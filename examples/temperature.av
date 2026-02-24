@@ -1,0 +1,96 @@
+module Temperature
+    intent:
+        "Converts temperatures between Celsius, Fahrenheit, and Kelvin."
+        "Demonstrates Result types, pipe operator, and co-located verification."
+
+decision NoLoops:
+    date: "2026-02-24"
+    reason:
+        "Temperature conversion is a pure mapping problem."
+        "Each conversion is a single expression — no iteration needed."
+    chosen: FunctionalPipeline
+    rejected: [ImperativeLoop]
+    impacts: [convertBatch]
+
+fn celsiusToFahr(c: Float) -> Float
+    ? "Converts Celsius to Fahrenheit using the standard formula."
+    = c * 1.8 + 32.0
+
+fn fahrToCelsius(f: Float) -> Float
+    ? "Converts Fahrenheit to Celsius."
+    = (f - 32.0) / 1.8
+
+fn celsiusToKelvin(c: Float) -> Result<Float, String>
+    ? "Converts Celsius to Kelvin. Returns Err if result would be below absolute zero."
+    match c < -273.15:
+        true  -> Err("Below absolute zero")
+        false -> Ok(c + 273.15)
+
+fn isBoiling(c: Float) -> Bool
+    ? "Returns true if a Celsius temperature is at or above the boiling point of water."
+    = c >= 100.0
+
+fn isFreezing(c: Float) -> Bool
+    ? "Returns true if a Celsius temperature is at or below the freezing point of water."
+    = c <= 0.0
+
+fn classify(c: Float) -> String
+    ? "Classifies a Celsius temperature into a human-readable category."
+    match c <= 0.0:
+        true  -> "freezing"
+        false -> match c < 20.0:
+            true  -> "cold"
+            false -> match c < 35.0:
+                true  -> "comfortable"
+                false -> "hot"
+
+fn main() -> Unit
+    val boiling = 100.0 |> celsiusToFahr
+    print("100 C in Fahrenheit:")
+    print(boiling)
+
+    val body = 98.6 |> fahrToCelsius
+    print("98.6 F in Celsius:")
+    print(body)
+
+    val freezeK = celsiusToKelvin(0.0)
+    print("0 C in Kelvin:")
+    print(freezeK)
+
+    val invalid = celsiusToKelvin(-300.0)
+    print("−300 C in Kelvin:")
+    print(invalid)
+
+    val temps = [0.0, 15.0, 25.0, 37.0, 100.0]
+    val boilingTemps = filter(temps, isBoiling)
+    print("Boiling:")
+    print(boilingTemps)
+
+    val freezingTemps = filter(temps, isFreezing)
+    print("Freezing:")
+    print(freezingTemps)
+
+verify celsiusToFahr:
+    celsiusToFahr(0.0)   => 32.0
+    celsiusToFahr(100.0) => 212.0
+    celsiusToFahr(-40.0) => -40.0
+
+verify fahrToCelsius:
+    fahrToCelsius(32.0)  => 0.0
+    fahrToCelsius(212.0) => 100.0
+    fahrToCelsius(-40.0) => -40.0
+
+verify celsiusToKelvin:
+    celsiusToKelvin(0.0)    => Ok(273.15)
+    celsiusToKelvin(100.0)  => Ok(373.15)
+    celsiusToKelvin(-300.0) => Err("Below absolute zero")
+
+verify isBoiling:
+    isBoiling(100.0) => true
+    isBoiling(99.9)  => false
+    isBoiling(150.0) => true
+
+verify isFreezing:
+    isFreezing(0.0)  => true
+    isFreezing(-10.0) => true
+    isFreezing(1.0)  => false

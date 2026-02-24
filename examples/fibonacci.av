@@ -1,0 +1,174 @@
+module Fibonacci
+    intent:
+        "Explores Fibonacci numbers and the golden ratio."
+        "Single-pass stats builder computes fibs, sum, max, and evens together."
+        "Verify blocks serve as executable examples and AI anchors."
+
+decision TailRecurrenceForPerformance:
+    date: "2026-02-24"
+    reason:
+        "Naive fib(n-1)+fib(n-2) is exponential and easy for AI to generate."
+        "Tail recursion makes fib linear time and predictable."
+    chosen: TailRecursion
+    rejected: [NaiveRecursion]
+    impacts: [fib, fibTR]
+
+decision SinglePassStats:
+    date: "2026-02-24"
+    reason:
+        "Building a list then folding and filtering is three separate passes."
+        "Accumulate sum, max, and even-filter alongside push in one traversal."
+        "Stats encoded as [fibs, sum, max, evens] since Aver has no records yet."
+    chosen: SinglePassAccumulator
+    rejected: [SeparateFoldAndFilter, Record]
+    impacts: [buildFibStats, buildFibStatsTR]
+
+decision EvenCheckWithoutModulo:
+    date: "2026-02-24"
+    reason:
+        "Aver has no modulo operator."
+        "Integer division truncates: n/2*2 equals n only when n is even."
+    chosen: DivisionTrick
+    rejected: [ModuloOperator]
+    impacts: [isEven]
+
+decision FloatChecksUseTolerance:
+    date: "2026-02-24"
+    reason:
+        "Exact float equality is brittle."
+        "Use abs + epsilon for stable verifies."
+    chosen: ApproxEq
+    rejected: [ExactFloatEquality]
+    impacts: [goldenApprox, absF, approxEq]
+
+fn fibTR(n: Int, a: Int, b: Int) -> Int
+    ? "Tail-recursive Fibonacci worker: returns F(n) given state (a=F(0), b=F(1))."
+    match n:
+        0 -> a
+        _ -> fibTR(n - 1, b, a + b)
+
+fn fib(n: Int) -> Int
+    ? "Computes Fibonacci number F(n). Returns 0 for negative n."
+    match n < 0:
+        true  -> 0
+        false -> fibTR(n, 0, 1)
+
+fn isEven(n: Int) -> Bool
+    ? "Even check via integer division trick (no modulo in Aver)."
+    = n / 2 * 2 == n
+
+fn bigger(a: Int, b: Int) -> Int
+    ? "Returns the larger of two integers."
+    match a > b:
+        true  -> a
+        false -> b
+
+fn pushIfEven(xs: List<Int>, n: Int) -> List<Int>
+    ? "Appends n to xs only when n is even."
+    match isEven(n):
+        true  -> push(xs, n)
+        false -> xs
+
+fn buildFibStatsTR(i: Int, n: Int, a: Int, b: Int, fibs: List<Int>, sum: Int, mx: Int, evens: List<Int>) -> List<Any>
+    ? "Single-pass builder: advances (a,b), pushes a, updates sum/max/evens each step."
+    match i > n:
+        true  -> [fibs, sum, mx, evens]
+        false -> buildFibStatsTR(i + 1, n, b, a + b, push(fibs, a), sum + a, bigger(a, mx), pushIfEven(evens, a))
+
+fn buildFibStats(n: Int) -> Result<List<Any>, String>
+    ? "Computes [fibs, sum, max, evens] for F(0)..F(n) in one pass. Err for n < 0."
+    match n < 0:
+        true  -> Err("Need n >= 0")
+        false -> Ok(buildFibStatsTR(0, n, 0, 1, [], 0, 0, []))
+
+fn absF(x: Float) -> Float
+    ? "Absolute value for Float using comparison and negation."
+    match x < 0.0:
+        true  -> 0.0 - x
+        false -> x
+
+fn approxEq(x: Float, y: Float, eps: Float) -> Bool
+    ? "Returns true when |x - y| <= eps."
+    = absF(x - y) <= eps
+
+fn goldenApprox(n: Int) -> Result<Float, String>
+    ? "Approximates golden ratio as F(n+1)/F(n). Requires n >= 1."
+    match n < 1:
+        true  -> Err("Need n >= 1")
+        false -> Ok(fib(n + 1) * 1.0 / fib(n))
+
+fn main() -> Unit
+    val stats = buildFibStats(12)?
+    val fibs = get(stats, 0)?
+    val total = get(stats, 1)?
+    val mx = get(stats, 2)?
+    val evens = get(stats, 3)?
+
+    print("Fibonacci [0..12]:")
+    print(fibs)
+    print("Sum:")
+    print(total)
+    print("Max:")
+    print(mx)
+    print("Even Fibonacci numbers:")
+    print(evens)
+
+    print("Golden ratio approx (n=5):")
+    print(goldenApprox(5))
+    print("Golden ratio approx (n=10):")
+    print(goldenApprox(10))
+    print("Golden ratio approx (n=12):")
+    print(goldenApprox(12))
+
+verify fibTR:
+    fibTR(0, 0, 1)  => 0
+    fibTR(1, 0, 1)  => 1
+    fibTR(5, 0, 1)  => 5
+    fibTR(12, 0, 1) => 144
+
+verify fib:
+    fib(-1) => 0
+    fib(0)  => 0
+    fib(1)  => 1
+    fib(5)  => 5
+    fib(10) => 55
+    fib(12) => 144
+
+verify isEven:
+    isEven(0)   => true
+    isEven(1)   => false
+    isEven(2)   => true
+    isEven(7)   => false
+    isEven(144) => true
+
+verify bigger:
+    bigger(3, 5) => 5
+    bigger(5, 3) => 5
+    bigger(4, 4) => 4
+
+verify pushIfEven:
+    pushIfEven([], 0)  => [0]
+    pushIfEven([], 1)  => []
+    pushIfEven([0], 2) => [0, 2]
+    pushIfEven([0], 3) => [0]
+
+verify buildFibStats:
+    buildFibStats(-1) => Err("Need n >= 0")
+    buildFibStats(0)  => Ok([[0], 0, 0, [0]])
+    buildFibStats(4)  => Ok([[0, 1, 1, 2, 3], 7, 3, [0, 2]])
+
+verify absF:
+    absF(-2.5) => 2.5
+    absF(0.0)  => 0.0
+    absF(3.25) => 3.25
+
+verify approxEq:
+    approxEq(1.0, 1.0, 0.0)      => true
+    approxEq(1.0, 1.0001, 0.001) => true
+    approxEq(1.0, 1.01, 0.001)   => false
+
+verify goldenApprox:
+    goldenApprox(0) => Err("Need n >= 1")
+    approxEq(goldenApprox(1)?, 1.0, 0.000001) => true
+    approxEq(goldenApprox(2)?, 2.0, 0.000001) => true
+    approxEq(goldenApprox(10)?, 1.618181818, 0.00001) => true
