@@ -1,194 +1,129 @@
 # Aver
 
-Aver is a statically-typed programming language designed for AI-assisted development. Its interpreter is written in Rust. The core premise: code is a letter to the next reader — who is increasingly an AI. Aver makes that letter as readable as possible without sacrificing rigour. Every function carries an optional prose description, every mutable variable can document why it exists, architectural decisions live as `decision` blocks right next to the code they describe, and inline `verify` blocks are the testing primitive.
+> *Code is a letter to the next reader. Often, that reader is an AI.*
 
-## Language tour
+Aver is a programming language designed for AI-assisted development. In an era where code is increasingly generated and refactored by LLMs, traditional comments and scattered docs are no longer enough. Aver bakes architectural context and intent directly into the language's grammar.
 
-### Functions
+## Why Aver?
 
-```aver
-fn greet(name: String) -> String
-    ? "Returns a personalised greeting."
-    = "Hello, {name}!"
+Most languages optimise for the CPU. Aver optimises for understanding — human and machine alike.
 
-fn safeDivide(a: Int, b: Int) -> Result<Int, String>
-    ? "Safe integer division. Returns Err when divisor is zero."
-    ! [Io]
-    match b:
-        0 -> Err("Division by zero")
-        _ -> Ok(a / b)
-```
+**`?` Intent** — every function carries a prose description of what it does and why. Not a comment that rots in isolation, but a semantic contract attached to the signature.
 
-- `? "..."` — prose description attached to the function signature
-- `! [Effect]` — declared effects (statically enforced)
-- `= expr` — single-expression body shorthand
-- Block body: indented statements, last expression is the return value
+**`!` Effects** — side effects are declared explicitly (`! [Network, Ledger]`). If a function "gets dirty", it must say so. Violations are type errors, not warnings.
 
-### Bindings
+**`decision` blocks** — architectural decisions live in the codebase, not in a stale Confluence page. The *why* behind every *how*, queryable without leaving your editor.
+
+**`verify` blocks** — tests are physically attached to the functions they cover. Self-verifying modules are the only way to scale safe AI automation.
+
+## Syntax at a glance
 
 ```aver
-val name = "Alice"          // immutable
-var count = 0               // mutable
-    reason: "Tracks retries."
-count = count + 1           // reassignment (no keyword)
-```
-
-### Match
-
-`match` is the only branching construct — there is no `if`/`else` by design.
-
-```aver
-fn classify(n: Int) -> String
-    = match n:
-        0 -> "zero"
-        _ -> "other"
-
-fn handle(result: Result<Int, String>) -> String
-    = match result:
-        Ok(v)  -> str(v)
-        Err(e) -> e
-```
-
-### Pipe operator
-
-```aver
-val loud = greet("Aver") |> shout
-```
-
-### Lists and higher-order functions
-
-```aver
-val numbers  = [1, 2, 3, 4, 5]
-val doubled  = map(numbers, double)
-val positives = filter(numbers, isPositive)
-val total    = fold(numbers, 0, add)
-```
-
-Builtins: `len`, `get`, `head`, `tail`, `push`, `map`, `filter`, `fold`.
-
-### Verify blocks
-
-Tests live next to the code they cover.
-
-```aver
-verify safeDivide:
-    safeDivide(10, 2) => Ok(5)
-    safeDivide(7,  0) => Err("Division by zero")
-```
-
-`=>` separates input from expected output. Run with `aver verify file.av`.
-
-### Module blocks
-
-```aver
-module Calculator
+module Payments
     intent:
-        "Safe calculator demonstrating Result types and match expressions."
-    exposes [safeDivide]
-    depends [Core]
-```
+        "Processes transactions with an explicit audit trail."
+    depends [Ledger, Fraud]
 
-### Decision blocks
-
-Architectural decision records as a language construct.
-
-```aver
-decision NoExceptions:
+decision UseResultNotExceptions:
     date: "2024-01-15"
     reason:
-        "Exceptions make error paths invisible at the call site."
-        "Result forces the caller to acknowledge failure explicitly."
+        "Invisible exceptions lose money."
+        "Callers must handle failure — Result forces that at compile time."
     chosen: Result
     rejected: [Exceptions, Nullable]
-    impacts: [safeDivide, safeRoot]
+    impacts: [charge]
+
+fn charge(account: String, amount: Int) -> Result<String, String>
+    ? "Charges account. Returns txn ID or a human-readable error."
+    ! [Network, Ledger]
+    match amount:
+        0 -> Err("Cannot charge zero")
+        _ -> Ok("txn-{account}-{amount}")
+
+verify charge:
+    charge("alice", 100) => Ok("txn-alice-100")
+    charge("bob",   0)   => Err("Cannot charge zero")
 ```
 
-Query all decisions in a file: `aver decisions examples/architecture.av`
+No `if`/`else`. No loops. No exceptions. No nulls. No magic.
 
-## Type system
+## Philosophy
 
-Primitive types: `Int`, `Float`, `String`, `Bool`, `Unit`.
-Compound types: `Result<T, E>`, `Option<T>`, `List<T>`.
-Escape hatch: `Any` — compatible with everything, opt-in.
+Aver doesn't trust the developer — and it certainly doesn't trust the AI. It enforces strict **Context-First** hygiene:
 
-Type errors block `run`, `check`, and `verify`. Unknown type annotations are hard errors, not silent `Any`.
+- Function with effects but no description `?` → **Warning**
+- `verify` case fails → **Error**
+- Type mismatch anywhere in the call graph → **Blocked before execution**
+
+Aver isn't for moving fast and breaking things. It's for building systems that stay maintainable for years, regardless of who — or what — is writing the code.
+
+## The type system
+
+Primitive types: `Int`, `Float`, `String`, `Bool`, `Unit`
+Compound types: `Result<T, E>`, `Option<T>`, `List<T>`
+Escape hatch: `Any` — compatible with everything, opt-in only
+
+Type errors block `run`, `check`, and `verify`. The checker runs before a single line executes.
 
 ## What Aver deliberately omits
 
 | Absent | Reason |
 |--------|--------|
-| `if`/`else` | `match` is the only branching construct; exhaustive matching forces explicit handling of all cases |
-| `for`/`while` loops | No imperative iteration; use `map`, `filter`, `fold` |
+| `if`/`else` | `match` is the only branching construct — exhaustive, no silent omissions |
+| `for`/`while` | No imperative iteration; use `map`, `filter`, `fold` |
 | `null` | `Option<T>` with `Some`/`None` only |
-| Exceptions | `Result<T, E>` with `Ok`/`Err` only; errors are values |
-| Global mutable state | Only `service` blocks with explicit `needs:` dependencies (planned) |
+| Exceptions | `Result<T, E>` only — errors are values, not control flow |
+| Global mutable state | Planned: `service` blocks with explicit `needs:` dependencies |
 | Magic | No decorators, no implicit behaviour, no runtime reflection |
 
 ## CLI
 
 ```
-aver run       file.av    # type-check then execute
+aver run       file.av    # type-check, then execute
 aver check     file.av    # type errors + intent/desc warnings
 aver verify    file.av    # run all verify blocks
 aver decisions file.av    # print all decision blocks
 ```
 
-## Building
-
-Prerequisites: Rust toolchain (stable).
+## Getting started
 
 ```bash
-git clone <repo>
-cd lumen-rs
+git clone https://github.com/jasisz/aver
+cd aver
 cargo build --release
 # binary at target/release/aver
-```
 
-Or run directly without installing:
-
-```bash
-cargo run -- run examples/hello.av
-cargo run -- verify examples/calculator.av
-cargo run -- check examples/calculator.av
+cargo run -- run      examples/calculator.av
+cargo run -- verify   examples/calculator.av
+cargo run -- check    examples/calculator.av
 cargo run -- decisions examples/architecture.av
 ```
 
-## Examples
+Requires: Rust stable toolchain.
 
-The `examples/` directory contains:
+## Examples
 
 | File | Demonstrates |
 |------|-------------|
-| `hello.av` | Basic syntax: functions, string interpolation, pipe, verify |
-| `calculator.av` | Result types, match, decision blocks, verify |
-| `lists.av` | List literals, map/filter/fold, verify |
-| `decisions.av` | Decision blocks as first-class language constructs |
-| `architecture.av` | The interpreter's own architecture documented in Aver |
-| `type_errors.av` | Intentional type errors — shows what the checker catches |
+| `hello.av` | Functions, string interpolation, pipe, verify |
+| `calculator.av` | Result types, match, decision blocks |
+| `lists.av` | List literals, map / filter / fold |
+| `decisions.av` | Decision blocks as first-class constructs |
+| `architecture.av` | The interpreter's own architecture — documented in Aver |
+| `type_errors.av` | Intentional type errors; shows what the checker catches |
 
-## Tests
+## Project status
 
-```bash
-cargo test    # 204 tests, 0 warnings
-```
+Implemented in Rust. 204 tests, zero warnings.
 
-| File | What it covers | Tests |
-|------|---------------|-------|
-| `tests/lexer_spec.rs` | Token kinds, INDENT/DEDENT, interpolation, comments | 58 |
-| `tests/parser_spec.rs` | AST shape for all constructs | 41 |
-| `tests/typechecker_spec.rs` | Valid programs pass; all error categories fail correctly | 29 |
-| `tests/eval_spec.rs` | Arithmetic, builtins, lists, match, pipe, HOFs | 65 |
-
-## Status
-
-Working: full pipeline (lex → parse → type-check → execute), all example programs, 204 passing tests.
-
-Not yet implemented (planned): list pattern matching (`[]`, `[h, ..t]`), user-defined types (`type`), proper `?` short-circuit across function boundaries, module imports at runtime, service blocks.
-
-## Design principles
-
-1. **Intent over implementation** — signatures, descriptions, and decisions tell the full story without running the code
-2. **Errors are values** — `Result<T, E>` everywhere; no exceptions
-3. **Co-location** — tests (`verify`) and decisions (`decision`) live next to the code they describe
-4. **Static by default** — type errors block execution; `Any` is an opt-in escape hatch
-5. **No magic** — every behaviour is explicit and visible in the source
+- [x] Lexer with significant indentation (Python-style INDENT/DEDENT)
+- [x] Recursive-descent parser — no libraries, hand-written
+- [x] Static type checker — blocks execution on errors
+- [x] Effect system — statically enforced, violations are type errors
+- [x] `verify` block runner — co-located tests
+- [x] `decision` block indexer — queryable ADRs
+- [x] List builtins: `map`, `filter`, `fold`, `get`, `head`, `tail`, `push`
+- [ ] List pattern matching (`[]`, `[h, ..t]`)
+- [ ] User-defined types (`type` keyword)
+- [ ] Module imports at runtime
+- [ ] AI context export — semantic maps to JSON/Markdown for LLM context windows
