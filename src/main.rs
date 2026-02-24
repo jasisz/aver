@@ -326,12 +326,22 @@ fn cmd_decisions(file: &str) {
             println!("    Impacts:  {}", dec.impacts.join(", "));
         }
         if !dec.reason.is_empty() {
-            let preview = if dec.reason.len() > 80 {
-                format!("{}...", &dec.reason[..80])
-            } else {
-                dec.reason.clone()
-            };
-            println!("    Reason:   {}", preview);
+            let prefix      = "    Reason:   ";
+            let continuation = "              ";
+            let max_width = 80usize;
+            let mut current = prefix.to_string();
+            for word in dec.reason.split_whitespace() {
+                if current == prefix || current == continuation {
+                    current.push_str(word);
+                } else if current.len() + 1 + word.len() <= max_width {
+                    current.push(' ');
+                    current.push_str(word);
+                } else {
+                    println!("{}", current);
+                    current = format!("{}{}", continuation, word);
+                }
+            }
+            println!("{}", current);
         }
         if let Some(author) = &dec.author {
             println!("    Author:   {}", author);

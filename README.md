@@ -109,7 +109,7 @@ Requires: Rust stable toolchain.
 | `calculator.av` | Result types, match, decision blocks |
 | `lists.av` | List literals, map / filter / fold |
 | `decisions.av` | Decision blocks as first-class constructs |
-| `architecture.av` | The interpreter's own architecture — documented in Aver |
+| `architecture.av` | The interpreter documents itself in Aver — [see it](examples/architecture.av) |
 | `type_errors.av` | Intentional type errors; shows what the checker catches |
 
 ## Project status
