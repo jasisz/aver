@@ -97,6 +97,17 @@ fn fn_needs_desc(f: &FnDef) -> bool {
 pub fn check_module_intent(items: &[TopLevel]) -> Vec<String> {
     let mut warnings = Vec::new();
 
+    let verified_fns: std::collections::HashSet<&str> = items
+        .iter()
+        .filter_map(|item| {
+            if let TopLevel::Verify(v) = item {
+                Some(v.fn_name.as_str())
+            } else {
+                None
+            }
+        })
+        .collect();
+
     for item in items {
         match item {
             TopLevel::Module(m) => {
@@ -107,6 +118,9 @@ pub fn check_module_intent(items: &[TopLevel]) -> Vec<String> {
             TopLevel::FnDef(f) => {
                 if f.desc.is_none() && fn_needs_desc(f) {
                     warnings.push(format!("Function '{}' has no description (?)", f.name));
+                }
+                if f.name != "main" && !verified_fns.contains(f.name.as_str()) {
+                    warnings.push(format!("Function '{}' has no verify block", f.name));
                 }
             }
             _ => {}

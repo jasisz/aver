@@ -1,7 +1,7 @@
 module Lists
     intent:
         "Demonstrates list values and higher-order builtins."
-        "Lumen has no loops — iteration happens through map, filter, and fold."
+        "Aver has no loops — iteration happens through map, filter, and fold."
 
 fn double(n: Int) -> Int
     ? "Doubles an integer."

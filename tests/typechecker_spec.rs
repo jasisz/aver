@@ -77,7 +77,7 @@ fn valid_float_function() {
 
 #[test]
 fn valid_unit_function() {
-    assert_no_errors("fn noop() -> Unit\n    = print(\"hi\")\n");
+    assert_no_errors("fn noop() -> Unit\n    ! [Console]\n    = print(\"hi\")\n");
 }
 
 #[test]
@@ -241,6 +241,6 @@ fn error_undeclared_effect() {
 #[test]
 fn valid_effect_propagated_correctly() {
     // caller declares the same effect as callee
-    let src = "fn log(msg: String) -> Unit\n    ! [Io]\n    = print(msg)\nfn caller(x: String) -> Unit\n    ! [Io]\n    = log(x)\n";
+    let src = "fn log(msg: String) -> Unit\n    ! [Console]\n    = print(msg)\nfn caller(x: String) -> Unit\n    ! [Console]\n    = log(x)\n";
     assert_no_errors(src);
 }

@@ -71,7 +71,7 @@ impl TypeChecker {
     fn register_builtins(&mut self) {
         let any = || Type::Any;
         let sigs: &[(&str, &[Type], Type, &[&str])] = &[
-            ("print",  &[Type::Any],                             Type::Unit,         &[]),
+            ("print",  &[Type::Any],                             Type::Unit,         &["Console"]),
             ("str",    &[Type::Any],                             Type::Str,          &[]),
             ("int",    &[Type::Any],                             Type::Int,          &[]),
             ("abs",    &[Type::Any],                             Type::Any,          &[]),
@@ -291,6 +291,8 @@ impl TypeChecker {
     // Effect propagation: ERROR (not warning) if callee has effect caller lacks
     // -----------------------------------------------------------------------
     fn check_effects_in_expr(&mut self, expr: &Expr, caller_name: &str, caller_effects: &[String]) {
+        // main() is the top-level effect boundary — it is exempt from effect propagation checks
+        if caller_name == "main" { return; }
         match expr {
             Expr::FnCall(fn_expr, args) => {
                 if let Expr::Ident(callee_name) = fn_expr.as_ref() {
