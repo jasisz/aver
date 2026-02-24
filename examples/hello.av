@@ -1,0 +1,26 @@
+module Hello
+    intent:
+        "Demonstrates basic Aver syntax: functions, string interpolation,"
+        "val bindings, and the pipe operator."
+
+fn greet(name: String) -> String
+    ? "Returns a personalised greeting."
+    = "Hello, {name}"
+
+fn shout(text: String) -> String
+    ? "Emphasises a greeting with exclamation marks."
+    = "{text}!!!"
+
+fn main() -> Unit
+    val greeting = greet("World")
+    print(greeting)
+    val loud = greet("Aver") |> shout
+    print(loud)
+
+verify greet:
+    greet("Alice") => "Hello, Alice"
+    greet("World") => "Hello, World"
+
+verify shout:
+    shout("Hello") => "Hello!!!"
+    shout(greet("Alice")) => "Hello, Alice!!!"

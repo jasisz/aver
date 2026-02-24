@@ -1,0 +1,57 @@
+module Architecture
+    intent:
+        "Architectural decisions for the Aver language, expressed in Aver itself."
+        "Run 'aver decisions examples/decisions.av' to query this file."
+
+decision UseResultOverExceptions:
+    date: "2024-01-15"
+    reason:
+        "Exceptions are invisible in function signatures."
+        "Result forces explicit error handling and is"
+        "fully readable by AI tooling without execution."
+    chosen: Result
+    rejected: [Exceptions, Nullable]
+    impacts: [Calculator, PaymentService]
+
+decision IndentationOverBraces:
+    date: "2024-01-20"
+    reason:
+        "Significant indentation reduces syntactic noise."
+        "Code reads like well-formatted prose."
+        "It also eliminates brace-placement style debates entirely."
+    chosen: Indentation
+    rejected: [Braces, BeginEnd]
+    impacts: [Lexer, Parser, AllModules]
+
+decision MatchOverIf:
+    date: "2024-01-22"
+    reason:
+        "match with exhaustive checking forces handling of every case."
+        "if/else allows silent omission of branches."
+        "Exhaustiveness is enforced at the language level, not by convention."
+    chosen: Match
+    rejected: [IfElse, Ternary]
+    impacts: [AllModules]
+
+decision ColocatedVerify:
+    date: "2024-01-25"
+    reason:
+        "Tests in separate directories rot faster because nobody reads them"
+        "when changing the function they test."
+        "A verify block immediately below its function is a minimal specification."
+    chosen: ColocatedVerify
+    rejected: [SeparateTestFiles, ExternalFramework]
+    impacts: [AllFunctions]
+
+fn summarise(name: String, pick: String) -> String
+    ? "Formats a one-line decision summary."
+    = "{name} -> {pick}"
+
+fn main() -> Unit
+    print(summarise("UseResultOverExceptions", "Result"))
+    print(summarise("IndentationOverBraces", "Indentation"))
+    print(summarise("MatchOverIf", "Match"))
+    print(summarise("ColocatedVerify", "ColocatedVerify"))
+
+verify summarise:
+    summarise("Foo", "Bar") => "Foo -> Bar"

@@ -1,0 +1,11 @@
+module TypeErrors
+    intent:
+        "Intentional type errors to test the type checker. Do not run."
+
+fn badAdd(a: Int, b: String) -> Int
+    ? "Type mismatch in BinOp — should be caught."
+    = a + b
+
+fn wrongReturn() -> Int
+    ? "Returns String but declares Int."
+    = "not an int"

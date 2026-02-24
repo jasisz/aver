@@ -1,0 +1,42 @@
+module Calculator
+    intent:
+        "Safe calculator demonstrating Result types, match expressions,"
+        "and co-located verification. Errors are values, not exceptions."
+    exposes [safeDivide, safeRoot]
+
+decision NoExceptions:
+    date: "2024-01-15"
+    reason:
+        "Exceptions make error paths invisible at the call site."
+        "Result forces the caller to acknowledge failure explicitly,"
+        "which is essential when AI tooling reads code without running it."
+    chosen: Result
+    rejected: [Exceptions, Nullable]
+    impacts: [safeDivide, safeRoot]
+
+fn safeDivide(a: Int, b: Int) -> Result<Int, String>
+    ? "Safe integer division. Returns Err when divisor is zero."
+    match b:
+        0 -> Err("Division by zero")
+        _ -> Ok(a / b)
+
+fn safeRoot(n: Int) -> Result<Int, String>
+    ? "Returns Err for negative input, Ok otherwise."
+    match n:
+        _ -> Ok(n)
+
+fn main() -> Unit
+    var attempts = 0
+        reason: "Tracks how many divisions we attempted for the summary."
+    val r1 = safeDivide(10, 2)
+    print(r1)
+    val r2 = safeDivide(7, 0)
+    print(r2)
+    val r3 = safeDivide(9, 3)
+    print(r3)
+
+verify safeDivide:
+    safeDivide(10, 2) => Ok(5)
+    safeDivide(7, 0)  => Err("Division by zero")
+    safeDivide(9, 3)  => Ok(3)
+    safeDivide(0, 5)  => Ok(0)

@@ -1,0 +1,246 @@
+/// Spec tests for the Aver static type checker.
+///
+/// Tests are grouped into:
+///   - valid programs that must produce zero type errors
+///   - invalid programs that must produce at least one error with a
+///     specific substring in the message
+///
+/// The type checker is run directly via `run_type_check`, bypassing the CLI.
+
+use aver::ast::TopLevel;
+use aver::lexer::Lexer;
+use aver::parser::Parser;
+use aver::typechecker::run_type_check;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn parse(src: &str) -> Vec<TopLevel> {
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().expect("lex failed");
+    let mut parser = Parser::new(tokens);
+    parser.parse().expect("parse failed")
+}
+
+fn errors(src: &str) -> Vec<String> {
+    let items = parse(src);
+    run_type_check(&items).into_iter().map(|e| e.message).collect()
+}
+
+fn assert_no_errors(src: &str) {
+    let errs = errors(src);
+    assert!(
+        errs.is_empty(),
+        "expected no type errors, got:\n  {}",
+        errs.join("\n  ")
+    );
+}
+
+fn assert_error_containing(src: &str, snippet: &str) {
+    let errs = errors(src);
+    assert!(
+        errs.iter().any(|e| e.contains(snippet)),
+        "expected error containing {:?}, got:\n  {}",
+        snippet,
+        if errs.is_empty() {
+            "<no errors>".to_string()
+        } else {
+            errs.join("\n  ")
+        }
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Valid programs — must pass with zero errors
+// ---------------------------------------------------------------------------
+
+#[test]
+fn valid_int_function() {
+    assert_no_errors("fn add(a: Int, b: Int) -> Int\n    = a + b\n");
+}
+
+#[test]
+fn valid_string_function() {
+    assert_no_errors("fn greet(name: String) -> String\n    = \"Hello\"\n");
+}
+
+#[test]
+fn valid_bool_function() {
+    assert_no_errors("fn negate(b: Bool) -> Bool\n    = b\n");
+}
+
+#[test]
+fn valid_float_function() {
+    assert_no_errors("fn scale(x: Float) -> Float\n    = x\n");
+}
+
+#[test]
+fn valid_unit_function() {
+    assert_no_errors("fn noop() -> Unit\n    = print(\"hi\")\n");
+}
+
+#[test]
+fn valid_result_return() {
+    assert_no_errors(
+        "fn safe_div(a: Int, b: Int) -> Result<Int, String>\n    = Ok(a)\n",
+    );
+}
+
+#[test]
+fn valid_option_return() {
+    assert_no_errors("fn maybe(x: Int) -> Option<Int>\n    = Some(x)\n");
+}
+
+#[test]
+fn valid_list_return() {
+    assert_no_errors("fn wrap(x: Int) -> List<Int>\n    = [x]\n");
+}
+
+#[test]
+fn valid_explicit_any() {
+    assert_no_errors("fn passthrough(x: Any) -> Any\n    = x\n");
+}
+
+#[test]
+fn valid_call_correct_args() {
+    let src = "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    val r = add(1, 2)\n";
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_call_chain() {
+    let src = "fn double(x: Int) -> Int\n    = x + x\nfn quadruple(x: Int) -> Int\n    = double(double(x))\n";
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_var_reassignment() {
+    assert_no_errors("fn f() -> Unit\n    var x = 0\n    x = 5\n");
+}
+
+#[test]
+fn valid_var_reassignment_same_type() {
+    assert_no_errors("fn f() -> Unit\n    var name = \"alice\"\n    name = \"bob\"\n");
+}
+
+#[test]
+fn valid_int_float_widening() {
+    // Int is compatible with Float (widening)
+    assert_no_errors("fn f(a: Int, b: Float) -> Float\n    = a + b\n");
+}
+
+#[test]
+fn valid_pipe_operator() {
+    let src = "fn double(x: Int) -> Int\n    = x + x\nfn main() -> Unit\n    val r = 5 |> double\n";
+    assert_no_errors(src);
+}
+
+// --- Real example files ---
+
+#[test]
+fn valid_hello_av() {
+    let src = std::fs::read_to_string("examples/hello.av")
+        .expect("examples/hello.av not found");
+    assert_no_errors(&src);
+}
+
+#[test]
+fn valid_calculator_av() {
+    let src = std::fs::read_to_string("examples/calculator.av")
+        .expect("examples/calculator.av not found");
+    assert_no_errors(&src);
+}
+
+#[test]
+fn valid_lists_av() {
+    let src = std::fs::read_to_string("examples/lists.av")
+        .expect("examples/lists.av not found");
+    assert_no_errors(&src);
+}
+
+// ---------------------------------------------------------------------------
+// Type errors — must produce at least one error
+// ---------------------------------------------------------------------------
+
+#[test]
+fn error_wrong_arg_count_too_few() {
+    let src = "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    val r = add(1)\n";
+    // actual: "Function 'add' expects 2 argument(s), got 1"
+    assert_error_containing(src, "argument(s)");
+}
+
+#[test]
+fn error_wrong_arg_count_too_many() {
+    let src = "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    val r = add(1, 2, 3)\n";
+    // actual: "Function 'add' expects 2 argument(s), got 3"
+    assert_error_containing(src, "argument(s)");
+}
+
+#[test]
+fn error_arg_type_mismatch_string_for_int() {
+    let src = "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    val r = add(1, \"two\")\n";
+    // actual: "Argument 2 of 'add': expected Int, got String"
+    assert_error_containing(src, "got String");
+}
+
+#[test]
+fn error_unknown_type_annotation() {
+    let src = "fn f(x: Intger) -> Unit\n    = x\n";
+    // actual: "Function 'f' parameter 'x': unknown type 'Intger'"
+    assert_error_containing(src, "unknown");
+}
+
+#[test]
+fn error_unknown_return_type() {
+    let src = "fn f() -> Strng\n    = \"hi\"\n";
+    // actual: "Function 'f': unknown return type 'Strng'"
+    assert_error_containing(src, "unknown");
+}
+
+#[test]
+fn error_assign_to_val_is_immutable() {
+    let src = "fn f() -> Unit\n    val x = 0\n    x = 1\n";
+    // actual: "Assignment to immutable 'x' in 'f' ..."
+    assert_error_containing(src, "immutable");
+}
+
+#[test]
+fn error_assign_to_undeclared() {
+    let src = "fn f() -> Unit\n    y = 1\n";
+    // actual: "Assignment to undeclared variable 'y' in 'f'"
+    assert_error_containing(src, "undeclared");
+}
+
+#[test]
+fn error_assign_to_var_wrong_type() {
+    let src = "fn f() -> Unit\n    var x = 0\n    x = \"hello\"\n";
+    // actual: "Assignment to 'x' in 'f': expected Int, got String"
+    assert_error_containing(src, "expected Int");
+}
+
+#[test]
+fn error_binop_int_plus_string() {
+    let src = "fn f(a: Int, b: String) -> Any\n    = a + b\n";
+    // actual: "Operator '+' requires Int/Float or String on both sides, got Int and String"
+    assert_error_containing(src, "requires");
+}
+
+#[test]
+fn error_undeclared_effect() {
+    // Calling a function with an effect from a function without that effect declared
+    let src =
+        "fn log(msg: String) -> Unit\n    ! [Io]\n    = print(msg)\nfn caller(x: String) -> Unit\n    = log(x)\n";
+    assert_error_containing(src, "Io");
+}
+
+// ---------------------------------------------------------------------------
+// Effect propagation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn valid_effect_propagated_correctly() {
+    // caller declares the same effect as callee
+    let src = "fn log(msg: String) -> Unit\n    ! [Io]\n    = print(msg)\nfn caller(x: String) -> Unit\n    ! [Io]\n    = log(x)\n";
+    assert_no_errors(src);
+}

@@ -1,0 +1,788 @@
+use std::collections::HashMap;
+use thiserror::Error;
+
+use crate::ast::*;
+use crate::lexer::Lexer;
+use crate::parser::Parser;
+
+#[derive(Debug, Error)]
+pub enum RuntimeError {
+    #[error("Runtime error: {0}")]
+    Error(String),
+}
+
+// Special signal for error propagation (? operator) — reserved for future use
+#[allow(dead_code)]
+#[derive(Debug)]
+pub struct ErrPropSignal(pub Box<Value>);
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    Int(i64),
+    Float(f64),
+    Str(String),
+    Bool(bool),
+    Unit,
+    Ok(Box<Value>),
+    Err(Box<Value>),
+    Some(Box<Value>),
+    None,
+    List(Vec<Value>),
+    Fn {
+        name: String,
+        params: Vec<(String, String)>,
+        body: FnBody,
+        closure: HashMap<String, Value>,
+    },
+    Builtin(String),
+}
+
+pub fn lumen_repr(val: &Value) -> String {
+    match val {
+        Value::Int(i) => i.to_string(),
+        Value::Float(f) => f.to_string(),
+        Value::Str(s) => s.clone(),
+        Value::Bool(b) => if *b { "true" } else { "false" }.to_string(),
+        Value::Unit => "()".to_string(),
+        Value::Ok(v) => format!("Ok({})", lumen_repr_inner(v)),
+        Value::Err(v) => format!("Err({})", lumen_repr_inner(v)),
+        Value::Some(v) => format!("Some({})", lumen_repr_inner(v)),
+        Value::None => "None".to_string(),
+        Value::List(items) => {
+            let parts: Vec<String> = items.iter().map(lumen_repr_inner).collect();
+            format!("[{}]", parts.join(", "))
+        }
+        Value::Fn { name, .. } => format!("<fn {}>", name),
+        Value::Builtin(name) => format!("<builtin {}>", name),
+    }
+}
+
+// For values inside constructors and list elements — strings get quoted
+fn lumen_repr_inner(val: &Value) -> String {
+    match val {
+        Value::Str(s) => format!("\"{}\"", s),
+        Value::List(items) => {
+            let parts: Vec<String> = items.iter().map(lumen_repr_inner).collect();
+            format!("[{}]", parts.join(", "))
+        }
+        other => lumen_repr(other),
+    }
+}
+
+pub fn lumen_display(val: &Value) -> Option<String> {
+    match val {
+        Value::Unit => None, // don't print Unit
+        other => Some(lumen_repr(other)),
+    }
+}
+
+pub type Env = Vec<HashMap<String, Value>>;
+
+pub struct Interpreter {
+    pub env: Env,
+}
+
+impl Interpreter {
+    pub fn new() -> Self {
+        let mut global = HashMap::new();
+        for name in &["print", "str", "int", "abs", "len", "map", "filter", "fold", "get", "push", "head", "tail"] {
+            global.insert(name.to_string(), Value::Builtin(name.to_string()));
+        }
+        Interpreter { env: vec![global] }
+    }
+
+    // -------------------------------------------------------------------------
+    // Environment management
+    // -------------------------------------------------------------------------
+    fn push_env(&mut self, base: HashMap<String, Value>) {
+        self.env.push(base);
+    }
+
+    fn pop_env(&mut self) {
+        if self.env.len() > 1 {
+            self.env.pop();
+        }
+    }
+
+    pub fn lookup(&self, name: &str) -> Result<Value, RuntimeError> {
+        for scope in self.env.iter().rev() {
+            if let Some(v) = scope.get(name) {
+                return Ok(v.clone());
+            }
+        }
+        Err(RuntimeError::Error(format!("Undefined variable: '{}'", name)))
+    }
+
+    pub fn define(&mut self, name: String, val: Value) {
+        if let Some(scope) = self.env.last_mut() {
+            scope.insert(name, val);
+        }
+    }
+
+    /// Walk the scope stack from innermost outward and update the first binding found.
+    /// Returns Err if no binding exists (use `define` for new bindings).
+    pub fn assign(&mut self, name: &str, val: Value) -> Result<(), RuntimeError> {
+        for scope in self.env.iter_mut().rev() {
+            if scope.contains_key(name) {
+                scope.insert(name.to_string(), val);
+                return Ok(());
+            }
+        }
+        Err(RuntimeError::Error(format!(
+            "Cannot assign to '{}': variable not declared",
+            name
+        )))
+    }
+
+    // -------------------------------------------------------------------------
+    // Builtins
+    // -------------------------------------------------------------------------
+    fn call_builtin(&mut self, name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        match name {
+            "print" => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::Error(format!(
+                        "print() takes 1 argument, got {}",
+                        args.len()
+                    )));
+                }
+                if let Some(s) = lumen_display(&args[0]) {
+                    println!("{}", s);
+                }
+                Ok(Value::Unit)
+            }
+            "len" => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::Error(format!(
+                        "len() takes 1 argument, got {}",
+                        args.len()
+                    )));
+                }
+                match &args[0] {
+                    Value::Str(s) => Ok(Value::Int(s.chars().count() as i64)),
+                    Value::List(items) => Ok(Value::Int(items.len() as i64)),
+                    _ => Err(RuntimeError::Error(
+                        "len() does not support this type".to_string()
+                    )),
+                }
+            }
+            "str" => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::Error(format!(
+                        "str() takes 1 argument, got {}",
+                        args.len()
+                    )));
+                }
+                Ok(Value::Str(lumen_repr(&args[0])))
+            }
+            "int" => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::Error(format!(
+                        "int() takes 1 argument, got {}",
+                        args.len()
+                    )));
+                }
+                match &args[0] {
+                    Value::Int(i) => Ok(Value::Int(*i)),
+                    Value::Float(f) => Ok(Value::Int(*f as i64)),
+                    Value::Str(s) => s.parse::<i64>().map(Value::Int).map_err(|_| {
+                        RuntimeError::Error(format!("Cannot convert '{}' to Int", s))
+                    }),
+                    _ => Err(RuntimeError::Error("int() does not support this type".to_string())),
+                }
+            }
+            "abs" => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::Error(format!(
+                        "abs() takes 1 argument, got {}",
+                        args.len()
+                    )));
+                }
+                match &args[0] {
+                    Value::Int(i) => Ok(Value::Int(i.abs())),
+                    Value::Float(f) => Ok(Value::Float(f.abs())),
+                    _ => Err(RuntimeError::Error("abs() does not support this type".to_string())),
+                }
+            }
+            "map" => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::Error(format!(
+                        "map() takes 2 arguments (list, fn), got {}",
+                        args.len()
+                    )));
+                }
+                let list = match args[0].clone() {
+                    Value::List(items) => items,
+                    _ => return Err(RuntimeError::Error("map() first argument must be a List".to_string())),
+                };
+                let func = args[1].clone();
+                let mut result = Vec::new();
+                for item in list {
+                    let val = self.call_value(func.clone(), vec![item])?;
+                    result.push(val);
+                }
+                Ok(Value::List(result))
+            }
+            "filter" => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::Error(format!(
+                        "filter() takes 2 arguments (list, fn), got {}",
+                        args.len()
+                    )));
+                }
+                let list = match args[0].clone() {
+                    Value::List(items) => items,
+                    _ => return Err(RuntimeError::Error("filter() first argument must be a List".to_string())),
+                };
+                let func = args[1].clone();
+                let mut result = Vec::new();
+                for item in list {
+                    let keep = self.call_value(func.clone(), vec![item.clone()])?;
+                    match keep {
+                        Value::Bool(true) => result.push(item),
+                        Value::Bool(false) => {}
+                        _ => return Err(RuntimeError::Error("filter() predicate must return Bool".to_string())),
+                    }
+                }
+                Ok(Value::List(result))
+            }
+            "fold" => {
+                if args.len() != 3 {
+                    return Err(RuntimeError::Error(format!(
+                        "fold() takes 3 arguments (list, init, fn), got {}",
+                        args.len()
+                    )));
+                }
+                let list = match args[0].clone() {
+                    Value::List(items) => items,
+                    _ => return Err(RuntimeError::Error("fold() first argument must be a List".to_string())),
+                };
+                let init = args[1].clone();
+                let func = args[2].clone();
+                let mut acc = init;
+                for item in list {
+                    acc = self.call_value(func.clone(), vec![acc, item])?;
+                }
+                Ok(acc)
+            }
+            "get" => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::Error(format!(
+                        "get() takes 2 arguments (list, index), got {}",
+                        args.len()
+                    )));
+                }
+                let list = match args[0].clone() {
+                    Value::List(items) => items,
+                    _ => return Err(RuntimeError::Error("get() first argument must be a List".to_string())),
+                };
+                let index = match &args[1] {
+                    Value::Int(i) => *i,
+                    _ => return Err(RuntimeError::Error("get() index must be an Int".to_string())),
+                };
+                if index < 0 || index as usize >= list.len() {
+                    Ok(Value::Err(Box::new(Value::Str(format!("index {} out of bounds", index)))))
+                } else {
+                    Ok(Value::Ok(Box::new(list[index as usize].clone())))
+                }
+            }
+            "push" => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::Error(format!(
+                        "push() takes 2 arguments (list, val), got {}",
+                        args.len()
+                    )));
+                }
+                let mut list = match args[0].clone() {
+                    Value::List(items) => items,
+                    _ => return Err(RuntimeError::Error("push() first argument must be a List".to_string())),
+                };
+                list.push(args[1].clone());
+                Ok(Value::List(list))
+            }
+            "head" => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::Error(format!(
+                        "head() takes 1 argument, got {}",
+                        args.len()
+                    )));
+                }
+                match args[0].clone() {
+                    Value::List(items) => {
+                        if items.is_empty() {
+                            Ok(Value::Err(Box::new(Value::Str("empty list".to_string()))))
+                        } else {
+                            Ok(Value::Ok(Box::new(items[0].clone())))
+                        }
+                    }
+                    _ => Err(RuntimeError::Error("head() argument must be a List".to_string())),
+                }
+            }
+            "tail" => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::Error(format!(
+                        "tail() takes 1 argument, got {}",
+                        args.len()
+                    )));
+                }
+                match args[0].clone() {
+                    Value::List(items) => {
+                        if items.is_empty() {
+                            Ok(Value::Err(Box::new(Value::Str("empty list".to_string()))))
+                        } else {
+                            Ok(Value::Ok(Box::new(Value::List(items[1..].to_vec()))))
+                        }
+                    }
+                    _ => Err(RuntimeError::Error("tail() argument must be a List".to_string())),
+                }
+            }
+            _ => Err(RuntimeError::Error(format!("Unknown builtin function: '{}'", name))),
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Top-level execution
+    // -------------------------------------------------------------------------
+    #[allow(dead_code)]
+    pub fn exec_items(&mut self, items: &[TopLevel]) -> Result<Value, RuntimeError> {
+        for item in items {
+            match item {
+                TopLevel::FnDef(fd) => self.exec_fn_def(fd)?,
+                TopLevel::Module(_) => {}
+                TopLevel::Verify(_) => {}
+                TopLevel::Decision(_) => {}
+                TopLevel::Stmt(s) => {
+                    self.exec_stmt(s)?;
+                }
+            }
+        }
+        Ok(Value::Unit)
+    }
+
+    pub fn exec_fn_def(&mut self, fd: &FnDef) -> Result<(), RuntimeError> {
+        // Capture current closure
+        let mut closure = HashMap::new();
+        for scope in &self.env {
+            for (k, v) in scope {
+                closure.insert(k.clone(), v.clone());
+            }
+        }
+
+        let val = Value::Fn {
+            name: fd.name.clone(),
+            params: fd.params.clone(),
+            body: fd.body.clone(),
+            closure,
+        };
+        self.define(fd.name.clone(), val);
+        Ok(())
+    }
+
+    pub fn exec_stmt(&mut self, stmt: &Stmt) -> Result<Value, RuntimeError> {
+        match stmt {
+            Stmt::Val(name, expr) => {
+                let val = self.eval_expr(expr)?;
+                self.define(name.clone(), val);
+                Ok(Value::Unit)
+            }
+            Stmt::Var(name, expr, _reason) => {
+                let val = self.eval_expr(expr)?;
+                self.define(name.clone(), val);
+                Ok(Value::Unit)
+            }
+            Stmt::Assign(name, expr) => {
+                let val = self.eval_expr(expr)?;
+                self.assign(name, val)?;
+                Ok(Value::Unit)
+            }
+            Stmt::Expr(expr) => self.eval_expr(expr),
+        }
+    }
+
+    pub fn exec_body(&mut self, stmts: &[Stmt]) -> Result<Value, RuntimeError> {
+        let mut last = Value::Unit;
+        for stmt in stmts {
+            last = self.exec_stmt(stmt)?;
+        }
+        Ok(last)
+    }
+
+    // -------------------------------------------------------------------------
+    // Expression evaluation
+    // -------------------------------------------------------------------------
+    pub fn eval_expr(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
+        match expr {
+            Expr::Literal(lit) => Ok(self.eval_literal(lit)),
+            Expr::Ident(name) => self.lookup(name),
+            Expr::Attr(obj, field) => {
+                let _obj_val = self.eval_expr(obj)?;
+                Err(RuntimeError::Error(format!(
+                    "Field access '{}' is not supported",
+                    field
+                )))
+            }
+            Expr::FnCall(fn_expr, args) => {
+                let fn_val = self.eval_expr(fn_expr)?;
+                let mut arg_vals = Vec::new();
+                for a in args {
+                    arg_vals.push(self.eval_expr(a)?);
+                }
+                self.call_value(fn_val, arg_vals)
+            }
+            Expr::BinOp(op, left, right) => {
+                let lv = self.eval_expr(left)?;
+                let rv = self.eval_expr(right)?;
+                self.eval_binop(op, lv, rv)
+            }
+            Expr::Match(subject, arms) => {
+                let sv = self.eval_expr(subject)?;
+                self.eval_match(sv, arms)
+            }
+            Expr::Pipe(left, right) => {
+                let left_val = self.eval_expr(left)?;
+                let fn_val = self.eval_expr(right)?;
+                self.call_value(fn_val, vec![left_val])
+            }
+            Expr::Constructor(name, arg) => {
+                let arg_val = match arg {
+                    Some(a) => self.eval_expr(a)?,
+                    None => Value::Unit,
+                };
+                match name.as_str() {
+                    "Ok" => Ok(Value::Ok(Box::new(arg_val))),
+                    "Err" => Ok(Value::Err(Box::new(arg_val))),
+                    "Some" => Ok(Value::Some(Box::new(arg_val))),
+                    "None" => Ok(Value::None),
+                    _ => Err(RuntimeError::Error(format!("Unknown constructor: {}", name))),
+                }
+            }
+            Expr::ErrorProp(inner) => {
+                let val = self.eval_expr(inner)?;
+                match val {
+                    Value::Ok(v) => Ok(*v),
+                    Value::Err(_) => Err(RuntimeError::Error(
+                        "Error propagation: Err value".to_string(),
+                    )),
+                    _ => Err(RuntimeError::Error(
+                        "Operator '?' can only be applied to Result".to_string(),
+                    )),
+                }
+            }
+            Expr::InterpolatedStr(parts) => {
+                let mut result = String::new();
+                for part in parts {
+                    match part {
+                        StrPart::Literal(s) => result.push_str(s),
+                        StrPart::Expr(src) => {
+                            // Re-lex and parse the expression source for string interpolation
+                            let mut lexer = Lexer::new(src);
+                            let tokens = lexer.tokenize().map_err(|e| {
+                                RuntimeError::Error(format!("Error in interpolation: {}", e))
+                            })?;
+                            let mut parser = Parser::new(tokens);
+                            let expr_node = parser.parse_expr().map_err(|e| {
+                                RuntimeError::Error(format!("Error in interpolation: {}", e))
+                            })?;
+                            let val = self.eval_expr(&expr_node)?;
+                            result.push_str(&lumen_repr(&val));
+                        }
+                    }
+                }
+                Ok(Value::Str(result))
+            }
+            Expr::List(elements) => {
+                let mut values = Vec::new();
+                for elem in elements {
+                    values.push(self.eval_expr(elem)?);
+                }
+                Ok(Value::List(values))
+            }
+        }
+    }
+
+    fn eval_literal(&self, lit: &Literal) -> Value {
+        match lit {
+            Literal::Int(i) => Value::Int(*i),
+            Literal::Float(f) => Value::Float(*f),
+            Literal::Str(s) => Value::Str(s.clone()),
+            Literal::Bool(b) => Value::Bool(*b),
+        }
+    }
+
+    fn call_value(&mut self, fn_val: Value, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        match fn_val {
+            Value::Builtin(name) => self.call_builtin(&name, args),
+            Value::Fn { name, params, body, closure } => {
+                if args.len() != params.len() {
+                    return Err(RuntimeError::Error(format!(
+                        "Function '{}' expects {} arguments, got {}",
+                        name,
+                        params.len(),
+                        args.len()
+                    )));
+                }
+
+                let mut new_env = closure;
+                for ((param_name, _), arg_val) in params.iter().zip(args.into_iter()) {
+                    new_env.insert(param_name.clone(), arg_val);
+                }
+
+                self.push_env(new_env);
+                let result = match &body {
+                    FnBody::Expr(e) => self.eval_expr(e),
+                    FnBody::Block(stmts) => self.exec_body(stmts),
+                };
+                self.pop_env();
+                result
+            }
+            _ => Err(RuntimeError::Error(format!(
+                "Cannot call value: {:?}",
+                fn_val
+            ))),
+        }
+    }
+
+    fn eval_binop(&self, op: &BinOp, left: Value, right: Value) -> Result<Value, RuntimeError> {
+        match op {
+            BinOp::Add => self.op_add(left, right),
+            BinOp::Sub => self.op_sub(left, right),
+            BinOp::Mul => self.op_mul(left, right),
+            BinOp::Div => self.op_div(left, right),
+            BinOp::Eq => Ok(Value::Bool(self.lumen_eq(&left, &right))),
+            BinOp::Neq => Ok(Value::Bool(!self.lumen_eq(&left, &right))),
+            BinOp::Lt => self.op_compare(&left, &right, "<"),
+            BinOp::Gt => self.op_compare(&left, &right, ">"),
+            BinOp::Lte => self.op_compare(&left, &right, "<="),
+            BinOp::Gte => self.op_compare(&left, &right, ">="),
+        }
+    }
+
+    pub fn lumen_eq(&self, a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::Int(x), Value::Int(y)) => x == y,
+            (Value::Float(x), Value::Float(y)) => x == y,
+            (Value::Str(x), Value::Str(y)) => x == y,
+            (Value::Bool(x), Value::Bool(y)) => x == y,
+            (Value::Unit, Value::Unit) => true,
+            (Value::None, Value::None) => true,
+            (Value::Ok(x), Value::Ok(y)) => self.lumen_eq(x, y),
+            (Value::Err(x), Value::Err(y)) => self.lumen_eq(x, y),
+            (Value::Some(x), Value::Some(y)) => self.lumen_eq(x, y),
+            (Value::List(xs), Value::List(ys)) => {
+                xs.len() == ys.len() && xs.iter().zip(ys.iter()).all(|(x, y)| self.lumen_eq(x, y))
+            }
+            _ => false,
+        }
+    }
+
+    fn op_add(&self, a: Value, b: Value) -> Result<Value, RuntimeError> {
+        match (&a, &b) {
+            (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x + y)),
+            (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x + y)),
+            (Value::Int(x), Value::Float(y)) => Ok(Value::Float(*x as f64 + y)),
+            (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x + *y as f64)),
+            (Value::Str(x), Value::Str(y)) => Ok(Value::Str(format!("{}{}", x, y))),
+            _ => Err(RuntimeError::Error(
+                "Operator '+' does not support these types".to_string()
+            )),
+        }
+    }
+
+    fn op_sub(&self, a: Value, b: Value) -> Result<Value, RuntimeError> {
+        match (&a, &b) {
+            (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x - y)),
+            (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x - y)),
+            (Value::Int(x), Value::Float(y)) => Ok(Value::Float(*x as f64 - y)),
+            (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x - *y as f64)),
+            _ => Err(RuntimeError::Error("Operator '-' does not support these types".to_string())),
+        }
+    }
+
+    fn op_mul(&self, a: Value, b: Value) -> Result<Value, RuntimeError> {
+        match (&a, &b) {
+            (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x * y)),
+            (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x * y)),
+            (Value::Int(x), Value::Float(y)) => Ok(Value::Float(*x as f64 * y)),
+            (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x * *y as f64)),
+            _ => Err(RuntimeError::Error("Operator '*' does not support these types".to_string())),
+        }
+    }
+
+    fn op_div(&self, a: Value, b: Value) -> Result<Value, RuntimeError> {
+        match (&a, &b) {
+            (Value::Int(x), Value::Int(y)) => {
+                if *y == 0 {
+                    Err(RuntimeError::Error("Division by zero".to_string()))
+                } else {
+                    Ok(Value::Int(x / y))
+                }
+            }
+            (Value::Float(x), Value::Float(y)) => {
+                if *y == 0.0 {
+                    Err(RuntimeError::Error("Division by zero".to_string()))
+                } else {
+                    Ok(Value::Float(x / y))
+                }
+            }
+            (Value::Int(x), Value::Float(y)) => Ok(Value::Float(*x as f64 / y)),
+            (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x / *y as f64)),
+            _ => Err(RuntimeError::Error("Operator '/' does not support these types".to_string())),
+        }
+    }
+
+    fn op_compare(&self, a: &Value, b: &Value, op: &str) -> Result<Value, RuntimeError> {
+        let result = match (a, b) {
+            (Value::Int(x), Value::Int(y)) => match op {
+                "<" => x < y,
+                ">" => x > y,
+                "<=" => x <= y,
+                ">=" => x >= y,
+                _ => unreachable!(),
+            },
+            (Value::Float(x), Value::Float(y)) => match op {
+                "<" => x < y,
+                ">" => x > y,
+                "<=" => x <= y,
+                ">=" => x >= y,
+                _ => unreachable!(),
+            },
+            (Value::Int(x), Value::Float(y)) => {
+                let x = *x as f64;
+                match op {
+                    "<" => x < *y,
+                    ">" => x > *y,
+                    "<=" => x <= *y,
+                    ">=" => x >= *y,
+                    _ => unreachable!(),
+                }
+            }
+            (Value::Float(x), Value::Int(y)) => {
+                let y = *y as f64;
+                match op {
+                    "<" => *x < y,
+                    ">" => *x > y,
+                    "<=" => *x <= y,
+                    ">=" => *x >= y,
+                    _ => unreachable!(),
+                }
+            }
+            (Value::Str(x), Value::Str(y)) => match op {
+                "<" => x < y,
+                ">" => x > y,
+                "<=" => x <= y,
+                ">=" => x >= y,
+                _ => unreachable!(),
+            },
+            _ => {
+                return Err(RuntimeError::Error(format!(
+                    "Operator '{}' does not support these types",
+                    op
+                )))
+            }
+        };
+        Ok(Value::Bool(result))
+    }
+
+    fn eval_match(&mut self, subject: Value, arms: &[MatchArm]) -> Result<Value, RuntimeError> {
+        for arm in arms {
+            if let Some(bindings) = self.match_pattern(&arm.pattern, &subject) {
+                // Create new scope with pattern bindings
+                let mut new_scope = HashMap::new();
+                for (k, v) in bindings {
+                    new_scope.insert(k, v);
+                }
+                self.push_env(new_scope);
+                let result = self.eval_expr(&arm.body);
+                self.pop_env();
+                return result;
+            }
+        }
+        Err(RuntimeError::Error(format!(
+            "No match found for value {}",
+            lumen_repr(&subject)
+        )))
+    }
+
+    fn match_pattern(&self, pattern: &Pattern, value: &Value) -> Option<HashMap<String, Value>> {
+        match pattern {
+            Pattern::Wildcard => Some(HashMap::new()),
+            Pattern::Literal(lit) => {
+                let matches = match (lit, value) {
+                    (Literal::Int(i), Value::Int(v)) => i == v,
+                    (Literal::Float(f), Value::Float(v)) => f == v,
+                    (Literal::Str(s), Value::Str(v)) => s == v,
+                    (Literal::Bool(b), Value::Bool(v)) => b == v,
+                    _ => false,
+                };
+                if matches { Some(HashMap::new()) } else { None }
+            }
+            Pattern::Ident(name) => {
+                let mut bindings = HashMap::new();
+                bindings.insert(name.clone(), value.clone());
+                Some(bindings)
+            }
+            Pattern::Constructor(ctor_name, binding) => {
+                match (ctor_name.as_str(), value) {
+                    ("None", Value::None) => Some(HashMap::new()),
+                    ("Ok", Value::Ok(inner)) => {
+                        let mut bindings = HashMap::new();
+                        if let Some(bind_name) = binding {
+                            bindings.insert(bind_name.clone(), *inner.clone());
+                        }
+                        Some(bindings)
+                    }
+                    ("Err", Value::Err(inner)) => {
+                        let mut bindings = HashMap::new();
+                        if let Some(bind_name) = binding {
+                            bindings.insert(bind_name.clone(), *inner.clone());
+                        }
+                        Some(bindings)
+                    }
+                    ("Some", Value::Some(inner)) => {
+                        let mut bindings = HashMap::new();
+                        if let Some(bind_name) = binding {
+                            bindings.insert(bind_name.clone(), *inner.clone());
+                        }
+                        Some(bindings)
+                    }
+                    _ => None,
+                }
+            }
+        }
+    }
+
+    // Public wrapper so main.rs can call call_value
+    pub fn call_value_pub(&mut self, fn_val: Value, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        self.call_value(fn_val, args)
+    }
+
+    // -------------------------------------------------------------------------
+    // Run a complete source file
+    // -------------------------------------------------------------------------
+    #[allow(dead_code)]
+    pub fn run_file(&mut self, source: &str) -> Result<Value, RuntimeError> {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().map_err(|e| RuntimeError::Error(e.to_string()))?;
+        let mut parser = Parser::new(tokens);
+        let items = parser.parse().map_err(|e| RuntimeError::Error(e.to_string()))?;
+
+        // First pass: register all top-level definitions
+        for item in &items {
+            match item {
+                TopLevel::FnDef(fd) => self.exec_fn_def(fd)?,
+                TopLevel::Stmt(s) => {
+                    self.exec_stmt(s)?;
+                }
+                _ => {}
+            }
+        }
+
+        // Second pass: run main() if it exists
+        let main_fn = self.lookup("main");
+        if let Ok(fn_val) = main_fn {
+            self.call_value(fn_val, vec![])?;
+        }
+
+        Ok(Value::Unit)
+    }
+}

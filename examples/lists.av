@@ -1,0 +1,39 @@
+module Lists
+    intent:
+        "Demonstrates list values and higher-order builtins."
+        "Lumen has no loops — iteration happens through map, filter, and fold."
+
+fn double(n: Int) -> Int
+    ? "Doubles an integer."
+    = n * 2
+
+fn isPositive(n: Int) -> Bool
+    ? "Returns true if n is greater than zero."
+    = n > 0
+
+fn add(a: Int, b: Int) -> Int
+    ? "Adds two integers. Used as fold accumulator."
+    = a + b
+
+fn main() -> Unit
+    val numbers = [1, 2, 3, 4, 5]
+    val doubled = map(numbers, double)
+    print(doubled)
+    val positives = filter([-1, 0, 2, 3], isPositive)
+    print(positives)
+    val total = fold(numbers, 0, add)
+    print(total)
+    val first = get(numbers, 0)
+    print(first)
+    val oob = get(numbers, 99)
+    print(oob)
+
+verify double:
+    double(3) => 6
+    double(0) => 0
+    double(-2) => -4
+
+verify isPositive:
+    isPositive(1)  => true
+    isPositive(0)  => false
+    isPositive(-5) => false
