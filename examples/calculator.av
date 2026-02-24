@@ -20,26 +20,17 @@ fn safeDivide(a: Int, b: Int) -> Result<Int, String>
         0 -> Err("Division by zero")
         _ -> Ok(a / b)
 
-decision NoNegativeRootGuard:
-    date: "2024-01-15"
-    reason:
-        "match only supports literal patterns, not comparisons."
-        "Guarding n < 0 requires a comparison pattern or a helper predicate,"
-        "neither of which exists yet. safeRoot currently accepts all integers."
-    chosen: AcceptAllIntegers
-    rejected: [GuardClause, ComparisonPattern]
-    impacts: [safeRoot]
-
 fn safeRoot(n: Int) -> Result<Int, String>
-    ? "Returns Ok(n) for any integer. Negative guard not yet enforced — see decision NoNegativeRootGuard."
-    match n:
-        0 -> Ok(0)
-        _ -> Ok(n)
+    ? "Returns Err for negative input, Ok otherwise. Uses match on a bool expression."
+    match n < 0:
+        true  -> Err("Cannot take root of negative number")
+        false -> Ok(n)
 
 verify safeRoot:
-    safeRoot(4)  => Ok(4)
-    safeRoot(0)  => Ok(0)
-    safeRoot(9)  => Ok(9)
+    safeRoot(4)   => Ok(4)
+    safeRoot(0)   => Ok(0)
+    safeRoot(-1)  => Err("Cannot take root of negative number")
+    safeRoot(-99) => Err("Cannot take root of negative number")
 
 fn main() -> Unit
     var attempts = 0

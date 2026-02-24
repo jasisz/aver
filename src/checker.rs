@@ -82,16 +82,9 @@ pub fn index_decisions(items: &[TopLevel]) -> Vec<&DecisionBlock> {
 }
 
 /// Returns true if a function requires a ? description annotation.
-/// Only functions with declared effects (! [...]) or a Result return type need one.
-/// fn main() never needs one.
+/// All functions except main() require one.
 fn fn_needs_desc(f: &FnDef) -> bool {
-    if f.name == "main" {
-        return false;
-    }
-    if !f.effects.is_empty() {
-        return true;
-    }
-    f.return_type.starts_with("Result")
+    f.name != "main"
 }
 
 pub fn check_module_intent(items: &[TopLevel]) -> Vec<String> {

@@ -30,6 +30,9 @@ enum Commands {
     /// Static analysis (intent presence, module size)
     Check {
         file: String,
+        /// Treat all warnings as errors (exit 1 if any warning)
+        #[arg(long)]
+        strict: bool,
     },
     /// Run all verify blocks
     Verify {
@@ -59,8 +62,8 @@ fn main() {
         Commands::Run { file, verify } => {
             cmd_run(file, *verify);
         }
-        Commands::Check { file } => {
-            cmd_check(file);
+        Commands::Check { file, strict } => {
+            cmd_check(file, *strict);
         }
         Commands::Verify { file } => {
             cmd_verify(file);
@@ -154,7 +157,7 @@ fn cmd_run(file: &str, run_verify_blocks: bool) {
     }
 }
 
-fn cmd_check(file: &str) {
+fn cmd_check(file: &str, strict: bool) {
     let source = match read_file(file) {
         Ok(s) => s,
         Err(e) => {
@@ -193,13 +196,14 @@ fn cmd_check(file: &str) {
         println!("  {} Size OK ({} lines)", "✓".green(), line_count);
     }
 
-    // Check intents and descriptions
+    // Check intents, descriptions, and verify coverage
     let warnings = check_module_intent(&items);
     if warnings.is_empty() {
-        println!("  {} All intent/desc present", "✓".green());
+        println!("  {} All intent/desc/verify present", "✓".green());
     } else {
+        let label = if strict { "Error:".red() } else { "Warning:".yellow() };
         for w in &warnings {
-            println!("  {} {}", "WARNING:".yellow(), w);
+            println!("  {} {}", label, w);
         }
     }
 
@@ -209,7 +213,8 @@ fn cmd_check(file: &str) {
         println!("  {} Found {} decision block(s)", "✓".green(), decisions.len());
     }
 
-    if has_errors {
+    let has_warnings = !warnings.is_empty();
+    if has_errors || (strict && has_warnings) {
         process::exit(1);
     } else {
         println!("  {} Type check passed", "✓".green());
