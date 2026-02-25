@@ -1,6 +1,7 @@
 module ConsoleDemo
-    intent: "Demonstrate all four Console methods: print, error, warn, readLine."
-    exposes [run]
+    intent:
+        "Demonstrate all four Console methods: print, error, warn, readLine."
+    exposes [main]
 
 fn greet(name: String) -> Unit
     ? "Print a greeting to stdout."
@@ -21,11 +22,11 @@ fn askName() -> String
     ? "Read a name from stdin; fall back to 'stranger' on EOF."
     ! [Console]
     val result = Console.readLine()
-    match result
+    match result:
         Ok(line) -> line
         Err(_)   -> "stranger"
 
-fn run() -> Unit
+fn main() -> Unit
     ? "Full console demo: greet, warn, error, then ask for input."
     ! [Console]
     greet("world")
