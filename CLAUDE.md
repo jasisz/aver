@@ -257,3 +257,12 @@ In `src/interpreter.rs`, two places:
 - Aver favors self-contained modules: code dependencies are explicit via `depends`, and effect dependencies are explicit via full `! [Effect]` propagation through the call chain.
 - If remapping is added later, prefer a versioned project manifest (`aver.toml`) over ad-hoc runtime flags so the mapping is visible to humans and AI agents.
 - Service override (for example replacing `Console`) is postponed; if added, it should be explicit, contract-checked, and limited to test/dev profiles first.
+
+## Deferred direction: concurrency shape (2026-02-25)
+
+- Current language model is sequential: no `async`/`await`/promises.
+- If concurrency is added, keep effects as capability (`what`) and concurrency as scheduling (`when`); do not overload `! [Effect]` with ordering semantics.
+- MVP preference: `par` for homogeneous workloads (same result type), e.g. multiple `Network.get` calls.
+- No `Any` fallback for mixed parallel results.
+- For mixed-type parallelism, prefer positional fixed products (tuple-like return) rather than heterogeneous lists.
+- Explicit `spawn`/`join` API is rejected for Aver (not postponed).
