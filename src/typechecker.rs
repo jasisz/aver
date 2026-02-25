@@ -203,7 +203,7 @@ impl TypeChecker {
         let net_resp_fields: &[(&str, Type)] = &[
             ("status", Type::Int),
             ("body", Type::Str),
-            ("headers", Type::List(Box::new(Type::Any))),
+            ("headers", Type::List(Box::new(Type::Named("Header".to_string())))),
         ];
         for (field, ty) in net_resp_fields {
             self.record_field_types
