@@ -113,6 +113,17 @@ decision ExternalBoundariesStayMinimal:
     rejected: [FFIFirstDesign, BroadBuiltinSurface]
     impacts: [Interop, Security, RuntimeDesign]
 
+decision TcpStaysTextOrientedAtAverBoundary:
+    date: "2026-02-25"
+    author: "ChallengeSession"
+    reason:
+        "A readability-first language should keep Tcp usage inspectable in plain source."
+        "Aver-level Tcp contracts remain string-oriented for send and receive flows."
+        "Binary protocol framing and parsing belongs in host services, not in core Aver code."
+    chosen: TextTcpBoundary
+    rejected: [BinarySocketApiInCoreAver]
+    impacts: [Tcp, Interop, LanguageScope]
+
 decision EffectsAreFlatCapabilities:
     date: "2026-02-25"
     author: "ChallengeSession"
