@@ -174,7 +174,8 @@ impl Parser {
     // -------------------------------------------------------------------------
     fn parse_effect_set(&mut self) -> Result<TopLevel, ParseError> {
         self.expect_exact(&TokenKind::Effects)?;
-        let name_tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected effect set name")?;
+        let name_tok =
+            self.expect_kind(&TokenKind::Ident(String::new()), "Expected effect set name")?;
         let name = match name_tok.kind {
             TokenKind::Ident(s) => s,
             _ => unreachable!(),
@@ -537,11 +538,14 @@ impl Parser {
                 _ => unreachable!(),
             };
 
-            let mut param_type = String::from("Any");
-            if self.check_exact(&TokenKind::Colon) {
-                self.advance();
-                param_type = self.parse_type()?;
+            if !self.check_exact(&TokenKind::Colon) {
+                return Err(self.error(format!(
+                    "Expected ':' and type annotation for parameter '{}'",
+                    param_name
+                )));
             }
+            self.advance();
+            let param_type = self.parse_type()?;
 
             params.push((param_name, param_type));
         }
@@ -586,6 +590,11 @@ impl Parser {
             TokenKind::Ident(s) => {
                 let s = s.clone();
                 self.advance();
+                if s == "Any" {
+                    return Err(self.error(
+                        "Type 'Any' has been removed. Use an explicit concrete type.".to_string(),
+                    ));
+                }
                 s
             }
             TokenKind::Ok => {
@@ -1020,6 +1029,15 @@ impl Parser {
             if self.check_exact(&TokenKind::Question) {
                 self.advance();
                 expr = Expr::ErrorProp(Box::new(expr));
+            } else if self.check_exact(&TokenKind::Colon)
+                && Self::can_start_type(&self.peek(1).kind)
+            {
+                // Expression type ascription: `expr: Type`
+                // We only consume ':' when the next token can begin a type
+                // so callers using ':' as a delimiter (e.g. `match x:`) remain unambiguous.
+                self.advance();
+                let ty = self.parse_type()?;
+                expr = Expr::TypeAscription(Box::new(expr), ty);
             } else if self.check_exact(&TokenKind::Dot) {
                 self.advance();
                 let field_tok = self.expect_kind(
@@ -1043,6 +1061,17 @@ impl Parser {
         }
 
         Ok(expr)
+    }
+
+    fn can_start_type(kind: &TokenKind) -> bool {
+        matches!(
+            kind,
+            TokenKind::Ident(_)
+                | TokenKind::Ok
+                | TokenKind::Err
+                | TokenKind::Some
+                | TokenKind::None
+        )
     }
 
     fn parse_call_or_atom(&mut self) -> Result<Expr, ParseError> {

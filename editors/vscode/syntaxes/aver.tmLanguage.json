@@ -110,7 +110,7 @@
 
     "builtin-type": {
       "name": "support.type.aver",
-      "match": "\\b(Int|Float|String|Bool|Unit|Any|Result|Option|List|NetworkResponse|Header)\\b"
+      "match": "\\b(Int|Float|String|Bool|Unit|Result|Option|List|NetworkResponse|Header)\\b"
     },
 
     "builtin-value": {

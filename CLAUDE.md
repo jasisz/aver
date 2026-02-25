@@ -36,11 +36,11 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 - Closures: functions capture their definition-time environment
 - CLI with four subcommands: `run`, `verify`, `check`, `decisions`
 - `check` command: warns when a module has no `intent:` or a function with effects/Result return has no `?` description; warns if file exceeds 150 lines; `fn main()` is exempt from the `?` requirement
-- **Static type checker** (`src/typechecker.rs`): `aver check`, `aver run`, and `aver verify` all run a type-check pass. Type errors are hard errors that block execution. The checker covers function bodies and top-level statements (including assignment mutability rules). `Any` is a valid explicit type annotation (`x: Any`) and acts as a gradual-typing escape hatch — two `Any`-typed values are always compatible. The type system is *statically typed with explicit `Any` escape hatch*; unsound programs that use `Any` broadly may still pass the checker.
+- **Static type checker** (`src/typechecker.rs`): `aver check`, `aver run`, and `aver verify` all run a type-check pass. Type errors are hard errors that block execution. The checker covers function bodies and top-level statements (including assignment mutability rules). `Any` annotations are removed from the language surface; the checker may still use internal `Type::Unknown` recovery after earlier errors so analysis can continue.
 - **Effect propagation** is statically enforced (blocks `check`/`run`/`verify`), including `main()`: calling an effectful function requires declaring the same effect in the caller. Runtime also enforces call-edge capabilities as a backstop.
 - **User-defined sum types** (`type` keyword): `type Shape` with variants `Circle(Float)`, `Rect(Float, Float)`, `Point`. Constructors are accessed with qualified syntax `Shape.Circle(5.0)` — no flat namespace pollution. Patterns: `Shape.Circle(r)`, `Shape.Point`. Registered as `Value::Namespace` in the interpreter env.
 - **User-defined product types** (`record` keyword): `record User` with named fields `name: String`, `age: Int`. Constructed as `User(name: "Alice", age: 30)`. Field access via `u.name`. Positional destructuring in match: `User(name, age) -> name`.
-- **`Type::Named(String)`** in the type system: capitalized single-word identifiers in type annotations resolve to named types. Compatible only with the same name or `Any`.
+- **`Type::Named(String)`** in the type system: capitalized single-word identifiers in type annotations resolve to named types. Compatible only with the same name or internal `Unknown` fallback.
 
 ### What is missing / known limitations
 
@@ -65,7 +65,7 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 - `for`/`while` loops — no imperative iteration; future iteration will be through higher-order functions (`map`, `filter`, `fold`) over lists
 - `null` — `Option<T>` with `Some`/`None` only
 - Exceptions — `Result<T, E>` with `Ok`/`Err` only; errors are values
-- Global mutable state — only `service` blocks with explicit `needs:` dependencies
+- Global mutable state — no DI, no service blocks; mocking via function parameter: `fn f(log: Fn(String) -> Unit ! [Console])`
 - Magic (decorators, implicit behaviour, runtime reflection)
 
 ## Architecture in one page
@@ -246,12 +246,12 @@ In `src/interpreter.rs`, two places:
 - **Effect list** (`! [Io, State]`) is propagated statically and also enforced at runtime on function-call edges; no algebraic handlers yet
 - **`chosen` field in DecisionBlock** only accepts a bare identifier (not a string), so multi-word chosen values require a single CamelCase identifier
 - **`reason` in `var`** expects a string literal on the same or next indented line; the block structure differs from `reason:` in decision blocks (decision uses multiline text, var uses a single string)
-- **Unknown identifiers in expressions** are inferred as `Any` after emitting a type error so checking can continue; this can produce cascaded follow-up errors in large files
+- **Unknown identifiers in expressions** are inferred as `Unknown` after emitting a type error so checking can continue; this can produce cascaded follow-up errors in large files
 
 ## Next steps (prioritised)
 
 1. **Proper `?` short-circuit** — introduce `ErrPropSignal` as a Rust `Err` variant so that `?` on `Err` inside a function body exits the function early, not just the current expression
-2. **Service blocks** — parse and execute `service Foo { needs: [...] }` as a lightweight DI container; dependencies are injected via constructor, no global state
+2. ~~**Service blocks**~~ — rejected; mocking via function parameter `Fn(A) -> B ! [Effect]`, zero new concepts
 3. **`aver decisions` query flags** — `--impacts Module`, `--since 2024-01-01`, `--rejected Technology` for searchable architectural history
 4. **REPL mode** — `aver repl` subcommand for interactive exploration; useful during AI-assisted development sessions
 

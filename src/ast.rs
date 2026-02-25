@@ -60,6 +60,8 @@ pub enum Expr {
     ErrorProp(Box<Expr>),
     InterpolatedStr(Vec<StrPart>),
     List(Vec<Expr>),
+    /// Explicit expression type annotation: `expr: Type`
+    TypeAscription(Box<Expr>, String),
     /// Record creation: `User(name: "Alice", age: 30)`
     RecordCreate {
         type_name: String,
@@ -149,5 +151,8 @@ pub enum TopLevel {
     Stmt(Stmt),
     TypeDef(TypeDef),
     /// `effects AppIO = [Console, Disk]` — named effect set (alias)
-    EffectSet { name: String, effects: Vec<String> },
+    EffectSet {
+        name: String,
+        effects: Vec<String>,
+    },
 }

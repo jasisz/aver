@@ -112,11 +112,6 @@ fn valid_list_pattern_matching() {
 }
 
 #[test]
-fn valid_explicit_any() {
-    assert_no_errors("fn passthrough(x: Any) -> Any\n    = x\n");
-}
-
-#[test]
 fn valid_call_correct_args() {
     let src =
         "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    val r = add(1, 2)\n";
@@ -294,7 +289,7 @@ fn error_assign_to_var_wrong_type() {
 
 #[test]
 fn error_binop_int_plus_string() {
-    let src = "fn f(a: Int, b: String) -> Any\n    = a + b\n";
+    let src = "fn f(a: Int, b: String) -> Int\n    = a + b\n";
     // actual: "Operator '+' requires Int/Float or String on both sides, got Int and String"
     assert_error_containing(src, "requires");
 }
@@ -439,11 +434,11 @@ fn named_types_are_incompatible_with_different_names() {
 }
 
 #[test]
-fn named_type_compatible_with_any() {
+fn named_type_compatible_with_unknown_fallback() {
     use aver::types::Type;
     let named = Type::Named("Shape".to_string());
-    assert!(named.compatible(&Type::Any));
-    assert!(Type::Any.compatible(&named));
+    assert!(named.compatible(&Type::Unknown));
+    assert!(Type::Unknown.compatible(&named));
 }
 
 #[test]
@@ -507,7 +502,7 @@ fn error_effect_set_alias_insufficient() {
 #[test]
 fn error_network_get_without_effect() {
     let src = concat!(
-        "fn fetch(url: String) -> Any\n",
+        "fn fetch(url: String) -> Result<NetworkResponse, String>\n",
         "    Network.get(url)\n",
     );
     assert_error_containing(src, "has effect 'Network'");
@@ -516,7 +511,7 @@ fn error_network_get_without_effect() {
 #[test]
 fn error_network_post_without_effect() {
     let src = concat!(
-        "fn send(url: String, body: String) -> Any\n",
+        "fn send(url: String, body: String) -> Result<NetworkResponse, String>\n",
         "    Network.post(url, body, \"application/json\", [])\n",
     );
     assert_error_containing(src, "has effect 'Network'");
@@ -525,7 +520,7 @@ fn error_network_post_without_effect() {
 #[test]
 fn valid_network_get_with_effect() {
     let src = concat!(
-        "fn fetch(url: String) -> Any\n",
+        "fn fetch(url: String) -> Result<NetworkResponse, String>\n",
         "    ! [Network]\n",
         "    Network.get(url)\n",
     );
@@ -535,7 +530,7 @@ fn valid_network_get_with_effect() {
 #[test]
 fn valid_network_post_with_effect() {
     let src = concat!(
-        "fn send(url: String) -> Any\n",
+        "fn send(url: String) -> Result<NetworkResponse, String>\n",
         "    ! [Network]\n",
         "    Network.post(url, \"{}\", \"application/json\", [])\n",
     );
@@ -543,9 +538,46 @@ fn valid_network_post_with_effect() {
 }
 
 #[test]
+fn valid_network_post_with_ascribed_empty_headers() {
+    let src = concat!(
+        "fn send(url: String) -> Result<NetworkResponse, String>\n",
+        "    ! [Network]\n",
+        "    Network.post(url, \"{}\", \"application/json\", []: List<Header>)\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_network_post_with_typed_headers() {
+    let src = concat!(
+        "fn send(url: String) -> Result<NetworkResponse, String>\n",
+        "    ! [Network]\n",
+        "    val headers = [Header(name: \"Authorization\", value: \"Bearer token\")]\n",
+        "    Network.post(url, \"{}\", \"application/json\", headers)\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn error_network_post_headers_wrong_type() {
+    let src = concat!(
+        "fn send(url: String) -> Result<NetworkResponse, String>\n",
+        "    ! [Network]\n",
+        "    Network.post(url, \"{}\", \"application/json\", [\"bad\"])\n",
+    );
+    assert_error_containing(src, "Argument 4 of 'Network.post': expected List<Header>");
+}
+
+#[test]
+fn error_type_ascription_mismatch() {
+    let src = concat!("fn bad() -> Int\n", "    = \"x\": Int\n",);
+    assert_error_containing(src, "Type ascription mismatch");
+}
+
+#[test]
 fn valid_network_all_methods_with_effect() {
     let src = concat!(
-        "fn callAll(url: String) -> Any\n",
+        "fn callAll(url: String) -> Result<NetworkResponse, String>\n",
         "    ! [Network]\n",
         "    Network.delete(url)\n",
     );
@@ -559,7 +591,7 @@ fn valid_network_all_methods_with_effect() {
 #[test]
 fn error_disk_read_without_effect() {
     let src = concat!(
-        "fn loadCfg() -> Any\n",
+        "fn loadCfg() -> Result<String, String>\n",
         "    = Disk.readText(\"config.av\")\n",
     );
     assert_error_containing(src, "has effect 'Disk'");
@@ -568,7 +600,7 @@ fn error_disk_read_without_effect() {
 #[test]
 fn error_disk_write_without_effect() {
     let src = concat!(
-        "fn save() -> Any\n",
+        "fn save() -> Result<Unit, String>\n",
         "    = Disk.writeText(\"out.txt\", \"data\")\n",
     );
     assert_error_containing(src, "has effect 'Disk'");
@@ -577,7 +609,7 @@ fn error_disk_write_without_effect() {
 #[test]
 fn valid_disk_read_with_effect() {
     let src = concat!(
-        "fn loadCfg() -> Any\n",
+        "fn loadCfg() -> Result<String, String>\n",
         "    ! [Disk]\n",
         "    = Disk.readText(\"config.av\")\n",
     );
@@ -587,7 +619,7 @@ fn valid_disk_read_with_effect() {
 #[test]
 fn valid_disk_all_methods_with_effect() {
     let src = concat!(
-        "fn ops(p: String) -> Any\n",
+        "fn ops(p: String) -> Result<String, String>\n",
         "    ! [Disk]\n",
         "    Disk.writeText(p, \"x\")\n",
         "    Disk.appendText(p, \"y\")\n",
@@ -625,7 +657,7 @@ fn error_console_warn_without_effect() {
 #[test]
 fn error_console_read_line_without_effect() {
     let src = concat!(
-        "fn ask() -> Any\n",
+        "fn ask() -> Result<String, String>\n",
         "    = Console.readLine()\n",
     );
     assert_error_containing(src, "has effect 'Console'");
@@ -634,7 +666,7 @@ fn error_console_read_line_without_effect() {
 #[test]
 fn valid_console_all_methods_with_effect() {
     let src = concat!(
-        "fn run(msg: String) -> Any\n",
+        "fn run(msg: String) -> Result<String, String>\n",
         "    ! [Console]\n",
         "    Console.print(msg)\n",
         "    Console.error(msg)\n",
@@ -694,7 +726,7 @@ fn valid_user_record_field_access() {
 #[test]
 fn error_network_response_unknown_field() {
     let src = concat!(
-        "fn bad(resp: NetworkResponse) -> Any\n",
+        "fn bad(resp: NetworkResponse) -> String\n",
         "    = resp.fooo\n",
     );
     assert_error_containing(src, "has no field 'fooo'");
@@ -705,7 +737,7 @@ fn error_user_record_unknown_field() {
     let src = concat!(
         "record User\n",
         "    name: String\n",
-        "fn bad(u: User) -> Any\n",
+        "fn bad(u: User) -> String\n",
         "    = u.email\n",
     );
     assert_error_containing(src, "has no field 'email'");

@@ -101,7 +101,7 @@ verify charge:
     charge("x",    -1)   => Ok("txn-x--1")
 ```
 
-`verify` blocks are physically attached to the function they cover — in the same file, immediately after the definition. You cannot move the function without the tests. You cannot hand the function to an AI without the tests. They run with `aver verify` and they run before the program executes.
+`verify` blocks are intended to stay close to the function they cover (same module, usually right after the definition). `aver check` warns when a non-`main` function has no `verify` block by name. They run with `aver verify` (or `aver run --verify`) under the same type/effect checks as normal code.
 
 ---
 
@@ -159,7 +159,7 @@ Primitive: `Int`, `Float`, `String`, `Bool`, `Unit`
 Compound: `Result<T, E>`, `Option<T>`, `List<T>`, `Fn(A) -> B`, `Fn(A) -> B ! [Effect]`
 User-defined sum types: `type Shape` → `Shape.Circle(Float)`, `Shape.Rect(Float, Float)`
 User-defined product types: `record User` → `User(name: "Alice", age: 30)`, `u.name`
-Escape hatch: `Any` — compatible with everything, opt-in
+Expression type ascription: `expr: Type` (e.g. `[]: List<Header>`)
 
 Module imports: `depends [Fibonacci]` → `fibonacci.av`, call as `Fibonacci.fn(...)`
 Dot-path imports: `depends [Models.User]` → `models/user.av`, call as `Models.User.fn(...)`
@@ -209,8 +209,10 @@ fn fetchUser(id: Int) -> Result<NetworkResponse, String>
 | `Network.get(url)` | `String` | `Result<NetworkResponse, String>` |
 | `Network.head(url)` | `String` | `Result<NetworkResponse, String>` |
 | `Network.delete(url)` | `String` | `Result<NetworkResponse, String>` |
-| `Network.post(url, body, contentType, headers)` | `String, String, String, Any` | `Result<NetworkResponse, String>` |
+| `Network.post(url, body, contentType, headers)` | `String, String, String, List<Header>` | `Result<NetworkResponse, String>` |
 | `Network.put` / `Network.patch` | same | same |
+
+`headers` is statically typed as `List<Header>`. Use `[]` when you do not need extra headers.
 
 `NetworkResponse` fields: `resp.status` (Int), `resp.body` (String), `resp.headers` (List of `{name, value}` records).
 `Ok` for any completed HTTP exchange including 4xx/5xx. `Err` only for transport failures.
@@ -277,7 +279,7 @@ Requires: Rust stable toolchain.
 
 ## Project status
 
-Implemented in Rust, zero warnings, 304 tests.
+Implemented in Rust with extensive automated test coverage (300+ tests).
 
 - [x] Lexer with significant indentation (Python-style INDENT/DEDENT)
 - [x] Recursive-descent parser — hand-written, no libraries

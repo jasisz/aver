@@ -5,7 +5,7 @@
 ///   Phase 2 — check top-level statements, then each FnDef for call-site
 ///              argument types, return type, BinOp compatibility, and effects.
 ///
-/// The checker is deliberately lenient: `Type::Any` is compatible with
+/// The checker is deliberately lenient: `Type::Unknown` is compatible with
 /// everything, so partially-typed programs still pass.  Full strictness
 /// requires concrete annotations on every function.
 use std::collections::{HashMap, HashSet};
@@ -99,7 +99,9 @@ impl TypeChecker {
         let expanded_caller = self.expand_effects(caller_effects);
         // Also expand the required effect (in case it's itself an alias)
         let expanded_required = self.expand_effects(&[required_effect.to_string()]);
-        expanded_required.iter().all(|e| expanded_caller.contains(e))
+        expanded_required
+            .iter()
+            .all(|e| expanded_caller.contains(e))
     }
 
     fn error(&mut self, msg: impl Into<String>) {
@@ -149,47 +151,47 @@ impl TypeChecker {
     // Builtin signatures
     // -----------------------------------------------------------------------
     fn register_builtins(&mut self) {
-        let any = || Type::Any;
+        let any = || Type::Unknown;
         let sigs: &[(&str, &[Type], Type, &[&str])] = &[
-            ("print", &[Type::Any], Type::Unit, &["Console"]),
-            ("str", &[Type::Any], Type::Str, &[]),
-            ("int", &[Type::Any], Type::Int, &[]),
-            ("abs", &[Type::Any], Type::Any, &[]),
-            ("len", &[Type::Any], Type::Int, &[]),
+            ("print", &[Type::Unknown], Type::Unit, &["Console"]),
+            ("str", &[Type::Unknown], Type::Str, &[]),
+            ("int", &[Type::Unknown], Type::Int, &[]),
+            ("abs", &[Type::Unknown], Type::Unknown, &[]),
+            ("len", &[Type::Unknown], Type::Int, &[]),
             (
                 "map",
-                &[Type::Any, Type::Any],
+                &[Type::Unknown, Type::Unknown],
                 Type::List(Box::new(any())),
                 &[],
             ),
             (
                 "filter",
-                &[Type::Any, Type::Any],
+                &[Type::Unknown, Type::Unknown],
                 Type::List(Box::new(any())),
                 &[],
             ),
-            ("fold", &[Type::Any, Type::Any, Type::Any], any(), &[]),
+            ("fold", &[Type::Unknown, Type::Unknown, Type::Unknown], any(), &[]),
             (
                 "get",
-                &[Type::Any, Type::Int],
+                &[Type::Unknown, Type::Int],
                 Type::Result(Box::new(any()), Box::new(Type::Str)),
                 &[],
             ),
             (
                 "push",
-                &[Type::Any, Type::Any],
+                &[Type::Unknown, Type::Unknown],
                 Type::List(Box::new(any())),
                 &[],
             ),
             (
                 "head",
-                &[Type::Any],
+                &[Type::Unknown],
                 Type::Result(Box::new(any()), Box::new(Type::Str)),
                 &[],
             ),
             (
                 "tail",
-                &[Type::Any],
+                &[Type::Unknown],
                 Type::Result(Box::new(any()), Box::new(Type::Str)),
                 &[],
             ),
@@ -203,7 +205,10 @@ impl TypeChecker {
         let net_resp_fields: &[(&str, Type)] = &[
             ("status", Type::Int),
             ("body", Type::Str),
-            ("headers", Type::List(Box::new(Type::Named("Header".to_string())))),
+            (
+                "headers",
+                Type::List(Box::new(Type::Named("Header".to_string()))),
+            ),
         ];
         for (field, ty) in net_resp_fields {
             self.record_field_types
@@ -215,50 +220,70 @@ impl TypeChecker {
                 .insert(format!("Header.{}", field), ty.clone());
         }
 
-        let net_ret =
-            || Type::Result(Box::new(Type::Named("NetworkResponse".to_string())), Box::new(Type::Str));
+        let net_ret = || {
+            Type::Result(
+                Box::new(Type::Named("NetworkResponse".to_string())),
+                Box::new(Type::Str),
+            )
+        };
         let disk_unit = || Type::Result(Box::new(Type::Unit), Box::new(Type::Str));
-        let disk_str  = || Type::Result(Box::new(Type::Str),  Box::new(Type::Str));
-        let disk_list = || Type::Result(Box::new(Type::List(Box::new(Type::Str))), Box::new(Type::Str));
+        let disk_str = || Type::Result(Box::new(Type::Str), Box::new(Type::Str));
+        let disk_list = || {
+            Type::Result(
+                Box::new(Type::List(Box::new(Type::Str))),
+                Box::new(Type::Str),
+            )
+        };
+        let header_list = || Type::List(Box::new(Type::Named("Header".to_string())));
         let service_sigs: &[(&str, &[Type], Type, &[&str])] = &[
-            ("Console.print",    &[Type::Any], Type::Unit, &["Console"]),
-            ("Console.error",   &[Type::Any], Type::Unit, &["Console"]),
-            ("Console.warn",    &[Type::Any], Type::Unit, &["Console"]),
+            ("Console.print", &[Type::Unknown], Type::Unit, &["Console"]),
+            ("Console.error", &[Type::Unknown], Type::Unit, &["Console"]),
+            ("Console.warn", &[Type::Unknown], Type::Unit, &["Console"]),
             (
                 "Console.readLine",
                 &[],
                 Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
                 &["Console"],
             ),
-            ("Network.get",    &[Type::Str], net_ret(), &["Network"]),
-            ("Network.head",   &[Type::Str], net_ret(), &["Network"]),
+            ("Network.get", &[Type::Str], net_ret(), &["Network"]),
+            ("Network.head", &[Type::Str], net_ret(), &["Network"]),
             ("Network.delete", &[Type::Str], net_ret(), &["Network"]),
             (
                 "Network.post",
-                &[Type::Str, Type::Str, Type::Str, Type::Any],
+                &[Type::Str, Type::Str, Type::Str, header_list()],
                 net_ret(),
                 &["Network"],
             ),
             (
                 "Network.put",
-                &[Type::Str, Type::Str, Type::Str, Type::Any],
+                &[Type::Str, Type::Str, Type::Str, header_list()],
                 net_ret(),
                 &["Network"],
             ),
             (
                 "Network.patch",
-                &[Type::Str, Type::Str, Type::Str, Type::Any],
+                &[Type::Str, Type::Str, Type::Str, header_list()],
                 net_ret(),
                 &["Network"],
             ),
-            ("Disk.readText",   &[Type::Str],             disk_str(),  &["Disk"]),
-            ("Disk.writeText",  &[Type::Str, Type::Str],  disk_unit(), &["Disk"]),
-            ("Disk.appendText", &[Type::Str, Type::Str],  disk_unit(), &["Disk"]),
-            ("Disk.exists",     &[Type::Str],             Type::Bool,  &["Disk"]),
-            ("Disk.delete",     &[Type::Str],             disk_unit(), &["Disk"]),
-            ("Disk.deleteDir",  &[Type::Str],             disk_unit(), &["Disk"]),
-            ("Disk.listDir",    &[Type::Str],             disk_list(), &["Disk"]),
-            ("Disk.makeDir",    &[Type::Str],             disk_unit(), &["Disk"]),
+            ("Disk.readText", &[Type::Str], disk_str(), &["Disk"]),
+            (
+                "Disk.writeText",
+                &[Type::Str, Type::Str],
+                disk_unit(),
+                &["Disk"],
+            ),
+            (
+                "Disk.appendText",
+                &[Type::Str, Type::Str],
+                disk_unit(),
+                &["Disk"],
+            ),
+            ("Disk.exists", &[Type::Str], Type::Bool, &["Disk"]),
+            ("Disk.delete", &[Type::Str], disk_unit(), &["Disk"]),
+            ("Disk.deleteDir", &[Type::Str], disk_unit(), &["Disk"]),
+            ("Disk.listDir", &[Type::Str], disk_list(), &["Disk"]),
+            ("Disk.makeDir", &[Type::Str], disk_unit(), &["Disk"]),
         ];
         for (name, params, ret, effects) in service_sigs {
             self.insert_sig(name, params, ret.clone(), effects);
@@ -289,7 +314,7 @@ impl TypeChecker {
                                     "Function '{}': unknown type '{}' for parameter '{}'",
                                     f.name, unknown, param_name
                                 ));
-                                params.push(Type::Any);
+                                params.push(Type::Unknown);
                             }
                         }
                     }
@@ -300,12 +325,19 @@ impl TypeChecker {
                                 "Function '{}': unknown return type '{}'",
                                 f.name, unknown
                             ));
-                            Type::Any
+                            Type::Unknown
                         }
                     };
                     // Expand effect aliases so effect checking works with concrete names
                     let effects = self.expand_effects(&f.effects);
-                    self.fn_sigs.insert(f.name.clone(), FnSig { params, ret, effects });
+                    self.fn_sigs.insert(
+                        f.name.clone(),
+                        FnSig {
+                            params,
+                            ret,
+                            effects,
+                        },
+                    );
                 }
                 TopLevel::TypeDef(td) => {
                     self.register_type_def_sigs(td);
@@ -337,7 +369,7 @@ impl TypeChecker {
                     let params: Vec<Type> = variant
                         .fields
                         .iter()
-                        .map(|f| parse_type_str_strict(f).unwrap_or(Type::Any))
+                        .map(|f| parse_type_str_strict(f).unwrap_or(Type::Unknown))
                         .collect();
                     let key = format!("{}.{}", type_name, variant.name);
                     if params.is_empty() {
@@ -364,7 +396,7 @@ impl TypeChecker {
                 // Register a dummy sig so Ident("TypeName") resolves to Named(type_name).
                 let params: Vec<Type> = fields
                     .iter()
-                    .map(|(_, ty_str)| parse_type_str_strict(ty_str).unwrap_or(Type::Any))
+                    .map(|(_, ty_str)| parse_type_str_strict(ty_str).unwrap_or(Type::Unknown))
                     .collect();
                 self.fn_sigs.insert(
                     type_name.clone(),
@@ -376,7 +408,7 @@ impl TypeChecker {
                 );
                 // Register per-field types so dot-access is checked.
                 for (field_name, ty_str) in fields {
-                    let field_ty = parse_type_str_strict(ty_str).unwrap_or(Type::Any);
+                    let field_ty = parse_type_str_strict(ty_str).unwrap_or(Type::Unknown);
                     self.record_field_types
                         .insert(format!("{}.{}", type_name, field_name), field_ty);
                 }
@@ -833,7 +865,7 @@ impl TypeChecker {
                     Self::fn_type_from_sig(sig)
                 } else {
                     self.error(format!("Unknown identifier '{}'", name));
-                    Type::Any
+                    Type::Unknown
                 }
             }
 
@@ -881,10 +913,10 @@ impl TypeChecker {
                             name,
                             binding_ty.display()
                         ));
-                        return Type::Any;
+                        return Type::Unknown;
                     }
                     self.error(format!("Call to unknown function '{}'", name));
-                    return Type::Any;
+                    return Type::Unknown;
                 }
 
                 if let Some(display_name) = Self::callee_key(fn_expr) {
@@ -898,10 +930,10 @@ impl TypeChecker {
                     return check_call(self, "<fn value>", sig);
                 }
 
-                if !matches!(callee_ty, Type::Any) {
+                if !matches!(callee_ty, Type::Unknown) {
                     self.error(format!("Cannot call value of type {}", callee_ty.display()));
                 }
-                Type::Any
+                Type::Unknown
             }
 
             Expr::BinOp(op, left, right) => {
@@ -924,7 +956,7 @@ impl TypeChecker {
                         {
                             Type::Str
                         } else {
-                            Type::Any
+                            Type::Unknown
                         }
                     }
                 }
@@ -936,14 +968,14 @@ impl TypeChecker {
                         .as_ref()
                         .map(|a| self.infer_type(a))
                         .unwrap_or(Type::Unit);
-                    Type::Result(Box::new(inner), Box::new(Type::Any))
+                    Type::Result(Box::new(inner), Box::new(Type::Unknown))
                 }
                 "Err" => {
                     let inner = arg
                         .as_ref()
                         .map(|a| self.infer_type(a))
                         .unwrap_or(Type::Unit);
-                    Type::Result(Box::new(Type::Any), Box::new(inner))
+                    Type::Result(Box::new(Type::Unknown), Box::new(inner))
                 }
                 "Some" => {
                     let inner = arg
@@ -952,15 +984,15 @@ impl TypeChecker {
                         .unwrap_or(Type::Unit);
                     Type::Option(Box::new(inner))
                 }
-                "None" => Type::Option(Box::new(Type::Any)),
-                _ => Type::Any,
+                "None" => Type::Option(Box::new(Type::Unknown)),
+                _ => Type::Unknown,
             },
 
             Expr::List(elems) => {
                 let inner = if let Some(first) = elems.first() {
                     self.infer_type(first)
                 } else {
-                    Type::Any
+                    Type::Unknown
                 };
                 Type::List(Box::new(inner))
             }
@@ -975,8 +1007,8 @@ impl TypeChecker {
                         let arm_ty = self.infer_type_with_pattern_bindings(&arm.pattern, &arm.body);
                         // Only report mismatch when both types are concrete
                         if !first_ty.compatible(&arm_ty)
-                            && !matches!(first_ty, Type::Any)
-                            && !matches!(arm_ty, Type::Any)
+                            && !matches!(first_ty, Type::Unknown)
+                            && !matches!(arm_ty, Type::Unknown)
                         {
                             self.error(format!(
                                 "Match arms return incompatible types: {} vs {}",
@@ -987,7 +1019,7 @@ impl TypeChecker {
                     }
                     first_ty
                 } else {
-                    Type::Any
+                    Type::Unknown
                 }
             }
 
@@ -1012,7 +1044,7 @@ impl TypeChecker {
                                     ));
                                 }
                             }
-                            Some(Type::Any) => {} // gradual typing — skip check
+                            Some(Type::Unknown) => {} // gradual typing — skip check
                             Some(other) => {
                                 self.error(format!(
                                     "Operator '?' used in function returning {}, which is not Result",
@@ -1025,15 +1057,34 @@ impl TypeChecker {
                         }
                         *ok_ty
                     }
-                    Type::Any => Type::Any,
+                    Type::Unknown => Type::Unknown,
                     other => {
                         self.error(format!(
                             "Operator '?' can only be applied to Result, got {}",
                             other.display()
                         ));
-                        Type::Any
+                        Type::Unknown
                     }
                 }
+            }
+
+            Expr::TypeAscription(inner, ty_src) => {
+                let annotated = match parse_type_str_strict(ty_src) {
+                    Ok(ty) => ty,
+                    Err(unknown) => {
+                        self.error(format!("Unknown type annotation '{}'", unknown));
+                        Type::Unknown
+                    }
+                };
+                let inferred = self.infer_type(inner);
+                if !inferred.compatible(&annotated) {
+                    self.error(format!(
+                        "Type ascription mismatch: expression has type {}, annotation is {}",
+                        inferred.display(),
+                        annotated.display()
+                    ));
+                }
+                annotated
             }
 
             Expr::Attr(obj, field) => {
@@ -1049,14 +1100,14 @@ impl TypeChecker {
                     }
                     if self.has_namespace_prefix(&key) {
                         // Intermediate namespace (e.g. Models.User in Models.User.findById)
-                        return Type::Any;
+                        return Type::Unknown;
                     }
                     if self.has_namespace_prefix(&obj_key) {
                         self.error(format!(
                             "Unknown member '{}.{}' (not exposed or missing)",
                             obj_key, field
                         ));
-                        return Type::Any;
+                        return Type::Unknown;
                     }
                 }
                 let obj_ty = self.infer_type(obj);
@@ -1066,20 +1117,17 @@ impl TypeChecker {
                         if let Some(field_ty) = self.record_field_types.get(&key) {
                             field_ty.clone()
                         } else {
-                            self.error(format!(
-                                "Record '{}' has no field '{}'",
-                                type_name, field
-                            ));
-                            Type::Any
+                            self.error(format!("Record '{}' has no field '{}'", type_name, field));
+                            Type::Unknown
                         }
                     }
-                    Type::Any => Type::Any,
+                    Type::Unknown => Type::Unknown,
                     other => {
                         self.error(format!(
                             "Field access on non-record type {}",
                             other.display()
                         ));
-                        Type::Any
+                        Type::Unknown
                     }
                 }
             }
@@ -1101,7 +1149,7 @@ impl TypeChecker {
         for bind_name in bindings {
             let old = self.locals.get(&bind_name).cloned();
             prev.push((bind_name.clone(), old));
-            self.locals.insert(bind_name, (Type::Any, false));
+            self.locals.insert(bind_name, (Type::Unknown, false));
         }
 
         let out_ty = self.infer_type(body);
@@ -1143,7 +1191,7 @@ impl TypeChecker {
     // BinOp type rules
     // -----------------------------------------------------------------------
     fn check_binop(&mut self, op: &BinOp, lt: &Type, rt: &Type) {
-        if matches!(lt, Type::Any) || matches!(rt, Type::Any) {
+        if matches!(lt, Type::Unknown) || matches!(rt, Type::Unknown) {
             return; // gradual — skip
         }
         match op {

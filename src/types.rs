@@ -14,16 +14,16 @@ pub enum Type {
     Option(Box<Type>),
     List(Box<Type>),
     Fn(Vec<Type>, Box<Type>, Vec<String>),
-    Any,           // unknown / gradual-typing escape hatch
+    Unknown,       // internal fallback when checker cannot infer a precise type
     Named(String), // user-defined type: Shape, User, etc.
 }
 
 impl Type {
     /// `a.compatible(b)` — can a value of type `self` be used where `other` is expected?
-    /// `Any` is compatible with everything (gradual typing).
+    /// `Unknown` is compatible with everything (internal fallback).
     /// Two concrete types must be equal (structurally) to be compatible.
     pub fn compatible(&self, other: &Type) -> bool {
-        if matches!(self, Type::Any) || matches!(other, Type::Any) {
+        if matches!(self, Type::Unknown) || matches!(other, Type::Unknown) {
             return true;
         }
         match (self, other) {
@@ -71,20 +71,20 @@ impl Type {
                     )
                 }
             }
-            Type::Any => "Any".to_string(),
+            Type::Unknown => "Unknown".to_string(),
             Type::Named(n) => n.clone(),
         }
     }
 }
 
 /// Parse a type annotation string strictly.
-/// Returns `Err(unknown_name)` if the string is a non-empty, non-`Any` identifier
+/// Returns `Err(unknown_name)` if the string is a non-empty identifier
 /// that does not map to a known type (i.e. a likely typo).
 /// Generic forms (`Result<...>`, `Option<...>`, `List<...>`) with valid inner types are accepted.
 pub fn parse_type_str_strict(s: &str) -> Result<Type, String> {
     let s = s.trim();
     if s.is_empty() || s == "Any" {
-        return Ok(Type::Any);
+        return Err(s.to_string());
     }
     if let Some(fn_ty) = parse_fn_type_strict(s)? {
         return Ok(fn_ty);
@@ -95,7 +95,6 @@ pub fn parse_type_str_strict(s: &str) -> Result<Type, String> {
         "String" | "Str" => Ok(Type::Str),
         "Bool" => Ok(Type::Bool),
         "Unit" => Ok(Type::Unit),
-        "Any" => Ok(Type::Any),
         _ => {
             if let Some(inner) = strip_wrapper(s, "Result<", ">") {
                 if let Some((ok_s, err_s)) = split_top_level_comma(inner) {
@@ -127,7 +126,7 @@ pub fn parse_type_str_strict(s: &str) -> Result<Type, String> {
 }
 
 /// Parse an Aver type annotation string into a `Type`.
-/// Returns `Type::Any` for unknown identifiers (gradual typing fallback).
+/// Returns `Type::Unknown` for unknown identifiers (internal fallback).
 /// Prefer `parse_type_str_strict` for user-facing type annotations.
 pub fn parse_type_str(s: &str) -> Type {
     let s = s.trim();
@@ -135,7 +134,7 @@ pub fn parse_type_str(s: &str) -> Type {
         if let Ok(Some(fn_ty)) = parse_fn_type_strict(s) {
             return fn_ty;
         }
-        return Type::Any;
+        return Type::Unknown;
     }
     match s {
         "Int" => Type::Int,
@@ -143,7 +142,7 @@ pub fn parse_type_str(s: &str) -> Type {
         "String" | "Str" => Type::Str,
         "Bool" => Type::Bool,
         "Unit" => Type::Unit,
-        "Any" | "" => Type::Any,
+        "" => Type::Unknown,
         _ => {
             // Try generic forms: Result<A, B>, Option<A>, List<A>
             if let Some(inner) = strip_wrapper(s, "Result<", ">") {
@@ -164,11 +163,12 @@ pub fn parse_type_str(s: &str) -> Type {
             // Capitalized identifier with only alphanumeric/_chars = user-defined type
             if s.chars().next().map_or(false, |c| c.is_uppercase())
                 && s.chars().all(|c| c.is_alphanumeric() || c == '_')
+                && s != "Any"
             {
                 return Type::Named(s.to_string());
             }
-            // Unknown — gradual typing escape hatch
-            Type::Any
+            // Unknown — internal fallback
+            Type::Unknown
         }
     }
 }
@@ -404,16 +404,16 @@ mod tests {
             parse_type_str("SomeUnknownType"),
             Type::Named("SomeUnknownType".to_string())
         );
-        // Lowercase non-keyword identifiers and empty strings remain Any
-        assert_eq!(parse_type_str(""), Type::Any);
+        // Lowercase non-keyword identifiers and empty strings become Unknown fallback
+        assert_eq!(parse_type_str(""), Type::Unknown);
     }
 
     #[test]
     fn test_compatible() {
         assert!(Type::Int.compatible(&Type::Int));
         assert!(!Type::Int.compatible(&Type::Str));
-        assert!(Type::Any.compatible(&Type::Int));
-        assert!(Type::Int.compatible(&Type::Any));
+        assert!(Type::Unknown.compatible(&Type::Int));
+        assert!(Type::Int.compatible(&Type::Unknown));
         assert!(Type::Int.compatible(&Type::Float)); // widening
         assert!(Type::Result(Box::new(Type::Int), Box::new(Type::Str))
             .compatible(&Type::Result(Box::new(Type::Int), Box::new(Type::Str))));

@@ -403,7 +403,7 @@ fn match_literal_wildcard() {
 
 #[test]
 fn match_ok_constructor() {
-    let src = "fn unwrap(r: Any) -> Int\n    = match r:\n        Ok(v) -> v\n        Err(_) -> 0\n";
+    let src = "fn unwrap(r: Result<Int, String>) -> Int\n    = match r:\n        Ok(v) -> v\n        Err(_) -> 0\n";
     assert_eq!(
         call_fn(src, "unwrap", vec![Value::Ok(Box::new(Value::Int(42)))]),
         Value::Int(42)
@@ -412,7 +412,7 @@ fn match_ok_constructor() {
 
 #[test]
 fn match_err_constructor() {
-    let src = "fn unwrap(r: Any) -> Int\n    = match r:\n        Ok(v) -> v\n        Err(_) -> 0\n";
+    let src = "fn unwrap(r: Result<Int, String>) -> Int\n    = match r:\n        Ok(v) -> v\n        Err(_) -> 0\n";
     assert_eq!(
         call_fn(
             src,
@@ -425,8 +425,7 @@ fn match_err_constructor() {
 
 #[test]
 fn match_some_none() {
-    let src =
-        "fn extract(o: Any) -> Int\n    = match o:\n        Some(v) -> v\n        None -> 0\n";
+    let src = "fn extract(o: Option<Int>) -> Int\n    = match o:\n        Some(v) -> v\n        None -> 0\n";
     assert_eq!(
         call_fn(src, "extract", vec![Value::Some(Box::new(Value::Int(7)))]),
         Value::Int(7)
@@ -640,7 +639,7 @@ fn higher_order_apply_twice_with_function_typed_param() {
 
 #[test]
 fn error_prop_unwraps_ok() {
-    let src = "fn get_ok(r: Any) -> Int\n    = r?\n";
+    let src = "fn get_ok(r: Result<Int, String>) -> Int\n    = r?\n";
     assert_eq!(
         call_fn(src, "get_ok", vec![Value::Ok(Box::new(Value::Int(99)))]),
         Value::Int(99)
@@ -650,7 +649,7 @@ fn error_prop_unwraps_ok() {
 #[test]
 fn error_prop_early_return_on_err() {
     // ? on Err causes early return: the function returns Err(e), not a crash.
-    let src = "fn get_val(r: Any) -> Any\n    = r?\n";
+    let src = "fn get_val(r: Result<Int, String>) -> Result<Int, String>\n    = r?\n";
     let result = call_fn(
         src,
         "get_val",
@@ -662,7 +661,7 @@ fn error_prop_early_return_on_err() {
 #[test]
 fn error_prop_early_return_in_block() {
     // ? in a block body causes early return, skipping subsequent statements.
-    let src = "fn double_ok(r: Any) -> Any\n    val x = r?\n    Ok(x + x)\n";
+    let src = "fn double_ok(r: Result<Int, String>) -> Result<Int, String>\n    val x = r?\n    Ok(x + x)\n";
     assert_eq!(
         call_fn(src, "double_ok", vec![Value::Ok(Box::new(Value::Int(5)))]),
         Value::Ok(Box::new(Value::Int(10)))
@@ -680,7 +679,7 @@ fn error_prop_early_return_in_block() {
 #[test]
 fn error_prop_chain_short_circuits() {
     // When the first ? encounters Err, the second ? and the Ok() never run.
-    let src = "fn chain(a: Any, b: Any) -> Any\n    val x = a?\n    val y = b?\n    Ok(x + y)\n";
+    let src = "fn chain(a: Result<Int, String>, b: Result<Int, String>) -> Result<Int, String>\n    val x = a?\n    val y = b?\n    Ok(x + y)\n";
     let err = Value::Err(Box::new(Value::Str("first".to_string())));
     let ok_ten = Value::Ok(Box::new(Value::Int(10)));
     assert_eq!(call_fn(src, "chain", vec![err.clone(), ok_ten]), err);
@@ -693,7 +692,7 @@ fn error_prop_chain_short_circuits() {
 #[test]
 fn closure_captures_outer_val() {
     let _src =
-        "fn make_adder(n: Int) -> Any\n    fn add(x: Int) -> Int\n        = x + n\n    add\n";
+        "fn make_adder(n: Int) -> Fn(Int) -> Int\n    fn add(x: Int) -> Int\n        = x + n\n    add\n";
     // Note: nested function definitions are not a first-class feature in Aver.
     // This test verifies the closure capture mechanism via lambda-style usage.
     // We use map with a pre-defined function instead.
@@ -991,7 +990,7 @@ mod network_tests {
     fn network_get_200_returns_ok_response() {
         let Some(url) = start_server(200, "hello", "") else { return; };
         let src = format!(
-            "fn fetch() -> Any\n    ! [Network]\n    Network.get(\"{}\")\n",
+            "fn fetch() -> Result<NetworkResponse, String>\n    ! [Network]\n    Network.get(\"{}\")\n",
             url
         );
         let val = run_network_fn(&src, "fetch");
@@ -1015,7 +1014,7 @@ mod network_tests {
     fn network_get_404_still_returns_ok_response() {
         let Some(url) = start_server(404, "not found", "") else { return; };
         let src = format!(
-            "fn fetch() -> Any\n    ! [Network]\n    Network.get(\"{}\")\n",
+            "fn fetch() -> Result<NetworkResponse, String>\n    ! [Network]\n    Network.get(\"{}\")\n",
             url
         );
         let val = run_network_fn(&src, "fetch");
@@ -1034,7 +1033,7 @@ mod network_tests {
     #[test]
     fn network_get_transport_error_returns_err() {
         // Port 1 is almost certainly not listening
-        let src = "fn fetch() -> Any\n    ! [Network]\n    Network.get(\"http://127.0.0.1:1/\")\n";
+        let src = "fn fetch() -> Result<NetworkResponse, String>\n    ! [Network]\n    Network.get(\"http://127.0.0.1:1/\")\n";
         let items = parse(src);
         let mut interp = Interpreter::new();
         for item in &items {
@@ -1058,7 +1057,7 @@ mod network_tests {
     fn network_post_201_returns_ok_response() {
         let Some(url) = start_server(201, "created", "") else { return; };
         let src = format!(
-            "fn send() -> Any\n    ! [Network]\n    Network.post(\"{}\", \"data\", \"text/plain\", [])\n",
+            "fn send() -> Result<NetworkResponse, String>\n    ! [Network]\n    Network.post(\"{}\", \"data\", \"text/plain\", [])\n",
             url
         );
         let val = run_network_fn(&src, "send");
@@ -1077,7 +1076,7 @@ mod network_tests {
     #[test]
     fn network_post_bad_headers_returns_runtime_error() {
         // Pass a non-list for headers — validation fails before any HTTP call
-        let src = "fn send() -> Any\n    ! [Network]\n    Network.post(\"http://127.0.0.1:1/\", \"\", \"text/plain\", \"bad\")\n";
+        let src = "fn send() -> Result<NetworkResponse, String>\n    ! [Network]\n    Network.post(\"http://127.0.0.1:1/\", \"\", \"text/plain\", \"bad\")\n";
         let items = parse(src);
         let mut interp = Interpreter::new();
         for item in &items {
@@ -1125,14 +1124,14 @@ mod disk_tests {
         let path = tmp_path("write_read.txt");
         let path_str = path.to_string_lossy();
         let src = format!(
-            "fn run() -> Any\n    ! [Disk]\n    Disk.writeText(\"{}\", \"hello\")\n",
+            "fn run() -> Result<Unit, String>\n    ! [Disk]\n    Disk.writeText(\"{}\", \"hello\")\n",
             path_str.replace('\\', "\\\\")
         );
         let val = run_disk_fn(&src, "run");
         assert_eq!(val, Value::Ok(Box::new(Value::Unit)));
 
         let src2 = format!(
-            "fn run() -> Any\n    ! [Disk]\n    Disk.readText(\"{}\")\n",
+            "fn run() -> Result<String, String>\n    ! [Disk]\n    Disk.readText(\"{}\")\n",
             path_str.replace('\\', "\\\\")
         );
         let val2 = run_disk_fn(&src2, "run");
@@ -1151,7 +1150,7 @@ mod disk_tests {
             f.write_all(b"hello").unwrap();
         }
         let src = format!(
-            "fn run() -> Any\n    ! [Disk]\n    Disk.appendText(\"{}\", \" world\")\n",
+            "fn run() -> Result<Unit, String>\n    ! [Disk]\n    Disk.appendText(\"{}\", \" world\")\n",
             path_str
         );
         let val = run_disk_fn(&src, "run");
@@ -1168,7 +1167,7 @@ mod disk_tests {
         std::fs::write(&path, "x").unwrap();
 
         let src = format!(
-            "fn run() -> Any\n    ! [Disk]\n    Disk.exists(\"{}\")\n",
+            "fn run() -> Bool\n    ! [Disk]\n    Disk.exists(\"{}\")\n",
             path_str
         );
         let val = run_disk_fn(&src, "run");
@@ -1178,7 +1177,7 @@ mod disk_tests {
         let missing_path = tmp_path("does_not_exist_xyz.txt");
         let missing_str = missing_path.to_string_lossy().replace('\\', "\\\\");
         let src2 = format!(
-            "fn run() -> Any\n    ! [Disk]\n    Disk.exists(\"{}\")\n",
+            "fn run() -> Bool\n    ! [Disk]\n    Disk.exists(\"{}\")\n",
             missing_str
         );
         let val2 = run_disk_fn(&src2, "run");
@@ -1192,7 +1191,7 @@ mod disk_tests {
         std::fs::write(&path, "bye").unwrap();
 
         let src = format!(
-            "fn run() -> Any\n    ! [Disk]\n    Disk.delete(\"{}\")\n",
+            "fn run() -> Result<Unit, String>\n    ! [Disk]\n    Disk.delete(\"{}\")\n",
             path_str
         );
         let val = run_disk_fn(&src, "run");
@@ -1208,7 +1207,7 @@ mod disk_tests {
         let dir_str = dir.to_string_lossy().replace('\\', "\\\\");
 
         let src = format!(
-            "fn run() -> Any\n    ! [Disk]\n    Disk.delete(\"{}\")\n",
+            "fn run() -> Result<Unit, String>\n    ! [Disk]\n    Disk.delete(\"{}\")\n",
             dir_str
         );
         let val = run_disk_fn(&src, "run");
@@ -1229,7 +1228,7 @@ mod disk_tests {
         let dir_str = dir.to_string_lossy().replace('\\', "\\\\");
 
         let src = format!(
-            "fn run() -> Any\n    ! [Disk]\n    Disk.deleteDir(\"{}\")\n",
+            "fn run() -> Result<Unit, String>\n    ! [Disk]\n    Disk.deleteDir(\"{}\")\n",
             dir_str
         );
         let val = run_disk_fn(&src, "run");
@@ -1244,7 +1243,7 @@ mod disk_tests {
         let path_str = path.to_string_lossy().replace('\\', "\\\\");
 
         let src = format!(
-            "fn run() -> Any\n    ! [Disk]\n    Disk.deleteDir(\"{}\")\n",
+            "fn run() -> Result<Unit, String>\n    ! [Disk]\n    Disk.deleteDir(\"{}\")\n",
             path_str
         );
         let val = run_disk_fn(&src, "run");
@@ -1260,7 +1259,7 @@ mod disk_tests {
         let path = tmp_path("no_such_file_xyz.txt");
         let path_str = path.to_string_lossy().replace('\\', "\\\\");
         let src = format!(
-            "fn run() -> Any\n    ! [Disk]\n    Disk.delete(\"{}\")\n",
+            "fn run() -> Result<Unit, String>\n    ! [Disk]\n    Disk.delete(\"{}\")\n",
             path_str
         );
         let val = run_disk_fn(&src, "run");
@@ -1274,7 +1273,7 @@ mod disk_tests {
         let _ = std::fs::remove_dir_all(&dir);
 
         let src = format!(
-            "fn run() -> Any\n    ! [Disk]\n    Disk.makeDir(\"{}\")\n",
+            "fn run() -> Result<Unit, String>\n    ! [Disk]\n    Disk.makeDir(\"{}\")\n",
             dir_str
         );
         let val = run_disk_fn(&src, "run");
@@ -1284,7 +1283,7 @@ mod disk_tests {
         // Write a file inside to list it
         std::fs::write(dir.join("a.txt"), "").unwrap();
         let src2 = format!(
-            "fn run() -> Any\n    ! [Disk]\n    Disk.listDir(\"{}\")\n",
+            "fn run() -> Result<List<String>, String>\n    ! [Disk]\n    Disk.listDir(\"{}\")\n",
             dir_str
         );
         let val2 = run_disk_fn(&src2, "run");
@@ -1303,7 +1302,7 @@ mod disk_tests {
 
     #[test]
     fn disk_read_missing_file_returns_err() {
-        let src = "fn run() -> Any\n    ! [Disk]\n    Disk.readText(\"/no/such/file.txt\")\n";
+        let src = "fn run() -> Result<String, String>\n    ! [Disk]\n    Disk.readText(\"/no/such/file.txt\")\n";
         let val = run_disk_fn(src, "run");
         assert!(matches!(val, Value::Err(_)));
     }

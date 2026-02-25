@@ -4,7 +4,7 @@
 /// be declared as an effect in order to be called:
 ///
 /// ```aver
-/// fn fetch(url: String) -> Any
+/// fn fetch(url: String) -> Result<NetworkResponse, String>
 ///     ! [Network]
 ///     Network.get(url)
 /// ```

@@ -362,6 +362,17 @@ fn expr_error_propagation() {
     }
 }
 
+#[test]
+fn expr_type_ascription_empty_list() {
+    let items = parse("[]: List<Int>");
+    if let TopLevel::Stmt(Stmt::Expr(Expr::TypeAscription(inner, ty))) = &items[0] {
+        assert!(matches!(**inner, Expr::List(_)));
+        assert_eq!(ty, "List<Int>");
+    } else {
+        panic!("expected TypeAscription");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Match expressions
 // ---------------------------------------------------------------------------
@@ -385,8 +396,17 @@ fn match_with_wildcard() {
 }
 
 #[test]
+fn match_subject_colon_is_not_type_ascription() {
+    let items = parse("match xs:\n    [] -> 0\n    _ -> 1\n");
+    assert!(matches!(
+        items[0],
+        TopLevel::Stmt(Stmt::Expr(Expr::Match(_, _)))
+    ));
+}
+
+#[test]
 fn match_constructor_patterns() {
-    let src = "fn f(r: Any) -> Int\n    = match r:\n        Ok(v) -> v\n        Err(_) -> 0\n";
+    let src = "fn f(r: Result<Int, String>) -> Int\n    = match r:\n        Ok(v) -> v\n        Err(_) -> 0\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         if let FnBody::Expr(Expr::Match(_, arms)) = &fd.body {
@@ -409,7 +429,7 @@ fn match_constructor_patterns() {
 
 #[test]
 fn match_ident_binding() {
-    let src = "fn f(x: Any) -> Any\n    = match x:\n        n -> n\n";
+    let src = "fn f(x: Int) -> Int\n    = match x:\n        n -> n\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         if let FnBody::Expr(Expr::Match(_, arms)) = &fd.body {
@@ -707,7 +727,7 @@ fn parse_record_create_expression() {
 
 #[test]
 fn parse_user_defined_constructor_pattern() {
-    let src = "fn classify(s: Any) -> Any\n  = match s:\n    Circle(r) -> r\n    Rect(w, h) -> w\n    Point -> 0.0\n";
+    let src = "fn classify(s: Shape) -> Float\n  = match s:\n    Circle(r) -> r\n    Rect(w, h) -> w\n    Point -> 0.0\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         if let FnBody::Expr(Expr::Match(_, arms)) = &fd.body {
@@ -730,6 +750,12 @@ fn parse_user_defined_constructor_pattern() {
     } else {
         panic!("expected FnDef");
     }
+}
+
+#[test]
+fn parse_fails_on_any_type_annotation() {
+    let src = "fn f(x: Any) -> Int\n    = x\n";
+    assert!(parse_fails(src));
 }
 
 #[test]

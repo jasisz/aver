@@ -93,7 +93,7 @@ contexts:
         3: punctuation.separator.key-value.aver
 
   builtin-types:
-    - match: '\b(Int|Float|String|Bool|Unit|Any|Result|Option|List|NetworkResponse|Header)\b'
+    - match: '\b(Int|Float|String|Bool|Unit|Result|Option|List|NetworkResponse|Header)\b'
       scope: support.type.aver
 
   builtin-values:
