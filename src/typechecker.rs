@@ -49,6 +49,10 @@ struct TypeChecker {
     fn_sigs: HashMap<String, FnSig>,
     module_sig_cache: HashMap<String, Vec<(String, FnSig)>>,
     value_members: HashMap<String, Type>,
+    /// Field types for record types: "TypeName.fieldName" → Type.
+    /// Populated for both user-defined `record` types and built-in records
+    /// (NetworkResponse, Header). Enables checked dot-access on Named types.
+    record_field_types: HashMap<String, Type>,
     /// Named effect aliases: `effects AppIO = [Console, Disk]`
     effect_aliases: HashMap<String, Vec<String>>,
     /// Top-level bindings visible from function bodies.
@@ -66,6 +70,7 @@ impl TypeChecker {
             fn_sigs: HashMap::new(),
             module_sig_cache: HashMap::new(),
             value_members: HashMap::new(),
+            record_field_types: HashMap::new(),
             effect_aliases: HashMap::new(),
             globals: HashMap::new(),
             locals: HashMap::new(),
@@ -193,7 +198,25 @@ impl TypeChecker {
             self.insert_sig(name, params, ret.clone(), effects);
         }
 
-        let net_ret = || Type::Result(Box::new(Type::Any), Box::new(Type::Str));
+        // Register built-in record field types for NetworkResponse and Header.
+        // This enables checked dot-access: resp.status → Int, resp.body → Str, etc.
+        let net_resp_fields: &[(&str, Type)] = &[
+            ("status", Type::Int),
+            ("body", Type::Str),
+            ("headers", Type::List(Box::new(Type::Any))),
+        ];
+        for (field, ty) in net_resp_fields {
+            self.record_field_types
+                .insert(format!("NetworkResponse.{}", field), ty.clone());
+        }
+        let header_fields: &[(&str, Type)] = &[("name", Type::Str), ("value", Type::Str)];
+        for (field, ty) in header_fields {
+            self.record_field_types
+                .insert(format!("Header.{}", field), ty.clone());
+        }
+
+        let net_ret =
+            || Type::Result(Box::new(Type::Named("NetworkResponse".to_string())), Box::new(Type::Str));
         let service_sigs: &[(&str, &[Type], Type, &[&str])] = &[
             ("Console.print", &[Type::Any], Type::Unit, &["Console"]),
             ("Network.get",    &[Type::Str], net_ret(), &["Network"]),
@@ -332,6 +355,12 @@ impl TypeChecker {
                         effects: vec![],
                     },
                 );
+                // Register per-field types so dot-access is checked.
+                for (field_name, ty_str) in fields {
+                    let field_ty = parse_type_str_strict(ty_str).unwrap_or(Type::Any);
+                    self.record_field_types
+                        .insert(format!("{}.{}", type_name, field_name), field_ty);
+                }
             }
         }
     }
@@ -1013,7 +1042,18 @@ impl TypeChecker {
                 }
                 let obj_ty = self.infer_type(obj);
                 match obj_ty {
-                    Type::Named(_) => Type::Any,
+                    Type::Named(ref type_name) => {
+                        let key = format!("{}.{}", type_name, field);
+                        if let Some(field_ty) = self.record_field_types.get(&key) {
+                            field_ty.clone()
+                        } else {
+                            self.error(format!(
+                                "Record '{}' has no field '{}'",
+                                type_name, field
+                            ));
+                            Type::Any
+                        }
+                    }
                     Type::Any => Type::Any,
                     other => {
                         self.error(format!(

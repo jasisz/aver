@@ -551,3 +551,70 @@ fn valid_network_all_methods_with_effect() {
     );
     assert_no_errors(src);
 }
+
+// ---------------------------------------------------------------------------
+// Record field access type checking
+// ---------------------------------------------------------------------------
+
+#[test]
+fn valid_network_response_field_access() {
+    // resp.status is Int — comparison with Int should pass
+    let src = concat!(
+        "fn isOk(resp: NetworkResponse) -> Bool\n",
+        "    = resp.status < 400\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_network_response_body_field() {
+    let src = concat!(
+        "fn body(resp: NetworkResponse) -> String\n",
+        "    = resp.body\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_header_field_access() {
+    let src = concat!(
+        "record Header\n",
+        "    name: String\n",
+        "    value: String\n",
+        "fn headerName(h: Header) -> String\n",
+        "    = h.name\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_user_record_field_access() {
+    let src = concat!(
+        "record User\n",
+        "    name: String\n",
+        "    age: Int\n",
+        "fn getName(u: User) -> String\n",
+        "    = u.name\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn error_network_response_unknown_field() {
+    let src = concat!(
+        "fn bad(resp: NetworkResponse) -> Any\n",
+        "    = resp.fooo\n",
+    );
+    assert_error_containing(src, "has no field 'fooo'");
+}
+
+#[test]
+fn error_user_record_unknown_field() {
+    let src = concat!(
+        "record User\n",
+        "    name: String\n",
+        "fn bad(u: User) -> Any\n",
+        "    = u.email\n",
+    );
+    assert_error_containing(src, "has no field 'email'");
+}
