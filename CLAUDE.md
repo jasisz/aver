@@ -47,16 +47,11 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 - No `if`/`else` — **this is intentional by design**; `match` is the only branching construct
 - No loops (`for`, `while`) — **intentionally absent**; Aver has no imperative iteration; use `map`/`filter`/`fold`
 - Field access works for `record` values (`u.name`) but not on sum type variants or other values
-- The `effect` and `service` declaration keywords are tokenised but not parsed yet (`! [Effect]` on functions is parsed and enforced)
-- The `?` error-propagation operator only works at the expression level; it does not short-circuit across function boundaries (no early return mechanism)
-- `ErrPropSignal` struct exists in interpreter.rs but is not used — reserved for a proper early-return implementation
 - No tail-call optimisation; deep recursion will overflow the stack
 
 ### What was explicitly NOT implemented yet (save for later)
 
 - Effect handlers / row-polymorphic effects — runtime currently uses declared effect lists with call-edge capability checks; no handlers yet
-- Service blocks with `needs:` dependency injection
-- Proper `?` short-circuit across function calls (requires a signal/exception mechanism or continuation)
 - `aver decisions --impacts Module` and other query flags on the CLI
 
 ### What will NEVER be in Aver (design decisions)
@@ -250,10 +245,7 @@ In `src/interpreter.rs`, two places:
 
 ## Next steps (prioritised)
 
-1. **Proper `?` short-circuit** — introduce `ErrPropSignal` as a Rust `Err` variant so that `?` on `Err` inside a function body exits the function early, not just the current expression
-2. ~~**Service blocks**~~ — rejected; mocking via function parameter `Fn(A) -> B ! [Effect]`, zero new concepts
-3. **`aver decisions` query flags** — `--impacts Module`, `--since 2024-01-01`, `--rejected Technology` for searchable architectural history
-4. **REPL mode** — `aver repl` subcommand for interactive exploration; useful during AI-assisted development sessions
+1. **`aver decisions` query flags** — `--impacts Module`, `--since 2024-01-01`, `--rejected Technology` for searchable architectural history
 
 ## Agreed direction: modules vs DI (2026-02-25)
 
