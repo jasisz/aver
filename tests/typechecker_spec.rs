@@ -6,7 +6,6 @@
 ///     specific substring in the message
 ///
 /// The type checker is run directly via `run_type_check`, bypassing the CLI.
-
 use aver::ast::TopLevel;
 use aver::lexer::Lexer;
 use aver::parser::Parser;
@@ -25,7 +24,10 @@ fn parse(src: &str) -> Vec<TopLevel> {
 
 fn errors(src: &str) -> Vec<String> {
     let items = parse(src);
-    run_type_check(&items).into_iter().map(|e| e.message).collect()
+    run_type_check(&items)
+        .into_iter()
+        .map(|e| e.message)
+        .collect()
 }
 
 fn assert_no_errors(src: &str) {
@@ -82,9 +84,7 @@ fn valid_unit_function() {
 
 #[test]
 fn valid_result_return() {
-    assert_no_errors(
-        "fn safe_div(a: Int, b: Int) -> Result<Int, String>\n    = Ok(a)\n",
-    );
+    assert_no_errors("fn safe_div(a: Int, b: Int) -> Result<Int, String>\n    = Ok(a)\n");
 }
 
 #[test]
@@ -104,7 +104,8 @@ fn valid_explicit_any() {
 
 #[test]
 fn valid_call_correct_args() {
-    let src = "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    val r = add(1, 2)\n";
+    let src =
+        "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    val r = add(1, 2)\n";
     assert_no_errors(src);
 }
 
@@ -140,8 +141,7 @@ fn valid_pipe_operator() {
 
 #[test]
 fn valid_hello_av() {
-    let src = std::fs::read_to_string("examples/hello.av")
-        .expect("examples/hello.av not found");
+    let src = std::fs::read_to_string("examples/hello.av").expect("examples/hello.av not found");
     assert_no_errors(&src);
 }
 
@@ -154,8 +154,7 @@ fn valid_calculator_av() {
 
 #[test]
 fn valid_lists_av() {
-    let src = std::fs::read_to_string("examples/lists.av")
-        .expect("examples/lists.av not found");
+    let src = std::fs::read_to_string("examples/lists.av").expect("examples/lists.av not found");
     assert_no_errors(&src);
 }
 
@@ -172,7 +171,8 @@ fn error_wrong_arg_count_too_few() {
 
 #[test]
 fn error_wrong_arg_count_too_many() {
-    let src = "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    val r = add(1, 2, 3)\n";
+    let src =
+        "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    val r = add(1, 2, 3)\n";
     // actual: "Function 'add' expects 2 argument(s), got 3"
     assert_error_containing(src, "argument(s)");
 }
@@ -254,8 +254,7 @@ fn valid_effect_propagated_correctly() {
 #[test]
 fn valid_error_prop_in_result_fn() {
     // ? on a Result<Int, String> inside a function returning Result<Int, String> — valid.
-    let src =
-        "fn safe(r: Result<Int, String>) -> Result<Int, String>\n    = Ok(r?)\n";
+    let src = "fn safe(r: Result<Int, String>) -> Result<Int, String>\n    = Ok(r?)\n";
     assert_no_errors(src);
 }
 

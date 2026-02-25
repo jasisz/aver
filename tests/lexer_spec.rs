@@ -3,7 +3,6 @@
 /// Each test verifies that specific source text tokenises to the expected
 /// sequence of token kinds.  Structural tokens (Newline, Eof) are filtered out
 /// unless the test is specifically about structure.
-
 use aver::lexer::{Lexer, TokenKind};
 
 // ---------------------------------------------------------------------------
@@ -12,7 +11,12 @@ use aver::lexer::{Lexer, TokenKind};
 
 fn lex_all(src: &str) -> Vec<TokenKind> {
     let mut lexer = Lexer::new(src);
-    lexer.tokenize().unwrap().into_iter().map(|t| t.kind).collect()
+    lexer
+        .tokenize()
+        .unwrap()
+        .into_iter()
+        .map(|t| t.kind)
+        .collect()
 }
 
 /// Filter out Newline and Eof tokens — tests focus on meaningful tokens only.
@@ -425,5 +429,8 @@ fn inline_comment_is_skipped() {
 
 #[test]
 fn unterminated_string_is_error() {
-    assert!(lex_err("\"hello"), "unterminated string should be a lex error");
+    assert!(
+        lex_err("\"hello"),
+        "unterminated string should be a lex error"
+    );
 }

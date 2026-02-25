@@ -14,7 +14,7 @@ pub enum Type {
     Option(Box<Type>),
     List(Box<Type>),
     Fn(Vec<Type>, Box<Type>),
-    Any, // unknown / gradual-typing escape hatch
+    Any,           // unknown / gradual-typing escape hatch
     Named(String), // user-defined type: Shape, User, etc.
 }
 
@@ -34,9 +34,7 @@ impl Type {
             (Type::Str, Type::Str) => true,
             (Type::Bool, Type::Bool) => true,
             (Type::Unit, Type::Unit) => true,
-            (Type::Result(a1, b1), Type::Result(a2, b2)) => {
-                a1.compatible(a2) && b1.compatible(b2)
-            }
+            (Type::Result(a1, b1), Type::Result(a2, b2)) => a1.compatible(a2) && b1.compatible(b2),
             (Type::Option(a), Type::Option(b)) => a.compatible(b),
             (Type::List(a), Type::List(b)) => a.compatible(b),
             (Type::Fn(p1, r1), Type::Fn(p2, r2)) => {
@@ -209,10 +207,7 @@ mod tests {
             parse_type_str("Option<Bool>"),
             Type::Option(Box::new(Type::Bool))
         );
-        assert_eq!(
-            parse_type_str("List<Int>"),
-            Type::List(Box::new(Type::Int))
-        );
+        assert_eq!(parse_type_str("List<Int>"), Type::List(Box::new(Type::Int)));
     }
 
     #[test]
@@ -226,7 +221,10 @@ mod tests {
     #[test]
     fn test_unknown() {
         // Capitalized identifiers are now parsed as user-defined Named types
-        assert_eq!(parse_type_str("SomeUnknownType"), Type::Named("SomeUnknownType".to_string()));
+        assert_eq!(
+            parse_type_str("SomeUnknownType"),
+            Type::Named("SomeUnknownType".to_string())
+        );
         // Lowercase non-keyword identifiers and empty strings remain Any
         assert_eq!(parse_type_str(""), Type::Any);
     }
@@ -238,10 +236,8 @@ mod tests {
         assert!(Type::Any.compatible(&Type::Int));
         assert!(Type::Int.compatible(&Type::Any));
         assert!(Type::Int.compatible(&Type::Float)); // widening
-        assert!(
-            Type::Result(Box::new(Type::Int), Box::new(Type::Str))
-                .compatible(&Type::Result(Box::new(Type::Int), Box::new(Type::Str)))
-        );
+        assert!(Type::Result(Box::new(Type::Int), Box::new(Type::Str))
+            .compatible(&Type::Result(Box::new(Type::Int), Box::new(Type::Str))));
     }
 
     #[test]
@@ -261,7 +257,10 @@ mod tests {
         // Capitalized identifiers are accepted as user-defined Named types
         assert_eq!(
             parse_type_str_strict("Result<MyError, String>").unwrap(),
-            Type::Result(Box::new(Type::Named("MyError".to_string())), Box::new(Type::Str))
+            Type::Result(
+                Box::new(Type::Named("MyError".to_string())),
+                Box::new(Type::Str)
+            )
         );
         assert_eq!(
             parse_type_str_strict("Option<Shape>").unwrap(),

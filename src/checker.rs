@@ -1,7 +1,7 @@
 use colored::Colorize;
 
 use crate::ast::{DecisionBlock, FnDef, TopLevel, VerifyBlock};
-use crate::interpreter::{Interpreter, aver_repr};
+use crate::interpreter::{aver_repr, Interpreter};
 
 pub struct VerifyResult {
     #[allow(dead_code)]
@@ -20,11 +20,7 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
     println!("Verify: {}", block.fn_name.cyan());
 
     for (left_expr, right_expr) in &block.cases {
-        let case_str = format!(
-            "{} == {}",
-            expr_to_str(left_expr),
-            expr_to_str(right_expr)
-        );
+        let case_str = format!("{} == {}", expr_to_str(left_expr), expr_to_str(right_expr));
 
         let left_result = interp.eval_expr(left_expr);
         let right_result = interp.eval_expr(right_expr);
@@ -122,8 +118,6 @@ pub fn check_module_intent(items: &[TopLevel]) -> Vec<String> {
 
     warnings
 }
-
-
 
 fn expr_to_str(expr: &crate::ast::Expr) -> String {
     use crate::ast::Expr;

@@ -3,7 +3,6 @@
 /// Each test verifies that a specific source snippet produces the expected
 /// AST structure.  Tests are intentionally narrow: they assert the relevant
 /// parts of the AST and ignore surrounding structure where possible.
-
 use aver::ast::*;
 use aver::lexer::Lexer;
 use aver::parser::Parser;
@@ -21,7 +20,9 @@ fn parse(src: &str) -> Vec<TopLevel> {
 
 fn parse_fails(src: &str) -> bool {
     let mut lexer = Lexer::new(src);
-    let Ok(tokens) = lexer.tokenize() else { return true };
+    let Ok(tokens) = lexer.tokenize() else {
+        return true;
+    };
     let mut parser = Parser::new(tokens);
     parser.parse().is_err()
 }
@@ -332,7 +333,8 @@ fn expr_error_propagation() {
 
 #[test]
 fn match_with_wildcard() {
-    let src = "fn f(n: Int) -> String\n    = match n:\n        0 -> \"zero\"\n        _ -> \"other\"\n";
+    let src =
+        "fn f(n: Int) -> String\n    = match n:\n        0 -> \"zero\"\n        _ -> \"other\"\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         if let FnBody::Expr(Expr::Match(_, arms)) = &fd.body {

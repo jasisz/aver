@@ -57,7 +57,10 @@ pub enum Expr {
     InterpolatedStr(Vec<StrPart>),
     List(Vec<Expr>),
     /// Record creation: `User(name: "Alice", age: 30)`
-    RecordCreate { type_name: String, fields: Vec<(String, Expr)> },
+    RecordCreate {
+        type_name: String,
+        fields: Vec<(String, Expr)>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -122,9 +125,15 @@ pub struct TypeVariant {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeDef {
     /// `type Shape` with variants Circle(Float), Rect(Float, Float), Point
-    Sum { name: String, variants: Vec<TypeVariant> },
+    Sum {
+        name: String,
+        variants: Vec<TypeVariant>,
+    },
     /// `record User` with fields name: String, age: Int
-    Product { name: String, fields: Vec<(String, String)> },
+    Product {
+        name: String,
+        fields: Vec<(String, String)>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

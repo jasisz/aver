@@ -2,7 +2,6 @@
 ///
 /// Tests evaluate expressions and function calls directly, bypassing the CLI
 /// and the type checker so they focus solely on runtime semantics.
-
 use aver::ast::{Stmt, TopLevel};
 use aver::interpreter::{Interpreter, Value};
 use aver::lexer::Lexer;
@@ -287,10 +286,7 @@ fn tail_returns_rest() {
 
 #[test]
 fn tail_single_element_returns_empty() {
-    assert_eq!(
-        eval("tail([99])"),
-        Value::Ok(Box::new(Value::List(vec![])))
-    );
+    assert_eq!(eval("tail([99])"), Value::Ok(Box::new(Value::List(vec![]))));
 }
 
 #[test]
@@ -384,7 +380,8 @@ fn match_err_constructor() {
 
 #[test]
 fn match_some_none() {
-    let src = "fn extract(o: Any) -> Int\n    = match o:\n        Some(v) -> v\n        None -> 0\n";
+    let src =
+        "fn extract(o: Any) -> Int\n    = match o:\n        Some(v) -> v\n        None -> 0\n";
     assert_eq!(
         call_fn(src, "extract", vec![Value::Some(Box::new(Value::Int(7)))]),
         Value::Int(7)
@@ -439,7 +436,8 @@ fn pipe_single() {
 
 #[test]
 fn pipe_chained() {
-    let src = "fn inc(x: Int) -> Int\n    = x + 1\nfn apply(x: Int) -> Int\n    = x |> inc |> inc\n";
+    let src =
+        "fn inc(x: Int) -> Int\n    = x + 1\nfn apply(x: Int) -> Int\n    = x |> inc |> inc\n";
     assert_eq!(call_fn(src, "apply", vec![Value::Int(0)]), Value::Int(2));
 }
 
@@ -476,7 +474,9 @@ fn map_doubles_list() {
     let list = Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
     let double_fn = interp.lookup("double").unwrap();
     let map_fn = interp.lookup("map").unwrap();
-    let result = interp.call_value_pub(map_fn, vec![list, double_fn]).unwrap();
+    let result = interp
+        .call_value_pub(map_fn, vec![list, double_fn])
+        .unwrap();
     assert_eq!(
         result,
         Value::List(vec![Value::Int(2), Value::Int(4), Value::Int(6)])
@@ -502,10 +502,7 @@ fn filter_keeps_positives() {
     let pred = interp.lookup("is_pos").unwrap();
     let filter_fn = interp.lookup("filter").unwrap();
     let result = interp.call_value_pub(filter_fn, vec![list, pred]).unwrap();
-    assert_eq!(
-        result,
-        Value::List(vec![Value::Int(2), Value::Int(4)])
-    );
+    assert_eq!(result, Value::List(vec![Value::Int(2), Value::Int(4)]));
 }
 
 #[test]
@@ -554,10 +551,7 @@ fn error_prop_early_return_on_err() {
         "get_val",
         vec![Value::Err(Box::new(Value::Str("bad".to_string())))],
     );
-    assert_eq!(
-        result,
-        Value::Err(Box::new(Value::Str("bad".to_string())))
-    );
+    assert_eq!(result, Value::Err(Box::new(Value::Str("bad".to_string()))));
 }
 
 #[test]
@@ -581,14 +575,10 @@ fn error_prop_early_return_in_block() {
 #[test]
 fn error_prop_chain_short_circuits() {
     // When the first ? encounters Err, the second ? and the Ok() never run.
-    let src =
-        "fn chain(a: Any, b: Any) -> Any\n    val x = a?\n    val y = b?\n    Ok(x + y)\n";
+    let src = "fn chain(a: Any, b: Any) -> Any\n    val x = a?\n    val y = b?\n    Ok(x + y)\n";
     let err = Value::Err(Box::new(Value::Str("first".to_string())));
     let ok_ten = Value::Ok(Box::new(Value::Int(10)));
-    assert_eq!(
-        call_fn(src, "chain", vec![err.clone(), ok_ten]),
-        err
-    );
+    assert_eq!(call_fn(src, "chain", vec![err.clone(), ok_ten]), err);
 }
 
 // ---------------------------------------------------------------------------
@@ -597,7 +587,8 @@ fn error_prop_chain_short_circuits() {
 
 #[test]
 fn closure_captures_outer_val() {
-    let _src = "fn make_adder(n: Int) -> Any\n    fn add(x: Int) -> Int\n        = x + n\n    add\n";
+    let _src =
+        "fn make_adder(n: Int) -> Any\n    fn add(x: Int) -> Int\n        = x + n\n    add\n";
     // Note: nested function definitions are not a first-class feature in Aver.
     // This test verifies the closure capture mechanism via lambda-style usage.
     // We use map with a pre-defined function instead.
@@ -701,10 +692,14 @@ fn sum_type_match_single_field_variant() {
     let items = parse(src);
     let mut interp = Interpreter::new();
     for item in &items {
-        if let TopLevel::TypeDef(td) = item { interp.register_type_def(td); }
+        if let TopLevel::TypeDef(td) = item {
+            interp.register_type_def(td);
+        }
     }
     for item in &items {
-        if let TopLevel::FnDef(fd) = item { interp.exec_fn_def(fd).unwrap(); }
+        if let TopLevel::FnDef(fd) = item {
+            interp.exec_fn_def(fd).unwrap();
+        }
     }
     let circle = Value::Variant {
         type_name: "Shape".to_string(),
@@ -731,10 +726,14 @@ fn sum_type_match_no_arg_variant() {
     let items = parse(src);
     let mut interp = Interpreter::new();
     for item in &items {
-        if let TopLevel::TypeDef(td) = item { interp.register_type_def(td); }
+        if let TopLevel::TypeDef(td) = item {
+            interp.register_type_def(td);
+        }
     }
     for item in &items {
-        if let TopLevel::FnDef(fd) = item { interp.exec_fn_def(fd).unwrap(); }
+        if let TopLevel::FnDef(fd) = item {
+            interp.exec_fn_def(fd).unwrap();
+        }
     }
     let point = Value::Variant {
         type_name: "Shape".to_string(),
@@ -789,10 +788,14 @@ fn record_positional_match() {
     let items = parse(src);
     let mut interp = Interpreter::new();
     for item in &items {
-        if let TopLevel::TypeDef(td) = item { interp.register_type_def(td); }
+        if let TopLevel::TypeDef(td) = item {
+            interp.register_type_def(td);
+        }
     }
     for item in &items {
-        if let TopLevel::FnDef(fd) = item { interp.exec_fn_def(fd).unwrap(); }
+        if let TopLevel::FnDef(fd) = item {
+            interp.exec_fn_def(fd).unwrap();
+        }
     }
     let user = Value::Record {
         type_name: "User".to_string(),

@@ -81,7 +81,11 @@ pub struct Token {
 #[derive(Debug, Error)]
 pub enum LexerError {
     #[error("Lexer error [{line}:{col}]: {msg}")]
-    Error { msg: String, line: usize, col: usize },
+    Error {
+        msg: String,
+        line: usize,
+        col: usize,
+    },
 }
 
 fn keyword(s: &str) -> Option<TokenKind> {
@@ -221,10 +225,15 @@ impl Lexer {
             let col = self.col;
             self.advance();
 
-            let last_is_structural = tokens.last().map(|t| matches!(
-                t.kind,
-                TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent
-            )).unwrap_or(true);
+            let last_is_structural = tokens
+                .last()
+                .map(|t| {
+                    matches!(
+                        t.kind,
+                        TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent
+                    )
+                })
+                .unwrap_or(true);
 
             if !tokens.is_empty() && !last_is_structural {
                 tokens.push(Token {
@@ -434,8 +443,7 @@ impl Lexer {
             }
         }
 
-        if self.current() == Some('.')
-            && self.peek(1).map(|c| c.is_ascii_digit()).unwrap_or(false)
+        if self.current() == Some('.') && self.peek(1).map(|c| c.is_ascii_digit()).unwrap_or(false)
         {
             is_float = true;
             num_str.push('.');
@@ -451,14 +459,18 @@ impl Lexer {
         }
 
         if is_float {
-            let f: f64 = num_str.parse().map_err(|_| self.error("Invalid floating-point number"))?;
+            let f: f64 = num_str
+                .parse()
+                .map_err(|_| self.error("Invalid floating-point number"))?;
             Ok(Token {
                 kind: TokenKind::Float(f),
                 line,
                 col,
             })
         } else {
-            let i: i64 = num_str.parse().map_err(|_| self.error("Invalid integer literal"))?;
+            let i: i64 = num_str
+                .parse()
+                .map_err(|_| self.error("Invalid integer literal"))?;
             Ok(Token {
                 kind: TokenKind::Int(i),
                 line,

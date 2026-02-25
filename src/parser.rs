@@ -1,12 +1,15 @@
-use thiserror::Error;
-use crate::lexer::{Token, TokenKind};
 use crate::ast::*;
-
+use crate::lexer::{Token, TokenKind};
+use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ParseError {
     #[error("Parse error [{line}:{col}]: {msg}")]
-    Error { msg: String, line: usize, col: usize },
+    Error {
+        msg: String,
+        line: usize,
+        col: usize,
+    },
 }
 
 pub struct Parser {
@@ -104,7 +107,11 @@ impl Parser {
         if &self.current().kind == kind {
             Ok(self.advance().clone())
         } else {
-            Err(self.error(format!("Expected {:?}, found {:?}", kind, self.current().kind)))
+            Err(self.error(format!(
+                "Expected {:?}, found {:?}",
+                kind,
+                self.current().kind
+            )))
         }
     }
 
@@ -185,7 +192,8 @@ impl Parser {
                     continue;
                 }
 
-                let variant_tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected variant name")?;
+                let variant_tok =
+                    self.expect_kind(&TokenKind::Ident(String::new()), "Expected variant name")?;
                 let variant_name = match variant_tok.kind {
                     TokenKind::Ident(s) => s,
                     _ => unreachable!(),
@@ -205,7 +213,10 @@ impl Parser {
                     self.expect_exact(&TokenKind::RParen)?;
                 }
 
-                variants.push(TypeVariant { name: variant_name, fields });
+                variants.push(TypeVariant {
+                    name: variant_name,
+                    fields,
+                });
                 self.skip_newlines();
             }
 
@@ -214,7 +225,10 @@ impl Parser {
             }
         }
 
-        Ok(TypeDef::Sum { name: type_name, variants })
+        Ok(TypeDef::Sum {
+            name: type_name,
+            variants,
+        })
     }
 
     // -------------------------------------------------------------------------
@@ -222,7 +236,8 @@ impl Parser {
     // -------------------------------------------------------------------------
     fn parse_record_def(&mut self) -> Result<TypeDef, ParseError> {
         self.expect_exact(&TokenKind::Record)?;
-        let name_tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected record name")?;
+        let name_tok =
+            self.expect_kind(&TokenKind::Ident(String::new()), "Expected record name")?;
         let type_name = match name_tok.kind {
             TokenKind::Ident(s) => s,
             _ => unreachable!(),
@@ -241,7 +256,8 @@ impl Parser {
                     continue;
                 }
 
-                let field_tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected field name")?;
+                let field_tok =
+                    self.expect_kind(&TokenKind::Ident(String::new()), "Expected field name")?;
                 let field_name = match field_tok.kind {
                     TokenKind::Ident(s) => s,
                     _ => unreachable!(),
@@ -257,7 +273,10 @@ impl Parser {
             }
         }
 
-        Ok(TypeDef::Product { name: type_name, fields })
+        Ok(TypeDef::Product {
+            name: type_name,
+            fields,
+        })
     }
 
     // -------------------------------------------------------------------------
@@ -265,7 +284,8 @@ impl Parser {
     // -------------------------------------------------------------------------
     fn parse_module(&mut self) -> Result<Module, ParseError> {
         self.expect_exact(&TokenKind::Module)?;
-        let name_tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected module name")?;
+        let name_tok =
+            self.expect_kind(&TokenKind::Ident(String::new()), "Expected module name")?;
         let name = match name_tok.kind {
             TokenKind::Ident(s) => s,
             _ => unreachable!(),
@@ -301,7 +321,12 @@ impl Parser {
             }
         }
 
-        Ok(Module { name, depends, exposes, intent })
+        Ok(Module {
+            name,
+            depends,
+            exposes,
+            intent,
+        })
     }
 
     fn parse_module_intent(&mut self) -> Result<String, ParseError> {
@@ -387,7 +412,8 @@ impl Parser {
     // -------------------------------------------------------------------------
     fn parse_fn(&mut self) -> Result<FnDef, ParseError> {
         self.expect_exact(&TokenKind::Fn)?;
-        let name_tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected function name")?;
+        let name_tok =
+            self.expect_kind(&TokenKind::Ident(String::new()), "Expected function name")?;
         let name = match name_tok.kind {
             TokenKind::Ident(s) => s,
             _ => unreachable!(),
@@ -478,7 +504,8 @@ impl Parser {
                 continue;
             }
 
-            let name_tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected parameter name")?;
+            let name_tok =
+                self.expect_kind(&TokenKind::Ident(String::new()), "Expected parameter name")?;
             let param_name = match name_tok.kind {
                 TokenKind::Ident(s) => s,
                 _ => unreachable!(),
@@ -503,10 +530,22 @@ impl Parser {
                 self.advance();
                 s
             }
-            TokenKind::Ok => { self.advance(); "Ok".to_string() }
-            TokenKind::Err => { self.advance(); "Err".to_string() }
-            TokenKind::Some => { self.advance(); "Some".to_string() }
-            TokenKind::None => { self.advance(); "None".to_string() }
+            TokenKind::Ok => {
+                self.advance();
+                "Ok".to_string()
+            }
+            TokenKind::Err => {
+                self.advance();
+                "Err".to_string()
+            }
+            TokenKind::Some => {
+                self.advance();
+                "Some".to_string()
+            }
+            TokenKind::None => {
+                self.advance();
+                "None".to_string()
+            }
             _ => {
                 return Err(self.error(format!(
                     "Expected a type name, found {:?}",
@@ -611,7 +650,8 @@ impl Parser {
     // -------------------------------------------------------------------------
     fn parse_val(&mut self) -> Result<Stmt, ParseError> {
         self.expect_exact(&TokenKind::Val)?;
-        let name_tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected variable name")?;
+        let name_tok =
+            self.expect_kind(&TokenKind::Ident(String::new()), "Expected variable name")?;
         let name = match name_tok.kind {
             TokenKind::Ident(s) => s,
             _ => unreachable!(),
@@ -624,7 +664,8 @@ impl Parser {
 
     fn parse_var(&mut self) -> Result<Stmt, ParseError> {
         self.expect_exact(&TokenKind::Var)?;
-        let name_tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected variable name")?;
+        let name_tok =
+            self.expect_kind(&TokenKind::Ident(String::new()), "Expected variable name")?;
         let name = match name_tok.kind {
             TokenKind::Ident(s) => s,
             _ => unreachable!(),
@@ -655,7 +696,8 @@ impl Parser {
     }
 
     fn parse_assign(&mut self) -> Result<Stmt, ParseError> {
-        let name_tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected variable name")?;
+        let name_tok =
+            self.expect_kind(&TokenKind::Ident(String::new()), "Expected variable name")?;
         let name = match name_tok.kind {
             TokenKind::Ident(s) => s,
             _ => unreachable!(),
@@ -775,7 +817,8 @@ impl Parser {
                     TokenKind::Err => "Err",
                     TokenKind::Some => "Some",
                     _ => unreachable!(),
-                }.to_string();
+                }
+                .to_string();
                 self.advance();
                 let mut bindings = vec![];
                 if self.check_exact(&TokenKind::LParen) {
@@ -788,7 +831,10 @@ impl Parser {
                 }
                 Ok(Pattern::Constructor(name, bindings))
             }
-            _ => Err(self.error(format!("Unexpected token in pattern: {:?}", self.current().kind))),
+            _ => Err(self.error(format!(
+                "Unexpected token in pattern: {:?}",
+                self.current().kind
+            ))),
         }
     }
 
@@ -891,7 +937,10 @@ impl Parser {
                 expr = Expr::ErrorProp(Box::new(expr));
             } else if self.check_exact(&TokenKind::Dot) {
                 self.advance();
-                let field_tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected field name after '.'")?;
+                let field_tok = self.expect_kind(
+                    &TokenKind::Ident(String::new()),
+                    "Expected field name after '.'",
+                )?;
                 let field = match field_tok.kind {
                     TokenKind::Ident(s) => s,
                     _ => unreachable!(),
@@ -952,7 +1001,8 @@ impl Parser {
                 self.advance();
                 continue;
             }
-            let name_tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected field name")?;
+            let name_tok =
+                self.expect_kind(&TokenKind::Ident(String::new()), "Expected field name")?;
             let field_name = match name_tok.kind {
                 TokenKind::Ident(s) => s,
                 _ => unreachable!(),
@@ -1021,7 +1071,8 @@ impl Parser {
                     TokenKind::Err => "Err",
                     TokenKind::Some => "Some",
                     _ => unreachable!(),
-                }.to_string();
+                }
+                .to_string();
                 self.advance();
                 let mut arg = None;
                 if self.check_exact(&TokenKind::LParen) {
@@ -1067,7 +1118,10 @@ impl Parser {
     // -------------------------------------------------------------------------
     fn parse_verify(&mut self) -> Result<VerifyBlock, ParseError> {
         self.expect_exact(&TokenKind::Verify)?;
-        let fn_name_tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected function name in verify block")?;
+        let fn_name_tok = self.expect_kind(
+            &TokenKind::Ident(String::new()),
+            "Expected function name in verify block",
+        )?;
         let fn_name = match fn_name_tok.kind {
             TokenKind::Ident(s) => s,
             _ => unreachable!(),
@@ -1107,7 +1161,8 @@ impl Parser {
     // -------------------------------------------------------------------------
     fn parse_decision(&mut self) -> Result<DecisionBlock, ParseError> {
         self.expect_exact(&TokenKind::Decision)?;
-        let name_tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected decision name")?;
+        let name_tok =
+            self.expect_kind(&TokenKind::Ident(String::new()), "Expected decision name")?;
         let name = match name_tok.kind {
             TokenKind::Ident(s) => s,
             _ => unreachable!(),
