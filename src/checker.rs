@@ -119,7 +119,7 @@ pub fn check_module_intent(items: &[TopLevel]) -> Vec<String> {
     warnings
 }
 
-fn expr_to_str(expr: &crate::ast::Expr) -> String {
+pub fn expr_to_str(expr: &crate::ast::Expr) -> String {
     use crate::ast::Expr;
     use crate::ast::Literal;
 
