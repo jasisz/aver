@@ -221,7 +221,15 @@ impl TypeChecker {
         let disk_str  = || Type::Result(Box::new(Type::Str),  Box::new(Type::Str));
         let disk_list = || Type::Result(Box::new(Type::List(Box::new(Type::Str))), Box::new(Type::Str));
         let service_sigs: &[(&str, &[Type], Type, &[&str])] = &[
-            ("Console.print", &[Type::Any], Type::Unit, &["Console"]),
+            ("Console.print",    &[Type::Any], Type::Unit, &["Console"]),
+            ("Console.error",   &[Type::Any], Type::Unit, &["Console"]),
+            ("Console.warn",    &[Type::Any], Type::Unit, &["Console"]),
+            (
+                "Console.readLine",
+                &[],
+                Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
+                &["Console"],
+            ),
             ("Network.get",    &[Type::Str], net_ret(), &["Network"]),
             ("Network.head",   &[Type::Str], net_ret(), &["Network"]),
             ("Network.delete", &[Type::Str], net_ret(), &["Network"]),
