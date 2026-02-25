@@ -13,7 +13,7 @@ pub enum Type {
     Result(Box<Type>, Box<Type>),
     Option(Box<Type>),
     List(Box<Type>),
-    Fn(Vec<Type>, Box<Type>),
+    Fn(Vec<Type>, Box<Type>, Vec<String>),
     Any,           // unknown / gradual-typing escape hatch
     Named(String), // user-defined type: Shape, User, etc.
 }
@@ -37,10 +37,11 @@ impl Type {
             (Type::Result(a1, b1), Type::Result(a2, b2)) => a1.compatible(a2) && b1.compatible(b2),
             (Type::Option(a), Type::Option(b)) => a.compatible(b),
             (Type::List(a), Type::List(b)) => a.compatible(b),
-            (Type::Fn(p1, r1), Type::Fn(p2, r2)) => {
+            (Type::Fn(p1, r1, e1), Type::Fn(p2, r2, e2)) => {
                 p1.len() == p2.len()
                     && p1.iter().zip(p2.iter()).all(|(a, b)| a.compatible(b))
                     && r1.compatible(r2)
+                    && e1.iter().all(|eff| e2.contains(eff))
             }
             (Type::Named(a), Type::Named(b)) => a == b,
             _ => false,
@@ -57,9 +58,18 @@ impl Type {
             Type::Result(ok, err) => format!("Result<{}, {}>", ok.display(), err.display()),
             Type::Option(inner) => format!("Option<{}>", inner.display()),
             Type::List(inner) => format!("List<{}>", inner.display()),
-            Type::Fn(params, ret) => {
+            Type::Fn(params, ret, effects) => {
                 let ps: Vec<String> = params.iter().map(|p| p.display()).collect();
-                format!("Fn({}) -> {}", ps.join(", "), ret.display())
+                if effects.is_empty() {
+                    format!("Fn({}) -> {}", ps.join(", "), ret.display())
+                } else {
+                    format!(
+                        "Fn({}) -> {} ! [{}]",
+                        ps.join(", "),
+                        ret.display(),
+                        effects.join(", ")
+                    )
+                }
             }
             Type::Any => "Any".to_string(),
             Type::Named(n) => n.clone(),
@@ -75,6 +85,9 @@ pub fn parse_type_str_strict(s: &str) -> Result<Type, String> {
     let s = s.trim();
     if s.is_empty() || s == "Any" {
         return Ok(Type::Any);
+    }
+    if let Some(fn_ty) = parse_fn_type_strict(s)? {
+        return Ok(fn_ty);
     }
     match s {
         "Int" => Ok(Type::Int),
@@ -118,6 +131,12 @@ pub fn parse_type_str_strict(s: &str) -> Result<Type, String> {
 /// Prefer `parse_type_str_strict` for user-facing type annotations.
 pub fn parse_type_str(s: &str) -> Type {
     let s = s.trim();
+    if s.starts_with("Fn(") {
+        if let Ok(Some(fn_ty)) = parse_fn_type_strict(s) {
+            return fn_ty;
+        }
+        return Type::Any;
+    }
     match s {
         "Int" => Type::Int,
         "Float" => Type::Float,
@@ -154,6 +173,164 @@ pub fn parse_type_str(s: &str) -> Type {
     }
 }
 
+fn parse_fn_type_strict(s: &str) -> Result<Option<Type>, String> {
+    if !s.starts_with("Fn(") {
+        return Ok(None);
+    }
+
+    let close_idx = find_matching_paren(s, 2).ok_or_else(|| s.to_string())?;
+    let params_src = &s[3..close_idx];
+
+    let after_params = s[close_idx + 1..].trim_start();
+    if !after_params.starts_with("->") {
+        return Err(s.to_string());
+    }
+    let ret_and_effects = after_params[2..].trim();
+    if ret_and_effects.is_empty() {
+        return Err(s.to_string());
+    }
+
+    let (ret_src, effects) = split_fn_effects_suffix(ret_and_effects)?;
+    let ret_ty = parse_type_str_strict(ret_src)?;
+    let params = parse_type_list_strict(params_src)?;
+    Ok(Some(Type::Fn(params, Box::new(ret_ty), effects)))
+}
+
+fn parse_type_list_strict(src: &str) -> Result<Vec<Type>, String> {
+    if src.trim().is_empty() {
+        return Ok(vec![]);
+    }
+    split_top_level(src, ',')?
+        .into_iter()
+        .map(|part| {
+            let part = part.trim();
+            if part.is_empty() {
+                Err(src.to_string())
+            } else {
+                parse_type_str_strict(part)
+            }
+        })
+        .collect()
+}
+
+fn split_fn_effects_suffix(src: &str) -> Result<(&str, Vec<String>), String> {
+    if let Some(bang_idx) = find_top_level_bang(src) {
+        let ret_src = src[..bang_idx].trim();
+        if ret_src.is_empty() {
+            return Err(src.to_string());
+        }
+        let effects_src = src[bang_idx + 1..].trim();
+        if !(effects_src.starts_with('[') && effects_src.ends_with(']')) {
+            return Err(src.to_string());
+        }
+        let inner = &effects_src[1..effects_src.len() - 1];
+        let effects = if inner.trim().is_empty() {
+            vec![]
+        } else {
+            split_top_level(inner, ',')?
+                .into_iter()
+                .map(|part| {
+                    let name = part.trim();
+                    if name.is_empty() {
+                        Err(src.to_string())
+                    } else {
+                        Ok(name.to_string())
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        Ok((ret_src, effects))
+    } else {
+        Ok((src.trim(), vec![]))
+    }
+}
+
+fn find_matching_paren(s: &str, open_idx: usize) -> Option<usize> {
+    if s.as_bytes().get(open_idx).copied() != Some(b'(') {
+        return None;
+    }
+    let mut depth = 1usize;
+    for (i, ch) in s.char_indices().skip(open_idx + 1) {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn find_top_level_bang(s: &str) -> Option<usize> {
+    let mut angle = 0usize;
+    let mut paren = 0usize;
+    let mut bracket = 0usize;
+
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '<' => angle += 1,
+            '>' => angle = angle.saturating_sub(1),
+            '(' => paren += 1,
+            ')' => paren = paren.saturating_sub(1),
+            '[' => bracket += 1,
+            ']' => bracket = bracket.saturating_sub(1),
+            '!' if angle == 0 && paren == 0 && bracket == 0 => return Some(i),
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn split_top_level<'a>(s: &'a str, delimiter: char) -> Result<Vec<&'a str>, String> {
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut angle = 0usize;
+    let mut paren = 0usize;
+    let mut bracket = 0usize;
+
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '<' => angle += 1,
+            '>' => {
+                if angle == 0 {
+                    return Err(s.to_string());
+                }
+                angle -= 1;
+            }
+            '(' => paren += 1,
+            ')' => {
+                if paren == 0 {
+                    return Err(s.to_string());
+                }
+                paren -= 1;
+            }
+            '[' => bracket += 1,
+            ']' => {
+                if bracket == 0 {
+                    return Err(s.to_string());
+                }
+                bracket -= 1;
+            }
+            _ if ch == delimiter && angle == 0 && paren == 0 && bracket == 0 => {
+                out.push(&s[start..i]);
+                start = i + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+
+    if angle != 0 || paren != 0 || bracket != 0 {
+        return Err(s.to_string());
+    }
+    out.push(&s[start..]);
+    Ok(out)
+}
+
 /// If `s` starts with `prefix` and ends with `suffix`, return the middle part.
 fn strip_wrapper<'a>(s: &'a str, prefix: &str, suffix: &str) -> Option<&'a str> {
     if s.starts_with(prefix) && s.ends_with(suffix) {
@@ -166,16 +343,18 @@ fn strip_wrapper<'a>(s: &'a str, prefix: &str, suffix: &str) -> Option<&'a str> 
 
 /// Split a string on the first top-level comma (depth=0), returning the two sides.
 fn split_top_level_comma(s: &str) -> Option<(&str, &str)> {
-    let mut depth = 0usize;
+    let mut angle = 0usize;
+    let mut paren = 0usize;
+    let mut bracket = 0usize;
     for (i, ch) in s.char_indices() {
         match ch {
-            '<' => depth += 1,
-            '>' => {
-                if depth > 0 {
-                    depth -= 1;
-                }
-            }
-            ',' if depth == 0 => {
+            '<' => angle += 1,
+            '>' => angle = angle.saturating_sub(1),
+            '(' => paren += 1,
+            ')' => paren = paren.saturating_sub(1),
+            '[' => bracket += 1,
+            ']' => bracket = bracket.saturating_sub(1),
+            ',' if angle == 0 && paren == 0 && bracket == 0 => {
                 return Some((&s[..i], &s[i + 1..]));
             }
             _ => {}
@@ -241,6 +420,35 @@ mod tests {
     }
 
     #[test]
+    fn test_function_type_parsing() {
+        assert_eq!(
+            parse_type_str_strict("Fn(Int, String) -> Bool").unwrap(),
+            Type::Fn(vec![Type::Int, Type::Str], Box::new(Type::Bool), vec![])
+        );
+        assert_eq!(
+            parse_type_str_strict("Fn(Int) -> Int ! [Console]").unwrap(),
+            Type::Fn(
+                vec![Type::Int],
+                Box::new(Type::Int),
+                vec!["Console".to_string()]
+            )
+        );
+    }
+
+    #[test]
+    fn test_function_effect_compatibility_subset() {
+        let pure = Type::Fn(vec![Type::Int], Box::new(Type::Int), vec![]);
+        let console = Type::Fn(
+            vec![Type::Int],
+            Box::new(Type::Int),
+            vec!["Console".to_string()],
+        );
+
+        assert!(pure.compatible(&console));
+        assert!(!console.compatible(&pure));
+    }
+
+    #[test]
     fn test_strict_parser_accepts_valid_generics() {
         assert_eq!(
             parse_type_str_strict("Result<Int, String>").unwrap(),
@@ -278,5 +486,7 @@ mod tests {
     fn test_strict_parser_rejects_malformed_generics() {
         assert!(parse_type_str_strict("Result<Int>").is_err());
         assert!(parse_type_str_strict("Option<Int, String>").is_err());
+        assert!(parse_type_str_strict("Fn(Int) Int").is_err());
+        assert!(parse_type_str_strict("Fn(Int) -> ! [Console]").is_err());
     }
 }

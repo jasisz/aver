@@ -524,7 +524,39 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> Result<String, ParseError> {
-        let base = match &self.current().kind {
+        // Function type annotation: Fn(A, B) -> C ! [Effect]
+        if let TokenKind::Ident(name) = &self.current().kind {
+            if name == "Fn" && matches!(self.peek(1).kind, TokenKind::LParen) {
+                self.advance(); // Fn
+                self.expect_exact(&TokenKind::LParen)?;
+
+                let mut params = Vec::new();
+                while !self.check_exact(&TokenKind::RParen) && !self.is_eof() {
+                    if self.check_exact(&TokenKind::Comma) {
+                        self.advance();
+                        continue;
+                    }
+                    params.push(self.parse_type()?);
+                    if self.check_exact(&TokenKind::Comma) {
+                        self.advance();
+                    }
+                }
+                self.expect_exact(&TokenKind::RParen)?;
+                self.expect_exact(&TokenKind::Arrow)?;
+
+                let ret = self.parse_type()?;
+                let mut out = format!("Fn({}) -> {}", params.join(", "), ret);
+
+                if self.check_exact(&TokenKind::Bang) {
+                    self.advance(); // !
+                    let effects = self.parse_effect_ident_list()?;
+                    out.push_str(&format!(" ! [{}]", effects.join(", ")));
+                }
+                return Ok(out);
+            }
+        }
+
+        let mut base = match &self.current().kind {
             TokenKind::Ident(s) => {
                 let s = s.clone();
                 self.advance();
@@ -555,55 +587,47 @@ impl Parser {
         };
 
         if self.check_exact(&TokenKind::Lt) {
-            self.advance();
-            let mut generic_parts = vec![base, "<".to_string()];
-            let mut depth = 1usize;
-            let start_tok = self.current().clone();
-
-            while depth > 0 && !self.is_eof() {
-                match &self.current().kind {
-                    TokenKind::Lt => {
-                        depth += 1;
-                        generic_parts.push("<".to_string());
-                        self.advance();
-                    }
-                    TokenKind::Gt => {
-                        depth -= 1;
-                        if depth > 0 {
-                            generic_parts.push(">".to_string());
-                        }
-                        self.advance();
-                    }
-                    TokenKind::Comma => {
-                        generic_parts.push(", ".to_string());
-                        self.advance();
-                    }
-                    TokenKind::Ident(s) => {
-                        generic_parts.push(s.clone());
-                        self.advance();
-                    }
-                    _ => {
-                        return Err(self.error(format!(
-                            "Unexpected token in generic type: {:?}",
-                            self.current().kind
-                        )));
-                    }
+            self.advance(); // <
+            let mut args = Vec::new();
+            while !self.check_exact(&TokenKind::Gt) && !self.is_eof() {
+                if self.check_exact(&TokenKind::Comma) {
+                    self.advance();
+                    continue;
+                }
+                args.push(self.parse_type()?);
+                if self.check_exact(&TokenKind::Comma) {
+                    self.advance();
                 }
             }
-
-            if depth != 0 {
-                return Err(ParseError::Error {
-                    msg: "Unterminated generic type annotation".to_string(),
-                    line: start_tok.line,
-                    col: start_tok.col,
-                });
-            }
-
-            generic_parts.push(">".to_string());
-            return Ok(generic_parts.join(""));
+            self.expect_exact(&TokenKind::Gt)?;
+            base = format!("{}<{}>", base, args.join(", "));
         }
 
         Ok(base)
+    }
+
+    fn parse_effect_ident_list(&mut self) -> Result<Vec<String>, ParseError> {
+        self.expect_exact(&TokenKind::LBracket)?;
+        let mut effects = Vec::new();
+        while !self.check_exact(&TokenKind::RBracket) && !self.is_eof() {
+            match self.current().kind.clone() {
+                TokenKind::Ident(s) => {
+                    effects.push(s);
+                    self.advance();
+                }
+                TokenKind::Comma => {
+                    self.advance();
+                }
+                _ => {
+                    return Err(self.error(format!(
+                        "Expected effect name in type annotation, found {:?}",
+                        self.current().kind
+                    )));
+                }
+            }
+        }
+        self.expect_exact(&TokenKind::RBracket)?;
+        Ok(effects)
     }
 
     fn parse_fn_body(&mut self) -> Result<(Option<Expr>, Vec<Stmt>), ParseError> {

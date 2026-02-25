@@ -122,6 +122,18 @@ fn valid_call_chain() {
 }
 
 #[test]
+fn valid_higher_order_function_param_call() {
+    let src = "fn applyTwice(f: Fn(Int) -> Int, x: Int) -> Int\n    = f(f(x))\nfn inc(n: Int) -> Int\n    = n + 1\nfn main() -> Unit\n    val r = applyTwice(inc, 10)\n";
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_pure_callback_for_effectful_slot() {
+    let src = "fn applyOnce(f: Fn(Int) -> Int ! [Console], x: Int) -> Int\n    ! [Console]\n    = f(x)\nfn pureInc(n: Int) -> Int\n    = n + 1\nfn main() -> Unit\n    ! [Console]\n    val r = applyOnce(pureInc, 10)\n";
+    assert_no_errors(src);
+}
+
+#[test]
 fn valid_var_reassignment() {
     assert_no_errors("fn f() -> Unit\n    var x = 0\n    x = 5\n");
 }
@@ -191,6 +203,12 @@ fn error_arg_type_mismatch_string_for_int() {
 }
 
 #[test]
+fn error_effectful_callback_passed_to_pure_slot() {
+    let src = "fn applyPure(f: Fn(Int) -> Int, x: Int) -> Int\n    = f(x)\nfn logInc(n: Int) -> Int\n    ! [Console]\n    print(n)\n    n + 1\nfn main() -> Unit\n    ! [Console]\n    val r = applyPure(logInc, 1)\n";
+    assert_error_containing(src, "Fn(Int) -> Int ! [Console]");
+}
+
+#[test]
 fn error_unknown_type_annotation() {
     // Capitalized typos are now parsed as Named types; the error surfaces as a type mismatch
     // (body returns Named("Intger") but declared return is Unit)
@@ -240,6 +258,12 @@ fn error_undeclared_effect() {
     let src =
         "fn log(msg: String) -> Unit\n    ! [Io]\n    = print(msg)\nfn caller(x: String) -> Unit\n    = log(x)\n";
     assert_error_containing(src, "Io");
+}
+
+#[test]
+fn error_undeclared_effect_from_function_typed_callback() {
+    let src = "fn applyOnce(f: Fn(Int) -> Int ! [Console], x: Int) -> Int\n    = f(x)\nfn pureInc(n: Int) -> Int\n    = n + 1\n";
+    assert_error_containing(src, "has effect 'Console'");
 }
 
 // ---------------------------------------------------------------------------

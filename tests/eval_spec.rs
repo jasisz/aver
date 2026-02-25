@@ -571,6 +571,24 @@ fn fold_sum() {
     assert_eq!(result, Value::Int(10));
 }
 
+#[test]
+fn higher_order_apply_twice_with_function_typed_param() {
+    let src = "fn applyTwice(f: Fn(Int) -> Int, x: Int) -> Int\n    = f(f(x))\nfn inc(n: Int) -> Int\n    = n + 1\n";
+    let items = parse(src);
+    let mut interp = Interpreter::new();
+    for item in &items {
+        if let TopLevel::FnDef(fd) = item {
+            interp.exec_fn_def(fd).unwrap();
+        }
+    }
+    let apply_fn = interp.lookup("applyTwice").unwrap();
+    let inc_fn = interp.lookup("inc").unwrap();
+    let result = interp
+        .call_value_pub(apply_fn, vec![inc_fn, Value::Int(10)])
+        .unwrap();
+    assert_eq!(result, Value::Int(12));
+}
+
 // ---------------------------------------------------------------------------
 // Error propagation operator ?
 // ---------------------------------------------------------------------------

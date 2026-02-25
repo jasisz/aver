@@ -88,6 +88,32 @@ impl TypeChecker {
         );
     }
 
+    fn fn_type_from_sig(sig: &FnSig) -> Type {
+        Type::Fn(
+            sig.params.clone(),
+            Box::new(sig.ret.clone()),
+            sig.effects.clone(),
+        )
+    }
+
+    fn sig_from_callable_type(ty: &Type) -> Option<FnSig> {
+        match ty {
+            Type::Fn(params, ret, effects) => Some(FnSig {
+                params: params.clone(),
+                ret: (*ret.clone()),
+                effects: effects.clone(),
+            }),
+            _ => None,
+        }
+    }
+
+    fn binding_type(&self, name: &str) -> Option<Type> {
+        self.locals
+            .get(name)
+            .or_else(|| self.globals.get(name))
+            .map(|(ty, _)| ty.clone())
+    }
+
     // -----------------------------------------------------------------------
     // Builtin signatures
     // -----------------------------------------------------------------------
@@ -564,6 +590,22 @@ impl TypeChecker {
         }
     }
 
+    fn callable_effects(&self, fn_expr: &Expr) -> Option<(String, Vec<String>)> {
+        if let Some(callee_name) = Self::callee_key(fn_expr) {
+            if let Some(callee_sig) = self.fn_sigs.get(&callee_name) {
+                return Some((callee_name, callee_sig.effects.clone()));
+            }
+        }
+        if let Expr::Ident(name) = fn_expr {
+            if let Some(ty) = self.binding_type(name) {
+                if let Type::Fn(_, _, effects) = ty {
+                    return Some((name.clone(), effects));
+                }
+            }
+        }
+        None
+    }
+
     fn check_effects_in_expr(&mut self, expr: &Expr, caller_name: &str, caller_effects: &[String]) {
         // main() is the top-level effect boundary — it is exempt from effect propagation checks
         if caller_name == "main" {
@@ -571,15 +613,13 @@ impl TypeChecker {
         }
         match expr {
             Expr::FnCall(fn_expr, args) => {
-                if let Some(callee_name) = Self::callee_key(fn_expr) {
-                    if let Some(callee_sig) = self.fn_sigs.get(&callee_name).cloned() {
-                        for effect in &callee_sig.effects {
-                            if !caller_effects.contains(effect) {
-                                self.error(format!(
-                                    "Function '{}' calls '{}' which has effect '{}', but '{}' does not declare it",
-                                    caller_name, callee_name, effect, caller_name
-                                ));
-                            }
+                if let Some((callee_name, effects)) = self.callable_effects(fn_expr) {
+                    for effect in &effects {
+                        if !caller_effects.contains(effect) {
+                            self.error(format!(
+                                "Function '{}' calls '{}' which has effect '{}', but '{}' does not declare it",
+                                caller_name, callee_name, effect, caller_name
+                            ));
                         }
                     }
                 }
@@ -595,15 +635,13 @@ impl TypeChecker {
             Expr::Pipe(left, right) => {
                 self.check_effects_in_expr(left, caller_name, caller_effects);
                 // x |> f counts as calling f — check f's effects
-                if let Some(callee_name) = Self::callee_key(right) {
-                    if let Some(callee_sig) = self.fn_sigs.get(&callee_name).cloned() {
-                        for effect in &callee_sig.effects {
-                            if !caller_effects.contains(effect) {
-                                self.error(format!(
-                                    "Function '{}' pipes into '{}' which has effect '{}', but '{}' does not declare it",
-                                    caller_name, callee_name, effect, caller_name
-                                ));
-                            }
+                if let Some((callee_name, effects)) = self.callable_effects(right) {
+                    for effect in &effects {
+                        if !caller_effects.contains(effect) {
+                            self.error(format!(
+                                "Function '{}' pipes into '{}' which has effect '{}', but '{}' does not declare it",
+                                caller_name, callee_name, effect, caller_name
+                            ));
                         }
                     }
                 }
@@ -656,7 +694,7 @@ impl TypeChecker {
                 if let Some((ty, _)) = self.locals.get(name) {
                     ty.clone()
                 } else if let Some(sig) = self.fn_sigs.get(name) {
-                    sig.ret.clone()
+                    Self::fn_type_from_sig(sig)
                 } else {
                     self.error(format!("Unknown identifier '{}'", name));
                     Type::Any
@@ -697,22 +735,36 @@ impl TypeChecker {
                 if let Expr::Ident(name) = fn_expr.as_ref() {
                     if let Some(sig) = self.fn_sigs.get(name).cloned() {
                         return check_call(self, name, sig);
-                    } else {
-                        self.error(format!("Call to unknown function '{}'", name));
                     }
-                } else if let Expr::Attr(inner_expr, field) = fn_expr.as_ref() {
-                    // Qualified constructor call: Shape.Circle(5.0)
-                    if let Expr::Ident(type_name) = inner_expr.as_ref() {
-                        let key = format!("{}.{}", type_name, field);
-                        if let Some(sig) = self.fn_sigs.get(&key).cloned() {
-                            return check_call(self, &key, sig);
+                    if let Some(binding_ty) = self.binding_type(name) {
+                        if let Some(sig) = Self::sig_from_callable_type(&binding_ty) {
+                            return check_call(self, name, sig);
                         }
+                        self.error(format!(
+                            "Cannot call '{}': expected function, got {}",
+                            name,
+                            binding_ty.display()
+                        ));
+                        return Type::Any;
                     }
-                    let _ = self.infer_type(fn_expr);
-                } else {
-                    let _ = self.infer_type(fn_expr);
+                    self.error(format!("Call to unknown function '{}'", name));
+                    return Type::Any;
                 }
-                // Unknown function — infer return type as Any
+
+                if let Some(display_name) = Self::callee_key(fn_expr) {
+                    if let Some(sig) = self.fn_sigs.get(&display_name).cloned() {
+                        return check_call(self, &display_name, sig);
+                    }
+                }
+
+                let callee_ty = self.infer_type(fn_expr);
+                if let Some(sig) = Self::sig_from_callable_type(&callee_ty) {
+                    return check_call(self, "<fn value>", sig);
+                }
+
+                if !matches!(callee_ty, Type::Any) {
+                    self.error(format!("Cannot call value of type {}", callee_ty.display()));
+                }
                 Type::Any
             }
 
@@ -803,9 +855,10 @@ impl TypeChecker {
                 }
             }
 
-            Expr::Pipe(_, right) => {
-                // Type of a pipe is the return type of the right-hand function
-                self.infer_type(right)
+            Expr::Pipe(left, right) => {
+                // x |> f is equivalent to f(x)
+                let call = Expr::FnCall(Box::new((**right).clone()), vec![(**left).clone()]);
+                self.infer_type(&call)
             }
 
             Expr::ErrorProp(inner) => {
@@ -847,7 +900,13 @@ impl TypeChecker {
                 }
             }
 
-            Expr::Attr(obj, _) => {
+            Expr::Attr(obj, field) => {
+                if let Expr::Ident(parent) = obj.as_ref() {
+                    let key = format!("{}.{}", parent, field);
+                    if let Some(sig) = self.fn_sigs.get(&key) {
+                        return Self::fn_type_from_sig(sig);
+                    }
+                }
                 let obj_ty = self.infer_type(obj);
                 match obj_ty {
                     Type::Named(_) => Type::Any,

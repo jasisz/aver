@@ -190,6 +190,41 @@ fn fn_result_return_type() {
     }
 }
 
+#[test]
+fn fn_with_function_typed_param() {
+    let src = "fn applyTwice(f: Fn(Int) -> Int, x: Int) -> Int\n    = f(f(x))\n";
+    let items = parse(src);
+    if let TopLevel::FnDef(fd) = &items[0] {
+        assert_eq!(
+            fd.params,
+            vec![
+                ("f".to_string(), "Fn(Int) -> Int".to_string()),
+                ("x".to_string(), "Int".to_string())
+            ]
+        );
+    } else {
+        panic!("expected FnDef");
+    }
+}
+
+#[test]
+fn fn_with_effectful_function_typed_param() {
+    let src =
+        "fn apply(f: Fn(Int) -> Int ! [Console], x: Int) -> Int\n    ! [Console]\n    = f(x)\n";
+    let items = parse(src);
+    if let TopLevel::FnDef(fd) = &items[0] {
+        assert_eq!(
+            fd.params,
+            vec![
+                ("f".to_string(), "Fn(Int) -> Int ! [Console]".to_string()),
+                ("x".to_string(), "Int".to_string())
+            ]
+        );
+    } else {
+        panic!("expected FnDef");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Expressions
 // ---------------------------------------------------------------------------
