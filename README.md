@@ -61,6 +61,8 @@ Aver isn't for moving fast and breaking things. It's for building systems that s
 
 Primitive types: `Int`, `Float`, `String`, `Bool`, `Unit`
 Compound types: `Result<T, E>`, `Option<T>`, `List<T>`
+User-defined sum types: `type Shape` with variants `Shape.Circle(Float)`, `Shape.Rect(Float, Float)`, `Shape.Point`
+User-defined product types: `record User` with named fields, field access `u.name`
 Escape hatch: `Any` — compatible with everything, opt-in only
 
 Type errors block `run`, `check`, and `verify`. The checker runs before a single line executes.
@@ -108,13 +110,16 @@ Requires: Rust stable toolchain.
 | `hello.av` | Functions, string interpolation, pipe, verify |
 | `calculator.av` | Result types, match, decision blocks |
 | `lists.av` | List literals, map / filter / fold |
+| `shapes.av` | Sum types, qualified constructors (`Shape.Circle`), match on variants |
+| `user_record.av` | Record types, field access, positional match |
+| `fibonacci.av` | Tail recursion, records (`FibStats`), single-pass accumulator, decision blocks |
 | `decisions.av` | Decision blocks as first-class constructs |
 | `architecture.av` | The interpreter documents itself in Aver — [see it](examples/architecture.av) |
 | `type_errors.av` | Intentional type errors; shows what the checker catches |
 
 ## Project status
 
-Implemented in Rust. 204 tests, zero warnings.
+Implemented in Rust, zero warnings.
 
 - [x] Lexer with significant indentation (Python-style INDENT/DEDENT)
 - [x] Recursive-descent parser — no libraries, hand-written
@@ -123,7 +128,8 @@ Implemented in Rust. 204 tests, zero warnings.
 - [x] `verify` block runner — co-located tests
 - [x] `decision` block indexer — queryable ADRs
 - [x] List builtins: `map`, `filter`, `fold`, `get`, `head`, `tail`, `push`
+- [x] User-defined sum types (`type`) with qualified constructors (`Shape.Circle`)
+- [x] User-defined product types (`record`) with field access and positional match
 - [ ] List pattern matching (`[]`, `[h, ..t]`)
-- [ ] User-defined types (`type` keyword)
 - [ ] Module imports at runtime
 - [ ] AI context export — semantic maps to JSON/Markdown for LLM context windows
