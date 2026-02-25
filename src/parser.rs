@@ -143,6 +143,7 @@ impl Parser {
             TokenKind::Decision => Ok(Some(TopLevel::Decision(self.parse_decision()?))),
             TokenKind::Type => Ok(Some(TopLevel::TypeDef(self.parse_sum_type_def()?))),
             TokenKind::Record => Ok(Some(TopLevel::TypeDef(self.parse_record_def()?))),
+            TokenKind::Effects => Ok(Some(self.parse_effect_set()?)),
             TokenKind::Val => {
                 let stmt = self.parse_val()?;
                 Ok(Some(TopLevel::Stmt(stmt)))
@@ -166,6 +167,33 @@ impl Parser {
                 Ok(Some(TopLevel::Stmt(Stmt::Expr(expr))))
             }
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Effect set: `effects AppIO = [Console, Disk]`
+    // -------------------------------------------------------------------------
+    fn parse_effect_set(&mut self) -> Result<TopLevel, ParseError> {
+        self.expect_exact(&TokenKind::Effects)?;
+        let name_tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected effect set name")?;
+        let name = match name_tok.kind {
+            TokenKind::Ident(s) => s,
+            _ => unreachable!(),
+        };
+        self.expect_exact(&TokenKind::Assign)?;
+        self.expect_exact(&TokenKind::LBracket)?;
+        let mut effects = Vec::new();
+        while !matches!(self.current().kind, TokenKind::RBracket | TokenKind::Eof) {
+            let tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected effect name")?;
+            if let TokenKind::Ident(eff) = tok.kind {
+                effects.push(eff);
+            }
+            if matches!(self.current().kind, TokenKind::Comma) {
+                self.advance();
+            }
+        }
+        self.expect_exact(&TokenKind::RBracket)?;
+        self.skip_newlines();
+        Ok(TopLevel::EffectSet { name, effects })
     }
 
     // -------------------------------------------------------------------------

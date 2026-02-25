@@ -460,3 +460,42 @@ fn valid_function_using_user_type_parameter() {
     );
     assert_no_errors(src);
 }
+
+#[test]
+fn valid_effect_set_alias_satisfies_effect() {
+    // Function declares ! [AppIO] where AppIO = [Console] — should pass
+    let src = concat!(
+        "effects AppIO = [Console]\n",
+        "fn greet() -> Unit\n",
+        "    ! [AppIO]\n",
+        "    print(\"hi\")\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_effect_set_multi_alias() {
+    // AppIO covers both Console and Disk — caller with AppIO can call both
+    let src = concat!(
+        "effects AppIO = [Console]\n",
+        "fn log(msg: String) -> Unit\n",
+        "    ! [Console]\n",
+        "    print(msg)\n",
+        "fn process() -> Unit\n",
+        "    ! [AppIO]\n",
+        "    log(\"processing\")\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn error_effect_set_alias_insufficient() {
+    // Function declares ! [Silent] where Silent = [] — calling print should fail
+    let src = concat!(
+        "effects Silent = []\n",
+        "fn greet() -> Unit\n",
+        "    ! [Silent]\n",
+        "    print(\"hi\")\n",
+    );
+    assert_error_containing(src, "has effect 'Console'");
+}

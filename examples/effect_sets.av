@@ -1,0 +1,21 @@
+module EffectSets
+    intent:
+        "Demonstrates named effect sets — aliases for groups of effects."
+
+effects AppIO = [Console]
+
+fn greet(name: String) -> Unit
+    ? "Prints a greeting. Declares AppIO instead of listing Console directly."
+    ! [AppIO]
+    print("Hello, {name}!")
+
+fn farewell(name: String) -> Unit
+    ? "Prints a farewell. Also uses AppIO alias."
+    ! [AppIO]
+    print("Goodbye, {name}!")
+
+fn main() -> Unit
+    ! [Console]
+    greet("Ada")
+    farewell("Ada")
+

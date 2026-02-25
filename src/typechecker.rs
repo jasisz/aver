@@ -49,6 +49,8 @@ struct TypeChecker {
     fn_sigs: HashMap<String, FnSig>,
     module_sig_cache: HashMap<String, Vec<(String, FnSig)>>,
     value_members: HashMap<String, Type>,
+    /// Named effect aliases: `effects AppIO = [Console, Disk]`
+    effect_aliases: HashMap<String, Vec<String>>,
     /// Top-level bindings visible from function bodies.
     globals: HashMap<String, (Type, bool)>,
     /// name → (type, is_mutable)
@@ -64,6 +66,7 @@ impl TypeChecker {
             fn_sigs: HashMap::new(),
             module_sig_cache: HashMap::new(),
             value_members: HashMap::new(),
+            effect_aliases: HashMap::new(),
             globals: HashMap::new(),
             locals: HashMap::new(),
             errors: Vec::new(),
@@ -71,6 +74,27 @@ impl TypeChecker {
         };
         tc.register_builtins();
         tc
+    }
+
+    /// Expand a list of effect names, resolving any aliases one level deep.
+    fn expand_effects(&self, effects: &[String]) -> Vec<String> {
+        let mut result = Vec::new();
+        for e in effects {
+            if let Some(expanded) = self.effect_aliases.get(e) {
+                result.extend(expanded.iter().cloned());
+            } else {
+                result.push(e.clone());
+            }
+        }
+        result
+    }
+
+    /// Check whether `required_effect` is satisfied by `caller_effects` (with alias expansion).
+    fn caller_has_effect(&self, caller_effects: &[String], required_effect: &str) -> bool {
+        let expanded_caller = self.expand_effects(caller_effects);
+        // Also expand the required effect (in case it's itself an alias)
+        let expanded_required = self.expand_effects(&[required_effect.to_string()]);
+        expanded_required.iter().all(|e| expanded_caller.contains(e))
     }
 
     fn error(&mut self, msg: impl Into<String>) {
@@ -180,6 +204,14 @@ impl TypeChecker {
     // Phase 1 — build signature table from program FnDefs
     // -----------------------------------------------------------------------
     fn build_signatures(&mut self, items: &[TopLevel]) {
+        // Pass A: collect effect aliases so they can be expanded in function sigs below
+        for item in items {
+            if let TopLevel::EffectSet { name, effects } = item {
+                self.effect_aliases.insert(name.clone(), effects.clone());
+            }
+        }
+
+        // Pass B: register function signatures and type defs
         for item in items {
             match item {
                 TopLevel::FnDef(f) => {
@@ -206,14 +238,9 @@ impl TypeChecker {
                             Type::Any
                         }
                     };
-                    self.fn_sigs.insert(
-                        f.name.clone(),
-                        FnSig {
-                            params,
-                            ret,
-                            effects: f.effects.clone(),
-                        },
-                    );
+                    // Expand effect aliases so effect checking works with concrete names
+                    let effects = self.expand_effects(&f.effects);
+                    self.fn_sigs.insert(f.name.clone(), FnSig { params, ret, effects });
                 }
                 TopLevel::TypeDef(td) => {
                     self.register_type_def_sigs(td);
@@ -653,7 +680,7 @@ impl TypeChecker {
             Expr::FnCall(fn_expr, args) => {
                 if let Some((callee_name, effects)) = self.callable_effects(fn_expr) {
                     for effect in &effects {
-                        if !caller_effects.contains(effect) {
+                        if !self.caller_has_effect(caller_effects, effect) {
                             self.error(format!(
                                 "Function '{}' calls '{}' which has effect '{}', but '{}' does not declare it",
                                 caller_name, callee_name, effect, caller_name
@@ -675,7 +702,7 @@ impl TypeChecker {
                 // x |> f counts as calling f — check f's effects
                 if let Some((callee_name, effects)) = self.callable_effects(right) {
                     for effect in &effects {
-                        if !caller_effects.contains(effect) {
+                        if !self.caller_has_effect(caller_effects, effect) {
                             self.error(format!(
                                 "Function '{}' pipes into '{}' which has effect '{}', but '{}' does not declare it",
                                 caller_name, callee_name, effect, caller_name

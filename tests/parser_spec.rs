@@ -731,3 +731,25 @@ fn parse_user_defined_constructor_pattern() {
         panic!("expected FnDef");
     }
 }
+
+#[test]
+fn effect_set_single() {
+    let items = parse("effects AppIO = [Console]");
+    if let TopLevel::EffectSet { name, effects } = &items[0] {
+        assert_eq!(name, "AppIO");
+        assert_eq!(effects, &["Console"]);
+    } else {
+        panic!("expected EffectSet, got {:?}", items[0]);
+    }
+}
+
+#[test]
+fn effect_set_multiple() {
+    let items = parse("effects AppIO = [Console, Disk, Network]");
+    if let TopLevel::EffectSet { name, effects } = &items[0] {
+        assert_eq!(name, "AppIO");
+        assert_eq!(effects, &["Console", "Disk", "Network"]);
+    } else {
+        panic!("expected EffectSet");
+    }
+}

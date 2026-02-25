@@ -133,7 +133,14 @@ fn cmd_run(file: &str, run_verify_blocks: bool) {
         process::exit(1);
     }
 
-    // Register type definitions (constructors) first
+    // Register effect sets first (needed before FnDef expansion)
+    for item in &items {
+        if let TopLevel::EffectSet { name, effects } = item {
+            interp.register_effect_set(name.clone(), effects.clone());
+        }
+    }
+
+    // Register type definitions (constructors)
     for item in &items {
         if let TopLevel::TypeDef(td) = item {
             interp.register_type_def(td);
@@ -302,7 +309,14 @@ fn cmd_verify(file: &str) {
         process::exit(1);
     }
 
-    // Register type definitions (constructors) first
+    // Register effect sets first (needed before FnDef expansion)
+    for item in &items {
+        if let TopLevel::EffectSet { name, effects } = item {
+            interp.register_effect_set(name.clone(), effects.clone());
+        }
+    }
+
+    // Register type definitions (constructors)
     for item in &items {
         if let TopLevel::TypeDef(td) = item {
             interp.register_type_def(td);

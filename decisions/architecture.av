@@ -81,11 +81,23 @@ decision RecordsAreDataMethodsInModules:
     rejected: [RecordMethods, ImplicitThis]
     impacts: [TypeSystem, RecordModel, ModuleNamespaces]
 
+decision EffectContractsAreTransparentAcrossModules:
+    date: "2026-02-25"
+    author: "Aver core team"
+    reason:
+        "Current Aver model keeps module imports and capability effects as two explicit contracts."
+        "`depends [X]` controls which module code is visible, while `! [Effect]` controls which side effects a function may use."
+        "Effect requirements propagate through cross-module calls, so callers must declare the effects required by imported functions."
+    chosen: TransparentAcrossModules
+    rejected: [OpaqueModuleContracts, ImplicitModuleCapabilities]
+    impacts: [ModuleSystem, Effects, TypeChecker, RuntimeGate]
+
 fn describeDecision(decName: String, pick: String) -> String
     ? "Formats a one-line summary of an architectural decision."
     = "Decision: {decName} -> chosen: {pick}"
 
 fn main() -> Unit
+    ! [Console]
     print("=== Aver Architecture ===")
     print("")
     print(describeDecision("HostLanguage", "Rust"))
@@ -95,6 +107,7 @@ fn main() -> Unit
     print(describeDecision("DecisionBlocksAsLanguageFeature", "FirstClassDecisions"))
     print(describeDecision("TreeWalkingInterpreter", "TreeWalker"))
     print(describeDecision("RecordsAreDataMethodsInModules", "DataOnlyRecords"))
+    print(describeDecision("EffectContractsAreTransparentAcrossModules", "TransparentAcrossModules"))
     print("")
     print("Run: cargo run -- decisions decisions/architecture.av")
 

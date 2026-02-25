@@ -124,6 +124,8 @@ pub struct Interpreter {
     pub env: Env,
     module_cache: HashMap<String, Value>,
     call_stack: Vec<CallFrame>,
+    /// Named effect aliases: `effects AppIO = [Console, Disk]`
+    effect_aliases: HashMap<String, Vec<String>>,
 }
 
 impl Interpreter {
@@ -154,7 +156,26 @@ impl Interpreter {
             env: vec![global],
             module_cache: HashMap::new(),
             call_stack: Vec::new(),
+            effect_aliases: HashMap::new(),
         }
+    }
+
+    /// Register a named effect set alias.
+    pub fn register_effect_set(&mut self, name: String, effects: Vec<String>) {
+        self.effect_aliases.insert(name, effects);
+    }
+
+    /// Expand effect names one level: aliases → concrete effect names.
+    fn expand_effects(&self, effects: &[String]) -> Vec<String> {
+        let mut result = Vec::new();
+        for e in effects {
+            if let Some(expanded) = self.effect_aliases.get(e) {
+                result.extend(expanded.iter().cloned());
+            } else {
+                result.push(e.clone());
+            }
+        }
+        result
     }
 
     // -------------------------------------------------------------------------
@@ -736,6 +757,9 @@ impl Interpreter {
                 TopLevel::Verify(_) => {}
                 TopLevel::Decision(_) => {}
                 TopLevel::TypeDef(td) => self.register_type_def(td),
+                TopLevel::EffectSet { name, effects } => {
+                    self.register_effect_set(name.clone(), effects.clone());
+                }
                 TopLevel::Stmt(s) => {
                     self.exec_stmt(s)?;
                 }
@@ -797,7 +821,7 @@ impl Interpreter {
         let val = Value::Fn {
             name: fd.name.clone(),
             params: fd.params.clone(),
-            effects: fd.effects.clone(),
+            effects: self.expand_effects(&fd.effects),
             body: fd.body.clone(),
             closure,
         };
