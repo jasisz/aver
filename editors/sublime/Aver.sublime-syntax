@@ -1,0 +1,132 @@
+%YAML 1.2
+---
+name: Aver
+file_extensions: [av]
+scope: source.aver
+
+contexts:
+  main:
+    - include: comment
+    - include: description
+    - include: effects
+    - include: string
+    - include: number
+    - include: fn-def
+    - include: keywords
+    - include: builtin-types
+    - include: builtin-values
+    - include: services
+    - include: constructors
+    - include: operators
+
+  comment:
+    - match: '--.*$'
+      scope: comment.line.double-dash.aver
+
+  description:
+    # ? "prose description" on a function
+    - match: '^\s*(\?)\s*(")'
+      captures:
+        1: punctuation.definition.comment.aver
+        2: punctuation.definition.string.begin.aver
+      push:
+        - meta_scope: comment.block.documentation.aver
+        - match: '"'
+          scope: punctuation.definition.string.end.aver
+          pop: true
+
+  effects:
+    # ! [Network, Disk]
+    - match: '(!)\s*(\[)'
+      captures:
+        1: keyword.operator.effect.aver
+        2: punctuation.section.brackets.begin.aver
+      push:
+        - meta_scope: meta.effect-declaration.aver
+        - match: '\]'
+          scope: punctuation.section.brackets.end.aver
+          pop: true
+        - match: '[A-Z][a-zA-Z0-9]*'
+          scope: entity.name.type.effect.aver
+        - match: ','
+          scope: punctuation.separator.aver
+
+  string:
+    - match: '"'
+      scope: punctuation.definition.string.begin.aver
+      push:
+        - meta_scope: string.quoted.double.aver
+        - match: '"'
+          scope: punctuation.definition.string.end.aver
+          pop: true
+        - match: '\{'
+          scope: punctuation.section.interpolation.begin.aver
+          push:
+            - meta_scope: meta.interpolation.aver
+            - match: '\}'
+              scope: punctuation.section.interpolation.end.aver
+              pop: true
+            - include: main
+        - match: '\\.'
+          scope: constant.character.escape.aver
+
+  number:
+    - match: '\b[0-9]+\.[0-9]+\b'
+      scope: constant.numeric.float.aver
+    - match: '\b[0-9]+\b'
+      scope: constant.numeric.integer.aver
+
+  fn-def:
+    - match: '^\s*(fn)\s+([a-z_][a-zA-Z0-9_]*)'
+      captures:
+        1: keyword.declaration.function.aver
+        2: entity.name.function.aver
+
+  keywords:
+    - match: '\b(val|var|type|record|module|effects|depends|exposes)\b'
+      scope: keyword.declaration.aver
+    - match: '\b(match|verify|decision)\b'
+      scope: keyword.control.aver
+    - match: '^(\s*)(intent|reason|date|chosen|rejected|impacts|author|needs)(:)'
+      captures:
+        2: keyword.other.adr.aver
+        3: punctuation.separator.key-value.aver
+
+  builtin-types:
+    - match: '\b(Int|Float|String|Bool|Unit|Any|Result|Option|List|NetworkResponse|Header)\b'
+      scope: support.type.aver
+
+  builtin-values:
+    - match: '\b(true|false|Ok|Err|Some|None)\b'
+      scope: constant.language.aver
+
+  services:
+    # Console.print, Network.get, Disk.readText etc.
+    - match: '\b(Console|Network|Disk)(\.)'
+      captures:
+        1: support.class.service.aver
+        2: punctuation.accessor.aver
+      push:
+        - match: '[a-z][a-zA-Z0-9]*'
+          scope: support.function.service.aver
+          pop: true
+        - match: ''
+          pop: true
+
+  constructors:
+    # Type names and qualified constructors: Shape.Circle
+    - match: '\b([A-Z][a-zA-Z0-9]*)(\.)([A-Z][a-zA-Z0-9]*)\b'
+      captures:
+        1: entity.name.type.aver
+        2: punctuation.accessor.aver
+        3: entity.name.type.variant.aver
+    - match: '\b[A-Z][a-zA-Z0-9]*\b'
+      scope: entity.name.type.aver
+
+  operators:
+    - match: '->|=>|\|>'
+      scope: keyword.operator.arrow.aver
+    - match: '==|!=|<=|>=|<|>'
+      scope: keyword.operator.comparison.aver
+    - match: '[+\-*/]'
+      scope: keyword.operator.arithmetic.aver
