@@ -87,11 +87,57 @@ Type errors block `run`, `check`, and `verify`. The checker runs before a single
 ## CLI
 
 ```
-aver run       file.av    # type-check, then execute
-aver check     file.av    # type errors + intent/desc warnings
-aver verify    file.av    # run all verify blocks
-aver decisions file.av    # print all decision blocks
+aver run       file.av             # type-check, then execute
+aver check     file.av             # type errors + intent/desc warnings
+aver verify    file.av             # run all verify blocks
+aver decisions file.av             # print all decision blocks
+aver context   file.av             # export project context (Markdown)
+aver context   file.av --json      # export project context (JSON)
+aver context   file.av -o ctx.md   # write to file instead of stdout
+aver repl                          # interactive REPL
 ```
+
+## AI context export
+
+`aver context` traverses the dependency graph starting from an entry file and emits a compact summary of everything an LLM needs to understand the project — without seeing the full source.
+
+```bash
+aver context examples/calculator.av
+```
+
+```markdown
+# Aver Context — examples/calculator.av
+
+## Module: Calculator
+> Safe calculator demonstrating Result types, match expressions, and co-located verification.
+
+### `safeDivide(a: Int, b: Int) -> Result<Int, String>`
+> Safe integer division. Returns Err when divisor is zero.
+verify: `safeDivide(10, 2)` → `Ok(5)`, `safeDivide(7, 0)` → `Err("Division by zero")`
+
+---
+
+## Decisions
+
+### NoExceptions (2024-01-15)
+**Chosen:** Result — **Rejected:** Exceptions, Nullable
+> Exceptions make error paths invisible at the call site...
+```
+
+What it collects per file:
+
+| Field | Source |
+|-------|--------|
+| Module intent | `intent:` block |
+| Public function signatures | `fn` defs, filtered by `exposes [...]` |
+| Effect declarations | `! [Console, Disk]` on each function |
+| Prose descriptions | `? "..."` attached to functions |
+| Verify cases | up to 3 per function from `verify` blocks |
+| Type and record definitions | `type` / `record` |
+| Effect set aliases | `effects AppIO = [Console, Disk]` |
+| Architectural decisions | `decision` blocks from all reachable files |
+
+The result is typically 1–3 k tokens — enough context for an LLM to understand contracts, boundaries, and rationale without the full implementation.
 
 ## Getting started
 
@@ -141,4 +187,5 @@ Implemented in Rust, zero warnings.
 - [x] User-defined product types (`record`) with field access and positional match
 - [x] List pattern matching (`[]`, `[h, ..t]`)
 - [x] Module imports at runtime (`depends [Foo]`, `depends [Models.User]`)
-- [ ] AI context export — semantic maps to JSON/Markdown for LLM context windows
+- [x] AI context export — `aver context` emits Markdown or JSON from the dependency graph
+- [x] Interactive REPL — `aver repl` with persistent state, multi-line input, type-checking
