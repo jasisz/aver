@@ -32,6 +32,7 @@ pub enum Value {
     Fn {
         name: String,
         params: Vec<(String, String)>,
+        effects: Vec<String>,
         body: FnBody,
         closure: HashMap<String, Value>,
     },
@@ -113,9 +114,16 @@ pub fn aver_display(val: &Value) -> Option<String> {
 
 pub type Env = Vec<HashMap<String, Value>>;
 
+#[derive(Debug, Clone)]
+struct CallFrame {
+    name: String,
+    effects: Vec<String>,
+}
+
 pub struct Interpreter {
     pub env: Env,
     module_cache: HashMap<String, Value>,
+    call_stack: Vec<CallFrame>,
 }
 
 impl Interpreter {
@@ -130,7 +138,10 @@ impl Interpreter {
 
         // Service namespace for backwards-compatible console output.
         let mut console = HashMap::new();
-        console.insert("print".to_string(), Value::Builtin("print".to_string()));
+        console.insert(
+            "print".to_string(),
+            Value::Builtin("Console.print".to_string()),
+        );
         global.insert(
             "Console".to_string(),
             Value::Namespace {
@@ -142,6 +153,7 @@ impl Interpreter {
         Interpreter {
             env: vec![global],
             module_cache: HashMap::new(),
+            call_stack: Vec::new(),
         }
     }
 
@@ -393,9 +405,71 @@ impl Interpreter {
     // -------------------------------------------------------------------------
     // Builtins
     // -------------------------------------------------------------------------
+    fn builtin_effects(name: &str) -> &'static [&'static str] {
+        match name {
+            "print" | "Console.print" => &["Console"],
+            _ => &[],
+        }
+    }
+
+    fn current_allowed_effects(&self) -> &[String] {
+        self.call_stack
+            .last()
+            .map(|frame| frame.effects.as_slice())
+            .unwrap_or(&[])
+    }
+
+    fn runtime_chain_with(&self, callee_name: &str) -> String {
+        let mut chain = if self.call_stack.is_empty() {
+            vec!["<top-level>".to_string()]
+        } else {
+            self.call_stack
+                .iter()
+                .map(|frame| frame.name.clone())
+                .collect()
+        };
+        chain.push(callee_name.to_string());
+        chain.join(" -> ")
+    }
+
+    fn ensure_effects_allowed<'a, I>(
+        &self,
+        callee_name: &str,
+        required_effects: I,
+    ) -> Result<(), RuntimeError>
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
+        let allowed = self.current_allowed_effects();
+        let mut missing = Vec::new();
+        for effect in required_effects {
+            if !allowed.iter().any(|e| e == effect) {
+                missing.push(effect.to_string());
+            }
+        }
+
+        if missing.is_empty() {
+            return Ok(());
+        }
+
+        let caller = self
+            .call_stack
+            .last()
+            .map(|frame| frame.name.as_str())
+            .unwrap_or("<top-level>");
+        let chain = self.runtime_chain_with(callee_name);
+        Err(RuntimeError::Error(format!(
+            "Runtime effect violation: '{}' cannot call '{}' (missing effect(s): {}) [chain: {}]",
+            caller,
+            callee_name,
+            missing.join(", "),
+            chain
+        )))
+    }
+
     fn call_builtin(&mut self, name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
         match name {
-            "print" => {
+            "print" | "Console.print" => {
                 if args.len() != 1 {
                     return Err(RuntimeError::Error(format!(
                         "print() takes 1 argument, got {}",
@@ -723,6 +797,7 @@ impl Interpreter {
         let val = Value::Fn {
             name: fd.name.clone(),
             params: fd.params.clone(),
+            effects: fd.effects.clone(),
             body: fd.body.clone(),
             closure,
         };
@@ -889,10 +964,14 @@ impl Interpreter {
 
     fn call_value(&mut self, fn_val: Value, args: Vec<Value>) -> Result<Value, RuntimeError> {
         match fn_val {
-            Value::Builtin(name) => self.call_builtin(&name, args),
+            Value::Builtin(name) => {
+                self.ensure_effects_allowed(&name, Self::builtin_effects(&name).iter().copied())?;
+                self.call_builtin(&name, args)
+            }
             Value::Fn {
                 name,
                 params,
+                effects,
                 body,
                 closure,
             } => {
@@ -904,18 +983,24 @@ impl Interpreter {
                         args.len()
                     )));
                 }
+                self.ensure_effects_allowed(&name, effects.iter().map(String::as_str))?;
 
                 let mut new_env = closure;
                 for ((param_name, _), arg_val) in params.iter().zip(args.into_iter()) {
                     new_env.insert(param_name.clone(), arg_val);
                 }
 
+                self.call_stack.push(CallFrame {
+                    name: name.clone(),
+                    effects,
+                });
                 self.push_env(new_env);
                 let result = match &body {
                     FnBody::Expr(e) => self.eval_expr(e),
                     FnBody::Block(stmts) => self.exec_body(stmts),
                 };
                 self.pop_env();
+                self.call_stack.pop();
                 match result {
                     Ok(v) => Ok(v),
                     Err(RuntimeError::ErrProp(e)) => Ok(Value::Err(e)),
@@ -1259,6 +1344,13 @@ impl Interpreter {
         }
     }
 
+    pub fn callable_declared_effects(fn_val: &Value) -> Vec<String> {
+        match fn_val {
+            Value::Fn { effects, .. } => effects.clone(),
+            _ => vec![],
+        }
+    }
+
     // Public wrapper so main.rs can call call_value
     pub fn call_value_pub(
         &mut self,
@@ -1266,6 +1358,22 @@ impl Interpreter {
         args: Vec<Value>,
     ) -> Result<Value, RuntimeError> {
         self.call_value(fn_val, args)
+    }
+
+    pub fn call_value_with_effects_pub(
+        &mut self,
+        fn_val: Value,
+        args: Vec<Value>,
+        entry_name: &str,
+        allowed_effects: Vec<String>,
+    ) -> Result<Value, RuntimeError> {
+        self.call_stack.push(CallFrame {
+            name: entry_name.to_string(),
+            effects: allowed_effects,
+        });
+        let result = self.call_value(fn_val, args);
+        self.call_stack.pop();
+        result
     }
 
     // -------------------------------------------------------------------------
@@ -1289,7 +1397,8 @@ impl Interpreter {
         // Second pass: run main() if it exists
         let main_fn = self.lookup("main");
         if let Ok(fn_val) = main_fn {
-            self.call_value(fn_val, vec![])?;
+            let allowed = Self::callable_declared_effects(&fn_val);
+            self.call_value_with_effects_pub(fn_val, vec![], "<main>", allowed)?;
         }
 
         Ok(Value::Unit)

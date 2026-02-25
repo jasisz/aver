@@ -315,6 +315,20 @@ fn error_main_undeclared_console_effect() {
 }
 
 #[test]
+fn error_top_level_undeclared_console_effect() {
+    let src = "print(\"hi\")\n";
+    assert_error_containing(src, "<top-level>");
+    assert_error_containing(src, "Console");
+}
+
+#[test]
+fn error_verify_undeclared_console_effect() {
+    let src = "fn main() -> Int\n    = 0\nverify main:\n    print(\"x\") => print(\"x\")\n";
+    assert_error_containing(src, "<verify:main>");
+    assert_error_containing(src, "Console");
+}
+
+#[test]
 fn error_undeclared_effect_from_function_typed_callback() {
     let src = "fn applyOnce(f: Fn(Int) -> Int ! [Console], x: Int) -> Int\n    = f(x)\nfn pureInc(n: Int) -> Int\n    = n + 1\n";
     assert_error_containing(src, "has effect 'Console'");

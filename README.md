@@ -10,7 +10,7 @@ Most languages optimise for the CPU. Aver optimises for understanding — human 
 
 **`?` Intent** — every function carries a prose description of what it does and why. Not a comment that rots in isolation, but a semantic contract attached to the signature.
 
-**`!` Effects** — side effects are declared explicitly (`! [Network, Ledger]`). If a function "gets dirty", it must say so. Violations are type errors, not warnings.
+**`!` Effects** — side effects are declared explicitly (`! [Network, Ledger]`). If a function "gets dirty", it must say so. Violations are type errors, and runtime enforces the same boundary as a backstop.
 
 **`decision` blocks** — architectural decisions live in the codebase, not in a stale Confluence page. The *why* behind every *how*, queryable without leaving your editor.
 
@@ -71,7 +71,7 @@ Module imports at runtime:
 - `depends [Fibonacci]` -> `fibonacci.av` / `Fibonacci.av`, call `Fibonacci.fn(...)`
 - `depends [Models.User]` -> `models/user.av` / `Models/User.av`, call `Models.User.fn(...)`
 
-Type errors block `run`, `check`, and `verify`. The checker runs before a single line executes.
+Type errors block `run`, `check`, and `verify`. The checker runs before a single line executes. Runtime also enforces declared effects on every call edge.
 
 ## What Aver deliberately omits
 
@@ -133,7 +133,7 @@ Implemented in Rust, zero warnings.
 - [x] Lexer with significant indentation (Python-style INDENT/DEDENT)
 - [x] Recursive-descent parser — no libraries, hand-written
 - [x] Static type checker — blocks execution on errors
-- [x] Effect system — statically enforced, violations are type errors
+- [x] Effect system — statically enforced + runtime call-edge gate
 - [x] `verify` block runner — co-located tests
 - [x] `decision` block indexer — queryable ADRs
 - [x] List builtins: `map`, `filter`, `fold`, `get`, `head`, `tail`, `push`

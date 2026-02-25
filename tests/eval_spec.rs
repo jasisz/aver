@@ -158,6 +158,51 @@ fn string_eq_false() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn runtime_gate_blocks_top_level_print() {
+    let items = parse("print(\"hi\")");
+    let item = items.into_iter().next().expect("no items");
+    if let TopLevel::Stmt(Stmt::Expr(expr)) = item {
+        let mut interp = Interpreter::new();
+        let err = interp
+            .eval_expr(&expr)
+            .expect_err("expected runtime gate error");
+        let msg = err.to_string();
+        assert!(msg.contains("Runtime effect violation"), "got: {}", msg);
+        assert!(msg.contains("Console"), "got: {}", msg);
+        assert!(msg.contains("<top-level>"), "got: {}", msg);
+    } else {
+        panic!("expected a single expression, got: {:?}", item);
+    }
+}
+
+#[test]
+fn runtime_gate_allows_effectful_entrypoint_with_grant() {
+    let src = "fn log(n: Int) -> Unit\n    ! [Console]\n    = print(n)\n";
+    let items = parse(src);
+    let mut interp = Interpreter::new();
+    for item in &items {
+        if let TopLevel::FnDef(fd) = item {
+            interp.exec_fn_def(fd).expect("exec_fn_def failed");
+        }
+    }
+    let log_fn = interp.lookup("log").expect("fn not found");
+
+    let blocked = interp
+        .call_value_pub(log_fn.clone(), vec![Value::Int(1)])
+        .expect_err("expected runtime gate error");
+    let blocked_msg = blocked.to_string();
+    assert!(
+        blocked_msg.contains("Runtime effect violation"),
+        "got: {}",
+        blocked_msg
+    );
+
+    let allowed = Interpreter::callable_declared_effects(&log_fn);
+    let result = interp.call_value_with_effects_pub(log_fn, vec![Value::Int(2)], "<test>", allowed);
+    assert!(result.is_ok(), "expected granted call to pass");
+}
+
+#[test]
 fn builtin_abs_positive() {
     assert_eq!(eval("abs(5)"), Value::Int(5));
 }

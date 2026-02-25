@@ -503,19 +503,23 @@ impl TypeChecker {
 
     fn check_top_level_stmts(&mut self, items: &[TopLevel]) {
         self.locals.clear();
+        let no_effects: Vec<String> = vec![];
         for item in items {
             if let TopLevel::Stmt(stmt) = item {
                 match stmt {
                     Stmt::Val(name, expr) => {
                         let ty = self.infer_type(expr);
+                        self.check_effects_in_expr(expr, "<top-level>", &no_effects);
                         self.locals.insert(name.clone(), (ty, false));
                     }
                     Stmt::Var(name, expr, _) => {
                         let ty = self.infer_type(expr);
+                        self.check_effects_in_expr(expr, "<top-level>", &no_effects);
                         self.locals.insert(name.clone(), (ty, true));
                     }
                     Stmt::Assign(name, expr) => {
                         let rhs_ty = self.infer_type(expr);
+                        self.check_effects_in_expr(expr, "<top-level>", &no_effects);
                         match self.locals.get(name).cloned() {
                             None => {
                                 self.error(format!(
@@ -543,11 +547,27 @@ impl TypeChecker {
                     }
                     Stmt::Expr(expr) => {
                         let _ = self.infer_type(expr);
+                        self.check_effects_in_expr(expr, "<top-level>", &no_effects);
                     }
                 }
             }
         }
         self.globals = self.locals.clone();
+    }
+
+    fn check_verify_blocks(&mut self, items: &[TopLevel]) {
+        let no_effects: Vec<String> = vec![];
+        for item in items {
+            if let TopLevel::Verify(vb) = item {
+                let caller = format!("<verify:{}>", vb.fn_name);
+                for (left, right) in &vb.cases {
+                    let _ = self.infer_type(left);
+                    self.check_effects_in_expr(left, &caller, &no_effects);
+                    let _ = self.infer_type(right);
+                    self.check_effects_in_expr(right, &caller, &no_effects);
+                }
+            }
+        }
     }
 
     fn check_stmts(&mut self, stmts: &[Stmt], fn_name: &str, caller_effects: &[String]) -> Type {
@@ -1083,6 +1103,7 @@ impl TypeChecker {
         }
 
         self.check_top_level_stmts(items);
+        self.check_verify_blocks(items);
 
         for item in items {
             if let TopLevel::FnDef(f) = item {

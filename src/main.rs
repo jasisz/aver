@@ -163,7 +163,8 @@ fn cmd_run(file: &str, run_verify_blocks: bool) {
     // Run main() if it exists
     match interp.lookup("main") {
         Ok(main_fn) => {
-            if let Err(e) = interp.call_value_pub(main_fn, vec![]) {
+            let allowed = Interpreter::callable_declared_effects(&main_fn);
+            if let Err(e) = interp.call_value_with_effects_pub(main_fn, vec![], "<main>", allowed) {
                 eprintln!("{}", e.to_string().red());
                 process::exit(1);
             }
