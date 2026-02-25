@@ -65,9 +65,9 @@ fn one_msg(name: &str, args: Vec<Value>, emit: impl Fn(&str)) -> Result<Value, R
             name, args.len()
         )));
     }
-    let s = aver_display(&args[0])
-        .unwrap_or_default();
-    emit(&s);
+    if let Some(s) = aver_display(&args[0]) {
+        emit(&s);
+    }
     Ok(Value::Unit)
 }
 

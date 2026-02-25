@@ -601,6 +601,50 @@ fn valid_disk_all_methods_with_effect() {
 }
 
 // ---------------------------------------------------------------------------
+// Console.error / warn / readLine
+// ---------------------------------------------------------------------------
+
+#[test]
+fn error_console_error_without_effect() {
+    let src = concat!(
+        "fn report(msg: String) -> Unit\n",
+        "    = Console.error(msg)\n",
+    );
+    assert_error_containing(src, "has effect 'Console'");
+}
+
+#[test]
+fn error_console_warn_without_effect() {
+    let src = concat!(
+        "fn report(msg: String) -> Unit\n",
+        "    = Console.warn(msg)\n",
+    );
+    assert_error_containing(src, "has effect 'Console'");
+}
+
+#[test]
+fn error_console_read_line_without_effect() {
+    let src = concat!(
+        "fn ask() -> Any\n",
+        "    = Console.readLine()\n",
+    );
+    assert_error_containing(src, "has effect 'Console'");
+}
+
+#[test]
+fn valid_console_all_methods_with_effect() {
+    let src = concat!(
+        "fn run(msg: String) -> Any\n",
+        "    ! [Console]\n",
+        "    Console.print(msg)\n",
+        "    Console.error(msg)\n",
+        "    Console.warn(msg)\n",
+        "    Console.readLine()\n",
+    );
+    assert_no_errors(src);
+}
+
+// ---------------------------------------------------------------------------
 // Record field access type checking
 // ---------------------------------------------------------------------------
 

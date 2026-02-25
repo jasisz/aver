@@ -1327,3 +1327,90 @@ mod disk_tests {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Console service tests
+// ---------------------------------------------------------------------------
+
+mod console_tests {
+    use super::*;
+    use aver::interpreter::{Interpreter, Value};
+
+    fn run_console_fn(src: &str, fn_name: &str) -> Value {
+        let items = parse(src);
+        let mut interp = Interpreter::new();
+        for item in &items {
+            if let TopLevel::FnDef(fd) = item {
+                interp.exec_fn_def(fd).expect("exec_fn_def failed");
+            }
+        }
+        let fn_val = interp.lookup(fn_name).expect("fn not found");
+        let effects = Interpreter::callable_declared_effects(&fn_val);
+        interp
+            .call_value_with_effects_pub(fn_val, vec![], fn_name, effects)
+            .expect("call failed")
+    }
+
+    #[test]
+    fn console_error_returns_unit() {
+        let src = concat!(
+            "fn run() -> Unit\n",
+            "    ! [Console]\n",
+            "    Console.error(\"oops\")\n",
+        );
+        let val = run_console_fn(src, "run");
+        assert_eq!(val, Value::Unit);
+    }
+
+    #[test]
+    fn console_warn_returns_unit() {
+        let src = concat!(
+            "fn run() -> Unit\n",
+            "    ! [Console]\n",
+            "    Console.warn(\"careful\")\n",
+        );
+        let val = run_console_fn(src, "run");
+        assert_eq!(val, Value::Unit);
+    }
+
+    #[test]
+    fn console_error_unit_value_is_silent() {
+        // Passing Unit to Console.error should not error — just emit nothing.
+        // Console.print returns Unit, so we use its result as the argument.
+        let src = concat!(
+            "fn run() -> Unit\n",
+            "    ! [Console]\n",
+            "    Console.error(Console.print(\"setup\"))\n",
+        );
+        let val = run_console_fn(src, "run");
+        assert_eq!(val, Value::Unit);
+    }
+
+    #[test]
+    fn console_warn_unit_value_is_silent() {
+        let src = concat!(
+            "fn run() -> Unit\n",
+            "    ! [Console]\n",
+            "    Console.warn(Console.print(\"setup\"))\n",
+        );
+        let val = run_console_fn(src, "run");
+        assert_eq!(val, Value::Unit);
+    }
+
+    #[test]
+    fn runtime_gate_blocks_console_error_without_effect() {
+        let items = parse("Console.error(\"x\")");
+        let item = items.into_iter().next().expect("no items");
+        if let TopLevel::Stmt(Stmt::Expr(expr)) = item {
+            let mut interp = Interpreter::new();
+            let err = interp
+                .eval_expr(&expr)
+                .expect_err("expected runtime gate error");
+            let msg = err.to_string();
+            assert!(msg.contains("Runtime effect violation"), "got: {}", msg);
+            assert!(msg.contains("Console"), "got: {}", msg);
+        } else {
+            panic!("expected a single expression");
+        }
+    }
+}
