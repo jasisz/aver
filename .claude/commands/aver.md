@@ -22,13 +22,22 @@ Single-expression shorthand: `= expr` on the same indent level as `?`.
 
 ### Effects
 
-Declare side effects with `! [Effect]`. Common effects: `Io`, `Network`, `Ledger`, `Disk`, `State`.
+Declare side effects with `! [Effect]`. Built-in platform effects:
+- `Console` — `Console.print`, `Console.error`, `Console.warn`, `Console.readLine`
+- `Http`    — `Http.get`, `Http.post`, `Http.put`, `Http.patch`, `Http.delete`, `Http.head`
+- `Disk`    — `Disk.readText`, `Disk.writeText`, `Disk.appendText`, `Disk.exists`, `Disk.delete`, `Disk.listDir`, `Disk.makeDir`
+- `Tcp`     — `Tcp.send`, `Tcp.ping`
+
+You can also declare custom domain effects (`Ledger`, `State`, etc.) and alias sets:
+```aver
+effects AppIO = [Console, Disk]
+```
 
 ```aver
-fn fetchUser(id: Int) -> Result<String, String>
+fn fetchUser(id: Int) -> Result<HttpResponse, String>
     ? "Fetches user by ID from the remote API."
-    ! [Network]
-    = Ok("user-{id}")
+    ! [Http]
+    Http.get("https://api.example.com/users/{id}")
 ```
 
 Effect declarations are statically enforced — a function calling another with `! [X]` must also declare `! [X]`.
@@ -47,7 +56,6 @@ count = count + 1        // reassignment: bare name, no keyword
 Primitives: `Int`, `Float`, `String`, `Bool`, `Unit`
 Compound: `Result<T, E>`, `Option<T>`, `List<T>`
 User-defined: `type` (sum types), `record` (product types)
-Escape hatch: `Any` (avoid unless necessary)
 
 ### User-defined types
 
@@ -186,12 +194,12 @@ decision UseResultNotExceptions:
 ## Rules you must follow
 
 1. **Every function needs `?`** — except `fn main`. No description = incomplete function.
-2. **No `if`/`else`** — always `match`.
+2. **No `if`/else`** — always `match`.
 3. **No loops** — use `map`, `filter`, `fold`.
 4. **No nulls** — use `Option<T>` with `Some`/`None`.
 5. **No exceptions** — use `Result<T, E>` with `Ok`/`Err`.
 6. **Mutable `var` needs `reason:`** — document why it must be mutable.
-7. **Effects must be declared** — any function with I/O, network, or state mutation needs `! [Effect]`.
+7. **Effects must be declared** — any function calling a service (`Console`, `Http`, `Disk`, `Tcp`) or custom effect needs `! [Effect]`.
 8. **Verify blocks are not optional** — write them for every function that has observable behaviour.
 9. **Co-location** — verify blocks go directly after the function they cover.
 10. **`val` by default** — only use `var` when reassignment is genuinely necessary.
