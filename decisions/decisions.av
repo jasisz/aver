@@ -1,7 +1,7 @@
 module Architecture
     intent:
         "Architectural decisions for the Aver language, expressed in Aver itself."
-        "Run 'aver decisions examples/decisions.av' to query this file."
+        "Run 'aver decisions decisions/decisions.av' to query this file."
 
 decision UseResultOverExceptions:
     date: "2024-01-15"

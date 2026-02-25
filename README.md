@@ -98,7 +98,7 @@ cargo build --release
 cargo run -- run      examples/calculator.av
 cargo run -- verify   examples/calculator.av
 cargo run -- check    examples/calculator.av
-cargo run -- decisions examples/architecture.av
+cargo run -- decisions decisions/architecture.av
 ```
 
 Requires: Rust stable toolchain.
@@ -113,8 +113,8 @@ Requires: Rust stable toolchain.
 | `shapes.av` | Sum types, qualified constructors (`Shape.Circle`), match on variants |
 | `user_record.av` | Record types, field access, positional match |
 | `fibonacci.av` | Tail recursion, records (`FibStats`), single-pass accumulator, decision blocks |
-| `decisions.av` | Decision blocks as first-class constructs |
-| `architecture.av` | The interpreter documents itself in Aver — [see it](examples/architecture.av) |
+| `decisions/decisions.av` | Decision blocks as first-class constructs |
+| `decisions/architecture.av` | The interpreter documents itself in Aver — [see it](decisions/architecture.av) |
 | `type_errors.av` | Intentional type errors; shows what the checker catches |
 
 ## Project status

@@ -8,10 +8,11 @@
 /// The checker is deliberately lenient: `Type::Any` is compatible with
 /// everything, so partially-typed programs still pass.  Full strictness
 /// requires concrete annotations on every function.
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
-use std::collections::HashMap;
-
-use crate::ast::{BinOp, Expr, FnBody, FnDef, Pattern, Stmt, TopLevel, TypeDef};
+use crate::ast::{BinOp, Expr, FnBody, FnDef, Module, Pattern, Stmt, TopLevel, TypeDef};
+use crate::source::{canonicalize_path, find_module_file, parse_source};
 use crate::types::{parse_type_str_strict, Type};
 
 // ---------------------------------------------------------------------------
@@ -24,8 +25,12 @@ pub struct TypeError {
 }
 
 pub fn run_type_check(items: &[TopLevel]) -> Vec<TypeError> {
+    run_type_check_with_base(items, None)
+}
+
+pub fn run_type_check_with_base(items: &[TopLevel], base_dir: Option<&str>) -> Vec<TypeError> {
     let mut checker = TypeChecker::new();
-    checker.check(items);
+    checker.check(items, base_dir);
     checker.errors
 }
 
@@ -42,6 +47,7 @@ struct FnSig {
 
 struct TypeChecker {
     fn_sigs: HashMap<String, FnSig>,
+    module_sig_cache: HashMap<String, Vec<(String, FnSig)>>,
     /// Top-level bindings visible from function bodies.
     globals: HashMap<String, (Type, bool)>,
     /// name → (type, is_mutable)
@@ -55,6 +61,7 @@ impl TypeChecker {
     fn new() -> Self {
         let mut tc = TypeChecker {
             fn_sigs: HashMap::new(),
+            module_sig_cache: HashMap::new(),
             globals: HashMap::new(),
             locals: HashMap::new(),
             errors: Vec::new(),
@@ -65,7 +72,20 @@ impl TypeChecker {
     }
 
     fn error(&mut self, msg: impl Into<String>) {
-        self.errors.push(TypeError { message: msg.into() });
+        self.errors.push(TypeError {
+            message: msg.into(),
+        });
+    }
+
+    fn insert_sig(&mut self, name: &str, params: &[Type], ret: Type, effects: &[&str]) {
+        self.fn_sigs.insert(
+            name.to_string(),
+            FnSig {
+                params: params.to_vec(),
+                ret,
+                effects: effects.iter().map(|s| s.to_string()).collect(),
+            },
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -74,28 +94,57 @@ impl TypeChecker {
     fn register_builtins(&mut self) {
         let any = || Type::Any;
         let sigs: &[(&str, &[Type], Type, &[&str])] = &[
-            ("print",  &[Type::Any],                             Type::Unit,         &["Console"]),
-            ("str",    &[Type::Any],                             Type::Str,          &[]),
-            ("int",    &[Type::Any],                             Type::Int,          &[]),
-            ("abs",    &[Type::Any],                             Type::Any,          &[]),
-            ("len",    &[Type::Any],                             Type::Int,          &[]),
-            ("map",    &[Type::Any, Type::Any],                  Type::List(Box::new(any())), &[]),
-            ("filter", &[Type::Any, Type::Any],                  Type::List(Box::new(any())), &[]),
-            ("fold",   &[Type::Any, Type::Any, Type::Any],       any(),              &[]),
-            ("get",    &[Type::Any, Type::Int],                  Type::Result(Box::new(any()), Box::new(Type::Str)), &[]),
-            ("push",   &[Type::Any, Type::Any],                  Type::List(Box::new(any())), &[]),
-            ("head",   &[Type::Any],                             Type::Result(Box::new(any()), Box::new(Type::Str)), &[]),
-            ("tail",   &[Type::Any],                             Type::Result(Box::new(any()), Box::new(Type::Str)), &[]),
+            ("print", &[Type::Any], Type::Unit, &["Console"]),
+            ("str", &[Type::Any], Type::Str, &[]),
+            ("int", &[Type::Any], Type::Int, &[]),
+            ("abs", &[Type::Any], Type::Any, &[]),
+            ("len", &[Type::Any], Type::Int, &[]),
+            (
+                "map",
+                &[Type::Any, Type::Any],
+                Type::List(Box::new(any())),
+                &[],
+            ),
+            (
+                "filter",
+                &[Type::Any, Type::Any],
+                Type::List(Box::new(any())),
+                &[],
+            ),
+            ("fold", &[Type::Any, Type::Any, Type::Any], any(), &[]),
+            (
+                "get",
+                &[Type::Any, Type::Int],
+                Type::Result(Box::new(any()), Box::new(Type::Str)),
+                &[],
+            ),
+            (
+                "push",
+                &[Type::Any, Type::Any],
+                Type::List(Box::new(any())),
+                &[],
+            ),
+            (
+                "head",
+                &[Type::Any],
+                Type::Result(Box::new(any()), Box::new(Type::Str)),
+                &[],
+            ),
+            (
+                "tail",
+                &[Type::Any],
+                Type::Result(Box::new(any()), Box::new(Type::Str)),
+                &[],
+            ),
         ];
         for (name, params, ret, effects) in sigs {
-            self.fn_sigs.insert(
-                name.to_string(),
-                FnSig {
-                    params: params.to_vec(),
-                    ret: ret.clone(),
-                    effects: effects.iter().map(|s| s.to_string()).collect(),
-                },
-            );
+            self.insert_sig(name, params, ret.clone(), effects);
+        }
+
+        let service_sigs: &[(&str, &[Type], Type, &[&str])] =
+            &[("Console.print", &[Type::Any], Type::Unit, &["Console"])];
+        for (name, params, ret, effects) in service_sigs {
+            self.insert_sig(name, params, ret.clone(), effects);
         }
     }
 
@@ -131,7 +180,11 @@ impl TypeChecker {
                     };
                     self.fn_sigs.insert(
                         f.name.clone(),
-                        FnSig { params, ret, effects: f.effects.clone() },
+                        FnSig {
+                            params,
+                            ret,
+                            effects: f.effects.clone(),
+                        },
                     );
                 }
                 TopLevel::TypeDef(td) => {
@@ -145,12 +198,19 @@ impl TypeChecker {
     /// Register constructor signatures for user-defined types.
     fn register_type_def_sigs(&mut self, td: &TypeDef) {
         match td {
-            TypeDef::Sum { name: type_name, variants } => {
+            TypeDef::Sum {
+                name: type_name,
+                variants,
+            } => {
                 // Register the type name in fn_sigs so `Ident("Shape")` resolves
                 // to Named("Shape") without error (checked after locals in infer_type).
                 self.fn_sigs.insert(
                     type_name.clone(),
-                    FnSig { params: vec![], ret: Type::Named(type_name.clone()), effects: vec![] },
+                    FnSig {
+                        params: vec![],
+                        ret: Type::Named(type_name.clone()),
+                        effects: vec![],
+                    },
                 );
                 // Register each constructor with a qualified key: "Shape.Circle"
                 for variant in variants {
@@ -169,7 +229,10 @@ impl TypeChecker {
                     );
                 }
             }
-            TypeDef::Product { name: type_name, fields } => {
+            TypeDef::Product {
+                name: type_name,
+                fields,
+            } => {
                 // Record constructors are handled via Expr::RecordCreate, not FnCall.
                 // Register a dummy sig so Ident("TypeName") resolves to Named(type_name).
                 let params: Vec<Type> = fields
@@ -188,6 +251,149 @@ impl TypeChecker {
         }
     }
 
+    fn module_decl(items: &[TopLevel]) -> Option<&Module> {
+        items.iter().find_map(|item| {
+            if let TopLevel::Module(m) = item {
+                Some(m)
+            } else {
+                None
+            }
+        })
+    }
+
+    fn exposed_set(items: &[TopLevel]) -> Option<HashSet<String>> {
+        Self::module_decl(items).and_then(|m| {
+            if m.exposes.is_empty() {
+                None
+            } else {
+                Some(m.exposes.iter().cloned().collect())
+            }
+        })
+    }
+
+    fn module_cache_key(path: &Path) -> String {
+        canonicalize_path(path).to_string_lossy().to_string()
+    }
+
+    fn cycle_display(loading: &[String], next: &str) -> String {
+        let mut chain = loading
+            .iter()
+            .map(|key| {
+                Path::new(key)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(key)
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        chain.push(
+            Path::new(next)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(next)
+                .to_string(),
+        );
+        chain.join(" -> ")
+    }
+
+    fn load_module_sigs(
+        &mut self,
+        name: &str,
+        base_dir: &str,
+        loading: &mut Vec<String>,
+    ) -> Result<(), String> {
+        let path = find_module_file(name, base_dir)
+            .ok_or_else(|| format!("Module '{}' not found in '{}'", name, base_dir))?;
+        let cache_key = Self::module_cache_key(&path);
+
+        if let Some(entries) = self.module_sig_cache.get(&cache_key).cloned() {
+            for (key, sig) in entries {
+                self.fn_sigs.insert(key, sig);
+            }
+            return Ok(());
+        }
+
+        if loading.contains(&cache_key) {
+            return Err(format!(
+                "Circular import: {}",
+                Self::cycle_display(loading, &cache_key)
+            ));
+        }
+
+        loading.push(cache_key.clone());
+        let result = (|| -> Result<Vec<(String, FnSig)>, String> {
+            let src = std::fs::read_to_string(&path)
+                .map_err(|e| format!("Cannot read '{}': {}", path.display(), e))?;
+            let items = parse_source(&src)
+                .map_err(|e| format!("Parse error in '{}': {}", path.display(), e))?;
+
+            if let Some(module) = Self::module_decl(&items) {
+                if module.name != name {
+                    return Err(format!(
+                        "Module name mismatch: expected '{}', found '{}' in '{}'",
+                        name,
+                        module.name,
+                        path.display()
+                    ));
+                }
+                for dep_name in &module.depends {
+                    self.load_module_sigs(dep_name, base_dir, loading)?;
+                }
+            }
+
+            let exposed = Self::exposed_set(&items);
+            let mut entries = Vec::new();
+            for item in &items {
+                if let TopLevel::FnDef(fd) = item {
+                    let include = match &exposed {
+                        Some(set) => set.contains(&fd.name),
+                        None => !fd.name.starts_with('_'),
+                    };
+                    if !include {
+                        continue;
+                    }
+
+                    let mut params = Vec::new();
+                    for (param_name, ty_str) in &fd.params {
+                        let ty = parse_type_str_strict(ty_str).map_err(|unknown| {
+                            format!(
+                                "Module '{}', function '{}': unknown type '{}' for parameter '{}'",
+                                name, fd.name, unknown, param_name
+                            )
+                        })?;
+                        params.push(ty);
+                    }
+
+                    let ret = parse_type_str_strict(&fd.return_type).map_err(|unknown| {
+                        format!(
+                            "Module '{}', function '{}': unknown return type '{}'",
+                            name, fd.name, unknown
+                        )
+                    })?;
+
+                    entries.push((
+                        format!("{}.{}", name, fd.name),
+                        FnSig {
+                            params,
+                            ret,
+                            effects: fd.effects.clone(),
+                        },
+                    ));
+                }
+            }
+
+            Ok(entries)
+        })();
+        loading.pop();
+
+        let entries = result?;
+        for (key, sig) in &entries {
+            self.fn_sigs.insert(key.clone(), sig.clone());
+        }
+        self.module_sig_cache.insert(cache_key, entries);
+        Ok(())
+    }
+
     // -----------------------------------------------------------------------
     // Phase 2 — check each function
     // -----------------------------------------------------------------------
@@ -197,7 +403,8 @@ impl TypeChecker {
         if let Some(sig) = self.fn_sigs.get(&f.name).cloned() {
             for ((param_name, _), param_type) in f.params.iter().zip(sig.params.iter()) {
                 // params are immutable (like val)
-                self.locals.insert(param_name.clone(), (param_type.clone(), false));
+                self.locals
+                    .insert(param_name.clone(), (param_type.clone(), false));
             }
 
             let declared_ret = sig.ret.clone();
@@ -285,12 +492,7 @@ impl TypeChecker {
         self.globals = self.locals.clone();
     }
 
-    fn check_stmts(
-        &mut self,
-        stmts: &[Stmt],
-        fn_name: &str,
-        caller_effects: &[String],
-    ) -> Type {
+    fn check_stmts(&mut self, stmts: &[Stmt], fn_name: &str, caller_effects: &[String]) -> Type {
         let mut last = Type::Unit;
         for stmt in stmts {
             match stmt {
@@ -326,7 +528,10 @@ impl TypeChecker {
                             if !rhs_ty.compatible(&var_ty) {
                                 self.error(format!(
                                     "Assignment to '{}' in '{}': expected {}, got {}",
-                                    name, fn_name, var_ty.display(), rhs_ty.display()
+                                    name,
+                                    fn_name,
+                                    var_ty.display(),
+                                    rhs_ty.display()
                                 ));
                             }
                         }
@@ -345,13 +550,29 @@ impl TypeChecker {
     // -----------------------------------------------------------------------
     // Effect propagation: ERROR (not warning) if callee has effect caller lacks
     // -----------------------------------------------------------------------
+    fn callee_key(fn_expr: &Expr) -> Option<String> {
+        match fn_expr {
+            Expr::Ident(name) => Some(name.clone()),
+            Expr::Attr(inner_expr, field) => {
+                if let Expr::Ident(parent) = inner_expr.as_ref() {
+                    Some(format!("{}.{}", parent, field))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     fn check_effects_in_expr(&mut self, expr: &Expr, caller_name: &str, caller_effects: &[String]) {
         // main() is the top-level effect boundary — it is exempt from effect propagation checks
-        if caller_name == "main" { return; }
+        if caller_name == "main" {
+            return;
+        }
         match expr {
             Expr::FnCall(fn_expr, args) => {
-                if let Expr::Ident(callee_name) = fn_expr.as_ref() {
-                    if let Some(callee_sig) = self.fn_sigs.get(callee_name).cloned() {
+                if let Some(callee_name) = Self::callee_key(fn_expr) {
+                    if let Some(callee_sig) = self.fn_sigs.get(&callee_name).cloned() {
                         for effect in &callee_sig.effects {
                             if !caller_effects.contains(effect) {
                                 self.error(format!(
@@ -374,8 +595,8 @@ impl TypeChecker {
             Expr::Pipe(left, right) => {
                 self.check_effects_in_expr(left, caller_name, caller_effects);
                 // x |> f counts as calling f — check f's effects
-                if let Expr::Ident(callee_name) = right.as_ref() {
-                    if let Some(callee_sig) = self.fn_sigs.get(callee_name).cloned() {
+                if let Some(callee_name) = Self::callee_key(right) {
+                    if let Some(callee_sig) = self.fn_sigs.get(&callee_name).cloned() {
                         for effect in &callee_sig.effects {
                             if !caller_effects.contains(effect) {
                                 self.error(format!(
@@ -509,7 +730,8 @@ impl TypeChecker {
                             Type::Float
                         } else if matches!(lt, Type::Int) && matches!(rt, Type::Int) {
                             Type::Int
-                        } else if matches!(lt, Type::Str) && matches!(rt, Type::Str)
+                        } else if matches!(lt, Type::Str)
+                            && matches!(rt, Type::Str)
                             && matches!(op, BinOp::Add)
                         {
                             Type::Str
@@ -522,15 +744,24 @@ impl TypeChecker {
 
             Expr::Constructor(name, arg) => match name.as_str() {
                 "Ok" => {
-                    let inner = arg.as_ref().map(|a| self.infer_type(a)).unwrap_or(Type::Unit);
+                    let inner = arg
+                        .as_ref()
+                        .map(|a| self.infer_type(a))
+                        .unwrap_or(Type::Unit);
                     Type::Result(Box::new(inner), Box::new(Type::Any))
                 }
                 "Err" => {
-                    let inner = arg.as_ref().map(|a| self.infer_type(a)).unwrap_or(Type::Unit);
+                    let inner = arg
+                        .as_ref()
+                        .map(|a| self.infer_type(a))
+                        .unwrap_or(Type::Unit);
                     Type::Result(Box::new(Type::Any), Box::new(inner))
                 }
                 "Some" => {
-                    let inner = arg.as_ref().map(|a| self.infer_type(a)).unwrap_or(Type::Unit);
+                    let inner = arg
+                        .as_ref()
+                        .map(|a| self.infer_type(a))
+                        .unwrap_or(Type::Unit);
                     Type::Option(Box::new(inner))
                 }
                 "None" => Type::Option(Box::new(Type::Any)),
@@ -553,10 +784,12 @@ impl TypeChecker {
                     let first_ty =
                         self.infer_type_with_pattern_bindings(&first_arm.pattern, &first_arm.body);
                     for arm in arms.iter().skip(1) {
-                        let arm_ty =
-                            self.infer_type_with_pattern_bindings(&arm.pattern, &arm.body);
+                        let arm_ty = self.infer_type_with_pattern_bindings(&arm.pattern, &arm.body);
                         // Only report mismatch when both types are concrete
-                        if !first_ty.compatible(&arm_ty) && !matches!(first_ty, Type::Any) && !matches!(arm_ty, Type::Any) {
+                        if !first_ty.compatible(&arm_ty)
+                            && !matches!(first_ty, Type::Any)
+                            && !matches!(arm_ty, Type::Any)
+                        {
                             self.error(format!(
                                 "Match arms return incompatible types: {} vs {}",
                                 first_ty.display(),
@@ -697,8 +930,8 @@ impl TypeChecker {
                 }
             }
             BinOp::Sub | BinOp::Mul | BinOp::Div => {
-                let ok = matches!(lt, Type::Int | Type::Float)
-                    && matches!(rt, Type::Int | Type::Float);
+                let ok =
+                    matches!(lt, Type::Int | Type::Float) && matches!(rt, Type::Int | Type::Float);
                 if !ok {
                     self.error(format!(
                         "Arithmetic operator requires numeric types, got {} and {}",
@@ -734,8 +967,20 @@ impl TypeChecker {
     // -----------------------------------------------------------------------
     // Entry point
     // -----------------------------------------------------------------------
-    fn check(&mut self, items: &[TopLevel]) {
+    fn check(&mut self, items: &[TopLevel], base_dir: Option<&str>) {
         self.build_signatures(items);
+
+        if let Some(base) = base_dir {
+            if let Some(module) = Self::module_decl(items) {
+                let mut loading = Vec::new();
+                for dep_name in &module.depends {
+                    if let Err(e) = self.load_module_sigs(dep_name, base, &mut loading) {
+                        self.error(e);
+                    }
+                }
+            }
+        }
+
         self.check_top_level_stmts(items);
 
         for item in items {
@@ -792,7 +1037,8 @@ mod tests {
 
         let errs = errors(vec![TopLevel::FnDef(main_fn)]);
         assert!(
-            errs.iter().any(|e| e.contains("Call to unknown function 'nosuch'")),
+            errs.iter()
+                .any(|e| e.contains("Call to unknown function 'nosuch'")),
             "expected unknown function error, got: {:?}",
             errs
         );

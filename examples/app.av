@@ -1,0 +1,15 @@
+module App
+    depends [Fibonacci]
+    intent:
+        "Demonstrates module imports via depends."
+
+fn main() -> Unit
+    ! [Console]
+    val result = Fibonacci.buildFibStats(10)
+    match result:
+        Ok(stats) -> Console.print(stats.sum)
+        Err(msg)  -> Console.print(msg)
+
+verify imports:
+    Fibonacci.fib(10) => 55
+    Fibonacci.isEven(144) => true

@@ -126,9 +126,9 @@ cargo run -- verify examples/calculator.av
 cargo run -- verify examples/lists.av
 cargo run -- check examples/hello.av
 cargo run -- check examples/calculator.av
-cargo run -- decisions examples/decisions.av
-cargo run -- decisions examples/architecture.av
-cargo run -- run examples/architecture.av
+cargo run -- decisions decisions/decisions.av
+cargo run -- decisions decisions/architecture.av
+cargo run -- run decisions/architecture.av
 ```
 
 ## Spec test suite
@@ -260,3 +260,13 @@ In `src/interpreter.rs`, two places:
 4. **Service blocks** — parse and execute `service Foo { needs: [...] }` as a lightweight DI container; dependencies are injected via constructor, no global state
 5. **`aver decisions` query flags** — `--impacts Module`, `--since 2024-01-01`, `--rejected Technology` for searchable architectural history
 6. **REPL mode** — `aver repl` subcommand for interactive exploration; useful during AI-assisted development sessions
+
+## Agreed direction: modules vs DI (2026-02-25)
+
+- Keep the language explicit in phase 1: `depends [Foo]` resolves from the entry file base directory only (`foo.av` / `Foo.av`), with no hidden CLI/env remapping.
+- Treat circular imports as a hard error with an explicit chain (`A -> B -> A`) rather than trying to support partial linking now.
+- Keep concerns separate:
+  - Module imports (`depends`) answer "where code comes from".
+  - Capabilities/services (future effect runtime model) answer "how effects are provided".
+- If remapping is added later, prefer a versioned project manifest (`aver.toml`) over ad-hoc runtime flags so the mapping is visible to humans and AI agents.
+- Service override (for example replacing `Console`) is postponed; if added, it should be explicit, contract-checked, and limited to test/dev profiles first.

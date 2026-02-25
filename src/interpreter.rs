@@ -1,9 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use thiserror::Error;
 
 use crate::ast::*;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
+use crate::source::{canonicalize_path, find_module_file, parse_source};
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
@@ -35,11 +37,21 @@ pub enum Value {
     },
     Builtin(String),
     /// User-defined sum type variant, e.g. `Shape.Circle(3.14)`
-    Variant { type_name: String, variant: String, fields: Vec<Value> },
+    Variant {
+        type_name: String,
+        variant: String,
+        fields: Vec<Value>,
+    },
     /// User-defined product type (record), e.g. `User(name: "Alice", age: 30)`
-    Record { type_name: String, fields: Vec<(String, Value)> },
+    Record {
+        type_name: String,
+        fields: Vec<(String, Value)>,
+    },
     /// Type namespace: `Shape` — provides `Shape.Circle`, `Shape.Rect`, etc.
-    Namespace { name: String, members: HashMap<String, Value> },
+    Namespace {
+        name: String,
+        members: HashMap<String, Value>,
+    },
 }
 
 pub fn aver_repr(val: &Value) -> String {
@@ -59,7 +71,9 @@ pub fn aver_repr(val: &Value) -> String {
         }
         Value::Fn { name, .. } => format!("<fn {}>", name),
         Value::Builtin(name) => format!("<builtin {}>", name),
-        Value::Variant { variant, fields, .. } => {
+        Value::Variant {
+            variant, fields, ..
+        } => {
             if fields.is_empty() {
                 variant.clone()
             } else {
@@ -101,15 +115,34 @@ pub type Env = Vec<HashMap<String, Value>>;
 
 pub struct Interpreter {
     pub env: Env,
+    module_cache: HashMap<String, Value>,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
         let mut global = HashMap::new();
-        for name in &["print", "str", "int", "abs", "len", "map", "filter", "fold", "get", "push", "head", "tail"] {
+        for name in &[
+            "print", "str", "int", "abs", "len", "map", "filter", "fold", "get", "push", "head",
+            "tail",
+        ] {
             global.insert(name.to_string(), Value::Builtin(name.to_string()));
         }
-        Interpreter { env: vec![global] }
+
+        // Service namespace for backwards-compatible console output.
+        let mut console = HashMap::new();
+        console.insert("print".to_string(), Value::Builtin("print".to_string()));
+        global.insert(
+            "Console".to_string(),
+            Value::Namespace {
+                name: "Console".to_string(),
+                members: console,
+            },
+        );
+
+        Interpreter {
+            env: vec![global],
+            module_cache: HashMap::new(),
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -131,7 +164,10 @@ impl Interpreter {
                 return Ok(v.clone());
             }
         }
-        Err(RuntimeError::Error(format!("Undefined variable: '{}'", name)))
+        Err(RuntimeError::Error(format!(
+            "Undefined variable: '{}'",
+            name
+        )))
     }
 
     pub fn define(&mut self, name: String, val: Value) {
@@ -153,6 +189,146 @@ impl Interpreter {
             "Cannot assign to '{}': variable not declared",
             name
         )))
+    }
+
+    fn module_cache_key(path: &Path) -> String {
+        canonicalize_path(path).to_string_lossy().to_string()
+    }
+
+    fn module_decl(items: &[TopLevel]) -> Option<&Module> {
+        items.iter().find_map(|item| {
+            if let TopLevel::Module(m) = item {
+                Some(m)
+            } else {
+                None
+            }
+        })
+    }
+
+    fn exposed_set(items: &[TopLevel]) -> Option<HashSet<String>> {
+        Self::module_decl(items).and_then(|m| {
+            if m.exposes.is_empty() {
+                None
+            } else {
+                Some(m.exposes.iter().cloned().collect())
+            }
+        })
+    }
+
+    fn cycle_display(loading: &[String], next: &str) -> String {
+        let mut chain = loading
+            .iter()
+            .map(|key| {
+                Path::new(key)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(key)
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        chain.push(
+            Path::new(next)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(next)
+                .to_string(),
+        );
+        chain.join(" -> ")
+    }
+
+    pub fn load_module(
+        &mut self,
+        name: &str,
+        base_dir: &str,
+        loading: &mut Vec<String>,
+    ) -> Result<Value, RuntimeError> {
+        let path = find_module_file(name, base_dir).ok_or_else(|| {
+            RuntimeError::Error(format!("Module '{}' not found in '{}'", name, base_dir))
+        })?;
+        let cache_key = Self::module_cache_key(&path);
+
+        if let Some(cached) = self.module_cache.get(&cache_key) {
+            return Ok(cached.clone());
+        }
+
+        if loading.contains(&cache_key) {
+            return Err(RuntimeError::Error(format!(
+                "Circular import: {}",
+                Self::cycle_display(loading, &cache_key)
+            )));
+        }
+
+        loading.push(cache_key.clone());
+        let result = (|| -> Result<Value, RuntimeError> {
+            let src = std::fs::read_to_string(&path).map_err(|e| {
+                RuntimeError::Error(format!("Cannot read '{}': {}", path.display(), e))
+            })?;
+            let items = parse_source(&src).map_err(|e| {
+                RuntimeError::Error(format!("Parse error in '{}': {}", path.display(), e))
+            })?;
+
+            if let Some(module) = Self::module_decl(&items) {
+                if module.name != name {
+                    return Err(RuntimeError::Error(format!(
+                        "Module name mismatch: expected '{}', found '{}' in '{}'",
+                        name,
+                        module.name,
+                        path.display()
+                    )));
+                }
+            }
+
+            let mut sub = Interpreter::new();
+
+            if let Some(module) = Self::module_decl(&items) {
+                for dep_name in &module.depends {
+                    let dep_ns = self.load_module(dep_name, base_dir, loading)?;
+                    sub.define(dep_name.clone(), dep_ns);
+                }
+            }
+
+            for item in &items {
+                if let TopLevel::TypeDef(td) = item {
+                    sub.register_type_def(td);
+                }
+            }
+            for item in &items {
+                if let TopLevel::FnDef(fd) = item {
+                    sub.exec_fn_def(fd)?;
+                }
+            }
+
+            let exposed = Self::exposed_set(&items);
+            let mut members = HashMap::new();
+            for item in &items {
+                if let TopLevel::FnDef(fd) = item {
+                    let include = match &exposed {
+                        Some(set) => set.contains(&fd.name),
+                        None => !fd.name.starts_with('_'),
+                    };
+                    if include {
+                        let val = sub.lookup(&fd.name).map_err(|_| {
+                            RuntimeError::Error(format!("Failed to export '{}.{}'", name, fd.name))
+                        })?;
+                        members.insert(fd.name.clone(), val);
+                    }
+                }
+            }
+
+            Ok(Value::Namespace {
+                name: name.to_string(),
+                members,
+            })
+        })();
+        loading.pop();
+
+        match result {
+            Ok(ns) => {
+                self.module_cache.insert(cache_key, ns.clone());
+                Ok(ns)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -183,7 +359,7 @@ impl Interpreter {
                     Value::Str(s) => Ok(Value::Int(s.chars().count() as i64)),
                     Value::List(items) => Ok(Value::Int(items.len() as i64)),
                     _ => Err(RuntimeError::Error(
-                        "len() does not support this type".to_string()
+                        "len() does not support this type".to_string(),
                     )),
                 }
             }
@@ -206,10 +382,13 @@ impl Interpreter {
                 match &args[0] {
                     Value::Int(i) => Ok(Value::Int(*i)),
                     Value::Float(f) => Ok(Value::Int(*f as i64)),
-                    Value::Str(s) => s.parse::<i64>().map(Value::Int).map_err(|_| {
-                        RuntimeError::Error(format!("Cannot convert '{}' to Int", s))
-                    }),
-                    _ => Err(RuntimeError::Error("int() does not support this type".to_string())),
+                    Value::Str(s) => s
+                        .parse::<i64>()
+                        .map(Value::Int)
+                        .map_err(|_| RuntimeError::Error(format!("Cannot convert '{}' to Int", s))),
+                    _ => Err(RuntimeError::Error(
+                        "int() does not support this type".to_string(),
+                    )),
                 }
             }
             "abs" => {
@@ -222,7 +401,9 @@ impl Interpreter {
                 match &args[0] {
                     Value::Int(i) => Ok(Value::Int(i.abs())),
                     Value::Float(f) => Ok(Value::Float(f.abs())),
-                    _ => Err(RuntimeError::Error("abs() does not support this type".to_string())),
+                    _ => Err(RuntimeError::Error(
+                        "abs() does not support this type".to_string(),
+                    )),
                 }
             }
             "map" => {
@@ -234,7 +415,11 @@ impl Interpreter {
                 }
                 let list = match args[0].clone() {
                     Value::List(items) => items,
-                    _ => return Err(RuntimeError::Error("map() first argument must be a List".to_string())),
+                    _ => {
+                        return Err(RuntimeError::Error(
+                            "map() first argument must be a List".to_string(),
+                        ))
+                    }
                 };
                 let func = args[1].clone();
                 let mut result = Vec::new();
@@ -253,7 +438,11 @@ impl Interpreter {
                 }
                 let list = match args[0].clone() {
                     Value::List(items) => items,
-                    _ => return Err(RuntimeError::Error("filter() first argument must be a List".to_string())),
+                    _ => {
+                        return Err(RuntimeError::Error(
+                            "filter() first argument must be a List".to_string(),
+                        ))
+                    }
                 };
                 let func = args[1].clone();
                 let mut result = Vec::new();
@@ -262,7 +451,11 @@ impl Interpreter {
                     match keep {
                         Value::Bool(true) => result.push(item),
                         Value::Bool(false) => {}
-                        _ => return Err(RuntimeError::Error("filter() predicate must return Bool".to_string())),
+                        _ => {
+                            return Err(RuntimeError::Error(
+                                "filter() predicate must return Bool".to_string(),
+                            ))
+                        }
                     }
                 }
                 Ok(Value::List(result))
@@ -276,7 +469,11 @@ impl Interpreter {
                 }
                 let list = match args[0].clone() {
                     Value::List(items) => items,
-                    _ => return Err(RuntimeError::Error("fold() first argument must be a List".to_string())),
+                    _ => {
+                        return Err(RuntimeError::Error(
+                            "fold() first argument must be a List".to_string(),
+                        ))
+                    }
                 };
                 let init = args[1].clone();
                 let func = args[2].clone();
@@ -295,14 +492,25 @@ impl Interpreter {
                 }
                 let list = match args[0].clone() {
                     Value::List(items) => items,
-                    _ => return Err(RuntimeError::Error("get() first argument must be a List".to_string())),
+                    _ => {
+                        return Err(RuntimeError::Error(
+                            "get() first argument must be a List".to_string(),
+                        ))
+                    }
                 };
                 let index = match &args[1] {
                     Value::Int(i) => *i,
-                    _ => return Err(RuntimeError::Error("get() index must be an Int".to_string())),
+                    _ => {
+                        return Err(RuntimeError::Error(
+                            "get() index must be an Int".to_string(),
+                        ))
+                    }
                 };
                 if index < 0 || index as usize >= list.len() {
-                    Ok(Value::Err(Box::new(Value::Str(format!("index {} out of bounds", index)))))
+                    Ok(Value::Err(Box::new(Value::Str(format!(
+                        "index {} out of bounds",
+                        index
+                    )))))
                 } else {
                     Ok(Value::Ok(Box::new(list[index as usize].clone())))
                 }
@@ -316,7 +524,11 @@ impl Interpreter {
                 }
                 let mut list = match args[0].clone() {
                     Value::List(items) => items,
-                    _ => return Err(RuntimeError::Error("push() first argument must be a List".to_string())),
+                    _ => {
+                        return Err(RuntimeError::Error(
+                            "push() first argument must be a List".to_string(),
+                        ))
+                    }
                 };
                 list.push(args[1].clone());
                 Ok(Value::List(list))
@@ -336,7 +548,9 @@ impl Interpreter {
                             Ok(Value::Ok(Box::new(items[0].clone())))
                         }
                     }
-                    _ => Err(RuntimeError::Error("head() argument must be a List".to_string())),
+                    _ => Err(RuntimeError::Error(
+                        "head() argument must be a List".to_string(),
+                    )),
                 }
             }
             "tail" => {
@@ -354,7 +568,9 @@ impl Interpreter {
                             Ok(Value::Ok(Box::new(Value::List(items[1..].to_vec()))))
                         }
                     }
-                    _ => Err(RuntimeError::Error("tail() argument must be a List".to_string())),
+                    _ => Err(RuntimeError::Error(
+                        "tail() argument must be a List".to_string(),
+                    )),
                 }
             }
             name if name.starts_with("__ctor:") => {
@@ -362,9 +578,16 @@ impl Interpreter {
                 let parts: Vec<&str> = name.splitn(3, ':').collect();
                 let type_name = parts.get(1).copied().unwrap_or("").to_string();
                 let variant = parts.get(2).copied().unwrap_or("").to_string();
-                Ok(Value::Variant { type_name, variant, fields: args })
+                Ok(Value::Variant {
+                    type_name,
+                    variant,
+                    fields: args,
+                })
             }
-            _ => Err(RuntimeError::Error(format!("Unknown builtin function: '{}'", name))),
+            _ => Err(RuntimeError::Error(format!(
+                "Unknown builtin function: '{}'",
+                name
+            ))),
         }
     }
 
@@ -391,7 +614,10 @@ impl Interpreter {
     /// Register a user-defined type: sum type variants and record constructors.
     pub fn register_type_def(&mut self, td: &TypeDef) {
         match td {
-            TypeDef::Sum { name: type_name, variants } => {
+            TypeDef::Sum {
+                name: type_name,
+                variants,
+            } => {
                 let mut members = HashMap::new();
                 for variant in variants {
                     if variant.fields.is_empty() {
@@ -412,10 +638,13 @@ impl Interpreter {
                         );
                     }
                 }
-                self.define(type_name.clone(), Value::Namespace {
-                    name: type_name.clone(),
-                    members,
-                });
+                self.define(
+                    type_name.clone(),
+                    Value::Namespace {
+                        name: type_name.clone(),
+                        members,
+                    },
+                );
             }
             TypeDef::Product { .. } => {
                 // Product types are constructed via Expr::RecordCreate — no env registration needed
@@ -481,20 +710,16 @@ impl Interpreter {
             Expr::Attr(obj, field) => {
                 let obj_val = self.eval_expr(obj)?;
                 match obj_val {
-                    Value::Record { fields, .. } => {
-                        fields
-                            .into_iter()
-                            .find(|(k, _)| k == field)
-                            .map(|(_, v)| Ok(v))
-                            .unwrap_or_else(|| {
-                                Err(RuntimeError::Error(format!("Unknown field '{}'", field)))
-                            })
-                    }
+                    Value::Record { fields, .. } => fields
+                        .into_iter()
+                        .find(|(k, _)| k == field)
+                        .map(|(_, v)| Ok(v))
+                        .unwrap_or_else(|| {
+                            Err(RuntimeError::Error(format!("Unknown field '{}'", field)))
+                        }),
                     Value::Namespace { name, members } => {
                         members.get(field).cloned().ok_or_else(|| {
-                            RuntimeError::Error(format!(
-                                "Unknown constructor '{}.{}'", name, field
-                            ))
+                            RuntimeError::Error(format!("Unknown member '{}.{}'", name, field))
                         })
                     }
                     _ => Err(RuntimeError::Error(format!(
@@ -535,7 +760,10 @@ impl Interpreter {
                     "Err" => Ok(Value::Err(Box::new(arg_val))),
                     "Some" => Ok(Value::Some(Box::new(arg_val))),
                     "None" => Ok(Value::None),
-                    _ => Err(RuntimeError::Error(format!("Unknown constructor: {}", name))),
+                    _ => Err(RuntimeError::Error(format!(
+                        "Unknown constructor: {}",
+                        name
+                    ))),
                 }
             }
             Expr::ErrorProp(inner) => {
@@ -583,7 +811,10 @@ impl Interpreter {
                     let val = self.eval_expr(expr)?;
                     field_vals.push((name.clone(), val));
                 }
-                Ok(Value::Record { type_name: type_name.clone(), fields: field_vals })
+                Ok(Value::Record {
+                    type_name: type_name.clone(),
+                    fields: field_vals,
+                })
             }
         }
     }
@@ -600,7 +831,12 @@ impl Interpreter {
     fn call_value(&mut self, fn_val: Value, args: Vec<Value>) -> Result<Value, RuntimeError> {
         match fn_val {
             Value::Builtin(name) => self.call_builtin(&name, args),
-            Value::Fn { name, params, body, closure } => {
+            Value::Fn {
+                name,
+                params,
+                body,
+                closure,
+            } => {
                 if args.len() != params.len() {
                     return Err(RuntimeError::Error(format!(
                         "Function '{}' expects {} arguments, got {}",
@@ -664,22 +900,38 @@ impl Interpreter {
                 xs.len() == ys.len() && xs.iter().zip(ys.iter()).all(|(x, y)| self.aver_eq(x, y))
             }
             (
-                Value::Variant { type_name: t1, variant: v1, fields: f1 },
-                Value::Variant { type_name: t2, variant: v2, fields: f2 },
+                Value::Variant {
+                    type_name: t1,
+                    variant: v1,
+                    fields: f1,
+                },
+                Value::Variant {
+                    type_name: t2,
+                    variant: v2,
+                    fields: f2,
+                },
             ) => {
-                t1 == t2 && v1 == v2
+                t1 == t2
+                    && v1 == v2
                     && f1.len() == f2.len()
                     && f1.iter().zip(f2.iter()).all(|(x, y)| self.aver_eq(x, y))
             }
             (
-                Value::Record { type_name: t1, fields: f1 },
-                Value::Record { type_name: t2, fields: f2 },
+                Value::Record {
+                    type_name: t1,
+                    fields: f1,
+                },
+                Value::Record {
+                    type_name: t2,
+                    fields: f2,
+                },
             ) => {
                 t1 == t2
                     && f1.len() == f2.len()
-                    && f1.iter().zip(f2.iter()).all(|((k1, v1), (k2, v2))| {
-                        k1 == k2 && self.aver_eq(v1, v2)
-                    })
+                    && f1
+                        .iter()
+                        .zip(f2.iter())
+                        .all(|((k1, v1), (k2, v2))| k1 == k2 && self.aver_eq(v1, v2))
             }
             _ => false,
         }
@@ -693,7 +945,7 @@ impl Interpreter {
             (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x + *y as f64)),
             (Value::Str(x), Value::Str(y)) => Ok(Value::Str(format!("{}{}", x, y))),
             _ => Err(RuntimeError::Error(
-                "Operator '+' does not support these types".to_string()
+                "Operator '+' does not support these types".to_string(),
             )),
         }
     }
@@ -704,7 +956,9 @@ impl Interpreter {
             (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x - y)),
             (Value::Int(x), Value::Float(y)) => Ok(Value::Float(*x as f64 - y)),
             (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x - *y as f64)),
-            _ => Err(RuntimeError::Error("Operator '-' does not support these types".to_string())),
+            _ => Err(RuntimeError::Error(
+                "Operator '-' does not support these types".to_string(),
+            )),
         }
     }
 
@@ -714,7 +968,9 @@ impl Interpreter {
             (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x * y)),
             (Value::Int(x), Value::Float(y)) => Ok(Value::Float(*x as f64 * y)),
             (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x * *y as f64)),
-            _ => Err(RuntimeError::Error("Operator '*' does not support these types".to_string())),
+            _ => Err(RuntimeError::Error(
+                "Operator '*' does not support these types".to_string(),
+            )),
         }
     }
 
@@ -736,7 +992,9 @@ impl Interpreter {
             }
             (Value::Int(x), Value::Float(y)) => Ok(Value::Float(*x as f64 / y)),
             (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x / *y as f64)),
-            _ => Err(RuntimeError::Error("Operator '/' does not support these types".to_string())),
+            _ => Err(RuntimeError::Error(
+                "Operator '/' does not support these types".to_string(),
+            )),
         }
     }
 
@@ -824,7 +1082,11 @@ impl Interpreter {
                     (Literal::Bool(b), Value::Bool(v)) => b == v,
                     _ => false,
                 };
-                if matches { Some(HashMap::new()) } else { None }
+                if matches {
+                    Some(HashMap::new())
+                } else {
+                    None
+                }
             }
             Pattern::Ident(name) => {
                 let mut bindings = HashMap::new();
@@ -862,7 +1124,15 @@ impl Interpreter {
                         Some(map)
                     }
                     // User-defined variant: match by variant name, qualified or unqualified
-                    (ctor, Value::Variant { type_name, variant, fields, .. }) => {
+                    (
+                        ctor,
+                        Value::Variant {
+                            type_name,
+                            variant,
+                            fields,
+                            ..
+                        },
+                    ) => {
                         let matches = if ctor.contains('.') {
                             // Qualified: "Shape.Circle"
                             let mut parts = ctor.splitn(2, '.');
@@ -888,7 +1158,14 @@ impl Interpreter {
                         Some(map)
                     }
                     // Record destructuring: positional, matched by type_name
-                    (ctor, Value::Record { type_name, fields: rf, .. }) if ctor == type_name => {
+                    (
+                        ctor,
+                        Value::Record {
+                            type_name,
+                            fields: rf,
+                            ..
+                        },
+                    ) if ctor == type_name => {
                         if !bindings.is_empty() && bindings.len() != rf.len() {
                             return None;
                         }
@@ -907,7 +1184,11 @@ impl Interpreter {
     }
 
     // Public wrapper so main.rs can call call_value
-    pub fn call_value_pub(&mut self, fn_val: Value, args: Vec<Value>) -> Result<Value, RuntimeError> {
+    pub fn call_value_pub(
+        &mut self,
+        fn_val: Value,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
         self.call_value(fn_val, args)
     }
 
@@ -916,10 +1197,7 @@ impl Interpreter {
     // -------------------------------------------------------------------------
     #[allow(dead_code)]
     pub fn run_file(&mut self, source: &str) -> Result<Value, RuntimeError> {
-        let mut lexer = Lexer::new(source);
-        let tokens = lexer.tokenize().map_err(|e| RuntimeError::Error(e.to_string()))?;
-        let mut parser = Parser::new(tokens);
-        let items = parser.parse().map_err(|e| RuntimeError::Error(e.to_string()))?;
+        let items = parse_source(source).map_err(RuntimeError::Error)?;
 
         // First pass: register all top-level definitions
         for item in &items {

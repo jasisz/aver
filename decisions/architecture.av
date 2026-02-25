@@ -70,6 +70,17 @@ decision TreeWalkingInterpreter:
     rejected: [BytecodeVM, LLVMBackend, Transpilation]
     impacts: [Interpreter, Performance]
 
+decision RecordsAreDataMethodsInModules:
+    date: "2026-02-25"
+    author: "Aver core team"
+    reason:
+        "Keeping records as data-only keeps the object model small and predictable."
+        "Module namespaces already provide a clear place for behavior via Module.fn(record, ...)."
+        "This avoids introducing two parallel styles too early: methods on records and module functions."
+    chosen: DataOnlyRecords
+    rejected: [RecordMethods, ImplicitThis]
+    impacts: [TypeSystem, RecordModel, ModuleNamespaces]
+
 fn describeDecision(decName: String, pick: String) -> String
     ? "Formats a one-line summary of an architectural decision."
     = "Decision: {decName} -> chosen: {pick}"
@@ -83,8 +94,9 @@ fn main() -> Unit
     print(describeDecision("ColocatedVerify", "ColocatedVerifyBlocks"))
     print(describeDecision("DecisionBlocksAsLanguageFeature", "FirstClassDecisions"))
     print(describeDecision("TreeWalkingInterpreter", "TreeWalker"))
+    print(describeDecision("RecordsAreDataMethodsInModules", "DataOnlyRecords"))
     print("")
-    print("Run: cargo run -- decisions examples/architecture.av")
+    print("Run: cargo run -- decisions decisions/architecture.av")
 
 verify describeDecision:
     describeDecision("HostLanguage", "Rust") => "Decision: HostLanguage -> chosen: Rust"

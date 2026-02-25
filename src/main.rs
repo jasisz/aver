@@ -1,15 +1,15 @@
 use std::fs;
+use std::path::Path;
 use std::process;
 
 use clap::{Parser as ClapParser, Subcommand};
 use colored::Colorize;
 
-use aver::lexer::Lexer;
-use aver::parser::Parser;
-use aver::interpreter::Interpreter;
-use aver::checker::{run_verify, index_decisions, check_module_intent};
-use aver::typechecker::run_type_check;
 use aver::ast::TopLevel;
+use aver::checker::{check_module_intent, index_decisions, run_verify};
+use aver::interpreter::Interpreter;
+use aver::source::parse_source;
+use aver::typechecker::run_type_check_with_base;
 
 #[derive(ClapParser)]
 #[command(name = "aver", about = "The Aver language interpreter")]
@@ -35,13 +35,9 @@ enum Commands {
         strict: bool,
     },
     /// Run all verify blocks
-    Verify {
-        file: String,
-    },
+    Verify { file: String },
     /// List all decision blocks
-    Decisions {
-        file: String,
-    },
+    Decisions { file: String },
 }
 
 fn read_file(path: &str) -> Result<String, String> {
@@ -49,10 +45,38 @@ fn read_file(path: &str) -> Result<String, String> {
 }
 
 fn parse_file(source: &str) -> Result<Vec<TopLevel>, String> {
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
-    let mut parser = Parser::new(tokens);
-    parser.parse().map_err(|e| e.to_string())
+    parse_source(source)
+}
+
+fn base_dir_for(file: &str) -> String {
+    Path::new(file)
+        .parent()
+        .and_then(|p| p.to_str())
+        .unwrap_or(".")
+        .to_string()
+}
+
+fn load_dep_modules(
+    interp: &mut Interpreter,
+    items: &[TopLevel],
+    base_dir: &str,
+) -> Result<(), String> {
+    let mut loading = Vec::new();
+    if let Some(module) = items.iter().find_map(|i| {
+        if let TopLevel::Module(m) = i {
+            Some(m)
+        } else {
+            None
+        }
+    }) {
+        for dep_name in &module.depends {
+            let ns = interp
+                .load_module(dep_name, base_dir, &mut loading)
+                .map_err(|e| e.to_string())?;
+            interp.define(dep_name.clone(), ns);
+        }
+    }
+    Ok(())
 }
 
 fn main() {
@@ -75,6 +99,7 @@ fn main() {
 }
 
 fn cmd_run(file: &str, run_verify_blocks: bool) {
+    let base_dir = base_dir_for(file);
     let source = match read_file(file) {
         Ok(s) => s,
         Err(e) => {
@@ -92,7 +117,7 @@ fn cmd_run(file: &str, run_verify_blocks: bool) {
     };
 
     // Static type check — block execution on any error
-    let type_errors = run_type_check(&items);
+    let type_errors = run_type_check_with_base(&items, Some(&base_dir));
     if !type_errors.is_empty() {
         for te in &type_errors {
             eprintln!("{} {}", "Error:".red(), te.message);
@@ -101,6 +126,10 @@ fn cmd_run(file: &str, run_verify_blocks: bool) {
     }
 
     let mut interp = Interpreter::new();
+    if let Err(e) = load_dep_modules(&mut interp, &items, &base_dir) {
+        eprintln!("{}", e.red());
+        process::exit(1);
+    }
 
     // Register type definitions (constructors) first
     for item in &items {
@@ -165,6 +194,7 @@ fn cmd_run(file: &str, run_verify_blocks: bool) {
 }
 
 fn cmd_check(file: &str, strict: bool) {
+    let base_dir = base_dir_for(file);
     let source = match read_file(file) {
         Ok(s) => s,
         Err(e) => {
@@ -186,7 +216,7 @@ fn cmd_check(file: &str, strict: bool) {
     println!("Check: {}", file.cyan());
 
     // --- Type errors (hard errors) ---
-    let type_errors = run_type_check(&items);
+    let type_errors = run_type_check_with_base(&items, Some(&base_dir));
     let has_errors = !type_errors.is_empty();
     for te in &type_errors {
         println!("  {} {}", "Error:".red(), te.message);
@@ -208,7 +238,11 @@ fn cmd_check(file: &str, strict: bool) {
     if warnings.is_empty() {
         println!("  {} All intent/desc/verify present", "✓".green());
     } else {
-        let label = if strict { "Error:".red() } else { "Warning:".yellow() };
+        let label = if strict {
+            "Error:".red()
+        } else {
+            "Warning:".yellow()
+        };
         for w in &warnings {
             println!("  {} {}", label, w);
         }
@@ -217,7 +251,11 @@ fn cmd_check(file: &str, strict: bool) {
     // Count decisions
     let decisions = index_decisions(&items);
     if !decisions.is_empty() {
-        println!("  {} Found {} decision block(s)", "✓".green(), decisions.len());
+        println!(
+            "  {} Found {} decision block(s)",
+            "✓".green(),
+            decisions.len()
+        );
     }
 
     let has_warnings = !warnings.is_empty();
@@ -229,6 +267,7 @@ fn cmd_check(file: &str, strict: bool) {
 }
 
 fn cmd_verify(file: &str) {
+    let base_dir = base_dir_for(file);
     let source = match read_file(file) {
         Ok(s) => s,
         Err(e) => {
@@ -246,7 +285,7 @@ fn cmd_verify(file: &str) {
     };
 
     // Static type check — verify should use the same soundness gate as run/check
-    let type_errors = run_type_check(&items);
+    let type_errors = run_type_check_with_base(&items, Some(&base_dir));
     if !type_errors.is_empty() {
         for te in &type_errors {
             eprintln!("{} {}", "Error:".red(), te.message);
@@ -255,6 +294,10 @@ fn cmd_verify(file: &str) {
     }
 
     let mut interp = Interpreter::new();
+    if let Err(e) = load_dep_modules(&mut interp, &items, &base_dir) {
+        eprintln!("{}", e.red());
+        process::exit(1);
+    }
 
     // Register type definitions (constructors) first
     for item in &items {
@@ -285,7 +328,10 @@ fn cmd_verify(file: &str) {
         .collect();
 
     if verify_blocks.is_empty() {
-        println!("{}", format!("No verify blocks found in {}.", file).yellow());
+        println!(
+            "{}",
+            format!("No verify blocks found in {}.", file).yellow()
+        );
         return;
     }
 
@@ -301,9 +347,15 @@ fn cmd_verify(file: &str) {
 
     let total = total_passed + total_failed;
     if total_failed == 0 {
-        println!("{}", format!("Total: {}/{} passed", total_passed, total).green());
+        println!(
+            "{}",
+            format!("Total: {}/{} passed", total_passed, total).green()
+        );
     } else {
-        println!("{}", format!("Total: {}/{} passed", total_passed, total).red());
+        println!(
+            "{}",
+            format!("Total: {}/{} passed", total_passed, total).red()
+        );
         process::exit(1);
     }
 }
@@ -345,7 +397,7 @@ fn cmd_decisions(file: &str) {
             println!("    Impacts:  {}", dec.impacts.join(", "));
         }
         if !dec.reason.is_empty() {
-            let prefix      = "    Reason:   ";
+            let prefix = "    Reason:   ";
             let continuation = "              ";
             let max_width = 80usize;
             let mut current = prefix.to_string();
