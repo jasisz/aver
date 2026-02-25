@@ -14,6 +14,7 @@ fn is_adult(u: User) -> Bool
     User(name, age) -> age >= 18
 
 fn main()
+  ! [Console]
   val alice = User(name: "Alice", age: 30)
   val bob = User(name: "Bob", age: 15)
   print(greet(alice))

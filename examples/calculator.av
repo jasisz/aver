@@ -33,6 +33,7 @@ verify safeRoot:
     safeRoot(-99) => Err("Cannot take root of negative number")
 
 fn main() -> Unit
+    ! [Console]
     var attempts = 0
         reason: "Tracks how many divisions we attempted for the summary."
     val r1 = safeDivide(10, 2)

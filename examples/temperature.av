@@ -45,6 +45,7 @@ fn classify(c: Float) -> String
                 false -> "hot"
 
 fn main() -> Unit
+    ! [Console]
     val boiling = 100.0 |> celsiusToFahr
     print("100 C in Fahrenheit:")
     print(boiling)

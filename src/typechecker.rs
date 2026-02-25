@@ -48,6 +48,7 @@ struct FnSig {
 struct TypeChecker {
     fn_sigs: HashMap<String, FnSig>,
     module_sig_cache: HashMap<String, Vec<(String, FnSig)>>,
+    value_members: HashMap<String, Type>,
     /// Top-level bindings visible from function bodies.
     globals: HashMap<String, (Type, bool)>,
     /// name → (type, is_mutable)
@@ -62,6 +63,7 @@ impl TypeChecker {
         let mut tc = TypeChecker {
             fn_sigs: HashMap::new(),
             module_sig_cache: HashMap::new(),
+            value_members: HashMap::new(),
             globals: HashMap::new(),
             locals: HashMap::new(),
             errors: Vec::new(),
@@ -245,14 +247,21 @@ impl TypeChecker {
                         .iter()
                         .map(|f| parse_type_str_strict(f).unwrap_or(Type::Any))
                         .collect();
-                    self.fn_sigs.insert(
-                        format!("{}.{}", type_name, variant.name),
-                        FnSig {
-                            params,
-                            ret: Type::Named(type_name.clone()),
-                            effects: vec![],
-                        },
-                    );
+                    let key = format!("{}.{}", type_name, variant.name);
+                    if params.is_empty() {
+                        // Zero-arg constructors are values in Aver (`Shape.Point`), not functions.
+                        self.value_members
+                            .insert(key, Type::Named(type_name.clone()));
+                    } else {
+                        self.fn_sigs.insert(
+                            key,
+                            FnSig {
+                                params,
+                                ret: Type::Named(type_name.clone()),
+                                effects: vec![],
+                            },
+                        );
+                    }
                 }
             }
             TypeDef::Product {
@@ -620,10 +629,6 @@ impl TypeChecker {
     }
 
     fn check_effects_in_expr(&mut self, expr: &Expr, caller_name: &str, caller_effects: &[String]) {
-        // main() is the top-level effect boundary — it is exempt from effect propagation checks
-        if caller_name == "main" {
-            return;
-        }
         match expr {
             Expr::FnCall(fn_expr, args) => {
                 if let Some((callee_name, effects)) = self.callable_effects(fn_expr) {
@@ -915,12 +920,24 @@ impl TypeChecker {
 
             Expr::Attr(obj, field) => {
                 if let Some(mut parts) = Self::attr_path(obj) {
+                    let obj_key = parts.join(".");
                     parts.push(field.clone());
                     let key = parts.join(".");
+                    if let Some(ty) = self.value_members.get(&key) {
+                        return ty.clone();
+                    }
                     if let Some(sig) = self.fn_sigs.get(&key) {
                         return Self::fn_type_from_sig(sig);
                     }
                     if self.has_namespace_prefix(&key) {
+                        // Intermediate namespace (e.g. Models.User in Models.User.findById)
+                        return Type::Any;
+                    }
+                    if self.has_namespace_prefix(&obj_key) {
+                        self.error(format!(
+                            "Unknown member '{}.{}' (not exposed or missing)",
+                            obj_key, field
+                        ));
                         return Type::Any;
                     }
                 }

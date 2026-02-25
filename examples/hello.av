@@ -12,6 +12,7 @@ fn shout(text: String) -> String
     = "{text}!!!"
 
 fn main() -> Unit
+    ! [Console]
     val greeting = greet("World")
     print(greeting)
     val loud = greet("Aver") |> shout

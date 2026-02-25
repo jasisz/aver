@@ -20,6 +20,7 @@ fn describe(s: Shape) -> String
     Shape.Point -> "Point"
 
 fn main()
+  ! [Console]
   val c = Shape.Circle(5.0)
   val r = Shape.Rect(3.0, 4.0)
   val p = Shape.Point

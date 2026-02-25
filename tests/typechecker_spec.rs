@@ -30,6 +30,14 @@ fn errors(src: &str) -> Vec<String> {
         .collect()
 }
 
+fn errors_with_base(src: &str, base_dir: &str) -> Vec<String> {
+    let items = parse(src);
+    run_type_check_with_base(&items, Some(base_dir))
+        .into_iter()
+        .map(|e| e.message)
+        .collect()
+}
+
 fn assert_no_errors(src: &str) {
     let errs = errors(src);
     assert!(
@@ -171,6 +179,12 @@ fn valid_calculator_av() {
 }
 
 #[test]
+fn valid_shapes_av() {
+    let src = std::fs::read_to_string("examples/shapes.av").expect("examples/shapes.av not found");
+    assert_no_errors(&src);
+}
+
+#[test]
 fn valid_lists_av() {
     let src = std::fs::read_to_string("examples/lists.av").expect("examples/lists.av not found");
     assert_no_errors(&src);
@@ -192,6 +206,17 @@ fn valid_app_dot_av() {
     );
 }
 
+#[test]
+fn valid_call_to_exposed_module_member() {
+    let src = "module App\n    depends [Secret]\n    intent:\n        \"Uses exported function\"\nfn main() -> Unit\n    val x = Secret.pub()\n";
+    let errs = errors_with_base(src, "examples");
+    assert!(
+        errs.is_empty(),
+        "expected no type errors, got:\n  {}",
+        errs.join("\n  ")
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Type errors — must produce at least one error
 // ---------------------------------------------------------------------------
@@ -209,6 +234,12 @@ fn error_wrong_arg_count_too_many() {
         "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    val r = add(1, 2, 3)\n";
     // actual: "Function 'add' expects 2 argument(s), got 3"
     assert_error_containing(src, "argument(s)");
+}
+
+#[test]
+fn error_zero_arg_constructor_called_like_function() {
+    let src = "type Shape\n  Point\nfn bad() -> Shape\n    = Shape.Point()\n";
+    assert_error_containing(src, "Cannot call value of type Shape");
 }
 
 #[test]
@@ -277,9 +308,31 @@ fn error_undeclared_effect() {
 }
 
 #[test]
+fn error_main_undeclared_console_effect() {
+    let src = "fn main() -> Unit\n    = print(\"hi\")\n";
+    assert_error_containing(src, "main");
+    assert_error_containing(src, "Console");
+}
+
+#[test]
 fn error_undeclared_effect_from_function_typed_callback() {
     let src = "fn applyOnce(f: Fn(Int) -> Int ! [Console], x: Int) -> Int\n    = f(x)\nfn pureInc(n: Int) -> Int\n    = n + 1\n";
     assert_error_containing(src, "has effect 'Console'");
+}
+
+#[test]
+fn error_call_to_unexposed_module_member() {
+    let src = "module App\n    depends [Secret]\n    intent:\n        \"Tries to use hidden member\"\nfn main() -> Unit\n    val x = Secret.hidden()\n";
+    let errs = errors_with_base(src, "examples");
+    assert!(
+        errs.iter().any(|e| e.contains("Secret.hidden")),
+        "expected exposes error mentioning Secret.hidden, got:\n  {}",
+        if errs.is_empty() {
+            "<no errors>".to_string()
+        } else {
+            errs.join("\n  ")
+        }
+    );
 }
 
 // ---------------------------------------------------------------------------

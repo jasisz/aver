@@ -16,6 +16,7 @@ fn add(a: Int, b: Int) -> Int
     = a + b
 
 fn main() -> Unit
+    ! [Console]
     val numbers = [1, 2, 3, 4, 5]
     val doubled = map(numbers, double)
     print(doubled)
