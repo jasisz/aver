@@ -1,0 +1,150 @@
+module Redis
+    intent:
+        "Minimal Redis client over raw TCP using the RESP protocol."
+        "Demonstrates persistent Tcp connections: connect once, issue multiple"
+        "commands on the same socket, close explicitly."
+    exposes [connect, disconnect, ping, set, get, del]
+    depends []
+
+decision RespOverTcp:
+    date: "2026-02-25"
+    reason:
+        "Redis speaks RESP (REdis Serialization Protocol), a text protocol over"
+        "TCP. RESP commands are plain lines terminated by CRLF, which maps"
+        "directly onto Tcp.writeLine / Tcp.readLine. No binary framing or"
+        "external library is needed."
+    chosen: RawTcpWithRespText
+    rejected: [HttpAdapter, NativeRedisDriver]
+    impacts: [Redis]
+    author: "szymon"
+
+decision ConnectionIdPattern:
+    date: "2026-02-25"
+    reason:
+        "Value must be Clone + PartialEq, so TcpStream cannot live inside a"
+        "Value directly. Instead Tcp.connect returns an opaque String ID"
+        "that is threaded through subsequent calls."
+        "The actual socket lives in a thread-local HashMap inside tcp.rs."
+    chosen: OpaqueStringHandle
+    rejected: [StreamInValue, GlobalConnectionPool]
+    impacts: [Redis, Tcp]
+    author: "szymon"
+
+// Config
+
+record RedisConfig
+    host: String
+    port: Int
+
+// RESP helpers (pure, verifiable)
+
+fn respBulkLen(s: String) -> String
+    ? "Returns the byte-length of s as a string, used to build RESP bulk-string headers."
+    = str(len(s))
+
+verify respBulkLen:
+    respBulkLen("PING") => "4"
+    respBulkLen("OK")   => "2"
+    respBulkLen("")     => "0"
+    respBulkLen("SET")  => "3"
+
+// RESP framing
+//
+// A RESP command with N args is sent as:
+//   *N\r\n
+//   $len(arg1)\r\n  arg1\r\n
+//   $len(arg2)\r\n  arg2\r\n
+//   ...
+//
+// sendCommand writes the *N header, then delegates to sendArgs.
+// sendArgs / sendArgAndRest recurse over the arg list.
+// Both return Result<String, String> where Ok carries conn, avoiding Ok(Unit).
+
+fn sendArgAndRest(conn: String, h: String, t: List<String>) -> Result<String, String>
+    ? "Sends one RESP bulk-string arg ('$len' + data), then recurses for the rest."
+    ! [Tcp]
+    val _ = Tcp.writeLine(conn, "${respBulkLen(h)}")?
+    val _ = Tcp.writeLine(conn, h)?
+    sendArgs(conn, t)
+
+fn sendArgs(conn: String, args: List<String>) -> Result<String, String>
+    ? "Recursively sends each element of args as a RESP bulk string."
+    ! [Tcp]
+    match args:
+        []       -> Ok(conn)
+        [h, ..t] -> sendArgAndRest(conn, h, t)
+
+fn sendCommand(conn: String, args: List<String>) -> Result<String, String>
+    ? "Sends a full RESP command: writes the '*N' array header then each arg via sendArgs."
+    ! [Tcp]
+    val _ = Tcp.writeLine(conn, "*{str(len(args))}")?
+    sendArgs(conn, args)
+
+// Public API
+
+fn connect(cfg: RedisConfig) -> Result<String, String>
+    ? "Opens a TCP connection to Redis and returns the connection ID."
+    ! [Tcp]
+    Tcp.connect(cfg.host, cfg.port)
+
+fn disconnect(conn: String) -> Result<Unit, String>
+    ? "Closes the TCP connection identified by conn."
+    ! [Tcp]
+    Tcp.close(conn)
+
+fn ping(conn: String) -> Result<String, String>
+    ? "Sends PING and returns the server reply (expected: +PONG)."
+    ! [Tcp]
+    val _ = sendCommand(conn, ["PING"])?
+    Tcp.readLine(conn)
+
+fn set(conn: String, key: String, value: String) -> Result<String, String>
+    ? "Sends SET key value and returns the server reply (expected: +OK)."
+    ! [Tcp]
+    val _ = sendCommand(conn, ["SET", key, value])?
+    Tcp.readLine(conn)
+
+fn get(conn: String, key: String) -> Result<String, String>
+    ? "Sends GET key. Returns Ok(value) or Err('key not found') when Redis replies $-1 (nil)."
+    ! [Tcp]
+    val _ = sendCommand(conn, ["GET", key])?
+    val header = Tcp.readLine(conn)?
+    match header == "$-1":
+        true  -> Err("key not found")
+        false -> Tcp.readLine(conn)
+
+fn del(conn: String, key: String) -> Result<String, String>
+    ? "Sends DEL key and returns the raw RESP reply (expected: :N deleted count)."
+    ! [Tcp]
+    val _ = sendCommand(conn, ["DEL", key])?
+    Tcp.readLine(conn)
+
+// Demo entry point
+
+fn run() -> Result<Unit, String>
+    ? "Full Redis demo: connect, PING, SET, GET, DEL, disconnect."
+    ! [Tcp, Console]
+    val cfg  = RedisConfig(host: "127.0.0.1", port: 6379)
+    val conn = connect(cfg)?
+
+    val pong = ping(conn)?
+    Console.print("PING -> {pong}")
+
+    val setR = set(conn, "aver:key", "hello from Aver")?
+    Console.print("SET  -> {setR}")
+
+    val getR = get(conn, "aver:key")?
+    Console.print("GET  -> {getR}")
+
+    val delR = del(conn, "aver:key")?
+    Console.print("DEL  -> {delR}")
+
+    val closed = disconnect(conn)
+    Console.print("connection closed.")
+    closed
+
+fn main() -> Unit
+    ! [Tcp, Console]
+    match run():
+        Ok(_)  -> Console.print("done.")
+        Err(e) -> Console.print("error: {e}")

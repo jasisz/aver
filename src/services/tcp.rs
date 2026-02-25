@@ -1,13 +1,21 @@
 /// Tcp service — raw TCP client.
 ///
-/// Two methods:
+/// One-shot methods:
 ///   `Tcp.send(host, port, message)` — connect, write message, read response, close.
 ///   `Tcp.ping(host, port)`          — check whether the port accepts connections.
 ///
-/// Both require `! [Tcp]`.
+/// Persistent-connection methods:
+///   `Tcp.connect(host, port)`           → Result<String, String>  (returns conn ID)
+///   `Tcp.writeLine(conn, line)`         → Result<Unit, String>    (writes line + \r\n)
+///   `Tcp.readLine(conn)`                → Result<String, String>  (reads until \n, strips \r\n)
+///   `Tcp.close(conn)`                   → Result<Unit, String>
+///
+/// All methods require `! [Tcp]`.
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crate::value::{RuntimeError, Value};
@@ -16,9 +24,16 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
 const BODY_LIMIT: usize = 10 * 1024 * 1024; // 10 MB
 
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
+thread_local! {
+    static CONNECTIONS: RefCell<HashMap<String, BufReader<TcpStream>>> =
+        RefCell::new(HashMap::new());
+}
+
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
-    for method in &["send", "ping"] {
+    for method in &["send", "ping", "connect", "writeLine", "readLine", "close"] {
         members.insert(
             method.to_string(),
             Value::Builtin(format!("Tcp.{}", method)),
@@ -35,7 +50,8 @@ pub fn register(global: &mut HashMap<String, Value>) {
 
 pub fn effects(name: &str) -> &'static [&'static str] {
     match name {
-        "Tcp.send" | "Tcp.ping" => &["Tcp"],
+        "Tcp.send" | "Tcp.ping" | "Tcp.connect" | "Tcp.writeLine" | "Tcp.readLine"
+        | "Tcp.close" => &["Tcp"],
         _ => &[],
     }
 }
@@ -45,11 +61,15 @@ pub fn call(name: &str, args: Vec<Value>) -> Option<Result<Value, RuntimeError>>
     match name {
         "Tcp.send" => Some(tcp_send(args)),
         "Tcp.ping" => Some(tcp_ping(args)),
+        "Tcp.connect" => Some(tcp_connect(args)),
+        "Tcp.writeLine" => Some(tcp_write_line(args)),
+        "Tcp.readLine" => Some(tcp_read_line(args)),
+        "Tcp.close" => Some(tcp_close(args)),
         _ => None,
     }
 }
 
-// ─── Private helpers ──────────────────────────────────────────────────────────
+// ─── One-shot helpers ─────────────────────────────────────────────────────────
 
 fn tcp_send(args: Vec<Value>) -> Result<Value, RuntimeError> {
     if args.len() != 3 {
@@ -83,7 +103,8 @@ fn tcp_send(args: Vec<Value>) -> Result<Value, RuntimeError> {
     stream.shutdown(std::net::Shutdown::Write).ok();
 
     let mut buf = Vec::new();
-    if let Err(e) = stream.take(BODY_LIMIT as u64 + 1).read_to_end(&mut buf) {
+    use std::io::Read;
+    if let Err(e) = std::io::Read::by_ref(&mut stream).take(BODY_LIMIT as u64 + 1).read_to_end(&mut buf) {
         return Ok(Value::Err(Box::new(Value::Str(e.to_string()))));
     }
 
@@ -114,6 +135,127 @@ fn tcp_ping(args: Vec<Value>) -> Result<Value, RuntimeError> {
         Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
     }
 }
+
+// ─── Persistent-connection helpers ────────────────────────────────────────────
+
+fn tcp_connect(args: Vec<Value>) -> Result<Value, RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!(
+            "Tcp.connect() takes 2 arguments (host, port), got {}",
+            args.len()
+        )));
+    }
+    let host = str_arg(&args[0], "Tcp.connect: host must be a String")?;
+    let port = int_arg(&args[1], "Tcp.connect: port must be an Int")?;
+
+    let addr = format!("{}:{}", host, port);
+    let socket_addr = match resolve(&addr) {
+        Ok(a) => a,
+        Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+    };
+
+    let stream = match TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT) {
+        Ok(s) => s,
+        Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+    };
+
+    stream.set_read_timeout(Some(IO_TIMEOUT)).ok();
+    stream.set_write_timeout(Some(IO_TIMEOUT)).ok();
+
+    let id = format!("tcp-{}", NEXT_ID.fetch_add(1, Ordering::Relaxed));
+    CONNECTIONS.with(|map| {
+        map.borrow_mut().insert(id.clone(), BufReader::new(stream));
+    });
+
+    Ok(Value::Ok(Box::new(Value::Str(id))))
+}
+
+fn tcp_write_line(args: Vec<Value>) -> Result<Value, RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!(
+            "Tcp.writeLine() takes 2 arguments (conn, line), got {}",
+            args.len()
+        )));
+    }
+    let conn_id = str_arg(&args[0], "Tcp.writeLine: conn must be a String")?;
+    let line = str_arg(&args[1], "Tcp.writeLine: line must be a String")?;
+
+    let result = CONNECTIONS.with(|map| {
+        let mut borrow = map.borrow_mut();
+        match borrow.get_mut(&conn_id) {
+            None => Err(format!("Tcp.writeLine: unknown connection '{}'", conn_id)),
+            Some(reader) => {
+                let msg = format!("{}\r\n", line);
+                reader
+                    .get_mut()
+                    .write_all(msg.as_bytes())
+                    .map_err(|e| e.to_string())
+            }
+        }
+    });
+
+    match result {
+        Ok(()) => Ok(Value::Ok(Box::new(Value::Unit))),
+        Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
+    }
+}
+
+fn tcp_read_line(args: Vec<Value>) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::Error(format!(
+            "Tcp.readLine() takes 1 argument (conn), got {}",
+            args.len()
+        )));
+    }
+    let conn_id = str_arg(&args[0], "Tcp.readLine: conn must be a String")?;
+
+    let result = CONNECTIONS.with(|map| {
+        let mut borrow = map.borrow_mut();
+        match borrow.get_mut(&conn_id) {
+            None => Err(format!("Tcp.readLine: unknown connection '{}'", conn_id)),
+            Some(reader) => {
+                let mut line = String::new();
+                reader
+                    .read_line(&mut line)
+                    .map_err(|e| e.to_string())?;
+                // Strip trailing \r\n or \n
+                if line.ends_with('\n') {
+                    line.pop();
+                    if line.ends_with('\r') {
+                        line.pop();
+                    }
+                }
+                Ok(line)
+            }
+        }
+    });
+
+    match result {
+        Ok(line) => Ok(Value::Ok(Box::new(Value::Str(line)))),
+        Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
+    }
+}
+
+fn tcp_close(args: Vec<Value>) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::Error(format!(
+            "Tcp.close() takes 1 argument (conn), got {}",
+            args.len()
+        )));
+    }
+    let conn_id = str_arg(&args[0], "Tcp.close: conn must be a String")?;
+
+    let removed = CONNECTIONS.with(|map| map.borrow_mut().remove(&conn_id));
+    match removed {
+        Some(_) => Ok(Value::Ok(Box::new(Value::Unit))),
+        None => Ok(Value::Err(Box::new(Value::Str(format!(
+            "Tcp.close: unknown connection '{}'",
+            conn_id
+        ))))),
+    }
+}
+
+// ─── Shared utilities ─────────────────────────────────────────────────────────
 
 fn resolve(addr: &str) -> Result<std::net::SocketAddr, RuntimeError> {
     addr.to_socket_addrs()

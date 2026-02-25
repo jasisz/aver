@@ -301,6 +301,30 @@ impl TypeChecker {
                 Type::Result(Box::new(Type::Unit), Box::new(Type::Str)),
                 &["Tcp"],
             ),
+            (
+                "Tcp.connect",
+                &[Type::Str, Type::Int],
+                Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
+                &["Tcp"],
+            ),
+            (
+                "Tcp.writeLine",
+                &[Type::Str, Type::Str],
+                Type::Result(Box::new(Type::Unit), Box::new(Type::Str)),
+                &["Tcp"],
+            ),
+            (
+                "Tcp.readLine",
+                &[Type::Str],
+                Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
+                &["Tcp"],
+            ),
+            (
+                "Tcp.close",
+                &[Type::Str],
+                Type::Result(Box::new(Type::Unit), Box::new(Type::Str)),
+                &["Tcp"],
+            ),
         ];
         for (name, params, ret, effects) in service_sigs {
             self.insert_sig(name, params, ret.clone(), effects);
