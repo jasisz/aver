@@ -1,118 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use thiserror::Error;
 
 use crate::ast::*;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
+use crate::services::{console, disk, network};
 use crate::source::{canonicalize_path, find_module_file, parse_source};
-
-#[derive(Debug, Error)]
-pub enum RuntimeError {
-    #[error("Runtime error: {0}")]
-    Error(String),
-    /// Internal signal: `?` operator encountered Err — caught by call_value to do early return.
-    /// Never surfaces to the user as a runtime error (type checker prevents top-level use).
-    #[error("Error propagation")]
-    ErrProp(Box<Value>),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Value {
-    Int(i64),
-    Float(f64),
-    Str(String),
-    Bool(bool),
-    Unit,
-    Ok(Box<Value>),
-    Err(Box<Value>),
-    Some(Box<Value>),
-    None,
-    List(Vec<Value>),
-    Fn {
-        name: String,
-        params: Vec<(String, String)>,
-        effects: Vec<String>,
-        body: FnBody,
-        closure: HashMap<String, Value>,
-    },
-    Builtin(String),
-    /// User-defined sum type variant, e.g. `Shape.Circle(3.14)`
-    Variant {
-        type_name: String,
-        variant: String,
-        fields: Vec<Value>,
-    },
-    /// User-defined product type (record), e.g. `User(name: "Alice", age: 30)`
-    Record {
-        type_name: String,
-        fields: Vec<(String, Value)>,
-    },
-    /// Type namespace: `Shape` — provides `Shape.Circle`, `Shape.Rect`, etc.
-    Namespace {
-        name: String,
-        members: HashMap<String, Value>,
-    },
-}
-
-pub fn aver_repr(val: &Value) -> String {
-    match val {
-        Value::Int(i) => i.to_string(),
-        Value::Float(f) => f.to_string(),
-        Value::Str(s) => s.clone(),
-        Value::Bool(b) => if *b { "true" } else { "false" }.to_string(),
-        Value::Unit => "()".to_string(),
-        Value::Ok(v) => format!("Ok({})", aver_repr_inner(v)),
-        Value::Err(v) => format!("Err({})", aver_repr_inner(v)),
-        Value::Some(v) => format!("Some({})", aver_repr_inner(v)),
-        Value::None => "None".to_string(),
-        Value::List(items) => {
-            let parts: Vec<String> = items.iter().map(aver_repr_inner).collect();
-            format!("[{}]", parts.join(", "))
-        }
-        Value::Fn { name, .. } => format!("<fn {}>", name),
-        Value::Builtin(name) => format!("<builtin {}>", name),
-        Value::Variant {
-            variant, fields, ..
-        } => {
-            if fields.is_empty() {
-                variant.clone()
-            } else {
-                let parts: Vec<String> = fields.iter().map(aver_repr_inner).collect();
-                format!("{}({})", variant, parts.join(", "))
-            }
-        }
-        Value::Record { type_name, fields } => {
-            let parts: Vec<String> = fields
-                .iter()
-                .map(|(k, v)| format!("{}: {}", k, aver_repr_inner(v)))
-                .collect();
-            format!("{}({})", type_name, parts.join(", "))
-        }
-        Value::Namespace { name, .. } => format!("<type {}>", name),
-    }
-}
-
-// For values inside constructors and list elements — strings get quoted
-fn aver_repr_inner(val: &Value) -> String {
-    match val {
-        Value::Str(s) => format!("\"{}\"", s),
-        Value::List(items) => {
-            let parts: Vec<String> = items.iter().map(aver_repr_inner).collect();
-            format!("[{}]", parts.join(", "))
-        }
-        other => aver_repr(other),
-    }
-}
-
-pub fn aver_display(val: &Value) -> Option<String> {
-    match val {
-        Value::Unit => None, // don't print Unit
-        other => Some(aver_repr(other)),
-    }
-}
-
-pub type Env = Vec<HashMap<String, Value>>;
+// Re-export value types so existing `use aver::interpreter::Value` imports keep working.
+pub use crate::value::{aver_display, aver_repr, Env, RuntimeError, Value};
 
 #[derive(Debug, Clone)]
 struct CallFrame {
@@ -128,81 +23,6 @@ pub struct Interpreter {
     effect_aliases: HashMap<String, Vec<String>>,
 }
 
-// ─── Network helpers (free functions) ────────────────────────────────────────
-
-fn parse_request_headers(val: &Value) -> Result<Vec<(String, String)>, RuntimeError> {
-    let items = match val {
-        Value::List(items) => items,
-        _ => return Err(RuntimeError::Error("Network: headers must be a List".to_string())),
-    };
-    let mut out = Vec::new();
-    for item in items {
-        let fields = match item {
-            Value::Record { fields, .. } => fields,
-            _ => return Err(RuntimeError::Error(
-                "Network: each header must be a record with 'name' and 'value' String fields".to_string()
-            )),
-        };
-        let get = |key: &str| -> Result<String, RuntimeError> {
-            fields.iter()
-                .find(|(k, _)| k == key)
-                .and_then(|(_, v)| if let Value::Str(s) = v { Some(s.clone()) } else { None })
-                .ok_or_else(|| RuntimeError::Error(format!(
-                    "Network: header record must have a '{}' String field", key
-                )))
-        };
-        out.push((get("name")?, get("value")?));
-    }
-    Ok(out)
-}
-
-fn build_network_response(resp: ureq::Response) -> Result<Value, RuntimeError> {
-    use std::io::Read;
-    let status = resp.status() as i64;
-    let header_names = resp.headers_names();
-    let headers: Vec<Value> = header_names.iter().map(|name| {
-        let value = resp.header(name).unwrap_or("").to_string();
-        Value::Record {
-            type_name: "Header".to_string(),
-            fields: vec![
-                ("name".to_string(), Value::Str(name.clone())),
-                ("value".to_string(), Value::Str(value)),
-            ],
-        }
-    }).collect();
-    const BODY_LIMIT: u64 = 10 * 1024 * 1024; // 10 MB
-    let mut buf = Vec::new();
-    let bytes_read = resp
-        .into_reader()
-        .take(BODY_LIMIT + 1)
-        .read_to_end(&mut buf)
-        .map_err(|e| RuntimeError::Error(format!("Network: failed to read response body: {}", e)))?;
-    if bytes_read as u64 > BODY_LIMIT {
-        return Ok(Value::Err(Box::new(Value::Str(
-            "Network: response body exceeds 10 MB limit".to_string(),
-        ))));
-    }
-    let body = String::from_utf8_lossy(&buf).into_owned();
-    Ok(Value::Ok(Box::new(Value::Record {
-        type_name: "NetworkResponse".to_string(),
-        fields: vec![
-            ("status".to_string(), Value::Int(status)),
-            ("body".to_string(), Value::Str(body)),
-            ("headers".to_string(), Value::List(headers)),
-        ],
-    })))
-}
-
-fn network_response_value(result: Result<ureq::Response, ureq::Error>) -> Result<Value, RuntimeError> {
-    match result {
-        Ok(resp) => build_network_response(resp),
-        Err(ureq::Error::Status(_, resp)) => build_network_response(resp),
-        Err(ureq::Error::Transport(e)) => {
-            Ok(Value::Err(Box::new(Value::Str(e.to_string()))))
-        }
-    }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 
 impl Interpreter {
@@ -215,51 +35,9 @@ impl Interpreter {
             global.insert(name.to_string(), Value::Builtin(name.to_string()));
         }
 
-        // Service namespace for backwards-compatible console output.
-        let mut console = HashMap::new();
-        console.insert(
-            "print".to_string(),
-            Value::Builtin("Console.print".to_string()),
-        );
-        global.insert(
-            "Console".to_string(),
-            Value::Namespace {
-                name: "Console".to_string(),
-                members: console,
-            },
-        );
-
-        // Network service namespace.
-        let mut network = HashMap::new();
-        for method in &["get", "head", "delete", "post", "put", "patch"] {
-            network.insert(
-                method.to_string(),
-                Value::Builtin(format!("Network.{}", method)),
-            );
-        }
-        global.insert(
-            "Network".to_string(),
-            Value::Namespace {
-                name: "Network".to_string(),
-                members: network,
-            },
-        );
-
-        // Disk service namespace.
-        let mut disk = HashMap::new();
-        for method in &["readText", "writeText", "appendText", "exists", "delete", "deleteDir", "listDir", "makeDir"] {
-            disk.insert(
-                method.to_string(),
-                Value::Builtin(format!("Disk.{}", method)),
-            );
-        }
-        global.insert(
-            "Disk".to_string(),
-            Value::Namespace {
-                name: "Disk".to_string(),
-                members: disk,
-            },
-        );
+        console::register(&mut global);
+        network::register(&mut global);
+        disk::register(&mut global);
 
         Interpreter {
             env: vec![global],
@@ -536,24 +314,11 @@ impl Interpreter {
     // Builtins
     // -------------------------------------------------------------------------
     fn builtin_effects(name: &str) -> &'static [&'static str] {
-        match name {
-            "print" | "Console.print" => &["Console"],
-            "Network.get"
-            | "Network.head"
-            | "Network.delete"
-            | "Network.post"
-            | "Network.put"
-            | "Network.patch" => &["Network"],
-            "Disk.readText"
-            | "Disk.writeText"
-            | "Disk.appendText"
-            | "Disk.exists"
-            | "Disk.delete"
-            | "Disk.deleteDir"
-            | "Disk.listDir"
-            | "Disk.makeDir" => &["Disk"],
-            _ => &[],
-        }
+        let e = console::effects(name);
+        if !e.is_empty() { return e; }
+        let e = network::effects(name);
+        if !e.is_empty() { return e; }
+        disk::effects(name)
     }
 
     fn current_allowed_effects(&self) -> &[String] {
@@ -861,207 +626,6 @@ impl Interpreter {
                     fields: args,
                 })
             }
-            "Network.get" | "Network.head" | "Network.delete" => {
-                if args.len() != 1 {
-                    return Err(RuntimeError::Error(format!(
-                        "Network.{}() takes 1 argument (url), got {}",
-                        name.trim_start_matches("Network."),
-                        args.len()
-                    )));
-                }
-                let url = match &args[0] {
-                    Value::Str(s) => s.clone(),
-                    _ => return Err(RuntimeError::Error(
-                        "Network: url must be a String".to_string()
-                    )),
-                };
-                let method = name.trim_start_matches("Network.").to_uppercase();
-                let result = ureq::request(&method, &url)
-                    .timeout(std::time::Duration::from_secs(10))
-                    .call();
-                network_response_value(result)
-            }
-
-            "Network.post" | "Network.put" | "Network.patch" => {
-                if args.len() != 4 {
-                    return Err(RuntimeError::Error(format!(
-                        "Network.{}() takes 4 arguments (url, body, contentType, headers), got {}",
-                        name.trim_start_matches("Network."),
-                        args.len()
-                    )));
-                }
-                let url = match &args[0] {
-                    Value::Str(s) => s.clone(),
-                    _ => return Err(RuntimeError::Error(
-                        "Network: url must be a String".to_string()
-                    )),
-                };
-                let body = match &args[1] {
-                    Value::Str(s) => s.clone(),
-                    _ => return Err(RuntimeError::Error(
-                        "Network: body must be a String".to_string()
-                    )),
-                };
-                let content_type = match &args[2] {
-                    Value::Str(s) => s.clone(),
-                    _ => return Err(RuntimeError::Error(
-                        "Network: contentType must be a String".to_string()
-                    )),
-                };
-                let extra_headers = parse_request_headers(&args[3])?;
-                let method = name.trim_start_matches("Network.").to_uppercase();
-                let mut req = ureq::request(&method, &url)
-                    .timeout(std::time::Duration::from_secs(10))
-                    .set("Content-Type", &content_type);
-                for (k, v) in &extra_headers {
-                    req = req.set(k, v);
-                }
-                let result = req.send_string(&body);
-                network_response_value(result)
-            }
-
-            // -----------------------------------------------------------------
-            // Disk service
-            // -----------------------------------------------------------------
-            "Disk.readText" => {
-                let [path_val] = args.as_slice() else {
-                    return Err(RuntimeError::Error(format!(
-                        "Disk.readText() takes 1 argument (path), got {}",
-                        args.len()
-                    )));
-                };
-                let Value::Str(path) = path_val else {
-                    return Err(RuntimeError::Error("Disk.readText: path must be a String".to_string()));
-                };
-                match std::fs::read_to_string(path) {
-                    Ok(text) => Ok(Value::Ok(Box::new(Value::Str(text)))),
-                    Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
-                }
-            }
-
-            "Disk.writeText" => {
-                let [path_val, content_val] = args.as_slice() else {
-                    return Err(RuntimeError::Error(format!(
-                        "Disk.writeText() takes 2 arguments (path, content), got {}",
-                        args.len()
-                    )));
-                };
-                let Value::Str(path) = path_val else {
-                    return Err(RuntimeError::Error("Disk.writeText: path must be a String".to_string()));
-                };
-                let Value::Str(content) = content_val else {
-                    return Err(RuntimeError::Error("Disk.writeText: content must be a String".to_string()));
-                };
-                match std::fs::write(path, content) {
-                    Ok(_) => Ok(Value::Ok(Box::new(Value::Unit))),
-                    Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
-                }
-            }
-
-            "Disk.appendText" => {
-                let [path_val, content_val] = args.as_slice() else {
-                    return Err(RuntimeError::Error(format!(
-                        "Disk.appendText() takes 2 arguments (path, content), got {}",
-                        args.len()
-                    )));
-                };
-                let Value::Str(path) = path_val else {
-                    return Err(RuntimeError::Error("Disk.appendText: path must be a String".to_string()));
-                };
-                let Value::Str(content) = content_val else {
-                    return Err(RuntimeError::Error("Disk.appendText: content must be a String".to_string()));
-                };
-                use std::io::Write;
-                match std::fs::OpenOptions::new().create(true).append(true).open(path) {
-                    Ok(mut f) => match f.write_all(content.as_bytes()) {
-                        Ok(_) => Ok(Value::Ok(Box::new(Value::Unit))),
-                        Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
-                    },
-                    Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
-                }
-            }
-
-            "Disk.exists" => {
-                let [path_val] = args.as_slice() else {
-                    return Err(RuntimeError::Error(format!(
-                        "Disk.exists() takes 1 argument (path), got {}",
-                        args.len()
-                    )));
-                };
-                let Value::Str(path) = path_val else {
-                    return Err(RuntimeError::Error("Disk.exists: path must be a String".to_string()));
-                };
-                Ok(Value::Bool(std::path::Path::new(path).exists()))
-            }
-
-            "Disk.delete" => {
-                let [path_val] = args.as_slice() else {
-                    return Err(RuntimeError::Error(format!(
-                        "Disk.delete() takes 1 argument (path), got {}",
-                        args.len()
-                    )));
-                };
-                let Value::Str(path) = path_val else {
-                    return Err(RuntimeError::Error("Disk.delete: path must be a String".to_string()));
-                };
-                let p = std::path::Path::new(path);
-                if p.is_dir() {
-                    return Ok(Value::Err(Box::new(Value::Str(
-                        "Disk.delete: path is a directory — use Disk.deleteDir to remove directories".to_string(),
-                    ))));
-                }
-                match std::fs::remove_file(p) {
-                    Ok(_) => Ok(Value::Ok(Box::new(Value::Unit))),
-                    Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
-                }
-            }
-
-            "Disk.deleteDir" => {
-                let [path_val] = args.as_slice() else {
-                    return Err(RuntimeError::Error(format!(
-                        "Disk.deleteDir() takes 1 argument (path), got {}",
-                        args.len()
-                    )));
-                };
-                let Value::Str(path) = path_val else {
-                    return Err(RuntimeError::Error("Disk.deleteDir: path must be a String".to_string()));
-                };
-                let p = std::path::Path::new(path);
-                if !p.is_dir() {
-                    return Ok(Value::Err(Box::new(Value::Str(
-                        "Disk.deleteDir: path is not a directory — use Disk.delete to remove files".to_string(),
-                    ))));
-                }
-                match std::fs::remove_dir_all(p) {
-                    Ok(_) => Ok(Value::Ok(Box::new(Value::Unit))),
-                    Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
-                }
-            }
-
-            "Disk.listDir" => {
-                let [path_val] = args.as_slice() else {
-                    return Err(RuntimeError::Error(format!(
-                        "Disk.listDir() takes 1 argument (path), got {}",
-                        args.len()
-                    )));
-                };
-                let Value::Str(path) = path_val else {
-                    return Err(RuntimeError::Error("Disk.listDir: path must be a String".to_string()));
-                };
-                match std::fs::read_dir(path) {
-                    Ok(entries) => {
-                        let mut names = Vec::new();
-                        for entry in entries {
-                            match entry {
-                                Ok(e) => names.push(Value::Str(e.file_name().to_string_lossy().into_owned())),
-                                Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
-                            }
-                        }
-                        Ok(Value::Ok(Box::new(Value::List(names))))
-                    }
-                    Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
-                }
-            }
 
             "Disk.makeDir" => {
                 let [path_val] = args.as_slice() else {
@@ -1079,10 +643,12 @@ impl Interpreter {
                 }
             }
 
-            _ => Err(RuntimeError::Error(format!(
-                "Unknown builtin function: '{}'",
-                name
-            ))),
+            _ => {
+                if let Some(r) = console::call(name, args.clone()) { return r; }
+                if let Some(r) = network::call(name, args.clone()) { return r; }
+                if let Some(r) = disk::call(name, args)            { return r; }
+                Err(RuntimeError::Error(format!("Unknown builtin function: '{}'", name)))
+            }
         }
     }
 
