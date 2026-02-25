@@ -987,6 +987,7 @@ mod network_tests {
     }
 
     #[test]
+    #[ignore = "integration: starts a local HTTP server; run with --include-ignored --test-threads=1"]
     fn network_get_200_returns_ok_response() {
         let Some(url) = start_server(200, "hello", "") else { return; };
         let src = format!(
@@ -1010,6 +1011,7 @@ mod network_tests {
     }
 
     #[test]
+    #[ignore = "integration: starts a local HTTP server; run with --include-ignored --test-threads=1"]
     fn network_get_404_still_returns_ok_response() {
         let Some(url) = start_server(404, "not found", "") else { return; };
         let src = format!(
@@ -1052,6 +1054,7 @@ mod network_tests {
     }
 
     #[test]
+    #[ignore = "integration: starts a local HTTP server; run with --include-ignored --test-threads=1"]
     fn network_post_201_returns_ok_response() {
         let Some(url) = start_server(201, "created", "") else { return; };
         let src = format!(

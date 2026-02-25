@@ -360,35 +360,53 @@ impl Lexer {
                     break;
                 }
                 Some('{') => {
-                    has_interp = true;
-                    if !current.is_empty() {
-                        parts.push((false, current.clone()));
-                        current.clear();
-                    }
-                    self.advance(); // consume {
-                    let mut expr_text = String::new();
-                    let mut depth = 1usize;
-                    while self.pos < self.chars.len() && depth > 0 {
-                        match self.chars[self.pos] {
-                            '{' => {
-                                depth += 1;
-                                expr_text.push('{');
-                                self.advance();
-                            }
-                            '}' => {
-                                depth -= 1;
-                                if depth > 0 {
-                                    expr_text.push('}');
+                    // {{ → literal {, otherwise start interpolation
+                    if self.chars.get(self.pos + 1).copied() == Some('{') {
+                        current.push('{');
+                        self.advance(); // first {
+                        self.advance(); // second {
+                    } else {
+                        has_interp = true;
+                        if !current.is_empty() {
+                            parts.push((false, current.clone()));
+                            current.clear();
+                        }
+                        self.advance(); // consume {
+                        let mut expr_text = String::new();
+                        let mut depth = 1usize;
+                        while self.pos < self.chars.len() && depth > 0 {
+                            match self.chars[self.pos] {
+                                '{' => {
+                                    depth += 1;
+                                    expr_text.push('{');
+                                    self.advance();
                                 }
-                                self.advance();
-                            }
-                            c => {
-                                expr_text.push(c);
-                                self.advance();
+                                '}' => {
+                                    depth -= 1;
+                                    if depth > 0 {
+                                        expr_text.push('}');
+                                    }
+                                    self.advance();
+                                }
+                                c => {
+                                    expr_text.push(c);
+                                    self.advance();
+                                }
                             }
                         }
+                        parts.push((true, expr_text));
                     }
-                    parts.push((true, expr_text));
+                }
+                Some('}') => {
+                    // }} → literal }, single } is just a literal character
+                    if self.chars.get(self.pos + 1).copied() == Some('}') {
+                        current.push('}');
+                        self.advance(); // first }
+                        self.advance(); // second }
+                    } else {
+                        current.push('}');
+                        self.advance();
+                    }
                 }
                 Some('\\') => {
                     self.advance();

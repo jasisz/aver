@@ -434,3 +434,38 @@ fn unterminated_string_is_error() {
         "unterminated string should be a lex error"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Brace escape sequences: {{ → { and }} → }
+// ---------------------------------------------------------------------------
+
+#[test]
+fn double_brace_open_is_literal() {
+    // "{{" produces a plain Str containing "{"
+    let kinds = lex("\"{{\"");
+    assert_eq!(kinds, vec![TokenKind::Str("{".to_string())]);
+}
+
+#[test]
+fn double_brace_close_is_literal() {
+    let kinds = lex("\"}}\"");
+    assert_eq!(kinds, vec![TokenKind::Str("}".to_string())]);
+}
+
+#[test]
+fn double_braces_produce_empty_json() {
+    let kinds = lex("\"{{}}\"");
+    assert_eq!(kinds, vec![TokenKind::Str("{}".to_string())]);
+}
+
+#[test]
+fn double_brace_mixed_with_interpolation() {
+    // "{{key}}: {name}" → literal "{key}: " + expr "name"
+    let kinds = lex("\"{{key}}: {name}\"");
+    if let TokenKind::InterpStr(parts) = &kinds[0] {
+        assert_eq!(parts[0], (false, "{key}: ".to_string()));
+        assert_eq!(parts[1], (true, "name".to_string()));
+    } else {
+        panic!("expected InterpStr");
+    }
+}
