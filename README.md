@@ -139,6 +139,49 @@ What it collects per file:
 
 The result is typically 1–3 k tokens — enough context for an LLM to understand contracts, boundaries, and rationale without the full implementation.
 
+## Network service
+
+Aver ships a built-in `Network` namespace for HTTP. All methods require `! [Network]` — the typechecker and runtime both enforce this.
+
+```aver
+record Header
+    name: String
+    value: String
+
+fn fetchUser(id: Int) -> Any
+    ! [Network]
+    Network.get("https://api.example.com/users/{id}")
+
+fn createItem(url: String, body: String, token: String) -> Any
+    ! [Network]
+    val headers = [Header(name: "Authorization", value: "Bearer {token}")]
+    Network.post(url, body, "application/json", headers)
+```
+
+| Method | Signature |
+|--------|-----------|
+| `Network.get(url)` | `String -> Result<NetworkResponse, String> ! [Network]` |
+| `Network.head(url)` | `String -> Result<NetworkResponse, String> ! [Network]` |
+| `Network.delete(url)` | `String -> Result<NetworkResponse, String> ! [Network]` |
+| `Network.post(url, body, contentType, headers)` | `String, String, String, Any -> Result<NetworkResponse, String> ! [Network]` |
+| `Network.put(url, body, contentType, headers)` | same |
+| `Network.patch(url, body, contentType, headers)` | same |
+
+**`NetworkResponse` shape** (runtime record — field access via `.`):
+
+```aver
+resp.status   -- Int    (e.g. 200, 404, 500)
+resp.body     -- String (up to 10 MB; Err if exceeded)
+resp.headers  -- List of records with .name and .value String fields
+```
+
+**Semantics:**
+- `Ok(response)` for any completed HTTP exchange, including 4xx and 5xx — status codes are values, not exceptions
+- `Err(String)` only for transport failures (connection refused, timeout, DNS error)
+- Response body limit: 10 MB — returns `Err` if exceeded (no silent truncation)
+- Default timeout: 10 seconds
+- `headers` for POST/PUT/PATCH: any `List` of records that have `name: String` and `value: String` fields — `type_name` is not checked
+
 ## Getting started
 
 ```bash

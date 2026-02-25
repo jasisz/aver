@@ -170,11 +170,19 @@ fn build_network_response(resp: ureq::Response) -> Result<Value, RuntimeError> {
             ],
         }
     }).collect();
-    let mut body = String::new();
-    resp.into_reader()
-        .take(10 * 1024 * 1024)
-        .read_to_string(&mut body)
+    const BODY_LIMIT: u64 = 10 * 1024 * 1024; // 10 MB
+    let mut buf = Vec::new();
+    let bytes_read = resp
+        .into_reader()
+        .take(BODY_LIMIT + 1)
+        .read_to_end(&mut buf)
         .map_err(|e| RuntimeError::Error(format!("Network: failed to read response body: {}", e)))?;
+    if bytes_read as u64 > BODY_LIMIT {
+        return Ok(Value::Err(Box::new(Value::Str(
+            "Network: response body exceeds 10 MB limit".to_string(),
+        ))));
+    }
+    let body = String::from_utf8_lossy(&buf).into_owned();
     Ok(Value::Record {
         type_name: "NetworkResponse".to_string(),
         fields: vec![

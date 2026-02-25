@@ -948,9 +948,12 @@ mod network_tests {
     use std::thread;
 
     /// Spawn a minimal HTTP/1.1 server on an OS-assigned port.
-    /// Responds to the first request with the given status + body, then stops.
-    fn start_server(status: u16, body: &'static str, extra_headers: &'static str) -> String {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    /// Returns None when the bind is not permitted (sandboxed CI environments).
+    fn start_server(status: u16, body: &'static str, extra_headers: &'static str) -> Option<String> {
+        let listener = match TcpListener::bind("127.0.0.1:0") {
+            Ok(l) => l,
+            Err(_) => return None,
+        };
         let port = listener.local_addr().unwrap().port();
         thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
@@ -965,7 +968,7 @@ mod network_tests {
             );
             stream.write_all(response.as_bytes()).unwrap();
         });
-        format!("http://127.0.0.1:{}/", port)
+        Some(format!("http://127.0.0.1:{}/", port))
     }
 
     fn run_network_fn(src: &str, fn_name: &str) -> Value {
@@ -985,7 +988,7 @@ mod network_tests {
 
     #[test]
     fn network_get_200_returns_ok_response() {
-        let url = start_server(200, "hello", "");
+        let Some(url) = start_server(200, "hello", "") else { return; };
         let src = format!(
             "fn fetch() -> Any\n    ! [Network]\n    Network.get(\"{}\")\n",
             url
@@ -1008,7 +1011,7 @@ mod network_tests {
 
     #[test]
     fn network_get_404_still_returns_ok_response() {
-        let url = start_server(404, "not found", "");
+        let Some(url) = start_server(404, "not found", "") else { return; };
         let src = format!(
             "fn fetch() -> Any\n    ! [Network]\n    Network.get(\"{}\")\n",
             url
@@ -1050,7 +1053,7 @@ mod network_tests {
 
     #[test]
     fn network_post_201_returns_ok_response() {
-        let url = start_server(201, "created", "");
+        let Some(url) = start_server(201, "created", "") else { return; };
         let src = format!(
             "fn send() -> Any\n    ! [Network]\n    Network.post(\"{}\", \"data\", \"text/plain\", [])\n",
             url
