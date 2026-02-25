@@ -128,6 +128,75 @@ pub struct Interpreter {
     effect_aliases: HashMap<String, Vec<String>>,
 }
 
+// ─── Network helpers (free functions) ────────────────────────────────────────
+
+fn parse_request_headers(val: &Value) -> Result<Vec<(String, String)>, RuntimeError> {
+    let items = match val {
+        Value::List(items) => items,
+        _ => return Err(RuntimeError::Error("Network: headers must be a List".to_string())),
+    };
+    let mut out = Vec::new();
+    for item in items {
+        let fields = match item {
+            Value::Record { fields, .. } => fields,
+            _ => return Err(RuntimeError::Error(
+                "Network: each header must be a record with 'name' and 'value' String fields".to_string()
+            )),
+        };
+        let get = |key: &str| -> Result<String, RuntimeError> {
+            fields.iter()
+                .find(|(k, _)| k == key)
+                .and_then(|(_, v)| if let Value::Str(s) = v { Some(s.clone()) } else { None })
+                .ok_or_else(|| RuntimeError::Error(format!(
+                    "Network: header record must have a '{}' String field", key
+                )))
+        };
+        out.push((get("name")?, get("value")?));
+    }
+    Ok(out)
+}
+
+fn build_network_response(resp: ureq::Response) -> Result<Value, RuntimeError> {
+    use std::io::Read;
+    let status = resp.status() as i64;
+    let header_names = resp.headers_names();
+    let headers: Vec<Value> = header_names.iter().map(|name| {
+        let value = resp.header(name).unwrap_or("").to_string();
+        Value::Record {
+            type_name: "Header".to_string(),
+            fields: vec![
+                ("name".to_string(), Value::Str(name.clone())),
+                ("value".to_string(), Value::Str(value)),
+            ],
+        }
+    }).collect();
+    let mut body = String::new();
+    resp.into_reader()
+        .take(10 * 1024 * 1024)
+        .read_to_string(&mut body)
+        .map_err(|e| RuntimeError::Error(format!("Network: failed to read response body: {}", e)))?;
+    Ok(Value::Record {
+        type_name: "NetworkResponse".to_string(),
+        fields: vec![
+            ("status".to_string(), Value::Int(status)),
+            ("body".to_string(), Value::Str(body)),
+            ("headers".to_string(), Value::List(headers)),
+        ],
+    })
+}
+
+fn network_response_value(result: Result<ureq::Response, ureq::Error>) -> Result<Value, RuntimeError> {
+    match result {
+        Ok(resp) => Ok(Value::Ok(Box::new(build_network_response(resp)?))),
+        Err(ureq::Error::Status(_, resp)) => Ok(Value::Ok(Box::new(build_network_response(resp)?))),
+        Err(ureq::Error::Transport(e)) => {
+            Ok(Value::Err(Box::new(Value::Str(e.to_string()))))
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 impl Interpreter {
     pub fn new() -> Self {
         let mut global = HashMap::new();
@@ -149,6 +218,22 @@ impl Interpreter {
             Value::Namespace {
                 name: "Console".to_string(),
                 members: console,
+            },
+        );
+
+        // Network service namespace.
+        let mut network = HashMap::new();
+        for method in &["get", "head", "delete", "post", "put", "patch"] {
+            network.insert(
+                method.to_string(),
+                Value::Builtin(format!("Network.{}", method)),
+            );
+        }
+        global.insert(
+            "Network".to_string(),
+            Value::Namespace {
+                name: "Network".to_string(),
+                members: network,
             },
         );
 
@@ -429,6 +514,12 @@ impl Interpreter {
     fn builtin_effects(name: &str) -> &'static [&'static str] {
         match name {
             "print" | "Console.print" => &["Console"],
+            "Network.get"
+            | "Network.head"
+            | "Network.delete"
+            | "Network.post"
+            | "Network.put"
+            | "Network.patch" => &["Network"],
             _ => &[],
         }
     }
@@ -738,6 +829,65 @@ impl Interpreter {
                     fields: args,
                 })
             }
+            "Network.get" | "Network.head" | "Network.delete" => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::Error(format!(
+                        "Network.{}() takes 1 argument (url), got {}",
+                        name.trim_start_matches("Network."),
+                        args.len()
+                    )));
+                }
+                let url = match &args[0] {
+                    Value::Str(s) => s.clone(),
+                    _ => return Err(RuntimeError::Error(
+                        "Network: url must be a String".to_string()
+                    )),
+                };
+                let method = name.trim_start_matches("Network.").to_uppercase();
+                let result = ureq::request(&method, &url)
+                    .timeout(std::time::Duration::from_secs(10))
+                    .call();
+                network_response_value(result)
+            }
+
+            "Network.post" | "Network.put" | "Network.patch" => {
+                if args.len() != 4 {
+                    return Err(RuntimeError::Error(format!(
+                        "Network.{}() takes 4 arguments (url, body, contentType, headers), got {}",
+                        name.trim_start_matches("Network."),
+                        args.len()
+                    )));
+                }
+                let url = match &args[0] {
+                    Value::Str(s) => s.clone(),
+                    _ => return Err(RuntimeError::Error(
+                        "Network: url must be a String".to_string()
+                    )),
+                };
+                let body = match &args[1] {
+                    Value::Str(s) => s.clone(),
+                    _ => return Err(RuntimeError::Error(
+                        "Network: body must be a String".to_string()
+                    )),
+                };
+                let content_type = match &args[2] {
+                    Value::Str(s) => s.clone(),
+                    _ => return Err(RuntimeError::Error(
+                        "Network: contentType must be a String".to_string()
+                    )),
+                };
+                let extra_headers = parse_request_headers(&args[3])?;
+                let method = name.trim_start_matches("Network.").to_uppercase();
+                let mut req = ureq::request(&method, &url)
+                    .timeout(std::time::Duration::from_secs(10))
+                    .set("Content-Type", &content_type);
+                for (k, v) in &extra_headers {
+                    req = req.set(k, v);
+                }
+                let result = req.send_string(&body);
+                network_response_value(result)
+            }
+
             _ => Err(RuntimeError::Error(format!(
                 "Unknown builtin function: '{}'",
                 name

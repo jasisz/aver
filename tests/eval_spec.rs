@@ -935,3 +935,153 @@ fn sum_type_variant_equality() {
     assert!(interp.aver_eq(&c1, &c2));
     assert!(!interp.aver_eq(&c1, &c3));
 }
+
+// ---------------------------------------------------------------------------
+// Network builtins — local TcpListener, no internet required
+// ---------------------------------------------------------------------------
+
+mod network_tests {
+    use super::*;
+    use aver::interpreter::{Interpreter, Value};
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::thread;
+
+    /// Spawn a minimal HTTP/1.1 server on an OS-assigned port.
+    /// Responds to the first request with the given status + body, then stops.
+    fn start_server(status: u16, body: &'static str, extra_headers: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+            let response = format!(
+                "HTTP/1.1 {} OK\r\nContent-Length: {}\r\n{}\r\n{}",
+                status,
+                body.len(),
+                extra_headers,
+                body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        format!("http://127.0.0.1:{}/", port)
+    }
+
+    fn run_network_fn(src: &str, fn_name: &str) -> Value {
+        let items = parse(src);
+        let mut interp = Interpreter::new();
+        for item in &items {
+            if let TopLevel::FnDef(fd) = item {
+                interp.exec_fn_def(fd).expect("exec_fn_def failed");
+            }
+        }
+        let fn_val = interp.lookup(fn_name).expect("fn not found");
+        let effects = Interpreter::callable_declared_effects(&fn_val);
+        interp
+            .call_value_with_effects_pub(fn_val, vec![], fn_name, effects)
+            .expect("call failed")
+    }
+
+    #[test]
+    fn network_get_200_returns_ok_response() {
+        let url = start_server(200, "hello", "");
+        let src = format!(
+            "fn fetch() -> Any\n    ! [Network]\n    Network.get(\"{}\")\n",
+            url
+        );
+        let val = run_network_fn(&src, "fetch");
+        match val {
+            Value::Ok(inner) => match *inner {
+                Value::Record { type_name, ref fields } => {
+                    assert_eq!(type_name, "NetworkResponse");
+                    let status = fields.iter().find(|(k, _)| k == "status").map(|(_, v)| v);
+                    assert_eq!(status, Some(&Value::Int(200)));
+                    let body = fields.iter().find(|(k, _)| k == "body").map(|(_, v)| v);
+                    assert_eq!(body, Some(&Value::Str("hello".to_string())));
+                }
+                other => panic!("expected Record, got {:?}", other),
+            },
+            other => panic!("expected Ok, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn network_get_404_still_returns_ok_response() {
+        let url = start_server(404, "not found", "");
+        let src = format!(
+            "fn fetch() -> Any\n    ! [Network]\n    Network.get(\"{}\")\n",
+            url
+        );
+        let val = run_network_fn(&src, "fetch");
+        match val {
+            Value::Ok(inner) => match *inner {
+                Value::Record { ref fields, .. } => {
+                    let status = fields.iter().find(|(k, _)| k == "status").map(|(_, v)| v);
+                    assert_eq!(status, Some(&Value::Int(404)));
+                }
+                other => panic!("expected Record, got {:?}", other),
+            },
+            other => panic!("expected Ok for 4xx, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn network_get_transport_error_returns_err() {
+        // Port 1 is almost certainly not listening
+        let src = "fn fetch() -> Any\n    ! [Network]\n    Network.get(\"http://127.0.0.1:1/\")\n";
+        let items = parse(src);
+        let mut interp = Interpreter::new();
+        for item in &items {
+            if let TopLevel::FnDef(fd) = item {
+                interp.exec_fn_def(fd).expect("exec_fn_def failed");
+            }
+        }
+        let fn_val = interp.lookup("fetch").expect("fn not found");
+        let effects = Interpreter::callable_declared_effects(&fn_val);
+        let val = interp
+            .call_value_with_effects_pub(fn_val, vec![], "fetch", effects)
+            .expect("call itself should not panic");
+        assert!(
+            matches!(val, Value::Err(_)),
+            "expected Err for unreachable host, got {:?}", val
+        );
+    }
+
+    #[test]
+    fn network_post_201_returns_ok_response() {
+        let url = start_server(201, "created", "");
+        let src = format!(
+            "fn send() -> Any\n    ! [Network]\n    Network.post(\"{}\", \"data\", \"text/plain\", [])\n",
+            url
+        );
+        let val = run_network_fn(&src, "send");
+        match val {
+            Value::Ok(inner) => match *inner {
+                Value::Record { ref fields, .. } => {
+                    let status = fields.iter().find(|(k, _)| k == "status").map(|(_, v)| v);
+                    assert_eq!(status, Some(&Value::Int(201)));
+                }
+                other => panic!("expected Record, got {:?}", other),
+            },
+            other => panic!("expected Ok, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn network_post_bad_headers_returns_runtime_error() {
+        // Pass a non-list for headers — validation fails before any HTTP call
+        let src = "fn send() -> Any\n    ! [Network]\n    Network.post(\"http://127.0.0.1:1/\", \"\", \"text/plain\", \"bad\")\n";
+        let items = parse(src);
+        let mut interp = Interpreter::new();
+        for item in &items {
+            if let TopLevel::FnDef(fd) = item {
+                interp.exec_fn_def(fd).expect("exec_fn_def failed");
+            }
+        }
+        let fn_val = interp.lookup("send").expect("fn not found");
+        let effects = Interpreter::callable_declared_effects(&fn_val);
+        let result = interp.call_value_with_effects_pub(fn_val, vec![], "send", effects);
+        assert!(result.is_err(), "expected RuntimeError for bad headers");
+    }
+}

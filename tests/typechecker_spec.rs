@@ -499,3 +499,55 @@ fn error_effect_set_alias_insufficient() {
     );
     assert_error_containing(src, "has effect 'Console'");
 }
+
+// ---------------------------------------------------------------------------
+// Network effect
+// ---------------------------------------------------------------------------
+
+#[test]
+fn error_network_get_without_effect() {
+    let src = concat!(
+        "fn fetch(url: String) -> Any\n",
+        "    Network.get(url)\n",
+    );
+    assert_error_containing(src, "has effect 'Network'");
+}
+
+#[test]
+fn error_network_post_without_effect() {
+    let src = concat!(
+        "fn send(url: String, body: String) -> Any\n",
+        "    Network.post(url, body, \"application/json\", [])\n",
+    );
+    assert_error_containing(src, "has effect 'Network'");
+}
+
+#[test]
+fn valid_network_get_with_effect() {
+    let src = concat!(
+        "fn fetch(url: String) -> Any\n",
+        "    ! [Network]\n",
+        "    Network.get(url)\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_network_post_with_effect() {
+    let src = concat!(
+        "fn send(url: String) -> Any\n",
+        "    ! [Network]\n",
+        "    Network.post(url, \"{}\", \"application/json\", [])\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_network_all_methods_with_effect() {
+    let src = concat!(
+        "fn callAll(url: String) -> Any\n",
+        "    ! [Network]\n",
+        "    Network.delete(url)\n",
+    );
+    assert_no_errors(src);
+}

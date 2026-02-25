@@ -193,8 +193,31 @@ impl TypeChecker {
             self.insert_sig(name, params, ret.clone(), effects);
         }
 
-        let service_sigs: &[(&str, &[Type], Type, &[&str])] =
-            &[("Console.print", &[Type::Any], Type::Unit, &["Console"])];
+        let net_ret = || Type::Result(Box::new(Type::Any), Box::new(Type::Str));
+        let service_sigs: &[(&str, &[Type], Type, &[&str])] = &[
+            ("Console.print", &[Type::Any], Type::Unit, &["Console"]),
+            ("Network.get",    &[Type::Str], net_ret(), &["Network"]),
+            ("Network.head",   &[Type::Str], net_ret(), &["Network"]),
+            ("Network.delete", &[Type::Str], net_ret(), &["Network"]),
+            (
+                "Network.post",
+                &[Type::Str, Type::Str, Type::Str, Type::Any],
+                net_ret(),
+                &["Network"],
+            ),
+            (
+                "Network.put",
+                &[Type::Str, Type::Str, Type::Str, Type::Any],
+                net_ret(),
+                &["Network"],
+            ),
+            (
+                "Network.patch",
+                &[Type::Str, Type::Str, Type::Str, Type::Any],
+                net_ret(),
+                &["Network"],
+            ),
+        ];
         for (name, params, ret, effects) in service_sigs {
             self.insert_sig(name, params, ret.clone(), effects);
         }

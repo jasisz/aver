@@ -11,3 +11,4 @@ path = "src/main.rs"
 clap = { version = "4", features = ["derive"] }
 colored = "2"
 thiserror = "1"
+ureq = "2"
