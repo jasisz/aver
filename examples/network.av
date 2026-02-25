@@ -1,0 +1,57 @@
+module Network
+    intent:
+        "Demonstrates the built-in Network service: GET, POST, and response handling."
+        "Network is a platform capability — declared with ! [Network], enforced statically."
+
+record Header
+    name: String
+    value: String
+
+decision NetworkAsCapability:
+    date: "2025-01-01"
+    reason:
+        "HTTP access is a side effect like any other. Declaring ! [Network] makes"
+        "it visible in the signature — callers know the function goes outside the process."
+        "4xx/5xx are Ok(response) because they are valid HTTP exchanges;"
+        "only transport failures (timeout, DNS, refused) are Err."
+    chosen: BuiltinService
+    rejected: [NetworkDotAv, ImplicitIO]
+    impacts: [fetch, checkStatus, post]
+
+fn fetch(url: String) -> Any
+    ? "GET a URL. Returns Ok(NetworkResponse) on any HTTP reply, Err on transport failure."
+    ! [Network]
+    Network.get(url)
+
+fn checkStatus(url: String) -> Any
+    ? "Returns Ok(status code as Int) or Err(transport error)."
+    ! [Network]
+    val result = Network.get(url)
+    match result:
+        Ok(resp) -> Ok(resp.status)
+        Err(msg) -> Err(msg)
+
+fn post(url: String, payload: String, token: String) -> Any
+    ? "POST JSON with a Bearer token. Builds the Authorization header explicitly."
+    ! [Network]
+    val auth = Header(name: "Authorization", value: "Bearer {token}")
+    Network.post(url, payload, "application/json", [auth])
+
+fn main() -> Unit
+    ! [Network, Console]
+    val url = "https://httpbin.org/get"
+
+    val r1 = fetch(url)
+    match r1:
+        Ok(resp) -> print("GET {url} — status: {resp.status}, body length: {len(resp.body)}")
+        Err(msg) -> print("Transport error: {msg}")
+
+    val r2 = checkStatus("https://httpbin.org/status/404")
+    match r2:
+        Ok(status) -> print("404 endpoint returned status: {status}")
+        Err(msg)   -> print("Transport error: {msg}")
+
+    val r3 = post("https://httpbin.org/post", "{}", "demo-token")
+    match r3:
+        Ok(resp) -> print("POST status: {resp.status}")
+        Err(msg) -> print("POST failed: {msg}")
