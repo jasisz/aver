@@ -1,0 +1,96 @@
+module DiskDemo
+    intent:
+        "Demonstrates the built-in Disk service: readText, writeText, appendText,"
+        "exists, delete, deleteDir, listDir, makeDir."
+        "Disk is a platform capability — declared with ! [Disk], enforced statically."
+
+decision DiskAsCapability:
+    date: "2025-01-01"
+    reason:
+        "File I/O is a side effect like any other. Declaring ! [Disk] makes"
+        "it visible in the signature — callers know the function touches the filesystem."
+        "read/write/append/exists/delete/deleteDir/listDir/makeDir cover the full CRUD"
+        "surface without any hidden implicit I/O."
+        "Disk.delete is file-only; Disk.deleteDir is the explicit recursive variant —"
+        "accidental tree deletion requires a conscious choice of the right method."
+    chosen: BuiltinService
+    rejected: [ImplicitIO, SeparateFileModule]
+    impacts: [loadConfig, saveConfig, appendLog, listWorkdir, scaffold]
+
+fn loadConfig(path: String) -> Result<String, String>
+    ? "Read a text file and return its contents, or Err on I/O failure."
+    ! [Disk]
+    Disk.readText(path)
+
+fn saveConfig(path: String, content: String) -> Result<Unit, String>
+    ? "Write content to a file, overwriting if it already exists."
+    ! [Disk]
+    Disk.writeText(path, content)
+
+fn appendLog(path: String, line: String) -> Result<Unit, String>
+    ? "Append a single log line to a file, creating it if absent."
+    ! [Disk]
+    Disk.appendText(path, line)
+
+fn listWorkdir(path: String) -> Result<List<String>, String>
+    ? "Return the names of entries in a directory."
+    ! [Disk]
+    Disk.listDir(path)
+
+fn scaffold(dir: String) -> Result<Unit, String>
+    ? "Create a directory tree, including any missing parents."
+    ! [Disk]
+    Disk.makeDir(dir)
+
+fn main() -> Unit
+    ! [Disk, Console]
+    val tmp = "/tmp/aver_disk_demo"
+
+    // Create a directory
+    val mkResult = scaffold(tmp)
+    match mkResult:
+        Ok(_)    -> print("Created: {tmp}")
+        Err(msg) -> print("makeDir failed: {msg}")
+
+    // Write and read back
+    val path = "{tmp}/hello.txt"
+    val writeResult = saveConfig(path, "Hello from Aver!")
+    match writeResult:
+        Ok(_)    -> print("Wrote: {path}")
+        Err(msg) -> print("writeText failed: {msg}")
+
+    val readResult = loadConfig(path)
+    match readResult:
+        Ok(text) -> print("Read back: {text}")
+        Err(msg) -> print("readText failed: {msg}")
+
+    // Append a log line
+    val logPath = "{tmp}/app.log"
+    val appendResult = appendLog(logPath, "started\n")
+    match appendResult:
+        Ok(_)    -> print("Appended to: {logPath}")
+        Err(msg) -> print("appendText failed: {msg}")
+
+    // Check existence
+    val exists = Disk.exists(path)
+    match exists:
+        true  -> print("exists check: {path} is present")
+        false -> print("exists check: {path} not found")
+
+    // List directory
+    val lsResult = listWorkdir(tmp)
+    match lsResult:
+        Ok(entries) -> print("entries in {tmp}: {str(entries)}")
+        Err(msg)    -> print("listDir failed: {msg}")
+
+    // Delete the file (not the directory — that needs deleteDir)
+    val delResult = Disk.delete(path)
+    match delResult:
+        Ok(_)    -> print("Deleted: {path}")
+        Err(msg) -> print("delete failed: {msg}")
+
+    // Clean up the directory tree
+    val rmdirResult = Disk.deleteDir(tmp)
+    match rmdirResult:
+        Ok(_)    -> print("Removed tree: {tmp}")
+        Err(msg) -> print("deleteDir failed: {msg}")

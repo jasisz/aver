@@ -182,6 +182,37 @@ resp.headers  -- List of records with .name and .value String fields
 - Default timeout: 10 seconds
 - `headers` for POST/PUT/PATCH: any `List` of records that have `name: String` and `value: String` fields — `type_name` is not checked
 
+## Disk service
+
+Aver ships a built-in `Disk` namespace for file I/O. All methods require `! [Disk]` — the typechecker and runtime both enforce this.
+
+```aver
+fn loadConfig(path: String) -> Result<String, String>
+    ! [Disk]
+    Disk.readText(path)
+
+fn saveConfig(path: String, content: String) -> Result<Unit, String>
+    ! [Disk]
+    Disk.writeText(path, content)
+```
+
+| Method | Signature |
+|--------|-----------|
+| `Disk.readText(path)` | `String -> Result<String, String> ! [Disk]` |
+| `Disk.writeText(path, content)` | `String, String -> Result<Unit, String> ! [Disk]` |
+| `Disk.appendText(path, content)` | `String, String -> Result<Unit, String> ! [Disk]` |
+| `Disk.exists(path)` | `String -> Bool ! [Disk]` |
+| `Disk.delete(path)` | `String -> Result<Unit, String> ! [Disk]` |
+| `Disk.deleteDir(path)` | `String -> Result<Unit, String> ! [Disk]` |
+| `Disk.listDir(path)` | `String -> Result<List<String>, String> ! [Disk]` |
+| `Disk.makeDir(path)` | `String -> Result<Unit, String> ! [Disk]` |
+
+**Semantics:**
+- `Disk.delete` removes **files only** — returns `Err` for directories (use `Disk.deleteDir` explicitly)
+- `Disk.deleteDir` removes a directory and its entire tree — refuses files with `Err`
+- `Disk.makeDir` creates all missing parent directories (`mkdir -p` behaviour)
+- `Disk.exists` returns `Bool` directly — existence is a fact, not a failable operation
+
 ## Getting started
 
 ```bash
@@ -212,6 +243,7 @@ Requires: Rust stable toolchain.
 | `app_dot.av` | Dot-path imports and nested namespaces (`depends [Models.User]`) |
 | `models/user.av` | Module loaded via dot-path from `app_dot.av` |
 | `http_demo.av` | Network service: GET, POST, response handling, Bearer auth header |
+| `disk_demo.av` | Disk service: readText, writeText, appendText, exists, delete, deleteDir, listDir, makeDir |
 | `decisions/decisions.av` | Decision blocks as first-class constructs |
 | `decisions/architecture.av` | The interpreter documents itself in Aver — [see it](decisions/architecture.av) |
 | `type_errors.av` | Intentional type errors; shows what the checker catches |
@@ -233,3 +265,5 @@ Implemented in Rust, zero warnings.
 - [x] Module imports at runtime (`depends [Foo]`, `depends [Models.User]`)
 - [x] AI context export — `aver context` emits Markdown or JSON from the dependency graph
 - [x] Interactive REPL — `aver repl` with persistent state, multi-line input, type-checking
+- [x] Built-in Network service — HTTP GET/HEAD/DELETE/POST/PUT/PATCH, `! [Network]` enforced
+- [x] Built-in Disk service — read/write/append/exists/delete/deleteDir/listDir/makeDir, `! [Disk]` enforced
