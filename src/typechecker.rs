@@ -301,6 +301,27 @@ impl TypeChecker {
         canonicalize_path(path).to_string_lossy().to_string()
     }
 
+    fn attr_path(expr: &Expr) -> Option<Vec<String>> {
+        match expr {
+            Expr::Ident(name) => Some(vec![name.clone()]),
+            Expr::Attr(inner, field) => {
+                let mut parts = Self::attr_path(inner)?;
+                parts.push(field.clone());
+                Some(parts)
+            }
+            _ => None,
+        }
+    }
+
+    fn attr_key(expr: &Expr) -> Option<String> {
+        Self::attr_path(expr).map(|parts| parts.join("."))
+    }
+
+    fn has_namespace_prefix(&self, key: &str) -> bool {
+        let prefix = format!("{}.", key);
+        self.fn_sigs.keys().any(|k| k.starts_with(&prefix))
+    }
+
     fn cycle_display(loading: &[String], next: &str) -> String {
         let mut chain = loading
             .iter()
@@ -354,9 +375,11 @@ impl TypeChecker {
                 .map_err(|e| format!("Parse error in '{}': {}", path.display(), e))?;
 
             if let Some(module) = Self::module_decl(&items) {
-                if module.name != name {
+                let expected = name.rsplit('.').next().unwrap_or(name);
+                if module.name != expected {
                     return Err(format!(
-                        "Module name mismatch: expected '{}', found '{}' in '{}'",
+                        "Module name mismatch: expected '{}' (from '{}'), found '{}' in '{}'",
+                        expected,
                         name,
                         module.name,
                         path.display()
@@ -577,17 +600,7 @@ impl TypeChecker {
     // Effect propagation: ERROR (not warning) if callee has effect caller lacks
     // -----------------------------------------------------------------------
     fn callee_key(fn_expr: &Expr) -> Option<String> {
-        match fn_expr {
-            Expr::Ident(name) => Some(name.clone()),
-            Expr::Attr(inner_expr, field) => {
-                if let Expr::Ident(parent) = inner_expr.as_ref() {
-                    Some(format!("{}.{}", parent, field))
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
+        Self::attr_key(fn_expr)
     }
 
     fn callable_effects(&self, fn_expr: &Expr) -> Option<(String, Vec<String>)> {
@@ -901,10 +914,14 @@ impl TypeChecker {
             }
 
             Expr::Attr(obj, field) => {
-                if let Expr::Ident(parent) = obj.as_ref() {
-                    let key = format!("{}.{}", parent, field);
+                if let Some(mut parts) = Self::attr_path(obj) {
+                    parts.push(field.clone());
+                    let key = parts.join(".");
                     if let Some(sig) = self.fn_sigs.get(&key) {
                         return Self::fn_type_from_sig(sig);
+                    }
+                    if self.has_namespace_prefix(&key) {
+                        return Type::Any;
                     }
                 }
                 let obj_ty = self.infer_type(obj);
@@ -1060,7 +1077,7 @@ impl TypeChecker {
 
 #[cfg(test)]
 mod tests {
-    use super::run_type_check;
+    use super::{run_type_check, TypeChecker};
     use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, Stmt, TopLevel};
 
     fn errors(items: Vec<TopLevel>) -> Vec<String> {
@@ -1135,6 +1152,21 @@ mod tests {
             errs.is_empty(),
             "expected no errors for assignment to top-level var, got: {:?}",
             errs
+        );
+    }
+
+    #[test]
+    fn nested_attr_callee_key() {
+        let expr = Expr::Attr(
+            Box::new(Expr::Attr(
+                Box::new(Expr::Ident("Models".to_string())),
+                "User".to_string(),
+            )),
+            "findById".to_string(),
+        );
+        assert_eq!(
+            TypeChecker::callee_key(&expr),
+            Some("Models.User.findById".to_string())
         );
     }
 }

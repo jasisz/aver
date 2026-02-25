@@ -24,7 +24,7 @@ Explicit `depends` for code, explicit `! [Effect]` for capabilities.
 module Payments
     intent:
         "Processes transactions with an explicit audit trail."
-    depends [Ledger, Fraud]
+    depends [Ledger, Fraud, Models.User]
 
 decision UseResultNotExceptions:
     date: "2024-01-15"
@@ -62,10 +62,14 @@ Aver isn't for moving fast and breaking things. It's for building systems that s
 ## The type system
 
 Primitive types: `Int`, `Float`, `String`, `Bool`, `Unit`
-Compound types: `Result<T, E>`, `Option<T>`, `List<T>`
+Compound types: `Result<T, E>`, `Option<T>`, `List<T>`, `Fn(A, B) -> C`, `Fn(A) -> C ! [Effect]`
 User-defined sum types: `type Shape` with variants `Shape.Circle(Float)`, `Shape.Rect(Float, Float)`, `Shape.Point`
 User-defined product types: `record User` with named fields, field access `u.name`
 Escape hatch: `Any` — compatible with everything, opt-in only
+
+Module imports at runtime:
+- `depends [Fibonacci]` -> `fibonacci.av` / `Fibonacci.av`, call `Fibonacci.fn(...)`
+- `depends [Models.User]` -> `models/user.av` / `Models/User.av`, call `Models.User.fn(...)`
 
 Type errors block `run`, `check`, and `verify`. The checker runs before a single line executes.
 
@@ -115,6 +119,9 @@ Requires: Rust stable toolchain.
 | `shapes.av` | Sum types, qualified constructors (`Shape.Circle`), match on variants |
 | `user_record.av` | Record types, field access, positional match |
 | `fibonacci.av` | Tail recursion, records (`FibStats`), single-pass accumulator, decision blocks |
+| `app.av` | Runtime module imports via `depends [Fibonacci]` |
+| `app_dot.av` | Dot-path imports and nested namespaces (`depends [Models.User]`) |
+| `models/user.av` | Module loaded via dot-path from `app_dot.av` |
 | `decisions/decisions.av` | Decision blocks as first-class constructs |
 | `decisions/architecture.av` | The interpreter documents itself in Aver — [see it](decisions/architecture.av) |
 | `type_errors.av` | Intentional type errors; shows what the checker catches |
@@ -133,5 +140,5 @@ Implemented in Rust, zero warnings.
 - [x] User-defined sum types (`type`) with qualified constructors (`Shape.Circle`)
 - [x] User-defined product types (`record`) with field access and positional match
 - [x] List pattern matching (`[]`, `[h, ..t]`)
-- [ ] Module imports at runtime
+- [x] Module imports at runtime (`depends [Foo]`, `depends [Models.User]`)
 - [ ] AI context export — semantic maps to JSON/Markdown for LLM context windows

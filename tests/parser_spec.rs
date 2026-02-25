@@ -490,6 +490,18 @@ fn module_with_depends() {
     }
 }
 
+#[test]
+fn module_with_dotted_depends() {
+    let src = "module App\n    depends [Models.User, Services.Auth]\n    intent:\n        \"App module.\"\n";
+    let items = parse(src);
+    if let TopLevel::Module(m) = &items[0] {
+        assert!(m.depends.contains(&"Models.User".to_string()));
+        assert!(m.depends.contains(&"Services.Auth".to_string()));
+    } else {
+        panic!("expected Module");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Verify blocks
 // ---------------------------------------------------------------------------

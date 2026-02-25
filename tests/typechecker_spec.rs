@@ -9,7 +9,7 @@
 use aver::ast::TopLevel;
 use aver::lexer::Lexer;
 use aver::parser::Parser;
-use aver::typechecker::run_type_check;
+use aver::typechecker::{run_type_check, run_type_check_with_base};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -174,6 +174,22 @@ fn valid_calculator_av() {
 fn valid_lists_av() {
     let src = std::fs::read_to_string("examples/lists.av").expect("examples/lists.av not found");
     assert_no_errors(&src);
+}
+
+#[test]
+fn valid_app_dot_av() {
+    let src =
+        std::fs::read_to_string("examples/app_dot.av").expect("examples/app_dot.av not found");
+    let items = parse(&src);
+    let errs = run_type_check_with_base(&items, Some("examples"))
+        .into_iter()
+        .map(|e| e.message)
+        .collect::<Vec<_>>();
+    assert!(
+        errs.is_empty(),
+        "expected no type errors for app_dot.av, got:\n  {}",
+        errs.join("\n  ")
+    );
 }
 
 // ---------------------------------------------------------------------------

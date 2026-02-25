@@ -73,7 +73,9 @@ fn load_dep_modules(
             let ns = interp
                 .load_module(dep_name, base_dir, &mut loading)
                 .map_err(|e| e.to_string())?;
-            interp.define(dep_name.clone(), ns);
+            interp
+                .define_module_path(dep_name, ns)
+                .map_err(|e| e.to_string())?;
         }
     }
     Ok(())

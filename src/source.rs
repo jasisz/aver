@@ -13,12 +13,23 @@ pub fn parse_source(source: &str) -> Result<Vec<TopLevel>, String> {
 
 pub fn find_module_file(name: &str, base_dir: &str) -> Option<PathBuf> {
     let base = Path::new(base_dir);
-    let lower = base.join(format!("{}.av", name.to_lowercase()));
+    let parts: Vec<&str> = name.split('.').filter(|s| !s.is_empty()).collect();
+    if parts.is_empty() {
+        return None;
+    }
+
+    let lower_rel = parts
+        .iter()
+        .map(|p| p.to_lowercase())
+        .collect::<Vec<_>>()
+        .join("/");
+    let lower = base.join(format!("{}.av", lower_rel));
     if lower.exists() {
         return Some(lower);
     }
 
-    let exact = base.join(format!("{}.av", name));
+    let exact_rel = parts.join("/");
+    let exact = base.join(format!("{}.av", exact_rel));
     if exact.exists() {
         return Some(exact);
     }

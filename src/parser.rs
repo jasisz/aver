@@ -390,15 +390,13 @@ impl Parser {
         let mut items = Vec::new();
 
         while !self.check_exact(&TokenKind::RBracket) && !self.is_eof() {
-            match self.current().kind.clone() {
-                TokenKind::Ident(s) => {
-                    items.push(s);
-                    self.advance();
-                }
-                TokenKind::Comma => {
-                    self.advance();
-                }
-                _ => break,
+            if self.check_exact(&TokenKind::Comma) {
+                self.advance();
+                continue;
+            }
+            items.push(self.parse_qualified_ident()?);
+            if self.check_exact(&TokenKind::Comma) {
+                self.advance();
             }
         }
 
@@ -1362,5 +1360,39 @@ impl Parser {
         }
 
         Ok(items)
+    }
+
+    fn parse_qualified_ident(&mut self) -> Result<String, ParseError> {
+        let first = match self.current().kind.clone() {
+            TokenKind::Ident(s) => {
+                self.advance();
+                s
+            }
+            _ => {
+                return Err(self.error(format!(
+                    "Expected identifier, found {:?}",
+                    self.current().kind
+                )));
+            }
+        };
+        let mut parts = vec![first];
+
+        while self.check_exact(&TokenKind::Dot) {
+            self.advance(); // '.'
+            match self.current().kind.clone() {
+                TokenKind::Ident(s) => {
+                    parts.push(s);
+                    self.advance();
+                }
+                _ => {
+                    return Err(self.error(format!(
+                        "Expected identifier after '.', found {:?}",
+                        self.current().kind
+                    )));
+                }
+            }
+        }
+
+        Ok(parts.join("."))
     }
 }

@@ -176,6 +176,63 @@ impl Interpreter {
         }
     }
 
+    pub fn define_module_path(&mut self, path: &str, val: Value) -> Result<(), RuntimeError> {
+        let parts: Vec<&str> = path.split('.').filter(|s| !s.is_empty()).collect();
+        if parts.is_empty() {
+            return Err(RuntimeError::Error("Empty module path".to_string()));
+        }
+        if parts.len() == 1 {
+            self.define(parts[0].to_string(), val);
+            return Ok(());
+        }
+
+        let scope = self
+            .env
+            .last_mut()
+            .ok_or_else(|| RuntimeError::Error("No active scope".to_string()))?;
+        Self::insert_namespace_path(scope, &parts, val)
+    }
+
+    fn insert_namespace_path(
+        scope: &mut HashMap<String, Value>,
+        parts: &[&str],
+        val: Value,
+    ) -> Result<(), RuntimeError> {
+        if parts.len() == 1 {
+            scope.insert(parts[0].to_string(), val);
+            return Ok(());
+        }
+
+        let head = parts[0];
+        let tail = &parts[1..];
+
+        if let Some(existing) = scope.remove(head) {
+            match existing {
+                Value::Namespace { name, mut members } => {
+                    Self::insert_namespace_path(&mut members, tail, val)?;
+                    scope.insert(head.to_string(), Value::Namespace { name, members });
+                    Ok(())
+                }
+                _ => Err(RuntimeError::Error(format!(
+                    "Cannot mount module '{}': '{}' is not a namespace",
+                    parts.join("."),
+                    head
+                ))),
+            }
+        } else {
+            let mut members = HashMap::new();
+            Self::insert_namespace_path(&mut members, tail, val)?;
+            scope.insert(
+                head.to_string(),
+                Value::Namespace {
+                    name: head.to_string(),
+                    members,
+                },
+            );
+            Ok(())
+        }
+    }
+
     /// Walk the scope stack from innermost outward and update the first binding found.
     /// Returns Err if no binding exists (use `define` for new bindings).
     pub fn assign(&mut self, name: &str, val: Value) -> Result<(), RuntimeError> {
@@ -268,9 +325,11 @@ impl Interpreter {
             })?;
 
             if let Some(module) = Self::module_decl(&items) {
-                if module.name != name {
+                let expected = name.rsplit('.').next().unwrap_or(name);
+                if module.name != expected {
                     return Err(RuntimeError::Error(format!(
-                        "Module name mismatch: expected '{}', found '{}' in '{}'",
+                        "Module name mismatch: expected '{}' (from '{}'), found '{}' in '{}'",
+                        expected,
                         name,
                         module.name,
                         path.display()
@@ -283,7 +342,7 @@ impl Interpreter {
             if let Some(module) = Self::module_decl(&items) {
                 for dep_name in &module.depends {
                     let dep_ns = self.load_module(dep_name, base_dir, loading)?;
-                    sub.define(dep_name.clone(), dep_ns);
+                    sub.define_module_path(dep_name, dep_ns)?;
                 }
             }
 
