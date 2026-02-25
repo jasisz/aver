@@ -2,6 +2,8 @@
 
 > *Imagine AI writes 90% of your code. What do you need to trust it?*
 
+Aver is hard to write, clean to read — and in a world where AI does the writing, that's the only trade-off that matters.
+
 Not better prompts. Not more reviews. You need a language that makes the AI's intent **verifiable** — statically, at the call site, before a single line runs.
 
 Aver is that language.
