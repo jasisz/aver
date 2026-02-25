@@ -1413,3 +1413,96 @@ mod console_tests {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tcp builtins
+// ---------------------------------------------------------------------------
+
+mod tcp_tests {
+    use super::*;
+    use aver::interpreter::{Interpreter, Value};
+
+    fn run_tcp_fn(src: &str, fn_name: &str) -> Value {
+        let items = parse(src);
+        let mut interp = Interpreter::new();
+        for item in &items {
+            if let TopLevel::FnDef(fd) = item {
+                interp.exec_fn_def(fd).expect("exec_fn_def failed");
+            }
+        }
+        let fn_val = interp.lookup(fn_name).expect("fn not found");
+        let effects = Interpreter::callable_declared_effects(&fn_val);
+        interp
+            .call_value_with_effects_pub(fn_val, vec![], fn_name, effects)
+            .expect("call failed")
+    }
+
+    #[test]
+    fn tcp_ping_unreachable_returns_err() {
+        // Port 1 is almost certainly not listening.
+        let src = concat!(
+            "fn check() -> Result<Unit, String>\n",
+            "    ! [Tcp]\n",
+            "    = Tcp.ping(\"127.0.0.1\", 1)\n",
+        );
+        let val = run_tcp_fn(src, "check");
+        assert!(matches!(val, Value::Err(_)), "expected Err, got {:?}", val);
+    }
+
+    #[test]
+    fn tcp_send_unreachable_returns_err() {
+        let src = concat!(
+            "fn talk() -> Result<String, String>\n",
+            "    ! [Tcp]\n",
+            "    = Tcp.send(\"127.0.0.1\", 1, \"hello\")\n",
+        );
+        let val = run_tcp_fn(src, "talk");
+        assert!(matches!(val, Value::Err(_)), "expected Err, got {:?}", val);
+    }
+
+    #[test]
+    #[ignore = "integration: starts a local TCP server; run with --include-ignored --test-threads=1"]
+    fn tcp_ping_open_port_returns_ok() {
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || { let _ = listener.accept(); });
+
+        let src = format!(
+            "fn check() -> Result<Unit, String>\n    ! [Tcp]\n    = Tcp.ping(\"127.0.0.1\", {})\n",
+            port
+        );
+        let val = run_tcp_fn(&src, "check");
+        assert!(matches!(val, Value::Ok(_)), "expected Ok, got {:?}", val);
+    }
+
+    #[test]
+    #[ignore = "integration: starts a local TCP server; run with --include-ignored --test-threads=1"]
+    fn tcp_send_echo_server() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = Vec::new();
+                stream.read_to_end(&mut buf).ok();
+                stream.write_all(&buf).ok();
+            }
+        });
+
+        let src = format!(
+            "fn talk() -> Result<String, String>\n    ! [Tcp]\n    = Tcp.send(\"127.0.0.1\", {}, \"echo me\")\n",
+            port
+        );
+        let val = run_tcp_fn(&src, "talk");
+        match val {
+            Value::Ok(inner) => assert_eq!(*inner, Value::Str("echo me".to_string())),
+            other => panic!("expected Ok(\"echo me\"), got {:?}", other),
+        }
+    }
+}

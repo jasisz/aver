@@ -289,6 +289,18 @@ impl TypeChecker {
             ("Disk.deleteDir", &[Type::Str], disk_unit(), &["Disk"]),
             ("Disk.listDir", &[Type::Str], disk_list(), &["Disk"]),
             ("Disk.makeDir", &[Type::Str], disk_unit(), &["Disk"]),
+            (
+                "Tcp.send",
+                &[Type::Str, Type::Int, Type::Str],
+                Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
+                &["Tcp"],
+            ),
+            (
+                "Tcp.ping",
+                &[Type::Str, Type::Int],
+                Type::Result(Box::new(Type::Unit), Box::new(Type::Str)),
+                &["Tcp"],
+            ),
         ];
         for (name, params, ret, effects) in service_sigs {
             self.insert_sig(name, params, ret.clone(), effects);

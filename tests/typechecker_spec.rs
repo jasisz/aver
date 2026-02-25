@@ -742,3 +742,45 @@ fn error_user_record_unknown_field() {
     );
     assert_error_containing(src, "has no field 'email'");
 }
+
+// ---------------------------------------------------------------------------
+// Tcp service
+// ---------------------------------------------------------------------------
+
+#[test]
+fn valid_tcp_send_with_effect() {
+    let src = concat!(
+        "fn talk(host: String, port: Int, msg: String) -> Result<String, String>\n",
+        "    ! [Tcp]\n",
+        "    = Tcp.send(host, port, msg)\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_tcp_ping_with_effect() {
+    let src = concat!(
+        "fn check(host: String, port: Int) -> Result<Unit, String>\n",
+        "    ! [Tcp]\n",
+        "    = Tcp.ping(host, port)\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn error_tcp_send_without_effect() {
+    let src = concat!(
+        "fn talk(host: String, port: Int, msg: String) -> Result<String, String>\n",
+        "    = Tcp.send(host, port, msg)\n",
+    );
+    assert_error_containing(src, "has effect 'Tcp'");
+}
+
+#[test]
+fn error_tcp_ping_without_effect() {
+    let src = concat!(
+        "fn check(host: String, port: Int) -> Result<Unit, String>\n",
+        "    = Tcp.ping(host, port)\n",
+    );
+    assert_error_containing(src, "has effect 'Tcp'");
+}

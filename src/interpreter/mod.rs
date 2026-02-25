@@ -4,7 +4,7 @@ use std::path::Path;
 use crate::ast::*;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
-use crate::services::{console, disk, http};
+use crate::services::{console, disk, http, tcp};
 use crate::source::{canonicalize_path, find_module_file, parse_source};
 // Re-export value types so existing `use aver::interpreter::Value` imports keep working.
 pub use crate::value::{aver_display, aver_repr, Env, RuntimeError, Value};
@@ -38,6 +38,7 @@ impl Interpreter {
         console::register(&mut global);
         http::register(&mut global);
         disk::register(&mut global);
+        tcp::register(&mut global);
 
         Interpreter {
             env: vec![global],
@@ -318,7 +319,9 @@ impl Interpreter {
         if !e.is_empty() { return e; }
         let e = http::effects(name);
         if !e.is_empty() { return e; }
-        disk::effects(name)
+        let e = disk::effects(name);
+        if !e.is_empty() { return e; }
+        tcp::effects(name)
     }
 
     fn current_allowed_effects(&self) -> &[String] {
@@ -646,7 +649,8 @@ impl Interpreter {
             _ => {
                 if let Some(r) = console::call(name, args.clone()) { return r; }
                 if let Some(r) = http::call(name, args.clone()) { return r; }
-                if let Some(r) = disk::call(name, args)            { return r; }
+                if let Some(r) = disk::call(name, args.clone())    { return r; }
+                if let Some(r) = tcp::call(name, args)             { return r; }
                 Err(RuntimeError::Error(format!("Unknown builtin function: '{}'", name)))
             }
         }
