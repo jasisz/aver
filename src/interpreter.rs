@@ -245,6 +245,22 @@ impl Interpreter {
             },
         );
 
+        // Disk service namespace.
+        let mut disk = HashMap::new();
+        for method in &["readText", "writeText", "appendText", "exists", "delete", "listDir", "makeDir"] {
+            disk.insert(
+                method.to_string(),
+                Value::Builtin(format!("Disk.{}", method)),
+            );
+        }
+        global.insert(
+            "Disk".to_string(),
+            Value::Namespace {
+                name: "Disk".to_string(),
+                members: disk,
+            },
+        );
+
         Interpreter {
             env: vec![global],
             module_cache: HashMap::new(),
@@ -528,6 +544,13 @@ impl Interpreter {
             | "Network.post"
             | "Network.put"
             | "Network.patch" => &["Network"],
+            "Disk.readText"
+            | "Disk.writeText"
+            | "Disk.appendText"
+            | "Disk.exists"
+            | "Disk.delete"
+            | "Disk.listDir"
+            | "Disk.makeDir" => &["Disk"],
             _ => &[],
         }
     }
@@ -894,6 +917,143 @@ impl Interpreter {
                 }
                 let result = req.send_string(&body);
                 network_response_value(result)
+            }
+
+            // -----------------------------------------------------------------
+            // Disk service
+            // -----------------------------------------------------------------
+            "Disk.readText" => {
+                let [path_val] = args.as_slice() else {
+                    return Err(RuntimeError::Error(format!(
+                        "Disk.readText() takes 1 argument (path), got {}",
+                        args.len()
+                    )));
+                };
+                let Value::Str(path) = path_val else {
+                    return Err(RuntimeError::Error("Disk.readText: path must be a String".to_string()));
+                };
+                match std::fs::read_to_string(path) {
+                    Ok(text) => Ok(Value::Ok(Box::new(Value::Str(text)))),
+                    Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                }
+            }
+
+            "Disk.writeText" => {
+                let [path_val, content_val] = args.as_slice() else {
+                    return Err(RuntimeError::Error(format!(
+                        "Disk.writeText() takes 2 arguments (path, content), got {}",
+                        args.len()
+                    )));
+                };
+                let Value::Str(path) = path_val else {
+                    return Err(RuntimeError::Error("Disk.writeText: path must be a String".to_string()));
+                };
+                let Value::Str(content) = content_val else {
+                    return Err(RuntimeError::Error("Disk.writeText: content must be a String".to_string()));
+                };
+                match std::fs::write(path, content) {
+                    Ok(_) => Ok(Value::Ok(Box::new(Value::Unit))),
+                    Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                }
+            }
+
+            "Disk.appendText" => {
+                let [path_val, content_val] = args.as_slice() else {
+                    return Err(RuntimeError::Error(format!(
+                        "Disk.appendText() takes 2 arguments (path, content), got {}",
+                        args.len()
+                    )));
+                };
+                let Value::Str(path) = path_val else {
+                    return Err(RuntimeError::Error("Disk.appendText: path must be a String".to_string()));
+                };
+                let Value::Str(content) = content_val else {
+                    return Err(RuntimeError::Error("Disk.appendText: content must be a String".to_string()));
+                };
+                use std::io::Write;
+                match std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                    Ok(mut f) => match f.write_all(content.as_bytes()) {
+                        Ok(_) => Ok(Value::Ok(Box::new(Value::Unit))),
+                        Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                    },
+                    Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                }
+            }
+
+            "Disk.exists" => {
+                let [path_val] = args.as_slice() else {
+                    return Err(RuntimeError::Error(format!(
+                        "Disk.exists() takes 1 argument (path), got {}",
+                        args.len()
+                    )));
+                };
+                let Value::Str(path) = path_val else {
+                    return Err(RuntimeError::Error("Disk.exists: path must be a String".to_string()));
+                };
+                Ok(Value::Bool(std::path::Path::new(path).exists()))
+            }
+
+            "Disk.delete" => {
+                let [path_val] = args.as_slice() else {
+                    return Err(RuntimeError::Error(format!(
+                        "Disk.delete() takes 1 argument (path), got {}",
+                        args.len()
+                    )));
+                };
+                let Value::Str(path) = path_val else {
+                    return Err(RuntimeError::Error("Disk.delete: path must be a String".to_string()));
+                };
+                let p = std::path::Path::new(path);
+                let result = if p.is_dir() {
+                    std::fs::remove_dir_all(p)
+                } else {
+                    std::fs::remove_file(p)
+                };
+                match result {
+                    Ok(_) => Ok(Value::Ok(Box::new(Value::Unit))),
+                    Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                }
+            }
+
+            "Disk.listDir" => {
+                let [path_val] = args.as_slice() else {
+                    return Err(RuntimeError::Error(format!(
+                        "Disk.listDir() takes 1 argument (path), got {}",
+                        args.len()
+                    )));
+                };
+                let Value::Str(path) = path_val else {
+                    return Err(RuntimeError::Error("Disk.listDir: path must be a String".to_string()));
+                };
+                match std::fs::read_dir(path) {
+                    Ok(entries) => {
+                        let mut names = Vec::new();
+                        for entry in entries {
+                            match entry {
+                                Ok(e) => names.push(Value::Str(e.file_name().to_string_lossy().into_owned())),
+                                Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                            }
+                        }
+                        Ok(Value::Ok(Box::new(Value::List(names))))
+                    }
+                    Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                }
+            }
+
+            "Disk.makeDir" => {
+                let [path_val] = args.as_slice() else {
+                    return Err(RuntimeError::Error(format!(
+                        "Disk.makeDir() takes 1 argument (path), got {}",
+                        args.len()
+                    )));
+                };
+                let Value::Str(path) = path_val else {
+                    return Err(RuntimeError::Error("Disk.makeDir: path must be a String".to_string()));
+                };
+                match std::fs::create_dir_all(path) {
+                    Ok(_) => Ok(Value::Ok(Box::new(Value::Unit))),
+                    Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                }
             }
 
             _ => Err(RuntimeError::Error(format!(

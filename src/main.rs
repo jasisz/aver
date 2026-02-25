@@ -928,7 +928,7 @@ fn repl_help() {
 fn repl_env(interp: &Interpreter) {
     let builtins = [
         "print", "str", "int", "abs", "len", "map", "filter", "fold", "get", "push", "head",
-        "tail", "Ok", "Err", "Some", "None", "Console", "Network",
+        "tail", "Ok", "Err", "Some", "None", "Console", "Network", "Disk",
     ];
     let mut found = false;
     for scope in &interp.env {

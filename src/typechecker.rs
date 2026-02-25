@@ -217,6 +217,9 @@ impl TypeChecker {
 
         let net_ret =
             || Type::Result(Box::new(Type::Named("NetworkResponse".to_string())), Box::new(Type::Str));
+        let disk_unit = || Type::Result(Box::new(Type::Unit), Box::new(Type::Str));
+        let disk_str  = || Type::Result(Box::new(Type::Str),  Box::new(Type::Str));
+        let disk_list = || Type::Result(Box::new(Type::List(Box::new(Type::Str))), Box::new(Type::Str));
         let service_sigs: &[(&str, &[Type], Type, &[&str])] = &[
             ("Console.print", &[Type::Any], Type::Unit, &["Console"]),
             ("Network.get",    &[Type::Str], net_ret(), &["Network"]),
@@ -240,6 +243,13 @@ impl TypeChecker {
                 net_ret(),
                 &["Network"],
             ),
+            ("Disk.readText",   &[Type::Str],             disk_str(),  &["Disk"]),
+            ("Disk.writeText",  &[Type::Str, Type::Str],  disk_unit(), &["Disk"]),
+            ("Disk.appendText", &[Type::Str, Type::Str],  disk_unit(), &["Disk"]),
+            ("Disk.exists",     &[Type::Str],             Type::Bool,  &["Disk"]),
+            ("Disk.delete",     &[Type::Str],             disk_unit(), &["Disk"]),
+            ("Disk.listDir",    &[Type::Str],             disk_list(), &["Disk"]),
+            ("Disk.makeDir",    &[Type::Str],             disk_unit(), &["Disk"]),
         ];
         for (name, params, ret, effects) in service_sigs {
             self.insert_sig(name, params, ret.clone(), effects);

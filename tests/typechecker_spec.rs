@@ -553,6 +553,54 @@ fn valid_network_all_methods_with_effect() {
 }
 
 // ---------------------------------------------------------------------------
+// Disk service effect checking
+// ---------------------------------------------------------------------------
+
+#[test]
+fn error_disk_read_without_effect() {
+    let src = concat!(
+        "fn loadCfg() -> Any\n",
+        "    = Disk.readText(\"config.av\")\n",
+    );
+    assert_error_containing(src, "has effect 'Disk'");
+}
+
+#[test]
+fn error_disk_write_without_effect() {
+    let src = concat!(
+        "fn save() -> Any\n",
+        "    = Disk.writeText(\"out.txt\", \"data\")\n",
+    );
+    assert_error_containing(src, "has effect 'Disk'");
+}
+
+#[test]
+fn valid_disk_read_with_effect() {
+    let src = concat!(
+        "fn loadCfg() -> Any\n",
+        "    ! [Disk]\n",
+        "    = Disk.readText(\"config.av\")\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_disk_all_methods_with_effect() {
+    let src = concat!(
+        "fn ops(p: String) -> Any\n",
+        "    ! [Disk]\n",
+        "    Disk.writeText(p, \"x\")\n",
+        "    Disk.appendText(p, \"y\")\n",
+        "    Disk.exists(p)\n",
+        "    Disk.delete(p)\n",
+        "    Disk.listDir(p)\n",
+        "    Disk.makeDir(p)\n",
+        "    Disk.readText(p)\n",
+    );
+    assert_no_errors(src);
+}
+
+// ---------------------------------------------------------------------------
 // Record field access type checking
 // ---------------------------------------------------------------------------
 

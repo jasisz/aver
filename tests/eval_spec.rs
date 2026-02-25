@@ -1091,3 +1091,165 @@ mod network_tests {
         assert!(result.is_err(), "expected RuntimeError for bad headers");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Disk service builtins
+// ---------------------------------------------------------------------------
+
+mod disk_tests {
+    use super::*;
+    use aver::interpreter::{Interpreter, Value};
+    use std::io::Write;
+
+    fn run_disk_fn(src: &str, fn_name: &str) -> Value {
+        let items = parse(src);
+        let mut interp = Interpreter::new();
+        for item in &items {
+            if let TopLevel::FnDef(fd) = item {
+                interp.exec_fn_def(fd).expect("exec_fn_def failed");
+            }
+        }
+        let fn_val = interp.lookup(fn_name).expect("fn not found");
+        let effects = Interpreter::callable_declared_effects(&fn_val);
+        interp
+            .call_value_with_effects_pub(fn_val, vec![], fn_name, effects)
+            .expect("call failed")
+    }
+
+    fn tmp_path(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("aver_disk_test_{}", name))
+    }
+
+    #[test]
+    fn disk_write_and_read_text() {
+        let path = tmp_path("write_read.txt");
+        let path_str = path.to_string_lossy();
+        let src = format!(
+            "fn run() -> Any\n    ! [Disk]\n    Disk.writeText(\"{}\", \"hello\")\n",
+            path_str.replace('\\', "\\\\")
+        );
+        let val = run_disk_fn(&src, "run");
+        assert_eq!(val, Value::Ok(Box::new(Value::Unit)));
+
+        let src2 = format!(
+            "fn run() -> Any\n    ! [Disk]\n    Disk.readText(\"{}\")\n",
+            path_str.replace('\\', "\\\\")
+        );
+        let val2 = run_disk_fn(&src2, "run");
+        assert_eq!(val2, Value::Ok(Box::new(Value::Str("hello".to_string()))));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn disk_append_text() {
+        let path = tmp_path("append.txt");
+        let path_str = path.to_string_lossy().replace('\\', "\\\\");
+        // Write initial content then append
+        {
+            let mut f = std::fs::File::create(&path).unwrap();
+            f.write_all(b"hello").unwrap();
+        }
+        let src = format!(
+            "fn run() -> Any\n    ! [Disk]\n    Disk.appendText(\"{}\", \" world\")\n",
+            path_str
+        );
+        let val = run_disk_fn(&src, "run");
+        assert_eq!(val, Value::Ok(Box::new(Value::Unit)));
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "hello world");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn disk_exists_true_and_false() {
+        let path = tmp_path("exists.txt");
+        let path_str = path.to_string_lossy().replace('\\', "\\\\");
+        std::fs::write(&path, "x").unwrap();
+
+        let src = format!(
+            "fn run() -> Any\n    ! [Disk]\n    Disk.exists(\"{}\")\n",
+            path_str
+        );
+        let val = run_disk_fn(&src, "run");
+        assert_eq!(val, Value::Bool(true));
+        let _ = std::fs::remove_file(&path);
+
+        let missing_path = tmp_path("does_not_exist_xyz.txt");
+        let missing_str = missing_path.to_string_lossy().replace('\\', "\\\\");
+        let src2 = format!(
+            "fn run() -> Any\n    ! [Disk]\n    Disk.exists(\"{}\")\n",
+            missing_str
+        );
+        let val2 = run_disk_fn(&src2, "run");
+        assert_eq!(val2, Value::Bool(false));
+    }
+
+    #[test]
+    fn disk_delete_file() {
+        let path = tmp_path("delete.txt");
+        let path_str = path.to_string_lossy().replace('\\', "\\\\");
+        std::fs::write(&path, "bye").unwrap();
+
+        let src = format!(
+            "fn run() -> Any\n    ! [Disk]\n    Disk.delete(\"{}\")\n",
+            path_str
+        );
+        let val = run_disk_fn(&src, "run");
+        assert_eq!(val, Value::Ok(Box::new(Value::Unit)));
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn disk_delete_missing_file_returns_err() {
+        let path = tmp_path("no_such_file_xyz.txt");
+        let path_str = path.to_string_lossy().replace('\\', "\\\\");
+        let src = format!(
+            "fn run() -> Any\n    ! [Disk]\n    Disk.delete(\"{}\")\n",
+            path_str
+        );
+        let val = run_disk_fn(&src, "run");
+        assert!(matches!(val, Value::Err(_)));
+    }
+
+    #[test]
+    fn disk_make_dir_and_list_dir() {
+        let dir = tmp_path("mydir_listtest");
+        let dir_str = dir.to_string_lossy().replace('\\', "\\\\");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let src = format!(
+            "fn run() -> Any\n    ! [Disk]\n    Disk.makeDir(\"{}\")\n",
+            dir_str
+        );
+        let val = run_disk_fn(&src, "run");
+        assert_eq!(val, Value::Ok(Box::new(Value::Unit)));
+        assert!(dir.exists());
+
+        // Write a file inside to list it
+        std::fs::write(dir.join("a.txt"), "").unwrap();
+        let src2 = format!(
+            "fn run() -> Any\n    ! [Disk]\n    Disk.listDir(\"{}\")\n",
+            dir_str
+        );
+        let val2 = run_disk_fn(&src2, "run");
+        match val2 {
+            Value::Ok(inner) => match *inner {
+                Value::List(items) => {
+                    assert!(items.contains(&Value::Str("a.txt".to_string())));
+                }
+                other => panic!("expected List, got {:?}", other),
+            },
+            other => panic!("expected Ok, got {:?}", other),
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn disk_read_missing_file_returns_err() {
+        let src = "fn run() -> Any\n    ! [Disk]\n    Disk.readText(\"/no/such/file.txt\")\n";
+        let val = run_disk_fn(src, "run");
+        assert!(matches!(val, Value::Err(_)));
+    }
+}
