@@ -119,6 +119,15 @@ fn main() {
     }
 }
 
+fn print_type_errors(errors: &[aver::typechecker::TypeError]) {
+    for te in errors {
+        match te.line {
+            Some(line) => eprintln!("{} {}", format!("Error [{}]:", line).red(), te.message),
+            None       => eprintln!("{} {}", "Error:".red(), te.message),
+        }
+    }
+}
+
 fn cmd_run(file: &str, run_verify_blocks: bool) {
     let base_dir = base_dir_for(file);
     let source = match read_file(file) {
@@ -140,9 +149,7 @@ fn cmd_run(file: &str, run_verify_blocks: bool) {
     // Static type check — block execution on any error
     let type_errors = run_type_check_with_base(&items, Some(&base_dir));
     if !type_errors.is_empty() {
-        for te in &type_errors {
-            eprintln!("{} {}", "Error:".red(), te.message);
-        }
+        print_type_errors(&type_errors);
         process::exit(1);
     }
 
@@ -248,7 +255,10 @@ fn cmd_check(file: &str, strict: bool) {
     let type_errors = run_type_check_with_base(&items, Some(&base_dir));
     let has_errors = !type_errors.is_empty();
     for te in &type_errors {
-        println!("  {} {}", "Error:".red(), te.message);
+        match te.line {
+            Some(line) => println!("  {} {}", format!("Error [{}]:", line).red(), te.message),
+            None       => println!("  {} {}", "Error:".red(), te.message),
+        }
     }
 
     // Check line count
@@ -316,9 +326,7 @@ fn cmd_verify(file: &str) {
     // Static type check — verify should use the same soundness gate as run/check
     let type_errors = run_type_check_with_base(&items, Some(&base_dir));
     if !type_errors.is_empty() {
-        for te in &type_errors {
-            eprintln!("{} {}", "Error:".red(), te.message);
-        }
+        print_type_errors(&type_errors);
         process::exit(1);
     }
 
@@ -1041,9 +1049,7 @@ fn cmd_repl() {
             .collect();
         let type_errors = run_type_check_with_base(&all, None);
         if !type_errors.is_empty() {
-            for te in &type_errors {
-                eprintln!("{} {}", "Error:".red(), te.message);
-            }
+            print_type_errors(&type_errors);
             buffer.clear();
             continue;
         }

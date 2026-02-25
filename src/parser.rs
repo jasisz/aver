@@ -438,6 +438,7 @@ impl Parser {
     // Function definition
     // -------------------------------------------------------------------------
     fn parse_fn(&mut self) -> Result<FnDef, ParseError> {
+        let fn_line = self.current().line;
         self.expect_exact(&TokenKind::Fn)?;
         let name_tok =
             self.expect_kind(&TokenKind::Ident(String::new()), "Expected function name")?;
@@ -514,6 +515,7 @@ impl Parser {
 
         Ok(FnDef {
             name,
+            line: fn_line,
             params,
             return_type,
             effects,

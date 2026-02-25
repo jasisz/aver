@@ -22,6 +22,7 @@ use crate::types::{parse_type_str_strict, Type};
 #[derive(Debug, Clone)]
 pub struct TypeError {
     pub message: String,
+    pub line: Option<usize>,
 }
 
 pub fn run_type_check(items: &[TopLevel]) -> Vec<TypeError> {
@@ -62,6 +63,8 @@ struct TypeChecker {
     errors: Vec<TypeError>,
     /// Return type of the function currently being checked; None at top level.
     current_fn_ret: Option<Type>,
+    /// Line number of the function currently being checked; None at top level.
+    current_fn_line: Option<usize>,
 }
 
 impl TypeChecker {
@@ -76,6 +79,7 @@ impl TypeChecker {
             locals: HashMap::new(),
             errors: Vec::new(),
             current_fn_ret: None,
+            current_fn_line: None,
         };
         tc.register_builtins();
         tc
@@ -107,6 +111,7 @@ impl TypeChecker {
     fn error(&mut self, msg: impl Into<String>) {
         self.errors.push(TypeError {
             message: msg.into(),
+            line: self.current_fn_line,
         });
     }
 
@@ -586,6 +591,7 @@ impl TypeChecker {
     // Phase 2 — check each function
     // -----------------------------------------------------------------------
     fn check_fn(&mut self, f: &FnDef) {
+        self.current_fn_line = Some(f.line);
         // Start with globals and overlay parameter bindings.
         self.locals = self.globals.clone();
         if let Some(sig) = self.fn_sigs.get(&f.name).cloned() {
@@ -628,6 +634,7 @@ impl TypeChecker {
             }
 
             self.current_fn_ret = None;
+            self.current_fn_line = None;
         }
     }
 
@@ -1304,6 +1311,7 @@ mod tests {
     fn unknown_function_calls_are_errors() {
         let main_fn = FnDef {
             name: "main".to_string(),
+            line: 1,
             params: vec![],
             return_type: "Unit".to_string(),
             effects: vec![],
@@ -1332,6 +1340,7 @@ mod tests {
         ));
         let main_fn = TopLevel::FnDef(FnDef {
             name: "main".to_string(),
+            line: 1,
             params: vec![],
             return_type: "Unit".to_string(),
             effects: vec![],

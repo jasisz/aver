@@ -87,6 +87,7 @@ pub enum FnBody {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnDef {
     pub name: String,
+    pub line: usize,
     pub params: Vec<(String, String)>,
     pub return_type: String,
     pub effects: Vec<String>,
