@@ -1,0 +1,171 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Aver",
+  "scopeName": "source.aver",
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#description" },
+    { "include": "#effects" },
+    { "include": "#string" },
+    { "include": "#number" },
+    { "include": "#keyword" },
+    { "include": "#adr-key" },
+    { "include": "#builtin-type" },
+    { "include": "#builtin-value" },
+    { "include": "#builtin-service" },
+    { "include": "#constructor" },
+    { "include": "#fn-def" },
+    { "include": "#operator" }
+  ],
+  "repository": {
+
+    "comment": {
+      "name": "comment.line.double-dash.aver",
+      "match": "--.*$"
+    },
+
+    "description": {
+      "comment": "? \"prose description\" attached to a function",
+      "name": "comment.block.documentation.aver",
+      "match": "^\\s*(\\?)\\s*(\"[^\"]*\")",
+      "captures": {
+        "1": { "name": "punctuation.definition.comment.aver" },
+        "2": { "name": "comment.block.documentation.aver" }
+      }
+    },
+
+    "effects": {
+      "comment": "! [Network, Disk] effect declaration",
+      "match": "(!)\\s*(\\[)([^\\]]*)(\\])",
+      "captures": {
+        "1": { "name": "keyword.operator.effect.aver" },
+        "2": { "name": "punctuation.section.brackets.aver" },
+        "3": { "name": "entity.name.type.effect.aver" },
+        "4": { "name": "punctuation.section.brackets.aver" }
+      }
+    },
+
+    "string": {
+      "comment": "String literal with interpolation",
+      "name": "string.quoted.double.aver",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "meta.embedded.expression.aver",
+          "begin": "\\{",
+          "end": "\\}",
+          "beginCaptures": { "0": { "name": "punctuation.section.interpolation.begin.aver" } },
+          "endCaptures":   { "0": { "name": "punctuation.section.interpolation.end.aver" } },
+          "patterns": [{ "include": "$self" }]
+        },
+        {
+          "name": "constant.character.escape.aver",
+          "match": "\\\\."
+        }
+      ]
+    },
+
+    "number": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.aver",
+          "match": "\\b[0-9]+\\.[0-9]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.aver",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+
+    "keyword": {
+      "patterns": [
+        {
+          "comment": "Definition keywords",
+          "name": "keyword.declaration.aver",
+          "match": "\\b(fn|val|var|type|record|module|effects)\\b"
+        },
+        {
+          "comment": "Block keywords",
+          "name": "keyword.control.aver",
+          "match": "\\b(match|verify|decision|depends|exposes)\\b"
+        },
+        {
+          "comment": "Module metadata keys",
+          "name": "keyword.other.aver",
+          "match": "\\b(intent|reason|date|chosen|rejected|impacts|author|needs)\\b"
+        }
+      ]
+    },
+
+    "adr-key": {
+      "comment": "decision block field names followed by colon",
+      "match": "^\\s*(date|reason|chosen|rejected|impacts|author|intent|needs)(:)",
+      "captures": {
+        "1": { "name": "keyword.other.adr.aver" },
+        "2": { "name": "punctuation.separator.key-value.aver" }
+      }
+    },
+
+    "builtin-type": {
+      "name": "support.type.aver",
+      "match": "\\b(Int|Float|String|Bool|Unit|Any|Result|Option|List|NetworkResponse|Header)\\b"
+    },
+
+    "builtin-value": {
+      "name": "constant.language.aver",
+      "match": "\\b(true|false|Ok|Err|Some|None)\\b"
+    },
+
+    "builtin-service": {
+      "comment": "Service namespaces — Console.print, Network.get, Disk.readText etc.",
+      "match": "\\b(Console|Network|Disk)(\\.)(\\w+)?",
+      "captures": {
+        "1": { "name": "support.class.service.aver" },
+        "2": { "name": "punctuation.accessor.aver" },
+        "3": { "name": "support.function.service.aver" }
+      }
+    },
+
+    "constructor": {
+      "comment": "Qualified constructors: Shape.Circle, Shape.Rect etc.",
+      "match": "\\b([A-Z][a-zA-Z0-9]*)(\\.)?([A-Z][a-zA-Z0-9]*)?",
+      "captures": {
+        "1": { "name": "entity.name.type.aver" },
+        "2": { "name": "punctuation.accessor.aver" },
+        "3": { "name": "entity.name.type.variant.aver" }
+      }
+    },
+
+    "fn-def": {
+      "comment": "fn name( — highlight function name",
+      "match": "^\\s*(fn)\\s+([a-z_][a-zA-Z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.declaration.function.aver" },
+        "2": { "name": "entity.name.function.aver" }
+      }
+    },
+
+    "operator": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arrow.aver",
+          "match": "->|=>|\\|>"
+        },
+        {
+          "name": "keyword.operator.comparison.aver",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.arithmetic.aver",
+          "match": "[+\\-*/]"
+        },
+        {
+          "name": "keyword.operator.error-propagation.aver",
+          "match": "\\?"
+        }
+      ]
+    }
+  }
+}

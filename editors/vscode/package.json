@@ -1,0 +1,27 @@
+{
+  "name": "aver-language",
+  "displayName": "Aver",
+  "description": "Syntax highlighting for the Aver programming language",
+  "version": "0.1.0",
+  "publisher": "aver",
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Programming Languages"],
+  "repository": { "type": "git", "url": "https://github.com/jasisz/aver" },
+  "contributes": {
+    "languages": [
+      {
+        "id": "aver",
+        "aliases": ["Aver", "aver"],
+        "extensions": [".av"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "aver",
+        "scopeName": "source.aver",
+        "path": "./syntaxes/aver.tmLanguage.json"
+      }
+    ]
+  }
+}
