@@ -63,7 +63,7 @@ decision UseResultNotExceptions:
 `decision` blocks are first-class syntax, co-located with the code they describe. Not a Confluence page that goes stale. Not a commit message no one reads. Queryable:
 
 ```bash
-aver decisions payments.av
+aver context payments.av --decisions-only
 ```
 
 Three months later — human or AI — you know *why* the code looks the way it does.
@@ -145,9 +145,10 @@ No `if`/`else`. No loops. No exceptions. No nulls. No magic.
 aver run       file.av        # type-check, then execute
 aver check     file.av        # type errors + intent/desc warnings
 aver verify    file.av        # run all verify blocks
-aver decisions file.av        # print all decision blocks
 aver context   file.av        # export project context (Markdown)
 aver context   file.av --json # export project context (JSON)
+aver context   file.av --decisions-only        # decision blocks only (Markdown)
+aver context   file.av --decisions-only --json # decision blocks only (JSON)
 aver repl                     # interactive REPL
 ```
 
@@ -248,7 +249,7 @@ cargo build --release
 cargo run -- run      examples/calculator.av
 cargo run -- verify   examples/calculator.av
 cargo run -- check    examples/calculator.av
-cargo run -- decisions decisions/architecture.av
+cargo run -- context  decisions/architecture.av --decisions-only
 cargo run -- context  examples/calculator.av
 cargo run -- repl
 ```
@@ -286,7 +287,7 @@ Implemented in Rust with extensive automated test coverage (300+ tests).
 - [x] Static type checker — blocks execution on type errors
 - [x] Effect system — statically enforced + runtime call-edge gate
 - [x] `verify` block runner — co-located tests
-- [x] `decision` block indexer — queryable ADRs
+- [x] `decision` block indexer — queryable ADRs via `aver context --decisions-only`
 - [x] List builtins: `map`, `filter`, `fold`, `get`, `head`, `tail`, `push`
 - [x] User-defined sum types (`type`) and product types (`record`)
 - [x] List pattern matching (`[]`, `[h, ..t]`)
