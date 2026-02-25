@@ -47,6 +47,9 @@ enum Commands {
         /// Write output to file instead of stdout
         #[arg(short = 'o', long)]
         output: Option<String>,
+        /// Output as JSON instead of Markdown
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -110,8 +113,8 @@ fn main() {
         Commands::Repl => {
             cmd_repl();
         }
-        Commands::Context { file, output } => {
-            cmd_context(file, output.as_deref());
+        Commands::Context { file, output, json } => {
+            cmd_context(file, output.as_deref(), *json);
         }
     }
 }
@@ -644,7 +647,221 @@ fn format_context_md(contexts: &[FileContext], entry_file: &str) -> String {
     out
 }
 
-fn cmd_context(file: &str, output: Option<&str>) {
+fn json_str(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n"))
+}
+
+fn format_context_json(contexts: &[FileContext], entry_file: &str) -> String {
+    let all_decisions: Vec<&DecisionBlock> =
+        contexts.iter().flat_map(|c| c.decisions.iter()).collect();
+
+    let mut out = String::from("{\n");
+    out.push_str(&format!("  \"entry\": {},\n", json_str(entry_file)));
+    out.push_str("  \"modules\": [\n");
+
+    let non_empty: Vec<&FileContext> = contexts
+        .iter()
+        .filter(|c| c.module_name.is_some() || !c.fn_defs.is_empty() || !c.type_defs.is_empty())
+        .collect();
+
+    for (mi, ctx) in non_empty.iter().enumerate() {
+        let comma_m = if mi + 1 < non_empty.len() { "," } else { "" };
+        out.push_str("    {\n");
+        out.push_str(&format!("      \"source_file\": {},\n", json_str(&ctx.source_file)));
+        match &ctx.module_name {
+            Some(n) => out.push_str(&format!("      \"module\": {},\n", json_str(n))),
+            None => out.push_str("      \"module\": null,\n"),
+        }
+        match &ctx.intent {
+            Some(i) => out.push_str(&format!("      \"intent\": {},\n", json_str(i))),
+            None => out.push_str("      \"intent\": null,\n"),
+        }
+
+        // effect_sets
+        out.push_str("      \"effect_sets\": [");
+        if ctx.effect_sets.is_empty() {
+            out.push_str("],\n");
+        } else {
+            out.push('\n');
+            for (ei, (name, effects)) in ctx.effect_sets.iter().enumerate() {
+                let comma_e = if ei + 1 < ctx.effect_sets.len() { "," } else { "" };
+                let effs: Vec<String> = effects.iter().map(|e| json_str(e)).collect();
+                out.push_str(&format!(
+                    "        {{\"name\": {}, \"effects\": [{}]}}{}\n",
+                    json_str(name),
+                    effs.join(", "),
+                    comma_e
+                ));
+            }
+            out.push_str("      ],\n");
+        }
+
+        // types
+        out.push_str("      \"types\": [");
+        let sum_types: Vec<&TypeDef> = ctx
+            .type_defs
+            .iter()
+            .filter(|td| matches!(td, TypeDef::Sum { .. }))
+            .collect();
+        if sum_types.is_empty() {
+            out.push_str("],\n");
+        } else {
+            out.push('\n');
+            for (ti, td) in sum_types.iter().enumerate() {
+                let comma_t = if ti + 1 < sum_types.len() { "," } else { "" };
+                if let TypeDef::Sum { name, variants } = td {
+                    let vars: Vec<String> = variants
+                        .iter()
+                        .map(|v| {
+                            if v.fields.is_empty() {
+                                json_str(&v.name)
+                            } else {
+                                format!(
+                                    "{{\"name\": {}, \"fields\": [{}]}}",
+                                    json_str(&v.name),
+                                    v.fields.iter().map(|f| json_str(f)).collect::<Vec<_>>().join(", ")
+                                )
+                            }
+                        })
+                        .collect();
+                    out.push_str(&format!(
+                        "        {{\"name\": {}, \"variants\": [{}]}}{}\n",
+                        json_str(name),
+                        vars.join(", "),
+                        comma_t
+                    ));
+                }
+            }
+            out.push_str("      ],\n");
+        }
+
+        // records
+        out.push_str("      \"records\": [");
+        let records: Vec<&TypeDef> = ctx
+            .type_defs
+            .iter()
+            .filter(|td| matches!(td, TypeDef::Product { .. }))
+            .collect();
+        if records.is_empty() {
+            out.push_str("],\n");
+        } else {
+            out.push('\n');
+            for (ri, td) in records.iter().enumerate() {
+                let comma_r = if ri + 1 < records.len() { "," } else { "" };
+                if let TypeDef::Product { name, fields } = td {
+                    let flds: Vec<String> = fields
+                        .iter()
+                        .map(|(fname, ftype)| {
+                            format!("{{\"name\": {}, \"type\": {}}}", json_str(fname), json_str(ftype))
+                        })
+                        .collect();
+                    out.push_str(&format!(
+                        "        {{\"name\": {}, \"fields\": [{}]}}{}\n",
+                        json_str(name),
+                        flds.join(", "),
+                        comma_r
+                    ));
+                }
+            }
+            out.push_str("      ],\n");
+        }
+
+        // functions
+        out.push_str("      \"functions\": [");
+        let fns: Vec<&FnDef> = ctx.fn_defs.iter().filter(|fd| fd.name != "main").collect();
+        if fns.is_empty() {
+            out.push_str("]\n");
+        } else {
+            out.push('\n');
+            for (fi, fd) in fns.iter().enumerate() {
+                let comma_f = if fi + 1 < fns.len() { "," } else { "" };
+                out.push_str("        {\n");
+                out.push_str(&format!("          \"name\": {},\n", json_str(&fd.name)));
+
+                let params: Vec<String> = fd
+                    .params
+                    .iter()
+                    .map(|(pn, pt)| {
+                        format!("{{\"name\": {}, \"type\": {}}}", json_str(pn), json_str(pt))
+                    })
+                    .collect();
+                out.push_str(&format!("          \"params\": [{}],\n", params.join(", ")));
+                out.push_str(&format!(
+                    "          \"return_type\": {},\n",
+                    json_str(&fd.return_type)
+                ));
+
+                let effs: Vec<String> = fd.effects.iter().map(|e| json_str(e)).collect();
+                out.push_str(&format!("          \"effects\": [{}],\n", effs.join(", ")));
+
+                match &fd.desc {
+                    Some(d) => out.push_str(&format!("          \"desc\": {},\n", json_str(d))),
+                    None => out.push_str("          \"desc\": null,\n"),
+                }
+
+                // verify cases (max 3)
+                out.push_str("          \"verify\": [");
+                let verify_cases: Vec<String> = ctx
+                    .verify_blocks
+                    .iter()
+                    .filter(|vb| vb.fn_name == fd.name)
+                    .flat_map(|vb| vb.cases.iter())
+                    .take(3)
+                    .map(|(lhs, rhs)| {
+                        format!(
+                            "{{\"input\": {}, \"expected\": {}}}",
+                            json_str(&expr_to_str(lhs)),
+                            json_str(&expr_to_str(rhs))
+                        )
+                    })
+                    .collect();
+                if verify_cases.is_empty() {
+                    out.push_str("]\n");
+                } else {
+                    out.push_str(&format!("{}]\n", verify_cases.join(", ")));
+                }
+
+                out.push_str(&format!("        }}{}\n", comma_f));
+            }
+            out.push_str("      ]\n");
+        }
+
+        out.push_str(&format!("    }}{}\n", comma_m));
+    }
+
+    out.push_str("  ],\n");
+
+    // decisions
+    out.push_str("  \"decisions\": [");
+    if all_decisions.is_empty() {
+        out.push_str("]\n");
+    } else {
+        out.push('\n');
+        for (di, dec) in all_decisions.iter().enumerate() {
+            let comma_d = if di + 1 < all_decisions.len() { "," } else { "" };
+            out.push_str("    {\n");
+            out.push_str(&format!("      \"name\": {},\n", json_str(&dec.name)));
+            out.push_str(&format!("      \"date\": {},\n", json_str(&dec.date)));
+            out.push_str(&format!("      \"chosen\": {},\n", json_str(&dec.chosen)));
+            let rej: Vec<String> = dec.rejected.iter().map(|r| json_str(r)).collect();
+            out.push_str(&format!("      \"rejected\": [{}],\n", rej.join(", ")));
+            out.push_str(&format!("      \"reason\": {},\n", json_str(&dec.reason)));
+            let imp: Vec<String> = dec.impacts.iter().map(|i| json_str(i)).collect();
+            out.push_str(&format!("      \"impacts\": [{}],\n", imp.join(", ")));
+            match &dec.author {
+                Some(a) => out.push_str(&format!("      \"author\": {}\n", json_str(a))),
+                None => out.push_str("      \"author\": null\n"),
+            }
+            out.push_str(&format!("    }}{}\n", comma_d));
+        }
+        out.push_str("  ]\n");
+    }
+
+    out.push('}');
+    out
+}
+
+fn cmd_context(file: &str, output: Option<&str>, json: bool) {
     let mut visited = std::collections::HashSet::new();
     let contexts = collect_contexts(file, &mut visited);
 
@@ -653,12 +870,16 @@ fn cmd_context(file: &str, output: Option<&str>) {
         process::exit(1);
     }
 
-    let markdown = format_context_md(&contexts, file);
+    let content = if json {
+        format_context_json(&contexts, file)
+    } else {
+        format_context_md(&contexts, file)
+    };
 
     match output {
-        None => print!("{}", markdown),
+        None => print!("{}", content),
         Some(out_path) => {
-            if let Err(e) = fs::write(out_path, &markdown) {
+            if let Err(e) = fs::write(out_path, &content) {
                 eprintln!("{} Cannot write to '{}': {}", "Error:".red(), out_path, e);
                 process::exit(1);
             }
