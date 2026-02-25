@@ -51,7 +51,7 @@ fn main() -> Unit
         Ok(status) -> print("404 endpoint returned status: {status}")
         Err(msg)   -> print("Transport error: {msg}")
 
-    val r3 = post("https://httpbin.org/post", "{}", "demo-token")
+    val r3 = post("https://httpbin.org/post", "ping", "demo-token")
     match r3:
         Ok(resp) -> print("POST status: {resp.status}")
         Err(msg) -> print("POST failed: {msg}")
