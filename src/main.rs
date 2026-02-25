@@ -122,8 +122,8 @@ fn main() {
 fn print_type_errors(errors: &[aver::typechecker::TypeError]) {
     for te in errors {
         match te.line {
-            Some(line) => eprintln!("{} {}", format!("Error [{}]:", line).red(), te.message),
-            None       => eprintln!("{} {}", "Error:".red(), te.message),
+            Some(line) => eprintln!("{}", format!("error[{}]: {}", line, te.message).red()),
+            None       => eprintln!("{}", format!("error: {}", te.message).red()),
         }
     }
 }
@@ -256,8 +256,8 @@ fn cmd_check(file: &str, strict: bool) {
     let has_errors = !type_errors.is_empty();
     for te in &type_errors {
         match te.line {
-            Some(line) => println!("  {} {}", format!("Error [{}]:", line).red(), te.message),
-            None       => println!("  {} {}", "Error:".red(), te.message),
+            Some(line) => println!("  {}", format!("error[{}]: {}", line, te.message).red()),
+            None       => println!("  {}", format!("error: {}", te.message).red()),
         }
     }
 

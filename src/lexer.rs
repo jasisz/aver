@@ -81,7 +81,7 @@ pub struct Token {
 
 #[derive(Debug, Error)]
 pub enum LexerError {
-    #[error("Lexer error [{line}:{col}]: {msg}")]
+    #[error("error[{line}:{col}]: {msg}")]
     Error {
         msg: String,
         line: usize,

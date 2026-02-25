@@ -4,7 +4,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ParseError {
-    #[error("Parse error [{line}:{col}]: {msg}")]
+    #[error("error[{line}:{col}]: {msg}")]
     Error {
         msg: String,
         line: usize,
