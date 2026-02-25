@@ -52,7 +52,7 @@ struct TypeChecker {
     value_members: HashMap<String, Type>,
     /// Field types for record types: "TypeName.fieldName" → Type.
     /// Populated for both user-defined `record` types and built-in records
-    /// (NetworkResponse, Header). Enables checked dot-access on Named types.
+    /// (HttpResponse, Header). Enables checked dot-access on Named types.
     record_field_types: HashMap<String, Type>,
     /// Named effect aliases: `effects AppIO = [Console, Disk]`
     effect_aliases: HashMap<String, Vec<String>>,
@@ -205,7 +205,7 @@ impl TypeChecker {
             self.insert_sig(name, params, ret.clone(), effects);
         }
 
-        // Register built-in record field types for NetworkResponse and Header.
+        // Register built-in record field types for HttpResponse and Header.
         // This enables checked dot-access: resp.status → Int, resp.body → Str, etc.
         let net_resp_fields: &[(&str, Type)] = &[
             ("status", Type::Int),
@@ -217,7 +217,7 @@ impl TypeChecker {
         ];
         for (field, ty) in net_resp_fields {
             self.record_field_types
-                .insert(format!("NetworkResponse.{}", field), ty.clone());
+                .insert(format!("HttpResponse.{}", field), ty.clone());
         }
         let header_fields: &[(&str, Type)] = &[("name", Type::Str), ("value", Type::Str)];
         for (field, ty) in header_fields {
@@ -227,7 +227,7 @@ impl TypeChecker {
 
         let net_ret = || {
             Type::Result(
-                Box::new(Type::Named("NetworkResponse".to_string())),
+                Box::new(Type::Named("HttpResponse".to_string())),
                 Box::new(Type::Str),
             )
         };
@@ -250,26 +250,26 @@ impl TypeChecker {
                 Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
                 &["Console"],
             ),
-            ("Network.get", &[Type::Str], net_ret(), &["Network"]),
-            ("Network.head", &[Type::Str], net_ret(), &["Network"]),
-            ("Network.delete", &[Type::Str], net_ret(), &["Network"]),
+            ("Http.get", &[Type::Str], net_ret(), &["Http"]),
+            ("Http.head", &[Type::Str], net_ret(), &["Http"]),
+            ("Http.delete", &[Type::Str], net_ret(), &["Http"]),
             (
-                "Network.post",
+                "Http.post",
                 &[Type::Str, Type::Str, Type::Str, header_list()],
                 net_ret(),
-                &["Network"],
+                &["Http"],
             ),
             (
-                "Network.put",
+                "Http.put",
                 &[Type::Str, Type::Str, Type::Str, header_list()],
                 net_ret(),
-                &["Network"],
+                &["Http"],
             ),
             (
-                "Network.patch",
+                "Http.patch",
                 &[Type::Str, Type::Str, Type::Str, header_list()],
                 net_ret(),
-                &["Network"],
+                &["Http"],
             ),
             ("Disk.readText", &[Type::Str], disk_str(), &["Disk"]),
             (

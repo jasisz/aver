@@ -35,7 +35,7 @@ Hot-reloads — no restart needed. Select **Aver** from the language menu in the
 - String interpolation: `"Hello, {name}!"`
 - Built-in types: `Int`, `Float`, `String`, `Bool`, `Result`, `Option`, `List`
 - Built-in values: `true`, `false`, `Ok`, `Err`, `Some`, `None`
-- Service calls: `Console.print`, `Network.get`, `Disk.readText`
+- Service calls: `Console.print`, `Http.get`, `Disk.readText`
 - Qualified constructors: `Shape.Circle`, `Models.User`
 - ADR keys: `date`, `reason`, `chosen`, `rejected`, `impacts`
 - Comments: `-- ...`

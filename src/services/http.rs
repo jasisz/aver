@@ -1,10 +1,10 @@
-/// Network service — HTTP client built on `ureq`.
+/// Http service — HTTP client built on `ureq`.
 ///
 /// Exposes six methods mirroring the HTTP verb set:
-///   GET / HEAD / DELETE  — `Network.get(url)`, `Network.head(url)`, `Network.delete(url)`
-///   POST / PUT / PATCH   — `Network.post(url, body, contentType, headers)`, etc.
+///   GET / HEAD / DELETE  — `Http.get(url)`, `Http.head(url)`, `Http.delete(url)`
+///   POST / PUT / PATCH   — `Http.post(url, body, contentType, headers)`, etc.
 ///
-/// All methods require `! [Network]`. Responses are wrapped in `Ok(NetworkResponse)`
+/// All methods require `! [Http]`. Responses are wrapped in `Ok(HttpResponse)`
 /// for any completed HTTP exchange (including 4xx/5xx). Transport failures return
 /// `Err(String)`. Response bodies are capped at 10 MB.
 use std::collections::HashMap;
@@ -16,13 +16,13 @@ pub fn register(global: &mut HashMap<String, Value>) {
     for method in &["get", "head", "delete", "post", "put", "patch"] {
         members.insert(
             method.to_string(),
-            Value::Builtin(format!("Network.{}", method)),
+            Value::Builtin(format!("Http.{}", method)),
         );
     }
     global.insert(
-        "Network".to_string(),
+        "Http".to_string(),
         Value::Namespace {
-            name: "Network".to_string(),
+            name: "Http".to_string(),
             members,
         },
     );
@@ -30,12 +30,12 @@ pub fn register(global: &mut HashMap<String, Value>) {
 
 pub fn effects(name: &str) -> &'static [&'static str] {
     match name {
-        "Network.get"
-        | "Network.head"
-        | "Network.delete"
-        | "Network.post"
-        | "Network.put"
-        | "Network.patch" => &["Network"],
+        "Http.get"
+        | "Http.head"
+        | "Http.delete"
+        | "Http.post"
+        | "Http.put"
+        | "Http.patch" => &["Http"],
         _ => &[],
     }
 }
@@ -43,8 +43,8 @@ pub fn effects(name: &str) -> &'static [&'static str] {
 /// Returns `Some(result)` when `name` is owned by this service, `None` otherwise.
 pub fn call(name: &str, args: Vec<Value>) -> Option<Result<Value, RuntimeError>> {
     match name {
-        "Network.get" | "Network.head" | "Network.delete" => Some(call_simple(name, args)),
-        "Network.post" | "Network.put" | "Network.patch" => Some(call_with_body(name, args)),
+        "Http.get" | "Http.head" | "Http.delete" => Some(call_simple(name, args)),
+        "Http.post" | "Http.put" | "Http.patch" => Some(call_with_body(name, args)),
         _ => None,
     }
 }
@@ -54,13 +54,13 @@ pub fn call(name: &str, args: Vec<Value>) -> Option<Result<Value, RuntimeError>>
 fn call_simple(name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::Error(format!(
-            "Network.{}() takes 1 argument (url), got {}",
-            name.trim_start_matches("Network."),
+            "Http.{}() takes 1 argument (url), got {}",
+            name.trim_start_matches("Http."),
             args.len()
         )));
     }
-    let url = str_arg(&args[0], "Network: url must be a String")?;
-    let method = name.trim_start_matches("Network.").to_uppercase();
+    let url = str_arg(&args[0], "Http: url must be a String")?;
+    let method = name.trim_start_matches("Http.").to_uppercase();
     let result = ureq::request(&method, &url)
         .timeout(std::time::Duration::from_secs(10))
         .call();
@@ -70,17 +70,17 @@ fn call_simple(name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
 fn call_with_body(name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
     if args.len() != 4 {
         return Err(RuntimeError::Error(format!(
-            "Network.{}() takes 4 arguments (url, body, contentType, headers), got {}",
-            name.trim_start_matches("Network."),
+            "Http.{}() takes 4 arguments (url, body, contentType, headers), got {}",
+            name.trim_start_matches("Http."),
             args.len()
         )));
     }
-    let url          = str_arg(&args[0], "Network: url must be a String")?;
-    let body         = str_arg(&args[1], "Network: body must be a String")?;
-    let content_type = str_arg(&args[2], "Network: contentType must be a String")?;
+    let url          = str_arg(&args[0], "Http: url must be a String")?;
+    let body         = str_arg(&args[1], "Http: body must be a String")?;
+    let content_type = str_arg(&args[2], "Http: contentType must be a String")?;
     let extra_headers = parse_request_headers(&args[3])?;
 
-    let method = name.trim_start_matches("Network.").to_uppercase();
+    let method = name.trim_start_matches("Http.").to_uppercase();
     let mut req = ureq::request(&method, &url)
         .timeout(std::time::Duration::from_secs(10))
         .set("Content-Type", &content_type);
@@ -100,14 +100,14 @@ fn str_arg(val: &Value, msg: &str) -> Result<String, RuntimeError> {
 fn parse_request_headers(val: &Value) -> Result<Vec<(String, String)>, RuntimeError> {
     let items = match val {
         Value::List(items) => items,
-        _ => return Err(RuntimeError::Error("Network: headers must be a List".to_string())),
+        _ => return Err(RuntimeError::Error("Http: headers must be a List".to_string())),
     };
     let mut out = Vec::new();
     for item in items {
         let fields = match item {
             Value::Record { fields, .. } => fields,
             _ => return Err(RuntimeError::Error(
-                "Network: each header must be a record with 'name' and 'value' String fields".to_string(),
+                "Http: each header must be a record with 'name' and 'value' String fields".to_string(),
             )),
         };
         let get = |key: &str| -> Result<String, RuntimeError> {
@@ -116,7 +116,7 @@ fn parse_request_headers(val: &Value) -> Result<Vec<(String, String)>, RuntimeEr
                 .find(|(k, _)| k == key)
                 .and_then(|(_, v)| if let Value::Str(s) = v { Some(s.clone()) } else { None })
                 .ok_or_else(|| RuntimeError::Error(format!(
-                    "Network: header record must have a '{}' String field", key
+                    "Http: header record must have a '{}' String field", key
                 )))
         };
         out.push((get("name")?, get("value")?));
@@ -156,15 +156,15 @@ fn build_response(resp: ureq::Response) -> Result<Value, RuntimeError> {
         .into_reader()
         .take(BODY_LIMIT + 1)
         .read_to_end(&mut buf)
-        .map_err(|e| RuntimeError::Error(format!("Network: failed to read response body: {}", e)))?;
+        .map_err(|e| RuntimeError::Error(format!("Http: failed to read response body: {}", e)))?;
     if bytes_read as u64 > BODY_LIMIT {
         return Ok(Value::Err(Box::new(Value::Str(
-            "Network: response body exceeds 10 MB limit".to_string(),
+            "Http: response body exceeds 10 MB limit".to_string(),
         ))));
     }
     let body = String::from_utf8_lossy(&buf).into_owned();
     Ok(Value::Ok(Box::new(Value::Record {
-        type_name: "NetworkResponse".to_string(),
+        type_name: "HttpResponse".to_string(),
         fields: vec![
             ("status".to_string(), Value::Int(status)),
             ("body".to_string(), Value::Str(body)),

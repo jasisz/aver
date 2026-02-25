@@ -771,10 +771,10 @@ fn effect_set_single() {
 
 #[test]
 fn effect_set_multiple() {
-    let items = parse("effects AppIO = [Console, Disk, Network]");
+    let items = parse("effects AppIO = [Console, Disk, Http]");
     if let TopLevel::EffectSet { name, effects } = &items[0] {
         assert_eq!(name, "AppIO");
-        assert_eq!(effects, &["Console", "Disk", "Network"]);
+        assert_eq!(effects, &["Console", "Disk", "Http"]);
     } else {
         panic!("expected EffectSet");
     }

@@ -93,7 +93,7 @@ contexts:
         3: punctuation.separator.key-value.aver
 
   builtin-types:
-    - match: '\b(Int|Float|String|Bool|Unit|Result|Option|List|NetworkResponse|Header)\b'
+    - match: '\b(Int|Float|String|Bool|Unit|Result|Option|List|HttpResponse|Header)\b'
       scope: support.type.aver
 
   builtin-values:
@@ -101,7 +101,7 @@ contexts:
       scope: constant.language.aver
 
   services:
-    # Console.print, Network.get, Disk.readText etc.
+    # Console.print, Http.get, Disk.readText etc.
     - match: '\b(Console|Network|Disk)(\.)'
       captures:
         1: support.class.service.aver

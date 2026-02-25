@@ -110,7 +110,7 @@
 
     "builtin-type": {
       "name": "support.type.aver",
-      "match": "\\b(Int|Float|String|Bool|Unit|Result|Option|List|NetworkResponse|Header)\\b"
+      "match": "\\b(Int|Float|String|Bool|Unit|Result|Option|List|HttpResponse|Header)\\b"
     },
 
     "builtin-value": {
@@ -119,7 +119,7 @@
     },
 
     "builtin-service": {
-      "comment": "Service namespaces — Console.print, Network.get, Disk.readText etc.",
+      "comment": "Service namespaces — Console.print, Http.get, Disk.readText etc.",
       "match": "\\b(Console|Network|Disk)(\\.)(\\w+)?",
       "captures": {
         "1": { "name": "support.class.service.aver" },

@@ -936,10 +936,10 @@ fn sum_type_variant_equality() {
 }
 
 // ---------------------------------------------------------------------------
-// Network builtins — local TcpListener, no internet required
+// Http builtins — local TcpListener, no internet required
 // ---------------------------------------------------------------------------
 
-mod network_tests {
+mod http_tests {
     use super::*;
     use aver::interpreter::{Interpreter, Value};
     use std::io::{Read, Write};
@@ -970,7 +970,7 @@ mod network_tests {
         Some(format!("http://127.0.0.1:{}/", port))
     }
 
-    fn run_network_fn(src: &str, fn_name: &str) -> Value {
+    fn run_http_fn(src: &str, fn_name: &str) -> Value {
         let items = parse(src);
         let mut interp = Interpreter::new();
         for item in &items {
@@ -987,17 +987,17 @@ mod network_tests {
 
     #[test]
     #[ignore = "integration: starts a local HTTP server; run with --include-ignored --test-threads=1"]
-    fn network_get_200_returns_ok_response() {
+    fn http_get_200_returns_ok_response() {
         let Some(url) = start_server(200, "hello", "") else { return; };
         let src = format!(
-            "fn fetch() -> Result<NetworkResponse, String>\n    ! [Network]\n    Network.get(\"{}\")\n",
+            "fn fetch() -> Result<HttpResponse, String>\n    ! [Http]\n    Http.get(\"{}\")\n",
             url
         );
-        let val = run_network_fn(&src, "fetch");
+        let val = run_http_fn(&src, "fetch");
         match val {
             Value::Ok(inner) => match *inner {
                 Value::Record { type_name, ref fields } => {
-                    assert_eq!(type_name, "NetworkResponse");
+                    assert_eq!(type_name, "HttpResponse");
                     let status = fields.iter().find(|(k, _)| k == "status").map(|(_, v)| v);
                     assert_eq!(status, Some(&Value::Int(200)));
                     let body = fields.iter().find(|(k, _)| k == "body").map(|(_, v)| v);
@@ -1011,13 +1011,13 @@ mod network_tests {
 
     #[test]
     #[ignore = "integration: starts a local HTTP server; run with --include-ignored --test-threads=1"]
-    fn network_get_404_still_returns_ok_response() {
+    fn http_get_404_still_returns_ok_response() {
         let Some(url) = start_server(404, "not found", "") else { return; };
         let src = format!(
-            "fn fetch() -> Result<NetworkResponse, String>\n    ! [Network]\n    Network.get(\"{}\")\n",
+            "fn fetch() -> Result<HttpResponse, String>\n    ! [Http]\n    Http.get(\"{}\")\n",
             url
         );
-        let val = run_network_fn(&src, "fetch");
+        let val = run_http_fn(&src, "fetch");
         match val {
             Value::Ok(inner) => match *inner {
                 Value::Record { ref fields, .. } => {
@@ -1031,9 +1031,9 @@ mod network_tests {
     }
 
     #[test]
-    fn network_get_transport_error_returns_err() {
+    fn http_get_transport_error_returns_err() {
         // Port 1 is almost certainly not listening
-        let src = "fn fetch() -> Result<NetworkResponse, String>\n    ! [Network]\n    Network.get(\"http://127.0.0.1:1/\")\n";
+        let src = "fn fetch() -> Result<HttpResponse, String>\n    ! [Http]\n    Http.get(\"http://127.0.0.1:1/\")\n";
         let items = parse(src);
         let mut interp = Interpreter::new();
         for item in &items {
@@ -1054,13 +1054,13 @@ mod network_tests {
 
     #[test]
     #[ignore = "integration: starts a local HTTP server; run with --include-ignored --test-threads=1"]
-    fn network_post_201_returns_ok_response() {
+    fn http_post_201_returns_ok_response() {
         let Some(url) = start_server(201, "created", "") else { return; };
         let src = format!(
-            "fn send() -> Result<NetworkResponse, String>\n    ! [Network]\n    Network.post(\"{}\", \"data\", \"text/plain\", [])\n",
+            "fn send() -> Result<HttpResponse, String>\n    ! [Http]\n    Http.post(\"{}\", \"data\", \"text/plain\", [])\n",
             url
         );
-        let val = run_network_fn(&src, "send");
+        let val = run_http_fn(&src, "send");
         match val {
             Value::Ok(inner) => match *inner {
                 Value::Record { ref fields, .. } => {
@@ -1074,9 +1074,9 @@ mod network_tests {
     }
 
     #[test]
-    fn network_post_bad_headers_returns_runtime_error() {
+    fn http_post_bad_headers_returns_runtime_error() {
         // Pass a non-list for headers — validation fails before any HTTP call
-        let src = "fn send() -> Result<NetworkResponse, String>\n    ! [Network]\n    Network.post(\"http://127.0.0.1:1/\", \"\", \"text/plain\", \"bad\")\n";
+        let src = "fn send() -> Result<HttpResponse, String>\n    ! [Http]\n    Http.post(\"http://127.0.0.1:1/\", \"\", \"text/plain\", \"bad\")\n";
         let items = parse(src);
         let mut interp = Interpreter::new();
         for item in &items {

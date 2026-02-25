@@ -39,10 +39,10 @@ fn processPayment(amount: Int) -> Result<String, String>
 fn fetchExchangeRate(currency: String) -> Result<Float, String>
     ? "Fetches live rate from the ECB feed."
     ! [Network]
-    Network.get("https://api.ecb.europa.eu/rates/{currency}")
+    Http.get("https://api.ecb.europa.eu/rates/{currency}")
 ```
 
-Effect declarations (`! [Network]`, `! [Disk]`, `! [Console]`) are part of the signature. The type checker enforces them — a function that calls `Network.get` without declaring `! [Network]` is a **type error, not a warning**. The runtime enforces the same boundary as a backstop.
+Effect declarations (`! [Network]`, `! [Disk]`, `! [Console]`) are part of the signature. The type checker enforces them — a function that calls `Http.get` without declaring `! [Network]` is a **type error, not a warning**. The runtime enforces the same boundary as a backstop.
 
 You can read any function in Aver and know exactly what it's capable of — without running it, without reading its body.
 
@@ -199,22 +199,22 @@ fn log(msg: String) -> Unit
 ### Network
 
 ```aver
-fn fetchUser(id: Int) -> Result<NetworkResponse, String>
+fn fetchUser(id: Int) -> Result<HttpResponse, String>
     ! [Network]
-    Network.get("https://api.example.com/users/{id}")
+    Http.get("https://api.example.com/users/{id}")
 ```
 
 | Method | Args | Returns |
 |--------|------|---------|
-| `Network.get(url)` | `String` | `Result<NetworkResponse, String>` |
-| `Network.head(url)` | `String` | `Result<NetworkResponse, String>` |
-| `Network.delete(url)` | `String` | `Result<NetworkResponse, String>` |
-| `Network.post(url, body, contentType, headers)` | `String, String, String, List<Header>` | `Result<NetworkResponse, String>` |
-| `Network.put` / `Network.patch` | same | same |
+| `Http.get(url)` | `String` | `Result<HttpResponse, String>` |
+| `Http.head(url)` | `String` | `Result<HttpResponse, String>` |
+| `Http.delete(url)` | `String` | `Result<HttpResponse, String>` |
+| `Http.post(url, body, contentType, headers)` | `String, String, String, List<Header>` | `Result<HttpResponse, String>` |
+| `Http.put` / `Http.patch` | same | same |
 
 `headers` is statically typed as `List<Header>`. Use `[]` when you do not need extra headers.
 
-`NetworkResponse` fields: `resp.status` (Int), `resp.body` (String), `resp.headers` (List of `{name, value}` records).
+`HttpResponse` fields: `resp.status` (Int), `resp.body` (String), `resp.headers` (List of `{name, value}` records).
 `Ok` for any completed HTTP exchange including 4xx/5xx. `Err` only for transport failures.
 
 ### Disk

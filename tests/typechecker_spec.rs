@@ -502,27 +502,27 @@ fn error_effect_set_alias_insufficient() {
 #[test]
 fn error_network_get_without_effect() {
     let src = concat!(
-        "fn fetch(url: String) -> Result<NetworkResponse, String>\n",
-        "    Network.get(url)\n",
+        "fn fetch(url: String) -> Result<HttpResponse, String>\n",
+        "    Http.get(url)\n",
     );
-    assert_error_containing(src, "has effect 'Network'");
+    assert_error_containing(src, "has effect 'Http'");
 }
 
 #[test]
 fn error_network_post_without_effect() {
     let src = concat!(
-        "fn send(url: String, body: String) -> Result<NetworkResponse, String>\n",
-        "    Network.post(url, body, \"application/json\", [])\n",
+        "fn send(url: String, body: String) -> Result<HttpResponse, String>\n",
+        "    Http.post(url, body, \"application/json\", [])\n",
     );
-    assert_error_containing(src, "has effect 'Network'");
+    assert_error_containing(src, "has effect 'Http'");
 }
 
 #[test]
 fn valid_network_get_with_effect() {
     let src = concat!(
-        "fn fetch(url: String) -> Result<NetworkResponse, String>\n",
-        "    ! [Network]\n",
-        "    Network.get(url)\n",
+        "fn fetch(url: String) -> Result<HttpResponse, String>\n",
+        "    ! [Http]\n",
+        "    Http.get(url)\n",
     );
     assert_no_errors(src);
 }
@@ -530,9 +530,9 @@ fn valid_network_get_with_effect() {
 #[test]
 fn valid_network_post_with_effect() {
     let src = concat!(
-        "fn send(url: String) -> Result<NetworkResponse, String>\n",
-        "    ! [Network]\n",
-        "    Network.post(url, \"{}\", \"application/json\", [])\n",
+        "fn send(url: String) -> Result<HttpResponse, String>\n",
+        "    ! [Http]\n",
+        "    Http.post(url, \"{}\", \"application/json\", [])\n",
     );
     assert_no_errors(src);
 }
@@ -540,9 +540,9 @@ fn valid_network_post_with_effect() {
 #[test]
 fn valid_network_post_with_ascribed_empty_headers() {
     let src = concat!(
-        "fn send(url: String) -> Result<NetworkResponse, String>\n",
-        "    ! [Network]\n",
-        "    Network.post(url, \"{}\", \"application/json\", []: List<Header>)\n",
+        "fn send(url: String) -> Result<HttpResponse, String>\n",
+        "    ! [Http]\n",
+        "    Http.post(url, \"{}\", \"application/json\", []: List<Header>)\n",
     );
     assert_no_errors(src);
 }
@@ -550,10 +550,10 @@ fn valid_network_post_with_ascribed_empty_headers() {
 #[test]
 fn valid_network_post_with_typed_headers() {
     let src = concat!(
-        "fn send(url: String) -> Result<NetworkResponse, String>\n",
-        "    ! [Network]\n",
+        "fn send(url: String) -> Result<HttpResponse, String>\n",
+        "    ! [Http]\n",
         "    val headers = [Header(name: \"Authorization\", value: \"Bearer token\")]\n",
-        "    Network.post(url, \"{}\", \"application/json\", headers)\n",
+        "    Http.post(url, \"{}\", \"application/json\", headers)\n",
     );
     assert_no_errors(src);
 }
@@ -561,11 +561,11 @@ fn valid_network_post_with_typed_headers() {
 #[test]
 fn error_network_post_headers_wrong_type() {
     let src = concat!(
-        "fn send(url: String) -> Result<NetworkResponse, String>\n",
-        "    ! [Network]\n",
-        "    Network.post(url, \"{}\", \"application/json\", [\"bad\"])\n",
+        "fn send(url: String) -> Result<HttpResponse, String>\n",
+        "    ! [Http]\n",
+        "    Http.post(url, \"{}\", \"application/json\", [\"bad\"])\n",
     );
-    assert_error_containing(src, "Argument 4 of 'Network.post': expected List<Header>");
+    assert_error_containing(src, "Argument 4 of 'Http.post': expected List<Header>");
 }
 
 #[test]
@@ -577,9 +577,9 @@ fn error_type_ascription_mismatch() {
 #[test]
 fn valid_network_all_methods_with_effect() {
     let src = concat!(
-        "fn callAll(url: String) -> Result<NetworkResponse, String>\n",
-        "    ! [Network]\n",
-        "    Network.delete(url)\n",
+        "fn callAll(url: String) -> Result<HttpResponse, String>\n",
+        "    ! [Http]\n",
+        "    Http.delete(url)\n",
     );
     assert_no_errors(src);
 }
@@ -684,7 +684,7 @@ fn valid_console_all_methods_with_effect() {
 fn valid_network_response_field_access() {
     // resp.status is Int — comparison with Int should pass
     let src = concat!(
-        "fn isOk(resp: NetworkResponse) -> Bool\n",
+        "fn isOk(resp: HttpResponse) -> Bool\n",
         "    = resp.status < 400\n",
     );
     assert_no_errors(src);
@@ -693,7 +693,7 @@ fn valid_network_response_field_access() {
 #[test]
 fn valid_network_response_body_field() {
     let src = concat!(
-        "fn body(resp: NetworkResponse) -> String\n",
+        "fn body(resp: HttpResponse) -> String\n",
         "    = resp.body\n",
     );
     assert_no_errors(src);
@@ -726,7 +726,7 @@ fn valid_user_record_field_access() {
 #[test]
 fn error_network_response_unknown_field() {
     let src = concat!(
-        "fn bad(resp: NetworkResponse) -> String\n",
+        "fn bad(resp: HttpResponse) -> String\n",
         "    = resp.fooo\n",
     );
     assert_error_containing(src, "has no field 'fooo'");
