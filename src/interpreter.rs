@@ -183,20 +183,20 @@ fn build_network_response(resp: ureq::Response) -> Result<Value, RuntimeError> {
         ))));
     }
     let body = String::from_utf8_lossy(&buf).into_owned();
-    Ok(Value::Record {
+    Ok(Value::Ok(Box::new(Value::Record {
         type_name: "NetworkResponse".to_string(),
         fields: vec![
             ("status".to_string(), Value::Int(status)),
             ("body".to_string(), Value::Str(body)),
             ("headers".to_string(), Value::List(headers)),
         ],
-    })
+    })))
 }
 
 fn network_response_value(result: Result<ureq::Response, ureq::Error>) -> Result<Value, RuntimeError> {
     match result {
-        Ok(resp) => Ok(Value::Ok(Box::new(build_network_response(resp)?))),
-        Err(ureq::Error::Status(_, resp)) => Ok(Value::Ok(Box::new(build_network_response(resp)?))),
+        Ok(resp) => build_network_response(resp),
+        Err(ureq::Error::Status(_, resp)) => build_network_response(resp),
         Err(ureq::Error::Transport(e)) => {
             Ok(Value::Err(Box::new(Value::Str(e.to_string()))))
         }

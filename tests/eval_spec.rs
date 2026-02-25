@@ -944,7 +944,7 @@ mod network_tests {
     use super::*;
     use aver::interpreter::{Interpreter, Value};
     use std::io::{Read, Write};
-    use std::net::{TcpListener, TcpStream};
+    use std::net::TcpListener;
     use std::thread;
 
     /// Spawn a minimal HTTP/1.1 server on an OS-assigned port.
