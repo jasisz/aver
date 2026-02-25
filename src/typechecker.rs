@@ -248,6 +248,7 @@ impl TypeChecker {
             ("Disk.appendText", &[Type::Str, Type::Str],  disk_unit(), &["Disk"]),
             ("Disk.exists",     &[Type::Str],             Type::Bool,  &["Disk"]),
             ("Disk.delete",     &[Type::Str],             disk_unit(), &["Disk"]),
+            ("Disk.deleteDir",  &[Type::Str],             disk_unit(), &["Disk"]),
             ("Disk.listDir",    &[Type::Str],             disk_list(), &["Disk"]),
             ("Disk.makeDir",    &[Type::Str],             disk_unit(), &["Disk"]),
         ];

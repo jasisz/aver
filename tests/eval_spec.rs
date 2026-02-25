@@ -1201,6 +1201,61 @@ mod disk_tests {
     }
 
     #[test]
+    fn disk_delete_directory_returns_err() {
+        // Disk.delete must refuse directories — use Disk.deleteDir instead
+        let dir = tmp_path("delete_dir_guard");
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir_str = dir.to_string_lossy().replace('\\', "\\\\");
+
+        let src = format!(
+            "fn run() -> Any\n    ! [Disk]\n    Disk.delete(\"{}\")\n",
+            dir_str
+        );
+        let val = run_disk_fn(&src, "run");
+        assert!(
+            matches!(val, Value::Err(_)),
+            "expected Err when deleting a directory via Disk.delete"
+        );
+        assert!(dir.exists(), "directory must not be removed");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn disk_delete_dir_removes_directory_tree() {
+        let dir = tmp_path("deletedir_tree");
+        let sub = dir.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("file.txt"), "x").unwrap();
+        let dir_str = dir.to_string_lossy().replace('\\', "\\\\");
+
+        let src = format!(
+            "fn run() -> Any\n    ! [Disk]\n    Disk.deleteDir(\"{}\")\n",
+            dir_str
+        );
+        let val = run_disk_fn(&src, "run");
+        assert_eq!(val, Value::Ok(Box::new(Value::Unit)));
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn disk_delete_dir_on_file_returns_err() {
+        let path = tmp_path("deletedir_on_file.txt");
+        std::fs::write(&path, "data").unwrap();
+        let path_str = path.to_string_lossy().replace('\\', "\\\\");
+
+        let src = format!(
+            "fn run() -> Any\n    ! [Disk]\n    Disk.deleteDir(\"{}\")\n",
+            path_str
+        );
+        let val = run_disk_fn(&src, "run");
+        assert!(
+            matches!(val, Value::Err(_)),
+            "expected Err when using Disk.deleteDir on a file"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn disk_delete_missing_file_returns_err() {
         let path = tmp_path("no_such_file_xyz.txt");
         let path_str = path.to_string_lossy().replace('\\', "\\\\");
@@ -1251,5 +1306,24 @@ mod disk_tests {
         let src = "fn run() -> Any\n    ! [Disk]\n    Disk.readText(\"/no/such/file.txt\")\n";
         let val = run_disk_fn(src, "run");
         assert!(matches!(val, Value::Err(_)));
+    }
+
+    #[test]
+    fn runtime_gate_blocks_disk_read_without_effect() {
+        // Call Disk.readText from top-level (no effect grant) → runtime gate fires
+        let items = parse("Disk.readText(\"x\")");
+        let item = items.into_iter().next().expect("no items");
+        if let TopLevel::Stmt(Stmt::Expr(expr)) = item {
+            let mut interp = Interpreter::new();
+            let err = interp
+                .eval_expr(&expr)
+                .expect_err("expected runtime gate error");
+            let msg = err.to_string();
+            assert!(msg.contains("Runtime effect violation"), "got: {}", msg);
+            assert!(msg.contains("Disk"), "got: {}", msg);
+            assert!(msg.contains("<top-level>"), "got: {}", msg);
+        } else {
+            panic!("expected a single expression");
+        }
     }
 }

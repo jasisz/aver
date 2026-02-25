@@ -247,7 +247,7 @@ impl Interpreter {
 
         // Disk service namespace.
         let mut disk = HashMap::new();
-        for method in &["readText", "writeText", "appendText", "exists", "delete", "listDir", "makeDir"] {
+        for method in &["readText", "writeText", "appendText", "exists", "delete", "deleteDir", "listDir", "makeDir"] {
             disk.insert(
                 method.to_string(),
                 Value::Builtin(format!("Disk.{}", method)),
@@ -549,6 +549,7 @@ impl Interpreter {
             | "Disk.appendText"
             | "Disk.exists"
             | "Disk.delete"
+            | "Disk.deleteDir"
             | "Disk.listDir"
             | "Disk.makeDir" => &["Disk"],
             _ => &[],
@@ -1004,12 +1005,34 @@ impl Interpreter {
                     return Err(RuntimeError::Error("Disk.delete: path must be a String".to_string()));
                 };
                 let p = std::path::Path::new(path);
-                let result = if p.is_dir() {
-                    std::fs::remove_dir_all(p)
-                } else {
-                    std::fs::remove_file(p)
+                if p.is_dir() {
+                    return Ok(Value::Err(Box::new(Value::Str(
+                        "Disk.delete: path is a directory — use Disk.deleteDir to remove directories".to_string(),
+                    ))));
+                }
+                match std::fs::remove_file(p) {
+                    Ok(_) => Ok(Value::Ok(Box::new(Value::Unit))),
+                    Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                }
+            }
+
+            "Disk.deleteDir" => {
+                let [path_val] = args.as_slice() else {
+                    return Err(RuntimeError::Error(format!(
+                        "Disk.deleteDir() takes 1 argument (path), got {}",
+                        args.len()
+                    )));
                 };
-                match result {
+                let Value::Str(path) = path_val else {
+                    return Err(RuntimeError::Error("Disk.deleteDir: path must be a String".to_string()));
+                };
+                let p = std::path::Path::new(path);
+                if !p.is_dir() {
+                    return Ok(Value::Err(Box::new(Value::Str(
+                        "Disk.deleteDir: path is not a directory — use Disk.delete to remove files".to_string(),
+                    ))));
+                }
+                match std::fs::remove_dir_all(p) {
                     Ok(_) => Ok(Value::Ok(Box::new(Value::Unit))),
                     Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
                 }
