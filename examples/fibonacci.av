@@ -1,8 +1,15 @@
 module Fibonacci
     intent:
         "Explores Fibonacci numbers and the golden ratio."
-        "Single-pass stats builder computes fibs, sum, max, and evens together."
+        "Single-pass stats builder computes fibs, sum, max, and evens in one traversal."
+        "Stats returned as a FibStats record now that Aver supports user-defined types."
         "Verify blocks serve as executable examples and AI anchors."
+
+record FibStats
+  fibs: List<Int>
+  sum: Int
+  mx: Int
+  evens: List<Int>
 
 decision TailRecurrenceForPerformance:
     date: "2026-02-24"
@@ -14,13 +21,13 @@ decision TailRecurrenceForPerformance:
     impacts: [fib, fibTR]
 
 decision SinglePassStats:
-    date: "2026-02-24"
+    date: "2026-02-25"
     reason:
         "Building a list then folding and filtering is three separate passes."
         "Accumulate sum, max, and even-filter alongside push in one traversal."
-        "Stats encoded as [fibs, sum, max, evens] since Aver has no records yet."
+        "Result wrapped in FibStats record: named fields replace positional list indexing."
     chosen: SinglePassAccumulator
-    rejected: [SeparateFoldAndFilter, Record]
+    rejected: [SeparateFoldAndFilter]
     impacts: [buildFibStats, buildFibStatsTR]
 
 decision EvenCheckWithoutModulo:
@@ -69,17 +76,29 @@ fn pushIfEven(xs: List<Int>, n: Int) -> List<Int>
         true  -> push(xs, n)
         false -> xs
 
-fn buildFibStatsTR(i: Int, n: Int, a: Int, b: Int, fibs: List<Int>, sum: Int, mx: Int, evens: List<Int>) -> List<Any>
+fn buildFibStatsTR(i: Int, n: Int, a: Int, b: Int, fibs: List<Int>, sum: Int, mx: Int, evens: List<Int>) -> FibStats
     ? "Single-pass builder: advances (a,b), pushes a, updates sum/max/evens each step."
     match i > n:
-        true  -> [fibs, sum, mx, evens]
+        true  -> FibStats(fibs: fibs, sum: sum, mx: mx, evens: evens)
         false -> buildFibStatsTR(i + 1, n, b, a + b, push(fibs, a), sum + a, bigger(a, mx), pushIfEven(evens, a))
 
-fn buildFibStats(n: Int) -> Result<List<Any>, String>
-    ? "Computes [fibs, sum, max, evens] for F(0)..F(n) in one pass. Err for n < 0."
+fn buildFibStats(n: Int) -> Result<FibStats, String>
+    ? "Computes FibStats for F(0)..F(n) in one pass. Err for n < 0."
     match n < 0:
         true  -> Err("Need n >= 0")
         false -> Ok(buildFibStatsTR(0, n, 0, 1, [], 0, 0, []))
+
+fn printStats(s: FibStats) -> Unit
+    ? "Print all fields of a FibStats record to stdout."
+    ! [Console]
+    print("Fibonacci [0..12]:")
+    print(s.fibs)
+    print("Sum:")
+    print(s.sum)
+    print("Max:")
+    print(s.mx)
+    print("Even Fibonacci numbers:")
+    print(s.evens)
 
 fn absF(x: Float) -> Float
     ? "Absolute value for Float using comparison and negation."
@@ -97,22 +116,11 @@ fn goldenApprox(n: Int) -> Result<Float, String>
         true  -> Err("Need n >= 1")
         false -> Ok(fib(n + 1) * 1.0 / fib(n))
 
-fn main() -> Unit
-    val stats = buildFibStats(12)?
-    val fibs = get(stats, 0)?
-    val total = get(stats, 1)?
-    val mx = get(stats, 2)?
-    val evens = get(stats, 3)?
-
-    print("Fibonacci [0..12]:")
-    print(fibs)
-    print("Sum:")
-    print(total)
-    print("Max:")
-    print(mx)
-    print("Even Fibonacci numbers:")
-    print(evens)
-
+fn main()
+    val result = buildFibStats(12)
+    match result:
+        Ok(stats) -> printStats(stats)
+        Err(msg)  -> print(msg)
     print("Golden ratio approx (n=5):")
     print(goldenApprox(5))
     print("Golden ratio approx (n=10):")
@@ -154,8 +162,8 @@ verify pushIfEven:
 
 verify buildFibStats:
     buildFibStats(-1) => Err("Need n >= 0")
-    buildFibStats(0)  => Ok([[0], 0, 0, [0]])
-    buildFibStats(4)  => Ok([[0, 1, 1, 2, 3], 7, 3, [0, 2]])
+    buildFibStats(0)  => Ok(FibStats(fibs: [0], sum: 0, mx: 0, evens: [0]))
+    buildFibStats(4)  => Ok(FibStats(fibs: [0, 1, 1, 2, 3], sum: 7, mx: 3, evens: [0, 2]))
 
 verify absF:
     absF(-2.5) => 2.5

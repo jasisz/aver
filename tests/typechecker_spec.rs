@@ -186,16 +186,18 @@ fn error_arg_type_mismatch_string_for_int() {
 
 #[test]
 fn error_unknown_type_annotation() {
+    // Capitalized typos are now parsed as Named types; the error surfaces as a type mismatch
+    // (body returns Named("Intger") but declared return is Unit)
     let src = "fn f(x: Intger) -> Unit\n    = x\n";
-    // actual: "Function 'f' parameter 'x': unknown type 'Intger'"
-    assert_error_containing(src, "unknown");
+    assert_error_containing(src, "Intger");
 }
 
 #[test]
 fn error_unknown_return_type() {
+    // Capitalized typos are now parsed as Named types; the error surfaces as a type mismatch
+    // (body returns String but declared return is Named("Strng"))
     let src = "fn f() -> Strng\n    = \"hi\"\n";
-    // actual: "Function 'f': unknown return type 'Strng'"
-    assert_error_containing(src, "unknown");
+    assert_error_containing(src, "Strng");
 }
 
 #[test]
@@ -242,5 +244,107 @@ fn error_undeclared_effect() {
 fn valid_effect_propagated_correctly() {
     // caller declares the same effect as callee
     let src = "fn log(msg: String) -> Unit\n    ! [Console]\n    = print(msg)\nfn caller(x: String) -> Unit\n    ! [Console]\n    = log(x)\n";
+    assert_no_errors(src);
+}
+
+// ---------------------------------------------------------------------------
+// Error propagation operator (?)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn valid_error_prop_in_result_fn() {
+    // ? on a Result<Int, String> inside a function returning Result<Int, String> — valid.
+    let src =
+        "fn safe(r: Result<Int, String>) -> Result<Int, String>\n    = Ok(r?)\n";
+    assert_no_errors(src);
+}
+
+#[test]
+fn error_prop_in_non_result_fn() {
+    // ? used inside a function that returns Int — type error.
+    let src = "fn bad(r: Result<Int, String>) -> Int\n    = r?\n";
+    assert_error_containing(src, "not Result");
+}
+
+#[test]
+fn error_prop_on_non_result_type() {
+    // ? applied to an Int — type error.
+    let src = "fn bad(n: Int) -> Result<Int, String>\n    = n?\n";
+    assert_error_containing(src, "can only be applied to Result");
+}
+
+#[test]
+fn error_prop_incompatible_err_types() {
+    // Inner Err is String, outer function expects Err = Int — incompatible.
+    let src =
+        "fn inner(x: Int) -> Result<Int, String>\n    = Ok(x)\nfn outer(x: Int) -> Result<Int, Int>\n    = Ok(inner(x)?)\n";
+    assert_error_containing(src, "incompatible");
+}
+
+// ---------------------------------------------------------------------------
+// User-defined types — type checker integration
+// ---------------------------------------------------------------------------
+
+#[test]
+fn valid_sum_type_definition() {
+    let src = "type Shape\n  Circle(Float)\n  Rect(Float, Float)\n  Point\n";
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_record_definition() {
+    let src = "record User\n  name: String\n  age: Int\n";
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_sum_type_constructor_call() {
+    let src = "type Shape\n  Circle(Float)\n  Point\nval c = Shape.Circle(3.14)\n";
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_record_creation() {
+    let src = "record User\n  name: String\n  age: Int\nval u = User(name: \"Alice\", age: 30)\n";
+    assert_no_errors(src);
+}
+
+#[test]
+fn named_types_are_compatible_with_same_name() {
+    // Two Named("Shape") values should be compatible
+    use aver::types::Type;
+    let a = Type::Named("Shape".to_string());
+    let b = Type::Named("Shape".to_string());
+    assert!(a.compatible(&b));
+}
+
+#[test]
+fn named_types_are_incompatible_with_different_names() {
+    use aver::types::Type;
+    let a = Type::Named("Shape".to_string());
+    let b = Type::Named("User".to_string());
+    assert!(!a.compatible(&b));
+}
+
+#[test]
+fn named_type_compatible_with_any() {
+    use aver::types::Type;
+    let named = Type::Named("Shape".to_string());
+    assert!(named.compatible(&Type::Any));
+    assert!(Type::Any.compatible(&named));
+}
+
+#[test]
+fn valid_function_using_user_type_parameter() {
+    let src = concat!(
+        "type Shape\n",
+        "  Circle(Float)\n",
+        "  Point\n",
+        "fn area(s: Shape) -> Float\n",
+        "  ? \"area\"\n",
+        "  = match s:\n",
+        "    Circle(r) -> r * r\n",
+        "    Point -> 0.0\n",
+    );
     assert_no_errors(src);
 }

@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{BinOp, Expr, FnBody, FnDef, Pattern, Stmt, TopLevel};
+use crate::ast::{BinOp, Expr, FnBody, FnDef, Pattern, Stmt, TopLevel, TypeDef};
 use crate::types::{parse_type_str_strict, Type};
 
 // ---------------------------------------------------------------------------
@@ -47,6 +47,8 @@ struct TypeChecker {
     /// name → (type, is_mutable)
     locals: HashMap<String, (Type, bool)>,
     errors: Vec<TypeError>,
+    /// Return type of the function currently being checked; None at top level.
+    current_fn_ret: Option<Type>,
 }
 
 impl TypeChecker {
@@ -56,6 +58,7 @@ impl TypeChecker {
             globals: HashMap::new(),
             locals: HashMap::new(),
             errors: Vec::new(),
+            current_fn_ret: None,
         };
         tc.register_builtins();
         tc
@@ -101,36 +104,84 @@ impl TypeChecker {
     // -----------------------------------------------------------------------
     fn build_signatures(&mut self, items: &[TopLevel]) {
         for item in items {
-            if let TopLevel::FnDef(f) = item {
-                let mut params = Vec::new();
-                for (param_name, ty_str) in &f.params {
-                    match parse_type_str_strict(ty_str) {
-                        Ok(ty) => params.push(ty),
-                        Err(unknown) => {
-                            self.error(format!(
-                                "Function '{}': unknown type '{}' for parameter '{}'",
-                                f.name, unknown, param_name
-                            ));
-                            params.push(Type::Any); // continue checking with Any
+            match item {
+                TopLevel::FnDef(f) => {
+                    let mut params = Vec::new();
+                    for (param_name, ty_str) in &f.params {
+                        match parse_type_str_strict(ty_str) {
+                            Ok(ty) => params.push(ty),
+                            Err(unknown) => {
+                                self.error(format!(
+                                    "Function '{}': unknown type '{}' for parameter '{}'",
+                                    f.name, unknown, param_name
+                                ));
+                                params.push(Type::Any);
+                            }
                         }
                     }
+                    let ret = match parse_type_str_strict(&f.return_type) {
+                        Ok(ty) => ty,
+                        Err(unknown) => {
+                            self.error(format!(
+                                "Function '{}': unknown return type '{}'",
+                                f.name, unknown
+                            ));
+                            Type::Any
+                        }
+                    };
+                    self.fn_sigs.insert(
+                        f.name.clone(),
+                        FnSig { params, ret, effects: f.effects.clone() },
+                    );
                 }
-                let ret = match parse_type_str_strict(&f.return_type) {
-                    Ok(ty) => ty,
-                    Err(unknown) => {
-                        self.error(format!(
-                            "Function '{}': unknown return type '{}'",
-                            f.name, unknown
-                        ));
-                        Type::Any
-                    }
-                };
+                TopLevel::TypeDef(td) => {
+                    self.register_type_def_sigs(td);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Register constructor signatures for user-defined types.
+    fn register_type_def_sigs(&mut self, td: &TypeDef) {
+        match td {
+            TypeDef::Sum { name: type_name, variants } => {
+                // Register the type name in fn_sigs so `Ident("Shape")` resolves
+                // to Named("Shape") without error (checked after locals in infer_type).
                 self.fn_sigs.insert(
-                    f.name.clone(),
+                    type_name.clone(),
+                    FnSig { params: vec![], ret: Type::Named(type_name.clone()), effects: vec![] },
+                );
+                // Register each constructor with a qualified key: "Shape.Circle"
+                for variant in variants {
+                    let params: Vec<Type> = variant
+                        .fields
+                        .iter()
+                        .map(|f| parse_type_str_strict(f).unwrap_or(Type::Any))
+                        .collect();
+                    self.fn_sigs.insert(
+                        format!("{}.{}", type_name, variant.name),
+                        FnSig {
+                            params,
+                            ret: Type::Named(type_name.clone()),
+                            effects: vec![],
+                        },
+                    );
+                }
+            }
+            TypeDef::Product { name: type_name, fields } => {
+                // Record constructors are handled via Expr::RecordCreate, not FnCall.
+                // Register a dummy sig so Ident("TypeName") resolves to Named(type_name).
+                let params: Vec<Type> = fields
+                    .iter()
+                    .map(|(_, ty_str)| parse_type_str_strict(ty_str).unwrap_or(Type::Any))
+                    .collect();
+                self.fn_sigs.insert(
+                    type_name.clone(),
                     FnSig {
                         params,
-                        ret,
-                        effects: f.effects.clone(),
+                        ret: Type::Named(type_name.clone()),
+                        effects: vec![],
                     },
                 );
             }
@@ -151,6 +202,8 @@ impl TypeChecker {
 
             let declared_ret = sig.ret.clone();
             let declared_effects = sig.effects.clone();
+
+            self.current_fn_ret = Some(declared_ret.clone());
 
             match &f.body {
                 FnBody::Expr(expr) => {
@@ -178,6 +231,8 @@ impl TypeChecker {
                     }
                 }
             }
+
+            self.current_fn_ret = None;
         }
     }
 
@@ -353,6 +408,11 @@ impl TypeChecker {
             Expr::Attr(obj, _) => {
                 self.check_effects_in_expr(obj, caller_name, caller_effects);
             }
+            Expr::RecordCreate { fields, .. } => {
+                for (_, expr) in fields {
+                    self.check_effects_in_expr(expr, caller_name, caller_effects);
+                }
+            }
             _ => {}
         }
     }
@@ -386,36 +446,48 @@ impl TypeChecker {
                 // Infer arg types
                 let arg_types: Vec<Type> = args.iter().map(|a| self.infer_type(a)).collect();
 
-                if let Expr::Ident(name) = fn_expr.as_ref() {
-                    if let Some(sig) = self.fn_sigs.get(name).cloned() {
-                        // Check arity
-                        if arg_types.len() != sig.params.len() {
-                            self.error(format!(
-                                "Function '{}' expects {} argument(s), got {}",
-                                name,
-                                sig.params.len(),
-                                arg_types.len()
-                            ));
-                        } else {
-                            // Check argument types
-                            for (i, (arg_ty, param_ty)) in
-                                arg_types.iter().zip(sig.params.iter()).enumerate()
-                            {
-                                if !arg_ty.compatible(param_ty) {
-                                    self.error(format!(
-                                        "Argument {} of '{}': expected {}, got {}",
-                                        i + 1,
-                                        name,
-                                        param_ty.display(),
-                                        arg_ty.display()
-                                    ));
-                                }
+                // Helper: check arity + arg types against a sig, return sig.ret
+                let check_call = |tc: &mut Self, display_name: &str, sig: FnSig| -> Type {
+                    if arg_types.len() != sig.params.len() {
+                        tc.error(format!(
+                            "Function '{}' expects {} argument(s), got {}",
+                            display_name,
+                            sig.params.len(),
+                            arg_types.len()
+                        ));
+                    } else {
+                        for (i, (arg_ty, param_ty)) in
+                            arg_types.iter().zip(sig.params.iter()).enumerate()
+                        {
+                            if !arg_ty.compatible(param_ty) {
+                                tc.error(format!(
+                                    "Argument {} of '{}': expected {}, got {}",
+                                    i + 1,
+                                    display_name,
+                                    param_ty.display(),
+                                    arg_ty.display()
+                                ));
                             }
                         }
-                        return sig.ret.clone();
+                    }
+                    sig.ret
+                };
+
+                if let Expr::Ident(name) = fn_expr.as_ref() {
+                    if let Some(sig) = self.fn_sigs.get(name).cloned() {
+                        return check_call(self, name, sig);
                     } else {
                         self.error(format!("Call to unknown function '{}'", name));
                     }
+                } else if let Expr::Attr(inner_expr, field) = fn_expr.as_ref() {
+                    // Qualified constructor call: Shape.Circle(5.0)
+                    if let Expr::Ident(type_name) = inner_expr.as_ref() {
+                        let key = format!("{}.{}", type_name, field);
+                        if let Some(sig) = self.fn_sigs.get(&key).cloned() {
+                            return check_call(self, &key, sig);
+                        }
+                    }
+                    let _ = self.infer_type(fn_expr);
                 } else {
                     let _ = self.infer_type(fn_expr);
                 }
@@ -504,16 +576,65 @@ impl TypeChecker {
             }
 
             Expr::ErrorProp(inner) => {
-                // expr? unwraps Result<T,E> → T
+                // expr? unwraps Result<T,E> → T, propagating E as early return.
                 let ty = self.infer_type(inner);
-                if let Type::Result(ok_ty, _) = ty {
-                    *ok_ty
-                } else {
-                    Type::Any
+                match ty {
+                    Type::Result(ok_ty, err_ty) => {
+                        match self.current_fn_ret.clone() {
+                            Some(Type::Result(_, fn_err_ty)) => {
+                                if !err_ty.compatible(&fn_err_ty) {
+                                    self.error(format!(
+                                        "Operator '?': Err type {} is incompatible with function's Err type {}",
+                                        err_ty.display(),
+                                        fn_err_ty.display()
+                                    ));
+                                }
+                            }
+                            Some(Type::Any) => {} // gradual typing — skip check
+                            Some(other) => {
+                                self.error(format!(
+                                    "Operator '?' used in function returning {}, which is not Result",
+                                    other.display()
+                                ));
+                            }
+                            None => {
+                                self.error("Operator '?' used outside of a function".to_string());
+                            }
+                        }
+                        *ok_ty
+                    }
+                    Type::Any => Type::Any,
+                    other => {
+                        self.error(format!(
+                            "Operator '?' can only be applied to Result, got {}",
+                            other.display()
+                        ));
+                        Type::Any
+                    }
                 }
             }
 
-            Expr::Attr(_, _) => Type::Any,
+            Expr::Attr(obj, _) => {
+                let obj_ty = self.infer_type(obj);
+                match obj_ty {
+                    Type::Named(_) => Type::Any,
+                    Type::Any => Type::Any,
+                    other => {
+                        self.error(format!(
+                            "Field access on non-record type {}",
+                            other.display()
+                        ));
+                        Type::Any
+                    }
+                }
+            }
+
+            Expr::RecordCreate { type_name, fields } => {
+                for (_, expr) in fields {
+                    let _ = self.infer_type(expr);
+                }
+                Type::Named(type_name.clone())
+            }
         }
     }
 
@@ -544,7 +665,13 @@ impl TypeChecker {
     fn collect_pattern_bindings(pattern: &Pattern, out: &mut Vec<String>) {
         match pattern {
             Pattern::Ident(name) if name != "_" => out.push(name.clone()),
-            Pattern::Constructor(_, Some(name)) => out.push(name.clone()),
+            Pattern::Constructor(_, bindings) => {
+                for name in bindings {
+                    if name != "_" {
+                        out.push(name.clone());
+                    }
+                }
+            }
             _ => {}
         }
     }

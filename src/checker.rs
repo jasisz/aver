@@ -1,7 +1,7 @@
 use colored::Colorize;
 
 use crate::ast::{DecisionBlock, FnDef, TopLevel, VerifyBlock};
-use crate::interpreter::{Interpreter, lumen_repr};
+use crate::interpreter::{Interpreter, aver_repr};
 
 pub struct VerifyResult {
     #[allow(dead_code)]
@@ -31,14 +31,14 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
 
         match (left_result, right_result) {
             (Ok(left_val), Ok(right_val)) => {
-                if interp.lumen_eq(&left_val, &right_val) {
+                if interp.aver_eq(&left_val, &right_val) {
                     passed += 1;
                     println!("  {} {}", "✓".green(), case_str);
                 } else {
                     failed += 1;
                     println!("  {} {}", "✗".red(), case_str);
-                    let expected = lumen_repr(&right_val);
-                    let actual = lumen_repr(&left_val);
+                    let expected = aver_repr(&right_val);
+                    let actual = aver_repr(&left_val);
                     println!("      expected: {}", expected);
                     println!("      got:      {}", actual);
                     failures.push((case_str, expected, actual));

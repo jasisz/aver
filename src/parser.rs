@@ -2,6 +2,7 @@ use thiserror::Error;
 use crate::lexer::{Token, TokenKind};
 use crate::ast::*;
 
+
 #[derive(Debug, Error)]
 pub enum ParseError {
     #[error("Parse error [{line}:{col}]: {msg}")]
@@ -133,6 +134,8 @@ impl Parser {
             TokenKind::Fn => Ok(Some(TopLevel::FnDef(self.parse_fn()?))),
             TokenKind::Verify => Ok(Some(TopLevel::Verify(self.parse_verify()?))),
             TokenKind::Decision => Ok(Some(TopLevel::Decision(self.parse_decision()?))),
+            TokenKind::Type => Ok(Some(TopLevel::TypeDef(self.parse_sum_type_def()?))),
+            TokenKind::Record => Ok(Some(TopLevel::TypeDef(self.parse_record_def()?))),
             TokenKind::Val => {
                 let stmt = self.parse_val()?;
                 Ok(Some(TopLevel::Stmt(stmt)))
@@ -156,6 +159,105 @@ impl Parser {
                 Ok(Some(TopLevel::Stmt(Stmt::Expr(expr))))
             }
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Sum type definition: `type Shape` with indented variants
+    // -------------------------------------------------------------------------
+    fn parse_sum_type_def(&mut self) -> Result<TypeDef, ParseError> {
+        self.expect_exact(&TokenKind::Type)?;
+        let name_tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected type name")?;
+        let type_name = match name_tok.kind {
+            TokenKind::Ident(s) => s,
+            _ => unreachable!(),
+        };
+        self.skip_newlines();
+
+        let mut variants = Vec::new();
+
+        if self.is_indent() {
+            self.advance(); // consume INDENT
+            self.skip_newlines();
+
+            while !self.is_dedent() && !self.is_eof() {
+                if self.is_newline() {
+                    self.advance();
+                    continue;
+                }
+
+                let variant_tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected variant name")?;
+                let variant_name = match variant_tok.kind {
+                    TokenKind::Ident(s) => s,
+                    _ => unreachable!(),
+                };
+
+                let mut fields = Vec::new();
+                if self.check_exact(&TokenKind::LParen) {
+                    self.advance();
+                    while !self.check_exact(&TokenKind::RParen) && !self.is_eof() {
+                        if self.check_exact(&TokenKind::Comma) {
+                            self.advance();
+                            continue;
+                        }
+                        let ty = self.parse_type()?;
+                        fields.push(ty);
+                    }
+                    self.expect_exact(&TokenKind::RParen)?;
+                }
+
+                variants.push(TypeVariant { name: variant_name, fields });
+                self.skip_newlines();
+            }
+
+            if self.is_dedent() {
+                self.advance();
+            }
+        }
+
+        Ok(TypeDef::Sum { name: type_name, variants })
+    }
+
+    // -------------------------------------------------------------------------
+    // Record (product type) definition: `record User` with `name: Type` fields
+    // -------------------------------------------------------------------------
+    fn parse_record_def(&mut self) -> Result<TypeDef, ParseError> {
+        self.expect_exact(&TokenKind::Record)?;
+        let name_tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected record name")?;
+        let type_name = match name_tok.kind {
+            TokenKind::Ident(s) => s,
+            _ => unreachable!(),
+        };
+        self.skip_newlines();
+
+        let mut fields = Vec::new();
+
+        if self.is_indent() {
+            self.advance(); // consume INDENT
+            self.skip_newlines();
+
+            while !self.is_dedent() && !self.is_eof() {
+                if self.is_newline() {
+                    self.advance();
+                    continue;
+                }
+
+                let field_tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected field name")?;
+                let field_name = match field_tok.kind {
+                    TokenKind::Ident(s) => s,
+                    _ => unreachable!(),
+                };
+                self.expect_exact(&TokenKind::Colon)?;
+                let field_type = self.parse_type()?;
+                fields.push((field_name, field_type));
+                self.skip_newlines();
+            }
+
+            if self.is_dedent() {
+                self.advance();
+            }
+        }
+
+        Ok(TypeDef::Product { name: type_name, fields })
     }
 
     // -------------------------------------------------------------------------
@@ -609,6 +711,40 @@ impl Parser {
                 self.advance();
                 Ok(Pattern::Wildcard)
             }
+            // User-defined constructor: starts with uppercase (e.g. Shape.Circle, Point)
+            TokenKind::Ident(ref s) if s.chars().next().map_or(false, |c| c.is_uppercase()) => {
+                let mut name = s.clone();
+                self.advance();
+                // Qualified constructor: Shape.Circle
+                if self.check_exact(&TokenKind::Dot) {
+                    if let TokenKind::Ident(ref variant) = self.peek(1).kind.clone() {
+                        if variant.chars().next().map_or(false, |c| c.is_uppercase()) {
+                            let variant = variant.clone();
+                            self.advance(); // consume '.'
+                            self.advance(); // consume variant name
+                            name = format!("{}.{}", name, variant);
+                        }
+                    }
+                }
+                let mut bindings = vec![];
+                if self.check_exact(&TokenKind::LParen) {
+                    self.advance();
+                    while !self.check_exact(&TokenKind::RParen) && !self.is_eof() {
+                        if self.check_exact(&TokenKind::Comma) {
+                            self.advance();
+                            continue;
+                        }
+                        if let TokenKind::Ident(b) = self.current().kind.clone() {
+                            bindings.push(b);
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    self.expect_exact(&TokenKind::RParen)?;
+                }
+                Ok(Pattern::Constructor(name, bindings))
+            }
             TokenKind::Ident(s) => {
                 self.advance();
                 Ok(Pattern::Ident(s))
@@ -631,7 +767,7 @@ impl Parser {
             }
             TokenKind::None => {
                 self.advance();
-                Ok(Pattern::Constructor("None".to_string(), None))
+                Ok(Pattern::Constructor("None".to_string(), vec![]))
             }
             TokenKind::Ok | TokenKind::Err | TokenKind::Some => {
                 let name = match self.current().kind {
@@ -641,16 +777,16 @@ impl Parser {
                     _ => unreachable!(),
                 }.to_string();
                 self.advance();
-                let mut binding = None;
+                let mut bindings = vec![];
                 if self.check_exact(&TokenKind::LParen) {
                     self.advance();
                     if let TokenKind::Ident(s) = self.current().kind.clone() {
-                        binding = Some(s);
+                        bindings.push(s);
                         self.advance();
                     }
                     self.expect_exact(&TokenKind::RParen)?;
                 }
-                Ok(Pattern::Constructor(name, binding))
+                Ok(Pattern::Constructor(name, bindings))
             }
             _ => Err(self.error(format!("Unexpected token in pattern: {:?}", self.current().kind))),
         }
@@ -779,6 +915,25 @@ impl Parser {
         let atom = self.parse_atom()?;
 
         if self.check_exact(&TokenKind::LParen) {
+            // Lookahead: is this `Name(field: value, ...)` (record creation)?
+            // Detect by checking if token after `(` is `Ident` followed by `:`
+            let is_record_create = if let Expr::Ident(ref name) = atom {
+                name.chars().next().map_or(false, |c| c.is_uppercase())
+                    && matches!(&self.peek(1).kind, TokenKind::Ident(_))
+                    && self.peek(2).kind == TokenKind::Colon
+            } else {
+                false
+            };
+
+            if is_record_create {
+                if let Expr::Ident(type_name) = atom {
+                    self.advance(); // consume (
+                    let fields = self.parse_record_create_fields()?;
+                    self.expect_exact(&TokenKind::RParen)?;
+                    return Ok(Expr::RecordCreate { type_name, fields });
+                }
+            }
+
             self.advance();
             let args = self.parse_args()?;
             self.expect_exact(&TokenKind::RParen)?;
@@ -786,6 +941,28 @@ impl Parser {
         }
 
         Ok(atom)
+    }
+
+    /// Parse named-field arguments for record creation: `name: expr, name2: expr2`
+    fn parse_record_create_fields(&mut self) -> Result<Vec<(String, Expr)>, ParseError> {
+        let mut fields = Vec::new();
+
+        while !self.check_exact(&TokenKind::RParen) && !self.is_eof() {
+            if self.check_exact(&TokenKind::Comma) {
+                self.advance();
+                continue;
+            }
+            let name_tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected field name")?;
+            let field_name = match name_tok.kind {
+                TokenKind::Ident(s) => s,
+                _ => unreachable!(),
+            };
+            self.expect_exact(&TokenKind::Colon)?;
+            let value = self.parse_expr()?;
+            fields.push((field_name, value));
+        }
+
+        Ok(fields)
     }
 
     fn parse_args(&mut self) -> Result<Vec<Expr>, ParseError> {

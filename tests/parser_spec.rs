@@ -356,7 +356,7 @@ fn match_constructor_patterns() {
             assert_eq!(arms.len(), 2);
             assert!(matches!(
                 &arms[0].pattern,
-                Pattern::Constructor(name, Some(_)) if name == "Ok"
+                Pattern::Constructor(name, bindings) if name == "Ok" && !bindings.is_empty()
             ));
             assert!(matches!(
                 &arms[1].pattern,
@@ -548,6 +548,97 @@ fn fn_missing_return_arrow_is_ok() {
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         assert_eq!(fd.return_type, "Unit");
+    } else {
+        panic!("expected FnDef");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// User-defined types
+// ---------------------------------------------------------------------------
+
+#[test]
+fn parse_sum_type_with_variants() {
+    let src = "type Shape\n  Circle(Float)\n  Rect(Float, Float)\n  Point\n";
+    let items = parse(src);
+    assert_eq!(items.len(), 1);
+    if let TopLevel::TypeDef(TypeDef::Sum { name, variants }) = &items[0] {
+        assert_eq!(name, "Shape");
+        assert_eq!(variants.len(), 3);
+        assert_eq!(variants[0].name, "Circle");
+        assert_eq!(variants[0].fields, vec!["Float"]);
+        assert_eq!(variants[1].name, "Rect");
+        assert_eq!(variants[1].fields, vec!["Float", "Float"]);
+        assert_eq!(variants[2].name, "Point");
+        assert!(variants[2].fields.is_empty());
+    } else {
+        panic!("expected TopLevel::TypeDef(Sum), got: {:?}", items[0]);
+    }
+}
+
+#[test]
+fn parse_record_type_with_fields() {
+    let src = "record User\n  name: String\n  age: Int\n";
+    let items = parse(src);
+    assert_eq!(items.len(), 1);
+    if let TopLevel::TypeDef(TypeDef::Product { name, fields }) = &items[0] {
+        assert_eq!(name, "User");
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0], ("name".to_string(), "String".to_string()));
+        assert_eq!(fields[1], ("age".to_string(), "Int".to_string()));
+    } else {
+        panic!("expected TopLevel::TypeDef(Product), got: {:?}", items[0]);
+    }
+}
+
+#[test]
+fn parse_sum_type_constructor_call() {
+    let src = "Circle(3.14)\n";
+    let items = parse(src);
+    if let TopLevel::Stmt(Stmt::Expr(Expr::FnCall(fn_expr, args))) = &items[0] {
+        assert!(matches!(fn_expr.as_ref(), Expr::Ident(n) if n == "Circle"));
+        assert_eq!(args.len(), 1);
+    } else {
+        panic!("expected FnCall, got: {:?}", items[0]);
+    }
+}
+
+#[test]
+fn parse_record_create_expression() {
+    let src = "User(name: \"Alice\", age: 30)\n";
+    let items = parse(src);
+    if let TopLevel::Stmt(Stmt::Expr(Expr::RecordCreate { type_name, fields })) = &items[0] {
+        assert_eq!(type_name, "User");
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].0, "name");
+        assert_eq!(fields[1].0, "age");
+    } else {
+        panic!("expected RecordCreate, got: {:?}", items[0]);
+    }
+}
+
+#[test]
+fn parse_user_defined_constructor_pattern() {
+    let src = "fn classify(s: Any) -> Any\n  = match s:\n    Circle(r) -> r\n    Rect(w, h) -> w\n    Point -> 0.0\n";
+    let items = parse(src);
+    if let TopLevel::FnDef(fd) = &items[0] {
+        if let FnBody::Expr(Expr::Match(_, arms)) = &fd.body {
+            assert_eq!(arms.len(), 3);
+            assert!(matches!(
+                &arms[0].pattern,
+                Pattern::Constructor(name, bindings) if name == "Circle" && bindings == &["r"]
+            ));
+            assert!(matches!(
+                &arms[1].pattern,
+                Pattern::Constructor(name, bindings) if name == "Rect" && bindings == &["w", "h"]
+            ));
+            assert!(matches!(
+                &arms[2].pattern,
+                Pattern::Constructor(name, bindings) if name == "Point" && bindings.is_empty()
+            ));
+        } else {
+            panic!("expected match body");
+        }
     } else {
         panic!("expected FnDef");
     }

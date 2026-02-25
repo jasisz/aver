@@ -9,12 +9,11 @@ use crate::parser::Parser;
 pub enum RuntimeError {
     #[error("Runtime error: {0}")]
     Error(String),
+    /// Internal signal: `?` operator encountered Err — caught by call_value to do early return.
+    /// Never surfaces to the user as a runtime error (type checker prevents top-level use).
+    #[error("Error propagation")]
+    ErrProp(Box<Value>),
 }
-
-// Special signal for error propagation (? operator) — reserved for future use
-#[allow(dead_code)]
-#[derive(Debug)]
-pub struct ErrPropSignal(pub Box<Value>);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -35,44 +34,66 @@ pub enum Value {
         closure: HashMap<String, Value>,
     },
     Builtin(String),
+    /// User-defined sum type variant, e.g. `Shape.Circle(3.14)`
+    Variant { type_name: String, variant: String, fields: Vec<Value> },
+    /// User-defined product type (record), e.g. `User(name: "Alice", age: 30)`
+    Record { type_name: String, fields: Vec<(String, Value)> },
+    /// Type namespace: `Shape` — provides `Shape.Circle`, `Shape.Rect`, etc.
+    Namespace { name: String, members: HashMap<String, Value> },
 }
 
-pub fn lumen_repr(val: &Value) -> String {
+pub fn aver_repr(val: &Value) -> String {
     match val {
         Value::Int(i) => i.to_string(),
         Value::Float(f) => f.to_string(),
         Value::Str(s) => s.clone(),
         Value::Bool(b) => if *b { "true" } else { "false" }.to_string(),
         Value::Unit => "()".to_string(),
-        Value::Ok(v) => format!("Ok({})", lumen_repr_inner(v)),
-        Value::Err(v) => format!("Err({})", lumen_repr_inner(v)),
-        Value::Some(v) => format!("Some({})", lumen_repr_inner(v)),
+        Value::Ok(v) => format!("Ok({})", aver_repr_inner(v)),
+        Value::Err(v) => format!("Err({})", aver_repr_inner(v)),
+        Value::Some(v) => format!("Some({})", aver_repr_inner(v)),
         Value::None => "None".to_string(),
         Value::List(items) => {
-            let parts: Vec<String> = items.iter().map(lumen_repr_inner).collect();
+            let parts: Vec<String> = items.iter().map(aver_repr_inner).collect();
             format!("[{}]", parts.join(", "))
         }
         Value::Fn { name, .. } => format!("<fn {}>", name),
         Value::Builtin(name) => format!("<builtin {}>", name),
+        Value::Variant { variant, fields, .. } => {
+            if fields.is_empty() {
+                variant.clone()
+            } else {
+                let parts: Vec<String> = fields.iter().map(aver_repr_inner).collect();
+                format!("{}({})", variant, parts.join(", "))
+            }
+        }
+        Value::Record { type_name, fields } => {
+            let parts: Vec<String> = fields
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k, aver_repr_inner(v)))
+                .collect();
+            format!("{}({})", type_name, parts.join(", "))
+        }
+        Value::Namespace { name, .. } => format!("<type {}>", name),
     }
 }
 
 // For values inside constructors and list elements — strings get quoted
-fn lumen_repr_inner(val: &Value) -> String {
+fn aver_repr_inner(val: &Value) -> String {
     match val {
         Value::Str(s) => format!("\"{}\"", s),
         Value::List(items) => {
-            let parts: Vec<String> = items.iter().map(lumen_repr_inner).collect();
+            let parts: Vec<String> = items.iter().map(aver_repr_inner).collect();
             format!("[{}]", parts.join(", "))
         }
-        other => lumen_repr(other),
+        other => aver_repr(other),
     }
 }
 
-pub fn lumen_display(val: &Value) -> Option<String> {
+pub fn aver_display(val: &Value) -> Option<String> {
     match val {
         Value::Unit => None, // don't print Unit
-        other => Some(lumen_repr(other)),
+        other => Some(aver_repr(other)),
     }
 }
 
@@ -146,7 +167,7 @@ impl Interpreter {
                         args.len()
                     )));
                 }
-                if let Some(s) = lumen_display(&args[0]) {
+                if let Some(s) = aver_display(&args[0]) {
                     println!("{}", s);
                 }
                 Ok(Value::Unit)
@@ -173,7 +194,7 @@ impl Interpreter {
                         args.len()
                     )));
                 }
-                Ok(Value::Str(lumen_repr(&args[0])))
+                Ok(Value::Str(aver_repr(&args[0])))
             }
             "int" => {
                 if args.len() != 1 {
@@ -336,6 +357,13 @@ impl Interpreter {
                     _ => Err(RuntimeError::Error("tail() argument must be a List".to_string())),
                 }
             }
+            name if name.starts_with("__ctor:") => {
+                // Format: __ctor:TypeName:VariantName
+                let parts: Vec<&str> = name.splitn(3, ':').collect();
+                let type_name = parts.get(1).copied().unwrap_or("").to_string();
+                let variant = parts.get(2).copied().unwrap_or("").to_string();
+                Ok(Value::Variant { type_name, variant, fields: args })
+            }
             _ => Err(RuntimeError::Error(format!("Unknown builtin function: '{}'", name))),
         }
     }
@@ -351,12 +379,48 @@ impl Interpreter {
                 TopLevel::Module(_) => {}
                 TopLevel::Verify(_) => {}
                 TopLevel::Decision(_) => {}
+                TopLevel::TypeDef(td) => self.register_type_def(td),
                 TopLevel::Stmt(s) => {
                     self.exec_stmt(s)?;
                 }
             }
         }
         Ok(Value::Unit)
+    }
+
+    /// Register a user-defined type: sum type variants and record constructors.
+    pub fn register_type_def(&mut self, td: &TypeDef) {
+        match td {
+            TypeDef::Sum { name: type_name, variants } => {
+                let mut members = HashMap::new();
+                for variant in variants {
+                    if variant.fields.is_empty() {
+                        // Zero-arg variant: stored directly as a Value
+                        members.insert(
+                            variant.name.clone(),
+                            Value::Variant {
+                                type_name: type_name.clone(),
+                                variant: variant.name.clone(),
+                                fields: vec![],
+                            },
+                        );
+                    } else {
+                        // Constructor function
+                        members.insert(
+                            variant.name.clone(),
+                            Value::Builtin(format!("__ctor:{}:{}", type_name, variant.name)),
+                        );
+                    }
+                }
+                self.define(type_name.clone(), Value::Namespace {
+                    name: type_name.clone(),
+                    members,
+                });
+            }
+            TypeDef::Product { .. } => {
+                // Product types are constructed via Expr::RecordCreate — no env registration needed
+            }
+        }
     }
 
     pub fn exec_fn_def(&mut self, fd: &FnDef) -> Result<(), RuntimeError> {
@@ -415,11 +479,29 @@ impl Interpreter {
             Expr::Literal(lit) => Ok(self.eval_literal(lit)),
             Expr::Ident(name) => self.lookup(name),
             Expr::Attr(obj, field) => {
-                let _obj_val = self.eval_expr(obj)?;
-                Err(RuntimeError::Error(format!(
-                    "Field access '{}' is not supported",
-                    field
-                )))
+                let obj_val = self.eval_expr(obj)?;
+                match obj_val {
+                    Value::Record { fields, .. } => {
+                        fields
+                            .into_iter()
+                            .find(|(k, _)| k == field)
+                            .map(|(_, v)| Ok(v))
+                            .unwrap_or_else(|| {
+                                Err(RuntimeError::Error(format!("Unknown field '{}'", field)))
+                            })
+                    }
+                    Value::Namespace { name, members } => {
+                        members.get(field).cloned().ok_or_else(|| {
+                            RuntimeError::Error(format!(
+                                "Unknown constructor '{}.{}'", name, field
+                            ))
+                        })
+                    }
+                    _ => Err(RuntimeError::Error(format!(
+                        "Field access '{}' is not supported on this value",
+                        field
+                    ))),
+                }
             }
             Expr::FnCall(fn_expr, args) => {
                 let fn_val = self.eval_expr(fn_expr)?;
@@ -460,9 +542,7 @@ impl Interpreter {
                 let val = self.eval_expr(inner)?;
                 match val {
                     Value::Ok(v) => Ok(*v),
-                    Value::Err(_) => Err(RuntimeError::Error(
-                        "Error propagation: Err value".to_string(),
-                    )),
+                    Value::Err(e) => Err(RuntimeError::ErrProp(e)),
                     _ => Err(RuntimeError::Error(
                         "Operator '?' can only be applied to Result".to_string(),
                     )),
@@ -484,7 +564,7 @@ impl Interpreter {
                                 RuntimeError::Error(format!("Error in interpolation: {}", e))
                             })?;
                             let val = self.eval_expr(&expr_node)?;
-                            result.push_str(&lumen_repr(&val));
+                            result.push_str(&aver_repr(&val));
                         }
                     }
                 }
@@ -496,6 +576,14 @@ impl Interpreter {
                     values.push(self.eval_expr(elem)?);
                 }
                 Ok(Value::List(values))
+            }
+            Expr::RecordCreate { type_name, fields } => {
+                let mut field_vals = Vec::new();
+                for (name, expr) in fields {
+                    let val = self.eval_expr(expr)?;
+                    field_vals.push((name.clone(), val));
+                }
+                Ok(Value::Record { type_name: type_name.clone(), fields: field_vals })
             }
         }
     }
@@ -533,7 +621,11 @@ impl Interpreter {
                     FnBody::Block(stmts) => self.exec_body(stmts),
                 };
                 self.pop_env();
-                result
+                match result {
+                    Ok(v) => Ok(v),
+                    Err(RuntimeError::ErrProp(e)) => Ok(Value::Err(e)),
+                    Err(e) => Err(e),
+                }
             }
             _ => Err(RuntimeError::Error(format!(
                 "Cannot call value: {:?}",
@@ -548,8 +640,8 @@ impl Interpreter {
             BinOp::Sub => self.op_sub(left, right),
             BinOp::Mul => self.op_mul(left, right),
             BinOp::Div => self.op_div(left, right),
-            BinOp::Eq => Ok(Value::Bool(self.lumen_eq(&left, &right))),
-            BinOp::Neq => Ok(Value::Bool(!self.lumen_eq(&left, &right))),
+            BinOp::Eq => Ok(Value::Bool(self.aver_eq(&left, &right))),
+            BinOp::Neq => Ok(Value::Bool(!self.aver_eq(&left, &right))),
             BinOp::Lt => self.op_compare(&left, &right, "<"),
             BinOp::Gt => self.op_compare(&left, &right, ">"),
             BinOp::Lte => self.op_compare(&left, &right, "<="),
@@ -557,7 +649,7 @@ impl Interpreter {
         }
     }
 
-    pub fn lumen_eq(&self, a: &Value, b: &Value) -> bool {
+    pub fn aver_eq(&self, a: &Value, b: &Value) -> bool {
         match (a, b) {
             (Value::Int(x), Value::Int(y)) => x == y,
             (Value::Float(x), Value::Float(y)) => x == y,
@@ -565,11 +657,29 @@ impl Interpreter {
             (Value::Bool(x), Value::Bool(y)) => x == y,
             (Value::Unit, Value::Unit) => true,
             (Value::None, Value::None) => true,
-            (Value::Ok(x), Value::Ok(y)) => self.lumen_eq(x, y),
-            (Value::Err(x), Value::Err(y)) => self.lumen_eq(x, y),
-            (Value::Some(x), Value::Some(y)) => self.lumen_eq(x, y),
+            (Value::Ok(x), Value::Ok(y)) => self.aver_eq(x, y),
+            (Value::Err(x), Value::Err(y)) => self.aver_eq(x, y),
+            (Value::Some(x), Value::Some(y)) => self.aver_eq(x, y),
             (Value::List(xs), Value::List(ys)) => {
-                xs.len() == ys.len() && xs.iter().zip(ys.iter()).all(|(x, y)| self.lumen_eq(x, y))
+                xs.len() == ys.len() && xs.iter().zip(ys.iter()).all(|(x, y)| self.aver_eq(x, y))
+            }
+            (
+                Value::Variant { type_name: t1, variant: v1, fields: f1 },
+                Value::Variant { type_name: t2, variant: v2, fields: f2 },
+            ) => {
+                t1 == t2 && v1 == v2
+                    && f1.len() == f2.len()
+                    && f1.iter().zip(f2.iter()).all(|(x, y)| self.aver_eq(x, y))
+            }
+            (
+                Value::Record { type_name: t1, fields: f1 },
+                Value::Record { type_name: t2, fields: f2 },
+            ) => {
+                t1 == t2
+                    && f1.len() == f2.len()
+                    && f1.iter().zip(f2.iter()).all(|((k1, v1), (k2, v2))| {
+                        k1 == k2 && self.aver_eq(v1, v2)
+                    })
             }
             _ => false,
         }
@@ -699,7 +809,7 @@ impl Interpreter {
         }
         Err(RuntimeError::Error(format!(
             "No match found for value {}",
-            lumen_repr(&subject)
+            aver_repr(&subject)
         )))
     }
 
@@ -721,29 +831,74 @@ impl Interpreter {
                 bindings.insert(name.clone(), value.clone());
                 Some(bindings)
             }
-            Pattern::Constructor(ctor_name, binding) => {
+            Pattern::Constructor(ctor_name, bindings) => {
                 match (ctor_name.as_str(), value) {
                     ("None", Value::None) => Some(HashMap::new()),
                     ("Ok", Value::Ok(inner)) => {
-                        let mut bindings = HashMap::new();
-                        if let Some(bind_name) = binding {
-                            bindings.insert(bind_name.clone(), *inner.clone());
+                        let mut map = HashMap::new();
+                        if let Some(name) = bindings.first() {
+                            if name != "_" {
+                                map.insert(name.clone(), *inner.clone());
+                            }
                         }
-                        Some(bindings)
+                        Some(map)
                     }
                     ("Err", Value::Err(inner)) => {
-                        let mut bindings = HashMap::new();
-                        if let Some(bind_name) = binding {
-                            bindings.insert(bind_name.clone(), *inner.clone());
+                        let mut map = HashMap::new();
+                        if let Some(name) = bindings.first() {
+                            if name != "_" {
+                                map.insert(name.clone(), *inner.clone());
+                            }
                         }
-                        Some(bindings)
+                        Some(map)
                     }
                     ("Some", Value::Some(inner)) => {
-                        let mut bindings = HashMap::new();
-                        if let Some(bind_name) = binding {
-                            bindings.insert(bind_name.clone(), *inner.clone());
+                        let mut map = HashMap::new();
+                        if let Some(name) = bindings.first() {
+                            if name != "_" {
+                                map.insert(name.clone(), *inner.clone());
+                            }
                         }
-                        Some(bindings)
+                        Some(map)
+                    }
+                    // User-defined variant: match by variant name, qualified or unqualified
+                    (ctor, Value::Variant { type_name, variant, fields, .. }) => {
+                        let matches = if ctor.contains('.') {
+                            // Qualified: "Shape.Circle"
+                            let mut parts = ctor.splitn(2, '.');
+                            parts.next().map_or(false, |t| t == type_name)
+                                && parts.next().map_or(false, |v| v == variant)
+                        } else {
+                            // Unqualified (builtins like Ok/Err handled above; this catches
+                            // any legacy unqualified user-defined patterns)
+                            ctor == variant
+                        };
+                        if !matches {
+                            return None;
+                        }
+                        if !bindings.is_empty() && bindings.len() != fields.len() {
+                            return None;
+                        }
+                        let mut map = HashMap::new();
+                        for (name, val) in bindings.iter().zip(fields.iter()) {
+                            if name != "_" {
+                                map.insert(name.clone(), val.clone());
+                            }
+                        }
+                        Some(map)
+                    }
+                    // Record destructuring: positional, matched by type_name
+                    (ctor, Value::Record { type_name, fields: rf, .. }) if ctor == type_name => {
+                        if !bindings.is_empty() && bindings.len() != rf.len() {
+                            return None;
+                        }
+                        let mut map = HashMap::new();
+                        for (name, (_, val)) in bindings.iter().zip(rf.iter()) {
+                            if name != "_" {
+                                map.insert(name.clone(), val.clone());
+                            }
+                        }
+                        Some(map)
                     }
                     _ => None,
                 }

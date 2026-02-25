@@ -38,15 +38,16 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 - `check` command: warns when a module has no `intent:` or a function with effects/Result return has no `?` description; warns if file exceeds 150 lines; `fn main()` is exempt from the `?` requirement
 - **Static type checker** (`src/typechecker.rs`): `aver check`, `aver run`, and `aver verify` all run a type-check pass. Type errors are hard errors that block execution. The checker covers function bodies and top-level statements (including assignment mutability rules). `Any` is a valid explicit type annotation (`x: Any`) and acts as a gradual-typing escape hatch — two `Any`-typed values are always compatible. The type system is *statically typed with explicit `Any` escape hatch*; unsound programs that use `Any` broadly may still pass the checker.
 - **Effect propagation** is statically enforced (blocks `check`/`run`/`verify`), but runtime-agnostic: no capability passing, no sandboxing. Violations are type errors, not warnings. The effect system has no runtime semantics — it is a static lint that prevents undeclared side effects from crossing function boundaries.
+- **User-defined sum types** (`type` keyword): `type Shape` with variants `Circle(Float)`, `Rect(Float, Float)`, `Point`. Constructors are accessed with qualified syntax `Shape.Circle(5.0)` — no flat namespace pollution. Patterns: `Shape.Circle(r)`, `Shape.Point`. Registered as `Value::Namespace` in the interpreter env.
+- **User-defined product types** (`record` keyword): `record User` with named fields `name: String`, `age: Int`. Constructed as `User(name: "Alice", age: 30)`. Field access via `u.name`. Positional destructuring in match: `User(name, age) -> name`.
+- **`Type::Named(String)`** in the type system: capitalized single-word identifiers in type annotations resolve to named types. Compatible only with the same name or `Any`.
 
 ### What is missing / known limitations
 
 - No list/array pattern matching in `match` (`[]` and `[h, ..t]` patterns are not implemented)
-- No user-defined types (`type` keyword is tokenised but not parsed)
 - No `if`/`else` — **this is intentional by design**; `match` is the only branching construct
 - No loops (`for`, `while`) — **intentionally absent**; Aver has no imperative iteration; use `map`/`filter`/`fold`
-- Field access (`expr.field`) is parsed but raises a `RuntimeError` at runtime ("Field access '...' is not supported")
-- Method call syntax (`obj.method(args)`) is parsed (postfix dot → `Attr` then `FnCall`) but cannot execute because field access is unimplemented
+- Field access works for `record` values (`u.name`) but not on sum type variants or other values
 - The `effect` and `service` keywords are tokenised but not parsed or enforced
 - The `?` error-propagation operator only works at the expression level; it does not short-circuit across function boundaries (no early return mechanism)
 - `ErrPropSignal` struct exists in interpreter.rs but is not used — reserved for a proper early-return implementation
@@ -55,7 +56,6 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 
 ### What was explicitly NOT implemented yet (save for later)
 
-- User-defined algebraic types (`type` keyword)
 - Effect system (algebraic effects / capabilities) — currently static-only lint (enforced at check/run time as type errors, but no runtime capability model)
 - Service blocks with `needs:` dependency injection
 - Module imports at runtime
@@ -134,17 +134,17 @@ cargo run -- run examples/architecture.av
 ## Spec test suite
 
 ```bash
-cargo test          # runs all 204 tests (zero warnings)
+cargo test
 ```
 
 Tests live in `tests/` and cover four layers:
 
-| File | What it tests | Tests |
-|---|---|---|
-| `tests/lexer_spec.rs` | Token kinds, INDENT/DEDENT, string interpolation, comments | 58 |
-| `tests/parser_spec.rs` | AST shape for all constructs (bindings, fns, match, verify, decision, module) | 41 |
-| `tests/typechecker_spec.rs` | Valid programs pass; type errors, effect violations, assignment errors | 29 |
-| `tests/eval_spec.rs` | Arithmetic, builtins, list ops, constructors, match, pipe, map/filter/fold | 65 |
+| File | What it tests |
+|---|---|
+| `tests/lexer_spec.rs` | Token kinds, INDENT/DEDENT, string interpolation, comments |
+| `tests/parser_spec.rs` | AST shape for all constructs (bindings, fns, match, verify, decision, module, type defs) |
+| `tests/typechecker_spec.rs` | Valid programs pass; type errors, effect violations, assignment errors |
+| `tests/eval_spec.rs` | Arithmetic, builtins, list ops, constructors, match, pipe, map/filter/fold, user-defined types |
 
 The `src/lib.rs` exports all modules as `pub mod` so integration tests can access them via `use aver::...`.
 
@@ -159,15 +159,16 @@ The `src/lib.rs` exports all modules as `pub mod` so integration tests can acces
 | `BinOp` | ast.rs | Arithmetic and comparison operators as enum variants |
 | `Pattern` | ast.rs | Match arm pattern: `Wildcard`, `Literal`, `Ident`, `Constructor` |
 | `StrPart` | ast.rs | Piece of an interpolated string: `Literal(String)` or `Expr(String)` (raw source) |
-| `Expr` | ast.rs | Every expression form: `Literal`, `Ident`, `Attr`, `FnCall`, `BinOp`, `Match`, `Pipe`, `Constructor`, `ErrorProp`, `InterpolatedStr`, `List(Vec<Expr>)` |
+| `Expr` | ast.rs | Every expression form: `Literal`, `Ident`, `Attr`, `FnCall`, `BinOp`, `Match`, `Pipe`, `Constructor`, `ErrorProp`, `InterpolatedStr`, `List(Vec<Expr>)`, `RecordCreate { type_name, fields }` |
 | `Stmt` | ast.rs | `Val(name, expr)`, `Var(name, expr, reason)`, `Assign(name, expr)`, `Expr(expr)` |
 | `FnBody` | ast.rs | `Expr(Expr)` for `= expr` shorthand, or `Block(Vec<Stmt>)` |
 | `FnDef` | ast.rs | Name, params, return type, effects, optional description, body |
 | `Module` | ast.rs | Name, depends, exposes, intent string |
 | `VerifyBlock` | ast.rs | Function name + list of `(left_expr, right_expr)` equality cases |
 | `DecisionBlock` | ast.rs | Name, date, reason, chosen, rejected list, impacts list, optional author |
-| `TopLevel` | ast.rs | Top-level item: `Module`, `FnDef`, `Verify`, `Decision`, `Stmt` |
-| `Value` | interpreter.rs | Runtime value: `Int`, `Float`, `Str`, `Bool`, `Unit`, `Ok(Box<Value>)`, `Err(Box<Value>)`, `Some(Box<Value>)`, `None`, `List(Vec<Value>)`, `Fn{...}`, `Builtin(String)` |
+| `TopLevel` | ast.rs | Top-level item: `Module`, `FnDef`, `Verify`, `Decision`, `Stmt`, `TypeDef` |
+| `TypeDef` | ast.rs | `Sum { name, variants: Vec<TypeVariant> }` or `Product { name, fields: Vec<(String, String)> }` |
+| `Value` | interpreter.rs | Runtime value: `Int`, `Float`, `Str`, `Bool`, `Unit`, `Ok(Box<Value>)`, `Err(Box<Value>)`, `Some(Box<Value>)`, `None`, `List(Vec<Value>)`, `Fn{...}`, `Builtin(String)`, `Variant { type_name, variant, fields }`, `Record { type_name, fields }`, `Namespace { name, members }` |
 | `Env` | interpreter.rs | `Vec<HashMap<String, Value>>` — scope stack, innermost last |
 | `RuntimeError` | interpreter.rs | Single-variant error wrapping a `String` message |
 | `ParseError` | parser.rs | `msg`, `line`, `col`; formatted as `"Parse error [L:C]: msg"` |
@@ -255,8 +256,7 @@ In `src/interpreter.rs`, two places:
 
 1. **List pattern matching** — add `Pattern::EmptyList` for `[]` and `Pattern::Cons(head_bind, tail_bind)` for `[h, ..t]` in `match` expressions; enables recursive list processing without builtins
 2. **Proper `?` short-circuit** — introduce `ErrPropSignal` as a Rust `Err` variant so that `?` on `Err` inside a function body exits the function early, not just the current expression
-3. **User-defined types** — parse `type` declarations; support product types (records) and sum types (enums with payloads); this unlocks user-defined constructors in `match` patterns
-4. **Module import at runtime** — `depends [Foo]` loads and evaluates `Foo.av` from a known path, merging `exposes` into current scope
-5. **Service blocks** — parse and execute `service Foo { needs: [...] }` as a lightweight DI container; dependencies are injected via constructor, no global state
-6. **`aver decisions` query flags** — `--impacts Module`, `--since 2024-01-01`, `--rejected Technology` for searchable architectural history
-7. **REPL mode** — `aver repl` subcommand for interactive exploration; useful during AI-assisted development sessions
+3. **Module import at runtime** — `depends [Foo]` loads and evaluates `Foo.av` from a known path, merging `exposes` into current scope
+4. **Service blocks** — parse and execute `service Foo { needs: [...] }` as a lightweight DI container; dependencies are injected via constructor, no global state
+5. **`aver decisions` query flags** — `--impacts Module`, `--since 2024-01-01`, `--rejected Technology` for searchable architectural history
+6. **REPL mode** — `aver repl` subcommand for interactive exploration; useful during AI-assisted development sessions

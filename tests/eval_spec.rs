@@ -546,18 +546,49 @@ fn error_prop_unwraps_ok() {
 }
 
 #[test]
-fn error_prop_raises_on_err() {
-    let src = "fn get_ok(r: Any) -> Int\n    = r?\n";
-    let result = std::panic::catch_unwind(|| {
+fn error_prop_early_return_on_err() {
+    // ? on Err causes early return: the function returns Err(e), not a crash.
+    let src = "fn get_val(r: Any) -> Any\n    = r?\n";
+    let result = call_fn(
+        src,
+        "get_val",
+        vec![Value::Err(Box::new(Value::Str("bad".to_string())))],
+    );
+    assert_eq!(
+        result,
+        Value::Err(Box::new(Value::Str("bad".to_string())))
+    );
+}
+
+#[test]
+fn error_prop_early_return_in_block() {
+    // ? in a block body causes early return, skipping subsequent statements.
+    let src = "fn double_ok(r: Any) -> Any\n    val x = r?\n    Ok(x + x)\n";
+    assert_eq!(
+        call_fn(src, "double_ok", vec![Value::Ok(Box::new(Value::Int(5)))]),
+        Value::Ok(Box::new(Value::Int(10)))
+    );
+    assert_eq!(
         call_fn(
             src,
-            "get_ok",
-            vec![Value::Err(Box::new(Value::Str("bad".to_string())))],
-        )
-    });
-    // Should fail at runtime (RuntimeError) — call_fn unwraps the Err, so catch_unwind captures the panic
-    // In our helper, call_fn uses .expect(), so this will panic
-    assert!(result.is_err(), "? on Err should fail at runtime");
+            "double_ok",
+            vec![Value::Err(Box::new(Value::Str("oops".to_string())))]
+        ),
+        Value::Err(Box::new(Value::Str("oops".to_string())))
+    );
+}
+
+#[test]
+fn error_prop_chain_short_circuits() {
+    // When the first ? encounters Err, the second ? and the Ok() never run.
+    let src =
+        "fn chain(a: Any, b: Any) -> Any\n    val x = a?\n    val y = b?\n    Ok(x + y)\n";
+    let err = Value::Err(Box::new(Value::Str("first".to_string())));
+    let ok_ten = Value::Ok(Box::new(Value::Int(10)));
+    assert_eq!(
+        call_fn(src, "chain", vec![err.clone(), ok_ten]),
+        err
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -582,4 +613,217 @@ fn closure_captures_outer_val() {
     let fn_val = interp.lookup("double").unwrap();
     let result = interp.call_value_pub(fn_val, vec![Value::Int(6)]).unwrap();
     assert_eq!(result, Value::Int(12));
+}
+
+// ---------------------------------------------------------------------------
+// User-defined types — sum types (type keyword)
+// ---------------------------------------------------------------------------
+
+/// Helper: parse, register type defs and fn defs, run top-level stmts, return interpreter.
+fn run_program(src: &str) -> Interpreter {
+    let items = parse(src);
+    let mut interp = Interpreter::new();
+    for item in &items {
+        if let TopLevel::TypeDef(td) = item {
+            interp.register_type_def(td);
+        }
+    }
+    for item in &items {
+        if let TopLevel::FnDef(fd) = item {
+            interp.exec_fn_def(fd).expect("exec_fn_def failed");
+        }
+    }
+    for item in &items {
+        if let TopLevel::Stmt(s) = item {
+            interp.exec_stmt(s).expect("exec_stmt failed");
+        }
+    }
+    interp
+}
+
+#[test]
+fn sum_type_no_arg_variant_is_variant_value() {
+    let src = "type Shape\n  Circle(Float)\n  Point\nval p = Shape.Point\n";
+    let mut interp = run_program(src);
+    let val = interp.lookup("p").expect("p not defined");
+    assert_eq!(
+        val,
+        Value::Variant {
+            type_name: "Shape".to_string(),
+            variant: "Point".to_string(),
+            fields: vec![],
+        }
+    );
+}
+
+#[test]
+fn sum_type_constructor_creates_variant() {
+    let src = "type Shape\n  Circle(Float)\n  Point\nval c = Shape.Circle(3.14)\n";
+    let mut interp = run_program(src);
+    let val = interp.lookup("c").expect("c not defined");
+    assert_eq!(
+        val,
+        Value::Variant {
+            type_name: "Shape".to_string(),
+            variant: "Circle".to_string(),
+            fields: vec![Value::Float(3.14)],
+        }
+    );
+}
+
+#[test]
+fn sum_type_multi_field_constructor() {
+    let src = "type Shape\n  Rect(Float, Float)\nval r = Shape.Rect(3.0, 4.0)\n";
+    let mut interp = run_program(src);
+    let val = interp.lookup("r").expect("r not defined");
+    assert_eq!(
+        val,
+        Value::Variant {
+            type_name: "Shape".to_string(),
+            variant: "Rect".to_string(),
+            fields: vec![Value::Float(3.0), Value::Float(4.0)],
+        }
+    );
+}
+
+#[test]
+fn sum_type_match_single_field_variant() {
+    let src = concat!(
+        "type Shape\n",
+        "  Circle(Float)\n",
+        "  Point\n",
+        "fn area(s: Shape) -> Float\n",
+        "  ? \"area\"\n",
+        "  = match s:\n",
+        "    Circle(r) -> r * r\n",
+        "    Point -> 0.0\n",
+    );
+    let items = parse(src);
+    let mut interp = Interpreter::new();
+    for item in &items {
+        if let TopLevel::TypeDef(td) = item { interp.register_type_def(td); }
+    }
+    for item in &items {
+        if let TopLevel::FnDef(fd) = item { interp.exec_fn_def(fd).unwrap(); }
+    }
+    let circle = Value::Variant {
+        type_name: "Shape".to_string(),
+        variant: "Circle".to_string(),
+        fields: vec![Value::Float(5.0)],
+    };
+    let fn_val = interp.lookup("area").unwrap();
+    let result = interp.call_value_pub(fn_val, vec![circle]).unwrap();
+    assert_eq!(result, Value::Float(25.0));
+}
+
+#[test]
+fn sum_type_match_no_arg_variant() {
+    let src = concat!(
+        "type Shape\n",
+        "  Circle(Float)\n",
+        "  Point\n",
+        "fn area(s: Shape) -> Float\n",
+        "  ? \"area\"\n",
+        "  = match s:\n",
+        "    Circle(r) -> r * r\n",
+        "    Point -> 0.0\n",
+    );
+    let items = parse(src);
+    let mut interp = Interpreter::new();
+    for item in &items {
+        if let TopLevel::TypeDef(td) = item { interp.register_type_def(td); }
+    }
+    for item in &items {
+        if let TopLevel::FnDef(fd) = item { interp.exec_fn_def(fd).unwrap(); }
+    }
+    let point = Value::Variant {
+        type_name: "Shape".to_string(),
+        variant: "Point".to_string(),
+        fields: vec![],
+    };
+    let fn_val = interp.lookup("area").unwrap();
+    let result = interp.call_value_pub(fn_val, vec![point]).unwrap();
+    assert_eq!(result, Value::Float(0.0));
+}
+
+// ---------------------------------------------------------------------------
+// User-defined types — records (record keyword)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn record_creation_stores_fields() {
+    let src = "record User\n  name: String\n  age: Int\nval u = User(name: \"Alice\", age: 30)\n";
+    let mut interp = run_program(src);
+    let val = interp.lookup("u").expect("u not defined");
+    assert_eq!(
+        val,
+        Value::Record {
+            type_name: "User".to_string(),
+            fields: vec![
+                ("name".to_string(), Value::Str("Alice".to_string())),
+                ("age".to_string(), Value::Int(30)),
+            ],
+        }
+    );
+}
+
+#[test]
+fn record_field_access() {
+    let src = "record User\n  name: String\n  age: Int\nval u = User(name: \"Alice\", age: 30)\nval n = u.name\n";
+    let mut interp = run_program(src);
+    let val = interp.lookup("n").expect("n not defined");
+    assert_eq!(val, Value::Str("Alice".to_string()));
+}
+
+#[test]
+fn record_positional_match() {
+    let src = concat!(
+        "record User\n",
+        "  name: String\n",
+        "  age: Int\n",
+        "fn get_name(u: User) -> String\n",
+        "  ? \"get name\"\n",
+        "  = match u:\n",
+        "    User(name, age) -> name\n",
+    );
+    let items = parse(src);
+    let mut interp = Interpreter::new();
+    for item in &items {
+        if let TopLevel::TypeDef(td) = item { interp.register_type_def(td); }
+    }
+    for item in &items {
+        if let TopLevel::FnDef(fd) = item { interp.exec_fn_def(fd).unwrap(); }
+    }
+    let user = Value::Record {
+        type_name: "User".to_string(),
+        fields: vec![
+            ("name".to_string(), Value::Str("Bob".to_string())),
+            ("age".to_string(), Value::Int(25)),
+        ],
+    };
+    let fn_val = interp.lookup("get_name").unwrap();
+    let result = interp.call_value_pub(fn_val, vec![user]).unwrap();
+    assert_eq!(result, Value::Str("Bob".to_string()));
+}
+
+#[test]
+fn sum_type_variant_equality() {
+    let c1 = Value::Variant {
+        type_name: "Shape".to_string(),
+        variant: "Circle".to_string(),
+        fields: vec![Value::Float(3.0)],
+    };
+    let c2 = Value::Variant {
+        type_name: "Shape".to_string(),
+        variant: "Circle".to_string(),
+        fields: vec![Value::Float(3.0)],
+    };
+    let c3 = Value::Variant {
+        type_name: "Shape".to_string(),
+        variant: "Circle".to_string(),
+        fields: vec![Value::Float(5.0)],
+    };
+    let interp = Interpreter::new();
+    assert!(interp.aver_eq(&c1, &c2));
+    assert!(!interp.aver_eq(&c1, &c3));
 }

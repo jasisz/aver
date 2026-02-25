@@ -15,6 +15,7 @@ pub enum Type {
     List(Box<Type>),
     Fn(Vec<Type>, Box<Type>),
     Any, // unknown / gradual-typing escape hatch
+    Named(String), // user-defined type: Shape, User, etc.
 }
 
 impl Type {
@@ -43,6 +44,7 @@ impl Type {
                     && p1.iter().zip(p2.iter()).all(|(a, b)| a.compatible(b))
                     && r1.compatible(r2)
             }
+            (Type::Named(a), Type::Named(b)) => a == b,
             _ => false,
         }
     }
@@ -62,6 +64,7 @@ impl Type {
                 format!("Fn({}) -> {}", ps.join(", "), ret.display())
             }
             Type::Any => "Any".to_string(),
+            Type::Named(n) => n.clone(),
         }
     }
 }
@@ -100,6 +103,13 @@ pub fn parse_type_str_strict(s: &str) -> Result<Type, String> {
                 return Ok(Type::List(Box::new(inner_ty)));
             }
 
+            // Capitalized identifier with only alphanumeric/_chars = user-defined type name
+            if s.chars().next().map_or(false, |c| c.is_uppercase())
+                && s.chars().all(|c| c.is_alphanumeric() || c == '_')
+            {
+                return Ok(Type::Named(s.to_string()));
+            }
+
             Err(s.to_string())
         }
     }
@@ -133,6 +143,12 @@ pub fn parse_type_str(s: &str) -> Type {
             }
             if let Some(inner) = strip_wrapper(s, "List<", ">") {
                 return Type::List(Box::new(parse_type_str(inner)));
+            }
+            // Capitalized identifier with only alphanumeric/_chars = user-defined type
+            if s.chars().next().map_or(false, |c| c.is_uppercase())
+                && s.chars().all(|c| c.is_alphanumeric() || c == '_')
+            {
+                return Type::Named(s.to_string());
             }
             // Unknown — gradual typing escape hatch
             Type::Any
@@ -209,7 +225,9 @@ mod tests {
 
     #[test]
     fn test_unknown() {
-        assert_eq!(parse_type_str("SomeUnknownType"), Type::Any);
+        // Capitalized identifiers are now parsed as user-defined Named types
+        assert_eq!(parse_type_str("SomeUnknownType"), Type::Named("SomeUnknownType".to_string()));
+        // Lowercase non-keyword identifiers and empty strings remain Any
         assert_eq!(parse_type_str(""), Type::Any);
     }
 
@@ -239,10 +257,22 @@ mod tests {
     }
 
     #[test]
-    fn test_strict_parser_rejects_unknown_inner_types() {
-        assert!(parse_type_str_strict("Result<Integ, String>").is_err());
-        assert!(parse_type_str_strict("Option<Boool>").is_err());
-        assert!(parse_type_str_strict("List<Result<Int, NoType>>").is_err());
+    fn test_strict_parser_accepts_user_defined_types() {
+        // Capitalized identifiers are accepted as user-defined Named types
+        assert_eq!(
+            parse_type_str_strict("Result<MyError, String>").unwrap(),
+            Type::Result(Box::new(Type::Named("MyError".to_string())), Box::new(Type::Str))
+        );
+        assert_eq!(
+            parse_type_str_strict("Option<Shape>").unwrap(),
+            Type::Option(Box::new(Type::Named("Shape".to_string())))
+        );
+        assert_eq!(
+            parse_type_str_strict("List<User>").unwrap(),
+            Type::List(Box::new(Type::Named("User".to_string())))
+        );
+        // Lowercase unknown types still fail
+        assert!(parse_type_str_strict("integ").is_err());
     }
 
     #[test]

@@ -31,7 +31,10 @@ pub enum Pattern {
     Wildcard,
     Literal(Literal),
     Ident(String),
-    Constructor(String, Option<String>),
+    /// Constructor pattern: name + list of binding names.
+    /// Built-ins: Ok(x), Err(x), Some(x), None → vec!["x"] or vec![]
+    /// User-defined: Circle(r), Rect(w, h), Point → vec!["r"], vec!["w","h"], vec![]
+    Constructor(String, Vec<String>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -53,6 +56,8 @@ pub enum Expr {
     ErrorProp(Box<Expr>),
     InterpolatedStr(Vec<StrPart>),
     List(Vec<Expr>),
+    /// Record creation: `User(name: "Alice", age: 30)`
+    RecordCreate { type_name: String, fields: Vec<(String, Expr)> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -105,6 +110,23 @@ pub struct DecisionBlock {
     pub author: Option<String>,
 }
 
+/// A variant in a sum type definition.
+/// e.g. `Circle(Float)` → `TypeVariant { name: "Circle", fields: ["Float"] }`
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeVariant {
+    pub name: String,
+    pub fields: Vec<String>, // type annotations (e.g. "Float", "String")
+}
+
+/// A user-defined type definition.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeDef {
+    /// `type Shape` with variants Circle(Float), Rect(Float, Float), Point
+    Sum { name: String, variants: Vec<TypeVariant> },
+    /// `record User` with fields name: String, age: Int
+    Product { name: String, fields: Vec<(String, String)> },
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TopLevel {
     Module(Module),
@@ -112,4 +134,5 @@ pub enum TopLevel {
     Verify(VerifyBlock),
     Decision(DecisionBlock),
     Stmt(Stmt),
+    TypeDef(TypeDef),
 }

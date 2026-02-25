@@ -102,7 +102,14 @@ fn cmd_run(file: &str, run_verify_blocks: bool) {
 
     let mut interp = Interpreter::new();
 
-    // Register all function definitions first
+    // Register type definitions (constructors) first
+    for item in &items {
+        if let TopLevel::TypeDef(td) = item {
+            interp.register_type_def(td);
+        }
+    }
+
+    // Register all function definitions
     for item in &items {
         if let TopLevel::FnDef(fd) = item {
             if let Err(e) = interp.exec_fn_def(fd) {
@@ -248,6 +255,13 @@ fn cmd_verify(file: &str) {
     }
 
     let mut interp = Interpreter::new();
+
+    // Register type definitions (constructors) first
+    for item in &items {
+        if let TopLevel::TypeDef(td) = item {
+            interp.register_type_def(td);
+        }
+    }
 
     // Register all functions
     for item in &items {

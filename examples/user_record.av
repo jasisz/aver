@@ -1,0 +1,22 @@
+// Product type (record) example: user data
+
+record User
+  name: String
+  age: Int
+
+fn greet(u: User) -> String
+  ? "Greet a user by name"
+  u.name
+
+fn is_adult(u: User) -> Bool
+  ? "Check if a user is an adult (18+)"
+  match u:
+    User(name, age) -> age >= 18
+
+fn main()
+  val alice = User(name: "Alice", age: 30)
+  val bob = User(name: "Bob", age: 15)
+  print(greet(alice))
+  print(greet(bob))
+  print(is_adult(alice))
+  print(is_adult(bob))
