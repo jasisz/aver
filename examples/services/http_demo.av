@@ -1,16 +1,16 @@
 module HttpDemo
     intent:
-        "Demonstrates the built-in Network service: GET, POST, and response handling."
-        "Network is a platform capability — declared with ! [Network], enforced statically."
+        "Demonstrates the built-in Http service: GET, POST, and response handling."
+        "Http is a platform capability — declared with ! [Http], enforced statically."
 
 record Header
     name: String
     value: String
 
-decision NetworkAsCapability:
+decision HttpAsCapability:
     date: "2025-01-01"
     reason:
-        "HTTP access is a side effect like any other. Declaring ! [Network] makes"
+        "HTTP access is a side effect like any other. Declaring ! [Http] makes"
         "it visible in the signature — callers know the function goes outside the process."
         "4xx/5xx are Ok(response) because they are valid HTTP exchanges;"
         "only transport failures (timeout, DNS, refused) are Err."
@@ -20,12 +20,12 @@ decision NetworkAsCapability:
 
 fn fetch(url: String) -> Result<HttpResponse, String>
     ? "GET a URL. Returns Ok(HttpResponse) on any HTTP reply, Err on transport failure."
-    ! [Network]
+    ! [Http]
     Http.get(url)
 
 fn checkStatus(url: String) -> Result<Int, String>
     ? "Returns Ok(status code as Int) or Err(transport error)."
-    ! [Network]
+    ! [Http]
     val result = Http.get(url)
     match result:
         Ok(resp) -> Ok(resp.status)
@@ -33,12 +33,12 @@ fn checkStatus(url: String) -> Result<Int, String>
 
 fn post(url: String, payload: String, token: String) -> Result<HttpResponse, String>
     ? "POST JSON with a Bearer token. Builds the Authorization header explicitly."
-    ! [Network]
+    ! [Http]
     val auth = Header(name: "Authorization", value: "Bearer {token}")
     Http.post(url, payload, "application/json", [auth])
 
 fn main() -> Unit
-    ! [Network, Console]
+    ! [Http, Console]
     val url = "https://httpbin.org/get"
 
     val r1 = fetch(url)

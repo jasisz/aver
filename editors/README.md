@@ -30,12 +30,12 @@ Hot-reloads — no restart needed. Select **Aver** from the language menu in the
 ## What's highlighted
 
 - Keywords: `fn`, `val`, `var`, `type`, `record`, `module`, `match`, `verify`, `decision`
-- Effect declarations: `! [Network, Disk]`
+- Effect declarations: `! [Http, Disk, Tcp]`
 - Function descriptions: `? "..."`
 - String interpolation: `"Hello, {name}!"`
 - Built-in types: `Int`, `Float`, `String`, `Bool`, `Result`, `Option`, `List`
 - Built-in values: `true`, `false`, `Ok`, `Err`, `Some`, `None`
-- Service calls: `Console.print`, `Http.get`, `Disk.readText`
+- Service calls: `Console.print`, `Http.get`, `Disk.readText`, `Tcp.send`
 - Qualified constructors: `Shape.Circle`, `Models.User`
 - ADR keys: `date`, `reason`, `chosen`, `rejected`, `impacts`
-- Comments: `-- ...`
+- Comments: `// ...`

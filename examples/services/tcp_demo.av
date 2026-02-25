@@ -1,0 +1,47 @@
+module TcpDemo
+    intent:
+        "Demonstrates the built-in Tcp service: raw TCP send and port ping."
+        "Tcp is a platform capability — declared with ! [Tcp], enforced statically."
+        "Use Http for HTTP/HTTPS. Use Tcp when you need a raw byte stream protocol."
+
+decision TcpVsHttp:
+    date: "2025-01-01"
+    reason:
+        "Http covers the HTTP verb set. Tcp handles everything else: Redis, Postgres wire"
+        "protocol, custom binary protocols, health-check pings. Both are stateless from"
+        "the Aver side — one function call = one connection open/close."
+    chosen: SeparateServices
+    rejected: [SingleNetworkService, OpenSocketHandle]
+    impacts: [ping, send, main]
+
+fn ping(host: String, port: Int) -> Result<Unit, String>
+    ? "Check whether a TCP port is accepting connections."
+    ! [Tcp]
+    Tcp.ping(host, port)
+
+fn send(host: String, port: Int, message: String) -> Result<String, String>
+    ? "Open a TCP connection, write message, read the full response, close."
+    ! [Tcp]
+    Tcp.send(host, port, message)
+
+fn checkPort(host: String, port: Int) -> Unit
+    ? "Print whether the port is reachable."
+    ! [Tcp, Console]
+    val result = ping(host, port)
+    match result:
+        Ok(_)  -> print("{host}:{port} is reachable")
+        Err(e) -> print("{host}:{port} is unreachable — {e}")
+
+fn main() -> Unit
+    ! [Tcp, Console]
+
+    // Check a few well-known ports
+    checkPort("127.0.0.1", 80)
+    checkPort("127.0.0.1", 22)
+    checkPort("127.0.0.1", 5432)
+
+    // Talk to an echo server if one is running locally on port 9000
+    val reply = send("127.0.0.1", 9000, "hello from Aver\n")
+    match reply:
+        Ok(response) -> print("Echo server replied: {response}")
+        Err(msg)     -> print("No echo server on port 9000: {msg}")
