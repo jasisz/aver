@@ -211,7 +211,7 @@ Requires: Rust stable toolchain.
 | `app.av` | Runtime module imports via `depends [Fibonacci]` |
 | `app_dot.av` | Dot-path imports and nested namespaces (`depends [Models.User]`) |
 | `models/user.av` | Module loaded via dot-path from `app_dot.av` |
-| `network.av` | Network service: GET, POST, response handling, Bearer auth header |
+| `http_demo.av` | Network service: GET, POST, response handling, Bearer auth header |
 | `decisions/decisions.av` | Decision blocks as first-class constructs |
 | `decisions/architecture.av` | The interpreter documents itself in Aver — [see it](decisions/architecture.av) |
 | `type_errors.av` | Intentional type errors; shows what the checker catches |

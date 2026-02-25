@@ -1,4 +1,4 @@
-module Network
+module HttpDemo
     intent:
         "Demonstrates the built-in Network service: GET, POST, and response handling."
         "Network is a platform capability — declared with ! [Network], enforced statically."
