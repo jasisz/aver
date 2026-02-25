@@ -753,6 +753,41 @@ impl Parser {
                 self.advance();
                 Ok(Pattern::Wildcard)
             }
+            TokenKind::LBracket => {
+                self.advance(); // '['
+
+                if self.check_exact(&TokenKind::RBracket) {
+                    self.advance(); // ']'
+                    return Ok(Pattern::EmptyList);
+                }
+
+                let head = if let TokenKind::Ident(s) = self.current().kind.clone() {
+                    self.advance();
+                    s
+                } else {
+                    return Err(self.error(format!(
+                        "Expected list head binding in pattern, found {:?}",
+                        self.current().kind
+                    )));
+                };
+
+                self.expect_exact(&TokenKind::Comma)?;
+                self.expect_exact(&TokenKind::Dot)?;
+                self.expect_exact(&TokenKind::Dot)?;
+
+                let tail = if let TokenKind::Ident(s) = self.current().kind.clone() {
+                    self.advance();
+                    s
+                } else {
+                    return Err(self.error(format!(
+                        "Expected list tail binding in pattern, found {:?}",
+                        self.current().kind
+                    )));
+                };
+
+                self.expect_exact(&TokenKind::RBracket)?;
+                Ok(Pattern::Cons(head, tail))
+            }
             // User-defined constructor: starts with uppercase (e.g. Shape.Circle, Point)
             TokenKind::Ident(ref s) if s.chars().next().map_or(false, |c| c.is_uppercase()) => {
                 let mut name = s.clone();

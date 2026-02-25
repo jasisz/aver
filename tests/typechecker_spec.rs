@@ -98,6 +98,12 @@ fn valid_list_return() {
 }
 
 #[test]
+fn valid_list_pattern_matching() {
+    let src = "fn score(xs: List<Int>) -> Int\n    = match xs:\n        [] -> 0\n        [h, ..t] -> h + len(t)\n";
+    assert_no_errors(src);
+}
+
+#[test]
 fn valid_explicit_any() {
     assert_no_errors("fn passthrough(x: Any) -> Any\n    = x\n");
 }

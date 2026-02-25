@@ -24,7 +24,7 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 - Arithmetic: `+`, `-`, `*`, `/` with mixed Int/Float promotion
 - Comparison operators: `==`, `!=`, `<`, `>`, `<=`, `>=`
 - Pipe operator `|>` — passes the left-hand value as the sole argument to the right-hand function
-- `match` expressions with patterns: wildcard `_`, literal, identifier binding, constructor (`Ok(x)`, `Err(x)`, `Some(x)`, `None`)
+- `match` expressions with patterns: wildcard `_`, literal, identifier binding, list patterns (`[]`, `[h, ..t]`), constructor (`Ok(x)`, `Err(x)`, `Some(x)`, `None`)
 - `Ok`, `Err`, `Some`, `None` constructors and corresponding value types
 - Error propagation operator `?` on `Result` values — unwraps `Ok`, raises `RuntimeError` on `Err`
 - `module` blocks with `intent:`, `exposes [...]`, and `depends [...]`
@@ -44,7 +44,6 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 
 ### What is missing / known limitations
 
-- No list/array pattern matching in `match` (`[]` and `[h, ..t]` patterns are not implemented)
 - No `if`/`else` — **this is intentional by design**; `match` is the only branching construct
 - No loops (`for`, `while`) — **intentionally absent**; Aver has no imperative iteration; use `map`/`filter`/`fold`
 - Field access works for `record` values (`u.name`) but not on sum type variants or other values
@@ -60,7 +59,6 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 - Service blocks with `needs:` dependency injection
 - Module imports at runtime
 - Proper `?` short-circuit across function calls (requires a signal/exception mechanism or continuation)
-- List pattern matching in `match`: `[]` (empty list) and `[h, ..t]` (cons) patterns
 - `aver decisions --impacts Module` and other query flags on the CLI
 
 ### What will NEVER be in Aver (design decisions)
@@ -157,7 +155,7 @@ The `src/lib.rs` exports all modules as `pub mod` so integration tests can acces
 | `LexerError` | lexer.rs | Carry `msg`, `line`, `col`; formatted as `"Lexer error [L:C]: msg"` |
 | `Literal` | ast.rs | `Int(i64)`, `Float(f64)`, `Str(String)`, `Bool(bool)` |
 | `BinOp` | ast.rs | Arithmetic and comparison operators as enum variants |
-| `Pattern` | ast.rs | Match arm pattern: `Wildcard`, `Literal`, `Ident`, `Constructor` |
+| `Pattern` | ast.rs | Match arm pattern: `Wildcard`, `Literal`, `Ident`, `EmptyList`, `Cons`, `Constructor` |
 | `StrPart` | ast.rs | Piece of an interpolated string: `Literal(String)` or `Expr(String)` (raw source) |
 | `Expr` | ast.rs | Every expression form: `Literal`, `Ident`, `Attr`, `FnCall`, `BinOp`, `Match`, `Pipe`, `Constructor`, `ErrorProp`, `InterpolatedStr`, `List(Vec<Expr>)`, `RecordCreate { type_name, fields }` |
 | `Stmt` | ast.rs | `Val(name, expr)`, `Var(name, expr, reason)`, `Assign(name, expr)`, `Expr(expr)` |
@@ -254,12 +252,11 @@ In `src/interpreter.rs`, two places:
 
 ## Next steps (prioritised)
 
-1. **List pattern matching** — add `Pattern::EmptyList` for `[]` and `Pattern::Cons(head_bind, tail_bind)` for `[h, ..t]` in `match` expressions; enables recursive list processing without builtins
-2. **Proper `?` short-circuit** — introduce `ErrPropSignal` as a Rust `Err` variant so that `?` on `Err` inside a function body exits the function early, not just the current expression
-3. **Module import at runtime** — `depends [Foo]` loads and evaluates `Foo.av` from a known path, merging `exposes` into current scope
-4. **Service blocks** — parse and execute `service Foo { needs: [...] }` as a lightweight DI container; dependencies are injected via constructor, no global state
-5. **`aver decisions` query flags** — `--impacts Module`, `--since 2024-01-01`, `--rejected Technology` for searchable architectural history
-6. **REPL mode** — `aver repl` subcommand for interactive exploration; useful during AI-assisted development sessions
+1. **Proper `?` short-circuit** — introduce `ErrPropSignal` as a Rust `Err` variant so that `?` on `Err` inside a function body exits the function early, not just the current expression
+2. **Module import at runtime** — `depends [Foo]` loads and evaluates `Foo.av` from a known path, merging `exposes` into current scope
+3. **Service blocks** — parse and execute `service Foo { needs: [...] }` as a lightweight DI container; dependencies are injected via constructor, no global state
+4. **`aver decisions` query flags** — `--impacts Module`, `--since 2024-01-01`, `--rejected Technology` for searchable architectural history
+5. **REPL mode** — `aver repl` subcommand for interactive exploration; useful during AI-assisted development sessions
 
 ## Agreed direction: modules vs DI (2026-02-25)
 
@@ -268,5 +265,6 @@ In `src/interpreter.rs`, two places:
 - Keep concerns separate:
   - Module imports (`depends`) answer "where code comes from".
   - Capabilities/services (future effect runtime model) answer "how effects are provided".
+- Aver favors self-contained modules: code dependencies are explicit via `depends`, and effect dependencies are explicit via full `! [Effect]` propagation through the call chain.
 - If remapping is added later, prefer a versioned project manifest (`aver.toml`) over ad-hoc runtime flags so the mapping is visible to humans and AI agents.
 - Service override (for example replacing `Console`) is postponed; if added, it should be explicit, contract-checked, and limited to test/dev profiles first.

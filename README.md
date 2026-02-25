@@ -16,6 +16,8 @@ Most languages optimise for the CPU. Aver optimises for understanding — human 
 
 **`verify` blocks** — tests are physically attached to the functions they cover. Self-verifying modules are the only way to scale safe AI automation.
 
+Explicit `depends` for code, explicit `! [Effect]` for capabilities.
+
 ## Syntax at a glance
 
 ```aver
@@ -130,6 +132,6 @@ Implemented in Rust, zero warnings.
 - [x] List builtins: `map`, `filter`, `fold`, `get`, `head`, `tail`, `push`
 - [x] User-defined sum types (`type`) with qualified constructors (`Shape.Circle`)
 - [x] User-defined product types (`record`) with field access and positional match
-- [ ] List pattern matching (`[]`, `[h, ..t]`)
+- [x] List pattern matching (`[]`, `[h, ..t]`)
 - [ ] Module imports at runtime
 - [ ] AI context export — semantic maps to JSON/Markdown for LLM context windows

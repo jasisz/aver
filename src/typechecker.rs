@@ -898,6 +898,14 @@ impl TypeChecker {
     fn collect_pattern_bindings(pattern: &Pattern, out: &mut Vec<String>) {
         match pattern {
             Pattern::Ident(name) if name != "_" => out.push(name.clone()),
+            Pattern::Cons(head, tail) => {
+                if head != "_" {
+                    out.push(head.clone());
+                }
+                if tail != "_" {
+                    out.push(tail.clone());
+                }
+            }
             Pattern::Constructor(_, bindings) => {
                 for name in bindings {
                     if name != "_" {

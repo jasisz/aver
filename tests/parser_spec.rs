@@ -387,6 +387,45 @@ fn match_ident_binding() {
     }
 }
 
+#[test]
+fn match_list_empty_pattern() {
+    let src =
+        "fn f(xs: List<Int>) -> Int\n    = match xs:\n        [] -> 0\n        [h, ..t] -> h\n";
+    let items = parse(src);
+    if let TopLevel::FnDef(fd) = &items[0] {
+        if let FnBody::Expr(Expr::Match(_, arms)) = &fd.body {
+            assert_eq!(arms.len(), 2);
+            assert!(matches!(&arms[0].pattern, Pattern::EmptyList));
+            assert!(matches!(
+                &arms[1].pattern,
+                Pattern::Cons(head, tail) if head == "h" && tail == "t"
+            ));
+        } else {
+            panic!("expected match");
+        }
+    } else {
+        panic!("expected FnDef");
+    }
+}
+
+#[test]
+fn match_list_cons_pattern_with_underscore() {
+    let src = "fn f(xs: List<Int>) -> Int\n    = match xs:\n        [_, ..rest] -> len(rest)\n        [] -> 0\n";
+    let items = parse(src);
+    if let TopLevel::FnDef(fd) = &items[0] {
+        if let FnBody::Expr(Expr::Match(_, arms)) = &fd.body {
+            assert!(matches!(
+                &arms[0].pattern,
+                Pattern::Cons(head, tail) if head == "_" && tail == "rest"
+            ));
+        } else {
+            panic!("expected match");
+        }
+    } else {
+        panic!("expected FnDef");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Module blocks
 // ---------------------------------------------------------------------------

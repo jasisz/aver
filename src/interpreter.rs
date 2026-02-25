@@ -1093,6 +1093,23 @@ impl Interpreter {
                 bindings.insert(name.clone(), value.clone());
                 Some(bindings)
             }
+            Pattern::EmptyList => match value {
+                Value::List(items) if items.is_empty() => Some(HashMap::new()),
+                _ => None,
+            },
+            Pattern::Cons(head, tail) => match value {
+                Value::List(items) if !items.is_empty() => {
+                    let mut map = HashMap::new();
+                    if head != "_" {
+                        map.insert(head.clone(), items[0].clone());
+                    }
+                    if tail != "_" {
+                        map.insert(tail.clone(), Value::List(items[1..].to_vec()));
+                    }
+                    Some(map)
+                }
+                _ => None,
+            },
             Pattern::Constructor(ctor_name, bindings) => {
                 match (ctor_name.as_str(), value) {
                     ("None", Value::None) => Some(HashMap::new()),

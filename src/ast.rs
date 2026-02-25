@@ -31,6 +31,10 @@ pub enum Pattern {
     Wildcard,
     Literal(Literal),
     Ident(String),
+    /// Empty list pattern: `[]`
+    EmptyList,
+    /// Cons-like list pattern: `[head, ..tail]`
+    Cons(String, String),
     /// Constructor pattern: name + list of binding names.
     /// Built-ins: Ok(x), Err(x), Some(x), None → vec!["x"] or vec![]
     /// User-defined: Circle(r), Rect(w, h), Point → vec!["r"], vec!["w","h"], vec![]

@@ -402,6 +402,48 @@ fn match_bool_literal() {
     );
 }
 
+#[test]
+fn match_empty_list_pattern() {
+    let src = "fn is_empty(xs: List<Int>) -> Bool\n    = match xs:\n        [] -> true\n        [_, ..rest] -> false\n";
+    assert_eq!(
+        call_fn(src, "is_empty", vec![Value::List(vec![])]),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        call_fn(
+            src,
+            "is_empty",
+            vec![Value::List(vec![Value::Int(1), Value::Int(2)])]
+        ),
+        Value::Bool(false)
+    );
+}
+
+#[test]
+fn match_list_cons_binds_head_and_tail() {
+    let src = "fn score(xs: List<Int>) -> Int\n    = match xs:\n        [h, ..t] -> h + len(t)\n        [] -> 0\n";
+    assert_eq!(
+        call_fn(
+            src,
+            "score",
+            vec![Value::List(vec![
+                Value::Int(5),
+                Value::Int(9),
+                Value::Int(11)
+            ])]
+        ),
+        Value::Int(7)
+    );
+    assert_eq!(
+        call_fn(src, "score", vec![Value::List(vec![Value::Int(5)])]),
+        Value::Int(5)
+    );
+    assert_eq!(
+        call_fn(src, "score", vec![Value::List(vec![])]),
+        Value::Int(0)
+    );
+}
+
 // ---------------------------------------------------------------------------
 // String interpolation
 // ---------------------------------------------------------------------------
