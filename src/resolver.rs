@@ -119,6 +119,11 @@ fn collect_expr_bindings(expr: &Expr, local_slots: &mut HashMap<String, u16>, ne
                 collect_expr_bindings(elem, local_slots, next_slot);
             }
         }
+        Expr::Tuple(items) => {
+            for item in items {
+                collect_expr_bindings(item, local_slots, next_slot);
+            }
+        }
         Expr::InterpolatedStr(parts) => {
             for part in parts {
                 if let StrPart::Parsed(e) = part {
@@ -227,6 +232,11 @@ fn resolve_expr(expr: &mut Expr, local_slots: &HashMap<String, u16>) {
         Expr::List(elements) => {
             for elem in elements {
                 resolve_expr(elem, local_slots);
+            }
+        }
+        Expr::Tuple(items) => {
+            for item in items {
+                resolve_expr(item, local_slots);
             }
         }
         Expr::TypeAscription(inner, _) => {

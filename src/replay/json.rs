@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
 
 use crate::value::{aver_repr, list_slice, Value};
@@ -100,6 +100,31 @@ pub fn value_to_json(value: &Value) -> Result<JsonValue, String> {
             }
             Ok(JsonValue::Array(arr))
         }
+        Value::Tuple(items) => {
+            let mut arr = Vec::with_capacity(items.len());
+            for item in items {
+                arr.push(value_to_json(item)?);
+            }
+            Ok(wrap_marker("$tuple", JsonValue::Array(arr)))
+        }
+        Value::Map(entries) => {
+            if entries.keys().all(|k| matches!(k, Value::Str(_))) {
+                let mut obj = BTreeMap::new();
+                for (k, v) in entries {
+                    let Value::Str(key) = k else {
+                        unreachable!("checked above");
+                    };
+                    obj.insert(key.clone(), value_to_json(v)?);
+                }
+                Ok(JsonValue::Object(obj))
+            } else {
+                let mut pairs = Vec::with_capacity(entries.len());
+                for (k, v) in entries {
+                    pairs.push(JsonValue::Array(vec![value_to_json(k)?, value_to_json(v)?]));
+                }
+                Ok(wrap_marker("$map", JsonValue::Array(pairs)))
+            }
+        }
         Value::Record { type_name, fields } => {
             let mut fields_obj = BTreeMap::new();
             for (name, field_value) in fields {
@@ -150,14 +175,11 @@ pub fn json_to_value(json: &JsonValue) -> Result<Value, String> {
             if let Some((marker, payload)) = marker_single_key(obj) {
                 return decode_marker(marker, payload);
             }
-            let mut fields = Vec::with_capacity(obj.len());
+            let mut map = HashMap::with_capacity(obj.len());
             for (k, v) in obj {
-                fields.push((k.clone(), json_to_value(v)?));
+                map.insert(Value::Str(k.clone()), json_to_value(v)?);
             }
-            Ok(Value::Record {
-                type_name: "JsonObject".to_string(),
-                fields,
-            })
+            Ok(Value::Map(map))
         }
     }
 }
@@ -196,10 +218,36 @@ fn decode_marker(marker: &str, payload: &JsonValue) -> Result<Value, String> {
         "$err" => Ok(Value::Err(Box::new(json_to_value(payload)?))),
         "$some" => Ok(Value::Some(Box::new(json_to_value(payload)?))),
         "$none" => Ok(Value::None),
+        "$tuple" => decode_tuple(payload),
+        "$map" => decode_map(payload),
         "$record" => decode_record(payload),
         "$variant" => decode_variant(payload),
         _ => Err(format!("unknown replay marker '{}'", marker)),
     }
+}
+
+fn decode_tuple(payload: &JsonValue) -> Result<Value, String> {
+    let items = parse_array(payload, "$tuple")?;
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        out.push(json_to_value(item)?);
+    }
+    Ok(Value::Tuple(out))
+}
+
+fn decode_map(payload: &JsonValue) -> Result<Value, String> {
+    let pairs = parse_array(payload, "$map")?;
+    let mut out = HashMap::with_capacity(pairs.len());
+    for (idx, pair_json) in pairs.iter().enumerate() {
+        let pair = parse_array(pair_json, &format!("$map[{}]", idx))?;
+        if pair.len() != 2 {
+            return Err(format!("$map[{}] must be a 2-element array", idx));
+        }
+        let key = json_to_value(&pair[0])?;
+        let value = json_to_value(&pair[1])?;
+        out.insert(key, value);
+    }
+    Ok(Value::Map(out))
 }
 
 fn decode_record(payload: &JsonValue) -> Result<Value, String> {

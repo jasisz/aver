@@ -206,6 +206,11 @@ impl TypeChecker {
                     self.check_effects_in_expr(elem, caller_name, caller_effects);
                 }
             }
+            Expr::Tuple(items) => {
+                for item in items {
+                    self.check_effects_in_expr(item, caller_name, caller_effects);
+                }
+            }
             Expr::Attr(obj, _) => {
                 self.check_effects_in_expr(obj, caller_name, caller_effects);
             }

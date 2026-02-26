@@ -93,7 +93,8 @@ pub(super) fn is_memo_safe_type(ty: &types::Type, safe_named: &HashSet<String>) 
     use aver::types::Type;
     match ty {
         Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit => true,
-        Type::List(_) | Type::Fn(_, _, _) | Type::Unknown => false,
+        Type::Tuple(items) => items.iter().all(|item| is_memo_safe_type(item, safe_named)),
+        Type::List(_) | Type::Map(_, _) | Type::Fn(_, _, _) | Type::Unknown => false,
         Type::Result(_, _) | Type::Option(_) => false,
         Type::Named(name) => safe_named.contains(name),
     }

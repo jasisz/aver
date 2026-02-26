@@ -34,7 +34,11 @@ impl Interpreter {
         if !e.is_empty() {
             return e;
         }
-        list::effects(name)
+        let e = list::effects(name);
+        if !e.is_empty() {
+            return e;
+        }
+        map::effects(name)
     }
 
     pub(super) fn current_allowed_effects(&self) -> &[String] {

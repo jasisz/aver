@@ -13,6 +13,7 @@ impl Interpreter {
         float::register(&mut global);
         string::register(&mut global);
         list::register(&mut global);
+        map::register(&mut global);
 
         // Result and Option namespaces — constructors for Ok/Err/Some/None
         {

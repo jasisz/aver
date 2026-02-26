@@ -9,7 +9,7 @@ use crate::replay::{
 };
 use crate::services::{console, disk, http, http_server, tcp};
 use crate::source::{canonicalize_path, find_module_file, parse_source};
-use crate::types::{float, int, list, string};
+use crate::types::{float, int, list, map, string};
 // Re-export value types so existing `use aver::interpreter::Value` imports keep working.
 pub use crate::value::{aver_display, aver_repr, Env, EnvFrame, RuntimeError, Value};
 use crate::value::{list_from_vec, list_len, list_slice, list_tail_view};

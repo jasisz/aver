@@ -32,7 +32,8 @@ impl TypeChecker {
     pub(super) fn is_memo_safe(&self, ty: &Type, visiting: &mut HashSet<String>) -> bool {
         match ty {
             Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit => true,
-            Type::List(_) | Type::Fn(_, _, _) | Type::Unknown => false,
+            Type::Tuple(items) => items.iter().all(|item| self.is_memo_safe(item, visiting)),
+            Type::List(_) | Type::Map(_, _) | Type::Fn(_, _, _) | Type::Unknown => false,
             Type::Result(_, _) | Type::Option(_) => false,
             Type::Named(name) => {
                 // Prevent infinite recursion for cyclic type defs

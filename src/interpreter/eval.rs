@@ -118,6 +118,13 @@ impl Interpreter {
                 }
                 Ok(list_from_vec(values))
             }
+            Expr::Tuple(items) => {
+                let mut values = Vec::with_capacity(items.len());
+                for item in items {
+                    values.push(self.eval_expr(item)?);
+                }
+                Ok(Value::Tuple(values))
+            }
             Expr::TypeAscription(inner, _) => self.eval_expr(inner),
             Expr::RecordCreate { type_name, fields } => {
                 let mut field_vals = Vec::new();

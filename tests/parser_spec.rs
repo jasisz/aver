@@ -380,6 +380,27 @@ fn expr_list_int() {
 }
 
 #[test]
+fn expr_tuple_literal() {
+    let items = parse("(1, \"x\")");
+    if let TopLevel::Stmt(Stmt::Expr(Expr::Tuple(items))) = &items[0] {
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0], Expr::Literal(Literal::Int(1)));
+        assert_eq!(items[1], Expr::Literal(Literal::Str("x".to_string())));
+    } else {
+        panic!("expected Tuple");
+    }
+}
+
+#[test]
+fn expr_parenthesized_group_not_tuple() {
+    let items = parse("(1 + 2)");
+    assert!(matches!(
+        items[0],
+        TopLevel::Stmt(Stmt::Expr(Expr::BinOp(BinOp::Add, _, _)))
+    ));
+}
+
+#[test]
 fn expr_error_propagation() {
     let items = parse("result?");
     if let TopLevel::Stmt(Stmt::Expr(Expr::ErrorProp(_))) = &items[0] {
@@ -397,6 +418,18 @@ fn expr_type_ascription_empty_list() {
         assert_eq!(ty, "List<Int>");
     } else {
         panic!("expected TypeAscription");
+    }
+}
+
+#[test]
+fn fn_with_tuple_type_annotation() {
+    let src = "fn pair() -> (Int, String)\n    = (1, \"x\")\n";
+    let items = parse(src);
+    if let TopLevel::FnDef(fd) = &items[0] {
+        assert_eq!(fd.return_type, "(Int, String)");
+        assert!(matches!(&*fd.body, FnBody::Expr(Expr::Tuple(_))));
+    } else {
+        panic!("expected FnDef");
     }
 }
 

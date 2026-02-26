@@ -244,6 +244,9 @@ impl Interpreter {
                 if let Some(r) = list::call(name, args) {
                     return r;
                 }
+                if let Some(r) = map::call(name, args) {
+                    return r;
+                }
                 Err(RuntimeError::Error(format!(
                     "Unknown builtin function: '{}'",
                     name

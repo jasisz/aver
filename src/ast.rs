@@ -60,6 +60,7 @@ pub enum Expr {
     ErrorProp(Box<Expr>),
     InterpolatedStr(Vec<StrPart>),
     List(Vec<Expr>),
+    Tuple(Vec<Expr>),
     /// Explicit expression type annotation: `expr: Type`
     TypeAscription(Box<Expr>, String),
     /// Record creation: `User(name: "Alice", age: 30)`

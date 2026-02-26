@@ -298,9 +298,19 @@ impl Parser {
             TokenKind::Match => self.parse_match(),
             TokenKind::LParen => {
                 self.advance();
-                let expr = self.parse_expr()?;
-                self.expect_exact(&TokenKind::RParen)?;
-                Ok(expr)
+                let first = self.parse_expr()?;
+                if self.check_exact(&TokenKind::Comma) {
+                    let mut items = vec![first];
+                    while self.check_exact(&TokenKind::Comma) {
+                        self.advance();
+                        items.push(self.parse_expr()?);
+                    }
+                    self.expect_exact(&TokenKind::RParen)?;
+                    Ok(Expr::Tuple(items))
+                } else {
+                    self.expect_exact(&TokenKind::RParen)?;
+                    Ok(first)
+                }
             }
             TokenKind::Ident(s) => {
                 self.advance();

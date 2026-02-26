@@ -557,6 +557,97 @@ fn tail_empty_list_returns_err() {
     assert!(matches!(eval("List.tail([])"), Value::Err(_)));
 }
 
+// ---------------------------------------------------------------------------
+// Tuple and Map namespace
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tuple_literal_runtime() {
+    assert_eq!(
+        eval("(1, \"x\")"),
+        Value::Tuple(vec![Value::Int(1), Value::Str("x".to_string())])
+    );
+}
+
+#[test]
+fn tuple_equality_runtime() {
+    assert_eq!(eval("(1, \"x\") == (1, \"x\")"), Value::Bool(true));
+}
+
+#[test]
+fn map_len_empty() {
+    assert_eq!(
+        eval("Map.len(Map.empty(): Map<String, Int>)"),
+        Value::Int(0)
+    );
+}
+
+#[test]
+fn map_set_get_has() {
+    assert_eq!(
+        eval("Map.has(Map.set(Map.empty(): Map<String, Int>, \"a\", 1), \"a\")"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        eval("Map.get(Map.set(Map.empty(): Map<String, Int>, \"a\", 1), \"a\")"),
+        Value::Some(Box::new(Value::Int(1)))
+    );
+}
+
+#[test]
+fn map_get_missing_returns_none() {
+    assert_eq!(
+        eval("Map.get(Map.empty(): Map<String, Int>, \"missing\")"),
+        Value::None
+    );
+}
+
+#[test]
+fn map_remove_drops_key() {
+    assert_eq!(
+        eval("Map.has(Map.remove(Map.set(Map.empty(): Map<String, Int>, \"a\", 1), \"a\"), \"a\")"),
+        Value::Bool(false)
+    );
+}
+
+#[test]
+fn map_from_list_and_entries_roundtrip() {
+    assert_eq!(
+        eval("Map.keys(Map.fromList([(\"a\", 1), (\"b\", 2)]): Map<String, Int>)"),
+        Value::List(vec![
+            Value::Str("a".to_string()),
+            Value::Str("b".to_string()),
+        ])
+    );
+    assert_eq!(
+        eval("Map.entries(Map.fromList([(\"a\", 1), (\"b\", 2)]): Map<String, Int>)"),
+        Value::List(vec![
+            Value::Tuple(vec![Value::Str("a".to_string()), Value::Int(1)]),
+            Value::Tuple(vec![Value::Str("b".to_string()), Value::Int(2)]),
+        ])
+    );
+}
+
+#[test]
+fn map_set_rejects_non_scalar_key() {
+    let items = parse("Map.set(Map.empty(), [1], 42)");
+    let item = items.into_iter().next().expect("no items");
+    if let TopLevel::Stmt(Stmt::Expr(expr)) = item {
+        let mut interp = Interpreter::new();
+        let err = interp
+            .eval_expr(&expr)
+            .expect_err("expected runtime error for non-scalar key");
+        assert!(
+            err.to_string()
+                .contains("key must be Int, Float, String, or Bool"),
+            "unexpected error: {}",
+            err
+        );
+    } else {
+        panic!("expected expression");
+    }
+}
+
 #[test]
 fn push_appends_element() {
     assert_eq!(

@@ -37,6 +37,15 @@ impl Interpreter {
             (Value::Ok(x), Value::Ok(y)) => self.aver_eq(x, y),
             (Value::Err(x), Value::Err(y)) => self.aver_eq(x, y),
             (Value::Some(x), Value::Some(y)) => self.aver_eq(x, y),
+            (Value::Tuple(xs), Value::Tuple(ys)) => {
+                xs.len() == ys.len() && xs.iter().zip(ys.iter()).all(|(x, y)| self.aver_eq(x, y))
+            }
+            (Value::Map(m1), Value::Map(m2)) => {
+                m1.len() == m2.len()
+                    && m1
+                        .iter()
+                        .all(|(k, v1)| m2.get(k).map(|v2| self.aver_eq(v1, v2)).unwrap_or(false))
+            }
             (
                 Value::Variant {
                     type_name: t1,

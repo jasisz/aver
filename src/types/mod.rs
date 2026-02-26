@@ -6,11 +6,12 @@
 ///
 /// Sub-modules:
 /// - `checker` — static type checker
-/// - `int`, `float`, `string`, `list` — pure namespace helpers (no effects)
+/// - `int`, `float`, `string`, `list`, `map` — pure namespace helpers (no effects)
 pub mod checker;
 pub mod float;
 pub mod int;
 pub mod list;
+pub mod map;
 pub mod string;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -23,6 +24,8 @@ pub enum Type {
     Result(Box<Type>, Box<Type>),
     Option(Box<Type>),
     List(Box<Type>),
+    Tuple(Vec<Type>),
+    Map(Box<Type>, Box<Type>),
     Fn(Vec<Type>, Box<Type>, Vec<String>),
     Unknown,       // internal fallback when checker cannot infer a precise type
     Named(String), // user-defined type: Shape, User, etc.
@@ -47,6 +50,10 @@ impl Type {
             (Type::Result(a1, b1), Type::Result(a2, b2)) => a1.compatible(a2) && b1.compatible(b2),
             (Type::Option(a), Type::Option(b)) => a.compatible(b),
             (Type::List(a), Type::List(b)) => a.compatible(b),
+            (Type::Tuple(a), Type::Tuple(b)) => {
+                a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.compatible(y))
+            }
+            (Type::Map(k1, v1), Type::Map(k2, v2)) => k1.compatible(k2) && v1.compatible(v2),
             (Type::Fn(p1, r1, e1), Type::Fn(p2, r2, e2)) => {
                 p1.len() == p2.len()
                     && p1.iter().zip(p2.iter()).all(|(a, b)| a.compatible(b))
@@ -68,6 +75,15 @@ impl Type {
             Type::Result(ok, err) => format!("Result<{}, {}>", ok.display(), err.display()),
             Type::Option(inner) => format!("Option<{}>", inner.display()),
             Type::List(inner) => format!("List<{}>", inner.display()),
+            Type::Tuple(items) => format!(
+                "({})",
+                items
+                    .iter()
+                    .map(Type::display)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Type::Map(key, value) => format!("Map<{}, {}>", key.display(), value.display()),
             Type::Fn(params, ret, effects) => {
                 let ps: Vec<String> = params.iter().map(|p| p.display()).collect();
                 if effects.is_empty() {
@@ -99,6 +115,20 @@ pub fn parse_type_str_strict(s: &str) -> Result<Type, String> {
     if let Some(fn_ty) = parse_fn_type_strict(s)? {
         return Ok(fn_ty);
     }
+
+    if s.starts_with('(') && s.ends_with(')') {
+        let inner = &s[1..s.len() - 1];
+        let parts = split_top_level(inner, ',')?;
+        if parts.len() < 2 {
+            return Err(s.to_string());
+        }
+        let elems = parts
+            .into_iter()
+            .map(parse_type_str_strict)
+            .collect::<Result<Vec<_>, _>>()?;
+        return Ok(Type::Tuple(elems));
+    }
+
     match s {
         "Int" => Ok(Type::Int),
         "Float" => Ok(Type::Float),
@@ -121,6 +151,17 @@ pub fn parse_type_str_strict(s: &str) -> Result<Type, String> {
             if let Some(inner) = strip_wrapper(s, "List<", ">") {
                 let inner_ty = parse_type_str_strict(inner)?;
                 return Ok(Type::List(Box::new(inner_ty)));
+            }
+            if let Some(inner) = strip_wrapper(s, "Map<", ">") {
+                if let Some((key_s, value_s)) = split_top_level_comma(inner) {
+                    let key_ty = parse_type_str_strict(key_s)?;
+                    if !matches!(key_ty, Type::Int | Type::Float | Type::Str | Type::Bool) {
+                        return Err(s.to_string());
+                    }
+                    let value_ty = parse_type_str_strict(value_s)?;
+                    return Ok(Type::Map(Box::new(key_ty), Box::new(value_ty)));
+                }
+                return Err(s.to_string());
             }
 
             // Capitalized identifier with only alphanumeric/_ and dot chars = user-defined type name
@@ -148,6 +189,15 @@ pub fn parse_type_str(s: &str) -> Type {
         }
         return Type::Unknown;
     }
+    if s.starts_with('(') && s.ends_with(')') {
+        let inner = &s[1..s.len() - 1];
+        if let Ok(parts) = split_top_level(inner, ',') {
+            if parts.len() >= 2 {
+                return Type::Tuple(parts.into_iter().map(parse_type_str).collect());
+            }
+        }
+        return Type::Unknown;
+    }
     match s {
         "Int" => Type::Int,
         "Float" => Type::Float,
@@ -171,6 +221,14 @@ pub fn parse_type_str(s: &str) -> Type {
             }
             if let Some(inner) = strip_wrapper(s, "List<", ">") {
                 return Type::List(Box::new(parse_type_str(inner)));
+            }
+            if let Some(inner) = strip_wrapper(s, "Map<", ">") {
+                if let Some((key_str, value_str)) = split_top_level_comma(inner) {
+                    return Type::Map(
+                        Box::new(parse_type_str(key_str)),
+                        Box::new(parse_type_str(value_str)),
+                    );
+                }
             }
             // Capitalized identifier with only alphanumeric/_ and dot chars = user-defined type
             // Supports dotted names like "Tcp.Connection"
@@ -401,6 +459,14 @@ mod tests {
             Type::Option(Box::new(Type::Bool))
         );
         assert_eq!(parse_type_str("List<Int>"), Type::List(Box::new(Type::Int)));
+        assert_eq!(
+            parse_type_str("Map<String, Int>"),
+            Type::Map(Box::new(Type::Str), Box::new(Type::Int))
+        );
+        assert_eq!(
+            parse_type_str("(Int, String)"),
+            Type::Tuple(vec![Type::Int, Type::Str])
+        );
     }
 
     #[test]
@@ -431,6 +497,10 @@ mod tests {
         assert!(Type::Int.compatible(&Type::Float)); // widening
         assert!(Type::Result(Box::new(Type::Int), Box::new(Type::Str))
             .compatible(&Type::Result(Box::new(Type::Int), Box::new(Type::Str))));
+        assert!(Type::Map(Box::new(Type::Str), Box::new(Type::Int))
+            .compatible(&Type::Map(Box::new(Type::Str), Box::new(Type::Int))));
+        assert!(!Type::Map(Box::new(Type::Str), Box::new(Type::Int))
+            .compatible(&Type::Map(Box::new(Type::Int), Box::new(Type::Int))));
     }
 
     #[test]
@@ -471,6 +541,14 @@ mod tests {
         assert_eq!(
             parse_type_str_strict("List<Option<Float>>").unwrap(),
             Type::List(Box::new(Type::Option(Box::new(Type::Float))))
+        );
+        assert_eq!(
+            parse_type_str_strict("Map<String, Int>").unwrap(),
+            Type::Map(Box::new(Type::Str), Box::new(Type::Int))
+        );
+        assert_eq!(
+            parse_type_str_strict("(Int, String)").unwrap(),
+            Type::Tuple(vec![Type::Int, Type::Str])
         );
     }
 
@@ -519,6 +597,9 @@ mod tests {
     fn test_strict_parser_rejects_malformed_generics() {
         assert!(parse_type_str_strict("Result<Int>").is_err());
         assert!(parse_type_str_strict("Option<Int, String>").is_err());
+        assert!(parse_type_str_strict("Map<Int>").is_err());
+        assert!(parse_type_str_strict("Map<List<Int>, String>").is_err());
+        assert!(parse_type_str_strict("(Int)").is_err());
         assert!(parse_type_str_strict("Fn(Int) Int").is_err());
         assert!(parse_type_str_strict("Fn(Int) -> ! [Console]").is_err());
     }

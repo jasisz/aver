@@ -310,6 +310,63 @@ impl TypeChecker {
             self.insert_sig(name, params, ret.clone(), effects);
         }
 
+        // Map namespace
+        let map_sigs: &[(&str, &[Type], Type, &[&str])] = &[
+            (
+                "Map.empty",
+                &[],
+                Type::Map(Box::new(any()), Box::new(any())),
+                &[],
+            ),
+            (
+                "Map.set",
+                &[Type::Unknown, Type::Unknown, Type::Unknown],
+                Type::Map(Box::new(any()), Box::new(any())),
+                &[],
+            ),
+            (
+                "Map.get",
+                &[Type::Unknown, Type::Unknown],
+                Type::Option(Box::new(any())),
+                &[],
+            ),
+            (
+                "Map.remove",
+                &[Type::Unknown, Type::Unknown],
+                Type::Map(Box::new(any()), Box::new(any())),
+                &[],
+            ),
+            ("Map.has", &[Type::Unknown, Type::Unknown], Type::Bool, &[]),
+            (
+                "Map.keys",
+                &[Type::Unknown],
+                Type::List(Box::new(any())),
+                &[],
+            ),
+            (
+                "Map.values",
+                &[Type::Unknown],
+                Type::List(Box::new(any())),
+                &[],
+            ),
+            (
+                "Map.entries",
+                &[Type::Unknown],
+                Type::List(Box::new(Type::Tuple(vec![any(), any()]))),
+                &[],
+            ),
+            ("Map.len", &[Type::Unknown], Type::Int, &[]),
+            (
+                "Map.fromList",
+                &[Type::Unknown],
+                Type::Map(Box::new(any()), Box::new(any())),
+                &[],
+            ),
+        ];
+        for (name, params, ret, effects) in map_sigs {
+            self.insert_sig(name, params, ret.clone(), effects);
+        }
+
         // Result.Ok / Result.Err / Option.Some — constructor signatures
         self.insert_sig(
             "Result.Ok",

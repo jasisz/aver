@@ -70,6 +70,8 @@ pub enum Value {
     Some(Box<Value>),
     None,
     List(Vec<Value>),
+    Tuple(Vec<Value>),
+    Map(HashMap<Value, Value>),
     /// Shared list view (`items[start..]`) to avoid O(n^2) tail copying in
     /// recursive list processing.
     ListSlice {
@@ -119,7 +121,13 @@ impl PartialEq for Value {
 
         match (self, other) {
             (Value::Int(a), Value::Int(b)) => a == b,
-            (Value::Float(a), Value::Float(b)) => a == b,
+            (Value::Float(a), Value::Float(b)) => {
+                if a.is_nan() || b.is_nan() {
+                    a.to_bits() == b.to_bits()
+                } else {
+                    a == b
+                }
+            }
             (Value::Str(a), Value::Str(b)) => a == b,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Unit, Value::Unit) => true,
@@ -127,6 +135,8 @@ impl PartialEq for Value {
             (Value::Err(a), Value::Err(b)) => a == b,
             (Value::Some(a), Value::Some(b)) => a == b,
             (Value::None, Value::None) => true,
+            (Value::Tuple(a), Value::Tuple(b)) => a == b,
+            (Value::Map(a), Value::Map(b)) => a == b,
             (
                 Value::Fn {
                     name: n1,
@@ -177,6 +187,121 @@ impl PartialEq for Value {
                 },
             ) => n1 == n2 && m1 == m2,
             _ => false,
+        }
+    }
+}
+
+impl Eq for Value {}
+
+impl std::hash::Hash for Value {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        if let Some(items) = list_slice(self) {
+            8u8.hash(state);
+            items.len().hash(state);
+            for item in items {
+                item.hash(state);
+            }
+            return;
+        }
+
+        match self {
+            Value::Int(i) => {
+                0u8.hash(state);
+                i.hash(state);
+            }
+            Value::Float(f) => {
+                1u8.hash(state);
+                let bits = if *f == 0.0 {
+                    0.0f64.to_bits()
+                } else {
+                    f.to_bits()
+                };
+                bits.hash(state);
+            }
+            Value::Str(s) => {
+                2u8.hash(state);
+                s.hash(state);
+            }
+            Value::Bool(b) => {
+                3u8.hash(state);
+                b.hash(state);
+            }
+            Value::Unit => {
+                4u8.hash(state);
+            }
+            Value::Ok(v) => {
+                5u8.hash(state);
+                v.hash(state);
+            }
+            Value::Err(v) => {
+                6u8.hash(state);
+                v.hash(state);
+            }
+            Value::Some(v) => {
+                7u8.hash(state);
+                v.hash(state);
+            }
+            Value::None => {
+                9u8.hash(state);
+            }
+            Value::Map(map) => {
+                10u8.hash(state);
+                let mut entries = map.iter().collect::<Vec<_>>();
+                entries.sort_by(|(k1, _), (k2, _)| aver_repr(k1).cmp(&aver_repr(k2)));
+                for (k, v) in entries {
+                    k.hash(state);
+                    v.hash(state);
+                }
+            }
+            Value::Tuple(items) => {
+                16u8.hash(state);
+                items.hash(state);
+            }
+            Value::Fn {
+                name,
+                params,
+                effects,
+                body,
+                ..
+            } => {
+                11u8.hash(state);
+                name.hash(state);
+                params.hash(state);
+                effects.hash(state);
+                format!("{:?}", body).hash(state);
+            }
+            Value::Builtin(name) => {
+                12u8.hash(state);
+                name.hash(state);
+            }
+            Value::Variant {
+                type_name,
+                variant,
+                fields,
+            } => {
+                13u8.hash(state);
+                type_name.hash(state);
+                variant.hash(state);
+                fields.hash(state);
+            }
+            Value::Record { type_name, fields } => {
+                14u8.hash(state);
+                type_name.hash(state);
+                fields.hash(state);
+            }
+            Value::Namespace { name, members } => {
+                15u8.hash(state);
+                name.hash(state);
+                let mut keys = members.keys().collect::<Vec<_>>();
+                keys.sort();
+                for key in keys {
+                    key.hash(state);
+                    if let Some(value) = members.get(key) {
+                        value.hash(state);
+                    }
+                }
+            }
+            Value::List(_) | Value::ListSlice { .. } => unreachable!("list hashed above"),
         }
     }
 }
@@ -274,6 +399,22 @@ pub fn aver_repr(val: &Value) -> String {
             let parts: Vec<String> = items.iter().map(aver_repr_inner).collect();
             format!("[{}]", parts.join(", "))
         }
+        Value::Tuple(items) => {
+            let parts: Vec<String> = items.iter().map(aver_repr_inner).collect();
+            format!("({})", parts.join(", "))
+        }
+        Value::Map(entries) => {
+            let mut pairs = entries
+                .iter()
+                .map(|(k, v)| (aver_repr_inner(k), aver_repr_inner(v)))
+                .collect::<Vec<_>>();
+            pairs.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
+            let parts = pairs
+                .into_iter()
+                .map(|(k, v)| format!("{}: {}", k, v))
+                .collect::<Vec<_>>();
+            format!("{{{}}}", parts.join(", "))
+        }
         Value::Fn { name, .. } => format!("<fn {}>", name),
         Value::Builtin(name) => format!("<builtin {}>", name),
         Value::Variant {
@@ -301,6 +442,10 @@ pub fn aver_repr(val: &Value) -> String {
 fn aver_repr_inner(val: &Value) -> String {
     match val {
         Value::Str(s) => format!("\"{}\"", s),
+        Value::Tuple(items) => {
+            let parts: Vec<String> = items.iter().map(aver_repr_inner).collect();
+            format!("({})", parts.join(", "))
+        }
         Value::List(_) | Value::ListSlice { .. } => {
             let items = list_slice(val).expect("list variants must have a slice view");
             let parts: Vec<String> = items.iter().map(aver_repr_inner).collect();
