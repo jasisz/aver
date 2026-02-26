@@ -7,6 +7,9 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use crate::ast::*;
+use crate::replay::{
+    json_to_string, value_to_json, values_to_json_lossy, EffectRecord, JsonValue, RecordedOutcome,
+};
 use crate::services::{console, disk, http, http_server, tcp};
 use crate::source::{canonicalize_path, find_module_file, parse_source};
 use crate::types::{float, int, list, string};
@@ -35,6 +38,13 @@ struct ServerResponse {
     headers: Vec<(String, String)>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionMode {
+    Normal,
+    Record,
+    Replay,
+}
+
 pub struct Interpreter {
     pub env: Env,
     module_cache: HashMap<String, Value>,
@@ -48,6 +58,11 @@ pub struct Interpreter {
     memo_fns: HashSet<String>,
     /// Per-function memo cache: fn_name → (hash(args) → result).
     memo_cache: HashMap<String, HashMap<u64, Value>>,
+    execution_mode: ExecutionMode,
+    recorded_effects: Vec<EffectRecord>,
+    replay_effects: Vec<EffectRecord>,
+    replay_pos: usize,
+    validate_replay_args: bool,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,7 +129,59 @@ impl Interpreter {
             active_local_slots: None,
             memo_fns: HashSet::new(),
             memo_cache: HashMap::new(),
+            execution_mode: ExecutionMode::Normal,
+            recorded_effects: Vec::new(),
+            replay_effects: Vec::new(),
+            replay_pos: 0,
+            validate_replay_args: false,
         }
+    }
+
+    pub fn execution_mode(&self) -> ExecutionMode {
+        self.execution_mode
+    }
+
+    pub fn set_execution_mode_normal(&mut self) {
+        self.execution_mode = ExecutionMode::Normal;
+        self.recorded_effects.clear();
+        self.replay_effects.clear();
+        self.replay_pos = 0;
+        self.validate_replay_args = false;
+    }
+
+    pub fn start_recording(&mut self) {
+        self.execution_mode = ExecutionMode::Record;
+        self.recorded_effects.clear();
+        self.replay_effects.clear();
+        self.replay_pos = 0;
+        self.validate_replay_args = false;
+    }
+
+    pub fn start_replay(&mut self, effects: Vec<EffectRecord>, validate_args: bool) {
+        self.execution_mode = ExecutionMode::Replay;
+        self.replay_effects = effects;
+        self.replay_pos = 0;
+        self.validate_replay_args = validate_args;
+        self.recorded_effects.clear();
+    }
+
+    pub fn take_recorded_effects(&mut self) -> Vec<EffectRecord> {
+        std::mem::take(&mut self.recorded_effects)
+    }
+
+    pub fn replay_progress(&self) -> (usize, usize) {
+        (self.replay_pos, self.replay_effects.len())
+    }
+
+    pub fn ensure_replay_consumed(&self) -> Result<(), RuntimeError> {
+        if self.execution_mode == ExecutionMode::Replay
+            && self.replay_pos < self.replay_effects.len()
+        {
+            return Err(RuntimeError::ReplayUnconsumed {
+                remaining: self.replay_effects.len() - self.replay_pos,
+            });
+        }
+        Ok(())
     }
 
     /// Mark a set of function names as eligible for auto-memoization.
@@ -976,6 +1043,76 @@ impl Interpreter {
     }
 
     fn call_builtin(&mut self, name: &str, args: &[Value]) -> Result<Value, RuntimeError> {
+        let is_effectful = !Self::builtin_effects(name).is_empty();
+        if is_effectful {
+            return self.execute_effect(name, args);
+        }
+        self.dispatch_builtin(name, args)
+    }
+
+    fn execute_effect(&mut self, effect_type: &str, args: &[Value]) -> Result<Value, RuntimeError> {
+        match self.execution_mode {
+            ExecutionMode::Normal => self.dispatch_builtin(effect_type, args),
+            ExecutionMode::Record => {
+                let args_json = values_to_json_lossy(args);
+                let result = self.dispatch_builtin(effect_type, args);
+                let outcome = match &result {
+                    Ok(value) => RecordedOutcome::Value(
+                        value_to_json(value).map_err(RuntimeError::ReplaySerialization)?,
+                    ),
+                    Err(err) => RecordedOutcome::RuntimeError(err.to_string()),
+                };
+                let seq = self.recorded_effects.len() as u32 + 1;
+                self.recorded_effects.push(EffectRecord {
+                    seq,
+                    effect_type: effect_type.to_string(),
+                    args: args_json,
+                    outcome,
+                });
+                result
+            }
+            ExecutionMode::Replay => {
+                if self.replay_pos >= self.replay_effects.len() {
+                    return Err(RuntimeError::ReplayExhausted {
+                        effect_type: effect_type.to_string(),
+                        position: self.replay_pos + 1,
+                    });
+                }
+
+                let record = self.replay_effects[self.replay_pos].clone();
+                if record.effect_type != effect_type {
+                    return Err(RuntimeError::ReplayMismatch {
+                        seq: record.seq,
+                        expected: record.effect_type,
+                        got: effect_type.to_string(),
+                    });
+                }
+
+                if self.validate_replay_args {
+                    let got_args = values_to_json_lossy(args);
+                    if got_args != record.args {
+                        let expected = json_to_string(&JsonValue::Array(record.args.clone()));
+                        let got = json_to_string(&JsonValue::Array(got_args));
+                        return Err(RuntimeError::ReplayArgsMismatch {
+                            seq: record.seq,
+                            effect_type: effect_type.to_string(),
+                            expected,
+                            got,
+                        });
+                    }
+                }
+
+                self.replay_pos += 1;
+                match record.outcome {
+                    RecordedOutcome::Value(value_json) => crate::replay::json_to_value(&value_json)
+                        .map_err(RuntimeError::ReplaySerialization),
+                    RecordedOutcome::RuntimeError(msg) => Err(RuntimeError::Error(msg)),
+                }
+            }
+        }
+    }
+
+    fn dispatch_builtin(&mut self, name: &str, args: &[Value]) -> Result<Value, RuntimeError> {
         match name {
             "__ctor:Result.Ok" => {
                 if args.len() != 1 {

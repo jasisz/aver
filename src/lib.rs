@@ -4,6 +4,7 @@ pub mod checker;
 pub mod interpreter;
 pub mod lexer;
 pub mod parser;
+pub mod replay;
 pub mod resolver;
 pub mod services;
 pub mod source;

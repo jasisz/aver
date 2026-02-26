@@ -26,6 +26,32 @@ pub enum RuntimeError {
     /// Never surfaces to the user. Boxed to keep RuntimeError small.
     #[error("Tail call")]
     TailCall(Box<(String, Vec<Value>)>),
+    #[error("Replay mismatch at seq {seq}: expected '{expected}', got '{got}'")]
+    ReplayMismatch {
+        seq: u32,
+        expected: String,
+        got: String,
+    },
+    #[error(
+        "Replay args mismatch at seq {seq} for '{effect_type}': expected {expected}, got {got}"
+    )]
+    ReplayArgsMismatch {
+        seq: u32,
+        effect_type: String,
+        expected: String,
+        got: String,
+    },
+    #[error(
+        "Replay exhausted at position {position}: no recorded effect for call '{effect_type}'"
+    )]
+    ReplayExhausted {
+        effect_type: String,
+        position: usize,
+    },
+    #[error("Replay has {remaining} unconsumed effect(s)")]
+    ReplayUnconsumed { remaining: usize },
+    #[error("Replay serialization error: {0}")]
+    ReplaySerialization(String),
 }
 
 // ---------------------------------------------------------------------------

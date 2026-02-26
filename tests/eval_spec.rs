@@ -2247,3 +2247,106 @@ fn mySum(n: Int) -> Int
         Value::Int(55)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Replay / record tests
+// ---------------------------------------------------------------------------
+
+mod replay_tests {
+    use super::*;
+    use aver::replay::{EffectRecord, JsonValue, RecordedOutcome};
+    use aver::value::RuntimeError;
+    use std::collections::BTreeMap;
+
+    fn run_effect_fn(
+        src: &str,
+        fn_name: &str,
+        interp: &mut Interpreter,
+    ) -> Result<Value, RuntimeError> {
+        let items = parse(src);
+        for item in &items {
+            if let TopLevel::FnDef(fd) = item {
+                interp.exec_fn_def(fd).expect("exec_fn_def failed");
+            }
+        }
+        let fn_val = interp.lookup(fn_name).expect("fn not found");
+        let effects = Interpreter::callable_declared_effects(&fn_val);
+        interp.call_value_with_effects_pub(fn_val, vec![], fn_name, effects)
+    }
+
+    #[test]
+    fn record_mode_logs_console_effect() {
+        let src = r#"
+fn ping() -> Unit
+    ! [Console]
+    = Console.print("hello")
+"#;
+        let mut interp = Interpreter::new();
+        interp.start_recording();
+        let out = run_effect_fn(src, "ping", &mut interp).expect("ping failed");
+        assert_eq!(out, Value::Unit);
+
+        let effects = interp.take_recorded_effects();
+        assert_eq!(effects.len(), 1);
+        assert_eq!(effects[0].seq, 1);
+        assert_eq!(effects[0].effect_type, "Console.print");
+        assert_eq!(
+            effects[0].args,
+            vec![JsonValue::String("hello".to_string())]
+        );
+        assert_eq!(effects[0].outcome, RecordedOutcome::Value(JsonValue::Null));
+    }
+
+    #[test]
+    fn replay_mode_substitutes_recorded_result() {
+        let src = r#"
+fn check() -> Bool
+    ! [Disk]
+    = Disk.exists("/definitely/not/existing/path")
+"#;
+        let mut interp = Interpreter::new();
+        interp.start_replay(
+            vec![EffectRecord {
+                seq: 1,
+                effect_type: "Disk.exists".to_string(),
+                args: vec![JsonValue::String(
+                    "/definitely/not/existing/path".to_string(),
+                )],
+                outcome: RecordedOutcome::Value(JsonValue::Bool(true)),
+            }],
+            true,
+        );
+        let out = run_effect_fn(src, "check", &mut interp).expect("check failed");
+        assert_eq!(out, Value::Bool(true));
+        interp
+            .ensure_replay_consumed()
+            .expect("all effects should be consumed");
+    }
+
+    #[test]
+    fn replay_mode_detects_effect_order_mismatch() {
+        let src = r#"
+fn check() -> Bool
+    ! [Disk]
+    = Disk.exists("/tmp/x")
+"#;
+        let mut interp = Interpreter::new();
+        let mut outcome = BTreeMap::new();
+        outcome.insert("$ok".to_string(), JsonValue::String("x".to_string()));
+        interp.start_replay(
+            vec![EffectRecord {
+                seq: 1,
+                effect_type: "Http.get".to_string(),
+                args: vec![JsonValue::String("https://example.com".to_string())],
+                outcome: RecordedOutcome::Value(JsonValue::Object(outcome)),
+            }],
+            false,
+        );
+        let err = run_effect_fn(src, "check", &mut interp).expect_err("expected replay mismatch");
+        assert!(
+            matches!(err, RuntimeError::ReplayMismatch { .. }),
+            "expected ReplayMismatch, got {:?}",
+            err
+        );
+    }
+}

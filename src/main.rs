@@ -1,17 +1,24 @@
 use std::fs;
 use std::io::{self, BufRead, Write};
+use std::path::{Path, PathBuf};
 use std::process;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Parser as ClapParser, Subcommand};
 use colored::Colorize;
 
 use aver::ast::{DecisionBlock, FnDef, Stmt, TopLevel, TypeDef, VerifyBlock};
+use aver::call_graph::find_recursive_fns;
 use aver::checker::{check_module_intent, expr_to_str, index_decisions, run_verify};
 use aver::interpreter::{aver_display, aver_repr, EnvFrame, Interpreter, Value};
+use aver::replay::{
+    first_diff_path, format_json, json_to_value, parse_session_recording,
+    session_recording_to_string_pretty, value_to_json, JsonValue, RecordedOutcome,
+    SessionRecording,
+};
 use aver::resolver;
-use aver::tco;
 use aver::source::{find_module_file, parse_source};
-use aver::call_graph::find_recursive_fns;
+use aver::tco;
 use aver::types::checker::{run_type_check_full, run_type_check_with_base};
 
 #[derive(ClapParser)]
@@ -32,6 +39,9 @@ enum Commands {
         /// Also run verify blocks after execution
         #[arg(long)]
         verify: bool,
+        /// Record effect calls and persist a replay session JSON into this directory
+        #[arg(long)]
+        record: Option<String>,
     },
     /// Static analysis (intent presence, module size)
     Check {
@@ -49,6 +59,19 @@ enum Commands {
         /// Resolve `depends [...]` from this root (default: current working directory)
         #[arg(long)]
         module_root: Option<String>,
+    },
+    /// Replay an execution from recorded effects JSON
+    Replay {
+        recording: String,
+        /// Show expected vs got output and first JSON diff path
+        #[arg(long)]
+        diff: bool,
+        /// Exit with non-zero when replay output differs from recording
+        #[arg(long)]
+        test: bool,
+        /// Validate effect arguments in addition to effect sequence/type
+        #[arg(long = "check-args")]
+        check_args: bool,
     },
     /// Interactive REPL
     Repl,
@@ -122,8 +145,9 @@ fn main() {
             file,
             module_root,
             verify,
+            record,
         } => {
-            cmd_run(file, module_root.as_deref(), *verify);
+            cmd_run(file, module_root.as_deref(), *verify, record.as_deref());
         }
         Commands::Check {
             file,
@@ -134,6 +158,14 @@ fn main() {
         }
         Commands::Verify { file, module_root } => {
             cmd_verify(file, module_root.as_deref());
+        }
+        Commands::Replay {
+            recording,
+            diff,
+            test,
+            check_args,
+        } => {
+            cmd_replay(recording, *diff, *test, *check_args);
         }
         Commands::Repl => {
             cmd_repl();
@@ -181,7 +213,9 @@ fn compute_memo_fns(
                 continue;
             }
             // All params must be memo-safe
-            let all_safe = params.iter().all(|ty| is_memo_safe_type(ty, &tc_result.memo_safe_types));
+            let all_safe = params
+                .iter()
+                .all(|ty| is_memo_safe_type(ty, &tc_result.memo_safe_types));
             if all_safe {
                 memo.insert(fn_name.clone());
             }
@@ -190,7 +224,10 @@ fn compute_memo_fns(
     memo
 }
 
-fn is_memo_safe_type(ty: &aver::types::Type, safe_named: &std::collections::HashSet<String>) -> bool {
+fn is_memo_safe_type(
+    ty: &aver::types::Type,
+    safe_named: &std::collections::HashSet<String>,
+) -> bool {
     use aver::types::Type;
     match ty {
         Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit => true,
@@ -200,23 +237,24 @@ fn is_memo_safe_type(ty: &aver::types::Type, safe_named: &std::collections::Hash
     }
 }
 
-fn cmd_run(file: &str, module_root_override: Option<&str>, run_verify_blocks: bool) {
-    let module_root = resolve_module_root(module_root_override);
-    let source = match read_file(file) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("{}", e.red());
-            process::exit(1);
+fn format_type_errors(errors: &[aver::types::checker::TypeError]) -> String {
+    let mut out = Vec::new();
+    for te in errors {
+        match te.line {
+            Some(line) => out.push(format!("error[{}]: {}", line, te.message)),
+            None => out.push(format!("error: {}", te.message)),
         }
-    };
+    }
+    out.join("\n")
+}
 
-    let mut items = match parse_file(&source) {
-        Ok(i) => i,
-        Err(e) => {
-            eprintln!("{}", e.red());
-            process::exit(1);
-        }
-    };
+fn compile_program_for_exec(
+    file: &str,
+    module_root_override: Option<&str>,
+) -> Result<(Interpreter, Vec<TopLevel>, String), String> {
+    let module_root = resolve_module_root(module_root_override);
+    let source = read_file(file)?;
+    let mut items = parse_file(&source)?;
 
     // TCO transform — rewrite tail-position calls in recursive SCCs
     tco::transform_program(&mut items);
@@ -224,11 +262,10 @@ fn cmd_run(file: &str, module_root_override: Option<&str>, run_verify_blocks: bo
     // Static type check — block execution on any error
     let tc_result = run_type_check_full(&items, Some(&module_root));
     if !tc_result.errors.is_empty() {
-        print_type_errors(&tc_result.errors);
-        process::exit(1);
+        return Err(format_type_errors(&tc_result.errors));
     }
 
-    // Compile-time variable resolution — replaces Ident with Resolved(depth, slot) in fn bodies
+    // Compile-time variable resolution
     resolver::resolve_program(&mut items);
 
     // Auto-memoization: find pure recursive fns with memo-safe params
@@ -237,10 +274,7 @@ fn cmd_run(file: &str, module_root_override: Option<&str>, run_verify_blocks: bo
     let mut interp = Interpreter::new();
     interp.enable_memo(memo_fns);
 
-    if let Err(e) = load_dep_modules(&mut interp, &items, &module_root) {
-        eprintln!("{}", e.red());
-        process::exit(1);
-    }
+    load_dep_modules(&mut interp, &items, &module_root)?;
 
     // Register effect sets first (needed before FnDef expansion)
     for item in &items {
@@ -259,45 +293,279 @@ fn cmd_run(file: &str, module_root_override: Option<&str>, run_verify_blocks: bo
     // Register all function definitions
     for item in &items {
         if let TopLevel::FnDef(fd) = item {
-            if let Err(e) = interp.exec_fn_def(fd) {
-                eprintln!("{}", e.to_string().red());
+            interp.exec_fn_def(fd).map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok((interp, items, module_root))
+}
+
+fn run_top_level_statements(interp: &mut Interpreter, items: &[TopLevel]) -> Result<(), String> {
+    for item in items {
+        if let TopLevel::Stmt(stmt) = item {
+            interp.exec_stmt(stmt).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn run_entry_function(
+    interp: &mut Interpreter,
+    entry_fn: &str,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let fn_val = interp
+        .lookup(entry_fn)
+        .map_err(|_| format!("Entry function '{}' not found", entry_fn))?;
+    let allowed = Interpreter::callable_declared_effects(&fn_val);
+    interp
+        .call_value_with_effects_pub(fn_val, args, &format!("<{}>", entry_fn), allowed)
+        .map_err(|e| e.to_string())
+}
+
+fn generate_request_id() -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("rec-{}", millis)
+}
+
+fn generate_timestamp() -> String {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("unix-{}", secs)
+}
+
+fn write_session_recording(dir: &str, recording: &SessionRecording) -> Result<PathBuf, String> {
+    let dir_path = Path::new(dir);
+    fs::create_dir_all(dir_path)
+        .map_err(|e| format!("Cannot create recording dir '{}': {}", dir, e))?;
+    let out_path = dir_path.join(format!("{}.json", recording.request_id));
+    let json = session_recording_to_string_pretty(recording);
+    fs::write(&out_path, json)
+        .map_err(|e| format!("Cannot write recording '{}': {}", out_path.display(), e))?;
+    Ok(out_path)
+}
+
+fn collect_recording_files(path: &str) -> Result<Vec<PathBuf>, String> {
+    let p = Path::new(path);
+    if p.is_file() {
+        return Ok(vec![p.to_path_buf()]);
+    }
+    if !p.is_dir() {
+        return Err(format!(
+            "Recording path '{}' is neither file nor directory",
+            path
+        ));
+    }
+    let mut files = Vec::new();
+    let entries = fs::read_dir(p)
+        .map_err(|e| format!("Cannot read recording directory '{}': {}", path, e))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let entry_path = entry.path();
+        if entry_path.is_file()
+            && entry_path
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(|s| s.eq_ignore_ascii_case("json"))
+                .unwrap_or(false)
+        {
+            files.push(entry_path);
+        }
+    }
+    files.sort();
+    if files.is_empty() {
+        return Err(format!("No .json recordings found in '{}'", path));
+    }
+    Ok(files)
+}
+
+fn decode_entry_args(input: &JsonValue) -> Result<Vec<Value>, String> {
+    let val = json_to_value(input)?;
+    match val {
+        Value::Unit => Ok(vec![]),
+        Value::List(args) => Ok(args),
+        other => Ok(vec![other]),
+    }
+}
+
+fn replay_recording_file(path: &Path, diff: bool, check_args: bool) -> Result<bool, String> {
+    let raw = fs::read_to_string(path)
+        .map_err(|e| format!("Cannot read recording '{}': {}", path.display(), e))?;
+    let recording: SessionRecording = parse_session_recording(&raw)
+        .map_err(|e| format!("Invalid recording JSON '{}': {}", path.display(), e))?;
+
+    let (mut interp, items, _) =
+        compile_program_for_exec(&recording.program_file, Some(&recording.module_root))?;
+    interp.start_replay(recording.effects.clone(), check_args);
+
+    run_top_level_statements(&mut interp, &items)?;
+    let entry_args = decode_entry_args(&recording.input)?;
+    let run_out = run_entry_function(&mut interp, &recording.entry_fn, entry_args);
+    let actual_outcome = match run_out {
+        Ok(Value::Err(err)) => RecordedOutcome::RuntimeError(format!(
+            "{} returned error: {}",
+            recording.entry_fn,
+            aver_repr(&err)
+        )),
+        Ok(v) => RecordedOutcome::Value(value_to_json(&v)?),
+        Err(e) => RecordedOutcome::RuntimeError(e),
+    };
+    interp.ensure_replay_consumed().map_err(|e| e.to_string())?;
+
+    let (consumed, total) = interp.replay_progress();
+    let matched = actual_outcome == recording.output;
+
+    println!();
+    println!("Replay: {}", path.display());
+    println!("Effects: {} replayed ({} matched)", consumed, total);
+    println!(
+        "Output:  {}",
+        if matched {
+            "MATCH".green().to_string()
+        } else {
+            "DIFFERS".red().to_string()
+        }
+    );
+
+    if diff && !matched {
+        match (&recording.output, &actual_outcome) {
+            (RecordedOutcome::Value(expected), RecordedOutcome::Value(got)) => {
+                println!();
+                println!("Expected: {}", format_json(expected));
+                println!("Got:      {}", format_json(got));
+                if let Some(path) = first_diff_path(expected, got) {
+                    println!("Diff at:  {}", path);
+                }
+            }
+            (RecordedOutcome::RuntimeError(expected), RecordedOutcome::RuntimeError(got)) => {
+                println!("Expected runtime error: {}", expected);
+                println!("Got runtime error:      {}", got);
+            }
+            (expected, got) => {
+                println!("Expected outcome: {:?}", expected);
+                println!("Got outcome:      {:?}", got);
+            }
+        }
+    }
+
+    Ok(matched)
+}
+
+fn cmd_replay(recording: &str, diff: bool, test_mode: bool, check_args: bool) {
+    let files = match collect_recording_files(recording) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+
+    let mut all_match = true;
+    for file in files {
+        match replay_recording_file(&file, diff, check_args) {
+            Ok(matched) => {
+                if !matched {
+                    all_match = false;
+                }
+            }
+            Err(e) => {
+                eprintln!("{}", e.red());
+                all_match = false;
+            }
+        }
+    }
+
+    if test_mode && !all_match {
+        process::exit(1);
+    }
+}
+
+fn cmd_run(
+    file: &str,
+    module_root_override: Option<&str>,
+    run_verify_blocks: bool,
+    record_dir: Option<&str>,
+) {
+    if run_verify_blocks && record_dir.is_some() {
+        eprintln!(
+            "{}",
+            "Cannot combine --verify and --record in one run; record should capture only main flow."
+                .red()
+        );
+        process::exit(1);
+    }
+
+    let (mut interp, items, module_root) =
+        match compile_program_for_exec(file, module_root_override) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("{}", e.red());
+                process::exit(1);
+            }
+        };
+
+    if record_dir.is_some() {
+        interp.start_recording();
+    }
+
+    let mut runtime_failure: Option<String> = run_top_level_statements(&mut interp, &items).err();
+
+    let mut main_result: Option<Result<Value, String>> = None;
+    if runtime_failure.is_none() {
+        if interp.lookup("main").is_ok() {
+            let result = run_entry_function(&mut interp, "main", vec![]);
+            if let Ok(Value::Err(err)) = &result {
+                runtime_failure = Some(format!("Main returned error: {}", aver_repr(err)));
+            } else if let Err(e) = &result {
+                runtime_failure = Some(e.clone());
+            }
+            main_result = Some(result);
+        }
+    }
+
+    if let Some(dir) = record_dir {
+        let output = if let Some(msg) = &runtime_failure {
+            RecordedOutcome::RuntimeError(msg.clone())
+        } else {
+            match &main_result {
+                Some(Ok(v)) => match value_to_json(v) {
+                    Ok(json) => RecordedOutcome::Value(json),
+                    Err(e) => RecordedOutcome::RuntimeError(e),
+                },
+                Some(Err(e)) => RecordedOutcome::RuntimeError(e.clone()),
+                None => RecordedOutcome::Value(JsonValue::Null),
+            }
+        };
+
+        let recording = SessionRecording {
+            schema_version: 1,
+            request_id: generate_request_id(),
+            timestamp: generate_timestamp(),
+            program_file: file.to_string(),
+            module_root: module_root.clone(),
+            entry_fn: "main".to_string(),
+            input: JsonValue::Null,
+            effects: interp.take_recorded_effects(),
+            output,
+        };
+
+        match write_session_recording(dir, &recording) {
+            Ok(path) => println!("Recording saved: {}", path.display()),
+            Err(e) => {
+                eprintln!("{}", e.red());
                 process::exit(1);
             }
         }
     }
 
-    // Run top-level statements that appear before main
-    for item in &items {
-        if let TopLevel::Stmt(s) = item {
-            if let Err(e) = interp.exec_stmt(s) {
-                eprintln!("{}", e.to_string().red());
-                process::exit(1);
-            }
-        }
-    }
-
-    // Run main() if it exists
-    match interp.lookup("main") {
-        Ok(main_fn) => {
-            let allowed = Interpreter::callable_declared_effects(&main_fn);
-            match interp.call_value_with_effects_pub(main_fn, vec![], "<main>", allowed) {
-                Err(e) => {
-                    eprintln!("{}", e.to_string().red());
-                    process::exit(1);
-                }
-                Ok(Value::Err(err)) => {
-                    eprintln!(
-                        "{}",
-                        format!("Main returned error: {}", aver_repr(&err)).red()
-                    );
-                    process::exit(1);
-                }
-                Ok(_) => {}
-            }
-        }
-        Err(_) => {
-            // No main() — that's fine, top-level statements already ran
-        }
+    if let Some(msg) = runtime_failure {
+        eprintln!("{}", msg.red());
+        process::exit(1);
     }
 
     // Optionally run verify blocks
