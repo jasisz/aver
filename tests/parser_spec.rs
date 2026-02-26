@@ -48,6 +48,7 @@ fn binding_int() {
         items,
         vec![TopLevel::Stmt(Stmt::Binding(
             "x".to_string(),
+            None,
             Expr::Literal(Literal::Int(42))
         ))]
     );
@@ -60,6 +61,7 @@ fn binding_string() {
         items,
         vec![TopLevel::Stmt(Stmt::Binding(
             "greeting".to_string(),
+            None,
             Expr::Literal(Literal::Str("hello".to_string()))
         ))]
     );
@@ -72,6 +74,7 @@ fn binding_bool_true() {
         items,
         vec![TopLevel::Stmt(Stmt::Binding(
             "flag".to_string(),
+            None,
             Expr::Literal(Literal::Bool(true))
         ))]
     );
@@ -84,13 +87,57 @@ fn binding_in_fn_body() {
     if let TopLevel::FnDef(fd) = &items[0] {
         if let FnBody::Block(stmts) = &*fd.body {
             assert!(
-                matches!(stmts[0], Stmt::Binding(_, _)),
+                matches!(stmts[0], Stmt::Binding(_, _, _)),
                 "first stmt should be Binding"
             );
             assert!(
                 matches!(stmts[1], Stmt::Expr(_)),
                 "second stmt should be Expr"
             );
+        } else {
+            panic!("expected block body");
+        }
+    } else {
+        panic!("expected FnDef");
+    }
+}
+
+#[test]
+fn typed_binding_parses_annotation() {
+    let items = parse("x: Int = 5");
+    assert_eq!(
+        items,
+        vec![TopLevel::Stmt(Stmt::Binding(
+            "x".to_string(),
+            Some("Int".to_string()),
+            Expr::Literal(Literal::Int(5))
+        ))]
+    );
+}
+
+#[test]
+fn typed_binding_generic_type() {
+    let items = parse("m: Map<String, Int> = Map.empty()");
+    if let TopLevel::Stmt(Stmt::Binding(name, type_ann, _)) = &items[0] {
+        assert_eq!(name, "m");
+        assert_eq!(type_ann.as_deref(), Some("Map<String, Int>"));
+    } else {
+        panic!("expected typed binding, got: {:?}", items[0]);
+    }
+}
+
+#[test]
+fn typed_binding_in_fn_body() {
+    let src = "fn f() -> Int\n    x: Int = 10\n    x\n";
+    let items = parse(src);
+    if let TopLevel::FnDef(fd) = &items[0] {
+        if let FnBody::Block(stmts) = &*fd.body {
+            if let Stmt::Binding(name, type_ann, _) = &stmts[0] {
+                assert_eq!(name, "x");
+                assert_eq!(type_ann.as_deref(), Some("Int"));
+            } else {
+                panic!("expected typed binding");
+            }
         } else {
             panic!("expected block body");
         }

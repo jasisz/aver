@@ -81,7 +81,7 @@ impl Interpreter {
 
     pub fn exec_stmt(&mut self, stmt: &Stmt) -> Result<Value, RuntimeError> {
         match stmt {
-            Stmt::Binding(name, expr) => {
+            Stmt::Binding(name, _, expr) => {
                 let val = self.eval_expr(expr)?;
                 self.define(name.clone(), val);
                 Ok(Value::Unit)
@@ -118,7 +118,7 @@ impl Interpreter {
         local_slots: &HashMap<String, u16>,
     ) -> Result<Value, RuntimeError> {
         match stmt {
-            Stmt::Binding(name, expr) => {
+            Stmt::Binding(name, _, expr) => {
                 let val = self.eval_expr(expr)?;
                 if let Some(&slot) = local_slots.get(name) {
                     self.define_slot(slot, val);

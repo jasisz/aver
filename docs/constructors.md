@@ -108,5 +108,5 @@ callee starts with UpperCamel?
 
 ## What this replaces
 
-- `Expr::TypeAscription` — removed (2026-02-26). `:` no longer appears in expressions.
+- `Expr::TypeAscription` — removed (2026-02-26). `:` no longer appears in expressions. Typed bindings (`name: Type = expr`) reuse `:` in declaration position instead.
 - Ad-hoc lookahead heuristics for distinguishing records from function calls.

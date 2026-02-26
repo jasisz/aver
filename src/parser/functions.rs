@@ -149,7 +149,7 @@ impl Parser {
                 let expr = self.parse_match()?;
                 stmts.push(Stmt::Expr(expr));
             } else if matches!(&self.current().kind, TokenKind::Ident(_))
-                && matches!(&self.peek(1).kind, TokenKind::Assign)
+                && matches!(&self.peek(1).kind, TokenKind::Assign | TokenKind::Colon)
             {
                 let stmt = self.parse_binding()?;
                 stmts.push(stmt);
@@ -164,7 +164,7 @@ impl Parser {
     }
 
     // -------------------------------------------------------------------------
-    // binding: `name = expr`
+    // binding: `name = expr` or `name: Type = expr`
     // -------------------------------------------------------------------------
     pub(super) fn parse_binding(&mut self) -> Result<Stmt, ParseError> {
         let name_tok =
@@ -173,9 +173,15 @@ impl Parser {
             TokenKind::Ident(s) => s,
             _ => unreachable!(),
         };
+        let type_ann = if self.check_exact(&TokenKind::Colon) {
+            self.advance();
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
         self.expect_exact(&TokenKind::Assign)?;
         let value = self.parse_expr()?;
         self.skip_newlines();
-        Ok(Stmt::Binding(name, value))
+        Ok(Stmt::Binding(name, type_ann, value))
     }
 }

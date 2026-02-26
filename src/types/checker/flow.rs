@@ -53,17 +53,41 @@ impl TypeChecker {
         for item in items {
             if let TopLevel::Stmt(stmt) = item {
                 match stmt {
-                    Stmt::Binding(name, expr) => {
+                    Stmt::Binding(name, type_ann, expr) => {
                         if self.locals.contains_key(name) {
                             self.error(format!("'{}' is already defined", name));
                         } else {
-                            if matches!(expr, Expr::List(elems) if elems.is_empty()) {
+                            if matches!(expr, Expr::List(elems) if elems.is_empty())
+                                && type_ann.is_none()
+                            {
                                 self.error(format!(
                                     "Binding '{}' to empty list literal is not allowed — immutable empty collection is dead code",
                                     name
                                 ));
                             }
-                            let ty = self.infer_type(expr);
+                            let inferred = self.infer_type(expr);
+                            let ty = if let Some(ann_src) = type_ann {
+                                match crate::types::parse_type_str_strict(ann_src) {
+                                    Ok(annotated) => {
+                                        if !Self::constraint_compatible(&inferred, &annotated) {
+                                            self.error(format!(
+                                                "Binding '{}': expression has type {}, annotation says {}",
+                                                name, inferred.display(), annotated.display()
+                                            ));
+                                        }
+                                        annotated
+                                    }
+                                    Err(unknown) => {
+                                        self.error(format!(
+                                            "Unknown type '{}' in binding annotation",
+                                            unknown
+                                        ));
+                                        inferred
+                                    }
+                                }
+                            } else {
+                                inferred
+                            };
                             self.check_effects_in_expr(expr, "<top-level>", &no_effects);
                             self.locals.insert(name.clone(), ty);
                         }
@@ -111,17 +135,41 @@ impl TypeChecker {
         let mut last = Type::Unit;
         for stmt in stmts {
             match stmt {
-                Stmt::Binding(name, expr) => {
+                Stmt::Binding(name, type_ann, expr) => {
                     if self.locals.contains_key(name) {
                         self.error(format!("'{}' is already defined in '{}'", name, fn_name));
                     } else {
-                        if matches!(expr, Expr::List(elems) if elems.is_empty()) {
+                        if matches!(expr, Expr::List(elems) if elems.is_empty())
+                            && type_ann.is_none()
+                        {
                             self.error(format!(
                                 "Binding '{}' to empty list literal is not allowed — immutable empty collection is dead code",
                                 name
                             ));
                         }
-                        let ty = self.infer_type(expr);
+                        let inferred = self.infer_type(expr);
+                        let ty = if let Some(ann_src) = type_ann {
+                            match crate::types::parse_type_str_strict(ann_src) {
+                                Ok(annotated) => {
+                                    if !Self::constraint_compatible(&inferred, &annotated) {
+                                        self.error(format!(
+                                            "Binding '{}': expression has type {}, annotation says {}",
+                                            name, inferred.display(), annotated.display()
+                                        ));
+                                    }
+                                    annotated
+                                }
+                                Err(unknown) => {
+                                    self.error(format!(
+                                        "Unknown type '{}' in binding annotation",
+                                        unknown
+                                    ));
+                                    inferred
+                                }
+                            }
+                        } else {
+                            inferred
+                        };
                         self.check_effects_in_expr(expr, fn_name, caller_effects);
                         self.locals.insert(name.clone(), ty);
                     }

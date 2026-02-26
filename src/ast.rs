@@ -77,7 +77,7 @@ pub enum Expr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
-    Binding(String, Expr),
+    Binding(String, Option<String>, Expr),
     Expr(Expr),
 }
 

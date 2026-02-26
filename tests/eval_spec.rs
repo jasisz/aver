@@ -2519,3 +2519,19 @@ fn check() -> Bool
         assert_eq!(restored, value);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Typed bindings
+// ---------------------------------------------------------------------------
+
+#[test]
+fn typed_binding_runtime_works() {
+    let src = concat!(
+        "fn f() -> Int\n",
+        "    x: Int = 42\n",
+        "    x\n",
+        "result = f()\n",
+    );
+    let interp = run_program(src);
+    assert_eq!(interp.lookup("result").unwrap(), Value::Int(42));
+}

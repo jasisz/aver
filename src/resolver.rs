@@ -71,7 +71,7 @@ fn collect_binding_slots(
 ) {
     for stmt in stmts {
         match stmt {
-            Stmt::Binding(name, _) => {
+            Stmt::Binding(name, _, _) => {
                 if !local_slots.contains_key(name) {
                     local_slots.insert(name.clone(), *next_slot);
                     *next_slot += 1;
@@ -256,7 +256,7 @@ fn resolve_expr(expr: &mut Expr, local_slots: &HashMap<String, u16>) {
 fn resolve_stmts(stmts: &mut [Stmt], local_slots: &HashMap<String, u16>) {
     for stmt in stmts {
         match stmt {
-            Stmt::Binding(_, expr) | Stmt::Expr(expr) => {
+            Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => {
                 resolve_expr(expr, local_slots);
             }
         }
@@ -340,6 +340,7 @@ mod tests {
             body: Rc::new(FnBody::Block(vec![
                 Stmt::Binding(
                     "y".to_string(),
+                    None,
                     Expr::BinOp(
                         BinOp::Add,
                         Box::new(Expr::Ident("x".to_string())),
@@ -360,7 +361,7 @@ mod tests {
             FnBody::Block(stmts) => {
                 // val y = x + 1  →  val y = Resolved(0,0) + 1
                 match &stmts[0] {
-                    Stmt::Binding(_, Expr::BinOp(_, left, _)) => {
+                    Stmt::Binding(_, _, Expr::BinOp(_, left, _)) => {
                         assert_eq!(**left, Expr::Resolved(0));
                     }
                     other => panic!("unexpected stmt: {:?}", other),

@@ -129,7 +129,7 @@ impl Parser {
                     kw
                 )))
             }
-            TokenKind::Ident(_) if matches!(&self.peek(1).kind, TokenKind::Assign) => {
+            TokenKind::Ident(_) if matches!(&self.peek(1).kind, TokenKind::Assign | TokenKind::Colon) => {
                 let stmt = self.parse_binding()?;
                 Ok(Some(TopLevel::Stmt(stmt)))
             }

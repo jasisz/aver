@@ -1141,3 +1141,39 @@ fn valid_no_effects_for_helpers() {
 fn error_duplicate_top_level_binding() {
     assert_error_containing("x = 1\nx = 2\n", "'x' is already defined");
 }
+
+// ---------------------------------------------------------------------------
+// Typed bindings: `name: Type = expr`
+// ---------------------------------------------------------------------------
+
+#[test]
+fn valid_typed_binding_matches_inferred() {
+    let src = "fn f() -> Int\n    x: Int = 5\n    x\n";
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_typed_binding_top_level() {
+    let src = "x: Int = 42\n";
+    assert_no_errors(src);
+}
+
+#[test]
+fn error_typed_binding_mismatch() {
+    let src = "fn f() -> Unit\n    x: Int = \"hello\"\n    x\n";
+    assert_error_containing(src, "Binding 'x': expression has type String, annotation says Int");
+}
+
+#[test]
+fn error_typed_binding_unknown_type() {
+    // Capitalized identifiers parse as Named("Foo"), producing a type mismatch
+    let src = "fn f() -> Unit\n    x: Foo = 5\n    x\n";
+    assert_error_containing(src, "Binding 'x': expression has type Int, annotation says Foo");
+}
+
+#[test]
+fn valid_typed_binding_empty_list_with_annotation() {
+    // With a type annotation, empty list binding should be allowed
+    let src = "fn f() -> List<Int>\n    xs: List<Int> = []\n    xs\n";
+    assert_no_errors(src);
+}

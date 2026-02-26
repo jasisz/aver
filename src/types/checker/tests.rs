@@ -12,6 +12,7 @@ fn errors(items: Vec<TopLevel>) -> Vec<String> {
 fn top_level_statements_are_typechecked() {
     let items = vec![TopLevel::Stmt(Stmt::Binding(
         "x".to_string(),
+        None,
         Expr::BinOp(
             BinOp::Add,
             Box::new(Expr::Literal(Literal::Int(1))),
@@ -56,10 +57,12 @@ fn duplicate_binding_is_rejected() {
     let items = vec![
         TopLevel::Stmt(Stmt::Binding(
             "x".to_string(),
+            None,
             Expr::Literal(Literal::Int(1)),
         )),
         TopLevel::Stmt(Stmt::Binding(
             "x".to_string(),
+            None,
             Expr::Literal(Literal::Int(2)),
         )),
     ];
