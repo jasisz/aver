@@ -56,12 +56,7 @@ fn resolve_fn(fd: &mut FnDef) {
     }
     fd.body = Rc::new(body);
 
-    // Build closure layout: we don't know at compile time which external names
-    // will be captured, so we leave closure_layout empty. The interpreter will
-    // still use the HashMap-based closure for external variable access.
-    // Only locals (params + body bindings) get slot-based lookup.
     fd.resolution = Some(FnResolution {
-        closure_layout: Vec::new(),
         local_count: next_slot,
         local_slots,
     });

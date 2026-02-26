@@ -153,10 +153,6 @@ impl Interpreter {
         self.push_env(EnvFrame::Owned(scope));
     }
 
-    fn push_shared_env(&mut self, scope: Rc<HashMap<String, Rc<Value>>>) {
-        self.push_env(EnvFrame::Shared(scope));
-    }
-
     fn pop_env(&mut self) {
         if self.env.len() > 1 {
             self.env.pop();
@@ -168,13 +164,9 @@ impl Interpreter {
             .env
             .last_mut()
             .ok_or_else(|| RuntimeError::Error("No active scope".to_string()))?;
-        if let EnvFrame::Shared(scope) = frame {
-            *frame = EnvFrame::Owned((**scope).clone());
-        }
         match frame {
             EnvFrame::Owned(scope) => Ok(scope),
-            EnvFrame::Shared(_) => Err(RuntimeError::Error("No mutable scope".to_string())),
-            EnvFrame::Slots(_) | EnvFrame::SharedSlots(_) => {
+            EnvFrame::Slots(_) => {
                 Err(RuntimeError::Error("Cannot define name in Slots frame".to_string()))
             }
         }
@@ -184,9 +176,8 @@ impl Interpreter {
         for frame in self.env.iter().rev() {
             let found = match frame {
                 EnvFrame::Owned(scope) => scope.get(name),
-                EnvFrame::Shared(scope) => scope.get(name),
                 // Slots frames are indexed by slot, not by name — skip in name-based lookup
-                EnvFrame::Slots(_) | EnvFrame::SharedSlots(_) => None,
+                EnvFrame::Slots(_) => None,
             };
             if let Some(v) = found {
                 return Ok(v);
@@ -213,7 +204,6 @@ impl Interpreter {
         let idx = self.env.len() - 1 - depth as usize;
         match &self.env[idx] {
             EnvFrame::Slots(v) => Ok(v[slot as usize].as_ref().clone()),
-            EnvFrame::SharedSlots(v) => Ok(v[slot as usize].as_ref().clone()),
             _ => {
                 // Fallback — shouldn't happen if resolver is correct
                 Err(RuntimeError::Error(
@@ -1191,22 +1181,11 @@ impl Interpreter {
     }
 
     pub fn exec_fn_def(&mut self, fd: &FnDef) -> Result<(), RuntimeError> {
-        // Fn sees only the global scope (env[0]) — no deep closure capture.
-        // All user-defined fns are top-level in Aver, so env[0] contains
-        // namespaces (Console, List, …), other fns, and top-level val bindings.
-        let closure = match &self.env[0] {
-            EnvFrame::Owned(scope) => Rc::new(scope.clone()),
-            EnvFrame::Shared(scope) => Rc::clone(scope),
-            _ => Rc::new(HashMap::new()),
-        };
-
         let val = Value::Fn {
             name: fd.name.clone(),
             params: fd.params.clone(),
             effects: self.expand_effects(&fd.effects),
             body: Rc::clone(&fd.body),
-            closure,
-            closure_slots: None,
             resolution: fd.resolution.clone(),
         };
         self.define(fd.name.clone(), val);
@@ -1462,7 +1441,6 @@ impl Interpreter {
             params,
             effects,
             body,
-            closure,
             resolution,
             ..
         } = fn_val
@@ -1502,7 +1480,8 @@ impl Interpreter {
 
         let prev_local_slots = self.active_local_slots.take();
         let result = if let Some(res) = resolution {
-            // Resolved path: single Slots frame with params + locals.
+            // Resolved path: push Slots frame only.
+            // lookup_rc skips Slots frames, so globals at env[0] are visible.
             let mut slots = vec![Rc::new(Value::Unit); res.local_count as usize];
             for ((param_name, _), arg_val) in params.iter().zip(args.into_iter()) {
                 if let Some(&slot) = res.local_slots.get(param_name) {
@@ -1510,29 +1489,28 @@ impl Interpreter {
                 }
             }
             self.active_local_slots = Some(res.local_slots.clone());
-            self.push_shared_env(Rc::clone(closure));
             self.push_env(EnvFrame::Slots(slots));
             let r = match &**body {
                 FnBody::Expr(e) => self.eval_expr(e),
                 FnBody::Block(stmts) => self.exec_body_resolved(stmts, &res.local_slots),
             };
             self.pop_env();
-            self.pop_env();
             r
         } else {
-            // Unresolved path (REPL, dynamically created fns): HashMap-based
+            // Unresolved path (REPL): isolate env to [globals, params]
+            // so the callee cannot see intermediate caller scopes.
             let mut params_scope = HashMap::new();
             for ((param_name, _), arg_val) in params.iter().zip(args.into_iter()) {
                 params_scope.insert(param_name.clone(), Rc::new(arg_val));
             }
-            self.push_shared_env(Rc::clone(closure));
+            let saved_frames: Vec<EnvFrame> = self.env.drain(1..).collect();
             self.push_owned_env(params_scope);
             let r = match &**body {
                 FnBody::Expr(e) => self.eval_expr(e),
                 FnBody::Block(stmts) => self.exec_body(stmts),
             };
             self.pop_env();
-            self.pop_env();
+            self.env.extend(saved_frames);
             r
         };
 
@@ -1540,7 +1518,7 @@ impl Interpreter {
         let result = match result {
             Err(RuntimeError::TailCall(boxed)) => {
                 let (target, new_args) = *boxed;
-                self.tco_trampoline(name, params, body, closure, resolution, target, new_args)
+                self.tco_trampoline(name, params, body, resolution, target, new_args)
             }
             other => other,
         };
@@ -1576,7 +1554,6 @@ impl Interpreter {
         orig_name: &str,
         orig_params: &[(String, String)],
         orig_body: &Rc<FnBody>,
-        orig_closure: &Rc<HashMap<String, Rc<Value>>>,
         orig_resolution: &Option<FnResolution>,
         first_target: String,
         first_args: Vec<Value>,
@@ -1584,7 +1561,6 @@ impl Interpreter {
         let mut cur_name = orig_name.to_string();
         let mut cur_params: Vec<(String, String)> = orig_params.to_vec();
         let mut cur_body = Rc::clone(orig_body);
-        let mut cur_closure = Rc::clone(orig_closure);
         let mut cur_resolution = orig_resolution.clone();
 
         // Handle the initial TailCall
@@ -1601,14 +1577,12 @@ impl Interpreter {
                         params: tp,
                         effects: te,
                         body: tb,
-                        closure: tc,
                         resolution: tr,
                         ..
                     } => {
                         cur_name = tn;
                         cur_params = tp;
                         cur_body = tb;
-                        cur_closure = tc;
                         cur_resolution = tr;
                         if let Some(frame) = self.call_stack.last_mut() {
                             frame.name = cur_name.clone();
@@ -1633,13 +1607,11 @@ impl Interpreter {
                     }
                 }
                 self.active_local_slots = Some(res.local_slots.clone());
-                self.push_shared_env(Rc::clone(&cur_closure));
                 self.push_env(EnvFrame::Slots(slots));
                 let r = match &*cur_body {
                     FnBody::Expr(e) => self.eval_expr(e),
                     FnBody::Block(stmts) => self.exec_body_resolved(stmts, &res.local_slots),
                 };
-                self.pop_env();
                 self.pop_env();
                 r
             } else {
@@ -1647,14 +1619,14 @@ impl Interpreter {
                 for ((param_name, _), arg_val) in cur_params.iter().zip(new_args.into_iter()) {
                     params_scope.insert(param_name.clone(), Rc::new(arg_val));
                 }
-                self.push_shared_env(Rc::clone(&cur_closure));
+                let saved_frames: Vec<EnvFrame> = self.env.drain(1..).collect();
                 self.push_owned_env(params_scope);
                 let r = match &*cur_body {
                     FnBody::Expr(e) => self.eval_expr(e),
                     FnBody::Block(stmts) => self.exec_body(stmts),
                 };
                 self.pop_env();
-                self.pop_env();
+                self.env.extend(saved_frames);
                 r
             };
 

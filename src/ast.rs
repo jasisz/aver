@@ -94,9 +94,7 @@ pub enum FnBody {
 /// so the interpreter can use `Vec<Rc<Value>>` instead of `HashMap` lookups.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnResolution {
-    /// Names of variables to capture from the enclosing scope, in slot order.
-    pub closure_layout: Vec<String>,
-    /// Total number of local slots needed (params + val/var bindings in body).
+    /// Total number of local slots needed (params + bindings in body).
     pub local_count: u16,
     /// Map from local variable name → slot index in the local `Slots` frame.
     pub local_slots: std::collections::HashMap<String, u16>,

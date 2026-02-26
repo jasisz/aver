@@ -36,7 +36,7 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 - **`Int` namespace** (`src/services/int_helpers.rs`): `Int.fromString`, `Int.fromFloat`, `Int.toString`, `Int.abs`, `Int.min`, `Int.max`, `Int.mod`, `Int.toFloat` — no effects
 - **`Float` namespace** (`src/services/float_helpers.rs`): `Float.fromString`, `Float.fromInt`, `Float.toString`, `Float.abs`, `Float.floor`, `Float.ceil`, `Float.round`, `Float.min`, `Float.max` — no effects
 - **`String` namespace** (`src/services/string_helpers.rs`): `String.length`, `String.byteLength`, `String.startsWith`, `String.endsWith`, `String.contains`, `String.slice`, `String.trim`, `String.split`, `String.replace`, `String.join`, `String.chars`, `String.fromInt`, `String.fromFloat`, `String.fromBool` — no effects
-- Closures: functions capture only global scope (env[0]) — all user-defined fns are top-level
+- **No closures**: all user-defined fns are top-level; at call time, the function sees globals (env[0]) + its own parameters — no closure capture at definition time
 - **Auto-memoization** (`src/call_graph.rs`, `src/types/checker.rs`, `src/interpreter/mod.rs`): pure recursive functions with memo-safe arguments (scalars, records/variants of scalars) are automatically memoized at runtime. Call graph is built from AST, Tarjan SCC detects recursion, and `call_fn_ref` checks/stores a per-function HashMap cache (capped at 4096 entries). No keyword needed — the compiler detects eligibility.
 - CLI with four subcommands: `run`, `verify`, `check`, `decisions`
 - `check` command: warns when a module has no `intent:` or a function with effects/Result return has no `?` description; warns if file exceeds 150 lines; `fn main()` is exempt from the `?` requirement
@@ -94,7 +94,7 @@ src/
                    Env is a Vec<HashMap<String,Value>> (scope stack).
                    No flat builtins — all functions live in namespaces
                    (Console, List, Int, Float, String, Http, Disk, Tcp).
-                   Closures capture only global scope (env[0]).
+                   No closure capture — functions see globals (env[0]) at call time.
                    Auto-memoization cache in call_fn_ref for pure
                    recursive functions.
                    String interpolation re-lexes and re-parses the raw
@@ -177,7 +177,7 @@ The `src/lib.rs` exports all modules as `pub mod` so integration tests can acces
 | `TopLevel` | ast.rs | Top-level item: `Module`, `FnDef`, `Verify`, `Decision`, `Stmt`, `TypeDef` |
 | `TypeDef` | ast.rs | `Sum { name, variants: Vec<TypeVariant> }` or `Product { name, fields: Vec<(String, String)> }` |
 | `Value` | interpreter.rs | Runtime value: `Int`, `Float`, `Str`, `Bool`, `Unit`, `Ok(Box<Value>)`, `Err(Box<Value>)`, `Some(Box<Value>)`, `None`, `List(Vec<Value>)`, `Fn{...}`, `Builtin(String)`, `Variant { type_name, variant, fields }`, `Record { type_name, fields }`, `Namespace { name, members }` |
-| `Env` | interpreter.rs | `Vec<HashMap<String, Value>>` — scope stack, innermost last |
+| `Env` | interpreter.rs | `Vec<EnvFrame>` — scope stack (Owned or Slots frames), innermost last |
 | `RuntimeError` | interpreter.rs | Single-variant error wrapping a `String` message |
 | `ParseError` | parser.rs | `msg`, `line`, `col`; formatted as `"Parse error [L:C]: msg"` |
 
