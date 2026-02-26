@@ -2,6 +2,7 @@ use colored::Colorize;
 
 use crate::ast::{DecisionBlock, FnDef, TopLevel, VerifyBlock};
 use crate::interpreter::{aver_repr, Interpreter};
+use crate::value::RuntimeError;
 
 pub struct VerifyResult {
     #[allow(dead_code)]
@@ -39,6 +40,17 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
                     println!("      got:      {}", actual);
                     failures.push((case_str, expected, actual));
                 }
+            }
+            // `?` in a verify case hitting Err produces ErrProp — treat as test failure.
+            (Err(RuntimeError::ErrProp(err_val)), _) | (_, Err(RuntimeError::ErrProp(err_val))) => {
+                failed += 1;
+                println!("  {} {}", "✗".red(), case_str);
+                println!("      ? hit Result.Err({})", aver_repr(&err_val));
+                failures.push((
+                    case_str,
+                    String::new(),
+                    format!("? hit Result.Err({})", aver_repr(&err_val)),
+                ));
             }
             (Err(e), _) | (_, Err(e)) => {
                 failed += 1;

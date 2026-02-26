@@ -23,8 +23,8 @@ fn askName() -> String
     ! [Console]
     val result = Console.readLine()
     match result:
-        Ok(line) -> line
-        Err(_)   -> "stranger"
+        Result.Ok(line) -> line
+        Result.Err(_)   -> "stranger"
 
 fn main() -> Unit
     ? "Full console demo: greet, warn, error, then ask for input."

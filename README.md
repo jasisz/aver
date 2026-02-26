@@ -152,6 +152,8 @@ aver context   file.av --decisions-only --json # decision blocks only (JSON)
 aver repl                     # interactive REPL
 ```
 
+`run`, `check`, `verify`, and `context` also accept `--module-root <path>` to override import base (default: current working directory).
+
 ---
 
 ## Type system
@@ -162,8 +164,9 @@ User-defined sum types: `type Shape` → `Shape.Circle(Float)`, `Shape.Rect(Floa
 User-defined product types: `record User` → `User(name: "Alice", age: 30)`, `u.name`
 Expression type ascription: `expr: Type` (e.g. `[]: List<Header>`)
 
-Module imports: `depends [Fibonacci]` → `fibonacci.av`, call as `Fibonacci.fn(...)`
-Dot-path imports: `depends [Models.User]` → `models/user.av`, call as `Models.User.fn(...)`
+Module imports resolve from a module root (`--module-root`, default: current working directory).
+Example: `depends [Examples.Fibonacci]` → `examples/fibonacci.av`, call as `Examples.Fibonacci.fn(...)`
+Dot-path import example: `depends [Examples.Models.User]` → `examples/models/user.av`, call as `Examples.Models.User.fn(...)`
 
 Type errors block `run`, `check`, and `verify`. No partial execution.
 
@@ -268,8 +271,8 @@ Requires: Rust stable toolchain.
 | `shapes.av` | Sum types, qualified constructors (`Shape.Circle`), match on variants |
 | `user_record.av` | Record types, field access, positional match |
 | `fibonacci.av` | Tail recursion, records, decision blocks |
-| `app.av` | Module imports via `depends [Fibonacci]` |
-| `app_dot.av` | Dot-path imports (`depends [Models.User]`) |
+| `app.av` | Module imports via `depends [Examples.Fibonacci]` |
+| `app_dot.av` | Dot-path imports (`depends [Examples.Models.User]`) |
 | `http_demo.av` | Network service: GET, POST, response handling |
 | `disk_demo.av` | Disk service: full I/O walkthrough |
 | `console_demo.av` | Console service: print, error, warn, readLine |
@@ -291,7 +294,7 @@ Implemented in Rust with extensive automated test coverage (300+ tests).
 - [x] List builtins: `map`, `filter`, `fold`, `get`, `head`, `tail`, `push`
 - [x] User-defined sum types (`type`) and product types (`record`)
 - [x] List pattern matching (`[]`, `[h, ..t]`)
-- [x] Module imports (`depends [Foo]`, `depends [Models.User]`)
+- [x] Module imports (`depends [Examples.Foo]`, `depends [Examples.Models.User]`)
 - [x] AI context export — `aver context` emits Markdown or JSON
 - [x] Interactive REPL — persistent state, multi-line, type-checked
 - [x] Built-in services — Console, Network, Disk — `! [Effect]` enforced everywhere

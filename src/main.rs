@@ -1,6 +1,5 @@
 use std::fs;
 use std::io::{self, BufRead, Write};
-use std::path::Path;
 use std::process;
 
 use clap::{Parser as ClapParser, Subcommand};
@@ -8,9 +7,9 @@ use colored::Colorize;
 
 use aver::ast::{DecisionBlock, FnDef, Stmt, TopLevel, TypeDef, VerifyBlock};
 use aver::checker::{check_module_intent, expr_to_str, index_decisions, run_verify};
-use aver::interpreter::{aver_display, aver_repr, Interpreter};
+use aver::interpreter::{aver_display, aver_repr, Interpreter, Value};
 use aver::source::{find_module_file, parse_source};
-use aver::typechecker::run_type_check_with_base;
+use aver::types::checker::run_type_check_with_base;
 
 #[derive(ClapParser)]
 #[command(name = "aver", about = "The Aver language interpreter")]
@@ -24,6 +23,9 @@ enum Commands {
     /// Run an Aver file
     Run {
         file: String,
+        /// Resolve `depends [...]` from this root (default: current working directory)
+        #[arg(long)]
+        module_root: Option<String>,
         /// Also run verify blocks after execution
         #[arg(long)]
         verify: bool,
@@ -31,17 +33,28 @@ enum Commands {
     /// Static analysis (intent presence, module size)
     Check {
         file: String,
+        /// Resolve `depends [...]` from this root (default: current working directory)
+        #[arg(long)]
+        module_root: Option<String>,
         /// Treat all warnings as errors (exit 1 if any warning)
         #[arg(long)]
         strict: bool,
     },
     /// Run all verify blocks
-    Verify { file: String },
+    Verify {
+        file: String,
+        /// Resolve `depends [...]` from this root (default: current working directory)
+        #[arg(long)]
+        module_root: Option<String>,
+    },
     /// Interactive REPL
     Repl,
     /// Export project context for LLM consumption
     Context {
         file: String,
+        /// Resolve `depends [...]` from this root (default: current working directory)
+        #[arg(long)]
+        module_root: Option<String>,
         /// Write output to file instead of stdout
         #[arg(short = 'o', long)]
         output: Option<String>,
@@ -62,18 +75,20 @@ fn parse_file(source: &str) -> Result<Vec<TopLevel>, String> {
     parse_source(source)
 }
 
-fn base_dir_for(file: &str) -> String {
-    Path::new(file)
-        .parent()
-        .and_then(|p| p.to_str())
-        .unwrap_or(".")
-        .to_string()
+fn resolve_module_root(module_root: Option<&str>) -> String {
+    if let Some(root) = module_root {
+        return root.to_string();
+    }
+    std::env::current_dir()
+        .ok()
+        .and_then(|p| p.into_os_string().into_string().ok())
+        .unwrap_or_else(|| ".".to_string())
 }
 
 fn load_dep_modules(
     interp: &mut Interpreter,
     items: &[TopLevel],
-    base_dir: &str,
+    module_root: &str,
 ) -> Result<(), String> {
     let mut loading = Vec::new();
     if let Some(module) = items.iter().find_map(|i| {
@@ -85,7 +100,7 @@ fn load_dep_modules(
     }) {
         for dep_name in &module.depends {
             let ns = interp
-                .load_module(dep_name, base_dir, &mut loading)
+                .load_module(dep_name, module_root, &mut loading)
                 .map_err(|e| e.to_string())?;
             interp
                 .define_module_path(dep_name, ns)
@@ -99,40 +114,55 @@ fn main() {
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Run { file, verify } => {
-            cmd_run(file, *verify);
+        Commands::Run {
+            file,
+            module_root,
+            verify,
+        } => {
+            cmd_run(file, module_root.as_deref(), *verify);
         }
-        Commands::Check { file, strict } => {
-            cmd_check(file, *strict);
+        Commands::Check {
+            file,
+            module_root,
+            strict,
+        } => {
+            cmd_check(file, module_root.as_deref(), *strict);
         }
-        Commands::Verify { file } => {
-            cmd_verify(file);
+        Commands::Verify { file, module_root } => {
+            cmd_verify(file, module_root.as_deref());
         }
         Commands::Repl => {
             cmd_repl();
         }
         Commands::Context {
             file,
+            module_root,
             output,
             json,
             decisions_only,
         } => {
-            cmd_context(file, output.as_deref(), *json, *decisions_only);
+            cmd_context(
+                file,
+                module_root.as_deref(),
+                output.as_deref(),
+                *json,
+                *decisions_only,
+            );
         }
     }
 }
 
-fn print_type_errors(errors: &[aver::typechecker::TypeError]) {
+fn print_type_errors(errors: &[aver::types::checker::TypeError]) {
     for te in errors {
         match te.line {
             Some(line) => eprintln!("{}", format!("error[{}]: {}", line, te.message).red()),
-            None       => eprintln!("{}", format!("error: {}", te.message).red()),
+            None => eprintln!("{}", format!("error: {}", te.message).red()),
         }
     }
 }
 
-fn cmd_run(file: &str, run_verify_blocks: bool) {
-    let base_dir = base_dir_for(file);
+fn cmd_run(file: &str, module_root_override: Option<&str>, run_verify_blocks: bool) {
+    let module_root = resolve_module_root(module_root_override);
     let source = match read_file(file) {
         Ok(s) => s,
         Err(e) => {
@@ -150,14 +180,14 @@ fn cmd_run(file: &str, run_verify_blocks: bool) {
     };
 
     // Static type check — block execution on any error
-    let type_errors = run_type_check_with_base(&items, Some(&base_dir));
+    let type_errors = run_type_check_with_base(&items, Some(&module_root));
     if !type_errors.is_empty() {
         print_type_errors(&type_errors);
         process::exit(1);
     }
 
     let mut interp = Interpreter::new();
-    if let Err(e) = load_dep_modules(&mut interp, &items, &base_dir) {
+    if let Err(e) = load_dep_modules(&mut interp, &items, &module_root) {
         eprintln!("{}", e.red());
         process::exit(1);
     }
@@ -200,9 +230,19 @@ fn cmd_run(file: &str, run_verify_blocks: bool) {
     match interp.lookup("main") {
         Ok(main_fn) => {
             let allowed = Interpreter::callable_declared_effects(&main_fn);
-            if let Err(e) = interp.call_value_with_effects_pub(main_fn, vec![], "<main>", allowed) {
-                eprintln!("{}", e.to_string().red());
-                process::exit(1);
+            match interp.call_value_with_effects_pub(main_fn, vec![], "<main>", allowed) {
+                Err(e) => {
+                    eprintln!("{}", e.to_string().red());
+                    process::exit(1);
+                }
+                Ok(Value::Err(err)) => {
+                    eprintln!(
+                        "{}",
+                        format!("Main returned error: {}", aver_repr(&err)).red()
+                    );
+                    process::exit(1);
+                }
+                Ok(_) => {}
             }
         }
         Err(_) => {
@@ -232,8 +272,8 @@ fn cmd_run(file: &str, run_verify_blocks: bool) {
     }
 }
 
-fn cmd_check(file: &str, strict: bool) {
-    let base_dir = base_dir_for(file);
+fn cmd_check(file: &str, module_root_override: Option<&str>, strict: bool) {
+    let module_root = resolve_module_root(module_root_override);
     let source = match read_file(file) {
         Ok(s) => s,
         Err(e) => {
@@ -255,12 +295,12 @@ fn cmd_check(file: &str, strict: bool) {
     println!("Check: {}", file.cyan());
 
     // --- Type errors (hard errors) ---
-    let type_errors = run_type_check_with_base(&items, Some(&base_dir));
+    let type_errors = run_type_check_with_base(&items, Some(&module_root));
     let has_errors = !type_errors.is_empty();
     for te in &type_errors {
         match te.line {
             Some(line) => println!("  {}", format!("error[{}]: {}", line, te.message).red()),
-            None       => println!("  {}", format!("error: {}", te.message).red()),
+            None => println!("  {}", format!("error: {}", te.message).red()),
         }
     }
 
@@ -308,8 +348,8 @@ fn cmd_check(file: &str, strict: bool) {
     }
 }
 
-fn cmd_verify(file: &str) {
-    let base_dir = base_dir_for(file);
+fn cmd_verify(file: &str, module_root_override: Option<&str>) {
+    let module_root = resolve_module_root(module_root_override);
     let source = match read_file(file) {
         Ok(s) => s,
         Err(e) => {
@@ -327,14 +367,14 @@ fn cmd_verify(file: &str) {
     };
 
     // Static type check — verify should use the same soundness gate as run/check
-    let type_errors = run_type_check_with_base(&items, Some(&base_dir));
+    let type_errors = run_type_check_with_base(&items, Some(&module_root));
     if !type_errors.is_empty() {
         print_type_errors(&type_errors);
         process::exit(1);
     }
 
     let mut interp = Interpreter::new();
-    if let Err(e) = load_dep_modules(&mut interp, &items, &base_dir) {
+    if let Err(e) = load_dep_modules(&mut interp, &items, &module_root) {
         eprintln!("{}", e.red());
         process::exit(1);
     }
@@ -423,6 +463,7 @@ struct FileContext {
 
 fn collect_contexts(
     file: &str,
+    module_root: &str,
     visited: &mut std::collections::HashSet<String>,
 ) -> Vec<FileContext> {
     let canonical = std::fs::canonicalize(file)
@@ -450,12 +491,6 @@ fn collect_contexts(
             return vec![];
         }
     };
-
-    let base_dir = Path::new(file)
-        .parent()
-        .and_then(|p| p.to_str())
-        .unwrap_or(".")
-        .to_string();
 
     let mut ctx = FileContext {
         source_file: file.to_string(),
@@ -504,9 +539,9 @@ fn collect_contexts(
 
     // Recurse into dependencies
     for dep_name in dep_names {
-        if let Some(dep_path) = find_module_file(&dep_name, &base_dir) {
+        if let Some(dep_path) = find_module_file(&dep_name, module_root) {
             let dep_file = dep_path.to_string_lossy().to_string();
-            let mut sub = collect_contexts(&dep_file, visited);
+            let mut sub = collect_contexts(&dep_file, module_root, visited);
             result.append(&mut sub);
         }
     }
@@ -523,9 +558,8 @@ fn format_context_md(contexts: &[FileContext], entry_file: &str) -> String {
         contexts.iter().flat_map(|c| c.decisions.iter()).collect();
 
     for ctx in contexts {
-        let has_content = !ctx.fn_defs.is_empty()
-            || !ctx.type_defs.is_empty()
-            || !ctx.effect_sets.is_empty();
+        let has_content =
+            !ctx.fn_defs.is_empty() || !ctx.type_defs.is_empty() || !ctx.effect_sets.is_empty();
 
         if !has_content && ctx.module_name.is_none() {
             continue;
@@ -659,7 +693,12 @@ fn format_context_md(contexts: &[FileContext], entry_file: &str) -> String {
 }
 
 fn json_str(s: &str) -> String {
-    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n"))
+    format!(
+        "\"{}\"",
+        s.replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n")
+    )
 }
 
 fn format_context_json(contexts: &[FileContext], entry_file: &str) -> String {
@@ -678,7 +717,10 @@ fn format_context_json(contexts: &[FileContext], entry_file: &str) -> String {
     for (mi, ctx) in non_empty.iter().enumerate() {
         let comma_m = if mi + 1 < non_empty.len() { "," } else { "" };
         out.push_str("    {\n");
-        out.push_str(&format!("      \"source_file\": {},\n", json_str(&ctx.source_file)));
+        out.push_str(&format!(
+            "      \"source_file\": {},\n",
+            json_str(&ctx.source_file)
+        ));
         match &ctx.module_name {
             Some(n) => out.push_str(&format!("      \"module\": {},\n", json_str(n))),
             None => out.push_str("      \"module\": null,\n"),
@@ -695,7 +737,11 @@ fn format_context_json(contexts: &[FileContext], entry_file: &str) -> String {
         } else {
             out.push('\n');
             for (ei, (name, effects)) in ctx.effect_sets.iter().enumerate() {
-                let comma_e = if ei + 1 < ctx.effect_sets.len() { "," } else { "" };
+                let comma_e = if ei + 1 < ctx.effect_sets.len() {
+                    ","
+                } else {
+                    ""
+                };
                 let effs: Vec<String> = effects.iter().map(|e| json_str(e)).collect();
                 out.push_str(&format!(
                     "        {{\"name\": {}, \"effects\": [{}]}}{}\n",
@@ -730,7 +776,11 @@ fn format_context_json(contexts: &[FileContext], entry_file: &str) -> String {
                                 format!(
                                     "{{\"name\": {}, \"fields\": [{}]}}",
                                     json_str(&v.name),
-                                    v.fields.iter().map(|f| json_str(f)).collect::<Vec<_>>().join(", ")
+                                    v.fields
+                                        .iter()
+                                        .map(|f| json_str(f))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
                                 )
                             }
                         })
@@ -763,7 +813,11 @@ fn format_context_json(contexts: &[FileContext], entry_file: &str) -> String {
                     let flds: Vec<String> = fields
                         .iter()
                         .map(|(fname, ftype)| {
-                            format!("{{\"name\": {}, \"type\": {}}}", json_str(fname), json_str(ftype))
+                            format!(
+                                "{{\"name\": {}, \"type\": {}}}",
+                                json_str(fname),
+                                json_str(ftype)
+                            )
                         })
                         .collect();
                     out.push_str(&format!(
@@ -849,7 +903,11 @@ fn format_context_json(contexts: &[FileContext], entry_file: &str) -> String {
     } else {
         out.push('\n');
         for (di, dec) in all_decisions.iter().enumerate() {
-            let comma_d = if di + 1 < all_decisions.len() { "," } else { "" };
+            let comma_d = if di + 1 < all_decisions.len() {
+                ","
+            } else {
+                ""
+            };
             out.push_str("    {\n");
             out.push_str(&format!("      \"name\": {},\n", json_str(&dec.name)));
             out.push_str(&format!("      \"date\": {},\n", json_str(&dec.date)));
@@ -940,9 +998,16 @@ fn format_decisions_json(decisions: &[&DecisionBlock], entry_file: &str) -> Stri
     out
 }
 
-fn cmd_context(file: &str, output: Option<&str>, json: bool, decisions_only: bool) {
+fn cmd_context(
+    file: &str,
+    module_root_override: Option<&str>,
+    output: Option<&str>,
+    json: bool,
+    decisions_only: bool,
+) {
+    let module_root = resolve_module_root(module_root_override);
     let mut visited = std::collections::HashSet::new();
-    let contexts = collect_contexts(file, &mut visited);
+    let contexts = collect_contexts(file, &module_root, &mut visited);
 
     if contexts.is_empty() {
         eprintln!("{}", "No content found.".yellow());
@@ -1017,8 +1082,27 @@ fn repl_help() {
 
 fn repl_env(interp: &Interpreter) {
     let builtins = [
-        "print", "str", "int", "abs", "len", "map", "filter", "fold", "get", "push", "head",
-        "tail", "Ok", "Err", "Some", "None", "Console", "Http", "Disk", "Tcp",
+        "print",
+        "str",
+        "int",
+        "abs",
+        "len",
+        "map",
+        "filter",
+        "fold",
+        "get",
+        "push",
+        "head",
+        "tail",
+        "Ok",
+        "Err",
+        "Some",
+        "None",
+        "Console",
+        "Http",
+        "Disk",
+        "Tcp",
+        "HttpServer",
     ];
     let mut found = false;
     for scope in &interp.env {
@@ -1048,7 +1132,11 @@ fn cmd_repl() {
     let stdin = io::stdin();
 
     loop {
-        let prompt = if buffer.is_empty() { "aver> " } else { "...   " };
+        let prompt = if buffer.is_empty() {
+            "aver> "
+        } else {
+            "...   "
+        };
         print!("{}", prompt);
         io::stdout().flush().ok();
 

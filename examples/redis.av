@@ -19,14 +19,14 @@ decision RespOverTcp:
     author: "szymon"
 
 decision ConnectionIdPattern:
-    date: "2026-02-25"
+    date: "2026-02-26"
     reason:
         "Value must be Clone + PartialEq, so TcpStream cannot live inside a"
-        "Value directly. Instead Tcp.connect returns an opaque String ID"
-        "that is threaded through subsequent calls."
-        "The actual socket lives in a thread-local HashMap inside tcp.rs."
-    chosen: OpaqueStringHandle
-    rejected: [StreamInValue, GlobalConnectionPool]
+        "Value directly. Tcp.connect returns an opaque Tcp.Connection record"
+        "(id, host, port) that is threaded through subsequent calls."
+        "The actual socket lives in a thread-local HashMap keyed by the id."
+    chosen: OpaqueConnectionRecord
+    rejected: [StreamInValue, GlobalConnectionPool, BareStringHandle]
     impacts: [Redis, Tcp]
     author: "szymon"
 
@@ -40,7 +40,7 @@ record RedisConfig
 
 fn respBulkLen(s: String) -> String
     ? "Returns the byte-length of s as a string, used to build RESP bulk-string headers."
-    = str(len(s))
+    = Int.toString(String.byteLength(s))
 
 verify respBulkLen:
     respBulkLen("PING") => "4"
@@ -52,68 +52,68 @@ verify respBulkLen:
 //
 // A RESP command with N args is sent as:
 //   *N\r\n
-//   $len(arg1)\r\n  arg1\r\n
-//   $len(arg2)\r\n  arg2\r\n
+//   $String.byteLength(arg1)\r\n  arg1\r\n
+//   $String.byteLength(arg2)\r\n  arg2\r\n
 //   ...
 //
 // sendCommand writes the *N header, then delegates to sendArgs.
 // sendArgs / sendArgAndRest recurse over the arg list.
 // Both return Result<String, String> where Ok carries conn, avoiding Ok(Unit).
 
-fn sendArgAndRest(conn: String, h: String, t: List<String>) -> Result<String, String>
+fn sendArgAndRest(conn: Tcp.Connection, h: String, t: List<String>) -> Result<Tcp.Connection, String>
     ? "Sends one RESP bulk-string arg ('$len' + data), then recurses for the rest."
     ! [Tcp]
     val _ = Tcp.writeLine(conn, "${respBulkLen(h)}")?
     val _ = Tcp.writeLine(conn, h)?
     sendArgs(conn, t)
 
-fn sendArgs(conn: String, args: List<String>) -> Result<String, String>
+fn sendArgs(conn: Tcp.Connection, args: List<String>) -> Result<Tcp.Connection, String>
     ? "Recursively sends each element of args as a RESP bulk string."
     ! [Tcp]
     match args:
-        []       -> Ok(conn)
+        []       -> Result.Ok(conn)
         [h, ..t] -> sendArgAndRest(conn, h, t)
 
-fn sendCommand(conn: String, args: List<String>) -> Result<String, String>
+fn sendCommand(conn: Tcp.Connection, args: List<String>) -> Result<Tcp.Connection, String>
     ? "Sends a full RESP command: writes the '*N' array header then each arg via sendArgs."
     ! [Tcp]
-    val _ = Tcp.writeLine(conn, "*{str(len(args))}")?
+    val _ = Tcp.writeLine(conn, "*{Int.toString(List.len(args))}")?
     sendArgs(conn, args)
 
 // Public API
 
-fn connect(cfg: RedisConfig) -> Result<String, String>
-    ? "Opens a TCP connection to Redis and returns the connection ID."
+fn connect(cfg: RedisConfig) -> Result<Tcp.Connection, String>
+    ? "Opens a TCP connection to Redis and returns the connection record."
     ! [Tcp]
     Tcp.connect(cfg.host, cfg.port)
 
-fn disconnect(conn: String) -> Result<Unit, String>
+fn disconnect(conn: Tcp.Connection) -> Result<Unit, String>
     ? "Closes the TCP connection identified by conn."
     ! [Tcp]
     Tcp.close(conn)
 
-fn ping(conn: String) -> Result<String, String>
+fn ping(conn: Tcp.Connection) -> Result<String, String>
     ? "Sends PING and returns the server reply (expected: +PONG)."
     ! [Tcp]
     val _ = sendCommand(conn, ["PING"])?
     Tcp.readLine(conn)
 
-fn set(conn: String, key: String, value: String) -> Result<String, String>
+fn set(conn: Tcp.Connection, key: String, value: String) -> Result<String, String>
     ? "Sends SET key value and returns the server reply (expected: +OK)."
     ! [Tcp]
     val _ = sendCommand(conn, ["SET", key, value])?
     Tcp.readLine(conn)
 
-fn get(conn: String, key: String) -> Result<String, String>
+fn get(conn: Tcp.Connection, key: String) -> Result<String, String>
     ? "Sends GET key. Returns Ok(value) or Err('key not found') when Redis replies $-1 (nil)."
     ! [Tcp]
     val _ = sendCommand(conn, ["GET", key])?
     val header = Tcp.readLine(conn)?
     match header == "$-1":
-        true  -> Err("key not found")
+        true  -> Result.Err("key not found")
         false -> Tcp.readLine(conn)
 
-fn del(conn: String, key: String) -> Result<String, String>
+fn del(conn: Tcp.Connection, key: String) -> Result<String, String>
     ? "Sends DEL key and returns the raw RESP reply (expected: :N deleted count)."
     ! [Tcp]
     val _ = sendCommand(conn, ["DEL", key])?
@@ -146,5 +146,5 @@ fn run() -> Result<Unit, String>
 fn main() -> Unit
     ! [Tcp, Console]
     match run():
-        Ok(_)  -> Console.print("done.")
-        Err(e) -> Console.print("error: {e}")
+        Result.Ok(_)  -> Console.print("done.")
+        Result.Err(e) -> Console.print("error: {e}")

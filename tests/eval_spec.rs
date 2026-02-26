@@ -159,7 +159,7 @@ fn string_eq_false() {
 
 #[test]
 fn runtime_gate_blocks_top_level_print() {
-    let items = parse("print(\"hi\")");
+    let items = parse("Console.print(\"hi\")");
     let item = items.into_iter().next().expect("no items");
     if let TopLevel::Stmt(Stmt::Expr(expr)) = item {
         let mut interp = Interpreter::new();
@@ -177,7 +177,7 @@ fn runtime_gate_blocks_top_level_print() {
 
 #[test]
 fn runtime_gate_allows_effectful_entrypoint_with_grant() {
-    let src = "fn log(n: Int) -> Unit\n    ! [Console]\n    = print(n)\n";
+    let src = "fn log(n: Int) -> Unit\n    ! [Console]\n    = Console.print(n)\n";
     let items = parse(src);
     let mut interp = Interpreter::new();
     for item in &items {
@@ -202,60 +202,275 @@ fn runtime_gate_allows_effectful_entrypoint_with_grant() {
     assert!(result.is_ok(), "expected granted call to pass");
 }
 
+// ---------------------------------------------------------------------------
+// Int namespace
+// ---------------------------------------------------------------------------
+
 #[test]
-fn builtin_abs_positive() {
-    assert_eq!(eval("abs(5)"), Value::Int(5));
+fn int_to_string() {
+    assert_eq!(eval("Int.toString(42)"), Value::Str("42".to_string()));
 }
 
 #[test]
-fn builtin_abs_negative_via_subtraction() {
-    // Aver has no unary minus literal; use 0 - n
-    assert_eq!(eval("abs(0 - 5)"), Value::Int(5));
+fn int_from_string() {
+    assert_eq!(
+        eval("Int.fromString(\"42\")"),
+        Value::Ok(Box::new(Value::Int(42)))
+    );
 }
 
 #[test]
-fn builtin_abs_float() {
-    assert_eq!(eval("abs(0.0 - 3.5)"), Value::Float(3.5));
+fn int_from_string_err() {
+    assert_eq!(
+        eval("Int.fromString(\"abc\")"),
+        Value::Err(Box::new(Value::Str(
+            "Cannot parse 'abc' as Int".to_string()
+        )))
+    );
 }
 
 #[test]
-fn builtin_str_int() {
-    assert_eq!(eval("str(42)"), Value::Str("42".to_string()));
+fn int_from_float() {
+    assert_eq!(eval("Int.fromFloat(3.9)"), Value::Int(3));
 }
 
 #[test]
-fn builtin_str_bool() {
-    assert_eq!(eval("str(true)"), Value::Str("true".to_string()));
+fn int_abs() {
+    assert_eq!(eval("Int.abs(5)"), Value::Int(5));
 }
 
 #[test]
-fn builtin_int_from_str() {
-    assert_eq!(eval("int(\"42\")"), Value::Int(42));
+fn int_abs_negative() {
+    assert_eq!(eval("Int.abs(0 - 5)"), Value::Int(5));
 }
 
 #[test]
-fn builtin_int_from_float() {
-    assert_eq!(eval("int(3.9)"), Value::Int(3));
+fn int_min() {
+    assert_eq!(eval("Int.min(3, 7)"), Value::Int(3));
 }
 
 #[test]
-fn builtin_len_string() {
-    assert_eq!(eval("len(\"hello\")"), Value::Int(5));
+fn int_max() {
+    assert_eq!(eval("Int.max(3, 7)"), Value::Int(7));
 }
 
 #[test]
-fn builtin_len_empty_string() {
-    assert_eq!(eval("len(\"\")"), Value::Int(0));
+fn int_mod() {
+    assert_eq!(eval("Int.mod(10, 3)"), Value::Ok(Box::new(Value::Int(1))));
 }
 
 #[test]
-fn builtin_len_list() {
-    assert_eq!(eval("len([1, 2, 3])"), Value::Int(3));
+fn int_mod_zero() {
+    assert_eq!(
+        eval("Int.mod(10, 0)"),
+        Value::Err(Box::new(Value::Str("division by zero".to_string())))
+    );
 }
 
 #[test]
-fn builtin_len_empty_list() {
-    assert_eq!(eval("len([])"), Value::Int(0));
+fn int_to_float() {
+    assert_eq!(eval("Int.toFloat(5)"), Value::Float(5.0));
+}
+
+// ---------------------------------------------------------------------------
+// Float namespace
+// ---------------------------------------------------------------------------
+
+#[test]
+fn float_abs() {
+    assert_eq!(eval("Float.abs(0.0 - 3.5)"), Value::Float(3.5));
+}
+
+#[test]
+fn float_from_int() {
+    assert_eq!(eval("Float.fromInt(5)"), Value::Float(5.0));
+}
+
+#[test]
+fn float_to_string() {
+    assert_eq!(eval("Float.toString(3.14)"), Value::Str("3.14".to_string()));
+}
+
+#[test]
+fn float_from_string() {
+    assert_eq!(
+        eval("Float.fromString(\"2.5\")"),
+        Value::Ok(Box::new(Value::Float(2.5)))
+    );
+}
+
+#[test]
+fn float_floor() {
+    assert_eq!(eval("Float.floor(3.7)"), Value::Int(3));
+}
+
+#[test]
+fn float_ceil() {
+    assert_eq!(eval("Float.ceil(3.2)"), Value::Int(4));
+}
+
+#[test]
+fn float_round() {
+    assert_eq!(eval("Float.round(3.5)"), Value::Int(4));
+}
+
+#[test]
+fn float_min() {
+    assert_eq!(eval("Float.min(1.5, 2.5)"), Value::Float(1.5));
+}
+
+#[test]
+fn float_max() {
+    assert_eq!(eval("Float.max(1.5, 2.5)"), Value::Float(2.5));
+}
+
+// ---------------------------------------------------------------------------
+// String namespace
+// ---------------------------------------------------------------------------
+
+#[test]
+fn string_from_bool() {
+    assert_eq!(
+        eval("String.fromBool(true)"),
+        Value::Str("true".to_string())
+    );
+}
+
+#[test]
+fn string_from_int() {
+    assert_eq!(eval("String.fromInt(42)"), Value::Str("42".to_string()));
+}
+
+#[test]
+fn string_from_float() {
+    assert_eq!(
+        eval("String.fromFloat(3.14)"),
+        Value::Str("3.14".to_string())
+    );
+}
+
+#[test]
+fn string_length() {
+    assert_eq!(eval("String.length(\"hello\")"), Value::Int(5));
+}
+
+#[test]
+fn string_length_empty() {
+    assert_eq!(eval("String.length(\"\")"), Value::Int(0));
+}
+
+#[test]
+fn string_byte_length() {
+    assert_eq!(eval("String.byteLength(\"hello\")"), Value::Int(5));
+}
+
+#[test]
+fn string_starts_with() {
+    assert_eq!(
+        eval("String.startsWith(\"hello world\", \"hello\")"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn string_starts_with_false() {
+    assert_eq!(
+        eval("String.startsWith(\"hello world\", \"world\")"),
+        Value::Bool(false)
+    );
+}
+
+#[test]
+fn string_ends_with() {
+    assert_eq!(
+        eval("String.endsWith(\"hello world\", \"world\")"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn string_contains() {
+    assert_eq!(
+        eval("String.contains(\"hello world\", \"lo wo\")"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn string_contains_false() {
+    assert_eq!(
+        eval("String.contains(\"hello\", \"xyz\")"),
+        Value::Bool(false)
+    );
+}
+
+#[test]
+fn string_slice() {
+    assert_eq!(
+        eval("String.slice(\"hello\", 1, 4)"),
+        Value::Str("ell".to_string())
+    );
+}
+
+#[test]
+fn string_trim() {
+    assert_eq!(
+        eval("String.trim(\"  hi  \")"),
+        Value::Str("hi".to_string())
+    );
+}
+
+#[test]
+fn string_split() {
+    assert_eq!(
+        eval("String.split(\"a,b,c\", \",\")"),
+        Value::List(vec![
+            Value::Str("a".to_string()),
+            Value::Str("b".to_string()),
+            Value::Str("c".to_string()),
+        ])
+    );
+}
+
+#[test]
+fn string_replace() {
+    assert_eq!(
+        eval("String.replace(\"hello world\", \"world\", \"aver\")"),
+        Value::Str("hello aver".to_string())
+    );
+}
+
+#[test]
+fn string_join() {
+    assert_eq!(
+        eval("String.join([\"a\", \"b\", \"c\"], \"-\")"),
+        Value::Str("a-b-c".to_string())
+    );
+}
+
+#[test]
+fn string_chars() {
+    assert_eq!(
+        eval("String.chars(\"hi\")"),
+        Value::List(vec![
+            Value::Str("h".to_string()),
+            Value::Str("i".to_string()),
+        ])
+    );
+}
+
+// ---------------------------------------------------------------------------
+// List namespace
+// ---------------------------------------------------------------------------
+
+#[test]
+fn list_len() {
+    assert_eq!(eval("List.len([1, 2, 3])"), Value::Int(3));
+}
+
+#[test]
+fn list_len_empty() {
+    assert_eq!(eval("List.len([])"), Value::Int(0));
 }
 
 // ---------------------------------------------------------------------------
@@ -289,7 +504,7 @@ fn list_string_literal() {
 #[test]
 fn get_first_element() {
     assert_eq!(
-        eval("get([10, 20, 30], 0)"),
+        eval("List.get([10, 20, 30], 0)"),
         Value::Ok(Box::new(Value::Int(10)))
     );
 }
@@ -297,59 +512,62 @@ fn get_first_element() {
 #[test]
 fn get_middle_element() {
     assert_eq!(
-        eval("get([10, 20, 30], 1)"),
+        eval("List.get([10, 20, 30], 1)"),
         Value::Ok(Box::new(Value::Int(20)))
     );
 }
 
 #[test]
 fn get_out_of_bounds_returns_err() {
-    let result = eval("get([1, 2], 5)");
+    let result = eval("List.get([1, 2], 5)");
     assert!(matches!(result, Value::Err(_)));
 }
 
 #[test]
 fn head_returns_first() {
     assert_eq!(
-        eval("head([42, 1, 2])"),
+        eval("List.head([42, 1, 2])"),
         Value::Ok(Box::new(Value::Int(42)))
     );
 }
 
 #[test]
 fn head_empty_list_returns_err() {
-    assert!(matches!(eval("head([])"), Value::Err(_)));
+    assert!(matches!(eval("List.head([])"), Value::Err(_)));
 }
 
 #[test]
 fn tail_returns_rest() {
     assert_eq!(
-        eval("tail([1, 2, 3])"),
+        eval("List.tail([1, 2, 3])"),
         Value::Ok(Box::new(Value::List(vec![Value::Int(2), Value::Int(3)])))
     );
 }
 
 #[test]
 fn tail_single_element_returns_empty() {
-    assert_eq!(eval("tail([99])"), Value::Ok(Box::new(Value::List(vec![]))));
+    assert_eq!(
+        eval("List.tail([99])"),
+        Value::Ok(Box::new(Value::List(vec![])))
+    );
 }
 
 #[test]
 fn tail_empty_list_returns_err() {
-    assert!(matches!(eval("tail([])"), Value::Err(_)));
+    assert!(matches!(eval("List.tail([])"), Value::Err(_)));
 }
 
 #[test]
 fn push_appends_element() {
     assert_eq!(
-        eval("push([1, 2], 3)"),
+        eval("List.push([1, 2], 3)"),
         Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
     );
 }
 
 #[test]
 fn push_to_empty_list() {
-    assert_eq!(eval("push([], 1)"), Value::List(vec![Value::Int(1)]));
+    assert_eq!(eval("List.push([], 1)"), Value::List(vec![Value::Int(1)]));
 }
 
 // ---------------------------------------------------------------------------
@@ -358,25 +576,25 @@ fn push_to_empty_list() {
 
 #[test]
 fn ok_wraps_value() {
-    assert_eq!(eval("Ok(42)"), Value::Ok(Box::new(Value::Int(42))));
+    assert_eq!(eval("Result.Ok(42)"), Value::Ok(Box::new(Value::Int(42))));
 }
 
 #[test]
 fn err_wraps_value() {
     assert_eq!(
-        eval("Err(\"fail\")"),
+        eval("Result.Err(\"fail\")"),
         Value::Err(Box::new(Value::Str("fail".to_string())))
     );
 }
 
 #[test]
 fn some_wraps_value() {
-    assert_eq!(eval("Some(1)"), Value::Some(Box::new(Value::Int(1))));
+    assert_eq!(eval("Option.Some(1)"), Value::Some(Box::new(Value::Int(1))));
 }
 
 #[test]
 fn none_is_none() {
-    assert_eq!(eval("None"), Value::None);
+    assert_eq!(eval("Option.None"), Value::None);
 }
 
 // ---------------------------------------------------------------------------
@@ -403,7 +621,7 @@ fn match_literal_wildcard() {
 
 #[test]
 fn match_ok_constructor() {
-    let src = "fn unwrap(r: Result<Int, String>) -> Int\n    = match r:\n        Ok(v) -> v\n        Err(_) -> 0\n";
+    let src = "fn unwrap(r: Result<Int, String>) -> Int\n    = match r:\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n";
     assert_eq!(
         call_fn(src, "unwrap", vec![Value::Ok(Box::new(Value::Int(42)))]),
         Value::Int(42)
@@ -412,7 +630,7 @@ fn match_ok_constructor() {
 
 #[test]
 fn match_err_constructor() {
-    let src = "fn unwrap(r: Result<Int, String>) -> Int\n    = match r:\n        Ok(v) -> v\n        Err(_) -> 0\n";
+    let src = "fn unwrap(r: Result<Int, String>) -> Int\n    = match r:\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n";
     assert_eq!(
         call_fn(
             src,
@@ -425,7 +643,7 @@ fn match_err_constructor() {
 
 #[test]
 fn match_some_none() {
-    let src = "fn extract(o: Option<Int>) -> Int\n    = match o:\n        Some(v) -> v\n        None -> 0\n";
+    let src = "fn extract(o: Option<Int>) -> Int\n    = match o:\n        Option.Some(v) -> v\n        Option.None -> 0\n";
     assert_eq!(
         call_fn(src, "extract", vec![Value::Some(Box::new(Value::Int(7)))]),
         Value::Int(7)
@@ -465,7 +683,7 @@ fn match_empty_list_pattern() {
 
 #[test]
 fn match_list_cons_binds_head_and_tail() {
-    let src = "fn score(xs: List<Int>) -> Int\n    = match xs:\n        [h, ..t] -> h + len(t)\n        [] -> 0\n";
+    let src = "fn score(xs: List<Int>) -> Int\n    = match xs:\n        [h, ..t] -> h + List.len(t)\n        [] -> 0\n";
     assert_eq!(
         call_fn(
             src,
@@ -559,7 +777,7 @@ fn map_doubles_list() {
     }
     let list = Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
     let double_fn = interp.lookup("double").unwrap();
-    let map_fn = interp.lookup("map").unwrap();
+    let map_fn = Value::Builtin("List.map".to_string());
     let result = interp
         .call_value_pub(map_fn, vec![list, double_fn])
         .unwrap();
@@ -586,7 +804,7 @@ fn filter_keeps_positives() {
         Value::Int(4),
     ]);
     let pred = interp.lookup("is_pos").unwrap();
-    let filter_fn = interp.lookup("filter").unwrap();
+    let filter_fn = Value::Builtin("List.filter".to_string());
     let result = interp.call_value_pub(filter_fn, vec![list, pred]).unwrap();
     assert_eq!(result, Value::List(vec![Value::Int(2), Value::Int(4)]));
 }
@@ -608,7 +826,7 @@ fn fold_sum() {
         Value::Int(4),
     ]);
     let add_fn = interp.lookup("add").unwrap();
-    let fold_fn = interp.lookup("fold").unwrap();
+    let fold_fn = Value::Builtin("List.fold".to_string());
     let result = interp
         .call_value_pub(fold_fn, vec![list, Value::Int(0), add_fn])
         .unwrap();
@@ -661,7 +879,7 @@ fn error_prop_early_return_on_err() {
 #[test]
 fn error_prop_early_return_in_block() {
     // ? in a block body causes early return, skipping subsequent statements.
-    let src = "fn double_ok(r: Result<Int, String>) -> Result<Int, String>\n    val x = r?\n    Ok(x + x)\n";
+    let src = "fn double_ok(r: Result<Int, String>) -> Result<Int, String>\n    val x = r?\n    Result.Ok(x + x)\n";
     assert_eq!(
         call_fn(src, "double_ok", vec![Value::Ok(Box::new(Value::Int(5)))]),
         Value::Ok(Box::new(Value::Int(10)))
@@ -679,7 +897,7 @@ fn error_prop_early_return_in_block() {
 #[test]
 fn error_prop_chain_short_circuits() {
     // When the first ? encounters Err, the second ? and the Ok() never run.
-    let src = "fn chain(a: Result<Int, String>, b: Result<Int, String>) -> Result<Int, String>\n    val x = a?\n    val y = b?\n    Ok(x + y)\n";
+    let src = "fn chain(a: Result<Int, String>, b: Result<Int, String>) -> Result<Int, String>\n    val x = a?\n    val y = b?\n    Result.Ok(x + y)\n";
     let err = Value::Err(Box::new(Value::Str("first".to_string())));
     let ok_ten = Value::Ok(Box::new(Value::Int(10)));
     assert_eq!(call_fn(src, "chain", vec![err.clone(), ok_ten]), err);
@@ -948,7 +1166,11 @@ mod http_tests {
 
     /// Spawn a minimal HTTP/1.1 server on an OS-assigned port.
     /// Returns None when the bind is not permitted (sandboxed CI environments).
-    fn start_server(status: u16, body: &'static str, extra_headers: &'static str) -> Option<String> {
+    fn start_server(
+        status: u16,
+        body: &'static str,
+        extra_headers: &'static str,
+    ) -> Option<String> {
         let listener = match TcpListener::bind("127.0.0.1:0") {
             Ok(l) => l,
             Err(_) => return None,
@@ -988,7 +1210,9 @@ mod http_tests {
     #[test]
     #[ignore = "integration: starts a local HTTP server; run with --include-ignored --test-threads=1"]
     fn http_get_200_returns_ok_response() {
-        let Some(url) = start_server(200, "hello", "") else { return; };
+        let Some(url) = start_server(200, "hello", "") else {
+            return;
+        };
         let src = format!(
             "fn fetch() -> Result<HttpResponse, String>\n    ! [Http]\n    Http.get(\"{}\")\n",
             url
@@ -996,7 +1220,10 @@ mod http_tests {
         let val = run_http_fn(&src, "fetch");
         match val {
             Value::Ok(inner) => match *inner {
-                Value::Record { type_name, ref fields } => {
+                Value::Record {
+                    type_name,
+                    ref fields,
+                } => {
                     assert_eq!(type_name, "HttpResponse");
                     let status = fields.iter().find(|(k, _)| k == "status").map(|(_, v)| v);
                     assert_eq!(status, Some(&Value::Int(200)));
@@ -1012,7 +1239,9 @@ mod http_tests {
     #[test]
     #[ignore = "integration: starts a local HTTP server; run with --include-ignored --test-threads=1"]
     fn http_get_404_still_returns_ok_response() {
-        let Some(url) = start_server(404, "not found", "") else { return; };
+        let Some(url) = start_server(404, "not found", "") else {
+            return;
+        };
         let src = format!(
             "fn fetch() -> Result<HttpResponse, String>\n    ! [Http]\n    Http.get(\"{}\")\n",
             url
@@ -1048,14 +1277,17 @@ mod http_tests {
             .expect("call itself should not panic");
         assert!(
             matches!(val, Value::Err(_)),
-            "expected Err for unreachable host, got {:?}", val
+            "expected Err for unreachable host, got {:?}",
+            val
         );
     }
 
     #[test]
     #[ignore = "integration: starts a local HTTP server; run with --include-ignored --test-threads=1"]
     fn http_post_201_returns_ok_response() {
-        let Some(url) = start_server(201, "created", "") else { return; };
+        let Some(url) = start_server(201, "created", "") else {
+            return;
+        };
         let src = format!(
             "fn send() -> Result<HttpResponse, String>\n    ! [Http]\n    Http.post(\"{}\", \"data\", \"text/plain\", [])\n",
             url
@@ -1468,7 +1700,9 @@ mod tcp_tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        thread::spawn(move || { let _ = listener.accept(); });
+        thread::spawn(move || {
+            let _ = listener.accept();
+        });
 
         let src = format!(
             "fn check() -> Result<Unit, String>\n    ! [Tcp]\n    = Tcp.ping(\"127.0.0.1\", {})\n",
@@ -1476,6 +1710,44 @@ mod tcp_tests {
         );
         let val = run_tcp_fn(&src, "check");
         assert!(matches!(val, Value::Ok(_)), "expected Ok, got {:?}", val);
+    }
+
+    #[test]
+    #[ignore = "integration: starts a local TCP server; run with --include-ignored --test-threads=1"]
+    fn tcp_connect_returns_connection_record() {
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            let _ = listener.accept();
+        });
+
+        let src = format!(
+            "fn open() -> Result<Tcp.Connection, String>\n    ! [Tcp]\n    = Tcp.connect(\"127.0.0.1\", {})\n",
+            port
+        );
+        let val = run_tcp_fn(&src, "open");
+        match val {
+            Value::Ok(inner) => match *inner {
+                Value::Record {
+                    ref type_name,
+                    ref fields,
+                } => {
+                    assert_eq!(type_name, "Tcp.Connection");
+                    assert!(fields.iter().any(|(k, _)| k == "id"));
+                    assert!(fields
+                        .iter()
+                        .any(|(k, v)| k == "host" && *v == Value::Str("127.0.0.1".to_string())));
+                    assert!(fields
+                        .iter()
+                        .any(|(k, v)| k == "port" && *v == Value::Int(port as i64)));
+                }
+                other => panic!("expected Tcp.Connection record, got {:?}", other),
+            },
+            other => panic!("expected Ok(Tcp.Connection), got {:?}", other),
+        }
     }
 
     #[test]
@@ -1503,6 +1775,52 @@ mod tcp_tests {
         match val {
             Value::Ok(inner) => assert_eq!(*inner, Value::Str("echo me".to_string())),
             other => panic!("expected Ok(\"echo me\"), got {:?}", other),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Verify: ? operator in verify blocks
+// ---------------------------------------------------------------------------
+
+#[test]
+fn verify_error_prop_ok_unwraps() {
+    // `?` on Ok in a verify case should unwrap normally
+    let src =
+        "fn ok() -> Result<Int, String>\n    = Result.Ok(42)\n\nverify ok:\n    ok()? => 42\n";
+    let items = parse(src);
+    let mut interp = Interpreter::new();
+    for item in &items {
+        if let TopLevel::FnDef(fd) = item {
+            interp.exec_fn_def(fd).unwrap();
+        }
+    }
+    for item in &items {
+        if let TopLevel::Verify(vb) = item {
+            let result = aver::checker::run_verify(vb, &mut interp);
+            assert_eq!(result.passed, 1);
+            assert_eq!(result.failed, 0);
+        }
+    }
+}
+
+#[test]
+fn verify_error_prop_err_fails_test() {
+    // `?` on Err in a verify case should produce a test failure, not a panic/crash
+    let src =
+        "fn fail() -> Result<Int, String>\n    = Result.Err(\"boom\")\n\nverify fail:\n    fail()? => 42\n";
+    let items = parse(src);
+    let mut interp = Interpreter::new();
+    for item in &items {
+        if let TopLevel::FnDef(fd) = item {
+            interp.exec_fn_def(fd).unwrap();
+        }
+    }
+    for item in &items {
+        if let TopLevel::Verify(vb) = item {
+            let result = aver::checker::run_verify(vb, &mut interp);
+            assert_eq!(result.passed, 0);
+            assert_eq!(result.failed, 1);
         }
     }
 }

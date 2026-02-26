@@ -93,32 +93,32 @@ fn bigger(a: Int, b: Int) -> Int
 fn pushIfEven(xs: List<Int>, n: Int) -> List<Int>
     ? "Appends n to xs only when n is even."
     match isEven(n):
-        true  -> push(xs, n)
+        true  -> List.push(xs, n)
         false -> xs
 
 fn buildFibStatsTR(acc: FibAcc) -> FibStats
     ? "Single-pass builder: advances accumulator state one step until i > n."
     match acc.i > acc.n:
         true  -> FibStats(fibs: acc.fibs, sum: acc.sum, mx: acc.mx, evens: acc.evens)
-        false -> buildFibStatsTR(FibAcc(i: acc.i + 1, n: acc.n, a: acc.b, b: acc.a + acc.b, fibs: push(acc.fibs, acc.a), sum: acc.sum + acc.a, mx: bigger(acc.a, acc.mx), evens: pushIfEven(acc.evens, acc.a)))
+        false -> buildFibStatsTR(FibAcc(i: acc.i + 1, n: acc.n, a: acc.b, b: acc.a + acc.b, fibs: List.push(acc.fibs, acc.a), sum: acc.sum + acc.a, mx: bigger(acc.a, acc.mx), evens: pushIfEven(acc.evens, acc.a)))
 
 fn buildFibStats(n: Int) -> Result<FibStats, String>
     ? "Computes FibStats for F(0)..F(n) in one pass. Err for n < 0."
     match n < 0:
-        true  -> Err("Need n >= 0")
-        false -> Ok(buildFibStatsTR(FibAcc(i: 0, n: n, a: 0, b: 1, fibs: [], sum: 0, mx: 0, evens: [])))
+        true  -> Result.Err("Need n >= 0")
+        false -> Result.Ok(buildFibStatsTR(FibAcc(i: 0, n: n, a: 0, b: 1, fibs: [], sum: 0, mx: 0, evens: [])))
 
 fn printStats(s: FibStats) -> Unit
     ? "Print all fields of a FibStats record to stdout."
     ! [Console]
-    print("Fibonacci [0..{len(s.fibs) - 1}]:")
-    print(s.fibs)
-    print("Sum:")
-    print(s.sum)
-    print("Max:")
-    print(s.mx)
-    print("Even Fibonacci numbers:")
-    print(s.evens)
+    Console.print("Fibonacci [0..{List.len(s.fibs) - 1}]:")
+    Console.print(s.fibs)
+    Console.print("Sum:")
+    Console.print(s.sum)
+    Console.print("Max:")
+    Console.print(s.mx)
+    Console.print("Even Fibonacci numbers:")
+    Console.print(s.evens)
 
 fn absF(x: Float) -> Float
     ? "Absolute value for Float using comparison and negation."
@@ -133,21 +133,21 @@ fn approxEq(x: Float, y: Float, eps: Float) -> Bool
 fn goldenApprox(n: Int) -> Result<Float, String>
     ? "Approximates golden ratio as F(n+1)/F(n). Requires n >= 1."
     match n < 1:
-        true  -> Err("Need n >= 1")
-        false -> Ok(fib(n + 1) * 1.0 / fib(n))
+        true  -> Result.Err("Need n >= 1")
+        false -> Result.Ok(fib(n + 1) * 1.0 / fib(n))
 
 fn main() -> Unit
     ! [Console]
     val result = buildFibStats(12)
     match result:
-        Ok(stats) -> printStats(stats)
-        Err(msg)  -> print(msg)
-    print("Golden ratio approx (n=5):")
-    print(goldenApprox(5))
-    print("Golden ratio approx (n=10):")
-    print(goldenApprox(10))
-    print("Golden ratio approx (n=12):")
-    print(goldenApprox(12))
+        Result.Ok(stats) -> printStats(stats)
+        Result.Err(msg)  -> Console.print(msg)
+    Console.print("Golden ratio approx (n=5):")
+    Console.print(goldenApprox(5))
+    Console.print("Golden ratio approx (n=10):")
+    Console.print(goldenApprox(10))
+    Console.print("Golden ratio approx (n=12):")
+    Console.print(goldenApprox(12))
 
 verify fibTR:
     fibTR(0, 0, 1)  => 0
@@ -182,9 +182,9 @@ verify pushIfEven:
     pushIfEven([0], 3) => [0]
 
 verify buildFibStats:
-    buildFibStats(-1) => Err("Need n >= 0")
-    buildFibStats(0)  => Ok(FibStats(fibs: [0], sum: 0, mx: 0, evens: [0]))
-    buildFibStats(4)  => Ok(FibStats(fibs: [0, 1, 1, 2, 3], sum: 7, mx: 3, evens: [0, 2]))
+    buildFibStats(-1) => Result.Err("Need n >= 0")
+    buildFibStats(0)  => Result.Ok(FibStats(fibs: [0], sum: 0, mx: 0, evens: [0]))
+    buildFibStats(4)  => Result.Ok(FibStats(fibs: [0, 1, 1, 2, 3], sum: 7, mx: 3, evens: [0, 2]))
 
 verify absF:
     absF(-2.5) => 2.5
@@ -197,7 +197,7 @@ verify approxEq:
     approxEq(1.0, 1.01, 0.001)   => false
 
 verify goldenApprox:
-    goldenApprox(0) => Err("Need n >= 1")
+    goldenApprox(0) => Result.Err("Need n >= 1")
     approxEq(goldenApprox(1)?, 1.0, 0.000001) => true
     approxEq(goldenApprox(2)?, 2.0, 0.000001) => true
     approxEq(goldenApprox(10)?, 1.618181818, 0.00001) => true

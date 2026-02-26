@@ -30,12 +30,9 @@ pub fn register(global: &mut HashMap<String, Value>) {
 
 pub fn effects(name: &str) -> &'static [&'static str] {
     match name {
-        "Http.get"
-        | "Http.head"
-        | "Http.delete"
-        | "Http.post"
-        | "Http.put"
-        | "Http.patch" => &["Http"],
+        "Http.get" | "Http.head" | "Http.delete" | "Http.post" | "Http.put" | "Http.patch" => {
+            &["Http"]
+        }
         _ => &[],
     }
 }
@@ -75,8 +72,8 @@ fn call_with_body(name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
             args.len()
         )));
     }
-    let url          = str_arg(&args[0], "Http: url must be a String")?;
-    let body         = str_arg(&args[1], "Http: body must be a String")?;
+    let url = str_arg(&args[0], "Http: url must be a String")?;
+    let body = str_arg(&args[1], "Http: body must be a String")?;
     let content_type = str_arg(&args[2], "Http: contentType must be a String")?;
     let extra_headers = parse_request_headers(&args[3])?;
 
@@ -100,24 +97,40 @@ fn str_arg(val: &Value, msg: &str) -> Result<String, RuntimeError> {
 fn parse_request_headers(val: &Value) -> Result<Vec<(String, String)>, RuntimeError> {
     let items = match val {
         Value::List(items) => items,
-        _ => return Err(RuntimeError::Error("Http: headers must be a List".to_string())),
+        _ => {
+            return Err(RuntimeError::Error(
+                "Http: headers must be a List".to_string(),
+            ))
+        }
     };
     let mut out = Vec::new();
     for item in items {
         let fields = match item {
             Value::Record { fields, .. } => fields,
-            _ => return Err(RuntimeError::Error(
-                "Http: each header must be a record with 'name' and 'value' String fields".to_string(),
-            )),
+            _ => {
+                return Err(RuntimeError::Error(
+                    "Http: each header must be a record with 'name' and 'value' String fields"
+                        .to_string(),
+                ))
+            }
         };
         let get = |key: &str| -> Result<String, RuntimeError> {
             fields
                 .iter()
                 .find(|(k, _)| k == key)
-                .and_then(|(_, v)| if let Value::Str(s) = v { Some(s.clone()) } else { None })
-                .ok_or_else(|| RuntimeError::Error(format!(
-                    "Http: header record must have a '{}' String field", key
-                )))
+                .and_then(|(_, v)| {
+                    if let Value::Str(s) = v {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
+                })
+                .ok_or_else(|| {
+                    RuntimeError::Error(format!(
+                        "Http: header record must have a '{}' String field",
+                        key
+                    ))
+                })
         };
         out.push((get("name")?, get("value")?));
     }

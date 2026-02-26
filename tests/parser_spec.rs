@@ -27,6 +27,16 @@ fn parse_fails(src: &str) -> bool {
     parser.parse().is_err()
 }
 
+fn parse_error(src: &str) -> String {
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().expect("lex failed");
+    let mut parser = Parser::new(tokens);
+    parser
+        .parse()
+        .expect_err("expected parse error")
+        .to_string()
+}
+
 // ---------------------------------------------------------------------------
 // Bindings
 // ---------------------------------------------------------------------------
@@ -181,7 +191,7 @@ fn fn_no_params() {
 
 #[test]
 fn fn_result_return_type() {
-    let src = "fn safe_div(a: Int, b: Int) -> Result<Int, String>\n    = Ok(a)\n";
+    let src = "fn safe_div(a: Int, b: Int) -> Result<Int, String>\n    = Result.Ok(a)\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         assert_eq!(fd.return_type, "Result<Int, String>");
@@ -289,42 +299,59 @@ fn expr_fn_call() {
 
 #[test]
 fn expr_constructor_ok() {
-    let items = parse("Ok(42)");
-    if let TopLevel::Stmt(Stmt::Expr(Expr::Constructor(name, Some(inner)))) = &items[0] {
-        assert_eq!(name, "Ok");
-        assert!(matches!(**inner, Expr::Literal(Literal::Int(42))));
+    let items = parse("Result.Ok(42)");
+    if let TopLevel::Stmt(Stmt::Expr(Expr::FnCall(fn_expr, args))) = &items[0] {
+        if let Expr::Attr(obj, field) = fn_expr.as_ref() {
+            assert!(matches!(obj.as_ref(), Expr::Ident(n) if n == "Result"));
+            assert_eq!(field, "Ok");
+        } else {
+            panic!("expected Attr, got: {:?}", fn_expr);
+        }
+        assert_eq!(args.len(), 1);
+        assert!(matches!(&args[0], Expr::Literal(Literal::Int(42))));
     } else {
-        panic!("expected Ok constructor");
+        panic!("expected Result.Ok call, got: {:?}", items[0]);
     }
 }
 
 #[test]
 fn expr_constructor_err() {
-    let items = parse("Err(\"fail\")");
-    if let TopLevel::Stmt(Stmt::Expr(Expr::Constructor(name, _))) = &items[0] {
-        assert_eq!(name, "Err");
+    let items = parse("Result.Err(\"fail\")");
+    if let TopLevel::Stmt(Stmt::Expr(Expr::FnCall(fn_expr, _))) = &items[0] {
+        if let Expr::Attr(obj, field) = fn_expr.as_ref() {
+            assert!(matches!(obj.as_ref(), Expr::Ident(n) if n == "Result"));
+            assert_eq!(field, "Err");
+        } else {
+            panic!("expected Attr, got: {:?}", fn_expr);
+        }
     } else {
-        panic!("expected Err constructor");
+        panic!("expected Result.Err call, got: {:?}", items[0]);
     }
 }
 
 #[test]
 fn expr_constructor_some() {
-    let items = parse("Some(1)");
-    if let TopLevel::Stmt(Stmt::Expr(Expr::Constructor(name, _))) = &items[0] {
-        assert_eq!(name, "Some");
+    let items = parse("Option.Some(1)");
+    if let TopLevel::Stmt(Stmt::Expr(Expr::FnCall(fn_expr, _))) = &items[0] {
+        if let Expr::Attr(obj, field) = fn_expr.as_ref() {
+            assert!(matches!(obj.as_ref(), Expr::Ident(n) if n == "Option"));
+            assert_eq!(field, "Some");
+        } else {
+            panic!("expected Attr, got: {:?}", fn_expr);
+        }
     } else {
-        panic!("expected Some constructor");
+        panic!("expected Option.Some call, got: {:?}", items[0]);
     }
 }
 
 #[test]
 fn expr_constructor_none() {
-    let items = parse("None");
-    if let TopLevel::Stmt(Stmt::Expr(Expr::Constructor(name, None))) = &items[0] {
-        assert_eq!(name, "None");
+    let items = parse("Option.None");
+    if let TopLevel::Stmt(Stmt::Expr(Expr::Attr(obj, field))) = &items[0] {
+        assert!(matches!(obj.as_ref(), Expr::Ident(n) if n == "Option"));
+        assert_eq!(field, "None");
     } else {
-        panic!("expected None constructor");
+        panic!("expected Option.None attr, got: {:?}", items[0]);
     }
 }
 
@@ -406,18 +433,18 @@ fn match_subject_colon_is_not_type_ascription() {
 
 #[test]
 fn match_constructor_patterns() {
-    let src = "fn f(r: Result<Int, String>) -> Int\n    = match r:\n        Ok(v) -> v\n        Err(_) -> 0\n";
+    let src = "fn f(r: Result<Int, String>) -> Int\n    = match r:\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         if let FnBody::Expr(Expr::Match(_, arms)) = &fd.body {
             assert_eq!(arms.len(), 2);
             assert!(matches!(
                 &arms[0].pattern,
-                Pattern::Constructor(name, bindings) if name == "Ok" && !bindings.is_empty()
+                Pattern::Constructor(name, bindings) if name == "Result.Ok" && !bindings.is_empty()
             ));
             assert!(matches!(
                 &arms[1].pattern,
-                Pattern::Constructor(name, _) if name == "Err"
+                Pattern::Constructor(name, _) if name == "Result.Err"
             ));
         } else {
             panic!("expected match body");
@@ -756,6 +783,22 @@ fn parse_user_defined_constructor_pattern() {
 fn parse_fails_on_any_type_annotation() {
     let src = "fn f(x: Any) -> Int\n    = x\n";
     assert!(parse_fails(src));
+}
+
+#[test]
+fn parse_tcp_connection_manual_constructor_shows_actionable_error() {
+    let src = "val c = Tcp.Connection(id: \"x\", host: \"127.0.0.1\", port: 6379)\n";
+    let msg = parse_error(src);
+    assert!(
+        msg.contains("Cannot construct 'Tcp.Connection' directly"),
+        "unexpected parse error: {}",
+        msg
+    );
+    assert!(
+        msg.contains("Tcp.connect(host, port)"),
+        "unexpected parse error: {}",
+        msg
+    );
 }
 
 #[test]

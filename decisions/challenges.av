@@ -178,3 +178,24 @@ decision LanguageScopeDefersGenericsTraits:
     chosen: ConcreteDomainTypes
     rejected: [GenericsNow, TraitsNow]
     impacts: [TypeSystem, LanguageScope, Simplicity]
+
+decision FullNamespaceEverywhere:
+    date: "2026-02-26"
+    author: "ChallengeSession"
+    reason:
+        "Bare functions like len and map are ambiguous across types."
+        "Namespaced calls eliminate overloading and implicit dispatch."
+        "One convention for everything: services, types, constructors, helpers."
+    chosen: UniformNamespacing
+    rejected: [BareBuiltins, MethodSyntax, Overloading]
+    impacts: [Stdlib, Readability, AIContext, LanguageScope]
+
+decision NamespacedConstructors:
+    date: "2026-02-26"
+    author: "ChallengeSession"
+    reason:
+        "Bare Ok Err Some None are inconsistent with FullNamespaceEverywhere."
+        "Result.Ok and Option.Some follow the same dotted convention as Shape.Circle."
+    chosen: QualifiedConstructors
+    rejected: [BareConstructors]
+    impacts: [Result, Option, Consistency]

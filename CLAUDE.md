@@ -24,15 +24,18 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 - Arithmetic: `+`, `-`, `*`, `/` with mixed Int/Float promotion
 - Comparison operators: `==`, `!=`, `<`, `>`, `<=`, `>=`
 - Pipe operator `|>` — passes the left-hand value as the sole argument to the right-hand function
-- `match` expressions with patterns: wildcard `_`, literal, identifier binding, list patterns (`[]`, `[h, ..t]`), constructor (`Ok(x)`, `Err(x)`, `Some(x)`, `None`)
-- `Ok`, `Err`, `Some`, `None` constructors and corresponding value types
-- Error propagation operator `?` on `Result` values — unwraps `Ok`, raises `RuntimeError` on `Err`
-- `module` blocks with `intent:`, `exposes [...]`, and `depends [...]`; runtime import resolution from the entry file base directory (`depends [Foo]`, `depends [Models.User]`)
+- `match` expressions with patterns: wildcard `_`, literal, identifier binding, list patterns (`[]`, `[h, ..t]`), constructor (`Result.Ok(x)`, `Result.Err(x)`, `Option.Some(x)`, `Option.None`)
+- **Namespaced constructors** (decision: `NamespacedConstructors`): `Result.Ok(v)`, `Result.Err(v)`, `Option.Some(v)`, `Option.None` — no bare `Ok`/`Err`/`Some`/`None`. `Result` and `Option` are registered as `Value::Namespace` in the interpreter. Constructors route through `call_builtin` (`__ctor:Result.Ok` etc.). Match patterns use qualified names (`Result.Ok(v)`, `Option.None`).
+- Error propagation operator `?` on `Result` values — unwraps `Result.Ok`, raises `RuntimeError` on `Result.Err`
+- `module` blocks with `intent:`, `exposes [...]`, and `depends [...]`; runtime import resolution from a module root (`--module-root`, default current working directory) with dot-path imports (`depends [Examples.Foo]`, `depends [Examples.Models.User]`)
 - `verify` blocks — inline property tests co-located with functions, run via `aver verify`
 - `decision` blocks — structured architectural decision records (ADR) with `date`, `reason`, `chosen`, `rejected`, `impacts`, `author`
 - **List values**: `Value::List(Vec<Value>)` with literal syntax `[1, 2, 3]`, `["a", "b"]`, `[]`; printed as `[1, 2, 3]`
-- **List builtins**: `len(list)`, `map(list, fn)`, `filter(list, fn)`, `fold(list, init, fn)`, `get(list, n)`, `push(list, val)`, `head(list)`, `tail(list)`; `get`/`head`/`tail` return `Ok(val)` or `Err(msg)`
-- Builtin functions: `print`, `str`, `int`, `abs`, `len` (strings and lists), `map`, `filter`, `fold`, `get`, `push`, `head`, `tail`
+- **No flat builtins** — all functions live in namespaces (decision: `FullNamespaceEverywhere`)
+- **`List` namespace** (`src/services/list_helpers.rs`): `List.len`, `List.map`, `List.filter`, `List.fold`, `List.get`, `List.push`, `List.head`, `List.tail`; `get`/`head`/`tail` return `Result.Ok(val)` or `Result.Err(msg)` — no effects
+- **`Int` namespace** (`src/services/int_helpers.rs`): `Int.fromString`, `Int.fromFloat`, `Int.toString`, `Int.abs`, `Int.min`, `Int.max`, `Int.mod`, `Int.toFloat` — no effects
+- **`Float` namespace** (`src/services/float_helpers.rs`): `Float.fromString`, `Float.fromInt`, `Float.toString`, `Float.abs`, `Float.floor`, `Float.ceil`, `Float.round`, `Float.min`, `Float.max` — no effects
+- **`String` namespace** (`src/services/string_helpers.rs`): `String.length`, `String.byteLength`, `String.startsWith`, `String.endsWith`, `String.contains`, `String.slice`, `String.trim`, `String.split`, `String.replace`, `String.join`, `String.chars`, `String.fromInt`, `String.fromFloat`, `String.fromBool` — no effects
 - Closures: functions capture their definition-time environment
 - CLI with four subcommands: `run`, `verify`, `check`, `decisions`
 - `check` command: warns when a module has no `intent:` or a function with effects/Result return has no `?` description; warns if file exceeds 150 lines; `fn main()` is exempt from the `?` requirement
@@ -40,7 +43,8 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 - **Effect propagation** is statically enforced (blocks `check`/`run`/`verify`), including `main()`: calling an effectful function requires declaring the same effect in the caller. Runtime also enforces call-edge capabilities as a backstop.
 - **User-defined sum types** (`type` keyword): `type Shape` with variants `Circle(Float)`, `Rect(Float, Float)`, `Point`. Constructors are accessed with qualified syntax `Shape.Circle(5.0)` — no flat namespace pollution. Patterns: `Shape.Circle(r)`, `Shape.Point`. Registered as `Value::Namespace` in the interpreter env.
 - **User-defined product types** (`record` keyword): `record User` with named fields `name: String`, `age: Int`. Constructed as `User(name: "Alice", age: 30)`. Field access via `u.name`. Positional destructuring in match: `User(name, age) -> name`.
-- **`Type::Named(String)`** in the type system: capitalized single-word identifiers in type annotations resolve to named types. Compatible only with the same name or internal `Unknown` fallback.
+- **`Type::Named(String)`** in the type system: capitalized identifiers (including dotted names like `Tcp.Connection`) in type annotations resolve to named types. Compatible only with the same name or internal `Unknown` fallback.
+- **`Tcp.Connection` opaque record**: `Tcp.connect` returns `Result<Tcp.Connection, String>` — a record with fields `id: String`, `host: String`, `port: Int`. Persistent-connection methods (`writeLine`, `readLine`, `close`) accept `Tcp.Connection` instead of a bare string ID. The actual socket lives in a thread-local `HashMap` keyed by the `id` field.
 
 ### What is missing / known limitations
 
@@ -87,7 +91,8 @@ src/
 
   interpreter.rs — Tree-walking evaluator.
                    Env is a Vec<HashMap<String,Value>> (scope stack).
-                   Builtins: print, str, int, abs, len.
+                   No flat builtins — all functions live in namespaces
+                   (Console, List, Int, Float, String, Http, Disk, Tcp).
                    Closures are captured eagerly (flat HashMap snapshot).
                    String interpolation re-lexes and re-parses the raw
                    expression text stored inside StrPart::Expr.
@@ -209,20 +214,20 @@ Expr::Maintain(cond, body) => {
 }
 ```
 
-### How to add a new builtin function
+### How to add a new namespace function
 
-In `src/interpreter.rs`, two places:
+All functions live in namespaces (e.g., `Int.abs`, `List.len`, `Console.print`). To add a new function to an existing namespace:
 
-1. Register the name in `Interpreter::new()`:
+1. Add the implementation in the namespace's service file (e.g., `src/services/int_helpers.rs`) inside `call()`:
    ```rust
-   for name in &["print", "str", "int", "abs", "len", "YOUR_BUILTIN"] {
-   ```
-2. Add a match arm in `call_builtin()`:
-   ```rust
-   "YOUR_BUILTIN" => {
-       // validate args.len(), pattern-match args[0], return Ok(Value::...)
+   "Int.yourMethod" => {
+       // validate args, return Ok(Value::...)
    }
    ```
+2. Register the member name in `register()` so it appears in the namespace's `members` map.
+3. Add the type signature in `src/typechecker.rs` in the corresponding `service_sigs` section.
+
+To create a new namespace, follow the pattern in any `src/services/*_helpers.rs` file: implement `register()`, `effects()`, and `call()`, add `pub mod` in `services/mod.rs`, wire it up in `interpreter/mod.rs`.
 
 ### How to add a new expression type
 
@@ -249,7 +254,7 @@ In `src/interpreter.rs`, two places:
 
 ## Agreed direction: modules vs DI (2026-02-25)
 
-- Keep the language explicit in phase 1: `depends [Foo]` resolves from the entry file base directory only (`foo.av` / `Foo.av`), with no hidden CLI/env remapping.
+- Keep the language explicit in phase 1: `depends [Examples.Foo]` resolves from an explicit module root (default current working directory, optional `--module-root` override), with no hidden env remapping or parent-directory fallback.
 - Treat circular imports as a hard error with an explicit chain (`A -> B -> A`) rather than trying to support partial linking now.
 - Keep concerns separate:
   - Module imports (`depends`) answer "where code comes from".

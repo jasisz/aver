@@ -151,22 +151,22 @@ fn keyword_module() {
 
 #[test]
 fn constructor_ok() {
-    assert_eq!(lex("Ok"), vec![TokenKind::Ok]);
+    assert_eq!(lex("Ok"), vec![TokenKind::Ident("Ok".to_string())]);
 }
 
 #[test]
 fn constructor_err() {
-    assert_eq!(lex("Err"), vec![TokenKind::Err]);
+    assert_eq!(lex("Err"), vec![TokenKind::Ident("Err".to_string())]);
 }
 
 #[test]
 fn constructor_some() {
-    assert_eq!(lex("Some"), vec![TokenKind::Some]);
+    assert_eq!(lex("Some"), vec![TokenKind::Ident("Some".to_string())]);
 }
 
 #[test]
 fn constructor_none() {
-    assert_eq!(lex("None"), vec![TokenKind::None]);
+    assert_eq!(lex("None"), vec![TokenKind::Ident("None".to_string())]);
 }
 
 // ---------------------------------------------------------------------------

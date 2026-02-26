@@ -30,11 +30,7 @@ pub fn register(global: &mut HashMap<String, Value>) {
 
 pub fn effects(name: &str) -> &'static [&'static str] {
     match name {
-        "print"
-        | "Console.print"
-        | "Console.error"
-        | "Console.warn"
-        | "Console.readLine" => &["Console"],
+        "Console.print" | "Console.error" | "Console.warn" | "Console.readLine" => &["Console"],
         _ => &[],
     }
 }
@@ -42,7 +38,7 @@ pub fn effects(name: &str) -> &'static [&'static str] {
 /// Returns `Some(result)` when `name` is owned by this service, `None` otherwise.
 pub fn call(name: &str, args: Vec<Value>) -> Option<Result<Value, RuntimeError>> {
     match name {
-        "print" | "Console.print" => Some(one_msg(name, args, |s| {
+        "Console.print" => Some(one_msg(name, args, |s| {
             println!("{}", s);
         })),
         "Console.error" => Some(one_msg(name, args, |s| {
@@ -62,7 +58,8 @@ fn one_msg(name: &str, args: Vec<Value>, emit: impl Fn(&str)) -> Result<Value, R
     if args.len() != 1 {
         return Err(RuntimeError::Error(format!(
             "{}() takes 1 argument, got {}",
-            name, args.len()
+            name,
+            args.len()
         )));
     }
     if let Some(s) = aver_display(&args[0]) {
@@ -83,8 +80,12 @@ fn read_line(args: Vec<Value>) -> Result<Value, RuntimeError> {
         Ok(0) => Ok(Value::Err(Box::new(Value::Str("EOF".to_string())))),
         Ok(_) => {
             // Strip trailing newline
-            if line.ends_with('\n') { line.pop(); }
-            if line.ends_with('\r') { line.pop(); }
+            if line.ends_with('\n') {
+                line.pop();
+            }
+            if line.ends_with('\r') {
+                line.pop();
+            }
             Ok(Value::Ok(Box::new(Value::Str(line))))
         }
         Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),

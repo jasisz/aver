@@ -9,7 +9,7 @@
 use aver::ast::TopLevel;
 use aver::lexer::Lexer;
 use aver::parser::Parser;
-use aver::typechecker::{run_type_check, run_type_check_with_base};
+use aver::types::checker::{run_type_check, run_type_check_with_base};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -87,17 +87,17 @@ fn valid_float_function() {
 
 #[test]
 fn valid_unit_function() {
-    assert_no_errors("fn noop() -> Unit\n    ! [Console]\n    = print(\"hi\")\n");
+    assert_no_errors("fn noop() -> Unit\n    ! [Console]\n    = Console.print(\"hi\")\n");
 }
 
 #[test]
 fn valid_result_return() {
-    assert_no_errors("fn safe_div(a: Int, b: Int) -> Result<Int, String>\n    = Ok(a)\n");
+    assert_no_errors("fn safe_div(a: Int, b: Int) -> Result<Int, String>\n    = Result.Ok(a)\n");
 }
 
 #[test]
 fn valid_option_return() {
-    assert_no_errors("fn maybe(x: Int) -> Option<Int>\n    = Some(x)\n");
+    assert_no_errors("fn maybe(x: Int) -> Option<Int>\n    = Option.Some(x)\n");
 }
 
 #[test]
@@ -107,7 +107,7 @@ fn valid_list_return() {
 
 #[test]
 fn valid_list_pattern_matching() {
-    let src = "fn score(xs: List<Int>) -> Int\n    = match xs:\n        [] -> 0\n        [h, ..t] -> h + len(t)\n";
+    let src = "fn score(xs: List<Int>) -> Int\n    = match xs:\n        [] -> 0\n        [h, ..t] -> h + List.len(t)\n";
     assert_no_errors(src);
 }
 
@@ -190,13 +190,44 @@ fn valid_app_dot_av() {
     let src =
         std::fs::read_to_string("examples/app_dot.av").expect("examples/app_dot.av not found");
     let items = parse(&src);
-    let errs = run_type_check_with_base(&items, Some("examples"))
+    let errs = run_type_check_with_base(&items, Some("."))
         .into_iter()
         .map(|e| e.message)
         .collect::<Vec<_>>();
     assert!(
         errs.is_empty(),
         "expected no type errors for app_dot.av, got:\n  {}",
+        errs.join("\n  ")
+    );
+}
+
+#[test]
+fn valid_app_av() {
+    let src = std::fs::read_to_string("examples/app.av").expect("examples/app.av not found");
+    let items = parse(&src);
+    let errs = run_type_check_with_base(&items, Some("."))
+        .into_iter()
+        .map(|e| e.message)
+        .collect::<Vec<_>>();
+    assert!(
+        errs.is_empty(),
+        "expected no type errors for app.av, got:\n  {}",
+        errs.join("\n  ")
+    );
+}
+
+#[test]
+fn valid_services_weather_av() {
+    let src = std::fs::read_to_string("examples/services/weather.av")
+        .expect("examples/services/weather.av not found");
+    let items = parse(&src);
+    let errs = run_type_check_with_base(&items, Some("."))
+        .into_iter()
+        .map(|e| e.message)
+        .collect::<Vec<_>>();
+    assert!(
+        errs.is_empty(),
+        "expected no type errors for services/weather.av, got:\n  {}",
         errs.join("\n  ")
     );
 }
@@ -246,7 +277,7 @@ fn error_arg_type_mismatch_string_for_int() {
 
 #[test]
 fn error_effectful_callback_passed_to_pure_slot() {
-    let src = "fn applyPure(f: Fn(Int) -> Int, x: Int) -> Int\n    = f(x)\nfn logInc(n: Int) -> Int\n    ! [Console]\n    print(n)\n    n + 1\nfn main() -> Unit\n    ! [Console]\n    val r = applyPure(logInc, 1)\n";
+    let src = "fn applyPure(f: Fn(Int) -> Int, x: Int) -> Int\n    = f(x)\nfn logInc(n: Int) -> Int\n    ! [Console]\n    Console.print(n)\n    n + 1\nfn main() -> Unit\n    ! [Console]\n    val r = applyPure(logInc, 1)\n";
     assert_error_containing(src, "Fn(Int) -> Int ! [Console]");
 }
 
@@ -298,27 +329,27 @@ fn error_binop_int_plus_string() {
 fn error_undeclared_effect() {
     // Calling a function with an effect from a function without that effect declared
     let src =
-        "fn log(msg: String) -> Unit\n    ! [Io]\n    = print(msg)\nfn caller(x: String) -> Unit\n    = log(x)\n";
+        "fn log(msg: String) -> Unit\n    ! [Io]\n    = Console.print(msg)\nfn caller(x: String) -> Unit\n    = log(x)\n";
     assert_error_containing(src, "Io");
 }
 
 #[test]
 fn error_main_undeclared_console_effect() {
-    let src = "fn main() -> Unit\n    = print(\"hi\")\n";
+    let src = "fn main() -> Unit\n    = Console.print(\"hi\")\n";
     assert_error_containing(src, "main");
     assert_error_containing(src, "Console");
 }
 
 #[test]
 fn error_top_level_undeclared_console_effect() {
-    let src = "print(\"hi\")\n";
+    let src = "Console.print(\"hi\")\n";
     assert_error_containing(src, "<top-level>");
     assert_error_containing(src, "Console");
 }
 
 #[test]
 fn error_verify_undeclared_console_effect() {
-    let src = "fn main() -> Int\n    = 0\nverify main:\n    print(\"x\") => print(\"x\")\n";
+    let src = "fn main() -> Int\n    = 0\nverify main:\n    Console.print(\"x\") => Console.print(\"x\")\n";
     assert_error_containing(src, "<verify:main>");
     assert_error_containing(src, "Console");
 }
@@ -351,7 +382,7 @@ fn error_call_to_unexposed_module_member() {
 #[test]
 fn valid_effect_propagated_correctly() {
     // caller declares the same effect as callee
-    let src = "fn log(msg: String) -> Unit\n    ! [Console]\n    = print(msg)\nfn caller(x: String) -> Unit\n    ! [Console]\n    = log(x)\n";
+    let src = "fn log(msg: String) -> Unit\n    ! [Console]\n    = Console.print(msg)\nfn caller(x: String) -> Unit\n    ! [Console]\n    = log(x)\n";
     assert_no_errors(src);
 }
 
@@ -362,7 +393,7 @@ fn valid_effect_propagated_correctly() {
 #[test]
 fn valid_error_prop_in_result_fn() {
     // ? on a Result<Int, String> inside a function returning Result<Int, String> — valid.
-    let src = "fn safe(r: Result<Int, String>) -> Result<Int, String>\n    = Ok(r?)\n";
+    let src = "fn safe(r: Result<Int, String>) -> Result<Int, String>\n    = Result.Ok(r?)\n";
     assert_no_errors(src);
 }
 
@@ -384,7 +415,7 @@ fn error_prop_on_non_result_type() {
 fn error_prop_incompatible_err_types() {
     // Inner Err is String, outer function expects Err = Int — incompatible.
     let src =
-        "fn inner(x: Int) -> Result<Int, String>\n    = Ok(x)\nfn outer(x: Int) -> Result<Int, Int>\n    = Ok(inner(x)?)\n";
+        "fn inner(x: Int) -> Result<Int, String>\n    = Result.Ok(x)\nfn outer(x: Int) -> Result<Int, Int>\n    = Result.Ok(inner(x)?)\n";
     assert_error_containing(src, "incompatible");
 }
 
@@ -463,7 +494,7 @@ fn valid_effect_set_alias_satisfies_effect() {
         "effects AppIO = [Console]\n",
         "fn greet() -> Unit\n",
         "    ! [AppIO]\n",
-        "    print(\"hi\")\n",
+        "    Console.print(\"hi\")\n",
     );
     assert_no_errors(src);
 }
@@ -475,7 +506,7 @@ fn valid_effect_set_multi_alias() {
         "effects AppIO = [Console]\n",
         "fn log(msg: String) -> Unit\n",
         "    ! [Console]\n",
-        "    print(msg)\n",
+        "    Console.print(msg)\n",
         "fn process() -> Unit\n",
         "    ! [AppIO]\n",
         "    log(\"processing\")\n",
@@ -490,7 +521,7 @@ fn error_effect_set_alias_insufficient() {
         "effects Silent = []\n",
         "fn greet() -> Unit\n",
         "    ! [Silent]\n",
-        "    print(\"hi\")\n",
+        "    Console.print(\"hi\")\n",
     );
     assert_error_containing(src, "has effect 'Console'");
 }
@@ -783,4 +814,221 @@ fn error_tcp_ping_without_effect() {
         "    = Tcp.ping(host, port)\n",
     );
     assert_error_containing(src, "has effect 'Tcp'");
+}
+
+#[test]
+fn valid_http_server_listen_with_context() {
+    let src = concat!(
+        "fn handle(ctx: String, req: HttpRequest) -> HttpResponse\n",
+        "    = HttpResponse(status: 200, body: ctx, headers: [])\n",
+        "fn main() -> Unit\n",
+        "    ! [HttpServer]\n",
+        "    HttpServer.listenWith(8080, \"ok\", handle)\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_tcp_connect_returns_connection() {
+    let src = concat!(
+        "fn open(host: String, port: Int) -> Result<Tcp.Connection, String>\n",
+        "    ! [Tcp]\n",
+        "    = Tcp.connect(host, port)\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_tcp_write_line_with_connection() {
+    let src = concat!(
+        "fn send(conn: Tcp.Connection, msg: String) -> Result<Unit, String>\n",
+        "    ! [Tcp]\n",
+        "    = Tcp.writeLine(conn, msg)\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_tcp_read_line_with_connection() {
+    let src = concat!(
+        "fn recv(conn: Tcp.Connection) -> Result<String, String>\n",
+        "    ! [Tcp]\n",
+        "    = Tcp.readLine(conn)\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_tcp_close_with_connection() {
+    let src = concat!(
+        "fn done(conn: Tcp.Connection) -> Result<Unit, String>\n",
+        "    ! [Tcp]\n",
+        "    = Tcp.close(conn)\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_tcp_connection_field_access() {
+    let src = concat!(
+        "fn getId(conn: Tcp.Connection) -> String\n",
+        "    = conn.id\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn error_tcp_write_line_with_string() {
+    let src = concat!(
+        "fn send(conn: String, msg: String) -> Result<Unit, String>\n",
+        "    ! [Tcp]\n",
+        "    = Tcp.writeLine(conn, msg)\n",
+    );
+    assert_error_containing(src, "expected Tcp.Connection");
+}
+
+// ---------------------------------------------------------------------------
+// Int / Float / String namespace type checking
+// ---------------------------------------------------------------------------
+
+#[test]
+fn valid_int_to_string() {
+    assert_no_errors("fn f(n: Int) -> String\n    = Int.toString(n)\n");
+}
+
+#[test]
+fn valid_int_from_string() {
+    assert_no_errors("fn f(s: String) -> Result<Int, String>\n    = Int.fromString(s)\n");
+}
+
+#[test]
+fn valid_int_abs() {
+    assert_no_errors("fn f(n: Int) -> Int\n    = Int.abs(n)\n");
+}
+
+#[test]
+fn valid_int_min_max() {
+    assert_no_errors("fn f(a: Int, b: Int) -> Int\n    = Int.min(a, Int.max(a, b))\n");
+}
+
+#[test]
+fn valid_int_mod() {
+    assert_no_errors("fn f(a: Int, b: Int) -> Result<Int, String>\n    = Int.mod(a, b)\n");
+}
+
+#[test]
+fn valid_int_to_float() {
+    assert_no_errors("fn f(n: Int) -> Float\n    = Int.toFloat(n)\n");
+}
+
+#[test]
+fn valid_float_abs() {
+    assert_no_errors("fn f(x: Float) -> Float\n    = Float.abs(x)\n");
+}
+
+#[test]
+fn valid_float_floor_ceil_round() {
+    assert_no_errors("fn f(x: Float) -> Int\n    = Float.floor(x)\n");
+    assert_no_errors("fn f(x: Float) -> Int\n    = Float.ceil(x)\n");
+    assert_no_errors("fn f(x: Float) -> Int\n    = Float.round(x)\n");
+}
+
+#[test]
+fn valid_float_from_int() {
+    assert_no_errors("fn f(n: Int) -> Float\n    = Float.fromInt(n)\n");
+}
+
+#[test]
+fn valid_float_to_string() {
+    assert_no_errors("fn f(x: Float) -> String\n    = Float.toString(x)\n");
+}
+
+#[test]
+fn valid_string_length() {
+    assert_no_errors("fn f(s: String) -> Int\n    = String.length(s)\n");
+}
+
+#[test]
+fn valid_string_byte_length() {
+    assert_no_errors("fn f(s: String) -> Int\n    = String.byteLength(s)\n");
+}
+
+#[test]
+fn valid_string_starts_with() {
+    assert_no_errors("fn f(s: String, p: String) -> Bool\n    = String.startsWith(s, p)\n");
+}
+
+#[test]
+fn valid_string_contains() {
+    assert_no_errors("fn f(s: String, sub: String) -> Bool\n    = String.contains(s, sub)\n");
+}
+
+#[test]
+fn valid_string_slice() {
+    assert_no_errors("fn f(s: String) -> String\n    = String.slice(s, 0, 3)\n");
+}
+
+#[test]
+fn valid_string_trim() {
+    assert_no_errors("fn f(s: String) -> String\n    = String.trim(s)\n");
+}
+
+#[test]
+fn valid_string_split() {
+    assert_no_errors("fn f(s: String) -> List<String>\n    = String.split(s, \",\")\n");
+}
+
+#[test]
+fn valid_string_replace() {
+    assert_no_errors("fn f(s: String) -> String\n    = String.replace(s, \"a\", \"b\")\n");
+}
+
+#[test]
+fn valid_string_join() {
+    assert_no_errors("fn f(xs: List<String>) -> String\n    = String.join(xs, \",\")\n");
+}
+
+#[test]
+fn valid_string_chars() {
+    assert_no_errors("fn f(s: String) -> List<String>\n    = String.chars(s)\n");
+}
+
+#[test]
+fn valid_string_from_int() {
+    assert_no_errors("fn f(n: Int) -> String\n    = String.fromInt(n)\n");
+}
+
+#[test]
+fn valid_string_from_float() {
+    assert_no_errors("fn f(x: Float) -> String\n    = String.fromFloat(x)\n");
+}
+
+#[test]
+fn valid_string_from_bool() {
+    assert_no_errors("fn f(b: Bool) -> String\n    = String.fromBool(b)\n");
+}
+
+#[test]
+fn error_int_to_string_wrong_arg() {
+    assert_error_containing(
+        "fn f(s: String) -> String\n    = Int.toString(s)\n",
+        "expected Int, got String",
+    );
+}
+
+#[test]
+fn error_float_abs_wrong_arg() {
+    // String is incompatible with Float (unlike Int which widens)
+    assert_error_containing(
+        "fn f(s: String) -> Float\n    = Float.abs(s)\n",
+        "expected Float, got String",
+    );
+}
+
+#[test]
+fn valid_no_effects_for_helpers() {
+    // Int/Float/String namespace methods don't require effects
+    assert_no_errors("fn f(n: Int) -> String\n    = Int.toString(n)\n");
+    assert_no_errors("fn f(x: Float) -> Int\n    = Float.floor(x)\n");
+    assert_no_errors("fn f(s: String) -> Int\n    = String.length(s)\n");
 }

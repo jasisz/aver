@@ -7,12 +7,12 @@ effects AppIO = [Console]
 fn greet(name: String) -> Unit
     ? "Prints a greeting. Declares AppIO instead of listing Console directly."
     ! [AppIO]
-    print("Hello, {name}!")
+    Console.print("Hello, {name}!")
 
 fn farewell(name: String) -> Unit
     ? "Prints a farewell. Also uses AppIO alias."
     ! [AppIO]
-    print("Goodbye, {name}!")
+    Console.print("Goodbye, {name}!")
 
 fn main() -> Unit
     ! [Console]

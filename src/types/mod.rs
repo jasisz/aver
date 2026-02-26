@@ -1,7 +1,17 @@
-/// Aver static type representation.
+/// Aver static type representation and built-in type namespaces.
+///
 /// Type annotations in the AST are plain strings; this module converts them
 /// to a structured enum and provides the compatibility relation used by
 /// the type checker.
+///
+/// Sub-modules:
+/// - `checker` — static type checker
+/// - `int`, `float`, `string`, `list` — pure namespace helpers (no effects)
+pub mod checker;
+pub mod float;
+pub mod int;
+pub mod list;
+pub mod string;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
@@ -113,9 +123,11 @@ pub fn parse_type_str_strict(s: &str) -> Result<Type, String> {
                 return Ok(Type::List(Box::new(inner_ty)));
             }
 
-            // Capitalized identifier with only alphanumeric/_chars = user-defined type name
+            // Capitalized identifier with only alphanumeric/_ and dot chars = user-defined type name
+            // Supports dotted names like "Tcp.Connection"
             if s.chars().next().map_or(false, |c| c.is_uppercase())
-                && s.chars().all(|c| c.is_alphanumeric() || c == '_')
+                && s.chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
             {
                 return Ok(Type::Named(s.to_string()));
             }
@@ -160,9 +172,11 @@ pub fn parse_type_str(s: &str) -> Type {
             if let Some(inner) = strip_wrapper(s, "List<", ">") {
                 return Type::List(Box::new(parse_type_str(inner)));
             }
-            // Capitalized identifier with only alphanumeric/_chars = user-defined type
+            // Capitalized identifier with only alphanumeric/_ and dot chars = user-defined type
+            // Supports dotted names like "Tcp.Connection"
             if s.chars().next().map_or(false, |c| c.is_uppercase())
-                && s.chars().all(|c| c.is_alphanumeric() || c == '_')
+                && s.chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
                 && s != "Any"
             {
                 return Type::Named(s.to_string());
@@ -480,6 +494,25 @@ mod tests {
         );
         // Lowercase unknown types still fail
         assert!(parse_type_str_strict("integ").is_err());
+    }
+
+    #[test]
+    fn test_dotted_named_type() {
+        assert_eq!(
+            parse_type_str("Tcp.Connection"),
+            Type::Named("Tcp.Connection".to_string())
+        );
+        assert_eq!(
+            parse_type_str_strict("Tcp.Connection").unwrap(),
+            Type::Named("Tcp.Connection".to_string())
+        );
+        assert_eq!(
+            parse_type_str_strict("Result<Tcp.Connection, String>").unwrap(),
+            Type::Result(
+                Box::new(Type::Named("Tcp.Connection".to_string())),
+                Box::new(Type::Str)
+            )
+        );
     }
 
     #[test]

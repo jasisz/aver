@@ -23,8 +23,8 @@ fn fahrToCelsius(f: Float) -> Float
 fn celsiusToKelvin(c: Float) -> Result<Float, String>
     ? "Converts Celsius to Kelvin. Returns Err if result would be below absolute zero."
     match c < -273.15:
-        true  -> Err("Below absolute zero")
-        false -> Ok(c + 273.15)
+        true  -> Result.Err("Below absolute zero")
+        false -> Result.Ok(c + 273.15)
 
 fn isBoiling(c: Float) -> Bool
     ? "Returns true if a Celsius temperature is at or above the boiling point of water."
@@ -47,29 +47,29 @@ fn classify(c: Float) -> String
 fn main() -> Unit
     ! [Console]
     val boiling = 100.0 |> celsiusToFahr
-    print("100 C in Fahrenheit:")
-    print(boiling)
+    Console.print("100 C in Fahrenheit:")
+    Console.print(boiling)
 
     val body = 98.6 |> fahrToCelsius
-    print("98.6 F in Celsius:")
-    print(body)
+    Console.print("98.6 F in Celsius:")
+    Console.print(body)
 
     val freezeK = celsiusToKelvin(0.0)
-    print("0 C in Kelvin:")
-    print(freezeK)
+    Console.print("0 C in Kelvin:")
+    Console.print(freezeK)
 
     val invalid = celsiusToKelvin(-300.0)
-    print("−300 C in Kelvin:")
-    print(invalid)
+    Console.print("−300 C in Kelvin:")
+    Console.print(invalid)
 
     val temps = [0.0, 15.0, 25.0, 37.0, 100.0]
-    val boilingTemps = filter(temps, isBoiling)
-    print("Boiling:")
-    print(boilingTemps)
+    val boilingTemps = List.filter(temps, isBoiling)
+    Console.print("Boiling:")
+    Console.print(boilingTemps)
 
-    val freezingTemps = filter(temps, isFreezing)
-    print("Freezing:")
-    print(freezingTemps)
+    val freezingTemps = List.filter(temps, isFreezing)
+    Console.print("Freezing:")
+    Console.print(freezingTemps)
 
 verify celsiusToFahr:
     celsiusToFahr(0.0)   => 32.0
@@ -82,9 +82,9 @@ verify fahrToCelsius:
     fahrToCelsius(-40.0) => -40.0
 
 verify celsiusToKelvin:
-    celsiusToKelvin(0.0)    => Ok(273.15)
-    celsiusToKelvin(100.0)  => Ok(373.15)
-    celsiusToKelvin(-300.0) => Err("Below absolute zero")
+    celsiusToKelvin(0.0)    => Result.Ok(273.15)
+    celsiusToKelvin(100.0)  => Result.Ok(373.15)
+    celsiusToKelvin(-300.0) => Result.Err("Below absolute zero")
 
 verify isBoiling:
     isBoiling(100.0) => true

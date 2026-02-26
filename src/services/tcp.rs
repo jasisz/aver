@@ -5,7 +5,7 @@
 ///   `Tcp.ping(host, port)`          — check whether the port accepts connections.
 ///
 /// Persistent-connection methods:
-///   `Tcp.connect(host, port)`           → Result<String, String>  (returns conn ID)
+///   `Tcp.connect(host, port)`           → Result<Tcp.Connection, String>  (returns opaque connection record)
 ///   `Tcp.writeLine(conn, line)`         → Result<Unit, String>    (writes line + \r\n)
 ///   `Tcp.readLine(conn)`                → Result<String, String>  (reads until \n, strips \r\n)
 ///   `Tcp.close(conn)`                   → Result<Unit, String>
@@ -104,7 +104,10 @@ fn tcp_send(args: Vec<Value>) -> Result<Value, RuntimeError> {
 
     let mut buf = Vec::new();
     use std::io::Read;
-    if let Err(e) = std::io::Read::by_ref(&mut stream).take(BODY_LIMIT as u64 + 1).read_to_end(&mut buf) {
+    if let Err(e) = std::io::Read::by_ref(&mut stream)
+        .take(BODY_LIMIT as u64 + 1)
+        .read_to_end(&mut buf)
+    {
         return Ok(Value::Err(Box::new(Value::Str(e.to_string()))));
     }
 
@@ -167,7 +170,15 @@ fn tcp_connect(args: Vec<Value>) -> Result<Value, RuntimeError> {
         map.borrow_mut().insert(id.clone(), BufReader::new(stream));
     });
 
-    Ok(Value::Ok(Box::new(Value::Str(id))))
+    let conn_record = Value::Record {
+        type_name: "Tcp.Connection".to_string(),
+        fields: vec![
+            ("id".to_string(), Value::Str(id)),
+            ("host".to_string(), Value::Str(host)),
+            ("port".to_string(), Value::Int(port as i64)),
+        ],
+    };
+    Ok(Value::Ok(Box::new(conn_record)))
 }
 
 fn tcp_write_line(args: Vec<Value>) -> Result<Value, RuntimeError> {
@@ -177,7 +188,7 @@ fn tcp_write_line(args: Vec<Value>) -> Result<Value, RuntimeError> {
             args.len()
         )));
     }
-    let conn_id = str_arg(&args[0], "Tcp.writeLine: conn must be a String")?;
+    let conn_id = conn_id_arg(&args[0], "Tcp.writeLine")?;
     let line = str_arg(&args[1], "Tcp.writeLine: line must be a String")?;
 
     let result = CONNECTIONS.with(|map| {
@@ -207,7 +218,7 @@ fn tcp_read_line(args: Vec<Value>) -> Result<Value, RuntimeError> {
             args.len()
         )));
     }
-    let conn_id = str_arg(&args[0], "Tcp.readLine: conn must be a String")?;
+    let conn_id = conn_id_arg(&args[0], "Tcp.readLine")?;
 
     let result = CONNECTIONS.with(|map| {
         let mut borrow = map.borrow_mut();
@@ -215,9 +226,7 @@ fn tcp_read_line(args: Vec<Value>) -> Result<Value, RuntimeError> {
             None => Err(format!("Tcp.readLine: unknown connection '{}'", conn_id)),
             Some(reader) => {
                 let mut line = String::new();
-                reader
-                    .read_line(&mut line)
-                    .map_err(|e| e.to_string())?;
+                reader.read_line(&mut line).map_err(|e| e.to_string())?;
                 // Strip trailing \r\n or \n
                 if line.ends_with('\n') {
                     line.pop();
@@ -243,7 +252,7 @@ fn tcp_close(args: Vec<Value>) -> Result<Value, RuntimeError> {
             args.len()
         )));
     }
-    let conn_id = str_arg(&args[0], "Tcp.close: conn must be a String")?;
+    let conn_id = conn_id_arg(&args[0], "Tcp.close")?;
 
     let removed = CONNECTIONS.with(|map| map.borrow_mut().remove(&conn_id));
     match removed {
@@ -259,9 +268,33 @@ fn tcp_close(args: Vec<Value>) -> Result<Value, RuntimeError> {
 
 fn resolve(addr: &str) -> Result<std::net::SocketAddr, RuntimeError> {
     addr.to_socket_addrs()
-        .map_err(|e| RuntimeError::Error(format!("Tcp: DNS resolution failed for {}: {}", addr, e)))?
+        .map_err(|e| {
+            RuntimeError::Error(format!("Tcp: DNS resolution failed for {}: {}", addr, e))
+        })?
         .next()
         .ok_or_else(|| RuntimeError::Error(format!("Tcp: no address found for {}", addr)))
+}
+
+fn conn_id_arg(val: &Value, method: &str) -> Result<String, RuntimeError> {
+    match val {
+        Value::Record { type_name, fields } if type_name == "Tcp.Connection" => {
+            for (name, v) in fields {
+                if name == "id" {
+                    if let Value::Str(s) = v {
+                        return Ok(s.clone());
+                    }
+                }
+            }
+            Err(RuntimeError::Error(format!(
+                "{}: Tcp.Connection record missing 'id' field",
+                method
+            )))
+        }
+        _ => Err(RuntimeError::Error(format!(
+            "{}: first argument must be a Tcp.Connection, got {:?}",
+            method, val
+        ))),
+    }
 }
 
 fn str_arg(val: &Value, msg: &str) -> Result<String, RuntimeError> {
@@ -275,7 +308,8 @@ fn int_arg(val: &Value, msg: &str) -> Result<u16, RuntimeError> {
     match val {
         Value::Int(n) if (0..=65535).contains(n) => Ok(*n as u16),
         Value::Int(n) => Err(RuntimeError::Error(format!(
-            "Tcp: port {} is out of range (0–65535)", n
+            "Tcp: port {} is out of range (0–65535)",
+            n
         ))),
         _ => Err(RuntimeError::Error(msg.to_string())),
     }

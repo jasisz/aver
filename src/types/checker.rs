@@ -11,9 +11,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use super::{parse_type_str_strict, Type};
 use crate::ast::{BinOp, Expr, FnBody, FnDef, Module, Pattern, Stmt, TopLevel, TypeDef};
 use crate::source::{canonicalize_path, find_module_file, parse_source};
-use crate::types::{parse_type_str_strict, Type};
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -156,57 +156,10 @@ impl TypeChecker {
     // Builtin signatures
     // -----------------------------------------------------------------------
     fn register_builtins(&mut self) {
-        let any = || Type::Unknown;
-        let sigs: &[(&str, &[Type], Type, &[&str])] = &[
-            ("print", &[Type::Unknown], Type::Unit, &["Console"]),
-            ("str", &[Type::Unknown], Type::Str, &[]),
-            ("int", &[Type::Unknown], Type::Int, &[]),
-            ("abs", &[Type::Unknown], Type::Unknown, &[]),
-            ("len", &[Type::Unknown], Type::Int, &[]),
-            (
-                "map",
-                &[Type::Unknown, Type::Unknown],
-                Type::List(Box::new(any())),
-                &[],
-            ),
-            (
-                "filter",
-                &[Type::Unknown, Type::Unknown],
-                Type::List(Box::new(any())),
-                &[],
-            ),
-            ("fold", &[Type::Unknown, Type::Unknown, Type::Unknown], any(), &[]),
-            (
-                "get",
-                &[Type::Unknown, Type::Int],
-                Type::Result(Box::new(any()), Box::new(Type::Str)),
-                &[],
-            ),
-            (
-                "push",
-                &[Type::Unknown, Type::Unknown],
-                Type::List(Box::new(any())),
-                &[],
-            ),
-            (
-                "head",
-                &[Type::Unknown],
-                Type::Result(Box::new(any()), Box::new(Type::Str)),
-                &[],
-            ),
-            (
-                "tail",
-                &[Type::Unknown],
-                Type::Result(Box::new(any()), Box::new(Type::Str)),
-                &[],
-            ),
-        ];
-        for (name, params, ret, effects) in sigs {
-            self.insert_sig(name, params, ret.clone(), effects);
-        }
+        // No flat builtins — all functions live in namespaces.
 
-        // Register built-in record field types for HttpResponse and Header.
-        // This enables checked dot-access: resp.status → Int, resp.body → Str, etc.
+        // Register built-in record field types for HttpResponse / HttpRequest and Header.
+        // This enables checked dot-access: resp.status → Int, req.path → String, etc.
         let net_resp_fields: &[(&str, Type)] = &[
             ("status", Type::Int),
             ("body", Type::Str),
@@ -219,10 +172,29 @@ impl TypeChecker {
             self.record_field_types
                 .insert(format!("HttpResponse.{}", field), ty.clone());
         }
+        let net_req_fields: &[(&str, Type)] = &[
+            ("method", Type::Str),
+            ("path", Type::Str),
+            ("body", Type::Str),
+            (
+                "headers",
+                Type::List(Box::new(Type::Named("Header".to_string()))),
+            ),
+        ];
+        for (field, ty) in net_req_fields {
+            self.record_field_types
+                .insert(format!("HttpRequest.{}", field), ty.clone());
+        }
         let header_fields: &[(&str, Type)] = &[("name", Type::Str), ("value", Type::Str)];
         for (field, ty) in header_fields {
             self.record_field_types
                 .insert(format!("Header.{}", field), ty.clone());
+        }
+        let tcp_conn_fields: &[(&str, Type)] =
+            &[("id", Type::Str), ("host", Type::Str), ("port", Type::Int)];
+        for (field, ty) in tcp_conn_fields {
+            self.record_field_types
+                .insert(format!("Tcp.Connection.{}", field), ty.clone());
         }
 
         let net_ret = || {
@@ -240,6 +212,32 @@ impl TypeChecker {
             )
         };
         let header_list = || Type::List(Box::new(Type::Named("Header".to_string())));
+        let http_handler = || {
+            Type::Fn(
+                vec![Type::Named("HttpRequest".to_string())],
+                Box::new(Type::Named("HttpResponse".to_string())),
+                vec![
+                    "Console".to_string(),
+                    "Http".to_string(),
+                    "Disk".to_string(),
+                    "Tcp".to_string(),
+                    "HttpServer".to_string(),
+                ],
+            )
+        };
+        let http_handler_with_context = || {
+            Type::Fn(
+                vec![Type::Unknown, Type::Named("HttpRequest".to_string())],
+                Box::new(Type::Named("HttpResponse".to_string())),
+                vec![
+                    "Console".to_string(),
+                    "Http".to_string(),
+                    "Disk".to_string(),
+                    "Tcp".to_string(),
+                    "HttpServer".to_string(),
+                ],
+            )
+        };
         let service_sigs: &[(&str, &[Type], Type, &[&str])] = &[
             ("Console.print", &[Type::Unknown], Type::Unit, &["Console"]),
             ("Console.error", &[Type::Unknown], Type::Unit, &["Console"]),
@@ -270,6 +268,18 @@ impl TypeChecker {
                 &[Type::Str, Type::Str, Type::Str, header_list()],
                 net_ret(),
                 &["Http"],
+            ),
+            (
+                "HttpServer.listen",
+                &[Type::Int, http_handler()],
+                Type::Unit,
+                &["HttpServer"],
+            ),
+            (
+                "HttpServer.listenWith",
+                &[Type::Int, Type::Unknown, http_handler_with_context()],
+                Type::Unit,
+                &["HttpServer"],
             ),
             ("Disk.readText", &[Type::Str], disk_str(), &["Disk"]),
             (
@@ -304,24 +314,27 @@ impl TypeChecker {
             (
                 "Tcp.connect",
                 &[Type::Str, Type::Int],
-                Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
+                Type::Result(
+                    Box::new(Type::Named("Tcp.Connection".to_string())),
+                    Box::new(Type::Str),
+                ),
                 &["Tcp"],
             ),
             (
                 "Tcp.writeLine",
-                &[Type::Str, Type::Str],
+                &[Type::Named("Tcp.Connection".to_string()), Type::Str],
                 Type::Result(Box::new(Type::Unit), Box::new(Type::Str)),
                 &["Tcp"],
             ),
             (
                 "Tcp.readLine",
-                &[Type::Str],
+                &[Type::Named("Tcp.Connection".to_string())],
                 Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
                 &["Tcp"],
             ),
             (
                 "Tcp.close",
-                &[Type::Str],
+                &[Type::Named("Tcp.Connection".to_string())],
                 Type::Result(Box::new(Type::Unit), Box::new(Type::Str)),
                 &["Tcp"],
             ),
@@ -329,6 +342,152 @@ impl TypeChecker {
         for (name, params, ret, effects) in service_sigs {
             self.insert_sig(name, params, ret.clone(), effects);
         }
+
+        // Int namespace
+        let int_result = || Type::Result(Box::new(Type::Int), Box::new(Type::Str));
+        let int_sigs: &[(&str, &[Type], Type, &[&str])] = &[
+            ("Int.fromString", &[Type::Str], int_result(), &[]),
+            ("Int.fromFloat", &[Type::Float], Type::Int, &[]),
+            ("Int.toString", &[Type::Int], Type::Str, &[]),
+            ("Int.abs", &[Type::Int], Type::Int, &[]),
+            ("Int.min", &[Type::Int, Type::Int], Type::Int, &[]),
+            ("Int.max", &[Type::Int, Type::Int], Type::Int, &[]),
+            ("Int.mod", &[Type::Int, Type::Int], int_result(), &[]),
+            ("Int.toFloat", &[Type::Int], Type::Float, &[]),
+        ];
+        for (name, params, ret, effects) in int_sigs {
+            self.insert_sig(name, params, ret.clone(), effects);
+        }
+
+        // Float namespace
+        let float_result = || Type::Result(Box::new(Type::Float), Box::new(Type::Str));
+        let float_sigs: &[(&str, &[Type], Type, &[&str])] = &[
+            ("Float.fromString", &[Type::Str], float_result(), &[]),
+            ("Float.fromInt", &[Type::Int], Type::Float, &[]),
+            ("Float.toString", &[Type::Float], Type::Str, &[]),
+            ("Float.abs", &[Type::Float], Type::Float, &[]),
+            ("Float.floor", &[Type::Float], Type::Int, &[]),
+            ("Float.ceil", &[Type::Float], Type::Int, &[]),
+            ("Float.round", &[Type::Float], Type::Int, &[]),
+            ("Float.min", &[Type::Float, Type::Float], Type::Float, &[]),
+            ("Float.max", &[Type::Float, Type::Float], Type::Float, &[]),
+        ];
+        for (name, params, ret, effects) in float_sigs {
+            self.insert_sig(name, params, ret.clone(), effects);
+        }
+
+        // String namespace
+        let str_list = || Type::List(Box::new(Type::Str));
+        let string_sigs: &[(&str, &[Type], Type, &[&str])] = &[
+            ("String.length", &[Type::Str], Type::Int, &[]),
+            ("String.byteLength", &[Type::Str], Type::Int, &[]),
+            (
+                "String.startsWith",
+                &[Type::Str, Type::Str],
+                Type::Bool,
+                &[],
+            ),
+            ("String.endsWith", &[Type::Str, Type::Str], Type::Bool, &[]),
+            ("String.contains", &[Type::Str, Type::Str], Type::Bool, &[]),
+            (
+                "String.slice",
+                &[Type::Str, Type::Int, Type::Int],
+                Type::Str,
+                &[],
+            ),
+            ("String.trim", &[Type::Str], Type::Str, &[]),
+            ("String.split", &[Type::Str, Type::Str], str_list(), &[]),
+            (
+                "String.replace",
+                &[Type::Str, Type::Str, Type::Str],
+                Type::Str,
+                &[],
+            ),
+            ("String.join", &[str_list(), Type::Str], Type::Str, &[]),
+            ("String.chars", &[Type::Str], str_list(), &[]),
+            ("String.fromInt", &[Type::Int], Type::Str, &[]),
+            ("String.fromFloat", &[Type::Float], Type::Str, &[]),
+            ("String.fromBool", &[Type::Bool], Type::Str, &[]),
+        ];
+        for (name, params, ret, effects) in string_sigs {
+            self.insert_sig(name, params, ret.clone(), effects);
+        }
+
+        // List namespace
+        let any = || Type::Unknown;
+        let list_sigs: &[(&str, &[Type], Type, &[&str])] = &[
+            ("List.len", &[Type::List(Box::new(any()))], Type::Int, &[]),
+            (
+                "List.map",
+                &[Type::Unknown, Type::Unknown],
+                Type::List(Box::new(any())),
+                &[],
+            ),
+            (
+                "List.filter",
+                &[Type::Unknown, Type::Unknown],
+                Type::List(Box::new(any())),
+                &[],
+            ),
+            (
+                "List.fold",
+                &[Type::Unknown, Type::Unknown, Type::Unknown],
+                any(),
+                &[],
+            ),
+            (
+                "List.get",
+                &[Type::Unknown, Type::Int],
+                Type::Result(Box::new(any()), Box::new(Type::Str)),
+                &[],
+            ),
+            (
+                "List.push",
+                &[Type::Unknown, Type::Unknown],
+                Type::List(Box::new(any())),
+                &[],
+            ),
+            (
+                "List.head",
+                &[Type::Unknown],
+                Type::Result(Box::new(any()), Box::new(Type::Str)),
+                &[],
+            ),
+            (
+                "List.tail",
+                &[Type::Unknown],
+                Type::Result(Box::new(any()), Box::new(Type::Str)),
+                &[],
+            ),
+        ];
+        for (name, params, ret, effects) in list_sigs {
+            self.insert_sig(name, params, ret.clone(), effects);
+        }
+
+        // Result.Ok / Result.Err / Option.Some — constructor signatures
+        self.insert_sig(
+            "Result.Ok",
+            &[Type::Unknown],
+            Type::Result(Box::new(Type::Unknown), Box::new(Type::Unknown)),
+            &[],
+        );
+        self.insert_sig(
+            "Result.Err",
+            &[Type::Unknown],
+            Type::Result(Box::new(Type::Unknown), Box::new(Type::Unknown)),
+            &[],
+        );
+        self.insert_sig(
+            "Option.Some",
+            &[Type::Unknown],
+            Type::Option(Box::new(Type::Unknown)),
+            &[],
+        );
+        // Option.None — zero-arg value, not a function
+        self.value_members.insert(
+            "Option.None".to_string(),
+            Type::Option(Box::new(Type::Unknown)),
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -730,6 +889,14 @@ impl TypeChecker {
 
     fn check_verify_blocks(&mut self, items: &[TopLevel]) {
         let no_effects: Vec<String> = vec![];
+        // Allow `?` in verify cases: treat each case as if inside a Result-returning
+        // function so ErrorProp type-checks. At runtime, `?` hitting Err means
+        // "test failed" rather than error propagation.
+        let prev_ret = self.current_fn_ret.take();
+        self.current_fn_ret = Some(Type::Result(
+            Box::new(Type::Unknown),
+            Box::new(Type::Unknown),
+        ));
         for item in items {
             if let TopLevel::Verify(vb) = item {
                 let caller = format!("<verify:{}>", vb.fn_name);
@@ -741,6 +908,7 @@ impl TypeChecker {
                 }
             }
         }
+        self.current_fn_ret = prev_ret;
     }
 
     fn check_stmts(&mut self, stmts: &[Stmt], fn_name: &str, caller_effects: &[String]) -> Type {
@@ -963,6 +1131,22 @@ impl TypeChecker {
                 }
 
                 if let Some(display_name) = Self::callee_key(fn_expr) {
+                    // Special-case Result.Ok/Err and Option.Some for precise type inference
+                    match display_name.as_str() {
+                        "Result.Ok" => {
+                            let inner = arg_types.first().cloned().unwrap_or(Type::Unit);
+                            return Type::Result(Box::new(inner), Box::new(Type::Unknown));
+                        }
+                        "Result.Err" => {
+                            let inner = arg_types.first().cloned().unwrap_or(Type::Unit);
+                            return Type::Result(Box::new(Type::Unknown), Box::new(inner));
+                        }
+                        "Option.Some" => {
+                            let inner = arg_types.first().cloned().unwrap_or(Type::Unit);
+                            return Type::Option(Box::new(inner));
+                        }
+                        _ => {}
+                    }
                     if let Some(sig) = self.fn_sigs.get(&display_name).cloned() {
                         return check_call(self, &display_name, sig);
                     }
@@ -1176,6 +1360,12 @@ impl TypeChecker {
             }
 
             Expr::RecordCreate { type_name, fields } => {
+                if type_name == "Tcp.Connection" {
+                    self.error(
+                        "Cannot construct 'Tcp.Connection' directly. Use Tcp.connect(host, port)."
+                            .to_string(),
+                    );
+                }
                 for (_, expr) in fields {
                     let _ = self.infer_type(expr);
                 }

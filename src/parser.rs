@@ -599,22 +599,6 @@ impl Parser {
                 }
                 s
             }
-            TokenKind::Ok => {
-                self.advance();
-                "Ok".to_string()
-            }
-            TokenKind::Err => {
-                self.advance();
-                "Err".to_string()
-            }
-            TokenKind::Some => {
-                self.advance();
-                "Some".to_string()
-            }
-            TokenKind::None => {
-                self.advance();
-                "None".to_string()
-            }
             _ => {
                 return Err(self.error(format!(
                     "Expected a type name, found {:?}",
@@ -622,6 +606,22 @@ impl Parser {
                 )));
             }
         };
+
+        // Dotted type name: e.g. Tcp.Connection
+        if self.check_exact(&TokenKind::Dot) {
+            if let Some(Token {
+                kind: TokenKind::Ident(next),
+                ..
+            }) = self.tokens.get(self.pos + 1)
+            {
+                if next.chars().next().map_or(false, |c| c.is_uppercase()) {
+                    let next = next.clone();
+                    self.advance(); // dot
+                    self.advance(); // ident
+                    base = format!("{}.{}", base, next);
+                }
+            }
+        }
 
         if self.check_exact(&TokenKind::Lt) {
             self.advance(); // <
@@ -903,30 +903,6 @@ impl Parser {
                 self.advance();
                 Ok(Pattern::Literal(Literal::Bool(b)))
             }
-            TokenKind::None => {
-                self.advance();
-                Ok(Pattern::Constructor("None".to_string(), vec![]))
-            }
-            TokenKind::Ok | TokenKind::Err | TokenKind::Some => {
-                let name = match self.current().kind {
-                    TokenKind::Ok => "Ok",
-                    TokenKind::Err => "Err",
-                    TokenKind::Some => "Some",
-                    _ => unreachable!(),
-                }
-                .to_string();
-                self.advance();
-                let mut bindings = vec![];
-                if self.check_exact(&TokenKind::LParen) {
-                    self.advance();
-                    if let TokenKind::Ident(s) = self.current().kind.clone() {
-                        bindings.push(s);
-                        self.advance();
-                    }
-                    self.expect_exact(&TokenKind::RParen)?;
-                }
-                Ok(Pattern::Constructor(name, bindings))
-            }
             _ => Err(self.error(format!(
                 "Unexpected token in pattern: {:?}",
                 self.current().kind
@@ -1052,6 +1028,22 @@ impl Parser {
                 };
                 expr = Expr::Attr(Box::new(expr), field);
                 if self.check_exact(&TokenKind::LParen) {
+                    let named_arg_start = matches!(&self.peek(1).kind, TokenKind::Ident(_))
+                        && self.peek(2).kind == TokenKind::Colon;
+                    if named_arg_start {
+                        if let Some(path) = Self::dotted_name(&expr) {
+                            if path == "Tcp.Connection" {
+                                return Err(self.error(
+                                    "Cannot construct 'Tcp.Connection' directly. Use Tcp.connect(host, port)."
+                                        .to_string(),
+                                ));
+                            }
+                            return Err(self.error(format!(
+                                "Named-field call syntax is only valid for direct record constructors like User(...), not '{}(...)'",
+                                path
+                            )));
+                        }
+                    }
                     self.advance();
                     let args = self.parse_args()?;
                     self.expect_exact(&TokenKind::RParen)?;
@@ -1066,14 +1058,20 @@ impl Parser {
     }
 
     fn can_start_type(kind: &TokenKind) -> bool {
-        matches!(
-            kind,
-            TokenKind::Ident(_)
-                | TokenKind::Ok
-                | TokenKind::Err
-                | TokenKind::Some
-                | TokenKind::None
-        )
+        matches!(kind, TokenKind::Ident(_))
+    }
+
+    fn dotted_name(expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Ident(name) => Some(name.clone()),
+            Expr::Attr(inner, field) => {
+                let mut base = Self::dotted_name(inner)?;
+                base.push('.');
+                base.push_str(field);
+                Some(base)
+            }
+            _ => None,
+        }
     }
 
     fn parse_call_or_atom(&mut self) -> Result<Expr, ParseError> {
@@ -1089,6 +1087,8 @@ impl Parser {
             } else {
                 false
             };
+            let named_arg_start = matches!(&self.peek(1).kind, TokenKind::Ident(_))
+                && self.peek(2).kind == TokenKind::Colon;
 
             if is_record_create {
                 if let Expr::Ident(type_name) = atom {
@@ -1096,6 +1096,21 @@ impl Parser {
                     let fields = self.parse_record_create_fields()?;
                     self.expect_exact(&TokenKind::RParen)?;
                     return Ok(Expr::RecordCreate { type_name, fields });
+                }
+            }
+
+            if named_arg_start {
+                if let Some(path) = Self::dotted_name(&atom) {
+                    if path == "Tcp.Connection" {
+                        return Err(self.error(
+                            "Cannot construct 'Tcp.Connection' directly. Use Tcp.connect(host, port)."
+                                .to_string(),
+                        ));
+                    }
+                    return Err(self.error(format!(
+                        "Named-field call syntax is only valid for direct record constructors like User(...), not '{}(...)'",
+                        path
+                    )));
                 }
             }
 
@@ -1176,27 +1191,6 @@ impl Parser {
             TokenKind::Bool(b) => {
                 self.advance();
                 Ok(Expr::Literal(Literal::Bool(b)))
-            }
-            TokenKind::None => {
-                self.advance();
-                Ok(Expr::Constructor("None".to_string(), None))
-            }
-            TokenKind::Ok | TokenKind::Err | TokenKind::Some => {
-                let name = match &self.current().kind {
-                    TokenKind::Ok => "Ok",
-                    TokenKind::Err => "Err",
-                    TokenKind::Some => "Some",
-                    _ => unreachable!(),
-                }
-                .to_string();
-                self.advance();
-                let mut arg = None;
-                if self.check_exact(&TokenKind::LParen) {
-                    self.advance();
-                    arg = Some(Box::new(self.parse_expr()?));
-                    self.expect_exact(&TokenKind::RParen)?;
-                }
-                Ok(Expr::Constructor(name, arg))
             }
             TokenKind::Match => self.parse_match(),
             TokenKind::LParen => {

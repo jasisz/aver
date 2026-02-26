@@ -1,7 +1,7 @@
 module Lists
     intent:
-        "Demonstrates list values and higher-order builtins."
-        "Aver has no loops — iteration happens through map, filter, and fold."
+        "Demonstrates list values and higher-order functions."
+        "Aver has no loops — iteration happens through List.map, List.filter, and List.fold."
 
 fn double(n: Int) -> Int
     ? "Doubles an integer."
@@ -18,16 +18,16 @@ fn add(a: Int, b: Int) -> Int
 fn main() -> Unit
     ! [Console]
     val numbers = [1, 2, 3, 4, 5]
-    val doubled = map(numbers, double)
-    print(doubled)
-    val positives = filter([-1, 0, 2, 3], isPositive)
-    print(positives)
-    val total = fold(numbers, 0, add)
-    print(total)
-    val first = get(numbers, 0)
-    print(first)
-    val oob = get(numbers, 99)
-    print(oob)
+    val doubled = List.map(numbers, double)
+    Console.print(doubled)
+    val positives = List.filter([-1, 0, 2, 3], isPositive)
+    Console.print(positives)
+    val total = List.fold(numbers, 0, add)
+    Console.print(total)
+    val first = List.get(numbers, 0)
+    Console.print(first)
+    val oob = List.get(numbers, 99)
+    Console.print(oob)
 
 verify double:
     double(3) => 6

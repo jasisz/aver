@@ -18,8 +18,14 @@ use crate::value::{RuntimeError, Value};
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
     for method in &[
-        "readText", "writeText", "appendText", "exists",
-        "delete", "deleteDir", "listDir", "makeDir",
+        "readText",
+        "writeText",
+        "appendText",
+        "exists",
+        "delete",
+        "deleteDir",
+        "listDir",
+        "makeDir",
     ] {
         members.insert(
             method.to_string(),
@@ -37,14 +43,8 @@ pub fn register(global: &mut HashMap<String, Value>) {
 
 pub fn effects(name: &str) -> &'static [&'static str] {
     match name {
-        "Disk.readText"
-        | "Disk.writeText"
-        | "Disk.appendText"
-        | "Disk.exists"
-        | "Disk.delete"
-        | "Disk.deleteDir"
-        | "Disk.listDir"
-        | "Disk.makeDir" => &["Disk"],
+        "Disk.readText" | "Disk.writeText" | "Disk.appendText" | "Disk.exists" | "Disk.delete"
+        | "Disk.deleteDir" | "Disk.listDir" | "Disk.makeDir" => &["Disk"],
         _ => &[],
     }
 }
@@ -52,14 +52,14 @@ pub fn effects(name: &str) -> &'static [&'static str] {
 /// Returns `Some(result)` when `name` is owned by this service, `None` otherwise.
 pub fn call(name: &str, args: Vec<Value>) -> Option<Result<Value, RuntimeError>> {
     match name {
-        "Disk.readText"   => Some(read_text(args)),
-        "Disk.writeText"  => Some(write_text(args)),
+        "Disk.readText" => Some(read_text(args)),
+        "Disk.writeText" => Some(write_text(args)),
         "Disk.appendText" => Some(append_text(args)),
-        "Disk.exists"     => Some(exists(args)),
-        "Disk.delete"     => Some(delete(args)),
-        "Disk.deleteDir"  => Some(delete_dir(args)),
-        "Disk.listDir"    => Some(list_dir(args)),
-        "Disk.makeDir"    => Some(make_dir(args)),
+        "Disk.exists" => Some(exists(args)),
+        "Disk.delete" => Some(delete(args)),
+        "Disk.deleteDir" => Some(delete_dir(args)),
+        "Disk.listDir" => Some(list_dir(args)),
+        "Disk.makeDir" => Some(make_dir(args)),
         _ => None,
     }
 }
@@ -85,7 +85,11 @@ fn write_text(args: Vec<Value>) -> Result<Value, RuntimeError> {
 fn append_text(args: Vec<Value>) -> Result<Value, RuntimeError> {
     use std::io::Write;
     let (path, content) = two_str_args("Disk.appendText", args)?;
-    match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         Ok(mut f) => match f.write_all(content.as_bytes()) {
             Ok(_) => Ok(Value::Ok(Box::new(Value::Unit))),
             Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
@@ -104,7 +108,8 @@ fn delete(args: Vec<Value>) -> Result<Value, RuntimeError> {
     let p = std::path::Path::new(&path);
     if p.is_dir() {
         return Ok(Value::Err(Box::new(Value::Str(
-            "Disk.delete: path is a directory — use Disk.deleteDir to remove directories".to_string(),
+            "Disk.delete: path is a directory — use Disk.deleteDir to remove directories"
+                .to_string(),
         ))));
     }
     match std::fs::remove_file(p) {
@@ -157,7 +162,10 @@ fn make_dir(args: Vec<Value>) -> Result<Value, RuntimeError> {
 fn one_str_arg(fn_name: &str, args: Vec<Value>) -> Result<String, RuntimeError> {
     match args.as_slice() {
         [Value::Str(s)] => Ok(s.clone()),
-        [_] => Err(RuntimeError::Error(format!("{}: path must be a String", fn_name))),
+        [_] => Err(RuntimeError::Error(format!(
+            "{}: path must be a String",
+            fn_name
+        ))),
         _ => Err(RuntimeError::Error(format!(
             "{}() takes 1 argument (path), got {}",
             fn_name,

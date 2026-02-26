@@ -37,10 +37,6 @@ pub enum TokenKind {
     Chosen,
     Rejected,
     Impacts,
-    Ok,
-    Err,
-    Some,
-    None,
     // Operators
     Arrow,    // ->
     Pipe,     // |>
@@ -119,10 +115,6 @@ fn keyword(s: &str) -> Option<TokenKind> {
         "impacts" => Some(TokenKind::Impacts),
         "true" => Some(TokenKind::Bool(true)),
         "false" => Some(TokenKind::Bool(false)),
-        "Ok" => Some(TokenKind::Ok),
-        "Err" => Some(TokenKind::Err),
-        "Some" => Some(TokenKind::Some),
-        "None" => Some(TokenKind::None),
         _ => None,
     }
 }

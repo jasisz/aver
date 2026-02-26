@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use thiserror::Error;
 
-use crate::ast::{FnBody};
+use crate::ast::FnBody;
 
 // ---------------------------------------------------------------------------
 // RuntimeError
@@ -84,17 +84,19 @@ pub fn aver_repr(val: &Value) -> String {
         Value::Str(s) => s.clone(),
         Value::Bool(b) => if *b { "true" } else { "false" }.to_string(),
         Value::Unit => "()".to_string(),
-        Value::Ok(v) => format!("Ok({})", aver_repr_inner(v)),
-        Value::Err(v) => format!("Err({})", aver_repr_inner(v)),
-        Value::Some(v) => format!("Some({})", aver_repr_inner(v)),
-        Value::None => "None".to_string(),
+        Value::Ok(v) => format!("Result.Ok({})", aver_repr_inner(v)),
+        Value::Err(v) => format!("Result.Err({})", aver_repr_inner(v)),
+        Value::Some(v) => format!("Option.Some({})", aver_repr_inner(v)),
+        Value::None => "Option.None".to_string(),
         Value::List(items) => {
             let parts: Vec<String> = items.iter().map(aver_repr_inner).collect();
             format!("[{}]", parts.join(", "))
         }
         Value::Fn { name, .. } => format!("<fn {}>", name),
         Value::Builtin(name) => format!("<builtin {}>", name),
-        Value::Variant { variant, fields, .. } => {
+        Value::Variant {
+            variant, fields, ..
+        } => {
             if fields.is_empty() {
                 variant.clone()
             } else {

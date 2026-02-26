@@ -17,34 +17,34 @@ decision NoExceptions:
 fn safeDivide(a: Int, b: Int) -> Result<Int, String>
     ? "Safe integer division. Returns Err when divisor is zero."
     match b:
-        0 -> Err("Division by zero")
-        _ -> Ok(a / b)
+        0 -> Result.Err("Division by zero")
+        _ -> Result.Ok(a / b)
 
 fn safeRoot(n: Int) -> Result<Int, String>
     ? "Returns Err for negative input, Ok otherwise. Uses match on a bool expression."
     match n < 0:
-        true  -> Err("Cannot take root of negative number")
-        false -> Ok(n)
+        true  -> Result.Err("Cannot take root of negative number")
+        false -> Result.Ok(n)
 
 verify safeRoot:
-    safeRoot(4)   => Ok(4)
-    safeRoot(0)   => Ok(0)
-    safeRoot(-1)  => Err("Cannot take root of negative number")
-    safeRoot(-99) => Err("Cannot take root of negative number")
+    safeRoot(4)   => Result.Ok(4)
+    safeRoot(0)   => Result.Ok(0)
+    safeRoot(-1)  => Result.Err("Cannot take root of negative number")
+    safeRoot(-99) => Result.Err("Cannot take root of negative number")
 
 fn main() -> Unit
     ! [Console]
     var attempts = 0
         reason: "Tracks how many divisions we attempted for the summary."
     val r1 = safeDivide(10, 2)
-    print(r1)
+    Console.print(r1)
     val r2 = safeDivide(7, 0)
-    print(r2)
+    Console.print(r2)
     val r3 = safeDivide(9, 3)
-    print(r3)
+    Console.print(r3)
 
 verify safeDivide:
-    safeDivide(10, 2) => Ok(5)
-    safeDivide(7, 0)  => Err("Division by zero")
-    safeDivide(9, 3)  => Ok(3)
-    safeDivide(0, 5)  => Ok(0)
+    safeDivide(10, 2) => Result.Ok(5)
+    safeDivide(7, 0)  => Result.Err("Division by zero")
+    safeDivide(9, 3)  => Result.Ok(3)
+    safeDivide(0, 5)  => Result.Ok(0)
