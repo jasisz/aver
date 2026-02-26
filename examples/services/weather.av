@@ -89,14 +89,14 @@ verify cacheKey:
 
 fn extractCity(path: String) -> Result<String, String>
     ? "Extracts city name from request path. Expects /weather/<city>."
-    val parts = String.split(path, "/")
+    parts = String.split(path, "/")
     match List.len(parts) >= 3:
         false -> Result.Err("Invalid path")
         true  -> extractCityFromParts(parts)
 
 fn extractCityFromParts(parts: List<String>) -> Result<String, String>
     ? "Validates endpoint segment and extracts city from already split path parts."
-    val section = List.get(parts, 1)?
+    section = List.get(parts, 1)?
     match section == "weather":
         false -> Result.Err("Not a weather endpoint")
         true  -> List.get(parts, 2)
@@ -124,7 +124,7 @@ fn cacheSet(conn: Tcp.Connection, city: String, data: String) -> Result<String, 
 fn fetchWeather(config: WeatherConfig, city: String) -> Result<String, String>
     ? "Fetches current weather from external API. Returns raw JSON body."
     ! [Http]
-    val result = Http.get(weatherUrl(config, city))
+    result = Http.get(weatherUrl(config, city))
     match result:
         Result.Err(msg)  -> Result.Err("Transport error: {msg}")
         Result.Ok(resp)  -> match resp.status == 200:
@@ -134,8 +134,8 @@ fn fetchWeather(config: WeatherConfig, city: String) -> Result<String, String>
 fn fetchAndCache(config: WeatherConfig, conn: Tcp.Connection, city: String) -> Result<String, String>
     ? "Fetches from API and stores result in Redis before returning it."
     ! [Tcp, Http]
-    val fresh = fetchWeather(config, city)?
-    val _ = cacheSet(conn, city, fresh)
+    fresh = fetchWeather(config, city)?
+    _ = cacheSet(conn, city, fresh)
     Result.Ok(fresh)
 
 // Core logic: cache-first weather lookup
@@ -170,7 +170,7 @@ fn startServer(context: WeatherContext) -> Result<Unit, String>
 
 fn main() -> Result<Unit, String>
     ! [HttpServer, Tcp, Console]
-    val config = WeatherConfig(apiHost: "api.weather.com", apiKey: "demo-key", redisHost: "127.0.0.1", redisPort: 6379, serverPort: 8080)
+    config = WeatherConfig(apiHost: "api.weather.com", apiKey: "demo-key", redisHost: "127.0.0.1", redisPort: 6379, serverPort: 8080)
 
-    val conn = Examples.Redis.connect(RedisConfig(host: config.redisHost, port: config.redisPort))?
+    conn = Examples.Redis.connect(RedisConfig(host: config.redisHost, port: config.redisPort))?
     startServer(WeatherContext(config: config, conn: conn))

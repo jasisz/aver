@@ -750,15 +750,9 @@ fn pipe_chained() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn val_binding_used_in_body() {
-    let src = "fn compute() -> Int\n    val x = 10\n    val y = 20\n    x + y\n";
+fn binding_used_in_body() {
+    let src = "fn compute() -> Int\n    x = 10\n    y = 20\n    x + y\n";
     assert_eq!(call_fn(src, "compute", vec![]), Value::Int(30));
-}
-
-#[test]
-fn var_reassignment() {
-    let src = "fn count() -> Int\n    var x = 0\n    x = 5\n    x\n";
-    assert_eq!(call_fn(src, "count", vec![]), Value::Int(5));
 }
 
 // ---------------------------------------------------------------------------
@@ -879,7 +873,7 @@ fn error_prop_early_return_on_err() {
 #[test]
 fn error_prop_early_return_in_block() {
     // ? in a block body causes early return, skipping subsequent statements.
-    let src = "fn double_ok(r: Result<Int, String>) -> Result<Int, String>\n    val x = r?\n    Result.Ok(x + x)\n";
+    let src = "fn double_ok(r: Result<Int, String>) -> Result<Int, String>\n    x = r?\n    Result.Ok(x + x)\n";
     assert_eq!(
         call_fn(src, "double_ok", vec![Value::Ok(Box::new(Value::Int(5)))]),
         Value::Ok(Box::new(Value::Int(10)))
@@ -897,7 +891,7 @@ fn error_prop_early_return_in_block() {
 #[test]
 fn error_prop_chain_short_circuits() {
     // When the first ? encounters Err, the second ? and the Ok() never run.
-    let src = "fn chain(a: Result<Int, String>, b: Result<Int, String>) -> Result<Int, String>\n    val x = a?\n    val y = b?\n    Result.Ok(x + y)\n";
+    let src = "fn chain(a: Result<Int, String>, b: Result<Int, String>) -> Result<Int, String>\n    x = a?\n    y = b?\n    Result.Ok(x + y)\n";
     let err = Value::Err(Box::new(Value::Str("first".to_string())));
     let ok_ten = Value::Ok(Box::new(Value::Int(10)));
     assert_eq!(call_fn(src, "chain", vec![err.clone(), ok_ten]), err);
@@ -956,7 +950,7 @@ fn run_program(src: &str) -> Interpreter {
 
 #[test]
 fn sum_type_no_arg_variant_is_variant_value() {
-    let src = "type Shape\n  Circle(Float)\n  Point\nval p = Shape.Point\n";
+    let src = "type Shape\n  Circle(Float)\n  Point\np = Shape.Point\n";
     let mut interp = run_program(src);
     let val = interp.lookup("p").expect("p not defined");
     assert_eq!(
@@ -971,7 +965,7 @@ fn sum_type_no_arg_variant_is_variant_value() {
 
 #[test]
 fn sum_type_constructor_creates_variant() {
-    let src = "type Shape\n  Circle(Float)\n  Point\nval c = Shape.Circle(3.14)\n";
+    let src = "type Shape\n  Circle(Float)\n  Point\nc = Shape.Circle(3.14)\n";
     let mut interp = run_program(src);
     let val = interp.lookup("c").expect("c not defined");
     assert_eq!(
@@ -986,7 +980,7 @@ fn sum_type_constructor_creates_variant() {
 
 #[test]
 fn sum_type_multi_field_constructor() {
-    let src = "type Shape\n  Rect(Float, Float)\nval r = Shape.Rect(3.0, 4.0)\n";
+    let src = "type Shape\n  Rect(Float, Float)\nr = Shape.Rect(3.0, 4.0)\n";
     let mut interp = run_program(src);
     let val = interp.lookup("r").expect("r not defined");
     assert_eq!(
@@ -1073,7 +1067,7 @@ fn sum_type_match_no_arg_variant() {
 
 #[test]
 fn record_creation_stores_fields() {
-    let src = "record User\n  name: String\n  age: Int\nval u = User(name: \"Alice\", age: 30)\n";
+    let src = "record User\n  name: String\n  age: Int\nu = User(name: \"Alice\", age: 30)\n";
     let mut interp = run_program(src);
     let val = interp.lookup("u").expect("u not defined");
     assert_eq!(
@@ -1090,7 +1084,7 @@ fn record_creation_stores_fields() {
 
 #[test]
 fn record_field_access() {
-    let src = "record User\n  name: String\n  age: Int\nval u = User(name: \"Alice\", age: 30)\nval n = u.name\n";
+    let src = "record User\n  name: String\n  age: Int\nu = User(name: \"Alice\", age: 30)\nn = u.name\n";
     let mut interp = run_program(src);
     let val = interp.lookup("n").expect("n not defined");
     assert_eq!(val, Value::Str("Alice".to_string()));

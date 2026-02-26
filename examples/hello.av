@@ -13,9 +13,9 @@ fn shout(text: String) -> String
 
 fn main() -> Unit
     ! [Console]
-    val greeting = greet("World")
+    greeting = greet("World")
     Console.print(greeting)
-    val loud = greet("Aver") |> shout
+    loud = greet("Aver") |> shout
     Console.print(loud)
 
 verify greet:

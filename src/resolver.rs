@@ -2,7 +2,7 @@
 ///
 /// After parsing and before interpretation, this pass walks each `FnDef` body
 /// and replaces `Expr::Ident(name)` with `Expr::Resolved(depth, slot)` for
-/// variables that are local to the function (parameters + val/var bindings).
+/// variables that are local to the function (parameters + bindings).
 ///
 /// Global/namespace identifiers are left as `Expr::Ident` — the interpreter
 /// falls back to HashMap lookup for those.
@@ -67,7 +67,7 @@ fn resolve_fn(fd: &mut FnDef) {
     });
 }
 
-/// Collect all val/var binding names from a statement list and assign slots.
+/// Collect all binding names from a statement list and assign slots.
 /// This handles match arms recursively (pattern bindings get slots too).
 fn collect_binding_slots(
     stmts: &[Stmt],
@@ -76,13 +76,13 @@ fn collect_binding_slots(
 ) {
     for stmt in stmts {
         match stmt {
-            Stmt::Val(name, _) | Stmt::Var(name, _, _) => {
+            Stmt::Binding(name, _) => {
                 if !local_slots.contains_key(name) {
                     local_slots.insert(name.clone(), *next_slot);
                     *next_slot += 1;
                 }
             }
-            Stmt::Expr(expr) | Stmt::Assign(_, expr) => {
+            Stmt::Expr(expr) => {
                 collect_expr_bindings(expr, local_slots, next_slot);
             }
         }
@@ -258,10 +258,7 @@ fn resolve_expr(expr: &mut Expr, local_slots: &HashMap<String, u16>) {
 fn resolve_stmts(stmts: &mut [Stmt], local_slots: &HashMap<String, u16>) {
     for stmt in stmts {
         match stmt {
-            Stmt::Val(_, expr) | Stmt::Var(_, expr, _) | Stmt::Assign(_, expr) => {
-                resolve_expr(expr, local_slots);
-            }
-            Stmt::Expr(expr) => {
+            Stmt::Binding(_, expr) | Stmt::Expr(expr) => {
                 resolve_expr(expr, local_slots);
             }
         }
@@ -343,7 +340,7 @@ mod tests {
             effects: vec![],
             desc: None,
             body: Rc::new(FnBody::Block(vec![
-                Stmt::Val(
+                Stmt::Binding(
                     "y".to_string(),
                     Expr::BinOp(
                         BinOp::Add,
@@ -365,7 +362,7 @@ mod tests {
             FnBody::Block(stmts) => {
                 // val y = x + 1  →  val y = Resolved(0,0) + 1
                 match &stmts[0] {
-                    Stmt::Val(_, Expr::BinOp(_, left, _)) => {
+                    Stmt::Binding(_, Expr::BinOp(_, left, _)) => {
                         assert_eq!(**left, Expr::Resolved(0, 0));
                     }
                     other => panic!("unexpected stmt: {:?}", other),

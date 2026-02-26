@@ -44,53 +44,53 @@ fn scaffold(dir: String) -> Result<Unit, String>
 
 fn main() -> Unit
     ! [Disk, Console]
-    val tmp = "/tmp/aver_disk_demo"
+    tmp = "/tmp/aver_disk_demo"
 
     // Create a directory
-    val mkResult = scaffold(tmp)
+    mkResult = scaffold(tmp)
     match mkResult:
         Result.Ok(_)    -> Console.print("Created: {tmp}")
         Result.Err(msg) -> Console.print("makeDir failed: {msg}")
 
     // Write and read back
-    val path = "{tmp}/hello.txt"
-    val writeResult = saveConfig(path, "Hello from Aver!")
+    path = "{tmp}/hello.txt"
+    writeResult = saveConfig(path, "Hello from Aver!")
     match writeResult:
         Result.Ok(_)    -> Console.print("Wrote: {path}")
         Result.Err(msg) -> Console.print("writeText failed: {msg}")
 
-    val readResult = loadConfig(path)
+    readResult = loadConfig(path)
     match readResult:
         Result.Ok(text) -> Console.print("Read back: {text}")
         Result.Err(msg) -> Console.print("readText failed: {msg}")
 
     // Append a log line
-    val logPath = "{tmp}/app.log"
-    val appendResult = appendLog(logPath, "started\n")
+    logPath = "{tmp}/app.log"
+    appendResult = appendLog(logPath, "started\n")
     match appendResult:
         Result.Ok(_)    -> Console.print("Appended to: {logPath}")
         Result.Err(msg) -> Console.print("appendText failed: {msg}")
 
     // Check existence
-    val exists = Disk.exists(path)
+    exists = Disk.exists(path)
     match exists:
         true  -> Console.print("exists check: {path} is present")
         false -> Console.print("exists check: {path} not found")
 
     // List directory
-    val lsResult = listWorkdir(tmp)
+    lsResult = listWorkdir(tmp)
     match lsResult:
         Result.Ok(entries) -> Console.print(entries)
         Result.Err(msg)    -> Console.print("listDir failed: {msg}")
 
     // Delete the file (not the directory — that needs deleteDir)
-    val delResult = Disk.delete(path)
+    delResult = Disk.delete(path)
     match delResult:
         Result.Ok(_)    -> Console.print("Deleted: {path}")
         Result.Err(msg) -> Console.print("delete failed: {msg}")
 
     // Clean up the directory tree
-    val rmdirResult = Disk.deleteDir(tmp)
+    rmdirResult = Disk.deleteDir(tmp)
     match rmdirResult:
         Result.Ok(_)    -> Console.print("Removed tree: {tmp}")
         Result.Err(msg) -> Console.print("deleteDir failed: {msg}")

@@ -27,7 +27,7 @@ fn send(host: String, port: Int, message: String) -> Result<String, String>
 fn checkPort(host: String, port: Int) -> Unit
     ? "Print whether the port is reachable."
     ! [Tcp, Console]
-    val result = ping(host, port)
+    result = ping(host, port)
     match result:
         Result.Ok(_)  -> Console.print("{host}:{port} is reachable")
         Result.Err(e) -> Console.print("{host}:{port} is unreachable — {e}")
@@ -41,7 +41,7 @@ fn main() -> Unit
     checkPort("127.0.0.1", 5432)
 
     // Talk to an echo server if one is running locally on port 9000
-    val reply = send("127.0.0.1", 9000, "hello from Aver\n")
+    reply = send("127.0.0.1", 9000, "hello from Aver\n")
     match reply:
         Result.Ok(response) -> Console.print("Echo server replied: {response}")
         Result.Err(msg)     -> Console.print("No echo server on port 9000: {msg}")

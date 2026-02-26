@@ -111,13 +111,13 @@ fn ident_with_numbers() {
 }
 
 #[test]
-fn keyword_val() {
-    assert_eq!(lex("val"), vec![TokenKind::Val]);
+fn val_is_ident() {
+    assert_eq!(lex("val"), vec![TokenKind::Ident("val".to_string())]);
 }
 
 #[test]
-fn keyword_var() {
-    assert_eq!(lex("var"), vec![TokenKind::Var]);
+fn var_is_ident() {
+    assert_eq!(lex("var"), vec![TokenKind::Ident("var".to_string())]);
 }
 
 #[test]

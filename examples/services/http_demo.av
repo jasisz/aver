@@ -26,7 +26,7 @@ fn fetch(url: String) -> Result<HttpResponse, String>
 fn checkStatus(url: String) -> Result<Int, String>
     ? "Returns Ok(status code as Int) or Err(transport error)."
     ! [Http]
-    val result = Http.get(url)
+    result = Http.get(url)
     match result:
         Result.Ok(resp) -> Result.Ok(resp.status)
         Result.Err(msg) -> Result.Err(msg)
@@ -34,24 +34,24 @@ fn checkStatus(url: String) -> Result<Int, String>
 fn post(url: String, payload: String, token: String) -> Result<HttpResponse, String>
     ? "POST JSON with a Bearer token. Builds the Authorization header explicitly."
     ! [Http]
-    val auth = Header(name: "Authorization", value: "Bearer {token}")
+    auth = Header(name: "Authorization", value: "Bearer {token}")
     Http.post(url, payload, "application/json", [auth])
 
 fn main() -> Unit
     ! [Http, Console]
-    val url = "https://httpbin.org/get"
+    url = "https://httpbin.org/get"
 
-    val r1 = fetch(url)
+    r1 = fetch(url)
     match r1:
         Result.Ok(resp) -> Console.print("GET {url} — status: {resp.status}, body length: {String.length(resp.body)}")
         Result.Err(msg) -> Console.print("Transport error: {msg}")
 
-    val r2 = checkStatus("https://httpbin.org/status/404")
+    r2 = checkStatus("https://httpbin.org/status/404")
     match r2:
         Result.Ok(status) -> Console.print("404 endpoint returned status: {status}")
         Result.Err(msg)   -> Console.print("Transport error: {msg}")
 
-    val r3 = post("https://httpbin.org/post", "{{}}", "demo-token")
+    r3 = post("https://httpbin.org/post", "{{}}", "demo-token")
     match r3:
         Result.Ok(resp) -> Console.print("POST status: {resp.status}")
         Result.Err(msg) -> Console.print("POST failed: {msg}")

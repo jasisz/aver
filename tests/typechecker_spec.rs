@@ -114,7 +114,7 @@ fn valid_list_pattern_matching() {
 #[test]
 fn valid_call_correct_args() {
     let src =
-        "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    val r = add(1, 2)\n";
+        "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    r = add(1, 2)\n";
     assert_no_errors(src);
 }
 
@@ -126,24 +126,19 @@ fn valid_call_chain() {
 
 #[test]
 fn valid_higher_order_function_param_call() {
-    let src = "fn applyTwice(f: Fn(Int) -> Int, x: Int) -> Int\n    = f(f(x))\nfn inc(n: Int) -> Int\n    = n + 1\nfn main() -> Unit\n    val r = applyTwice(inc, 10)\n";
+    let src = "fn applyTwice(f: Fn(Int) -> Int, x: Int) -> Int\n    = f(f(x))\nfn inc(n: Int) -> Int\n    = n + 1\nfn main() -> Unit\n    r = applyTwice(inc, 10)\n";
     assert_no_errors(src);
 }
 
 #[test]
 fn valid_pure_callback_for_effectful_slot() {
-    let src = "fn applyOnce(f: Fn(Int) -> Int ! [Console], x: Int) -> Int\n    ! [Console]\n    = f(x)\nfn pureInc(n: Int) -> Int\n    = n + 1\nfn main() -> Unit\n    ! [Console]\n    val r = applyOnce(pureInc, 10)\n";
+    let src = "fn applyOnce(f: Fn(Int) -> Int ! [Console], x: Int) -> Int\n    ! [Console]\n    = f(x)\nfn pureInc(n: Int) -> Int\n    = n + 1\nfn main() -> Unit\n    ! [Console]\n    r = applyOnce(pureInc, 10)\n";
     assert_no_errors(src);
 }
 
 #[test]
-fn valid_var_reassignment() {
-    assert_no_errors("fn f() -> Unit\n    var x = 0\n    x = 5\n");
-}
-
-#[test]
-fn valid_var_reassignment_same_type() {
-    assert_no_errors("fn f() -> Unit\n    var name = \"alice\"\n    name = \"bob\"\n");
+fn valid_simple_binding_in_fn() {
+    assert_no_errors("fn f() -> Int\n    x = 5\n    x\n");
 }
 
 #[test]
@@ -154,7 +149,7 @@ fn valid_int_float_widening() {
 
 #[test]
 fn valid_pipe_operator() {
-    let src = "fn double(x: Int) -> Int\n    = x + x\nfn main() -> Unit\n    val r = 5 |> double\n";
+    let src = "fn double(x: Int) -> Int\n    = x + x\nfn main() -> Unit\n    r = 5 |> double\n";
     assert_no_errors(src);
 }
 
@@ -234,7 +229,7 @@ fn valid_services_weather_av() {
 
 #[test]
 fn valid_call_to_exposed_module_member() {
-    let src = "module App\n    depends [Secret]\n    intent:\n        \"Uses exported function\"\nfn main() -> Unit\n    val x = Secret.pub()\n";
+    let src = "module App\n    depends [Secret]\n    intent:\n        \"Uses exported function\"\nfn main() -> Unit\n    x = Secret.pub()\n";
     let errs = errors_with_base(src, "examples");
     assert!(
         errs.is_empty(),
@@ -249,7 +244,7 @@ fn valid_call_to_exposed_module_member() {
 
 #[test]
 fn error_wrong_arg_count_too_few() {
-    let src = "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    val r = add(1)\n";
+    let src = "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    r = add(1)\n";
     // actual: "Function 'add' expects 2 argument(s), got 1"
     assert_error_containing(src, "argument(s)");
 }
@@ -257,7 +252,7 @@ fn error_wrong_arg_count_too_few() {
 #[test]
 fn error_wrong_arg_count_too_many() {
     let src =
-        "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    val r = add(1, 2, 3)\n";
+        "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    r = add(1, 2, 3)\n";
     // actual: "Function 'add' expects 2 argument(s), got 3"
     assert_error_containing(src, "argument(s)");
 }
@@ -270,14 +265,14 @@ fn error_zero_arg_constructor_called_like_function() {
 
 #[test]
 fn error_arg_type_mismatch_string_for_int() {
-    let src = "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    val r = add(1, \"two\")\n";
+    let src = "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    r = add(1, \"two\")\n";
     // actual: "Argument 2 of 'add': expected Int, got String"
     assert_error_containing(src, "got String");
 }
 
 #[test]
 fn error_effectful_callback_passed_to_pure_slot() {
-    let src = "fn applyPure(f: Fn(Int) -> Int, x: Int) -> Int\n    = f(x)\nfn logInc(n: Int) -> Int\n    ! [Console]\n    Console.print(n)\n    n + 1\nfn main() -> Unit\n    ! [Console]\n    val r = applyPure(logInc, 1)\n";
+    let src = "fn applyPure(f: Fn(Int) -> Int, x: Int) -> Int\n    = f(x)\nfn logInc(n: Int) -> Int\n    ! [Console]\n    Console.print(n)\n    n + 1\nfn main() -> Unit\n    ! [Console]\n    r = applyPure(logInc, 1)\n";
     assert_error_containing(src, "Fn(Int) -> Int ! [Console]");
 }
 
@@ -298,24 +293,9 @@ fn error_unknown_return_type() {
 }
 
 #[test]
-fn error_assign_to_val_is_immutable() {
-    let src = "fn f() -> Unit\n    val x = 0\n    x = 1\n";
-    // actual: "Assignment to immutable 'x' in 'f' ..."
-    assert_error_containing(src, "immutable");
-}
-
-#[test]
-fn error_assign_to_undeclared() {
-    let src = "fn f() -> Unit\n    y = 1\n";
-    // actual: "Assignment to undeclared variable 'y' in 'f'"
-    assert_error_containing(src, "undeclared");
-}
-
-#[test]
-fn error_assign_to_var_wrong_type() {
-    let src = "fn f() -> Unit\n    var x = 0\n    x = \"hello\"\n";
-    // actual: "Assignment to 'x' in 'f': expected Int, got String"
-    assert_error_containing(src, "expected Int");
+fn error_duplicate_binding_in_fn() {
+    let src = "fn f() -> Unit\n    x = 0\n    x = 1\n";
+    assert_error_containing(src, "already defined");
 }
 
 #[test]
@@ -362,7 +342,7 @@ fn error_undeclared_effect_from_function_typed_callback() {
 
 #[test]
 fn error_call_to_unexposed_module_member() {
-    let src = "module App\n    depends [Secret]\n    intent:\n        \"Tries to use hidden member\"\nfn main() -> Unit\n    val x = Secret.hidden()\n";
+    let src = "module App\n    depends [Secret]\n    intent:\n        \"Tries to use hidden member\"\nfn main() -> Unit\n    x = Secret.hidden()\n";
     let errs = errors_with_base(src, "examples");
     assert!(
         errs.iter().any(|e| e.contains("Secret.hidden")),
@@ -437,13 +417,13 @@ fn valid_record_definition() {
 
 #[test]
 fn valid_sum_type_constructor_call() {
-    let src = "type Shape\n  Circle(Float)\n  Point\nval c = Shape.Circle(3.14)\n";
+    let src = "type Shape\n  Circle(Float)\n  Point\nc = Shape.Circle(3.14)\n";
     assert_no_errors(src);
 }
 
 #[test]
 fn valid_record_creation() {
-    let src = "record User\n  name: String\n  age: Int\nval u = User(name: \"Alice\", age: 30)\n";
+    let src = "record User\n  name: String\n  age: Int\nu = User(name: \"Alice\", age: 30)\n";
     assert_no_errors(src);
 }
 
@@ -583,7 +563,7 @@ fn valid_network_post_with_typed_headers() {
     let src = concat!(
         "fn send(url: String) -> Result<HttpResponse, String>\n",
         "    ! [Http]\n",
-        "    val headers = [Header(name: \"Authorization\", value: \"Bearer token\")]\n",
+        "    headers = [Header(name: \"Authorization\", value: \"Bearer token\")]\n",
         "    Http.post(url, \"{}\", \"application/json\", headers)\n",
     );
     assert_no_errors(src);
@@ -1034,12 +1014,6 @@ fn valid_no_effects_for_helpers() {
 }
 
 #[test]
-fn error_top_level_var_is_not_allowed() {
-    assert_error_containing("var x = 0\n", "Top-level 'var' is not allowed");
-}
-
-#[test]
-fn valid_var_inside_function_body() {
-    // var is still allowed inside function bodies
-    assert_no_errors("fn f() -> Int\n    var x = 0\n    x = 5\n    x\n");
+fn error_duplicate_top_level_binding() {
+    assert_error_containing("x = 1\nx = 2\n", "'x' is already defined");
 }

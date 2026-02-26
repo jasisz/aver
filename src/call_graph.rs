@@ -109,7 +109,7 @@ fn collect_callees_body(body: &FnBody, callees: &mut HashSet<String>) {
 
 fn collect_callees_stmt(stmt: &Stmt, callees: &mut HashSet<String>) {
     match stmt {
-        Stmt::Val(_, e) | Stmt::Var(_, e, _) | Stmt::Assign(_, e) | Stmt::Expr(e) => {
+        Stmt::Binding(_, e) | Stmt::Expr(e) => {
             collect_callees_expr(e, callees);
         }
     }

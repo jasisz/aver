@@ -92,7 +92,7 @@ verify sqlBody:
 fn query(config: DbConfig, sql: String) -> Result<String, String>
     ? "Executes SELECT. Returns Ok(rawJson) on success."
     ! [Http]
-    val result = Http.post(queryUrl(config), sqlBody(sql), "application/json", [authHeader(config)])
+    result = Http.post(queryUrl(config), sqlBody(sql), "application/json", [authHeader(config)])
     match result:
         Result.Err(msg) -> Result.Err("Transport error: {msg}")
         Result.Ok(resp) -> match is2xx(resp.status):
@@ -104,7 +104,7 @@ verify query:
 fn execute(config: DbConfig, sql: String) -> Result<String, String>
     ? "Executes non-SELECT statement. Returns Ok(rawJson) on success."
     ! [Http]
-    val result = Http.post(executeUrl(config), sqlBody(sql), "application/json", [authHeader(config)])
+    result = Http.post(executeUrl(config), sqlBody(sql), "application/json", [authHeader(config)])
     match result:
         Result.Err(msg) -> Result.Err("Transport error: {msg}")
         Result.Ok(resp) -> match is2xx(resp.status):
@@ -116,7 +116,7 @@ verify execute:
 fn ping(config: DbConfig) -> Result<Int, String>
     ? "Health-checks the gateway. Returns Ok(httpStatus) when reachable."
     ! [Http]
-    val result = Http.get(pingUrl(config))
+    result = Http.get(pingUrl(config))
     match result:
         Result.Err(msg) -> Result.Err("Transport error: {msg}")
         Result.Ok(resp) -> match is2xx(resp.status):
@@ -136,14 +136,14 @@ verify logResult:
 
 fn main() -> Unit
     ! [Http, Console]
-    val db = DbConfig(host: "db.example.com", database: "myapp", token: "demo-token")
-    val health = ping(db)
+    db = DbConfig(host: "db.example.com", database: "myapp", token: "demo-token")
+    health = ping(db)
     match health:
         Result.Ok(status) -> Console.print("Database reachable - HTTP {status}")
         Result.Err(msg)   -> Console.error("Database unreachable: {msg}")
-    val rows = query(db, "SELECT id, name FROM users LIMIT 10")
+    rows = query(db, "SELECT id, name FROM users LIMIT 10")
     logResult("SELECT users", rows)
-    val created = execute(db, "INSERT INTO events (name, ts) VALUES ('app_start', NOW())")
+    created = execute(db, "INSERT INTO events (name, ts) VALUES ('app_start', NOW())")
     logResult("INSERT event", created)
-    val deleted = execute(db, "DELETE FROM events WHERE name = 'app_start'")
+    deleted = execute(db, "DELETE FROM events WHERE name = 'app_start'")
     logResult("DELETE events", deleted)

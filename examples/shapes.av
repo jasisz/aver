@@ -21,9 +21,9 @@ fn describe(s: Shape) -> String
 
 fn main()
   ! [Console]
-  val c = Shape.Circle(5.0)
-  val r = Shape.Rect(3.0, 4.0)
-  val p = Shape.Point
+  c = Shape.Circle(5.0)
+  r = Shape.Rect(3.0, 4.0)
+  p = Shape.Point
   Console.print(area(c))
   Console.print(area(r))
   Console.print(area(p))

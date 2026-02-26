@@ -46,28 +46,28 @@ fn classify(c: Float) -> String
 
 fn main() -> Unit
     ! [Console]
-    val boiling = 100.0 |> celsiusToFahr
+    boiling = 100.0 |> celsiusToFahr
     Console.print("100 C in Fahrenheit:")
     Console.print(boiling)
 
-    val body = 98.6 |> fahrToCelsius
+    body = 98.6 |> fahrToCelsius
     Console.print("98.6 F in Celsius:")
     Console.print(body)
 
-    val freezeK = celsiusToKelvin(0.0)
+    freezeK = celsiusToKelvin(0.0)
     Console.print("0 C in Kelvin:")
     Console.print(freezeK)
 
-    val invalid = celsiusToKelvin(-300.0)
+    invalid = celsiusToKelvin(-300.0)
     Console.print("−300 C in Kelvin:")
     Console.print(invalid)
 
-    val temps = [0.0, 15.0, 25.0, 37.0, 100.0]
-    val boilingTemps = List.filter(temps, isBoiling)
+    temps = [0.0, 15.0, 25.0, 37.0, 100.0]
+    boilingTemps = List.filter(temps, isBoiling)
     Console.print("Boiling:")
     Console.print(boilingTemps)
 
-    val freezingTemps = List.filter(temps, isFreezing)
+    freezingTemps = List.filter(temps, isFreezing)
     Console.print("Freezing:")
     Console.print(freezingTemps)
 

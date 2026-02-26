@@ -138,7 +138,7 @@ fn goldenApprox(n: Int) -> Result<Float, String>
 
 fn main() -> Unit
     ! [Console]
-    val result = buildFibStats(12)
+    result = buildFibStats(12)
     match result:
         Result.Ok(stats) -> printStats(stats)
         Result.Err(msg)  -> Console.print(msg)

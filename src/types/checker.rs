@@ -87,9 +87,9 @@ struct TypeChecker {
     /// Named effect aliases: `effects AppIO = [Console, Disk]`
     effect_aliases: HashMap<String, Vec<String>>,
     /// Top-level bindings visible from function bodies.
-    globals: HashMap<String, (Type, bool)>,
-    /// name → (type, is_mutable)
-    locals: HashMap<String, (Type, bool)>,
+    globals: HashMap<String, Type>,
+    /// Local bindings in the current function/scope.
+    locals: HashMap<String, Type>,
     errors: Vec<TypeError>,
     /// Return type of the function currently being checked; None at top level.
     current_fn_ret: Option<Type>,
@@ -179,7 +179,7 @@ impl TypeChecker {
         self.locals
             .get(name)
             .or_else(|| self.globals.get(name))
-            .map(|(ty, _)| ty.clone())
+            .cloned()
     }
 
     // -----------------------------------------------------------------------
@@ -821,9 +821,8 @@ impl TypeChecker {
         self.locals = self.globals.clone();
         if let Some(sig) = self.fn_sigs.get(&f.name).cloned() {
             for ((param_name, _), param_type) in f.params.iter().zip(sig.params.iter()) {
-                // params are immutable (like val)
                 self.locals
-                    .insert(param_name.clone(), (param_type.clone(), false));
+                    .insert(param_name.clone(), param_type.clone());
             }
 
             let declared_ret = sig.ret.clone();
@@ -869,43 +868,13 @@ impl TypeChecker {
         for item in items {
             if let TopLevel::Stmt(stmt) = item {
                 match stmt {
-                    Stmt::Val(name, expr) => {
-                        let ty = self.infer_type(expr);
-                        self.check_effects_in_expr(expr, "<top-level>", &no_effects);
-                        self.locals.insert(name.clone(), (ty, false));
-                    }
-                    Stmt::Var(_name, _expr, _) => {
-                        self.error(
-                            "Top-level 'var' is not allowed; use 'val' for immutable bindings"
-                                .to_string(),
-                        );
-                    }
-                    Stmt::Assign(name, expr) => {
-                        let rhs_ty = self.infer_type(expr);
-                        self.check_effects_in_expr(expr, "<top-level>", &no_effects);
-                        match self.locals.get(name).cloned() {
-                            None => {
-                                self.error(format!(
-                                    "Assignment to undeclared variable '{}' in <top-level>",
-                                    name
-                                ));
-                            }
-                            Some((_, false)) => {
-                                self.error(format!(
-                                    "Cannot assign to '{}' in <top-level>: declared with val (immutable)",
-                                    name
-                                ));
-                            }
-                            Some((var_ty, true)) => {
-                                if !rhs_ty.compatible(&var_ty) {
-                                    self.error(format!(
-                                        "Assignment to '{}' in <top-level>: expected {}, got {}",
-                                        name,
-                                        var_ty.display(),
-                                        rhs_ty.display()
-                                    ));
-                                }
-                            }
+                    Stmt::Binding(name, expr) => {
+                        if self.locals.contains_key(name) {
+                            self.error(format!("'{}' is already defined", name));
+                        } else {
+                            let ty = self.infer_type(expr);
+                            self.check_effects_in_expr(expr, "<top-level>", &no_effects);
+                            self.locals.insert(name.clone(), ty);
                         }
                     }
                     Stmt::Expr(expr) => {
@@ -946,45 +915,13 @@ impl TypeChecker {
         let mut last = Type::Unit;
         for stmt in stmts {
             match stmt {
-                Stmt::Val(name, expr) => {
-                    let ty = self.infer_type(expr);
-                    self.check_effects_in_expr(expr, fn_name, caller_effects);
-                    self.locals.insert(name.clone(), (ty, false));
-                    last = Type::Unit;
-                }
-                Stmt::Var(name, expr, _) => {
-                    let ty = self.infer_type(expr);
-                    self.check_effects_in_expr(expr, fn_name, caller_effects);
-                    self.locals.insert(name.clone(), (ty, true));
-                    last = Type::Unit;
-                }
-                Stmt::Assign(name, expr) => {
-                    let rhs_ty = self.infer_type(expr);
-                    self.check_effects_in_expr(expr, fn_name, caller_effects);
-                    match self.locals.get(name).cloned() {
-                        None => {
-                            self.error(format!(
-                                "Assignment to undeclared variable '{}' in '{}'",
-                                name, fn_name
-                            ));
-                        }
-                        Some((_, false)) => {
-                            self.error(format!(
-                                "Cannot assign to '{}' in '{}': declared with val (immutable)",
-                                name, fn_name
-                            ));
-                        }
-                        Some((var_ty, true)) => {
-                            if !rhs_ty.compatible(&var_ty) {
-                                self.error(format!(
-                                    "Assignment to '{}' in '{}': expected {}, got {}",
-                                    name,
-                                    fn_name,
-                                    var_ty.display(),
-                                    rhs_ty.display()
-                                ));
-                            }
-                        }
+                Stmt::Binding(name, expr) => {
+                    if self.locals.contains_key(name) {
+                        self.error(format!("'{}' is already defined in '{}'", name, fn_name));
+                    } else {
+                        let ty = self.infer_type(expr);
+                        self.check_effects_in_expr(expr, fn_name, caller_effects);
+                        self.locals.insert(name.clone(), ty);
                     }
                     last = Type::Unit;
                 }
@@ -1106,7 +1043,7 @@ impl TypeChecker {
             Expr::InterpolatedStr(_) => Type::Str,
 
             Expr::Ident(name) => {
-                if let Some((ty, _)) = self.locals.get(name) {
+                if let Some(ty) = self.locals.get(name) {
                     ty.clone()
                 } else if let Some(sig) = self.fn_sigs.get(name) {
                     Self::fn_type_from_sig(sig)
@@ -1435,7 +1372,7 @@ impl TypeChecker {
         for bind_name in bindings {
             let old = self.locals.get(&bind_name).cloned();
             prev.push((bind_name.clone(), old));
-            self.locals.insert(bind_name, (Type::Unknown, false));
+            self.locals.insert(bind_name, Type::Unknown);
         }
 
         let out_ty = self.infer_type(body);
@@ -1653,7 +1590,7 @@ mod tests {
 
     #[test]
     fn top_level_statements_are_typechecked() {
-        let items = vec![TopLevel::Stmt(Stmt::Val(
+        let items = vec![TopLevel::Stmt(Stmt::Binding(
             "x".to_string(),
             Expr::BinOp(
                 BinOp::Add,
@@ -1695,18 +1632,21 @@ mod tests {
     }
 
     #[test]
-    fn top_level_var_is_rejected() {
-        let top_level_var = TopLevel::Stmt(Stmt::Var(
-            "x".to_string(),
-            Expr::Literal(Literal::Int(1)),
-            None,
-        ));
-
-        let errs = errors(vec![top_level_var]);
+    fn duplicate_binding_is_rejected() {
+        let items = vec![
+            TopLevel::Stmt(Stmt::Binding(
+                "x".to_string(),
+                Expr::Literal(Literal::Int(1)),
+            )),
+            TopLevel::Stmt(Stmt::Binding(
+                "x".to_string(),
+                Expr::Literal(Literal::Int(2)),
+            )),
+        ];
+        let errs = errors(items);
         assert!(
-            errs.iter()
-                .any(|e| e.contains("Top-level 'var' is not allowed")),
-            "expected top-level var error, got: {:?}",
+            errs.iter().any(|e| e.contains("'x' is already defined")),
+            "expected duplicate binding error, got: {:?}",
             errs
         );
     }

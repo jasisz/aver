@@ -34,13 +34,11 @@ verify safeRoot:
 
 fn main() -> Unit
     ! [Console]
-    var attempts = 0
-        reason: "Tracks how many divisions we attempted for the summary."
-    val r1 = safeDivide(10, 2)
+    r1 = safeDivide(10, 2)
     Console.print(r1)
-    val r2 = safeDivide(7, 0)
+    r2 = safeDivide(7, 0)
     Console.print(r2)
-    val r3 = safeDivide(9, 3)
+    r3 = safeDivide(9, 3)
     Console.print(r3)
 
 verify safeDivide:

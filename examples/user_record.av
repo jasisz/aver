@@ -15,8 +15,8 @@ fn is_adult(u: User) -> Bool
 
 fn main()
   ! [Console]
-  val alice = User(name: "Alice", age: 30)
-  val bob = User(name: "Bob", age: 15)
+  alice = User(name: "Alice", age: 30)
+  bob = User(name: "Bob", age: 15)
   Console.print(greet(alice))
   Console.print(greet(bob))
   Console.print(is_adult(alice))

@@ -146,16 +146,15 @@ impl Parser {
             TokenKind::Type => Ok(Some(TopLevel::TypeDef(self.parse_sum_type_def()?))),
             TokenKind::Record => Ok(Some(TopLevel::TypeDef(self.parse_record_def()?))),
             TokenKind::Effects => Ok(Some(self.parse_effect_set()?)),
-            TokenKind::Val => {
-                let stmt = self.parse_val()?;
-                Ok(Some(TopLevel::Stmt(stmt)))
-            }
-            TokenKind::Var => {
-                let stmt = self.parse_var()?;
-                Ok(Some(TopLevel::Stmt(stmt)))
+            TokenKind::Ident(s) if s == "val" || s == "var" => {
+                let kw = s.clone();
+                Err(self.error(format!(
+                    "Unknown keyword '{}'. Bindings are just: x = 5",
+                    kw
+                )))
             }
             TokenKind::Ident(_) if matches!(&self.peek(1).kind, TokenKind::Assign) => {
-                let stmt = self.parse_assign()?;
+                let stmt = self.parse_binding()?;
                 Ok(Some(TopLevel::Stmt(stmt)))
             }
             TokenKind::Newline | TokenKind::Dedent | TokenKind::Indent => {
@@ -685,19 +684,22 @@ impl Parser {
                 let expr = self.parse_expr()?;
                 self.skip_newlines();
                 return Ok((Some(expr), Vec::new()));
-            } else if self.check_exact(&TokenKind::Val) {
-                let stmt = self.parse_val()?;
-                stmts.push(stmt);
-            } else if self.check_exact(&TokenKind::Var) {
-                let stmt = self.parse_var()?;
-                stmts.push(stmt);
+            } else if matches!(&self.current().kind, TokenKind::Ident(s) if s == "val" || s == "var") {
+                let kw = match &self.current().kind {
+                    TokenKind::Ident(s) => s.clone(),
+                    _ => unreachable!(),
+                };
+                return Err(self.error(format!(
+                    "Unknown keyword '{}'. Bindings are just: x = 5",
+                    kw
+                )));
             } else if self.check_exact(&TokenKind::Match) {
                 let expr = self.parse_match()?;
                 stmts.push(Stmt::Expr(expr));
             } else if matches!(&self.current().kind, TokenKind::Ident(_))
                 && matches!(&self.peek(1).kind, TokenKind::Assign)
             {
-                let stmt = self.parse_assign()?;
+                let stmt = self.parse_binding()?;
                 stmts.push(stmt);
             } else {
                 let expr = self.parse_expr()?;
@@ -710,10 +712,9 @@ impl Parser {
     }
 
     // -------------------------------------------------------------------------
-    // val / var
+    // binding: `name = expr`
     // -------------------------------------------------------------------------
-    fn parse_val(&mut self) -> Result<Stmt, ParseError> {
-        self.expect_exact(&TokenKind::Val)?;
+    fn parse_binding(&mut self) -> Result<Stmt, ParseError> {
         let name_tok =
             self.expect_kind(&TokenKind::Ident(String::new()), "Expected variable name")?;
         let name = match name_tok.kind {
@@ -723,53 +724,7 @@ impl Parser {
         self.expect_exact(&TokenKind::Assign)?;
         let value = self.parse_expr()?;
         self.skip_newlines();
-        Ok(Stmt::Val(name, value))
-    }
-
-    fn parse_var(&mut self) -> Result<Stmt, ParseError> {
-        self.expect_exact(&TokenKind::Var)?;
-        let name_tok =
-            self.expect_kind(&TokenKind::Ident(String::new()), "Expected variable name")?;
-        let name = match name_tok.kind {
-            TokenKind::Ident(s) => s,
-            _ => unreachable!(),
-        };
-        self.expect_exact(&TokenKind::Assign)?;
-        let value = self.parse_expr()?;
-        self.skip_newlines();
-
-        let mut reason = None;
-        if self.is_indent() {
-            self.advance();
-            self.skip_newlines();
-            if self.check_exact(&TokenKind::Reason) {
-                self.advance();
-                self.expect_exact(&TokenKind::Colon)?;
-                if let TokenKind::Str(s) = self.current().kind.clone() {
-                    reason = Some(s);
-                    self.advance();
-                }
-                self.skip_newlines();
-            }
-            if self.is_dedent() {
-                self.advance();
-            }
-        }
-
-        Ok(Stmt::Var(name, value, reason))
-    }
-
-    fn parse_assign(&mut self) -> Result<Stmt, ParseError> {
-        let name_tok =
-            self.expect_kind(&TokenKind::Ident(String::new()), "Expected variable name")?;
-        let name = match name_tok.kind {
-            TokenKind::Ident(s) => s,
-            _ => unreachable!(),
-        };
-        self.expect_exact(&TokenKind::Assign)?;
-        let value = self.parse_expr()?;
-        self.skip_newlines();
-        Ok(Stmt::Assign(name, value))
+        Ok(Stmt::Binding(name, value))
     }
 
     // -------------------------------------------------------------------------

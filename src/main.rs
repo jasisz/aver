@@ -1316,12 +1316,7 @@ fn cmd_repl() {
                 }
                 TopLevel::Stmt(s) => match interp.exec_stmt(s) {
                     Ok(val) => match s {
-                        Stmt::Val(name, _) | Stmt::Var(name, _, _) => {
-                            if let Ok(v) = interp.lookup(name) {
-                                println!("{} = {}", name, aver_repr(&v));
-                            }
-                        }
-                        Stmt::Assign(name, _) => {
+                        Stmt::Binding(name, _) => {
                             if let Ok(v) = interp.lookup(name) {
                                 println!("{} = {}", name, aver_repr(&v));
                             }

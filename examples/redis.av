@@ -63,8 +63,8 @@ verify respBulkLen:
 fn sendArgAndRest(conn: Tcp.Connection, h: String, t: List<String>) -> Result<Tcp.Connection, String>
     ? "Sends one RESP bulk-string arg ('$len' + data), then recurses for the rest."
     ! [Tcp]
-    val _ = Tcp.writeLine(conn, "${respBulkLen(h)}")?
-    val _ = Tcp.writeLine(conn, h)?
+    _ = Tcp.writeLine(conn, "${respBulkLen(h)}")?
+    _ = Tcp.writeLine(conn, h)?
     sendArgs(conn, t)
 
 fn sendArgs(conn: Tcp.Connection, args: List<String>) -> Result<Tcp.Connection, String>
@@ -77,7 +77,7 @@ fn sendArgs(conn: Tcp.Connection, args: List<String>) -> Result<Tcp.Connection, 
 fn sendCommand(conn: Tcp.Connection, args: List<String>) -> Result<Tcp.Connection, String>
     ? "Sends a full RESP command: writes the '*N' array header then each arg via sendArgs."
     ! [Tcp]
-    val _ = Tcp.writeLine(conn, "*{Int.toString(List.len(args))}")?
+    _ = Tcp.writeLine(conn, "*{Int.toString(List.len(args))}")?
     sendArgs(conn, args)
 
 // Public API
@@ -95,20 +95,20 @@ fn disconnect(conn: Tcp.Connection) -> Result<Unit, String>
 fn ping(conn: Tcp.Connection) -> Result<String, String>
     ? "Sends PING and returns the server reply (expected: +PONG)."
     ! [Tcp]
-    val _ = sendCommand(conn, ["PING"])?
+    _ = sendCommand(conn, ["PING"])?
     Tcp.readLine(conn)
 
 fn set(conn: Tcp.Connection, key: String, value: String) -> Result<String, String>
     ? "Sends SET key value and returns the server reply (expected: +OK)."
     ! [Tcp]
-    val _ = sendCommand(conn, ["SET", key, value])?
+    _ = sendCommand(conn, ["SET", key, value])?
     Tcp.readLine(conn)
 
 fn get(conn: Tcp.Connection, key: String) -> Result<String, String>
     ? "Sends GET key. Returns Ok(value) or Err('key not found') when Redis replies $-1 (nil)."
     ! [Tcp]
-    val _ = sendCommand(conn, ["GET", key])?
-    val header = Tcp.readLine(conn)?
+    _ = sendCommand(conn, ["GET", key])?
+    header = Tcp.readLine(conn)?
     match header == "$-1":
         true  -> Result.Err("key not found")
         false -> Tcp.readLine(conn)
@@ -116,7 +116,7 @@ fn get(conn: Tcp.Connection, key: String) -> Result<String, String>
 fn del(conn: Tcp.Connection, key: String) -> Result<String, String>
     ? "Sends DEL key and returns the raw RESP reply (expected: :N deleted count)."
     ! [Tcp]
-    val _ = sendCommand(conn, ["DEL", key])?
+    _ = sendCommand(conn, ["DEL", key])?
     Tcp.readLine(conn)
 
 // Demo entry point
@@ -124,22 +124,22 @@ fn del(conn: Tcp.Connection, key: String) -> Result<String, String>
 fn run() -> Result<Unit, String>
     ? "Full Redis demo: connect, PING, SET, GET, DEL, disconnect."
     ! [Tcp, Console]
-    val cfg  = RedisConfig(host: "127.0.0.1", port: 6379)
-    val conn = connect(cfg)?
+    cfg  = RedisConfig(host: "127.0.0.1", port: 6379)
+    conn = connect(cfg)?
 
-    val pong = ping(conn)?
+    pong = ping(conn)?
     Console.print("PING -> {pong}")
 
-    val setR = set(conn, "aver:key", "hello from Aver")?
+    setR = set(conn, "aver:key", "hello from Aver")?
     Console.print("SET  -> {setR}")
 
-    val getR = get(conn, "aver:key")?
+    getR = get(conn, "aver:key")?
     Console.print("GET  -> {getR}")
 
-    val delR = del(conn, "aver:key")?
+    delR = del(conn, "aver:key")?
     Console.print("DEL  -> {delR}")
 
-    val closed = disconnect(conn)
+    closed = disconnect(conn)
     Console.print("connection closed.")
     closed
 

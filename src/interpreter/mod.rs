@@ -223,14 +223,6 @@ impl Interpreter {
         }
     }
 
-    /// O(1) slot-based assignment for resolved function bodies.
-    fn assign_slot(&mut self, slot: u16, val: Value) {
-        let idx = self.env.len() - 1;
-        if let EnvFrame::Slots(v) = &mut self.env[idx] {
-            v[slot as usize] = Rc::new(val);
-        }
-    }
-
     /// Define a value in the current Slots frame at the given slot index.
     fn define_slot(&mut self, slot: u16, val: Value) {
         let idx = self.env.len() - 1;
@@ -322,78 +314,6 @@ impl Interpreter {
             );
             Ok(())
         }
-    }
-
-    /// Walk the scope stack from innermost outward and update the first binding found.
-    /// Returns Err if no binding exists (use `define` for new bindings).
-    pub fn assign(&mut self, name: &str, val: Value) -> Result<(), RuntimeError> {
-        enum AssignTarget {
-            Owned(usize),
-            Shadow(usize),
-            SharedToOwned(usize),
-        }
-
-        let mut shadow_target: Option<usize> = None;
-        let mut target: Option<AssignTarget> = None;
-
-        for idx in (0..self.env.len()).rev() {
-            match &self.env[idx] {
-                EnvFrame::Owned(scope) => {
-                    if shadow_target.is_none() {
-                        shadow_target = Some(idx);
-                    }
-                    if scope.contains_key(name) {
-                        target = Some(AssignTarget::Owned(idx));
-                        break;
-                    }
-                }
-                EnvFrame::Shared(scope) => {
-                    if scope.contains_key(name) {
-                        target = Some(match shadow_target {
-                            Some(owned_idx) => AssignTarget::Shadow(owned_idx),
-                            None => AssignTarget::SharedToOwned(idx),
-                        });
-                        break;
-                    }
-                }
-                // Slots frames don't participate in name-based assignment
-                EnvFrame::Slots(_) | EnvFrame::SharedSlots(_) => {}
-            }
-        }
-
-        let target = target.ok_or_else(|| {
-            RuntimeError::Error(format!(
-                "Cannot assign to '{}': variable not declared",
-                name
-            ))
-        })?;
-        let rc_val = Rc::new(val);
-
-        match target {
-            AssignTarget::Owned(idx) | AssignTarget::Shadow(idx) => {
-                if let EnvFrame::Owned(scope) = &mut self.env[idx] {
-                    scope.insert(name.to_string(), rc_val);
-                    return Ok(());
-                }
-            }
-            AssignTarget::SharedToOwned(idx) => {
-                let cloned = match &self.env[idx] {
-                    EnvFrame::Shared(scope) => (**scope).clone(),
-                    EnvFrame::Owned(scope) => scope.clone(),
-                    _ => unreachable!(),
-                };
-                self.env[idx] = EnvFrame::Owned(cloned);
-                if let EnvFrame::Owned(scope) = &mut self.env[idx] {
-                    scope.insert(name.to_string(), rc_val);
-                    return Ok(());
-                }
-            }
-        }
-
-        Err(RuntimeError::Error(format!(
-            "Cannot assign to '{}': no mutable scope available",
-            name
-        )))
     }
 
     fn module_cache_key(path: &Path) -> String {
@@ -1295,19 +1215,9 @@ impl Interpreter {
 
     pub fn exec_stmt(&mut self, stmt: &Stmt) -> Result<Value, RuntimeError> {
         match stmt {
-            Stmt::Val(name, expr) => {
+            Stmt::Binding(name, expr) => {
                 let val = self.eval_expr(expr)?;
                 self.define(name.clone(), val);
-                Ok(Value::Unit)
-            }
-            Stmt::Var(name, expr, _reason) => {
-                let val = self.eval_expr(expr)?;
-                self.define(name.clone(), val);
-                Ok(Value::Unit)
-            }
-            Stmt::Assign(name, expr) => {
-                let val = self.eval_expr(expr)?;
-                self.assign(name, val)?;
                 Ok(Value::Unit)
             }
             Stmt::Expr(expr) => self.eval_expr(expr),
@@ -1342,30 +1252,12 @@ impl Interpreter {
         local_slots: &HashMap<String, u16>,
     ) -> Result<Value, RuntimeError> {
         match stmt {
-            Stmt::Val(name, expr) => {
+            Stmt::Binding(name, expr) => {
                 let val = self.eval_expr(expr)?;
                 if let Some(&slot) = local_slots.get(name) {
                     self.define_slot(slot, val);
                 } else {
                     self.define(name.clone(), val);
-                }
-                Ok(Value::Unit)
-            }
-            Stmt::Var(name, expr, _reason) => {
-                let val = self.eval_expr(expr)?;
-                if let Some(&slot) = local_slots.get(name) {
-                    self.define_slot(slot, val);
-                } else {
-                    self.define(name.clone(), val);
-                }
-                Ok(Value::Unit)
-            }
-            Stmt::Assign(name, expr) => {
-                let val = self.eval_expr(expr)?;
-                if let Some(&slot) = local_slots.get(name) {
-                    self.assign_slot(slot, val);
-                } else {
-                    self.assign(name, val)?;
                 }
                 Ok(Value::Unit)
             }

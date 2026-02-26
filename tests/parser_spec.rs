@@ -42,11 +42,11 @@ fn parse_error(src: &str) -> String {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn val_int() {
-    let items = parse("val x = 42");
+fn binding_int() {
+    let items = parse("x = 42");
     assert_eq!(
         items,
-        vec![TopLevel::Stmt(Stmt::Val(
+        vec![TopLevel::Stmt(Stmt::Binding(
             "x".to_string(),
             Expr::Literal(Literal::Int(42))
         ))]
@@ -54,11 +54,11 @@ fn val_int() {
 }
 
 #[test]
-fn val_string() {
-    let items = parse("val greeting = \"hello\"");
+fn binding_string() {
+    let items = parse("greeting = \"hello\"");
     assert_eq!(
         items,
-        vec![TopLevel::Stmt(Stmt::Val(
+        vec![TopLevel::Stmt(Stmt::Binding(
             "greeting".to_string(),
             Expr::Literal(Literal::Str("hello".to_string()))
         ))]
@@ -66,11 +66,11 @@ fn val_string() {
 }
 
 #[test]
-fn val_bool_true() {
-    let items = parse("val flag = true");
+fn binding_bool_true() {
+    let items = parse("flag = true");
     assert_eq!(
         items,
-        vec![TopLevel::Stmt(Stmt::Val(
+        vec![TopLevel::Stmt(Stmt::Binding(
             "flag".to_string(),
             Expr::Literal(Literal::Bool(true))
         ))]
@@ -78,28 +78,18 @@ fn val_bool_true() {
 }
 
 #[test]
-fn var_binding_no_reason() {
-    let items = parse("var count = 0");
-    if let TopLevel::Stmt(Stmt::Var(name, Expr::Literal(Literal::Int(0)), None)) = &items[0] {
-        assert_eq!(name, "count");
-    } else {
-        panic!("unexpected: {:?}", items[0]);
-    }
-}
-
-#[test]
-fn assign_stmt_inside_fn() {
-    let src = "fn f() -> Unit\n    var x = 0\n    x = 1\n";
+fn binding_in_fn_body() {
+    let src = "fn f() -> Int\n    x = 10\n    x\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         if let FnBody::Block(stmts) = &*fd.body {
             assert!(
-                matches!(stmts[0], Stmt::Var(_, _, _)),
-                "first stmt should be Var"
+                matches!(stmts[0], Stmt::Binding(_, _)),
+                "first stmt should be Binding"
             );
             assert!(
-                matches!(stmts[1], Stmt::Assign(_, _)),
-                "second stmt should be Assign"
+                matches!(stmts[1], Stmt::Expr(_)),
+                "second stmt should be Expr"
             );
         } else {
             panic!("expected block body");
@@ -107,6 +97,16 @@ fn assign_stmt_inside_fn() {
     } else {
         panic!("expected FnDef");
     }
+}
+
+#[test]
+fn val_keyword_is_parse_error() {
+    assert!(parse_fails("val x = 42"), "'val' should be rejected");
+}
+
+#[test]
+fn var_keyword_is_parse_error() {
+    assert!(parse_fails("var x = 42"), "'var' should be rejected");
 }
 
 // ---------------------------------------------------------------------------
@@ -130,7 +130,7 @@ fn fn_single_expr_body() {
 
 #[test]
 fn fn_block_body() {
-    let src = "fn greet(name: String) -> String\n    val msg = \"Hello\"\n    msg\n";
+    let src = "fn greet(name: String) -> String\n    msg = \"Hello\"\n    msg\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         assert!(matches!(*fd.body, FnBody::Block(_)), "expected Block body");
@@ -672,8 +672,9 @@ fn module_then_fn() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn val_missing_name_is_error() {
-    assert!(parse_fails("val = 42"), "missing name should fail");
+fn val_keyword_error_in_fn_body() {
+    let src = "fn f() -> Int\n    val x = 1\n    x\n";
+    assert!(parse_fails(src), "'val' inside fn body should fail");
 }
 
 #[test]
@@ -787,7 +788,7 @@ fn parse_fails_on_any_type_annotation() {
 
 #[test]
 fn parse_tcp_connection_manual_constructor_shows_actionable_error() {
-    let src = "val c = Tcp.Connection(id: \"x\", host: \"127.0.0.1\", port: 6379)\n";
+    let src = "c = Tcp.Connection(id: \"x\", host: \"127.0.0.1\", port: 6379)\n";
     let msg = parse_error(src);
     assert!(
         msg.contains("Cannot construct 'Tcp.Connection' directly"),

@@ -2,7 +2,7 @@
 
 ## What is this?
 
-Aver is a programming language designed for AI-assisted development. Its interpreter is written in Rust. The language prioritises human and machine readability: every function carries an optional prose description, every mutable variable can document why it exists, and architectural decisions are first-class citizens expressed as `decision` blocks co-located with the code they describe. This file is the single entry point for any AI resuming work on this project — read it before touching any source file.
+Aver is a programming language designed for AI-assisted development. Its interpreter is written in Rust. The language prioritises human and machine readability: every function carries an optional prose description, and architectural decisions are first-class citizens expressed as `decision` blocks co-located with the code they describe. This file is the single entry point for any AI resuming work on this project — read it before touching any source file.
 
 ## Project philosophy
 
@@ -18,7 +18,7 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 - Lexer with significant-indentation handling (Python-style INDENT / DEDENT tokens)
 - String interpolation: `"Hello, {name}!"` is tokenised as `InterpStr` and evaluated at runtime by re-lexing the expression inside `{}`
 - Integer and float literals, bool literals, string literals
-- `val` (immutable binding) at any scope; `var` (mutable binding with optional `reason:` annotation) inside function bodies only — **top-level `var` is a type error** (enforced by the type checker)
+- **Immutable bindings only**: `name = expr` (no `val`/`var` keywords — they are parse errors). All bindings are immutable; no reassignment. Duplicate binding of the same name in the same scope is a type error.
 - Function definitions (`fn`) with typed parameters, return type annotation, optional prose description (`? "..."`), and optional effect declaration (`! [Effect]`)
 - Single-expression functions (`= expr` shorthand) and block-body functions
 - Arithmetic: `+`, `-`, `*`, `/` with mixed Int/Float promotion
@@ -40,7 +40,7 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 - **Auto-memoization** (`src/call_graph.rs`, `src/types/checker.rs`, `src/interpreter/mod.rs`): pure recursive functions with memo-safe arguments (scalars, records/variants of scalars) are automatically memoized at runtime. Call graph is built from AST, Tarjan SCC detects recursion, and `call_fn_ref` checks/stores a per-function HashMap cache (capped at 4096 entries). No keyword needed — the compiler detects eligibility.
 - CLI with four subcommands: `run`, `verify`, `check`, `decisions`
 - `check` command: warns when a module has no `intent:` or a function with effects/Result return has no `?` description; warns if file exceeds 150 lines; `fn main()` is exempt from the `?` requirement
-- **Static type checker** (`src/typechecker.rs`): `aver check`, `aver run`, and `aver verify` all run a type-check pass. Type errors are hard errors that block execution. The checker covers function bodies and top-level statements (including assignment mutability rules). `Any` annotations are removed from the language surface; the checker may still use internal `Type::Unknown` recovery after earlier errors so analysis can continue.
+- **Static type checker** (`src/types/checker.rs`): `aver check`, `aver run`, and `aver verify` all run a type-check pass. Type errors are hard errors that block execution. The checker covers function bodies and top-level statements (including duplicate binding detection). `Any` annotations are removed from the language surface; the checker may still use internal `Type::Unknown` recovery after earlier errors so analysis can continue.
 - **Effect propagation** is statically enforced (blocks `check`/`run`/`verify`), including `main()`: calling an effectful function requires declaring the same effect in the caller. Runtime also enforces call-edge capabilities as a backstop.
 - **User-defined sum types** (`type` keyword): `type Shape` with variants `Circle(Float)`, `Rect(Float, Float)`, `Point`. Constructors are accessed with qualified syntax `Shape.Circle(5.0)` — no flat namespace pollution. Patterns: `Shape.Circle(r)`, `Shape.Point`. Registered as `Value::Namespace` in the interpreter env.
 - **User-defined product types** (`record` keyword): `record User` with named fields `name: String`, `age: Int`. Constructed as `User(name: "Alice", age: 30)`. Field access via `u.name`. Positional destructuring in match: `User(name, age) -> name`.
@@ -168,8 +168,8 @@ The `src/lib.rs` exports all modules as `pub mod` so integration tests can acces
 | `Pattern` | ast.rs | Match arm pattern: `Wildcard`, `Literal`, `Ident`, `EmptyList`, `Cons`, `Constructor` |
 | `StrPart` | ast.rs | Piece of an interpolated string: `Literal(String)` or `Expr(String)` (raw source) |
 | `Expr` | ast.rs | Every expression form: `Literal`, `Ident`, `Attr`, `FnCall`, `BinOp`, `Match`, `Pipe`, `Constructor`, `ErrorProp`, `InterpolatedStr`, `List(Vec<Expr>)`, `RecordCreate { type_name, fields }` |
-| `Stmt` | ast.rs | `Val(name, expr)`, `Var(name, expr, reason)`, `Assign(name, expr)`, `Expr(expr)` |
-| `FnBody` | ast.rs | `Expr(Expr)` for `= expr` shorthand, or `Block(Vec<Stmt>)` |
+| `Stmt` | ast.rs | `Binding(name, expr)`, `Expr(expr)` |
+| `FnBody` | ast.rs | `Expr(Expr)` for `= expr` shorthand, or `Block(Vec<Stmt>)` where Stmt is `Binding` or `Expr` |
 | `FnDef` | ast.rs | Name, params, return type, effects, optional description, body |
 | `Module` | ast.rs | Name, depends, exposes, intent string |
 | `VerifyBlock` | ast.rs | Function name + list of `(left_expr, right_expr)` equality cases |
@@ -257,7 +257,7 @@ To create a new namespace, follow the pattern in any `src/services/*_helpers.rs`
 - **`match` is a statement in `parse_fn_body`** (handled via `if check_exact(Match)`) but also an expression in `parse_atom`; this dual path works but means a `match` at statement position does not pass through the normal expression precedence chain
 - **Effect list** (`! [Io, State]`) is propagated statically and also enforced at runtime on function-call edges; no algebraic handlers yet
 - **`chosen` field in DecisionBlock** only accepts a bare identifier (not a string), so multi-word chosen values require a single CamelCase identifier
-- **`reason` in `var`** expects a string literal on the same or next indented line; the block structure differs from `reason:` in decision blocks (decision uses multiline text, var uses a single string)
+- **No `val`/`var` keywords**: bindings are `name = expr`, always immutable. Using `val` or `var` produces a parse error with a helpful message.
 - **Unknown identifiers in expressions** are inferred as `Unknown` after emitting a type error so checking can continue; this can produce cascaded follow-up errors in large files
 
 ## Next steps (prioritised)

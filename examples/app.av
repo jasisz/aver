@@ -5,7 +5,7 @@ module App
 
 fn main() -> Unit
     ! [Console]
-    val result = Examples.Fibonacci.buildFibStats(10)
+    result = Examples.Fibonacci.buildFibStats(10)
     match result:
         Result.Ok(stats) -> Console.print(stats.sum)
         Result.Err(msg)  -> Console.print(msg)

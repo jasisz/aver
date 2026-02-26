@@ -17,16 +17,16 @@ fn add(a: Int, b: Int) -> Int
 
 fn main() -> Unit
     ! [Console]
-    val numbers = [1, 2, 3, 4, 5]
-    val doubled = List.map(numbers, double)
+    numbers = [1, 2, 3, 4, 5]
+    doubled = List.map(numbers, double)
     Console.print(doubled)
-    val positives = List.filter([-1, 0, 2, 3], isPositive)
+    positives = List.filter([-1, 0, 2, 3], isPositive)
     Console.print(positives)
-    val total = List.fold(numbers, 0, add)
+    total = List.fold(numbers, 0, add)
     Console.print(total)
-    val first = List.get(numbers, 0)
+    first = List.get(numbers, 0)
     Console.print(first)
-    val oob = List.get(numbers, 99)
+    oob = List.get(numbers, 99)
     Console.print(oob)
 
 verify double:

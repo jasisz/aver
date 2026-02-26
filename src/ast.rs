@@ -79,10 +79,7 @@ pub enum Expr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
-    Val(String, Expr),
-    Var(String, Expr, Option<String>),
-    /// Bare assignment to an existing `var` binding: `name = expr`
-    Assign(String, Expr),
+    Binding(String, Expr),
     Expr(Expr),
 }
 
