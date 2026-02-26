@@ -16,7 +16,7 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 ### What works
 
 - Lexer with significant-indentation handling (Python-style INDENT / DEDENT tokens)
-- String interpolation: `"Hello, {name}!"` is tokenised as `InterpStr` and evaluated at runtime by re-lexing the expression inside `{}`
+- String interpolation: `"Hello, {name}!"` is tokenised as `InterpStr`; expressions inside `{}` are parsed at parse time into `StrPart::Parsed(Expr)`
 - Integer and float literals, bool literals, string literals
 - **Immutable bindings only**: `name = expr` (no `val`/`var` keywords — they are parse errors). All bindings are immutable; no reassignment. Duplicate binding of the same name in the same scope is a type error.
 - Function definitions (`fn`) with typed parameters, return type annotation, optional prose description (`? "..."`), and optional effect declaration (`! [Effect]`)
@@ -91,14 +91,12 @@ src/
                    parse_call_or_atom -> parse_atom
 
   interpreter.rs — Tree-walking evaluator.
-                   Env is a Vec<HashMap<String,Value>> (scope stack).
+                   Env is a Vec<EnvFrame> (scope stack: Owned or Slots).
                    No flat builtins — all functions live in namespaces
                    (Console, List, Int, Float, String, Http, Disk, Tcp).
                    No closure capture — functions see globals (env[0]) at call time.
                    Auto-memoization cache in call_fn_ref for pure
                    recursive functions.
-                   String interpolation re-lexes and re-parses the raw
-                   expression text stored inside StrPart::Expr.
 
   tco.rs         — Tail-call optimization transform pass.
                    Runs after parsing, before type-checking.
@@ -166,7 +164,7 @@ The `src/lib.rs` exports all modules as `pub mod` so integration tests can acces
 | `Literal` | ast.rs | `Int(i64)`, `Float(f64)`, `Str(String)`, `Bool(bool)` |
 | `BinOp` | ast.rs | Arithmetic and comparison operators as enum variants |
 | `Pattern` | ast.rs | Match arm pattern: `Wildcard`, `Literal`, `Ident`, `EmptyList`, `Cons`, `Constructor` |
-| `StrPart` | ast.rs | Piece of an interpolated string: `Literal(String)` or `Expr(String)` (raw source) |
+| `StrPart` | ast.rs | Piece of an interpolated string: `Literal(String)` or `Parsed(Box<Expr>)` |
 | `Expr` | ast.rs | Every expression form: `Literal`, `Ident`, `Attr`, `FnCall`, `BinOp`, `Match`, `Pipe`, `Constructor`, `ErrorProp`, `InterpolatedStr`, `List(Vec<Expr>)`, `RecordCreate { type_name, fields }` |
 | `Stmt` | ast.rs | `Binding(name, expr)`, `Expr(expr)` |
 | `FnBody` | ast.rs | `Expr(Expr)` for `= expr` shorthand, or `Block(Vec<Stmt>)` where Stmt is `Binding` or `Expr` |
@@ -251,7 +249,7 @@ To create a new namespace, follow the pattern in any `src/services/*_helpers.rs`
 ## Known issues / edge cases
 
 - **Unary minus** is implemented as `0 - operand`, which means the expression AST is slightly incorrect for float negation edge cases (e.g., `-0.0`)
-- **String interpolation re-lexing**: the raw text inside `{...}` is re-lexed and re-parsed at runtime with a fresh lexer. Nested braces are handled by a depth counter, but the inner expression cannot span multiple lines
+- **String interpolation**: expressions inside `{...}` are parsed at parse time; invalid interpolation expressions are a hard `ParseError`. Nested braces are handled by a depth counter in the lexer, but the inner expression cannot span multiple lines
 - **Verify block syntax** uses `=>` as a case separator (`left_expr => expected_expr`); both sides support full expressions including comparisons (`==`, `!=`, etc.) since `=>` is a distinct token (`FatArrow`) that cannot appear inside an expression
 - **No check for duplicate function names**: defining a function twice silently shadows the earlier definition
 - **`match` is a statement in `parse_fn_body`** (handled via `if check_exact(Match)`) but also an expression in `parse_atom`; this dual path works but means a `match` at statement position does not pass through the normal expression precedence chain
