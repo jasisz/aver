@@ -219,11 +219,7 @@ fn tarjan_scc(
     state.sccs
 }
 
-fn strongconnect(
-    v: &str,
-    graph: &HashMap<String, HashSet<String>>,
-    state: &mut TarjanState,
-) {
+fn strongconnect(v: &str, graph: &HashMap<String, HashSet<String>>, state: &mut TarjanState) {
     let idx = state.index_counter;
     state.index_counter += 1;
     state.indices.insert(v.to_string(), idx);
@@ -283,7 +279,11 @@ fn fib(n: Int) -> Int
 "#;
         let items = parse(src);
         let rec = find_recursive_fns(&items);
-        assert!(rec.contains("fib"), "fib should be recursive, got: {:?}", rec);
+        assert!(
+            rec.contains("fib"),
+            "fib should be recursive, got: {:?}",
+            rec
+        );
     }
 
     #[test]
@@ -291,7 +291,11 @@ fn fib(n: Int) -> Int
         let src = "fn double(x: Int) -> Int\n    = x + x\n";
         let items = parse(src);
         let rec = find_recursive_fns(&items);
-        assert!(rec.is_empty(), "double should not be recursive, got: {:?}", rec);
+        assert!(
+            rec.is_empty(),
+            "double should not be recursive, got: {:?}",
+            rec
+        );
     }
 
     #[test]

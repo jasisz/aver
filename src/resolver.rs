@@ -85,11 +85,7 @@ fn collect_binding_slots(
 }
 
 /// Collect pattern bindings from match expressions inside an expression tree.
-fn collect_expr_bindings(
-    expr: &Expr,
-    local_slots: &mut HashMap<String, u16>,
-    next_slot: &mut u16,
-) {
+fn collect_expr_bindings(expr: &Expr, local_slots: &mut HashMap<String, u16>, next_slot: &mut u16) {
     match expr {
         Expr::Match(subject, arms) => {
             collect_expr_bindings(subject, local_slots, next_slot);

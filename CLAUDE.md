@@ -296,3 +296,10 @@ To create a new namespace, follow the pattern in any `src/services/*_helpers.rs`
 - Prefer this over ad-hoc print debugging inside core functions; debugging artifacts should become executable specs when possible.
 - This is especially AI-friendly: `verify` cases are declarative, reviewable, and reusable across sessions.
 - Limits (still real): `verify` alone does not replace profiling, latency analysis, or debugging nondeterministic external systems.
+
+## Agreed direction: file size and splitting policy (2026-02-26)
+
+- Any Rust file above 500 lines must be reviewed for splitting during normal development.
+- Split when it improves maintainability, testing, or separation of responsibilities.
+- Do not split purely to satisfy a metric if the file is large but still cohesive (for example large spec tables).
+- Treat 500 lines as a trigger for review, not an automatic hard failure.

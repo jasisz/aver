@@ -1,0 +1,700 @@
+use super::*;
+
+impl TypeChecker {
+    pub(super) fn infer_list_call_type(&mut self, name: &str, arg_types: &[Type]) -> Option<Type> {
+        let list_result = |inner: Type| Type::Result(Box::new(inner), Box::new(Type::Str));
+
+        let list_inner = |tc: &mut Self, arg_ty: &Type, arg_idx: usize| -> Type {
+            match arg_ty {
+                Type::List(inner) => *inner.clone(),
+                Type::Unknown => Type::Unknown,
+                other => {
+                    tc.error(format!(
+                        "Argument {} of '{}': expected List<...>, got {}",
+                        arg_idx,
+                        name,
+                        other.display()
+                    ));
+                    Type::Unknown
+                }
+            }
+        };
+
+        let expect_arity = |tc: &mut Self, expected: usize, fallback: Type| -> Result<(), Type> {
+            if arg_types.len() != expected {
+                tc.error(format!(
+                    "Function '{}' expects {} argument(s), got {}",
+                    name,
+                    expected,
+                    arg_types.len()
+                ));
+                Err(fallback)
+            } else {
+                Ok(())
+            }
+        };
+
+        match name {
+            "List.len" => {
+                if let Err(fallback) = expect_arity(self, 1, Type::Int) {
+                    return Some(fallback);
+                }
+                let _ = list_inner(self, &arg_types[0], 1);
+                Some(Type::Int)
+            }
+            "List.get" => {
+                if let Err(fallback) = expect_arity(self, 2, list_result(Type::Unknown)) {
+                    return Some(fallback);
+                }
+                let elem_ty = list_inner(self, &arg_types[0], 1);
+                if !arg_types[1].compatible(&Type::Int) {
+                    self.error(format!(
+                        "Argument 2 of '{}': expected Int, got {}",
+                        name,
+                        arg_types[1].display()
+                    ));
+                }
+                Some(list_result(elem_ty))
+            }
+            "List.head" => {
+                if let Err(fallback) = expect_arity(self, 1, list_result(Type::Unknown)) {
+                    return Some(fallback);
+                }
+                let elem_ty = list_inner(self, &arg_types[0], 1);
+                Some(list_result(elem_ty))
+            }
+            "List.tail" => {
+                if let Err(fallback) =
+                    expect_arity(self, 1, list_result(Type::List(Box::new(Type::Unknown))))
+                {
+                    return Some(fallback);
+                }
+                let elem_ty = list_inner(self, &arg_types[0], 1);
+                Some(list_result(Type::List(Box::new(elem_ty))))
+            }
+            "List.push" => {
+                if let Err(fallback) = expect_arity(self, 2, Type::List(Box::new(Type::Unknown))) {
+                    return Some(fallback);
+                }
+                let mut elem_ty = list_inner(self, &arg_types[0], 1);
+                let val_ty = arg_types[1].clone();
+                if matches!(elem_ty, Type::Unknown) {
+                    elem_ty = val_ty;
+                } else if !matches!(val_ty, Type::Unknown) && !val_ty.compatible(&elem_ty) {
+                    self.error(format!(
+                        "Argument 2 of '{}': expected {}, got {}",
+                        name,
+                        elem_ty.display(),
+                        val_ty.display()
+                    ));
+                }
+                Some(Type::List(Box::new(elem_ty)))
+            }
+            "List.map" => {
+                if let Err(fallback) = expect_arity(self, 2, Type::List(Box::new(Type::Unknown))) {
+                    return Some(fallback);
+                }
+                let elem_ty = list_inner(self, &arg_types[0], 1);
+                let fn_ty = &arg_types[1];
+                match fn_ty {
+                    Type::Fn(params, ret, _) => {
+                        if params.len() != 1 {
+                            self.error(format!(
+                                "Argument 2 of '{}': expected Fn(T) -> U, got {}",
+                                name,
+                                fn_ty.display()
+                            ));
+                            return Some(Type::List(Box::new(Type::Unknown)));
+                        }
+                        let param_ty = params[0].clone();
+                        if !matches!(elem_ty, Type::Unknown)
+                            && !matches!(param_ty, Type::Unknown)
+                            && !elem_ty.compatible(&param_ty)
+                        {
+                            self.error(format!(
+                                "Argument 2 of '{}': mapper expects {}, list provides {}",
+                                name,
+                                param_ty.display(),
+                                elem_ty.display()
+                            ));
+                        }
+                        Some(Type::List(Box::new(*ret.clone())))
+                    }
+                    Type::Unknown => Some(Type::List(Box::new(Type::Unknown))),
+                    other => {
+                        self.error(format!(
+                            "Argument 2 of '{}': expected function, got {}",
+                            name,
+                            other.display()
+                        ));
+                        Some(Type::List(Box::new(Type::Unknown)))
+                    }
+                }
+            }
+            "List.filter" => {
+                if let Err(fallback) = expect_arity(self, 2, Type::List(Box::new(Type::Unknown))) {
+                    return Some(fallback);
+                }
+                let mut elem_ty = list_inner(self, &arg_types[0], 1);
+                let fn_ty = &arg_types[1];
+                match fn_ty {
+                    Type::Fn(params, ret, _) => {
+                        if params.len() != 1 {
+                            self.error(format!(
+                                "Argument 2 of '{}': expected Fn(T) -> Bool, got {}",
+                                name,
+                                fn_ty.display()
+                            ));
+                            return Some(Type::List(Box::new(Type::Unknown)));
+                        }
+                        let param_ty = params[0].clone();
+                        if matches!(elem_ty, Type::Unknown) {
+                            elem_ty = param_ty.clone();
+                        } else if !matches!(param_ty, Type::Unknown)
+                            && !elem_ty.compatible(&param_ty)
+                        {
+                            self.error(format!(
+                                "Argument 2 of '{}': predicate expects {}, list provides {}",
+                                name,
+                                param_ty.display(),
+                                elem_ty.display()
+                            ));
+                        }
+                        if !ret.compatible(&Type::Bool) {
+                            self.error(format!(
+                                "Argument 2 of '{}': predicate must return Bool, got {}",
+                                name,
+                                ret.display()
+                            ));
+                        }
+                        Some(Type::List(Box::new(elem_ty)))
+                    }
+                    Type::Unknown => Some(Type::List(Box::new(elem_ty))),
+                    other => {
+                        self.error(format!(
+                            "Argument 2 of '{}': expected function, got {}",
+                            name,
+                            other.display()
+                        ));
+                        Some(Type::List(Box::new(Type::Unknown)))
+                    }
+                }
+            }
+            "List.fold" => {
+                if let Err(fallback) = expect_arity(self, 3, Type::Unknown) {
+                    return Some(fallback);
+                }
+                let elem_ty = list_inner(self, &arg_types[0], 1);
+                let mut acc_ty = arg_types[1].clone();
+                let fn_ty = &arg_types[2];
+                match fn_ty {
+                    Type::Fn(params, ret, _) => {
+                        if params.len() != 2 {
+                            self.error(format!(
+                                "Argument 3 of '{}': expected Fn(Acc, T) -> Acc, got {}",
+                                name,
+                                fn_ty.display()
+                            ));
+                            return Some(acc_ty);
+                        }
+                        let param_acc = params[0].clone();
+                        let param_elem = params[1].clone();
+
+                        if matches!(acc_ty, Type::Unknown) {
+                            acc_ty = param_acc.clone();
+                        } else if !matches!(param_acc, Type::Unknown)
+                            && !acc_ty.compatible(&param_acc)
+                        {
+                            self.error(format!(
+                                "Argument 3 of '{}': fold accumulator param expects {}, init is {}",
+                                name,
+                                param_acc.display(),
+                                acc_ty.display()
+                            ));
+                        }
+
+                        if !matches!(elem_ty, Type::Unknown)
+                            && !matches!(param_elem, Type::Unknown)
+                            && !elem_ty.compatible(&param_elem)
+                        {
+                            self.error(format!(
+                                "Argument 3 of '{}': fold item param expects {}, list has {}",
+                                name,
+                                param_elem.display(),
+                                elem_ty.display()
+                            ));
+                        }
+
+                        if matches!(acc_ty, Type::Unknown) {
+                            acc_ty = *ret.clone();
+                        } else if !ret.compatible(&acc_ty) {
+                            self.error(format!(
+                                "Argument 3 of '{}': fold function must return {}, got {}",
+                                name,
+                                acc_ty.display(),
+                                ret.display()
+                            ));
+                        }
+
+                        Some(acc_ty)
+                    }
+                    Type::Unknown => Some(acc_ty),
+                    other => {
+                        self.error(format!(
+                            "Argument 3 of '{}': expected function, got {}",
+                            name,
+                            other.display()
+                        ));
+                        Some(Type::Unknown)
+                    }
+                }
+            }
+            _ => None,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Type inference for expressions
+    // -----------------------------------------------------------------------
+    pub(super) fn infer_type(&mut self, expr: &Expr) -> Type {
+        match expr {
+            Expr::Literal(lit) => match lit {
+                crate::ast::Literal::Int(_) => Type::Int,
+                crate::ast::Literal::Float(_) => Type::Float,
+                crate::ast::Literal::Str(_) => Type::Str,
+                crate::ast::Literal::Bool(_) => Type::Bool,
+            },
+
+            Expr::InterpolatedStr(_) => Type::Str,
+
+            Expr::Ident(name) => {
+                if let Some(ty) = self.locals.get(name) {
+                    ty.clone()
+                } else if let Some(sig) = self.fn_sigs.get(name) {
+                    Self::fn_type_from_sig(sig)
+                } else {
+                    self.error(format!("Unknown identifier '{}'", name));
+                    Type::Unknown
+                }
+            }
+
+            Expr::FnCall(fn_expr, args) => {
+                // Infer arg types
+                let arg_types: Vec<Type> = args.iter().map(|a| self.infer_type(a)).collect();
+
+                // Helper: check arity + arg types against a sig, return sig.ret
+                let check_call = |tc: &mut Self, display_name: &str, sig: FnSig| -> Type {
+                    if arg_types.len() != sig.params.len() {
+                        tc.error(format!(
+                            "Function '{}' expects {} argument(s), got {}",
+                            display_name,
+                            sig.params.len(),
+                            arg_types.len()
+                        ));
+                    } else {
+                        for (i, (arg_ty, param_ty)) in
+                            arg_types.iter().zip(sig.params.iter()).enumerate()
+                        {
+                            if !arg_ty.compatible(param_ty) {
+                                tc.error(format!(
+                                    "Argument {} of '{}': expected {}, got {}",
+                                    i + 1,
+                                    display_name,
+                                    param_ty.display(),
+                                    arg_ty.display()
+                                ));
+                            }
+                        }
+                    }
+                    sig.ret
+                };
+
+                if let Expr::Ident(name) = fn_expr.as_ref() {
+                    if let Some(sig) = self.fn_sigs.get(name).cloned() {
+                        return check_call(self, name, sig);
+                    }
+                    if let Some(binding_ty) = self.binding_type(name) {
+                        if let Some(sig) = Self::sig_from_callable_type(&binding_ty) {
+                            return check_call(self, name, sig);
+                        }
+                        self.error(format!(
+                            "Cannot call '{}': expected function, got {}",
+                            name,
+                            binding_ty.display()
+                        ));
+                        return Type::Unknown;
+                    }
+                    self.error(format!("Call to unknown function '{}'", name));
+                    return Type::Unknown;
+                }
+
+                if let Some(display_name) = Self::callee_key(fn_expr) {
+                    if let Some(ty) = self.infer_list_call_type(&display_name, &arg_types) {
+                        return ty;
+                    }
+
+                    // Special-case Result.Ok/Err and Option.Some for precise type inference
+                    match display_name.as_str() {
+                        "Result.Ok" => {
+                            let inner = arg_types.first().cloned().unwrap_or(Type::Unit);
+                            return Type::Result(Box::new(inner), Box::new(Type::Unknown));
+                        }
+                        "Result.Err" => {
+                            let inner = arg_types.first().cloned().unwrap_or(Type::Unit);
+                            return Type::Result(Box::new(Type::Unknown), Box::new(inner));
+                        }
+                        "Option.Some" => {
+                            let inner = arg_types.first().cloned().unwrap_or(Type::Unit);
+                            return Type::Option(Box::new(inner));
+                        }
+                        _ => {}
+                    }
+                    if let Some(sig) = self.fn_sigs.get(&display_name).cloned() {
+                        return check_call(self, &display_name, sig);
+                    }
+                }
+
+                let callee_ty = self.infer_type(fn_expr);
+                if let Some(sig) = Self::sig_from_callable_type(&callee_ty) {
+                    return check_call(self, "<fn value>", sig);
+                }
+
+                if !matches!(callee_ty, Type::Unknown) {
+                    self.error(format!("Cannot call value of type {}", callee_ty.display()));
+                }
+                Type::Unknown
+            }
+
+            Expr::BinOp(op, left, right) => {
+                let lt = self.infer_type(left);
+                let rt = self.infer_type(right);
+                self.check_binop(op, &lt, &rt);
+                match op {
+                    BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => {
+                        Type::Bool
+                    }
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
+                        // Promote to Float if either side is Float
+                        if matches!(lt, Type::Float) || matches!(rt, Type::Float) {
+                            Type::Float
+                        } else if matches!(lt, Type::Int) && matches!(rt, Type::Int) {
+                            Type::Int
+                        } else if matches!(lt, Type::Str)
+                            && matches!(rt, Type::Str)
+                            && matches!(op, BinOp::Add)
+                        {
+                            Type::Str
+                        } else {
+                            Type::Unknown
+                        }
+                    }
+                }
+            }
+
+            Expr::Constructor(name, arg) => match name.as_str() {
+                "Ok" => {
+                    let inner = arg
+                        .as_ref()
+                        .map(|a| self.infer_type(a))
+                        .unwrap_or(Type::Unit);
+                    Type::Result(Box::new(inner), Box::new(Type::Unknown))
+                }
+                "Err" => {
+                    let inner = arg
+                        .as_ref()
+                        .map(|a| self.infer_type(a))
+                        .unwrap_or(Type::Unit);
+                    Type::Result(Box::new(Type::Unknown), Box::new(inner))
+                }
+                "Some" => {
+                    let inner = arg
+                        .as_ref()
+                        .map(|a| self.infer_type(a))
+                        .unwrap_or(Type::Unit);
+                    Type::Option(Box::new(inner))
+                }
+                "None" => Type::Option(Box::new(Type::Unknown)),
+                _ => Type::Unknown,
+            },
+
+            Expr::List(elems) => {
+                let inner = if let Some(first) = elems.first() {
+                    self.infer_type(first)
+                } else {
+                    Type::Unknown
+                };
+                Type::List(Box::new(inner))
+            }
+
+            Expr::Match(subject, arms) => {
+                let _ = self.infer_type(subject);
+                // Infer from first arm; check remaining arms for consistency
+                if let Some(first_arm) = arms.first() {
+                    let first_ty =
+                        self.infer_type_with_pattern_bindings(&first_arm.pattern, &first_arm.body);
+                    for arm in arms.iter().skip(1) {
+                        let arm_ty = self.infer_type_with_pattern_bindings(&arm.pattern, &arm.body);
+                        // Only report mismatch when both types are concrete
+                        if !first_ty.compatible(&arm_ty)
+                            && !matches!(first_ty, Type::Unknown)
+                            && !matches!(arm_ty, Type::Unknown)
+                        {
+                            self.error(format!(
+                                "Match arms return incompatible types: {} vs {}",
+                                first_ty.display(),
+                                arm_ty.display()
+                            ));
+                        }
+                    }
+                    first_ty
+                } else {
+                    Type::Unknown
+                }
+            }
+
+            Expr::Pipe(left, right) => {
+                // x |> f is equivalent to f(x)
+                let call = Expr::FnCall(Box::new((**right).clone()), vec![(**left).clone()]);
+                self.infer_type(&call)
+            }
+
+            Expr::ErrorProp(inner) => {
+                // expr? unwraps Result<T,E> → T, propagating E as early return.
+                let ty = self.infer_type(inner);
+                match ty {
+                    Type::Result(ok_ty, err_ty) => {
+                        match self.current_fn_ret.clone() {
+                            Some(Type::Result(_, fn_err_ty)) => {
+                                if !err_ty.compatible(&fn_err_ty) {
+                                    self.error(format!(
+                                        "Operator '?': Err type {} is incompatible with function's Err type {}",
+                                        err_ty.display(),
+                                        fn_err_ty.display()
+                                    ));
+                                }
+                            }
+                            Some(Type::Unknown) => {} // gradual typing — skip check
+                            Some(other) => {
+                                self.error(format!(
+                                    "Operator '?' used in function returning {}, which is not Result",
+                                    other.display()
+                                ));
+                            }
+                            None => {
+                                self.error("Operator '?' used outside of a function".to_string());
+                            }
+                        }
+                        *ok_ty
+                    }
+                    Type::Unknown => Type::Unknown,
+                    other => {
+                        self.error(format!(
+                            "Operator '?' can only be applied to Result, got {}",
+                            other.display()
+                        ));
+                        Type::Unknown
+                    }
+                }
+            }
+
+            Expr::TypeAscription(inner, ty_src) => {
+                let annotated = match parse_type_str_strict(ty_src) {
+                    Ok(ty) => ty,
+                    Err(unknown) => {
+                        self.error(format!("Unknown type annotation '{}'", unknown));
+                        Type::Unknown
+                    }
+                };
+                let inferred = self.infer_type(inner);
+                if !inferred.compatible(&annotated) {
+                    self.error(format!(
+                        "Type ascription mismatch: expression has type {}, annotation is {}",
+                        inferred.display(),
+                        annotated.display()
+                    ));
+                }
+                annotated
+            }
+
+            Expr::Attr(obj, field) => {
+                if let Some(mut parts) = Self::attr_path(obj) {
+                    let obj_key = parts.join(".");
+                    parts.push(field.clone());
+                    let key = parts.join(".");
+                    if let Some(ty) = self.value_members.get(&key) {
+                        return ty.clone();
+                    }
+                    if let Some(sig) = self.fn_sigs.get(&key) {
+                        return Self::fn_type_from_sig(sig);
+                    }
+                    if self.has_namespace_prefix(&key) {
+                        // Intermediate namespace (e.g. Models.User in Models.User.findById)
+                        return Type::Unknown;
+                    }
+                    if self.has_namespace_prefix(&obj_key) {
+                        self.error(format!(
+                            "Unknown member '{}.{}' (not exposed or missing)",
+                            obj_key, field
+                        ));
+                        return Type::Unknown;
+                    }
+                }
+                let obj_ty = self.infer_type(obj);
+                match obj_ty {
+                    Type::Named(ref type_name) => {
+                        let key = format!("{}.{}", type_name, field);
+                        if let Some(field_ty) = self.record_field_types.get(&key) {
+                            field_ty.clone()
+                        } else {
+                            self.error(format!("Record '{}' has no field '{}'", type_name, field));
+                            Type::Unknown
+                        }
+                    }
+                    Type::Unknown => Type::Unknown,
+                    other => {
+                        self.error(format!(
+                            "Field access on non-record type {}",
+                            other.display()
+                        ));
+                        Type::Unknown
+                    }
+                }
+            }
+
+            Expr::RecordCreate { type_name, fields } => {
+                if type_name == "Tcp.Connection" {
+                    self.error(
+                        "Cannot construct 'Tcp.Connection' directly. Use Tcp.connect(host, port)."
+                            .to_string(),
+                    );
+                }
+                for (_, expr) in fields {
+                    let _ = self.infer_type(expr);
+                }
+                Type::Named(type_name.clone())
+            }
+
+            Expr::TailCall(boxed) => {
+                let (target, args) = boxed.as_ref();
+                for arg in args {
+                    let _ = self.infer_type(arg);
+                }
+                // Return type is the same as the target function's return type
+                if let Some(sig) = self.fn_sigs.get(target).cloned() {
+                    sig.ret
+                } else {
+                    Type::Unknown
+                }
+            }
+
+            // Resolved nodes are produced after type-checking, so should not appear here.
+            // If they do (e.g. in a test), treat as Unknown.
+            Expr::Resolved(_) => Type::Unknown,
+        }
+    }
+
+    pub(super) fn infer_type_with_pattern_bindings(
+        &mut self,
+        pattern: &Pattern,
+        body: &Expr,
+    ) -> Type {
+        let mut bindings = Vec::new();
+        Self::collect_pattern_bindings(pattern, &mut bindings);
+
+        let mut prev = Vec::new();
+        for bind_name in bindings {
+            let old = self.locals.get(&bind_name).cloned();
+            prev.push((bind_name.clone(), old));
+            self.locals.insert(bind_name, Type::Unknown);
+        }
+
+        let out_ty = self.infer_type(body);
+
+        for (name, old) in prev {
+            if let Some(old_val) = old {
+                self.locals.insert(name, old_val);
+            } else {
+                self.locals.remove(&name);
+            }
+        }
+
+        out_ty
+    }
+
+    pub(super) fn collect_pattern_bindings(pattern: &Pattern, out: &mut Vec<String>) {
+        match pattern {
+            Pattern::Ident(name) if name != "_" => out.push(name.clone()),
+            Pattern::Cons(head, tail) => {
+                if head != "_" {
+                    out.push(head.clone());
+                }
+                if tail != "_" {
+                    out.push(tail.clone());
+                }
+            }
+            Pattern::Constructor(_, bindings) => {
+                for name in bindings {
+                    if name != "_" {
+                        out.push(name.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // BinOp type rules
+    // -----------------------------------------------------------------------
+    pub(super) fn check_binop(&mut self, op: &BinOp, lt: &Type, rt: &Type) {
+        if matches!(lt, Type::Unknown) || matches!(rt, Type::Unknown) {
+            return; // gradual — skip
+        }
+        match op {
+            BinOp::Add => {
+                let ok = (matches!(lt, Type::Int | Type::Float)
+                    && matches!(rt, Type::Int | Type::Float))
+                    || (matches!(lt, Type::Str) && matches!(rt, Type::Str));
+                if !ok {
+                    self.error(format!(
+                        "Operator '+' requires Int/Float or String on both sides, got {} and {}",
+                        lt.display(),
+                        rt.display()
+                    ));
+                }
+            }
+            BinOp::Sub | BinOp::Mul | BinOp::Div => {
+                let ok =
+                    matches!(lt, Type::Int | Type::Float) && matches!(rt, Type::Int | Type::Float);
+                if !ok {
+                    self.error(format!(
+                        "Arithmetic operator requires numeric types, got {} and {}",
+                        lt.display(),
+                        rt.display()
+                    ));
+                }
+            }
+            BinOp::Eq | BinOp::Neq => {
+                if !lt.compatible(rt) {
+                    self.error(format!(
+                        "Equality operator requires same types, got {} and {}",
+                        lt.display(),
+                        rt.display()
+                    ));
+                }
+            }
+            BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => {
+                let ok = (matches!(lt, Type::Int | Type::Float)
+                    && matches!(rt, Type::Int | Type::Float))
+                    || (matches!(lt, Type::Str) && matches!(rt, Type::Str));
+                if !ok {
+                    self.error(format!(
+                        "Comparison operator requires numeric or String types, got {} and {}",
+                        lt.display(),
+                        rt.display()
+                    ));
+                }
+            }
+        }
+    }
+}
