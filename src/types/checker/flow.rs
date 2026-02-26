@@ -271,6 +271,12 @@ impl TypeChecker {
                     self.check_effects_in_expr(item, caller_name, caller_effects);
                 }
             }
+            Expr::MapLiteral(entries) => {
+                for (key, value) in entries {
+                    self.check_effects_in_expr(key, caller_name, caller_effects);
+                    self.check_effects_in_expr(value, caller_name, caller_effects);
+                }
+            }
             Expr::Attr(obj, _) => {
                 self.check_effects_in_expr(obj, caller_name, caller_effects);
             }

@@ -61,6 +61,8 @@ pub enum Expr {
     InterpolatedStr(Vec<StrPart>),
     List(Vec<Expr>),
     Tuple(Vec<Expr>),
+    /// Map literal: `{"a" => 1, "b" => 2}`
+    MapLiteral(Vec<(Expr, Expr)>),
     /// Record creation: `User(name = "Alice", age = 30)`
     RecordCreate {
         type_name: String,

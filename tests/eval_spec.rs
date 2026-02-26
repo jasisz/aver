@@ -592,6 +592,14 @@ fn map_set_get_has() {
 }
 
 #[test]
+fn map_literal_runtime() {
+    let mut expected = std::collections::HashMap::new();
+    expected.insert(Value::Str("a".to_string()), Value::Int(1));
+    expected.insert(Value::Str("b".to_string()), Value::Int(2));
+    assert_eq!(eval("{\"a\" => 1, \"b\" => 2}"), Value::Map(expected));
+}
+
+#[test]
 fn map_get_missing_returns_none() {
     assert_eq!(eval("Map.get(Map.empty(), \"missing\")"), Value::None);
 }
@@ -634,6 +642,26 @@ fn map_set_rejects_non_scalar_key() {
         assert!(
             err.to_string()
                 .contains("key must be Int, Float, String, or Bool"),
+            "unexpected error: {}",
+            err
+        );
+    } else {
+        panic!("expected expression");
+    }
+}
+
+#[test]
+fn map_literal_rejects_non_scalar_key() {
+    let items = parse("{[1] => 42}");
+    let item = items.into_iter().next().expect("no items");
+    if let TopLevel::Stmt(Stmt::Expr(expr)) = item {
+        let mut interp = Interpreter::new();
+        let err = interp
+            .eval_expr(&expr)
+            .expect_err("expected runtime error for non-scalar map key");
+        assert!(
+            err.to_string()
+                .contains("Map literal key must be Int, Float, String, or Bool"),
             "unexpected error: {}",
             err
         );

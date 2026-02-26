@@ -234,6 +234,11 @@ fn op_arrow() {
 }
 
 #[test]
+fn op_fat_arrow() {
+    assert_eq!(lex("=>"), vec![TokenKind::FatArrow]);
+}
+
+#[test]
 fn op_assign() {
     assert_eq!(lex("="), vec![TokenKind::Assign]);
 }
@@ -261,6 +266,16 @@ fn op_comma() {
 #[test]
 fn op_dot() {
     assert_eq!(lex("."), vec![TokenKind::Dot]);
+}
+
+#[test]
+fn op_lbrace() {
+    assert_eq!(lex("{"), vec![TokenKind::LBrace]);
+}
+
+#[test]
+fn op_rbrace() {
+    assert_eq!(lex("}"), vec![TokenKind::RBrace]);
 }
 
 // ---------------------------------------------------------------------------

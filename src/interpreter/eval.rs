@@ -125,6 +125,7 @@ impl Interpreter {
                 }
                 Ok(Value::Tuple(values))
             }
+            Expr::MapLiteral(entries) => self.eval_map_literal(entries),
             Expr::RecordCreate { type_name, fields } => self.eval_record_create(type_name, fields),
             Expr::TailCall(boxed) => self.eval_tail_call(boxed),
         }
@@ -201,6 +202,29 @@ impl Interpreter {
             type_name: type_name.to_string(),
             fields: field_vals,
         })
+    }
+
+    #[inline(never)]
+    fn eval_map_literal(&mut self, entries: &[(Expr, Expr)]) -> Result<Value, RuntimeError> {
+        let mut map = HashMap::with_capacity(entries.len());
+        for (key_expr, value_expr) in entries {
+            let key = self.eval_expr(key_expr)?;
+            if !Self::is_hashable_map_key(&key) {
+                return Err(RuntimeError::Error(
+                    "Map literal key must be Int, Float, String, or Bool".to_string(),
+                ));
+            }
+            let value = self.eval_expr(value_expr)?;
+            map.insert(key, value);
+        }
+        Ok(Value::Map(map))
+    }
+
+    fn is_hashable_map_key(value: &Value) -> bool {
+        matches!(
+            value,
+            Value::Int(_) | Value::Float(_) | Value::Str(_) | Value::Bool(_)
+        )
     }
 
     pub(super) fn eval_literal(&self, lit: &Literal) -> Value {

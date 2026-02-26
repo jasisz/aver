@@ -59,6 +59,8 @@ pub enum TokenKind {
     RParen,   // )
     LBracket, // [
     RBracket, // ]
+    LBrace,   // {
+    RBrace,   // }
     // Structure
     Indent,
     Dedent,
@@ -555,6 +557,8 @@ impl Lexer {
             ')' => TokenKind::RParen,
             '[' => TokenKind::LBracket,
             ']' => TokenKind::RBracket,
+            '{' => TokenKind::LBrace,
+            '}' => TokenKind::RBrace,
             other => return Err(self.error(format!("Unknown character: {:?}", other))),
         };
 

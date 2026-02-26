@@ -161,6 +161,12 @@ fn collect_callees_expr(expr: &Expr, callees: &mut HashSet<String>) {
                 collect_callees_expr(item, callees);
             }
         }
+        Expr::MapLiteral(entries) => {
+            for (key, value) in entries {
+                collect_callees_expr(key, callees);
+                collect_callees_expr(value, callees);
+            }
+        }
         Expr::Constructor(_, arg) => {
             if let Some(a) = arg {
                 collect_callees_expr(a, callees);

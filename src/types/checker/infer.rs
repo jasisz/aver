@@ -651,6 +651,52 @@ impl TypeChecker {
                 Type::Tuple(tys)
             }
 
+            Expr::MapLiteral(entries) => {
+                let mut key_ty = Type::Unknown;
+                let mut val_ty = Type::Unknown;
+
+                for (key_expr, value_expr) in entries {
+                    let current_key = self.infer_type(key_expr);
+                    let current_val = self.infer_type(value_expr);
+
+                    if !matches!(
+                        current_key,
+                        Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unknown
+                    ) {
+                        self.error(format!(
+                            "Map literal key type must be Int, Float, String, or Bool (got {})",
+                            current_key.display()
+                        ));
+                    }
+
+                    if matches!(key_ty, Type::Unknown) {
+                        key_ty = current_key.clone();
+                    } else if !matches!(current_key, Type::Unknown)
+                        && !Self::constraint_compatible(&current_key, &key_ty)
+                    {
+                        self.error(format!(
+                            "Map literal contains incompatible key types: {} vs {}",
+                            key_ty.display(),
+                            current_key.display()
+                        ));
+                    }
+
+                    if matches!(val_ty, Type::Unknown) {
+                        val_ty = current_val.clone();
+                    } else if !matches!(current_val, Type::Unknown)
+                        && !Self::constraint_compatible(&current_val, &val_ty)
+                    {
+                        self.error(format!(
+                            "Map literal contains incompatible value types: {} vs {}",
+                            val_ty.display(),
+                            current_val.display()
+                        ));
+                    }
+                }
+
+                Type::Map(Box::new(key_ty), Box::new(val_ty))
+            }
+
             Expr::Match(subject, arms) => {
                 let subject_ty = self.infer_type(subject);
                 // Infer from first arm; check remaining arms for consistency

@@ -449,6 +449,40 @@ fn expr_tuple_literal() {
 }
 
 #[test]
+fn expr_map_literal_empty() {
+    let items = parse("{}");
+    if let TopLevel::Stmt(Stmt::Expr(Expr::MapLiteral(entries))) = &items[0] {
+        assert!(entries.is_empty());
+    } else {
+        panic!("expected MapLiteral, got: {:?}", items[0]);
+    }
+}
+
+#[test]
+fn expr_map_literal_entries() {
+    let items = parse("{\"a\" => 1, \"b\" => 2}");
+    if let TopLevel::Stmt(Stmt::Expr(Expr::MapLiteral(entries))) = &items[0] {
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].0, Expr::Literal(Literal::Str("a".to_string())));
+        assert_eq!(entries[0].1, Expr::Literal(Literal::Int(1)));
+        assert_eq!(entries[1].0, Expr::Literal(Literal::Str("b".to_string())));
+        assert_eq!(entries[1].1, Expr::Literal(Literal::Int(2)));
+    } else {
+        panic!("expected MapLiteral, got: {:?}", items[0]);
+    }
+}
+
+#[test]
+fn expr_map_literal_missing_fat_arrow_is_parse_error() {
+    let msg = parse_error("{\"a\": 1}");
+    assert!(
+        msg.contains("Expected '=>' between key and value in map literal"),
+        "unexpected parse error: {}",
+        msg
+    );
+}
+
+#[test]
 fn expr_parenthesized_group_not_tuple() {
     let items = parse("(1 + 2)");
     assert!(matches!(

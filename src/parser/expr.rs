@@ -262,6 +262,35 @@ impl Parser {
         Ok(args)
     }
 
+    pub(super) fn parse_map_literal(&mut self) -> Result<Expr, ParseError> {
+        self.expect_exact(&TokenKind::LBrace)?;
+        let mut entries = Vec::new();
+
+        while !self.check_exact(&TokenKind::RBrace) && !self.is_eof() {
+            if self.check_exact(&TokenKind::Comma) {
+                self.advance();
+                continue;
+            }
+
+            let key = self.parse_expr()?;
+            if !self.check_exact(&TokenKind::FatArrow) {
+                return Err(
+                    self.error("Expected '=>' between key and value in map literal".to_string())
+                );
+            }
+            self.advance(); // =>
+            let value = self.parse_expr()?;
+            entries.push((key, value));
+
+            if self.check_exact(&TokenKind::Comma) {
+                self.advance();
+            }
+        }
+
+        self.expect_exact(&TokenKind::RBrace)?;
+        Ok(Expr::MapLiteral(entries))
+    }
+
     pub(super) fn parse_atom(&mut self) -> Result<Expr, ParseError> {
         match self.current().kind.clone() {
             TokenKind::Int(i) => {
@@ -343,6 +372,7 @@ impl Parser {
                 self.expect_exact(&TokenKind::RBracket)?;
                 Ok(Expr::List(elements))
             }
+            TokenKind::LBrace => self.parse_map_literal(),
             _ => Err(self.error(format!(
                 "Unexpected token in expression: {:?}",
                 self.current().kind

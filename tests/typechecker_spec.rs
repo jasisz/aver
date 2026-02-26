@@ -144,6 +144,22 @@ fn valid_map_from_list_tuples() {
 }
 
 #[test]
+fn valid_map_literal_infers_types() {
+    let src = concat!(
+        "fn readAge() -> Option<Int>\n",
+        "    m = {\"age\" => 42}\n",
+        "    Map.get(m, \"age\")\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_empty_map_literal_with_annotation() {
+    let src = "fn empty() -> Map<String, Int>\n    = {}\n";
+    assert_no_errors(src);
+}
+
+#[test]
 fn valid_call_correct_args() {
     let src = "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    r = add(1, 2)\n";
     assert_no_errors(src);
@@ -371,6 +387,24 @@ fn error_map_from_list_requires_tuple_pairs() {
         "    = Map.fromList([[\"a\", 1]])\n",
     );
     assert_error_containing(src, "expected List<(K, V)>");
+}
+
+#[test]
+fn error_map_literal_key_must_be_hashable_scalar() {
+    let src = concat!("fn bad() -> Map<String, Int>\n", "    = {[1] => 2}\n",);
+    assert_error_containing(
+        src,
+        "Map literal key type must be Int, Float, String, or Bool",
+    );
+}
+
+#[test]
+fn error_map_literal_incompatible_key_types() {
+    let src = concat!(
+        "fn bad() -> Map<String, Int>\n",
+        "    = {\"a\" => 1, 2 => 3}\n",
+    );
+    assert_error_containing(src, "Map literal contains incompatible key types");
 }
 
 #[test]
@@ -1161,14 +1195,20 @@ fn valid_typed_binding_top_level() {
 #[test]
 fn error_typed_binding_mismatch() {
     let src = "fn f() -> Unit\n    x: Int = \"hello\"\n    x\n";
-    assert_error_containing(src, "Binding 'x': expression has type String, annotation says Int");
+    assert_error_containing(
+        src,
+        "Binding 'x': expression has type String, annotation says Int",
+    );
 }
 
 #[test]
 fn error_typed_binding_unknown_type() {
     // Capitalized identifiers parse as Named("Foo"), producing a type mismatch
     let src = "fn f() -> Unit\n    x: Foo = 5\n    x\n";
-    assert_error_containing(src, "Binding 'x': expression has type Int, annotation says Foo");
+    assert_error_containing(
+        src,
+        "Binding 'x': expression has type Int, annotation says Foo",
+    );
 }
 
 #[test]

@@ -190,10 +190,12 @@ aver repl                              # interactive REPL
 ## Type system
 
 Primitive: `Int`, `Float`, `String`, `Bool`, `Unit`
-Compound: `Result<T, E>`, `Option<T>`, `List<T>`, `Fn(A) -> B`, `Fn(A) -> B ! [Effect]`
+Compound: `Result<T, E>`, `Option<T>`, `List<T>`, `Map<K, V>`, `(A, B, ...)`, `Fn(A) -> B`, `Fn(A) -> B ! [Effect]`
 User-defined sum types: `type Shape` → `Shape.Circle(Float)`, `Shape.Rect(Float, Float)`
 User-defined product types: `record User` → `User(name = "Alice", age = 30)`, `u.name`
-Expression type ascription: `expr: Type` (e.g. `[]: List<Header>`)
+Map literals: `{"k" => v, "x" => y}` (`=>` is required; `:` stays type-only)
+Typed bindings: `name: Type = expr` (e.g. `headers: List<Header> = []`)
+Constructors: with args use parens (`Shape.Circle(1.0)`), zero-arg variants are bare values (`Shape.Point`, `Option.None`)
 
 Module imports resolve from a module root (`--module-root`, default: current working directory).
 Example: `depends [Examples.Fibonacci]` → `examples/fibonacci.av`, call as `Examples.Fibonacci.fn(...)`
@@ -228,7 +230,7 @@ Aver ships built-in namespaces for I/O. All require explicit effect declarations
 | `Disk` | `! [Disk]` | `readText`, `writeText`, `exists`, `delete`, `listDir`, `makeDir` |
 | `Tcp` | `! [Tcp]` | `connect`, `writeLine`, `readLine`, `close`, `send`, `ping` |
 
-Pure namespaces (no effects): `Int`, `Float`, `String`, `List` — conversion, math, collection ops.
+Pure namespaces (no effects): `Int`, `Float`, `String`, `List`, `Map` — conversion, math, collection ops.
 
 Full API reference: [docs/services.md](docs/services.md)
 
