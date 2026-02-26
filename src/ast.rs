@@ -44,7 +44,8 @@ pub enum Pattern {
 #[derive(Debug, Clone, PartialEq)]
 pub enum StrPart {
     Literal(String),
-    Expr(String), // raw expression source text
+    Expr(String),      // raw expression source text (legacy, unused after parsing)
+    Parsed(Box<Expr>), // pre-parsed expression
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -92,7 +93,7 @@ pub struct FnDef {
     pub return_type: String,
     pub effects: Vec<String>,
     pub desc: Option<String>,
-    pub body: FnBody,
+    pub body: std::rc::Rc<FnBody>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

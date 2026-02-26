@@ -4,6 +4,7 @@
 /// implementations (`services::*`) can import it without circular
 /// dependencies.
 use std::collections::HashMap;
+use std::rc::Rc;
 use thiserror::Error;
 
 use crate::ast::FnBody;
@@ -27,7 +28,7 @@ pub enum RuntimeError {
 // Value
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Value {
     Int(i64),
     Float(f64),
@@ -39,12 +40,18 @@ pub enum Value {
     Some(Box<Value>),
     None,
     List(Vec<Value>),
+    /// Shared list view (`items[start..]`) to avoid O(n^2) tail copying in
+    /// recursive list processing.
+    ListSlice {
+        items: Rc<Vec<Value>>,
+        start: usize,
+    },
     Fn {
         name: String,
         params: Vec<(String, String)>,
         effects: Vec<String>,
-        body: FnBody,
-        closure: HashMap<String, Value>,
+        body: Rc<FnBody>,
+        closure: Rc<HashMap<String, Rc<Value>>>,
     },
     Builtin(String),
     /// User-defined sum type variant, e.g. `Shape.Circle(3.14)`
@@ -65,12 +72,147 @@ pub enum Value {
     },
 }
 
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (list_slice(self), list_slice(other)) {
+            (Some(xs), Some(ys)) => return xs == ys,
+            (Some(_), None) | (None, Some(_)) => return false,
+            (None, None) => {}
+        }
+
+        match (self, other) {
+            (Value::Int(a), Value::Int(b)) => a == b,
+            (Value::Float(a), Value::Float(b)) => a == b,
+            (Value::Str(a), Value::Str(b)) => a == b,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::Unit, Value::Unit) => true,
+            (Value::Ok(a), Value::Ok(b)) => a == b,
+            (Value::Err(a), Value::Err(b)) => a == b,
+            (Value::Some(a), Value::Some(b)) => a == b,
+            (Value::None, Value::None) => true,
+            (
+                Value::Fn {
+                    name: n1,
+                    params: p1,
+                    effects: e1,
+                    body: b1,
+                    closure: c1,
+                },
+                Value::Fn {
+                    name: n2,
+                    params: p2,
+                    effects: e2,
+                    body: b2,
+                    closure: c2,
+                },
+            ) => n1 == n2 && p1 == p2 && e1 == e2 && b1 == b2 && c1 == c2,
+            (Value::Builtin(a), Value::Builtin(b)) => a == b,
+            (
+                Value::Variant {
+                    type_name: t1,
+                    variant: v1,
+                    fields: f1,
+                },
+                Value::Variant {
+                    type_name: t2,
+                    variant: v2,
+                    fields: f2,
+                },
+            ) => t1 == t2 && v1 == v2 && f1 == f2,
+            (
+                Value::Record {
+                    type_name: t1,
+                    fields: f1,
+                },
+                Value::Record {
+                    type_name: t2,
+                    fields: f2,
+                },
+            ) => t1 == t2 && f1 == f2,
+            (
+                Value::Namespace {
+                    name: n1,
+                    members: m1,
+                },
+                Value::Namespace {
+                    name: n2,
+                    members: m2,
+                },
+            ) => n1 == n2 && m1 == m2,
+            _ => false,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Environment
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone)]
+pub enum EnvFrame {
+    Owned(HashMap<String, Rc<Value>>),
+    Shared(Rc<HashMap<String, Rc<Value>>>),
+}
+
 /// Scope stack: innermost scope last.
-pub type Env = Vec<HashMap<String, Value>>;
+pub type Env = Vec<EnvFrame>;
+
+// ---------------------------------------------------------------------------
+// List helpers
+// ---------------------------------------------------------------------------
+
+pub fn list_slice(value: &Value) -> Option<&[Value]> {
+    match value {
+        Value::List(items) => Some(items.as_slice()),
+        Value::ListSlice { items, start } => Some(items.get(*start..).unwrap_or(&[])),
+        _ => None,
+    }
+}
+
+pub fn list_from_vec(items: Vec<Value>) -> Value {
+    Value::ListSlice {
+        items: Rc::new(items),
+        start: 0,
+    }
+}
+
+pub fn list_to_vec(value: &Value) -> Option<Vec<Value>> {
+    list_slice(value).map(|items| items.to_vec())
+}
+
+pub fn list_len(value: &Value) -> Option<usize> {
+    list_slice(value).map(|items| items.len())
+}
+
+pub fn list_head(value: &Value) -> Option<Value> {
+    list_slice(value).and_then(|items| items.first().cloned())
+}
+
+pub fn list_tail_view(value: &Value) -> Option<Value> {
+    match value {
+        Value::List(items) => {
+            if items.is_empty() {
+                None
+            } else {
+                Some(Value::ListSlice {
+                    items: Rc::new(items.clone()),
+                    start: 1,
+                })
+            }
+        }
+        Value::ListSlice { items, start } => {
+            if *start >= items.len() {
+                None
+            } else {
+                Some(Value::ListSlice {
+                    items: Rc::clone(items),
+                    start: start + 1,
+                })
+            }
+        }
+        _ => None,
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Display helpers
@@ -88,7 +230,8 @@ pub fn aver_repr(val: &Value) -> String {
         Value::Err(v) => format!("Result.Err({})", aver_repr_inner(v)),
         Value::Some(v) => format!("Option.Some({})", aver_repr_inner(v)),
         Value::None => "Option.None".to_string(),
-        Value::List(items) => {
+        Value::List(_) | Value::ListSlice { .. } => {
+            let items = list_slice(val).expect("list variants must have a slice view");
             let parts: Vec<String> = items.iter().map(aver_repr_inner).collect();
             format!("[{}]", parts.join(", "))
         }
@@ -119,7 +262,8 @@ pub fn aver_repr(val: &Value) -> String {
 fn aver_repr_inner(val: &Value) -> String {
     match val {
         Value::Str(s) => format!("\"{}\"", s),
-        Value::List(items) => {
+        Value::List(_) | Value::ListSlice { .. } => {
+            let items = list_slice(val).expect("list variants must have a slice view");
             let parts: Vec<String> = items.iter().map(aver_repr_inner).collect();
             format!("[{}]", parts.join(", "))
         }

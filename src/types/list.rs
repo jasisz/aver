@@ -13,7 +13,10 @@
 /// No effects required.
 use std::collections::HashMap;
 
-use crate::value::{RuntimeError, Value};
+use crate::value::{
+    list_from_vec, list_head, list_len, list_slice, list_tail_view, list_to_vec, RuntimeError,
+    Value,
+};
 
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
@@ -40,49 +43,41 @@ pub fn effects(_name: &str) -> &'static [&'static str] {
 
 /// Returns `Some(result)` when `name` is owned by this namespace, `None` otherwise.
 /// Note: List.map, List.filter, List.fold are NOT handled here (they need interpreter access).
-pub fn call(name: &str, args: Vec<Value>) -> Option<Result<Value, RuntimeError>> {
+pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
-        "List.len" => Some(len(args)),
-        "List.get" => Some(get(args)),
-        "List.push" => Some(push(args)),
-        "List.head" => Some(head(args)),
-        "List.tail" => Some(tail(args)),
+        "List.len" => Some(len(&args)),
+        "List.get" => Some(get(&args)),
+        "List.push" => Some(push(&args)),
+        "List.head" => Some(head(&args)),
+        "List.tail" => Some(tail(&args)),
         _ => None,
     }
 }
 
 // ─── Implementations ────────────────────────────────────────────────────────
 
-fn len(args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn len(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::Error(format!(
             "List.len() takes 1 argument, got {}",
             args.len()
         )));
     }
-    match &args[0] {
-        Value::List(items) => Ok(Value::Int(items.len() as i64)),
-        _ => Err(RuntimeError::Error(
-            "List.len() argument must be a List".to_string(),
-        )),
-    }
+    list_len(&args[0])
+        .map(|n| Value::Int(n as i64))
+        .ok_or_else(|| RuntimeError::Error("List.len() argument must be a List".to_string()))
 }
 
-fn get(args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn get(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
         return Err(RuntimeError::Error(format!(
             "List.get() takes 2 arguments (list, index), got {}",
             args.len()
         )));
     }
-    let list = match args[0].clone() {
-        Value::List(items) => items,
-        _ => {
-            return Err(RuntimeError::Error(
-                "List.get() first argument must be a List".to_string(),
-            ))
-        }
-    };
+    let list = list_slice(&args[0]).ok_or_else(|| {
+        RuntimeError::Error("List.get() first argument must be a List".to_string())
+    })?;
     let index = match &args[1] {
         Value::Int(i) => *i,
         _ => {
@@ -101,62 +96,51 @@ fn get(args: Vec<Value>) -> Result<Value, RuntimeError> {
     }
 }
 
-fn push(args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn push(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
         return Err(RuntimeError::Error(format!(
             "List.push() takes 2 arguments (list, val), got {}",
             args.len()
         )));
     }
-    let mut list = match args[0].clone() {
-        Value::List(items) => items,
-        _ => {
-            return Err(RuntimeError::Error(
-                "List.push() first argument must be a List".to_string(),
-            ))
-        }
-    };
+    let mut list = list_to_vec(&args[0]).ok_or_else(|| {
+        RuntimeError::Error("List.push() first argument must be a List".to_string())
+    })?;
     list.push(args[1].clone());
-    Ok(Value::List(list))
+    Ok(list_from_vec(list))
 }
 
-fn head(args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn head(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::Error(format!(
             "List.head() takes 1 argument, got {}",
             args.len()
         )));
     }
-    match args[0].clone() {
-        Value::List(items) => {
-            if items.is_empty() {
-                Ok(Value::Err(Box::new(Value::Str("empty list".to_string()))))
-            } else {
-                Ok(Value::Ok(Box::new(items[0].clone())))
-            }
+    match list_head(&args[0]) {
+        Some(v) => Ok(Value::Ok(Box::new(v))),
+        None if list_len(&args[0]).is_some() => {
+            Ok(Value::Err(Box::new(Value::Str("empty list".to_string()))))
         }
-        _ => Err(RuntimeError::Error(
+        None => Err(RuntimeError::Error(
             "List.head() argument must be a List".to_string(),
         )),
     }
 }
 
-fn tail(args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn tail(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::Error(format!(
             "List.tail() takes 1 argument, got {}",
             args.len()
         )));
     }
-    match args[0].clone() {
-        Value::List(items) => {
-            if items.is_empty() {
-                Ok(Value::Err(Box::new(Value::Str("empty list".to_string()))))
-            } else {
-                Ok(Value::Ok(Box::new(Value::List(items[1..].to_vec()))))
-            }
+    match list_tail_view(&args[0]) {
+        Some(v) => Ok(Value::Ok(Box::new(v))),
+        None if list_len(&args[0]).is_some() => {
+            Ok(Value::Err(Box::new(Value::Str("empty list".to_string()))))
         }
-        _ => Err(RuntimeError::Error(
+        None => Err(RuntimeError::Error(
             "List.tail() argument must be a List".to_string(),
         )),
     }

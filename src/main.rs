@@ -7,7 +7,7 @@ use colored::Colorize;
 
 use aver::ast::{DecisionBlock, FnDef, Stmt, TopLevel, TypeDef, VerifyBlock};
 use aver::checker::{check_module_intent, expr_to_str, index_decisions, run_verify};
-use aver::interpreter::{aver_display, aver_repr, Interpreter, Value};
+use aver::interpreter::{aver_display, aver_repr, EnvFrame, Interpreter, Value};
 use aver::source::{find_module_file, parse_source};
 use aver::types::checker::run_type_check_with_base;
 
@@ -91,6 +91,7 @@ fn load_dep_modules(
     module_root: &str,
 ) -> Result<(), String> {
     let mut loading = Vec::new();
+    let mut loading_set = std::collections::HashSet::new();
     if let Some(module) = items.iter().find_map(|i| {
         if let TopLevel::Module(m) = i {
             Some(m)
@@ -100,7 +101,7 @@ fn load_dep_modules(
     }) {
         for dep_name in &module.depends {
             let ns = interp
-                .load_module(dep_name, module_root, &mut loading)
+                .load_module(dep_name, module_root, &mut loading, &mut loading_set)
                 .map_err(|e| e.to_string())?;
             interp
                 .define_module_path(dep_name, ns)
@@ -1105,7 +1106,11 @@ fn repl_env(interp: &Interpreter) {
         "HttpServer",
     ];
     let mut found = false;
-    for scope in &interp.env {
+    for frame in &interp.env {
+        let scope = match frame {
+            EnvFrame::Owned(scope) => scope,
+            EnvFrame::Shared(scope) => scope,
+        };
         for (name, val) in scope {
             if builtins.contains(&name.as_str()) {
                 continue;
@@ -1113,7 +1118,7 @@ fn repl_env(interp: &Interpreter) {
             if name.starts_with("__") {
                 continue;
             }
-            println!("  {} = {}", name, aver_repr(val));
+            println!("  {} = {}", name, aver_repr(val.as_ref()));
             found = true;
         }
     }

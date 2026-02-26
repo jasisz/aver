@@ -23,6 +23,7 @@ use crate::value::{RuntimeError, Value};
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
 const BODY_LIMIT: usize = 10 * 1024 * 1024; // 10 MB
+const MAX_CONNECTIONS: usize = 256;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -57,21 +58,21 @@ pub fn effects(name: &str) -> &'static [&'static str] {
 }
 
 /// Returns `Some(result)` when `name` is owned by this service, `None` otherwise.
-pub fn call(name: &str, args: Vec<Value>) -> Option<Result<Value, RuntimeError>> {
+pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
-        "Tcp.send" => Some(tcp_send(args)),
-        "Tcp.ping" => Some(tcp_ping(args)),
-        "Tcp.connect" => Some(tcp_connect(args)),
-        "Tcp.writeLine" => Some(tcp_write_line(args)),
-        "Tcp.readLine" => Some(tcp_read_line(args)),
-        "Tcp.close" => Some(tcp_close(args)),
+        "Tcp.send" => Some(tcp_send(&args)),
+        "Tcp.ping" => Some(tcp_ping(&args)),
+        "Tcp.connect" => Some(tcp_connect(&args)),
+        "Tcp.writeLine" => Some(tcp_write_line(&args)),
+        "Tcp.readLine" => Some(tcp_read_line(&args)),
+        "Tcp.close" => Some(tcp_close(&args)),
         _ => None,
     }
 }
 
 // ─── One-shot helpers ─────────────────────────────────────────────────────────
 
-fn tcp_send(args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn tcp_send(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 3 {
         return Err(RuntimeError::Error(format!(
             "Tcp.send() takes 3 arguments (host, port, message), got {}",
@@ -121,7 +122,7 @@ fn tcp_send(args: Vec<Value>) -> Result<Value, RuntimeError> {
     Ok(Value::Ok(Box::new(Value::Str(response))))
 }
 
-fn tcp_ping(args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn tcp_ping(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
         return Err(RuntimeError::Error(format!(
             "Tcp.ping() takes 2 arguments (host, port), got {}",
@@ -141,7 +142,7 @@ fn tcp_ping(args: Vec<Value>) -> Result<Value, RuntimeError> {
 
 // ─── Persistent-connection helpers ────────────────────────────────────────────
 
-fn tcp_connect(args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn tcp_connect(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
         return Err(RuntimeError::Error(format!(
             "Tcp.connect() takes 2 arguments (host, port), got {}",
@@ -150,6 +151,15 @@ fn tcp_connect(args: Vec<Value>) -> Result<Value, RuntimeError> {
     }
     let host = str_arg(&args[0], "Tcp.connect: host must be a String")?;
     let port = int_arg(&args[1], "Tcp.connect: port must be an Int")?;
+
+    // Guard against unbounded connection growth
+    let count = CONNECTIONS.with(|map| map.borrow().len());
+    if count >= MAX_CONNECTIONS {
+        return Ok(Value::Err(Box::new(Value::Str(format!(
+            "Tcp.connect: connection limit reached ({} max). Close unused connections first.",
+            MAX_CONNECTIONS
+        )))));
+    }
 
     let addr = format!("{}:{}", host, port);
     let socket_addr = match resolve(&addr) {
@@ -181,7 +191,7 @@ fn tcp_connect(args: Vec<Value>) -> Result<Value, RuntimeError> {
     Ok(Value::Ok(Box::new(conn_record)))
 }
 
-fn tcp_write_line(args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn tcp_write_line(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
         return Err(RuntimeError::Error(format!(
             "Tcp.writeLine() takes 2 arguments (conn, line), got {}",
@@ -211,7 +221,7 @@ fn tcp_write_line(args: Vec<Value>) -> Result<Value, RuntimeError> {
     }
 }
 
-fn tcp_read_line(args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn tcp_read_line(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::Error(format!(
             "Tcp.readLine() takes 1 argument (conn), got {}",
@@ -245,7 +255,7 @@ fn tcp_read_line(args: Vec<Value>) -> Result<Value, RuntimeError> {
     }
 }
 
-fn tcp_close(args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn tcp_close(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::Error(format!(
             "Tcp.close() takes 1 argument (conn), got {}",

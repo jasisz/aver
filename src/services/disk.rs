@@ -50,23 +50,23 @@ pub fn effects(name: &str) -> &'static [&'static str] {
 }
 
 /// Returns `Some(result)` when `name` is owned by this service, `None` otherwise.
-pub fn call(name: &str, args: Vec<Value>) -> Option<Result<Value, RuntimeError>> {
+pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
-        "Disk.readText" => Some(read_text(args)),
-        "Disk.writeText" => Some(write_text(args)),
-        "Disk.appendText" => Some(append_text(args)),
-        "Disk.exists" => Some(exists(args)),
-        "Disk.delete" => Some(delete(args)),
-        "Disk.deleteDir" => Some(delete_dir(args)),
-        "Disk.listDir" => Some(list_dir(args)),
-        "Disk.makeDir" => Some(make_dir(args)),
+        "Disk.readText" => Some(read_text(&args)),
+        "Disk.writeText" => Some(write_text(&args)),
+        "Disk.appendText" => Some(append_text(&args)),
+        "Disk.exists" => Some(exists(&args)),
+        "Disk.delete" => Some(delete(&args)),
+        "Disk.deleteDir" => Some(delete_dir(&args)),
+        "Disk.listDir" => Some(list_dir(&args)),
+        "Disk.makeDir" => Some(make_dir(&args)),
         _ => None,
     }
 }
 
 // ─── Implementations ──────────────────────────────────────────────────────────
 
-fn read_text(args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn read_text(args: &[Value]) -> Result<Value, RuntimeError> {
     let path = one_str_arg("Disk.readText", args)?;
     match std::fs::read_to_string(&path) {
         Ok(text) => Ok(Value::Ok(Box::new(Value::Str(text)))),
@@ -74,7 +74,7 @@ fn read_text(args: Vec<Value>) -> Result<Value, RuntimeError> {
     }
 }
 
-fn write_text(args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn write_text(args: &[Value]) -> Result<Value, RuntimeError> {
     let (path, content) = two_str_args("Disk.writeText", args)?;
     match std::fs::write(&path, &content) {
         Ok(_) => Ok(Value::Ok(Box::new(Value::Unit))),
@@ -82,7 +82,7 @@ fn write_text(args: Vec<Value>) -> Result<Value, RuntimeError> {
     }
 }
 
-fn append_text(args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn append_text(args: &[Value]) -> Result<Value, RuntimeError> {
     use std::io::Write;
     let (path, content) = two_str_args("Disk.appendText", args)?;
     match std::fs::OpenOptions::new()
@@ -98,12 +98,12 @@ fn append_text(args: Vec<Value>) -> Result<Value, RuntimeError> {
     }
 }
 
-fn exists(args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn exists(args: &[Value]) -> Result<Value, RuntimeError> {
     let path = one_str_arg("Disk.exists", args)?;
     Ok(Value::Bool(std::path::Path::new(&path).exists()))
 }
 
-fn delete(args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn delete(args: &[Value]) -> Result<Value, RuntimeError> {
     let path = one_str_arg("Disk.delete", args)?;
     let p = std::path::Path::new(&path);
     if p.is_dir() {
@@ -118,7 +118,7 @@ fn delete(args: Vec<Value>) -> Result<Value, RuntimeError> {
     }
 }
 
-fn delete_dir(args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn delete_dir(args: &[Value]) -> Result<Value, RuntimeError> {
     let path = one_str_arg("Disk.deleteDir", args)?;
     let p = std::path::Path::new(&path);
     if !p.is_dir() {
@@ -132,7 +132,7 @@ fn delete_dir(args: Vec<Value>) -> Result<Value, RuntimeError> {
     }
 }
 
-fn list_dir(args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn list_dir(args: &[Value]) -> Result<Value, RuntimeError> {
     let path = one_str_arg("Disk.listDir", args)?;
     match std::fs::read_dir(&path) {
         Ok(entries) => {
@@ -149,7 +149,7 @@ fn list_dir(args: Vec<Value>) -> Result<Value, RuntimeError> {
     }
 }
 
-fn make_dir(args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn make_dir(args: &[Value]) -> Result<Value, RuntimeError> {
     let path = one_str_arg("Disk.makeDir", args)?;
     match std::fs::create_dir_all(&path) {
         Ok(_) => Ok(Value::Ok(Box::new(Value::Unit))),
@@ -159,8 +159,8 @@ fn make_dir(args: Vec<Value>) -> Result<Value, RuntimeError> {
 
 // ─── Argument helpers ─────────────────────────────────────────────────────────
 
-fn one_str_arg(fn_name: &str, args: Vec<Value>) -> Result<String, RuntimeError> {
-    match args.as_slice() {
+fn one_str_arg(fn_name: &str, args: &[Value]) -> Result<String, RuntimeError> {
+    match args {
         [Value::Str(s)] => Ok(s.clone()),
         [_] => Err(RuntimeError::Error(format!(
             "{}: path must be a String",
@@ -174,8 +174,8 @@ fn one_str_arg(fn_name: &str, args: Vec<Value>) -> Result<String, RuntimeError> 
     }
 }
 
-fn two_str_args(fn_name: &str, args: Vec<Value>) -> Result<(String, String), RuntimeError> {
-    match args.as_slice() {
+fn two_str_args(fn_name: &str, args: &[Value]) -> Result<(String, String), RuntimeError> {
+    match args {
         [Value::Str(a), Value::Str(b)] => Ok((a.clone(), b.clone())),
         [_, _] => Err(RuntimeError::Error(format!(
             "{}: both arguments must be Strings",

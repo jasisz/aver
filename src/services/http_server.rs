@@ -34,6 +34,6 @@ pub fn effects(name: &str) -> &'static [&'static str] {
 
 /// Always returns `None` — `HttpServer.listen` is executed by `Interpreter`
 /// so it can invoke user-defined callbacks.
-pub fn call(_name: &str, _args: Vec<Value>) -> Option<Result<Value, RuntimeError>> {
+pub fn call(_name: &str, _args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     None
 }

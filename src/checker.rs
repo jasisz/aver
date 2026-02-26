@@ -174,6 +174,11 @@ pub fn expr_to_str(expr: &crate::ast::Expr) -> String {
             for part in parts {
                 match part {
                     StrPart::Literal(s) => inner.push_str(s),
+                    StrPart::Parsed(e) => {
+                        inner.push('{');
+                        inner.push_str(&expr_to_str(e));
+                        inner.push('}');
+                    }
                     StrPart::Expr(s) => {
                         inner.push('{');
                         inner.push_str(s);

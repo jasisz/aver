@@ -19,7 +19,7 @@
 /// No effects required.
 use std::collections::HashMap;
 
-use crate::value::{RuntimeError, Value};
+use crate::value::{list_from_vec, list_slice, RuntimeError, Value};
 
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
@@ -58,30 +58,30 @@ pub fn effects(_name: &str) -> &'static [&'static str] {
 }
 
 /// Returns `Some(result)` when `name` is owned by this namespace, `None` otherwise.
-pub fn call(name: &str, args: Vec<Value>) -> Option<Result<Value, RuntimeError>> {
+pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
-        "String.length" => Some(length(args)),
-        "String.byteLength" => Some(byte_length(args)),
-        "String.startsWith" => Some(starts_with(args)),
-        "String.endsWith" => Some(ends_with(args)),
-        "String.contains" => Some(contains(args)),
-        "String.slice" => Some(slice(args)),
-        "String.trim" => Some(trim(args)),
-        "String.split" => Some(split(args)),
-        "String.replace" => Some(replace(args)),
-        "String.join" => Some(join(args)),
-        "String.chars" => Some(chars(args)),
-        "String.fromInt" => Some(from_int(args)),
-        "String.fromFloat" => Some(from_float(args)),
-        "String.fromBool" => Some(from_bool(args)),
+        "String.length" => Some(length(&args)),
+        "String.byteLength" => Some(byte_length(&args)),
+        "String.startsWith" => Some(starts_with(&args)),
+        "String.endsWith" => Some(ends_with(&args)),
+        "String.contains" => Some(contains(&args)),
+        "String.slice" => Some(slice(&args)),
+        "String.trim" => Some(trim(&args)),
+        "String.split" => Some(split(&args)),
+        "String.replace" => Some(replace(&args)),
+        "String.join" => Some(join(&args)),
+        "String.chars" => Some(chars(&args)),
+        "String.fromInt" => Some(from_int(&args)),
+        "String.fromFloat" => Some(from_float(&args)),
+        "String.fromBool" => Some(from_bool(&args)),
         _ => None,
     }
 }
 
 // ─── Implementations ────────────────────────────────────────────────────────
 
-fn length(args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let [val] = one_arg("String.length", &args)?;
+fn length(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [val] = one_arg("String.length", args)?;
     let Value::Str(s) = val else {
         return Err(RuntimeError::Error(
             "String.length: argument must be a String".to_string(),
@@ -90,8 +90,8 @@ fn length(args: Vec<Value>) -> Result<Value, RuntimeError> {
     Ok(Value::Int(s.chars().count() as i64))
 }
 
-fn byte_length(args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let [val] = one_arg("String.byteLength", &args)?;
+fn byte_length(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [val] = one_arg("String.byteLength", args)?;
     let Value::Str(s) = val else {
         return Err(RuntimeError::Error(
             "String.byteLength: argument must be a String".to_string(),
@@ -100,8 +100,8 @@ fn byte_length(args: Vec<Value>) -> Result<Value, RuntimeError> {
     Ok(Value::Int(s.len() as i64))
 }
 
-fn starts_with(args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let [a, b] = two_args("String.startsWith", &args)?;
+fn starts_with(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [a, b] = two_args("String.startsWith", args)?;
     let (Value::Str(s), Value::Str(prefix)) = (a, b) else {
         return Err(RuntimeError::Error(
             "String.startsWith: both arguments must be String".to_string(),
@@ -110,8 +110,8 @@ fn starts_with(args: Vec<Value>) -> Result<Value, RuntimeError> {
     Ok(Value::Bool(s.starts_with(prefix.as_str())))
 }
 
-fn ends_with(args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let [a, b] = two_args("String.endsWith", &args)?;
+fn ends_with(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [a, b] = two_args("String.endsWith", args)?;
     let (Value::Str(s), Value::Str(suffix)) = (a, b) else {
         return Err(RuntimeError::Error(
             "String.endsWith: both arguments must be String".to_string(),
@@ -120,8 +120,8 @@ fn ends_with(args: Vec<Value>) -> Result<Value, RuntimeError> {
     Ok(Value::Bool(s.ends_with(suffix.as_str())))
 }
 
-fn contains(args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let [a, b] = two_args("String.contains", &args)?;
+fn contains(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [a, b] = two_args("String.contains", args)?;
     let (Value::Str(s), Value::Str(sub)) = (a, b) else {
         return Err(RuntimeError::Error(
             "String.contains: both arguments must be String".to_string(),
@@ -130,7 +130,7 @@ fn contains(args: Vec<Value>) -> Result<Value, RuntimeError> {
     Ok(Value::Bool(s.contains(sub.as_str())))
 }
 
-fn slice(args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn slice(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 3 {
         return Err(RuntimeError::Error(format!(
             "String.slice() takes 3 arguments (s, from, to), got {}",
@@ -158,8 +158,8 @@ fn slice(args: Vec<Value>) -> Result<Value, RuntimeError> {
     Ok(Value::Str(result))
 }
 
-fn trim(args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let [val] = one_arg("String.trim", &args)?;
+fn trim(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [val] = one_arg("String.trim", args)?;
     let Value::Str(s) = val else {
         return Err(RuntimeError::Error(
             "String.trim: argument must be a String".to_string(),
@@ -168,8 +168,8 @@ fn trim(args: Vec<Value>) -> Result<Value, RuntimeError> {
     Ok(Value::Str(s.trim().to_string()))
 }
 
-fn split(args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let [a, b] = two_args("String.split", &args)?;
+fn split(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [a, b] = two_args("String.split", args)?;
     let (Value::Str(s), Value::Str(delim)) = (a, b) else {
         return Err(RuntimeError::Error(
             "String.split: both arguments must be String".to_string(),
@@ -179,10 +179,10 @@ fn split(args: Vec<Value>) -> Result<Value, RuntimeError> {
         .split(delim.as_str())
         .map(|p| Value::Str(p.to_string()))
         .collect();
-    Ok(Value::List(parts))
+    Ok(list_from_vec(parts))
 }
 
-fn replace(args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn replace(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 3 {
         return Err(RuntimeError::Error(format!(
             "String.replace() takes 3 arguments (s, old, new), got {}",
@@ -197,13 +197,11 @@ fn replace(args: Vec<Value>) -> Result<Value, RuntimeError> {
     Ok(Value::Str(s.replace(old.as_str(), new.as_str())))
 }
 
-fn join(args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let [a, b] = two_args("String.join", &args)?;
-    let Value::List(items) = a else {
-        return Err(RuntimeError::Error(
-            "String.join: first argument must be a List".to_string(),
-        ));
-    };
+fn join(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [a, b] = two_args("String.join", args)?;
+    let items = list_slice(a).ok_or_else(|| {
+        RuntimeError::Error("String.join: first argument must be a List".to_string())
+    })?;
     let Value::Str(sep) = b else {
         return Err(RuntimeError::Error(
             "String.join: second argument must be a String".to_string(),
@@ -221,19 +219,19 @@ fn join(args: Vec<Value>) -> Result<Value, RuntimeError> {
     Ok(Value::Str(strs?.join(sep.as_str())))
 }
 
-fn chars(args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let [val] = one_arg("String.chars", &args)?;
+fn chars(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [val] = one_arg("String.chars", args)?;
     let Value::Str(s) = val else {
         return Err(RuntimeError::Error(
             "String.chars: argument must be a String".to_string(),
         ));
     };
     let result: Vec<Value> = s.chars().map(|c| Value::Str(c.to_string())).collect();
-    Ok(Value::List(result))
+    Ok(list_from_vec(result))
 }
 
-fn from_int(args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let [val] = one_arg("String.fromInt", &args)?;
+fn from_int(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [val] = one_arg("String.fromInt", args)?;
     let Value::Int(n) = val else {
         return Err(RuntimeError::Error(
             "String.fromInt: argument must be an Int".to_string(),
@@ -242,8 +240,8 @@ fn from_int(args: Vec<Value>) -> Result<Value, RuntimeError> {
     Ok(Value::Str(format!("{}", n)))
 }
 
-fn from_float(args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let [val] = one_arg("String.fromFloat", &args)?;
+fn from_float(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [val] = one_arg("String.fromFloat", args)?;
     let Value::Float(f) = val else {
         return Err(RuntimeError::Error(
             "String.fromFloat: argument must be a Float".to_string(),
@@ -252,8 +250,8 @@ fn from_float(args: Vec<Value>) -> Result<Value, RuntimeError> {
     Ok(Value::Str(format!("{}", f)))
 }
 
-fn from_bool(args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let [val] = one_arg("String.fromBool", &args)?;
+fn from_bool(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [val] = one_arg("String.fromBool", args)?;
     let Value::Bool(b) = val else {
         return Err(RuntimeError::Error(
             "String.fromBool: argument must be a Bool".to_string(),

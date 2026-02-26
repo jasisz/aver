@@ -46,24 +46,24 @@ pub fn effects(_name: &str) -> &'static [&'static str] {
 }
 
 /// Returns `Some(result)` when `name` is owned by this namespace, `None` otherwise.
-pub fn call(name: &str, args: Vec<Value>) -> Option<Result<Value, RuntimeError>> {
+pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
-        "Int.fromString" => Some(from_string(args)),
-        "Int.fromFloat" => Some(from_float(args)),
-        "Int.toString" => Some(to_string(args)),
-        "Int.abs" => Some(abs(args)),
-        "Int.min" => Some(min(args)),
-        "Int.max" => Some(max(args)),
-        "Int.mod" => Some(modulo(args)),
-        "Int.toFloat" => Some(to_float(args)),
+        "Int.fromString" => Some(from_string(&args)),
+        "Int.fromFloat" => Some(from_float(&args)),
+        "Int.toString" => Some(to_string(&args)),
+        "Int.abs" => Some(abs(&args)),
+        "Int.min" => Some(min(&args)),
+        "Int.max" => Some(max(&args)),
+        "Int.mod" => Some(modulo(&args)),
+        "Int.toFloat" => Some(to_float(&args)),
         _ => None,
     }
 }
 
 // ─── Implementations ────────────────────────────────────────────────────────
 
-fn from_string(args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let [val] = one_arg("Int.fromString", &args)?;
+fn from_string(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [val] = one_arg("Int.fromString", args)?;
     let Value::Str(s) = val else {
         return Err(RuntimeError::Error(
             "Int.fromString: argument must be a String".to_string(),
@@ -78,8 +78,8 @@ fn from_string(args: Vec<Value>) -> Result<Value, RuntimeError> {
     }
 }
 
-fn from_float(args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let [val] = one_arg("Int.fromFloat", &args)?;
+fn from_float(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [val] = one_arg("Int.fromFloat", args)?;
     let Value::Float(f) = val else {
         return Err(RuntimeError::Error(
             "Int.fromFloat: argument must be a Float".to_string(),
@@ -88,8 +88,8 @@ fn from_float(args: Vec<Value>) -> Result<Value, RuntimeError> {
     Ok(Value::Int(*f as i64))
 }
 
-fn to_string(args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let [val] = one_arg("Int.toString", &args)?;
+fn to_string(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [val] = one_arg("Int.toString", args)?;
     let Value::Int(n) = val else {
         return Err(RuntimeError::Error(
             "Int.toString: argument must be an Int".to_string(),
@@ -98,8 +98,8 @@ fn to_string(args: Vec<Value>) -> Result<Value, RuntimeError> {
     Ok(Value::Str(format!("{}", n)))
 }
 
-fn abs(args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let [val] = one_arg("Int.abs", &args)?;
+fn abs(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [val] = one_arg("Int.abs", args)?;
     let Value::Int(n) = val else {
         return Err(RuntimeError::Error(
             "Int.abs: argument must be an Int".to_string(),
@@ -108,8 +108,8 @@ fn abs(args: Vec<Value>) -> Result<Value, RuntimeError> {
     Ok(Value::Int(n.abs()))
 }
 
-fn min(args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let [a, b] = two_args("Int.min", &args)?;
+fn min(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [a, b] = two_args("Int.min", args)?;
     let (Value::Int(x), Value::Int(y)) = (a, b) else {
         return Err(RuntimeError::Error(
             "Int.min: both arguments must be Int".to_string(),
@@ -118,8 +118,8 @@ fn min(args: Vec<Value>) -> Result<Value, RuntimeError> {
     Ok(Value::Int(std::cmp::min(*x, *y)))
 }
 
-fn max(args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let [a, b] = two_args("Int.max", &args)?;
+fn max(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [a, b] = two_args("Int.max", args)?;
     let (Value::Int(x), Value::Int(y)) = (a, b) else {
         return Err(RuntimeError::Error(
             "Int.max: both arguments must be Int".to_string(),
@@ -128,8 +128,8 @@ fn max(args: Vec<Value>) -> Result<Value, RuntimeError> {
     Ok(Value::Int(std::cmp::max(*x, *y)))
 }
 
-fn modulo(args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let [a, b] = two_args("Int.mod", &args)?;
+fn modulo(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [a, b] = two_args("Int.mod", args)?;
     let (Value::Int(x), Value::Int(y)) = (a, b) else {
         return Err(RuntimeError::Error(
             "Int.mod: both arguments must be Int".to_string(),
@@ -144,8 +144,8 @@ fn modulo(args: Vec<Value>) -> Result<Value, RuntimeError> {
     }
 }
 
-fn to_float(args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let [val] = one_arg("Int.toFloat", &args)?;
+fn to_float(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [val] = one_arg("Int.toFloat", args)?;
     let Value::Int(n) = val else {
         return Err(RuntimeError::Error(
             "Int.toFloat: argument must be an Int".to_string(),

@@ -9,7 +9,7 @@
 /// `Err(String)`. Response bodies are capped at 10 MB.
 use std::collections::HashMap;
 
-use crate::value::{RuntimeError, Value};
+use crate::value::{list_from_vec, list_slice, RuntimeError, Value};
 
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
@@ -38,17 +38,17 @@ pub fn effects(name: &str) -> &'static [&'static str] {
 }
 
 /// Returns `Some(result)` when `name` is owned by this service, `None` otherwise.
-pub fn call(name: &str, args: Vec<Value>) -> Option<Result<Value, RuntimeError>> {
+pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
-        "Http.get" | "Http.head" | "Http.delete" => Some(call_simple(name, args)),
-        "Http.post" | "Http.put" | "Http.patch" => Some(call_with_body(name, args)),
+        "Http.get" | "Http.head" | "Http.delete" => Some(call_simple(name, &args)),
+        "Http.post" | "Http.put" | "Http.patch" => Some(call_with_body(name, &args)),
         _ => None,
     }
 }
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
-fn call_simple(name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn call_simple(name: &str, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::Error(format!(
             "Http.{}() takes 1 argument (url), got {}",
@@ -64,7 +64,7 @@ fn call_simple(name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
     response_value(result)
 }
 
-fn call_with_body(name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn call_with_body(name: &str, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 4 {
         return Err(RuntimeError::Error(format!(
             "Http.{}() takes 4 arguments (url, body, contentType, headers), got {}",
@@ -95,14 +95,8 @@ fn str_arg(val: &Value, msg: &str) -> Result<String, RuntimeError> {
 }
 
 fn parse_request_headers(val: &Value) -> Result<Vec<(String, String)>, RuntimeError> {
-    let items = match val {
-        Value::List(items) => items,
-        _ => {
-            return Err(RuntimeError::Error(
-                "Http: headers must be a List".to_string(),
-            ))
-        }
-    };
+    let items = list_slice(val)
+        .ok_or_else(|| RuntimeError::Error("Http: headers must be a List".to_string()))?;
     let mut out = Vec::new();
     for item in items {
         let fields = match item {
@@ -181,7 +175,7 @@ fn build_response(resp: ureq::Response) -> Result<Value, RuntimeError> {
         fields: vec![
             ("status".to_string(), Value::Int(status)),
             ("body".to_string(), Value::Str(body)),
-            ("headers".to_string(), Value::List(headers)),
+            ("headers".to_string(), list_from_vec(headers)),
         ],
     })))
 }

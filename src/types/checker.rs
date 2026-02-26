@@ -801,7 +801,7 @@ impl TypeChecker {
 
             self.current_fn_ret = Some(declared_ret.clone());
 
-            match &f.body {
+            match &*f.body {
                 FnBody::Expr(expr) => {
                     let inferred = self.infer_type(expr);
                     if !inferred.compatible(&declared_ret) {
@@ -1542,10 +1542,10 @@ mod tests {
             return_type: "Unit".to_string(),
             effects: vec![],
             desc: None,
-            body: FnBody::Block(vec![Stmt::Expr(Expr::FnCall(
+            body: std::rc::Rc::new(FnBody::Block(vec![Stmt::Expr(Expr::FnCall(
                 Box::new(Expr::Ident("nosuch".to_string())),
                 vec![Expr::Literal(Literal::Int(1))],
-            ))]),
+            ))])),
         };
 
         let errs = errors(vec![TopLevel::FnDef(main_fn)]);
@@ -1571,10 +1571,10 @@ mod tests {
             return_type: "Unit".to_string(),
             effects: vec![],
             desc: None,
-            body: FnBody::Block(vec![Stmt::Assign(
+            body: std::rc::Rc::new(FnBody::Block(vec![Stmt::Assign(
                 "x".to_string(),
                 Expr::Literal(Literal::Int(2)),
-            )]),
+            )])),
         });
 
         let errs = errors(vec![top_level_var, main_fn]);

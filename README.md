@@ -189,56 +189,17 @@ Type errors block `run`, `check`, and `verify`. No partial execution.
 
 Aver ships built-in namespaces for I/O. All require explicit effect declarations — the typechecker and runtime both enforce this.
 
-### Console
+| Namespace | Effect | Key functions |
+|-----------|--------|---------------|
+| `Console` | `! [Console]` | `print`, `error`, `warn`, `readLine` |
+| `Http` | `! [Http]` | `get`, `post`, `put`, `patch`, `head`, `delete` |
+| `HttpServer` | `! [Http]` | `listen` |
+| `Disk` | `! [Disk]` | `readText`, `writeText`, `exists`, `delete`, `listDir`, `makeDir` |
+| `Tcp` | `! [Tcp]` | `connect`, `writeLine`, `readLine`, `close`, `send`, `ping` |
 
-```aver
-fn log(msg: String) -> Unit
-    ! [Console]
-    Console.print(msg)      -- stdout
-    Console.warn(msg)       -- stderr, prefixed [warn]
-    Console.error(msg)      -- stderr
-    val line = Console.readLine()  -- Result<String, String>
-```
+Pure namespaces (no effects): `Int`, `Float`, `String`, `List` — conversion, math, collection ops.
 
-### Network
-
-```aver
-fn fetchUser(id: Int) -> Result<HttpResponse, String>
-    ! [Network]
-    Http.get("https://api.example.com/users/{id}")
-```
-
-| Method | Args | Returns |
-|--------|------|---------|
-| `Http.get(url)` | `String` | `Result<HttpResponse, String>` |
-| `Http.head(url)` | `String` | `Result<HttpResponse, String>` |
-| `Http.delete(url)` | `String` | `Result<HttpResponse, String>` |
-| `Http.post(url, body, contentType, headers)` | `String, String, String, List<Header>` | `Result<HttpResponse, String>` |
-| `Http.put` / `Http.patch` | same | same |
-
-`headers` is statically typed as `List<Header>`. Use `[]` when you do not need extra headers.
-
-`HttpResponse` fields: `resp.status` (Int), `resp.body` (String), `resp.headers` (List of `{name, value}` records).
-`Ok` for any completed HTTP exchange including 4xx/5xx. `Err` only for transport failures.
-
-### Disk
-
-```aver
-fn loadConfig(path: String) -> Result<String, String>
-    ! [Disk]
-    Disk.readText(path)
-```
-
-| Method | Returns |
-|--------|---------|
-| `Disk.readText(path)` | `Result<String, String>` |
-| `Disk.writeText(path, content)` | `Result<Unit, String>` |
-| `Disk.appendText(path, content)` | `Result<Unit, String>` |
-| `Disk.exists(path)` | `Bool` |
-| `Disk.delete(path)` | `Result<Unit, String>` — files only |
-| `Disk.deleteDir(path)` | `Result<Unit, String>` — recursive |
-| `Disk.listDir(path)` | `Result<List<String>, String>` |
-| `Disk.makeDir(path)` | `Result<Unit, String>` — `mkdir -p` semantics |
+Full API reference: [docs/services.md](docs/services.md)
 
 ---
 
@@ -281,9 +242,20 @@ Requires: Rust stable toolchain.
 
 ---
 
+## Documentation
+
+| Document | Contents |
+|----------|----------|
+| [docs/services.md](docs/services.md) | Full API reference for all namespaces (signatures, effects, notes) |
+| [docs/types.md](docs/types.md) | Key data types (compiler, AST, runtime) |
+| [docs/extending.md](docs/extending.md) | How to add keywords, namespace functions, expression types |
+| [docs/decisions.md](docs/decisions.md) | Agreed directions: modules, concurrency, verify-first debugging |
+
+---
+
 ## Project status
 
-Implemented in Rust with extensive automated test coverage (300+ tests).
+Implemented in Rust with extensive automated test coverage.
 
 - [x] Lexer with significant indentation (Python-style INDENT/DEDENT)
 - [x] Recursive-descent parser — hand-written, no libraries

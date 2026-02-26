@@ -36,25 +36,25 @@ pub fn effects(name: &str) -> &'static [&'static str] {
 }
 
 /// Returns `Some(result)` when `name` is owned by this service, `None` otherwise.
-pub fn call(name: &str, args: Vec<Value>) -> Option<Result<Value, RuntimeError>> {
+pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
-        "Console.print" => Some(one_msg(name, args, |s| {
+        "Console.print" => Some(one_msg(name, &args, |s| {
             println!("{}", s);
         })),
-        "Console.error" => Some(one_msg(name, args, |s| {
+        "Console.error" => Some(one_msg(name, &args, |s| {
             eprintln!("{}", s);
         })),
-        "Console.warn" => Some(one_msg(name, args, |s| {
+        "Console.warn" => Some(one_msg(name, &args, |s| {
             eprintln!("[warn] {}", s);
         })),
-        "Console.readLine" => Some(read_line(args)),
+        "Console.readLine" => Some(read_line(&args)),
         _ => None,
     }
 }
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
-fn one_msg(name: &str, args: Vec<Value>, emit: impl Fn(&str)) -> Result<Value, RuntimeError> {
+fn one_msg(name: &str, args: &[Value], emit: impl Fn(&str)) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::Error(format!(
             "{}() takes 1 argument, got {}",
@@ -68,7 +68,7 @@ fn one_msg(name: &str, args: Vec<Value>, emit: impl Fn(&str)) -> Result<Value, R
     Ok(Value::Unit)
 }
 
-fn read_line(args: Vec<Value>) -> Result<Value, RuntimeError> {
+fn read_line(args: &[Value]) -> Result<Value, RuntimeError> {
     if !args.is_empty() {
         return Err(RuntimeError::Error(format!(
             "Console.readLine() takes 0 arguments, got {}",

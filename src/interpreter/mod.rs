@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
+use std::rc::Rc;
 use std::time::Duration;
 
 use crate::ast::*;
@@ -11,7 +12,8 @@ use crate::services::{console, disk, http, http_server, tcp};
 use crate::source::{canonicalize_path, find_module_file, parse_source};
 use crate::types::{float, int, list, string};
 // Re-export value types so existing `use aver::interpreter::Value` imports keep working.
-pub use crate::value::{aver_display, aver_repr, Env, RuntimeError, Value};
+pub use crate::value::{aver_display, aver_repr, Env, EnvFrame, RuntimeError, Value};
+use crate::value::{list_from_vec, list_len, list_slice, list_tail_view, list_to_vec};
 
 #[derive(Debug, Clone)]
 struct CallFrame {
@@ -93,8 +95,13 @@ impl Interpreter {
             );
         }
 
+        let rc_global = global
+            .into_iter()
+            .map(|(k, v)| (k, Rc::new(v)))
+            .collect::<HashMap<_, _>>();
+
         Interpreter {
-            env: vec![global],
+            env: vec![EnvFrame::Owned(rc_global)],
             module_cache: HashMap::new(),
             call_stack: Vec::new(),
             effect_aliases: HashMap::new(),
@@ -122,8 +129,16 @@ impl Interpreter {
     // -------------------------------------------------------------------------
     // Environment management
     // -------------------------------------------------------------------------
-    fn push_env(&mut self, base: HashMap<String, Value>) {
-        self.env.push(base);
+    fn push_env(&mut self, frame: EnvFrame) {
+        self.env.push(frame);
+    }
+
+    fn push_owned_env(&mut self, scope: HashMap<String, Rc<Value>>) {
+        self.push_env(EnvFrame::Owned(scope));
+    }
+
+    fn push_shared_env(&mut self, scope: Rc<HashMap<String, Rc<Value>>>) {
+        self.push_env(EnvFrame::Shared(scope));
     }
 
     fn pop_env(&mut self) {
@@ -132,10 +147,28 @@ impl Interpreter {
         }
     }
 
-    pub fn lookup(&self, name: &str) -> Result<Value, RuntimeError> {
-        for scope in self.env.iter().rev() {
-            if let Some(v) = scope.get(name) {
-                return Ok(v.clone());
+    fn last_owned_scope_mut(&mut self) -> Result<&mut HashMap<String, Rc<Value>>, RuntimeError> {
+        let frame = self
+            .env
+            .last_mut()
+            .ok_or_else(|| RuntimeError::Error("No active scope".to_string()))?;
+        if let EnvFrame::Shared(scope) = frame {
+            *frame = EnvFrame::Owned((**scope).clone());
+        }
+        match frame {
+            EnvFrame::Owned(scope) => Ok(scope),
+            EnvFrame::Shared(_) => Err(RuntimeError::Error("No mutable scope".to_string())),
+        }
+    }
+
+    fn lookup_rc(&self, name: &str) -> Result<&Rc<Value>, RuntimeError> {
+        for frame in self.env.iter().rev() {
+            let found = match frame {
+                EnvFrame::Owned(scope) => scope.get(name),
+                EnvFrame::Shared(scope) => scope.get(name),
+            };
+            if let Some(v) = found {
+                return Ok(v);
             }
         }
         Err(RuntimeError::Error(format!(
@@ -144,9 +177,13 @@ impl Interpreter {
         )))
     }
 
+    pub fn lookup(&self, name: &str) -> Result<Value, RuntimeError> {
+        self.lookup_rc(name).map(|rc| (**rc).clone())
+    }
+
     pub fn define(&mut self, name: String, val: Value) {
-        if let Some(scope) = self.env.last_mut() {
-            scope.insert(name, val);
+        if let Ok(scope) = self.last_owned_scope_mut() {
+            scope.insert(name, Rc::new(val));
         }
     }
 
@@ -160,11 +197,39 @@ impl Interpreter {
             return Ok(());
         }
 
-        let scope = self
-            .env
-            .last_mut()
-            .ok_or_else(|| RuntimeError::Error("No active scope".to_string()))?;
-        Self::insert_namespace_path(scope, &parts, val)
+        let scope = self.last_owned_scope_mut()?;
+        let head = parts[0];
+        let tail = &parts[1..];
+
+        if let Some(rc_existing) = scope.remove(head) {
+            let existing = Rc::try_unwrap(rc_existing).unwrap_or_else(|rc| (*rc).clone());
+            match existing {
+                Value::Namespace { name, mut members } => {
+                    Self::insert_namespace_path(&mut members, tail, val)?;
+                    scope.insert(
+                        head.to_string(),
+                        Rc::new(Value::Namespace { name, members }),
+                    );
+                    Ok(())
+                }
+                _ => Err(RuntimeError::Error(format!(
+                    "Cannot mount module '{}': '{}' is not a namespace",
+                    parts.join("."),
+                    head
+                ))),
+            }
+        } else {
+            let mut members = HashMap::new();
+            Self::insert_namespace_path(&mut members, tail, val)?;
+            scope.insert(
+                head.to_string(),
+                Rc::new(Value::Namespace {
+                    name: head.to_string(),
+                    members,
+                }),
+            );
+            Ok(())
+        }
     }
 
     fn insert_namespace_path(
@@ -210,14 +275,68 @@ impl Interpreter {
     /// Walk the scope stack from innermost outward and update the first binding found.
     /// Returns Err if no binding exists (use `define` for new bindings).
     pub fn assign(&mut self, name: &str, val: Value) -> Result<(), RuntimeError> {
-        for scope in self.env.iter_mut().rev() {
-            if scope.contains_key(name) {
-                scope.insert(name.to_string(), val);
-                return Ok(());
+        enum AssignTarget {
+            Owned(usize),
+            Shadow(usize),
+            SharedToOwned(usize),
+        }
+
+        let mut shadow_target: Option<usize> = None;
+        let mut target: Option<AssignTarget> = None;
+
+        for idx in (0..self.env.len()).rev() {
+            match &self.env[idx] {
+                EnvFrame::Owned(scope) => {
+                    if shadow_target.is_none() {
+                        shadow_target = Some(idx);
+                    }
+                    if scope.contains_key(name) {
+                        target = Some(AssignTarget::Owned(idx));
+                        break;
+                    }
+                }
+                EnvFrame::Shared(scope) => {
+                    if scope.contains_key(name) {
+                        target = Some(match shadow_target {
+                            Some(owned_idx) => AssignTarget::Shadow(owned_idx),
+                            None => AssignTarget::SharedToOwned(idx),
+                        });
+                        break;
+                    }
+                }
             }
         }
+
+        let target = target.ok_or_else(|| {
+            RuntimeError::Error(format!(
+                "Cannot assign to '{}': variable not declared",
+                name
+            ))
+        })?;
+        let rc_val = Rc::new(val);
+
+        match target {
+            AssignTarget::Owned(idx) | AssignTarget::Shadow(idx) => {
+                if let EnvFrame::Owned(scope) = &mut self.env[idx] {
+                    scope.insert(name.to_string(), rc_val);
+                    return Ok(());
+                }
+            }
+            AssignTarget::SharedToOwned(idx) => {
+                let cloned = match &self.env[idx] {
+                    EnvFrame::Shared(scope) => (**scope).clone(),
+                    EnvFrame::Owned(scope) => scope.clone(),
+                };
+                self.env[idx] = EnvFrame::Owned(cloned);
+                if let EnvFrame::Owned(scope) = &mut self.env[idx] {
+                    scope.insert(name.to_string(), rc_val);
+                    return Ok(());
+                }
+            }
+        }
+
         Err(RuntimeError::Error(format!(
-            "Cannot assign to '{}': variable not declared",
+            "Cannot assign to '{}': no mutable scope available",
             name
         )))
     }
@@ -272,6 +391,7 @@ impl Interpreter {
         name: &str,
         base_dir: &str,
         loading: &mut Vec<String>,
+        loading_set: &mut HashSet<String>,
     ) -> Result<Value, RuntimeError> {
         let path = find_module_file(name, base_dir).ok_or_else(|| {
             RuntimeError::Error(format!("Module '{}' not found in '{}'", name, base_dir))
@@ -282,7 +402,7 @@ impl Interpreter {
             return Ok(cached.clone());
         }
 
-        if loading.contains(&cache_key) {
+        if loading_set.contains(&cache_key) {
             return Err(RuntimeError::Error(format!(
                 "Circular import: {}",
                 Self::cycle_display(loading, &cache_key)
@@ -290,6 +410,7 @@ impl Interpreter {
         }
 
         loading.push(cache_key.clone());
+        loading_set.insert(cache_key.clone());
         let result = (|| -> Result<Value, RuntimeError> {
             let src = std::fs::read_to_string(&path).map_err(|e| {
                 RuntimeError::Error(format!("Cannot read '{}': {}", path.display(), e))
@@ -315,7 +436,7 @@ impl Interpreter {
 
             if let Some(module) = Self::module_decl(&items) {
                 for dep_name in &module.depends {
-                    let dep_ns = self.load_module(dep_name, base_dir, loading)?;
+                    let dep_ns = self.load_module(dep_name, base_dir, loading, loading_set)?;
                     sub.define_module_path(dep_name, dep_ns)?;
                 }
             }
@@ -354,6 +475,7 @@ impl Interpreter {
             })
         })();
         loading.pop();
+        loading_set.remove(&cache_key);
 
         match result {
             Ok(ns) => {
@@ -458,17 +580,17 @@ impl Interpreter {
         )))
     }
 
-    fn http_server_listen(&mut self, args: Vec<Value>) -> Result<Value, RuntimeError> {
+    fn http_server_listen(&mut self, args: &[Value]) -> Result<Value, RuntimeError> {
         self.http_server_listen_internal(args, false)
     }
 
-    fn http_server_listen_with(&mut self, args: Vec<Value>) -> Result<Value, RuntimeError> {
+    fn http_server_listen_with(&mut self, args: &[Value]) -> Result<Value, RuntimeError> {
         self.http_server_listen_internal(args, true)
     }
 
     fn http_server_listen_internal(
         &mut self,
-        args: Vec<Value>,
+        args: &[Value],
         with_context: bool,
     ) -> Result<Value, RuntimeError> {
         let expected = if with_context { 3 } else { 2 };
@@ -698,7 +820,7 @@ impl Interpreter {
                 ("method".to_string(), Value::Str(req.method.clone())),
                 ("path".to_string(), Value::Str(req.path.clone())),
                 ("body".to_string(), Value::Str(req.body.clone())),
-                ("headers".to_string(), Value::List(headers)),
+                ("headers".to_string(), list_from_vec(headers)),
             ],
         }
     }
@@ -762,14 +884,9 @@ impl Interpreter {
     }
 
     fn parse_http_response_headers(val: Value) -> Result<Vec<(String, String)>, RuntimeError> {
-        let list = match val {
-            Value::List(items) => items,
-            _ => {
-                return Err(RuntimeError::Error(
-                    "HttpResponse.headers must be List<Header>".to_string(),
-                ))
-            }
-        };
+        let list = list_to_vec(&val).ok_or_else(|| {
+            RuntimeError::Error("HttpResponse.headers must be List<Header>".to_string())
+        })?;
 
         let mut out = Vec::new();
         for item in list {
@@ -874,7 +991,7 @@ impl Interpreter {
         Ok(())
     }
 
-    fn call_builtin(&mut self, name: &str, mut args: Vec<Value>) -> Result<Value, RuntimeError> {
+    fn call_builtin(&mut self, name: &str, args: &[Value]) -> Result<Value, RuntimeError> {
         match name {
             "__ctor:Result.Ok" => {
                 if args.len() != 1 {
@@ -883,7 +1000,7 @@ impl Interpreter {
                         args.len()
                     )));
                 }
-                return Ok(Value::Ok(Box::new(args.remove(0))));
+                return Ok(Value::Ok(Box::new(args[0].clone())));
             }
             "__ctor:Result.Err" => {
                 if args.len() != 1 {
@@ -892,7 +1009,7 @@ impl Interpreter {
                         args.len()
                     )));
                 }
-                return Ok(Value::Err(Box::new(args.remove(0))));
+                return Ok(Value::Err(Box::new(args[0].clone())));
             }
             "__ctor:Option.Some" => {
                 if args.len() != 1 {
@@ -901,7 +1018,7 @@ impl Interpreter {
                         args.len()
                     )));
                 }
-                return Ok(Value::Some(Box::new(args.remove(0))));
+                return Ok(Value::Some(Box::new(args[0].clone())));
             }
             "List.map" => {
                 if args.len() != 2 {
@@ -910,21 +1027,16 @@ impl Interpreter {
                         args.len()
                     )));
                 }
-                let list = match args[0].clone() {
-                    Value::List(items) => items,
-                    _ => {
-                        return Err(RuntimeError::Error(
-                            "List.map() first argument must be a List".to_string(),
-                        ))
-                    }
-                };
+                let items = list_slice(&args[0]).ok_or_else(|| {
+                    RuntimeError::Error("List.map() first argument must be a List".to_string())
+                })?;
                 let func = args[1].clone();
                 let mut result = Vec::new();
-                for item in list {
-                    let val = self.call_value(func.clone(), vec![item])?;
+                for item in items.iter().cloned() {
+                    let val = self.call_fn_ref(&func, vec![item])?;
                     result.push(val);
                 }
-                Ok(Value::List(result))
+                Ok(list_from_vec(result))
             }
             "List.filter" => {
                 if args.len() != 2 {
@@ -933,18 +1045,13 @@ impl Interpreter {
                         args.len()
                     )));
                 }
-                let list = match args[0].clone() {
-                    Value::List(items) => items,
-                    _ => {
-                        return Err(RuntimeError::Error(
-                            "List.filter() first argument must be a List".to_string(),
-                        ))
-                    }
-                };
+                let items = list_slice(&args[0]).ok_or_else(|| {
+                    RuntimeError::Error("List.filter() first argument must be a List".to_string())
+                })?;
                 let func = args[1].clone();
                 let mut result = Vec::new();
-                for item in list {
-                    let keep = self.call_value(func.clone(), vec![item.clone()])?;
+                for item in items.iter().cloned() {
+                    let keep = self.call_fn_ref(&func, vec![item.clone()])?;
                     match keep {
                         Value::Bool(true) => result.push(item),
                         Value::Bool(false) => {}
@@ -955,7 +1062,7 @@ impl Interpreter {
                         }
                     }
                 }
-                Ok(Value::List(result))
+                Ok(list_from_vec(result))
             }
             "List.fold" => {
                 if args.len() != 3 {
@@ -964,19 +1071,14 @@ impl Interpreter {
                         args.len()
                     )));
                 }
-                let list = match args[0].clone() {
-                    Value::List(items) => items,
-                    _ => {
-                        return Err(RuntimeError::Error(
-                            "List.fold() first argument must be a List".to_string(),
-                        ))
-                    }
-                };
+                let items = list_slice(&args[0]).ok_or_else(|| {
+                    RuntimeError::Error("List.fold() first argument must be a List".to_string())
+                })?;
                 let init = args[1].clone();
                 let func = args[2].clone();
                 let mut acc = init;
-                for item in list {
-                    acc = self.call_value(func.clone(), vec![acc, item])?;
+                for item in items.iter().cloned() {
+                    acc = self.call_fn_ref(&func, vec![acc, item])?;
                 }
                 Ok(acc)
             }
@@ -988,12 +1090,12 @@ impl Interpreter {
                 Ok(Value::Variant {
                     type_name,
                     variant,
-                    fields: args,
+                    fields: args.to_vec(),
                 })
             }
 
             "Disk.makeDir" => {
-                let [path_val] = args.as_slice() else {
+                let [path_val] = args else {
                     return Err(RuntimeError::Error(format!(
                         "Disk.makeDir() takes 1 argument (path), got {}",
                         args.len()
@@ -1009,32 +1111,32 @@ impl Interpreter {
                     Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
                 }
             }
-            "HttpServer.listen" => self.http_server_listen(args),
-            "HttpServer.listenWith" => self.http_server_listen_with(args),
+            "HttpServer.listen" => self.http_server_listen(&args),
+            "HttpServer.listenWith" => self.http_server_listen_with(&args),
 
             _ => {
-                if let Some(r) = console::call(name, args.clone()) {
+                if let Some(r) = console::call(name, args) {
                     return r;
                 }
-                if let Some(r) = http::call(name, args.clone()) {
+                if let Some(r) = http::call(name, args) {
                     return r;
                 }
-                if let Some(r) = http_server::call(name, args.clone()) {
+                if let Some(r) = http_server::call(name, args) {
                     return r;
                 }
-                if let Some(r) = disk::call(name, args.clone()) {
+                if let Some(r) = disk::call(name, args) {
                     return r;
                 }
-                if let Some(r) = tcp::call(name, args.clone()) {
+                if let Some(r) = tcp::call(name, args) {
                     return r;
                 }
-                if let Some(r) = int::call(name, args.clone()) {
+                if let Some(r) = int::call(name, args) {
                     return r;
                 }
-                if let Some(r) = float::call(name, args.clone()) {
+                if let Some(r) = float::call(name, args) {
                     return r;
                 }
-                if let Some(r) = string::call(name, args.clone()) {
+                if let Some(r) = string::call(name, args) {
                     return r;
                 }
                 if let Some(r) = list::call(name, args) {
@@ -1114,10 +1216,14 @@ impl Interpreter {
 
     pub fn exec_fn_def(&mut self, fd: &FnDef) -> Result<(), RuntimeError> {
         // Capture current closure
-        let mut closure = HashMap::new();
-        for scope in &self.env {
+        let mut closure: HashMap<String, Rc<Value>> = HashMap::new();
+        for frame in &self.env {
+            let scope = match frame {
+                EnvFrame::Owned(scope) => scope,
+                EnvFrame::Shared(scope) => scope,
+            };
             for (k, v) in scope {
-                closure.insert(k.clone(), v.clone());
+                closure.insert(k.clone(), Rc::clone(v));
             }
         }
 
@@ -1125,8 +1231,8 @@ impl Interpreter {
             name: fd.name.clone(),
             params: fd.params.clone(),
             effects: self.expand_effects(&fd.effects),
-            body: fd.body.clone(),
-            closure,
+            body: Rc::clone(&fd.body),
+            closure: Rc::new(closure),
         };
         self.define(fd.name.clone(), val);
         Ok(())
@@ -1169,6 +1275,32 @@ impl Interpreter {
             Expr::Literal(lit) => Ok(self.eval_literal(lit)),
             Expr::Ident(name) => self.lookup(name),
             Expr::Attr(obj, field) => {
+                // Fast path: `Ident.field` avoids cloning the entire namespace/record
+                if let Expr::Ident(name) = obj.as_ref() {
+                    let rc = self.lookup_rc(name)?;
+                    return match rc.as_ref() {
+                        Value::Namespace { name, members } => {
+                            members.get(field.as_str()).cloned().ok_or_else(|| {
+                                RuntimeError::Error(format!(
+                                    "Unknown member '{}.{}'",
+                                    name, field
+                                ))
+                            })
+                        }
+                        Value::Record { fields, .. } => fields
+                            .iter()
+                            .find(|(k, _)| k == field)
+                            .map(|(_, v)| Ok(v.clone()))
+                            .unwrap_or_else(|| {
+                                Err(RuntimeError::Error(format!("Unknown field '{}'", field)))
+                            }),
+                        _ => Err(RuntimeError::Error(format!(
+                            "Field access '{}' is not supported on this value",
+                            field
+                        ))),
+                    };
+                }
+                // General path: computed object expression
                 let obj_val = self.eval_expr(obj)?;
                 match obj_val {
                     Value::Record { fields, .. } => fields
@@ -1242,8 +1374,12 @@ impl Interpreter {
                 for part in parts {
                     match part {
                         StrPart::Literal(s) => result.push_str(s),
+                        StrPart::Parsed(expr) => {
+                            let val = self.eval_expr(expr)?;
+                            result.push_str(&aver_repr(&val));
+                        }
                         StrPart::Expr(src) => {
-                            // Re-lex and parse the expression source for string interpolation
+                            // Legacy fallback: re-lex and parse at runtime
                             let mut lexer = Lexer::new(src);
                             let tokens = lexer.tokenize().map_err(|e| {
                                 RuntimeError::Error(format!("Error in interpolation: {}", e))
@@ -1264,7 +1400,7 @@ impl Interpreter {
                 for elem in elements {
                     values.push(self.eval_expr(elem)?);
                 }
-                Ok(Value::List(values))
+                Ok(list_from_vec(values))
             }
             Expr::TypeAscription(inner, _) => self.eval_expr(inner),
             Expr::RecordCreate { type_name, fields } => {
@@ -1290,55 +1426,70 @@ impl Interpreter {
         }
     }
 
+    /// Call a function value (owned). Delegates to `call_fn_ref` for `Value::Fn`.
     fn call_value(&mut self, fn_val: Value, args: Vec<Value>) -> Result<Value, RuntimeError> {
-        match fn_val {
+        match &fn_val {
             Value::Builtin(name) => {
-                self.ensure_effects_allowed(&name, Self::builtin_effects(&name).iter().copied())?;
-                self.call_builtin(&name, args)
+                self.ensure_effects_allowed(name, Self::builtin_effects(name).iter().copied())?;
+                self.call_builtin(name, &args)
             }
-            Value::Fn {
-                name,
-                params,
-                effects,
-                body,
-                closure,
-            } => {
-                if args.len() != params.len() {
-                    return Err(RuntimeError::Error(format!(
-                        "Function '{}' expects {} arguments, got {}",
-                        name,
-                        params.len(),
-                        args.len()
-                    )));
-                }
-                self.ensure_effects_allowed(&name, effects.iter().map(String::as_str))?;
-
-                let mut new_env = closure;
-                for ((param_name, _), arg_val) in params.iter().zip(args.into_iter()) {
-                    new_env.insert(param_name.clone(), arg_val);
-                }
-
-                self.call_stack.push(CallFrame {
-                    name: name.clone(),
-                    effects,
-                });
-                self.push_env(new_env);
-                let result = match &body {
-                    FnBody::Expr(e) => self.eval_expr(e),
-                    FnBody::Block(stmts) => self.exec_body(stmts),
-                };
-                self.pop_env();
-                self.call_stack.pop();
-                match result {
-                    Ok(v) => Ok(v),
-                    Err(RuntimeError::ErrProp(e)) => Ok(Value::Err(e)),
-                    Err(e) => Err(e),
-                }
-            }
+            Value::Fn { .. } => self.call_fn_ref(&fn_val, args),
             _ => Err(RuntimeError::Error(format!(
                 "Cannot call value: {:?}",
                 fn_val
             ))),
+        }
+    }
+
+    /// Call a `Value::Fn` by reference — avoids cloning name/params/effects.
+    /// Used in map/filter/fold hot loops.
+    fn call_fn_ref(&mut self, fn_val: &Value, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let Value::Fn {
+            name,
+            params,
+            effects,
+            body,
+            closure,
+        } = fn_val
+        else {
+            return Err(RuntimeError::Error(format!(
+                "Cannot call value: {:?}",
+                fn_val
+            )));
+        };
+
+        if args.len() != params.len() {
+            return Err(RuntimeError::Error(format!(
+                "Function '{}' expects {} arguments, got {}",
+                name,
+                params.len(),
+                args.len()
+            )));
+        }
+        self.ensure_effects_allowed(name, effects.iter().map(String::as_str))?;
+
+        let mut params_scope = HashMap::new();
+        for ((param_name, _), arg_val) in params.iter().zip(args.into_iter()) {
+            params_scope.insert(param_name.clone(), Rc::new(arg_val));
+        }
+
+        self.call_stack.push(CallFrame {
+            name: name.clone(),
+            effects: effects.clone(),
+        });
+        self.push_shared_env(Rc::clone(closure));
+        self.push_owned_env(params_scope);
+        let result = match &**body {
+            FnBody::Expr(e) => self.eval_expr(e),
+            FnBody::Block(stmts) => self.exec_body(stmts),
+        };
+        self.pop_env();
+        self.pop_env();
+        self.call_stack.pop();
+        match result {
+            Ok(v) => Ok(v),
+            Err(RuntimeError::ErrProp(e)) => Ok(Value::Err(e)),
+            Err(e) => Err(e),
         }
     }
 
@@ -1358,6 +1509,11 @@ impl Interpreter {
     }
 
     pub fn aver_eq(&self, a: &Value, b: &Value) -> bool {
+        if let (Some(xs), Some(ys)) = (list_slice(a), list_slice(b)) {
+            return xs.len() == ys.len()
+                && xs.iter().zip(ys.iter()).all(|(x, y)| self.aver_eq(x, y));
+        }
+
         match (a, b) {
             (Value::Int(x), Value::Int(y)) => x == y,
             (Value::Float(x), Value::Float(y)) => x == y,
@@ -1368,9 +1524,6 @@ impl Interpreter {
             (Value::Ok(x), Value::Ok(y)) => self.aver_eq(x, y),
             (Value::Err(x), Value::Err(y)) => self.aver_eq(x, y),
             (Value::Some(x), Value::Some(y)) => self.aver_eq(x, y),
-            (Value::List(xs), Value::List(ys)) => {
-                xs.len() == ys.len() && xs.iter().zip(ys.iter()).all(|(x, y)| self.aver_eq(x, y))
-            }
             (
                 Value::Variant {
                     type_name: t1,
@@ -1527,11 +1680,11 @@ impl Interpreter {
         for arm in arms {
             if let Some(bindings) = self.match_pattern(&arm.pattern, &subject) {
                 // Create new scope with pattern bindings
-                let mut new_scope = HashMap::new();
-                for (k, v) in bindings {
-                    new_scope.insert(k, v);
-                }
-                self.push_env(new_scope);
+                let rc_scope = bindings
+                    .into_iter()
+                    .map(|(k, v)| (k, Rc::new(v)))
+                    .collect::<HashMap<_, _>>();
+                self.push_owned_env(rc_scope);
                 let result = self.eval_expr(&arm.body);
                 self.pop_env();
                 return result;
@@ -1565,23 +1718,30 @@ impl Interpreter {
                 bindings.insert(name.clone(), value.clone());
                 Some(bindings)
             }
-            Pattern::EmptyList => match value {
-                Value::List(items) if items.is_empty() => Some(HashMap::new()),
-                _ => None,
-            },
-            Pattern::Cons(head, tail) => match value {
-                Value::List(items) if !items.is_empty() => {
-                    let mut map = HashMap::new();
-                    if head != "_" {
-                        map.insert(head.clone(), items[0].clone());
-                    }
-                    if tail != "_" {
-                        map.insert(tail.clone(), Value::List(items[1..].to_vec()));
-                    }
-                    Some(map)
+            Pattern::EmptyList => {
+                if list_len(value) == Some(0) {
+                    Some(HashMap::new())
+                } else {
+                    None
                 }
-                _ => None,
-            },
+            }
+            Pattern::Cons(head, tail) => {
+                let items = list_slice(value)?;
+                if items.is_empty() {
+                    return None;
+                }
+                let mut map = HashMap::new();
+                if head != "_" {
+                    map.insert(head.clone(), items[0].clone());
+                }
+                if tail != "_" {
+                    map.insert(
+                        tail.clone(),
+                        list_tail_view(value).unwrap_or_else(|| list_from_vec(vec![])),
+                    );
+                }
+                Some(map)
+            }
             Pattern::Constructor(ctor_name, bindings) => {
                 match (ctor_name.as_str(), value) {
                     ("Option.None", Value::None) => Some(HashMap::new()),

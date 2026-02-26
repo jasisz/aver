@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use crate::ast::*;
 use crate::lexer::{Token, TokenKind};
 use thiserror::Error;
@@ -520,7 +522,7 @@ impl Parser {
             return_type,
             effects,
             desc,
-            body,
+            body: Rc::new(body),
         })
     }
 
@@ -1176,16 +1178,29 @@ impl Parser {
             }
             TokenKind::InterpStr(parts) => {
                 self.advance();
-                let str_parts = parts
-                    .into_iter()
-                    .map(|(is_expr, s)| {
-                        if is_expr {
-                            StrPart::Expr(s)
+                let mut str_parts = Vec::new();
+                for (is_expr, s) in parts {
+                    if is_expr {
+                        // Try to pre-parse the expression at parse time.
+                        // Fall back to raw StrPart::Expr for edge cases
+                        // (empty `{}`, escaped quotes in JSON templates, etc.)
+                        let parsed = if s.trim().is_empty() {
+                            None
                         } else {
-                            StrPart::Literal(s)
+                            let mut lexer = crate::lexer::Lexer::new(&s);
+                            lexer.tokenize().ok().and_then(|tokens| {
+                                let mut sub_parser = Parser::new(tokens);
+                                sub_parser.parse_expr().ok()
+                            })
+                        };
+                        match parsed {
+                            Some(expr) => str_parts.push(StrPart::Parsed(Box::new(expr))),
+                            None => str_parts.push(StrPart::Expr(s)),
                         }
-                    })
-                    .collect();
+                    } else {
+                        str_parts.push(StrPart::Literal(s));
+                    }
+                }
                 Ok(Expr::InterpolatedStr(str_parts))
             }
             TokenKind::Bool(b) => {

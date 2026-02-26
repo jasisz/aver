@@ -92,7 +92,7 @@ fn assign_stmt_inside_fn() {
     let src = "fn f() -> Unit\n    var x = 0\n    x = 1\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Block(stmts) = &fd.body {
+        if let FnBody::Block(stmts) = &*fd.body {
             assert!(
                 matches!(stmts[0], Stmt::Var(_, _, _)),
                 "first stmt should be Var"
@@ -122,7 +122,7 @@ fn fn_single_expr_body() {
         assert_eq!(fd.name, "double");
         assert_eq!(fd.params, vec![("x".to_string(), "Int".to_string())]);
         assert_eq!(fd.return_type, "Int");
-        assert!(matches!(fd.body, FnBody::Expr(_)), "expected Expr body");
+        assert!(matches!(*fd.body, FnBody::Expr(_)), "expected Expr body");
     } else {
         panic!("expected FnDef");
     }
@@ -133,7 +133,7 @@ fn fn_block_body() {
     let src = "fn greet(name: String) -> String\n    val msg = \"Hello\"\n    msg\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        assert!(matches!(fd.body, FnBody::Block(_)), "expected Block body");
+        assert!(matches!(*fd.body, FnBody::Block(_)), "expected Block body");
     } else {
         panic!("expected FnDef");
     }
@@ -410,7 +410,7 @@ fn match_with_wildcard() {
         "fn f(n: Int) -> String\n    = match n:\n        0 -> \"zero\"\n        _ -> \"other\"\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Expr(Expr::Match(_, arms)) = &fd.body {
+        if let FnBody::Expr(Expr::Match(_, arms)) = &*fd.body {
             assert_eq!(arms.len(), 2);
             assert!(matches!(arms[0].pattern, Pattern::Literal(Literal::Int(0))));
             assert!(matches!(arms[1].pattern, Pattern::Wildcard));
@@ -436,7 +436,7 @@ fn match_constructor_patterns() {
     let src = "fn f(r: Result<Int, String>) -> Int\n    = match r:\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Expr(Expr::Match(_, arms)) = &fd.body {
+        if let FnBody::Expr(Expr::Match(_, arms)) = &*fd.body {
             assert_eq!(arms.len(), 2);
             assert!(matches!(
                 &arms[0].pattern,
@@ -459,7 +459,7 @@ fn match_ident_binding() {
     let src = "fn f(x: Int) -> Int\n    = match x:\n        n -> n\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Expr(Expr::Match(_, arms)) = &fd.body {
+        if let FnBody::Expr(Expr::Match(_, arms)) = &*fd.body {
             assert!(matches!(&arms[0].pattern, Pattern::Ident(s) if s == "n"));
         } else {
             panic!("expected match");
@@ -475,7 +475,7 @@ fn match_list_empty_pattern() {
         "fn f(xs: List<Int>) -> Int\n    = match xs:\n        [] -> 0\n        [h, ..t] -> h\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Expr(Expr::Match(_, arms)) = &fd.body {
+        if let FnBody::Expr(Expr::Match(_, arms)) = &*fd.body {
             assert_eq!(arms.len(), 2);
             assert!(matches!(&arms[0].pattern, Pattern::EmptyList));
             assert!(matches!(
@@ -495,7 +495,7 @@ fn match_list_cons_pattern_with_underscore() {
     let src = "fn f(xs: List<Int>) -> Int\n    = match xs:\n        [_, ..rest] -> len(rest)\n        [] -> 0\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Expr(Expr::Match(_, arms)) = &fd.body {
+        if let FnBody::Expr(Expr::Match(_, arms)) = &*fd.body {
             assert!(matches!(
                 &arms[0].pattern,
                 Pattern::Cons(head, tail) if head == "_" && tail == "rest"
@@ -757,7 +757,7 @@ fn parse_user_defined_constructor_pattern() {
     let src = "fn classify(s: Shape) -> Float\n  = match s:\n    Circle(r) -> r\n    Rect(w, h) -> w\n    Point -> 0.0\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Expr(Expr::Match(_, arms)) = &fd.body {
+        if let FnBody::Expr(Expr::Match(_, arms)) = &*fd.body {
             assert_eq!(arms.len(), 3);
             assert!(matches!(
                 &arms[0].pattern,
