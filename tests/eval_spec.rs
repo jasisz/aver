@@ -1084,7 +1084,8 @@ fn record_creation_stores_fields() {
 
 #[test]
 fn record_field_access() {
-    let src = "record User\n  name: String\n  age: Int\nu = User(name: \"Alice\", age: 30)\nn = u.name\n";
+    let src =
+        "record User\n  name: String\n  age: Int\nu = User(name: \"Alice\", age: 30)\nn = u.name\n";
     let mut interp = run_program(src);
     let val = interp.lookup("n").expect("n not defined");
     assert_eq!(val, Value::Str("Alice".to_string()));
@@ -1820,6 +1821,166 @@ fn verify_error_prop_err_fails_test() {
 }
 
 // ---------------------------------------------------------------------------
+// Module runtime semantics
+// ---------------------------------------------------------------------------
+
+mod module_runtime_tests {
+    use super::*;
+    use std::collections::HashSet;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_module_root(tag: &str) -> std::path::PathBuf {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock went backwards")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("aver_module_runtime_{}_{}", tag, ts));
+        std::fs::create_dir_all(&dir).expect("create temp module dir failed");
+        dir
+    }
+
+    fn load_module_into(interp: &mut Interpreter, module_root: &std::path::Path, name: &str) {
+        let mut loading = Vec::new();
+        let mut loading_set = HashSet::new();
+        let ns = interp
+            .load_module(
+                name,
+                module_root
+                    .to_str()
+                    .expect("module_root is not valid UTF-8"),
+                &mut loading,
+                &mut loading_set,
+            )
+            .expect("load_module failed");
+        interp
+            .define_module_path(name, ns)
+            .expect("define_module_path failed");
+    }
+
+    fn register_fns(interp: &mut Interpreter, src: &str) {
+        let mut items = parse(src);
+        aver::resolver::resolve_program(&mut items);
+        for item in &items {
+            if let TopLevel::FnDef(fd) = item {
+                interp.exec_fn_def(fd).expect("exec_fn_def failed");
+            }
+        }
+    }
+
+    #[test]
+    fn imported_recursive_fn_uses_module_scope() {
+        let root = temp_module_root("recursive_scope");
+        let math_src = r#"
+module Math
+    exposes [fib]
+    intent:
+        "Math module"
+
+fn fib(n: Int) -> Int
+    match n:
+        0 -> 0
+        1 -> 1
+        _ -> fib(n - 1) + fib(n - 2)
+"#;
+        std::fs::write(root.join("Math.av"), math_src).expect("write Math.av failed");
+
+        let app_src = r#"
+fn main() -> Int
+    Math.fib(6)
+"#;
+
+        let mut interp = Interpreter::new();
+        load_module_into(&mut interp, &root, "Math");
+        register_fns(&mut interp, app_src);
+
+        let main_fn = interp.lookup("main").expect("main not found");
+        let out = interp
+            .call_value_pub(main_fn, vec![])
+            .expect("main call failed");
+        assert_eq!(out, Value::Int(8));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn memo_cache_does_not_collide_with_imported_same_name() {
+        let root = temp_module_root("memo_collision");
+        let math_src = r#"
+module Math
+    exposes [fib]
+    intent:
+        "Math module"
+
+fn fib(n: Int) -> Int
+    = n + 100
+"#;
+        std::fs::write(root.join("Math.av"), math_src).expect("write Math.av failed");
+
+        let app_src = r#"
+fn fib(n: Int) -> Int
+    match n:
+        0 -> 0
+        1 -> 1
+        _ -> fib(n - 1) + fib(n - 2)
+
+fn probe() -> Int
+    a = fib(10)
+    Math.fib(10)
+"#;
+
+        let mut interp = Interpreter::new();
+        load_module_into(&mut interp, &root, "Math");
+        interp.enable_memo(HashSet::from([String::from("fib")]));
+        register_fns(&mut interp, app_src);
+
+        let probe_fn = interp.lookup("probe").expect("probe not found");
+        let out = interp
+            .call_value_pub(probe_fn, vec![])
+            .expect("probe call failed");
+        assert_eq!(out, Value::Int(110));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn imported_effect_alias_is_expanded_in_runtime_gate() {
+        let root = temp_module_root("effect_alias");
+        let lib_src = r#"
+module Lib
+    exposes [hi]
+    intent:
+        "Library"
+
+effects IO = [Console]
+
+fn hi() -> Unit
+    ! [IO]
+    = Console.print("hello")
+"#;
+        std::fs::write(root.join("Lib.av"), lib_src).expect("write Lib.av failed");
+
+        let app_src = r#"
+fn main() -> Unit
+    ! [Console]
+    = Lib.hi()
+"#;
+
+        let mut interp = Interpreter::new();
+        load_module_into(&mut interp, &root, "Lib");
+        register_fns(&mut interp, app_src);
+
+        let main_fn = interp.lookup("main").expect("main not found");
+        let effects = Interpreter::callable_declared_effects(&main_fn);
+        let out = interp
+            .call_value_with_effects_pub(main_fn, vec![], "main", effects)
+            .expect("main call failed");
+        assert_eq!(out, Value::Unit);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Auto-memoization tests
 // ---------------------------------------------------------------------------
 
@@ -1886,7 +2047,10 @@ fn fib(n: Int) -> Int
         _ -> fib(n - 1) + fib(n - 2)
 "#;
     // fib(30) = 832040 — without memo this would take exponential time
-    assert_eq!(call_fn_with_memo(src, "fib", vec![Value::Int(30)]), Value::Int(832040));
+    assert_eq!(
+        call_fn_with_memo(src, "fib", vec![Value::Int(30)]),
+        Value::Int(832040)
+    );
 }
 
 #[test]
@@ -1898,16 +2062,28 @@ fn fib(n: Int) -> Int
         1 -> 1
         _ -> fib(n - 1) + fib(n - 2)
 "#;
-    assert_eq!(call_fn_with_memo(src, "fib", vec![Value::Int(0)]), Value::Int(0));
-    assert_eq!(call_fn_with_memo(src, "fib", vec![Value::Int(1)]), Value::Int(1));
-    assert_eq!(call_fn_with_memo(src, "fib", vec![Value::Int(10)]), Value::Int(55));
+    assert_eq!(
+        call_fn_with_memo(src, "fib", vec![Value::Int(0)]),
+        Value::Int(0)
+    );
+    assert_eq!(
+        call_fn_with_memo(src, "fib", vec![Value::Int(1)]),
+        Value::Int(1)
+    );
+    assert_eq!(
+        call_fn_with_memo(src, "fib", vec![Value::Int(10)]),
+        Value::Int(55)
+    );
 }
 
 #[test]
 fn memo_non_recursive_fn_still_works() {
     // Non-recursive functions should work normally (not memoized but not broken)
     let src = "fn double(x: Int) -> Int\n    = x + x\n";
-    assert_eq!(call_fn_with_memo(src, "double", vec![Value::Int(5)]), Value::Int(10));
+    assert_eq!(
+        call_fn_with_memo(src, "double", vec![Value::Int(5)]),
+        Value::Int(10)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1952,10 +2128,22 @@ fn factorial(n: Int, acc: Int) -> Int
         _ -> factorial(n - 1, acc * n)
 "#;
     // Small values: correctness
-    assert_eq!(call_fn_with_tco(src, "factorial", vec![Value::Int(0), Value::Int(1)]), Value::Int(1));
-    assert_eq!(call_fn_with_tco(src, "factorial", vec![Value::Int(5), Value::Int(1)]), Value::Int(120));
-    assert_eq!(call_fn_with_tco(src, "factorial", vec![Value::Int(10), Value::Int(1)]), Value::Int(3628800));
-    assert_eq!(call_fn_with_tco(src, "factorial", vec![Value::Int(20), Value::Int(1)]), Value::Int(2432902008176640000));
+    assert_eq!(
+        call_fn_with_tco(src, "factorial", vec![Value::Int(0), Value::Int(1)]),
+        Value::Int(1)
+    );
+    assert_eq!(
+        call_fn_with_tco(src, "factorial", vec![Value::Int(5), Value::Int(1)]),
+        Value::Int(120)
+    );
+    assert_eq!(
+        call_fn_with_tco(src, "factorial", vec![Value::Int(10), Value::Int(1)]),
+        Value::Int(3628800)
+    );
+    assert_eq!(
+        call_fn_with_tco(src, "factorial", vec![Value::Int(20), Value::Int(1)]),
+        Value::Int(2432902008176640000)
+    );
 }
 
 #[test]
@@ -1967,9 +2155,15 @@ fn sum(n: Int, acc: Int) -> Int
         0 -> acc
         _ -> sum(n - 1, acc + n)
 "#;
-    assert_eq!(call_fn_with_tco(src, "sum", vec![Value::Int(100), Value::Int(0)]), Value::Int(5050));
+    assert_eq!(
+        call_fn_with_tco(src, "sum", vec![Value::Int(100), Value::Int(0)]),
+        Value::Int(5050)
+    );
     // Large n: no stack overflow with TCO
-    assert_eq!(call_fn_with_tco(src, "sum", vec![Value::Int(100_000), Value::Int(0)]), Value::Int(5000050000i64));
+    assert_eq!(
+        call_fn_with_tco(src, "sum", vec![Value::Int(100_000), Value::Int(0)]),
+        Value::Int(5000050000i64)
+    );
 }
 
 #[test]
@@ -1987,13 +2181,31 @@ fn isOdd(n: Int) -> Bool
         _ -> isEven(n - 1)
 "#;
     // Small values
-    assert_eq!(call_fn_with_tco(src, "isEven", vec![Value::Int(0)]), Value::Bool(true));
-    assert_eq!(call_fn_with_tco(src, "isEven", vec![Value::Int(1)]), Value::Bool(false));
-    assert_eq!(call_fn_with_tco(src, "isOdd", vec![Value::Int(1)]), Value::Bool(true));
-    assert_eq!(call_fn_with_tco(src, "isOdd", vec![Value::Int(4)]), Value::Bool(false));
+    assert_eq!(
+        call_fn_with_tco(src, "isEven", vec![Value::Int(0)]),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        call_fn_with_tco(src, "isEven", vec![Value::Int(1)]),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        call_fn_with_tco(src, "isOdd", vec![Value::Int(1)]),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        call_fn_with_tco(src, "isOdd", vec![Value::Int(4)]),
+        Value::Bool(false)
+    );
     // Large n: would overflow without mutual TCO
-    assert_eq!(call_fn_with_tco(src, "isEven", vec![Value::Int(100_000)]), Value::Bool(true));
-    assert_eq!(call_fn_with_tco(src, "isOdd", vec![Value::Int(100_001)]), Value::Bool(true));
+    assert_eq!(
+        call_fn_with_tco(src, "isEven", vec![Value::Int(100_000)]),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        call_fn_with_tco(src, "isOdd", vec![Value::Int(100_001)]),
+        Value::Bool(true)
+    );
 }
 
 #[test]
@@ -2007,9 +2219,18 @@ fn fib(n: Int) -> Int
         _ -> fib(n - 1) + fib(n - 2)
 "#;
     // Small values work even without memo (normal recursion)
-    assert_eq!(call_fn_with_tco(src, "fib", vec![Value::Int(0)]), Value::Int(0));
-    assert_eq!(call_fn_with_tco(src, "fib", vec![Value::Int(1)]), Value::Int(1));
-    assert_eq!(call_fn_with_tco(src, "fib", vec![Value::Int(10)]), Value::Int(55));
+    assert_eq!(
+        call_fn_with_tco(src, "fib", vec![Value::Int(0)]),
+        Value::Int(0)
+    );
+    assert_eq!(
+        call_fn_with_tco(src, "fib", vec![Value::Int(1)]),
+        Value::Int(1)
+    );
+    assert_eq!(
+        call_fn_with_tco(src, "fib", vec![Value::Int(10)]),
+        Value::Int(55)
+    );
 }
 
 #[test]
@@ -2021,5 +2242,8 @@ fn mySum(n: Int) -> Int
         0 -> 0
         _ -> n + mySum(n - 1)
 "#;
-    assert_eq!(call_fn_with_tco(src, "mySum", vec![Value::Int(10)]), Value::Int(55));
+    assert_eq!(
+        call_fn_with_tco(src, "mySum", vec![Value::Int(10)]),
+        Value::Int(55)
+    );
 }

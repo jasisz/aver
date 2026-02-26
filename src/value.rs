@@ -57,6 +57,12 @@ pub enum Value {
         body: Rc<FnBody>,
         /// Compile-time resolution metadata (slot layout for locals).
         resolution: Option<crate::ast::FnResolution>,
+        /// True only for functions selected by `compute_memo_fns` in the
+        /// interpreter that defined them.
+        memo_eligible: bool,
+        /// Optional function-specific global scope (used by imported module
+        /// functions so they resolve names in their home module).
+        home_globals: Option<Rc<HashMap<String, Rc<Value>>>>,
     },
     Builtin(String),
     /// User-defined sum type variant, e.g. `Shape.Circle(3.14)`
@@ -156,6 +162,7 @@ impl PartialEq for Value {
 #[derive(Debug, Clone)]
 pub enum EnvFrame {
     Owned(HashMap<String, Rc<Value>>),
+    Shared(Rc<HashMap<String, Rc<Value>>>),
     /// Slot-indexed frame for resolved function bodies — O(1) lookup.
     Slots(Vec<Rc<Value>>),
 }

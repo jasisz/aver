@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet};
 use crate::value::hash_memo_args;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
@@ -166,9 +166,9 @@ impl Interpreter {
             .ok_or_else(|| RuntimeError::Error("No active scope".to_string()))?;
         match frame {
             EnvFrame::Owned(scope) => Ok(scope),
-            EnvFrame::Slots(_) => {
-                Err(RuntimeError::Error("Cannot define name in Slots frame".to_string()))
-            }
+            EnvFrame::Shared(_) | EnvFrame::Slots(_) => Err(RuntimeError::Error(
+                "Cannot define name in non-owned frame".to_string(),
+            )),
         }
     }
 
@@ -176,6 +176,7 @@ impl Interpreter {
         for frame in self.env.iter().rev() {
             let found = match frame {
                 EnvFrame::Owned(scope) => scope.get(name),
+                EnvFrame::Shared(scope) => scope.get(name),
                 // Slots frames are indexed by slot, not by name — skip in name-based lookup
                 EnvFrame::Slots(_) => None,
             };
@@ -187,6 +188,20 @@ impl Interpreter {
             "Undefined variable: '{}'",
             name
         )))
+    }
+
+    fn global_scope_clone(&self) -> Result<HashMap<String, Rc<Value>>, RuntimeError> {
+        let frame = self
+            .env
+            .first()
+            .ok_or_else(|| RuntimeError::Error("No global scope".to_string()))?;
+        match frame {
+            EnvFrame::Owned(scope) => Ok(scope.clone()),
+            EnvFrame::Shared(scope) => Ok((**scope).clone()),
+            EnvFrame::Slots(_) => Err(RuntimeError::Error(
+                "Invalid global scope frame: Slots".to_string(),
+            )),
+        }
     }
 
     pub fn lookup(&self, name: &str) -> Result<Value, RuntimeError> {
@@ -408,6 +423,11 @@ impl Interpreter {
             }
 
             for item in &items {
+                if let TopLevel::EffectSet { name, effects } = item {
+                    sub.register_effect_set(name.clone(), effects.clone());
+                }
+            }
+            for item in &items {
                 if let TopLevel::TypeDef(td) = item {
                     sub.register_type_def(td);
                 }
@@ -417,6 +437,7 @@ impl Interpreter {
                     sub.exec_fn_def(fd)?;
                 }
             }
+            let module_globals = Rc::new(sub.global_scope_clone()?);
 
             let exposed = Self::exposed_set(&items);
             let mut members = HashMap::new();
@@ -427,9 +448,12 @@ impl Interpreter {
                         None => !fd.name.starts_with('_'),
                     };
                     if include {
-                        let val = sub.lookup(&fd.name).map_err(|_| {
+                        let mut val = sub.lookup(&fd.name).map_err(|_| {
                             RuntimeError::Error(format!("Failed to export '{}.{}'", name, fd.name))
                         })?;
+                        if let Value::Fn { home_globals, .. } = &mut val {
+                            *home_globals = Some(Rc::clone(&module_globals));
+                        }
                         members.insert(fd.name.clone(), val);
                     }
                 }
@@ -1187,6 +1211,8 @@ impl Interpreter {
             effects: self.expand_effects(&fd.effects),
             body: Rc::clone(&fd.body),
             resolution: fd.resolution.clone(),
+            memo_eligible: self.memo_fns.contains(&fd.name),
+            home_globals: None,
         };
         self.define(fd.name.clone(), val);
         Ok(())
@@ -1259,10 +1285,7 @@ impl Interpreter {
                     return match rc.as_ref() {
                         Value::Namespace { name, members } => {
                             members.get(field.as_str()).cloned().ok_or_else(|| {
-                                RuntimeError::Error(format!(
-                                    "Unknown member '{}.{}'",
-                                    name, field
-                                ))
+                                RuntimeError::Error(format!("Unknown member '{}.{}'", name, field))
                             })
                         }
                         Value::Record { fields, .. } => fields
@@ -1442,6 +1465,8 @@ impl Interpreter {
             effects,
             body,
             resolution,
+            memo_eligible,
+            home_globals,
             ..
         } = fn_val
         else {
@@ -1462,7 +1487,7 @@ impl Interpreter {
         self.ensure_effects_allowed(name, effects.iter().map(String::as_str))?;
 
         // Auto-memoization: check cache before executing
-        let is_memo = self.memo_fns.contains(name);
+        let is_memo = *memo_eligible;
         let memo_key = if is_memo {
             let key = hash_memo_args(&args);
             if let Some(cached) = self.memo_cache.get(name).and_then(|c| c.get(&key)) {
@@ -1479,6 +1504,17 @@ impl Interpreter {
         });
 
         let prev_local_slots = self.active_local_slots.take();
+        let saved_frames: Vec<EnvFrame> = self.env.drain(1..).collect();
+        let prev_global = if let Some(home) = home_globals {
+            let global = self
+                .env
+                .first_mut()
+                .ok_or_else(|| RuntimeError::Error("No global scope".to_string()))?;
+            Some(std::mem::replace(global, EnvFrame::Shared(Rc::clone(home))))
+        } else {
+            None
+        };
+
         let result = if let Some(res) = resolution {
             // Resolved path: push Slots frame only.
             // lookup_rc skips Slots frames, so globals at env[0] are visible.
@@ -1497,20 +1533,17 @@ impl Interpreter {
             self.pop_env();
             r
         } else {
-            // Unresolved path (REPL): isolate env to [globals, params]
-            // so the callee cannot see intermediate caller scopes.
+            // Unresolved path (REPL): env is already isolated to [globals].
             let mut params_scope = HashMap::new();
             for ((param_name, _), arg_val) in params.iter().zip(args.into_iter()) {
                 params_scope.insert(param_name.clone(), Rc::new(arg_val));
             }
-            let saved_frames: Vec<EnvFrame> = self.env.drain(1..).collect();
             self.push_owned_env(params_scope);
             let r = match &**body {
                 FnBody::Expr(e) => self.eval_expr(e),
                 FnBody::Block(stmts) => self.exec_body(stmts),
             };
             self.pop_env();
-            self.env.extend(saved_frames);
             r
         };
 
@@ -1524,6 +1557,13 @@ impl Interpreter {
         };
 
         self.active_local_slots = prev_local_slots;
+        if let Some(prev) = prev_global {
+            if let Some(global) = self.env.first_mut() {
+                *global = prev;
+            }
+        }
+        self.env.truncate(1);
+        self.env.extend(saved_frames);
 
         self.call_stack.pop();
         let final_result = match result {
@@ -1831,9 +1871,7 @@ impl Interpreter {
                 // If we're in a resolved function and all bindings have slots,
                 // write directly into the Slots frame (no extra scope push).
                 if let Some(local_slots) = self.active_local_slots.clone() {
-                    let all_slotted = bindings
-                        .keys()
-                        .all(|name| local_slots.contains_key(name));
+                    let all_slotted = bindings.keys().all(|name| local_slots.contains_key(name));
                     if all_slotted {
                         for (name, val) in bindings {
                             if let Some(&slot) = local_slots.get(&name) {

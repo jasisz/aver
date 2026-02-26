@@ -52,7 +52,12 @@ pub fn run_type_check_full(items: &[TopLevel], base_dir: Option<&str>) -> TypeCh
     let fn_sigs: HashMap<String, (Vec<Type>, Type, Vec<String>)> = checker
         .fn_sigs
         .iter()
-        .map(|(k, v)| (k.clone(), (v.params.clone(), v.ret.clone(), v.effects.clone())))
+        .map(|(k, v)| {
+            (
+                k.clone(),
+                (v.params.clone(), v.ret.clone(), v.effects.clone()),
+            )
+        })
         .collect();
 
     // Compute memo-safe named types
@@ -742,6 +747,23 @@ impl TypeChecker {
                 .map_err(|e| format!("Cannot read '{}': {}", path.display(), e))?;
             let items = parse_source(&src)
                 .map_err(|e| format!("Parse error in '{}': {}", path.display(), e))?;
+            let mut module_effect_aliases: HashMap<String, Vec<String>> = HashMap::new();
+            for item in &items {
+                if let TopLevel::EffectSet { name, effects } = item {
+                    module_effect_aliases.insert(name.clone(), effects.clone());
+                }
+            }
+            let expand_module_effects = |effects: &[String]| -> Vec<String> {
+                let mut out = Vec::new();
+                for effect in effects {
+                    if let Some(expanded) = module_effect_aliases.get(effect) {
+                        out.extend(expanded.iter().cloned());
+                    } else {
+                        out.push(effect.clone());
+                    }
+                }
+                out
+            };
 
             if let Some(module) = Self::module_decl(&items) {
                 let expected = name.rsplit('.').next().unwrap_or(name);
@@ -794,7 +816,7 @@ impl TypeChecker {
                         FnSig {
                             params,
                             ret,
-                            effects: fd.effects.clone(),
+                            effects: expand_module_effects(&fd.effects),
                         },
                     ));
                 }
@@ -821,8 +843,7 @@ impl TypeChecker {
         self.locals = self.globals.clone();
         if let Some(sig) = self.fn_sigs.get(&f.name).cloned() {
             for ((param_name, _), param_type) in f.params.iter().zip(sig.params.iter()) {
-                self.locals
-                    .insert(param_name.clone(), param_type.clone());
+                self.locals.insert(param_name.clone(), param_type.clone());
             }
 
             let declared_ret = sig.ret.clone();

@@ -1169,6 +1169,7 @@ fn repl_env(interp: &Interpreter) {
     for frame in &interp.env {
         let scope: Option<&std::collections::HashMap<String, std::rc::Rc<Value>>> = match frame {
             EnvFrame::Owned(scope) => Some(scope),
+            EnvFrame::Shared(scope) => Some(scope.as_ref()),
             EnvFrame::Slots(_) => None,
         };
         let Some(scope) = scope else { continue };
