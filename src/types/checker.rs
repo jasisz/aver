@@ -844,10 +844,11 @@ impl TypeChecker {
                         self.check_effects_in_expr(expr, "<top-level>", &no_effects);
                         self.locals.insert(name.clone(), (ty, false));
                     }
-                    Stmt::Var(name, expr, _) => {
-                        let ty = self.infer_type(expr);
-                        self.check_effects_in_expr(expr, "<top-level>", &no_effects);
-                        self.locals.insert(name.clone(), (ty, true));
+                    Stmt::Var(_name, _expr, _) => {
+                        self.error(
+                            "Top-level 'var' is not allowed; use 'val' for immutable bindings"
+                                .to_string(),
+                        );
                     }
                     Stmt::Assign(name, expr) => {
                         let rhs_ty = self.infer_type(expr);
@@ -1563,30 +1564,18 @@ mod tests {
     }
 
     #[test]
-    fn functions_can_assign_to_top_level_var_bindings() {
+    fn top_level_var_is_rejected() {
         let top_level_var = TopLevel::Stmt(Stmt::Var(
             "x".to_string(),
             Expr::Literal(Literal::Int(1)),
             None,
         ));
-        let main_fn = TopLevel::FnDef(FnDef {
-            name: "main".to_string(),
-            line: 1,
-            params: vec![],
-            return_type: "Unit".to_string(),
-            effects: vec![],
-            desc: None,
-            body: std::rc::Rc::new(FnBody::Block(vec![Stmt::Assign(
-                "x".to_string(),
-                Expr::Literal(Literal::Int(2)),
-            )])),
-            resolution: None,
-        });
 
-        let errs = errors(vec![top_level_var, main_fn]);
+        let errs = errors(vec![top_level_var]);
         assert!(
-            errs.is_empty(),
-            "expected no errors for assignment to top-level var, got: {:?}",
+            errs.iter()
+                .any(|e| e.contains("Top-level 'var' is not allowed")),
+            "expected top-level var error, got: {:?}",
             errs
         );
     }

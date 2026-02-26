@@ -1032,3 +1032,14 @@ fn valid_no_effects_for_helpers() {
     assert_no_errors("fn f(x: Float) -> Int\n    = Float.floor(x)\n");
     assert_no_errors("fn f(s: String) -> Int\n    = String.length(s)\n");
 }
+
+#[test]
+fn error_top_level_var_is_not_allowed() {
+    assert_error_containing("var x = 0\n", "Top-level 'var' is not allowed");
+}
+
+#[test]
+fn valid_var_inside_function_body() {
+    // var is still allowed inside function bodies
+    assert_no_errors("fn f() -> Int\n    var x = 0\n    x = 5\n    x\n");
+}
