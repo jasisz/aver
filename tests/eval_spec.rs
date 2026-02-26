@@ -694,7 +694,7 @@ fn none_is_none() {
 
 #[test]
 fn match_literal_zero() {
-    let src = "fn classify(n: Int) -> String\n    = match n:\n        0 -> \"zero\"\n        _ -> \"other\"\n";
+    let src = "fn classify(n: Int) -> String\n    = match n\n        0 -> \"zero\"\n        _ -> \"other\"\n";
     assert_eq!(
         call_fn(src, "classify", vec![Value::Int(0)]),
         Value::Str("zero".to_string())
@@ -703,7 +703,7 @@ fn match_literal_zero() {
 
 #[test]
 fn match_literal_wildcard() {
-    let src = "fn classify(n: Int) -> String\n    = match n:\n        0 -> \"zero\"\n        _ -> \"other\"\n";
+    let src = "fn classify(n: Int) -> String\n    = match n\n        0 -> \"zero\"\n        _ -> \"other\"\n";
     assert_eq!(
         call_fn(src, "classify", vec![Value::Int(99)]),
         Value::Str("other".to_string())
@@ -712,7 +712,7 @@ fn match_literal_wildcard() {
 
 #[test]
 fn match_ok_constructor() {
-    let src = "fn unwrap(r: Result<Int, String>) -> Int\n    = match r:\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n";
+    let src = "fn unwrap(r: Result<Int, String>) -> Int\n    = match r\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n";
     assert_eq!(
         call_fn(src, "unwrap", vec![Value::Ok(Box::new(Value::Int(42)))]),
         Value::Int(42)
@@ -721,7 +721,7 @@ fn match_ok_constructor() {
 
 #[test]
 fn match_err_constructor() {
-    let src = "fn unwrap(r: Result<Int, String>) -> Int\n    = match r:\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n";
+    let src = "fn unwrap(r: Result<Int, String>) -> Int\n    = match r\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n";
     assert_eq!(
         call_fn(
             src,
@@ -734,7 +734,7 @@ fn match_err_constructor() {
 
 #[test]
 fn match_some_none() {
-    let src = "fn extract(o: Option<Int>) -> Int\n    = match o:\n        Option.Some(v) -> v\n        Option.None -> 0\n";
+    let src = "fn extract(o: Option<Int>) -> Int\n    = match o\n        Option.Some(v) -> v\n        Option.None -> 0\n";
     assert_eq!(
         call_fn(src, "extract", vec![Value::Some(Box::new(Value::Int(7)))]),
         Value::Int(7)
@@ -744,7 +744,7 @@ fn match_some_none() {
 
 #[test]
 fn match_bool_literal() {
-    let src = "fn yes_no(b: Bool) -> String\n    = match b:\n        true -> \"yes\"\n        false -> \"no\"\n";
+    let src = "fn yes_no(b: Bool) -> String\n    = match b\n        true -> \"yes\"\n        false -> \"no\"\n";
     assert_eq!(
         call_fn(src, "yes_no", vec![Value::Bool(true)]),
         Value::Str("yes".to_string())
@@ -757,7 +757,7 @@ fn match_bool_literal() {
 
 #[test]
 fn match_empty_list_pattern() {
-    let src = "fn is_empty(xs: List<Int>) -> Bool\n    = match xs:\n        [] -> true\n        [_, ..rest] -> false\n";
+    let src = "fn is_empty(xs: List<Int>) -> Bool\n    = match xs\n        [] -> true\n        [_, ..rest] -> false\n";
     assert_eq!(
         call_fn(src, "is_empty", vec![Value::List(vec![])]),
         Value::Bool(true)
@@ -774,7 +774,7 @@ fn match_empty_list_pattern() {
 
 #[test]
 fn match_list_cons_binds_head_and_tail() {
-    let src = "fn score(xs: List<Int>) -> Int\n    = match xs:\n        [h, ..t] -> h + List.len(t)\n        [] -> 0\n";
+    let src = "fn score(xs: List<Int>) -> Int\n    = match xs\n        [h, ..t] -> h + List.len(t)\n        [] -> 0\n";
     assert_eq!(
         call_fn(
             src,
@@ -1092,7 +1092,7 @@ fn sum_type_match_single_field_variant() {
         "  Point\n",
         "fn area(s: Shape) -> Float\n",
         "  ? \"area\"\n",
-        "  = match s:\n",
+        "  = match s\n",
         "    Circle(r) -> r * r\n",
         "    Point -> 0.0\n",
     );
@@ -1126,7 +1126,7 @@ fn sum_type_match_no_arg_variant() {
         "  Point\n",
         "fn area(s: Shape) -> Float\n",
         "  ? \"area\"\n",
-        "  = match s:\n",
+        "  = match s\n",
         "    Circle(r) -> r * r\n",
         "    Point -> 0.0\n",
     );
@@ -1158,7 +1158,7 @@ fn sum_type_match_no_arg_variant() {
 
 #[test]
 fn record_creation_stores_fields() {
-    let src = "record User\n  name: String\n  age: Int\nu = User(name: \"Alice\", age: 30)\n";
+    let src = "record User\n  name: String\n  age: Int\nu = User(name = \"Alice\", age = 30)\n";
     let mut interp = run_program(src);
     let val = interp.lookup("u").expect("u not defined");
     assert_eq!(
@@ -1176,7 +1176,7 @@ fn record_creation_stores_fields() {
 #[test]
 fn record_field_access() {
     let src =
-        "record User\n  name: String\n  age: Int\nu = User(name: \"Alice\", age: 30)\nn = u.name\n";
+        "record User\n  name: String\n  age: Int\nu = User(name = \"Alice\", age = 30)\nn = u.name\n";
     let mut interp = run_program(src);
     let val = interp.lookup("n").expect("n not defined");
     assert_eq!(val, Value::Str("Alice".to_string()));
@@ -1190,7 +1190,7 @@ fn record_positional_match() {
         "  age: Int\n",
         "fn get_name(u: User) -> String\n",
         "  ? \"get name\"\n",
-        "  = match u:\n",
+        "  = match u\n",
         "    User(name, age) -> name\n",
     );
     let items = parse(src);
@@ -1872,8 +1872,7 @@ mod tcp_tests {
 #[test]
 fn verify_error_prop_ok_unwraps() {
     // `?` on Ok in a verify case should unwrap normally
-    let src =
-        "fn ok() -> Result<Int, String>\n    = Result.Ok(42)\n\nverify ok:\n    ok()? => 42\n";
+    let src = "fn ok() -> Result<Int, String>\n    = Result.Ok(42)\n\nverify ok\n    ok()? => 42\n";
     let items = parse(src);
     let mut interp = Interpreter::new();
     for item in &items {
@@ -1894,7 +1893,7 @@ fn verify_error_prop_ok_unwraps() {
 fn verify_error_prop_err_fails_test() {
     // `?` on Err in a verify case should produce a test failure, not a panic/crash
     let src =
-        "fn fail() -> Result<Int, String>\n    = Result.Err(\"boom\")\n\nverify fail:\n    fail()? => 42\n";
+        "fn fail() -> Result<Int, String>\n    = Result.Err(\"boom\")\n\nverify fail\n    fail()? => 42\n";
     let items = parse(src);
     let mut interp = Interpreter::new();
     for item in &items {
@@ -1964,11 +1963,11 @@ mod module_runtime_tests {
         let math_src = r#"
 module Math
     exposes [fib]
-    intent:
+    intent =
         "Math module"
 
 fn fib(n: Int) -> Int
-    match n:
+    match n
         0 -> 0
         1 -> 1
         _ -> fib(n - 1) + fib(n - 2)
@@ -1999,7 +1998,7 @@ fn main() -> Int
         let math_src = r#"
 module Math
     exposes [fib]
-    intent:
+    intent =
         "Math module"
 
 fn fib(n: Int) -> Int
@@ -2009,7 +2008,7 @@ fn fib(n: Int) -> Int
 
         let app_src = r#"
 fn fib(n: Int) -> Int
-    match n:
+    match n
         0 -> 0
         1 -> 1
         _ -> fib(n - 1) + fib(n - 2)
@@ -2039,7 +2038,7 @@ fn probe() -> Int
         let lib_src = r#"
 module Lib
     exposes [hi]
-    intent:
+    intent =
         "Library"
 
 effects IO = [Console]
@@ -2132,7 +2131,7 @@ fn call_fn_with_memo(src: &str, fn_name: &str, args: Vec<Value>) -> Value {
 fn memo_fib_30_returns_correct_result() {
     let src = r#"
 fn fib(n: Int) -> Int
-    match n:
+    match n
         0 -> 0
         1 -> 1
         _ -> fib(n - 1) + fib(n - 2)
@@ -2148,7 +2147,7 @@ fn fib(n: Int) -> Int
 fn memo_fib_small_values() {
     let src = r#"
 fn fib(n: Int) -> Int
-    match n:
+    match n
         0 -> 0
         1 -> 1
         _ -> fib(n - 1) + fib(n - 2)
@@ -2214,7 +2213,7 @@ fn tco_factorial_large_n() {
     // Tail-recursive factorial — should not overflow with TCO
     let src = r#"
 fn factorial(n: Int, acc: Int) -> Int
-    match n:
+    match n
         0 -> acc
         _ -> factorial(n - 1, acc * n)
 "#;
@@ -2242,7 +2241,7 @@ fn tco_sum_accumulator() {
     // Tail-recursive sum with accumulator
     let src = r#"
 fn sum(n: Int, acc: Int) -> Int
-    match n:
+    match n
         0 -> acc
         _ -> sum(n - 1, acc + n)
 "#;
@@ -2262,12 +2261,12 @@ fn tco_mutual_recursion_is_even_is_odd() {
     // isEven / isOdd — mutual tail-call recursion
     let src = r#"
 fn isEven(n: Int) -> Bool
-    match n:
+    match n
         0 -> true
         _ -> isOdd(n - 1)
 
 fn isOdd(n: Int) -> Bool
-    match n:
+    match n
         0 -> false
         _ -> isEven(n - 1)
 "#;
@@ -2304,7 +2303,7 @@ fn tco_non_tail_fib_still_works() {
     // fib is NOT tail-recursive — should still work (via memoization or normal recursion)
     let src = r#"
 fn fib(n: Int) -> Int
-    match n:
+    match n
         0 -> 0
         1 -> 1
         _ -> fib(n - 1) + fib(n - 2)
@@ -2329,7 +2328,7 @@ fn tco_non_tail_call_stays_recursive() {
     // h + sum(t) is NOT in tail position — normal recursion
     let src = r#"
 fn mySum(n: Int) -> Int
-    match n:
+    match n
         0 -> 0
         _ -> n + mySum(n - 1)
 "#;

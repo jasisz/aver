@@ -277,7 +277,7 @@ mod tests {
     fn detects_self_recursion() {
         let src = r#"
 fn fib(n: Int) -> Int
-    match n:
+    match n
         0 -> 0
         1 -> 1
         _ -> fib(n - 1) + fib(n - 2)
@@ -307,12 +307,12 @@ fn fib(n: Int) -> Int
     fn mutual_recursion() {
         let src = r#"
 fn isEven(n: Int) -> Bool
-    match n:
+    match n
         0 -> true
         _ -> isOdd(n - 1)
 
 fn isOdd(n: Int) -> Bool
-    match n:
+    match n
         0 -> false
         _ -> isEven(n - 1)
 "#;

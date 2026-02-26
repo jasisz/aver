@@ -1,9 +1,9 @@
 module User
     exposes [nameById]
-    intent:
+    intent =
         "User lookup module for dot-path import demo."
 
 fn nameById(id: Int) -> String
-    = match id:
+    = match id
         1 -> "Ada"
         _ -> "Unknown"

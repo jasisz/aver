@@ -1,21 +1,21 @@
 module DiskDemo
-    intent:
+    intent =
         "Demonstrates the built-in Disk service: readText, writeText, appendText,"
         "exists, delete, deleteDir, listDir, makeDir."
         "Disk is a platform capability — declared with ! [Disk], enforced statically."
 
-decision DiskAsCapability:
-    date: "2025-01-01"
-    reason:
+decision DiskAsCapability
+    date = "2025-01-01"
+    reason =
         "File I/O is a side effect like any other. Declaring ! [Disk] makes"
         "it visible in the signature — callers know the function touches the filesystem."
         "read/write/append/exists/delete/deleteDir/listDir/makeDir cover the full CRUD"
         "surface without any hidden implicit I/O."
         "Disk.delete is file-only; Disk.deleteDir is the explicit recursive variant —"
         "accidental tree deletion requires a conscious choice of the right method."
-    chosen: BuiltinService
-    rejected: [ImplicitIO, SeparateFileModule]
-    impacts: [loadConfig, saveConfig, appendLog, listWorkdir, scaffold]
+    chosen = BuiltinService
+    rejected = [ImplicitIO, SeparateFileModule]
+    impacts = [loadConfig, saveConfig, appendLog, listWorkdir, scaffold]
 
 fn loadConfig(path: String) -> Result<String, String>
     ? "Read a text file and return its contents, or Err on I/O failure."
@@ -48,49 +48,49 @@ fn main() -> Unit
 
     // Create a directory
     mkResult = scaffold(tmp)
-    match mkResult:
+    match mkResult
         Result.Ok(_)    -> Console.print("Created: {tmp}")
         Result.Err(msg) -> Console.print("makeDir failed: {msg}")
 
     // Write and read back
     path = "{tmp}/hello.txt"
     writeResult = saveConfig(path, "Hello from Aver!")
-    match writeResult:
+    match writeResult
         Result.Ok(_)    -> Console.print("Wrote: {path}")
         Result.Err(msg) -> Console.print("writeText failed: {msg}")
 
     readResult = loadConfig(path)
-    match readResult:
+    match readResult
         Result.Ok(text) -> Console.print("Read back: {text}")
         Result.Err(msg) -> Console.print("readText failed: {msg}")
 
     // Append a log line
     logPath = "{tmp}/app.log"
     appendResult = appendLog(logPath, "started\n")
-    match appendResult:
+    match appendResult
         Result.Ok(_)    -> Console.print("Appended to: {logPath}")
         Result.Err(msg) -> Console.print("appendText failed: {msg}")
 
     // Check existence
     exists = Disk.exists(path)
-    match exists:
+    match exists
         true  -> Console.print("exists check: {path} is present")
         false -> Console.print("exists check: {path} not found")
 
     // List directory
     lsResult = listWorkdir(tmp)
-    match lsResult:
+    match lsResult
         Result.Ok(entries) -> Console.print(entries)
         Result.Err(msg)    -> Console.print("listDir failed: {msg}")
 
     // Delete the file (not the directory — that needs deleteDir)
     delResult = Disk.delete(path)
-    match delResult:
+    match delResult
         Result.Ok(_)    -> Console.print("Deleted: {path}")
         Result.Err(msg) -> Console.print("delete failed: {msg}")
 
     // Clean up the directory tree
     rmdirResult = Disk.deleteDir(tmp)
-    match rmdirResult:
+    match rmdirResult
         Result.Ok(_)    -> Console.print("Removed tree: {tmp}")
         Result.Err(msg) -> Console.print("deleteDir failed: {msg}")

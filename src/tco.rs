@@ -112,7 +112,7 @@ mod tests {
     fn transforms_self_tail_call() {
         let src = r#"
 fn factorial(n: Int, acc: Int) -> Int
-    match n:
+    match n
         0 -> acc
         _ -> factorial(n - 1, acc * n)
 "#;
@@ -142,7 +142,7 @@ fn factorial(n: Int, acc: Int) -> Int
     fn does_not_transform_non_tail_call() {
         let src = r#"
 fn fib(n: Int) -> Int
-    match n:
+    match n
         0 -> 0
         1 -> 1
         _ -> fib(n - 1) + fib(n - 2)
@@ -167,12 +167,12 @@ fn fib(n: Int) -> Int
     fn transforms_mutual_recursion() {
         let src = r#"
 fn isEven(n: Int) -> Bool
-    match n:
+    match n
         0 -> true
         _ -> isOdd(n - 1)
 
 fn isOdd(n: Int) -> Bool
-    match n:
+    match n
         0 -> false
         _ -> isEven(n - 1)
 "#;

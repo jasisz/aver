@@ -1,5 +1,5 @@
 module EffectSets
-    intent:
+    intent =
         "Demonstrates named effect sets — aliases for groups of effects."
 
 effects AppIO = [Console]

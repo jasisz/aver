@@ -63,7 +63,7 @@ pub enum Expr {
     Tuple(Vec<Expr>),
     /// Explicit expression type annotation: `expr: Type`
     TypeAscription(Box<Expr>, String),
-    /// Record creation: `User(name: "Alice", age: 30)`
+    /// Record creation: `User(name = "Alice", age = 30)`
     RecordCreate {
         type_name: String,
         fields: Vec<(String, Expr)>,

@@ -1,34 +1,34 @@
 module Redis
-    intent:
+    intent =
         "Minimal Redis client over raw TCP using the RESP protocol."
         "Demonstrates persistent Tcp connections: connect once, issue multiple"
         "commands on the same socket, close explicitly."
     exposes [connect, disconnect, ping, set, get, del]
     depends []
 
-decision RespOverTcp:
-    date: "2026-02-25"
-    reason:
+decision RespOverTcp
+    date = "2026-02-25"
+    reason =
         "Redis speaks RESP (REdis Serialization Protocol), a text protocol over"
         "TCP. RESP commands are plain lines terminated by CRLF, which maps"
         "directly onto Tcp.writeLine / Tcp.readLine. No binary framing or"
         "external library is needed."
-    chosen: RawTcpWithRespText
-    rejected: [HttpAdapter, NativeRedisDriver]
-    impacts: [Redis]
-    author: "szymon"
+    chosen = RawTcpWithRespText
+    rejected = [HttpAdapter, NativeRedisDriver]
+    impacts = [Redis]
+    author = "szymon"
 
-decision ConnectionIdPattern:
-    date: "2026-02-26"
-    reason:
+decision ConnectionIdPattern
+    date = "2026-02-26"
+    reason =
         "Value must be Clone + PartialEq, so TcpStream cannot live inside a"
         "Value directly. Tcp.connect returns an opaque Tcp.Connection record"
         "(id, host, port) that is threaded through subsequent calls."
         "The actual socket lives in a thread-local HashMap keyed by the id."
-    chosen: OpaqueConnectionRecord
-    rejected: [StreamInValue, GlobalConnectionPool, BareStringHandle]
-    impacts: [Redis, Tcp]
-    author: "szymon"
+    chosen = OpaqueConnectionRecord
+    rejected = [StreamInValue, GlobalConnectionPool, BareStringHandle]
+    impacts = [Redis, Tcp]
+    author = "szymon"
 
 // Config
 
@@ -42,7 +42,7 @@ fn respBulkLen(s: String) -> String
     ? "Returns the byte-length of s as a string, used to build RESP bulk-string headers."
     = Int.toString(String.byteLength(s))
 
-verify respBulkLen:
+verify respBulkLen
     respBulkLen("PING") => "4"
     respBulkLen("OK")   => "2"
     respBulkLen("")     => "0"
@@ -70,7 +70,7 @@ fn sendArgAndRest(conn: Tcp.Connection, h: String, t: List<String>) -> Result<Tc
 fn sendArgs(conn: Tcp.Connection, args: List<String>) -> Result<Tcp.Connection, String>
     ? "Recursively sends each element of args as a RESP bulk string."
     ! [Tcp]
-    match args:
+    match args
         []       -> Result.Ok(conn)
         [h, ..t] -> sendArgAndRest(conn, h, t)
 
@@ -109,7 +109,7 @@ fn get(conn: Tcp.Connection, key: String) -> Result<String, String>
     ! [Tcp]
     _ = sendCommand(conn, ["GET", key])?
     header = Tcp.readLine(conn)?
-    match header == "$-1":
+    match header == "$-1"
         true  -> Result.Err("key not found")
         false -> Tcp.readLine(conn)
 
@@ -124,7 +124,7 @@ fn del(conn: Tcp.Connection, key: String) -> Result<String, String>
 fn run() -> Result<Unit, String>
     ? "Full Redis demo: connect, PING, SET, GET, DEL, disconnect."
     ! [Tcp, Console]
-    cfg  = RedisConfig(host: "127.0.0.1", port: 6379)
+    cfg  = RedisConfig(host = "127.0.0.1", port = 6379)
     conn = connect(cfg)?
 
     pong = ping(conn)?
@@ -145,6 +145,6 @@ fn run() -> Result<Unit, String>
 
 fn main() -> Unit
     ! [Tcp, Console]
-    match run():
+    match run()
         Result.Ok(_)  -> Console.print("done.")
         Result.Err(e) -> Console.print("error: {e}")

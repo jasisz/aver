@@ -1,11 +1,11 @@
 module App
     depends [Examples.Models.User]
-    intent:
+    intent =
         "Demonstrates dot-path module imports."
 
 fn main() -> Unit
     ! [Console]
     Console.print(Examples.Models.User.nameById(1))
 
-verify main:
+verify main
     Examples.Models.User.nameById(1) => "Ada"

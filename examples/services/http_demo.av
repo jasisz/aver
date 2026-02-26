@@ -1,5 +1,5 @@
 module HttpDemo
-    intent:
+    intent =
         "Demonstrates the built-in Http service: GET, POST, and response handling."
         "Http is a platform capability — declared with ! [Http], enforced statically."
 
@@ -7,16 +7,16 @@ record Header
     name: String
     value: String
 
-decision HttpAsCapability:
-    date: "2025-01-01"
-    reason:
+decision HttpAsCapability
+    date = "2025-01-01"
+    reason =
         "HTTP access is a side effect like any other. Declaring ! [Http] makes"
         "it visible in the signature — callers know the function goes outside the process."
         "4xx/5xx are Ok(response) because they are valid HTTP exchanges;"
         "only transport failures (timeout, DNS, refused) are Err."
-    chosen: BuiltinService
-    rejected: [NetworkDotAv, ImplicitIO]
-    impacts: [fetch, checkStatus, post]
+    chosen = BuiltinService
+    rejected = [NetworkDotAv, ImplicitIO]
+    impacts = [fetch, checkStatus, post]
 
 fn fetch(url: String) -> Result<HttpResponse, String>
     ? "GET a URL. Returns Ok(HttpResponse) on any HTTP reply, Err on transport failure."
@@ -27,14 +27,14 @@ fn checkStatus(url: String) -> Result<Int, String>
     ? "Returns Ok(status code as Int) or Err(transport error)."
     ! [Http]
     result = Http.get(url)
-    match result:
+    match result
         Result.Ok(resp) -> Result.Ok(resp.status)
         Result.Err(msg) -> Result.Err(msg)
 
 fn post(url: String, payload: String, token: String) -> Result<HttpResponse, String>
     ? "POST JSON with a Bearer token. Builds the Authorization header explicitly."
     ! [Http]
-    auth = Header(name: "Authorization", value: "Bearer {token}")
+    auth = Header(name = "Authorization", value = "Bearer {token}")
     Http.post(url, payload, "application/json", [auth])
 
 fn main() -> Unit
@@ -42,16 +42,16 @@ fn main() -> Unit
     url = "https://httpbin.org/get"
 
     r1 = fetch(url)
-    match r1:
+    match r1
         Result.Ok(resp) -> Console.print("GET {url} — status: {resp.status}, body length: {String.length(resp.body)}")
         Result.Err(msg) -> Console.print("Transport error: {msg}")
 
     r2 = checkStatus("https://httpbin.org/status/404")
-    match r2:
+    match r2
         Result.Ok(status) -> Console.print("404 endpoint returned status: {status}")
         Result.Err(msg)   -> Console.print("Transport error: {msg}")
 
     r3 = post("https://httpbin.org/post", "{{}}", "demo-token")
-    match r3:
+    match r3
         Result.Ok(resp) -> Console.print("POST status: {resp.status}")
         Result.Err(msg) -> Console.print("POST failed: {msg}")

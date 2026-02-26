@@ -4,7 +4,6 @@ impl Parser {
     pub(super) fn parse_match(&mut self) -> Result<Expr, ParseError> {
         self.expect_exact(&TokenKind::Match)?;
         let subject = self.parse_expr()?;
-        self.expect_exact(&TokenKind::Colon)?;
         self.skip_newlines();
 
         let mut arms = Vec::new();

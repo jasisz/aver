@@ -50,7 +50,7 @@ impl Parser {
 
     pub(super) fn parse_module_intent(&mut self) -> Result<String, ParseError> {
         self.expect_exact(&TokenKind::Intent)?;
-        self.expect_exact(&TokenKind::Colon)?;
+        self.expect_exact(&TokenKind::Assign)?;
         self.skip_newlines();
 
         let mut parts = Vec::new();

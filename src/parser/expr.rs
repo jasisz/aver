@@ -99,8 +99,7 @@ impl Parser {
                 && Self::can_start_type(&self.peek(1).kind)
             {
                 // Expression type ascription: `expr: Type`
-                // We only consume ':' when the next token can begin a type
-                // so callers using ':' as a delimiter (e.g. `match x:`) remain unambiguous.
+                // We only consume ':' when the next token can begin a type.
                 self.advance();
                 let ty = self.parse_type()?;
                 expr = Expr::TypeAscription(Box::new(expr), ty);
@@ -117,7 +116,7 @@ impl Parser {
                 expr = Expr::Attr(Box::new(expr), field);
                 if self.check_exact(&TokenKind::LParen) {
                     let named_arg_start = matches!(&self.peek(1).kind, TokenKind::Ident(_))
-                        && self.peek(2).kind == TokenKind::Colon;
+                        && self.peek(2).kind == TokenKind::Assign;
                     if named_arg_start {
                         if let Some(path) = Self::dotted_name(&expr) {
                             if path == "Tcp.Connection" {
@@ -166,17 +165,17 @@ impl Parser {
         let atom = self.parse_atom()?;
 
         if self.check_exact(&TokenKind::LParen) {
-            // Lookahead: is this `Name(field: value, ...)` (record creation)?
-            // Detect by checking if token after `(` is `Ident` followed by `:`
+            // Lookahead: is this `Name(field = value, ...)` (record creation)?
+            // Detect by checking if token after `(` is `Ident` followed by `=`.
             let is_record_create = if let Expr::Ident(ref name) = atom {
                 name.chars().next().map_or(false, |c| c.is_uppercase())
                     && matches!(&self.peek(1).kind, TokenKind::Ident(_))
-                    && self.peek(2).kind == TokenKind::Colon
+                    && self.peek(2).kind == TokenKind::Assign
             } else {
                 false
             };
             let named_arg_start = matches!(&self.peek(1).kind, TokenKind::Ident(_))
-                && self.peek(2).kind == TokenKind::Colon;
+                && self.peek(2).kind == TokenKind::Assign;
 
             if is_record_create {
                 if let Expr::Ident(type_name) = atom {
@@ -211,7 +210,7 @@ impl Parser {
         Ok(atom)
     }
 
-    /// Parse named-field arguments for record creation: `name: expr, name2: expr2`
+    /// Parse named-field arguments for record creation: `name = expr, name2 = expr2`
     pub(super) fn parse_record_create_fields(&mut self) -> Result<Vec<(String, Expr)>, ParseError> {
         let mut fields = Vec::new();
 
@@ -226,7 +225,7 @@ impl Parser {
                 TokenKind::Ident(s) => s,
                 _ => unreachable!(),
             };
-            self.expect_exact(&TokenKind::Colon)?;
+            self.expect_exact(&TokenKind::Assign)?;
             let value = self.parse_expr()?;
             fields.push((field_name, value));
         }

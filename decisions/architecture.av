@@ -1,100 +1,100 @@
 module Architecture
-    intent:
+    intent =
         "Documents the architectural decisions of the Aver interpreter itself."
         "The language uses its own decision blocks to record why it was built the way it was."
         "This file is self-referential: Aver explains its own design in Aver."
 
-decision HostLanguage:
-    date: "2024-01-10"
-    author: "Aver core team"
-    reason:
+decision HostLanguage
+    date = "2024-01-10"
+    author = "Aver core team"
+    reason =
         "Rust provides memory safety without a garbage collector, which matters for a language runtime."
         "Its algebraic types (enum, Result, Option) map directly onto Aver concepts and kept the implementation honest."
         "The rich ecosystem (clap, colored, thiserror) let us ship a polished CLI without boilerplate."
-    chosen: Rust
-    rejected: [Python, Go, Haskell]
-    impacts: [Lexer, Parser, Interpreter, Checker]
+    chosen = Rust
+    rejected = [Python, Go, Haskell]
+    impacts = [Lexer, Parser, Interpreter, Checker]
 
-decision SignificantIndentation:
-    date: "2024-01-20"
-    author: "Aver core team"
-    reason:
+decision SignificantIndentation
+    date = "2024-01-20"
+    author = "Aver core team"
+    reason =
         "Braces are syntactic noise that adds no meaning and forces style debates."
         "Indentation is already how humans read code, so making it structural removes a class of inconsistency."
         "The lexer emits explicit INDENT and DEDENT tokens, keeping the parser context-free and easy to extend."
-    chosen: Indentation
-    rejected: [Braces, BeginEnd, Keywords]
-    impacts: [Lexer, Parser, AllModules]
+    chosen = Indentation
+    rejected = [Braces, BeginEnd, Keywords]
+    impacts = [Lexer, Parser, AllModules]
 
-decision ResultOverExceptions:
-    date: "2024-01-15"
-    author: "Aver core team"
-    reason:
+decision ResultOverExceptions
+    date = "2024-01-15"
+    author = "Aver core team"
+    reason =
         "Exceptions hide control flow: a function that throws is indistinguishable from one that does not at the call site."
         "Result types make every error path visible in the signature, which is essential when an AI reads code without running it."
         "The match expression and the ? operator together give ergonomic error handling without sacrificing explicitness."
-    chosen: Result
-    rejected: [Exceptions, Nullable, Panic]
-    impacts: [Calculator, Interpreter, Checker]
+    chosen = Result
+    rejected = [Exceptions, Nullable, Panic]
+    impacts = [Calculator, Interpreter, Checker]
 
-decision ColocatedVerify:
-    date: "2024-01-25"
-    author: "Aver core team"
-    reason:
+decision ColocatedVerify
+    date = "2024-01-25"
+    author = "Aver core team"
+    reason =
         "Tests that live in a separate directory rot faster because nobody reads them when changing the function."
         "A verify block immediately below its function is the minimum viable specification: it says what the function must do."
         "Co-location also makes it trivial for an AI to regenerate or extend tests without searching the repository."
-    chosen: ColocatedVerifyBlocks
-    rejected: [SeparateTestFiles, ExternalTestFramework]
-    impacts: [Checker, AllFunctions]
+    chosen = ColocatedVerifyBlocks
+    rejected = [SeparateTestFiles, ExternalTestFramework]
+    impacts = [Checker, AllFunctions]
 
-decision DecisionBlocksAsLanguageFeature:
-    date: "2024-02-01"
-    author: "Aver core team"
-    reason:
+decision DecisionBlocksAsLanguageFeature
+    date = "2024-02-01"
+    author = "Aver core team"
+    reason =
         "Architecture Decision Records written in markdown files are invisible to the language tooling and decay silently."
         "Making decisions a first-class parse node means they can be indexed, searched, and rendered by any tool that reads Aver."
         "When an AI resumes work on a codebase, it can run aver decisions to reconstruct the design rationale without reading prose."
-    chosen: FirstClassDecisions
-    rejected: [MarkdownADR, Comments, ExternalWiki]
-    impacts: [Lexer, Parser, Checker, AIDeveloperExperience]
+    chosen = FirstClassDecisions
+    rejected = [MarkdownADR, Comments, ExternalWiki]
+    impacts = [Lexer, Parser, Checker, AIDeveloperExperience]
 
-decision TreeWalkingInterpreter:
-    date: "2024-01-30"
-    author: "Aver core team"
-    reason:
+decision TreeWalkingInterpreter
+    date = "2024-01-30"
+    author = "Aver core team"
+    reason =
         "A tree-walking interpreter can be built and debugged in an afternoon; bytecode compilation requires weeks of infrastructure."
         "The primary goal of Aver is to validate language design and AI tooling, not to achieve maximum runtime throughput."
         "Switching to bytecode or LLVM later is straightforward once the semantics are stable."
-    chosen: TreeWalker
-    rejected: [BytecodeVM, LLVMBackend, Transpilation]
-    impacts: [Interpreter, Performance]
+    chosen = TreeWalker
+    rejected = [BytecodeVM, LLVMBackend, Transpilation]
+    impacts = [Interpreter, Performance]
 
-decision RecordsAreDataMethodsInModules:
-    date: "2026-02-25"
-    author: "Aver core team"
-    reason:
+decision RecordsAreDataMethodsInModules
+    date = "2026-02-25"
+    author = "Aver core team"
+    reason =
         "Keeping records as data-only keeps the object model small and predictable."
         "Module namespaces already provide a clear place for behavior via Module.fn(record, ...)."
         "This avoids introducing two parallel styles too early: methods on records and module functions."
-    chosen: DataOnlyRecords
-    rejected: [RecordMethods, ImplicitThis]
-    impacts: [TypeSystem, RecordModel, ModuleNamespaces]
+    chosen = DataOnlyRecords
+    rejected = [RecordMethods, ImplicitThis]
+    impacts = [TypeSystem, RecordModel, ModuleNamespaces]
 
-decision EffectContractsAreTransparentAcrossModules:
-    date: "2026-02-25"
-    author: "Aver core team"
-    reason:
+decision EffectContractsAreTransparentAcrossModules
+    date = "2026-02-25"
+    author = "Aver core team"
+    reason =
         "Current Aver model keeps module imports and capability effects as two explicit contracts."
         "`depends [X]` controls which module code is visible, while `! [Effect]` controls which side effects a function may use."
         "Effect requirements propagate through cross-module calls, so callers must declare the effects required by imported functions."
-    chosen: TransparentAcrossModules
-    rejected: [OpaqueModuleContracts, ImplicitModuleCapabilities]
-    impacts: [ModuleSystem, Effects, TypeChecker, RuntimeGate]
+    chosen = TransparentAcrossModules
+    rejected = [OpaqueModuleContracts, ImplicitModuleCapabilities]
+    impacts = [ModuleSystem, Effects, TypeChecker, RuntimeGate]
 
 fn describeDecision(decName: String, pick: String) -> String
     ? "Formats a one-line summary of an architectural decision."
-    = "Decision: {decName} -> chosen: {pick}"
+    = "Decision: {decName} -> chosen = {pick}"
 
 fn main() -> Unit
     ! [Console]
@@ -111,6 +111,6 @@ fn main() -> Unit
     print("")
     print("Run: cargo run -- decisions decisions/architecture.av")
 
-verify describeDecision:
-    describeDecision("HostLanguage", "Rust") => "Decision: HostLanguage -> chosen: Rust"
-    describeDecision("TreeWalker", "Fast") => "Decision: TreeWalker -> chosen: Fast"
+verify describeDecision
+    describeDecision("HostLanguage", "Rust") => "Decision: HostLanguage -> chosen = Rust"
+    describeDecision("TreeWalker", "Fast") => "Decision: TreeWalker -> chosen = Fast"

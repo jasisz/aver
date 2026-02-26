@@ -1,5 +1,5 @@
 module Lists
-    intent:
+    intent =
         "Demonstrates list values and higher-order functions."
         "Aver has no loops — iteration happens through List.map, List.filter, and List.fold."
 
@@ -29,12 +29,12 @@ fn main() -> Unit
     oob = List.get(numbers, 99)
     Console.print(oob)
 
-verify double:
+verify double
     double(3) => 6
     double(0) => 0
     double(-2) => -4
 
-verify isPositive:
+verify isPositive
     isPositive(1)  => true
     isPositive(0)  => false
     isPositive(-5) => false

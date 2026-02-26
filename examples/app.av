@@ -1,15 +1,15 @@
 module App
     depends [Examples.Fibonacci]
-    intent:
+    intent =
         "Demonstrates module imports via depends."
 
 fn main() -> Unit
     ! [Console]
     result = Examples.Fibonacci.buildFibStats(10)
-    match result:
+    match result
         Result.Ok(stats) -> Console.print(stats.sum)
         Result.Err(msg)  -> Console.print(msg)
 
-verify imports:
+verify imports
     Examples.Fibonacci.fib(10) => 55
     Examples.Fibonacci.isEven(144) => true

@@ -1,5 +1,5 @@
 module TypeErrors
-    intent:
+    intent =
         "Intentional type errors to test the type checker. Do not run."
 
 fn badAdd(a: Int, b: String) -> Int

@@ -7,14 +7,14 @@ type Shape
 
 fn area(s: Shape) -> Float
   ? "Calculate the area of a shape"
-  match s:
+  match s
     Shape.Circle(r) -> r * r * 3.14159
     Shape.Rect(w, h) -> w * h
     Shape.Point -> 0.0
 
 fn describe(s: Shape) -> String
   ? "Describe a shape as a human-readable string"
-  match s:
+  match s
     Shape.Circle(r) -> "Circle with radius"
     Shape.Rect(w, h) -> "Rectangle"
     Shape.Point -> "Point"

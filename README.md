@@ -30,7 +30,7 @@ Traditional languages leave all of this as implicit knowledge in someone's head,
 ```aver
 fn processPayment(amount: Int) -> Result<String, String>
     ? "Validates and records the charge. Pure — no network, no disk."
-    match amount:
+    match amount
         0 -> Result.Err("Cannot charge zero")
         _ -> Result.Ok("txn-{amount}")
 ```
@@ -49,15 +49,15 @@ You can read any function in Aver and know exactly what it's capable of — with
 ### "Why was this decision made?"
 
 ```aver
-decision UseResultNotExceptions:
-    date: "2024-01-15"
-    reason:
+decision UseResultNotExceptions
+    date = "2024-01-15"
+    reason =
         "Invisible exceptions lose money at runtime."
         "Callers must handle failure — Result forces that at the call site."
-    chosen: Result
-    rejected: [Exceptions, Nullable]
-    impacts: [charge, refund, settle]
-    author: "team"
+    chosen = Result
+    rejected = [Exceptions, Nullable]
+    impacts = [charge, refund, settle]
+    author = "team"
 ```
 
 `decision` blocks are first-class syntax, co-located with the code they describe. Not a Confluence page that goes stale. Not a commit message no one reads. Queryable:
@@ -95,7 +95,7 @@ This is what AI-assisted development actually needs: context that travels with t
 ### "How do I know a refactor didn't break anything?"
 
 ```aver
-verify charge:
+verify charge
     charge("alice", 100) => Result.Ok("txn-alice-100")
     charge("bob",   0)   => Result.Err("Cannot charge zero")
     charge("x",    -1)   => Result.Ok("txn-x--1")
@@ -136,28 +136,28 @@ Pure logic stays in `verify`; effectful flows are covered by replay recordings. 
 
 ```aver
 module Payments
-    intent:
+    intent =
         "Processes transactions with an explicit audit trail."
     depends [Ledger, Models.User]
     exposes [charge]
 
-decision UseResultNotExceptions:
-    date: "2024-01-15"
-    reason:
+decision UseResultNotExceptions
+    date = "2024-01-15"
+    reason =
         "Invisible exceptions lose money at runtime."
         "Callers must handle failure — Result forces that at compile time."
-    chosen: Result
-    rejected: [Exceptions, Nullable]
-    impacts: [charge]
+    chosen = Result
+    rejected = [Exceptions, Nullable]
+    impacts = [charge]
 
 fn charge(account: String, amount: Int) -> Result<String, String>
     ? "Charges account. Returns txn ID or a human-readable error."
     ! [Http, Ledger]
-    match amount:
+    match amount
         0 -> Result.Err("Cannot charge zero")
         _ -> Result.Ok("txn-{account}-{amount}")
 
-verify charge:
+verify charge
     charge("alice", 100) => Result.Ok("txn-alice-100")
     charge("bob",   0)   => Result.Err("Cannot charge zero")
 ```
@@ -192,7 +192,7 @@ aver repl                              # interactive REPL
 Primitive: `Int`, `Float`, `String`, `Bool`, `Unit`
 Compound: `Result<T, E>`, `Option<T>`, `List<T>`, `Fn(A) -> B`, `Fn(A) -> B ! [Effect]`
 User-defined sum types: `type Shape` → `Shape.Circle(Float)`, `Shape.Rect(Float, Float)`
-User-defined product types: `record User` → `User(name: "Alice", age: 30)`, `u.name`
+User-defined product types: `record User` → `User(name = "Alice", age = 30)`, `u.name`
 Expression type ascription: `expr: Type` (e.g. `[]: List<Header>`)
 
 Module imports resolve from a module root (`--module-root`, default: current working directory).

@@ -10,13 +10,13 @@ fn greet(u: User) -> String
 
 fn is_adult(u: User) -> Bool
   ? "Check if a user is an adult (18+)"
-  match u:
+  match u
     User(name, age) -> age >= 18
 
 fn main()
   ! [Console]
-  alice = User(name: "Alice", age: 30)
-  bob = User(name: "Bob", age: 15)
+  alice = User(name = "Alice", age = 30)
+  bob = User(name = "Bob", age = 15)
   Console.print(greet(alice))
   Console.print(greet(bob))
   Console.print(is_adult(alice))

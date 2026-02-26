@@ -11,7 +11,6 @@ impl Parser {
             TokenKind::Ident(s) => s,
             _ => unreachable!(),
         };
-        self.expect_exact(&TokenKind::Colon)?;
         self.skip_newlines();
 
         let mut cases = Vec::new();
@@ -52,7 +51,6 @@ impl Parser {
             TokenKind::Ident(s) => s,
             _ => unreachable!(),
         };
-        self.expect_exact(&TokenKind::Colon)?;
         self.skip_newlines();
 
         let mut date = String::new();
@@ -73,7 +71,7 @@ impl Parser {
                     }
                     TokenKind::Date => {
                         self.advance();
-                        self.expect_exact(&TokenKind::Colon)?;
+                        self.expect_exact(&TokenKind::Assign)?;
                         if let TokenKind::Str(s) = self.current().kind.clone() {
                             date = s;
                             self.advance();
@@ -82,13 +80,13 @@ impl Parser {
                     }
                     TokenKind::Reason => {
                         self.advance();
-                        self.expect_exact(&TokenKind::Colon)?;
+                        self.expect_exact(&TokenKind::Assign)?;
                         self.skip_newlines();
                         reason = self.parse_multiline_text()?;
                     }
                     TokenKind::Chosen => {
                         self.advance();
-                        self.expect_exact(&TokenKind::Colon)?;
+                        self.expect_exact(&TokenKind::Assign)?;
                         if let TokenKind::Ident(s) = self.current().kind.clone() {
                             chosen = s;
                             self.advance();
@@ -97,19 +95,19 @@ impl Parser {
                     }
                     TokenKind::Rejected => {
                         self.advance();
-                        self.expect_exact(&TokenKind::Colon)?;
+                        self.expect_exact(&TokenKind::Assign)?;
                         rejected = self.parse_ident_list()?;
                         self.skip_newlines();
                     }
                     TokenKind::Impacts => {
                         self.advance();
-                        self.expect_exact(&TokenKind::Colon)?;
+                        self.expect_exact(&TokenKind::Assign)?;
                         impacts = self.parse_ident_list()?;
                         self.skip_newlines();
                     }
                     TokenKind::Author => {
                         self.advance();
-                        self.expect_exact(&TokenKind::Colon)?;
+                        self.expect_exact(&TokenKind::Assign)?;
                         if let TokenKind::Str(s) = self.current().kind.clone() {
                             author = Some(s);
                             self.advance();

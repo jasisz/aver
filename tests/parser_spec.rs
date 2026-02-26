@@ -440,7 +440,7 @@ fn fn_with_tuple_type_annotation() {
 #[test]
 fn match_with_wildcard() {
     let src =
-        "fn f(n: Int) -> String\n    = match n:\n        0 -> \"zero\"\n        _ -> \"other\"\n";
+        "fn f(n: Int) -> String\n    = match n\n        0 -> \"zero\"\n        _ -> \"other\"\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         if let FnBody::Expr(Expr::Match(_, arms)) = &*fd.body {
@@ -457,7 +457,7 @@ fn match_with_wildcard() {
 
 #[test]
 fn match_subject_colon_is_not_type_ascription() {
-    let items = parse("match xs:\n    [] -> 0\n    _ -> 1\n");
+    let items = parse("match xs\n    [] -> 0\n    _ -> 1\n");
     assert!(matches!(
         items[0],
         TopLevel::Stmt(Stmt::Expr(Expr::Match(_, _)))
@@ -466,7 +466,7 @@ fn match_subject_colon_is_not_type_ascription() {
 
 #[test]
 fn match_constructor_patterns() {
-    let src = "fn f(r: Result<Int, String>) -> Int\n    = match r:\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n";
+    let src = "fn f(r: Result<Int, String>) -> Int\n    = match r\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         if let FnBody::Expr(Expr::Match(_, arms)) = &*fd.body {
@@ -489,7 +489,7 @@ fn match_constructor_patterns() {
 
 #[test]
 fn match_ident_binding() {
-    let src = "fn f(x: Int) -> Int\n    = match x:\n        n -> n\n";
+    let src = "fn f(x: Int) -> Int\n    = match x\n        n -> n\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         if let FnBody::Expr(Expr::Match(_, arms)) = &*fd.body {
@@ -505,7 +505,7 @@ fn match_ident_binding() {
 #[test]
 fn match_list_empty_pattern() {
     let src =
-        "fn f(xs: List<Int>) -> Int\n    = match xs:\n        [] -> 0\n        [h, ..t] -> h\n";
+        "fn f(xs: List<Int>) -> Int\n    = match xs\n        [] -> 0\n        [h, ..t] -> h\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         if let FnBody::Expr(Expr::Match(_, arms)) = &*fd.body {
@@ -525,7 +525,7 @@ fn match_list_empty_pattern() {
 
 #[test]
 fn match_list_cons_pattern_with_underscore() {
-    let src = "fn f(xs: List<Int>) -> Int\n    = match xs:\n        [_, ..rest] -> len(rest)\n        [] -> 0\n";
+    let src = "fn f(xs: List<Int>) -> Int\n    = match xs\n        [_, ..rest] -> len(rest)\n        [] -> 0\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         if let FnBody::Expr(Expr::Match(_, arms)) = &*fd.body {
@@ -547,7 +547,7 @@ fn match_list_cons_pattern_with_underscore() {
 
 #[test]
 fn module_with_intent() {
-    let src = "module Calc\n    intent:\n        \"A calculator module.\"\n";
+    let src = "module Calc\n    intent =\n        \"A calculator module.\"\n";
     let items = parse(src);
     assert_eq!(items.len(), 1);
     if let TopLevel::Module(m) = &items[0] {
@@ -561,7 +561,7 @@ fn module_with_intent() {
 #[test]
 fn module_with_depends() {
     // depends uses no colon: `depends [Core]`
-    let src = "module App\n    depends [Core]\n    intent:\n        \"App module.\"\n";
+    let src = "module App\n    depends [Core]\n    intent =\n        \"App module.\"\n";
     let items = parse(src);
     if let TopLevel::Module(m) = &items[0] {
         assert!(m.depends.contains(&"Core".to_string()));
@@ -572,7 +572,7 @@ fn module_with_depends() {
 
 #[test]
 fn module_with_dotted_depends() {
-    let src = "module App\n    depends [Models.User, Services.Auth]\n    intent:\n        \"App module.\"\n";
+    let src = "module App\n    depends [Models.User, Services.Auth]\n    intent =\n        \"App module.\"\n";
     let items = parse(src);
     if let TopLevel::Module(m) = &items[0] {
         assert!(m.depends.contains(&"Models.User".to_string()));
@@ -588,7 +588,7 @@ fn module_with_dotted_depends() {
 
 #[test]
 fn verify_two_cases() {
-    let src = "verify add:\n    add(1, 2) =>3\n    add(0, 0) =>0\n";
+    let src = "verify add\n    add(1, 2) =>3\n    add(0, 0) =>0\n";
     let items = parse(src);
     assert_eq!(items.len(), 1);
     if let TopLevel::Verify(vb) = &items[0] {
@@ -601,7 +601,7 @@ fn verify_two_cases() {
 
 #[test]
 fn verify_case_lhs_is_fn_call() {
-    let src = "verify greet:\n    greet(\"Alice\") =>\"Hello, Alice\"\n";
+    let src = "verify greet\n    greet(\"Alice\") =>\"Hello, Alice\"\n";
     let items = parse(src);
     if let TopLevel::Verify(vb) = &items[0] {
         let (lhs, _) = &vb.cases[0];
@@ -613,7 +613,7 @@ fn verify_case_lhs_is_fn_call() {
 
 #[test]
 fn verify_case_rhs_is_literal() {
-    let src = "verify double:\n    double(3) =>6\n";
+    let src = "verify double\n    double(3) =>6\n";
     let items = parse(src);
     if let TopLevel::Verify(vb) = &items[0] {
         let (_, rhs) = &vb.cases[0];
@@ -626,7 +626,7 @@ fn verify_case_rhs_is_literal() {
 // Verify that comparison operators work inside verify cases (not consumed as separator)
 #[test]
 fn verify_case_with_comparison_inside() {
-    let src = "verify is_pos:\n    is_pos(1) =>true\n    is_pos(0) =>false\n";
+    let src = "verify is_pos\n    is_pos(1) =>true\n    is_pos(0) =>false\n";
     let items = parse(src);
     if let TopLevel::Verify(vb) = &items[0] {
         assert_eq!(vb.cases.len(), 2);
@@ -641,7 +641,7 @@ fn verify_case_with_comparison_inside() {
 
 #[test]
 fn decision_basic() {
-    let src = "decision UseResult:\n    date: \"2024-01-01\"\n    reason:\n        \"Explicit error handling.\"\n    chosen: Result\n    rejected: [Exceptions]\n    impacts: [AllModules]\n";
+    let src = "decision UseResult\n    date = \"2024-01-01\"\n    reason =\n        \"Explicit error handling.\"\n    chosen = Result\n    rejected = [Exceptions]\n    impacts = [AllModules]\n";
     let items = parse(src);
     assert_eq!(items.len(), 1);
     if let TopLevel::Decision(d) = &items[0] {
@@ -657,7 +657,7 @@ fn decision_basic() {
 
 #[test]
 fn decision_with_author() {
-    let src = "decision UseResult:\n    date: \"2024-01-01\"\n    author: \"Alice\"\n    reason:\n        \"Good choice.\"\n    chosen: Result\n    rejected: []\n    impacts: []\n";
+    let src = "decision UseResult\n    date = \"2024-01-01\"\n    author = \"Alice\"\n    reason =\n        \"Good choice.\"\n    chosen = Result\n    rejected = []\n    impacts = []\n";
     let items = parse(src);
     if let TopLevel::Decision(d) = &items[0] {
         assert_eq!(d.author, Some("Alice".to_string()));
@@ -668,7 +668,7 @@ fn decision_with_author() {
 
 #[test]
 fn decision_multiple_rejected() {
-    let src = "decision NullChoice:\n    date: \"2024-01-01\"\n    reason:\n        \"No null.\"\n    chosen: Option\n    rejected: [Null, Nil, Nothing]\n    impacts: []\n";
+    let src = "decision NullChoice\n    date = \"2024-01-01\"\n    reason =\n        \"No null.\"\n    chosen = Option\n    rejected = [Null, Nil, Nothing]\n    impacts = []\n";
     let items = parse(src);
     if let TopLevel::Decision(d) = &items[0] {
         assert_eq!(d.rejected.len(), 3);
@@ -694,7 +694,7 @@ fn multiple_fn_defs() {
 
 #[test]
 fn module_then_fn() {
-    let src = "module M\n    intent:\n        \"M.\"\nfn f() -> Unit\n    = print(\"f\")\n";
+    let src = "module M\n    intent =\n        \"M.\"\nfn f() -> Unit\n    = print(\"f\")\n";
     let items = parse(src);
     assert!(matches!(items[0], TopLevel::Module(_)));
     assert!(matches!(items[1], TopLevel::FnDef(_)));
@@ -774,7 +774,7 @@ fn parse_sum_type_constructor_call() {
 
 #[test]
 fn parse_record_create_expression() {
-    let src = "User(name: \"Alice\", age: 30)\n";
+    let src = "User(name = \"Alice\", age = 30)\n";
     let items = parse(src);
     if let TopLevel::Stmt(Stmt::Expr(Expr::RecordCreate { type_name, fields })) = &items[0] {
         assert_eq!(type_name, "User");
@@ -788,7 +788,7 @@ fn parse_record_create_expression() {
 
 #[test]
 fn parse_user_defined_constructor_pattern() {
-    let src = "fn classify(s: Shape) -> Float\n  = match s:\n    Circle(r) -> r\n    Rect(w, h) -> w\n    Point -> 0.0\n";
+    let src = "fn classify(s: Shape) -> Float\n  = match s\n    Circle(r) -> r\n    Rect(w, h) -> w\n    Point -> 0.0\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         if let FnBody::Expr(Expr::Match(_, arms)) = &*fd.body {
@@ -821,7 +821,7 @@ fn parse_fails_on_any_type_annotation() {
 
 #[test]
 fn parse_tcp_connection_manual_constructor_shows_actionable_error() {
-    let src = "c = Tcp.Connection(id: \"x\", host: \"127.0.0.1\", port: 6379)\n";
+    let src = "c = Tcp.Connection(id = \"x\", host = \"127.0.0.1\", port = 6379)\n";
     let msg = parse_error(src);
     assert!(
         msg.contains("Cannot construct 'Tcp.Connection' directly"),

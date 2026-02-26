@@ -1,5 +1,5 @@
 module MySql
-    intent:
+    intent =
         "MySQL connector over an Http SQL gateway (PlanetScale, Vitess, or self-hosted SQL-over-HTTP)."
         "All operations return Result: transport and SQL failures are values, never exceptions."
         "Pure Aver surface: no native driver, no binary protocol, no hidden connection state."
@@ -11,41 +11,41 @@ record DbConfig
     host: String
     database: String
     token: String
-decision UseHttpGateway:
-    date: "2026-02-25"
-    reason:
+decision UseHttpGateway
+    date = "2026-02-25"
+    reason =
         "Aver does not implement native MySQL wire framing (handshake, auth, COM_QUERY packets)."
         "Http gateways expose SQL semantics through a protocol already supported by the Http service."
         "This keeps the connector dependency-free and portable across Aver runtimes."
-    chosen: HttpGateway
-    rejected: [NativeWireProtocol, FFIBinding, EmbeddedDriver]
-    impacts: [query, execute, ping]
-decision BearerTokenAuth:
-    date: "2026-02-25"
-    reason:
+    chosen = HttpGateway
+    rejected = [NativeWireProtocol, FFIBinding, EmbeddedDriver]
+    impacts = [query, execute, ping]
+decision BearerTokenAuth
+    date = "2026-02-25"
+    reason =
         "Token auth is explicit and stateless: each request carries credentials."
         "No implicit pool or session state hidden inside runtime internals."
         "Token in DbConfig is visible at call sites and easy to swap in tests."
-    chosen: BearerToken
-    rejected: [BasicAuth, ConnectionString, ImplicitEnvLookup]
-    impacts: [authHeader, query, execute, ping]
-decision RawJsonBody:
-    date: "2026-02-25"
-    reason:
+    chosen = BearerToken
+    rejected = [BasicAuth, ConnectionString, ImplicitEnvLookup]
+    impacts = [authHeader, query, execute, ping]
+decision RawJsonBody
+    date = "2026-02-25"
+    reason =
         "Aver has no JSON parser in the standard library yet."
         "Returning raw response body as String is honest about current capabilities."
         "Structured parsing can be layered later via external tools or future Json module."
-    chosen: RawStringBody
-    rejected: [ParsedRecord, DynamicMap, JsonValue]
-    impacts: [query, execute]
+    chosen = RawStringBody
+    rejected = [ParsedRecord, DynamicMap, JsonValue]
+    impacts = [query, execute]
 fn is2xx(status: Int) -> Bool
     ? "True when HTTP status is in [200, 299]."
-    match status >= 200:
+    match status >= 200
         false -> false
-        true  -> match status < 300:
+        true  -> match status < 300
             true  -> true
             false -> false
-verify is2xx:
+verify is2xx
     is2xx(200) => true
     is2xx(201) => true
     is2xx(204) => true
@@ -58,87 +58,87 @@ fn queryUrl(config: DbConfig) -> String
     ? "Builds the query endpoint URL for this database."
     = "https://{config.host}/v1/databases/{config.database}/query"
 
-verify queryUrl:
-    queryUrl(DbConfig(host: "db.example.com", database: "shop", token: "t")) => "https://db.example.com/v1/databases/shop/query"
+verify queryUrl
+    queryUrl(DbConfig(host = "db.example.com", database = "shop", token = "t")) => "https://db.example.com/v1/databases/shop/query"
 
 fn executeUrl(config: DbConfig) -> String
     ? "Builds execute endpoint URL for non-SELECT statements."
     = "https://{config.host}/v1/databases/{config.database}/execute"
 
-verify executeUrl:
-    executeUrl(DbConfig(host: "db.example.com", database: "shop", token: "t")) => "https://db.example.com/v1/databases/shop/execute"
+verify executeUrl
+    executeUrl(DbConfig(host = "db.example.com", database = "shop", token = "t")) => "https://db.example.com/v1/databases/shop/execute"
 
 fn pingUrl(config: DbConfig) -> String
     ? "Builds health-check URL for this database host."
     = "https://{config.host}/v1/health"
 
-verify pingUrl:
-    pingUrl(DbConfig(host: "db.example.com", database: "shop", token: "t")) => "https://db.example.com/v1/health"
+verify pingUrl
+    pingUrl(DbConfig(host = "db.example.com", database = "shop", token = "t")) => "https://db.example.com/v1/health"
 
 fn authHeader(config: DbConfig) -> Header
     ? "Constructs Authorization: Bearer header from DbConfig token."
-    = Header(name: "Authorization", value: "Bearer {config.token}")
+    = Header(name = "Authorization", value = "Bearer {config.token}")
 
-verify authHeader:
-    authHeader(DbConfig(host: "h", database: "d", token: "abc")) => Header(name: "Authorization", value: "Bearer abc")
+verify authHeader
+    authHeader(DbConfig(host = "h", database = "d", token = "abc")) => Header(name = "Authorization", value = "Bearer abc")
 
 fn sqlBody(sql: String) -> String
     ? "Wraps SQL statement in JSON envelope expected by the gateway."
     = "{{\"sql\": \"{sql}\"}}"
 
-verify sqlBody:
+verify sqlBody
     sqlBody("SELECT 1") => "{{\"sql\": \"SELECT 1\"}}"
 
 fn query(config: DbConfig, sql: String) -> Result<String, String>
     ? "Executes SELECT. Returns Ok(rawJson) on success."
     ! [Http]
     result = Http.post(queryUrl(config), sqlBody(sql), "application/json", [authHeader(config)])
-    match result:
+    match result
         Result.Err(msg) -> Result.Err("Transport error: {msg}")
-        Result.Ok(resp) -> match is2xx(resp.status):
+        Result.Ok(resp) -> match is2xx(resp.status)
             false -> Result.Err("Query failed - HTTP {resp.status}: {resp.body}")
             true  -> Result.Ok(resp.body)
 
-verify query:
+verify query
 
 fn execute(config: DbConfig, sql: String) -> Result<String, String>
     ? "Executes non-SELECT statement. Returns Ok(rawJson) on success."
     ! [Http]
     result = Http.post(executeUrl(config), sqlBody(sql), "application/json", [authHeader(config)])
-    match result:
+    match result
         Result.Err(msg) -> Result.Err("Transport error: {msg}")
-        Result.Ok(resp) -> match is2xx(resp.status):
+        Result.Ok(resp) -> match is2xx(resp.status)
             false -> Result.Err("Execute failed - HTTP {resp.status}: {resp.body}")
             true  -> Result.Ok(resp.body)
 
-verify execute:
+verify execute
 
 fn ping(config: DbConfig) -> Result<Int, String>
     ? "Health-checks the gateway. Returns Ok(httpStatus) when reachable."
     ! [Http]
     result = Http.get(pingUrl(config))
-    match result:
+    match result
         Result.Err(msg) -> Result.Err("Transport error: {msg}")
-        Result.Ok(resp) -> match is2xx(resp.status):
+        Result.Ok(resp) -> match is2xx(resp.status)
             false -> Result.Err("Ping failed - HTTP {resp.status}")
             true  -> Result.Ok(resp.status)
 
-verify ping:
+verify ping
 
 fn logResult(label: String, result: Result<String, String>) -> Unit
     ? "Prints labeled Ok/Err result to the console."
     ! [Console]
-    match result:
+    match result
         Result.Ok(body) -> Console.print("{label} OK: {body}")
         Result.Err(msg) -> Console.error("{label} FAILED: {msg}")
 
-verify logResult:
+verify logResult
 
 fn main() -> Unit
     ! [Http, Console]
-    db = DbConfig(host: "db.example.com", database: "myapp", token: "demo-token")
+    db = DbConfig(host = "db.example.com", database = "myapp", token = "demo-token")
     health = ping(db)
-    match health:
+    match health
         Result.Ok(status) -> Console.print("Database reachable - HTTP {status}")
         Result.Err(msg)   -> Console.error("Database unreachable: {msg}")
     rows = query(db, "SELECT id, name FROM users LIMIT 10")

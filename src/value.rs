@@ -99,7 +99,7 @@ pub enum Value {
         variant: String,
         fields: Vec<Value>,
     },
-    /// User-defined product type (record), e.g. `User(name: "Alice", age: 30)`
+    /// User-defined product type (record), e.g. `User(name = "Alice", age = 30)`
     Record {
         type_name: String,
         fields: Vec<(String, Value)>,

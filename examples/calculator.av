@@ -1,32 +1,32 @@
 module Calculator
-    intent:
+    intent =
         "Safe calculator demonstrating Result types, match expressions,"
         "and co-located verification. Errors are values, not exceptions."
     exposes [safeDivide, safeRoot]
 
-decision NoExceptions:
-    date: "2024-01-15"
-    reason:
+decision NoExceptions
+    date = "2024-01-15"
+    reason =
         "Exceptions make error paths invisible at the call site."
         "Result forces the caller to acknowledge failure explicitly,"
         "which is essential when AI tooling reads code without running it."
-    chosen: Result
-    rejected: [Exceptions, Nullable]
-    impacts: [safeDivide, safeRoot]
+    chosen = Result
+    rejected = [Exceptions, Nullable]
+    impacts = [safeDivide, safeRoot]
 
 fn safeDivide(a: Int, b: Int) -> Result<Int, String>
     ? "Safe integer division. Returns Err when divisor is zero."
-    match b:
+    match b
         0 -> Result.Err("Division by zero")
         _ -> Result.Ok(a / b)
 
 fn safeRoot(n: Int) -> Result<Int, String>
     ? "Returns Err for negative input, Ok otherwise. Uses match on a bool expression."
-    match n < 0:
+    match n < 0
         true  -> Result.Err("Cannot take root of negative number")
         false -> Result.Ok(n)
 
-verify safeRoot:
+verify safeRoot
     safeRoot(4)   => Result.Ok(4)
     safeRoot(0)   => Result.Ok(0)
     safeRoot(-1)  => Result.Err("Cannot take root of negative number")
@@ -41,7 +41,7 @@ fn main() -> Unit
     r3 = safeDivide(9, 3)
     Console.print(r3)
 
-verify safeDivide:
+verify safeDivide
     safeDivide(10, 2) => Result.Ok(5)
     safeDivide(7, 0)  => Result.Err("Division by zero")
     safeDivide(9, 3)  => Result.Ok(3)

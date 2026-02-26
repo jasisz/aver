@@ -113,7 +113,7 @@ fn valid_list_get_preserves_inner_type() {
 
 #[test]
 fn valid_list_pattern_matching() {
-    let src = "fn score(xs: List<Int>) -> Int\n    = match xs:\n        [] -> 0\n        [h, ..t] -> h + List.len(t)\n";
+    let src = "fn score(xs: List<Int>) -> Int\n    = match xs\n        [] -> 0\n        [h, ..t] -> h + List.len(t)\n";
     assert_no_errors(src);
 }
 
@@ -260,7 +260,7 @@ fn valid_services_weather_av() {
 
 #[test]
 fn valid_call_to_exposed_module_member() {
-    let src = "module App\n    depends [Secret]\n    intent:\n        \"Uses exported function\"\nfn main() -> Unit\n    x = Secret.pub()\n";
+    let src = "module App\n    depends [Secret]\n    intent =\n        \"Uses exported function\"\nfn main() -> Unit\n    x = Secret.pub()\n";
     let errs = errors_with_base(src, "examples");
     assert!(
         errs.is_empty(),
@@ -312,7 +312,7 @@ fn error_list_get_wrong_declared_inner_type() {
 fn error_unknown_does_not_satisfy_declared_return_type() {
     let src = concat!(
         "fn bad() -> Int\n",
-        "    = match []:\n",
+        "    = match []\n",
         "        [h, ..t] -> h\n",
         "        []       -> 0\n",
     );
@@ -325,7 +325,7 @@ fn error_unknown_does_not_satisfy_call_argument_type() {
         "fn takesInt(x: Int) -> Int\n",
         "    = x + 1\n",
         "fn bad() -> Int\n",
-        "    n = match []:\n",
+        "    n = match []\n",
         "        [h, ..t] -> h\n",
         "        []       -> 0\n",
         "    takesInt(n)\n",
@@ -337,7 +337,7 @@ fn error_unknown_does_not_satisfy_call_argument_type() {
 fn error_unknown_does_not_satisfy_type_ascription() {
     let src = concat!(
         "fn bad() -> Int\n",
-        "    n = match []:\n",
+        "    n = match []\n",
         "        [h, ..t] -> h\n",
         "        []       -> 0\n",
         "    n: Int\n",
@@ -450,7 +450,7 @@ fn error_top_level_undeclared_console_effect() {
 
 #[test]
 fn error_verify_undeclared_console_effect() {
-    let src = "fn main() -> Int\n    = 0\nverify main:\n    Console.print(\"x\") => Console.print(\"x\")\n";
+    let src = "fn main() -> Int\n    = 0\nverify main\n    Console.print(\"x\") => Console.print(\"x\")\n";
     assert_error_containing(src, "<verify:main>");
     assert_error_containing(src, "Console");
 }
@@ -463,7 +463,7 @@ fn error_undeclared_effect_from_function_typed_callback() {
 
 #[test]
 fn error_call_to_unexposed_module_member() {
-    let src = "module App\n    depends [Secret]\n    intent:\n        \"Tries to use hidden member\"\nfn main() -> Unit\n    x = Secret.hidden()\n";
+    let src = "module App\n    depends [Secret]\n    intent =\n        \"Tries to use hidden member\"\nfn main() -> Unit\n    x = Secret.hidden()\n";
     let errs = errors_with_base(src, "examples");
     assert!(
         errs.iter().any(|e| e.contains("Secret.hidden")),
@@ -544,7 +544,7 @@ fn valid_sum_type_constructor_call() {
 
 #[test]
 fn valid_record_creation() {
-    let src = "record User\n  name: String\n  age: Int\nu = User(name: \"Alice\", age: 30)\n";
+    let src = "record User\n  name: String\n  age: Int\nu = User(name = \"Alice\", age = 30)\n";
     assert_no_errors(src);
 }
 
@@ -581,7 +581,7 @@ fn valid_function_using_user_type_parameter() {
         "  Point\n",
         "fn area(s: Shape) -> Float\n",
         "  ? \"area\"\n",
-        "  = match s:\n",
+        "  = match s\n",
         "    Circle(r) -> r * r\n",
         "    Point -> 0.0\n",
     );
@@ -684,7 +684,7 @@ fn valid_network_post_with_typed_headers() {
     let src = concat!(
         "fn send(url: String) -> Result<HttpResponse, String>\n",
         "    ! [Http]\n",
-        "    headers = [Header(name: \"Authorization\", value: \"Bearer token\")]\n",
+        "    headers = [Header(name = \"Authorization\", value = \"Bearer token\")]\n",
         "    Http.post(url, \"{}\", \"application/json\", headers)\n",
     );
     assert_no_errors(src);
@@ -921,7 +921,7 @@ fn error_tcp_ping_without_effect() {
 fn valid_http_server_listen_with_context() {
     let src = concat!(
         "fn handle(ctx: String, req: HttpRequest) -> HttpResponse\n",
-        "    = HttpResponse(status: 200, body: ctx, headers: [])\n",
+        "    = HttpResponse(status = 200, body = ctx, headers = [])\n",
         "fn main() -> Unit\n",
         "    ! [HttpServer]\n",
         "    HttpServer.listenWith(8080, \"ok\", handle)\n",
