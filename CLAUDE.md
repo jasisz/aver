@@ -38,7 +38,8 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 - **`String` namespace** (`src/services/string_helpers.rs`): `String.length`, `String.byteLength`, `String.startsWith`, `String.endsWith`, `String.contains`, `String.slice`, `String.trim`, `String.split`, `String.replace`, `String.join`, `String.chars`, `String.fromInt`, `String.fromFloat`, `String.fromBool` — no effects
 - **No closures**: all user-defined fns are top-level; at call time, the function sees globals (env[0]) + its own parameters — no closure capture at definition time
 - **Auto-memoization** (`src/call_graph.rs`, `src/types/checker.rs`, `src/interpreter/mod.rs`): pure recursive functions with memo-safe arguments (scalars, records/variants of scalars) are automatically memoized at runtime. Call graph is built from AST, Tarjan SCC detects recursion, and `call_fn_ref` checks/stores a per-function HashMap cache (capped at 4096 entries). No keyword needed — the compiler detects eligibility.
-- CLI with four subcommands: `run`, `verify`, `check`, `decisions`
+- CLI subcommands: `run`, `verify`, `check`, `replay`, `context`, `repl`
+- **Deterministic replay for effectful code** (`src/replay/`, `src/interpreter/mod.rs`, `src/main.rs`): `aver run --record <dir>` captures effect sequence + outcomes; `aver replay <file|dir> [--diff] [--test] [--check-args]` replays offline without real side effects and can fail CI on output mismatch
 - `check` command: warns when a module has no `intent:` or a function with effects/Result return has no `?` description; warns if file exceeds 150 lines; `fn main()` is exempt from the `?` requirement
 - **Static type checker** (`src/types/checker.rs`): `aver check`, `aver run`, and `aver verify` all run a type-check pass. Type errors are hard errors that block execution. The checker covers function bodies and top-level statements (including duplicate binding detection). `Any` annotations are removed from the language surface; the checker may still use internal `Type::Unknown` recovery after earlier errors so analysis can continue.
 - **Effect propagation** is statically enforced (blocks `check`/`run`/`verify`), including `main()`: calling an effectful function requires declaring the same effect in the caller. Runtime also enforces call-edge capabilities as a backstop.
@@ -57,7 +58,7 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 ### What was explicitly NOT implemented yet (save for later)
 
 - Effect handlers / row-polymorphic effects — runtime currently uses declared effect lists with call-edge capability checks; no handlers yet
-- `aver decisions --impacts Module` and other query flags on the CLI
+- decision-query flags (`--impacts`, `--since`, etc.) for `aver context --decisions-only`
 
 ### What will NEVER be in Aver (design decisions)
 
@@ -107,6 +108,10 @@ src/
                    Builds fn→callee graph from AST, detects recursive
                    (self or mutual) functions for auto-memoization and TCO.
 
+  replay/        — Deterministic replay runtime:
+                   `json.rs` (JSON parser/formatter + Value<->JSON mapping)
+                   and `session.rs` (EffectRecord / SessionRecording encoding).
+
   checker.rs     — Static analysis and test runner.
                    run_verify() executes VerifyBlock cases and prints
                    pass/fail with colour.
@@ -114,11 +119,12 @@ src/
                    index_decisions() filters TopLevel::Decision items.
 
   main.rs        — CLI entry point via clap.
-                   Four subcommands: run, verify, check, decisions.
+                   Subcommands: run, verify, check, replay, context, repl.
                    cmd_run: registers FnDefs, runs Stmts, calls main().
+                   cmd_run --record writes SessionRecording JSON traces.
+                   cmd_replay re-executes with recorded effect outcomes.
                    cmd_verify: runs typecheck, registers FnDefs, runs all verify blocks.
                    cmd_check: line-count check + intent/desc warnings.
-                   cmd_decisions: pretty-prints all decision blocks.
 ```
 
 ## How to run
@@ -128,13 +134,14 @@ cargo build
 cargo run -- run examples/hello.av
 cargo run -- run examples/calculator.av
 cargo run -- run examples/lists.av
+cargo run -- run examples/services/console_demo.av --record recordings/
+cargo run -- replay recordings/ --test --diff
 cargo run -- verify examples/calculator.av
 cargo run -- verify examples/lists.av
 cargo run -- check examples/hello.av
 cargo run -- check examples/calculator.av
-cargo run -- decisions decisions/decisions.av
-cargo run -- decisions decisions/architecture.av
-cargo run -- run decisions/architecture.av
+cargo run -- context decisions/architecture.av --decisions-only
+cargo run -- context examples/calculator.av
 ```
 
 ## Spec test suite
@@ -254,6 +261,7 @@ To create a new namespace, follow the pattern in any `src/services/*_helpers.rs`
 - **No check for duplicate function names**: defining a function twice silently shadows the earlier definition
 - **`match` is a statement in `parse_fn_body`** (handled via `if check_exact(Match)`) but also an expression in `parse_atom`; this dual path works but means a `match` at statement position does not pass through the normal expression precedence chain
 - **Effect list** (`! [Io, State]`) is propagated statically and also enforced at runtime on function-call edges; no algebraic handlers yet
+- **Entry-point effect enforcement**: `main`/top-level entry calls use `call_value_with_effects_pub(...)`, which pushes a synthetic call frame with declared effects so runtime checks apply uniformly at the entry boundary
 - **`chosen` field in DecisionBlock** only accepts a bare identifier (not a string), so multi-word chosen values require a single CamelCase identifier
 - **No `val`/`var` keywords**: bindings are `name = expr`, always immutable. Using `val` or `var` produces a parse error with a helpful message.
 - **Unknown identifiers in expressions** are inferred as `Unknown` after emitting a type error so checking can continue; this can produce cascaded follow-up errors in large files

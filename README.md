@@ -31,18 +31,18 @@ Traditional languages leave all of this as implicit knowledge in someone's head,
 fn processPayment(amount: Int) -> Result<String, String>
     ? "Validates and records the charge. Pure — no network, no disk."
     match amount:
-        0 -> Err("Cannot charge zero")
-        _ -> Ok("txn-{amount}")
+        0 -> Result.Err("Cannot charge zero")
+        _ -> Result.Ok("txn-{amount}")
 ```
 
 ```aver
-fn fetchExchangeRate(currency: String) -> Result<Float, String>
+fn fetchExchangeRate(currency: String) -> Result<HttpResponse, String>
     ? "Fetches live rate from the ECB feed."
-    ! [Network]
+    ! [Http]
     Http.get("https://api.ecb.europa.eu/rates/{currency}")
 ```
 
-Effect declarations (`! [Network]`, `! [Disk]`, `! [Console]`) are part of the signature. The type checker enforces them — a function that calls `Http.get` without declaring `! [Network]` is a **type error, not a warning**. The runtime enforces the same boundary as a backstop.
+Effect declarations (`! [Http]`, `! [Disk]`, `! [Console]`, `! [Tcp]`, `! [HttpServer]`) are part of the signature. The type checker enforces them — a function that calls `Http.get` without declaring `! [Http]` is a **type error, not a warning**. The runtime enforces the same boundary as a backstop.
 
 You can read any function in Aver and know exactly what it's capable of — without running it, without reading its body.
 
@@ -80,9 +80,9 @@ Aver traverses the dependency graph and emits a compact summary — module inten
 ## Module: Payments
 > Processes transactions with an explicit audit trail.
 
-### `charge(account: String, amount: Int) -> Result<String, String>` ! [Network, Ledger]
+### `charge(account: String, amount: Int) -> Result<String, String>` ! [Http, Ledger]
 > Charges account. Returns txn ID or a human-readable error.
-verify: `charge("alice", 100)` → `Ok("txn-alice-100")`, `charge("bob", 0)` → `Err("Cannot charge zero")`
+verify: `charge("alice", 100)` → `Result.Ok("txn-alice-100")`, `charge("bob", 0)` → `Result.Err("Cannot charge zero")`
 
 ## Decisions
 ### UseResultNotExceptions (2024-01-15)
@@ -96,12 +96,39 @@ This is what AI-assisted development actually needs: context that travels with t
 
 ```aver
 verify charge:
-    charge("alice", 100) => Ok("txn-alice-100")
-    charge("bob",   0)   => Err("Cannot charge zero")
-    charge("x",    -1)   => Ok("txn-x--1")
+    charge("alice", 100) => Result.Ok("txn-alice-100")
+    charge("bob",   0)   => Result.Err("Cannot charge zero")
+    charge("x",    -1)   => Result.Ok("txn-x--1")
 ```
 
 `verify` blocks are intended to stay close to the function they cover (same module, usually right after the definition). `aver check` warns when a non-`main` function has no `verify` block by name. They run with `aver verify` (or `aver run --verify`) under the same type/effect checks as normal code.
+
+### "How do I test effectful code without flaky mocks?"
+
+Use deterministic replay.
+
+1. Run once against real services and record the effect trace.
+2. Replay offline: same effect sequence, same outcomes, no real network/disk/TCP calls.
+3. Use `--diff`/`--test` to turn recordings into a regression suite.
+
+```bash
+# Real execution + capture
+aver run payments.av --record recordings/
+
+# Deterministic replay (single file or whole directory)
+aver replay recordings/rec-123.json --diff
+aver replay recordings/ --test --diff
+```
+
+No mock framework. No mock code. No mock maintenance.
+
+In Aver, effectful tests are just replay files:
+
+1. capture once,
+2. replay forever,
+3. optionally tweak one recorded effect outcome to create a new edge-case test.
+
+Pure logic stays in `verify`; effectful flows are covered by replay recordings. Testing stays embarrassingly simple.
 
 ---
 
@@ -125,14 +152,14 @@ decision UseResultNotExceptions:
 
 fn charge(account: String, amount: Int) -> Result<String, String>
     ? "Charges account. Returns txn ID or a human-readable error."
-    ! [Network, Ledger]
+    ! [Http, Ledger]
     match amount:
-        0 -> Err("Cannot charge zero")
-        _ -> Ok("txn-{account}-{amount}")
+        0 -> Result.Err("Cannot charge zero")
+        _ -> Result.Ok("txn-{account}-{amount}")
 
 verify charge:
-    charge("alice", 100) => Ok("txn-alice-100")
-    charge("bob",   0)   => Err("Cannot charge zero")
+    charge("alice", 100) => Result.Ok("txn-alice-100")
+    charge("bob",   0)   => Result.Err("Cannot charge zero")
 ```
 
 No `if`/`else`. No loops. No exceptions. No nulls. No magic.
@@ -142,14 +169,18 @@ No `if`/`else`. No loops. No exceptions. No nulls. No magic.
 ## CLI
 
 ```
-aver run       file.av        # type-check, then execute
-aver check     file.av        # type errors + intent/desc warnings
-aver verify    file.av        # run all verify blocks
-aver context   file.av        # export project context (Markdown)
-aver context   file.av --json # export project context (JSON)
+aver run       file.av                   # type-check, then execute
+aver run       file.av --verify          # execute + run verify blocks
+aver run       file.av --record recs/    # execute + record effect trace
+aver replay    recs/rec-123.json         # replay one recording offline
+aver replay    recs/ --test --diff       # replay suite; fail on output mismatch
+aver check     file.av                   # type errors + intent/desc warnings
+aver verify    file.av                   # run all verify blocks
+aver context   file.av                   # export project context (Markdown)
+aver context   file.av --json            # export project context (JSON)
 aver context   file.av --decisions-only        # decision blocks only (Markdown)
 aver context   file.av --decisions-only --json # decision blocks only (JSON)
-aver repl                     # interactive REPL
+aver repl                              # interactive REPL
 ```
 
 `run`, `check`, `verify`, and `context` also accept `--module-root <path>` to override import base (default: current working directory).
@@ -193,7 +224,7 @@ Aver ships built-in namespaces for I/O. All require explicit effect declarations
 |-----------|--------|---------------|
 | `Console` | `! [Console]` | `print`, `error`, `warn`, `readLine` |
 | `Http` | `! [Http]` | `get`, `post`, `put`, `patch`, `head`, `delete` |
-| `HttpServer` | `! [Http]` | `listen` |
+| `HttpServer` | `! [HttpServer]` | `listen`, `listenWith` |
 | `Disk` | `! [Disk]` | `readText`, `writeText`, `exists`, `delete`, `listDir`, `makeDir` |
 | `Tcp` | `! [Tcp]` | `connect`, `writeLine`, `readLine`, `close`, `send`, `ping` |
 
@@ -213,6 +244,8 @@ cargo build --release
 cargo run -- run      examples/calculator.av
 cargo run -- verify   examples/calculator.av
 cargo run -- check    examples/calculator.av
+cargo run -- run      examples/services/console_demo.av --record recordings/
+cargo run -- replay   recordings/ --test --diff
 cargo run -- context  decisions/architecture.av --decisions-only
 cargo run -- context  examples/calculator.av
 cargo run -- repl
@@ -234,9 +267,11 @@ Requires: Rust stable toolchain.
 | `fibonacci.av` | Tail recursion, records, decision blocks |
 | `app.av` | Module imports via `depends [Examples.Fibonacci]` |
 | `app_dot.av` | Dot-path imports (`depends [Examples.Models.User]`) |
-| `http_demo.av` | Network service: GET, POST, response handling |
-| `disk_demo.av` | Disk service: full I/O walkthrough |
-| `console_demo.av` | Console service: print, error, warn, readLine |
+| `services/http_demo.av` | HTTP service: GET, POST, response handling |
+| `services/disk_demo.av` | Disk service: full I/O walkthrough |
+| `services/console_demo.av` | Console service: print, error, warn, readLine |
+| `services/tcp_demo.av` | TCP persistent connections (`Tcp.Connection`) |
+| `services/weather.av` | End-to-end service: `HttpServer` + `Http` + `Tcp` |
 | `decisions/architecture.av` | The interpreter documents itself in Aver |
 | `type_errors.av` | Intentional type errors — shows what the checker catches |
 
@@ -269,4 +304,5 @@ Implemented in Rust with extensive automated test coverage.
 - [x] Module imports (`depends [Examples.Foo]`, `depends [Examples.Models.User]`)
 - [x] AI context export — `aver context` emits Markdown or JSON
 - [x] Interactive REPL — persistent state, multi-line, type-checked
-- [x] Built-in services — Console, Network, Disk — `! [Effect]` enforced everywhere
+- [x] Built-in services — Console, Http, HttpServer, Disk, Tcp — `! [Effect]` enforced everywhere
+- [x] Deterministic replay — `aver run --record` + `aver replay` for effectful regression testing

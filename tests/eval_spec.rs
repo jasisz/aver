@@ -2254,7 +2254,7 @@ fn mySum(n: Int) -> Int
 
 mod replay_tests {
     use super::*;
-    use aver::replay::{EffectRecord, JsonValue, RecordedOutcome};
+    use aver::replay::{json_to_value, value_to_json, EffectRecord, JsonValue, RecordedOutcome};
     use aver::value::RuntimeError;
     use std::collections::BTreeMap;
 
@@ -2348,5 +2348,73 @@ fn check() -> Bool
             "expected ReplayMismatch, got {:?}",
             err
         );
+    }
+
+    #[test]
+    fn value_json_roundtrip_nested_record_variant_list() {
+        let value = Value::Record {
+            type_name: "Envelope".to_string(),
+            fields: vec![
+                ("id".to_string(), Value::Int(7)),
+                (
+                    "payload".to_string(),
+                    Value::Variant {
+                        type_name: "Event".to_string(),
+                        variant: "Created".to_string(),
+                        fields: vec![
+                            Value::Record {
+                                type_name: "User".to_string(),
+                                fields: vec![
+                                    ("age".to_string(), Value::Int(35)),
+                                    ("name".to_string(), Value::Str("Ada".to_string())),
+                                ],
+                            },
+                            Value::List(vec![
+                                Value::Some(Box::new(Value::Int(1))),
+                                Value::None,
+                                Value::Ok(Box::new(Value::Str("ok".to_string()))),
+                                Value::Err(Box::new(Value::Str("boom".to_string()))),
+                            ]),
+                        ],
+                    },
+                ),
+            ],
+        };
+
+        let json = value_to_json(&value).expect("value_to_json failed");
+        let restored = json_to_value(&json).expect("json_to_value failed");
+        assert_eq!(restored, value);
+    }
+
+    #[test]
+    fn value_json_roundtrip_list_with_nested_structures() {
+        let value = Value::List(vec![
+            Value::Record {
+                type_name: "Point".to_string(),
+                fields: vec![
+                    ("x".to_string(), Value::Float(1.5)),
+                    ("y".to_string(), Value::Float(-2.25)),
+                ],
+            },
+            Value::Variant {
+                type_name: "MaybePoint".to_string(),
+                variant: "Some".to_string(),
+                fields: vec![Value::Record {
+                    type_name: "Point".to_string(),
+                    fields: vec![
+                        ("x".to_string(), Value::Int(1)),
+                        ("y".to_string(), Value::Int(2)),
+                    ],
+                }],
+            },
+            Value::Ok(Box::new(Value::List(vec![
+                Value::Bool(true),
+                Value::Some(Box::new(Value::Str("v".to_string()))),
+            ]))),
+        ]);
+
+        let json = value_to_json(&value).expect("value_to_json failed");
+        let restored = json_to_value(&json).expect("json_to_value failed");
+        assert_eq!(restored, value);
     }
 }
