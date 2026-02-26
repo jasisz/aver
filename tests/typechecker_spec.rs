@@ -106,6 +106,12 @@ fn valid_list_return() {
 }
 
 #[test]
+fn valid_list_get_preserves_inner_type() {
+    let src = "fn first(xs: List<Int>) -> Result<Int, String>\n    = List.get(xs, 0)\n";
+    assert_no_errors(src);
+}
+
+#[test]
 fn valid_list_pattern_matching() {
     let src = "fn score(xs: List<Int>) -> Int\n    = match xs:\n        [] -> 0\n        [h, ..t] -> h + List.len(t)\n";
     assert_no_errors(src);
@@ -113,8 +119,7 @@ fn valid_list_pattern_matching() {
 
 #[test]
 fn valid_call_correct_args() {
-    let src =
-        "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    r = add(1, 2)\n";
+    let src = "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    r = add(1, 2)\n";
     assert_no_errors(src);
 }
 
@@ -265,9 +270,34 @@ fn error_zero_arg_constructor_called_like_function() {
 
 #[test]
 fn error_arg_type_mismatch_string_for_int() {
-    let src = "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    r = add(1, \"two\")\n";
+    let src =
+        "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    r = add(1, \"two\")\n";
     // actual: "Argument 2 of 'add': expected Int, got String"
     assert_error_containing(src, "got String");
+}
+
+#[test]
+fn error_list_get_wrong_declared_inner_type() {
+    let src = "fn first(xs: List<Int>) -> Result<String, String>\n    = List.get(xs, 0)\n";
+    assert_error_containing(src, "body returns Result<Int, String>");
+}
+
+#[test]
+fn error_list_push_mismatched_element_type() {
+    let src = "fn bad(xs: List<Int>) -> List<Int>\n    = List.push(xs, \"x\")\n";
+    assert_error_containing(src, "Argument 2 of 'List.push': expected Int, got String");
+}
+
+#[test]
+fn error_list_filter_predicate_must_return_bool() {
+    let src = "fn bad(xs: List<Int>) -> List<Int>\n    = List.filter(xs, Int.toString)\n";
+    assert_error_containing(src, "predicate must return Bool");
+}
+
+#[test]
+fn error_list_fold_item_type_mismatch() {
+    let src = "fn step(acc: Int, s: String) -> Int\n    = acc + String.length(s)\nfn bad(xs: List<Int>) -> Int\n    = List.fold(xs, 0, step)\n";
+    assert_error_containing(src, "fold item param expects String, list has Int");
 }
 
 #[test]
