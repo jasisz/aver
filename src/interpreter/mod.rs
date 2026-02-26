@@ -1259,32 +1259,21 @@ impl Interpreter {
     }
 
     pub fn exec_fn_def(&mut self, fd: &FnDef) -> Result<(), RuntimeError> {
-        // Capture current closure
-        let mut closure: HashMap<String, Rc<Value>> = HashMap::new();
-        for frame in &self.env {
-            match frame {
-                EnvFrame::Owned(scope) => {
-                    for (k, v) in scope {
-                        closure.insert(k.clone(), Rc::clone(v));
-                    }
-                }
-                EnvFrame::Shared(scope) => {
-                    for (k, v) in scope.as_ref() {
-                        closure.insert(k.clone(), Rc::clone(v));
-                    }
-                }
-                EnvFrame::Slots(_) | EnvFrame::SharedSlots(_) => {
-                    // Slots frames don't contribute to name-based closure capture
-                }
-            }
-        }
+        // Fn sees only the global scope (env[0]) — no deep closure capture.
+        // All user-defined fns are top-level in Aver, so env[0] contains
+        // namespaces (Console, List, …), other fns, and top-level val bindings.
+        let closure = match &self.env[0] {
+            EnvFrame::Owned(scope) => Rc::new(scope.clone()),
+            EnvFrame::Shared(scope) => Rc::clone(scope),
+            _ => Rc::new(HashMap::new()),
+        };
 
         let val = Value::Fn {
             name: fd.name.clone(),
             params: fd.params.clone(),
             effects: self.expand_effects(&fd.effects),
             body: Rc::clone(&fd.body),
-            closure: Rc::new(closure),
+            closure,
             closure_slots: None,
             resolution: fd.resolution.clone(),
         };
