@@ -1082,6 +1082,11 @@ impl TypeChecker {
                     self.check_effects_in_expr(expr, caller_name, caller_effects);
                 }
             }
+            Expr::TailCall(boxed) => {
+                for arg in &boxed.1 {
+                    self.check_effects_in_expr(arg, caller_name, caller_effects);
+                }
+            }
             _ => {}
         }
     }
@@ -1401,6 +1406,19 @@ impl TypeChecker {
                     let _ = self.infer_type(expr);
                 }
                 Type::Named(type_name.clone())
+            }
+
+            Expr::TailCall(boxed) => {
+                let (target, args) = boxed.as_ref();
+                for arg in args {
+                    let _ = self.infer_type(arg);
+                }
+                // Return type is the same as the target function's return type
+                if let Some(sig) = self.fn_sigs.get(target).cloned() {
+                    sig.ret
+                } else {
+                    Type::Unknown
+                }
             }
 
             // Resolved nodes are produced after type-checking, so should not appear here.

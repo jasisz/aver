@@ -68,6 +68,10 @@ pub enum Expr {
         type_name: String,
         fields: Vec<(String, Expr)>,
     },
+    /// Tail-position call to a function in the same SCC (self or mutual recursion).
+    /// Produced by the TCO transform pass before type-checking.
+    /// Boxed to keep Expr enum at its original size (48 bytes).
+    TailCall(Box<(String, Vec<Expr>)>),
     /// Compiled variable lookup: `env[depth][slot]` — O(1) instead of HashMap scan.
     /// Produced by the resolver pass for locals inside function bodies.
     Resolved(u16, u16),

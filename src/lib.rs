@@ -7,5 +7,6 @@ pub mod parser;
 pub mod resolver;
 pub mod services;
 pub mod source;
+pub mod tco;
 pub mod types;
 pub mod value;

@@ -12,6 +12,38 @@ use crate::ast::{Expr, FnBody, Stmt, TopLevel};
 // Public API
 // ---------------------------------------------------------------------------
 
+/// Returns the SCC groups that contain cycles (self or mutual recursion).
+/// Each group is a `HashSet<String>` of function names in the SCC.
+pub fn find_tco_groups(items: &[TopLevel]) -> Vec<HashSet<String>> {
+    let graph = build_call_graph(items);
+    let user_fns: HashSet<String> = items
+        .iter()
+        .filter_map(|item| {
+            if let TopLevel::FnDef(fd) = item {
+                Some(fd.name.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let sccs = tarjan_scc(&graph, &user_fns);
+    let mut groups = Vec::new();
+    for scc in sccs {
+        if scc.len() > 1 {
+            groups.push(scc.into_iter().collect());
+        } else if scc.len() == 1 {
+            let name = &scc[0];
+            if let Some(callees) = graph.get(name) {
+                if callees.contains(name) {
+                    groups.push(scc.into_iter().collect());
+                }
+            }
+        }
+    }
+    groups
+}
+
 /// Returns the set of user-defined function names that are recursive
 /// (directly or mutually).
 pub fn find_recursive_fns(items: &[TopLevel]) -> HashSet<String> {
@@ -145,6 +177,12 @@ fn collect_callees_expr(expr: &Expr, callees: &mut HashSet<String>) {
             }
         }
         Expr::TypeAscription(inner, _) => collect_callees_expr(inner, callees),
+        Expr::TailCall(boxed) => {
+            callees.insert(boxed.0.clone());
+            for arg in &boxed.1 {
+                collect_callees_expr(arg, callees);
+            }
+        }
     }
 }
 

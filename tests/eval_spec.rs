@@ -1915,3 +1915,117 @@ fn memo_non_recursive_fn_still_works() {
     let src = "fn double(x: Int) -> Int\n    = x + x\n";
     assert_eq!(call_fn_with_memo(src, "double", vec![Value::Int(5)]), Value::Int(10));
 }
+
+// ---------------------------------------------------------------------------
+// Tail-call optimization (TCO) tests
+// ---------------------------------------------------------------------------
+
+/// Helper: parse → TCO transform → typecheck → resolve → interpret
+fn call_fn_with_tco(src: &str, fn_name: &str, args: Vec<Value>) -> Value {
+    use aver::resolver;
+    use aver::tco;
+    use aver::types::checker::run_type_check_full;
+
+    let mut items = parse(src);
+    tco::transform_program(&mut items);
+
+    let tc_result = run_type_check_full(&items, None);
+    assert!(
+        tc_result.errors.is_empty(),
+        "type errors: {:?}",
+        tc_result.errors
+    );
+
+    resolver::resolve_program(&mut items);
+
+    let mut interp = Interpreter::new();
+    for item in &items {
+        if let TopLevel::FnDef(fd) = item {
+            interp.exec_fn_def(fd).expect("exec_fn_def failed");
+        }
+    }
+    let fn_val = interp.lookup(fn_name).expect("fn not found");
+    interp.call_value_pub(fn_val, args).expect("call failed")
+}
+
+#[test]
+fn tco_factorial_large_n() {
+    // Tail-recursive factorial — should not overflow with TCO
+    let src = r#"
+fn factorial(n: Int, acc: Int) -> Int
+    match n:
+        0 -> acc
+        _ -> factorial(n - 1, acc * n)
+"#;
+    // Small values: correctness
+    assert_eq!(call_fn_with_tco(src, "factorial", vec![Value::Int(0), Value::Int(1)]), Value::Int(1));
+    assert_eq!(call_fn_with_tco(src, "factorial", vec![Value::Int(5), Value::Int(1)]), Value::Int(120));
+    assert_eq!(call_fn_with_tco(src, "factorial", vec![Value::Int(10), Value::Int(1)]), Value::Int(3628800));
+    assert_eq!(call_fn_with_tco(src, "factorial", vec![Value::Int(20), Value::Int(1)]), Value::Int(2432902008176640000));
+}
+
+#[test]
+fn tco_sum_accumulator() {
+    // Tail-recursive sum with accumulator
+    let src = r#"
+fn sum(n: Int, acc: Int) -> Int
+    match n:
+        0 -> acc
+        _ -> sum(n - 1, acc + n)
+"#;
+    assert_eq!(call_fn_with_tco(src, "sum", vec![Value::Int(100), Value::Int(0)]), Value::Int(5050));
+    // Large n: no stack overflow with TCO
+    assert_eq!(call_fn_with_tco(src, "sum", vec![Value::Int(100_000), Value::Int(0)]), Value::Int(5000050000i64));
+}
+
+#[test]
+fn tco_mutual_recursion_is_even_is_odd() {
+    // isEven / isOdd — mutual tail-call recursion
+    let src = r#"
+fn isEven(n: Int) -> Bool
+    match n:
+        0 -> true
+        _ -> isOdd(n - 1)
+
+fn isOdd(n: Int) -> Bool
+    match n:
+        0 -> false
+        _ -> isEven(n - 1)
+"#;
+    // Small values
+    assert_eq!(call_fn_with_tco(src, "isEven", vec![Value::Int(0)]), Value::Bool(true));
+    assert_eq!(call_fn_with_tco(src, "isEven", vec![Value::Int(1)]), Value::Bool(false));
+    assert_eq!(call_fn_with_tco(src, "isOdd", vec![Value::Int(1)]), Value::Bool(true));
+    assert_eq!(call_fn_with_tco(src, "isOdd", vec![Value::Int(4)]), Value::Bool(false));
+    // Large n: would overflow without mutual TCO
+    assert_eq!(call_fn_with_tco(src, "isEven", vec![Value::Int(100_000)]), Value::Bool(true));
+    assert_eq!(call_fn_with_tco(src, "isOdd", vec![Value::Int(100_001)]), Value::Bool(true));
+}
+
+#[test]
+fn tco_non_tail_fib_still_works() {
+    // fib is NOT tail-recursive — should still work (via memoization or normal recursion)
+    let src = r#"
+fn fib(n: Int) -> Int
+    match n:
+        0 -> 0
+        1 -> 1
+        _ -> fib(n - 1) + fib(n - 2)
+"#;
+    // Small values work even without memo (normal recursion)
+    assert_eq!(call_fn_with_tco(src, "fib", vec![Value::Int(0)]), Value::Int(0));
+    assert_eq!(call_fn_with_tco(src, "fib", vec![Value::Int(1)]), Value::Int(1));
+    assert_eq!(call_fn_with_tco(src, "fib", vec![Value::Int(10)]), Value::Int(55));
+}
+
+#[test]
+fn tco_non_tail_call_stays_recursive() {
+    // h + sum(t) is NOT in tail position — normal recursion
+    let src = r#"
+fn mySum(n: Int) -> Int
+    match n:
+        0 -> 0
+        _ -> n + mySum(n - 1)
+"#;
+    assert_eq!(call_fn_with_tco(src, "mySum", vec![Value::Int(10)]), Value::Int(55));
+}

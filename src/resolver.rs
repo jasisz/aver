@@ -143,6 +143,11 @@ fn collect_expr_bindings(
         Expr::Attr(obj, _) => {
             collect_expr_bindings(obj, local_slots, next_slot);
         }
+        Expr::TailCall(boxed) => {
+            for arg in &boxed.1 {
+                collect_expr_bindings(arg, local_slots, next_slot);
+            }
+        }
         // Leaves — no bindings to collect
         Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_, _) | Expr::Constructor(_, None) => {}
     }
@@ -239,6 +244,11 @@ fn resolve_expr(expr: &mut Expr, local_slots: &HashMap<String, u16>) {
         Expr::RecordCreate { fields, .. } => {
             for (_, expr) in fields {
                 resolve_expr(expr, local_slots);
+            }
+        }
+        Expr::TailCall(boxed) => {
+            for arg in &mut boxed.1 {
+                resolve_expr(arg, local_slots);
             }
         }
     }

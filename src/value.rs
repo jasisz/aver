@@ -22,6 +22,10 @@ pub enum RuntimeError {
     /// top-level use).
     #[error("Error propagation")]
     ErrProp(Box<Value>),
+    /// Internal signal: tail-call — caught by the trampoline in call_fn_ref.
+    /// Never surfaces to the user. Boxed to keep RuntimeError small.
+    #[error("Tail call")]
+    TailCall(Box<(String, Vec<Value>)>),
 }
 
 // ---------------------------------------------------------------------------

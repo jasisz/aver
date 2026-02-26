@@ -203,6 +203,11 @@ pub fn expr_to_str(expr: &crate::ast::Expr) -> String {
                 .collect();
             format!("{}({})", type_name, flds.join(", "))
         }
+        Expr::TailCall(boxed) => {
+            let (target, args) = boxed.as_ref();
+            let a = args.iter().map(expr_to_str).collect::<Vec<_>>().join(", ");
+            format!("<tail-call:{}>({})", target, a)
+        }
         Expr::Resolved(_, _) => "<resolved>".to_string(),
         Expr::Match(subject, arms) => {
             let s = expr_to_str(subject);

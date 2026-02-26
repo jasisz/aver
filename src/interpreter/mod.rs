@@ -1521,7 +1521,19 @@ impl Interpreter {
                     fields: field_vals,
                 })
             }
+            Expr::TailCall(boxed) => self.eval_tail_call(boxed),
         }
+    }
+
+    /// Evaluate a TailCall expression — separate fn to keep `eval_expr` frame small.
+    #[inline(never)]
+    fn eval_tail_call(&mut self, boxed: &(String, Vec<Expr>)) -> Result<Value, RuntimeError> {
+        let (target, args) = boxed;
+        let mut vals = Vec::with_capacity(args.len());
+        for a in args {
+            vals.push(self.eval_expr(a)?);
+        }
+        Err(RuntimeError::TailCall(Box::new((target.clone(), vals))))
     }
 
     fn eval_literal(&self, lit: &Literal) -> Value {
@@ -1550,6 +1562,8 @@ impl Interpreter {
 
     /// Call a `Value::Fn` by reference — avoids cloning name/params/effects.
     /// Used in map/filter/fold hot loops.
+    /// When the body returns `RuntimeError::TailCall`, delegates to
+    /// `tco_trampoline` to iterate without growing the call stack.
     fn call_fn_ref(&mut self, fn_val: &Value, args: Vec<Value>) -> Result<Value, RuntimeError> {
         let Value::Fn {
             name,
@@ -1597,7 +1611,6 @@ impl Interpreter {
         let prev_local_slots = self.active_local_slots.take();
         let result = if let Some(res) = resolution {
             // Resolved path: single Slots frame with params + locals.
-            // Closure is the HashMap-based one (globals + captured names).
             let mut slots = vec![Rc::new(Value::Unit); res.local_count as usize];
             for ((param_name, _), arg_val) in params.iter().zip(args.into_iter()) {
                 if let Some(&slot) = res.local_slots.get(param_name) {
@@ -1630,6 +1643,16 @@ impl Interpreter {
             self.pop_env();
             r
         };
+
+        // If TailCall, enter trampoline — only then do we clone fn state.
+        let result = match result {
+            Err(RuntimeError::TailCall(boxed)) => {
+                let (target, new_args) = *boxed;
+                self.tco_trampoline(name, params, body, closure, resolution, target, new_args)
+            }
+            other => other,
+        };
+
         self.active_local_slots = prev_local_slots;
 
         self.call_stack.pop();
@@ -1650,6 +1673,109 @@ impl Interpreter {
         }
 
         final_result
+    }
+
+    /// Trampoline loop for tail-call optimization.
+    /// Called only when `call_fn_ref` encounters a `TailCall` — keeps the call
+    /// stack flat by re-binding args in a loop instead of recursing.
+    #[inline(never)]
+    fn tco_trampoline(
+        &mut self,
+        orig_name: &str,
+        orig_params: &[(String, String)],
+        orig_body: &Rc<FnBody>,
+        orig_closure: &Rc<HashMap<String, Rc<Value>>>,
+        orig_resolution: &Option<FnResolution>,
+        first_target: String,
+        first_args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        let mut cur_name = orig_name.to_string();
+        let mut cur_params: Vec<(String, String)> = orig_params.to_vec();
+        let mut cur_body = Rc::clone(orig_body);
+        let mut cur_closure = Rc::clone(orig_closure);
+        let mut cur_resolution = orig_resolution.clone();
+
+        // Handle the initial TailCall
+        let mut target = first_target;
+        let mut new_args = first_args;
+
+        loop {
+            // Switch to target if different from current
+            if target != cur_name {
+                let target_fn = self.lookup(&target)?;
+                match target_fn {
+                    Value::Fn {
+                        name: tn,
+                        params: tp,
+                        effects: te,
+                        body: tb,
+                        closure: tc,
+                        resolution: tr,
+                        ..
+                    } => {
+                        cur_name = tn;
+                        cur_params = tp;
+                        cur_body = tb;
+                        cur_closure = tc;
+                        cur_resolution = tr;
+                        if let Some(frame) = self.call_stack.last_mut() {
+                            frame.name = cur_name.clone();
+                            frame.effects = te;
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::Error(format!(
+                            "TCO target '{}' is not a function",
+                            target
+                        )));
+                    }
+                }
+            }
+
+            // Execute body with new args
+            let exec_result = if let Some(ref res) = cur_resolution {
+                let mut slots = vec![Rc::new(Value::Unit); res.local_count as usize];
+                for ((param_name, _), arg_val) in cur_params.iter().zip(new_args.into_iter()) {
+                    if let Some(&slot) = res.local_slots.get(param_name) {
+                        slots[slot as usize] = Rc::new(arg_val);
+                    }
+                }
+                self.active_local_slots = Some(res.local_slots.clone());
+                self.push_shared_env(Rc::clone(&cur_closure));
+                self.push_env(EnvFrame::Slots(slots));
+                let r = match &*cur_body {
+                    FnBody::Expr(e) => self.eval_expr(e),
+                    FnBody::Block(stmts) => self.exec_body_resolved(stmts, &res.local_slots),
+                };
+                self.pop_env();
+                self.pop_env();
+                r
+            } else {
+                let mut params_scope = HashMap::new();
+                for ((param_name, _), arg_val) in cur_params.iter().zip(new_args.into_iter()) {
+                    params_scope.insert(param_name.clone(), Rc::new(arg_val));
+                }
+                self.push_shared_env(Rc::clone(&cur_closure));
+                self.push_owned_env(params_scope);
+                let r = match &*cur_body {
+                    FnBody::Expr(e) => self.eval_expr(e),
+                    FnBody::Block(stmts) => self.exec_body(stmts),
+                };
+                self.pop_env();
+                self.pop_env();
+                r
+            };
+
+            match exec_result {
+                Err(RuntimeError::TailCall(boxed)) => {
+                    let (next_target, next_args) = *boxed;
+                    target = next_target;
+                    new_args = next_args;
+                    continue;
+                }
+                other => return other,
+            }
+        }
     }
 
     fn eval_binop(&self, op: &BinOp, left: Value, right: Value) -> Result<Value, RuntimeError> {

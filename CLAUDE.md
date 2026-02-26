@@ -18,7 +18,7 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 - Lexer with significant-indentation handling (Python-style INDENT / DEDENT tokens)
 - String interpolation: `"Hello, {name}!"` is tokenised as `InterpStr` and evaluated at runtime by re-lexing the expression inside `{}`
 - Integer and float literals, bool literals, string literals
-- `val` (immutable binding) and `var` (mutable binding with optional `reason:` annotation); `var` supports reassignment with `name = expr` (bare assignment, no keyword)
+- `val` (immutable binding) at any scope; `var` (mutable binding with optional `reason:` annotation) inside function bodies only — **top-level `var` is a type error** (enforced by the type checker)
 - Function definitions (`fn`) with typed parameters, return type annotation, optional prose description (`? "..."`), and optional effect declaration (`! [Effect]`)
 - Single-expression functions (`= expr` shorthand) and block-body functions
 - Arithmetic: `+`, `-`, `*`, `/` with mixed Int/Float promotion
@@ -36,7 +36,8 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 - **`Int` namespace** (`src/services/int_helpers.rs`): `Int.fromString`, `Int.fromFloat`, `Int.toString`, `Int.abs`, `Int.min`, `Int.max`, `Int.mod`, `Int.toFloat` — no effects
 - **`Float` namespace** (`src/services/float_helpers.rs`): `Float.fromString`, `Float.fromInt`, `Float.toString`, `Float.abs`, `Float.floor`, `Float.ceil`, `Float.round`, `Float.min`, `Float.max` — no effects
 - **`String` namespace** (`src/services/string_helpers.rs`): `String.length`, `String.byteLength`, `String.startsWith`, `String.endsWith`, `String.contains`, `String.slice`, `String.trim`, `String.split`, `String.replace`, `String.join`, `String.chars`, `String.fromInt`, `String.fromFloat`, `String.fromBool` — no effects
-- Closures: functions capture their definition-time environment
+- Closures: functions capture only global scope (env[0]) — all user-defined fns are top-level
+- **Auto-memoization** (`src/call_graph.rs`, `src/types/checker.rs`, `src/interpreter/mod.rs`): pure recursive functions with memo-safe arguments (scalars, records/variants of scalars) are automatically memoized at runtime. Call graph is built from AST, Tarjan SCC detects recursion, and `call_fn_ref` checks/stores a per-function HashMap cache (capped at 4096 entries). No keyword needed — the compiler detects eligibility.
 - CLI with four subcommands: `run`, `verify`, `check`, `decisions`
 - `check` command: warns when a module has no `intent:` or a function with effects/Result return has no `?` description; warns if file exceeds 150 lines; `fn main()` is exempt from the `?` requirement
 - **Static type checker** (`src/typechecker.rs`): `aver check`, `aver run`, and `aver verify` all run a type-check pass. Type errors are hard errors that block execution. The checker covers function bodies and top-level statements (including assignment mutability rules). `Any` annotations are removed from the language surface; the checker may still use internal `Type::Unknown` recovery after earlier errors so analysis can continue.
@@ -45,13 +46,13 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 - **User-defined product types** (`record` keyword): `record User` with named fields `name: String`, `age: Int`. Constructed as `User(name: "Alice", age: 30)`. Field access via `u.name`. Positional destructuring in match: `User(name, age) -> name`.
 - **`Type::Named(String)`** in the type system: capitalized identifiers (including dotted names like `Tcp.Connection`) in type annotations resolve to named types. Compatible only with the same name or internal `Unknown` fallback.
 - **`Tcp.Connection` opaque record**: `Tcp.connect` returns `Result<Tcp.Connection, String>` — a record with fields `id: String`, `host: String`, `port: Int`. Persistent-connection methods (`writeLine`, `readLine`, `close`) accept `Tcp.Connection` instead of a bare string ID. The actual socket lives in a thread-local `HashMap` keyed by the `id` field.
+- **Tail-call optimization** (`src/tco.rs`): a transform pass after parsing rewrites tail-position calls in recursive SCCs (self or mutual) from `FnCall` to `Expr::TailCall`. The interpreter's `call_fn_ref` uses a trampoline: when `TailCall` is returned, it rebinds args (self-TCO) or switches to the target fn (mutual TCO) without growing the call stack. Pipeline: `parse → tco_transform → typecheck → resolve → interpret`. Tail position = last expression in fn body, or each arm body in a `match` at tail position.
 
 ### What is missing / known limitations
 
 - No `if`/`else` — **this is intentional by design**; `match` is the only branching construct
 - No loops (`for`, `while`) — **intentionally absent**; Aver has no imperative iteration; use `map`/`filter`/`fold`
 - Field access works for `record` values (`u.name`) but not on sum type variants or other values
-- No tail-call optimisation; deep recursion will overflow the stack
 
 ### What was explicitly NOT implemented yet (save for later)
 
@@ -93,9 +94,20 @@ src/
                    Env is a Vec<HashMap<String,Value>> (scope stack).
                    No flat builtins — all functions live in namespaces
                    (Console, List, Int, Float, String, Http, Disk, Tcp).
-                   Closures are captured eagerly (flat HashMap snapshot).
+                   Closures capture only global scope (env[0]).
+                   Auto-memoization cache in call_fn_ref for pure
+                   recursive functions.
                    String interpolation re-lexes and re-parses the raw
                    expression text stored inside StrPart::Expr.
+
+  tco.rs         — Tail-call optimization transform pass.
+                   Runs after parsing, before type-checking.
+                   Uses call_graph SCC to find recursive groups, then
+                   rewrites tail-position FnCall → TailCall in each SCC.
+
+  call_graph.rs  — Call-graph analysis + Tarjan SCC algorithm.
+                   Builds fn→callee graph from AST, detects recursive
+                   (self or mutual) functions for auto-memoization and TCO.
 
   checker.rs     — Static analysis and test runner.
                    run_verify() executes VerifyBlock cases and prints

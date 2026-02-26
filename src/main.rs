@@ -9,6 +9,7 @@ use aver::ast::{DecisionBlock, FnDef, Stmt, TopLevel, TypeDef, VerifyBlock};
 use aver::checker::{check_module_intent, expr_to_str, index_decisions, run_verify};
 use aver::interpreter::{aver_display, aver_repr, EnvFrame, Interpreter, Value};
 use aver::resolver;
+use aver::tco;
 use aver::source::{find_module_file, parse_source};
 use aver::call_graph::find_recursive_fns;
 use aver::types::checker::{run_type_check_full, run_type_check_with_base};
@@ -217,6 +218,9 @@ fn cmd_run(file: &str, module_root_override: Option<&str>, run_verify_blocks: bo
         }
     };
 
+    // TCO transform — rewrite tail-position calls in recursive SCCs
+    tco::transform_program(&mut items);
+
     // Static type check — block execution on any error
     let tc_result = run_type_check_full(&items, Some(&module_root));
     if !tc_result.errors.is_empty() {
@@ -411,6 +415,9 @@ fn cmd_verify(file: &str, module_root_override: Option<&str>) {
             process::exit(1);
         }
     };
+
+    // TCO transform — rewrite tail-position calls in recursive SCCs
+    tco::transform_program(&mut items);
 
     // Static type check — verify should use the same soundness gate as run/check
     let tc_result = run_type_check_full(&items, Some(&module_root));
