@@ -791,8 +791,59 @@ impl TypeChecker {
                             .to_string(),
                     );
                 }
-                for (_, expr) in fields {
-                    let _ = self.infer_type(expr);
+
+                let schema_prefix = format!("{}.", type_name);
+                let mut expected = HashMap::new();
+                for (key, ty) in &self.record_field_types {
+                    if let Some(field_name) = key.strip_prefix(&schema_prefix) {
+                        expected.insert(field_name.to_string(), ty.clone());
+                    }
+                }
+
+                let mut seen = HashSet::new();
+                for (field_name, expr) in fields {
+                    let actual_ty = self.infer_type(expr);
+                    if !seen.insert(field_name.clone()) {
+                        self.error(format!(
+                            "Record '{}' field '{}' provided more than once",
+                            type_name, field_name
+                        ));
+                        continue;
+                    }
+
+                    if expected.is_empty() {
+                        continue;
+                    }
+
+                    if let Some(expected_ty) = expected.get(field_name) {
+                        if !Self::constraint_compatible(&actual_ty, expected_ty) {
+                            self.error(format!(
+                                "Record '{}' field '{}' expects {}, got {}",
+                                type_name,
+                                field_name,
+                                expected_ty.display(),
+                                actual_ty.display()
+                            ));
+                        }
+                    } else {
+                        self.error(format!(
+                            "Record '{}' has no field '{}'",
+                            type_name, field_name
+                        ));
+                    }
+                }
+
+                if !expected.is_empty() {
+                    let mut required = expected.keys().cloned().collect::<Vec<_>>();
+                    required.sort();
+                    for field_name in required {
+                        if !seen.contains(&field_name) {
+                            self.error(format!(
+                                "Record '{}' missing required field '{}'",
+                                type_name, field_name
+                            ));
+                        }
+                    }
                 }
                 Type::Named(type_name.clone())
             }

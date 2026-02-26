@@ -125,17 +125,7 @@ impl Interpreter {
                 }
                 Ok(Value::Tuple(values))
             }
-            Expr::RecordCreate { type_name, fields } => {
-                let mut field_vals = Vec::new();
-                for (name, expr) in fields {
-                    let val = self.eval_expr(expr)?;
-                    field_vals.push((name.clone(), val));
-                }
-                Ok(Value::Record {
-                    type_name: type_name.clone(),
-                    fields: field_vals,
-                })
-            }
+            Expr::RecordCreate { type_name, fields } => self.eval_record_create(type_name, fields),
             Expr::TailCall(boxed) => self.eval_tail_call(boxed),
         }
     }
@@ -152,6 +142,65 @@ impl Interpreter {
             vals.push(self.eval_expr(a)?);
         }
         Err(RuntimeError::TailCall(Box::new((target.clone(), vals))))
+    }
+
+    /// Evaluate a record constructor.
+    /// Kept out of `eval_expr` to avoid inflating the recursive eval stack frame.
+    #[inline(never)]
+    fn eval_record_create(
+        &mut self,
+        type_name: &str,
+        fields: &[(String, Expr)],
+    ) -> Result<Value, RuntimeError> {
+        let mut field_vals = Vec::with_capacity(fields.len());
+        let mut seen = HashSet::new();
+        for (name, expr) in fields {
+            if !seen.insert(name.clone()) {
+                return Err(RuntimeError::Error(format!(
+                    "Record '{}' field '{}' provided more than once",
+                    type_name, name
+                )));
+            }
+            let val = self.eval_expr(expr)?;
+            field_vals.push((name.clone(), val));
+        }
+
+        if let Some(schema) = self.record_schemas.get(type_name) {
+            let mut by_name = HashMap::with_capacity(field_vals.len());
+            for (name, val) in field_vals {
+                by_name.insert(name, val);
+            }
+
+            for provided in by_name.keys() {
+                if !schema.iter().any(|f| f == provided) {
+                    return Err(RuntimeError::Error(format!(
+                        "Record '{}' has no field '{}'",
+                        type_name, provided
+                    )));
+                }
+            }
+
+            let mut ordered = Vec::with_capacity(schema.len());
+            for required in schema {
+                let val = by_name.remove(required).ok_or_else(|| {
+                    RuntimeError::Error(format!(
+                        "Record '{}' missing required field '{}'",
+                        type_name, required
+                    ))
+                })?;
+                ordered.push((required.clone(), val));
+            }
+
+            return Ok(Value::Record {
+                type_name: type_name.to_string(),
+                fields: ordered,
+            });
+        }
+
+        Ok(Value::Record {
+            type_name: type_name.to_string(),
+            fields: field_vals,
+        })
     }
 
     pub(super) fn eval_literal(&self, lit: &Literal) -> Value {

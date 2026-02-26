@@ -1,6 +1,26 @@
 use super::*;
 
 impl Parser {
+    fn is_upper_camel_segment(name: &str) -> bool {
+        name.chars().next().map_or(false, |c| c.is_uppercase())
+    }
+
+    fn is_constructor_path(path: &str) -> bool {
+        path.rsplit('.')
+            .next()
+            .map_or(false, Self::is_upper_camel_segment)
+    }
+
+    fn reject_zero_arg_constructor_call(&self, path: &str) -> Result<(), ParseError> {
+        if Self::is_constructor_path(path) && self.peek(1).kind == TokenKind::RParen {
+            return Err(self.error(format!(
+                "Zero-argument constructor call '{}()' is not allowed. Use '{}' (no parentheses).",
+                path, path
+            )));
+        }
+        Ok(())
+    }
+
     pub fn parse_expr(&mut self) -> Result<Expr, ParseError> {
         self.parse_pipe()
     }
@@ -107,6 +127,9 @@ impl Parser {
                 };
                 expr = Expr::Attr(Box::new(expr), field);
                 if self.check_exact(&TokenKind::LParen) {
+                    if let Some(path) = Self::dotted_name(&expr) {
+                        self.reject_zero_arg_constructor_call(&path)?;
+                    }
                     let named_arg_start = matches!(&self.peek(1).kind, TokenKind::Ident(_))
                         && self.peek(2).kind == TokenKind::Assign;
                     if named_arg_start {
@@ -153,6 +176,10 @@ impl Parser {
         let atom = self.parse_atom()?;
 
         if self.check_exact(&TokenKind::LParen) {
+            if let Some(path) = Self::dotted_name(&atom) {
+                self.reject_zero_arg_constructor_call(&path)?;
+            }
+
             // Lookahead: is this `Name(field = value, ...)` (record creation)?
             // Detect by checking if token after `(` is `Ident` followed by `=`.
             let is_record_create = if let Expr::Ident(ref name) = atom {

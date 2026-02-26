@@ -576,10 +576,7 @@ fn tuple_equality_runtime() {
 
 #[test]
 fn map_len_empty() {
-    assert_eq!(
-        eval("Map.len(Map.empty())"),
-        Value::Int(0)
-    );
+    assert_eq!(eval("Map.len(Map.empty())"), Value::Int(0));
 }
 
 #[test]
@@ -596,10 +593,7 @@ fn map_set_get_has() {
 
 #[test]
 fn map_get_missing_returns_none() {
-    assert_eq!(
-        eval("Map.get(Map.empty(), \"missing\")"),
-        Value::None
-    );
+    assert_eq!(eval("Map.get(Map.empty(), \"missing\")"), Value::None);
 }
 
 #[test]
@@ -1159,6 +1153,23 @@ fn sum_type_match_no_arg_variant() {
 #[test]
 fn record_creation_stores_fields() {
     let src = "record User\n  name: String\n  age: Int\nu = User(name = \"Alice\", age = 30)\n";
+    let mut interp = run_program(src);
+    let val = interp.lookup("u").expect("u not defined");
+    assert_eq!(
+        val,
+        Value::Record {
+            type_name: "User".to_string(),
+            fields: vec![
+                ("name".to_string(), Value::Str("Alice".to_string())),
+                ("age".to_string(), Value::Int(30)),
+            ],
+        }
+    );
+}
+
+#[test]
+fn record_creation_canonicalizes_field_order() {
+    let src = "record User\n  name: String\n  age: Int\nu = User(age = 30, name = \"Alice\")\n";
     let mut interp = run_program(src);
     let val = interp.lookup("u").expect("u not defined");
     assert_eq!(

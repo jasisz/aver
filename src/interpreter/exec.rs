@@ -55,8 +55,12 @@ impl Interpreter {
                     },
                 );
             }
-            TypeDef::Product { .. } => {
-                // Product types are constructed via Expr::RecordCreate — no env registration needed
+            TypeDef::Product { name, fields } => {
+                // Product types are constructed via Expr::RecordCreate.
+                // Keep declaration field order so runtime records are canonicalized
+                // and positional record matches stay stable.
+                let schema = fields.iter().map(|(field, _)| field.clone()).collect();
+                self.record_schemas.insert(name.clone(), schema);
             }
         }
     }

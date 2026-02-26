@@ -356,6 +356,16 @@ fn expr_constructor_none() {
 }
 
 #[test]
+fn expr_constructor_none_with_parens_is_parse_error() {
+    let msg = parse_error("Option.None()");
+    assert!(
+        msg.contains("Zero-argument constructor call 'Option.None()' is not allowed"),
+        "unexpected parse error: {}",
+        msg
+    );
+}
+
+#[test]
 fn expr_list_empty() {
     let items = parse("[]");
     assert!(matches!(
@@ -819,6 +829,17 @@ fn parse_tcp_connection_manual_constructor_shows_actionable_error() {
     );
     assert!(
         msg.contains("Tcp.connect(host, port)"),
+        "unexpected parse error: {}",
+        msg
+    );
+}
+
+#[test]
+fn parse_singleton_variant_with_parens_is_parse_error() {
+    let src = "type Shape\n  Point\np = Shape.Point()\n";
+    let msg = parse_error(src);
+    assert!(
+        msg.contains("Zero-argument constructor call 'Shape.Point()' is not allowed"),
         "unexpected parse error: {}",
         msg
     );

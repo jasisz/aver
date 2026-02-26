@@ -202,6 +202,103 @@ fn parseObjectNext(chars: List<String>, pos: Int, accum: Map<String, Json>) -> P
             "," -> parseObjectFields(chars, skipWhitespace(chars, pos + 1), accum)
             _ -> ParseResult.Err("Expected ',' or '}'")
 
+fn getField(j: Json, key: String) -> Option<Json>
+    ? "Extract a field from a JsonObject by key."
+    match j
+        Json.JsonObject(m) -> Map.get(m, key)
+        _ -> Option.None
+
+fn jsonStr(j: Json) -> String
+    ? "Extract raw string from JsonString."
+    match j
+        Json.JsonString(s) -> s
+        _ -> ""
+
+fn jsonInt(j: Json) -> Int
+    ? "Extract raw int from JsonInt."
+    match j
+        Json.JsonInt(n) -> n
+        _ -> 0
+
+fn jsonList(j: Json) -> List<Json>
+    ? "Extract list from JsonList."
+    match j
+        Json.JsonList(items) -> items
+        _ -> []
+
+fn showTag(tag: Json) -> String
+    ? "Show a tag string with hash prefix."
+    = "#" + jsonStr(tag)
+
+fn main() -> Unit
+    ! [Console]
+    json = "{{ \"company\": \"Aver Labs\", \"founded\": 2024, \"active\": true, \"address\": {{ \"city\": \"Warszawa\", \"country\": \"Poland\", \"zip\": \"00-001\" }}, \"team\": [{{ \"name\": \"Jan\", \"role\": \"lead\" }}, {{ \"name\": \"Anna\", \"role\": \"dev\" }}, {{ \"name\": \"Piotr\", \"role\": \"ops\" }}], \"tags\": [\"lang-design\", \"rust\", \"ai-first\"], \"funding\": null }}"
+
+    Console.print("Parsing complex nested JSON...")
+    match parse(json)
+        Result.Err(msg) -> Console.print("Parse error: " + msg)
+        Result.Ok(root) -> printReport(root)
+
+fn printReport(root: Json) -> Unit
+    ! [Console]
+    company = getField(root, "company")
+    founded = getField(root, "founded")
+    address = getField(root, "address")
+    team = getField(root, "team")
+    tags = getField(root, "tags")
+    funding = getField(root, "funding")
+
+    match company
+        Option.Some(c) -> Console.print("Company: " + jsonStr(c))
+        Option.None -> Console.print("Company: ?")
+
+    match founded
+        Option.Some(f) -> Console.print("Founded: " + String.fromInt(jsonInt(f)))
+        Option.None -> Console.print("Founded: ?")
+
+    match address
+        Option.Some(addr) -> printAddress(addr)
+        Option.None -> Console.print("Address: ?")
+
+    match team
+        Option.Some(t) -> printTeam(jsonList(t))
+        Option.None -> Console.print("Team: ?")
+
+    match tags
+        Option.Some(t) -> Console.print("Tags: " + String.join(List.map(jsonList(t), showTag), ", "))
+        Option.None -> Console.print("Tags: ?")
+
+    match funding
+        Option.Some(f) -> match f
+            Json.JsonNull -> Console.print("Funding: none yet")
+            _ -> Console.print("Funding: present")
+        Option.None -> Console.print("Funding: ?")
+
+fn printAddress(addr: Json) -> Unit
+    ! [Console]
+    city = getField(addr, "city")
+    country = getField(addr, "country")
+    match city
+        Option.Some(c) -> match country
+            Option.Some(co) -> Console.print("Address: " + jsonStr(c) + ", " + jsonStr(co))
+            Option.None -> Console.print("Address: " + jsonStr(c))
+        Option.None -> Console.print("Address: ?")
+
+fn printTeam(members: List<Json>) -> Unit
+    ! [Console]
+    Console.print("Team (" + String.fromInt(List.len(members)) + " members):")
+    _ = List.map(members, printMember)
+
+fn printMember(member: Json) -> Unit
+    ! [Console]
+    name = getField(member, "name")
+    role = getField(member, "role")
+    match name
+        Option.Some(n) -> match role
+            Option.Some(r) -> Console.print("  " + jsonStr(n) + " (" + jsonStr(r) + ")")
+            Option.None -> Console.print("  " + jsonStr(n))
+        Option.None -> Console.print("  (unknown)")
+
 verify parse
     parse("null") => Result.Ok(Json.JsonNull)
     parse("true") => Result.Ok(Json.JsonBool(true))

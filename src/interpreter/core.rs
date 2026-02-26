@@ -55,9 +55,37 @@ impl Interpreter {
             .map(|(k, v)| (k, Rc::new(v)))
             .collect::<HashMap<_, _>>();
 
+        let mut record_schemas = HashMap::new();
+        record_schemas.insert(
+            "HttpResponse".to_string(),
+            vec![
+                "status".to_string(),
+                "body".to_string(),
+                "headers".to_string(),
+            ],
+        );
+        record_schemas.insert(
+            "HttpRequest".to_string(),
+            vec![
+                "method".to_string(),
+                "path".to_string(),
+                "body".to_string(),
+                "headers".to_string(),
+            ],
+        );
+        record_schemas.insert(
+            "Header".to_string(),
+            vec!["name".to_string(), "value".to_string()],
+        );
+        record_schemas.insert(
+            "Tcp.Connection".to_string(),
+            vec!["id".to_string(), "host".to_string(), "port".to_string()],
+        );
+
         Interpreter {
             env: vec![EnvFrame::Owned(rc_global)],
             module_cache: HashMap::new(),
+            record_schemas,
             call_stack: Vec::new(),
             effect_aliases: HashMap::new(),
             active_local_slots: None,

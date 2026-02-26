@@ -30,6 +30,9 @@ pub enum ExecutionMode {
 pub struct Interpreter {
     pub env: Env,
     module_cache: HashMap<String, Value>,
+    /// Record field order schemas by type name (used to validate and
+    /// canonicalize `RecordCreate` runtime values).
+    record_schemas: HashMap<String, Vec<String>>,
     call_stack: Vec<CallFrame>,
     /// Named effect aliases: `effects AppIO = [Console, Disk]`
     effect_aliases: HashMap<String, Vec<String>>,

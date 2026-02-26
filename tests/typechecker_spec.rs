@@ -290,8 +290,8 @@ fn error_wrong_arg_count_too_many() {
 
 #[test]
 fn error_zero_arg_constructor_called_like_function() {
-    let src = "type Shape\n  Point\nfn bad() -> Shape\n    = Shape.Point()\n";
-    assert_error_containing(src, "Cannot call value of type Shape");
+    let src = "fn bad() -> Int\n    x = 1\n    x()\n";
+    assert_error_containing(src, "expected function, got Int");
 }
 
 #[test]
@@ -332,7 +332,6 @@ fn error_unknown_does_not_satisfy_call_argument_type() {
     );
     assert_error_containing(src, "Argument 1 of 'takesInt': expected Int, got Unknown");
 }
-
 
 #[test]
 fn error_list_push_mismatched_element_type() {
@@ -541,6 +540,31 @@ fn valid_sum_type_constructor_call() {
 fn valid_record_creation() {
     let src = "record User\n  name: String\n  age: Int\nu = User(name = \"Alice\", age = 30)\n";
     assert_no_errors(src);
+}
+
+#[test]
+fn error_record_creation_missing_required_field() {
+    let src = "record User\n  name: String\n  age: Int\nu = User(name = \"Alice\")\n";
+    assert_error_containing(src, "missing required field 'age'");
+}
+
+#[test]
+fn error_record_creation_unknown_field() {
+    let src = "record User\n  name: String\n  age: Int\nu = User(name = \"Alice\", age = 30, admin = true)\n";
+    assert_error_containing(src, "has no field 'admin'");
+}
+
+#[test]
+fn error_record_creation_duplicate_field() {
+    let src =
+        "record User\n  name: String\n  age: Int\nu = User(name = \"A\", name = \"B\", age = 30)\n";
+    assert_error_containing(src, "field 'name' provided more than once");
+}
+
+#[test]
+fn error_record_creation_field_type_mismatch() {
+    let src = "record User\n  name: String\n  age: Int\nu = User(name = \"Alice\", age = \"30\")\n";
+    assert_error_containing(src, "field 'age' expects Int, got String");
 }
 
 #[test]
