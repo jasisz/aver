@@ -41,7 +41,7 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 - CLI subcommands: `run`, `verify`, `check`, `replay`, `context`, `repl`
 - **Deterministic replay for effectful code** (`src/replay/`, `src/interpreter/mod.rs`, `src/main.rs`): `aver run --record <dir>` captures effect sequence + outcomes; `aver replay <file|dir> [--diff] [--test] [--check-args]` replays offline without real side effects and can fail CI on output mismatch
 - `check` command: warns when a module has no `intent:` or a function with effects/Result return has no `?` description; warns if file exceeds 150 lines; `fn main()` is exempt from the `?` requirement
-- **Static type checker** (`src/types/checker.rs`): `aver check`, `aver run`, and `aver verify` all run a type-check pass. Type errors are hard errors that block execution. The checker covers function bodies and top-level statements (including duplicate binding detection). `Any` annotations are removed from the language surface; the checker may still use internal `Type::Unknown` recovery after earlier errors so analysis can continue.
+- **Static type checker** (`src/types/checker/`): `aver check`, `aver run`, and `aver verify` all run a type-check pass. Type errors are hard errors that block execution. The checker covers function bodies and top-level statements (including duplicate binding detection). `Any` annotations are removed from the language surface; the checker may still use internal `Type::Unknown` recovery after earlier errors so analysis can continue. Bare `Unknown` does **not** satisfy concrete types in constraints (args, returns, ascriptions) — only nested `Unknown` is tolerated (gradual typing). Match pattern bindings are typed: `Result.Ok(x)` on `Result<Int, String>` gives `x: Int`, `[h, ..t]` on `List<Int>` gives `h: Int`, `t: List<Int>`.
 - **Effect propagation** is statically enforced (blocks `check`/`run`/`verify`), including `main()`: calling an effectful function requires declaring the same effect in the caller. Runtime also enforces call-edge capabilities as a backstop.
 - **User-defined sum types** (`type` keyword): `type Shape` with variants `Circle(Float)`, `Rect(Float, Float)`, `Point`. Constructors are accessed with qualified syntax `Shape.Circle(5.0)` — no flat namespace pollution. Patterns: `Shape.Circle(r)`, `Shape.Point`. Registered as `Value::Namespace` in the interpreter env.
 - **User-defined product types** (`record` keyword): `record User` with named fields `name: String`, `age: Int`. Constructed as `User(name: "Alice", age: 30)`. Field access via `u.name`. Positional destructuring in match: `User(name, age) -> name`.
@@ -73,58 +73,84 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 
 ```
 src/
-  lexer.rs       — Converts source text to a flat Vec<Token>.
-                   Manages an indent_stack to emit INDENT/DEDENT tokens
-                   for significant indentation. Handles string interpolation
-                   by collecting raw expression source inside "{ }".
+  lexer.rs            — Converts source text to a flat Vec<Token>.
+                        Manages an indent_stack to emit INDENT/DEDENT tokens
+                        for significant indentation. Handles string interpolation
+                        by collecting raw expression source inside "{ }".
 
-  ast.rs         — Pure data: the Abstract Syntax Tree.
-                   No logic, no methods. Defines TokenKind, Expr, Stmt,
-                   FnDef, Module, VerifyBlock, DecisionBlock, TopLevel, Value
-                   (actually Value lives in interpreter.rs).
+  ast.rs              — Pure data: the Abstract Syntax Tree.
+                        No logic, no methods. Defines TokenKind, Expr, Stmt,
+                        FnDef, Module, VerifyBlock, DecisionBlock, TopLevel.
 
-  parser.rs      — Recursive-descent parser consuming Vec<Token>.
-                   Produces Vec<TopLevel>. Each parse_* method corresponds
-                   to one grammar construct. Expression precedence is
-                   encoded in the call chain:
-                   parse_pipe -> parse_comparison -> parse_additive ->
-                   parse_multiplicative -> parse_unary -> parse_postfix ->
-                   parse_call_or_atom -> parse_atom
+  parser/             — Recursive-descent parser consuming Vec<Token>.
+                        Produces Vec<TopLevel>. Split into submodules:
+                        core.rs    — Parser struct, token helpers, error type
+                        expr.rs    — Expression parsing (precedence chain)
+                        functions.rs — fn/verify/decision parsing
+                        blocks.rs  — fn body, match arms, indented blocks
+                        patterns.rs — match patterns
+                        module.rs  — module block, effect sets, top-level dispatch
+                        types.rs   — type annotations, record/sum type defs
 
-  interpreter.rs — Tree-walking evaluator.
-                   Env is a Vec<EnvFrame> (scope stack: Owned or Slots).
-                   No flat builtins — all functions live in namespaces
-                   (Console, List, Int, Float, String, Http, Disk, Tcp).
-                   No closure capture — functions see globals (env[0]) at call time.
-                   Auto-memoization cache in call_fn_ref for pure
-                   recursive functions.
+  interpreter/        — Tree-walking evaluator. Split into submodules:
+                        core.rs    — Interpreter struct, env management, memo
+                        eval.rs    — eval_expr: literals, binops, match, interp strings
+                        exec.rs    — exec_stmt, exec_body, exec_fn_def, exec_items
+                        builtins.rs — call_builtin dispatch (constructors, services)
+                        effects.rs — ExecutionMode (Normal/Record/Replay), effect interception
+                        ops.rs     — call_fn_ref, tco_trampoline, call_value
+                        patterns.rs — match_pattern, eval_match
+                        api.rs     — public helpers (call_value_with_effects_pub, lookup)
 
-  tco.rs         — Tail-call optimization transform pass.
-                   Runs after parsing, before type-checking.
-                   Uses call_graph SCC to find recursive groups, then
-                   rewrites tail-position FnCall → TailCall in each SCC.
+  types/
+    mod.rs            — enum Type, parse_type_str, compatible()
+    checker/          — Static type checker. Split into submodules:
+      mod.rs          — TypeChecker struct, constraint_compatible(), run_type_check_*
+      infer.rs        — infer_type: expressions, calls, match, patterns
+      flow.rs         — check_fn_body, check_stmts, effect propagation
+      builtins.rs     — service_sigs, record_field_types registration
+      modules.rs      — cross-module type checking, base signature merging
+      memo.rs         — is_memo_safe, memo_safe_types computation
+      tests.rs        — unit tests for checker internals
 
-  call_graph.rs  — Call-graph analysis + Tarjan SCC algorithm.
-                   Builds fn→callee graph from AST, detects recursive
-                   (self or mutual) functions for auto-memoization and TCO.
+  tco.rs              — Tail-call optimization transform pass.
+                        Runs after parsing, before type-checking.
 
-  replay/        — Deterministic replay runtime:
-                   `json.rs` (JSON parser/formatter + Value<->JSON mapping)
-                   and `session.rs` (EffectRecord / SessionRecording encoding).
+  call_graph.rs       — Call-graph analysis + Tarjan SCC algorithm.
 
-  checker.rs     — Static analysis and test runner.
-                   run_verify() executes VerifyBlock cases and prints
-                   pass/fail with colour.
-                   check_module_intent() warns on missing intent/desc.
-                   index_decisions() filters TopLevel::Decision items.
+  resolver.rs         — Compile-time variable resolution: Ident → Resolved(slot).
 
-  main.rs        — CLI entry point via clap.
-                   Subcommands: run, verify, check, replay, context, repl.
-                   cmd_run: registers FnDefs, runs Stmts, calls main().
-                   cmd_run --record writes SessionRecording JSON traces.
-                   cmd_replay re-executes with recorded effect outcomes.
-                   cmd_verify: runs typecheck, registers FnDefs, runs all verify blocks.
-                   cmd_check: line-count check + intent/desc warnings.
+  replay/             — Deterministic replay runtime:
+                        json.rs    — JSON parser/formatter + Value↔JSON roundtrip
+                        session.rs — EffectRecord / SessionRecording encoding
+
+  checker.rs          — Verify block runner, module intent warnings, decision index.
+
+  value.rs            — Value, RuntimeError, Env, EnvFrame, aver_repr, aver_display.
+
+  source.rs           — parse_source(), find_module_file().
+
+  main.rs             — CLI entry point, delegates to main/ submodules.
+  main/
+    cli.rs            — clap CLI definition (Commands enum)
+    commands.rs       — cmd_run, cmd_check, cmd_verify
+    replay_cmd.rs     — cmd_replay
+    repl.rs           — cmd_repl (interactive REPL)
+    context_cmd.rs    — cmd_context
+    context_data.rs   — project context data collection
+    context_format.rs — Markdown context formatting
+    shared.rs         — shared helpers (compile_program_for_exec, load_dep_modules)
+
+  services/           — Namespace service implementations:
+    console.rs        — Console.print/error/warn/readLine  ! [Console]
+    http.rs           — Http.get/head/delete/post/put/patch  ! [Http]
+    http_server.rs    — HttpServer.listen (standalone runtime)  ! [HttpServer]
+    disk.rs           — Disk.readText/writeText/appendText/exists/delete/...  ! [Disk]
+    tcp.rs            — Tcp.send/ping + connect/writeLine/readLine/close  ! [Tcp]
+    int_helpers.rs    — Int.* (pure)
+    float_helpers.rs  — Float.* (pure)
+    string_helpers.rs — String.* (pure)
+    list_helpers.rs   — List.len/get/push/head/tail (pure)
 ```
 
 ## How to run
@@ -181,10 +207,10 @@ The `src/lib.rs` exports all modules as `pub mod` so integration tests can acces
 | `DecisionBlock` | ast.rs | Name, date, reason, chosen, rejected list, impacts list, optional author |
 | `TopLevel` | ast.rs | Top-level item: `Module`, `FnDef`, `Verify`, `Decision`, `Stmt`, `TypeDef` |
 | `TypeDef` | ast.rs | `Sum { name, variants: Vec<TypeVariant> }` or `Product { name, fields: Vec<(String, String)> }` |
-| `Value` | interpreter.rs | Runtime value: `Int`, `Float`, `Str`, `Bool`, `Unit`, `Ok(Box<Value>)`, `Err(Box<Value>)`, `Some(Box<Value>)`, `None`, `List(Vec<Value>)`, `Fn{...}`, `Builtin(String)`, `Variant { type_name, variant, fields }`, `Record { type_name, fields }`, `Namespace { name, members }` |
-| `Env` | interpreter.rs | `Vec<EnvFrame>` — scope stack (Owned or Slots frames), innermost last |
-| `RuntimeError` | interpreter.rs | Single-variant error wrapping a `String` message |
-| `ParseError` | parser.rs | `msg`, `line`, `col`; formatted as `"Parse error [L:C]: msg"` |
+| `Value` | value.rs | Runtime value: `Int`, `Float`, `Str`, `Bool`, `Unit`, `Ok(Box<Value>)`, `Err(Box<Value>)`, `Some(Box<Value>)`, `None`, `List(Vec<Value>)`, `Fn{...}`, `Builtin(String)`, `Variant { type_name, variant, fields }`, `Record { type_name, fields }`, `Namespace { name, members }` |
+| `Env` | value.rs | `Vec<EnvFrame>` — scope stack (Owned or Slots frames), innermost last |
+| `RuntimeError` | value.rs | Error enum: `Error(String)`, `TailCall(...)`, `Replay*` variants |
+| `ParseError` | parser/core.rs | `msg`, `line`, `col`; formatted as `"Parse error [L:C]: msg"` |
 
 ## Extending the language
 
@@ -193,8 +219,8 @@ The `src/lib.rs` exports all modules as `pub mod` so integration tests can acces
 1. Add a variant to `TokenKind` in `src/lexer.rs`
 2. Add a match arm in the `keyword()` function in `src/lexer.rs`
 3. Add the corresponding AST node(s) to `src/ast.rs` if needed
-4. Add a `parse_*` method in `src/parser.rs` and call it from `parse_top_level()` or the appropriate sub-parser
-5. Add execution logic in `src/interpreter.rs` (`eval_expr`, `exec_stmt`, or a new method)
+4. Add a `parse_*` method in the appropriate `src/parser/*.rs` submodule and call it from `parse_top_level()` in `module.rs`
+5. Add execution logic in the appropriate `src/interpreter/*.rs` submodule (`eval.rs` for expressions, `exec.rs` for statements)
 
 **Concrete example — adding `maintain` (goal-based looping):**
 
@@ -210,7 +236,7 @@ Maintain,
 // ast.rs — add to Expr:
 Maintain(Box<Expr>, Box<Expr>),  // condition, body block
 
-// parser.rs — add method:
+// parser/expr.rs — add method:
 fn parse_maintain(&mut self) -> Result<Expr, ParseError> {
     self.expect_exact(&TokenKind::Maintain)?;
     let cond = self.parse_expr()?;
@@ -218,7 +244,7 @@ fn parse_maintain(&mut self) -> Result<Expr, ParseError> {
     // parse indented body block
 }
 
-// interpreter.rs — add to eval_expr():
+// interpreter/eval.rs — add to eval_expr():
 Expr::Maintain(cond, body) => {
     loop {
         match self.eval_expr(cond)? {
@@ -242,15 +268,15 @@ All functions live in namespaces (e.g., `Int.abs`, `List.len`, `Console.print`).
    }
    ```
 2. Register the member name in `register()` so it appears in the namespace's `members` map.
-3. Add the type signature in `src/typechecker.rs` in the corresponding `service_sigs` section.
+3. Add the type signature in `src/types/checker/builtins.rs` in the corresponding `service_sigs` section.
 
-To create a new namespace, follow the pattern in any `src/services/*_helpers.rs` file: implement `register()`, `effects()`, and `call()`, add `pub mod` in `services/mod.rs`, wire it up in `interpreter/mod.rs`.
+To create a new namespace, follow the pattern in any `src/services/*_helpers.rs` file: implement `register()`, `effects()`, and `call()`, add `pub mod` in `services/mod.rs`, wire it up in `interpreter/builtins.rs`.
 
 ### How to add a new expression type
 
 1. Add a variant to `Expr` in `ast.rs`
-2. Parse it in `parser.rs` (typically in `parse_atom` or a new precedence level)
-3. Evaluate it in `interpreter.rs` inside `eval_expr`'s `match expr` block
+2. Parse it in `parser/expr.rs` (typically in `parse_atom` or a new precedence level)
+3. Evaluate it in `interpreter/eval.rs` inside `eval_expr`'s `match expr` block
 4. If it should appear in verify cases, update `expr_to_str` in `checker.rs`
 
 ## Known issues / edge cases
