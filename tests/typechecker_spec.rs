@@ -283,6 +283,43 @@ fn error_list_get_wrong_declared_inner_type() {
 }
 
 #[test]
+fn error_unknown_does_not_satisfy_declared_return_type() {
+    let src = concat!(
+        "fn bad() -> Int\n",
+        "    = match []:\n",
+        "        [h, ..t] -> h\n",
+        "        []       -> 0\n",
+    );
+    assert_error_containing(src, "body returns Unknown but declared return type is Int");
+}
+
+#[test]
+fn error_unknown_does_not_satisfy_call_argument_type() {
+    let src = concat!(
+        "fn takesInt(x: Int) -> Int\n",
+        "    = x + 1\n",
+        "fn bad() -> Int\n",
+        "    n = match []:\n",
+        "        [h, ..t] -> h\n",
+        "        []       -> 0\n",
+        "    takesInt(n)\n",
+    );
+    assert_error_containing(src, "Argument 1 of 'takesInt': expected Int, got Unknown");
+}
+
+#[test]
+fn error_unknown_does_not_satisfy_type_ascription() {
+    let src = concat!(
+        "fn bad() -> Int\n",
+        "    n = match []:\n",
+        "        [h, ..t] -> h\n",
+        "        []       -> 0\n",
+        "    n: Int\n",
+    );
+    assert_error_containing(src, "Type ascription mismatch");
+}
+
+#[test]
 fn error_list_push_mismatched_element_type() {
     let src = "fn bad(xs: List<Int>) -> List<Int>\n    = List.push(xs, \"x\")\n";
     assert_error_containing(src, "Argument 2 of 'List.push': expected Int, got String");

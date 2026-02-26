@@ -47,7 +47,7 @@ impl TypeChecker {
                     return Some(fallback);
                 }
                 let elem_ty = list_inner(self, &arg_types[0], 1);
-                if !arg_types[1].compatible(&Type::Int) {
+                if !Self::constraint_compatible(&arg_types[1], &Type::Int) {
                     self.error(format!(
                         "Argument 2 of '{}': expected Int, got {}",
                         name,
@@ -80,7 +80,7 @@ impl TypeChecker {
                 let val_ty = arg_types[1].clone();
                 if matches!(elem_ty, Type::Unknown) {
                     elem_ty = val_ty;
-                } else if !matches!(val_ty, Type::Unknown) && !val_ty.compatible(&elem_ty) {
+                } else if !Self::constraint_compatible(&val_ty, &elem_ty) {
                     self.error(format!(
                         "Argument 2 of '{}': expected {}, got {}",
                         name,
@@ -160,7 +160,7 @@ impl TypeChecker {
                                 elem_ty.display()
                             ));
                         }
-                        if !ret.compatible(&Type::Bool) {
+                        if !Self::constraint_compatible(ret, &Type::Bool) {
                             self.error(format!(
                                 "Argument 2 of '{}': predicate must return Bool, got {}",
                                 name,
@@ -227,7 +227,7 @@ impl TypeChecker {
 
                         if matches!(acc_ty, Type::Unknown) {
                             acc_ty = *ret.clone();
-                        } else if !ret.compatible(&acc_ty) {
+                        } else if !Self::constraint_compatible(ret, &acc_ty) {
                             self.error(format!(
                                 "Argument 3 of '{}': fold function must return {}, got {}",
                                 name,
@@ -295,7 +295,7 @@ impl TypeChecker {
                         for (i, (arg_ty, param_ty)) in
                             arg_types.iter().zip(sig.params.iter()).enumerate()
                         {
-                            if !arg_ty.compatible(param_ty) {
+                            if !Self::constraint_compatible(arg_ty, param_ty) {
                                 tc.error(format!(
                                     "Argument {} of '{}': expected {}, got {}",
                                     i + 1,
@@ -427,13 +427,20 @@ impl TypeChecker {
             }
 
             Expr::Match(subject, arms) => {
-                let _ = self.infer_type(subject);
+                let subject_ty = self.infer_type(subject);
                 // Infer from first arm; check remaining arms for consistency
                 if let Some(first_arm) = arms.first() {
-                    let first_ty =
-                        self.infer_type_with_pattern_bindings(&first_arm.pattern, &first_arm.body);
+                    let first_ty = self.infer_type_with_pattern_bindings(
+                        &first_arm.pattern,
+                        &subject_ty,
+                        &first_arm.body,
+                    );
                     for arm in arms.iter().skip(1) {
-                        let arm_ty = self.infer_type_with_pattern_bindings(&arm.pattern, &arm.body);
+                        let arm_ty = self.infer_type_with_pattern_bindings(
+                            &arm.pattern,
+                            &subject_ty,
+                            &arm.body,
+                        );
                         // Only report mismatch when both types are concrete
                         if !first_ty.compatible(&arm_ty)
                             && !matches!(first_ty, Type::Unknown)
@@ -465,7 +472,7 @@ impl TypeChecker {
                     Type::Result(ok_ty, err_ty) => {
                         match self.current_fn_ret.clone() {
                             Some(Type::Result(_, fn_err_ty)) => {
-                                if !err_ty.compatible(&fn_err_ty) {
+                                if !Self::constraint_compatible(&err_ty, &fn_err_ty) {
                                     self.error(format!(
                                         "Operator '?': Err type {} is incompatible with function's Err type {}",
                                         err_ty.display(),
@@ -506,7 +513,7 @@ impl TypeChecker {
                     }
                 };
                 let inferred = self.infer_type(inner);
-                if !inferred.compatible(&annotated) {
+                if !Self::constraint_compatible(&inferred, &annotated) {
                     self.error(format!(
                         "Type ascription mismatch: expression has type {}, annotation is {}",
                         inferred.display(),
@@ -546,7 +553,17 @@ impl TypeChecker {
                         if let Some(field_ty) = self.record_field_types.get(&key) {
                             field_ty.clone()
                         } else {
-                            self.error(format!("Record '{}' has no field '{}'", type_name, field));
+                            let schema_prefix = format!("{}.", type_name);
+                            let has_known_schema = self
+                                .record_field_types
+                                .keys()
+                                .any(|k| k.starts_with(&schema_prefix));
+                            if has_known_schema {
+                                self.error(format!(
+                                    "Record '{}' has no field '{}'",
+                                    type_name, field
+                                ));
+                            }
                             Type::Unknown
                         }
                     }
@@ -596,16 +613,17 @@ impl TypeChecker {
     pub(super) fn infer_type_with_pattern_bindings(
         &mut self,
         pattern: &Pattern,
+        subject_ty: &Type,
         body: &Expr,
     ) -> Type {
         let mut bindings = Vec::new();
-        Self::collect_pattern_bindings(pattern, &mut bindings);
+        self.collect_pattern_bindings(pattern, subject_ty, &mut bindings);
 
         let mut prev = Vec::new();
-        for bind_name in bindings {
+        for (bind_name, bind_ty) in bindings {
             let old = self.locals.get(&bind_name).cloned();
             prev.push((bind_name.clone(), old));
-            self.locals.insert(bind_name, Type::Unknown);
+            self.locals.insert(bind_name, bind_ty);
         }
 
         let out_ty = self.infer_type(body);
@@ -621,21 +639,100 @@ impl TypeChecker {
         out_ty
     }
 
-    pub(super) fn collect_pattern_bindings(pattern: &Pattern, out: &mut Vec<String>) {
-        match pattern {
-            Pattern::Ident(name) if name != "_" => out.push(name.clone()),
-            Pattern::Cons(head, tail) => {
-                if head != "_" {
-                    out.push(head.clone());
+    fn pattern_constructor_binding_types(
+        &self,
+        ctor_name: &str,
+        subject_ty: &Type,
+        arity: usize,
+    ) -> Vec<Type> {
+        let ctor_base = ctor_name.rsplit('.').next().unwrap_or(ctor_name);
+        let unknowns = || vec![Type::Unknown; arity];
+
+        let from_sig = |name: &str| -> Option<Vec<Type>> {
+            self.fn_sigs.get(name).and_then(|sig| {
+                if sig.params.len() == arity {
+                    Some(sig.params.clone())
+                } else {
+                    None
                 }
-                if tail != "_" {
-                    out.push(tail.clone());
+            })
+        };
+
+        match subject_ty {
+            Type::Result(ok_ty, err_ty) => match ctor_base {
+                "Ok" if arity == 1 => return vec![*ok_ty.clone()],
+                "Err" if arity == 1 => return vec![*err_ty.clone()],
+                _ => {}
+            },
+            Type::Option(inner_ty) => match ctor_base {
+                "Some" if arity == 1 => return vec![*inner_ty.clone()],
+                "None" if arity == 0 => return Vec::new(),
+                _ => {}
+            },
+            Type::Named(type_name) => {
+                let qualified = if ctor_name.contains('.') {
+                    ctor_name.to_string()
+                } else {
+                    format!("{}.{}", type_name, ctor_name)
+                };
+                if let Some(params) = from_sig(&qualified) {
+                    return params;
                 }
             }
-            Pattern::Constructor(_, bindings) => {
-                for name in bindings {
-                    if name != "_" {
-                        out.push(name.clone());
+            _ => {}
+        }
+
+        if let Some(params) = from_sig(ctor_name) {
+            return params;
+        }
+
+        if !ctor_name.contains('.') {
+            let suffix = format!(".{}", ctor_name);
+            let mut matching = self
+                .fn_sigs
+                .iter()
+                .filter_map(|(name, sig)| {
+                    if name.ends_with(&suffix) && sig.params.len() == arity {
+                        Some(sig.params.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            if matching.len() == 1 {
+                return matching.pop().unwrap_or_else(unknowns);
+            }
+        }
+
+        unknowns()
+    }
+
+    pub(super) fn collect_pattern_bindings(
+        &self,
+        pattern: &Pattern,
+        subject_ty: &Type,
+        out: &mut Vec<(String, Type)>,
+    ) {
+        match pattern {
+            Pattern::Ident(name) if name != "_" => out.push((name.clone(), subject_ty.clone())),
+            Pattern::Cons(head, tail) => {
+                let elem_ty = match subject_ty {
+                    Type::List(inner) => *inner.clone(),
+                    _ => Type::Unknown,
+                };
+                if head != "_" {
+                    out.push((head.clone(), elem_ty.clone()));
+                }
+                if tail != "_" {
+                    out.push((tail.clone(), Type::List(Box::new(elem_ty))));
+                }
+            }
+            Pattern::Constructor(name, bindings) => {
+                let binding_tys =
+                    self.pattern_constructor_binding_types(name, subject_ty, bindings.len());
+                for (bind_name, bind_ty) in bindings.iter().zip(binding_tys.into_iter()) {
+                    if bind_name != "_" {
+                        out.push((bind_name.clone(), bind_ty));
                     }
                 }
             }

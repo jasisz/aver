@@ -18,7 +18,7 @@ impl TypeChecker {
             match &*f.body {
                 FnBody::Expr(expr) => {
                     let inferred = self.infer_type(expr);
-                    if !inferred.compatible(&declared_ret) {
+                    if !Self::constraint_compatible(&inferred, &declared_ret) {
                         self.error(format!(
                             "Function '{}': body returns {} but declared return type is {}",
                             f.name,
@@ -31,7 +31,7 @@ impl TypeChecker {
                 }
                 FnBody::Block(stmts) => {
                     let last_type = self.check_stmts(stmts, &f.name, &declared_effects);
-                    if !last_type.compatible(&declared_ret) {
+                    if !Self::constraint_compatible(&last_type, &declared_ret) {
                         self.error(format!(
                             "Function '{}': body returns {} but declared return type is {}",
                             f.name,

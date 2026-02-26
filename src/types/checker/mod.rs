@@ -5,9 +5,9 @@
 ///   Phase 2 — check top-level statements, then each FnDef for call-site
 ///              argument types, return type, BinOp compatibility, and effects.
 ///
-/// The checker is deliberately lenient: `Type::Unknown` is compatible with
-/// everything, so partially-typed programs still pass. Full strictness
-/// requires concrete annotations on every function.
+/// The checker keeps gradual typing for nested placeholders, but applies
+/// stricter rules for checker constraints: a bare `Unknown` does not satisfy
+/// a concrete expected type in argument/return/ascription checks.
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -194,5 +194,18 @@ impl TypeChecker {
             .get(name)
             .or_else(|| self.globals.get(name))
             .cloned()
+    }
+
+    /// Compatibility used for checker constraints (call args, returns, ascriptions).
+    ///
+    /// We keep gradual typing for nested placeholders (`Result<Int, Unknown>` can
+    /// still fit `Result<Int, String>`), but reject *bare* `Unknown` when a
+    /// concrete type is required. This closes common false negatives where an
+    /// unresolved expression silently passes a concrete signature.
+    pub(super) fn constraint_compatible(actual: &Type, expected: &Type) -> bool {
+        if matches!(actual, Type::Unknown) && !matches!(expected, Type::Unknown) {
+            return false;
+        }
+        actual.compatible(expected)
     }
 }
