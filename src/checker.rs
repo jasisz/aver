@@ -203,6 +203,14 @@ pub fn expr_to_str(expr: &crate::ast::Expr) -> String {
                 .collect();
             format!("{}({})", type_name, flds.join(", "))
         }
-        _ => format!("{:?}", expr),
+        Expr::Resolved(_, _) => "<resolved>".to_string(),
+        Expr::Match(subject, arms) => {
+            let s = expr_to_str(subject);
+            let arms_str: Vec<String> = arms
+                .iter()
+                .map(|arm| format!("{:?} -> {}", arm.pattern, expr_to_str(&arm.body)))
+                .collect();
+            format!("match {}: {}", s, arms_str.join(", "))
+        }
     }
 }

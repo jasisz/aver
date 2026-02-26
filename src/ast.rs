@@ -68,6 +68,9 @@ pub enum Expr {
         type_name: String,
         fields: Vec<(String, Expr)>,
     },
+    /// Compiled variable lookup: `env[depth][slot]` — O(1) instead of HashMap scan.
+    /// Produced by the resolver pass for locals inside function bodies.
+    Resolved(u16, u16),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -85,6 +88,19 @@ pub enum FnBody {
     Block(Vec<Stmt>),
 }
 
+/// Compile-time resolution metadata for a function body.
+/// Produced by `resolver::resolve_fn` — maps local variable names to slot indices
+/// so the interpreter can use `Vec<Rc<Value>>` instead of `HashMap` lookups.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FnResolution {
+    /// Names of variables to capture from the enclosing scope, in slot order.
+    pub closure_layout: Vec<String>,
+    /// Total number of local slots needed (params + val/var bindings in body).
+    pub local_count: u16,
+    /// Map from local variable name → slot index in the local `Slots` frame.
+    pub local_slots: std::collections::HashMap<String, u16>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnDef {
     pub name: String,
@@ -94,6 +110,8 @@ pub struct FnDef {
     pub effects: Vec<String>,
     pub desc: Option<String>,
     pub body: std::rc::Rc<FnBody>,
+    /// `None` for unresolved (REPL, module sub-interpreters).
+    pub resolution: Option<FnResolution>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

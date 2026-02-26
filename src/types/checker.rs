@@ -1371,6 +1371,10 @@ impl TypeChecker {
                 }
                 Type::Named(type_name.clone())
             }
+
+            // Resolved nodes are produced after type-checking, so should not appear here.
+            // If they do (e.g. in a test), treat as Unknown.
+            Expr::Resolved(_, _) => Type::Unknown,
         }
     }
 
@@ -1546,6 +1550,7 @@ mod tests {
                 Box::new(Expr::Ident("nosuch".to_string())),
                 vec![Expr::Literal(Literal::Int(1))],
             ))])),
+            resolution: None,
         };
 
         let errs = errors(vec![TopLevel::FnDef(main_fn)]);
@@ -1575,6 +1580,7 @@ mod tests {
                 "x".to_string(),
                 Expr::Literal(Literal::Int(2)),
             )])),
+            resolution: None,
         });
 
         let errs = errors(vec![top_level_var, main_fn]);

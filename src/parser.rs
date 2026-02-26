@@ -523,6 +523,7 @@ impl Parser {
             effects,
             desc,
             body: Rc::new(body),
+            resolution: None,
         })
     }
 

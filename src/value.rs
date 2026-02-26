@@ -52,6 +52,10 @@ pub enum Value {
         effects: Vec<String>,
         body: Rc<FnBody>,
         closure: Rc<HashMap<String, Rc<Value>>>,
+        /// Slot-based closure for resolved functions (produced by resolver pass).
+        closure_slots: Option<Rc<Vec<Rc<Value>>>>,
+        /// Compile-time resolution metadata (slot layout for locals).
+        resolution: Option<crate::ast::FnResolution>,
     },
     Builtin(String),
     /// User-defined sum type variant, e.g. `Shape.Circle(3.14)`
@@ -97,6 +101,7 @@ impl PartialEq for Value {
                     effects: e1,
                     body: b1,
                     closure: c1,
+                    ..
                 },
                 Value::Fn {
                     name: n2,
@@ -104,6 +109,7 @@ impl PartialEq for Value {
                     effects: e2,
                     body: b2,
                     closure: c2,
+                    ..
                 },
             ) => n1 == n2 && p1 == p2 && e1 == e2 && b1 == b2 && c1 == c2,
             (Value::Builtin(a), Value::Builtin(b)) => a == b,
@@ -152,6 +158,10 @@ impl PartialEq for Value {
 pub enum EnvFrame {
     Owned(HashMap<String, Rc<Value>>),
     Shared(Rc<HashMap<String, Rc<Value>>>),
+    /// Slot-indexed frame for resolved function bodies — O(1) lookup.
+    Slots(Vec<Rc<Value>>),
+    /// Shared slot-indexed closure captured from a resolved function.
+    SharedSlots(Rc<Vec<Rc<Value>>>),
 }
 
 /// Scope stack: innermost scope last.

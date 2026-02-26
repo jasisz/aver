@@ -8,6 +8,7 @@ use colored::Colorize;
 use aver::ast::{DecisionBlock, FnDef, Stmt, TopLevel, TypeDef, VerifyBlock};
 use aver::checker::{check_module_intent, expr_to_str, index_decisions, run_verify};
 use aver::interpreter::{aver_display, aver_repr, EnvFrame, Interpreter, Value};
+use aver::resolver;
 use aver::source::{find_module_file, parse_source};
 use aver::types::checker::run_type_check_with_base;
 
@@ -172,7 +173,7 @@ fn cmd_run(file: &str, module_root_override: Option<&str>, run_verify_blocks: bo
         }
     };
 
-    let items = match parse_file(&source) {
+    let mut items = match parse_file(&source) {
         Ok(i) => i,
         Err(e) => {
             eprintln!("{}", e.red());
@@ -186,6 +187,9 @@ fn cmd_run(file: &str, module_root_override: Option<&str>, run_verify_blocks: bo
         print_type_errors(&type_errors);
         process::exit(1);
     }
+
+    // Compile-time variable resolution — replaces Ident with Resolved(depth, slot) in fn bodies
+    resolver::resolve_program(&mut items);
 
     let mut interp = Interpreter::new();
     if let Err(e) = load_dep_modules(&mut interp, &items, &module_root) {
@@ -359,7 +363,7 @@ fn cmd_verify(file: &str, module_root_override: Option<&str>) {
         }
     };
 
-    let items = match parse_file(&source) {
+    let mut items = match parse_file(&source) {
         Ok(i) => i,
         Err(e) => {
             eprintln!("{}", e.red());
@@ -373,6 +377,9 @@ fn cmd_verify(file: &str, module_root_override: Option<&str>) {
         print_type_errors(&type_errors);
         process::exit(1);
     }
+
+    // Compile-time variable resolution
+    resolver::resolve_program(&mut items);
 
     let mut interp = Interpreter::new();
     if let Err(e) = load_dep_modules(&mut interp, &items, &module_root) {
@@ -1107,10 +1114,12 @@ fn repl_env(interp: &Interpreter) {
     ];
     let mut found = false;
     for frame in &interp.env {
-        let scope = match frame {
-            EnvFrame::Owned(scope) => scope,
-            EnvFrame::Shared(scope) => scope,
+        let scope: Option<&std::collections::HashMap<String, std::rc::Rc<Value>>> = match frame {
+            EnvFrame::Owned(scope) => Some(scope),
+            EnvFrame::Shared(scope) => Some(scope),
+            EnvFrame::Slots(_) | EnvFrame::SharedSlots(_) => None,
         };
+        let Some(scope) = scope else { continue };
         for (name, val) in scope {
             if builtins.contains(&name.as_str()) {
                 continue;

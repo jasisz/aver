@@ -42,6 +42,9 @@ pub struct Interpreter {
     call_stack: Vec<CallFrame>,
     /// Named effect aliases: `effects AppIO = [Console, Disk]`
     effect_aliases: HashMap<String, Vec<String>>,
+    /// Active slot mapping for resolved function bodies.
+    /// Set when entering a resolved fn, cleared on exit.
+    active_local_slots: Option<HashMap<String, u16>>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -105,6 +108,7 @@ impl Interpreter {
             module_cache: HashMap::new(),
             call_stack: Vec::new(),
             effect_aliases: HashMap::new(),
+            active_local_slots: None,
         }
     }
 
@@ -158,6 +162,9 @@ impl Interpreter {
         match frame {
             EnvFrame::Owned(scope) => Ok(scope),
             EnvFrame::Shared(_) => Err(RuntimeError::Error("No mutable scope".to_string())),
+            EnvFrame::Slots(_) | EnvFrame::SharedSlots(_) => {
+                Err(RuntimeError::Error("Cannot define name in Slots frame".to_string()))
+            }
         }
     }
 
@@ -166,6 +173,8 @@ impl Interpreter {
             let found = match frame {
                 EnvFrame::Owned(scope) => scope.get(name),
                 EnvFrame::Shared(scope) => scope.get(name),
+                // Slots frames are indexed by slot, not by name — skip in name-based lookup
+                EnvFrame::Slots(_) | EnvFrame::SharedSlots(_) => None,
             };
             if let Some(v) = found {
                 return Ok(v);
@@ -184,6 +193,37 @@ impl Interpreter {
     pub fn define(&mut self, name: String, val: Value) {
         if let Ok(scope) = self.last_owned_scope_mut() {
             scope.insert(name, Rc::new(val));
+        }
+    }
+
+    /// O(1) slot-based variable lookup for resolved function bodies.
+    fn lookup_slot(&self, depth: u16, slot: u16) -> Result<Value, RuntimeError> {
+        let idx = self.env.len() - 1 - depth as usize;
+        match &self.env[idx] {
+            EnvFrame::Slots(v) => Ok(v[slot as usize].as_ref().clone()),
+            EnvFrame::SharedSlots(v) => Ok(v[slot as usize].as_ref().clone()),
+            _ => {
+                // Fallback — shouldn't happen if resolver is correct
+                Err(RuntimeError::Error(
+                    "Resolved lookup on non-Slots frame".to_string(),
+                ))
+            }
+        }
+    }
+
+    /// O(1) slot-based assignment for resolved function bodies.
+    fn assign_slot(&mut self, slot: u16, val: Value) {
+        let idx = self.env.len() - 1;
+        if let EnvFrame::Slots(v) = &mut self.env[idx] {
+            v[slot as usize] = Rc::new(val);
+        }
+    }
+
+    /// Define a value in the current Slots frame at the given slot index.
+    fn define_slot(&mut self, slot: u16, val: Value) {
+        let idx = self.env.len() - 1;
+        if let EnvFrame::Slots(v) = &mut self.env[idx] {
+            v[slot as usize] = Rc::new(val);
         }
     }
 
@@ -304,6 +344,8 @@ impl Interpreter {
                         break;
                     }
                 }
+                // Slots frames don't participate in name-based assignment
+                EnvFrame::Slots(_) | EnvFrame::SharedSlots(_) => {}
             }
         }
 
@@ -326,6 +368,7 @@ impl Interpreter {
                 let cloned = match &self.env[idx] {
                     EnvFrame::Shared(scope) => (**scope).clone(),
                     EnvFrame::Owned(scope) => scope.clone(),
+                    _ => unreachable!(),
                 };
                 self.env[idx] = EnvFrame::Owned(cloned);
                 if let EnvFrame::Owned(scope) = &mut self.env[idx] {
@@ -415,9 +458,10 @@ impl Interpreter {
             let src = std::fs::read_to_string(&path).map_err(|e| {
                 RuntimeError::Error(format!("Cannot read '{}': {}", path.display(), e))
             })?;
-            let items = parse_source(&src).map_err(|e| {
+            let mut items = parse_source(&src).map_err(|e| {
                 RuntimeError::Error(format!("Parse error in '{}': {}", path.display(), e))
             })?;
+            crate::resolver::resolve_program(&mut items);
 
             if let Some(module) = Self::module_decl(&items) {
                 let expected = name.rsplit('.').next().unwrap_or(name);
@@ -1218,12 +1262,20 @@ impl Interpreter {
         // Capture current closure
         let mut closure: HashMap<String, Rc<Value>> = HashMap::new();
         for frame in &self.env {
-            let scope = match frame {
-                EnvFrame::Owned(scope) => scope,
-                EnvFrame::Shared(scope) => scope,
-            };
-            for (k, v) in scope {
-                closure.insert(k.clone(), Rc::clone(v));
+            match frame {
+                EnvFrame::Owned(scope) => {
+                    for (k, v) in scope {
+                        closure.insert(k.clone(), Rc::clone(v));
+                    }
+                }
+                EnvFrame::Shared(scope) => {
+                    for (k, v) in scope.as_ref() {
+                        closure.insert(k.clone(), Rc::clone(v));
+                    }
+                }
+                EnvFrame::Slots(_) | EnvFrame::SharedSlots(_) => {
+                    // Slots frames don't contribute to name-based closure capture
+                }
             }
         }
 
@@ -1233,6 +1285,8 @@ impl Interpreter {
             effects: self.expand_effects(&fd.effects),
             body: Rc::clone(&fd.body),
             closure: Rc::new(closure),
+            closure_slots: None,
+            resolution: fd.resolution.clone(),
         };
         self.define(fd.name.clone(), val);
         Ok(())
@@ -1267,12 +1321,64 @@ impl Interpreter {
         Ok(last)
     }
 
+    /// Execute a block body inside a resolved (Slots-based) function.
+    /// Val/Var/Assign use slot indices when available.
+    fn exec_body_resolved(
+        &mut self,
+        stmts: &[Stmt],
+        local_slots: &HashMap<String, u16>,
+    ) -> Result<Value, RuntimeError> {
+        let mut last = Value::Unit;
+        for stmt in stmts {
+            last = self.exec_stmt_resolved(stmt, local_slots)?;
+        }
+        Ok(last)
+    }
+
+    fn exec_stmt_resolved(
+        &mut self,
+        stmt: &Stmt,
+        local_slots: &HashMap<String, u16>,
+    ) -> Result<Value, RuntimeError> {
+        match stmt {
+            Stmt::Val(name, expr) => {
+                let val = self.eval_expr(expr)?;
+                if let Some(&slot) = local_slots.get(name) {
+                    self.define_slot(slot, val);
+                } else {
+                    self.define(name.clone(), val);
+                }
+                Ok(Value::Unit)
+            }
+            Stmt::Var(name, expr, _reason) => {
+                let val = self.eval_expr(expr)?;
+                if let Some(&slot) = local_slots.get(name) {
+                    self.define_slot(slot, val);
+                } else {
+                    self.define(name.clone(), val);
+                }
+                Ok(Value::Unit)
+            }
+            Stmt::Assign(name, expr) => {
+                let val = self.eval_expr(expr)?;
+                if let Some(&slot) = local_slots.get(name) {
+                    self.assign_slot(slot, val);
+                } else {
+                    self.assign(name, val)?;
+                }
+                Ok(Value::Unit)
+            }
+            Stmt::Expr(expr) => self.eval_expr(expr),
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Expression evaluation
     // -------------------------------------------------------------------------
     pub fn eval_expr(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
         match expr {
             Expr::Literal(lit) => Ok(self.eval_literal(lit)),
+            Expr::Resolved(depth, slot) => self.lookup_slot(*depth, *slot),
             Expr::Ident(name) => self.lookup(name),
             Expr::Attr(obj, field) => {
                 // Fast path: `Ident.field` avoids cloning the entire namespace/record
@@ -1450,6 +1556,8 @@ impl Interpreter {
             effects,
             body,
             closure,
+            resolution,
+            ..
         } = fn_val
         else {
             return Err(RuntimeError::Error(format!(
@@ -1468,23 +1576,49 @@ impl Interpreter {
         }
         self.ensure_effects_allowed(name, effects.iter().map(String::as_str))?;
 
-        let mut params_scope = HashMap::new();
-        for ((param_name, _), arg_val) in params.iter().zip(args.into_iter()) {
-            params_scope.insert(param_name.clone(), Rc::new(arg_val));
-        }
-
         self.call_stack.push(CallFrame {
             name: name.clone(),
             effects: effects.clone(),
         });
-        self.push_shared_env(Rc::clone(closure));
-        self.push_owned_env(params_scope);
-        let result = match &**body {
-            FnBody::Expr(e) => self.eval_expr(e),
-            FnBody::Block(stmts) => self.exec_body(stmts),
+
+        let prev_local_slots = self.active_local_slots.take();
+        let result = if let Some(res) = resolution {
+            // Resolved path: single Slots frame with params + locals.
+            // Closure is the HashMap-based one (globals + captured names).
+            let mut slots = vec![Rc::new(Value::Unit); res.local_count as usize];
+            for ((param_name, _), arg_val) in params.iter().zip(args.into_iter()) {
+                if let Some(&slot) = res.local_slots.get(param_name) {
+                    slots[slot as usize] = Rc::new(arg_val);
+                }
+            }
+            self.active_local_slots = Some(res.local_slots.clone());
+            self.push_shared_env(Rc::clone(closure));
+            self.push_env(EnvFrame::Slots(slots));
+            let r = match &**body {
+                FnBody::Expr(e) => self.eval_expr(e),
+                FnBody::Block(stmts) => self.exec_body_resolved(stmts, &res.local_slots),
+            };
+            self.pop_env();
+            self.pop_env();
+            r
+        } else {
+            // Unresolved path (REPL, dynamically created fns): HashMap-based
+            let mut params_scope = HashMap::new();
+            for ((param_name, _), arg_val) in params.iter().zip(args.into_iter()) {
+                params_scope.insert(param_name.clone(), Rc::new(arg_val));
+            }
+            self.push_shared_env(Rc::clone(closure));
+            self.push_owned_env(params_scope);
+            let r = match &**body {
+                FnBody::Expr(e) => self.eval_expr(e),
+                FnBody::Block(stmts) => self.exec_body(stmts),
+            };
+            self.pop_env();
+            self.pop_env();
+            r
         };
-        self.pop_env();
-        self.pop_env();
+        self.active_local_slots = prev_local_slots;
+
         self.call_stack.pop();
         match result {
             Ok(v) => Ok(v),
@@ -1679,7 +1813,22 @@ impl Interpreter {
     fn eval_match(&mut self, subject: Value, arms: &[MatchArm]) -> Result<Value, RuntimeError> {
         for arm in arms {
             if let Some(bindings) = self.match_pattern(&arm.pattern, &subject) {
-                // Create new scope with pattern bindings
+                // If we're in a resolved function and all bindings have slots,
+                // write directly into the Slots frame (no extra scope push).
+                if let Some(local_slots) = self.active_local_slots.clone() {
+                    let all_slotted = bindings
+                        .keys()
+                        .all(|name| local_slots.contains_key(name));
+                    if all_slotted {
+                        for (name, val) in bindings {
+                            if let Some(&slot) = local_slots.get(&name) {
+                                self.define_slot(slot, val);
+                            }
+                        }
+                        return self.eval_expr(&arm.body);
+                    }
+                }
+                // Fallback: HashMap-based scope for unresolved functions / REPL
                 let rc_scope = bindings
                     .into_iter()
                     .map(|(k, v)| (k, Rc::new(v)))
@@ -1869,7 +2018,8 @@ impl Interpreter {
     // -------------------------------------------------------------------------
     #[allow(dead_code)]
     pub fn run_file(&mut self, source: &str) -> Result<Value, RuntimeError> {
-        let items = parse_source(source).map_err(RuntimeError::Error)?;
+        let mut items = parse_source(source).map_err(RuntimeError::Error)?;
+        crate::resolver::resolve_program(&mut items);
 
         // First pass: register all top-level definitions
         for item in &items {
