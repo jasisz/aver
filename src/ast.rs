@@ -44,8 +44,7 @@ pub enum Pattern {
 #[derive(Debug, Clone, PartialEq)]
 pub enum StrPart {
     Literal(String),
-    Expr(String),      // raw expression source text (legacy, unused after parsing)
-    Parsed(Box<Expr>), // pre-parsed expression
+    Parsed(Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -72,9 +71,9 @@ pub enum Expr {
     /// Produced by the TCO transform pass before type-checking.
     /// Boxed to keep Expr enum at its original size (48 bytes).
     TailCall(Box<(String, Vec<Expr>)>),
-    /// Compiled variable lookup: `env[depth][slot]` — O(1) instead of HashMap scan.
+    /// Compiled variable lookup: `env[last][slot]` — O(1) instead of HashMap scan.
     /// Produced by the resolver pass for locals inside function bodies.
-    Resolved(u16, u16),
+    Resolved(u16),
 }
 
 #[derive(Debug, Clone, PartialEq)]

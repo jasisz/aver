@@ -134,7 +134,7 @@ fn collect_callees_expr(expr: &Expr, callees: &mut HashSet<String>) {
                 collect_callees_expr(arg, callees);
             }
         }
-        Expr::Literal(_) | Expr::Resolved(_, _) => {}
+        Expr::Literal(_) | Expr::Resolved(_) => {}
         Expr::Ident(_) => {}
         Expr::Attr(obj, _) => collect_callees_expr(obj, callees),
         Expr::BinOp(_, l, r) => {
@@ -164,10 +164,8 @@ fn collect_callees_expr(expr: &Expr, callees: &mut HashSet<String>) {
         Expr::ErrorProp(inner) => collect_callees_expr(inner, callees),
         Expr::InterpolatedStr(parts) => {
             for part in parts {
-                if let crate::ast::StrPart::Expr(raw) = part {
-                    // We don't re-parse interpolation expressions for call graph
-                    // purposes — conservative: miss calls inside string interpolation.
-                    let _ = raw;
+                if let crate::ast::StrPart::Parsed(expr) = part {
+                    collect_callees_expr(expr, callees);
                 }
             }
         }

@@ -7,8 +7,6 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use crate::ast::*;
-use crate::lexer::Lexer;
-use crate::parser::Parser;
 use crate::services::{console, disk, http, http_server, tcp};
 use crate::source::{canonicalize_path, find_module_file, parse_source};
 use crate::types::{float, int, list, string};
@@ -149,10 +147,6 @@ impl Interpreter {
         self.env.push(frame);
     }
 
-    fn push_owned_env(&mut self, scope: HashMap<String, Rc<Value>>) {
-        self.push_env(EnvFrame::Owned(scope));
-    }
-
     fn pop_env(&mut self) {
         if self.env.len() > 1 {
             self.env.pop();
@@ -215,8 +209,8 @@ impl Interpreter {
     }
 
     /// O(1) slot-based variable lookup for resolved function bodies.
-    fn lookup_slot(&self, depth: u16, slot: u16) -> Result<Value, RuntimeError> {
-        let idx = self.env.len() - 1 - depth as usize;
+    fn lookup_slot(&self, slot: u16) -> Result<Value, RuntimeError> {
+        let idx = self.env.len() - 1;
         match &self.env[idx] {
             EnvFrame::Slots(v) => Ok(v[slot as usize].as_ref().clone()),
             _ => {
@@ -1276,7 +1270,7 @@ impl Interpreter {
     pub fn eval_expr(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
         match expr {
             Expr::Literal(lit) => Ok(self.eval_literal(lit)),
-            Expr::Resolved(depth, slot) => self.lookup_slot(*depth, *slot),
+            Expr::Resolved(slot) => self.lookup_slot(*slot),
             Expr::Ident(name) => self.lookup(name),
             Expr::Attr(obj, field) => {
                 // Fast path: `Ident.field` avoids cloning the entire namespace/record
@@ -1377,19 +1371,6 @@ impl Interpreter {
                         StrPart::Literal(s) => result.push_str(s),
                         StrPart::Parsed(expr) => {
                             let val = self.eval_expr(expr)?;
-                            result.push_str(&aver_repr(&val));
-                        }
-                        StrPart::Expr(src) => {
-                            // Legacy fallback: re-lex and parse at runtime
-                            let mut lexer = Lexer::new(src);
-                            let tokens = lexer.tokenize().map_err(|e| {
-                                RuntimeError::Error(format!("Error in interpolation: {}", e))
-                            })?;
-                            let mut parser = Parser::new(tokens);
-                            let expr_node = parser.parse_expr().map_err(|e| {
-                                RuntimeError::Error(format!("Error in interpolation: {}", e))
-                            })?;
-                            let val = self.eval_expr(&expr_node)?;
                             result.push_str(&aver_repr(&val));
                         }
                     }
@@ -1538,7 +1519,7 @@ impl Interpreter {
             for ((param_name, _), arg_val) in params.iter().zip(args.into_iter()) {
                 params_scope.insert(param_name.clone(), Rc::new(arg_val));
             }
-            self.push_owned_env(params_scope);
+            self.push_env(EnvFrame::Owned(params_scope));
             let r = match &**body {
                 FnBody::Expr(e) => self.eval_expr(e),
                 FnBody::Block(stmts) => self.exec_body(stmts),
@@ -1660,7 +1641,7 @@ impl Interpreter {
                     params_scope.insert(param_name.clone(), Rc::new(arg_val));
                 }
                 let saved_frames: Vec<EnvFrame> = self.env.drain(1..).collect();
-                self.push_owned_env(params_scope);
+                self.push_env(EnvFrame::Owned(params_scope));
                 let r = match &*cur_body {
                     FnBody::Expr(e) => self.eval_expr(e),
                     FnBody::Block(stmts) => self.exec_body(stmts),
@@ -1886,7 +1867,7 @@ impl Interpreter {
                     .into_iter()
                     .map(|(k, v)| (k, Rc::new(v)))
                     .collect::<HashMap<_, _>>();
-                self.push_owned_env(rc_scope);
+                self.push_env(EnvFrame::Owned(rc_scope));
                 let result = self.eval_expr(&arm.body);
                 self.pop_env();
                 return result;

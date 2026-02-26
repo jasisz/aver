@@ -63,10 +63,10 @@ fn jsonErr(msg: String) -> String
     = "{{\"error\": \"{msg}\"}}"
 
 verify jsonOk:
-    jsonOk("Warsaw", "\"sunny\"") => "{\"city\": \"Warsaw\", \"weather\": \"sunny\", \"source\": \"cache_or_api\"}"
+    jsonOk("Warsaw", "\"sunny\"") => "{{\"city\": \"Warsaw\", \"weather\": \"sunny\", \"source\": \"cache_or_api\"}}"
 
 verify jsonErr:
-    jsonErr("not found") => "{\"error\": \"not found\"}"
+    jsonErr("not found") => "{{\"error\": \"not found\"}}"
 
 // URL and key builders (pure)
 

@@ -63,11 +63,6 @@ impl Parser {
         tok
     }
 
-    #[allow(dead_code)]
-    fn check(&self, kind: &TokenKind) -> bool {
-        std::mem::discriminant(&self.current().kind) == std::mem::discriminant(kind)
-    }
-
     fn check_exact(&self, kind: &TokenKind) -> bool {
         &self.current().kind == kind
     }
@@ -1137,21 +1132,19 @@ impl Parser {
                 let mut str_parts = Vec::new();
                 for (is_expr, s) in parts {
                     if is_expr {
-                        // Try to pre-parse the expression at parse time.
-                        // Fall back to raw StrPart::Expr for edge cases
-                        // (empty `{}`, escaped quotes in JSON templates, etc.)
-                        let parsed = if s.trim().is_empty() {
-                            None
+                        // Parse the interpolation expression; empty `{}` → empty literal.
+                        if s.trim().is_empty() {
+                            str_parts.push(StrPart::Literal(String::new()));
                         } else {
                             let mut lexer = crate::lexer::Lexer::new(&s);
-                            lexer.tokenize().ok().and_then(|tokens| {
-                                let mut sub_parser = Parser::new(tokens);
-                                sub_parser.parse_expr().ok()
-                            })
-                        };
-                        match parsed {
-                            Some(expr) => str_parts.push(StrPart::Parsed(Box::new(expr))),
-                            None => str_parts.push(StrPart::Expr(s)),
+                            let tokens = lexer.tokenize().map_err(|e| {
+                                ParseError::Error { msg: format!("Error in interpolation: {}", e), line: self.current().line, col: self.current().col }
+                            })?;
+                            let mut sub_parser = Parser::new(tokens);
+                            let expr = sub_parser.parse_expr().map_err(|e| {
+                                ParseError::Error { msg: format!("Error in interpolation: {}", e), line: self.current().line, col: self.current().col }
+                            })?;
+                            str_parts.push(StrPart::Parsed(Box::new(expr)));
                         }
                     } else {
                         str_parts.push(StrPart::Literal(s));

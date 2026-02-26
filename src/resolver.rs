@@ -144,7 +144,7 @@ fn collect_expr_bindings(
             }
         }
         // Leaves — no bindings to collect
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_, _) | Expr::Constructor(_, None) => {}
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) | Expr::Constructor(_, None) => {}
     }
 }
 
@@ -186,11 +186,11 @@ fn resolve_expr(expr: &mut Expr, local_slots: &HashMap<String, u16>) {
     match expr {
         Expr::Ident(name) => {
             if let Some(&slot) = local_slots.get(name) {
-                *expr = Expr::Resolved(0, slot);
+                *expr = Expr::Resolved(slot);
             }
             // else: global/namespace — leave as Ident for HashMap fallback
         }
-        Expr::Resolved(_, _) | Expr::Literal(_) => {}
+        Expr::Resolved(_) | Expr::Literal(_) => {}
         Expr::Attr(obj, _) => {
             resolve_expr(obj, local_slots);
         }
@@ -291,8 +291,8 @@ mod tests {
 
         match fd.body.as_ref() {
             FnBody::Expr(Expr::BinOp(_, left, right)) => {
-                assert_eq!(**left, Expr::Resolved(0, 0));
-                assert_eq!(**right, Expr::Resolved(0, 1));
+                assert_eq!(**left, Expr::Resolved(0));
+                assert_eq!(**right, Expr::Resolved(1));
             }
             other => panic!("unexpected body: {:?}", other),
         }
@@ -319,7 +319,7 @@ mod tests {
                 // Console stays as Ident (global)
                 assert_eq!(**func, Expr::Ident("Console".to_string()));
                 // x is resolved to slot 0
-                assert_eq!(args[0], Expr::Resolved(0, 0));
+                assert_eq!(args[0], Expr::Resolved(0));
             }
             other => panic!("unexpected body: {:?}", other),
         }
@@ -358,13 +358,13 @@ mod tests {
                 // val y = x + 1  →  val y = Resolved(0,0) + 1
                 match &stmts[0] {
                     Stmt::Binding(_, Expr::BinOp(_, left, _)) => {
-                        assert_eq!(**left, Expr::Resolved(0, 0));
+                        assert_eq!(**left, Expr::Resolved(0));
                     }
                     other => panic!("unexpected stmt: {:?}", other),
                 }
                 // y  →  Resolved(0,1)
                 match &stmts[1] {
-                    Stmt::Expr(Expr::Resolved(0, 1)) => {}
+                    Stmt::Expr(Expr::Resolved(1)) => {}
                     other => panic!("unexpected stmt: {:?}", other),
                 }
             }
@@ -408,7 +408,7 @@ mod tests {
         match fd.body.as_ref() {
             FnBody::Expr(Expr::Match(_, arms)) => {
                 // v in arm body should be Resolved(0, 1)
-                assert_eq!(*arms[0].body, Expr::Resolved(0, 1));
+                assert_eq!(*arms[0].body, Expr::Resolved(1));
             }
             other => panic!("unexpected body: {:?}", other),
         }

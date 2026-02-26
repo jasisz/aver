@@ -179,11 +179,6 @@ pub fn expr_to_str(expr: &crate::ast::Expr) -> String {
                         inner.push_str(&expr_to_str(e));
                         inner.push('}');
                     }
-                    StrPart::Expr(s) => {
-                        inner.push('{');
-                        inner.push_str(s);
-                        inner.push('}');
-                    }
                 }
             }
             format!("\"{}\"", inner)
@@ -208,7 +203,7 @@ pub fn expr_to_str(expr: &crate::ast::Expr) -> String {
             let a = args.iter().map(expr_to_str).collect::<Vec<_>>().join(", ");
             format!("<tail-call:{}>({})", target, a)
         }
-        Expr::Resolved(_, _) => "<resolved>".to_string(),
+        Expr::Resolved(_) => "<resolved>".to_string(),
         Expr::Match(subject, arms) => {
             let s = expr_to_str(subject);
             let arms_str: Vec<String> = arms
