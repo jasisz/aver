@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod call_graph;
 pub mod checker;
 pub mod interpreter;
 pub mod lexer;

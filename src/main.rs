@@ -10,7 +10,8 @@ use aver::checker::{check_module_intent, expr_to_str, index_decisions, run_verif
 use aver::interpreter::{aver_display, aver_repr, EnvFrame, Interpreter, Value};
 use aver::resolver;
 use aver::source::{find_module_file, parse_source};
-use aver::types::checker::run_type_check_with_base;
+use aver::call_graph::find_recursive_fns;
+use aver::types::checker::{run_type_check_full, run_type_check_with_base};
 
 #[derive(ClapParser)]
 #[command(name = "aver", about = "The Aver language interpreter")]
@@ -163,6 +164,41 @@ fn print_type_errors(errors: &[aver::types::checker::TypeError]) {
     }
 }
 
+/// Determine which functions qualify for auto-memoization:
+/// pure (no effects), recursive, and all parameters are memo-safe types.
+fn compute_memo_fns(
+    items: &[TopLevel],
+    tc_result: &aver::types::checker::TypeCheckResult,
+) -> std::collections::HashSet<String> {
+    let recursive = find_recursive_fns(items);
+    let mut memo = std::collections::HashSet::new();
+
+    for fn_name in &recursive {
+        if let Some((params, _ret, effects)) = tc_result.fn_sigs.get(fn_name) {
+            // Must be pure (no effects)
+            if !effects.is_empty() {
+                continue;
+            }
+            // All params must be memo-safe
+            let all_safe = params.iter().all(|ty| is_memo_safe_type(ty, &tc_result.memo_safe_types));
+            if all_safe {
+                memo.insert(fn_name.clone());
+            }
+        }
+    }
+    memo
+}
+
+fn is_memo_safe_type(ty: &aver::types::Type, safe_named: &std::collections::HashSet<String>) -> bool {
+    use aver::types::Type;
+    match ty {
+        Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit => true,
+        Type::List(_) | Type::Fn(_, _, _) | Type::Unknown => false,
+        Type::Result(_, _) | Type::Option(_) => false,
+        Type::Named(name) => safe_named.contains(name),
+    }
+}
+
 fn cmd_run(file: &str, module_root_override: Option<&str>, run_verify_blocks: bool) {
     let module_root = resolve_module_root(module_root_override);
     let source = match read_file(file) {
@@ -182,16 +218,21 @@ fn cmd_run(file: &str, module_root_override: Option<&str>, run_verify_blocks: bo
     };
 
     // Static type check — block execution on any error
-    let type_errors = run_type_check_with_base(&items, Some(&module_root));
-    if !type_errors.is_empty() {
-        print_type_errors(&type_errors);
+    let tc_result = run_type_check_full(&items, Some(&module_root));
+    if !tc_result.errors.is_empty() {
+        print_type_errors(&tc_result.errors);
         process::exit(1);
     }
 
     // Compile-time variable resolution — replaces Ident with Resolved(depth, slot) in fn bodies
     resolver::resolve_program(&mut items);
 
+    // Auto-memoization: find pure recursive fns with memo-safe params
+    let memo_fns = compute_memo_fns(&items, &tc_result);
+
     let mut interp = Interpreter::new();
+    interp.enable_memo(memo_fns);
+
     if let Err(e) = load_dep_modules(&mut interp, &items, &module_root) {
         eprintln!("{}", e.red());
         process::exit(1);
@@ -372,16 +413,21 @@ fn cmd_verify(file: &str, module_root_override: Option<&str>) {
     };
 
     // Static type check — verify should use the same soundness gate as run/check
-    let type_errors = run_type_check_with_base(&items, Some(&module_root));
-    if !type_errors.is_empty() {
-        print_type_errors(&type_errors);
+    let tc_result = run_type_check_full(&items, Some(&module_root));
+    if !tc_result.errors.is_empty() {
+        print_type_errors(&tc_result.errors);
         process::exit(1);
     }
 
     // Compile-time variable resolution
     resolver::resolve_program(&mut items);
 
+    // Auto-memoization
+    let memo_fns = compute_memo_fns(&items, &tc_result);
+
     let mut interp = Interpreter::new();
+    interp.enable_memo(memo_fns);
+
     if let Err(e) = load_dep_modules(&mut interp, &items, &module_root) {
         eprintln!("{}", e.red());
         process::exit(1);

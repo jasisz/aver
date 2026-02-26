@@ -25,14 +25,44 @@ pub struct TypeError {
     pub line: Option<usize>,
 }
 
+/// Result of type-checking that also carries memo-safety metadata.
+#[derive(Debug)]
+pub struct TypeCheckResult {
+    pub errors: Vec<TypeError>,
+    /// For each user-defined fn: (param_types, return_type, effects).
+    /// Used by the memo system to decide which fns qualify.
+    pub fn_sigs: HashMap<String, (Vec<Type>, Type, Vec<String>)>,
+    /// Set of type names whose values are memo-safe (hashable scalars / records of scalars).
+    pub memo_safe_types: HashSet<String>,
+}
+
 pub fn run_type_check(items: &[TopLevel]) -> Vec<TypeError> {
     run_type_check_with_base(items, None)
 }
 
 pub fn run_type_check_with_base(items: &[TopLevel], base_dir: Option<&str>) -> Vec<TypeError> {
+    run_type_check_full(items, base_dir).errors
+}
+
+pub fn run_type_check_full(items: &[TopLevel], base_dir: Option<&str>) -> TypeCheckResult {
     let mut checker = TypeChecker::new();
     checker.check(items, base_dir);
-    checker.errors
+
+    // Export fn_sigs for memo analysis
+    let fn_sigs: HashMap<String, (Vec<Type>, Type, Vec<String>)> = checker
+        .fn_sigs
+        .iter()
+        .map(|(k, v)| (k.clone(), (v.params.clone(), v.ret.clone(), v.effects.clone())))
+        .collect();
+
+    // Compute memo-safe named types
+    let memo_safe_types = checker.compute_memo_safe_types(items);
+
+    TypeCheckResult {
+        errors: checker.errors,
+        fn_sigs,
+        memo_safe_types,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1505,6 +1535,89 @@ impl TypeChecker {
                 self.check_fn(f);
             }
         }
+    }
+
+    // ── Memo-safety analysis ─────────────────────────────────────────────
+
+    /// A type is memo-safe if its runtime values can be cheaply hashed and
+    /// compared for equality (scalars, records/variants of scalars).
+    fn is_memo_safe(&self, ty: &Type, visiting: &mut HashSet<String>) -> bool {
+        match ty {
+            Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit => true,
+            Type::List(_) | Type::Fn(_, _, _) | Type::Unknown => false,
+            Type::Result(_, _) | Type::Option(_) => false,
+            Type::Named(name) => {
+                // Prevent infinite recursion for cyclic type defs
+                if !visiting.insert(name.clone()) {
+                    return true;
+                }
+                let safe = self.named_type_memo_safe(name, visiting);
+                visiting.remove(name);
+                safe
+            }
+        }
+    }
+
+    /// Check whether a named user-defined type has only memo-safe fields.
+    fn named_type_memo_safe(&self, name: &str, visiting: &mut HashSet<String>) -> bool {
+        // Check record fields: keys are "TypeName.fieldName"
+        let prefix = format!("{}.", name);
+        let mut found_fields = false;
+        for (key, field_ty) in &self.record_field_types {
+            if key.starts_with(&prefix) {
+                found_fields = true;
+                if !self.is_memo_safe(field_ty, visiting) {
+                    return false;
+                }
+            }
+        }
+        if found_fields {
+            return true;
+        }
+
+        // Check sum type variants: constructors are registered in fn_sigs
+        // as "TypeName.VariantName" with param types, or in value_members
+        // for zero-arg constructors.
+        let mut found_variants = false;
+        for (key, sig) in &self.fn_sigs {
+            if key.starts_with(&prefix) && key.len() > prefix.len() {
+                found_variants = true;
+                for param in &sig.params {
+                    if !self.is_memo_safe(param, visiting) {
+                        return false;
+                    }
+                }
+            }
+        }
+        for (key, _) in &self.value_members {
+            if key.starts_with(&prefix) && key.len() > prefix.len() {
+                found_variants = true;
+                // Zero-arg constructors carry no data — always safe
+            }
+        }
+        if found_variants {
+            return true;
+        }
+
+        // Unknown named type — conservatively not safe
+        false
+    }
+
+    /// Compute the set of user-defined type names that are memo-safe.
+    fn compute_memo_safe_types(&self, items: &[TopLevel]) -> HashSet<String> {
+        let mut safe = HashSet::new();
+        for item in items {
+            if let TopLevel::TypeDef(td) = item {
+                let name = match td {
+                    TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name,
+                };
+                let mut visiting = HashSet::new();
+                if self.is_memo_safe(&Type::Named(name.clone()), &mut visiting) {
+                    safe.insert(name.clone());
+                }
+            }
+        }
+        safe
     }
 }
 

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use crate::value::hash_memo_args;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
@@ -45,6 +46,10 @@ pub struct Interpreter {
     /// Active slot mapping for resolved function bodies.
     /// Set when entering a resolved fn, cleared on exit.
     active_local_slots: Option<HashMap<String, u16>>,
+    /// Names of pure recursive functions eligible for auto-memoization.
+    memo_fns: HashSet<String>,
+    /// Per-function memo cache: fn_name → (hash(args) → result).
+    memo_cache: HashMap<String, HashMap<u64, Value>>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -109,7 +114,14 @@ impl Interpreter {
             call_stack: Vec::new(),
             effect_aliases: HashMap::new(),
             active_local_slots: None,
+            memo_fns: HashSet::new(),
+            memo_cache: HashMap::new(),
         }
+    }
+
+    /// Mark a set of function names as eligible for auto-memoization.
+    pub fn enable_memo(&mut self, fns: HashSet<String>) {
+        self.memo_fns = fns;
     }
 
     /// Register a named effect set alias.
@@ -1565,6 +1577,18 @@ impl Interpreter {
         }
         self.ensure_effects_allowed(name, effects.iter().map(String::as_str))?;
 
+        // Auto-memoization: check cache before executing
+        let is_memo = self.memo_fns.contains(name);
+        let memo_key = if is_memo {
+            let key = hash_memo_args(&args);
+            if let Some(cached) = self.memo_cache.get(name).and_then(|c| c.get(&key)) {
+                return Ok(cached.clone());
+            }
+            Some(key)
+        } else {
+            None
+        };
+
         self.call_stack.push(CallFrame {
             name: name.clone(),
             effects: effects.clone(),
@@ -1609,11 +1633,23 @@ impl Interpreter {
         self.active_local_slots = prev_local_slots;
 
         self.call_stack.pop();
-        match result {
+        let final_result = match result {
             Ok(v) => Ok(v),
             Err(RuntimeError::ErrProp(e)) => Ok(Value::Err(e)),
             Err(e) => Err(e),
+        };
+
+        // Auto-memoization: store result in cache
+        if let (Some(key), Ok(ref val)) = (memo_key, &final_result) {
+            let fn_name = name.clone();
+            let cache = self.memo_cache.entry(fn_name).or_default();
+            // Cap cache size at 4096 entries per function
+            if cache.len() < 4096 {
+                cache.insert(key, val.clone());
+            }
         }
+
+        final_result
     }
 
     fn eval_binop(&self, op: &BinOp, left: Value, right: Value) -> Result<Value, RuntimeError> {

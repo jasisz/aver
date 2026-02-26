@@ -1824,3 +1824,94 @@ fn verify_error_prop_err_fails_test() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Auto-memoization tests
+// ---------------------------------------------------------------------------
+
+/// Helper: parse, type-check, resolve, compute memo_fns, register everything, call fn.
+fn call_fn_with_memo(src: &str, fn_name: &str, args: Vec<Value>) -> Value {
+    use aver::call_graph::find_recursive_fns;
+    use aver::resolver;
+    use aver::types::checker::run_type_check_full;
+    use aver::types::Type;
+
+    let mut items = parse(src);
+
+    let tc_result = run_type_check_full(&items, None);
+    assert!(
+        tc_result.errors.is_empty(),
+        "type errors: {:?}",
+        tc_result.errors
+    );
+
+    resolver::resolve_program(&mut items);
+
+    // Compute memo fns
+    let recursive = find_recursive_fns(&items);
+    let mut memo_fns = std::collections::HashSet::new();
+    for name in &recursive {
+        if let Some((params, _ret, effects)) = tc_result.fn_sigs.get(name) {
+            if effects.is_empty() {
+                let all_safe = params.iter().all(|ty| match ty {
+                    Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit => true,
+                    Type::Named(n) => tc_result.memo_safe_types.contains(n),
+                    _ => false,
+                });
+                if all_safe {
+                    memo_fns.insert(name.clone());
+                }
+            }
+        }
+    }
+
+    let mut interp = Interpreter::new();
+    interp.enable_memo(memo_fns);
+
+    for item in &items {
+        if let TopLevel::TypeDef(td) = item {
+            interp.register_type_def(td);
+        }
+    }
+    for item in &items {
+        if let TopLevel::FnDef(fd) = item {
+            interp.exec_fn_def(fd).expect("exec_fn_def failed");
+        }
+    }
+    let fn_val = interp.lookup(fn_name).expect("fn not found");
+    interp.call_value_pub(fn_val, args).expect("call failed")
+}
+
+#[test]
+fn memo_fib_30_returns_correct_result() {
+    let src = r#"
+fn fib(n: Int) -> Int
+    match n:
+        0 -> 0
+        1 -> 1
+        _ -> fib(n - 1) + fib(n - 2)
+"#;
+    // fib(30) = 832040 — without memo this would take exponential time
+    assert_eq!(call_fn_with_memo(src, "fib", vec![Value::Int(30)]), Value::Int(832040));
+}
+
+#[test]
+fn memo_fib_small_values() {
+    let src = r#"
+fn fib(n: Int) -> Int
+    match n:
+        0 -> 0
+        1 -> 1
+        _ -> fib(n - 1) + fib(n - 2)
+"#;
+    assert_eq!(call_fn_with_memo(src, "fib", vec![Value::Int(0)]), Value::Int(0));
+    assert_eq!(call_fn_with_memo(src, "fib", vec![Value::Int(1)]), Value::Int(1));
+    assert_eq!(call_fn_with_memo(src, "fib", vec![Value::Int(10)]), Value::Int(55));
+}
+
+#[test]
+fn memo_non_recursive_fn_still_works() {
+    // Non-recursive functions should work normally (not memoized but not broken)
+    let src = "fn double(x: Int) -> Int\n    = x + x\n";
+    assert_eq!(call_fn_with_memo(src, "double", vec![Value::Int(5)]), Value::Int(10));
+}
