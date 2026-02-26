@@ -577,7 +577,7 @@ fn tuple_equality_runtime() {
 #[test]
 fn map_len_empty() {
     assert_eq!(
-        eval("Map.len(Map.empty(): Map<String, Int>)"),
+        eval("Map.len(Map.empty())"),
         Value::Int(0)
     );
 }
@@ -585,11 +585,11 @@ fn map_len_empty() {
 #[test]
 fn map_set_get_has() {
     assert_eq!(
-        eval("Map.has(Map.set(Map.empty(): Map<String, Int>, \"a\", 1), \"a\")"),
+        eval("Map.has(Map.set(Map.empty(), \"a\", 1), \"a\")"),
         Value::Bool(true)
     );
     assert_eq!(
-        eval("Map.get(Map.set(Map.empty(): Map<String, Int>, \"a\", 1), \"a\")"),
+        eval("Map.get(Map.set(Map.empty(), \"a\", 1), \"a\")"),
         Value::Some(Box::new(Value::Int(1)))
     );
 }
@@ -597,7 +597,7 @@ fn map_set_get_has() {
 #[test]
 fn map_get_missing_returns_none() {
     assert_eq!(
-        eval("Map.get(Map.empty(): Map<String, Int>, \"missing\")"),
+        eval("Map.get(Map.empty(), \"missing\")"),
         Value::None
     );
 }
@@ -605,7 +605,7 @@ fn map_get_missing_returns_none() {
 #[test]
 fn map_remove_drops_key() {
     assert_eq!(
-        eval("Map.has(Map.remove(Map.set(Map.empty(): Map<String, Int>, \"a\", 1), \"a\"), \"a\")"),
+        eval("Map.has(Map.remove(Map.set(Map.empty(), \"a\", 1), \"a\"), \"a\")"),
         Value::Bool(false)
     );
 }
@@ -613,14 +613,14 @@ fn map_remove_drops_key() {
 #[test]
 fn map_from_list_and_entries_roundtrip() {
     assert_eq!(
-        eval("Map.keys(Map.fromList([(\"a\", 1), (\"b\", 2)]): Map<String, Int>)"),
+        eval("Map.keys(Map.fromList([(\"a\", 1), (\"b\", 2)]))"),
         Value::List(vec![
             Value::Str("a".to_string()),
             Value::Str("b".to_string()),
         ])
     );
     assert_eq!(
-        eval("Map.entries(Map.fromList([(\"a\", 1), (\"b\", 2)]): Map<String, Int>)"),
+        eval("Map.entries(Map.fromList([(\"a\", 1), (\"b\", 2)]))"),
         Value::List(vec![
             Value::Tuple(vec![Value::Str("a".to_string()), Value::Int(1)]),
             Value::Tuple(vec![Value::Str("b".to_string()), Value::Int(2)]),

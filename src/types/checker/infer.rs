@@ -729,25 +729,6 @@ impl TypeChecker {
                 }
             }
 
-            Expr::TypeAscription(inner, ty_src) => {
-                let annotated = match parse_type_str_strict(ty_src) {
-                    Ok(ty) => ty,
-                    Err(unknown) => {
-                        self.error(format!("Unknown type annotation '{}'", unknown));
-                        Type::Unknown
-                    }
-                };
-                let inferred = self.infer_type(inner);
-                if !Self::constraint_compatible(&inferred, &annotated) {
-                    self.error(format!(
-                        "Type ascription mismatch: expression has type {}, annotation is {}",
-                        inferred.display(),
-                        annotated.display()
-                    ));
-                }
-                annotated
-            }
-
             Expr::Attr(obj, field) => {
                 if let Some(mut parts) = Self::attr_path(obj) {
                     let obj_key = parts.join(".");

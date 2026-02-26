@@ -127,7 +127,7 @@ fn valid_tuple_return() {
 fn valid_map_set_get_infers_types() {
     let src = concat!(
         "fn readAge() -> Option<Int>\n",
-        "    m = Map.empty(): Map<String, Int>\n",
+        "    m = Map.set(Map.empty(), \"x\", 0)\n",
         "    m2 = Map.set(m, \"age\", 42)\n",
         "    Map.get(m2, \"age\")\n",
     );
@@ -333,17 +333,6 @@ fn error_unknown_does_not_satisfy_call_argument_type() {
     assert_error_containing(src, "Argument 1 of 'takesInt': expected Int, got Unknown");
 }
 
-#[test]
-fn error_unknown_does_not_satisfy_type_ascription() {
-    let src = concat!(
-        "fn bad() -> Int\n",
-        "    n = match []\n",
-        "        [h, ..t] -> h\n",
-        "        []       -> 0\n",
-        "    n: Int\n",
-    );
-    assert_error_containing(src, "Type ascription mismatch");
-}
 
 #[test]
 fn error_list_push_mismatched_element_type() {
@@ -361,7 +350,7 @@ fn error_list_filter_predicate_must_return_bool() {
 fn error_map_set_key_type_mismatch() {
     let src = concat!(
         "fn bad() -> Map<String, Int>\n",
-        "    m = Map.empty(): Map<String, Int>\n",
+        "    m = Map.fromList([(\"a\", 1)])\n",
         "    Map.set(m, 1, 42)\n",
     );
     assert_error_containing(src, "Argument 2 of 'Map.set': expected String, got Int");
@@ -371,9 +360,9 @@ fn error_map_set_key_type_mismatch() {
 fn error_map_key_type_must_be_hashable_scalar() {
     let src = concat!(
         "fn bad() -> Map<List<Int>, Int>\n",
-        "    = Map.empty(): Map<List<Int>, Int>\n",
+        "    = Map.fromList([([1], 2)])\n",
     );
-    assert_error_containing(src, "Map<List<Int>, Int>");
+    assert_error_containing(src, "map key type must be Int, Float, String, or Bool");
 }
 
 #[test]
@@ -383,6 +372,12 @@ fn error_map_from_list_requires_tuple_pairs() {
         "    = Map.fromList([[\"a\", 1]])\n",
     );
     assert_error_containing(src, "expected List<(K, V)>");
+}
+
+#[test]
+fn binding_empty_list_literal_is_error() {
+    let src = "x = []\n";
+    assert_error_containing(src, "Binding 'x' to empty list literal is not allowed");
 }
 
 #[test]
@@ -670,16 +665,6 @@ fn valid_network_post_with_effect() {
 }
 
 #[test]
-fn valid_network_post_with_ascribed_empty_headers() {
-    let src = concat!(
-        "fn send(url: String) -> Result<HttpResponse, String>\n",
-        "    ! [Http]\n",
-        "    Http.post(url, \"{}\", \"application/json\", []: List<Header>)\n",
-    );
-    assert_no_errors(src);
-}
-
-#[test]
 fn valid_network_post_with_typed_headers() {
     let src = concat!(
         "fn send(url: String) -> Result<HttpResponse, String>\n",
@@ -698,12 +683,6 @@ fn error_network_post_headers_wrong_type() {
         "    Http.post(url, \"{}\", \"application/json\", [\"bad\"])\n",
     );
     assert_error_containing(src, "Argument 4 of 'Http.post': expected List<Header>");
-}
-
-#[test]
-fn error_type_ascription_mismatch() {
-    let src = concat!("fn bad() -> Int\n", "    = \"x\": Int\n",);
-    assert_error_containing(src, "Type ascription mismatch");
 }
 
 #[test]

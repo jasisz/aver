@@ -108,7 +108,7 @@ fn collect_expr_bindings(expr: &Expr, local_slots: &mut HashMap<String, u16>, ne
             collect_expr_bindings(left, local_slots, next_slot);
             collect_expr_bindings(right, local_slots, next_slot);
         }
-        Expr::ErrorProp(inner) | Expr::TypeAscription(inner, _) => {
+        Expr::ErrorProp(inner) => {
             collect_expr_bindings(inner, local_slots, next_slot);
         }
         Expr::Constructor(_, Some(inner)) => {
@@ -238,9 +238,6 @@ fn resolve_expr(expr: &mut Expr, local_slots: &HashMap<String, u16>) {
             for item in items {
                 resolve_expr(item, local_slots);
             }
-        }
-        Expr::TypeAscription(inner, _) => {
-            resolve_expr(inner, local_slots);
         }
         Expr::RecordCreate { fields, .. } => {
             for (_, expr) in fields {

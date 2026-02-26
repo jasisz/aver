@@ -125,7 +125,6 @@ impl Interpreter {
                 }
                 Ok(Value::Tuple(values))
             }
-            Expr::TypeAscription(inner, _) => self.eval_expr(inner),
             Expr::RecordCreate { type_name, fields } => {
                 let mut field_vals = Vec::new();
                 for (name, expr) in fields {

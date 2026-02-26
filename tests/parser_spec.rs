@@ -411,17 +411,6 @@ fn expr_error_propagation() {
 }
 
 #[test]
-fn expr_type_ascription_empty_list() {
-    let items = parse("[]: List<Int>");
-    if let TopLevel::Stmt(Stmt::Expr(Expr::TypeAscription(inner, ty))) = &items[0] {
-        assert!(matches!(**inner, Expr::List(_)));
-        assert_eq!(ty, "List<Int>");
-    } else {
-        panic!("expected TypeAscription");
-    }
-}
-
-#[test]
 fn fn_with_tuple_type_annotation() {
     let src = "fn pair() -> (Int, String)\n    = (1, \"x\")\n";
     let items = parse(src);

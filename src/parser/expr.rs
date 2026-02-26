@@ -95,14 +95,6 @@ impl Parser {
             if self.check_exact(&TokenKind::Question) {
                 self.advance();
                 expr = Expr::ErrorProp(Box::new(expr));
-            } else if self.check_exact(&TokenKind::Colon)
-                && Self::can_start_type(&self.peek(1).kind)
-            {
-                // Expression type ascription: `expr: Type`
-                // We only consume ':' when the next token can begin a type.
-                self.advance();
-                let ty = self.parse_type()?;
-                expr = Expr::TypeAscription(Box::new(expr), ty);
             } else if self.check_exact(&TokenKind::Dot) {
                 self.advance();
                 let field_tok = self.expect_kind(
@@ -142,10 +134,6 @@ impl Parser {
         }
 
         Ok(expr)
-    }
-
-    pub(super) fn can_start_type(kind: &TokenKind) -> bool {
-        matches!(kind, TokenKind::Ident(_))
     }
 
     pub(super) fn dotted_name(expr: &Expr) -> Option<String> {

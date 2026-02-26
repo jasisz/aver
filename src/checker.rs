@@ -191,7 +191,6 @@ pub fn expr_to_str(expr: &crate::ast::Expr) -> String {
             let parts: Vec<String> = items.iter().map(expr_to_str).collect();
             format!("({})", parts.join(", "))
         }
-        Expr::TypeAscription(inner, ty) => format!("{}: {}", expr_to_str(inner), ty),
         Expr::ErrorProp(inner) => format!("{}?", expr_to_str(inner)),
         Expr::Attr(obj, field) => format!("{}.{}", expr_to_str(obj), field),
         Expr::Pipe(left, right) => format!("{} |> {}", expr_to_str(left), expr_to_str(right)),

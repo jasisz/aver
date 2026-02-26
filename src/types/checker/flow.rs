@@ -57,6 +57,12 @@ impl TypeChecker {
                         if self.locals.contains_key(name) {
                             self.error(format!("'{}' is already defined", name));
                         } else {
+                            if matches!(expr, Expr::List(elems) if elems.is_empty()) {
+                                self.error(format!(
+                                    "Binding '{}' to empty list literal is not allowed — immutable empty collection is dead code",
+                                    name
+                                ));
+                            }
                             let ty = self.infer_type(expr);
                             self.check_effects_in_expr(expr, "<top-level>", &no_effects);
                             self.locals.insert(name.clone(), ty);
@@ -109,6 +115,12 @@ impl TypeChecker {
                     if self.locals.contains_key(name) {
                         self.error(format!("'{}' is already defined in '{}'", name, fn_name));
                     } else {
+                        if matches!(expr, Expr::List(elems) if elems.is_empty()) {
+                            self.error(format!(
+                                "Binding '{}' to empty list literal is not allowed — immutable empty collection is dead code",
+                                name
+                            ));
+                        }
                         let ty = self.infer_type(expr);
                         self.check_effects_in_expr(expr, fn_name, caller_effects);
                         self.locals.insert(name.clone(), ty);

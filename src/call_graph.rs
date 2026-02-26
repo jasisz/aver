@@ -179,7 +179,6 @@ fn collect_callees_expr(expr: &Expr, callees: &mut HashSet<String>) {
                 collect_callees_expr(e, callees);
             }
         }
-        Expr::TypeAscription(inner, _) => collect_callees_expr(inner, callees),
         Expr::TailCall(boxed) => {
             callees.insert(boxed.0.clone());
             for arg in &boxed.1 {
