@@ -92,6 +92,18 @@ decision EffectContractsAreTransparentAcrossModules
     rejected = [OpaqueModuleContracts, ImplicitModuleCapabilities]
     impacts = [ModuleSystem, Effects, TypeChecker, RuntimeGate]
 
+decision ConstructorContract
+    date = "2026-02-26"
+    author = "Aver core team"
+    reason =
+        "Constructors need a single, unambiguous parsing rule that does not conflict with function calls or type annotations."
+        "UpperCamel callee distinguishes constructors from functions at parse time with one token of lookahead."
+        "Records use named args (=), variants use positional args. Zero-arg constructors are bare singletons without parens."
+        "This removes the need for TypeAscription and all cross-cutting heuristics in the parser."
+    chosen = UpperCamelCalleeContract
+    rejected = [TypeAscriptionBased, KeywordConstructors, UniformParens]
+    impacts = [Parser, Interpreter, TypeChecker, AllModules]
+
 fn describeDecision(decName: String, pick: String) -> String
     ? "Formats a one-line summary of an architectural decision."
     = "Decision: {decName} -> chosen = {pick}"
