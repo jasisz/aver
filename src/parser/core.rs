@@ -32,6 +32,25 @@ impl Parser {
         }
     }
 
+    /// Peek at the nth non-formatting token (skips Newline/Indent/Dedent).
+    pub(super) fn peek_skip_formatting(&self, nth: usize) -> &Token {
+        let mut count = 0;
+        let mut idx = self.pos;
+        while idx < self.tokens.len() {
+            if !matches!(
+                self.tokens[idx].kind,
+                TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent
+            ) {
+                if count == nth {
+                    return &self.tokens[idx];
+                }
+                count += 1;
+            }
+            idx += 1;
+        }
+        self.tokens.last().unwrap()
+    }
+
     pub(super) fn advance(&mut self) -> &Token {
         let tok = if self.pos < self.tokens.len() {
             &self.tokens[self.pos]
@@ -90,6 +109,15 @@ impl Parser {
                 kind,
                 self.current().kind
             )))
+        }
+    }
+
+    pub(super) fn skip_formatting(&mut self) {
+        while matches!(
+            self.current().kind,
+            TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent
+        ) {
+            self.advance();
         }
     }
 

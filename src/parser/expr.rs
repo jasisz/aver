@@ -182,15 +182,16 @@ impl Parser {
 
             // Lookahead: is this `Name(field = value, ...)` (record creation)?
             // Detect by checking if token after `(` is `Ident` followed by `=`.
+            // Use peek_skip_formatting to handle multiline constructor syntax.
             let is_record_create = if let Expr::Ident(ref name) = atom {
                 name.chars().next().map_or(false, |c| c.is_uppercase())
-                    && matches!(&self.peek(1).kind, TokenKind::Ident(_))
-                    && self.peek(2).kind == TokenKind::Assign
+                    && matches!(&self.peek_skip_formatting(1).kind, TokenKind::Ident(_))
+                    && self.peek_skip_formatting(2).kind == TokenKind::Assign
             } else {
                 false
             };
-            let named_arg_start = matches!(&self.peek(1).kind, TokenKind::Ident(_))
-                && self.peek(2).kind == TokenKind::Assign;
+            let named_arg_start = matches!(&self.peek_skip_formatting(1).kind, TokenKind::Ident(_))
+                && self.peek_skip_formatting(2).kind == TokenKind::Assign;
 
             if is_record_create {
                 if let Expr::Ident(type_name) = atom {
@@ -228,10 +229,12 @@ impl Parser {
     /// Parse named-field arguments for record creation: `name = expr, name2 = expr2`
     pub(super) fn parse_record_create_fields(&mut self) -> Result<Vec<(String, Expr)>, ParseError> {
         let mut fields = Vec::new();
+        self.skip_formatting();
 
         while !self.check_exact(&TokenKind::RParen) && !self.is_eof() {
             if self.check_exact(&TokenKind::Comma) {
                 self.advance();
+                self.skip_formatting();
                 continue;
             }
             let name_tok =
@@ -243,6 +246,7 @@ impl Parser {
             self.expect_exact(&TokenKind::Assign)?;
             let value = self.parse_expr()?;
             fields.push((field_name, value));
+            self.skip_formatting();
         }
 
         Ok(fields)
@@ -250,13 +254,16 @@ impl Parser {
 
     pub(super) fn parse_args(&mut self) -> Result<Vec<Expr>, ParseError> {
         let mut args = Vec::new();
+        self.skip_formatting();
 
         while !self.check_exact(&TokenKind::RParen) && !self.is_eof() {
             if self.check_exact(&TokenKind::Comma) {
                 self.advance();
+                self.skip_formatting();
                 continue;
             }
             args.push(self.parse_expr()?);
+            self.skip_formatting();
         }
 
         Ok(args)
@@ -265,25 +272,31 @@ impl Parser {
     pub(super) fn parse_map_literal(&mut self) -> Result<Expr, ParseError> {
         self.expect_exact(&TokenKind::LBrace)?;
         let mut entries = Vec::new();
+        self.skip_formatting();
 
         while !self.check_exact(&TokenKind::RBrace) && !self.is_eof() {
             if self.check_exact(&TokenKind::Comma) {
                 self.advance();
+                self.skip_formatting();
                 continue;
             }
 
             let key = self.parse_expr()?;
+            self.skip_formatting();
             if !self.check_exact(&TokenKind::FatArrow) {
                 return Err(
                     self.error("Expected '=>' between key and value in map literal".to_string())
                 );
             }
             self.advance(); // =>
+            self.skip_formatting();
             let value = self.parse_expr()?;
             entries.push((key, value));
+            self.skip_formatting();
 
             if self.check_exact(&TokenKind::Comma) {
                 self.advance();
+                self.skip_formatting();
             }
         }
 
@@ -362,12 +375,15 @@ impl Parser {
             TokenKind::LBracket => {
                 self.advance(); // consume [
                 let mut elements = Vec::new();
+                self.skip_formatting();
                 while !self.check_exact(&TokenKind::RBracket) && !self.is_eof() {
                     if self.check_exact(&TokenKind::Comma) {
                         self.advance();
+                        self.skip_formatting();
                         continue;
                     }
                     elements.push(self.parse_expr()?);
+                    self.skip_formatting();
                 }
                 self.expect_exact(&TokenKind::RBracket)?;
                 Ok(Expr::List(elements))
