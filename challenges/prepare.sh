@@ -99,13 +99,15 @@ Your task:
    aver check challenges/$CHALLENGE/solution.av
    aver verify challenges/$CHALLENGE/solution.av
    aver run challenges/$CHALLENGE/solution.av
-7. When satisfied that check, verify, and run all pass — you are done
-
 Rules:
 - Do not ask questions — everything you need is in the docs
 - Do not read files outside this directory
 - Do not modify any existing files — only create challenges/$CHALLENGE/solution.av
-- Your goal is CHALLENGE PASSED
+
+You are done when ALL of these pass:
+- aver check — no type errors
+- aver verify — all verify cases pass
+- aver run — executes without runtime errors
 PROMPT
     echo ""
 }
