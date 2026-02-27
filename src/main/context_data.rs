@@ -35,7 +35,7 @@ fn expr_has_tail_call(expr: &aver::ast::Expr) -> bool {
         Expr::Attr(obj, _) => expr_has_tail_call(obj),
         Expr::FnCall(f, args) => expr_has_tail_call(f) || args.iter().any(expr_has_tail_call),
         Expr::BinOp(_, l, r) | Expr::Pipe(l, r) => expr_has_tail_call(l) || expr_has_tail_call(r),
-        Expr::Match(subject, arms) => {
+        Expr::Match { subject, arms, .. } => {
             expr_has_tail_call(subject) || arms.iter().any(|arm| expr_has_tail_call(&arm.body))
         }
         Expr::Constructor(_, arg) => arg.as_ref().is_some_and(|a| expr_has_tail_call(a)),

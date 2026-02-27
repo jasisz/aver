@@ -229,7 +229,11 @@ fn count_recursive_calls_expr(expr: &Expr, recursive: &HashSet<String>, out: &mu
             count_recursive_calls_expr(l, recursive, out);
             count_recursive_calls_expr(r, recursive, out);
         }
-        Expr::Match(scrutinee, arms) => {
+        Expr::Match {
+            subject: scrutinee,
+            arms,
+            ..
+        } => {
             count_recursive_calls_expr(scrutinee, recursive, out);
             for arm in arms {
                 count_recursive_calls_expr(&arm.body, recursive, out);
@@ -311,7 +315,11 @@ fn collect_callees_expr(expr: &Expr, callees: &mut HashSet<String>) {
             collect_callees_expr(l, callees);
             collect_callees_expr(r, callees);
         }
-        Expr::Match(scrutinee, arms) => {
+        Expr::Match {
+            subject: scrutinee,
+            arms,
+            ..
+        } => {
             collect_callees_expr(scrutinee, callees);
             for arm in arms {
                 collect_callees_expr(&arm.body, callees);

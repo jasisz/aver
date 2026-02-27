@@ -56,7 +56,11 @@ pub enum Expr {
     Attr(Box<Expr>, String),
     FnCall(Box<Expr>, Vec<Expr>),
     BinOp(BinOp, Box<Expr>, Box<Expr>),
-    Match(Box<Expr>, Vec<MatchArm>),
+    Match {
+        subject: Box<Expr>,
+        arms: Vec<MatchArm>,
+        line: usize,
+    },
     Pipe(Box<Expr>, Box<Expr>),
     Constructor(String, Option<Box<Expr>>),
     ErrorProp(Box<Expr>),

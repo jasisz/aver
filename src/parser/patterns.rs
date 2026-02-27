@@ -2,6 +2,7 @@ use super::*;
 
 impl Parser {
     pub(super) fn parse_match(&mut self) -> Result<Expr, ParseError> {
+        let match_line = self.current().line;
         self.expect_exact(&TokenKind::Match)?;
         let subject = self.parse_expr()?;
         self.skip_newlines();
@@ -38,7 +39,11 @@ impl Parser {
             }
         }
 
-        Ok(Expr::Match(Box::new(subject), arms))
+        Ok(Expr::Match {
+            subject: Box::new(subject),
+            arms,
+            line: match_line,
+        })
     }
 
     pub(super) fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {

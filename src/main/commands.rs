@@ -181,10 +181,7 @@ pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>, strict: 
     let type_errors = run_type_check_with_base(&items, Some(&module_root));
     let has_errors = !type_errors.is_empty();
     for te in &type_errors {
-        match te.line {
-            Some(line) => println!("  {}", format!("error[{}]: {}", line, te.message).red()),
-            None => println!("  {}", format!("error: {}", te.message).red()),
-        }
+        println!("  {}", format!("error[{}]: {}", te.line, te.message).red());
     }
 
     // Check line count

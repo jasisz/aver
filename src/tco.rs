@@ -71,7 +71,7 @@ fn transform_tail_expr(expr: &mut Expr, scc_members: &HashSet<String>) {
             }
         }
         // Match: each arm body is in tail position
-        Expr::Match(_, arms) => {
+        Expr::Match { arms, .. } => {
             for arm in arms {
                 transform_tail_expr(&mut arm.body, scc_members);
             }
@@ -93,12 +93,12 @@ mod tests {
     }
 
     /// Helper: extract the match arms from a fn body.
-    /// The parser produces `Block([Expr(Match(_, arms))])` for indented match bodies.
+    /// The parser produces `Block([Expr(Match{subject, arms, ..})])` for indented match bodies.
     fn extract_match_arms(fd: &FnDef) -> &[MatchArm] {
         match fd.body.as_ref() {
-            FnBody::Expr(Expr::Match(_, arms)) => arms,
+            FnBody::Expr(Expr::Match { arms, .. }) => arms,
             FnBody::Block(stmts) => {
-                if let Some(Stmt::Expr(Expr::Match(_, arms))) = stmts.last() {
+                if let Some(Stmt::Expr(Expr::Match { arms, .. })) = stmts.last() {
                     arms
                 } else {
                     panic!("expected Match in block body, got {:?}", fd.body)

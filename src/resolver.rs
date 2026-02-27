@@ -87,7 +87,7 @@ fn collect_binding_slots(
 /// Collect pattern bindings from match expressions inside an expression tree.
 fn collect_expr_bindings(expr: &Expr, local_slots: &mut HashMap<String, u16>, next_slot: &mut u16) {
     match expr {
-        Expr::Match(subject, arms) => {
+        Expr::Match { subject, arms, .. } => {
             collect_expr_bindings(subject, local_slots, next_slot);
             for arm in arms {
                 collect_pattern_bindings(&arm.pattern, local_slots, next_slot);
@@ -222,7 +222,7 @@ fn resolve_expr(expr: &mut Expr, local_slots: &HashMap<String, u16>) {
             resolve_expr(left, local_slots);
             resolve_expr(right, local_slots);
         }
-        Expr::Match(subject, arms) => {
+        Expr::Match { subject, arms, .. } => {
             resolve_expr(subject, local_slots);
             for arm in arms {
                 resolve_expr(&mut arm.body, local_slots);
@@ -415,9 +415,9 @@ mod tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::Expr(Expr::Match(
-                Box::new(Expr::Ident("x".to_string())),
-                vec![
+            body: Rc::new(FnBody::Expr(Expr::Match {
+                subject: Box::new(Expr::Ident("x".to_string())),
+                arms: vec![
                     MatchArm {
                         pattern: Pattern::Constructor(
                             "Result.Ok".to_string(),
@@ -430,7 +430,8 @@ mod tests {
                         body: Box::new(Expr::Literal(Literal::Int(0))),
                     },
                 ],
-            ))),
+                line: 1,
+            })),
             resolution: None,
         };
         resolve_fn(&mut fd);
@@ -439,7 +440,7 @@ mod tests {
         assert_eq!(res.local_slots["v"], 1);
 
         match fd.body.as_ref() {
-            FnBody::Expr(Expr::Match(_, arms)) => {
+            FnBody::Expr(Expr::Match { arms, .. }) => {
                 // v in arm body should be Resolved(0, 1)
                 assert_eq!(*arms[0].body, Expr::Resolved(1));
             }

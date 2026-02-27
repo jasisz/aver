@@ -32,7 +32,7 @@ mod tests;
 #[derive(Debug, Clone)]
 pub struct TypeError {
     pub message: String,
-    pub line: Option<usize>,
+    pub line: usize,
 }
 
 /// Result of type-checking that also carries memo-safety metadata.
@@ -168,9 +168,17 @@ impl TypeChecker {
     }
 
     fn error(&mut self, msg: impl Into<String>) {
+        let line = self.current_fn_line.unwrap_or(1);
         self.errors.push(TypeError {
             message: msg.into(),
-            line: self.current_fn_line,
+            line,
+        });
+    }
+
+    fn error_at_line(&mut self, line: usize, msg: impl Into<String>) {
+        self.errors.push(TypeError {
+            message: msg.into(),
+            line,
         });
     }
 

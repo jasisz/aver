@@ -1,11 +1,15 @@
 use super::{run_type_check, TypeChecker};
-use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, Stmt, TopLevel};
+use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Stmt, TopLevel};
 
 fn errors(items: Vec<TopLevel>) -> Vec<String> {
     run_type_check(&items)
         .into_iter()
         .map(|e| e.message)
         .collect()
+}
+
+fn type_errors(items: Vec<TopLevel>) -> Vec<super::TypeError> {
+    run_type_check(&items)
 }
 
 #[test]
@@ -87,4 +91,32 @@ fn nested_attr_callee_key() {
         TypeChecker::callee_key(&expr),
         Some("Models.User.findById".to_string())
     );
+}
+
+#[test]
+fn non_exhaustive_match_reports_match_line() {
+    let f = FnDef {
+        name: "f".to_string(),
+        line: 1,
+        params: vec![("b".to_string(), "Bool".to_string())],
+        return_type: "Int".to_string(),
+        effects: vec![],
+        desc: None,
+        body: std::rc::Rc::new(FnBody::Expr(Expr::Match {
+            subject: Box::new(Expr::Ident("b".to_string())),
+            arms: vec![MatchArm {
+                pattern: Pattern::Literal(Literal::Bool(true)),
+                body: Box::new(Expr::Literal(Literal::Int(1))),
+            }],
+            line: 7,
+        })),
+        resolution: None,
+    };
+
+    let errs = type_errors(vec![TopLevel::FnDef(f)]);
+    let hit = errs
+        .iter()
+        .find(|e| e.message.contains("Non-exhaustive match"));
+    assert!(hit.is_some(), "expected non-exhaustive match error: {errs:?}");
+    assert_eq!(hit.expect("checked above").line, 7);
 }

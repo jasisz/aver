@@ -353,7 +353,7 @@ pub fn expr_to_str(expr: &crate::ast::Expr) -> String {
             format!("<tail-call:{}>({})", target, a)
         }
         Expr::Resolved(_) => "<resolved>".to_string(),
-        Expr::Match(subject, arms) => {
+        Expr::Match { subject, arms, .. } => {
             let s = expr_to_str(subject);
             let arms_str: Vec<String> = arms
                 .iter()

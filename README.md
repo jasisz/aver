@@ -311,6 +311,7 @@ fn charge(account: String, amount: Int) -> Result<String, String>
 ### No closures
 
 All user-defined functions are top-level. At call time, a function sees globals + its own parameters — no closure capture at definition time.
+There is no lambda syntax. Higher-order APIs (for example `List.map`, `List.filter`, `List.any`) take a top-level function name.
 
 ### Auto-memoization
 

@@ -58,10 +58,7 @@ pub(super) fn load_dep_modules(
 
 pub(super) fn print_type_errors(errors: &[TypeError]) {
     for te in errors {
-        match te.line {
-            Some(line) => eprintln!("{}", format!("error[{}]: {}", line, te.message).red()),
-            None => eprintln!("{}", format!("error: {}", te.message).red()),
-        }
+        eprintln!("{}", format!("error[{}]: {}", te.line, te.message).red());
     }
 }
 
@@ -113,10 +110,7 @@ pub(super) fn is_memo_safe_type(ty: &types::Type, safe_named: &HashSet<String>) 
 pub(super) fn format_type_errors(errors: &[TypeError]) -> String {
     let mut out = Vec::new();
     for te in errors {
-        match te.line {
-            Some(line) => out.push(format!("error[{}]: {}", line, te.message)),
-            None => out.push(format!("error: {}", te.message)),
-        }
+        out.push(format!("error[{}]: {}", te.line, te.message));
     }
     out.join("\n")
 }

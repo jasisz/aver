@@ -6,7 +6,9 @@ All functions live in namespaces — no flat builtins (decision: `FullNamespaceE
 
 ### `List` namespace
 
-Source: `src/types/list.rs` (pure helpers) + `src/interpreter/builtins.rs` (`map`/`filter`/`fold`/`find`/`any`/`flatMap` — need closure calls).
+Source: `src/types/list.rs` (pure helpers) + `src/interpreter/builtins.rs` (`map`/`filter`/`fold`/`find`/`any`/`flatMap`).
+
+Note: Aver has no lambdas/closures. Function-valued parameters (`Fn(...) -> ...`) must be passed as top-level function names.
 
 | Function | Signature | Notes |
 |---|---|---|

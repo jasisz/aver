@@ -1349,11 +1349,7 @@ fn exhaustive_bool_both_branches() {
 
 #[test]
 fn error_non_exhaustive_bool_missing_false() {
-    let src = concat!(
-        "fn f(b: Bool) -> Int\n",
-        "  = match b\n",
-        "    true -> 1\n",
-    );
+    let src = concat!("fn f(b: Bool) -> Int\n", "  = match b\n", "    true -> 1\n",);
     assert_error_containing(src, "false");
 }
 

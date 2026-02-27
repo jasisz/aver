@@ -7,6 +7,7 @@ impl TypeChecker {
         &mut self,
         subject_ty: &Type,
         arms: &[crate::ast::MatchArm],
+        line: usize,
     ) {
         // A catch-all pattern (_  or bare identifier) makes any match exhaustive.
         for arm in arms {
@@ -31,10 +32,10 @@ impl TypeChecker {
                     missing.push("false");
                 }
                 if !missing.is_empty() {
-                    self.error(format!(
-                        "Non-exhaustive match: missing {}",
-                        missing.join(", ")
-                    ));
+                    self.error_at_line(
+                        line,
+                        format!("Non-exhaustive match: missing {}", missing.join(", ")),
+                    );
                 }
             }
 
@@ -43,6 +44,7 @@ impl TypeChecker {
                     arms,
                     &["Result.Ok", "Result.Err"],
                     "Result",
+                    line,
                 );
             }
 
@@ -51,6 +53,7 @@ impl TypeChecker {
                     arms,
                     &["Option.Some", "Option.None"],
                     "Option",
+                    line,
                 );
             }
 
@@ -61,7 +64,7 @@ impl TypeChecker {
                         .map(|v| format!("{}.{}", name, v))
                         .collect();
                     let qualified_refs: Vec<&str> = qualified.iter().map(|s| s.as_str()).collect();
-                    self.check_constructor_exhaustiveness(arms, &qualified_refs, name);
+                    self.check_constructor_exhaustiveness(arms, &qualified_refs, name, line);
                 }
                 // If the type is not in type_variants (e.g. a record type), skip checking.
             }
@@ -81,16 +84,19 @@ impl TypeChecker {
                     missing.push("[h, ..t]");
                 }
                 if !missing.is_empty() {
-                    self.error(format!(
-                        "Non-exhaustive match: missing {}",
-                        missing.join(", ")
-                    ));
+                    self.error_at_line(
+                        line,
+                        format!("Non-exhaustive match: missing {}", missing.join(", ")),
+                    );
                 }
             }
 
             // Infinite domains — only exhaustive with a catch-all (already checked above).
             Type::Int | Type::Float | Type::Str | Type::Tuple(_) => {
-                self.error("Non-exhaustive match: missing catch-all (_) pattern".to_string());
+                self.error_at_line(
+                    line,
+                    "Non-exhaustive match: missing catch-all (_) pattern".to_string(),
+                );
             }
 
             // Map, Fn, Unit, Unknown — skip checking.
@@ -105,6 +111,7 @@ impl TypeChecker {
         arms: &[crate::ast::MatchArm],
         expected: &[&str],
         type_name: &str,
+        line: usize,
     ) {
         let present: Vec<&str> = arms
             .iter()
@@ -140,11 +147,14 @@ impl TypeChecker {
             .collect();
 
         if !missing.is_empty() {
-            self.error(format!(
-                "Non-exhaustive match on {}: missing {}",
-                type_name,
-                missing.join(", ")
-            ));
+            self.error_at_line(
+                line,
+                format!(
+                    "Non-exhaustive match on {}: missing {}",
+                    type_name,
+                    missing.join(", ")
+                ),
+            );
         }
     }
 }

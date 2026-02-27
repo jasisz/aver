@@ -249,7 +249,7 @@ impl TypeChecker {
                 }
                 self.check_effects_in_expr(right, caller_name, caller_effects);
             }
-            Expr::Match(subject, arms) => {
+            Expr::Match { subject, arms, .. } => {
                 self.check_effects_in_expr(subject, caller_name, caller_effects);
                 for arm in arms {
                     self.check_effects_in_expr(&arm.body, caller_name, caller_effects);

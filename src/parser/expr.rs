@@ -415,6 +415,10 @@ impl Parser {
                 Ok(Expr::List(elements))
             }
             TokenKind::LBrace => self.parse_map_literal(),
+            TokenKind::Fn => Err(self.error(
+                "Anonymous functions are not supported in Aver. Define a top-level function and pass its name."
+                    .to_string(),
+            )),
             _ => Err(self.error(format!(
                 "Expected expression (identifier, literal, '[', or '{{'), found {}",
                 self.current().kind

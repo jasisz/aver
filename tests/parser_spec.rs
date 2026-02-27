@@ -523,7 +523,7 @@ fn match_with_wildcard() {
         "fn f(n: Int) -> String\n    = match n\n        0 -> \"zero\"\n        _ -> \"other\"\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Expr(Expr::Match(_, arms)) = &*fd.body {
+        if let FnBody::Expr(Expr::Match { arms, .. }) = &*fd.body {
             assert_eq!(arms.len(), 2);
             assert!(matches!(arms[0].pattern, Pattern::Literal(Literal::Int(0))));
             assert!(matches!(arms[1].pattern, Pattern::Wildcard));
@@ -540,7 +540,7 @@ fn match_subject_colon_is_not_type_ascription() {
     let items = parse("match xs\n    [] -> 0\n    _ -> 1\n");
     assert!(matches!(
         items[0],
-        TopLevel::Stmt(Stmt::Expr(Expr::Match(_, _)))
+        TopLevel::Stmt(Stmt::Expr(Expr::Match { .. }))
     ));
 }
 
@@ -549,7 +549,7 @@ fn match_constructor_patterns() {
     let src = "fn f(r: Result<Int, String>) -> Int\n    = match r\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Expr(Expr::Match(_, arms)) = &*fd.body {
+        if let FnBody::Expr(Expr::Match { arms, .. }) = &*fd.body {
             assert_eq!(arms.len(), 2);
             assert!(matches!(
                 &arms[0].pattern,
@@ -572,7 +572,7 @@ fn match_ident_binding() {
     let src = "fn f(x: Int) -> Int\n    = match x\n        n -> n\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Expr(Expr::Match(_, arms)) = &*fd.body {
+        if let FnBody::Expr(Expr::Match { arms, .. }) = &*fd.body {
             assert!(matches!(&arms[0].pattern, Pattern::Ident(s) if s == "n"));
         } else {
             panic!("expected match");
@@ -588,7 +588,7 @@ fn match_list_empty_pattern() {
         "fn f(xs: List<Int>) -> Int\n    = match xs\n        [] -> 0\n        [h, ..t] -> h\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Expr(Expr::Match(_, arms)) = &*fd.body {
+        if let FnBody::Expr(Expr::Match { arms, .. }) = &*fd.body {
             assert_eq!(arms.len(), 2);
             assert!(matches!(&arms[0].pattern, Pattern::EmptyList));
             assert!(matches!(
@@ -608,7 +608,7 @@ fn match_list_cons_pattern_with_underscore() {
     let src = "fn f(xs: List<Int>) -> Int\n    = match xs\n        [_, ..rest] -> len(rest)\n        [] -> 0\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Expr(Expr::Match(_, arms)) = &*fd.body {
+        if let FnBody::Expr(Expr::Match { arms, .. }) = &*fd.body {
             assert!(matches!(
                 &arms[0].pattern,
                 Pattern::Cons(head, tail) if head == "_" && tail == "rest"
@@ -626,7 +626,7 @@ fn match_tuple_pattern_binds_items() {
     let src = "fn f(p: (Int, Int)) -> Int\n    = match p\n        (a, b) -> a\n        _ -> 0\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Expr(Expr::Match(_, arms)) = &*fd.body {
+        if let FnBody::Expr(Expr::Match { arms, .. }) = &*fd.body {
             assert_eq!(arms.len(), 2);
             assert!(matches!(
                 &arms[0].pattern,
@@ -649,7 +649,7 @@ fn match_nested_tuple_pattern_parses() {
     let src = "fn f(p: ((Int, Int), Int)) -> Int\n    = match p\n        ((x, y), z) -> x\n        _ -> 0\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Expr(Expr::Match(_, arms)) = &*fd.body {
+        if let FnBody::Expr(Expr::Match { arms, .. }) = &*fd.body {
             assert!(matches!(
                 &arms[0].pattern,
                 Pattern::Tuple(items)
@@ -849,6 +849,17 @@ fn val_keyword_error_in_fn_body() {
 }
 
 #[test]
+fn lambda_syntax_shows_actionable_error() {
+    let src = "fn main() -> Bool\n    = List.any([1, 2, 3], fn(x: Int) -> Bool\n        = x > 1)\n";
+    let msg = parse_error(src);
+    assert!(
+        msg.contains("Anonymous functions are not supported"),
+        "unexpected parse error: {}",
+        msg
+    );
+}
+
+#[test]
 fn fn_missing_return_arrow_is_ok() {
     // -> return type is optional; missing it defaults to Unit
     let src = "fn noop()\n    = print(\"ok\")\n";
@@ -929,7 +940,7 @@ fn parse_user_defined_constructor_pattern() {
     let src = "fn classify(s: Shape) -> Float\n  = match s\n    Circle(r) -> r\n    Rect(w, h) -> w\n    Point -> 0.0\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Expr(Expr::Match(_, arms)) = &*fd.body {
+        if let FnBody::Expr(Expr::Match { arms, .. }) = &*fd.body {
             assert_eq!(arms.len(), 3);
             assert!(matches!(
                 &arms[0].pattern,

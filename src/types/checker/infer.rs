@@ -250,9 +250,7 @@ impl TypeChecker {
                 }
             }
             "List.zip" => {
-                if let Err(fallback) =
-                    expect_arity(self, 2, Type::List(Box::new(Type::Unknown)))
-                {
+                if let Err(fallback) = expect_arity(self, 2, Type::List(Box::new(Type::Unknown))) {
                     return Some(fallback);
                 }
                 let a_ty = list_inner(self, &arg_types[0], 1);
@@ -260,9 +258,7 @@ impl TypeChecker {
                 Some(Type::List(Box::new(Type::Tuple(vec![a_ty, b_ty]))))
             }
             "List.flatMap" => {
-                if let Err(fallback) =
-                    expect_arity(self, 2, Type::List(Box::new(Type::Unknown)))
-                {
+                if let Err(fallback) = expect_arity(self, 2, Type::List(Box::new(Type::Unknown))) {
                     return Some(fallback);
                 }
                 let elem_ty = list_inner(self, &arg_types[0], 1);
@@ -785,9 +781,13 @@ impl TypeChecker {
                 Type::Map(Box::new(key_ty), Box::new(val_ty))
             }
 
-            Expr::Match(subject, arms) => {
+            Expr::Match {
+                subject,
+                arms,
+                line,
+            } => {
                 let subject_ty = self.infer_type(subject);
-                self.check_match_exhaustiveness(&subject_ty, arms);
+                self.check_match_exhaustiveness(&subject_ty, arms, *line);
                 // Infer from first arm; check remaining arms for consistency
                 if let Some(first_arm) = arms.first() {
                     let first_ty = self.infer_type_with_pattern_bindings(
