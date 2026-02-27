@@ -13,44 +13,24 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 
 ## Current status
 
-### What works
+### Language features
 
-- Lexer with significant-indentation handling (Python-style INDENT / DEDENT tokens)
-- String interpolation: `"Hello, {name}!"` is tokenised as `InterpStr`; expressions inside `{}` are parsed at parse time into `StrPart::Parsed(Expr)`
-- Integer and float literals, bool literals, string literals
-- **Immutable bindings only**: `name = expr` or `name: Type = expr` (no `val`/`var` keywords — they are parse errors). All bindings are immutable; no reassignment. Duplicate binding of the same name in the same scope is a type error. Optional type annotation provides a hint to the type checker (e.g., `m: Map<String, Int> = Map.empty()`); the annotation wins over inference when both are compatible.
-- Function definitions (`fn`) with typed parameters, return type annotation, optional prose description (`? "..."`), and optional effect declaration (`! [Effect]`)
-- Single-expression functions (`= expr` shorthand) and block-body functions
-- Arithmetic: `+`, `-`, `*`, `/` with mixed Int/Float promotion
-- Comparison operators: `==`, `!=`, `<`, `>`, `<=`, `>=`
-- Pipe operator `|>` — passes the left-hand value as the sole argument to the right-hand function
-- `match` expressions with patterns: wildcard `_`, literal, identifier binding, list patterns (`[]`, `[h, ..t]`), constructor (`Result.Ok(x)`, `Result.Err(x)`, `Option.Some(x)`, `Option.None`)
-- **Constructor contract** (decision: `ConstructorContract`, see `docs/constructors.md`): UpperCamel callee = constructor, lowerCamel = function call. Records use named args (`User(name = "A", age = 1)`), variants use positional args (`Shape.Circle(3.14)`), zero-arg constructors are bare singletons (`Option.None`, `Shape.Point`). No `Expr::TypeAscription` — `:` appears only in type declarations and typed bindings. Binding to empty list literal without a type annotation (`x = []`) is a type error; with annotation (`x: List<Int> = []`) it is allowed.
-- **Namespaced constructors**: `Result.Ok(v)`, `Result.Err(v)`, `Option.Some(v)`, `Option.None` — no bare `Ok`/`Err`/`Some`/`None`. `Result` and `Option` are registered as `Value::Namespace` in the interpreter. Constructors route through `call_builtin` (`__ctor:Result.Ok` etc.). Match patterns use qualified names (`Result.Ok(v)`, `Option.None`).
-- Error propagation operator `?` on `Result` values — unwraps `Result.Ok`, raises `RuntimeError` on `Result.Err`
-- `module` blocks with `intent =`, `exposes [...]`, and `depends [...]`; runtime import resolution from a module root (`--module-root`, default current working directory) with dot-path imports (`depends [Examples.Foo]`, `depends [Examples.Models.User]`)
-- `verify` blocks — inline property tests co-located with functions, run via `aver verify`
-- `decision` blocks — structured architectural decision records (ADR) with `date`, `reason`, `chosen`, `rejected`, `impacts`, `author`
-- **List values**: `Value::List(Vec<Value>)` with literal syntax `[1, 2, 3]`, `["a", "b"]`, `[]`; printed as `[1, 2, 3]`
-- **No flat builtins** — all functions live in namespaces (decision: `FullNamespaceEverywhere`)
-- **`List` namespace** (`src/types/list.rs`): `List.len`, `List.map`, `List.filter`, `List.fold`, `List.get`, `List.push`, `List.head`, `List.tail`; `get`/`head`/`tail` return `Result.Ok(val)` or `Result.Err(msg)` — no effects
-- **`Int` namespace** (`src/types/int.rs`): `Int.fromString`, `Int.fromFloat`, `Int.toString`, `Int.abs`, `Int.min`, `Int.max`, `Int.mod`, `Int.toFloat` — no effects
-- **`Float` namespace** (`src/types/float.rs`): `Float.fromString`, `Float.fromInt`, `Float.toString`, `Float.abs`, `Float.floor`, `Float.ceil`, `Float.round`, `Float.min`, `Float.max` — no effects
-- **`String` namespace** (`src/types/string.rs`): `String.length`, `String.byteLength`, `String.charAt`, `String.startsWith`, `String.endsWith`, `String.contains`, `String.slice`, `String.trim`, `String.split`, `String.replace`, `String.join`, `String.chars`, `String.fromInt`, `String.fromFloat`, `String.fromBool` — no effects. `charAt(s, i)` returns `Option<String>` (single char or `None` on out-of-bounds)
-- **`Char` namespace** (`src/types/char.rs`): `Char.toCode(s)` → `Int` (Unicode scalar value of first char), `Char.fromCode(n)` → `Option<String>` (code point to 1-char string, `None` for surrogates/invalid). Not a type — operates on `String`/`Int`.
-- **`Byte` namespace** (`src/types/byte.rs`): `Byte.toHex(n)` → `Result<String, String>` (always 2-char lowercase hex), `Byte.fromHex(s)` → `Result<Int, String>` (exactly 2 hex chars). Not a type — operates on `Int`/`String`.
-- **No closures**: all user-defined fns are top-level; at call time, the function sees globals (env[0]) + its own parameters — no closure capture at definition time
-- **Auto-memoization** (`src/call_graph.rs`, `src/types/checker.rs`, `src/interpreter/mod.rs`): pure recursive functions with memo-safe arguments (scalars, records/variants of scalars) are automatically memoized at runtime. Call graph is built from AST, Tarjan SCC detects recursion, and `call_fn_ref` checks/stores a per-function HashMap cache (capped at 4096 entries). No keyword needed — the compiler detects eligibility.
-- CLI subcommands: `run`, `verify`, `check`, `replay`, `context`, `repl`
-- **Deterministic replay for effectful code** (`src/replay/`, `src/interpreter/mod.rs`, `src/main.rs`): `aver run --record <dir>` captures effect sequence + outcomes; `aver replay <file|dir> [--diff] [--test] [--check-args]` replays offline without real side effects and can fail CI on output mismatch
-- `check` command: warns when a module has no `intent =` or a function with effects/Result return has no `?` description; warns if file exceeds 150 lines; `fn main()` is exempt from the `?` requirement
-- **Static type checker** (`src/types/checker/`): `aver check`, `aver run`, and `aver verify` all run a type-check pass. Type errors are hard errors that block execution. The checker covers function bodies and top-level statements (including duplicate binding detection). `Any` annotations are removed from the language surface; the checker may still use internal `Type::Unknown` recovery after earlier errors so analysis can continue. Bare `Unknown` does **not** satisfy concrete types in constraints (args, returns, ascriptions) — only nested `Unknown` is tolerated (gradual typing). Match pattern bindings are typed: `Result.Ok(x)` on `Result<Int, String>` gives `x: Int`, `[h, ..t]` on `List<Int>` gives `h: Int`, `t: List<Int>`.
-- **Effect propagation** is statically enforced (blocks `check`/`run`/`verify`), including `main()`: calling an effectful function requires declaring the same effect in the caller. Runtime also enforces call-edge capabilities as a backstop.
-- **User-defined sum types** (`type` keyword): `type Shape` with variants `Circle(Float)`, `Rect(Float, Float)`, `Point`. Constructors are accessed with qualified syntax `Shape.Circle(5.0)` — no flat namespace pollution. Patterns: `Shape.Circle(r)`, `Shape.Point`. Registered as `Value::Namespace` in the interpreter env.
-- **User-defined product types** (`record` keyword): `record User` with named fields `name: String`, `age: Int`. Constructed as `User(name = "Alice", age = 30)`. Field access via `u.name`. Positional destructuring in match: `User(name, age) -> name`.
+See [README.md](README.md#language-reference) for complete language reference (syntax, types, operators, patterns, modules).
+
+Below: implementation details relevant to development only.
+
+### Implementation notes
+
+- **Constructor routing**: `Result.Ok(v)`, `Result.Err(v)`, `Option.Some(v)` route through `call_builtin` (`__ctor:Result.Ok` etc.). `Result` and `Option` registered as `Value::Namespace`. Match patterns use qualified names.
+- **No flat builtins** (decision: `FullNamespaceEverywhere`). `List.map/filter/fold` stay in `interpreter/builtins.rs` because they need `self.call_value()`.
 - **`Type::Named(String)`** in the type system: capitalized identifiers (including dotted names like `Tcp.Connection`) in type annotations resolve to named types. Compatible only with the same name or internal `Unknown` fallback.
-- **`Tcp.Connection` opaque record**: `Tcp.connect` returns `Result<Tcp.Connection, String>` — a record with fields `id: String`, `host: String`, `port: Int`. Persistent-connection methods (`writeLine`, `readLine`, `close`) accept `Tcp.Connection` instead of a bare string ID. The actual socket lives in a thread-local `HashMap` keyed by the `id` field.
-- **Tail-call optimization** (`src/tco.rs`): a transform pass after parsing rewrites tail-position calls in recursive SCCs (self or mutual) from `FnCall` to `Expr::TailCall`. The interpreter's `call_fn_ref` uses a trampoline: when `TailCall` is returned, it rebinds args (self-TCO) or switches to the target fn (mutual TCO) without growing the call stack. Pipeline: `parse → tco_transform → typecheck → resolve → interpret`. Tail position = last expression in fn body, or each arm body in a `match` at tail position.
+- **`Tcp.Connection` opaque record**: fields `id: String`, `host: String`, `port: Int`. Actual socket in thread-local `HashMap` keyed by `id`. `NEXT_ID: AtomicU64` generates "tcp-1", "tcp-2", etc.
+- **Static type checker** (`src/types/checker/`): internal `Type::Unknown` recovery after earlier errors so analysis can continue. Bare `Unknown` does **not** satisfy concrete types in constraints — only nested `Unknown` is tolerated (gradual typing). Match pattern bindings are typed: `Result.Ok(x)` on `Result<Int, String>` gives `x: Int`.
+- **Auto-memoization** (`src/call_graph.rs`, `src/types/checker/memo.rs`, `src/interpreter/core.rs`): call graph built from AST, Tarjan SCC detects recursion, `call_fn_ref` checks/stores per-function HashMap cache (capped at 4096). Eligibility: pure + recursive + all params memo-safe (scalars, records/variants of scalars).
+- **TCO** (`src/tco.rs`): transform pass rewrites tail-position `FnCall` → `Expr::TailCall` in recursive SCCs. Interpreter trampoline in `call_fn_ref`: self-TCO rebinds args, mutual TCO switches to target fn. Pipeline: `parse → tco_transform → typecheck → resolve → interpret`.
+- **Compile-time variable resolution** (`src/resolver.rs`): `Ident("x")` → `Resolved(slot)` inside FnDef bodies. `EnvFrame::Slots(Vec<Rc<Value>>)` for O(1) lookup. REPL and sub-interpreters use unresolved path (`EnvFrame::Owned(HashMap)`).
+- **`check` command**: warns when module has no `intent =`, function with effects/Result return has no `?` description, file exceeds 150 lines. `fn main()` is exempt from `?` requirement.
+- **Entry-point effect enforcement**: `main`/top-level entry calls use `call_value_with_effects_pub(...)` with synthetic call frame.
 
 ### What is missing / known limitations
 
@@ -63,14 +43,9 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 - Effect handlers / row-polymorphic effects — runtime currently uses declared effect lists with call-edge capability checks; no handlers yet
 - decision-query flags (`--impacts`, `--since`, etc.) for `aver context --decisions-only`
 
-### What will NEVER be in Aver (design decisions)
+### Design omissions
 
-- `if`/`else` — `match` is the only branching construct; exhaustive matching forces explicit handling of all cases
-- `for`/`while` loops — no imperative iteration; future iteration will be through higher-order functions (`map`, `filter`, `fold`) over lists
-- `null` — `Option<T>` with `Some`/`None` only
-- Exceptions — `Result<T, E>` with `Ok`/`Err` only; errors are values
-- Global mutable state — no DI, no service blocks; mocking via function parameter: `fn f(log: Fn(String) -> Unit ! [Console])`
-- Magic (decorators, implicit behaviour, runtime reflection)
+See [README.md](README.md#what-aver-deliberately-omits) for the full list of intentional omissions (no `if`/`else`, no loops, no `null`, no exceptions, no mutable state, no magic).
 
 ## Architecture in one page
 

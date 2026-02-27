@@ -6,7 +6,7 @@ All functions live in namespaces — no flat builtins (decision: `FullNamespaceE
 
 ### `List` namespace
 
-Source: `src/services/list_helpers.rs` (pure helpers) + `src/interpreter/mod.rs` (`map`/`filter`/`fold` — need closure calls).
+Source: `src/types/list.rs` (pure helpers) + `src/interpreter/builtins.rs` (`map`/`filter`/`fold` — need closure calls).
 
 | Function | Signature | Notes |
 |---|---|---|
@@ -21,7 +21,7 @@ Source: `src/services/list_helpers.rs` (pure helpers) + `src/interpreter/mod.rs`
 
 ### `Int` namespace
 
-Source: `src/services/int_helpers.rs`
+Source: `src/types/int.rs`
 
 | Function | Signature |
 |---|---|
@@ -36,7 +36,7 @@ Source: `src/services/int_helpers.rs`
 
 ### `Float` namespace
 
-Source: `src/services/float_helpers.rs`
+Source: `src/types/float.rs`
 
 | Function | Signature |
 |---|---|
@@ -52,24 +52,60 @@ Source: `src/services/float_helpers.rs`
 
 ### `String` namespace
 
-Source: `src/services/string_helpers.rs`
+Source: `src/types/string.rs`
 
-| Function | Signature |
-|---|---|
-| `String.length` | `String -> Int` |
-| `String.byteLength` | `String -> Int` |
-| `String.startsWith` | `(String, String) -> Bool` |
-| `String.endsWith` | `(String, String) -> Bool` |
-| `String.contains` | `(String, String) -> Bool` |
-| `String.slice` | `(String, Int, Int) -> String` |
-| `String.trim` | `String -> String` |
-| `String.split` | `(String, String) -> List<String>` |
-| `String.replace` | `(String, String, String) -> String` |
-| `String.join` | `(List<String>, String) -> String` |
-| `String.chars` | `String -> List<String>` |
-| `String.fromInt` | `Int -> String` |
-| `String.fromFloat` | `Float -> String` |
-| `String.fromBool` | `Bool -> String` |
+| Function | Signature | Notes |
+|---|---|---|
+| `String.length` | `String -> Int` | |
+| `String.byteLength` | `String -> Int` | |
+| `String.charAt` | `(String, Int) -> Option<String>` | Single char or `Option.None` on out-of-bounds |
+| `String.startsWith` | `(String, String) -> Bool` | |
+| `String.endsWith` | `(String, String) -> Bool` | |
+| `String.contains` | `(String, String) -> Bool` | |
+| `String.slice` | `(String, Int, Int) -> String` | |
+| `String.trim` | `String -> String` | |
+| `String.split` | `(String, String) -> List<String>` | |
+| `String.replace` | `(String, String, String) -> String` | |
+| `String.join` | `(List<String>, String) -> String` | |
+| `String.chars` | `String -> List<String>` | |
+| `String.fromInt` | `Int -> String` | |
+| `String.fromFloat` | `Float -> String` | |
+| `String.fromBool` | `Bool -> String` | |
+
+### `Map` namespace
+
+Source: `src/types/map.rs`
+
+| Function | Signature | Notes |
+|---|---|---|
+| `Map.empty` | `() -> Map<K, V>` | |
+| `Map.fromList` | `List<(K, V)> -> Map<K, V>` | Keys must be hashable (Int, Float, String, Bool) |
+| `Map.set` | `(Map<K, V>, K, V) -> Map<K, V>` | Returns new map with key set |
+| `Map.get` | `(Map<K, V>, K) -> Option<V>` | |
+| `Map.has` | `(Map<K, V>, K) -> Bool` | |
+| `Map.remove` | `(Map<K, V>, K) -> Map<K, V>` | Returns new map without key |
+| `Map.keys` | `Map<K, V> -> List<K>` | |
+| `Map.values` | `Map<K, V> -> List<V>` | |
+| `Map.entries` | `Map<K, V> -> List<(K, V)>` | |
+| `Map.len` | `Map<K, V> -> Int` | |
+
+### `Char` namespace
+
+Source: `src/types/char.rs` — not a type, operates on `String`/`Int`.
+
+| Function | Signature | Notes |
+|---|---|---|
+| `Char.toCode` | `String -> Int` | Unicode scalar value of first char |
+| `Char.fromCode` | `Int -> Option<String>` | Code point to 1-char string, `Option.None` for surrogates/invalid |
+
+### `Byte` namespace
+
+Source: `src/types/byte.rs` — not a type, operates on `Int`/`String`.
+
+| Function | Signature | Notes |
+|---|---|---|
+| `Byte.toHex` | `Int -> Result<String, String>` | Always 2-char lowercase hex |
+| `Byte.fromHex` | `String -> Result<Int, String>` | Exactly 2 hex chars required |
 
 ## Effectful namespaces
 
@@ -100,7 +136,7 @@ Source: `src/services/http.rs`
 `HttpResponse` record: `{ status: Int, body: String, headers: List<Header> }`.
 `Header` record: `{ name: String, value: String }`.
 
-### `HttpServer` namespace — `! [Http]`
+### `HttpServer` namespace — `! [HttpServer]`
 
 Source: `src/services/http_server.rs`
 

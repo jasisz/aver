@@ -189,21 +189,152 @@ aver repl                              # interactive REPL
 
 ---
 
-## Type system
+## Language reference
+
+### Types
 
 Primitive: `Int`, `Float`, `String`, `Bool`, `Unit`
 Compound: `Result<T, E>`, `Option<T>`, `List<T>`, `Map<K, V>`, `(A, B, ...)`, `Fn(A) -> B`, `Fn(A) -> B ! [Effect]`
 User-defined sum types: `type Shape` → `Shape.Circle(Float)`, `Shape.Rect(Float, Float)`
 User-defined product types: `record User` → `User(name = "Alice", age = 30)`, `u.name`
-Map literals: `{"k" => v, "x" => y}` (`=>` is required; `:` stays type-only)
-Typed bindings: `name: Type = expr` (e.g. `headers: List<Header> = []`)
-Constructors: with args use parens (`Shape.Circle(1.0)`), zero-arg variants are bare values (`Shape.Point`, `Option.None`)
+
+### Bindings
+
+All bindings are immutable. No `val`/`var` keywords — they are parse errors.
+
+```aver
+name = "Alice"
+age: Int = 30
+xs: List<Int> = []
+```
+
+Optional type annotation provides a hint to the type checker; the annotation wins over inference when both are compatible. Binding to an empty list literal without a type annotation (`x = []`) is a type error.
+
+Duplicate binding of the same name in the same scope is a type error.
+
+### Operators
+
+Arithmetic: `+`, `-`, `*`, `/` with mixed Int/Float promotion.
+Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`.
+Pipe: `value |> fn` — passes the left-hand value as the sole argument to the right-hand function.
+Error propagation: `expr?` — unwraps `Result.Ok`, propagates `Result.Err` as a `RuntimeError`.
+
+### String interpolation
+
+Expressions inside `{}` are evaluated at runtime:
+
+```aver
+greeting = "Hello, {name}! You are {age} years old."
+```
+
+### Constructors
+
+UpperCamel callee = constructor, lowerCamel = function call. Records use named args (`User(name = "A", age = 1)`), variants use positional args (`Shape.Circle(3.14)`), zero-arg constructors are bare singletons (`Option.None`, `Shape.Point`).
+
+All constructors are namespaced — no bare `Ok`/`Err`/`Some`/`None`:
+
+```aver
+Result.Ok(42)
+Result.Err("not found")
+Option.Some("hello")
+Option.None
+```
+
+### Match expressions
+
+`match` is the only branching construct (no `if`/`else`). Patterns:
+
+```aver
+match value
+    42 -> "exact"                          // literal
+    _ -> "anything"                        // wildcard
+    x -> "bound to {x}"                    // identifier binding
+    [] -> "empty list"                     // empty list
+    [h, ..t] -> "head {h}, tail {t}"       // list cons
+    Result.Ok(v) -> "success: {v}"         // constructor
+    Result.Err(e) -> "error: {e}"
+    Shape.Circle(r) -> "circle r={r}"
+    Shape.Point -> "point"
+    User(name, age) -> "user {name}"       // record positional destructuring
+```
+
+Nested match in match arms is supported.
+
+### Record update
+
+Creates a new record with overridden fields, preserving all other fields:
+
+```aver
+updated = User.update(u, age = 31)
+```
+
+### Map literals
+
+```aver
+m = {"key" => value, "other" => 42}
+```
+
+`=>` is required inside map literals; `:` stays type-only.
+
+### Effect aliases
+
+Named effect sets reduce repetition:
+
+```aver
+effects AppIO = [Console, Disk]
+
+fn main() -> Unit
+    ! [AppIO]
+    // ...
+```
+
+### Functions
+
+```aver
+fn add(a: Int, b: Int) -> Int = a + b
+
+fn charge(account: String, amount: Int) -> Result<String, String>
+    ? "Charges account. Returns txn ID or error."
+    ! [Http]
+    match amount
+        0 -> Result.Err("Cannot charge zero")
+        _ -> Result.Ok("txn-{account}-{amount}")
+```
+
+- `? "..."` — optional prose description (part of the signature)
+- `! [Effect]` — optional effect declaration (statically and runtime enforced)
+- `= expr` — single-expression shorthand
+- Block body with indentation for multi-statement functions
+
+### No closures
+
+All user-defined functions are top-level. At call time, a function sees globals + its own parameters — no closure capture at definition time.
+
+### Auto-memoization
+
+Pure recursive functions with memo-safe arguments (scalars, records/variants of scalars) are automatically memoized at runtime. No keyword needed — the compiler detects eligibility via call-graph analysis (Tarjan SCC). Cache is capped at 4096 entries per function.
+
+### Tail-call optimization
+
+Self and mutual tail recursion is optimized automatically. A transform pass after parsing rewrites tail-position calls into a trampoline — no stack growth for recursive functions. Tail position = last expression in function body, or each arm body in a `match` at tail position.
+
+### Modules
 
 Module imports resolve from a module root (`--module-root`, default: current working directory).
-Example: `depends [Examples.Fibonacci]` → `examples/fibonacci.av`, call as `Examples.Fibonacci.fn(...)`
-Dot-path import example: `depends [Examples.Models.User]` → `examples/models/user.av`, call as `Examples.Models.User.fn(...)`
 
-Type errors block `run`, `check`, and `verify`. No partial execution.
+```aver
+module Payments
+    intent = "Processes transactions."
+    depends [Examples.Fibonacci]
+    exposes [charge]
+```
+
+`depends [Examples.Fibonacci]` → `examples/fibonacci.av`, call as `Examples.Fibonacci.fn(...)`.
+`depends [Examples.Models.User]` → `examples/models/user.av`, call as `Examples.Models.User.fn(...)`.
+
+### Static type checking
+
+Type errors block `run`, `check`, and `verify`. No partial execution. The checker covers function bodies, top-level statements, effect propagation, and duplicate binding detection.
 
 ---
 
@@ -232,7 +363,17 @@ Aver ships built-in namespaces for I/O. All require explicit effect declarations
 | `Disk` | `! [Disk]` | `readText`, `writeText`, `exists`, `delete`, `listDir`, `makeDir` |
 | `Tcp` | `! [Tcp]` | `connect`, `writeLine`, `readLine`, `close`, `send`, `ping` |
 
-Pure namespaces (no effects): `Int`, `Float`, `String`, `List`, `Map` — conversion, math, collection ops.
+Pure namespaces (no effects):
+
+| Namespace | Key functions |
+|-----------|---------------|
+| `Int` | `fromString`, `fromFloat`, `toString`, `toFloat`, `abs`, `min`, `max`, `mod` |
+| `Float` | `fromString`, `fromInt`, `toString`, `abs`, `floor`, `ceil`, `round`, `min`, `max` |
+| `String` | `length`, `byteLength`, `charAt`, `startsWith`, `endsWith`, `contains`, `slice`, `trim`, `split`, `replace`, `join`, `chars`, `fromInt`, `fromFloat`, `fromBool` |
+| `List` | `len`, `map`, `filter`, `fold`, `get`, `push`, `head`, `tail` |
+| `Map` | `empty`, `fromList`, `set`, `get`, `has`, `remove`, `keys`, `values`, `entries`, `len` |
+| `Char` | `toCode` (String→Int), `fromCode` (Int→Option\<String\>) — not a type, operates on String/Int |
+| `Byte` | `toHex` (Int→Result), `fromHex` (String→Result) — not a type, operates on Int/String |
 
 Full API reference: [docs/services.md](docs/services.md)
 
@@ -310,3 +451,12 @@ Implemented in Rust with extensive automated test coverage.
 - [x] Interactive REPL — persistent state, multi-line, type-checked
 - [x] Built-in services — Console, Http, HttpServer, Disk, Tcp — `! [Effect]` enforced everywhere
 - [x] Deterministic replay — `aver run --record` + `aver replay` for effectful regression testing
+- [x] Record update — `User.update(u, age = 31)`
+- [x] Auto-memoization — pure recursive functions with scalar args
+- [x] Tail-call optimization — self and mutual recursion
+- [x] Effect aliases — `effects AppIO = [Console, Disk]`
+- [x] Map, Char, Byte pure namespaces
+- [x] Pipe operator — `value |> fn`
+- [x] Error propagation — `expr?` on Result values
+- [x] String interpolation — `"Hello, {name}!"`
+- [x] Compile-time variable resolution
