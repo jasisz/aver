@@ -208,6 +208,22 @@ pub fn expr_to_str(expr: &crate::ast::Expr) -> String {
                 .collect();
             format!("{}({})", type_name, flds.join(", "))
         }
+        Expr::RecordUpdate {
+            type_name,
+            base,
+            updates,
+        } => {
+            let upds: Vec<String> = updates
+                .iter()
+                .map(|(name, expr)| format!("{} = {}", name, expr_to_str(expr)))
+                .collect();
+            format!(
+                "{}.update({}, {})",
+                type_name,
+                expr_to_str(base),
+                upds.join(", ")
+            )
+        }
         Expr::TailCall(boxed) => {
             let (target, args) = boxed.as_ref();
             let a = args.iter().map(expr_to_str).collect::<Vec<_>>().join(", ");

@@ -894,6 +894,56 @@ impl TypeChecker {
                 Type::Named(type_name.clone())
             }
 
+            Expr::RecordUpdate {
+                type_name,
+                base,
+                updates,
+            } => {
+                let base_ty = self.infer_type(base);
+                let expected_ty = Type::Named(type_name.clone());
+                if !Self::constraint_compatible(&base_ty, &expected_ty) {
+                    self.error(format!(
+                        "{}.update: base has type {}, expected {}",
+                        type_name,
+                        base_ty.display(),
+                        type_name
+                    ));
+                }
+
+                let schema_prefix = format!("{}.", type_name);
+                let mut expected_fields = HashMap::new();
+                for (key, ty) in &self.record_field_types {
+                    if let Some(field_name) = key.strip_prefix(&schema_prefix) {
+                        expected_fields.insert(field_name.to_string(), ty.clone());
+                    }
+                }
+
+                for (field_name, expr) in updates {
+                    let actual_ty = self.infer_type(expr);
+                    if expected_fields.is_empty() {
+                        continue;
+                    }
+                    if let Some(expected_ty) = expected_fields.get(field_name) {
+                        if !Self::constraint_compatible(&actual_ty, expected_ty) {
+                            self.error(format!(
+                                "Record '{}' field '{}' expects {}, got {}",
+                                type_name,
+                                field_name,
+                                expected_ty.display(),
+                                actual_ty.display()
+                            ));
+                        }
+                    } else {
+                        self.error(format!(
+                            "Record '{}' has no field '{}'",
+                            type_name, field_name
+                        ));
+                    }
+                }
+
+                Type::Named(type_name.clone())
+            }
+
             Expr::TailCall(boxed) => {
                 let (target, args) = boxed.as_ref();
                 for arg in args {

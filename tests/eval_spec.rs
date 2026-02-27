@@ -2758,3 +2758,84 @@ fn byte_from_hex_wrong_length() {
     let val = eval("Byte.fromHex(\"a\")");
     assert!(matches!(val, Value::Err(_)));
 }
+
+// ---------------------------------------------------------------------------
+// Record update
+// ---------------------------------------------------------------------------
+
+#[test]
+fn record_update_single_field() {
+    let src = r#"
+record User
+    name: String
+    age: Int
+
+u = User(name = "Alice", age = 30)
+updated = User.update(u, age = 31)
+"#;
+    let interp = run_program(src);
+    let updated = interp.lookup("updated").unwrap();
+    match &updated {
+        Value::Record { type_name, fields } => {
+            assert_eq!(type_name, "User");
+            assert_eq!(
+                fields,
+                &[
+                    ("name".to_string(), Value::Str("Alice".to_string())),
+                    ("age".to_string(), Value::Int(31)),
+                ]
+            );
+        }
+        other => panic!("expected Record, got {:?}", other),
+    }
+}
+
+#[test]
+fn record_update_multiple_fields() {
+    let src = r#"
+record User
+    name: String
+    age: Int
+
+u = User(name = "Alice", age = 30)
+updated = User.update(u, name = "Bob", age = 31)
+"#;
+    let interp = run_program(src);
+    let updated = interp.lookup("updated").unwrap();
+    match &updated {
+        Value::Record { type_name, fields } => {
+            assert_eq!(type_name, "User");
+            assert_eq!(
+                fields,
+                &[
+                    ("name".to_string(), Value::Str("Bob".to_string())),
+                    ("age".to_string(), Value::Int(31)),
+                ]
+            );
+        }
+        other => panic!("expected Record, got {:?}", other),
+    }
+}
+
+#[test]
+fn record_update_preserves_unmodified() {
+    let src = r#"
+record User
+    name: String
+    age: Int
+
+u = User(name = "Alice", age = 30)
+updated = User.update(u, age = 99)
+"#;
+    let interp = run_program(src);
+    let updated = interp.lookup("updated").unwrap();
+    match &updated {
+        Value::Record { fields, .. } => {
+            // name should be unchanged
+            assert_eq!(fields[0], ("name".to_string(), Value::Str("Alice".to_string())));
+            // age should be updated
+            assert_eq!(fields[1], ("age".to_string(), Value::Int(99)));
+        }
+        other => panic!("expected Record, got {:?}", other),
+    }
+}

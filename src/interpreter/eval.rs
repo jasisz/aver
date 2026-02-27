@@ -127,6 +127,11 @@ impl Interpreter {
             }
             Expr::MapLiteral(entries) => self.eval_map_literal(entries),
             Expr::RecordCreate { type_name, fields } => self.eval_record_create(type_name, fields),
+            Expr::RecordUpdate {
+                type_name,
+                base,
+                updates,
+            } => self.eval_record_update(type_name, base, updates),
             Expr::TailCall(boxed) => self.eval_tail_call(boxed),
         }
     }
@@ -201,6 +206,68 @@ impl Interpreter {
         Ok(Value::Record {
             type_name: type_name.to_string(),
             fields: field_vals,
+        })
+    }
+
+    /// Evaluate a record update: `Type.update(base, field = newVal, ...)`.
+    #[inline(never)]
+    fn eval_record_update(
+        &mut self,
+        type_name: &str,
+        base: &Expr,
+        updates: &[(String, Expr)],
+    ) -> Result<Value, RuntimeError> {
+        let base_val = self.eval_expr(base)?;
+        let (base_type, base_fields) = match base_val {
+            Value::Record { type_name: t, fields } => (t, fields),
+            _ => {
+                return Err(RuntimeError::Error(format!(
+                    "{}.update: base must be a {} record",
+                    type_name, type_name
+                )));
+            }
+        };
+        if base_type != type_name {
+            return Err(RuntimeError::Error(format!(
+                "{}.update: base is a {} record, expected {}",
+                type_name, base_type, type_name
+            )));
+        }
+
+        let mut update_vals = Vec::with_capacity(updates.len());
+        for (name, expr) in updates {
+            let val = self.eval_expr(expr)?;
+            update_vals.push((name.clone(), val));
+        }
+
+        // Validate update field names against schema
+        if let Some(schema) = self.record_schemas.get(type_name) {
+            for (field_name, _) in &update_vals {
+                if !schema.iter().any(|f| f == field_name) {
+                    return Err(RuntimeError::Error(format!(
+                        "Record '{}' has no field '{}'",
+                        type_name, field_name
+                    )));
+                }
+            }
+        }
+
+        // Clone base fields, apply overrides
+        let mut fields: Vec<(String, Value)> = base_fields;
+        for (upd_name, upd_val) in update_vals {
+            if let Some(field) = fields.iter_mut().find(|(k, _)| k == &upd_name) {
+                field.1 = upd_val;
+            } else {
+                return Err(RuntimeError::Error(format!(
+                    "Record '{}' has no field '{}'",
+                    type_name, upd_name
+                )));
+            }
+        }
+
+        Ok(Value::Record {
+            type_name: type_name.to_string(),
+            fields,
         })
     }
 

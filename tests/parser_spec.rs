@@ -947,3 +947,53 @@ fn effect_set_multiple() {
         panic!("expected EffectSet");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Record update
+// ---------------------------------------------------------------------------
+
+#[test]
+fn record_update_parses() {
+    let src = "record User\n    name: String\n    age: Int\n\nfn f(u: User) -> User\n    = User.update(u, age = 31)\n";
+    let items = parse(src);
+    if let TopLevel::FnDef(fd) = &items[1] {
+        match fd.body.as_ref() {
+            FnBody::Expr(Expr::RecordUpdate {
+                type_name,
+                base,
+                updates,
+            }) => {
+                assert_eq!(type_name, "User");
+                assert!(matches!(base.as_ref(), Expr::Ident(n) if n == "u"));
+                assert_eq!(updates.len(), 1);
+                assert_eq!(updates[0].0, "age");
+            }
+            other => panic!("expected RecordUpdate, got {:?}", other),
+        }
+    } else {
+        panic!("expected FnDef");
+    }
+}
+
+#[test]
+fn record_update_multiple_fields() {
+    let src = "record User\n    name: String\n    age: Int\n\nfn f(u: User) -> User\n    = User.update(u, name = \"Bob\", age = 31)\n";
+    let items = parse(src);
+    if let TopLevel::FnDef(fd) = &items[1] {
+        match fd.body.as_ref() {
+            FnBody::Expr(Expr::RecordUpdate {
+                type_name,
+                updates,
+                ..
+            }) => {
+                assert_eq!(type_name, "User");
+                assert_eq!(updates.len(), 2);
+                assert_eq!(updates[0].0, "name");
+                assert_eq!(updates[1].0, "age");
+            }
+            other => panic!("expected RecordUpdate, got {:?}", other),
+        }
+    } else {
+        panic!("expected FnDef");
+    }
+}

@@ -49,6 +49,9 @@ fn expr_has_tail_call(expr: &aver::ast::Expr) -> bool {
             .iter()
             .any(|(k, v)| expr_has_tail_call(k) || expr_has_tail_call(v)),
         Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| expr_has_tail_call(e)),
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_has_tail_call(base) || updates.iter().any(|(_, e)| expr_has_tail_call(e))
+        }
     }
 }
 

@@ -1253,3 +1253,63 @@ fn valid_typed_binding_empty_list_with_annotation() {
     let src = "fn f() -> List<Int>\n    xs: List<Int> = []\n    xs\n";
     assert_no_errors(src);
 }
+
+// ---------------------------------------------------------------------------
+// Record update
+// ---------------------------------------------------------------------------
+
+#[test]
+fn valid_record_update() {
+    let src = r#"
+record User
+    name: String
+    age: Int
+
+fn f(u: User) -> User
+    = User.update(u, age = 31)
+"#;
+    assert_no_errors(src);
+}
+
+#[test]
+fn error_record_update_unknown_field() {
+    let src = r#"
+record User
+    name: String
+    age: Int
+
+fn f(u: User) -> User
+    = User.update(u, foo = 1)
+"#;
+    assert_error_containing(src, "Record 'User' has no field 'foo'");
+}
+
+#[test]
+fn error_record_update_field_type_mismatch() {
+    let src = r#"
+record User
+    name: String
+    age: Int
+
+fn f(u: User) -> User
+    = User.update(u, age = "old")
+"#;
+    assert_error_containing(src, "Record 'User' field 'age' expects Int, got String");
+}
+
+#[test]
+fn error_record_update_wrong_base_type() {
+    let src = r#"
+record User
+    name: String
+    age: Int
+
+record Point
+    x: Int
+    y: Int
+
+fn f(u: User) -> Point
+    = Point.update(u, x = 1)
+"#;
+    assert_error_containing(src, "Point.update: base has type User, expected Point");
+}

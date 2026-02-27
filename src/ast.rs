@@ -68,6 +68,12 @@ pub enum Expr {
         type_name: String,
         fields: Vec<(String, Expr)>,
     },
+    /// Record update: `User.update(base, field = newVal, ...)`
+    RecordUpdate {
+        type_name: String,
+        base: Box<Expr>,
+        updates: Vec<(String, Expr)>,
+    },
     /// Tail-position call to a function in the same SCC (self or mutual recursion).
     /// Produced by the TCO transform pass before type-checking.
     /// Boxed to keep Expr enum at its original size (48 bytes).

@@ -142,6 +142,12 @@ fn collect_expr_bindings(expr: &Expr, local_slots: &mut HashMap<String, u16>, ne
                 collect_expr_bindings(expr, local_slots, next_slot);
             }
         }
+        Expr::RecordUpdate { base, updates, .. } => {
+            collect_expr_bindings(base, local_slots, next_slot);
+            for (_, expr) in updates {
+                collect_expr_bindings(expr, local_slots, next_slot);
+            }
+        }
         Expr::Attr(obj, _) => {
             collect_expr_bindings(obj, local_slots, next_slot);
         }
@@ -253,6 +259,12 @@ fn resolve_expr(expr: &mut Expr, local_slots: &HashMap<String, u16>) {
         }
         Expr::RecordCreate { fields, .. } => {
             for (_, expr) in fields {
+                resolve_expr(expr, local_slots);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            resolve_expr(base, local_slots);
+            for (_, expr) in updates {
                 resolve_expr(expr, local_slots);
             }
         }

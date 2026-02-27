@@ -127,6 +127,32 @@ impl Parser {
                 };
                 expr = Expr::Attr(Box::new(expr), field);
                 if self.check_exact(&TokenKind::LParen) {
+                    // Detect `Type.update(base, field = val, ...)` for record update
+                    if let Some(path) = Self::dotted_name(&expr) {
+                        if path.ends_with(".update") {
+                            let prefix = &path[..path.len() - ".update".len()];
+                            if !prefix.is_empty()
+                                && prefix.chars().next().map_or(false, |c| c.is_uppercase())
+                            {
+                                self.advance(); // consume (
+                                let base = self.parse_expr()?;
+                                let updates = if self.check_exact(&TokenKind::Comma) {
+                                    self.advance();
+                                    self.skip_formatting();
+                                    self.parse_record_create_fields()?
+                                } else {
+                                    Vec::new()
+                                };
+                                self.expect_exact(&TokenKind::RParen)?;
+                                expr = Expr::RecordUpdate {
+                                    type_name: prefix.to_string(),
+                                    base: Box::new(base),
+                                    updates,
+                                };
+                                continue;
+                            }
+                        }
+                    }
                     if let Some(path) = Self::dotted_name(&expr) {
                         self.reject_zero_arg_constructor_call(&path)?;
                     }

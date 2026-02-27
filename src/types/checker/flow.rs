@@ -285,6 +285,12 @@ impl TypeChecker {
                     self.check_effects_in_expr(expr, caller_name, caller_effects);
                 }
             }
+            Expr::RecordUpdate { base, updates, .. } => {
+                self.check_effects_in_expr(base, caller_name, caller_effects);
+                for (_, expr) in updates {
+                    self.check_effects_in_expr(expr, caller_name, caller_effects);
+                }
+            }
             Expr::TailCall(boxed) => {
                 for arg in &boxed.1 {
                     self.check_effects_in_expr(arg, caller_name, caller_effects);

@@ -264,6 +264,12 @@ fn count_recursive_calls_expr(expr: &Expr, recursive: &HashSet<String>, out: &mu
                 count_recursive_calls_expr(e, recursive, out);
             }
         }
+        Expr::RecordUpdate { base, updates, .. } => {
+            count_recursive_calls_expr(base, recursive, out);
+            for (_, e) in updates {
+                count_recursive_calls_expr(e, recursive, out);
+            }
+        }
     }
 }
 
@@ -342,6 +348,12 @@ fn collect_callees_expr(expr: &Expr, callees: &mut HashSet<String>) {
         }
         Expr::RecordCreate { fields, .. } => {
             for (_, e) in fields {
+                collect_callees_expr(e, callees);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            collect_callees_expr(base, callees);
+            for (_, e) in updates {
                 collect_callees_expr(e, callees);
             }
         }
