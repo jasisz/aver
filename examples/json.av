@@ -22,104 +22,97 @@ fn emptyJsonMap() -> Map<String, Json>
 
 fn parse(s: String) -> Result<Json, String>
     ? "Parse JSON string into Json value."
-    chars = String.chars(s)
-    match parseValue(chars, skipWhitespace(chars, 0))
+    match parseValue(s, skipWhitespace(s, 0))
         ParseResult.Ok(value, _) -> Result.Ok(value)
         ParseResult.Err(msg) -> Result.Err(msg)
 
-fn charAt(chars: List<String>, pos: Int) -> Option<String>
-    ? "Safe character access."
-    match List.get(chars, pos)
-        Result.Ok(c) -> Option.Some(c)
-        Result.Err(_) -> Option.None
-
-fn skipWhitespace(chars: List<String>, pos: Int) -> Int
+fn skipWhitespace(s: String, pos: Int) -> Int
     ? "Skip whitespace characters."
-    match charAt(chars, pos)
+    match String.charAt(s, pos)
         Option.None -> pos
         Option.Some(c) -> match c
-            " " -> skipWhitespace(chars, pos + 1)
-            "\t" -> skipWhitespace(chars, pos + 1)
-            "\n" -> skipWhitespace(chars, pos + 1)
-            "\r" -> skipWhitespace(chars, pos + 1)
+            " " -> skipWhitespace(s, pos + 1)
+            "\t" -> skipWhitespace(s, pos + 1)
+            "\n" -> skipWhitespace(s, pos + 1)
+            "\r" -> skipWhitespace(s, pos + 1)
             _ -> pos
 
-fn parseValue(chars: List<String>, pos: Int) -> ParseResult
+fn parseValue(s: String, pos: Int) -> ParseResult
     ? "Dispatch on first character to parse any JSON value."
-    match charAt(chars, pos)
+    match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unexpected end of input")
         Option.Some(c) -> match c
-            "\"" -> parseString(chars, pos + 1, "")
-            "{{" -> parseObject(chars, skipWhitespace(chars, pos + 1))
-            "[" -> parseArray(chars, skipWhitespace(chars, pos + 1))
-            "t" -> parseLiteral(chars, pos, "true", Json.JsonBool(true))
-            "f" -> parseLiteral(chars, pos, "false", Json.JsonBool(false))
-            "n" -> parseLiteral(chars, pos, "null", Json.JsonNull)
-            "-" -> parseNumber(chars, pos + 1, 0, true)
-            _ -> tryDigitOrError(chars, pos, c)
+            "\"" -> parseString(s, pos + 1, "")
+            "{{" -> parseObject(s, skipWhitespace(s, pos + 1))
+            "[" -> parseArray(s, skipWhitespace(s, pos + 1))
+            "t" -> parseLiteral(s, pos, "true", Json.JsonBool(true))
+            "f" -> parseLiteral(s, pos, "false", Json.JsonBool(false))
+            "n" -> parseLiteral(s, pos, "null", Json.JsonNull)
+            "-" -> parseNumber(s, pos + 1, 0, true)
+            _ -> tryDigitOrError(s, pos, c)
 
-fn tryDigitOrError(chars: List<String>, pos: Int, c: String) -> ParseResult
+fn tryDigitOrError(s: String, pos: Int, c: String) -> ParseResult
     ? "Start number if digit, otherwise error."
     match Int.fromString(c)
-        Result.Ok(d) -> parseNumber(chars, pos + 1, d, false)
+        Result.Ok(d) -> parseNumber(s, pos + 1, d, false)
         Result.Err(_) -> ParseResult.Err("Unexpected character: " + c)
 
-fn parseLiteral(chars: List<String>, pos: Int, expected: String, value: Json) -> ParseResult
+fn parseLiteral(s: String, pos: Int, expected: String, value: Json) -> ParseResult
     ? "Match exact literal string, return given Json value."
-    match expectChars(chars, pos, String.chars(expected))
+    match expectChars(s, pos, String.chars(expected))
         Option.Some(newPos) -> ParseResult.Ok(value, newPos)
         Option.None -> ParseResult.Err("Expected '" + expected + "'")
 
-fn expectChars(chars: List<String>, pos: Int, expected: List<String>) -> Option<Int>
+fn expectChars(s: String, pos: Int, expected: List<String>) -> Option<Int>
     ? "Check chars at pos match expected sequence."
     match expected
         [] -> Option.Some(pos)
-        [h, ..t] -> expectChar(chars, pos, h, t)
+        [h, ..t] -> expectChar(s, pos, h, t)
 
-fn expectChar(chars: List<String>, pos: Int, expected: String, rest: List<String>) -> Option<Int>
+fn expectChar(s: String, pos: Int, expected: String, rest: List<String>) -> Option<Int>
     ? "Match one expected char and continue."
-    match charAt(chars, pos)
+    match String.charAt(s, pos)
         Option.None -> Option.None
-        Option.Some(c) -> expectIfEqual(chars, pos, c, expected, rest)
+        Option.Some(c) -> expectIfEqual(s, pos, c, expected, rest)
 
-fn expectIfEqual(chars: List<String>, pos: Int, actual: String, expected: String, rest: List<String>) -> Option<Int>
+fn expectIfEqual(s: String, pos: Int, actual: String, expected: String, rest: List<String>) -> Option<Int>
     ? "Continue matching if chars equal."
     match actual == expected
-        true -> expectChars(chars, pos + 1, rest)
+        true -> expectChars(s, pos + 1, rest)
         false -> Option.None
 
-fn parseString(chars: List<String>, pos: Int, accum: String) -> ParseResult
+fn parseString(s: String, pos: Int, accum: String) -> ParseResult
     ? "Accumulate string chars until closing quote."
-    match charAt(chars, pos)
+    match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated string")
         Option.Some(c) -> match c
             "\"" -> ParseResult.Ok(Json.JsonString(accum), pos + 1)
-            "\\" -> parseEscape(chars, pos + 1, accum)
-            _ -> parseString(chars, pos + 1, accum + c)
+            "\\" -> parseEscape(s, pos + 1, accum)
+            _ -> parseString(s, pos + 1, accum + c)
 
-fn parseEscape(chars: List<String>, pos: Int, accum: String) -> ParseResult
+fn parseEscape(s: String, pos: Int, accum: String) -> ParseResult
     ? "Handle escape sequence after backslash."
-    match charAt(chars, pos)
+    match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated escape")
         Option.Some(c) -> match c
-            "\"" -> parseString(chars, pos + 1, accum + "\"")
-            "\\" -> parseString(chars, pos + 1, accum + "\\")
-            "/" -> parseString(chars, pos + 1, accum + "/")
-            "n" -> parseString(chars, pos + 1, accum + "\n")
-            "t" -> parseString(chars, pos + 1, accum + "\t")
-            "r" -> parseString(chars, pos + 1, accum + "\r")
+            "\"" -> parseString(s, pos + 1, accum + "\"")
+            "\\" -> parseString(s, pos + 1, accum + "\\")
+            "/" -> parseString(s, pos + 1, accum + "/")
+            "n" -> parseString(s, pos + 1, accum + "\n")
+            "t" -> parseString(s, pos + 1, accum + "\t")
+            "r" -> parseString(s, pos + 1, accum + "\r")
             _ -> ParseResult.Err("Unknown escape: \\" + c)
 
-fn parseNumber(chars: List<String>, pos: Int, accum: Int, negative: Bool) -> ParseResult
+fn parseNumber(s: String, pos: Int, accum: Int, negative: Bool) -> ParseResult
     ? "Accumulate digits into integer."
-    match charAt(chars, pos)
+    match String.charAt(s, pos)
         Option.None -> finishNumber(accum, negative, pos)
-        Option.Some(c) -> tryAccumDigit(chars, pos, accum, negative, c)
+        Option.Some(c) -> tryAccumDigit(s, pos, accum, negative, c)
 
-fn tryAccumDigit(chars: List<String>, pos: Int, accum: Int, negative: Bool, c: String) -> ParseResult
+fn tryAccumDigit(s: String, pos: Int, accum: Int, negative: Bool, c: String) -> ParseResult
     ? "If digit accumulate, otherwise finish number."
     match Int.fromString(c)
-        Result.Ok(d) -> parseNumber(chars, pos + 1, accum * 10 + d, negative)
+        Result.Ok(d) -> parseNumber(s, pos + 1, accum * 10 + d, negative)
         Result.Err(_) -> finishNumber(accum, negative, pos)
 
 fn finishNumber(accum: Int, negative: Bool, pos: Int) -> ParseResult
@@ -128,50 +121,50 @@ fn finishNumber(accum: Int, negative: Bool, pos: Int) -> ParseResult
         true -> ParseResult.Ok(Json.JsonInt(accum * -1), pos)
         false -> ParseResult.Ok(Json.JsonInt(accum), pos)
 
-fn parseArray(chars: List<String>, pos: Int) -> ParseResult
+fn parseArray(s: String, pos: Int) -> ParseResult
     ? "Parse array after opening bracket."
-    match charAt(chars, pos)
+    match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated array")
         Option.Some(c) -> match c
             "]" -> ParseResult.Ok(Json.JsonList([]), pos + 1)
-            _ -> parseArrayElements(chars, pos, [])
+            _ -> parseArrayElements(s, pos, [])
 
-fn parseArrayElements(chars: List<String>, pos: Int, accum: List<Json>) -> ParseResult
+fn parseArrayElements(s: String, pos: Int, accum: List<Json>) -> ParseResult
     ? "Parse comma-separated values in array."
-    match parseValue(chars, pos)
+    match parseValue(s, pos)
         ParseResult.Err(msg) -> ParseResult.Err(msg)
-        ParseResult.Ok(value, newPos) -> parseArrayNext(chars, skipWhitespace(chars, newPos), List.push(accum, value))
+        ParseResult.Ok(value, newPos) -> parseArrayNext(s, skipWhitespace(s, newPos), List.push(accum, value))
 
-fn parseArrayNext(chars: List<String>, pos: Int, accum: List<Json>) -> ParseResult
+fn parseArrayNext(s: String, pos: Int, accum: List<Json>) -> ParseResult
     ? "After array value expect comma or bracket."
-    match charAt(chars, pos)
+    match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated array")
         Option.Some(c) -> match c
             "]" -> ParseResult.Ok(Json.JsonList(accum), pos + 1)
-            "," -> parseArrayElements(chars, skipWhitespace(chars, pos + 1), accum)
+            "," -> parseArrayElements(s, skipWhitespace(s, pos + 1), accum)
             _ -> ParseResult.Err("Expected ',' or ']'")
 
-fn parseObject(chars: List<String>, pos: Int) -> ParseResult
+fn parseObject(s: String, pos: Int) -> ParseResult
     ? "Parse object after opening brace."
-    match charAt(chars, pos)
+    match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated object")
         Option.Some(c) -> match c
             "}}" -> ParseResult.Ok(Json.JsonObject(emptyJsonMap()), pos + 1)
-            _ -> parseObjectFields(chars, pos, emptyJsonMap())
+            _ -> parseObjectFields(s, pos, emptyJsonMap())
 
-fn parseObjectFields(chars: List<String>, pos: Int, accum: Map<String, Json>) -> ParseResult
+fn parseObjectFields(s: String, pos: Int, accum: Map<String, Json>) -> ParseResult
     ? "Parse key:value pairs in object."
-    match charAt(chars, pos)
+    match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated object")
         Option.Some(c) -> match c
-            "\"" -> parseObjectKey(chars, pos + 1, accum)
+            "\"" -> parseObjectKey(s, pos + 1, accum)
             _ -> ParseResult.Err("Expected string key")
 
-fn parseObjectKey(chars: List<String>, pos: Int, accum: Map<String, Json>) -> ParseResult
+fn parseObjectKey(s: String, pos: Int, accum: Map<String, Json>) -> ParseResult
     ? "Parse key then expect colon."
-    match parseString(chars, pos, "")
+    match parseString(s, pos, "")
         ParseResult.Err(msg) -> ParseResult.Err(msg)
-        ParseResult.Ok(keyJson, newPos) -> parseObjectColon(chars, skipWhitespace(chars, newPos), accum, extractString(keyJson))
+        ParseResult.Ok(keyJson, newPos) -> parseObjectColon(s, skipWhitespace(s, newPos), accum, extractString(keyJson))
 
 fn extractString(j: Json) -> String
     ? "Extract string from JsonString."
@@ -179,27 +172,27 @@ fn extractString(j: Json) -> String
         Json.JsonString(s) -> s
         _ -> ""
 
-fn parseObjectColon(chars: List<String>, pos: Int, accum: Map<String, Json>, key: String) -> ParseResult
+fn parseObjectColon(s: String, pos: Int, accum: Map<String, Json>, key: String) -> ParseResult
     ? "Expect colon then parse value."
-    match charAt(chars, pos)
+    match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated object")
         Option.Some(c) -> match c
-            ":" -> parseObjectValue(chars, skipWhitespace(chars, pos + 1), accum, key)
+            ":" -> parseObjectValue(s, skipWhitespace(s, pos + 1), accum, key)
             _ -> ParseResult.Err("Expected ':'")
 
-fn parseObjectValue(chars: List<String>, pos: Int, accum: Map<String, Json>, key: String) -> ParseResult
+fn parseObjectValue(s: String, pos: Int, accum: Map<String, Json>, key: String) -> ParseResult
     ? "Parse value and add to object map."
-    match parseValue(chars, pos)
+    match parseValue(s, pos)
         ParseResult.Err(msg) -> ParseResult.Err(msg)
-        ParseResult.Ok(value, newPos) -> parseObjectNext(chars, skipWhitespace(chars, newPos), Map.set(accum, key, value))
+        ParseResult.Ok(value, newPos) -> parseObjectNext(s, skipWhitespace(s, newPos), Map.set(accum, key, value))
 
-fn parseObjectNext(chars: List<String>, pos: Int, accum: Map<String, Json>) -> ParseResult
+fn parseObjectNext(s: String, pos: Int, accum: Map<String, Json>) -> ParseResult
     ? "After object value expect comma or brace."
-    match charAt(chars, pos)
+    match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated object")
         Option.Some(c) -> match c
             "}}" -> ParseResult.Ok(Json.JsonObject(accum), pos + 1)
-            "," -> parseObjectFields(chars, skipWhitespace(chars, pos + 1), accum)
+            "," -> parseObjectFields(s, skipWhitespace(s, pos + 1), accum)
             _ -> ParseResult.Err("Expected ',' or '}'")
 
 fn getField(j: Json, key: String) -> Option<Json>
