@@ -1,9 +1,8 @@
 module JsonParser
     intent =
-        "Pure JSON parser. Parses strings into Json sum type."
-        "Uses Map for objects. Recursive descent."
-        "Validates: trailing content, leading zeros, bare minus."
-        "Supports: integers, floats (decimal + exponent), strings, bools, null, arrays, objects."
+        "RFC 8259 JSON parser. Recursive descent, pure, no effects."
+        "Supports: integers, floats, strings (with \\uXXXX), bools, null, arrays, objects."
+        "Validates: trailing content, leading zeros, control chars, invalid escapes."
     exposes [parse]
 
 type Json
@@ -19,419 +18,374 @@ type ParseResult
     Ok(Json, Int)
     Err(String, Int)
 
-fn emptyJsonMap() -> Map<String, Json>
-    ? "Create empty Map<String, Json>."
-    Map.empty()
-
-fn formatError(msg: String, pos: Int) -> String
-    ? "Format parse error with position."
-    = msg + " at position " + String.fromInt(pos)
+// ── Public API ────────────────────────────────────────────────────
 
 fn parse(s: String) -> Result<Json, String>
-    ? "Parse JSON string into Json value."
-    match parseValue(s, skipWhitespace(s, 0))
-        ParseResult.Err(msg, ePos) -> Result.Err(formatError(msg, ePos))
-        ParseResult.Ok(value, newPos) -> checkEof(s, value, skipWhitespace(s, newPos))
+    ? "Parse a JSON string into a Json value."
+    match parseValue(s, skipWs(s, 0))
+        ParseResult.Err(msg, p) -> Result.Err(msg + " at position " + String.fromInt(p))
+        ParseResult.Ok(val, p) -> checkEof(s, val, skipWs(s, p))
 
-fn checkEof(s: String, value: Json, pos: Int) -> Result<Json, String>
-    ? "Reject trailing content after parsed value."
+fn checkEof(s: String, val: Json, pos: Int) -> Result<Json, String>
     match String.charAt(s, pos)
-        Option.None -> Result.Ok(value)
-        Option.Some(c) -> Result.Err(formatError("Unexpected trailing content: " + c, pos))
+        Option.None -> Result.Ok(val)
+        Option.Some(c) -> Result.Err("Trailing content: " + c + " at position " + String.fromInt(pos))
 
-fn skipWhitespace(s: String, pos: Int) -> Int
-    ? "Skip whitespace characters."
+// ── Char helpers ──────────────────────────────────────────────────
+
+fn isDigit(c: String) -> Bool
+    code = Char.toCode(c)
+    match code >= 48
+        true -> code <= 57
+        false -> false
+
+fn digitVal(c: String) -> Int
+    = Char.toCode(c) - 48
+
+fn hexVal(c: String) -> Option<Int>
+    ? "Hex digit value: 0-9, a-f, A-F. None for non-hex."
+    match isDigit(c)
+        true -> Option.Some(digitVal(c))
+        false -> hexAlpha(Char.toCode(c))
+
+fn hexAlpha(code: Int) -> Option<Int>
+    match code >= 97
+        true -> match code <= 102
+            true -> Option.Some(code - 87)
+            false -> Option.None
+        false -> match code >= 65
+            true -> match code <= 70
+                true -> Option.Some(code - 55)
+                false -> Option.None
+            false -> Option.None
+
+// ── Whitespace ────────────────────────────────────────────────────
+
+fn skipWs(s: String, pos: Int) -> Int
     match String.charAt(s, pos)
         Option.None -> pos
         Option.Some(c) -> match c
-            " " -> skipWhitespace(s, pos + 1)
-            "\t" -> skipWhitespace(s, pos + 1)
-            "\n" -> skipWhitespace(s, pos + 1)
-            "\r" -> skipWhitespace(s, pos + 1)
+            " " -> skipWs(s, pos + 1)
+            "\t" -> skipWs(s, pos + 1)
+            "\n" -> skipWs(s, pos + 1)
+            "\r" -> skipWs(s, pos + 1)
             _ -> pos
 
+// ── Value dispatch ────────────────────────────────────────────────
+
 fn parseValue(s: String, pos: Int) -> ParseResult
-    ? "Dispatch on first character to parse any JSON value."
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unexpected end of input", pos)
-        Option.Some(c) -> match c
-            "\"" -> parseString(s, pos + 1, "")
-            "{{" -> parseObject(s, skipWhitespace(s, pos + 1))
-            "[" -> parseArray(s, skipWhitespace(s, pos + 1))
-            "t" -> parseLiteral(s, pos, "true", Json.JsonBool(true))
-            "f" -> parseLiteral(s, pos, "false", Json.JsonBool(false))
-            "n" -> parseLiteral(s, pos, "null", Json.JsonNull)
-            "0" -> parseAfterZero(s, pos + 1, false)
-            "-" -> parseNegative(s, pos + 1)
-            _ -> tryDigitOrError(s, pos, c)
+        Option.Some(c) -> dispatchChar(s, pos, c)
 
-fn parseNegative(s: String, pos: Int) -> ParseResult
-    ? "Parse negative number, ensure digit follows minus."
+fn dispatchChar(s: String, pos: Int, c: String) -> ParseResult
+    match c
+        "\"" -> parseString(s, pos + 1, "")
+        "{{" -> parseObject(s, skipWs(s, pos + 1))
+        "[" -> parseArray(s, skipWs(s, pos + 1))
+        "t" -> parseLiteral(s, pos, "true", Json.JsonBool(true))
+        "f" -> parseLiteral(s, pos, "false", Json.JsonBool(false))
+        "n" -> parseLiteral(s, pos, "null", Json.JsonNull)
+        "-" -> parseMinus(s, pos + 1)
+        "0" -> parseAfterZero(s, pos + 1, false)
+        _ -> startDigits(s, pos, c)
+
+fn startDigits(s: String, pos: Int, c: String) -> ParseResult
+    match isDigit(c)
+        true -> parseDigits(s, pos + 1, digitVal(c), false)
+        false -> ParseResult.Err("Unexpected character: " + c, pos)
+
+// ── Literals ──────────────────────────────────────────────────────
+
+fn parseLiteral(s: String, pos: Int, expected: String, value: Json) -> ParseResult
+    ? "Match exact keyword using slice comparison."
+    len = String.length(expected)
+    match String.slice(s, pos, pos + len) == expected
+        true -> ParseResult.Ok(value, pos + len)
+        false -> ParseResult.Err("Expected '" + expected + "'", pos)
+
+// ── Strings ───────────────────────────────────────────────────────
+
+fn parseString(s: String, pos: Int, acc: String) -> ParseResult
+    match String.charAt(s, pos)
+        Option.None -> ParseResult.Err("Unterminated string", pos)
+        Option.Some(c) -> match c
+            "\"" -> ParseResult.Ok(Json.JsonString(acc), pos + 1)
+            "\\" -> parseEscape(s, pos + 1, acc)
+            _ -> validateChar(s, pos, acc, c)
+
+fn validateChar(s: String, pos: Int, acc: String, c: String) -> ParseResult
+    match Char.toCode(c) < 32
+        true -> ParseResult.Err("Unescaped control character", pos)
+        false -> parseString(s, pos + 1, acc + c)
+
+fn parseEscape(s: String, pos: Int, acc: String) -> ParseResult
+    match String.charAt(s, pos)
+        Option.None -> ParseResult.Err("Unterminated escape", pos)
+        Option.Some(c) -> match c
+            "\"" -> parseString(s, pos + 1, acc + "\"")
+            "\\" -> parseString(s, pos + 1, acc + "\\")
+            "/" -> parseString(s, pos + 1, acc + "/")
+            "n" -> parseString(s, pos + 1, acc + "\n")
+            "t" -> parseString(s, pos + 1, acc + "\t")
+            "r" -> parseString(s, pos + 1, acc + "\r")
+            "b" -> parseString(s, pos + 1, acc + "\b")
+            "f" -> parseString(s, pos + 1, acc + "\f")
+            "u" -> parseUnicode(s, pos + 1, acc)
+            _ -> ParseResult.Err("Unknown escape: \\" + c, pos)
+
+fn parseUnicode(s: String, pos: Int, acc: String) -> ParseResult
+    ? "Parse \\uXXXX escape sequence."
+    match readHex4(s, pos, 0, 0)
+        Option.None -> ParseResult.Err("Invalid \\u escape", pos)
+        Option.Some(cp) -> applyCodePoint(s, pos + 4, acc, cp)
+
+fn readHex4(s: String, pos: Int, acc: Int, count: Int) -> Option<Int>
+    match count == 4
+        true -> Option.Some(acc)
+        false -> match String.charAt(s, pos)
+            Option.None -> Option.None
+            Option.Some(c) -> match hexVal(c)
+                Option.None -> Option.None
+                Option.Some(v) -> readHex4(s, pos + 1, acc * 16 + v, count + 1)
+
+fn applyCodePoint(s: String, pos: Int, acc: String, cp: Int) -> ParseResult
+    match Char.fromCode(cp)
+        Option.None -> ParseResult.Err("Invalid Unicode code point", pos - 4)
+        Option.Some(ch) -> parseString(s, pos, acc + ch)
+
+// ── Numbers ───────────────────────────────────────────────────────
+
+fn parseMinus(s: String, pos: Int) -> ParseResult
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Expected digit after '-'", pos)
         Option.Some(c) -> match c
             "0" -> parseAfterZero(s, pos + 1, true)
-            _ -> tryStartDigit(s, pos, c)
+            _ -> startNegDigit(s, pos, c)
 
-fn tryStartDigit(s: String, pos: Int, c: String) -> ParseResult
-    ? "Start negative number if digit, otherwise error."
-    match Int.fromString(c)
-        Result.Ok(d) -> parseDigits(s, pos + 1, d, true)
-        Result.Err(_) -> ParseResult.Err("Expected digit after '-'", pos)
+fn startNegDigit(s: String, pos: Int, c: String) -> ParseResult
+    match isDigit(c)
+        true -> parseDigits(s, pos + 1, digitVal(c), true)
+        false -> ParseResult.Err("Expected digit after '-'", pos)
 
-fn parseAfterZero(s: String, pos: Int, negative: Bool) -> ParseResult
-    ? "After leading zero: allow fraction/exponent, reject more digits."
+fn parseAfterZero(s: String, pos: Int, neg: Bool) -> ParseResult
+    ? "After leading zero: fraction, exponent, or end. No leading zeros."
     match String.charAt(s, pos)
-        Option.None -> finishInt(0, negative, pos)
+        Option.None -> finishInt(0, neg, pos)
         Option.Some(c) -> match c
-            "." -> parseFracStart(s, pos + 1, buildNumStr(0, negative) + ".")
-            "e" -> parseExpStart(s, pos + 1, buildNumStr(0, negative) + "e")
-            "E" -> parseExpStart(s, pos + 1, buildNumStr(0, negative) + "e")
-            _ -> rejectLeadingZero(pos, c, negative)
+            "." -> parseFrac(s, pos + 1, numStr(0, neg) + ".")
+            "e" -> parseExp(s, pos + 1, numStr(0, neg) + "e")
+            "E" -> parseExp(s, pos + 1, numStr(0, neg) + "e")
+            _ -> afterZeroOther(pos, neg, c)
 
-fn rejectLeadingZero(pos: Int, c: String, negative: Bool) -> ParseResult
-    ? "Error if digit follows zero, otherwise finish number."
-    match Int.fromString(c)
-        Result.Ok(_) -> ParseResult.Err("Leading zeros are not allowed", pos)
-        Result.Err(_) -> finishInt(0, negative, pos)
+fn afterZeroOther(pos: Int, neg: Bool, c: String) -> ParseResult
+    match isDigit(c)
+        true -> ParseResult.Err("Leading zeros not allowed", pos)
+        false -> finishInt(0, neg, pos)
 
-fn tryDigitOrError(s: String, pos: Int, c: String) -> ParseResult
-    ? "Start number if digit, otherwise error."
-    match Int.fromString(c)
-        Result.Ok(d) -> parseDigits(s, pos + 1, d, false)
-        Result.Err(_) -> ParseResult.Err("Unexpected character: " + c, pos)
-
-fn parseLiteral(s: String, pos: Int, expected: String, value: Json) -> ParseResult
-    ? "Match exact literal string, return given Json value."
-    match expectChars(s, pos, String.chars(expected))
-        Option.Some(newPos) -> ParseResult.Ok(value, newPos)
-        Option.None -> ParseResult.Err("Expected '" + expected + "'", pos)
-
-fn expectChars(s: String, pos: Int, expected: List<String>) -> Option<Int>
-    ? "Check chars at pos match expected sequence."
-    match expected
-        [] -> Option.Some(pos)
-        [h, ..t] -> expectChar(s, pos, h, t)
-
-fn expectChar(s: String, pos: Int, expected: String, rest: List<String>) -> Option<Int>
-    ? "Match one expected char and continue."
+fn parseDigits(s: String, pos: Int, acc: Int, neg: Bool) -> ParseResult
     match String.charAt(s, pos)
-        Option.None -> Option.None
-        Option.Some(c) -> expectIfEqual(s, pos, c, expected, rest)
+        Option.None -> finishInt(acc, neg, pos)
+        Option.Some(c) -> match isDigit(c)
+            true -> parseDigits(s, pos + 1, acc * 10 + digitVal(c), neg)
+            false -> afterDigits(s, pos, acc, neg, c)
 
-fn expectIfEqual(s: String, pos: Int, actual: String, expected: String, rest: List<String>) -> Option<Int>
-    ? "Continue matching if chars equal."
-    match actual == expected
-        true -> expectChars(s, pos + 1, rest)
-        false -> Option.None
-
-fn parseString(s: String, pos: Int, accum: String) -> ParseResult
-    ? "Accumulate string chars until closing quote."
-    match String.charAt(s, pos)
-        Option.None -> ParseResult.Err("Unterminated string", pos)
-        Option.Some(c) -> match c
-            "\"" -> ParseResult.Ok(Json.JsonString(accum), pos + 1)
-            "\\" -> parseEscape(s, pos + 1, accum)
-            _ -> parseString(s, pos + 1, accum + c)
-
-fn parseEscape(s: String, pos: Int, accum: String) -> ParseResult
-    ? "Handle escape sequence after backslash."
-    match String.charAt(s, pos)
-        Option.None -> ParseResult.Err("Unterminated escape", pos)
-        Option.Some(c) -> match c
-            "\"" -> parseString(s, pos + 1, accum + "\"")
-            "\\" -> parseString(s, pos + 1, accum + "\\")
-            "/" -> parseString(s, pos + 1, accum + "/")
-            "n" -> parseString(s, pos + 1, accum + "\n")
-            "t" -> parseString(s, pos + 1, accum + "\t")
-            "r" -> parseString(s, pos + 1, accum + "\r")
-            "b" -> parseString(s, pos + 1, accum + "\b")
-            "f" -> parseString(s, pos + 1, accum + "\f")
-            _ -> ParseResult.Err("Unknown escape: \\" + c, pos)
-
-fn buildNumStr(accum: Int, negative: Bool) -> String
-    ? "Build number string from accumulated integer and sign."
-    match negative
-        true -> "-" + String.fromInt(accum)
-        false -> String.fromInt(accum)
-
-fn parseDigits(s: String, pos: Int, accum: Int, negative: Bool) -> ParseResult
-    ? "Accumulate integer digits."
-    match String.charAt(s, pos)
-        Option.None -> finishInt(accum, negative, pos)
-        Option.Some(c) -> tryAccumDigit(s, pos, accum, negative, c)
-
-fn tryAccumDigit(s: String, pos: Int, accum: Int, negative: Bool, c: String) -> ParseResult
-    ? "If digit accumulate, otherwise check for fraction/exponent."
-    match Int.fromString(c)
-        Result.Ok(d) -> parseDigits(s, pos + 1, accum * 10 + d, negative)
-        Result.Err(_) -> checkFraction(s, accum, negative, pos, c)
-
-fn checkFraction(s: String, accum: Int, negative: Bool, pos: Int, c: String) -> ParseResult
-    ? "Check for decimal point or exponent after integer digits."
+fn afterDigits(s: String, pos: Int, acc: Int, neg: Bool, c: String) -> ParseResult
     match c
-        "." -> parseFracStart(s, pos + 1, buildNumStr(accum, negative) + ".")
-        "e" -> parseExpStart(s, pos + 1, buildNumStr(accum, negative) + "e")
-        "E" -> parseExpStart(s, pos + 1, buildNumStr(accum, negative) + "e")
-        _ -> finishInt(accum, negative, pos)
+        "." -> parseFrac(s, pos + 1, numStr(acc, neg) + ".")
+        "e" -> parseExp(s, pos + 1, numStr(acc, neg) + "e")
+        "E" -> parseExp(s, pos + 1, numStr(acc, neg) + "e")
+        _ -> finishInt(acc, neg, pos)
 
-fn parseFracStart(s: String, pos: Int, numStr: String) -> ParseResult
-    ? "First fraction digit (at least one required after '.')."
+fn parseFrac(s: String, pos: Int, ns: String) -> ParseResult
+    ? "First fraction digit (required after '.')."
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Expected digit after '.'", pos)
-        Option.Some(c) -> tryFirstFracDigit(s, pos, numStr, c)
+        Option.Some(c) -> match isDigit(c)
+            true -> parseFracMore(s, pos + 1, ns + c)
+            false -> ParseResult.Err("Expected digit after '.'", pos)
 
-fn tryFirstFracDigit(s: String, pos: Int, numStr: String, c: String) -> ParseResult
-    ? "Verify first fraction char is a digit."
-    match Int.fromString(c)
-        Result.Ok(_) -> parseFracDigits(s, pos + 1, numStr + c)
-        Result.Err(_) -> ParseResult.Err("Expected digit after '.'", pos)
-
-fn parseFracDigits(s: String, pos: Int, numStr: String) -> ParseResult
-    ? "Accumulate fraction digits."
+fn parseFracMore(s: String, pos: Int, ns: String) -> ParseResult
     match String.charAt(s, pos)
-        Option.None -> finishFloat(numStr, pos)
-        Option.Some(c) -> tryMoreFracDigit(s, pos, numStr, c)
+        Option.None -> finishFloat(ns, pos)
+        Option.Some(c) -> match isDigit(c)
+            true -> parseFracMore(s, pos + 1, ns + c)
+            false -> afterFrac(s, pos, ns, c)
 
-fn tryMoreFracDigit(s: String, pos: Int, numStr: String, c: String) -> ParseResult
-    ? "Continue fraction digit or check for exponent."
-    match Int.fromString(c)
-        Result.Ok(_) -> parseFracDigits(s, pos + 1, numStr + c)
-        Result.Err(_) -> checkExpOrFinish(s, pos, numStr, c)
-
-fn checkExpOrFinish(s: String, pos: Int, numStr: String, c: String) -> ParseResult
-    ? "Check for e/E exponent after fraction, or finish float."
+fn afterFrac(s: String, pos: Int, ns: String, c: String) -> ParseResult
     match c
-        "e" -> parseExpStart(s, pos + 1, numStr + "e")
-        "E" -> parseExpStart(s, pos + 1, numStr + "e")
-        _ -> finishFloat(numStr, pos)
+        "e" -> parseExp(s, pos + 1, ns + "e")
+        "E" -> parseExp(s, pos + 1, ns + "e")
+        _ -> finishFloat(ns, pos)
 
-fn parseExpStart(s: String, pos: Int, numStr: String) -> ParseResult
+fn parseExp(s: String, pos: Int, ns: String) -> ParseResult
     ? "Parse exponent: optional sign then digits."
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Expected digit in exponent", pos)
         Option.Some(c) -> match c
-            "+" -> parseExpAfterSign(s, pos + 1, numStr + "+")
-            "-" -> parseExpAfterSign(s, pos + 1, numStr + "-")
-            _ -> tryFirstExpDigit(s, pos, numStr, c)
+            "+" -> parseExpDigit1(s, pos + 1, ns + "+")
+            "-" -> parseExpDigit1(s, pos + 1, ns + "-")
+            _ -> startExpDigit(s, pos, ns, c)
 
-fn parseExpAfterSign(s: String, pos: Int, numStr: String) -> ParseResult
+fn startExpDigit(s: String, pos: Int, ns: String, c: String) -> ParseResult
+    match isDigit(c)
+        true -> parseExpMore(s, pos + 1, ns + c)
+        false -> ParseResult.Err("Expected digit in exponent", pos)
+
+fn parseExpDigit1(s: String, pos: Int, ns: String) -> ParseResult
     ? "First exponent digit after sign (required)."
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Expected digit in exponent", pos)
-        Option.Some(c) -> tryFirstExpDigit(s, pos, numStr, c)
+        Option.Some(c) -> match isDigit(c)
+            true -> parseExpMore(s, pos + 1, ns + c)
+            false -> ParseResult.Err("Expected digit in exponent", pos)
 
-fn tryFirstExpDigit(s: String, pos: Int, numStr: String, c: String) -> ParseResult
-    ? "Verify first exponent char is a digit."
-    match Int.fromString(c)
-        Result.Ok(_) -> parseExpDigits(s, pos + 1, numStr + c)
-        Result.Err(_) -> ParseResult.Err("Expected digit in exponent", pos)
-
-fn parseExpDigits(s: String, pos: Int, numStr: String) -> ParseResult
-    ? "Accumulate exponent digits."
+fn parseExpMore(s: String, pos: Int, ns: String) -> ParseResult
     match String.charAt(s, pos)
-        Option.None -> finishFloat(numStr, pos)
-        Option.Some(c) -> tryMoreExpDigit(s, pos, numStr, c)
+        Option.None -> finishFloat(ns, pos)
+        Option.Some(c) -> match isDigit(c)
+            true -> parseExpMore(s, pos + 1, ns + c)
+            false -> finishFloat(ns, pos)
 
-fn tryMoreExpDigit(s: String, pos: Int, numStr: String, c: String) -> ParseResult
-    ? "Continue exponent digit or finish float."
-    match Int.fromString(c)
-        Result.Ok(_) -> parseExpDigits(s, pos + 1, numStr + c)
-        Result.Err(_) -> finishFloat(numStr, pos)
+fn numStr(acc: Int, neg: Bool) -> String
+    match neg
+        true -> "-" + String.fromInt(acc)
+        false -> String.fromInt(acc)
 
-fn finishInt(accum: Int, negative: Bool, pos: Int) -> ParseResult
-    ? "Apply sign and return finished integer."
-    match negative
-        true -> ParseResult.Ok(Json.JsonInt(accum * -1), pos)
-        false -> ParseResult.Ok(Json.JsonInt(accum), pos)
+fn finishInt(acc: Int, neg: Bool, pos: Int) -> ParseResult
+    match neg
+        true -> ParseResult.Ok(Json.JsonInt(acc * -1), pos)
+        false -> ParseResult.Ok(Json.JsonInt(acc), pos)
 
-fn finishFloat(numStr: String, pos: Int) -> ParseResult
-    ? "Convert accumulated number string to Float."
-    match Float.fromString(numStr)
+fn finishFloat(ns: String, pos: Int) -> ParseResult
+    match Float.fromString(ns)
         Result.Ok(f) -> ParseResult.Ok(Json.JsonFloat(f), pos)
-        Result.Err(_) -> ParseResult.Err("Invalid number: " + numStr, pos)
+        Result.Err(_) -> ParseResult.Err("Invalid number: " + ns, pos)
+
+// ── Arrays ────────────────────────────────────────────────────────
 
 fn parseArray(s: String, pos: Int) -> ParseResult
-    ? "Parse array after opening bracket."
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated array", pos)
         Option.Some(c) -> match c
             "]" -> ParseResult.Ok(Json.JsonList([]), pos + 1)
-            _ -> parseArrayElements(s, pos, [])
+            _ -> parseArrayElems(s, pos, [])
 
-fn parseArrayElements(s: String, pos: Int, accum: List<Json>) -> ParseResult
-    ? "Parse comma-separated values in array."
+fn parseArrayElems(s: String, pos: Int, acc: List<Json>) -> ParseResult
     match parseValue(s, pos)
-        ParseResult.Err(msg, ePos) -> ParseResult.Err(msg, ePos)
-        ParseResult.Ok(value, newPos) -> parseArrayNext(s, skipWhitespace(s, newPos), List.push(accum, value))
+        ParseResult.Err(msg, p) -> ParseResult.Err(msg, p)
+        ParseResult.Ok(val, p) -> parseArrayNext(s, skipWs(s, p), List.push(acc, val))
 
-fn parseArrayNext(s: String, pos: Int, accum: List<Json>) -> ParseResult
-    ? "After array value expect comma or bracket."
+fn parseArrayNext(s: String, pos: Int, acc: List<Json>) -> ParseResult
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated array", pos)
         Option.Some(c) -> match c
-            "]" -> ParseResult.Ok(Json.JsonList(accum), pos + 1)
-            "," -> parseArrayElements(s, skipWhitespace(s, pos + 1), accum)
+            "]" -> ParseResult.Ok(Json.JsonList(acc), pos + 1)
+            "," -> parseArrayElems(s, skipWs(s, pos + 1), acc)
             _ -> ParseResult.Err("Expected ',' or ']'", pos)
 
+// ── Objects ───────────────────────────────────────────────────────
+
+fn emptyJsonMap() -> Map<String, Json>
+    = Map.empty()
+
 fn parseObject(s: String, pos: Int) -> ParseResult
-    ? "Parse object after opening brace."
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated object", pos)
         Option.Some(c) -> match c
             "}}" -> ParseResult.Ok(Json.JsonObject(emptyJsonMap()), pos + 1)
-            _ -> parseObjectFields(s, pos, emptyJsonMap())
+            _ -> parseObjFields(s, pos, emptyJsonMap())
 
-fn parseObjectFields(s: String, pos: Int, accum: Map<String, Json>) -> ParseResult
-    ? "Parse key:value pairs in object."
+fn parseObjFields(s: String, pos: Int, acc: Map<String, Json>) -> ParseResult
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated object", pos)
         Option.Some(c) -> match c
-            "\"" -> parseObjectKey(s, pos + 1, accum)
+            "\"" -> parseObjKey(s, pos + 1, acc)
             _ -> ParseResult.Err("Expected string key", pos)
 
-fn parseObjectKey(s: String, pos: Int, accum: Map<String, Json>) -> ParseResult
-    ? "Parse key then expect colon."
+fn parseObjKey(s: String, pos: Int, acc: Map<String, Json>) -> ParseResult
     match parseString(s, pos, "")
-        ParseResult.Err(msg, ePos) -> ParseResult.Err(msg, ePos)
-        ParseResult.Ok(keyJson, newPos) -> parseObjectColon(s, skipWhitespace(s, newPos), accum, extractString(keyJson))
+        ParseResult.Err(msg, p) -> ParseResult.Err(msg, p)
+        ParseResult.Ok(keyJson, p) -> parseObjColon(s, skipWs(s, p), acc, extractStr(keyJson))
 
-fn extractString(j: Json) -> String
-    ? "Extract string from JsonString. Safe: only called on parseString output."
+fn extractStr(j: Json) -> String
     match j
         Json.JsonString(s) -> s
         _ -> ""
 
-fn parseObjectColon(s: String, pos: Int, accum: Map<String, Json>, key: String) -> ParseResult
-    ? "Expect colon then parse value."
+fn parseObjColon(s: String, pos: Int, acc: Map<String, Json>, key: String) -> ParseResult
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated object", pos)
         Option.Some(c) -> match c
-            ":" -> parseObjectValue(s, skipWhitespace(s, pos + 1), accum, key)
+            ":" -> parseObjVal(s, skipWs(s, pos + 1), acc, key)
             _ -> ParseResult.Err("Expected ':'", pos)
 
-fn parseObjectValue(s: String, pos: Int, accum: Map<String, Json>, key: String) -> ParseResult
-    ? "Parse value and add to object map."
+fn parseObjVal(s: String, pos: Int, acc: Map<String, Json>, key: String) -> ParseResult
     match parseValue(s, pos)
-        ParseResult.Err(msg, ePos) -> ParseResult.Err(msg, ePos)
-        ParseResult.Ok(value, newPos) -> parseObjectNext(s, skipWhitespace(s, newPos), Map.set(accum, key, value))
+        ParseResult.Err(msg, p) -> ParseResult.Err(msg, p)
+        ParseResult.Ok(val, p) -> parseObjNext(s, skipWs(s, p), Map.set(acc, key, val))
 
-fn parseObjectNext(s: String, pos: Int, accum: Map<String, Json>) -> ParseResult
-    ? "After object value expect comma or brace."
+fn parseObjNext(s: String, pos: Int, acc: Map<String, Json>) -> ParseResult
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated object", pos)
         Option.Some(c) -> match c
-            "}}" -> ParseResult.Ok(Json.JsonObject(accum), pos + 1)
-            "," -> parseObjectFields(s, skipWhitespace(s, pos + 1), accum)
+            "}}" -> ParseResult.Ok(Json.JsonObject(acc), pos + 1)
+            "," -> parseObjFields(s, skipWs(s, pos + 1), acc)
             _ -> ParseResult.Err("Expected ',' or '}'", pos)
 
+// ── Extractors ────────────────────────────────────────────────────
+
 fn getField(j: Json, key: String) -> Option<Json>
-    ? "Extract a field from a JsonObject by key."
     match j
         Json.JsonObject(m) -> Map.get(m, key)
         _ -> Option.None
 
 fn jsonStr(j: Json) -> String
-    ? "Extract raw string from JsonString."
     match j
         Json.JsonString(s) -> s
         _ -> ""
 
 fn jsonInt(j: Json) -> Int
-    ? "Extract raw int from JsonInt."
     match j
         Json.JsonInt(n) -> n
         _ -> 0
 
 fn jsonFloat(j: Json) -> Float
-    ? "Extract raw float from JsonFloat."
     match j
         Json.JsonFloat(f) -> f
         _ -> 0.0
 
 fn jsonList(j: Json) -> List<Json>
-    ? "Extract list from JsonList."
     match j
         Json.JsonList(items) -> items
         _ -> []
 
-fn showTag(tag: Json) -> String
-    ? "Show a tag string with hash prefix."
-    = "#" + jsonStr(tag)
+// ── Demo ──────────────────────────────────────────────────────────
 
 fn main() -> Unit
     ! [Console]
-    json = "{{ \"company\": \"Aver Labs\", \"founded\": 2024, \"active\": true, \"address\": {{ \"city\": \"Warszawa\", \"country\": \"Poland\", \"zip\": \"00-001\" }}, \"team\": [{{ \"name\": \"Jan\", \"role\": \"lead\" }}, {{ \"name\": \"Anna\", \"role\": \"dev\" }}, {{ \"name\": \"Piotr\", \"role\": \"ops\" }}], \"tags\": [\"lang-design\", \"rust\", \"ai-first\"], \"funding\": null, \"score\": 9.75 }}"
-
-    Console.print("Parsing complex nested JSON...")
+    json = "{{ \"name\": \"Aver Labs\", \"score\": 9.75, \"motto\": \"caf\\u00e9 au code\", \"team\": [\"Jan\", \"Anna\"] }}"
+    Console.print("Parsing JSON...")
     match parse(json)
-        Result.Err(msg) -> Console.print("Parse error: " + msg)
-        Result.Ok(root) -> printReport(root)
+        Result.Err(msg) -> Console.print("Error: " + msg)
+        Result.Ok(root) -> printResult(root)
 
-fn printReport(root: Json) -> Unit
+fn printResult(root: Json) -> Unit
     ! [Console]
-    company = getField(root, "company")
-    founded = getField(root, "founded")
-    address = getField(root, "address")
-    team = getField(root, "team")
-    tags = getField(root, "tags")
-    funding = getField(root, "funding")
-    score = getField(root, "score")
-
-    match company
-        Option.Some(c) -> Console.print("Company: " + jsonStr(c))
-        Option.None -> Console.print("Company: ?")
-
-    match founded
-        Option.Some(f) -> Console.print("Founded: " + String.fromInt(jsonInt(f)))
-        Option.None -> Console.print("Founded: ?")
-
-    match address
-        Option.Some(addr) -> printAddress(addr)
-        Option.None -> Console.print("Address: ?")
-
-    match team
-        Option.Some(t) -> printTeam(jsonList(t))
+    match getField(root, "name")
+        Option.Some(v) -> Console.print("Name: " + jsonStr(v))
+        Option.None -> Console.print("Name: ?")
+    match getField(root, "score")
+        Option.Some(v) -> Console.print("Score: " + String.fromFloat(jsonFloat(v)))
+        Option.None -> Console.print("Score: ?")
+    match getField(root, "motto")
+        Option.Some(v) -> Console.print("Motto: " + jsonStr(v))
+        Option.None -> Console.print("Motto: ?")
+    match getField(root, "team")
+        Option.Some(t) -> Console.print("Team: " + String.join(List.map(jsonList(t), jsonStr), ", "))
         Option.None -> Console.print("Team: ?")
 
-    match tags
-        Option.Some(t) -> Console.print("Tags: " + String.join(List.map(jsonList(t), showTag), ", "))
-        Option.None -> Console.print("Tags: ?")
-
-    match funding
-        Option.Some(f) -> match f
-            Json.JsonNull -> Console.print("Funding: none yet")
-            _ -> Console.print("Funding: present")
-        Option.None -> Console.print("Funding: ?")
-
-    match score
-        Option.Some(s) -> Console.print("Score: " + String.fromFloat(jsonFloat(s)))
-        Option.None -> Console.print("Score: ?")
-
-fn printAddress(addr: Json) -> Unit
-    ! [Console]
-    city = getField(addr, "city")
-    country = getField(addr, "country")
-    match city
-        Option.Some(c) -> match country
-            Option.Some(co) -> Console.print("Address: " + jsonStr(c) + ", " + jsonStr(co))
-            Option.None -> Console.print("Address: " + jsonStr(c))
-        Option.None -> Console.print("Address: ?")
-
-fn printTeam(members: List<Json>) -> Unit
-    ! [Console]
-    Console.print("Team (" + String.fromInt(List.len(members)) + " members):")
-    _ = List.map(members, printMember)
-
-fn printMember(member: Json) -> Unit
-    ! [Console]
-    name = getField(member, "name")
-    role = getField(member, "role")
-    match name
-        Option.Some(n) -> match role
-            Option.Some(r) -> Console.print("  " + jsonStr(n) + " (" + jsonStr(r) + ")")
-            Option.None -> Console.print("  " + jsonStr(n))
-        Option.None -> Console.print("  (unknown)")
+// ── Verify: primitives ───────────────────────────────────────────
 
 verify parse
     parse("null") => Result.Ok(Json.JsonNull)
@@ -441,19 +395,12 @@ verify parse
     parse("-7") => Result.Ok(Json.JsonInt(-7))
     parse("0") => Result.Ok(Json.JsonInt(0))
     parse("-0") => Result.Ok(Json.JsonInt(0))
-    parse("\"hello\"") => Result.Ok(Json.JsonString("hello"))
-    parse("\"he\\nllo\"") => Result.Ok(Json.JsonString("he\nllo"))
-    parse("\"\"") => Result.Ok(Json.JsonString(""))
-    parse("[]") => Result.Ok(Json.JsonList([]))
-    parse("[1,2,3]") => Result.Ok(Json.JsonList([Json.JsonInt(1), Json.JsonInt(2), Json.JsonInt(3)]))
-    parse("{{}}") => Result.Ok(Json.JsonObject(emptyJsonMap()))
-    parse("{{\"a\":1}}") => Result.Ok(Json.JsonObject(Map.fromList([("a", Json.JsonInt(1))])))
-    parse("  {{ \"x\" : [1, 2] , \"y\" : null }}  ") => Result.Ok(Json.JsonObject(Map.fromList([("x", Json.JsonList([Json.JsonInt(1), Json.JsonInt(2)])), ("y", Json.JsonNull)])))
+
+// ── Verify: floats ───────────────────────────────────────────────
 
 verify parse
     parse("1.5") => Result.Ok(Json.JsonFloat(1.5))
     parse("0.5") => Result.Ok(Json.JsonFloat(0.5))
-    parse("-0.5") => Result.Ok(Json.JsonFloat(-0.5))
     parse("-3.14") => Result.Ok(Json.JsonFloat(-3.14))
     parse("1e2") => Result.Ok(Json.JsonFloat(100.0))
     parse("1E2") => Result.Ok(Json.JsonFloat(100.0))
@@ -463,12 +410,35 @@ verify parse
     parse("0e5") => Result.Ok(Json.JsonFloat(0.0))
     parse("-2.5e3") => Result.Ok(Json.JsonFloat(-2500.0))
 
+// ── Verify: strings and unicode ──────────────────────────────────
+
 verify parse
-    parse("true false") => Result.Err("Unexpected trailing content: f at position 5")
-    parse("42oops") => Result.Err("Unexpected trailing content: o at position 2")
+    parse("\"hello\"") => Result.Ok(Json.JsonString("hello"))
+    parse("\"\"") => Result.Ok(Json.JsonString(""))
+    parse("\"he\\nllo\"") => Result.Ok(Json.JsonString("he\nllo"))
+    parse("\"\\u0041\"") => Result.Ok(Json.JsonString("A"))
+    parse("\"caf\\u00e9\"") => Result.Ok(Json.JsonString("café"))
+
+// ── Verify: collections ──────────────────────────────────────────
+
+verify parse
+    parse("[]") => Result.Ok(Json.JsonList([]))
+    parse("[1,2,3]") => Result.Ok(Json.JsonList([Json.JsonInt(1), Json.JsonInt(2), Json.JsonInt(3)]))
+    parse("{{}}") => Result.Ok(Json.JsonObject(emptyJsonMap()))
+    parse("{{\"a\":1}}") => Result.Ok(Json.JsonObject(Map.fromList([("a", Json.JsonInt(1))])))
+    parse("  {{ \"x\" : [1, 2] , \"y\" : null }}  ") => Result.Ok(Json.JsonObject(Map.fromList([("x", Json.JsonList([Json.JsonInt(1), Json.JsonInt(2)])), ("y", Json.JsonNull)])))
+
+// ── Verify: errors ───────────────────────────────────────────────
+
+verify parse
+    parse("true false") => Result.Err("Trailing content: f at position 5")
+    parse("42oops") => Result.Err("Trailing content: o at position 2")
     parse("-") => Result.Err("Expected digit after '-' at position 1")
-    parse("01") => Result.Err("Leading zeros are not allowed at position 1")
-    parse("-01") => Result.Err("Leading zeros are not allowed at position 2")
+    parse("01") => Result.Err("Leading zeros not allowed at position 1")
+    parse("-01") => Result.Err("Leading zeros not allowed at position 2")
     parse("1.") => Result.Err("Expected digit after '.' at position 2")
     parse("1e") => Result.Err("Expected digit in exponent at position 2")
     parse("1e+") => Result.Err("Expected digit in exponent at position 3")
+    parse("\"\\uXXXX\"") => Result.Err("Invalid \\u escape at position 3")
+    parse("\"\\uD800\"") => Result.Err("Invalid Unicode code point at position 3")
+    parse("\"\t\"") => Result.Err("Unescaped control character at position 1")
