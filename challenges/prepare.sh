@@ -65,8 +65,7 @@ prepare_one() {
     cp "$PROJECT_ROOT/examples/calculator.av" "$STAGING/examples/"
     mkdir -p "$STAGING/challenges/$CHALLENGE"
     cp "$CHALLENGE_DIR/TASK.md" "$STAGING/challenges/$CHALLENGE/"
-    cp "$CHALLENGE_DIR/evaluate.sh" "$STAGING/challenges/$CHALLENGE/"
-    chmod +x "$STAGING/challenges/$CHALLENGE/evaluate.sh"
+    # NOTE: evaluate.sh is NOT copied — agent must not see grading criteria
 
     if [ -f "$CHALLENGE_DIR/AGENT_INSTRUCTIONS.md" ]; then
         cp "$CHALLENGE_DIR/AGENT_INSTRUCTIONS.md" "$STAGING/challenges/$CHALLENGE/"
@@ -100,7 +99,7 @@ Your task:
    aver check challenges/$CHALLENGE/solution.av
    aver verify challenges/$CHALLENGE/solution.av
    aver run challenges/$CHALLENGE/solution.av
-7. When done, run: bash challenges/$CHALLENGE/evaluate.sh
+7. When satisfied that check, verify, and run all pass — you are done
 
 Rules:
 - Do not ask questions — everything you need is in the docs
@@ -142,7 +141,9 @@ if [ "${1:-}" = "--all" ]; then
     echo ""
     echo -e "${BOLD}Summary:${NC}"
     for i in "${!CHALLENGES[@]}"; do
-        echo -e "  ${CHALLENGES[$i]}:  cd ${STAGINGS[$i]}"
+        echo -e "  ${CHALLENGES[$i]}:"
+        echo -e "    agent dir:  cd ${STAGINGS[$i]}"
+        echo -e "    evaluate:   bash $PROJECT_ROOT/challenges/${CHALLENGES[$i]}/evaluate.sh ${STAGINGS[$i]}/challenges/${CHALLENGES[$i]}/solution.av"
     done
     echo ""
     echo -e "Assessment rubric: ${BOLD}$PROJECT_ROOT/challenges/ASSESSMENT.md${NC}"
@@ -163,6 +164,6 @@ else
     echo -e "${BOLD}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
     echo -e "To start the agent:  ${BOLD}cd $STAGING${NC}"
-    echo -e "To evaluate after:   ${BOLD}bash challenges/$CHALLENGE/evaluate.sh${NC}"
+    echo -e "To evaluate after:   ${BOLD}bash $PROJECT_ROOT/challenges/$CHALLENGE/evaluate.sh $STAGING/challenges/$CHALLENGE/solution.av${NC}"
     echo -e "Assessment rubric:   ${BOLD}$PROJECT_ROOT/challenges/ASSESSMENT.md${NC}"
 fi
