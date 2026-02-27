@@ -80,19 +80,18 @@ fn parseValue(s: String, pos: Int) -> ParseResult
 
 fn dispatchChar(s: String, pos: Int, c: String) -> ParseResult
     match c
-        "\"" -> parseString(s, pos + 1, "")
+        "\"" -> parseString(s, pos + 1)
         "{{" -> parseObject(s, skipWs(s, pos + 1))
         "[" -> parseArray(s, skipWs(s, pos + 1))
         "t" -> parseLiteral(s, pos, "true", Json.JsonBool(true))
         "f" -> parseLiteral(s, pos, "false", Json.JsonBool(false))
         "n" -> parseLiteral(s, pos, "null", Json.JsonNull)
-        "-" -> parseMinus(s, pos + 1)
-        "0" -> parseAfterZero(s, pos + 1, false)
-        _ -> startDigits(s, pos, c)
+        "-" -> parseNumber(s, pos)
+        _ -> dispatchNumberOrErr(s, pos, c)
 
-fn startDigits(s: String, pos: Int, c: String) -> ParseResult
+fn dispatchNumberOrErr(s: String, pos: Int, c: String) -> ParseResult
     match isDigit(c)
-        true -> parseDigits(s, pos + 1, digitVal(c), false)
+        true -> parseNumber(s, pos)
         false -> ParseResult.Err("Unexpected character: " + c, pos)
 
 // ── Literals ──────────────────────────────────────────────────────
@@ -106,39 +105,91 @@ fn parseLiteral(s: String, pos: Int, expected: String, value: Json) -> ParseResu
 
 // ── Strings ───────────────────────────────────────────────────────
 
-fn parseString(s: String, pos: Int, acc: String) -> ParseResult
+fn parseString(s: String, pos: Int) -> ParseResult
+    ? "Parse string using segment chunks to avoid repeated concatenation."
+    = parseStringChunk(s, pos, pos, [])
+
+fn parseStringChunk(s: String, pos: Int, segmentStart: Int, chunks: List<String>) -> ParseResult
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated string", pos)
         Option.Some(c) -> match c
-            "\"" -> ParseResult.Ok(Json.JsonString(acc), pos + 1)
-            "\\" -> parseEscape(s, pos + 1, acc)
-            _ -> validateChar(s, pos, acc, c)
+            "\"" -> finishString(s, pos + 1, segmentStart, chunks)
+            "\\" -> parseEscape(s, pos + 1, pos, segmentStart, chunks)
+            _ -> validateChar(s, pos, segmentStart, chunks, c)
 
-fn validateChar(s: String, pos: Int, acc: String, c: String) -> ParseResult
+fn finishString(s: String, nextPos: Int, segmentStart: Int, chunks: List<String>) -> ParseResult
+    segment = String.slice(s, segmentStart, nextPos - 1)
+    all = String.join(List.push(chunks, segment), "")
+    ParseResult.Ok(Json.JsonString(all), nextPos)
+
+fn validateChar(s: String, pos: Int, segmentStart: Int, chunks: List<String>, c: String) -> ParseResult
     match Char.toCode(c) < 32
         true -> ParseResult.Err("Unescaped control character", pos)
-        false -> parseString(s, pos + 1, acc + c)
+        false -> parseStringChunk(s, pos + 1, segmentStart, chunks)
 
-fn parseEscape(s: String, pos: Int, acc: String) -> ParseResult
+fn parseEscape(s: String, pos: Int, slashPos: Int, segmentStart: Int, chunks: List<String>) -> ParseResult
+    segment = String.slice(s, segmentStart, slashPos)
+    base = List.push(chunks, segment)
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated escape", pos)
         Option.Some(c) -> match c
-            "\"" -> parseString(s, pos + 1, acc + "\"")
-            "\\" -> parseString(s, pos + 1, acc + "\\")
-            "/" -> parseString(s, pos + 1, acc + "/")
-            "n" -> parseString(s, pos + 1, acc + "\n")
-            "t" -> parseString(s, pos + 1, acc + "\t")
-            "r" -> parseString(s, pos + 1, acc + "\r")
-            "b" -> parseString(s, pos + 1, acc + "\b")
-            "f" -> parseString(s, pos + 1, acc + "\f")
-            "u" -> parseUnicode(s, pos + 1, acc)
+            "\"" -> parseStringChunk(s, pos + 1, pos + 1, List.push(base, "\""))
+            "\\" -> parseStringChunk(s, pos + 1, pos + 1, List.push(base, "\\"))
+            "/" -> parseStringChunk(s, pos + 1, pos + 1, List.push(base, "/"))
+            "n" -> parseStringChunk(s, pos + 1, pos + 1, List.push(base, "\n"))
+            "t" -> parseStringChunk(s, pos + 1, pos + 1, List.push(base, "\t"))
+            "r" -> parseStringChunk(s, pos + 1, pos + 1, List.push(base, "\r"))
+            "b" -> parseStringChunk(s, pos + 1, pos + 1, List.push(base, "\b"))
+            "f" -> parseStringChunk(s, pos + 1, pos + 1, List.push(base, "\f"))
+            "u" -> parseUnicode(s, pos + 1, pos + 1, base)
             _ -> ParseResult.Err("Unknown escape: \\" + c, pos)
 
-fn parseUnicode(s: String, pos: Int, acc: String) -> ParseResult
-    ? "Parse \\uXXXX escape sequence."
+fn parseUnicode(s: String, pos: Int, escapePos: Int, chunks: List<String>) -> ParseResult
+    ? "Parse \\uXXXX, including surrogate pairs."
     match readHex4(s, pos, 0, 0)
-        Option.None -> ParseResult.Err("Invalid \\u escape", pos)
-        Option.Some(cp) -> applyCodePoint(s, pos + 4, acc, cp)
+        Option.None -> ParseResult.Err("Invalid \\u escape", escapePos)
+        Option.Some(cp) -> parseUnicodeCodePoint(s, pos + 4, escapePos, chunks, cp)
+
+fn parseUnicodeCodePoint(s: String, pos: Int, escapePos: Int, chunks: List<String>, cp: Int) -> ParseResult
+    match isHighSurrogate(cp)
+        true -> parseUnicodePair(s, pos, escapePos, chunks, cp)
+        false -> match isLowSurrogate(cp)
+            true -> ParseResult.Err("Invalid Unicode surrogate pair", escapePos)
+            false -> applyCodePoint(s, pos, escapePos, chunks, cp)
+
+fn isHighSurrogate(cp: Int) -> Bool
+    match cp >= 55296
+        true -> cp <= 56319
+        false -> false
+
+fn isLowSurrogate(cp: Int) -> Bool
+    match cp >= 56320
+        true -> cp <= 57343
+        false -> false
+
+fn parseUnicodePair(s: String, pos: Int, escapePos: Int, chunks: List<String>, hi: Int) -> ParseResult
+    match String.charAt(s, pos)
+        Option.None -> ParseResult.Err("Invalid Unicode surrogate pair", escapePos)
+        Option.Some(c) -> match c
+            "\\" -> parseUnicodePairU(s, pos + 1, escapePos, chunks, hi)
+            _ -> ParseResult.Err("Invalid Unicode surrogate pair", escapePos)
+
+fn parseUnicodePairU(s: String, pos: Int, escapePos: Int, chunks: List<String>, hi: Int) -> ParseResult
+    match String.charAt(s, pos)
+        Option.None -> ParseResult.Err("Invalid Unicode surrogate pair", escapePos)
+        Option.Some(c) -> match c
+            "u" -> parseUnicodePairLow(s, pos + 1, escapePos, chunks, hi)
+            _ -> ParseResult.Err("Invalid Unicode surrogate pair", escapePos)
+
+fn parseUnicodePairLow(s: String, pos: Int, escapePos: Int, chunks: List<String>, hi: Int) -> ParseResult
+    match readHex4(s, pos, 0, 0)
+        Option.None -> ParseResult.Err("Invalid \\u escape", pos - 1)
+        Option.Some(lo) -> match isLowSurrogate(lo)
+            true -> applyCodePoint(s, pos + 4, escapePos, chunks, combineSurrogates(hi, lo))
+            false -> ParseResult.Err("Invalid Unicode surrogate pair", escapePos)
+
+fn combineSurrogates(hi: Int, lo: Int) -> Int
+    = 65536 + (hi - 55296) * 1024 + (lo - 56320)
 
 fn readHex4(s: String, pos: Int, acc: Int, count: Int) -> Option<Int>
     match count == 4
@@ -149,118 +200,116 @@ fn readHex4(s: String, pos: Int, acc: Int, count: Int) -> Option<Int>
                 Option.None -> Option.None
                 Option.Some(v) -> readHex4(s, pos + 1, acc * 16 + v, count + 1)
 
-fn applyCodePoint(s: String, pos: Int, acc: String, cp: Int) -> ParseResult
+fn applyCodePoint(s: String, pos: Int, escapePos: Int, chunks: List<String>, cp: Int) -> ParseResult
     match Char.fromCode(cp)
-        Option.None -> ParseResult.Err("Invalid Unicode code point", pos - 4)
-        Option.Some(ch) -> parseString(s, pos, acc + ch)
+        Option.None -> ParseResult.Err("Invalid Unicode code point", escapePos)
+        Option.Some(ch) -> parseStringChunk(s, pos, pos, List.push(chunks, ch))
 
 // ── Numbers ───────────────────────────────────────────────────────
 
-fn parseMinus(s: String, pos: Int) -> ParseResult
+fn parseNumber(s: String, start: Int) -> ParseResult
+    ? "Parse JSON number using source slices (avoids Int overflow during scan)."
+    match String.charAt(s, start)
+        Option.None -> ParseResult.Err("Unexpected end of input", start)
+        Option.Some(c) -> match c
+            "-" -> parseNumberSign(s, start + 1, start)
+            "0" -> scanIntTail(s, start + 1, start, true)
+            _ -> startNumberDigits(s, start, c)
+
+fn startNumberDigits(s: String, start: Int, c: String) -> ParseResult
+    match isDigit(c)
+        true -> scanIntTail(s, start + 1, start, false)
+        false -> ParseResult.Err("Unexpected character: " + c, start)
+
+fn parseNumberSign(s: String, pos: Int, start: Int) -> ParseResult
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Expected digit after '-'", pos)
         Option.Some(c) -> match c
-            "0" -> parseAfterZero(s, pos + 1, true)
-            _ -> startNegDigit(s, pos, c)
+            "0" -> scanIntTail(s, pos + 1, start, true)
+            _ -> startSignDigit(s, pos, start, c)
 
-fn startNegDigit(s: String, pos: Int, c: String) -> ParseResult
+fn startSignDigit(s: String, pos: Int, start: Int, c: String) -> ParseResult
     match isDigit(c)
-        true -> parseDigits(s, pos + 1, digitVal(c), true)
+        true -> scanIntTail(s, pos + 1, start, false)
         false -> ParseResult.Err("Expected digit after '-'", pos)
 
-fn parseAfterZero(s: String, pos: Int, neg: Bool) -> ParseResult
-    ? "After leading zero: fraction, exponent, or end. No leading zeros."
+fn scanIntTail(s: String, pos: Int, start: Int, leadingZero: Bool) -> ParseResult
     match String.charAt(s, pos)
-        Option.None -> finishInt(0, neg, pos)
-        Option.Some(c) -> match c
-            "." -> parseFrac(s, pos + 1, numStr(0, neg) + ".")
-            "e" -> parseExp(s, pos + 1, numStr(0, neg) + "e")
-            "E" -> parseExp(s, pos + 1, numStr(0, neg) + "e")
-            _ -> afterZeroOther(pos, neg, c)
-
-fn afterZeroOther(pos: Int, neg: Bool, c: String) -> ParseResult
-    match isDigit(c)
-        true -> ParseResult.Err("Leading zeros not allowed", pos)
-        false -> finishInt(0, neg, pos)
-
-fn parseDigits(s: String, pos: Int, acc: Int, neg: Bool) -> ParseResult
-    match String.charAt(s, pos)
-        Option.None -> finishInt(acc, neg, pos)
+        Option.None -> finishNumber(s, start, pos, false)
         Option.Some(c) -> match isDigit(c)
-            true -> parseDigits(s, pos + 1, acc * 10 + digitVal(c), neg)
-            false -> afterDigits(s, pos, acc, neg, c)
+            true -> match leadingZero
+                true -> ParseResult.Err("Leading zeros not allowed", pos)
+                false -> scanIntTail(s, pos + 1, start, false)
+            false -> afterIntChar(s, pos, start, c)
 
-fn afterDigits(s: String, pos: Int, acc: Int, neg: Bool, c: String) -> ParseResult
+fn afterIntChar(s: String, pos: Int, start: Int, c: String) -> ParseResult
     match c
-        "." -> parseFrac(s, pos + 1, numStr(acc, neg) + ".")
-        "e" -> parseExp(s, pos + 1, numStr(acc, neg) + "e")
-        "E" -> parseExp(s, pos + 1, numStr(acc, neg) + "e")
-        _ -> finishInt(acc, neg, pos)
+        "." -> scanFracFirst(s, pos + 1, start)
+        "e" -> scanExpStart(s, pos + 1, start)
+        "E" -> scanExpStart(s, pos + 1, start)
+        _ -> finishNumber(s, start, pos, false)
 
-fn parseFrac(s: String, pos: Int, ns: String) -> ParseResult
-    ? "First fraction digit (required after '.')."
+fn scanFracFirst(s: String, pos: Int, start: Int) -> ParseResult
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Expected digit after '.'", pos)
         Option.Some(c) -> match isDigit(c)
-            true -> parseFracMore(s, pos + 1, ns + c)
+            true -> scanFracTail(s, pos + 1, start)
             false -> ParseResult.Err("Expected digit after '.'", pos)
 
-fn parseFracMore(s: String, pos: Int, ns: String) -> ParseResult
+fn scanFracTail(s: String, pos: Int, start: Int) -> ParseResult
     match String.charAt(s, pos)
-        Option.None -> finishFloat(ns, pos)
+        Option.None -> finishNumber(s, start, pos, true)
         Option.Some(c) -> match isDigit(c)
-            true -> parseFracMore(s, pos + 1, ns + c)
-            false -> afterFrac(s, pos, ns, c)
+            true -> scanFracTail(s, pos + 1, start)
+            false -> afterFracChar(s, pos, start, c)
 
-fn afterFrac(s: String, pos: Int, ns: String, c: String) -> ParseResult
+fn afterFracChar(s: String, pos: Int, start: Int, c: String) -> ParseResult
     match c
-        "e" -> parseExp(s, pos + 1, ns + "e")
-        "E" -> parseExp(s, pos + 1, ns + "e")
-        _ -> finishFloat(ns, pos)
+        "e" -> scanExpStart(s, pos + 1, start)
+        "E" -> scanExpStart(s, pos + 1, start)
+        _ -> finishNumber(s, start, pos, true)
 
-fn parseExp(s: String, pos: Int, ns: String) -> ParseResult
-    ? "Parse exponent: optional sign then digits."
+fn scanExpStart(s: String, pos: Int, start: Int) -> ParseResult
+    ? "Parse exponent: optional sign then at least one digit."
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Expected digit in exponent", pos)
         Option.Some(c) -> match c
-            "+" -> parseExpDigit1(s, pos + 1, ns + "+")
-            "-" -> parseExpDigit1(s, pos + 1, ns + "-")
-            _ -> startExpDigit(s, pos, ns, c)
+            "+" -> scanExpDigit1(s, pos + 1, start)
+            "-" -> scanExpDigit1(s, pos + 1, start)
+            _ -> startExpDigit(s, pos, start, c)
 
-fn startExpDigit(s: String, pos: Int, ns: String, c: String) -> ParseResult
-    match isDigit(c)
-        true -> parseExpMore(s, pos + 1, ns + c)
-        false -> ParseResult.Err("Expected digit in exponent", pos)
-
-fn parseExpDigit1(s: String, pos: Int, ns: String) -> ParseResult
-    ? "First exponent digit after sign (required)."
+fn scanExpDigit1(s: String, pos: Int, start: Int) -> ParseResult
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Expected digit in exponent", pos)
-        Option.Some(c) -> match isDigit(c)
-            true -> parseExpMore(s, pos + 1, ns + c)
-            false -> ParseResult.Err("Expected digit in exponent", pos)
+        Option.Some(c) -> startExpDigit(s, pos, start, c)
 
-fn parseExpMore(s: String, pos: Int, ns: String) -> ParseResult
+fn startExpDigit(s: String, pos: Int, start: Int, c: String) -> ParseResult
+    match isDigit(c)
+        true -> scanExpTail(s, pos + 1, start)
+        false -> ParseResult.Err("Expected digit in exponent", pos)
+
+fn scanExpTail(s: String, pos: Int, start: Int) -> ParseResult
     match String.charAt(s, pos)
-        Option.None -> finishFloat(ns, pos)
+        Option.None -> finishNumber(s, start, pos, true)
         Option.Some(c) -> match isDigit(c)
-            true -> parseExpMore(s, pos + 1, ns + c)
-            false -> finishFloat(ns, pos)
+            true -> scanExpTail(s, pos + 1, start)
+            false -> finishNumber(s, start, pos, true)
 
-fn numStr(acc: Int, neg: Bool) -> String
-    match neg
-        true -> "-" + String.fromInt(acc)
-        false -> String.fromInt(acc)
+fn finishNumber(s: String, start: Int, endPos: Int, asFloat: Bool) -> ParseResult
+    num = String.slice(s, start, endPos)
+    match asFloat
+        true -> finishFloat(num, endPos)
+        false -> finishInt(num, endPos)
 
-fn finishInt(acc: Int, neg: Bool, pos: Int) -> ParseResult
-    match neg
-        true -> ParseResult.Ok(Json.JsonInt(acc * -1), pos)
-        false -> ParseResult.Ok(Json.JsonInt(acc), pos)
+fn finishInt(num: String, pos: Int) -> ParseResult
+    match Int.fromString(num)
+        Result.Ok(n) -> ParseResult.Ok(Json.JsonInt(n), pos)
+        Result.Err(_) -> ParseResult.Err("Invalid number: " + num, pos)
 
-fn finishFloat(ns: String, pos: Int) -> ParseResult
-    match Float.fromString(ns)
+fn finishFloat(num: String, pos: Int) -> ParseResult
+    match Float.fromString(num)
         Result.Ok(f) -> ParseResult.Ok(Json.JsonFloat(f), pos)
-        Result.Err(_) -> ParseResult.Err("Invalid number: " + ns, pos)
+        Result.Err(_) -> ParseResult.Err("Invalid number: " + num, pos)
 
 // ── Arrays ────────────────────────────────────────────────────────
 
@@ -304,14 +353,14 @@ fn parseObjFields(s: String, pos: Int, acc: Map<String, Json>) -> ParseResult
             _ -> ParseResult.Err("Expected string key", pos)
 
 fn parseObjKey(s: String, pos: Int, acc: Map<String, Json>) -> ParseResult
-    match parseString(s, pos, "")
+    match parseString(s, pos)
         ParseResult.Err(msg, p) -> ParseResult.Err(msg, p)
-        ParseResult.Ok(keyJson, p) -> parseObjColon(s, skipWs(s, p), acc, extractStr(keyJson))
+        ParseResult.Ok(keyJson, p) -> parseObjKeyValue(s, p, acc, keyJson)
 
-fn extractStr(j: Json) -> String
-    match j
-        Json.JsonString(s) -> s
-        _ -> ""
+fn parseObjKeyValue(s: String, pos: Int, acc: Map<String, Json>, keyJson: Json) -> ParseResult
+    match keyJson
+        Json.JsonString(key) -> parseObjColon(s, skipWs(s, pos), acc, key)
+        _ -> ParseResult.Err("Expected string key", pos)
 
 fn parseObjColon(s: String, pos: Int, acc: Map<String, Json>, key: String) -> ParseResult
     match String.charAt(s, pos)
@@ -418,6 +467,7 @@ verify parse
     parse("\"he\\nllo\"") => Result.Ok(Json.JsonString("he\nllo"))
     parse("\"\\u0041\"") => Result.Ok(Json.JsonString("A"))
     parse("\"caf\\u00e9\"") => Result.Ok(Json.JsonString("café"))
+    parse("\"\\uD83D\\uDE00\"") => Result.Ok(Json.JsonString("😀"))
 
 // ── Verify: collections ──────────────────────────────────────────
 
@@ -440,5 +490,5 @@ verify parse
     parse("1e") => Result.Err("Expected digit in exponent at position 2")
     parse("1e+") => Result.Err("Expected digit in exponent at position 3")
     parse("\"\\uXXXX\"") => Result.Err("Invalid \\u escape at position 3")
-    parse("\"\\uD800\"") => Result.Err("Invalid Unicode code point at position 3")
+    parse("\"\\uD800\"") => Result.Err("Invalid Unicode surrogate pair at position 3")
     parse("\"\t\"") => Result.Err("Unescaped control character at position 1")

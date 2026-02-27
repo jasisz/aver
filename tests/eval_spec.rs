@@ -2155,14 +2155,20 @@ fn call_fn_with_memo(src: &str, fn_name: &str, args: Vec<Value>) -> Value {
     // Compute memo fns
     let recursive = find_recursive_fns(&items);
     let mut memo_fns = std::collections::HashSet::new();
+    fn is_memo_safe_param(ty: &Type, safe_named: &std::collections::HashSet<String>) -> bool {
+        match ty {
+            Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit => true,
+            Type::Tuple(items) => items.iter().all(|item| is_memo_safe_param(item, safe_named)),
+            Type::Named(n) => safe_named.contains(n),
+            _ => false,
+        }
+    }
     for name in &recursive {
         if let Some((params, _ret, effects)) = tc_result.fn_sigs.get(name) {
             if effects.is_empty() {
-                let all_safe = params.iter().all(|ty| match ty {
-                    Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit => true,
-                    Type::Named(n) => tc_result.memo_safe_types.contains(n),
-                    _ => false,
-                });
+                let all_safe = params
+                    .iter()
+                    .all(|ty| is_memo_safe_param(ty, &tc_result.memo_safe_types));
                 if all_safe {
                     memo_fns.insert(name.clone());
                 }
@@ -2234,6 +2240,35 @@ fn memo_non_recursive_fn_still_works() {
         call_fn_with_memo(src, "double", vec![Value::Int(5)]),
         Value::Int(10)
     );
+}
+
+#[test]
+fn memo_tuple_args_do_not_collide() {
+    let src = r#"
+fn pick(p: (Int, Int)) -> Int
+    match p == (1, 2)
+        true -> 12
+        false -> 99
+"#;
+    let items = parse(src);
+    let mut interp = Interpreter::new();
+    interp.enable_memo(std::collections::HashSet::from([String::from("pick")]));
+    for item in &items {
+        if let TopLevel::FnDef(fd) = item {
+            interp.exec_fn_def(fd).expect("exec_fn_def failed");
+        }
+    }
+
+    let fn_val = interp.lookup("pick").expect("pick not found");
+    let out_a = interp
+        .call_value_pub(fn_val.clone(), vec![Value::Tuple(vec![Value::Int(1), Value::Int(2)])])
+        .expect("first call failed");
+    assert_eq!(out_a, Value::Int(12));
+
+    let out_b = interp
+        .call_value_pub(fn_val, vec![Value::Tuple(vec![Value::Int(9), Value::Int(9)])])
+        .expect("second call failed");
+    assert_eq!(out_b, Value::Int(99));
 }
 
 // ---------------------------------------------------------------------------
