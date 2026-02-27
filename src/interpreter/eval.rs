@@ -295,10 +295,15 @@ impl Interpreter {
         let is_memo = *memo_eligible;
         let memo_key = if is_memo {
             let key = hash_memo_args(&args);
-            if let Some(cached) = self.memo_cache.get(name).and_then(|c| c.get(&key)) {
-                return Ok(cached.clone());
+            if let Some(cached) = self
+                .memo_cache
+                .entry(name.clone())
+                .or_default()
+                .get(key, &args)
+            {
+                return Ok(cached);
             }
-            Some(key)
+            Some((key, args.clone()))
         } else {
             None
         };
@@ -378,13 +383,10 @@ impl Interpreter {
         };
 
         // Auto-memoization: store result in cache
-        if let (Some(key), Ok(ref val)) = (memo_key, &final_result) {
+        if let (Some((key, memo_args)), Ok(ref val)) = (memo_key, &final_result) {
             let fn_name = name.clone();
             let cache = self.memo_cache.entry(fn_name).or_default();
-            // Cap cache size at 4096 entries per function
-            if cache.len() < 4096 {
-                cache.insert(key, val.clone());
-            }
+            cache.insert(key, memo_args, val.clone(), MEMO_CACHE_CAP_PER_FN);
         }
 
         final_result

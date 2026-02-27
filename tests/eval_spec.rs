@@ -2136,7 +2136,7 @@ fn main() -> Unit
 
 /// Helper: parse, type-check, resolve, compute memo_fns, register everything, call fn.
 fn call_fn_with_memo(src: &str, fn_name: &str, args: Vec<Value>) -> Value {
-    use aver::call_graph::find_recursive_fns;
+    use aver::call_graph::{find_recursive_fns, recursive_callsite_counts};
     use aver::resolver;
     use aver::types::checker::run_type_check_full;
     use aver::types::Type;
@@ -2154,11 +2154,14 @@ fn call_fn_with_memo(src: &str, fn_name: &str, args: Vec<Value>) -> Value {
 
     // Compute memo fns
     let recursive = find_recursive_fns(&items);
+    let recursive_calls = recursive_callsite_counts(&items);
     let mut memo_fns = std::collections::HashSet::new();
     fn is_memo_safe_param(ty: &Type, safe_named: &std::collections::HashSet<String>) -> bool {
         match ty {
-            Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit => true,
-            Type::Tuple(items) => items.iter().all(|item| is_memo_safe_param(item, safe_named)),
+            Type::Int | Type::Float | Type::Bool | Type::Unit => true,
+            Type::Tuple(items) => items
+                .iter()
+                .all(|item| is_memo_safe_param(item, safe_named)),
             Type::Named(n) => safe_named.contains(n),
             _ => false,
         }
@@ -2166,6 +2169,9 @@ fn call_fn_with_memo(src: &str, fn_name: &str, args: Vec<Value>) -> Value {
     for name in &recursive {
         if let Some((params, _ret, effects)) = tc_result.fn_sigs.get(name) {
             if effects.is_empty() {
+                if recursive_calls.get(name).copied().unwrap_or(0) < 2 {
+                    continue;
+                }
                 let all_safe = params
                     .iter()
                     .all(|ty| is_memo_safe_param(ty, &tc_result.memo_safe_types));
@@ -2261,12 +2267,18 @@ fn pick(p: (Int, Int)) -> Int
 
     let fn_val = interp.lookup("pick").expect("pick not found");
     let out_a = interp
-        .call_value_pub(fn_val.clone(), vec![Value::Tuple(vec![Value::Int(1), Value::Int(2)])])
+        .call_value_pub(
+            fn_val.clone(),
+            vec![Value::Tuple(vec![Value::Int(1), Value::Int(2)])],
+        )
         .expect("first call failed");
     assert_eq!(out_a, Value::Int(12));
 
     let out_b = interp
-        .call_value_pub(fn_val, vec![Value::Tuple(vec![Value::Int(9), Value::Int(9)])])
+        .call_value_pub(
+            fn_val,
+            vec![Value::Tuple(vec![Value::Int(9), Value::Int(9)])],
+        )
         .expect("second call failed");
     assert_eq!(out_b, Value::Int(99));
 }

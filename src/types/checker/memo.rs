@@ -31,7 +31,10 @@ impl TypeChecker {
     /// compared for equality (scalars, records/variants of scalars).
     pub(super) fn is_memo_safe(&self, ty: &Type, visiting: &mut HashSet<String>) -> bool {
         match ty {
-            Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit => true,
+            // String stays excluded for now: memo keys hash String content,
+            // so string-heavy recursion can degrade to O(n) keying work.
+            Type::Int | Type::Float | Type::Bool | Type::Unit => true,
+            Type::Str => false,
             Type::Tuple(items) => items.iter().all(|item| self.is_memo_safe(item, visiting)),
             Type::List(_) | Type::Map(_, _) | Type::Fn(_, _, _) | Type::Unknown => false,
             Type::Result(_, _) | Type::Option(_) => false,

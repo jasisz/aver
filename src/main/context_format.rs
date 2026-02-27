@@ -3,6 +3,29 @@ use aver::checker::expr_to_str;
 
 use crate::context_data::FileContext;
 
+const JSON_VERIFY_SAMPLE_LIMIT: usize = 3;
+const VERIFY_SAMPLE_POLICY_ID: &str = "source_head_3";
+const CONTEXT_SCHEMA_VERSION: u32 = 2;
+const ANALYSIS_ENCODING_VERSION: u32 = 1;
+const ANALYSIS_FLAG_AUTO_MEMO: u8 = 1;
+const ANALYSIS_FLAG_AUTO_TCO: u8 = 2;
+const MEMO_QUAL_PURE: u8 = 1;
+const MEMO_QUAL_RECURSIVE: u8 = 2;
+const MEMO_QUAL_SAFE_ARGS: u8 = 4;
+
+fn memo_qual_mask(memo_qual: &[String]) -> u8 {
+    let mut mask = 0u8;
+    for q in memo_qual {
+        match q.as_str() {
+            "PURE" => mask |= MEMO_QUAL_PURE,
+            "RECURSIVE" => mask |= MEMO_QUAL_RECURSIVE,
+            "SAFE_ARGS" => mask |= MEMO_QUAL_SAFE_ARGS,
+            _ => {}
+        }
+    }
+    mask
+}
+
 pub(super) fn format_context_md(contexts: &[FileContext], entry_file: &str) -> String {
     let mut out = String::new();
     out.push_str(&format!("# Aver Context — {}\n\n", entry_file));
@@ -89,6 +112,35 @@ pub(super) fn format_context_md(contexts: &[FileContext], entry_file: &str) -> S
             if !fd.effects.is_empty() {
                 out.push_str(&format!("effects: `[{}]`  \n", fd.effects.join(", ")));
             }
+            out.push_str(&format!(
+                "auto_memo: `{}`  \n",
+                if ctx.fn_auto_memo.contains(&fd.name) {
+                    "true"
+                } else {
+                    "false"
+                }
+            ));
+            let memo_qual = ctx.fn_memo_qual.get(&fd.name).cloned().unwrap_or_default();
+            out.push_str(&format!("memo_qual: `[{}]`  \n", memo_qual.join(", ")));
+            out.push_str(&format!(
+                "auto_tco: `{}`  \n",
+                if ctx.fn_auto_tco.contains(&fd.name) {
+                    "true"
+                } else {
+                    "false"
+                }
+            ));
+            out.push_str(&format!(
+                "recursive_callsites: `{}`  \n",
+                ctx.fn_recursive_callsites
+                    .get(&fd.name)
+                    .copied()
+                    .unwrap_or(0)
+            ));
+            out.push_str(&format!(
+                "recursive_scc_id: `{}`  \n",
+                ctx.fn_recursive_scc_id.get(&fd.name).copied().unwrap_or(0)
+            ));
 
             if let Some(desc) = &fd.desc {
                 out.push_str(&format!("> {}\n", desc));
@@ -111,7 +163,12 @@ pub(super) fn format_context_md(contexts: &[FileContext], entry_file: &str) -> S
                 } else {
                     String::new()
                 };
-                out.push_str(&format!("verify: {}{}\n", shown.join(", "), extra));
+                out.push_str(&format!(
+                    "verify_sample_policy_id: `{}`\nverify: {}{}\n",
+                    VERIFY_SAMPLE_POLICY_ID,
+                    shown.join(", "),
+                    extra
+                ));
             }
 
             out.push('\n');
@@ -160,7 +217,21 @@ pub(super) fn format_context_json(contexts: &[FileContext], entry_file: &str) ->
         contexts.iter().flat_map(|c| c.decisions.iter()).collect();
 
     let mut out = String::from("{\n");
+    out.push_str(&format!(
+        "  \"schema_version\": {},\n",
+        CONTEXT_SCHEMA_VERSION
+    ));
     out.push_str(&format!("  \"entry\": {},\n", json_str(entry_file)));
+    out.push_str("  \"analysis_encoding\": {\n");
+    out.push_str(&format!(
+        "    \"version\": {},\n",
+        ANALYSIS_ENCODING_VERSION
+    ));
+    out.push_str("    \"fields\": {\"f\": \"flags\", \"q\": \"memo_qual\", \"r\": \"recursive_callsites\", \"s\": \"scc_id\"},\n");
+    out.push_str("    \"r_scope\": \"scc\",\n");
+    out.push_str("    \"flags\": {\"AUTO_MEMO\": 1, \"AUTO_TCO\": 2},\n");
+    out.push_str("    \"memo_qual\": {\"PURE\": 1, \"RECURSIVE\": 2, \"SAFE_ARGS\": 4}\n");
+    out.push_str("  },\n");
     out.push_str("  \"modules\": [\n");
 
     let non_empty: Vec<&FileContext> = contexts
@@ -312,20 +383,57 @@ pub(super) fn format_context_json(contexts: &[FileContext], entry_file: &str) ->
 
                 let effs: Vec<String> = fd.effects.iter().map(|e| json_str(e)).collect();
                 out.push_str(&format!("          \"effects\": [{}],\n", effs.join(", ")));
+                let memo_qual = ctx.fn_memo_qual.get(&fd.name).cloned().unwrap_or_default();
+                let mut analysis_flags = 0u8;
+                if ctx.fn_auto_memo.contains(&fd.name) {
+                    analysis_flags |= ANALYSIS_FLAG_AUTO_MEMO;
+                }
+                if ctx.fn_auto_tco.contains(&fd.name) {
+                    analysis_flags |= ANALYSIS_FLAG_AUTO_TCO;
+                }
+                let analysis_memo_qual = memo_qual_mask(&memo_qual);
+                let analysis_recursive_callsites = ctx
+                    .fn_recursive_callsites
+                    .get(&fd.name)
+                    .copied()
+                    .unwrap_or(0);
+                let analysis_recursive_scc_id =
+                    ctx.fn_recursive_scc_id.get(&fd.name).copied().unwrap_or(0);
+                out.push_str(&format!(
+                    "          \"analysis\": {{\"f\": {}, \"q\": {}, \"r\": {}, \"s\": {}}},\n",
+                    analysis_flags,
+                    analysis_memo_qual,
+                    analysis_recursive_callsites,
+                    analysis_recursive_scc_id
+                ));
 
                 match &fd.desc {
                     Some(d) => out.push_str(&format!("          \"desc\": {},\n", json_str(d))),
                     None => out.push_str("          \"desc\": null,\n"),
                 }
 
-                // verify cases (max 3)
+                // verify cases (compact JSON: first sample + full count)
+                let verify_total = ctx
+                    .verify_blocks
+                    .iter()
+                    .filter(|vb| vb.fn_name == fd.name)
+                    .map(|vb| vb.cases.len())
+                    .sum::<usize>();
+                out.push_str(&format!("          \"verify_count\": {},\n", verify_total));
+                if verify_total > 0 {
+                    out.push_str(&format!(
+                        "          \"verify_sample_policy_id\": {},\n",
+                        json_str(VERIFY_SAMPLE_POLICY_ID)
+                    ));
+                }
+
                 out.push_str("          \"verify\": [");
                 let verify_cases: Vec<String> = ctx
                     .verify_blocks
                     .iter()
                     .filter(|vb| vb.fn_name == fd.name)
                     .flat_map(|vb| vb.cases.iter())
-                    .take(3)
+                    .take(JSON_VERIFY_SAMPLE_LIMIT)
                     .map(|(lhs, rhs)| {
                         format!(
                             "{{\"input\": {}, \"expected\": {}}}",
