@@ -933,6 +933,62 @@ fn match_list_cons_binds_head_and_tail() {
     );
 }
 
+#[test]
+fn match_tuple_pattern_binds_values() {
+    let src = "fn sum_pair(p: (Int, Int)) -> Int\n    = match p\n        (a, b) -> a + b\n        _ -> 0\n";
+    assert_eq!(
+        call_fn(
+            src,
+            "sum_pair",
+            vec![Value::Tuple(vec![Value::Int(2), Value::Int(5)])]
+        ),
+        Value::Int(7)
+    );
+}
+
+#[test]
+fn match_tuple_pattern_with_wildcard() {
+    let src =
+        "fn first(p: (Int, Int)) -> Int\n    = match p\n        (x, _) -> x\n        _ -> 0\n";
+    assert_eq!(
+        call_fn(
+            src,
+            "first",
+            vec![Value::Tuple(vec![Value::Int(9), Value::Int(123)])]
+        ),
+        Value::Int(9)
+    );
+}
+
+#[test]
+fn match_nested_tuple_pattern() {
+    let src = "fn flatten(p: ((Int, Int), Int)) -> Int\n    = match p\n        ((a, b), c) -> a + b + c\n        _ -> 0\n";
+    assert_eq!(
+        call_fn(
+            src,
+            "flatten",
+            vec![Value::Tuple(vec![
+                Value::Tuple(vec![Value::Int(1), Value::Int(2)]),
+                Value::Int(3)
+            ])]
+        ),
+        Value::Int(6)
+    );
+}
+
+#[test]
+fn tuple_pattern_arity_mismatch_falls_through() {
+    let src = "fn test(p: (Int, Int)) -> Int\n    = match p\n        (a, b, c) -> a + b + c\n        _ -> 42\n";
+    assert_eq!(
+        call_fn(
+            src,
+            "test",
+            vec![Value::Tuple(vec![Value::Int(1), Value::Int(2)])]
+        ),
+        Value::Int(42)
+    );
+}
+
 // ---------------------------------------------------------------------------
 // String interpolation
 // ---------------------------------------------------------------------------

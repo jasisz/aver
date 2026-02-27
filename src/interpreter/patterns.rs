@@ -88,6 +88,20 @@ impl Interpreter {
                 }
                 Some(map)
             }
+            Pattern::Tuple(patterns) => {
+                let Value::Tuple(values) = value else {
+                    return None;
+                };
+                if patterns.len() != values.len() {
+                    return None;
+                }
+                let mut all = HashMap::new();
+                for (p, v) in patterns.iter().zip(values.iter()) {
+                    let sub = self.match_pattern(p, v)?;
+                    all.extend(sub);
+                }
+                Some(all)
+            }
             Pattern::Constructor(ctor_name, bindings) => {
                 match (ctor_name.as_str(), value) {
                     ("Option.None", Value::None) => Some(HashMap::new()),

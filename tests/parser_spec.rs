@@ -621,6 +621,50 @@ fn match_list_cons_pattern_with_underscore() {
     }
 }
 
+#[test]
+fn match_tuple_pattern_binds_items() {
+    let src = "fn f(p: (Int, Int)) -> Int\n    = match p\n        (a, b) -> a\n        _ -> 0\n";
+    let items = parse(src);
+    if let TopLevel::FnDef(fd) = &items[0] {
+        if let FnBody::Expr(Expr::Match(_, arms)) = &*fd.body {
+            assert_eq!(arms.len(), 2);
+            assert!(matches!(
+                &arms[0].pattern,
+                Pattern::Tuple(items)
+                if items.len() == 2
+                    && matches!(&items[0], Pattern::Ident(a) if a == "a")
+                    && matches!(&items[1], Pattern::Ident(b) if b == "b")
+            ));
+            assert!(matches!(arms[1].pattern, Pattern::Wildcard));
+        } else {
+            panic!("expected match");
+        }
+    } else {
+        panic!("expected FnDef");
+    }
+}
+
+#[test]
+fn match_nested_tuple_pattern_parses() {
+    let src = "fn f(p: ((Int, Int), Int)) -> Int\n    = match p\n        ((x, y), z) -> x\n        _ -> 0\n";
+    let items = parse(src);
+    if let TopLevel::FnDef(fd) = &items[0] {
+        if let FnBody::Expr(Expr::Match(_, arms)) = &*fd.body {
+            assert!(matches!(
+                &arms[0].pattern,
+                Pattern::Tuple(items)
+                if items.len() == 2
+                    && matches!(&items[0], Pattern::Tuple(inner) if inner.len() == 2)
+                    && matches!(&items[1], Pattern::Ident(z) if z == "z")
+            ));
+        } else {
+            panic!("expected match");
+        }
+    } else {
+        panic!("expected FnDef");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Match arm body must be on the same line as ->
 // ---------------------------------------------------------------------------

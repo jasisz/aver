@@ -82,6 +82,22 @@ impl Parser {
                 self.expect_exact(&TokenKind::RBracket)?;
                 Ok(Pattern::Cons(head, tail))
             }
+            TokenKind::LParen => {
+                self.advance(); // '('
+                let first = self.parse_pattern()?;
+                if self.check_exact(&TokenKind::Comma) {
+                    let mut items = vec![first];
+                    while self.check_exact(&TokenKind::Comma) {
+                        self.advance();
+                        items.push(self.parse_pattern()?);
+                    }
+                    self.expect_exact(&TokenKind::RParen)?;
+                    Ok(Pattern::Tuple(items))
+                } else {
+                    self.expect_exact(&TokenKind::RParen)?;
+                    Ok(first)
+                }
+            }
             // User-defined constructor: starts with uppercase (e.g. Shape.Circle, Point)
             TokenKind::Ident(ref s) if s.chars().next().map_or(false, |c| c.is_uppercase()) => {
                 let mut name = s.clone();
@@ -137,7 +153,7 @@ impl Parser {
                 Ok(Pattern::Literal(Literal::Bool(b)))
             }
             _ => Err(self.error(format!(
-                "Expected match pattern (identifier, literal, '[]', or constructor), found {}",
+                "Expected match pattern (identifier, literal, '[]', tuple, or constructor), found {}",
                 self.current().kind
             ))),
         }

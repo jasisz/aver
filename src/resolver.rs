@@ -190,6 +190,11 @@ fn collect_pattern_bindings(
                 }
             }
         }
+        Pattern::Tuple(items) => {
+            for item in items {
+                collect_pattern_bindings(item, local_slots, next_slot);
+            }
+        }
         Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => {}
     }
 }
