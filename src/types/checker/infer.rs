@@ -567,6 +567,30 @@ impl TypeChecker {
                             let inner = arg_types.first().cloned().unwrap_or(Type::Unit);
                             return Type::Option(Box::new(inner));
                         }
+                        // Option/Result combinators: propagate inner types
+                        "Option.withDefault" => {
+                            // (Option<T>, T) -> T
+                            if arg_types.len() == 2 {
+                                return arg_types[1].clone();
+                            }
+                        }
+                        "Result.withDefault" => {
+                            // (Result<T, E>, T) -> T
+                            if arg_types.len() == 2 {
+                                return arg_types[1].clone();
+                            }
+                        }
+                        "Option.toResult" => {
+                            // (Option<T>, E) -> Result<T, E>
+                            if arg_types.len() == 2 {
+                                let t = match &arg_types[0] {
+                                    Type::Option(inner) => *inner.clone(),
+                                    _ => Type::Unknown,
+                                };
+                                let e = arg_types[1].clone();
+                                return Type::Result(Box::new(t), Box::new(e));
+                            }
+                        }
                         _ => {}
                     }
                     if let Some(sig) = self.fn_sigs.get(&display_name).cloned() {
@@ -1090,6 +1114,15 @@ impl TypeChecker {
                     if bind_name != "_" {
                         out.push((bind_name.clone(), bind_ty));
                     }
+                }
+            }
+            Pattern::Tuple(items) => {
+                let elem_tys = match subject_ty {
+                    Type::Tuple(elems) if elems.len() == items.len() => elems.clone(),
+                    _ => vec![Type::Unknown; items.len()],
+                };
+                for (item, elem_ty) in items.iter().zip(elem_tys.iter()) {
+                    self.collect_pattern_bindings(item, elem_ty, out);
                 }
             }
             _ => {}

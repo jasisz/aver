@@ -106,6 +106,24 @@ fn valid_list_return() {
 }
 
 #[test]
+fn valid_option_with_default_infers_type() {
+    let src = "fn unwrap(x: Option<String>) -> String\n    = Option.withDefault(x, \"fallback\")\n";
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_result_with_default_infers_type() {
+    let src = "fn unwrap(x: Result<Int, String>) -> Int\n    = Result.withDefault(x, 0)\n";
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_option_to_result_infers_type() {
+    let src = "fn convert(x: Option<Int>) -> Result<Int, String>\n    = Option.toResult(x, \"missing\")\n";
+    assert_no_errors(src);
+}
+
+#[test]
 fn valid_list_get_preserves_inner_type() {
     let src = "fn first(xs: List<Int>) -> Option<Int>\n    = List.get(xs, 0)\n";
     assert_no_errors(src);
