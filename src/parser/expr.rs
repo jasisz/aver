@@ -390,7 +390,7 @@ impl Parser {
             }
             TokenKind::LBrace => self.parse_map_literal(),
             _ => Err(self.error(format!(
-                "Unexpected token in expression: {:?}",
+                "Expected expression (identifier, literal, '[', or '{{'), found {}",
                 self.current().kind
             ))),
         }

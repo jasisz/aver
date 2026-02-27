@@ -55,7 +55,7 @@ impl Parser {
                     s
                 } else {
                     return Err(self.error(format!(
-                        "Expected list head binding in pattern, found {:?}",
+                        "Expected identifier for list head in [head, ..tail] pattern, found {}",
                         self.current().kind
                     )));
                 };
@@ -69,7 +69,7 @@ impl Parser {
                     s
                 } else {
                     return Err(self.error(format!(
-                        "Expected list tail binding in pattern, found {:?}",
+                        "Expected identifier for list tail in [head, ..tail] pattern, found {}",
                         self.current().kind
                     )));
                 };
@@ -132,7 +132,7 @@ impl Parser {
                 Ok(Pattern::Literal(Literal::Bool(b)))
             }
             _ => Err(self.error(format!(
-                "Unexpected token in pattern: {:?}",
+                "Expected match pattern (identifier, literal, '[]', or constructor), found {}",
                 self.current().kind
             ))),
         }

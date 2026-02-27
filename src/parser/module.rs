@@ -132,7 +132,7 @@ impl Parser {
             }
             _ => {
                 return Err(self.error(format!(
-                    "Expected identifier, found {:?}",
+                    "Expected identifier, found {}",
                     self.current().kind
                 )));
             }
@@ -148,7 +148,7 @@ impl Parser {
                 }
                 _ => {
                     return Err(self.error(format!(
-                        "Expected identifier after '.', found {:?}",
+                        "Expected identifier after '.', found {}",
                         self.current().kind
                     )));
                 }

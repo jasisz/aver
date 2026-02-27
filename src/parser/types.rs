@@ -197,7 +197,7 @@ impl Parser {
             }
             _ => {
                 return Err(self.error(format!(
-                    "Expected a type name, found {:?}",
+                    "Expected a type name, found {}",
                     self.current().kind
                 )));
             }
@@ -253,7 +253,7 @@ impl Parser {
                 }
                 _ => {
                     return Err(self.error(format!(
-                        "Expected effect name in type annotation, found {:?}",
+                        "Expected effect name in type annotation, found {}",
                         self.current().kind
                     )));
                 }

@@ -293,6 +293,7 @@ To create a new pure namespace, follow the pattern in `src/types/char.rs` or `sr
 - **Verify block syntax** uses `=>` as a case separator (`left_expr => expected_expr`); both sides support full expressions including comparisons (`==`, `!=`, etc.) since `=>` is a distinct token (`FatArrow`) that cannot appear inside an expression
 - **No check for duplicate function names**: defining a function twice silently shadows the earlier definition
 - **`match` is a statement in `parse_fn_body`** (handled via `if check_exact(Match)`) but also an expression in `parse_atom`; this dual path works but means a `match` at statement position does not pass through the normal expression precedence chain
+- **Nested match in match arms** is supported: arm body is `parse_expr()`, and `match` is a valid expression, so `Result.Err(_) -> match x ...` with an indented block works correctly
 - **Effect list** (`! [Io, State]`) is propagated statically and also enforced at runtime on function-call edges; no algebraic handlers yet
 - **Entry-point effect enforcement**: `main`/top-level entry calls use `call_value_with_effects_pub(...)`, which pushes a synthetic call frame with declared effects so runtime checks apply uniformly at the entry boundary
 - **`chosen` field in DecisionBlock** only accepts a bare identifier (not a string), so multi-word chosen values require a single CamelCase identifier

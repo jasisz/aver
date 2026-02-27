@@ -96,7 +96,7 @@ impl Parser {
         if std::mem::discriminant(&self.current().kind) == std::mem::discriminant(kind) {
             Ok(self.advance().clone())
         } else {
-            Err(self.error(format!("{}: found {:?}", msg, self.current().kind)))
+            Err(self.error(format!("{}, found {}", msg, self.current().kind)))
         }
     }
 
@@ -105,7 +105,7 @@ impl Parser {
             Ok(self.advance().clone())
         } else {
             Err(self.error(format!(
-                "Expected {:?}, found {:?}",
+                "Expected {}, found {}",
                 kind,
                 self.current().kind
             )))

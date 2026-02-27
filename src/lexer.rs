@@ -1,3 +1,4 @@
+use std::fmt;
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -66,6 +67,72 @@ pub enum TokenKind {
     Dedent,
     Newline,
     Eof,
+}
+
+impl fmt::Display for TokenKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TokenKind::Int(n) => write!(f, "integer '{}'", n),
+            TokenKind::Float(n) => write!(f, "float '{}'", n),
+            TokenKind::Str(s) => write!(f, "string \"{}\"", s),
+            TokenKind::InterpStr(_) => write!(f, "interpolated string"),
+            TokenKind::Bool(b) => write!(f, "'{}'", b),
+            TokenKind::Ident(s) => write!(f, "'{}'", s),
+            TokenKind::Module => write!(f, "'module'"),
+            TokenKind::Depends => write!(f, "'depends'"),
+            TokenKind::Exposes => write!(f, "'exposes'"),
+            TokenKind::Intent => write!(f, "'intent'"),
+            TokenKind::Type => write!(f, "'type'"),
+            TokenKind::Record => write!(f, "'record'"),
+            TokenKind::Reason => write!(f, "'reason'"),
+            TokenKind::Fn => write!(f, "'fn'"),
+            TokenKind::Effect => write!(f, "'effect'"),
+            TokenKind::Effects => write!(f, "'effects'"),
+            TokenKind::Service => write!(f, "'service'"),
+            TokenKind::Needs => write!(f, "'needs'"),
+            TokenKind::Decision => write!(f, "'decision'"),
+            TokenKind::Verify => write!(f, "'verify'"),
+            TokenKind::Case => write!(f, "'case'"),
+            TokenKind::Match => write!(f, "'match'"),
+            TokenKind::Where => write!(f, "'where'"),
+            TokenKind::Input => write!(f, "'input'"),
+            TokenKind::Expect => write!(f, "'expect'"),
+            TokenKind::Date => write!(f, "'date'"),
+            TokenKind::Author => write!(f, "'author'"),
+            TokenKind::Chosen => write!(f, "'chosen'"),
+            TokenKind::Rejected => write!(f, "'rejected'"),
+            TokenKind::Impacts => write!(f, "'impacts'"),
+            TokenKind::Arrow => write!(f, "'->'"),
+            TokenKind::Pipe => write!(f, "'|>'"),
+            TokenKind::FatArrow => write!(f, "'=>'"),
+            TokenKind::Eq => write!(f, "'=='"),
+            TokenKind::Neq => write!(f, "'!='"),
+            TokenKind::Lte => write!(f, "'<='"),
+            TokenKind::Gte => write!(f, "'>='"),
+            TokenKind::Assign => write!(f, "'='"),
+            TokenKind::Bang => write!(f, "'!'"),
+            TokenKind::Question => write!(f, "'?'"),
+            TokenKind::Lt => write!(f, "'<'"),
+            TokenKind::Gt => write!(f, "'>'"),
+            TokenKind::Plus => write!(f, "'+'"),
+            TokenKind::Minus => write!(f, "'-'"),
+            TokenKind::Star => write!(f, "'*'"),
+            TokenKind::Slash => write!(f, "'/'"),
+            TokenKind::Dot => write!(f, "'.'"),
+            TokenKind::Colon => write!(f, "':'"),
+            TokenKind::Comma => write!(f, "','"),
+            TokenKind::LParen => write!(f, "'('"),
+            TokenKind::RParen => write!(f, "')'"),
+            TokenKind::LBracket => write!(f, "'['"),
+            TokenKind::RBracket => write!(f, "']'"),
+            TokenKind::LBrace => write!(f, "'{{'"),
+            TokenKind::RBrace => write!(f, "'}}'"),
+            TokenKind::Indent => write!(f, "indentation"),
+            TokenKind::Dedent => write!(f, "end of block"),
+            TokenKind::Newline => write!(f, "end of line"),
+            TokenKind::Eof => write!(f, "end of file"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
