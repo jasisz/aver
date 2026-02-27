@@ -107,7 +107,7 @@ fn valid_list_return() {
 
 #[test]
 fn valid_list_get_preserves_inner_type() {
-    let src = "fn first(xs: List<Int>) -> Result<Int, String>\n    = List.get(xs, 0)\n";
+    let src = "fn first(xs: List<Int>) -> Option<Int>\n    = List.get(xs, 0)\n";
     assert_no_errors(src);
 }
 
@@ -356,8 +356,8 @@ fn error_arg_type_mismatch_string_for_int() {
 
 #[test]
 fn error_list_get_wrong_declared_inner_type() {
-    let src = "fn first(xs: List<Int>) -> Result<String, String>\n    = List.get(xs, 0)\n";
-    assert_error_containing(src, "body returns Result<Int, String>");
+    let src = "fn first(xs: List<Int>) -> Option<String>\n    = List.get(xs, 0)\n";
+    assert_error_containing(src, "body returns Option<Int>");
 }
 
 #[test]
@@ -451,7 +451,7 @@ fn binding_empty_list_literal_is_error() {
 
 #[test]
 fn error_list_fold_item_type_mismatch() {
-    let src = "fn step(acc: Int, s: String) -> Int\n    = acc + String.length(s)\nfn bad(xs: List<Int>) -> Int\n    = List.fold(xs, 0, step)\n";
+    let src = "fn step(acc: Int, s: String) -> Int\n    = acc + String.len(s)\nfn bad(xs: List<Int>) -> Int\n    = List.fold(xs, 0, step)\n";
     assert_error_containing(src, "fold item param expects String, list has Int");
 }
 
@@ -1119,7 +1119,7 @@ fn valid_float_to_string() {
 
 #[test]
 fn valid_string_length() {
-    assert_no_errors("fn f(s: String) -> Int\n    = String.length(s)\n");
+    assert_no_errors("fn f(s: String) -> Int\n    = String.len(s)\n");
 }
 
 #[test]
@@ -1204,7 +1204,7 @@ fn valid_no_effects_for_helpers() {
     // Int/Float/String namespace methods don't require effects
     assert_no_errors("fn f(n: Int) -> String\n    = Int.toString(n)\n");
     assert_no_errors("fn f(x: Float) -> Int\n    = Float.floor(x)\n");
-    assert_no_errors("fn f(s: String) -> Int\n    = String.length(s)\n");
+    assert_no_errors("fn f(s: String) -> Int\n    = String.len(s)\n");
 }
 
 #[test]

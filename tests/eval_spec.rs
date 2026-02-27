@@ -350,13 +350,13 @@ fn string_from_float() {
 }
 
 #[test]
-fn string_length() {
-    assert_eq!(eval("String.length(\"hello\")"), Value::Int(5));
+fn string_len() {
+    assert_eq!(eval("String.len(\"hello\")"), Value::Int(5));
 }
 
 #[test]
-fn string_length_empty() {
-    assert_eq!(eval("String.length(\"\")"), Value::Int(0));
+fn string_len_empty() {
+    assert_eq!(eval("String.len(\"\")"), Value::Int(0));
 }
 
 #[test]
@@ -526,7 +526,7 @@ fn list_string_literal() {
 fn get_first_element() {
     assert_eq!(
         eval("List.get([10, 20, 30], 0)"),
-        Value::Ok(Box::new(Value::Int(10)))
+        Value::Some(Box::new(Value::Int(10)))
     );
 }
 
@@ -534,34 +534,33 @@ fn get_first_element() {
 fn get_middle_element() {
     assert_eq!(
         eval("List.get([10, 20, 30], 1)"),
-        Value::Ok(Box::new(Value::Int(20)))
+        Value::Some(Box::new(Value::Int(20)))
     );
 }
 
 #[test]
-fn get_out_of_bounds_returns_err() {
-    let result = eval("List.get([1, 2], 5)");
-    assert!(matches!(result, Value::Err(_)));
+fn get_out_of_bounds_returns_none() {
+    assert_eq!(eval("List.get([1, 2], 5)"), Value::None);
 }
 
 #[test]
 fn head_returns_first() {
     assert_eq!(
         eval("List.head([42, 1, 2])"),
-        Value::Ok(Box::new(Value::Int(42)))
+        Value::Some(Box::new(Value::Int(42)))
     );
 }
 
 #[test]
-fn head_empty_list_returns_err() {
-    assert!(matches!(eval("List.head([])"), Value::Err(_)));
+fn head_empty_list_returns_none() {
+    assert_eq!(eval("List.head([])"), Value::None);
 }
 
 #[test]
 fn tail_returns_rest() {
     assert_eq!(
         eval("List.tail([1, 2, 3])"),
-        Value::Ok(Box::new(Value::List(vec![Value::Int(2), Value::Int(3)])))
+        Value::Some(Box::new(Value::List(vec![Value::Int(2), Value::Int(3)])))
     );
 }
 
@@ -569,13 +568,99 @@ fn tail_returns_rest() {
 fn tail_single_element_returns_empty() {
     assert_eq!(
         eval("List.tail([99])"),
-        Value::Ok(Box::new(Value::List(vec![])))
+        Value::Some(Box::new(Value::List(vec![])))
     );
 }
 
 #[test]
-fn tail_empty_list_returns_err() {
-    assert!(matches!(eval("List.tail([])"), Value::Err(_)));
+fn tail_empty_list_returns_none() {
+    assert_eq!(eval("List.tail([])"), Value::None);
+}
+
+// ---------------------------------------------------------------------------
+// List.find / List.any
+// ---------------------------------------------------------------------------
+
+#[test]
+fn list_find_returns_first_match() {
+    let src = "fn isEven(n: Int) -> Bool\n    = Int.mod(n, 2) == Result.Ok(0)\nfn main() -> Unit\n    = List.find([1, 3, 4, 6], isEven)\n";
+    let mut interp = run_program(src);
+    let main_val = interp.lookup("main").unwrap();
+    let result = interp.call_value_with_effects_pub(main_val, vec![], "main", vec![]).unwrap();
+    assert_eq!(result, Value::Some(Box::new(Value::Int(4))));
+}
+
+#[test]
+fn list_find_returns_none_when_no_match() {
+    let src = "fn isNeg(n: Int) -> Bool\n    = n < 0\nfn main() -> Unit\n    = List.find([1, 2, 3], isNeg)\n";
+    let mut interp = run_program(src);
+    let main_val = interp.lookup("main").unwrap();
+    let result = interp.call_value_with_effects_pub(main_val, vec![], "main", vec![]).unwrap();
+    assert_eq!(result, Value::None);
+}
+
+#[test]
+fn list_any_returns_true() {
+    let src = "fn isNeg(n: Int) -> Bool\n    = n < 0\nfn main() -> Unit\n    = List.any([1, -2, 3], isNeg)\n";
+    let mut interp = run_program(src);
+    let main_val = interp.lookup("main").unwrap();
+    let result = interp.call_value_with_effects_pub(main_val, vec![], "main", vec![]).unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn list_any_returns_false() {
+    let src = "fn isNeg(n: Int) -> Bool\n    = n < 0\nfn main() -> Unit\n    = List.any([1, 2, 3], isNeg)\n";
+    let mut interp = run_program(src);
+    let main_val = interp.lookup("main").unwrap();
+    let result = interp.call_value_with_effects_pub(main_val, vec![], "main", vec![]).unwrap();
+    assert_eq!(result, Value::Bool(false));
+}
+
+// ---------------------------------------------------------------------------
+// Result.withDefault / Option.withDefault / Option.toResult
+// ---------------------------------------------------------------------------
+
+#[test]
+fn result_with_default_ok() {
+    assert_eq!(eval("Result.withDefault(Result.Ok(42), 0)"), Value::Int(42));
+}
+
+#[test]
+fn result_with_default_err() {
+    assert_eq!(
+        eval("Result.withDefault(Result.Err(\"oops\"), 0)"),
+        Value::Int(0)
+    );
+}
+
+#[test]
+fn option_with_default_some() {
+    assert_eq!(
+        eval("Option.withDefault(Option.Some(42), 0)"),
+        Value::Int(42)
+    );
+}
+
+#[test]
+fn option_with_default_none() {
+    assert_eq!(eval("Option.withDefault(Option.None, 0)"), Value::Int(0));
+}
+
+#[test]
+fn option_to_result_some() {
+    assert_eq!(
+        eval("Option.toResult(Option.Some(42), \"missing\")"),
+        Value::Ok(Box::new(Value::Int(42)))
+    );
+}
+
+#[test]
+fn option_to_result_none() {
+    assert_eq!(
+        eval("Option.toResult(Option.None, \"missing\")"),
+        Value::Err(Box::new(Value::Str("missing".to_string())))
+    );
 }
 
 // ---------------------------------------------------------------------------

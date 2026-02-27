@@ -2,13 +2,14 @@
 ///
 /// Methods:
 ///   List.len(list)           → Int                    — number of elements
-///   List.get(list, index)    → Result<T, String>      — element at index
+///   List.get(list, index)    → Option<T>              — element at index
 ///   List.push(list, val)     → List<T>                — append element (returns new list)
-///   List.head(list)          → Result<T, String>      — first element
-///   List.tail(list)          → Result<List<T>, String> — all but first
+///   List.head(list)          → Option<T>              — first element
+///   List.tail(list)          → Option<List<T>>        — all but first
 ///
-/// Note: List.map, List.filter, List.fold are handled directly in the
-/// interpreter because they need to invoke closures via `self.call_value`.
+/// Note: List.map, List.filter, List.fold, List.find, List.any are handled
+/// directly in the interpreter because they need to invoke closures via
+/// `self.call_value`.
 ///
 /// No effects required.
 use std::collections::HashMap;
@@ -21,7 +22,7 @@ use crate::value::{
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
     for method in &[
-        "len", "map", "filter", "fold", "get", "push", "head", "tail",
+        "len", "map", "filter", "fold", "get", "push", "head", "tail", "find", "any",
     ] {
         members.insert(
             method.to_string(),
@@ -87,12 +88,9 @@ fn get(args: &[Value]) -> Result<Value, RuntimeError> {
         }
     };
     if index < 0 || index as usize >= list.len() {
-        Ok(Value::Err(Box::new(Value::Str(format!(
-            "index {} out of bounds",
-            index
-        )))))
+        Ok(Value::None)
     } else {
-        Ok(Value::Ok(Box::new(list[index as usize].clone())))
+        Ok(Value::Some(Box::new(list[index as usize].clone())))
     }
 }
 
@@ -118,10 +116,8 @@ fn head(args: &[Value]) -> Result<Value, RuntimeError> {
         )));
     }
     match list_head(&args[0]) {
-        Some(v) => Ok(Value::Ok(Box::new(v))),
-        None if list_len(&args[0]).is_some() => {
-            Ok(Value::Err(Box::new(Value::Str("empty list".to_string()))))
-        }
+        Some(v) => Ok(Value::Some(Box::new(v))),
+        None if list_len(&args[0]).is_some() => Ok(Value::None),
         None => Err(RuntimeError::Error(
             "List.head() argument must be a List".to_string(),
         )),
@@ -136,10 +132,8 @@ fn tail(args: &[Value]) -> Result<Value, RuntimeError> {
         )));
     }
     match list_tail_view(&args[0]) {
-        Some(v) => Ok(Value::Ok(Box::new(v))),
-        None if list_len(&args[0]).is_some() => {
-            Ok(Value::Err(Box::new(Value::Str("empty list".to_string()))))
-        }
+        Some(v) => Ok(Value::Some(Box::new(v))),
+        None if list_len(&args[0]).is_some() => Ok(Value::None),
         None => Err(RuntimeError::Error(
             "List.tail() argument must be a List".to_string(),
         )),

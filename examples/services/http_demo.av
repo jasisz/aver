@@ -43,7 +43,7 @@ fn main() -> Unit
 
     r1 = fetch(url)
     match r1
-        Result.Ok(resp) -> Console.print("GET {url} — status: {resp.status}, body length: {String.length(resp.body)}")
+        Result.Ok(resp) -> Console.print("GET {url} — status: {resp.status}, body length: {String.len(resp.body)}")
         Result.Err(msg) -> Console.print("Transport error: {msg}")
 
     r2 = checkStatus("https://httpbin.org/status/404")

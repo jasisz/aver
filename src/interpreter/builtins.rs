@@ -174,6 +174,56 @@ impl Interpreter {
                 }
                 Ok(acc)
             }
+            "List.find" => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::Error(format!(
+                        "List.find() takes 2 arguments (list, fn), got {}",
+                        args.len()
+                    )));
+                }
+                let items = list_slice(&args[0]).ok_or_else(|| {
+                    RuntimeError::Error("List.find() first argument must be a List".to_string())
+                })?;
+                let func = args[1].clone();
+                for item in items.iter().cloned() {
+                    let result = self.call_fn_ref(&func, vec![item.clone()])?;
+                    match result {
+                        Value::Bool(true) => return Ok(Value::Some(Box::new(item))),
+                        Value::Bool(false) => {}
+                        _ => {
+                            return Err(RuntimeError::Error(
+                                "List.find() predicate must return Bool".to_string(),
+                            ))
+                        }
+                    }
+                }
+                Ok(Value::None)
+            }
+            "List.any" => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::Error(format!(
+                        "List.any() takes 2 arguments (list, fn), got {}",
+                        args.len()
+                    )));
+                }
+                let items = list_slice(&args[0]).ok_or_else(|| {
+                    RuntimeError::Error("List.any() first argument must be a List".to_string())
+                })?;
+                let func = args[1].clone();
+                for item in items.iter().cloned() {
+                    let result = self.call_fn_ref(&func, vec![item])?;
+                    match result {
+                        Value::Bool(true) => return Ok(Value::Bool(true)),
+                        Value::Bool(false) => {}
+                        _ => {
+                            return Err(RuntimeError::Error(
+                                "List.any() predicate must return Bool".to_string(),
+                            ))
+                        }
+                    }
+                }
+                Ok(Value::Bool(false))
+            }
             name if name.starts_with("__ctor:") => {
                 // Format: __ctor:TypeName:VariantName
                 let parts: Vec<&str> = name.splitn(3, ':').collect();
@@ -251,6 +301,12 @@ impl Interpreter {
                     return r;
                 }
                 if let Some(r) = byte::call(name, args) {
+                    return r;
+                }
+                if let Some(r) = result::call(name, args) {
+                    return r;
+                }
+                if let Some(r) = option::call(name, args) {
                     return r;
                 }
                 Err(RuntimeError::Error(format!(

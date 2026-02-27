@@ -2,7 +2,7 @@ use super::*;
 
 impl TypeChecker {
     pub(super) fn infer_list_call_type(&mut self, name: &str, arg_types: &[Type]) -> Option<Type> {
-        let list_result = |inner: Type| Type::Result(Box::new(inner), Box::new(Type::Str));
+        let list_option = |inner: Type| Type::Option(Box::new(inner));
 
         let list_inner = |tc: &mut Self, arg_ty: &Type, arg_idx: usize| -> Type {
             match arg_ty {
@@ -43,7 +43,7 @@ impl TypeChecker {
                 Some(Type::Int)
             }
             "List.get" => {
-                if let Err(fallback) = expect_arity(self, 2, list_result(Type::Unknown)) {
+                if let Err(fallback) = expect_arity(self, 2, list_option(Type::Unknown)) {
                     return Some(fallback);
                 }
                 let elem_ty = list_inner(self, &arg_types[0], 1);
@@ -54,23 +54,23 @@ impl TypeChecker {
                         arg_types[1].display()
                     ));
                 }
-                Some(list_result(elem_ty))
+                Some(list_option(elem_ty))
             }
             "List.head" => {
-                if let Err(fallback) = expect_arity(self, 1, list_result(Type::Unknown)) {
+                if let Err(fallback) = expect_arity(self, 1, list_option(Type::Unknown)) {
                     return Some(fallback);
                 }
                 let elem_ty = list_inner(self, &arg_types[0], 1);
-                Some(list_result(elem_ty))
+                Some(list_option(elem_ty))
             }
             "List.tail" => {
                 if let Err(fallback) =
-                    expect_arity(self, 1, list_result(Type::List(Box::new(Type::Unknown))))
+                    expect_arity(self, 1, list_option(Type::List(Box::new(Type::Unknown))))
                 {
                     return Some(fallback);
                 }
                 let elem_ty = list_inner(self, &arg_types[0], 1);
-                Some(list_result(Type::List(Box::new(elem_ty))))
+                Some(list_option(Type::List(Box::new(elem_ty))))
             }
             "List.push" => {
                 if let Err(fallback) = expect_arity(self, 2, Type::List(Box::new(Type::Unknown))) {
@@ -743,7 +743,10 @@ impl TypeChecker {
                     Type::Result(ok_ty, err_ty) => {
                         match self.current_fn_ret.clone() {
                             Some(Type::Result(_, fn_err_ty)) => {
-                                if !Self::constraint_compatible(&err_ty, &fn_err_ty) {
+                                // Use compatible() (not constraint_compatible) so that
+                                // Unknown err types from generic combinators (e.g.
+                                // Option.toResult) are accepted without error.
+                                if !err_ty.compatible(&fn_err_ty) {
                                     self.error(format!(
                                         "Operator '?': Err type {} is incompatible with function's Err type {}",
                                         err_ty.display(),

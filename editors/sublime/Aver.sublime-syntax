@@ -100,8 +100,8 @@ contexts:
         3: punctuation.separator.key-value.aver
 
   namespaces:
-    # Namespace.method calls: Console.print, String.length, Char.toCode, etc.
-    - match: '\b(Console|Http|HttpServer|Disk|Tcp|Int|Float|String|List|Map|Char|Byte)(\.)'
+    # Namespace.method calls: Console.print, String.len, Char.toCode, etc.
+    - match: '\b(Console|Http|HttpServer|Disk|Tcp|Int|Float|String|List|Map|Char|Byte|Result|Option)(\.)'
       captures:
         1: support.class.namespace.aver
         2: punctuation.accessor.aver

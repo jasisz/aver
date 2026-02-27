@@ -129,8 +129,8 @@
     },
 
     "builtin-namespace": {
-      "comment": "Namespace.method calls: Console.print, String.length, Char.toCode, etc.",
-      "match": "\\b(Console|Http|HttpServer|Disk|Tcp|Int|Float|String|List|Map|Char|Byte)(\\.)(\\w+)?",
+      "comment": "Namespace.method calls: Console.print, String.len, Char.toCode, etc.",
+      "match": "\\b(Console|Http|HttpServer|Disk|Tcp|Int|Float|String|List|Map|Char|Byte|Result|Option)(\\.)(\\w+)?",
       "captures": {
         "1": { "name": "support.class.namespace.aver" },
         "2": { "name": "punctuation.accessor.aver" },

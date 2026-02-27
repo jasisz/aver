@@ -98,7 +98,7 @@ fn dispatchNumberOrErr(s: String, pos: Int, c: String) -> ParseResult
 
 fn parseLiteral(s: String, pos: Int, expected: String, value: Json) -> ParseResult
     ? "Match exact keyword using slice comparison."
-    len = String.length(expected)
+    len = String.len(expected)
     match String.slice(s, pos, pos + len) == expected
         true -> ParseResult.Ok(value, pos + len)
         false -> ParseResult.Err("Expected '" + expected + "'", pos)

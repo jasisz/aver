@@ -225,7 +225,7 @@ impl TypeChecker {
         // String namespace
         let str_list = || Type::List(Box::new(Type::Str));
         let string_sigs: &[(&str, &[Type], Type, &[&str])] = &[
-            ("String.length", &[Type::Str], Type::Int, &[]),
+            ("String.len", &[Type::Str], Type::Int, &[]),
             ("String.byteLength", &[Type::Str], Type::Int, &[]),
             (
                 "String.startsWith",
@@ -290,7 +290,7 @@ impl TypeChecker {
             (
                 "List.get",
                 &[Type::Unknown, Type::Int],
-                Type::Result(Box::new(any()), Box::new(Type::Str)),
+                Type::Option(Box::new(any())),
                 &[],
             ),
             (
@@ -302,13 +302,25 @@ impl TypeChecker {
             (
                 "List.head",
                 &[Type::Unknown],
-                Type::Result(Box::new(any()), Box::new(Type::Str)),
+                Type::Option(Box::new(any())),
                 &[],
             ),
             (
                 "List.tail",
                 &[Type::Unknown],
-                Type::Result(Box::new(any()), Box::new(Type::Str)),
+                Type::Option(Box::new(Type::List(Box::new(any())))),
+                &[],
+            ),
+            (
+                "List.find",
+                &[Type::Unknown, Type::Unknown],
+                Type::Option(Box::new(any())),
+                &[],
+            ),
+            (
+                "List.any",
+                &[Type::Unknown, Type::Unknown],
+                Type::Bool,
                 &[],
             ),
         ];
@@ -429,6 +441,28 @@ impl TypeChecker {
         self.value_members.insert(
             "Option.None".to_string(),
             Type::Option(Box::new(Type::Unknown)),
+        );
+
+        // Result combinators
+        self.insert_sig(
+            "Result.withDefault",
+            &[Type::Unknown, Type::Unknown],
+            Type::Unknown,
+            &[],
+        );
+
+        // Option combinators
+        self.insert_sig(
+            "Option.withDefault",
+            &[Type::Unknown, Type::Unknown],
+            Type::Unknown,
+            &[],
+        );
+        self.insert_sig(
+            "Option.toResult",
+            &[Type::Unknown, Type::Unknown],
+            Type::Result(Box::new(Type::Unknown), Box::new(Type::Unknown)),
+            &[],
         );
     }
 }

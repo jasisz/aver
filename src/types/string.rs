@@ -1,7 +1,7 @@
 /// String namespace — text manipulation helpers.
 ///
 /// Methods:
-///   String.length(s)            → Int            — char count (code points)
+///   String.len(s)               → Int            — char count (code points)
 ///   String.byteLength(s)        → Int            — byte count (UTF-8)
 ///   String.startsWith(s, pre)   → Bool
 ///   String.endsWith(s, suf)     → Bool
@@ -25,7 +25,7 @@ use crate::value::{list_from_vec, list_slice, RuntimeError, Value};
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
     for method in &[
-        "length",
+        "len",
         "byteLength",
         "startsWith",
         "endsWith",
@@ -62,7 +62,7 @@ pub fn effects(_name: &str) -> &'static [&'static str] {
 /// Returns `Some(result)` when `name` is owned by this namespace, `None` otherwise.
 pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
-        "String.length" => Some(length(&args)),
+        "String.len" => Some(length(&args)),
         "String.byteLength" => Some(byte_length(&args)),
         "String.startsWith" => Some(starts_with(&args)),
         "String.endsWith" => Some(ends_with(&args)),
@@ -84,10 +84,10 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
 // ─── Implementations ────────────────────────────────────────────────────────
 
 fn length(args: &[Value]) -> Result<Value, RuntimeError> {
-    let [val] = one_arg("String.length", args)?;
+    let [val] = one_arg("String.len", args)?;
     let Value::Str(s) = val else {
         return Err(RuntimeError::Error(
-            "String.length: argument must be a String".to_string(),
+            "String.len: argument must be a String".to_string(),
         ));
     };
     Ok(Value::Int(s.chars().count() as i64))

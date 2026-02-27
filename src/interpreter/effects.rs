@@ -46,7 +46,15 @@ impl Interpreter {
         if !e.is_empty() {
             return e;
         }
-        byte::effects(name)
+        let e = byte::effects(name);
+        if !e.is_empty() {
+            return e;
+        }
+        let e = result::effects(name);
+        if !e.is_empty() {
+            return e;
+        }
+        option::effects(name)
     }
 
     pub(super) fn current_allowed_effects(&self) -> &[String] {

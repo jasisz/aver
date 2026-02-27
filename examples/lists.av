@@ -25,9 +25,13 @@ fn main() -> Unit
     total = List.fold(numbers, 0, add)
     Console.print(total)
     first = List.get(numbers, 0)
-    Console.print(first)
+    match first
+        Option.Some(v) -> Console.print("First: {v}")
+        Option.None -> Console.print("No element")
     oob = List.get(numbers, 99)
-    Console.print(oob)
+    match oob
+        Option.Some(v) -> Console.print("Got: {v}")
+        Option.None -> Console.print("Out of bounds")
 
 verify double
     double(3) => 6

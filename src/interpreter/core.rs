@@ -28,6 +28,9 @@ impl Interpreter {
                 "Err".to_string(),
                 Value::Builtin("__ctor:Result.Err".to_string()),
             );
+            for (name, builtin_name) in result::extra_members() {
+                members.insert(name.to_string(), Value::Builtin(builtin_name));
+            }
             global.insert(
                 "Result".to_string(),
                 Value::Namespace {
@@ -43,6 +46,9 @@ impl Interpreter {
                 Value::Builtin("__ctor:Option.Some".to_string()),
             );
             members.insert("None".to_string(), Value::None);
+            for (name, builtin_name) in option::extra_members() {
+                members.insert(name.to_string(), Value::Builtin(builtin_name));
+            }
             global.insert(
                 "Option".to_string(),
                 Value::Namespace {

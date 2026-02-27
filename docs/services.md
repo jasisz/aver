@@ -6,18 +6,41 @@ All functions live in namespaces — no flat builtins (decision: `FullNamespaceE
 
 ### `List` namespace
 
-Source: `src/types/list.rs` (pure helpers) + `src/interpreter/builtins.rs` (`map`/`filter`/`fold` — need closure calls).
+Source: `src/types/list.rs` (pure helpers) + `src/interpreter/builtins.rs` (`map`/`filter`/`fold`/`find`/`any` — need closure calls).
 
 | Function | Signature | Notes |
 |---|---|---|
 | `List.len` | `List<T> -> Int` | |
-| `List.get` | `(List<T>, Int) -> Result<T, String>` | Returns `Result.Err` on out-of-bounds |
+| `List.get` | `(List<T>, Int) -> Option<T>` | Returns `Option.None` on out-of-bounds |
 | `List.push` | `(List<T>, T) -> List<T>` | Appends element, returns new list |
-| `List.head` | `List<T> -> Result<T, String>` | Returns `Result.Err` on empty |
-| `List.tail` | `List<T> -> Result<List<T>, String>` | Returns `Result.Err` on empty |
+| `List.head` | `List<T> -> Option<T>` | Returns `Option.None` on empty |
+| `List.tail` | `List<T> -> Option<List<T>>` | Returns `Option.None` on empty |
 | `List.map` | `(List<T>, Fn(T) -> U) -> List<U>` | |
 | `List.filter` | `(List<T>, Fn(T) -> Bool) -> List<T>` | |
 | `List.fold` | `(List<T>, U, Fn(U, T) -> U) -> U` | |
+| `List.find` | `(List<T>, Fn(T) -> Bool) -> Option<T>` | First matching element |
+| `List.any` | `(List<T>, Fn(T) -> Bool) -> Bool` | True if any element matches |
+
+### `Result` namespace
+
+Source: `src/types/result.rs` + constructors in `src/interpreter/core.rs`.
+
+| Function | Signature | Notes |
+|---|---|---|
+| `Result.Ok` | `T -> Result<T, E>` | Constructor |
+| `Result.Err` | `E -> Result<T, E>` | Constructor |
+| `Result.withDefault` | `(Result<T, E>, T) -> T` | Unwrap Ok or return default |
+
+### `Option` namespace
+
+Source: `src/types/option.rs` + constructors in `src/interpreter/core.rs`.
+
+| Function | Signature | Notes |
+|---|---|---|
+| `Option.Some` | `T -> Option<T>` | Constructor |
+| `Option.None` | `Option<T>` | Value (not a function) |
+| `Option.withDefault` | `(Option<T>, T) -> T` | Unwrap Some or return default |
+| `Option.toResult` | `(Option<T>, E) -> Result<T, E>` | Convert Option to Result |
 
 ### `Int` namespace
 
@@ -56,7 +79,7 @@ Source: `src/types/string.rs`
 
 | Function | Signature | Notes |
 |---|---|---|
-| `String.length` | `String -> Int` | |
+| `String.len` | `String -> Int` | |
 | `String.byteLength` | `String -> Int` | |
 | `String.charAt` | `(String, Int) -> Option<String>` | Single char or `Option.None` on out-of-bounds |
 | `String.startsWith` | `(String, String) -> Bool` | |
