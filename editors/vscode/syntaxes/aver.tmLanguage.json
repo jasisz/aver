@@ -10,18 +10,18 @@
     { "include": "#number" },
     { "include": "#keyword" },
     { "include": "#adr-key" },
+    { "include": "#fn-def" },
+    { "include": "#builtin-namespace" },
     { "include": "#builtin-type" },
     { "include": "#builtin-value" },
-    { "include": "#builtin-service" },
     { "include": "#constructor" },
-    { "include": "#fn-def" },
     { "include": "#operator" }
   ],
   "repository": {
 
     "comment": {
-      "name": "comment.line.double-dash.aver",
-      "match": "--.*$"
+      "name": "comment.line.double-slash.aver",
+      "match": "//.*$"
     },
 
     "description": {
@@ -35,7 +35,7 @@
     },
 
     "effects": {
-      "comment": "! [Network, Disk] effect declaration",
+      "comment": "! [Console, Http, Disk] effect declaration",
       "match": "(!)\\s*(\\[)([^\\]]*)(\\])",
       "captures": {
         "1": { "name": "keyword.operator.effect.aver" },
@@ -69,8 +69,14 @@
     "number": {
       "patterns": [
         {
+          "comment": "Float with decimal and optional exponent: 1.5, 1.5e10, 1.5e-3",
           "name": "constant.numeric.float.aver",
-          "match": "\\b[0-9]+\\.[0-9]+\\b"
+          "match": "\\b[0-9]+\\.[0-9]+([eE][+-]?[0-9]+)?\\b"
+        },
+        {
+          "comment": "Integer with exponent (still a float): 1e2, 2E+10",
+          "name": "constant.numeric.float.aver",
+          "match": "\\b[0-9]+[eE][+-]?[0-9]+\\b"
         },
         {
           "name": "constant.numeric.integer.aver",
@@ -82,7 +88,7 @@
     "keyword": {
       "patterns": [
         {
-          "comment": "Definition keywords",
+          "comment": "Definition keywords (val/var produce parse errors but are reserved)",
           "name": "keyword.declaration.aver",
           "match": "\\b(fn|val|var|type|record|module|effects)\\b"
         },
@@ -92,7 +98,7 @@
           "match": "\\b(match|verify|decision|depends|exposes)\\b"
         },
         {
-          "comment": "Module metadata keys",
+          "comment": "Module and decision metadata keys",
           "name": "keyword.other.aver",
           "match": "\\b(intent|reason|date|chosen|rejected|impacts|author|needs)\\b"
         }
@@ -108,42 +114,42 @@
       }
     },
 
-    "builtin-type": {
-      "name": "support.type.aver",
-      "match": "\\b(Int|Float|String|Bool|Unit|Result|Option|List|HttpResponse|Header)\\b"
-    },
-
-    "builtin-value": {
-      "name": "constant.language.aver",
-      "match": "\\b(true|false|Ok|Err|Some|None)\\b"
-    },
-
-    "builtin-service": {
-      "comment": "Service namespaces — Console.print, Http.get, Disk.readText etc.",
-      "match": "\\b(Console|Network|Disk)(\\.)(\\w+)?",
-      "captures": {
-        "1": { "name": "support.class.service.aver" },
-        "2": { "name": "punctuation.accessor.aver" },
-        "3": { "name": "support.function.service.aver" }
-      }
-    },
-
-    "constructor": {
-      "comment": "Qualified constructors: Shape.Circle, Shape.Rect etc.",
-      "match": "\\b([A-Z][a-zA-Z0-9]*)(\\.)?([A-Z][a-zA-Z0-9]*)?",
-      "captures": {
-        "1": { "name": "entity.name.type.aver" },
-        "2": { "name": "punctuation.accessor.aver" },
-        "3": { "name": "entity.name.type.variant.aver" }
-      }
-    },
-
     "fn-def": {
       "comment": "fn name( — highlight function name",
       "match": "^\\s*(fn)\\s+([a-z_][a-zA-Z0-9_]*)",
       "captures": {
         "1": { "name": "keyword.declaration.function.aver" },
         "2": { "name": "entity.name.function.aver" }
+      }
+    },
+
+    "builtin-namespace": {
+      "comment": "Namespace.method calls: Console.print, String.length, Char.toCode, etc.",
+      "match": "\\b(Console|Http|HttpServer|Disk|Tcp|Int|Float|String|List|Map|Char|Byte)(\\.)(\\w+)?",
+      "captures": {
+        "1": { "name": "support.class.namespace.aver" },
+        "2": { "name": "punctuation.accessor.aver" },
+        "3": { "name": "support.function.namespace.aver" }
+      }
+    },
+
+    "builtin-type": {
+      "name": "support.type.aver",
+      "match": "\\b(Int|Float|String|Bool|Unit|Result|Option|List|Map|Fn|HttpResponse|HttpRequest|Header)\\b"
+    },
+
+    "builtin-value": {
+      "name": "constant.language.aver",
+      "match": "\\b(true|false)\\b"
+    },
+
+    "constructor": {
+      "comment": "Qualified constructors: Result.Ok, Shape.Circle, Option.None",
+      "match": "\\b([A-Z][a-zA-Z0-9]*)(\\.)?([A-Z][a-zA-Z0-9]*)?",
+      "captures": {
+        "1": { "name": "entity.name.type.aver" },
+        "2": { "name": "punctuation.accessor.aver" },
+        "3": { "name": "entity.name.type.variant.aver" }
       }
     },
 

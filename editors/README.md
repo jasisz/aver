@@ -29,13 +29,16 @@ Hot-reloads — no restart needed. Select **Aver** from the language menu in the
 
 ## What's highlighted
 
-- Keywords: `fn`, `val`, `var`, `type`, `record`, `module`, `match`, `verify`, `decision`
-- Effect declarations: `! [Http, Disk, Tcp]`
+- Keywords: `fn`, `type`, `record`, `module`, `match`, `verify`, `decision`, `depends`, `exposes`, `effects`
+- Reserved words (parse errors): `val`, `var`
+- Effect declarations: `! [Console, Http, Disk]`
 - Function descriptions: `? "..."`
 - String interpolation: `"Hello, {name}!"`
-- Built-in types: `Int`, `Float`, `String`, `Bool`, `Result`, `Option`, `List`
-- Built-in values: `true`, `false`, `Ok`, `Err`, `Some`, `None`
-- Service calls: `Console.print`, `Http.get`, `Disk.readText`, `Tcp.send`
-- Qualified constructors: `Shape.Circle`, `Models.User`
-- ADR keys: `date`, `reason`, `chosen`, `rejected`, `impacts`
+- Escape sequences: `\n`, `\t`, `\\`, `\"`, etc.
+- Built-in types: `Int`, `Float`, `String`, `Bool`, `Unit`, `Result`, `Option`, `List`, `Map`, `Fn`
+- Built-in values: `true`, `false`
+- Namespace calls: `Console.print`, `Http.get`, `Disk.readText`, `Tcp.send`, `Int.fromString`, `String.length`, `List.map`, `Map.get`, `Char.toCode`, `Byte.toHex`
+- Qualified constructors: `Result.Ok`, `Option.None`, `Shape.Circle`
+- ADR keys: `date`, `reason`, `chosen`, `rejected`, `impacts`, `author`
+- Numbers: integers, floats, scientific notation (`1.5e-3`)
 - Comments: `// ...`

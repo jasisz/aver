@@ -13,15 +13,15 @@ contexts:
     - include: number
     - include: fn-def
     - include: keywords
+    - include: namespaces
     - include: builtin-types
     - include: builtin-values
-    - include: services
     - include: constructors
     - include: operators
 
   comment:
-    - match: '--.*$'
-      scope: comment.line.double-dash.aver
+    - match: '//.*$'
+      scope: comment.line.double-slash.aver
 
   description:
     # ? "prose description" on a function
@@ -36,7 +36,7 @@ contexts:
           pop: true
 
   effects:
-    # ! [Network, Disk]
+    # ! [Console, Http, Disk]
     - match: '(!)\s*(\[)'
       captures:
         1: keyword.operator.effect.aver
@@ -71,7 +71,11 @@ contexts:
           scope: constant.character.escape.aver
 
   number:
-    - match: '\b[0-9]+\.[0-9]+\b'
+    # Float with decimal and optional exponent: 1.5, 1.5e10, 1.5e-3
+    - match: '\b[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?\b'
+      scope: constant.numeric.float.aver
+    # Integer with exponent (still a float): 1e2, 2E+10
+    - match: '\b[0-9]+[eE][+-]?[0-9]+\b'
       scope: constant.numeric.float.aver
     - match: '\b[0-9]+\b'
       scope: constant.numeric.integer.aver
@@ -83,6 +87,7 @@ contexts:
         2: entity.name.function.aver
 
   keywords:
+    # val/var produce parse errors but are reserved words
     - match: '\b(val|var|type|record|module|effects|depends|exposes)\b'
       scope: keyword.declaration.aver
     - match: '\b(match|verify|decision)\b'
@@ -92,29 +97,29 @@ contexts:
         2: keyword.other.adr.aver
         3: punctuation.separator.key-value.aver
 
-  builtin-types:
-    - match: '\b(Int|Float|String|Bool|Unit|Result|Option|List|HttpResponse|Header)\b'
-      scope: support.type.aver
-
-  builtin-values:
-    - match: '\b(true|false|Ok|Err|Some|None)\b'
-      scope: constant.language.aver
-
-  services:
-    # Console.print, Http.get, Disk.readText etc.
-    - match: '\b(Console|Network|Disk)(\.)'
+  namespaces:
+    # Namespace.method calls: Console.print, String.length, Char.toCode, etc.
+    - match: '\b(Console|Http|HttpServer|Disk|Tcp|Int|Float|String|List|Map|Char|Byte)(\.)'
       captures:
-        1: support.class.service.aver
+        1: support.class.namespace.aver
         2: punctuation.accessor.aver
       push:
         - match: '[a-z][a-zA-Z0-9]*'
-          scope: support.function.service.aver
+          scope: support.function.namespace.aver
           pop: true
         - match: ''
           pop: true
 
+  builtin-types:
+    - match: '\b(Int|Float|String|Bool|Unit|Result|Option|List|Map|Fn|HttpResponse|HttpRequest|Header)\b'
+      scope: support.type.aver
+
+  builtin-values:
+    - match: '\b(true|false)\b'
+      scope: constant.language.aver
+
   constructors:
-    # Type names and qualified constructors: Shape.Circle
+    # Qualified constructors: Result.Ok, Shape.Circle, Option.None
     - match: '\b([A-Z][a-zA-Z0-9]*)(\.)([A-Z][a-zA-Z0-9]*)\b'
       captures:
         1: entity.name.type.aver
