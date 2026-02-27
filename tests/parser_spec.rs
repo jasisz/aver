@@ -622,6 +622,20 @@ fn match_list_cons_pattern_with_underscore() {
 }
 
 // ---------------------------------------------------------------------------
+// Match arm body must be on the same line as ->
+// ---------------------------------------------------------------------------
+
+#[test]
+fn match_arm_body_after_newline_is_error() {
+    let src = "fn f(x: Int) -> Int\n    = match x\n        1 ->\n            42\n        _ -> 0\n";
+    let msg = parse_error(src);
+    assert!(
+        msg.contains("same line"),
+        "expected 'same line' hint, got: {msg}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Module blocks
 // ---------------------------------------------------------------------------
 

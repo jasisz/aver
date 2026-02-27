@@ -20,6 +20,11 @@ impl Parser {
 
                 let pattern = self.parse_pattern()?;
                 self.expect_exact(&TokenKind::Arrow)?;
+                if self.is_newline() || self.is_indent() {
+                    return Err(self.error(
+                        "Match arm body must follow '->' on the same line. Extract complex expressions into a named function.".to_string()
+                    ));
+                }
                 let body = self.parse_expr()?;
                 arms.push(MatchArm {
                     pattern,

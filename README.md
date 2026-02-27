@@ -258,7 +258,7 @@ match value
     User(name, age) -> "user {name}"       // record positional destructuring
 ```
 
-Nested match in match arms is supported.
+Nested match in match arms is supported. Arm body must follow `->` on the same line — extract complex expressions into a named function.
 
 ### Record update
 
@@ -347,6 +347,7 @@ Type errors block `run`, `check`, and `verify`. No partial execution. The checke
 | `null` | `Option<T>` with `Some`/`None` only |
 | Exceptions | `Result<T, E>` only — errors are values |
 | Global mutable state | No shared mutable state by design |
+| Closures | All functions are top-level — no captured variables, explicit is better than implicit |
 | Magic | No decorators, no implicit behaviour, no runtime reflection |
 
 ---
