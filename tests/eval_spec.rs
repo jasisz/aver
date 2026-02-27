@@ -586,7 +586,9 @@ fn list_find_returns_first_match() {
     let src = "fn isEven(n: Int) -> Bool\n    = Int.mod(n, 2) == Result.Ok(0)\nfn main() -> Unit\n    = List.find([1, 3, 4, 6], isEven)\n";
     let mut interp = run_program(src);
     let main_val = interp.lookup("main").unwrap();
-    let result = interp.call_value_with_effects_pub(main_val, vec![], "main", vec![]).unwrap();
+    let result = interp
+        .call_value_with_effects_pub(main_val, vec![], "main", vec![])
+        .unwrap();
     assert_eq!(result, Value::Some(Box::new(Value::Int(4))));
 }
 
@@ -595,7 +597,9 @@ fn list_find_returns_none_when_no_match() {
     let src = "fn isNeg(n: Int) -> Bool\n    = n < 0\nfn main() -> Unit\n    = List.find([1, 2, 3], isNeg)\n";
     let mut interp = run_program(src);
     let main_val = interp.lookup("main").unwrap();
-    let result = interp.call_value_with_effects_pub(main_val, vec![], "main", vec![]).unwrap();
+    let result = interp
+        .call_value_with_effects_pub(main_val, vec![], "main", vec![])
+        .unwrap();
     assert_eq!(result, Value::None);
 }
 
@@ -604,7 +608,9 @@ fn list_any_returns_true() {
     let src = "fn isNeg(n: Int) -> Bool\n    = n < 0\nfn main() -> Unit\n    = List.any([1, -2, 3], isNeg)\n";
     let mut interp = run_program(src);
     let main_val = interp.lookup("main").unwrap();
-    let result = interp.call_value_with_effects_pub(main_val, vec![], "main", vec![]).unwrap();
+    let result = interp
+        .call_value_with_effects_pub(main_val, vec![], "main", vec![])
+        .unwrap();
     assert_eq!(result, Value::Bool(true));
 }
 
@@ -613,7 +619,9 @@ fn list_any_returns_false() {
     let src = "fn isNeg(n: Int) -> Bool\n    = n < 0\nfn main() -> Unit\n    = List.any([1, 2, 3], isNeg)\n";
     let mut interp = run_program(src);
     let main_val = interp.lookup("main").unwrap();
-    let result = interp.call_value_with_effects_pub(main_val, vec![], "main", vec![]).unwrap();
+    let result = interp
+        .call_value_with_effects_pub(main_val, vec![], "main", vec![])
+        .unwrap();
     assert_eq!(result, Value::Bool(false));
 }
 
@@ -2917,7 +2925,10 @@ updated = User.update(u, age = 99)
     match &updated {
         Value::Record { fields, .. } => {
             // name should be unchanged
-            assert_eq!(fields[0], ("name".to_string(), Value::Str("Alice".to_string())));
+            assert_eq!(
+                fields[0],
+                ("name".to_string(), Value::Str("Alice".to_string()))
+            );
             // age should be updated
             assert_eq!(fields[1], ("age".to_string(), Value::Int(99)));
         }

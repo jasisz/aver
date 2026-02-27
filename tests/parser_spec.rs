@@ -996,9 +996,7 @@ fn record_update_multiple_fields() {
     if let TopLevel::FnDef(fd) = &items[1] {
         match fd.body.as_ref() {
             FnBody::Expr(Expr::RecordUpdate {
-                type_name,
-                updates,
-                ..
+                type_name, updates, ..
             }) => {
                 assert_eq!(type_name, "User");
                 assert_eq!(updates.len(), 2);

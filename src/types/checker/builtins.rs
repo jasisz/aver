@@ -317,12 +317,7 @@ impl TypeChecker {
                 Type::Option(Box::new(any())),
                 &[],
             ),
-            (
-                "List.any",
-                &[Type::Unknown, Type::Unknown],
-                Type::Bool,
-                &[],
-            ),
+            ("List.any", &[Type::Unknown, Type::Unknown], Type::Bool, &[]),
         ];
         for (name, params, ret, effects) in list_sigs {
             self.insert_sig(name, params, ret.clone(), effects);

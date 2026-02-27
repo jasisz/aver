@@ -219,7 +219,10 @@ impl Interpreter {
     ) -> Result<Value, RuntimeError> {
         let base_val = self.eval_expr(base)?;
         let (base_type, base_fields) = match base_val {
-            Value::Record { type_name: t, fields } => (t, fields),
+            Value::Record {
+                type_name: t,
+                fields,
+            } => (t, fields),
             _ => {
                 return Err(RuntimeError::Error(format!(
                     "{}.update: base must be a {} record",

@@ -104,11 +104,7 @@ impl Parser {
         if &self.current().kind == kind {
             Ok(self.advance().clone())
         } else {
-            Err(self.error(format!(
-                "Expected {}, found {}",
-                kind,
-                self.current().kind
-            )))
+            Err(self.error(format!("Expected {}, found {}", kind, self.current().kind)))
         }
     }
 
