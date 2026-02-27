@@ -459,6 +459,27 @@ fn string_chars() {
     );
 }
 
+#[test]
+fn string_char_at_valid_index() {
+    assert_eq!(
+        eval("String.charAt(\"hello\", 1)"),
+        Value::Some(Box::new(Value::Str("e".to_string())))
+    );
+}
+
+#[test]
+fn string_char_at_out_of_bounds() {
+    assert_eq!(eval("String.charAt(\"hi\", 5)"), Value::None);
+}
+
+#[test]
+fn string_char_at_first() {
+    assert_eq!(
+        eval("String.charAt(\"abc\", 0)"),
+        Value::Some(Box::new(Value::Str("a".to_string())))
+    );
+}
+
 // ---------------------------------------------------------------------------
 // List namespace
 // ---------------------------------------------------------------------------

@@ -11,6 +11,7 @@
 ///   String.split(s, delim)      → List<String>
 ///   String.replace(s, old, new) → String
 ///   String.join(list, sep)      → String
+///   String.charAt(s, index)     → Option<String>  — O(1)-ish char at code-point index
 ///   String.chars(s)             → List<String>   — each char as 1-char string
 ///   String.fromInt(n)           → String
 ///   String.fromFloat(f)         → String
@@ -34,6 +35,7 @@ pub fn register(global: &mut HashMap<String, Value>) {
         "split",
         "replace",
         "join",
+        "charAt",
         "chars",
         "fromInt",
         "fromFloat",
@@ -70,6 +72,7 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
         "String.split" => Some(split(&args)),
         "String.replace" => Some(replace(&args)),
         "String.join" => Some(join(&args)),
+        "String.charAt" => Some(char_at(&args)),
         "String.chars" => Some(chars(&args)),
         "String.fromInt" => Some(from_int(&args)),
         "String.fromFloat" => Some(from_float(&args)),
@@ -217,6 +220,25 @@ fn join(args: &[Value]) -> Result<Value, RuntimeError> {
         })
         .collect();
     Ok(Value::Str(strs?.join(sep.as_str())))
+}
+
+fn char_at(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [a, b] = two_args("String.charAt", args)?;
+    let Value::Str(s) = a else {
+        return Err(RuntimeError::Error(
+            "String.charAt: first argument must be a String".to_string(),
+        ));
+    };
+    let Value::Int(idx) = b else {
+        return Err(RuntimeError::Error(
+            "String.charAt: second argument must be an Int".to_string(),
+        ));
+    };
+    let idx = *idx as usize;
+    match s.chars().nth(idx) {
+        Some(c) => Ok(Value::Some(Box::new(Value::Str(c.to_string())))),
+        None => Ok(Value::None),
+    }
 }
 
 fn chars(args: &[Value]) -> Result<Value, RuntimeError> {

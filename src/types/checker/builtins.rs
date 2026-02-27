@@ -250,6 +250,12 @@ impl TypeChecker {
                 &[],
             ),
             ("String.join", &[str_list(), Type::Str], Type::Str, &[]),
+            (
+                "String.charAt",
+                &[Type::Str, Type::Int],
+                Type::Option(Box::new(Type::Str)),
+                &[],
+            ),
             ("String.chars", &[Type::Str], str_list(), &[]),
             ("String.fromInt", &[Type::Int], Type::Str, &[]),
             ("String.fromFloat", &[Type::Float], Type::Str, &[]),
