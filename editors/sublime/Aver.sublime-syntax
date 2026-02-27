@@ -59,6 +59,8 @@ contexts:
         - match: '"'
           scope: punctuation.definition.string.end.aver
           pop: true
+        - match: '\{\{|\}\}'
+          scope: constant.character.escape.aver
         - match: '\{'
           scope: punctuation.section.interpolation.begin.aver
           push:

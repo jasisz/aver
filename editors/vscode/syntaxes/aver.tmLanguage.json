@@ -52,6 +52,11 @@
       "end": "\"",
       "patterns": [
         {
+          "comment": "Escaped braces: {{ and }} produce literal { and }",
+          "name": "constant.character.escape.aver",
+          "match": "\\{\\{|\\}\\}"
+        },
+        {
           "name": "meta.embedded.expression.aver",
           "begin": "\\{",
           "end": "\\}",
