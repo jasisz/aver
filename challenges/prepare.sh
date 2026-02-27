@@ -109,11 +109,24 @@ You are done when ALL of these pass:
 - aver verify — all verify cases pass
 - aver run — executes without runtime errors
 
-When finished, write challenges/$CHALLENGE/notes.md with:
+When finished, write challenges/$CHALLENGE/notes.md covering:
+
+Process:
 - Which docs you read and in what order
-- What was confusing or surprising about the language
 - How many attempts before check/verify/run all passed
-- What you would do differently next time
+- Which error messages helped you, which ones were unhelpful or misleading
+
+Language review:
+- Rate Aver 1-10 for: readability, learnability, expressiveness, error messages
+- What felt natural or well-designed
+- What felt awkward, missing, or frustrating
+- Did the lack of if/else bother you? Was match sufficient?
+- How does Aver compare to languages you know (pick 2-3 specific comparisons)
+
+Suggestions:
+- What would you add to the language if you could
+- What would you change about the docs to learn faster
+- Would you use Aver for a real project? Why or why not
 PROMPT
     echo ""
 }
