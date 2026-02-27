@@ -6,7 +6,9 @@
 ///
 /// Sub-modules:
 /// - `checker` — static type checker
-/// - `int`, `float`, `string`, `list`, `map` — pure namespace helpers (no effects)
+/// - `int`, `float`, `string`, `list`, `map`, `char`, `byte` — pure namespace helpers (no effects)
+pub mod byte;
+pub mod char;
 pub mod checker;
 pub mod float;
 pub mod int;

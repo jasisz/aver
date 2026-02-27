@@ -2584,3 +2584,124 @@ fn typed_binding_runtime_works() {
     let interp = run_program(src);
     assert_eq!(interp.lookup("result").unwrap(), Value::Int(42));
 }
+
+// ---------------------------------------------------------------------------
+// Char namespace
+// ---------------------------------------------------------------------------
+
+#[test]
+fn char_to_code_ascii() {
+    assert_eq!(eval("Char.toCode(\"A\")"), Value::Int(65));
+}
+
+#[test]
+fn char_to_code_unicode() {
+    assert_eq!(eval("Char.toCode(\"π\")"), Value::Int(960));
+}
+
+#[test]
+fn char_to_code_emoji() {
+    // 🎉 = U+1F389
+    assert_eq!(eval("Char.toCode(\"🎉\")"), Value::Int(0x1F389));
+}
+
+#[test]
+fn char_from_code_valid() {
+    assert_eq!(
+        eval("Char.fromCode(65)"),
+        Value::Some(Box::new(Value::Str("A".to_string())))
+    );
+}
+
+#[test]
+fn char_from_code_unicode() {
+    assert_eq!(
+        eval("Char.fromCode(960)"),
+        Value::Some(Box::new(Value::Str("π".to_string())))
+    );
+}
+
+#[test]
+fn char_from_code_surrogate_returns_none() {
+    // U+D800 is a surrogate — not a valid scalar value
+    assert_eq!(eval("Char.fromCode(55296)"), Value::None);
+}
+
+#[test]
+fn char_from_code_negative_returns_none() {
+    assert_eq!(eval("Char.fromCode(0 - 1)"), Value::None);
+}
+
+#[test]
+fn char_from_code_too_large_returns_none() {
+    // > U+10FFFF
+    assert_eq!(eval("Char.fromCode(1114112)"), Value::None);
+}
+
+// ---------------------------------------------------------------------------
+// Byte namespace
+// ---------------------------------------------------------------------------
+
+#[test]
+fn byte_to_hex_zero() {
+    assert_eq!(
+        eval("Byte.toHex(0)"),
+        Value::Ok(Box::new(Value::Str("00".to_string())))
+    );
+}
+
+#[test]
+fn byte_to_hex_255() {
+    assert_eq!(
+        eval("Byte.toHex(255)"),
+        Value::Ok(Box::new(Value::Str("ff".to_string())))
+    );
+}
+
+#[test]
+fn byte_to_hex_ten() {
+    assert_eq!(
+        eval("Byte.toHex(10)"),
+        Value::Ok(Box::new(Value::Str("0a".to_string())))
+    );
+}
+
+#[test]
+fn byte_to_hex_out_of_range() {
+    let val = eval("Byte.toHex(256)");
+    assert!(matches!(val, Value::Err(_)));
+}
+
+#[test]
+fn byte_to_hex_negative() {
+    let val = eval("Byte.toHex(0 - 1)");
+    assert!(matches!(val, Value::Err(_)));
+}
+
+#[test]
+fn byte_from_hex_valid() {
+    assert_eq!(
+        eval("Byte.fromHex(\"0a\")"),
+        Value::Ok(Box::new(Value::Int(10)))
+    );
+}
+
+#[test]
+fn byte_from_hex_uppercase() {
+    assert_eq!(
+        eval("Byte.fromHex(\"FF\")"),
+        Value::Ok(Box::new(Value::Int(255)))
+    );
+}
+
+#[test]
+fn byte_from_hex_invalid_chars() {
+    let val = eval("Byte.fromHex(\"zz\")");
+    assert!(matches!(val, Value::Err(_)));
+}
+
+#[test]
+fn byte_from_hex_wrong_length() {
+    let val = eval("Byte.fromHex(\"a\")");
+    assert!(matches!(val, Value::Err(_)));
+}

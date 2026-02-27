@@ -373,6 +373,39 @@ impl TypeChecker {
             self.insert_sig(name, params, ret.clone(), effects);
         }
 
+        // Char namespace
+        let char_sigs: &[(&str, &[Type], Type, &[&str])] = &[
+            ("Char.toCode", &[Type::Str], Type::Int, &[]),
+            (
+                "Char.fromCode",
+                &[Type::Int],
+                Type::Option(Box::new(Type::Str)),
+                &[],
+            ),
+        ];
+        for (name, params, ret, effects) in char_sigs {
+            self.insert_sig(name, params, ret.clone(), effects);
+        }
+
+        // Byte namespace
+        let byte_sigs: &[(&str, &[Type], Type, &[&str])] = &[
+            (
+                "Byte.toHex",
+                &[Type::Int],
+                Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
+                &[],
+            ),
+            (
+                "Byte.fromHex",
+                &[Type::Str],
+                Type::Result(Box::new(Type::Int), Box::new(Type::Str)),
+                &[],
+            ),
+        ];
+        for (name, params, ret, effects) in byte_sigs {
+            self.insert_sig(name, params, ret.clone(), effects);
+        }
+
         // Result.Ok / Result.Err / Option.Some — constructor signatures
         self.insert_sig(
             "Result.Ok",

@@ -38,7 +38,15 @@ impl Interpreter {
         if !e.is_empty() {
             return e;
         }
-        map::effects(name)
+        let e = map::effects(name);
+        if !e.is_empty() {
+            return e;
+        }
+        let e = char::effects(name);
+        if !e.is_empty() {
+            return e;
+        }
+        byte::effects(name)
     }
 
     pub(super) fn current_allowed_effects(&self) -> &[String] {

@@ -14,6 +14,8 @@ impl Interpreter {
         string::register(&mut global);
         list::register(&mut global);
         map::register(&mut global);
+        char::register(&mut global);
+        byte::register(&mut global);
 
         // Result and Option namespaces — constructors for Ok/Err/Some/None
         {
