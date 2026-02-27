@@ -62,7 +62,6 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 
 - Effect handlers / row-polymorphic effects — runtime currently uses declared effect lists with call-edge capability checks; no handlers yet
 - decision-query flags (`--impacts`, `--since`, etc.) for `aver context --decisions-only`
-- `aver decisions --format markdown` — auto-generate documentation from decision blocks. Decision blocks already have full structure (`date`, `reason`, `chosen`, `rejected`, `impacts`, `author`), so a Markdown renderer can produce a complete ADR document without any manual writing. Natural extension of "decisions are first-class citizens".
 
 ### What will NEVER be in Aver (design decisions)
 
@@ -174,6 +173,7 @@ cargo run -- verify examples/lists.av
 cargo run -- check examples/hello.av
 cargo run -- check examples/calculator.av
 cargo run -- context decisions/architecture.av --decisions-only
+cargo run -- decisions --docs
 cargo run -- context examples/calculator.av
 ```
 

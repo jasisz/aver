@@ -180,6 +180,8 @@ aver context   file.av                   # export project context (Markdown)
 aver context   file.av --json            # export project context (JSON)
 aver context   file.av --decisions-only        # decision blocks only (Markdown)
 aver context   file.av --decisions-only --json # decision blocks only (JSON)
+aver decisions                          # ADR-style decisions from decisions/architecture.av
+aver decisions --docs                   # regenerate docs/decisions.md from decision blocks
 aver repl                              # interactive REPL
 ```
 
@@ -286,7 +288,7 @@ Requires: Rust stable toolchain.
 | [docs/services.md](docs/services.md) | Full API reference for all namespaces (signatures, effects, notes) |
 | [docs/types.md](docs/types.md) | Key data types (compiler, AST, runtime) |
 | [docs/extending.md](docs/extending.md) | How to add keywords, namespace functions, expression types |
-| [docs/decisions.md](docs/decisions.md) | Agreed directions: modules, concurrency, verify-first debugging |
+| [docs/decisions.md](docs/decisions.md) | Partially generated ADR document from `decision` blocks |
 
 ---
 
@@ -299,7 +301,7 @@ Implemented in Rust with extensive automated test coverage.
 - [x] Static type checker — blocks execution on type errors
 - [x] Effect system — statically enforced + runtime call-edge gate
 - [x] `verify` block runner — co-located tests
-- [x] `decision` block indexer — queryable ADRs via `aver context --decisions-only`
+- [x] `decision` tooling — queryable ADRs via `aver context --decisions-only` and docs generation via `aver decisions --docs`
 - [x] List builtins: `map`, `filter`, `fold`, `get`, `head`, `tail`, `push`
 - [x] User-defined sum types (`type`) and product types (`record`)
 - [x] List pattern matching (`[]`, `[h, ..t]`)

@@ -10,6 +10,8 @@ mod context_cmd;
 mod context_data;
 #[path = "main/context_format.rs"]
 mod context_format;
+#[path = "main/decisions_cmd.rs"]
+mod decisions_cmd;
 #[path = "main/repl.rs"]
 mod repl;
 #[path = "main/replay_cmd.rs"]
@@ -66,6 +68,14 @@ fn main() {
                 *json,
                 *decisions_only,
             );
+        }
+        Commands::Decisions {
+            source,
+            output,
+            json,
+            docs,
+        } => {
+            decisions_cmd::cmd_decisions(source.as_deref(), output.as_deref(), *json, *docs);
         }
     }
 }

@@ -70,4 +70,19 @@ pub(super) enum Commands {
         #[arg(long)]
         decisions_only: bool,
     },
+    /// Export decision blocks (ADR-style) and optionally update docs
+    Decisions {
+        /// File or directory with `.av` files containing `decision` blocks
+        /// (default: decisions/architecture.av)
+        source: Option<String>,
+        /// Write output to file instead of stdout
+        #[arg(short = 'o', long)]
+        output: Option<String>,
+        /// Output as JSON instead of Markdown
+        #[arg(long)]
+        json: bool,
+        /// Update docs/decisions.md generated section between markers
+        #[arg(long)]
+        docs: bool,
+    },
 }
