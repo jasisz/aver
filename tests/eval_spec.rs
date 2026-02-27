@@ -625,6 +625,16 @@ fn list_any_returns_false() {
     assert_eq!(result, Value::Bool(false));
 }
 
+#[test]
+fn list_contains_returns_true() {
+    assert_eq!(eval("List.contains([1, 2, 3], 2)"), Value::Bool(true));
+}
+
+#[test]
+fn list_contains_returns_false() {
+    assert_eq!(eval("List.contains([1, 2, 3], 9)"), Value::Bool(false));
+}
+
 // ---------------------------------------------------------------------------
 // Result.withDefault / Option.withDefault / Option.toResult
 // ---------------------------------------------------------------------------

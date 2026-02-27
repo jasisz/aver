@@ -92,7 +92,18 @@ impl TypeChecker {
             }
 
             // Infinite domains — only exhaustive with a catch-all (already checked above).
-            Type::Int | Type::Float | Type::Str | Type::Tuple(_) => {
+            Type::Tuple(item_tys) => {
+                let has_total_tuple_arm = arms
+                    .iter()
+                    .any(|arm| tuple_pattern_is_total(&arm.pattern, item_tys));
+                if !has_total_tuple_arm {
+                    self.error_at_line(
+                        line,
+                        "Non-exhaustive match: missing catch-all (_) pattern".to_string(),
+                    );
+                }
+            }
+            Type::Int | Type::Float | Type::Str => {
                 self.error_at_line(
                     line,
                     "Non-exhaustive match: missing catch-all (_) pattern".to_string(),
@@ -162,4 +173,28 @@ impl TypeChecker {
 /// A catch-all pattern covers all possible values.
 fn is_catch_all(pattern: &Pattern) -> bool {
     matches!(pattern, Pattern::Wildcard | Pattern::Ident(_))
+}
+
+fn tuple_pattern_is_total(pattern: &Pattern, tuple_items: &[Type]) -> bool {
+    match pattern {
+        Pattern::Tuple(items) if items.len() == tuple_items.len() => items
+            .iter()
+            .zip(tuple_items.iter())
+            .all(|(item, item_ty)| pattern_is_total_for_type(item, item_ty)),
+        _ => false,
+    }
+}
+
+fn pattern_is_total_for_type(pattern: &Pattern, ty: &Type) -> bool {
+    match pattern {
+        Pattern::Wildcard | Pattern::Ident(_) => true,
+        Pattern::Tuple(items) => match ty {
+            Type::Tuple(elem_tys) if items.len() == elem_tys.len() => items
+                .iter()
+                .zip(elem_tys.iter())
+                .all(|(item, item_ty)| pattern_is_total_for_type(item, item_ty)),
+            _ => false,
+        },
+        _ => false,
+    }
 }

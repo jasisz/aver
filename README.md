@@ -314,6 +314,24 @@ fn charge(account: String, amount: Int) -> Result<String, String>
 All user-defined functions are top-level. At call time, a function sees globals + its own parameters — no closure capture at definition time.
 There is no lambda syntax. Higher-order APIs (for example `List.map`, `List.filter`, `List.any`) take a top-level function name.
 
+### Common patterns (without closures)
+
+```aver
+fn isEven(n: Int) -> Bool
+    = Int.mod(n, 2) == Result.Ok(0)
+
+evens = List.filter([1, 2, 3, 4], isEven)
+```
+
+```aver
+hasAlice = List.contains(["alice", "bob"], "alice")
+```
+
+```aver
+ages = Map.fromList([("alice", 30), ("bob", 25)])
+maybe_age = Map.get(ages, "alice")
+```
+
 ### Auto-memoization
 
 Pure recursive functions with memo-safe arguments (scalars, records/variants of scalars) are automatically memoized at runtime. No keyword needed — the compiler detects eligibility via call-graph analysis (Tarjan SCC). Cache is capped at 4096 entries per function.
@@ -375,7 +393,7 @@ Pure namespaces (no effects):
 | `Int` | `fromString`, `fromFloat`, `toString`, `toFloat`, `abs`, `min`, `max`, `mod` |
 | `Float` | `fromString`, `fromInt`, `toString`, `abs`, `floor`, `ceil`, `round`, `min`, `max` |
 | `String` | `len`, `byteLength`, `charAt`, `startsWith`, `endsWith`, `contains`, `slice`, `trim`, `split`, `replace`, `join`, `chars`, `fromInt`, `fromFloat`, `fromBool`, `toLower`, `toUpper` |
-| `List` | `len`, `map`, `filter`, `fold`, `get`, `push`, `head`, `tail` |
+| `List` | `len`, `map`, `filter`, `fold`, `get`, `push`, `head`, `tail`, `find`, `any`, `contains`, `zip`, `flatMap` |
 | `Map` | `empty`, `fromList`, `set`, `get`, `has`, `remove`, `keys`, `values`, `entries`, `len` |
 | `Char` | `toCode` (String→Int), `fromCode` (Int→Option\<String\>) — not a type, operates on String/Int |
 | `Byte` | `toHex` (Int→Result), `fromHex` (String→Result) — not a type, operates on Int/String |
@@ -412,6 +430,7 @@ Requires: Rust stable toolchain.
 | `hello.av` | Functions, string interpolation, pipe, verify |
 | `calculator.av` | Result types, match, decision blocks |
 | `lists.av` | List literals, map / filter / fold |
+| `map.av` | Typed maps: `Map.fromList`, `Map.set`, `Map.get`, `Map.entries` |
 | `shapes.av` | Sum types, qualified constructors (`Shape.Circle`), match on variants |
 | `user_record.av` | Record types, field access, positional match |
 | `fibonacci.av` | Tail recursion, records, decision blocks |
@@ -448,7 +467,7 @@ Implemented in Rust with extensive automated test coverage.
 - [x] Effect system — statically enforced + runtime call-edge gate
 - [x] `verify` block runner — co-located tests
 - [x] `decision` tooling — queryable ADRs via `aver context --decisions-only` and docs generation via `aver decisions --docs`
-- [x] List builtins: `map`, `filter`, `fold`, `get`, `head`, `tail`, `push`, `find`, `any`, `zip`, `flatMap`
+- [x] List builtins: `map`, `filter`, `fold`, `get`, `head`, `tail`, `push`, `find`, `any`, `contains`, `zip`, `flatMap`
 - [x] User-defined sum types (`type`) and product types (`record`)
 - [x] List pattern matching (`[]`, `[h, ..t]`), tuple patterns (`(a, b)`, nested)
 - [x] Module imports (`depends [Examples.Foo]`, `depends [Examples.Models.User]`)

@@ -1,0 +1,50 @@
+module MapExample
+    intent =
+        "Demonstrates typed Map usage in Aver."
+        "Shows Map.fromList, Map.get, Map.entries, and counting with List.fold."
+
+fn emptyCounts() -> Map<String, Int>
+    ? "Creates an empty word-count map."
+    = Map.empty()
+
+fn incCount(counts: Map<String, Int>, word: String) -> Map<String, Int>
+    ? "Increments the counter for one word."
+    current = Map.get(counts, word)
+    match current
+        Option.Some(n) -> Map.set(counts, word, n + 1)
+        Option.None    -> Map.set(counts, word, 1)
+
+fn countWords(words: List<String>) -> Map<String, Int>
+    ? "Counts occurrences of each word."
+    = List.fold(words, emptyCounts(), incCount)
+
+fn containsWord(words: List<String>, word: String) -> Bool
+    ? "Checks whether a word appears in a list."
+    = List.contains(words, word)
+
+fn main() -> Unit
+    ! [Console]
+    words = ["alice", "bob", "alice", "eve"]
+    counts = countWords(words)
+    Console.print("Counts:")
+    Console.print(counts)
+    Console.print("alice count:")
+    Console.print(Map.get(counts, "alice"))
+    Console.print("Keys:")
+    Console.print(Map.keys(counts))
+    Console.print("Entries:")
+    Console.print(Map.entries(counts))
+    Console.print("Contains 'eve':")
+    Console.print(containsWord(words, "eve"))
+
+verify containsWord
+    containsWord(["a", "b"], "a") => true
+    containsWord(["a", "b"], "x") => false
+
+verify incCount
+    incCount(Map.empty(), "a") => Map.fromList([("a", 1)])
+    incCount(Map.fromList([("a", 1)]), "a") => Map.fromList([("a", 2)])
+
+verify countWords
+    countWords([])                => Map.empty()
+    countWords(["a", "b", "a"])  => Map.fromList([("a", 2), ("b", 1)])

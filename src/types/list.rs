@@ -6,6 +6,7 @@
 ///   List.push(list, val)     → List<T>                — append element (returns new list)
 ///   List.head(list)          → Option<T>              — first element
 ///   List.tail(list)          → Option<List<T>>        — all but first
+///   List.contains(list, val) → Bool                   — membership by `==`
 ///   List.zip(a, b)           → List<(A, B)>           — pair elements from two lists
 ///
 /// Note: List.map, List.filter, List.fold, List.find, List.any, List.flatMap are handled
@@ -24,7 +25,7 @@ pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
     for method in &[
         "len", "map", "filter", "fold", "get", "push", "head", "tail", "find", "any", "zip",
-        "flatMap",
+        "flatMap", "contains",
     ] {
         members.insert(
             method.to_string(),
@@ -53,6 +54,7 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
         "List.push" => Some(push(&args)),
         "List.head" => Some(head(&args)),
         "List.tail" => Some(tail(&args)),
+        "List.contains" => Some(contains(&args)),
         "List.zip" => Some(zip(&args)),
         _ => None,
     }
@@ -141,6 +143,20 @@ fn tail(args: &[Value]) -> Result<Value, RuntimeError> {
             "List.tail() argument must be a List".to_string(),
         )),
     }
+}
+
+fn contains(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!(
+            "List.contains() takes 2 arguments (list, value), got {}",
+            args.len()
+        )));
+    }
+    let list = list_slice(&args[0]).ok_or_else(|| {
+        RuntimeError::Error("List.contains() first argument must be a List".to_string())
+    })?;
+    let target = &args[1];
+    Ok(Value::Bool(list.iter().any(|item| item == target)))
 }
 
 fn zip(args: &[Value]) -> Result<Value, RuntimeError> {

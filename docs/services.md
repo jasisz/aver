@@ -22,6 +22,7 @@ Note: Aver has no lambdas/closures. Function-valued parameters (`Fn(...) -> ...`
 | `List.fold` | `(List<T>, U, Fn(U, T) -> U) -> U` | |
 | `List.find` | `(List<T>, Fn(T) -> Bool) -> Option<T>` | First matching element |
 | `List.any` | `(List<T>, Fn(T) -> Bool) -> Bool` | True if any element matches |
+| `List.contains` | `(List<T>, T) -> Bool` | Membership check via `==` |
 | `List.zip` | `(List<A>, List<B>) -> List<(A, B)>` | Pairs elements, truncates to shorter list |
 | `List.flatMap` | `(List<T>, Fn(T) -> List<U>) -> List<U>` | Map then flatten |
 

@@ -320,6 +320,12 @@ impl TypeChecker {
                 &[],
             ),
             ("List.any", &[Type::Unknown, Type::Unknown], Type::Bool, &[]),
+            (
+                "List.contains",
+                &[Type::Unknown, Type::Unknown],
+                Type::Bool,
+                &[],
+            ),
             // List.zip and List.flatMap have special-case inference in infer_list_call_type
         ];
         for (name, params, ret, effects) in list_sigs {

@@ -136,6 +136,12 @@ fn valid_list_pattern_matching() {
 }
 
 #[test]
+fn valid_list_contains_requires_same_element_type() {
+    let src = "fn hasTwo(xs: List<Int>) -> Bool\n    = List.contains(xs, 2)\n";
+    assert_no_errors(src);
+}
+
+#[test]
 fn valid_tuple_return() {
     let src = "fn pair() -> (Int, String)\n    = (1, \"x\")\n";
     assert_no_errors(src);
@@ -413,6 +419,15 @@ fn error_list_push_mismatched_element_type() {
 fn error_list_filter_predicate_must_return_bool() {
     let src = "fn bad(xs: List<Int>) -> List<Int>\n    = List.filter(xs, Int.toString)\n";
     assert_error_containing(src, "predicate must return Bool");
+}
+
+#[test]
+fn error_list_contains_mismatched_element_type() {
+    let src = "fn bad(xs: List<Int>) -> Bool\n    = List.contains(xs, \"x\")\n";
+    assert_error_containing(
+        src,
+        "Argument 2 of 'List.contains': expected Int, got String",
+    );
 }
 
 #[test]
@@ -1477,4 +1492,24 @@ fn exhaustive_with_ident_catch_all() {
         "    x -> x\n",
     );
     assert_no_errors(src);
+}
+
+#[test]
+fn exhaustive_tuple_with_binding_wildcards() {
+    let src = concat!(
+        "fn f(p: (Int, Int)) -> Int\n",
+        "  = match p\n",
+        "    (_, x) -> x\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn error_non_exhaustive_tuple_with_literal_only() {
+    let src = concat!(
+        "fn f(p: (Int, Int)) -> Int\n",
+        "  = match p\n",
+        "    (0, x) -> x\n",
+    );
+    assert_error_containing(src, "catch-all");
 }

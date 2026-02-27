@@ -90,6 +90,25 @@ impl TypeChecker {
                 }
                 Some(Type::List(Box::new(elem_ty)))
             }
+            "List.contains" => {
+                if let Err(fallback) = expect_arity(self, 2, Type::Bool) {
+                    return Some(fallback);
+                }
+                let elem_ty = list_inner(self, &arg_types[0], 1);
+                let needle_ty = arg_types[1].clone();
+                if !matches!(elem_ty, Type::Unknown)
+                    && !matches!(needle_ty, Type::Unknown)
+                    && !Self::constraint_compatible(&needle_ty, &elem_ty)
+                {
+                    self.error(format!(
+                        "Argument 2 of '{}': expected {}, got {}",
+                        name,
+                        elem_ty.display(),
+                        needle_ty.display()
+                    ));
+                }
+                Some(Type::Bool)
+            }
             "List.map" => {
                 if let Err(fallback) = expect_arity(self, 2, Type::List(Box::new(Type::Unknown))) {
                     return Some(fallback);
