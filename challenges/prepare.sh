@@ -11,8 +11,8 @@
 #   2. Creates a staging directory with ONLY the files the agent may see
 #   3. Prints the ready-to-paste agent prompt
 #
-# The agent gets: README.md, docs/, examples/calculator.av, challenges/<name>/
-# The agent does NOT get: src/, tests/, other examples, Cargo.toml, .git/
+# The agent gets: README.md, docs/, examples/, challenges/<name>/
+# The agent does NOT get: src/, tests/, Cargo.toml, .git/
 
 set -euo pipefail
 
@@ -61,8 +61,17 @@ prepare_one() {
     # Copy allowed files
     cp "$PROJECT_ROOT/README.md" "$STAGING/"
     cp -r "$PROJECT_ROOT/docs" "$STAGING/"
-    mkdir -p "$STAGING/examples"
-    cp "$PROJECT_ROOT/examples/calculator.av" "$STAGING/examples/"
+
+    # Examples: agent learns conventions from these
+    mkdir -p "$STAGING/examples/models"
+    cp "$PROJECT_ROOT/examples/calculator.av" "$STAGING/examples/"    # ? descriptions, decision, verify, Result
+    cp "$PROJECT_ROOT/examples/lists.av" "$STAGING/examples/"         # List ops, Option, match
+    cp "$PROJECT_ROOT/examples/temperature.av" "$STAGING/examples/"   # decision, pipe, nested match
+    cp "$PROJECT_ROOT/examples/shapes.av" "$STAGING/examples/"        # sum types, pattern matching
+    cp "$PROJECT_ROOT/examples/fibonacci.av" "$STAGING/examples/"      # larger project: decisions, records, recursion
+    cp "$PROJECT_ROOT/examples/app.av" "$STAGING/examples/"           # module depends (imports fibonacci)
+    cp "$PROJECT_ROOT/examples/models/user.av" "$STAGING/examples/models/"  # simple module
+    cp "$PROJECT_ROOT/examples/app_dot.av" "$STAGING/examples/"       # dotted module import
     mkdir -p "$STAGING/challenges/$CHALLENGE"
     cp "$CHALLENGE_DIR/TASK.md" "$STAGING/challenges/$CHALLENGE/"
     # NOTE: evaluate.sh is NOT copied — agent must not see grading criteria
@@ -90,11 +99,13 @@ You are an AI agent being tested on your ability to write a program in Aver, a p
 Working directory: $STAGING
 
 Your task:
-1. Read README.md — it explains the language
-2. Read docs/services.md — full API reference
-3. Read examples/calculator.av — style reference
+1. Read README.md — the complete language reference
+2. Read docs/services.md — full API for all built-in namespaces
+3. Read ALL files in examples/ — these show idiomatic Aver conventions
+   Pay attention to: function descriptions, decision blocks, module structure, verify blocks
 4. Read challenges/$CHALLENGE/TASK.md — task requirements
 5. Write your solution to challenges/$CHALLENGE/solution.av
+   For larger solutions, consider splitting into modules (see examples/app.av for how)
 6. Verify it works by running:
    aver check challenges/$CHALLENGE/solution.av
    aver verify challenges/$CHALLENGE/solution.av
