@@ -11,9 +11,9 @@ You are an AI agent being tested on your ability to write a program in **Aver**,
 5. **Write your solution** to `challenges/inventory/solution.av`
 6. **Verify it works** by running:
    ```bash
-   cargo run -- check challenges/inventory/solution.av
-   cargo run -- verify challenges/inventory/solution.av
-   cargo run -- run challenges/inventory/solution.av
+   aver check challenges/inventory/solution.av
+   aver verify challenges/inventory/solution.av
+   aver run challenges/inventory/solution.av
    ```
 7. **Do not ask questions** — everything you need is in the README, docs, and the example
 8. **Do not read other example files** — only `examples/calculator.av` is allowed as reference

@@ -51,7 +51,7 @@ fi
 
 # ── 2. Type check ──
 echo "2. Static analysis"
-CHECK_OUTPUT=$(cargo run --quiet -- check "$SOLUTION" 2>&1)
+CHECK_OUTPUT=$(aver check "$SOLUTION" 2>&1)
 CHECK_EXIT=$?
 if echo "$CHECK_OUTPUT" | grep -q "Type check passed"; then
     check "cargo run -- check passes" 0
@@ -62,7 +62,7 @@ fi
 
 # ── 3. Verify ──
 echo "3. Verify blocks"
-VERIFY_OUTPUT=$(cargo run --quiet -- verify "$SOLUTION" 2>&1)
+VERIFY_OUTPUT=$(aver verify "$SOLUTION" 2>&1)
 VERIFY_EXIT=$?
 VERIFY_LAST=$(echo "$VERIFY_OUTPUT" | tail -1)
 echo "  $VERIFY_LAST"
@@ -88,7 +88,7 @@ fi
 
 # ── 4. Run ──
 echo "4. Runtime"
-if cargo run --quiet -- run "$SOLUTION" > /dev/null 2>&1; then
+if aver run "$SOLUTION" > /dev/null 2>&1; then
     check "cargo run -- run succeeds" 0
 else
     check "cargo run -- run succeeds" 1

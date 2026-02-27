@@ -45,9 +45,9 @@ A warehouse tracks products. Each product has a **name** (String), **price** (Fl
 
 Your solution must pass:
 ```bash
-cargo run -- check challenges/inventory/solution.av
-cargo run -- verify challenges/inventory/solution.av
-cargo run -- run challenges/inventory/solution.av
+aver check challenges/inventory/solution.av
+aver verify challenges/inventory/solution.av
+aver run challenges/inventory/solution.av
 ```
 
 ## What success looks like
