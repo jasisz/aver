@@ -2638,6 +2638,12 @@ fn char_from_code_too_large_returns_none() {
     assert_eq!(eval("Char.fromCode(1114112)"), Value::None);
 }
 
+#[test]
+fn char_from_code_u32_overflow_returns_none() {
+    // > u32::MAX should not wrap around to NUL
+    assert_eq!(eval("Char.fromCode(4294967296)"), Value::None);
+}
+
 // ---------------------------------------------------------------------------
 // Byte namespace
 // ---------------------------------------------------------------------------

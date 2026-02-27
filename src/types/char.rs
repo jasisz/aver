@@ -79,7 +79,10 @@ fn from_code(args: &[Value]) -> Result<Value, RuntimeError> {
     if n < 0 {
         return Ok(Value::None);
     }
-    match char::from_u32(n as u32) {
+    let Ok(code) = u32::try_from(n) else {
+        return Ok(Value::None);
+    };
+    match char::from_u32(code) {
         Some(c) => Ok(Value::Some(Box::new(Value::Str(c.to_string())))),
         None => Ok(Value::None),
     }
