@@ -117,6 +117,9 @@ fn non_exhaustive_match_reports_match_line() {
     let hit = errs
         .iter()
         .find(|e| e.message.contains("Non-exhaustive match"));
-    assert!(hit.is_some(), "expected non-exhaustive match error: {errs:?}");
+    assert!(
+        hit.is_some(),
+        "expected non-exhaustive match error: {errs:?}"
+    );
     assert_eq!(hit.expect("checked above").line, 7);
 }

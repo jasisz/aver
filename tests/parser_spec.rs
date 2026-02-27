@@ -334,6 +334,16 @@ fn expr_pipe() {
 }
 
 #[test]
+fn expr_pipe_rhs_call_is_parse_error() {
+    let msg = parse_error("x |> f(1)");
+    assert!(
+        msg.contains("Pipe right side must be a function reference"),
+        "unexpected parse error: {}",
+        msg
+    );
+}
+
+#[test]
 fn expr_fn_call() {
     let items = parse("add(1, 2)");
     if let TopLevel::Stmt(Stmt::Expr(Expr::FnCall(fn_expr, args))) = &items[0] {

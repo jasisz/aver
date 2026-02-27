@@ -34,6 +34,12 @@ impl Parser {
         while self.check_exact(&TokenKind::Pipe) {
             self.advance();
             let right = self.parse_call_or_atom()?;
+            if matches!(right, Expr::FnCall(_, _)) {
+                return Err(self.error(
+                    "Pipe right side must be a function reference (for example `f` or `Ns.f`), not a call (`f(...)`)."
+                        .to_string(),
+                ));
+            }
             left = Expr::Pipe(Box::new(left), Box::new(right));
         }
 

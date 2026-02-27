@@ -147,7 +147,7 @@ Source: `src/services/console.rs`
 | `Console.print` | `T -> Unit` |
 | `Console.error` | `T -> Unit` (writes to stderr) |
 | `Console.warn` | `T -> Unit` (writes to stderr) |
-| `Console.readLine` | `String -> Result<String, String>` |
+| `Console.readLine` | `() -> Result<String, String>` |
 
 ### `Http` namespace — `! [Http]`
 
@@ -171,7 +171,8 @@ Source: `src/services/http_server.rs`
 
 | Function | Signature |
 |---|---|
-| `HttpServer.listen` | `(Int, Fn(Request) -> Response ! [Http], context: T) -> Unit` |
+| `HttpServer.listen` | `(Int, Fn(HttpRequest) -> HttpResponse ! [Console, Http, Disk, Tcp, HttpServer]) -> Unit` |
+| `HttpServer.listenWith` | `(Int, T, Fn(T, HttpRequest) -> HttpResponse ! [Console, Http, Disk, Tcp, HttpServer]) -> Unit` |
 
 ### `Disk` namespace — `! [Disk]`
 
@@ -197,7 +198,7 @@ Source: `src/services/tcp.rs`
 | Function | Signature |
 |---|---|
 | `Tcp.send` | `(String, Int, String) -> Result<String, String>` |
-| `Tcp.ping` | `(String, Int) -> Result<String, String>` |
+| `Tcp.ping` | `(String, Int) -> Result<Unit, String>` |
 
 **Persistent connections:**
 
