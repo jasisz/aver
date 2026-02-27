@@ -3,11 +3,13 @@ module JsonParser
         "Pure JSON parser. Parses strings into Json sum type."
         "Uses Map for objects. Recursive descent."
         "Validates: trailing content, leading zeros, bare minus."
+        "Supports: integers, floats (decimal + exponent), strings, bools, null, arrays, objects."
     exposes [parse]
 
 type Json
     JsonString(String)
     JsonInt(Int)
+    JsonFloat(Float)
     JsonBool(Bool)
     JsonList(List<Json>)
     JsonObject(Map<String, Json>)
@@ -78,16 +80,20 @@ fn tryStartDigit(s: String, pos: Int, c: String) -> ParseResult
         Result.Err(_) -> ParseResult.Err("Expected digit after '-'", pos)
 
 fn parseAfterZero(s: String, pos: Int, negative: Bool) -> ParseResult
-    ? "After leading zero, reject further digits."
+    ? "After leading zero: allow fraction/exponent, reject more digits."
     match String.charAt(s, pos)
-        Option.None -> finishNumber(0, negative, pos)
-        Option.Some(c) -> rejectLeadingZero(s, pos, c, negative)
+        Option.None -> finishInt(0, negative, pos)
+        Option.Some(c) -> match c
+            "." -> parseFracStart(s, pos + 1, buildNumStr(0, negative) + ".")
+            "e" -> parseExpStart(s, pos + 1, buildNumStr(0, negative) + "e")
+            "E" -> parseExpStart(s, pos + 1, buildNumStr(0, negative) + "e")
+            _ -> rejectLeadingZero(pos, c, negative)
 
-fn rejectLeadingZero(s: String, pos: Int, c: String, negative: Bool) -> ParseResult
+fn rejectLeadingZero(pos: Int, c: String, negative: Bool) -> ParseResult
     ? "Error if digit follows zero, otherwise finish number."
     match Int.fromString(c)
         Result.Ok(_) -> ParseResult.Err("Leading zeros are not allowed", pos)
-        Result.Err(_) -> finishNumber(0, negative, pos)
+        Result.Err(_) -> finishInt(0, negative, pos)
 
 fn tryDigitOrError(s: String, pos: Int, c: String) -> ParseResult
     ? "Start number if digit, otherwise error."
@@ -143,23 +149,107 @@ fn parseEscape(s: String, pos: Int, accum: String) -> ParseResult
             "f" -> parseString(s, pos + 1, accum + "\f")
             _ -> ParseResult.Err("Unknown escape: \\" + c, pos)
 
+fn buildNumStr(accum: Int, negative: Bool) -> String
+    ? "Build number string from accumulated integer and sign."
+    match negative
+        true -> "-" + String.fromInt(accum)
+        false -> String.fromInt(accum)
+
 fn parseDigits(s: String, pos: Int, accum: Int, negative: Bool) -> ParseResult
-    ? "Accumulate digits into integer."
+    ? "Accumulate integer digits."
     match String.charAt(s, pos)
-        Option.None -> finishNumber(accum, negative, pos)
+        Option.None -> finishInt(accum, negative, pos)
         Option.Some(c) -> tryAccumDigit(s, pos, accum, negative, c)
 
 fn tryAccumDigit(s: String, pos: Int, accum: Int, negative: Bool, c: String) -> ParseResult
-    ? "If digit accumulate, otherwise finish number."
+    ? "If digit accumulate, otherwise check for fraction/exponent."
     match Int.fromString(c)
         Result.Ok(d) -> parseDigits(s, pos + 1, accum * 10 + d, negative)
-        Result.Err(_) -> finishNumber(accum, negative, pos)
+        Result.Err(_) -> checkFraction(s, accum, negative, pos, c)
 
-fn finishNumber(accum: Int, negative: Bool, pos: Int) -> ParseResult
-    ? "Apply sign and return finished number."
+fn checkFraction(s: String, accum: Int, negative: Bool, pos: Int, c: String) -> ParseResult
+    ? "Check for decimal point or exponent after integer digits."
+    match c
+        "." -> parseFracStart(s, pos + 1, buildNumStr(accum, negative) + ".")
+        "e" -> parseExpStart(s, pos + 1, buildNumStr(accum, negative) + "e")
+        "E" -> parseExpStart(s, pos + 1, buildNumStr(accum, negative) + "e")
+        _ -> finishInt(accum, negative, pos)
+
+fn parseFracStart(s: String, pos: Int, numStr: String) -> ParseResult
+    ? "First fraction digit (at least one required after '.')."
+    match String.charAt(s, pos)
+        Option.None -> ParseResult.Err("Expected digit after '.'", pos)
+        Option.Some(c) -> tryFirstFracDigit(s, pos, numStr, c)
+
+fn tryFirstFracDigit(s: String, pos: Int, numStr: String, c: String) -> ParseResult
+    ? "Verify first fraction char is a digit."
+    match Int.fromString(c)
+        Result.Ok(_) -> parseFracDigits(s, pos + 1, numStr + c)
+        Result.Err(_) -> ParseResult.Err("Expected digit after '.'", pos)
+
+fn parseFracDigits(s: String, pos: Int, numStr: String) -> ParseResult
+    ? "Accumulate fraction digits."
+    match String.charAt(s, pos)
+        Option.None -> finishFloat(numStr, pos)
+        Option.Some(c) -> tryMoreFracDigit(s, pos, numStr, c)
+
+fn tryMoreFracDigit(s: String, pos: Int, numStr: String, c: String) -> ParseResult
+    ? "Continue fraction digit or check for exponent."
+    match Int.fromString(c)
+        Result.Ok(_) -> parseFracDigits(s, pos + 1, numStr + c)
+        Result.Err(_) -> checkExpOrFinish(s, pos, numStr, c)
+
+fn checkExpOrFinish(s: String, pos: Int, numStr: String, c: String) -> ParseResult
+    ? "Check for e/E exponent after fraction, or finish float."
+    match c
+        "e" -> parseExpStart(s, pos + 1, numStr + "e")
+        "E" -> parseExpStart(s, pos + 1, numStr + "e")
+        _ -> finishFloat(numStr, pos)
+
+fn parseExpStart(s: String, pos: Int, numStr: String) -> ParseResult
+    ? "Parse exponent: optional sign then digits."
+    match String.charAt(s, pos)
+        Option.None -> ParseResult.Err("Expected digit in exponent", pos)
+        Option.Some(c) -> match c
+            "+" -> parseExpAfterSign(s, pos + 1, numStr + "+")
+            "-" -> parseExpAfterSign(s, pos + 1, numStr + "-")
+            _ -> tryFirstExpDigit(s, pos, numStr, c)
+
+fn parseExpAfterSign(s: String, pos: Int, numStr: String) -> ParseResult
+    ? "First exponent digit after sign (required)."
+    match String.charAt(s, pos)
+        Option.None -> ParseResult.Err("Expected digit in exponent", pos)
+        Option.Some(c) -> tryFirstExpDigit(s, pos, numStr, c)
+
+fn tryFirstExpDigit(s: String, pos: Int, numStr: String, c: String) -> ParseResult
+    ? "Verify first exponent char is a digit."
+    match Int.fromString(c)
+        Result.Ok(_) -> parseExpDigits(s, pos + 1, numStr + c)
+        Result.Err(_) -> ParseResult.Err("Expected digit in exponent", pos)
+
+fn parseExpDigits(s: String, pos: Int, numStr: String) -> ParseResult
+    ? "Accumulate exponent digits."
+    match String.charAt(s, pos)
+        Option.None -> finishFloat(numStr, pos)
+        Option.Some(c) -> tryMoreExpDigit(s, pos, numStr, c)
+
+fn tryMoreExpDigit(s: String, pos: Int, numStr: String, c: String) -> ParseResult
+    ? "Continue exponent digit or finish float."
+    match Int.fromString(c)
+        Result.Ok(_) -> parseExpDigits(s, pos + 1, numStr + c)
+        Result.Err(_) -> finishFloat(numStr, pos)
+
+fn finishInt(accum: Int, negative: Bool, pos: Int) -> ParseResult
+    ? "Apply sign and return finished integer."
     match negative
         true -> ParseResult.Ok(Json.JsonInt(accum * -1), pos)
         false -> ParseResult.Ok(Json.JsonInt(accum), pos)
+
+fn finishFloat(numStr: String, pos: Int) -> ParseResult
+    ? "Convert accumulated number string to Float."
+    match Float.fromString(numStr)
+        Result.Ok(f) -> ParseResult.Ok(Json.JsonFloat(f), pos)
+        Result.Err(_) -> ParseResult.Err("Invalid number: " + numStr, pos)
 
 fn parseArray(s: String, pos: Int) -> ParseResult
     ? "Parse array after opening bracket."
@@ -253,6 +343,12 @@ fn jsonInt(j: Json) -> Int
         Json.JsonInt(n) -> n
         _ -> 0
 
+fn jsonFloat(j: Json) -> Float
+    ? "Extract raw float from JsonFloat."
+    match j
+        Json.JsonFloat(f) -> f
+        _ -> 0.0
+
 fn jsonList(j: Json) -> List<Json>
     ? "Extract list from JsonList."
     match j
@@ -265,7 +361,7 @@ fn showTag(tag: Json) -> String
 
 fn main() -> Unit
     ! [Console]
-    json = "{{ \"company\": \"Aver Labs\", \"founded\": 2024, \"active\": true, \"address\": {{ \"city\": \"Warszawa\", \"country\": \"Poland\", \"zip\": \"00-001\" }}, \"team\": [{{ \"name\": \"Jan\", \"role\": \"lead\" }}, {{ \"name\": \"Anna\", \"role\": \"dev\" }}, {{ \"name\": \"Piotr\", \"role\": \"ops\" }}], \"tags\": [\"lang-design\", \"rust\", \"ai-first\"], \"funding\": null }}"
+    json = "{{ \"company\": \"Aver Labs\", \"founded\": 2024, \"active\": true, \"address\": {{ \"city\": \"Warszawa\", \"country\": \"Poland\", \"zip\": \"00-001\" }}, \"team\": [{{ \"name\": \"Jan\", \"role\": \"lead\" }}, {{ \"name\": \"Anna\", \"role\": \"dev\" }}, {{ \"name\": \"Piotr\", \"role\": \"ops\" }}], \"tags\": [\"lang-design\", \"rust\", \"ai-first\"], \"funding\": null, \"score\": 9.75 }}"
 
     Console.print("Parsing complex nested JSON...")
     match parse(json)
@@ -280,6 +376,7 @@ fn printReport(root: Json) -> Unit
     team = getField(root, "team")
     tags = getField(root, "tags")
     funding = getField(root, "funding")
+    score = getField(root, "score")
 
     match company
         Option.Some(c) -> Console.print("Company: " + jsonStr(c))
@@ -306,6 +403,10 @@ fn printReport(root: Json) -> Unit
             Json.JsonNull -> Console.print("Funding: none yet")
             _ -> Console.print("Funding: present")
         Option.None -> Console.print("Funding: ?")
+
+    match score
+        Option.Some(s) -> Console.print("Score: " + String.fromFloat(jsonFloat(s)))
+        Option.None -> Console.print("Score: ?")
 
 fn printAddress(addr: Json) -> Unit
     ! [Console]
@@ -350,8 +451,24 @@ verify parse
     parse("  {{ \"x\" : [1, 2] , \"y\" : null }}  ") => Result.Ok(Json.JsonObject(Map.fromList([("x", Json.JsonList([Json.JsonInt(1), Json.JsonInt(2)])), ("y", Json.JsonNull)])))
 
 verify parse
+    parse("1.5") => Result.Ok(Json.JsonFloat(1.5))
+    parse("0.5") => Result.Ok(Json.JsonFloat(0.5))
+    parse("-0.5") => Result.Ok(Json.JsonFloat(-0.5))
+    parse("-3.14") => Result.Ok(Json.JsonFloat(-3.14))
+    parse("1e2") => Result.Ok(Json.JsonFloat(100.0))
+    parse("1E2") => Result.Ok(Json.JsonFloat(100.0))
+    parse("1e+2") => Result.Ok(Json.JsonFloat(100.0))
+    parse("1e-1") => Result.Ok(Json.JsonFloat(0.1))
+    parse("1.5e1") => Result.Ok(Json.JsonFloat(15.0))
+    parse("0e5") => Result.Ok(Json.JsonFloat(0.0))
+    parse("-2.5e3") => Result.Ok(Json.JsonFloat(-2500.0))
+
+verify parse
     parse("true false") => Result.Err("Unexpected trailing content: f at position 5")
     parse("42oops") => Result.Err("Unexpected trailing content: o at position 2")
     parse("-") => Result.Err("Expected digit after '-' at position 1")
     parse("01") => Result.Err("Leading zeros are not allowed at position 1")
     parse("-01") => Result.Err("Leading zeros are not allowed at position 2")
+    parse("1.") => Result.Err("Expected digit after '.' at position 2")
+    parse("1e") => Result.Err("Expected digit in exponent at position 2")
+    parse("1e+") => Result.Err("Expected digit in exponent at position 3")
