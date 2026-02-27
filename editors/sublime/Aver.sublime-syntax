@@ -119,7 +119,7 @@ contexts:
       scope: constant.language.aver
 
   constructors:
-    # Qualified constructors: Result.Ok, Shape.Circle, Option.None
+    # Qualified constructors: Result.Ok, Option.Some, Option.None
     - match: '\b([A-Z][a-zA-Z0-9]*)(\.)([A-Z][a-zA-Z0-9]*)\b'
       captures:
         1: entity.name.type.aver

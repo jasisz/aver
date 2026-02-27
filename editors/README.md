@@ -38,7 +38,7 @@ Hot-reloads — no restart needed. Select **Aver** from the language menu in the
 - Built-in types: `Int`, `Float`, `String`, `Bool`, `Unit`, `Result`, `Option`, `List`, `Map`, `Fn`
 - Built-in values: `true`, `false`
 - Namespace calls: `Console.print`, `Http.get`, `Disk.readText`, `Tcp.send`, `Int.fromString`, `String.length`, `List.map`, `Map.get`, `Char.toCode`, `Byte.toHex`
-- Qualified constructors: `Result.Ok`, `Option.None`, `Shape.Circle`
+- Qualified constructors: `Result.Ok`, `Option.Some`, `Option.None`
 - ADR keys: `date`, `reason`, `chosen`, `rejected`, `impacts`, `author`
 - Numbers: integers, floats, scientific notation (`1.5e-3`)
 - Comments: `// ...`
