@@ -1331,3 +1331,154 @@ fn f(u: User) -> Point
 "#;
     assert_error_containing(src, "Point.update: base has type User, expected Point");
 }
+
+// ---------------------------------------------------------------------------
+// Match exhaustiveness checking
+// ---------------------------------------------------------------------------
+
+#[test]
+fn exhaustive_bool_both_branches() {
+    let src = concat!(
+        "fn f(b: Bool) -> Int\n",
+        "  = match b\n",
+        "    true -> 1\n",
+        "    false -> 0\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn error_non_exhaustive_bool_missing_false() {
+    let src = concat!(
+        "fn f(b: Bool) -> Int\n",
+        "  = match b\n",
+        "    true -> 1\n",
+    );
+    assert_error_containing(src, "false");
+}
+
+#[test]
+fn exhaustive_result_both_constructors() {
+    let src = concat!(
+        "fn f(r: Result<Int, String>) -> Int\n",
+        "  = match r\n",
+        "    Result.Ok(x) -> x\n",
+        "    Result.Err(e) -> 0\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn error_non_exhaustive_result_missing_err() {
+    let src = concat!(
+        "fn f(r: Result<Int, String>) -> Int\n",
+        "  = match r\n",
+        "    Result.Ok(x) -> x\n",
+    );
+    assert_error_containing(src, "Result.Err");
+}
+
+#[test]
+fn exhaustive_option_both_constructors() {
+    let src = concat!(
+        "fn f(o: Option<Int>) -> Int\n",
+        "  = match o\n",
+        "    Option.Some(x) -> x\n",
+        "    Option.None -> 0\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn error_non_exhaustive_option_missing_none() {
+    let src = concat!(
+        "fn f(o: Option<Int>) -> Int\n",
+        "  = match o\n",
+        "    Option.Some(x) -> x\n",
+    );
+    assert_error_containing(src, "Option.None");
+}
+
+#[test]
+fn exhaustive_user_sum_type_all_variants() {
+    let src = concat!(
+        "type Shape\n",
+        "  Circle(Float)\n",
+        "  Rect(Float, Float)\n",
+        "  Point\n",
+        "fn area(s: Shape) -> Float\n",
+        "  = match s\n",
+        "    Circle(r) -> r * r\n",
+        "    Rect(w, h) -> w * h\n",
+        "    Point -> 0.0\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn error_non_exhaustive_user_sum_type_missing_variant() {
+    let src = concat!(
+        "type Shape\n",
+        "  Circle(Float)\n",
+        "  Rect(Float, Float)\n",
+        "  Point\n",
+        "fn area(s: Shape) -> Float\n",
+        "  = match s\n",
+        "    Circle(r) -> r * r\n",
+    );
+    assert_error_containing(src, "Rect");
+}
+
+#[test]
+fn exhaustive_list_both_patterns() {
+    let src = concat!(
+        "fn f(xs: List<Int>) -> Int\n",
+        "  = match xs\n",
+        "    [] -> 0\n",
+        "    [h, ..t] -> h\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn error_non_exhaustive_list_missing_cons() {
+    let src = concat!(
+        "fn f(xs: List<Int>) -> Int\n",
+        "  = match xs\n",
+        "    [] -> 0\n",
+    );
+    assert_error_containing(src, "[h, ..t]");
+}
+
+#[test]
+fn error_non_exhaustive_int_without_catch_all() {
+    let src = concat!(
+        "fn f(n: Int) -> Int\n",
+        "  = match n\n",
+        "    0 -> 1\n",
+        "    1 -> 2\n",
+    );
+    assert_error_containing(src, "catch-all");
+}
+
+#[test]
+fn exhaustive_int_with_wildcard() {
+    let src = concat!(
+        "fn f(n: Int) -> Int\n",
+        "  = match n\n",
+        "    0 -> 1\n",
+        "    _ -> 0\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn exhaustive_with_ident_catch_all() {
+    let src = concat!(
+        "fn f(n: Int) -> Int\n",
+        "  = match n\n",
+        "    0 -> 1\n",
+        "    x -> x\n",
+    );
+    assert_no_errors(src);
+}

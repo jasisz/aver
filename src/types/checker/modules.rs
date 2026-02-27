@@ -62,6 +62,11 @@ impl TypeChecker {
                 name: type_name,
                 variants,
             } => {
+                // Register variant names for exhaustiveness checking.
+                self.type_variants.insert(
+                    type_name.clone(),
+                    variants.iter().map(|v| v.name.clone()).collect(),
+                );
                 // Register the type name in fn_sigs so `Ident("Shape")` resolves
                 // to Named("Shape") without error (checked after locals in infer_type).
                 self.fn_sigs.insert(

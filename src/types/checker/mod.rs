@@ -12,10 +12,11 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use super::{parse_type_str_strict, Type};
-use crate::ast::{BinOp, Expr, FnBody, FnDef, Module, Pattern, Stmt, TopLevel, TypeDef};
+use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, Module, Pattern, Stmt, TopLevel, TypeDef};
 use crate::source::{canonicalize_path, find_module_file, parse_source};
 
 mod builtins;
+mod exhaustiveness;
 mod flow;
 mod infer;
 mod memo;
@@ -98,6 +99,9 @@ struct TypeChecker {
     /// Populated for both user-defined `record` types and built-in records
     /// (HttpResponse, Header). Enables checked dot-access on Named types.
     record_field_types: HashMap<String, Type>,
+    /// Variant names for sum types: "Shape" → ["Circle", "Rect", "Point"].
+    /// Pre-populated for Result and Option; extended by user-defined sum types.
+    type_variants: HashMap<String, Vec<String>>,
     /// Named effect aliases: `effects AppIO = [Console, Disk]`
     effect_aliases: HashMap<String, Vec<String>>,
     /// Top-level bindings visible from function bodies.
@@ -113,11 +117,22 @@ struct TypeChecker {
 
 impl TypeChecker {
     fn new() -> Self {
+        let mut type_variants = HashMap::new();
+        type_variants.insert(
+            "Result".to_string(),
+            vec!["Ok".to_string(), "Err".to_string()],
+        );
+        type_variants.insert(
+            "Option".to_string(),
+            vec!["Some".to_string(), "None".to_string()],
+        );
+
         let mut tc = TypeChecker {
             fn_sigs: HashMap::new(),
             module_sig_cache: HashMap::new(),
             value_members: HashMap::new(),
             record_field_types: HashMap::new(),
+            type_variants,
             effect_aliases: HashMap::new(),
             globals: HashMap::new(),
             locals: HashMap::new(),

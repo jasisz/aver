@@ -36,6 +36,7 @@ Below: implementation details relevant to development only.
 
 - No `if`/`else` — **this is intentional by design**; `match` is the only branching construct
 - No loops (`for`, `while`) — **intentionally absent**; Aver has no imperative iteration; use `map`/`filter`/`fold`
+- No guard clauses in match (`when`, `> 0`, etc.) — **rejected by design**; guards break exhaustiveness checking and add a class of "forgotten else" bugs; nested `match` on `true`/`false` is verbose but verifiably safe
 - Field access works for `record` values (`u.name`) but not on sum type variants or other values
 
 ### What was explicitly NOT implemented yet (save for later)

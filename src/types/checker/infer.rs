@@ -787,6 +787,7 @@ impl TypeChecker {
 
             Expr::Match(subject, arms) => {
                 let subject_ty = self.infer_type(subject);
+                self.check_match_exhaustiveness(&subject_ty, arms);
                 // Infer from first arm; check remaining arms for consistency
                 if let Some(first_arm) = arms.first() {
                     let first_ty = self.infer_type_with_pattern_bindings(
