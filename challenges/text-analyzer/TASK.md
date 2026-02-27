@@ -2,65 +2,40 @@
 
 ## Goal
 
-Write an Aver program (`solution.av`) that analyzes text strings and computes statistics.
+Build an Aver program (`solution.av`) that analyzes text and computes statistics.
 
-## Domain
+## What the system should do
 
-A text analyzer takes a string of text and produces statistics about it. The system must support these operations:
+Given a string of text (words separated by spaces), your program should compute:
 
-1. **Word count** — number of words (split by spaces)
-2. **Unique words** — list of distinct words (case-sensitive)
-3. **Word frequency** — how many times each word appears (as a Map)
-4. **Most frequent word** — the word with the highest count
-5. **Contains word** — check if a specific word appears in the text
+1. **Word count** — total number of words
+2. **Unique words** — deduplicated list of words (case-sensitive)
+3. **Word frequency** — how many times each word appears
+4. **Most frequent word** — the word with the highest count (handle ties and empty text)
+5. **Contains word** — check if a specific word appears
 6. **Average word length** — mean character count across all words
+7. **Longest word** — find the longest word in the text (handle empty text)
+8. **Summarize** — a single function that takes text and returns a structured summary with key statistics
 
-## Requirements
+Think about: what happens with empty text? Single-word text? How do you represent "no result"? What data structures best fit word frequencies?
 
-### Data model
-- Use a `record` for analysis results (wordCount, uniqueCount, averageLength)
-- Use `Map<String, Int>` for word frequencies
-- Use `Option` for operations that may have no result (most frequent word on empty text)
+## Main function
 
-### Functions to implement
-- `wordCount(text)` → Int
-- `uniqueWords(text)` → List<String>
-- `wordFrequency(text)` → Map<String, Int>
-- `mostFrequent(text)` → Option<String>
-- `containsWord(text, word)` → Bool
-- `averageWordLength(text)` → Float
-- `analyze(text)` → TextStats record with summary
-
-### Conventions
-- Read `README.md` and `docs/` for the language specification and API
-- Look at `examples/calculator.av` as a reference for style and structure
-- Every function must have a `? "..."` description
-- Use `verify` blocks to prove your functions work
-- Use at least one `decision` block to justify a design choice
-- Use a `module` block with `intent`
-- **No `if`/`else`** — use `match` for all branching
-- **No loops** — use `List.map`, `List.filter`, `List.fold` for iteration
-- All constructors are namespaced: `Result.Ok(x)`, `Option.Some(x)`, `Option.None`
-
-### Main function
-- `fn main()` with `! [Console]` that analyzes a sample text and prints results
-- Print results using `Console.print`
+Write `fn main()` that analyzes a few sample texts (including an empty one) and prints the results.
 
 ## Verification
 
+Include `verify` blocks that prove your functions work — cover normal text, single word, empty text, repeated words, and edge cases.
+
 Your solution must pass:
-```bash
+```
 aver check challenges/text-analyzer/solution.av
 aver verify challenges/text-analyzer/solution.av
 aver run challenges/text-analyzer/solution.av
 ```
 
-## What success looks like
+## Getting started
 
-A single `solution.av` file that:
-- Compiles without type errors (`check`)
-- All verify cases pass (`verify`)
-- Runs and prints meaningful output (`run`)
-- Follows Aver conventions (namespaced calls, Option/Result for errors, match for branching, descriptions on functions)
-- Contains at least one `decision` block
-- Contains at least 10 verify cases covering edge cases (empty text, single word, repeated words)
+1. Read `README.md` — the complete language reference
+2. Read `docs/services.md` — full API for all built-in namespaces
+3. Study `examples/calculator.av` — conventions and style

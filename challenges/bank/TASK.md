@@ -2,64 +2,42 @@
 
 ## Goal
 
-Write an Aver program (`solution.av`) that models a simple banking system.
+Build an Aver program (`solution.av`) that models a simple banking system.
 
-## Domain
+## What the system should do
 
-A bank manages accounts. Each account has an **owner** (String), **balance** (Float), and **id** (Int). The system must support these operations:
+A bank manages accounts. Each account has an owner, balance, and unique identifier.
 
-1. **Create an account** with an initial balance
-2. **Deposit** money into an account (by id)
-3. **Withdraw** money from an account (by id, fails if insufficient funds)
-4. **Transfer** money between two accounts (by ids, fails if insufficient funds or same account)
-5. **Find account** by id
-6. **Total assets** — sum of all balances across accounts
+Your program should support:
 
-## Requirements
+1. **Create account** with an initial balance
+2. **Find account** by id
+3. **Deposit** money into an account
+4. **Withdraw** money (fail if insufficient funds)
+5. **Transfer** between two accounts (fail if insufficient funds or invalid accounts)
+6. **Total assets** — sum of all balances in the bank
+7. **Transaction log** — each deposit/withdraw/transfer should produce a record of what happened (who, what, amount, success/failure), and you should be able to collect a history of operations
+8. **Account statement** — given an account id and a transaction log, produce a summary: opening balance, list of transactions affecting that account, closing balance
 
-### Data model
-- Bank is a `List` of accounts
-- Use Aver's `record` for the account type
-- Use `Result` for operations that can fail (insufficient funds, account not found, etc.)
+Think about: how do you represent a collection of accounts for efficient lookup? How do you handle the various error conditions? How do you model a transaction log immutably?
 
-### Functions to implement
-- `createAccount(bank, owner, initialBalance)` → returns updated bank with new account (auto-assign id)
-- `deposit(bank, id, amount)` → returns updated bank or error (not found, negative amount)
-- `withdraw(bank, id, amount)` → returns updated bank or error (not found, insufficient funds)
-- `transfer(bank, fromId, toId, amount)` → returns updated bank or error
-- `findAccount(bank, id)` → returns the account or error (not found)
-- `totalAssets(bank)` → returns Float
+## Main function
 
-### Conventions
-- Read `README.md` and `docs/` for the language specification and API
-- Look at `examples/calculator.av` as a reference for style and structure
-- Every function must have a `? "..."` description
-- Use `verify` blocks to prove your functions work
-- Use at least one `decision` block to justify a design choice
-- Use a `module` block with `intent`
-- **No `if`/`else`** — use `match` for all branching
-- **No loops** — use `List.map`, `List.filter`, `List.fold` for iteration
-- All constructors are namespaced: `Result.Ok(x)`, `Result.Err(msg)`
-
-### Main function
-- `fn main()` with `! [Console]` that demonstrates all operations
-- Print results using `Console.print`
+Write `fn main()` that runs a realistic sequence of operations — create accounts, make deposits/withdrawals/transfers (including some that fail), then print a statement for one account.
 
 ## Verification
 
+Include `verify` blocks that prove your functions work — cover happy paths, error cases (insufficient funds, account not found, self-transfer), and edge cases.
+
 Your solution must pass:
-```bash
+```
 aver check challenges/bank/solution.av
 aver verify challenges/bank/solution.av
 aver run challenges/bank/solution.av
 ```
 
-## What success looks like
+## Getting started
 
-A single `solution.av` file that:
-- Compiles without type errors (`check`)
-- All verify cases pass (`verify`)
-- Runs and prints meaningful output (`run`)
-- Follows Aver conventions (namespaced calls, Result for errors, match for branching, descriptions on functions)
-- Contains at least one `decision` block
-- Contains at least 10 verify cases covering happy paths and error cases
+1. Read `README.md` — the complete language reference
+2. Read `docs/services.md` — full API for all built-in namespaces
+3. Study `examples/calculator.av` — conventions and style

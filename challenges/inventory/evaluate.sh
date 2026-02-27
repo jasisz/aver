@@ -76,10 +76,10 @@ if echo "$TOTAL_LINE" | grep -qE "^Total:.*passed$"; then
     else
         check "all verify cases pass" 1
     fi
-    if [ "$VERIFY_TOTAL" -ge 8 ]; then
-        check "at least 8 verify cases ($VERIFY_TOTAL found)" 0
+    if [ "$VERIFY_TOTAL" -ge 10 ]; then
+        check "at least 10 verify cases ($VERIFY_TOTAL found)" 0
     else
-        check "at least 8 verify cases ($VERIFY_TOTAL found)" 1
+        check "at least 10 verify cases ($VERIFY_TOTAL found)" 1
     fi
 else
     check "all verify cases pass" 1
