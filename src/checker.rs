@@ -1,6 +1,6 @@
 use colored::Colorize;
 
-use crate::ast::{DecisionBlock, FnDef, TopLevel, VerifyBlock};
+use crate::ast::{DecisionBlock, Expr, FnBody, FnDef, Stmt, TopLevel, VerifyBlock};
 use crate::interpreter::{aver_repr, Interpreter};
 use crate::value::RuntimeError;
 
@@ -95,6 +95,64 @@ fn fn_needs_desc(f: &FnDef) -> bool {
     f.name != "main"
 }
 
+/// Missing verify warning policy:
+/// - skip `main`
+/// - skip effectful functions (tested through replay/recording flow)
+/// - skip trivial pure pass-through wrappers
+/// - require verify for the rest (pure, non-trivial logic)
+fn fn_needs_verify(f: &FnDef) -> bool {
+    if f.name == "main" {
+        return false;
+    }
+    if !f.effects.is_empty() {
+        return false;
+    }
+    !is_trivial_passthrough_wrapper(f)
+}
+
+fn is_trivial_passthrough_wrapper(f: &FnDef) -> bool {
+    let param_names: Vec<&str> = f.params.iter().map(|(name, _)| name.as_str()).collect();
+
+    match f.body.as_ref() {
+        FnBody::Expr(expr) => expr_is_passthrough(expr, &param_names),
+        FnBody::Block(stmts) => {
+            if stmts.len() != 1 {
+                return false;
+            }
+            match &stmts[0] {
+                Stmt::Expr(expr) => expr_is_passthrough(expr, &param_names),
+                Stmt::Binding(_, _, _) => false,
+            }
+        }
+    }
+}
+
+fn expr_is_passthrough(expr: &Expr, param_names: &[&str]) -> bool {
+    match expr {
+        // `fn id(x) = x`
+        Expr::Ident(name) => param_names.len() == 1 && name == param_names[0],
+        // `fn wrap(a,b) = inner(a,b)` (no argument transformation)
+        Expr::FnCall(_, args) => args_match_params(args, param_names),
+        // `fn some(x) = Option.Some(x)` style
+        Expr::Constructor(_, Some(arg)) => {
+            if param_names.len() != 1 {
+                return false;
+            }
+            matches!(arg.as_ref(), Expr::Ident(name) if name == param_names[0])
+        }
+        _ => false,
+    }
+}
+
+fn args_match_params(args: &[Expr], param_names: &[&str]) -> bool {
+    if args.len() != param_names.len() {
+        return false;
+    }
+    args.iter()
+        .zip(param_names.iter())
+        .all(|(arg, expected)| matches!(arg, Expr::Ident(name) if name == *expected))
+}
+
 pub fn check_module_intent(items: &[TopLevel]) -> Vec<String> {
     let mut warnings = Vec::new();
 
@@ -120,7 +178,7 @@ pub fn check_module_intent(items: &[TopLevel]) -> Vec<String> {
                 if f.desc.is_none() && fn_needs_desc(f) {
                     warnings.push(format!("Function '{}' has no description (?)", f.name));
                 }
-                if f.name != "main" && !verified_fns.contains(f.name.as_str()) {
+                if fn_needs_verify(f) && !verified_fns.contains(f.name.as_str()) {
                     warnings.push(format!("Function '{}' has no verify block", f.name));
                 }
             }
@@ -129,6 +187,71 @@ pub fn check_module_intent(items: &[TopLevel]) -> Vec<String> {
     }
 
     warnings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::Lexer;
+    use crate::parser::Parser;
+
+    fn parse_items(src: &str) -> Vec<TopLevel> {
+        let mut lexer = Lexer::new(src);
+        let tokens = lexer.tokenize().expect("lex failed");
+        let mut parser = Parser::new(tokens);
+        parser.parse().expect("parse failed")
+    }
+
+    #[test]
+    fn no_verify_warning_for_effectful_function() {
+        let items = parse_items(
+            r#"
+fn log(x: Int) -> Unit
+    ! [Console]
+    = Console.print(x)
+"#,
+        );
+        let warnings = check_module_intent(&items);
+        assert!(
+            !warnings.iter().any(|w| w.contains("no verify block")),
+            "unexpected warnings: {:?}",
+            warnings
+        );
+    }
+
+    #[test]
+    fn no_verify_warning_for_trivial_passthrough_wrapper() {
+        let items = parse_items(
+            r#"
+fn passthrough(x: Int) -> Int
+    = inner(x)
+"#,
+        );
+        let warnings = check_module_intent(&items);
+        assert!(
+            !warnings.iter().any(|w| w.contains("no verify block")),
+            "unexpected warnings: {:?}",
+            warnings
+        );
+    }
+
+    #[test]
+    fn verify_warning_for_pure_non_trivial_logic() {
+        let items = parse_items(
+            r#"
+fn add1(x: Int) -> Int
+    = x + 1
+"#,
+        );
+        let warnings = check_module_intent(&items);
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w == "Function 'add1' has no verify block"),
+            "expected verify warning, got: {:?}",
+            warnings
+        );
+    }
 }
 
 pub fn expr_to_str(expr: &crate::ast::Expr) -> String {

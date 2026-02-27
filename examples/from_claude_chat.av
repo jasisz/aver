@@ -1,0 +1,196 @@
+module Inventory
+    intent =
+        "Product inventory for a small warehouse."
+        "Tracks products by name with unit price and quantity."
+        "Supports add, find, update, remove, total value, low stock report, and discount."
+    exposes [addProduct, findProduct, updateStock, removeProduct, totalValue, lowStock, applyDiscount]
+
+record Product
+    name: String
+    price: Int
+    qty: Int
+
+decision ListAsInventory
+    date = "2026-02-27"
+    reason =
+        "Inventory is a List<Product> searched by name."
+        "No closures in Aver, so lookup/filter uses manual recursion on [h, ..t]."
+        "Map<String, Product> would need composite values — List is simpler and sufficient."
+    chosen = ListOfRecords
+    rejected = [MapByName]
+    impacts = [addProduct, findProduct, updateStock, removeProduct, lowStock, applyDiscount]
+
+decision PriceAsInt
+    date = "2026-02-27"
+    reason =
+        "Store price as integer cents to avoid float rounding."
+        "Aver has no modulo — integer arithmetic keeps totals exact."
+    chosen = IntCents
+    rejected = [FloatDollars]
+    impacts = [totalValue, applyDiscount]
+
+// ── Helpers ──────────────────────────────────────────────────────
+
+fn hasName(products: List<Product>, name: String) -> Bool
+    ? "Returns true if any product in the list has the given name."
+    match products
+        [] -> false
+        [h, ..t] -> match h.name == name
+            true  -> true
+            false -> hasName(t, name)
+
+fn findProduct(products: List<Product>, name: String) -> Option<Product>
+    ? "Finds a product by name. Returns Option.None if not found."
+    match products
+        [] -> Option.None
+        [h, ..t] -> match h.name == name
+            true  -> Option.Some(h)
+            false -> findProduct(t, name)
+
+// ── Core operations ──────────────────────────────────────────────
+
+fn addProduct(products: List<Product>, p: Product) -> Result<List<Product>, String>
+    ? "Adds a product to inventory. Rejects duplicates by name."
+    match hasName(products, p.name)
+        true  -> Result.Err("Duplicate product: {p.name}")
+        false -> Result.Ok(List.push(products, p))
+
+fn updateStock(products: List<Product>, name: String, newQty: Int) -> Result<List<Product>, String>
+    ? "Sets the quantity of a named product. Err if not found."
+    match hasName(products, name)
+        false -> Result.Err("Product not found: {name}")
+        true  -> Result.Ok(updateStockTR(products, name, newQty, []))
+
+fn updateStockTR(products: List<Product>, name: String, newQty: Int, acc: List<Product>) -> List<Product>
+    ? "Tail-recursive worker: rebuilds list with updated quantity for matching product."
+    match products
+        [] -> acc
+        [h, ..t] -> match h.name == name
+            true  -> updateStockTR(t, name, newQty, List.push(acc, Product(name = h.name, price = h.price, qty = newQty)))
+            false -> updateStockTR(t, name, newQty, List.push(acc, h))
+
+fn removeProduct(products: List<Product>, name: String) -> Result<List<Product>, String>
+    ? "Removes a product by name. Err if not found."
+    match hasName(products, name)
+        false -> Result.Err("Product not found: {name}")
+        true  -> Result.Ok(removeTR(products, name, []))
+
+fn removeTR(products: List<Product>, name: String, acc: List<Product>) -> List<Product>
+    ? "Tail-recursive worker: rebuilds list without the named product."
+    match products
+        [] -> acc
+        [h, ..t] -> match h.name == name
+            true  -> removeTR(t, name, acc)
+            false -> removeTR(t, name, List.push(acc, h))
+
+// ── Aggregations ─────────────────────────────────────────────────
+
+fn totalValue(products: List<Product>) -> Int
+    ? "Sum of price * qty for all products."
+    totalValueTR(products, 0)
+
+fn totalValueTR(products: List<Product>, acc: Int) -> Int
+    ? "Tail-recursive total value accumulator."
+    match products
+        [] -> acc
+        [h, ..t] -> totalValueTR(t, acc + h.price * h.qty)
+
+fn lowStock(products: List<Product>, threshold: Int) -> List<Product>
+    ? "Returns all products with quantity below the given threshold."
+    lowStockTR(products, threshold, [])
+
+fn lowStockTR(products: List<Product>, threshold: Int, acc: List<Product>) -> List<Product>
+    ? "Tail-recursive worker: collects products below threshold."
+    match products
+        [] -> acc
+        [h, ..t] -> match h.qty < threshold
+            true  -> lowStockTR(t, threshold, List.push(acc, h))
+            false -> lowStockTR(t, threshold, acc)
+
+fn applyDiscount(products: List<Product>, minPrice: Int, pct: Int) -> List<Product>
+    ? "Reduces price by pct percent for every product priced above minPrice."
+    applyDiscountTR(products, minPrice, pct, [])
+
+fn applyDiscountTR(products: List<Product>, minPrice: Int, pct: Int, acc: List<Product>) -> List<Product>
+    ? "Tail-recursive worker: rebuilds list with discounted prices where applicable."
+    match products
+        [] -> acc
+        [h, ..t] -> match h.price > minPrice
+            true  -> applyDiscountTR(t, minPrice, pct, List.push(acc, Product(name = h.name, price = h.price - h.price * pct / 100, qty = h.qty)))
+            false -> applyDiscountTR(t, minPrice, pct, List.push(acc, h))
+
+// ── Main ─────────────────────────────────────────────────────────
+
+fn main() -> Unit
+    ! [Console]
+    empty = []
+    inv1 = addProduct(empty, Product(name = "Bolt", price = 150, qty = 500))?
+    inv2 = addProduct(inv1, Product(name = "Nut", price = 75, qty = 1000))?
+    inv3 = addProduct(inv2, Product(name = "Washer", price = 25, qty = 200))?
+    inv4 = addProduct(inv3, Product(name = "Gear", price = 3200, qty = 3))?
+    Console.print("Inventory:")
+    Console.print(inv4)
+    Console.print("Find Bolt:")
+    Console.print(findProduct(inv4, "Bolt"))
+    Console.print("Find Missing:")
+    Console.print(findProduct(inv4, "Missing"))
+    Console.print("Total value:")
+    Console.print(totalValue(inv4))
+    Console.print("Low stock (< 10):")
+    Console.print(lowStock(inv4, 10))
+    inv5 = updateStock(inv4, "Gear", 50)?
+    Console.print("After restock Gear to 50:")
+    Console.print(inv5)
+    inv6 = removeProduct(inv5, "Washer")?
+    Console.print("After removing Washer:")
+    Console.print(inv6)
+    discounted = applyDiscount(inv6, 100, 10)
+    Console.print("After 10% discount on items over 100:")
+    Console.print(discounted)
+    dup = addProduct(inv4, Product(name = "Bolt", price = 100, qty = 1))
+    Console.print("Duplicate add:")
+    Console.print(dup)
+
+// ── Verify blocks ────────────────────────────────────────────────
+
+verify hasName
+    hasName([], "x") => false
+    hasName([Product(name = "A", price = 1, qty = 1)], "A") => true
+    hasName([Product(name = "A", price = 1, qty = 1)], "B") => false
+
+verify findProduct
+    findProduct([], "x") => Option.None
+    findProduct([Product(name = "Bolt", price = 150, qty = 10)], "Bolt") => Option.Some(Product(name = "Bolt", price = 150, qty = 10))
+    findProduct([Product(name = "Bolt", price = 150, qty = 10)], "Nut") => Option.None
+
+verify addProduct
+    addProduct([], Product(name = "A", price = 10, qty = 5)) => Result.Ok([Product(name = "A", price = 10, qty = 5)])
+    addProduct([Product(name = "A", price = 10, qty = 5)], Product(name = "A", price = 20, qty = 1)) => Result.Err("Duplicate product: A")
+    addProduct([Product(name = "A", price = 10, qty = 5)], Product(name = "B", price = 20, qty = 1)) => Result.Ok([Product(name = "A", price = 10, qty = 5), Product(name = "B", price = 20, qty = 1)])
+
+verify updateStock
+    updateStock([], "A", 10) => Result.Err("Product not found: A")
+    updateStock([Product(name = "A", price = 10, qty = 5)], "A", 20) => Result.Ok([Product(name = "A", price = 10, qty = 20)])
+    updateStock([Product(name = "A", price = 10, qty = 5)], "B", 20) => Result.Err("Product not found: B")
+
+verify removeProduct
+    removeProduct([], "A") => Result.Err("Product not found: A")
+    removeProduct([Product(name = "A", price = 10, qty = 5)], "A") => Result.Ok([])
+    removeProduct([Product(name = "A", price = 10, qty = 5), Product(name = "B", price = 20, qty = 3)], "A") => Result.Ok([Product(name = "B", price = 20, qty = 3)])
+
+verify totalValue
+    totalValue([]) => 0
+    totalValue([Product(name = "A", price = 10, qty = 5)]) => 50
+    totalValue([Product(name = "A", price = 10, qty = 5), Product(name = "B", price = 20, qty = 3)]) => 110
+
+verify lowStock
+    lowStock([], 10) => []
+    lowStock([Product(name = "A", price = 10, qty = 5)], 10) => [Product(name = "A", price = 10, qty = 5)]
+    lowStock([Product(name = "A", price = 10, qty = 5)], 3) => []
+    lowStock([Product(name = "A", price = 10, qty = 2), Product(name = "B", price = 20, qty = 50)], 10) => [Product(name = "A", price = 10, qty = 2)]
+
+verify applyDiscount
+    applyDiscount([], 100, 10) => []
+    applyDiscount([Product(name = "A", price = 200, qty = 1)], 100, 10) => [Product(name = "A", price = 180, qty = 1)]
+    applyDiscount([Product(name = "A", price = 50, qty = 1)], 100, 10) => [Product(name = "A", price = 50, qty = 1)]
+    applyDiscount([Product(name = "A", price = 200, qty = 1), Product(name = "B", price = 50, qty = 1)], 100, 50) => [Product(name = "A", price = 100, qty = 1), Product(name = "B", price = 50, qty = 1)]
