@@ -102,12 +102,18 @@ Your task:
 Rules:
 - Do not ask questions — everything you need is in the docs
 - Do not read files outside this directory
-- Do not modify any existing files — only create challenges/$CHALLENGE/solution.av
+- Do not modify any existing files — only create solution.av and notes.md
 
 You are done when ALL of these pass:
 - aver check — no type errors
 - aver verify — all verify cases pass
 - aver run — executes without runtime errors
+
+When finished, write challenges/$CHALLENGE/notes.md with:
+- Which docs you read and in what order
+- What was confusing or surprising about the language
+- How many attempts before check/verify/run all passed
+- What you would do differently next time
 PROMPT
     echo ""
 }
