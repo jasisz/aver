@@ -33,9 +33,9 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 - `decision` blocks — structured architectural decision records (ADR) with `date`, `reason`, `chosen`, `rejected`, `impacts`, `author`
 - **List values**: `Value::List(Vec<Value>)` with literal syntax `[1, 2, 3]`, `["a", "b"]`, `[]`; printed as `[1, 2, 3]`
 - **No flat builtins** — all functions live in namespaces (decision: `FullNamespaceEverywhere`)
-- **`List` namespace** (`src/services/list_helpers.rs`): `List.len`, `List.map`, `List.filter`, `List.fold`, `List.get`, `List.push`, `List.head`, `List.tail`; `get`/`head`/`tail` return `Result.Ok(val)` or `Result.Err(msg)` — no effects
-- **`Int` namespace** (`src/services/int_helpers.rs`): `Int.fromString`, `Int.fromFloat`, `Int.toString`, `Int.abs`, `Int.min`, `Int.max`, `Int.mod`, `Int.toFloat` — no effects
-- **`Float` namespace** (`src/services/float_helpers.rs`): `Float.fromString`, `Float.fromInt`, `Float.toString`, `Float.abs`, `Float.floor`, `Float.ceil`, `Float.round`, `Float.min`, `Float.max` — no effects
+- **`List` namespace** (`src/types/list.rs`): `List.len`, `List.map`, `List.filter`, `List.fold`, `List.get`, `List.push`, `List.head`, `List.tail`; `get`/`head`/`tail` return `Result.Ok(val)` or `Result.Err(msg)` — no effects
+- **`Int` namespace** (`src/types/int.rs`): `Int.fromString`, `Int.fromFloat`, `Int.toString`, `Int.abs`, `Int.min`, `Int.max`, `Int.mod`, `Int.toFloat` — no effects
+- **`Float` namespace** (`src/types/float.rs`): `Float.fromString`, `Float.fromInt`, `Float.toString`, `Float.abs`, `Float.floor`, `Float.ceil`, `Float.round`, `Float.min`, `Float.max` — no effects
 - **`String` namespace** (`src/types/string.rs`): `String.length`, `String.byteLength`, `String.charAt`, `String.startsWith`, `String.endsWith`, `String.contains`, `String.slice`, `String.trim`, `String.split`, `String.replace`, `String.join`, `String.chars`, `String.fromInt`, `String.fromFloat`, `String.fromBool` — no effects. `charAt(s, i)` returns `Option<String>` (single char or `None` on out-of-bounds)
 - **`Char` namespace** (`src/types/char.rs`): `Char.toCode(s)` → `Int` (Unicode scalar value of first char), `Char.fromCode(n)` → `Option<String>` (code point to 1-char string, `None` for surrogates/invalid). Not a type — operates on `String`/`Int`.
 - **`Byte` namespace** (`src/types/byte.rs`): `Byte.toHex(n)` → `Result<String, String>` (always 2-char lowercase hex), `Byte.fromHex(s)` → `Result<Int, String>` (exactly 2 hex chars). Not a type — operates on `Int`/`String`.
@@ -108,6 +108,13 @@ src/
 
   types/
     mod.rs            — enum Type, parse_type_str, compatible()
+    int.rs            — Int.* (pure)
+    float.rs          — Float.* (pure)
+    string.rs         — String.* (pure)
+    list.rs           — List.len/get/push/head/tail (pure)
+    map.rs            — Map.* (pure)
+    char.rs           — Char.toCode/fromCode (pure, not a type)
+    byte.rs           — Byte.toHex/fromHex (pure, not a type)
     checker/          — Static type checker. Split into submodules:
       mod.rs          — TypeChecker struct, constraint_compatible(), run_type_check_*
       infer.rs        — infer_type: expressions, calls, match, patterns
@@ -145,16 +152,12 @@ src/
     context_format.rs — Markdown context formatting
     shared.rs         — shared helpers (compile_program_for_exec, load_dep_modules)
 
-  services/           — Namespace service implementations:
+  services/           — Effectful namespace implementations:
     console.rs        — Console.print/error/warn/readLine  ! [Console]
     http.rs           — Http.get/head/delete/post/put/patch  ! [Http]
     http_server.rs    — HttpServer.listen (standalone runtime)  ! [HttpServer]
     disk.rs           — Disk.readText/writeText/appendText/exists/delete/...  ! [Disk]
     tcp.rs            — Tcp.send/ping + connect/writeLine/readLine/close  ! [Tcp]
-    int_helpers.rs    — Int.* (pure)
-    float_helpers.rs  — Float.* (pure)
-    string_helpers.rs — String.* (pure)
-    list_helpers.rs   — List.len/get/push/head/tail (pure)
 ```
 
 ## How to run
@@ -203,7 +206,7 @@ The `src/lib.rs` exports all modules as `pub mod` so integration tests can acces
 | `Pattern` | ast.rs | Match arm pattern: `Wildcard`, `Literal`, `Ident`, `EmptyList`, `Cons`, `Constructor` |
 | `StrPart` | ast.rs | Piece of an interpolated string: `Literal(String)` or `Parsed(Box<Expr>)` |
 | `Expr` | ast.rs | Every expression form: `Literal`, `Ident`, `Attr`, `FnCall`, `BinOp`, `Match`, `Pipe`, `Constructor`, `ErrorProp`, `InterpolatedStr`, `List(Vec<Expr>)`, `RecordCreate { type_name, fields }` |
-| `Stmt` | ast.rs | `Binding(name, expr)`, `Expr(expr)` |
+| `Stmt` | ast.rs | `Binding(name, Option<type_ann>, expr)`, `Expr(expr)` |
 | `FnBody` | ast.rs | `Expr(Expr)` for `= expr` shorthand, or `Block(Vec<Stmt>)` where Stmt is `Binding` or `Expr` |
 | `FnDef` | ast.rs | Name, params, return type, effects, optional description, body |
 | `Module` | ast.rs | Name, depends, exposes, intent string |
@@ -265,16 +268,16 @@ Expr::Maintain(cond, body) => {
 
 All functions live in namespaces (e.g., `Int.abs`, `List.len`, `Console.print`). To add a new function to an existing namespace:
 
-1. Add the implementation in the namespace's service file (e.g., `src/services/int_helpers.rs`) inside `call()`:
+1. Add the implementation in the namespace's file (e.g., `src/types/int.rs` for pure, `src/services/console.rs` for effectful) inside `call()`:
    ```rust
    "Int.yourMethod" => {
        // validate args, return Ok(Value::...)
    }
    ```
 2. Register the member name in `register()` so it appears in the namespace's `members` map.
-3. Add the type signature in `src/types/checker/builtins.rs` in the corresponding `service_sigs` section.
+3. Add the type signature in `src/types/checker/builtins.rs` in the corresponding sigs section.
 
-To create a new namespace, follow the pattern in any `src/services/*_helpers.rs` file: implement `register()`, `effects()`, and `call()`, add `pub mod` in `services/mod.rs`, wire it up in `interpreter/builtins.rs`.
+To create a new pure namespace, follow the pattern in `src/types/char.rs` or `src/types/int.rs`: implement `register()`, `effects()`, and `call()`, add `pub mod` in `types/mod.rs`, wire dispatch in `interpreter/builtins.rs` and effects in `interpreter/effects.rs`. For effectful namespaces, use `src/services/` instead.
 
 ### How to add a new expression type
 
