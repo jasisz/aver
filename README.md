@@ -256,6 +256,8 @@ match value
     Shape.Circle(r) -> "circle r={r}"
     Shape.Point -> "point"
     User(name, age) -> "user {name}"       // record positional destructuring
+    (a, b) -> "pair: {a}, {b}"             // tuple destructuring
+    ((x, y), z) -> "nested: {x}"          // nested tuple
 ```
 
 Nested match in match arms is supported. Arm body must follow `->` on the same line — extract complex expressions into a named function.
@@ -444,9 +446,9 @@ Implemented in Rust with extensive automated test coverage.
 - [x] Effect system — statically enforced + runtime call-edge gate
 - [x] `verify` block runner — co-located tests
 - [x] `decision` tooling — queryable ADRs via `aver context --decisions-only` and docs generation via `aver decisions --docs`
-- [x] List builtins: `map`, `filter`, `fold`, `get`, `head`, `tail`, `push`
+- [x] List builtins: `map`, `filter`, `fold`, `get`, `head`, `tail`, `push`, `find`, `any`, `zip`, `flatMap`
 - [x] User-defined sum types (`type`) and product types (`record`)
-- [x] List pattern matching (`[]`, `[h, ..t]`)
+- [x] List pattern matching (`[]`, `[h, ..t]`), tuple patterns (`(a, b)`, nested)
 - [x] Module imports (`depends [Examples.Foo]`, `depends [Examples.Models.User]`)
 - [x] AI context export — `aver context` emits Markdown or JSON
 - [x] Interactive REPL — persistent state, multi-line, type-checked

@@ -199,6 +199,29 @@ impl Interpreter {
                 }
                 Ok(Value::None)
             }
+            "List.flatMap" => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::Error(format!(
+                        "List.flatMap() takes 2 arguments (list, fn), got {}",
+                        args.len()
+                    )));
+                }
+                let items = list_slice(&args[0]).ok_or_else(|| {
+                    RuntimeError::Error("List.flatMap() first argument must be a List".to_string())
+                })?;
+                let func = args[1].clone();
+                let mut result = Vec::new();
+                for item in items.iter().cloned() {
+                    let val = self.call_fn_ref(&func, vec![item])?;
+                    let sub = list_slice(&val).ok_or_else(|| {
+                        RuntimeError::Error(
+                            "List.flatMap() function must return a List".to_string(),
+                        )
+                    })?;
+                    result.extend(sub.iter().cloned());
+                }
+                Ok(list_from_vec(result))
+            }
             "List.any" => {
                 if args.len() != 2 {
                     return Err(RuntimeError::Error(format!(

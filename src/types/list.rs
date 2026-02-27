@@ -6,8 +6,9 @@
 ///   List.push(list, val)     → List<T>                — append element (returns new list)
 ///   List.head(list)          → Option<T>              — first element
 ///   List.tail(list)          → Option<List<T>>        — all but first
+///   List.zip(a, b)           → List<(A, B)>           — pair elements from two lists
 ///
-/// Note: List.map, List.filter, List.fold, List.find, List.any are handled
+/// Note: List.map, List.filter, List.fold, List.find, List.any, List.flatMap are handled
 /// directly in the interpreter because they need to invoke closures via
 /// `self.call_value`.
 ///
@@ -22,7 +23,8 @@ use crate::value::{
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
     for method in &[
-        "len", "map", "filter", "fold", "get", "push", "head", "tail", "find", "any",
+        "len", "map", "filter", "fold", "get", "push", "head", "tail", "find", "any", "zip",
+        "flatMap",
     ] {
         members.insert(
             method.to_string(),
@@ -51,6 +53,7 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
         "List.push" => Some(push(&args)),
         "List.head" => Some(head(&args)),
         "List.tail" => Some(tail(&args)),
+        "List.zip" => Some(zip(&args)),
         _ => None,
     }
 }
@@ -138,4 +141,25 @@ fn tail(args: &[Value]) -> Result<Value, RuntimeError> {
             "List.tail() argument must be a List".to_string(),
         )),
     }
+}
+
+fn zip(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!(
+            "List.zip() takes 2 arguments (list, list), got {}",
+            args.len()
+        )));
+    }
+    let a = list_slice(&args[0]).ok_or_else(|| {
+        RuntimeError::Error("List.zip() first argument must be a List".to_string())
+    })?;
+    let b = list_slice(&args[1]).ok_or_else(|| {
+        RuntimeError::Error("List.zip() second argument must be a List".to_string())
+    })?;
+    let pairs: Vec<Value> = a
+        .iter()
+        .zip(b.iter())
+        .map(|(x, y)| Value::Tuple(vec![x.clone(), y.clone()]))
+        .collect();
+    Ok(list_from_vec(pairs))
 }

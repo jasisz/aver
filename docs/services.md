@@ -6,7 +6,7 @@ All functions live in namespaces — no flat builtins (decision: `FullNamespaceE
 
 ### `List` namespace
 
-Source: `src/types/list.rs` (pure helpers) + `src/interpreter/builtins.rs` (`map`/`filter`/`fold`/`find`/`any` — need closure calls).
+Source: `src/types/list.rs` (pure helpers) + `src/interpreter/builtins.rs` (`map`/`filter`/`fold`/`find`/`any`/`flatMap` — need closure calls).
 
 | Function | Signature | Notes |
 |---|---|---|
@@ -20,6 +20,8 @@ Source: `src/types/list.rs` (pure helpers) + `src/interpreter/builtins.rs` (`map
 | `List.fold` | `(List<T>, U, Fn(U, T) -> U) -> U` | |
 | `List.find` | `(List<T>, Fn(T) -> Bool) -> Option<T>` | First matching element |
 | `List.any` | `(List<T>, Fn(T) -> Bool) -> Bool` | True if any element matches |
+| `List.zip` | `(List<A>, List<B>) -> List<(A, B)>` | Pairs elements, truncates to shorter list |
+| `List.flatMap` | `(List<T>, Fn(T) -> List<U>) -> List<U>` | Map then flatten |
 
 ### `Result` namespace
 
@@ -94,6 +96,8 @@ Source: `src/types/string.rs`
 | `String.fromInt` | `Int -> String` | |
 | `String.fromFloat` | `Float -> String` | |
 | `String.fromBool` | `Bool -> String` | |
+| `String.toLower` | `String -> String` | Unicode-aware lowercase |
+| `String.toUpper` | `String -> String` | Unicode-aware uppercase |
 
 ### `Map` namespace
 

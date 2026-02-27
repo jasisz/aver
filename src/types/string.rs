@@ -16,6 +16,8 @@
 ///   String.fromInt(n)           → String
 ///   String.fromFloat(f)         → String
 ///   String.fromBool(b)          → String
+///   String.toLower(s)           → String         — lowercase (Unicode-aware)
+///   String.toUpper(s)           → String         — uppercase (Unicode-aware)
 ///
 /// No effects required.
 use std::collections::HashMap;
@@ -40,6 +42,8 @@ pub fn register(global: &mut HashMap<String, Value>) {
         "fromInt",
         "fromFloat",
         "fromBool",
+        "toLower",
+        "toUpper",
     ] {
         members.insert(
             method.to_string(),
@@ -77,6 +81,8 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
         "String.fromInt" => Some(from_int(&args)),
         "String.fromFloat" => Some(from_float(&args)),
         "String.fromBool" => Some(from_bool(&args)),
+        "String.toLower" => Some(to_lower(&args)),
+        "String.toUpper" => Some(to_upper(&args)),
         _ => None,
     }
 }
@@ -280,6 +286,26 @@ fn from_bool(args: &[Value]) -> Result<Value, RuntimeError> {
         ));
     };
     Ok(Value::Str(if *b { "true" } else { "false" }.to_string()))
+}
+
+fn to_lower(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [val] = one_arg("String.toLower", args)?;
+    let Value::Str(s) = val else {
+        return Err(RuntimeError::Error(
+            "String.toLower: argument must be a String".to_string(),
+        ));
+    };
+    Ok(Value::Str(s.to_lowercase()))
+}
+
+fn to_upper(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [val] = one_arg("String.toUpper", args)?;
+    let Value::Str(s) = val else {
+        return Err(RuntimeError::Error(
+            "String.toUpper: argument must be a String".to_string(),
+        ));
+    };
+    Ok(Value::Str(s.to_uppercase()))
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

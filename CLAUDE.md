@@ -29,7 +29,7 @@ Below: implementation details relevant to development only.
 - **Auto-memoization** (`src/call_graph.rs`, `src/types/checker/memo.rs`, `src/interpreter/core.rs`): call graph built from AST, Tarjan SCC detects recursion, `call_fn_ref` checks/stores per-function HashMap cache (capped at 4096). Eligibility: pure + recursive + all params memo-safe (scalars, records/variants of scalars).
 - **TCO** (`src/tco.rs`): transform pass rewrites tail-position `FnCall` → `Expr::TailCall` in recursive SCCs. Interpreter trampoline in `call_fn_ref`: self-TCO rebinds args, mutual TCO switches to target fn. Pipeline: `parse → tco_transform → typecheck → resolve → interpret`.
 - **Compile-time variable resolution** (`src/resolver.rs`): `Ident("x")` → `Resolved(slot)` inside FnDef bodies. `EnvFrame::Slots(Vec<Rc<Value>>)` for O(1) lookup. REPL and sub-interpreters use unresolved path (`EnvFrame::Owned(HashMap)`).
-- **`check` command**: warns when module has no `intent =`, function with effects/Result return has no `?` description, file exceeds 150 lines. `fn main()` is exempt from `?` requirement.
+- **`check` command**: warns when module has no `intent =`, function with effects/Result return has no `?` description, file exceeds 250 lines. `fn main()` is exempt from `?` requirement.
 - **Entry-point effect enforcement**: `main`/top-level entry calls use `call_value_with_effects_pub(...)` with synthetic call frame.
 
 ### What is missing / known limitations

@@ -249,6 +249,70 @@ impl TypeChecker {
                     }
                 }
             }
+            "List.zip" => {
+                if let Err(fallback) =
+                    expect_arity(self, 2, Type::List(Box::new(Type::Unknown)))
+                {
+                    return Some(fallback);
+                }
+                let a_ty = list_inner(self, &arg_types[0], 1);
+                let b_ty = list_inner(self, &arg_types[1], 2);
+                Some(Type::List(Box::new(Type::Tuple(vec![a_ty, b_ty]))))
+            }
+            "List.flatMap" => {
+                if let Err(fallback) =
+                    expect_arity(self, 2, Type::List(Box::new(Type::Unknown)))
+                {
+                    return Some(fallback);
+                }
+                let elem_ty = list_inner(self, &arg_types[0], 1);
+                let fn_ty = &arg_types[1];
+                match fn_ty {
+                    Type::Fn(params, ret, _) => {
+                        if params.len() != 1 {
+                            self.error(format!(
+                                "Argument 2 of '{}': expected Fn(T) -> List<U>, got {}",
+                                name,
+                                fn_ty.display()
+                            ));
+                            return Some(Type::List(Box::new(Type::Unknown)));
+                        }
+                        let param_ty = params[0].clone();
+                        if !matches!(elem_ty, Type::Unknown)
+                            && !matches!(param_ty, Type::Unknown)
+                            && !elem_ty.compatible(&param_ty)
+                        {
+                            self.error(format!(
+                                "Argument 2 of '{}': mapper expects {}, list provides {}",
+                                name,
+                                param_ty.display(),
+                                elem_ty.display()
+                            ));
+                        }
+                        match ret.as_ref() {
+                            Type::List(inner) => Some(Type::List(inner.clone())),
+                            Type::Unknown => Some(Type::List(Box::new(Type::Unknown))),
+                            other => {
+                                self.error(format!(
+                                    "Argument 2 of '{}': function must return List<...>, got {}",
+                                    name,
+                                    other.display()
+                                ));
+                                Some(Type::List(Box::new(Type::Unknown)))
+                            }
+                        }
+                    }
+                    Type::Unknown => Some(Type::List(Box::new(Type::Unknown))),
+                    other => {
+                        self.error(format!(
+                            "Argument 2 of '{}': expected function, got {}",
+                            name,
+                            other.display()
+                        ));
+                        Some(Type::List(Box::new(Type::Unknown)))
+                    }
+                }
+            }
             _ => None,
         }
     }

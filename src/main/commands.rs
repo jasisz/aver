@@ -188,9 +188,9 @@ pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>, strict: 
     }
 
     // Check line count
-    if line_count > 150 {
+    if line_count > 250 {
         println!(
-            "  {} File has {} lines (recommended max: 150)",
+            "  {} File has {} lines (recommended max: 250)",
             "WARNING:".yellow(),
             line_count
         );
