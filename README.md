@@ -101,7 +101,7 @@ verify charge
     charge("x",    -1)   => Result.Ok("txn-x--1")
 ```
 
-`verify` blocks are intended to stay close to the function they cover (same module, usually right after the definition). `aver check` warns when a non-`main` function has no `verify` block by name. They run with `aver verify` (or `aver run --verify`) under the same type/effect checks as normal code.
+`verify` blocks are intended to stay close to the function they cover (same module, usually right after the definition). `aver check` warns when a pure, non-trivial, non-`main` function has no `verify` block by name. It intentionally skips effectful functions (covered by replay) and trivial pass-through wrappers. Verify blocks run with `aver verify` (or `aver run --verify`) under the same type/effect checks as normal code.
 
 ### "How do I test effectful code without flaky mocks?"
 
