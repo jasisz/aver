@@ -6,7 +6,7 @@ Aver is hard to write, clean to read — and in a world where AI does the writin
 
 Not better prompts. Not more reviews. You need a language that makes the AI's intent **verifiable** — statically, at the call site, before a single line runs.
 
-Aver is that language.
+Aver is that language. Read the [Aver Manifesto](https://jasisz.github.io/aver-language/) for the full story.
 
 ---
 
