@@ -1,0 +1,42 @@
+module TrustCheck
+    intent =
+        "Decides whether to trust AI-generated code."
+    exposes [canTrust]
+
+decision RequireVerification
+    date = "2026-02-28"
+    reason =
+        "AI writes convincing code that may be subtly wrong."
+        "Verify blocks make correctness visible, not assumed."
+    chosen = VerifyBlocks
+    rejected = [TrustByDefault, ManualReview]
+    impacts = [canTrust]
+
+record CodeReview
+    hasVerify: Bool
+    hasIntent: Bool
+
+fn canTrust(review: CodeReview) -> Result<String, String>
+    ? "Decides whether AI-generated code can be trusted. Spoiler: read it anyway."
+    match review.hasVerify
+        false -> Result.Err("No verify block — how do you know it works?")
+        true -> match review.hasIntent
+            false -> Result.Err("No intent — what is this even for?")
+            true -> Result.Ok("Looks trustworthy. But read it anyway.")
+
+verify canTrust
+    canTrust(CodeReview(hasVerify = false, hasIntent = true)) => Result.Err("No verify block — how do you know it works?")
+    canTrust(CodeReview(hasVerify = true, hasIntent = false)) => Result.Err("No intent — what is this even for?")
+    canTrust(CodeReview(hasVerify = true, hasIntent = true)) => Result.Ok("Looks trustworthy. But read it anyway.")
+
+fn reviewAndReport(review: CodeReview) -> Unit
+    ? "Reviews code and reports the verdict."
+    ! [Console]
+    match canTrust(review)
+        Result.Ok(msg) -> Console.print("PASS: {msg}")
+        Result.Err(msg) -> Console.print("FAIL: {msg}")
+
+fn main() -> Unit
+    ! [Console]
+    thisProgram = CodeReview(hasVerify = true, hasIntent = true)
+    reviewAndReport(thisProgram)
