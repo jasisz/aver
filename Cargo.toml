@@ -1,7 +1,15 @@
 [package]
-name = "aver"
+name = "aver-lang"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+description = "Interpreter for Aver, a programming language designed for AI-assisted development"
+license = "MIT"
+repository = "https://github.com/jasisz/aver"
+keywords = ["language", "interpreter", "programming-language"]
+categories = ["compilers"]
+
+[lib]
+name = "aver"
 
 [[bin]]
 name = "aver"

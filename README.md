@@ -404,6 +404,23 @@ Full API reference: [docs/services.md](docs/services.md)
 
 ## Getting started
 
+### Install from crates.io
+
+```bash
+cargo install aver-lang
+```
+
+This installs the `aver` binary. Then:
+
+```bash
+aver run      examples/calculator.av
+aver verify   examples/calculator.av
+aver check    examples/calculator.av
+aver repl
+```
+
+### Build from source
+
 ```bash
 git clone https://github.com/jasisz/aver
 cd aver

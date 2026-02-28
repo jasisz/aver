@@ -453,7 +453,7 @@ impl Interpreter {
         };
 
         // Auto-memoization: store result in cache
-        if let (Some((key, memo_args)), Ok(ref val)) = (memo_key, &final_result) {
+        if let (Some((key, memo_args)), Ok(val)) = (memo_key, &final_result) {
             let fn_name = name.clone();
             let cache = self.memo_cache.entry(fn_name).or_default();
             cache.insert(key, memo_args, val.clone(), MEMO_CACHE_CAP_PER_FN);

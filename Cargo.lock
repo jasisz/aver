@@ -59,7 +59,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aver"
+name = "aver-lang"
 version = "0.1.0"
 dependencies = [
  "clap",
