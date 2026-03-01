@@ -561,7 +561,14 @@ impl TypeChecker {
                 crate::ast::Literal::Bool(_) => Type::Bool,
             },
 
-            Expr::InterpolatedStr(_) => Type::Str,
+            Expr::InterpolatedStr(parts) => {
+                for part in parts {
+                    if let crate::ast::StrPart::Parsed(expr) = part {
+                        self.infer_type(expr);
+                    }
+                }
+                Type::Str
+            }
 
             Expr::Ident(name) => {
                 if let Some(ty) = self.locals.get(name) {

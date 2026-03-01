@@ -520,6 +520,12 @@ fn error_duplicate_binding_in_fn() {
 }
 
 #[test]
+fn error_unknown_ident_inside_interpolated_string() {
+    let src = "fn f() -> String\n    = \"hello {bogus}\"\n";
+    assert_error_containing(src, "Unknown identifier 'bogus'");
+}
+
+#[test]
 fn error_binop_int_plus_string() {
     let src = "fn f(a: Int, b: String) -> Int\n    = a + b\n";
     // actual: "Operator '+' requires Int/Float or String on both sides, got Int and String"

@@ -130,6 +130,11 @@ impl Parser {
             }
 
             if self.check_exact(&TokenKind::Assign) {
+                if !stmts.is_empty() {
+                    return Err(self.error(
+                        "Unexpected '=' in function body. The '= expr' shorthand is only valid as the entire body. Use a plain expression as the last line instead.".to_string()
+                    ));
+                }
                 // Single-expression return: = expr
                 self.advance();
                 let expr = self.parse_expr()?;

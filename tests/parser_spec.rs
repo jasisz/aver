@@ -859,6 +859,18 @@ fn val_keyword_error_in_fn_body() {
 }
 
 #[test]
+fn eq_shorthand_after_binding_is_parse_error() {
+    // `= expr` is only valid as the entire body, not after bindings
+    let src = "fn f(x: Int) -> String\n    items = Int.abs(x)\n    = \"result\"\n";
+    let msg = parse_error(src);
+    assert!(
+        msg.contains("Unexpected '='"),
+        "unexpected parse error: {}",
+        msg
+    );
+}
+
+#[test]
 fn lambda_syntax_shows_actionable_error() {
     let src = "fn main() -> Bool\n    = List.any([1, 2, 3], fn(x: Int) -> Bool\n        = x > 1)\n";
     let msg = parse_error(src);
