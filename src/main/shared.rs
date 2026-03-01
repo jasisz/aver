@@ -10,7 +10,7 @@ use aver::resolver;
 use aver::source::parse_source;
 use aver::tco;
 use aver::types;
-use aver::types::checker::{run_type_check_full, TypeCheckResult, TypeError};
+use aver::types::checker::{TypeCheckResult, TypeError, run_type_check_full};
 
 pub(super) fn read_file(path: &str) -> Result<String, String> {
     fs::read_to_string(path).map_err(|e| format!("Cannot open file '{}': {}", path, e))
@@ -58,7 +58,10 @@ pub(super) fn load_dep_modules(
 
 pub(super) fn print_type_errors(errors: &[TypeError]) {
     for te in errors {
-        eprintln!("{}", format!("error[{}:{}]: {}", te.line, te.col, te.message).red());
+        eprintln!(
+            "{}",
+            format!("error[{}:{}]: {}", te.line, te.col, te.message).red()
+        );
     }
 }
 

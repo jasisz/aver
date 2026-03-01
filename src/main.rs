@@ -76,7 +76,13 @@ fn main() {
             name,
             module_root,
         } => {
-            commands::cmd_compile(file, output, target, name.as_deref(), module_root.as_deref());
+            commands::cmd_compile(
+                file,
+                output,
+                target,
+                name.as_deref(),
+                module_root.as_deref(),
+            );
         }
         Commands::Decisions {
             source,

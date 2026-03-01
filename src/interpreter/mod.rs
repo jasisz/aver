@@ -5,13 +5,13 @@ use std::rc::Rc;
 
 use crate::ast::*;
 use crate::replay::{
-    json_to_string, value_to_json, values_to_json_lossy, EffectRecord, JsonValue, RecordedOutcome,
+    EffectRecord, JsonValue, RecordedOutcome, json_to_string, value_to_json, values_to_json_lossy,
 };
 use crate::services::{console, disk, http, http_server, tcp};
 use crate::source::{canonicalize_path, find_module_file, parse_source};
 use crate::types::{byte, char, float, int, list, map, option, result, string};
 // Re-export value types so existing `use aver::interpreter::Value` imports keep working.
-pub use crate::value::{aver_display, aver_repr, Env, EnvFrame, RuntimeError, Value};
+pub use crate::value::{Env, EnvFrame, RuntimeError, Value, aver_display, aver_repr};
 use crate::value::{list_from_vec, list_len, list_slice, list_tail_view};
 
 #[derive(Debug, Clone)]

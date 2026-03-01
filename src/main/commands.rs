@@ -8,11 +8,11 @@ use colored::Colorize;
 use aver::ast::TopLevel;
 use aver::checker::{check_module_intent, index_decisions, run_verify};
 use aver::codegen;
-use aver::codegen::rust as rust_codegen;
 use aver::codegen::ModuleInfo;
-use aver::interpreter::{aver_repr, Interpreter, Value};
+use aver::codegen::rust as rust_codegen;
+use aver::interpreter::{Interpreter, Value, aver_repr};
 use aver::replay::{
-    session_recording_to_string_pretty, value_to_json, JsonValue, RecordedOutcome, SessionRecording,
+    JsonValue, RecordedOutcome, SessionRecording, session_recording_to_string_pretty, value_to_json,
 };
 use aver::resolver;
 use aver::source::find_module_file;
@@ -380,15 +380,13 @@ pub(super) fn cmd_compile(
     let memo_fns = compute_memo_fns(&items, &tc_result);
 
     // Derive project name from file if not specified
-    let name = project_name
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| {
-            Path::new(file)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("aver_program")
-                .to_string()
-        });
+    let name = project_name.map(|s| s.to_string()).unwrap_or_else(|| {
+        Path::new(file)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("aver_program")
+            .to_string()
+    });
 
     // Load dependent modules for codegen
     let modules = load_compile_deps(&items, &module_root);

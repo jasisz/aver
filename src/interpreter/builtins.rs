@@ -150,7 +150,7 @@ impl Interpreter {
                         _ => {
                             return Err(RuntimeError::Error(
                                 "List.filter() predicate must return Bool".to_string(),
-                            ))
+                            ));
                         }
                     }
                 }
@@ -193,7 +193,7 @@ impl Interpreter {
                         _ => {
                             return Err(RuntimeError::Error(
                                 "List.find() predicate must return Bool".to_string(),
-                            ))
+                            ));
                         }
                     }
                 }
@@ -241,7 +241,7 @@ impl Interpreter {
                         _ => {
                             return Err(RuntimeError::Error(
                                 "List.any() predicate must return Bool".to_string(),
-                            ))
+                            ));
                         }
                     }
                 }

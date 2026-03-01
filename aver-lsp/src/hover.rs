@@ -95,11 +95,8 @@ pub fn hover_for_word(word: &str, source: &str, base_dir: Option<&str>) -> Optio
                             }
                         })
                         .collect();
-                    let content = format!(
-                        "```aver\ntype {}\n{}\n```",
-                        name,
-                        variant_strs.join("\n")
-                    );
+                    let content =
+                        format!("```aver\ntype {}\n{}\n```", name, variant_strs.join("\n"));
                     return Some(make_hover(content));
                 }
                 TypeDef::Product { name, fields, .. } if name == word => {
@@ -107,11 +104,8 @@ pub fn hover_for_word(word: &str, source: &str, base_dir: Option<&str>) -> Optio
                         .iter()
                         .map(|(fname, ftype)| format!("  {}: {}", fname, ftype))
                         .collect();
-                    let content = format!(
-                        "```aver\nrecord {}\n{}\n```",
-                        name,
-                        field_strs.join("\n")
-                    );
+                    let content =
+                        format!("```aver\nrecord {}\n{}\n```", name, field_strs.join("\n"));
                     return Some(make_hover(content));
                 }
                 _ => {}
@@ -228,8 +222,7 @@ fn extract_fn_source(fd: &FnDef, source: &str) -> Option<String> {
             // Empty line — include only if more body follows
             let has_more = (i + 1 < lines.len()) && {
                 let next = lines[i + 1];
-                !next.trim().is_empty()
-                    && (next.len() - next.trim_start().len()) > header_indent
+                !next.trim().is_empty() && (next.len() - next.trim_start().len()) > header_indent
             };
             if has_more {
                 fn_lines.push(line);

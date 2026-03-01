@@ -97,7 +97,11 @@ fn int_float_no_promotion() {
     if let TopLevel::Stmt(Stmt::Expr(expr)) = item {
         let mut interp = Interpreter::new();
         let result = interp.eval_expr(&expr);
-        assert!(result.is_err(), "Expected error for Int + Float, got: {:?}", result);
+        assert!(
+            result.is_err(),
+            "Expected error for Int + Float, got: {:?}",
+            result
+        );
     } else {
         panic!("expected expression");
     }
@@ -1205,8 +1209,7 @@ fn error_prop_chain_short_circuits() {
 
 #[test]
 fn closure_captures_outer_val() {
-    let _src =
-        "fn make_adder(n: Int) -> Fn(Int) -> Int\n    fn add(x: Int) -> Int\n        = x + n\n    add\n";
+    let _src = "fn make_adder(n: Int) -> Fn(Int) -> Int\n    fn add(x: Int) -> Int\n        = x + n\n    add\n";
     // Note: nested function definitions are not a first-class feature in Aver.
     // This test verifies the closure capture mechanism via lambda-style usage.
     // We use map with a pre-defined function instead.
@@ -1403,8 +1406,7 @@ fn record_creation_canonicalizes_field_order() {
 
 #[test]
 fn record_field_access() {
-    let src =
-        "record User\n  name: String\n  age: Int\nu = User(name = \"Alice\", age = 30)\nn = u.name\n";
+    let src = "record User\n  name: String\n  age: Int\nu = User(name = \"Alice\", age = 30)\nn = u.name\n";
     let mut interp = run_program(src);
     let val = interp.lookup("n").expect("n not defined");
     assert_eq!(val, Value::Str("Alice".to_string()));
@@ -2051,12 +2053,16 @@ mod tcp_tests {
                 } => {
                     assert_eq!(type_name, "Tcp.Connection");
                     assert!(fields.iter().any(|(k, _)| k == "id"));
-                    assert!(fields
-                        .iter()
-                        .any(|(k, v)| k == "host" && *v == Value::Str("127.0.0.1".to_string())));
-                    assert!(fields
-                        .iter()
-                        .any(|(k, v)| k == "port" && *v == Value::Int(port as i64)));
+                    assert!(
+                        fields
+                            .iter()
+                            .any(|(k, v)| k == "host" && *v == Value::Str("127.0.0.1".to_string()))
+                    );
+                    assert!(
+                        fields
+                            .iter()
+                            .any(|(k, v)| k == "port" && *v == Value::Int(port as i64))
+                    );
                 }
                 other => panic!("expected Tcp.Connection record, got {:?}", other),
             },
@@ -2120,8 +2126,7 @@ fn verify_error_prop_ok_unwraps() {
 #[test]
 fn verify_error_prop_err_fails_test() {
     // `?` on Err in a verify case should produce a test failure, not a panic/crash
-    let src =
-        "fn fail() -> Result<Int, String>\n    = Result.Err(\"boom\")\n\nverify fail\n    fail()? => 42\n";
+    let src = "fn fail() -> Result<Int, String>\n    = Result.Err(\"boom\")\n\nverify fail\n    fail()? => 42\n";
     let items = parse(src);
     let mut interp = Interpreter::new();
     for item in &items {
@@ -2306,8 +2311,8 @@ fn main() -> Unit
 fn call_fn_with_memo(src: &str, fn_name: &str, args: Vec<Value>) -> Value {
     use aver::call_graph::{find_recursive_fns, recursive_callsite_counts};
     use aver::resolver;
-    use aver::types::checker::run_type_check_full;
     use aver::types::Type;
+    use aver::types::checker::run_type_check_full;
 
     let mut items = parse(src);
 
@@ -2619,7 +2624,7 @@ fn mySum(n: Int) -> Int
 
 mod replay_tests {
     use super::*;
-    use aver::replay::{json_to_value, value_to_json, EffectRecord, JsonValue, RecordedOutcome};
+    use aver::replay::{EffectRecord, JsonValue, RecordedOutcome, json_to_value, value_to_json};
     use aver::value::RuntimeError;
     use std::collections::BTreeMap;
 

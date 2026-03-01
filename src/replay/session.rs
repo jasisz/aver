@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use super::json::{format_json, parse_json, JsonValue};
+use super::json::{JsonValue, format_json, parse_json};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RecordedOutcome {

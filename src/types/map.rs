@@ -18,7 +18,7 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-use crate::value::{aver_repr, list_from_vec, list_slice, RuntimeError, Value};
+use crate::value::{RuntimeError, Value, aver_repr, list_from_vec, list_slice};
 
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();

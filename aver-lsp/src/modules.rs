@@ -51,8 +51,7 @@ pub fn resolve_dependencies(source: &str, base_dir: &str) -> Vec<ResolvedModule>
 /// Get the base directory from an LSP URI, properly handling percent-encoding.
 pub fn base_dir_from_uri(uri: &Uri) -> Option<String> {
     let path = uri.to_file_path()?;
-    path.parent()
-        .map(|p| p.to_string_lossy().to_string())
+    path.parent().map(|p| p.to_string_lossy().to_string())
 }
 
 /// Convert a filesystem path to an LSP Uri.
@@ -83,11 +82,7 @@ pub fn exported_fns(module: &ResolvedModule) -> Vec<&FnDef> {
                     Some(set) => set.contains(fd.name.as_str()),
                     None => !fd.name.starts_with('_'),
                 };
-                if include {
-                    Some(fd)
-                } else {
-                    None
-                }
+                if include { Some(fd) } else { None }
             } else {
                 None
             }

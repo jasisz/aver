@@ -40,14 +40,8 @@ pub fn goto_definition(
                             return Some(GotoDefinitionResponse::Scalar(Location {
                                 uri: mod_uri,
                                 range: Range {
-                                    start: Position {
-                                        line,
-                                        character: 0,
-                                    },
-                                    end: Position {
-                                        line,
-                                        character: 0,
-                                    },
+                                    start: Position { line, character: 0 },
+                                    end: Position { line, character: 0 },
                                 },
                             }));
                         }
@@ -92,14 +86,8 @@ pub fn goto_definition(
                 return Some(GotoDefinitionResponse::Scalar(Location {
                     uri: uri.clone(),
                     range: Range {
-                        start: Position {
-                            line,
-                            character: 0,
-                        },
-                        end: Position {
-                            line,
-                            character: 0,
-                        },
+                        start: Position { line, character: 0 },
+                        end: Position { line, character: 0 },
                     },
                 }));
             }
@@ -118,14 +106,8 @@ pub fn goto_definition(
                 return Some(GotoDefinitionResponse::Scalar(Location {
                     uri: uri.clone(),
                     range: Range {
-                        start: Position {
-                            line,
-                            character: 0,
-                        },
-                        end: Position {
-                            line,
-                            character: 0,
-                        },
+                        start: Position { line, character: 0 },
+                        end: Position { line, character: 0 },
                     },
                 }));
             }
@@ -197,14 +179,8 @@ fn find_type_member_def(
                     return Some(GotoDefinitionResponse::Scalar(Location {
                         uri: uri.clone(),
                         range: Range {
-                            start: Position {
-                                line,
-                                character: 0,
-                            },
-                            end: Position {
-                                line,
-                                character: 0,
-                            },
+                            start: Position { line, character: 0 },
+                            end: Position { line, character: 0 },
                         },
                     }));
                 }
@@ -228,4 +204,3 @@ fn find_binding_line(source: &str, name: &str) -> Option<usize> {
     }
     None
 }
-

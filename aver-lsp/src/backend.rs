@@ -133,9 +133,7 @@ impl LanguageServer for AverBackend {
             docs.remove(&uri.to_string());
         }
         // Clear diagnostics for closed file
-        self.client
-            .publish_diagnostics(uri, Vec::new(), None)
-            .await;
+        self.client.publish_diagnostics(uri, Vec::new(), None).await;
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
@@ -198,8 +196,8 @@ impl LanguageServer for AverBackend {
 
         // Add keywords
         let keywords = [
-            "fn", "match", "module", "depends", "exposes", "intent", "verify", "decision",
-            "type", "record", "true", "false",
+            "fn", "match", "module", "depends", "exposes", "intent", "verify", "decision", "type",
+            "record", "true", "false",
         ];
         for kw in &keywords {
             items.push(CompletionItem {
@@ -242,10 +240,7 @@ impl LanguageServer for AverBackend {
         ))
     }
 
-    async fn signature_help(
-        &self,
-        params: SignatureHelpParams,
-    ) -> Result<Option<SignatureHelp>> {
+    async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 

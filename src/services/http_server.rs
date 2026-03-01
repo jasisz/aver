@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
 
-use crate::value::{list_from_vec, list_to_vec, RuntimeError, Value};
+use crate::value::{RuntimeError, Value, list_from_vec, list_to_vec};
 
 #[derive(Debug, Clone)]
 struct ServerRequest {

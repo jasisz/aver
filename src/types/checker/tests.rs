@@ -1,4 +1,4 @@
-use super::{run_type_check, TypeChecker};
+use super::{TypeChecker, run_type_check};
 use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Stmt, TopLevel};
 
 fn errors(items: Vec<TopLevel>) -> Vec<String> {

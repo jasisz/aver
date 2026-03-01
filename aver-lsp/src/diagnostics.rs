@@ -3,7 +3,7 @@ use tower_lsp_server::ls_types::{Diagnostic, DiagnosticSeverity, Position, Range
 use aver::lexer::{Lexer, LexerError};
 use aver::parser::Parser;
 use aver::tco;
-use aver::types::checker::{run_type_check_full, TypeError};
+use aver::types::checker::{TypeError, run_type_check_full};
 
 /// Run the full Aver analysis pipeline on source text and return LSP diagnostics.
 pub fn diagnose(source: &str, base_dir: Option<&str>) -> Vec<Diagnostic> {
@@ -122,14 +122,8 @@ fn warning_to_diagnostic(
 
     Diagnostic {
         range: Range {
-            start: Position {
-                line,
-                character: 0,
-            },
-            end: Position {
-                line,
-                character: 0,
-            },
+            start: Position { line, character: 0 },
+            end: Position { line, character: 0 },
         },
         severity: Some(DiagnosticSeverity::WARNING),
         source: Some("aver".to_string()),

@@ -53,11 +53,7 @@ impl Interpreter {
                     (Literal::Bool(b), Value::Bool(v)) => b == v,
                     _ => false,
                 };
-                if matches {
-                    Some(HashMap::new())
-                } else {
-                    None
-                }
+                if matches { Some(HashMap::new()) } else { None }
             }
             Pattern::Ident(name) => {
                 let mut bindings = HashMap::new();

@@ -529,8 +529,7 @@ fn error_binop_int_plus_string() {
 #[test]
 fn error_undeclared_effect() {
     // Calling a function with an effect from a function without that effect declared
-    let src =
-        "fn log(msg: String) -> Unit\n    ! [Io]\n    = Console.print(msg)\nfn caller(x: String) -> Unit\n    = log(x)\n";
+    let src = "fn log(msg: String) -> Unit\n    ! [Io]\n    = Console.print(msg)\nfn caller(x: String) -> Unit\n    = log(x)\n";
     assert_error_containing(src, "Io");
 }
 
@@ -615,8 +614,7 @@ fn error_prop_on_non_result_type() {
 #[test]
 fn error_prop_incompatible_err_types() {
     // Inner Err is String, outer function expects Err = Int — incompatible.
-    let src =
-        "fn inner(x: Int) -> Result<Int, String>\n    = Result.Ok(x)\nfn outer(x: Int) -> Result<Int, Int>\n    = Result.Ok(inner(x)?)\n";
+    let src = "fn inner(x: Int) -> Result<Int, String>\n    = Result.Ok(x)\nfn outer(x: Int) -> Result<Int, Int>\n    = Result.Ok(inner(x)?)\n";
     assert_error_containing(src, "incompatible");
 }
 

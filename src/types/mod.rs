@@ -497,12 +497,18 @@ mod tests {
         assert!(Type::Unknown.compatible(&Type::Int));
         assert!(Type::Int.compatible(&Type::Unknown));
         assert!(!Type::Int.compatible(&Type::Float)); // no implicit widening
-        assert!(Type::Result(Box::new(Type::Int), Box::new(Type::Str))
-            .compatible(&Type::Result(Box::new(Type::Int), Box::new(Type::Str))));
-        assert!(Type::Map(Box::new(Type::Str), Box::new(Type::Int))
-            .compatible(&Type::Map(Box::new(Type::Str), Box::new(Type::Int))));
-        assert!(!Type::Map(Box::new(Type::Str), Box::new(Type::Int))
-            .compatible(&Type::Map(Box::new(Type::Int), Box::new(Type::Int))));
+        assert!(
+            Type::Result(Box::new(Type::Int), Box::new(Type::Str))
+                .compatible(&Type::Result(Box::new(Type::Int), Box::new(Type::Str)))
+        );
+        assert!(
+            Type::Map(Box::new(Type::Str), Box::new(Type::Int))
+                .compatible(&Type::Map(Box::new(Type::Str), Box::new(Type::Int)))
+        );
+        assert!(
+            !Type::Map(Box::new(Type::Str), Box::new(Type::Int))
+                .compatible(&Type::Map(Box::new(Type::Int), Box::new(Type::Int)))
+        );
     }
 
     #[test]

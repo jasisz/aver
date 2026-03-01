@@ -17,8 +17,8 @@
 use std::collections::HashMap;
 
 use crate::value::{
-    list_from_vec, list_head, list_len, list_slice, list_tail_view, list_to_vec, RuntimeError,
-    Value,
+    RuntimeError, Value, list_from_vec, list_head, list_len, list_slice, list_tail_view,
+    list_to_vec,
 };
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -89,7 +89,7 @@ fn get(args: &[Value]) -> Result<Value, RuntimeError> {
         _ => {
             return Err(RuntimeError::Error(
                 "List.get() index must be an Int".to_string(),
-            ))
+            ));
         }
     };
     if index < 0 || index as usize >= list.len() {

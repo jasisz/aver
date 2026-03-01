@@ -166,7 +166,7 @@ impl Interpreter {
                 return Err(RuntimeError::Error(format!(
                     "Operator '{}' does not support these types",
                     op
-                )))
+                )));
             }
         };
         Ok(Value::Bool(result))

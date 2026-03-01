@@ -21,15 +21,10 @@ pub fn emit_pattern(pat: &Pattern, string_context: bool, _ctx: &CodegenContext) 
             )
         }
         Pattern::Tuple(pats) => {
-            let parts: Vec<String> = pats
-                .iter()
-                .map(|p| emit_pattern(p, false, _ctx))
-                .collect();
+            let parts: Vec<String> = pats.iter().map(|p| emit_pattern(p, false, _ctx)).collect();
             format!("({})", parts.join(", "))
         }
-        Pattern::Constructor(name, bindings) => {
-            emit_constructor_pattern(name, bindings)
-        }
+        Pattern::Constructor(name, bindings) => emit_constructor_pattern(name, bindings),
     }
 }
 

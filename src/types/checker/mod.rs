@@ -11,7 +11,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use super::{parse_type_str_strict, Type};
+use super::{Type, parse_type_str_strict};
 use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, Module, Pattern, Stmt, TopLevel, TypeDef};
 use crate::source::{canonicalize_path, find_module_file, parse_source};
 

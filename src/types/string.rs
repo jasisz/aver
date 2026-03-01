@@ -22,7 +22,7 @@
 /// No effects required.
 use std::collections::HashMap;
 
-use crate::value::{list_from_vec, list_slice, RuntimeError, Value};
+use crate::value::{RuntimeError, Value, list_from_vec, list_slice};
 
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();

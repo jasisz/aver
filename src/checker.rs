@@ -1,7 +1,7 @@
 use colored::Colorize;
 
 use crate::ast::{DecisionBlock, Expr, FnBody, FnDef, Stmt, TopLevel, VerifyBlock};
-use crate::interpreter::{aver_repr, Interpreter};
+use crate::interpreter::{Interpreter, aver_repr};
 use crate::value::RuntimeError;
 
 pub struct VerifyResult {

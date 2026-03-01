@@ -129,16 +129,9 @@ fn find_call_context(before_cursor: &str) -> Option<(String, u32)> {
 }
 
 /// Build SignatureHelp from a function name and its detail string like "fn(a: Int, b: Int) -> Int".
-fn build_signature_help(
-    fn_name: &str,
-    detail: &str,
-    active_param: u32,
-) -> Option<SignatureHelp> {
+fn build_signature_help(fn_name: &str, detail: &str, active_param: u32) -> Option<SignatureHelp> {
     // Parse parameters from detail string: "fn(param1, param2) -> RetType"
-    let params_str = detail
-        .strip_prefix("fn(")?
-        .split(") ->")
-        .next()?;
+    let params_str = detail.strip_prefix("fn(")?.split(") ->").next()?;
 
     let params: Vec<&str> = if params_str.is_empty() {
         vec![]

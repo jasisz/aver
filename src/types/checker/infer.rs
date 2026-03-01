@@ -1219,7 +1219,14 @@ impl TypeChecker {
 
     /// Check binop type compatibility. Also handles the unary minus special
     /// case (`0 - float_expr`) produced by the lexer for negative float literals.
-    pub(super) fn check_binop_expr(&mut self, op: &BinOp, left: &Expr, _right: &Expr, lt: &Type, rt: &Type) {
+    pub(super) fn check_binop_expr(
+        &mut self,
+        op: &BinOp,
+        left: &Expr,
+        _right: &Expr,
+        lt: &Type,
+        rt: &Type,
+    ) {
         // Unary minus: `- float_expr` is parsed as `BinOp(Sub, Literal(Int(0)), expr)`.
         // Allow Int(0) - Float to produce Float without requiring explicit conversion.
         if matches!(op, BinOp::Sub)

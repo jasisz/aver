@@ -41,9 +41,7 @@ pub enum RuntimeError {
         expected: String,
         got: String,
     },
-    #[error(
-        "Replay exhausted at position {position}: no recorded effect for call '{effect_type}'"
-    )]
+    #[error("Replay exhausted at position {position}: no recorded effect for call '{effect_type}'")]
     ReplayExhausted {
         effect_type: String,
         position: usize,

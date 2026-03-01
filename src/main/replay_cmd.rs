@@ -4,10 +4,10 @@ use std::process;
 
 use colored::Colorize;
 
-use aver::interpreter::{aver_repr, Value};
+use aver::interpreter::{Value, aver_repr};
 use aver::replay::{
-    first_diff_path, format_json, json_to_value, parse_session_recording, value_to_json, JsonValue,
-    RecordedOutcome, SessionRecording,
+    JsonValue, RecordedOutcome, SessionRecording, first_diff_path, format_json, json_to_value,
+    parse_session_recording, value_to_json,
 };
 
 use crate::shared::{compile_program_for_exec, run_entry_function, run_top_level_statements};

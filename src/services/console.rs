@@ -9,7 +9,7 @@
 /// All methods require `! [Console]`.
 use std::collections::HashMap;
 
-use crate::value::{aver_display, RuntimeError, Value};
+use crate::value::{RuntimeError, Value, aver_display};
 
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();

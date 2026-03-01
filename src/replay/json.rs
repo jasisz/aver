@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
 
-use crate::value::{aver_repr, list_slice, Value};
+use crate::value::{Value, aver_repr, list_slice};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum JsonValue {
