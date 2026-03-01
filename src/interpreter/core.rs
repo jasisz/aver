@@ -475,20 +475,43 @@ impl Interpreter {
             let exposed = Self::exposed_set(&items);
             let mut members = HashMap::new();
             for item in &items {
-                if let TopLevel::FnDef(fd) = item {
-                    let include = match &exposed {
-                        Some(set) => set.contains(&fd.name),
-                        None => !fd.name.starts_with('_'),
-                    };
-                    if include {
-                        let mut val = sub.lookup(&fd.name).map_err(|_| {
-                            RuntimeError::Error(format!("Failed to export '{}.{}'", name, fd.name))
-                        })?;
-                        if let Value::Fn { home_globals, .. } = &mut val {
-                            *home_globals = Some(Rc::clone(&module_globals));
+                match item {
+                    TopLevel::FnDef(fd) => {
+                        let include = match &exposed {
+                            Some(set) => set.contains(&fd.name),
+                            None => !fd.name.starts_with('_'),
+                        };
+                        if include {
+                            let mut val = sub.lookup(&fd.name).map_err(|_| {
+                                RuntimeError::Error(format!(
+                                    "Failed to export '{}.{}'",
+                                    name, fd.name
+                                ))
+                            })?;
+                            if let Value::Fn { home_globals, .. } = &mut val {
+                                *home_globals = Some(Rc::clone(&module_globals));
+                            }
+                            members.insert(fd.name.clone(), val);
                         }
-                        members.insert(fd.name.clone(), val);
                     }
+                    TopLevel::TypeDef(TypeDef::Sum {
+                        name: type_name, ..
+                    }) => {
+                        let include = match &exposed {
+                            Some(set) => set.contains(type_name),
+                            None => !type_name.starts_with('_'),
+                        };
+                        if include {
+                            let val = sub.lookup(type_name).map_err(|_| {
+                                RuntimeError::Error(format!(
+                                    "Failed to export '{}.{}'",
+                                    name, type_name
+                                ))
+                            })?;
+                            members.insert(type_name.clone(), val);
+                        }
+                    }
+                    _ => {}
                 }
             }
 

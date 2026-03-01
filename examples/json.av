@@ -1,9 +1,9 @@
-module JsonParser
+module Json
     intent =
         "RFC 8259 JSON parser. Recursive descent, pure, no effects."
         "Supports: integers, floats, strings (with \\uXXXX), bools, null, arrays, objects."
         "Validates: trailing content, leading zeros, control chars, invalid escapes."
-    exposes [parse]
+    exposes [Json, fromString, toString]
 
 type Json
     JsonString(String)
@@ -20,7 +20,7 @@ type ParseResult
 
 // ── Public API ────────────────────────────────────────────────────
 
-fn parse(s: String) -> Result<Json, String>
+fn fromString(s: String) -> Result<Json, String>
     ? "Parse a JSON string into a Json value."
     match parseValue(s, skipWs(s, 0))
         ParseResult.Err(msg, p) -> Result.Err(msg + " at position " + String.fromInt(p))
@@ -30,6 +30,134 @@ fn checkEof(s: String, val: Json, pos: Int) -> Result<Json, String>
     match String.charAt(s, pos)
         Option.None -> Result.Ok(val)
         Option.Some(c) -> Result.Err("Trailing content: " + c + " at position " + String.fromInt(pos))
+
+verify fromString
+    fromString("null") => Result.Ok(Json.JsonNull)
+    fromString("true") => Result.Ok(Json.JsonBool(true))
+    fromString("false") => Result.Ok(Json.JsonBool(false))
+    fromString("42") => Result.Ok(Json.JsonInt(42))
+    fromString("-7") => Result.Ok(Json.JsonInt(-7))
+    fromString("0") => Result.Ok(Json.JsonInt(0))
+    fromString("-0") => Result.Ok(Json.JsonInt(0))
+
+verify fromString
+    fromString("1.5") => Result.Ok(Json.JsonFloat(1.5))
+    fromString("0.5") => Result.Ok(Json.JsonFloat(0.5))
+    fromString("-3.14") => Result.Ok(Json.JsonFloat(-3.14))
+    fromString("1e2") => Result.Ok(Json.JsonFloat(100.0))
+    fromString("1E2") => Result.Ok(Json.JsonFloat(100.0))
+    fromString("1e+2") => Result.Ok(Json.JsonFloat(100.0))
+    fromString("1e-1") => Result.Ok(Json.JsonFloat(0.1))
+    fromString("1.5e1") => Result.Ok(Json.JsonFloat(15.0))
+    fromString("0e5") => Result.Ok(Json.JsonFloat(0.0))
+    fromString("-2.5e3") => Result.Ok(Json.JsonFloat(-2500.0))
+
+verify fromString
+    fromString("\"hello\"") => Result.Ok(Json.JsonString("hello"))
+    fromString("\"\"") => Result.Ok(Json.JsonString(""))
+    fromString("\"he\\nllo\"") => Result.Ok(Json.JsonString("he\nllo"))
+    fromString("\"\\u0041\"") => Result.Ok(Json.JsonString("A"))
+    fromString("\"caf\\u00e9\"") => Result.Ok(Json.JsonString("café"))
+    fromString("\"\\uD83D\\uDE00\"") => Result.Ok(Json.JsonString("😀"))
+
+verify fromString
+    fromString("[]") => Result.Ok(Json.JsonList([]))
+    fromString("[1,2,3]") => Result.Ok(Json.JsonList([Json.JsonInt(1), Json.JsonInt(2), Json.JsonInt(3)]))
+    fromString("{{}}") => Result.Ok(Json.JsonObject(emptyJsonMap()))
+    fromString("{{\"a\":1}}") => Result.Ok(Json.JsonObject({"a" => Json.JsonInt(1)}))
+    fromString("  {{ \"x\" : [1, 2] , \"y\" : null }}  ") => Result.Ok(Json.JsonObject({"x" => Json.JsonList([Json.JsonInt(1), Json.JsonInt(2)]), "y" => Json.JsonNull}))
+
+verify fromString
+    fromString("true false") => Result.Err("Trailing content: f at position 5")
+    fromString("42oops") => Result.Err("Trailing content: o at position 2")
+    fromString("-") => Result.Err("Expected digit after '-' at position 1")
+    fromString("01") => Result.Err("Leading zeros not allowed at position 1")
+    fromString("-01") => Result.Err("Leading zeros not allowed at position 2")
+    fromString("1.") => Result.Err("Expected digit after '.' at position 2")
+    fromString("1e") => Result.Err("Expected digit in exponent at position 2")
+    fromString("1e+") => Result.Err("Expected digit in exponent at position 3")
+    fromString("\"\\uXXXX\"") => Result.Err("Invalid \\u escape at position 3")
+    fromString("\"\\uD800\"") => Result.Err("Invalid Unicode surrogate pair at position 3")
+    fromString("\"\t\"") => Result.Err("Unescaped control character at position 1")
+
+fn toString(j: Json) -> String
+    ? "Serialize Json into compact JSON."
+    match j
+        Json.JsonString(s) -> "\"" + escapeJsonString(s) + "\""
+        Json.JsonInt(n) -> String.fromInt(n)
+        Json.JsonFloat(f) -> String.fromFloat(f)
+        Json.JsonBool(b) -> match b
+            true -> "true"
+            false -> "false"
+        Json.JsonList(items) -> "[" + renderJsonList(items) + "]"
+        Json.JsonObject(m) -> "{{" + renderJsonEntries(Map.entries(m)) + "}}"
+        Json.JsonNull -> "null"
+
+fn renderJsonList(items: List<Json>) -> String
+    match items
+        [] -> ""
+        [head, ..tail] -> renderJsonListTail(toString(head), tail)
+
+fn renderJsonListTail(acc: String, rest: List<Json>) -> String
+    match rest
+        [] -> acc
+        [head, ..tail] -> renderJsonListTail(acc + "," + toString(head), tail)
+
+fn renderJsonEntries(entries: List<(String, Json)>) -> String
+    match entries
+        [] -> ""
+        [entry, ..tail] -> renderJsonEntriesTail(entryToString(entry), tail)
+
+fn renderJsonEntriesTail(acc: String, rest: List<(String, Json)>) -> String
+    match rest
+        [] -> acc
+        [entry, ..tail] -> renderJsonEntriesTail(acc + "," + entryToString(entry), tail)
+
+fn entryToString(entry: (String, Json)) -> String
+    match entry
+        (key, val) -> "\"" + escapeJsonString(key) + "\":" + toString(val)
+
+fn escapeJsonString(s: String) -> String
+    = escapeJsonChars(String.chars(s), "")
+
+fn escapeJsonChars(chars: List<String>, acc: String) -> String
+    match chars
+        [] -> acc
+        [c, ..rest] -> escapeJsonChars(rest, acc + escapeJsonChar(c))
+
+fn escapeJsonChar(c: String) -> String
+    match c
+        "\"" -> "\\\""
+        "\\" -> "\\\\"
+        "\n" -> "\\n"
+        "\r" -> "\\r"
+        "\t" -> "\\t"
+        _ -> escapeControlChar(c)
+
+fn escapeControlChar(c: String) -> String
+    code = Char.toCode(c)
+    match code == 8
+        true -> "\\b"
+        false -> match code == 12
+            true -> "\\f"
+            false -> match code < 32
+                true -> controlCodeEscape(c, code)
+                false -> c
+
+fn controlCodeEscape(c: String, code: Int) -> String
+    match Byte.toHex(code)
+        Result.Ok(hex) -> "\\u00" + hex
+        Result.Err(_) -> c
+
+verify toString
+    toString(Json.JsonNull) => "null"
+    toString(Json.JsonBool(true)) => "true"
+    toString(Json.JsonInt(42)) => "42"
+    toString(Json.JsonString("hi")) => "\"hi\""
+    toString(Json.JsonString("a\"b")) => "\"a\\\"b\""
+    toString(Json.JsonString("line\nx")) => "\"line\\nx\""
+    toString(Json.JsonList([Json.JsonInt(1), Json.JsonNull])) => "[1,null]"
+    toString(Json.JsonObject({"a" => Json.JsonInt(1), "b" => Json.JsonBool(false)})) => "{{\"a\":1,\"b\":false}}"
 
 // ── Char helpers ──────────────────────────────────────────────────
 
@@ -415,7 +543,7 @@ fn main() -> Unit
     ! [Console]
     json = "{{ \"name\": \"Aver Labs\", \"score\": 9.75, \"motto\": \"caf\\u00e9 au code\", \"team\": [\"Jan\", \"Anna\"] }}"
     Console.print("Parsing JSON...")
-    match parse(json)
+    match fromString(json)
         Result.Err(msg) -> Console.print("Error: " + msg)
         Result.Ok(root) -> printResult(root)
 
@@ -433,62 +561,3 @@ fn printResult(root: Json) -> Unit
     match getField(root, "team")
         Option.Some(t) -> Console.print("Team: " + String.join(List.map(jsonList(t), jsonStr), ", "))
         Option.None -> Console.print("Team: ?")
-
-// ── Verify: primitives ───────────────────────────────────────────
-
-verify parse
-    parse("null") => Result.Ok(Json.JsonNull)
-    parse("true") => Result.Ok(Json.JsonBool(true))
-    parse("false") => Result.Ok(Json.JsonBool(false))
-    parse("42") => Result.Ok(Json.JsonInt(42))
-    parse("-7") => Result.Ok(Json.JsonInt(-7))
-    parse("0") => Result.Ok(Json.JsonInt(0))
-    parse("-0") => Result.Ok(Json.JsonInt(0))
-
-// ── Verify: floats ───────────────────────────────────────────────
-
-verify parse
-    parse("1.5") => Result.Ok(Json.JsonFloat(1.5))
-    parse("0.5") => Result.Ok(Json.JsonFloat(0.5))
-    parse("-3.14") => Result.Ok(Json.JsonFloat(-3.14))
-    parse("1e2") => Result.Ok(Json.JsonFloat(100.0))
-    parse("1E2") => Result.Ok(Json.JsonFloat(100.0))
-    parse("1e+2") => Result.Ok(Json.JsonFloat(100.0))
-    parse("1e-1") => Result.Ok(Json.JsonFloat(0.1))
-    parse("1.5e1") => Result.Ok(Json.JsonFloat(15.0))
-    parse("0e5") => Result.Ok(Json.JsonFloat(0.0))
-    parse("-2.5e3") => Result.Ok(Json.JsonFloat(-2500.0))
-
-// ── Verify: strings and unicode ──────────────────────────────────
-
-verify parse
-    parse("\"hello\"") => Result.Ok(Json.JsonString("hello"))
-    parse("\"\"") => Result.Ok(Json.JsonString(""))
-    parse("\"he\\nllo\"") => Result.Ok(Json.JsonString("he\nllo"))
-    parse("\"\\u0041\"") => Result.Ok(Json.JsonString("A"))
-    parse("\"caf\\u00e9\"") => Result.Ok(Json.JsonString("café"))
-    parse("\"\\uD83D\\uDE00\"") => Result.Ok(Json.JsonString("😀"))
-
-// ── Verify: collections ──────────────────────────────────────────
-
-verify parse
-    parse("[]") => Result.Ok(Json.JsonList([]))
-    parse("[1,2,3]") => Result.Ok(Json.JsonList([Json.JsonInt(1), Json.JsonInt(2), Json.JsonInt(3)]))
-    parse("{{}}") => Result.Ok(Json.JsonObject(emptyJsonMap()))
-    parse("{{\"a\":1}}") => Result.Ok(Json.JsonObject(Map.fromList([("a", Json.JsonInt(1))])))
-    parse("  {{ \"x\" : [1, 2] , \"y\" : null }}  ") => Result.Ok(Json.JsonObject(Map.fromList([("x", Json.JsonList([Json.JsonInt(1), Json.JsonInt(2)])), ("y", Json.JsonNull)])))
-
-// ── Verify: errors ───────────────────────────────────────────────
-
-verify parse
-    parse("true false") => Result.Err("Trailing content: f at position 5")
-    parse("42oops") => Result.Err("Trailing content: o at position 2")
-    parse("-") => Result.Err("Expected digit after '-' at position 1")
-    parse("01") => Result.Err("Leading zeros not allowed at position 1")
-    parse("-01") => Result.Err("Leading zeros not allowed at position 2")
-    parse("1.") => Result.Err("Expected digit after '.' at position 2")
-    parse("1e") => Result.Err("Expected digit in exponent at position 2")
-    parse("1e+") => Result.Err("Expected digit in exponent at position 3")
-    parse("\"\\uXXXX\"") => Result.Err("Invalid \\u escape at position 3")
-    parse("\"\\uD800\"") => Result.Err("Invalid Unicode surrogate pair at position 3")
-    parse("\"\t\"") => Result.Err("Unescaped control character at position 1")

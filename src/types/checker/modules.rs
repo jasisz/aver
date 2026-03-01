@@ -174,6 +174,7 @@ impl TypeChecker {
     pub(super) fn has_namespace_prefix(&self, key: &str) -> bool {
         let prefix = format!("{}.", key);
         self.fn_sigs.keys().any(|k| k.starts_with(&prefix))
+            || self.value_members.keys().any(|k| k.starts_with(&prefix))
     }
 
     pub(super) fn cycle_display(loading: &[String], next: &str) -> String {
@@ -207,9 +208,18 @@ impl TypeChecker {
             .ok_or_else(|| format!("Module '{}' not found in '{}'", name, base_dir))?;
         let cache_key = Self::module_cache_key(&path);
 
-        if let Some(entries) = self.module_sig_cache.get(&cache_key).cloned() {
-            for (key, sig) in entries {
+        if let Some(cached) = self.module_sig_cache.get(&cache_key).cloned() {
+            for (key, sig) in cached.fn_entries {
                 self.fn_sigs.insert(key, sig);
+            }
+            for (key, ty) in cached.value_entries {
+                self.value_members.insert(key, ty);
+            }
+            for (key, ty) in cached.record_field_entries {
+                self.record_field_types.insert(key, ty);
+            }
+            for (type_name, variants) in cached.type_variants {
+                self.type_variants.insert(type_name, variants);
             }
             return Ok(());
         }
@@ -222,7 +232,7 @@ impl TypeChecker {
         }
 
         loading.push(cache_key.clone());
-        let result = (|| -> Result<Vec<(String, FnSig)>, String> {
+        let result = (|| -> Result<ModuleSigCache, String> {
             let src = std::fs::read_to_string(&path)
                 .map_err(|e| format!("Cannot read '{}': {}", path.display(), e))?;
             let items = parse_source(&src)
@@ -262,7 +272,10 @@ impl TypeChecker {
             }
 
             let exposed = Self::exposed_set(&items);
-            let mut entries = Vec::new();
+            let mut fn_entries = Vec::new();
+            let mut value_entries = Vec::new();
+            let mut record_field_entries = Vec::new();
+            let mut type_variants = Vec::new();
             for item in &items {
                 if let TopLevel::FnDef(fd) = item {
                     let include = match &exposed {
@@ -291,7 +304,7 @@ impl TypeChecker {
                         )
                     })?;
 
-                    entries.push((
+                    fn_entries.push((
                         format!("{}.{}", name, fd.name),
                         FnSig {
                             params,
@@ -302,15 +315,102 @@ impl TypeChecker {
                 }
             }
 
-            Ok(entries)
+            for item in &items {
+                if let TopLevel::TypeDef(td) = item {
+                    match td {
+                        TypeDef::Sum {
+                            name: type_name,
+                            variants,
+                            ..
+                        } => {
+                            let include = match &exposed {
+                                Some(set) => set.contains(type_name),
+                                None => !type_name.starts_with('_'),
+                            };
+                            if !include {
+                                continue;
+                            }
+
+                            type_variants.push((
+                                type_name.clone(),
+                                variants.iter().map(|v| v.name.clone()).collect(),
+                            ));
+
+                            for variant in variants {
+                                let params: Vec<Type> = variant
+                                    .fields
+                                    .iter()
+                                    .map(|f| parse_type_str_strict(f).unwrap_or(Type::Unknown))
+                                    .collect();
+                                let key = format!("{}.{}.{}", name, type_name, variant.name);
+                                if params.is_empty() {
+                                    value_entries.insert(0, (key, Type::Named(type_name.clone())));
+                                } else {
+                                    fn_entries.push((
+                                        key,
+                                        FnSig {
+                                            params,
+                                            ret: Type::Named(type_name.clone()),
+                                            effects: vec![],
+                                        },
+                                    ));
+                                }
+                            }
+                        }
+                        TypeDef::Product {
+                            name: type_name,
+                            fields,
+                            ..
+                        } => {
+                            let include = match &exposed {
+                                Some(set) => set.contains(type_name),
+                                None => !type_name.starts_with('_'),
+                            };
+                            if !include {
+                                continue;
+                            }
+
+                            for (field_name, ty_str) in fields {
+                                let field_ty =
+                                    parse_type_str_strict(ty_str).unwrap_or(Type::Unknown);
+                                // Qualified key for explicit module paths.
+                                record_field_entries.push((
+                                    format!("{}.{}.{}", name, type_name, field_name),
+                                    field_ty.clone(),
+                                ));
+                                // Unqualified alias for common `Note.id` style.
+                                record_field_entries
+                                    .push((format!("{}.{}", type_name, field_name), field_ty));
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok(ModuleSigCache {
+                fn_entries,
+                value_entries,
+                record_field_entries,
+                type_variants,
+            })
         })();
         loading.pop();
 
-        let entries = result?;
-        for (key, sig) in &entries {
+        let cached = result?;
+        for (key, sig) in &cached.fn_entries {
             self.fn_sigs.insert(key.clone(), sig.clone());
         }
-        self.module_sig_cache.insert(cache_key, entries);
+        for (key, ty) in &cached.value_entries {
+            self.value_members.insert(key.clone(), ty.clone());
+        }
+        for (key, ty) in &cached.record_field_entries {
+            self.record_field_types.insert(key.clone(), ty.clone());
+        }
+        for (type_name, variants) in &cached.type_variants {
+            self.type_variants
+                .insert(type_name.clone(), variants.clone());
+        }
+        self.module_sig_cache.insert(cache_key, cached);
         Ok(())
     }
 }

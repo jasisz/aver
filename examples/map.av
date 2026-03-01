@@ -1,7 +1,7 @@
 module MapExample
     intent =
         "Demonstrates typed Map usage in Aver."
-        "Shows Map.fromList, Map.get, Map.entries, and counting with List.fold."
+        "Shows map literals, Map.get, Map.entries, and counting with List.fold."
 
 fn emptyCounts() -> Map<String, Int>
     ? "Creates an empty word-count map."
@@ -42,9 +42,9 @@ verify containsWord
     containsWord(["a", "b"], "x") => false
 
 verify incCount
-    incCount(Map.empty(), "a") => Map.fromList([("a", 1)])
-    incCount(Map.fromList([("a", 1)]), "a") => Map.fromList([("a", 2)])
+    incCount(Map.empty(), "a") => {"a" => 1}
+    incCount({"a" => 1}, "a") => {"a" => 2}
 
 verify countWords
     countWords([])                => Map.empty()
-    countWords(["a", "b", "a"])  => Map.fromList([("a", 2), ("b", 1)])
+    countWords(["a", "b", "a"])  => {"a" => 2, "b" => 1}

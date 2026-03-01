@@ -1,0 +1,161 @@
+module Store
+    intent =
+        "Disk-based note storage for the Notepad API."
+        "Notes are persisted as tab-separated lines in a flat file."
+        "A counter file tracks the next available ID."
+    exposes [Note, initStore, loadAll, addNote, removeNote, findById]
+    depends []
+
+decision FlatFileStorage
+    date = "2026-03-01"
+    reason =
+        "A single flat file is the simplest persistence model."
+        "No external database required. Disk service provides atomic read/write."
+        "Tab-separated format is trivial to parse with String.split."
+        "Good enough for a demo; real apps would use a proper DB."
+    chosen = SingleFlatFile
+    rejected = [OneFilePerNote, Sqlite, InMemoryOnly]
+    impacts = [loadAll, saveAll, addNote, removeNote]
+
+record Note
+    id: Int
+    title: String
+    body: String
+
+// --- paths ---
+
+fn dataDir() -> String
+    = "/tmp/aver_notepad"
+
+fn notesPath() -> String
+    = "{dataDir()}/notes.txt"
+
+fn counterPath() -> String
+    = "{dataDir()}/counter"
+
+// --- initialization ---
+
+fn initFileIfMissing(path: String, content: String) -> Result<Unit, String>
+    ? "Creates a file with default content only when it does not already exist."
+    ! [Disk]
+    match Disk.exists(path)
+        false -> Disk.writeText(path, content)
+        true -> Disk.appendText(path, "")
+
+fn initStore() -> Result<Unit, String>
+    ? "Ensures the data directory and storage files exist."
+    ! [Disk]
+    d = Disk.makeDir(dataDir())?
+    n = initFileIfMissing(notesPath(), "")?
+    initFileIfMissing(counterPath(), "1")
+
+// --- id counter ---
+
+fn bumpCounter() -> Result<Int, String>
+    ? "Reads the ID counter, increments it on disk, returns the old value."
+    ! [Disk]
+    text = Disk.readText(counterPath())?
+    current = Int.fromString(String.trim(text))?
+    _ = Disk.writeText(counterPath(), "{current + 1}")?
+    Result.Ok(current)
+
+// --- serialization ---
+
+fn serializeLine(note: Note) -> String
+    ? "Encodes a note as a tab-separated line: id, title, body."
+    = "{note.id}\t{note.title}\t{note.body}"
+
+verify serializeLine
+    serializeLine(Note(id = 1, title = "Hello", body = "World")) => "1\tHello\tWorld"
+    serializeLine(Note(id = 42, title = "Test", body = "note body")) => "42\tTest\tnote body"
+
+fn deserializeLine(line: String) -> Result<Note, String>
+    ? "Decodes a tab-separated line into a Note record."
+    parts = String.split(line, "\t")
+    rawId = Option.toResult(List.get(parts, 0), "corrupt note: missing id")?
+    id = Int.fromString(rawId)?
+    title = Option.toResult(List.get(parts, 1), "corrupt note: missing title")?
+    body = Option.toResult(List.get(parts, 2), "corrupt note: missing body")?
+    Result.Ok(Note(id = id, title = title, body = body))
+
+verify deserializeLine
+    deserializeLine("1\tHello\tWorld") => Result.Ok(Note(id = 1, title = "Hello", body = "World"))
+    deserializeLine("bad") => Result.Err("Cannot parse 'bad' as Int")
+
+fn foldNote(acc: Result<List<Note>, String>, line: String) -> Result<List<Note>, String>
+    ? "Fold step: parses a line and appends the resulting note."
+    = match acc
+        Result.Err(e) -> Result.Err(e)
+        Result.Ok(notes) -> match deserializeLine(line)
+            Result.Err(e) -> Result.Err(e)
+            Result.Ok(note) -> Result.Ok(List.push(notes, note))
+
+fn isNonEmpty(s: String) -> Bool
+    ? "Returns true when the string is not empty."
+    = String.len(s) > 0
+
+fn parseNotes(content: String) -> Result<List<Note>, String>
+    ? "Parses the entire notes file into a list of Notes."
+    lines = String.split(content, "\n")
+    nonEmpty = List.filter(lines, isNonEmpty)
+    List.fold(nonEmpty, Result.Ok([]), foldNote)
+
+verify parseNotes
+    parseNotes("") => Result.Ok([])
+    parseNotes("1\tBuy milk\tFrom the store") => Result.Ok([Note(id = 1, title = "Buy milk", body = "From the store")])
+
+// --- lookup helpers (recursive, no closures needed) ---
+
+fn findById(notes: List<Note>, id: Int) -> Option<Note>
+    ? "Walks the list to find a note with the given ID."
+    = match List.head(notes)
+        Option.None -> Option.None
+        Option.Some(note) -> match note.id == id
+            true -> Option.Some(note)
+            false -> findById(Option.withDefault(List.tail(notes), []), id)
+
+verify findById
+    findById([Note(id = 1, title = "A", body = "a"), Note(id = 2, title = "B", body = "b")], 2) => Option.Some(Note(id = 2, title = "B", body = "b"))
+    findById([Note(id = 1, title = "A", body = "a")], 99) => Option.None
+    findById([], 1) => Option.None
+
+fn withoutId(notes: List<Note>, id: Int, acc: List<Note>) -> List<Note>
+    ? "Builds a new list excluding the note with the given ID."
+    = match List.head(notes)
+        Option.None -> acc
+        Option.Some(note) -> match note.id == id
+            true -> withoutId(Option.withDefault(List.tail(notes), []), id, acc)
+            false -> withoutId(Option.withDefault(List.tail(notes), []), id, List.push(acc, note))
+
+verify withoutId
+    withoutId([Note(id = 1, title = "A", body = "a"), Note(id = 2, title = "B", body = "b")], 1, []) => [Note(id = 2, title = "B", body = "b")]
+    withoutId([], 1, []) => []
+
+// --- CRUD ---
+
+fn loadAll() -> Result<List<Note>, String>
+    ? "Reads all notes from disk."
+    ! [Disk]
+    content = Disk.readText(notesPath())?
+    parseNotes(content)
+
+fn saveAll(notes: List<Note>) -> Result<Unit, String>
+    ? "Overwrites the notes file with the given list."
+    ! [Disk]
+    lines = List.map(notes, serializeLine)
+    Disk.writeText(notesPath(), "{String.join(lines, "\n")}\n")
+
+fn addNote(title: String, body: String) -> Result<Note, String>
+    ? "Creates a new note with the next available ID and persists it."
+    ! [Disk]
+    id = bumpCounter()?
+    note = Note(id = id, title = title, body = body)
+    _ = Disk.appendText(notesPath(), "{serializeLine(note)}\n")?
+    Result.Ok(note)
+
+fn removeNote(id: Int) -> Result<Unit, String>
+    ? "Deletes a note by ID. Rewrites the storage file without the deleted note."
+    ! [Disk]
+    notes = loadAll()?
+    remaining = withoutId(notes, id, [])
+    saveAll(remaining)

@@ -92,9 +92,17 @@ struct FnSig {
     effects: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+struct ModuleSigCache {
+    fn_entries: Vec<(String, FnSig)>,
+    value_entries: Vec<(String, Type)>,
+    record_field_entries: Vec<(String, Type)>,
+    type_variants: Vec<(String, Vec<String>)>,
+}
+
 struct TypeChecker {
     fn_sigs: HashMap<String, FnSig>,
-    module_sig_cache: HashMap<String, Vec<(String, FnSig)>>,
+    module_sig_cache: HashMap<String, ModuleSigCache>,
     value_members: HashMap<String, Type>,
     /// Field types for record types: "TypeName.fieldName" → Type.
     /// Populated for both user-defined `record` types and built-in records
