@@ -3,6 +3,7 @@
 /// Transforms Aver AST → valid Rust source code.
 mod builtins;
 mod expr;
+mod liveness;
 mod pattern;
 mod project;
 mod runtime;
