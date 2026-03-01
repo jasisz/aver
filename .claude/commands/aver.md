@@ -25,7 +25,7 @@ Single-expression shorthand: `= expr` on its own indented line.
 Declare side effects with `! [Effect]`. Built-in platform effects:
 - `Console` — `Console.print`, `Console.error`, `Console.warn`, `Console.readLine`
 - `Http`    — `Http.get`, `Http.post`, `Http.put`, `Http.patch`, `Http.delete`, `Http.head`
-- `Disk`    — `Disk.readText`, `Disk.writeText`, `Disk.appendText`, `Disk.exists`, `Disk.delete`, `Disk.listDir`, `Disk.makeDir`
+- `Disk`    — `Disk.readText`, `Disk.writeText`, `Disk.appendText`, `Disk.exists`, `Disk.delete`, `Disk.deleteDir`, `Disk.listDir`, `Disk.makeDir`
 - `Tcp`     — `Tcp.connect`, `Tcp.writeLine`, `Tcp.readLine`, `Tcp.close`, `Tcp.send`, `Tcp.ping`
 - `HttpServer` — `HttpServer.listen`, `HttpServer.listenWith`
 
@@ -42,6 +42,15 @@ fn fetchUser(id: Int) -> Result<String, String>
 ```
 
 Effect declarations are statically enforced — a function calling another with `! [X]` must also declare `! [X]`.
+
+### Comments
+
+```aver
+// This is a line comment
+x = 42  // inline comment
+```
+
+Only `//` line comments. No block comments. No `--` or `#`.
 
 ### Bindings
 
@@ -125,6 +134,40 @@ match x
 
 No guard clauses — use nested match on `true`/`false` instead.
 
+**Additional match patterns:**
+```aver
+// List patterns
+match xs
+    [] -> "empty"
+    [head | tail] -> "head is {head}"
+
+// Tuple patterns
+match pair
+    (a, b) -> a + b
+
+// Option/Result patterns
+match opt
+    Option.Some(v) -> v
+    Option.None -> "nothing"
+```
+
+### Tuples
+
+```aver
+pair = (1, "hello")
+triple = (true, 42, "world")
+```
+
+Destructure with match: `(a, b) -> ...`. No index access — always destructure.
+
+### Map literals
+
+```aver
+m = { "key1" => value1, "key2" => value2 }
+```
+
+Keys and values are full expressions separated by `=>`. Map operations via `Map.*` namespace.
+
 ### Pipe operator
 
 ```aver
@@ -175,6 +218,9 @@ Use `?` to propagate errors (unwraps `Result.Ok`, propagates `Result.Err`):
 ```aver
 n = safeDivide(10, 2)?
 ```
+
+The `?` operator can only be used inside functions that return `Result<T, E>`.
+`fn main()` returns `Unit`, so use a helper function that returns `Result` if you need `?`.
 
 ### String interpolation
 
@@ -231,10 +277,11 @@ All user-defined functions are top-level. At call time, a function sees globals 
 Higher-order APIs (`List.map`, `List.filter`, `List.fold`, `List.any`) take a top-level function name.
 
 ```aver
-fn isEven(n: Int) -> Bool
-    = Int.mod(n, 2) == Result.Ok(0)
+fn double(n: Int) -> Int
+    ? "Doubles a number."
+    = n * 2
 
-evens = List.filter([1, 2, 3, 4], isEven)
+doubled = List.map([1, 2, 3, 4], double)
 ```
 
 ## Rules you must follow
