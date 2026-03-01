@@ -104,6 +104,7 @@ impl Interpreter {
             replay_effects: Vec::new(),
             replay_pos: 0,
             validate_replay_args: false,
+            recording_sink: None,
         }
     }
 
@@ -151,6 +152,59 @@ impl Interpreter {
                 remaining: self.replay_effects.len() - self.replay_pos,
             });
         }
+        Ok(())
+    }
+
+    pub fn configure_recording_sink(
+        &mut self,
+        path: std::path::PathBuf,
+        request_id: String,
+        timestamp: String,
+        program_file: String,
+        module_root: String,
+        entry_fn: String,
+        input: JsonValue,
+    ) {
+        self.recording_sink = Some(RecordingSink {
+            path,
+            request_id,
+            timestamp,
+            program_file,
+            module_root,
+            entry_fn,
+            input,
+        });
+    }
+
+    pub fn recording_sink_path(&self) -> Option<std::path::PathBuf> {
+        self.recording_sink.as_ref().map(|s| s.path.clone())
+    }
+
+    pub fn persist_recording_snapshot(&self, output: RecordedOutcome) -> Result<(), RuntimeError> {
+        let Some(sink) = &self.recording_sink else {
+            return Ok(());
+        };
+
+        let recording = SessionRecording {
+            schema_version: 1,
+            request_id: sink.request_id.clone(),
+            timestamp: sink.timestamp.clone(),
+            program_file: sink.program_file.clone(),
+            module_root: sink.module_root.clone(),
+            entry_fn: sink.entry_fn.clone(),
+            input: sink.input.clone(),
+            effects: self.recorded_effects.clone(),
+            output,
+        };
+
+        let json = session_recording_to_string_pretty(&recording);
+        std::fs::write(&sink.path, json).map_err(|e| {
+            RuntimeError::Error(format!(
+                "Cannot write recording '{}': {}",
+                sink.path.display(),
+                e
+            ))
+        })?;
         Ok(())
     }
 

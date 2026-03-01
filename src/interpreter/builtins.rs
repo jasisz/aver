@@ -36,6 +36,9 @@ impl Interpreter {
                     args: args_json,
                     outcome,
                 });
+                // Autosave snapshots on every recorded effect so long-running
+                // processes (like HttpServer) still persist replay data.
+                self.persist_recording_snapshot(RecordedOutcome::Value(JsonValue::Null))?;
                 result
             }
             ExecutionMode::Replay => {

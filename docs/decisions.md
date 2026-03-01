@@ -13,6 +13,16 @@ aver decisions --docs
 
 <!-- BEGIN AUTO-GENERATED: decisions -->
 
+## HybridExecutionModel (2026-03-01)
+
+**Chosen:** InterpreterPlusTranspiler
+**Rejected:** InterpreterOnly, TranspilerOnly, BytecodeVM
+**Impacts:** Interpreter, Transpiler, CLI, Performance
+
+> Interpreter keeps feedback loop fast for language work (run/check/verify/context). Transpilation gives a deployment path to native projects without shipping the Aver runtime. These paths solve different problems, so they should coexist instead of replacing each other.
+
+Author: `Aver core team`
+
 ## ConstructorContract (2026-02-26)
 
 **Chosen:** UpperCamelCalleeContract
@@ -50,16 +60,6 @@ Author: `Aver core team`
 **Impacts:** Lexer, Parser, Checker, AIDeveloperExperience
 
 > Architecture Decision Records written in markdown files are invisible to the language tooling and decay silently. Making decisions a first-class parse node means they can be indexed, searched, and rendered by any tool that reads Aver. When an AI resumes work on a codebase, it can run aver decisions to reconstruct the design rationale without reading prose.
-
-Author: `Aver core team`
-
-## TreeWalkingInterpreter (2024-01-30)
-
-**Chosen:** TreeWalker
-**Rejected:** BytecodeVM, LLVMBackend, Transpilation
-**Impacts:** Interpreter, Performance
-
-> A tree-walking interpreter can be built and debugged in an afternoon; bytecode compilation requires weeks of infrastructure. The primary goal of Aver is to validate language design and AI tooling, not to achieve maximum runtime throughput. Switching to bytecode or LLVM later is straightforward once the semantics are stable.
 
 Author: `Aver core team`
 

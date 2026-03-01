@@ -59,16 +59,16 @@ decision DecisionBlocksAsLanguageFeature
     rejected = [MarkdownADR, Comments, ExternalWiki]
     impacts = [Lexer, Parser, Checker, AIDeveloperExperience]
 
-decision TreeWalkingInterpreter
-    date = "2024-01-30"
+decision HybridExecutionModel
+    date = "2026-03-01"
     author = "Aver core team"
     reason =
-        "A tree-walking interpreter can be built and debugged in an afternoon; bytecode compilation requires weeks of infrastructure."
-        "The primary goal of Aver is to validate language design and AI tooling, not to achieve maximum runtime throughput."
-        "Switching to bytecode or LLVM later is straightforward once the semantics are stable."
-    chosen = TreeWalker
-    rejected = [BytecodeVM, LLVMBackend, Transpilation]
-    impacts = [Interpreter, Performance]
+        "Interpreter keeps feedback loop fast for language work (run/check/verify/context)."
+        "Transpilation gives a deployment path to native projects without shipping the Aver runtime."
+        "These paths solve different problems, so they should coexist instead of replacing each other."
+    chosen = InterpreterPlusTranspiler
+    rejected = [InterpreterOnly, TranspilerOnly, BytecodeVM]
+    impacts = [Interpreter, Transpiler, CLI, Performance]
 
 decision RecordsAreDataMethodsInModules
     date = "2026-02-25"
@@ -110,19 +110,19 @@ fn describeDecision(decName: String, pick: String) -> String
 
 fn main() -> Unit
     ! [Console]
-    print("=== Aver Architecture ===")
-    print("")
-    print(describeDecision("HostLanguage", "Rust"))
-    print(describeDecision("SignificantIndentation", "Indentation"))
-    print(describeDecision("ResultOverExceptions", "Result"))
-    print(describeDecision("ColocatedVerify", "ColocatedVerifyBlocks"))
-    print(describeDecision("DecisionBlocksAsLanguageFeature", "FirstClassDecisions"))
-    print(describeDecision("TreeWalkingInterpreter", "TreeWalker"))
-    print(describeDecision("RecordsAreDataMethodsInModules", "DataOnlyRecords"))
-    print(describeDecision("EffectContractsAreTransparentAcrossModules", "TransparentAcrossModules"))
-    print("")
-    print("Run: cargo run -- decisions decisions/architecture.av")
+    Console.print("=== Aver Architecture ===")
+    Console.print("")
+    Console.print(describeDecision("HostLanguage", "Rust"))
+    Console.print(describeDecision("SignificantIndentation", "Indentation"))
+    Console.print(describeDecision("ResultOverExceptions", "Result"))
+    Console.print(describeDecision("ColocatedVerify", "ColocatedVerifyBlocks"))
+    Console.print(describeDecision("DecisionBlocksAsLanguageFeature", "FirstClassDecisions"))
+    Console.print(describeDecision("HybridExecutionModel", "InterpreterPlusTranspiler"))
+    Console.print(describeDecision("RecordsAreDataMethodsInModules", "DataOnlyRecords"))
+    Console.print(describeDecision("EffectContractsAreTransparentAcrossModules", "TransparentAcrossModules"))
+    Console.print("")
+    Console.print("Run: cargo run -- decisions decisions/architecture.av")
 
 verify describeDecision
     describeDecision("HostLanguage", "Rust") => "Decision: HostLanguage -> chosen = Rust"
-    describeDecision("TreeWalker", "Fast") => "Decision: TreeWalker -> chosen = Fast"
+    describeDecision("HybridExecutionModel", "InterpreterPlusTranspiler") => "Decision: HybridExecutionModel -> chosen = InterpreterPlusTranspiler"

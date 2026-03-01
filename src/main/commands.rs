@@ -11,9 +11,7 @@ use aver::codegen;
 use aver::codegen::ModuleInfo;
 use aver::codegen::rust as rust_codegen;
 use aver::interpreter::{Interpreter, Value, aver_repr};
-use aver::replay::{
-    JsonValue, RecordedOutcome, SessionRecording, session_recording_to_string_pretty, value_to_json,
-};
+use aver::replay::{JsonValue, RecordedOutcome, value_to_json};
 use aver::resolver;
 use aver::source::find_module_file;
 use aver::tco;
@@ -40,18 +38,11 @@ pub(super) fn generate_timestamp() -> String {
     format!("unix-{}", secs)
 }
 
-pub(super) fn write_session_recording(
-    dir: &str,
-    recording: &SessionRecording,
-) -> Result<PathBuf, String> {
+pub(super) fn prepare_recording_path(dir: &str, request_id: &str) -> Result<PathBuf, String> {
     let dir_path = Path::new(dir);
     fs::create_dir_all(dir_path)
         .map_err(|e| format!("Cannot create recording dir '{}': {}", dir, e))?;
-    let out_path = dir_path.join(format!("{}.json", recording.request_id));
-    let json = session_recording_to_string_pretty(recording);
-    fs::write(&out_path, json)
-        .map_err(|e| format!("Cannot write recording '{}': {}", out_path.display(), e))?;
-    Ok(out_path)
+    Ok(dir_path.join(format!("{}.json", request_id)))
 }
 
 pub(super) fn cmd_run(
@@ -78,9 +69,34 @@ pub(super) fn cmd_run(
             }
         };
 
-    if record_dir.is_some() {
+    let recording_target = if let Some(dir) = record_dir {
+        let request_id = generate_request_id();
+        let timestamp = generate_timestamp();
+        let out_path = match prepare_recording_path(dir, &request_id) {
+            Ok(path) => path,
+            Err(e) => {
+                eprintln!("{}", e.red());
+                process::exit(1);
+            }
+        };
+        interp.configure_recording_sink(
+            out_path.clone(),
+            request_id.clone(),
+            timestamp.clone(),
+            file.to_string(),
+            module_root.clone(),
+            "main".to_string(),
+            JsonValue::Null,
+        );
         interp.start_recording();
-    }
+        if let Err(e) = interp.persist_recording_snapshot(RecordedOutcome::Value(JsonValue::Null)) {
+            eprintln!("{}", e.to_string().red());
+            process::exit(1);
+        }
+        Some(out_path)
+    } else {
+        None
+    };
 
     let mut runtime_failure: Option<String> = run_top_level_statements(&mut interp, &items).err();
 
@@ -97,7 +113,7 @@ pub(super) fn cmd_run(
         }
     }
 
-    if let Some(dir) = record_dir {
+    if recording_target.is_some() {
         let output = if let Some(msg) = &runtime_failure {
             RecordedOutcome::RuntimeError(msg.clone())
         } else {
@@ -111,24 +127,12 @@ pub(super) fn cmd_run(
             }
         };
 
-        let recording = SessionRecording {
-            schema_version: 1,
-            request_id: generate_request_id(),
-            timestamp: generate_timestamp(),
-            program_file: file.to_string(),
-            module_root: module_root.clone(),
-            entry_fn: "main".to_string(),
-            input: JsonValue::Null,
-            effects: interp.take_recorded_effects(),
-            output,
-        };
-
-        match write_session_recording(dir, &recording) {
-            Ok(path) => println!("Recording saved: {}", path.display()),
-            Err(e) => {
-                eprintln!("{}", e.red());
-                process::exit(1);
-            }
+        if let Err(e) = interp.persist_recording_snapshot(output) {
+            eprintln!("{}", e.to_string().red());
+            process::exit(1);
+        }
+        if let Some(path) = interp.recording_sink_path() {
+            println!("Recording saved: {}", path.display());
         }
     }
 

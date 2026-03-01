@@ -1,11 +1,12 @@
 use crate::value::hash_memo_args;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use crate::ast::*;
 use crate::replay::{
-    EffectRecord, JsonValue, RecordedOutcome, json_to_string, value_to_json, values_to_json_lossy,
+    EffectRecord, JsonValue, RecordedOutcome, SessionRecording, json_to_string,
+    session_recording_to_string_pretty, value_to_json, values_to_json_lossy,
 };
 use crate::services::{console, disk, http, http_server, tcp};
 use crate::source::{canonicalize_path, find_module_file, parse_source};
@@ -34,6 +35,17 @@ struct MemoEntry {
     id: u64,
     args: Vec<Value>,
     result: Value,
+}
+
+#[derive(Debug, Clone)]
+struct RecordingSink {
+    path: PathBuf,
+    request_id: String,
+    timestamp: String,
+    program_file: String,
+    module_root: String,
+    entry_fn: String,
+    input: JsonValue,
 }
 
 /// Per-function memo cache with collision-safe buckets and true LRU eviction.
@@ -198,6 +210,7 @@ pub struct Interpreter {
     replay_effects: Vec<EffectRecord>,
     replay_pos: usize,
     validate_replay_args: bool,
+    recording_sink: Option<RecordingSink>,
 }
 
 mod api;
