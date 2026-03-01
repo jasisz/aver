@@ -4,6 +4,7 @@ mod definition;
 mod diagnostics;
 mod hover;
 mod modules;
+mod position;
 mod signature;
 
 use backend::AverBackend;

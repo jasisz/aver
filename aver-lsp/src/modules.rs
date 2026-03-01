@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 use tower_lsp_server::ls_types::Uri;
 
@@ -8,11 +10,55 @@ use aver::source::find_module_file;
 use crate::completion;
 
 /// Information about a resolved module dependency.
+#[derive(Clone)]
 pub struct ResolvedModule {
     pub name: String,
     pub path: PathBuf,
     pub source: String,
     pub items: Vec<TopLevel>,
+}
+
+#[derive(Clone)]
+struct CachedModuleFile {
+    modified: Option<SystemTime>,
+    source: String,
+    items: Vec<TopLevel>,
+}
+
+thread_local! {
+    static MODULE_FILE_CACHE: RefCell<std::collections::HashMap<PathBuf, CachedModuleFile>> =
+        RefCell::new(std::collections::HashMap::new());
+}
+
+fn read_module_cached(path: &PathBuf) -> Option<(String, Vec<TopLevel>)> {
+    let modified = std::fs::metadata(path).ok().and_then(|m| m.modified().ok());
+    let cached = MODULE_FILE_CACHE.with(|cache| {
+        cache
+            .borrow()
+            .get(path)
+            .filter(|entry| entry.modified == modified)
+            .map(|entry| (entry.source.clone(), entry.items.clone()))
+    });
+    if let Some(hit) = cached {
+        return Some(hit);
+    }
+
+    let source = std::fs::read_to_string(path).ok()?;
+    let items = completion::parse_items(&source);
+
+    MODULE_FILE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        cache.insert(
+            path.clone(),
+            CachedModuleFile {
+                modified,
+                source: source.clone(),
+                items: items.clone(),
+            },
+        );
+    });
+
+    Some((source, items))
 }
 
 /// Extract module `depends` list from parsed items.
@@ -34,8 +80,7 @@ pub fn resolve_dependencies(source: &str, base_dir: &str) -> Vec<ResolvedModule>
     let mut modules = Vec::new();
     for dep_name in &depends {
         if let Some(path) = find_module_file(dep_name, base_dir) {
-            if let Ok(mod_source) = std::fs::read_to_string(&path) {
-                let mod_items = completion::parse_items(&mod_source);
+            if let Some((mod_source, mod_items)) = read_module_cached(&path) {
                 modules.push(ResolvedModule {
                     name: dep_name.clone(),
                     path,

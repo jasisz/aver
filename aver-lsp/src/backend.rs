@@ -10,6 +10,7 @@ use crate::definition;
 use crate::diagnostics;
 use crate::hover as hover_mod;
 use crate::modules;
+use crate::position::utf16_col_to_byte_idx;
 use crate::signature;
 
 pub struct AverBackend {
@@ -149,11 +150,8 @@ impl LanguageServer for AverBackend {
 
         // Try to figure out if we're completing after a dot (namespace member)
         let line_text = source.lines().nth(position.line as usize).unwrap_or("");
-        let before_cursor = if (position.character as usize) <= line_text.len() {
-            &line_text[..position.character as usize]
-        } else {
-            line_text
-        };
+        let byte_col = utf16_col_to_byte_idx(line_text, position.character);
+        let before_cursor = &line_text[..byte_col];
 
         // Check for namespace.member pattern
         if let Some(dot_pos) = before_cursor.rfind('.') {
@@ -225,7 +223,7 @@ impl LanguageServer for AverBackend {
         let word = match hover_mod::word_at_position(
             &source,
             position.line as usize,
-            position.character as usize,
+            position.character,
         ) {
             Some(w) => w,
             None => return Ok(None),
@@ -253,7 +251,7 @@ impl LanguageServer for AverBackend {
         Ok(signature::signature_help(
             &source,
             position.line as usize,
-            position.character as usize,
+            position.character,
             base_dir.as_deref(),
         ))
     }
@@ -270,7 +268,7 @@ impl LanguageServer for AverBackend {
         let word = match hover_mod::word_at_position(
             &source,
             position.line as usize,
-            position.character as usize,
+            position.character,
         ) {
             Some(w) => w,
             None => return Ok(None),

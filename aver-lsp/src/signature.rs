@@ -4,20 +4,18 @@ use tower_lsp_server::ls_types::{
 
 use crate::completion;
 use crate::modules;
+use crate::position::utf16_col_to_byte_idx;
 
 /// Provide signature help when the cursor is inside a function call.
 pub fn signature_help(
     source: &str,
     line: usize,
-    character: usize,
+    character: u32,
     base_dir: Option<&str>,
 ) -> Option<SignatureHelp> {
     let line_text = source.lines().nth(line)?;
-    let before_cursor = if character <= line_text.len() {
-        &line_text[..character]
-    } else {
-        line_text
-    };
+    let byte_col = utf16_col_to_byte_idx(line_text, character);
+    let before_cursor = &line_text[..byte_col];
 
     // Walk backwards to find the function name and open paren
     let (fn_name, active_param) = find_call_context(before_cursor)?;
@@ -131,12 +129,17 @@ fn find_call_context(before_cursor: &str) -> Option<(String, u32)> {
 /// Build SignatureHelp from a function name and its detail string like "fn(a: Int, b: Int) -> Int".
 fn build_signature_help(fn_name: &str, detail: &str, active_param: u32) -> Option<SignatureHelp> {
     // Parse parameters from detail string: "fn(param1, param2) -> RetType"
-    let params_str = detail.strip_prefix("fn(")?.split(") ->").next()?;
+    let params_str = extract_params_str(detail)?;
 
     let params: Vec<&str> = if params_str.is_empty() {
         vec![]
     } else {
         split_params(params_str)
+    };
+    let active_param = if params.is_empty() {
+        0
+    } else {
+        active_param.min((params.len() - 1) as u32)
     };
 
     let parameters: Vec<ParameterInformation> = params
@@ -161,18 +164,53 @@ fn build_signature_help(fn_name: &str, detail: &str, active_param: u32) -> Optio
     })
 }
 
+/// Extract the `...` from `fn(...) -> ...`, respecting nested parentheses.
+fn extract_params_str(detail: &str) -> Option<&str> {
+    if !detail.starts_with("fn(") {
+        return None;
+    }
+    let start = 3; // after "fn("
+    let mut depth = 1i32;
+
+    for (i, ch) in detail[start..].char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    let end = start + i;
+                    return Some(&detail[start..end]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Split parameter string respecting nested generics like "List<a>" or "Fn(a) -> b".
 fn split_params(s: &str) -> Vec<&str> {
     let mut result = Vec::new();
-    let mut depth = 0i32;
+    let mut paren_depth = 0i32;
+    let mut angle_depth = 0i32;
     let mut start = 0;
     let bytes = s.as_bytes();
 
     for i in 0..bytes.len() {
         match bytes[i] {
-            b'<' | b'(' => depth += 1,
-            b'>' | b')' => depth -= 1,
-            b',' if depth == 0 => {
+            b'(' => paren_depth += 1,
+            b')' => {
+                if paren_depth > 0 {
+                    paren_depth -= 1;
+                }
+            }
+            b'<' => angle_depth += 1,
+            b'>' => {
+                if angle_depth > 0 {
+                    angle_depth -= 1;
+                }
+            }
+            b',' if paren_depth == 0 && angle_depth == 0 => {
                 result.push(s[start..i].trim());
                 start = i + 1;
             }
@@ -184,4 +222,29 @@ fn split_params(s: &str) -> Vec<&str> {
         result.push(last);
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{extract_params_str, split_params};
+
+    #[test]
+    fn extract_params_handles_nested_fn_types() {
+        let detail = "fn(List<a>, Fn(a) -> Bool) -> List<a>";
+        assert_eq!(extract_params_str(detail), Some("List<a>, Fn(a) -> Bool"));
+    }
+
+    #[test]
+    fn split_params_handles_nested_generics_and_fn() {
+        let s = "List<a>, Fn(a, List<b>) -> Result<c, d>, Map<String, Int>";
+        let parts = split_params(s);
+        assert_eq!(
+            parts,
+            vec![
+                "List<a>",
+                "Fn(a, List<b>) -> Result<c, d>",
+                "Map<String, Int>"
+            ]
+        );
+    }
 }

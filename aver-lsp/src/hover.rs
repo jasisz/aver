@@ -4,6 +4,7 @@ use aver::ast::{FnBody, FnDef, Stmt, TopLevel, TypeDef};
 
 use crate::completion;
 use crate::modules;
+use crate::position::utf16_col_to_byte_idx;
 
 /// Try to produce hover info for a word at the cursor position.
 pub fn hover_for_word(word: &str, source: &str, base_dir: Option<&str>) -> Option<Hover> {
@@ -263,11 +264,9 @@ fn make_hover(content: String) -> Hover {
 
 /// Extract the word at a given position from source text.
 /// Handles dotted names like "List.map".
-pub fn word_at_position(source: &str, line: usize, character: usize) -> Option<String> {
+pub fn word_at_position(source: &str, line: usize, character: u32) -> Option<String> {
     let target_line = source.lines().nth(line)?;
-    if character > target_line.len() {
-        return None;
-    }
+    let character = utf16_col_to_byte_idx(target_line, character);
 
     let bytes = target_line.as_bytes();
     let mut start = character;
