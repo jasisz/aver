@@ -218,7 +218,7 @@ Duplicate binding of the same name in the same scope is a type error.
 
 ### Operators
 
-Arithmetic: `+`, `-`, `*`, `/` with mixed Int/Float promotion.
+Arithmetic: `+`, `-`, `*`, `/` — operands must match (`Int+Int`, `Float+Float`, `String+String`). No implicit promotion; use `Int.toFloat` / `Float.fromInt` to convert.
 Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`.
 Pipe: `value |> fn` — passes the left-hand value as the sole argument to the right-hand function.
 Right-hand side must be a function reference (`fn` / `Ns.fn`), not a call (`fn(...)`).
@@ -321,10 +321,11 @@ There is no lambda syntax. Higher-order APIs (for example `List.map`, `List.filt
 ### Common patterns (without closures)
 
 ```aver
-fn isEven(n: Int) -> Bool
-    = Int.mod(n, 2) == Result.Ok(0)
+fn double(n: Int) -> Int
+    ? "Doubles a number."
+    = n * 2
 
-evens = List.filter([1, 2, 3, 4], isEven)
+doubled = List.map([1, 2, 3, 4], double)
 ```
 
 ```aver
@@ -387,7 +388,7 @@ Aver ships built-in namespaces for I/O. All require explicit effect declarations
 | `Console` | `! [Console]` | `print`, `error`, `warn`, `readLine` |
 | `Http` | `! [Http]` | `get`, `post`, `put`, `patch`, `head`, `delete` |
 | `HttpServer` | `! [HttpServer]` | `listen`, `listenWith` |
-| `Disk` | `! [Disk]` | `readText`, `writeText`, `exists`, `delete`, `listDir`, `makeDir` |
+| `Disk` | `! [Disk]` | `readText`, `writeText`, `appendText`, `exists`, `delete`, `deleteDir`, `listDir`, `makeDir` |
 | `Tcp` | `! [Tcp]` | `connect`, `writeLine`, `readLine`, `close`, `send`, `ping` |
 
 Pure namespaces (no effects):
