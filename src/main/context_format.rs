@@ -66,7 +66,7 @@ pub(super) fn format_context_md(contexts: &[FileContext], entry_file: &str) -> S
         // Types
         for td in &ctx.type_defs {
             match td {
-                TypeDef::Sum { name, variants } => {
+                TypeDef::Sum { name, variants, .. } => {
                     out.push_str(&format!("### type {}\n", name));
                     let vars: Vec<String> = variants
                         .iter()
@@ -80,7 +80,7 @@ pub(super) fn format_context_md(contexts: &[FileContext], entry_file: &str) -> S
                         .collect();
                     out.push_str(&format!("`{}`\n\n", vars.join("` | `")));
                 }
-                TypeDef::Product { name, fields } => {
+                TypeDef::Product { name, fields, .. } => {
                     out.push_str(&format!("### record {}\n", name));
                     let flds: Vec<String> = fields
                         .iter()
@@ -291,7 +291,7 @@ pub(super) fn format_context_json(contexts: &[FileContext], entry_file: &str) ->
             out.push('\n');
             for (ti, td) in sum_types.iter().enumerate() {
                 let comma_t = if ti + 1 < sum_types.len() { "," } else { "" };
-                if let TypeDef::Sum { name, variants } = td {
+                if let TypeDef::Sum { name, variants, .. } = td {
                     let vars: Vec<String> = variants
                         .iter()
                         .map(|v| {
@@ -334,7 +334,7 @@ pub(super) fn format_context_json(contexts: &[FileContext], entry_file: &str) ->
             out.push('\n');
             for (ri, td) in records.iter().enumerate() {
                 let comma_r = if ri + 1 < records.len() { "," } else { "" };
-                if let TypeDef::Product { name, fields } = td {
+                if let TypeDef::Product { name, fields, .. } = td {
                     let flds: Vec<String> = fields
                         .iter()
                         .map(|(fname, ftype)| {

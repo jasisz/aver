@@ -33,6 +33,7 @@ mod tests;
 pub struct TypeError {
     pub message: String,
     pub line: usize,
+    pub col: usize,
 }
 
 /// Result of type-checking that also carries memo-safety metadata.
@@ -172,6 +173,7 @@ impl TypeChecker {
         self.errors.push(TypeError {
             message: msg.into(),
             line,
+            col: 0,
         });
     }
 
@@ -179,6 +181,7 @@ impl TypeChecker {
         self.errors.push(TypeError {
             message: msg.into(),
             line,
+            col: 0,
         });
     }
 

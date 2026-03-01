@@ -1,18 +1,30 @@
 {
-  "name": "aver-language",
-  "displayName": "Aver",
-  "description": "Syntax highlighting for the Aver programming language",
+  "name": "aver-lang",
+  "displayName": "Aver Language",
+  "description": "Syntax highlighting and LSP support for the Aver programming language",
   "version": "0.1.0",
   "publisher": "aver",
-  "engines": { "vscode": "^1.75.0" },
-  "categories": ["Programming Languages"],
-  "repository": { "type": "git", "url": "https://github.com/jasisz/aver" },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:aver"
+  ],
+  "main": "./out/extension.js",
   "contributes": {
     "languages": [
       {
         "id": "aver",
-        "aliases": ["Aver", "aver"],
-        "extensions": [".av"],
+        "aliases": [
+          "Aver",
+          "aver"
+        ],
+        "extensions": [
+          ".av"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -22,6 +34,29 @@
         "scopeName": "source.aver",
         "path": "./syntaxes/aver.tmLanguage.json"
       }
-    ]
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Aver",
+      "properties": {
+        "aver.lsp.path": {
+          "type": "string",
+          "default": "aver-lsp",
+          "description": "Path to the aver-lsp binary"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.0.0"
   }
 }

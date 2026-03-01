@@ -890,7 +890,7 @@ fn parse_sum_type_with_variants() {
     let src = "type Shape\n  Circle(Float)\n  Rect(Float, Float)\n  Point\n";
     let items = parse(src);
     assert_eq!(items.len(), 1);
-    if let TopLevel::TypeDef(TypeDef::Sum { name, variants }) = &items[0] {
+    if let TopLevel::TypeDef(TypeDef::Sum { name, variants, .. }) = &items[0] {
         assert_eq!(name, "Shape");
         assert_eq!(variants.len(), 3);
         assert_eq!(variants[0].name, "Circle");
@@ -909,7 +909,7 @@ fn parse_record_type_with_fields() {
     let src = "record User\n  name: String\n  age: Int\n";
     let items = parse(src);
     assert_eq!(items.len(), 1);
-    if let TopLevel::TypeDef(TypeDef::Product { name, fields }) = &items[0] {
+    if let TopLevel::TypeDef(TypeDef::Product { name, fields, .. }) = &items[0] {
         assert_eq!(name, "User");
         assert_eq!(fields.len(), 2);
         assert_eq!(fields[0], ("name".to_string(), "String".to_string()));

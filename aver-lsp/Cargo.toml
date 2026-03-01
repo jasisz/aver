@@ -1,0 +1,16 @@
+[package]
+name = "aver-lsp"
+version = "0.1.0"
+edition = "2024"
+description = "LSP server for the Aver programming language"
+license = "MIT"
+
+[[bin]]
+name = "aver-lsp"
+path = "src/main.rs"
+
+[dependencies]
+aver = { path = "..", package = "aver-lang" }
+tower-lsp-server = "0.23"
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"

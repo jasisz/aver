@@ -402,6 +402,41 @@ Full API reference: [docs/services.md](docs/services.md)
 
 ---
 
+## Editor support
+
+Aver ships with a VS Code extension and a Language Server Protocol (LSP) server.
+
+### Features
+
+| Feature | Description |
+|---------|-------------|
+| Syntax highlighting | TextMate grammar — keywords, types, effects, string interpolation, `?` descriptions |
+| Diagnostics | Lex, parse, and type errors shown inline. `check` warnings (missing `?`, missing `verify`) as yellow underlines |
+| Completion | Built-in namespaces (`List.`, `Console.`), user-defined types (`Shape.`), user functions, module members — all cross-module |
+| Hover | Full function source (≤12 lines), type definitions, variable types, namespace member signatures |
+| Go-to-definition | Jump to function, type, or binding — works cross-file for module dependencies |
+| Signature help | Parameter hints inside function calls |
+
+All features work cross-module — `depends [Examples.Redis]` is resolved from the workspace root, matching `aver run` behaviour.
+
+### Install
+
+```bash
+# Build the LSP server
+cargo install aver-lang   # installs `aver`
+cargo build -p aver-lsp --release
+ln -sf $(pwd)/target/release/aver-lsp /usr/local/bin/aver-lsp
+
+# Install the VS Code extension
+ln -sf $(pwd)/editors/vscode ~/.vscode/extensions/aver-lang-0.1.0
+```
+
+Open a `.av` file — the extension activates automatically.
+
+To point at a different binary, set `aver.lsp.path` in VS Code settings.
+
+---
+
 ## Getting started
 
 ### Install from crates.io
@@ -501,3 +536,5 @@ Implemented in Rust with extensive automated test coverage.
 - [x] Error propagation — `expr?` on Result values
 - [x] String interpolation — `"Hello, {name}!"`
 - [x] Compile-time variable resolution
+- [x] LSP server — diagnostics, completion, hover, go-to-definition, signature help (cross-module)
+- [x] VS Code extension — syntax highlighting + LSP client

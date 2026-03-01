@@ -26,6 +26,7 @@ impl Interpreter {
             TypeDef::Sum {
                 name: type_name,
                 variants,
+                ..
             } => {
                 let mut members = HashMap::new();
                 for variant in variants {
@@ -55,7 +56,7 @@ impl Interpreter {
                     },
                 );
             }
-            TypeDef::Product { name, fields } => {
+            TypeDef::Product { name, fields, .. } => {
                 // Product types are constructed via Expr::RecordCreate.
                 // Keep declaration field order so runtime records are canonicalized
                 // and positional record matches stay stable.

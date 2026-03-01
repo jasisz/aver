@@ -4,165 +4,162 @@
   "scopeName": "source.aver",
   "patterns": [
     { "include": "#comment" },
+    { "include": "#decision" },
+    { "include": "#verify" },
+    { "include": "#module" },
+    { "include": "#function-definition" },
+    { "include": "#type-definition" },
+    { "include": "#record-definition" },
+    { "include": "#effects-declaration" },
+    { "include": "#effect-annotation" },
     { "include": "#description" },
-    { "include": "#effects" },
     { "include": "#string" },
     { "include": "#number" },
-    { "include": "#keyword" },
-    { "include": "#adr-key" },
-    { "include": "#fn-def" },
-    { "include": "#builtin-namespace" },
-    { "include": "#builtin-type" },
-    { "include": "#builtin-value" },
+    { "include": "#boolean" },
+    { "include": "#keywords" },
     { "include": "#constructor" },
-    { "include": "#operator" }
+    { "include": "#namespace-access" },
+    { "include": "#operators" },
+    { "include": "#type-names" },
+    { "include": "#identifier" }
   ],
   "repository": {
-
     "comment": {
       "name": "comment.line.double-slash.aver",
       "match": "//.*$"
     },
-
-    "description": {
-      "comment": "? \"prose description\" attached to a function",
-      "name": "comment.block.documentation.aver",
-      "match": "^\\s*(\\?)\\s*(\"[^\"]*\")",
+    "function-definition": {
+      "match": "^\\s*(fn)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\(",
       "captures": {
-        "1": { "name": "punctuation.definition.comment.aver" },
-        "2": { "name": "comment.block.documentation.aver" }
+        "1": { "name": "keyword.other.fn.aver" },
+        "2": { "name": "entity.name.function.aver" }
       }
     },
-
-    "effects": {
-      "comment": "! [Console, Http, Disk] effect declaration",
-      "match": "(!)\\s*(\\[)([^\\]]*)(\\])",
+    "type-definition": {
+      "match": "^\\s*(type)\\s+([A-Z][a-zA-Z0-9_]*)\\s*:",
+      "captures": {
+        "1": { "name": "keyword.other.type.aver" },
+        "2": { "name": "entity.name.type.aver" }
+      }
+    },
+    "record-definition": {
+      "match": "^\\s*(record)\\s+([A-Z][a-zA-Z0-9_]*)\\s*:",
+      "captures": {
+        "1": { "name": "keyword.other.record.aver" },
+        "2": { "name": "entity.name.type.aver" }
+      }
+    },
+    "module": {
+      "match": "^\\s*(module)\\s+([A-Z][a-zA-Z0-9_.]*)",
+      "captures": {
+        "1": { "name": "keyword.other.module.aver" },
+        "2": { "name": "entity.name.namespace.aver" }
+      }
+    },
+    "decision": {
+      "match": "^\\s*(decision)\\s+([A-Z][a-zA-Z0-9_]*)\\s*:",
+      "captures": {
+        "1": { "name": "keyword.other.decision.aver" },
+        "2": { "name": "entity.name.section.aver" }
+      }
+    },
+    "verify": {
+      "match": "^\\s*(verify)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*:",
+      "captures": {
+        "1": { "name": "keyword.other.verify.aver" },
+        "2": { "name": "entity.name.function.aver" }
+      }
+    },
+    "effects-declaration": {
+      "match": "^\\s*(effects)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*=",
+      "captures": {
+        "1": { "name": "keyword.other.effects.aver" },
+        "2": { "name": "entity.name.type.aver" }
+      }
+    },
+    "keywords": {
+      "match": "\\b(fn|match|module|depends|exposes|intent|verify|decision|type|record|effects|date|author|chosen|rejected|impacts|reason|service|needs)\\b",
+      "name": "keyword.other.aver"
+    },
+    "effect-annotation": {
+      "match": "(!)\\s*\\[([^\\]]*)\\]",
       "captures": {
         "1": { "name": "keyword.operator.effect.aver" },
-        "2": { "name": "punctuation.section.brackets.aver" },
-        "3": { "name": "entity.name.type.effect.aver" },
-        "4": { "name": "punctuation.section.brackets.aver" }
+        "2": { "name": "entity.name.type.aver" }
       }
     },
-
+    "description": {
+      "match": "(\\?)\\s*(\"[^\"]*\")",
+      "captures": {
+        "1": { "name": "keyword.operator.description.aver" },
+        "2": { "name": "string.quoted.double.description.aver" }
+      }
+    },
     "string": {
-      "comment": "String literal with interpolation",
       "name": "string.quoted.double.aver",
       "begin": "\"",
       "end": "\"",
       "patterns": [
         {
-          "comment": "Escaped braces: {{ and }} produce literal { and }",
           "name": "constant.character.escape.aver",
-          "match": "\\{\\{|\\}\\}"
+          "match": "\\\\[\"\\\\nrt]"
         },
         {
-          "name": "meta.embedded.expression.aver",
-          "begin": "\\{",
+          "name": "meta.interpolation.aver",
+          "begin": "\\{(?=[a-zA-Z_0-9(])",
           "end": "\\}",
-          "beginCaptures": { "0": { "name": "punctuation.section.interpolation.begin.aver" } },
-          "endCaptures":   { "0": { "name": "punctuation.section.interpolation.end.aver" } },
-          "patterns": [{ "include": "$self" }]
-        },
-        {
-          "name": "constant.character.escape.aver",
-          "match": "\\\\."
+          "beginCaptures": {
+            "0": { "name": "punctuation.section.interpolation.begin.aver" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.section.interpolation.end.aver" }
+          },
+          "patterns": [
+            { "include": "source.aver" }
+          ]
         }
       ]
     },
-
     "number": {
       "patterns": [
         {
-          "comment": "Float with decimal and optional exponent: 1.5, 1.5e10, 1.5e-3",
           "name": "constant.numeric.float.aver",
-          "match": "\\b[0-9]+\\.[0-9]+([eE][+-]?[0-9]+)?\\b"
-        },
-        {
-          "comment": "Integer with exponent (still a float): 1e2, 2E+10",
-          "name": "constant.numeric.float.aver",
-          "match": "\\b[0-9]+[eE][+-]?[0-9]+\\b"
+          "match": "\\b\\d+\\.\\d+\\b"
         },
         {
           "name": "constant.numeric.integer.aver",
-          "match": "\\b[0-9]+\\b"
+          "match": "\\b\\d+\\b"
         }
       ]
     },
-
-    "keyword": {
-      "patterns": [
-        {
-          "comment": "Definition keywords (val/var produce parse errors but are reserved)",
-          "name": "keyword.declaration.aver",
-          "match": "\\b(fn|val|var|type|record|module|effects)\\b"
-        },
-        {
-          "comment": "Block keywords",
-          "name": "keyword.control.aver",
-          "match": "\\b(match|verify|decision|depends|exposes)\\b"
-        },
-        {
-          "comment": "Module and decision metadata keys",
-          "name": "keyword.other.aver",
-          "match": "\\b(intent|reason|date|chosen|rejected|impacts|author|needs)\\b"
-        }
-      ]
-    },
-
-    "adr-key": {
-      "comment": "decision block field names followed by colon",
-      "match": "^\\s*(date|reason|chosen|rejected|impacts|author|intent|needs)(:)",
-      "captures": {
-        "1": { "name": "keyword.other.adr.aver" },
-        "2": { "name": "punctuation.separator.key-value.aver" }
-      }
-    },
-
-    "fn-def": {
-      "comment": "fn name( — highlight function name",
-      "match": "^\\s*(fn)\\s+([a-z_][a-zA-Z0-9_]*)",
-      "captures": {
-        "1": { "name": "keyword.declaration.function.aver" },
-        "2": { "name": "entity.name.function.aver" }
-      }
-    },
-
-    "builtin-namespace": {
-      "comment": "Namespace.method calls: Console.print, String.len, Char.toCode, etc.",
-      "match": "\\b(Console|Http|HttpServer|Disk|Tcp|Int|Float|String|List|Map|Char|Byte|Result|Option)(\\.)(\\w+)?",
-      "captures": {
-        "1": { "name": "support.class.namespace.aver" },
-        "2": { "name": "punctuation.accessor.aver" },
-        "3": { "name": "support.function.namespace.aver" }
-      }
-    },
-
-    "builtin-type": {
-      "name": "support.type.aver",
-      "match": "\\b(Int|Float|String|Bool|Unit|Result|Option|List|Map|Fn|HttpResponse|HttpRequest|Header)\\b"
-    },
-
-    "builtin-value": {
-      "name": "constant.language.aver",
+    "boolean": {
+      "name": "constant.language.boolean.aver",
       "match": "\\b(true|false)\\b"
     },
-
     "constructor": {
-      "comment": "Qualified constructors: Result.Ok, Option.Some, Option.None",
-      "match": "\\b([A-Z][a-zA-Z0-9]*)(\\.)?([A-Z][a-zA-Z0-9]*)?",
+      "match": "\\b(Result\\.Ok|Result\\.Err|Option\\.Some|Option\\.None)\\b",
+      "name": "support.function.constructor.aver"
+    },
+    "namespace-access": {
+      "match": "\\b(Int|Float|String|List|Map|Char|Byte|Result|Option|Console|Http|HttpServer|Disk|Tcp)\\.([a-zA-Z_][a-zA-Z0-9_]*)",
       "captures": {
-        "1": { "name": "entity.name.type.aver" },
-        "2": { "name": "punctuation.accessor.aver" },
-        "3": { "name": "entity.name.type.variant.aver" }
+        "1": { "name": "support.class.namespace.aver" },
+        "2": { "name": "support.function.member.aver" }
       }
     },
-
-    "operator": {
+    "operators": {
       "patterns": [
         {
+          "name": "keyword.operator.pipe.aver",
+          "match": "\\|>"
+        },
+        {
           "name": "keyword.operator.arrow.aver",
-          "match": "->|=>|\\|>"
+          "match": "->"
+        },
+        {
+          "name": "keyword.operator.fat-arrow.aver",
+          "match": "=>"
         },
         {
           "name": "keyword.operator.comparison.aver",
@@ -170,13 +167,29 @@
         },
         {
           "name": "keyword.operator.arithmetic.aver",
-          "match": "[+\\-*/]"
+          "match": "[+\\-*/%]"
+        },
+        {
+          "name": "keyword.operator.concatenation.aver",
+          "match": "\\+\\+"
+        },
+        {
+          "name": "keyword.operator.assignment.aver",
+          "match": "(?<!=|!)=(?!=)"
         },
         {
           "name": "keyword.operator.error-propagation.aver",
           "match": "\\?"
         }
       ]
+    },
+    "type-names": {
+      "match": "\\b(Int|Float|String|Bool|Unit|List|Result|Option|Map|Fn)\\b",
+      "name": "support.type.aver"
+    },
+    "identifier": {
+      "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b",
+      "name": "variable.other.aver"
     }
   }
 }

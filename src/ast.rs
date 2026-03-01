@@ -165,11 +165,13 @@ pub enum TypeDef {
     Sum {
         name: String,
         variants: Vec<TypeVariant>,
+        line: usize,
     },
     /// `record User` with fields name: String, age: Int
     Product {
         name: String,
         fields: Vec<(String, String)>,
+        line: usize,
     },
 }
 

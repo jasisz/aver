@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "aver-lsp"]
+
 [package]
 name = "aver-lang"
 version = "0.1.0"

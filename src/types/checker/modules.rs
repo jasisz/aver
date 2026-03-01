@@ -61,6 +61,7 @@ impl TypeChecker {
             TypeDef::Sum {
                 name: type_name,
                 variants,
+                ..
             } => {
                 // Register variant names for exhaustiveness checking.
                 self.type_variants.insert(
@@ -104,6 +105,7 @@ impl TypeChecker {
             TypeDef::Product {
                 name: type_name,
                 fields,
+                ..
             } => {
                 // Record constructors are handled via Expr::RecordCreate, not FnCall.
                 // Register a dummy sig so Ident("TypeName") resolves to Named(type_name).

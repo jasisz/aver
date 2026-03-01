@@ -27,6 +27,7 @@ impl Parser {
     }
 
     pub(super) fn parse_sum_type_def(&mut self) -> Result<TypeDef, ParseError> {
+        let line = self.current().line;
         self.expect_exact(&TokenKind::Type)?;
         let name_tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected type name")?;
         let type_name = match name_tok.kind {
@@ -83,10 +84,12 @@ impl Parser {
         Ok(TypeDef::Sum {
             name: type_name,
             variants,
+            line,
         })
     }
 
     pub(super) fn parse_record_def(&mut self) -> Result<TypeDef, ParseError> {
+        let line = self.current().line;
         self.expect_exact(&TokenKind::Record)?;
         let name_tok =
             self.expect_kind(&TokenKind::Ident(String::new()), "Expected record name")?;
@@ -128,6 +131,7 @@ impl Parser {
         Ok(TypeDef::Product {
             name: type_name,
             fields,
+            line,
         })
     }
 
