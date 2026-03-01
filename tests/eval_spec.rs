@@ -89,9 +89,18 @@ fn float_sub() {
 }
 
 #[test]
-fn int_float_promotion() {
-    // Int + Float → Float
-    assert_eq!(eval("1 + 2.0"), Value::Float(3.0));
+fn int_float_no_promotion() {
+    // Int + Float is now a type error at runtime (no implicit widening)
+    // Use eval() which evaluates a single expression — 1 + 2.0 should fail
+    let items = parse("1 + 2.0");
+    let item = items.into_iter().next().expect("no items");
+    if let TopLevel::Stmt(Stmt::Expr(expr)) = item {
+        let mut interp = Interpreter::new();
+        let result = interp.eval_expr(&expr);
+        assert!(result.is_err(), "Expected error for Int + Float, got: {:?}", result);
+    } else {
+        panic!("expected expression");
+    }
 }
 
 // ---------------------------------------------------------------------------

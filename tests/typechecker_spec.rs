@@ -249,9 +249,12 @@ fn valid_simple_binding_in_fn() {
 }
 
 #[test]
-fn valid_int_float_widening() {
-    // Int is compatible with Float (widening)
-    assert_no_errors("fn f(a: Int, b: Float) -> Float\n    = a + b\n");
+fn invalid_int_float_no_widening() {
+    // Int + Float is no longer allowed (no implicit widening)
+    assert_error_containing(
+        "fn f(a: Int, b: Float) -> Float\n    = a + b\n",
+        "matching types",
+    );
 }
 
 #[test]

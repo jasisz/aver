@@ -1,6 +1,7 @@
 pub mod ast;
 pub mod call_graph;
 pub mod checker;
+pub mod codegen;
 pub mod interpreter;
 pub mod lexer;
 pub mod parser;

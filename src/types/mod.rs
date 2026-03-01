@@ -46,8 +46,6 @@ impl Type {
         match (self, other) {
             (Type::Int, Type::Int) => true,
             (Type::Float, Type::Float) => true,
-            // Allow Int where Float expected (widening)
-            (Type::Int, Type::Float) => true,
             (Type::Str, Type::Str) => true,
             (Type::Bool, Type::Bool) => true,
             (Type::Unit, Type::Unit) => true,
@@ -498,7 +496,7 @@ mod tests {
         assert!(!Type::Int.compatible(&Type::Str));
         assert!(Type::Unknown.compatible(&Type::Int));
         assert!(Type::Int.compatible(&Type::Unknown));
-        assert!(Type::Int.compatible(&Type::Float)); // widening
+        assert!(!Type::Int.compatible(&Type::Float)); // no implicit widening
         assert!(Type::Result(Box::new(Type::Int), Box::new(Type::Str))
             .compatible(&Type::Result(Box::new(Type::Int), Box::new(Type::Str))));
         assert!(Type::Map(Box::new(Type::Str), Box::new(Type::Int))

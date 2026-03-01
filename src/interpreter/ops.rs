@@ -88,8 +88,6 @@ impl Interpreter {
         match (&a, &b) {
             (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x + y)),
             (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x + y)),
-            (Value::Int(x), Value::Float(y)) => Ok(Value::Float(*x as f64 + y)),
-            (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x + *y as f64)),
             (Value::Str(x), Value::Str(y)) => Ok(Value::Str(format!("{}{}", x, y))),
             _ => Err(RuntimeError::Error(
                 "Operator '+' does not support these types".to_string(),
@@ -101,8 +99,8 @@ impl Interpreter {
         match (&a, &b) {
             (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x - y)),
             (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x - y)),
-            (Value::Int(x), Value::Float(y)) => Ok(Value::Float(*x as f64 - y)),
-            (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x - *y as f64)),
+            // Unary minus: `- float_expr` is parsed as `0 - expr`
+            (Value::Int(0), Value::Float(y)) => Ok(Value::Float(-y)),
             _ => Err(RuntimeError::Error(
                 "Operator '-' does not support these types".to_string(),
             )),
@@ -113,8 +111,6 @@ impl Interpreter {
         match (&a, &b) {
             (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x * y)),
             (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x * y)),
-            (Value::Int(x), Value::Float(y)) => Ok(Value::Float(*x as f64 * y)),
-            (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x * *y as f64)),
             _ => Err(RuntimeError::Error(
                 "Operator '*' does not support these types".to_string(),
             )),
@@ -137,8 +133,6 @@ impl Interpreter {
                     Ok(Value::Float(x / y))
                 }
             }
-            (Value::Int(x), Value::Float(y)) => Ok(Value::Float(*x as f64 / y)),
-            (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x / *y as f64)),
             _ => Err(RuntimeError::Error(
                 "Operator '/' does not support these types".to_string(),
             )),
@@ -161,26 +155,6 @@ impl Interpreter {
                 ">=" => x >= y,
                 _ => unreachable!(),
             },
-            (Value::Int(x), Value::Float(y)) => {
-                let x = *x as f64;
-                match op {
-                    "<" => x < *y,
-                    ">" => x > *y,
-                    "<=" => x <= *y,
-                    ">=" => x >= *y,
-                    _ => unreachable!(),
-                }
-            }
-            (Value::Float(x), Value::Int(y)) => {
-                let y = *y as f64;
-                match op {
-                    "<" => *x < y,
-                    ">" => *x > y,
-                    "<=" => *x <= y,
-                    ">=" => *x >= y,
-                    _ => unreachable!(),
-                }
-            }
             (Value::Str(x), Value::Str(y)) => match op {
                 "<" => x < y,
                 ">" => x > y,

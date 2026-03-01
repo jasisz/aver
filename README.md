@@ -176,6 +176,8 @@ aver replay    recs/rec-123.json         # replay one recording offline
 aver replay    recs/ --test --diff       # replay suite; fail on output mismatch
 aver check     file.av                   # type errors + intent/desc warnings
 aver verify    file.av                   # run all verify blocks
+aver compile   file.av -o out/           # transpile to a Rust project
+aver compile   file.av -t rust -o out/   # explicit target (rust is default)
 aver context   file.av                   # export project context (Markdown)
 aver context   file.av --json            # export project context (JSON)
 aver context   file.av --decisions-only        # decision blocks only (Markdown)
@@ -185,7 +187,9 @@ aver decisions --docs                   # regenerate docs/decisions.md from deci
 aver repl                              # interactive REPL
 ```
 
-`run`, `check`, `verify`, and `context` also accept `--module-root <path>` to override import base (default: current working directory).
+`run`, `check`, `verify`, `compile`, and `context` also accept `--module-root <path>` to override import base (default: current working directory).
+
+See [docs/transpilation.md](docs/transpilation.md) for full transpilation documentation.
 
 ---
 
@@ -505,6 +509,7 @@ Requires: Rust stable toolchain.
 | [docs/services.md](docs/services.md) | Full API reference for all namespaces (signatures, effects, notes) |
 | [docs/types.md](docs/types.md) | Key data types (compiler, AST, runtime) |
 | [docs/extending.md](docs/extending.md) | How to add keywords, namespace functions, expression types |
+| [docs/transpilation.md](docs/transpilation.md) | Transpilation (`aver compile`): targets, flags, supported features |
 | [docs/decisions.md](docs/decisions.md) | Partially generated ADR document from `decision` blocks |
 
 ---
@@ -535,6 +540,7 @@ Implemented in Rust with extensive automated test coverage.
 - [x] Pipe operator — `value |> fn`
 - [x] Error propagation — `expr?` on Result values
 - [x] String interpolation — `"Hello, {name}!"`
+- [x] Transpilation — `aver compile` to Rust (all examples, modules, services)
 - [x] Compile-time variable resolution
 - [x] LSP server — diagnostics, completion, hover, go-to-definition, signature help (cross-module)
 - [x] VS Code extension — syntax highlighting + LSP client

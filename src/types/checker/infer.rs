@@ -691,7 +691,7 @@ impl TypeChecker {
             Expr::BinOp(op, left, right) => {
                 let lt = self.infer_type(left);
                 let rt = self.infer_type(right);
-                self.check_binop(op, &lt, &rt);
+                self.check_binop_expr(op, left, right, &lt, &rt);
                 match op {
                     BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => {
                         Type::Bool
@@ -1216,29 +1216,45 @@ impl TypeChecker {
     // -----------------------------------------------------------------------
     // BinOp type rules
     // -----------------------------------------------------------------------
+
+    /// Check binop type compatibility. Also handles the unary minus special
+    /// case (`0 - float_expr`) produced by the lexer for negative float literals.
+    pub(super) fn check_binop_expr(&mut self, op: &BinOp, left: &Expr, _right: &Expr, lt: &Type, rt: &Type) {
+        // Unary minus: `- float_expr` is parsed as `BinOp(Sub, Literal(Int(0)), expr)`.
+        // Allow Int(0) - Float to produce Float without requiring explicit conversion.
+        if matches!(op, BinOp::Sub)
+            && matches!(lt, Type::Int)
+            && matches!(rt, Type::Float)
+            && matches!(left, Expr::Literal(Literal::Int(0)))
+        {
+            return; // Unary minus on Float — OK
+        }
+        self.check_binop(op, lt, rt);
+    }
+
     pub(super) fn check_binop(&mut self, op: &BinOp, lt: &Type, rt: &Type) {
         if matches!(lt, Type::Unknown) || matches!(rt, Type::Unknown) {
             return; // gradual — skip
         }
         match op {
             BinOp::Add => {
-                let ok = (matches!(lt, Type::Int | Type::Float)
-                    && matches!(rt, Type::Int | Type::Float))
+                let ok = (matches!(lt, Type::Int) && matches!(rt, Type::Int))
+                    || (matches!(lt, Type::Float) && matches!(rt, Type::Float))
                     || (matches!(lt, Type::Str) && matches!(rt, Type::Str));
                 if !ok {
                     self.error(format!(
-                        "Operator '+' requires Int/Float or String on both sides, got {} and {}",
+                        "Operator '+' requires matching types (Int+Int, Float+Float, or String+String), got {} and {}",
                         lt.display(),
                         rt.display()
                     ));
                 }
             }
             BinOp::Sub | BinOp::Mul | BinOp::Div => {
-                let ok =
-                    matches!(lt, Type::Int | Type::Float) && matches!(rt, Type::Int | Type::Float);
+                let ok = (matches!(lt, Type::Int) && matches!(rt, Type::Int))
+                    || (matches!(lt, Type::Float) && matches!(rt, Type::Float));
                 if !ok {
                     self.error(format!(
-                        "Arithmetic operator requires numeric types, got {} and {}",
+                        "Arithmetic operator requires matching numeric types (Int+Int or Float+Float), got {} and {}",
                         lt.display(),
                         rt.display()
                     ));
@@ -1254,12 +1270,12 @@ impl TypeChecker {
                 }
             }
             BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => {
-                let ok = (matches!(lt, Type::Int | Type::Float)
-                    && matches!(rt, Type::Int | Type::Float))
+                let ok = (matches!(lt, Type::Int) && matches!(rt, Type::Int))
+                    || (matches!(lt, Type::Float) && matches!(rt, Type::Float))
                     || (matches!(lt, Type::Str) && matches!(rt, Type::Str));
                 if !ok {
                     self.error(format!(
-                        "Comparison operator requires numeric or String types, got {} and {}",
+                        "Comparison operator requires matching types, got {} and {}",
                         lt.display(),
                         rt.display()
                     ));

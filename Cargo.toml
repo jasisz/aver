@@ -5,10 +5,10 @@ members = [".", "aver-lsp"]
 name = "aver-lang"
 version = "0.1.0"
 edition = "2024"
-description = "Interpreter for Aver, a programming language designed for AI-assisted development"
+description = "Interpreter and transpiler for Aver, a statically-typed language designed for AI-assisted development"
 license = "MIT"
 repository = "https://github.com/jasisz/aver"
-keywords = ["language", "interpreter", "programming-language"]
+keywords = ["language", "interpreter", "transpiler", "programming-language"]
 categories = ["compilers"]
 
 [lib]

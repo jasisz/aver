@@ -134,7 +134,7 @@ fn goldenApprox(n: Int) -> Result<Float, String>
     ? "Approximates golden ratio as F(n+1)/F(n). Requires n >= 1."
     match n < 1
         true  -> Result.Err("Need n >= 1")
-        false -> Result.Ok(fib(n + 1) * 1.0 / fib(n))
+        false -> Result.Ok(Int.toFloat(fib(n + 1)) / Int.toFloat(fib(n)))
 
 fn main() -> Unit
     ! [Console]

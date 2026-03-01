@@ -7,11 +7,15 @@ use colored::Colorize;
 
 use aver::ast::TopLevel;
 use aver::checker::{check_module_intent, index_decisions, run_verify};
+use aver::codegen;
+use aver::codegen::rust as rust_codegen;
+use aver::codegen::ModuleInfo;
 use aver::interpreter::{aver_repr, Interpreter, Value};
 use aver::replay::{
     session_recording_to_string_pretty, value_to_json, JsonValue, RecordedOutcome, SessionRecording,
 };
 use aver::resolver;
+use aver::source::find_module_file;
 use aver::tco;
 use aver::types::checker::{run_type_check_full, run_type_check_with_base};
 
@@ -336,4 +340,211 @@ pub(super) fn cmd_verify(file: &str, module_root_override: Option<&str>) {
         );
         process::exit(1);
     }
+}
+
+pub(super) fn cmd_compile(
+    file: &str,
+    output_dir: &str,
+    target: &super::cli::Target,
+    project_name: Option<&str>,
+    module_root_override: Option<&str>,
+) {
+    let module_root = resolve_module_root(module_root_override);
+    let source = match read_file(file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+
+    let mut items = match parse_file(&source) {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+
+    // TCO transform
+    tco::transform_program(&mut items);
+
+    // Static type check
+    let tc_result = run_type_check_full(&items, Some(&module_root));
+    if !tc_result.errors.is_empty() {
+        print_type_errors(&tc_result.errors);
+        process::exit(1);
+    }
+
+    // Compute memo-eligible functions
+    let memo_fns = compute_memo_fns(&items, &tc_result);
+
+    // Derive project name from file if not specified
+    let name = project_name
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            Path::new(file)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("aver_program")
+                .to_string()
+        });
+
+    // Load dependent modules for codegen
+    let modules = load_compile_deps(&items, &module_root);
+
+    // Build codegen context
+    let ctx = codegen::build_context(items, &tc_result, memo_fns, name, modules);
+
+    // Transpile to the selected target
+    let (output, build_hint) = match target {
+        super::cli::Target::Rust => {
+            let out = rust_codegen::transpile(&ctx);
+            let hint = format!("cd {} && cargo build && cargo run", output_dir);
+            (out, hint)
+        }
+    };
+
+    // Write output files
+    let out_path = Path::new(output_dir);
+    for (rel_path, content) in &output.files {
+        let full_path = out_path.join(rel_path);
+        if let Some(parent) = full_path.parent() {
+            if let Err(e) = fs::create_dir_all(parent) {
+                eprintln!(
+                    "{}",
+                    format!("Cannot create dir '{}': {}", parent.display(), e).red()
+                );
+                process::exit(1);
+            }
+        }
+        if let Err(e) = fs::write(&full_path, content) {
+            eprintln!(
+                "{}",
+                format!("Cannot write '{}': {}", full_path.display(), e).red()
+            );
+            process::exit(1);
+        }
+    }
+
+    let target_label = match target {
+        super::cli::Target::Rust => "Rust",
+    };
+    println!(
+        "{}",
+        format!("Compiled {} → {}/ [{}]", file, output_dir, target_label).green()
+    );
+    println!("  {}", build_hint.cyan());
+}
+
+/// Load dependent modules for codegen (recursive, with circular import detection).
+fn load_compile_deps(items: &[TopLevel], module_root: &str) -> Vec<ModuleInfo> {
+    let module = items.iter().find_map(|i| {
+        if let TopLevel::Module(m) = i {
+            Some(m)
+        } else {
+            None
+        }
+    });
+    let Some(module) = module else {
+        return vec![];
+    };
+
+    let mut result = Vec::new();
+    let mut loaded = std::collections::HashSet::new();
+
+    for dep_name in &module.depends {
+        load_module_recursive(dep_name, module_root, &mut result, &mut loaded);
+    }
+
+    result
+}
+
+fn load_module_recursive(
+    name: &str,
+    module_root: &str,
+    result: &mut Vec<ModuleInfo>,
+    loaded: &mut std::collections::HashSet<String>,
+) {
+    if !loaded.insert(name.to_string()) {
+        return; // already loaded or circular
+    }
+
+    let path = match find_module_file(name, module_root) {
+        Some(p) => p,
+        None => {
+            eprintln!(
+                "{}",
+                format!(
+                    "Cannot find module '{}' in module root '{}'",
+                    name, module_root
+                )
+                .red()
+            );
+            process::exit(1);
+        }
+    };
+
+    let source = match read_file(path.to_str().unwrap_or("")) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+
+    let mut items = match parse_file(&source) {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+
+    tco::transform_program(&mut items);
+
+    // Recursively load transitive dependencies
+    if let Some(mod_block) = items.iter().find_map(|i| {
+        if let TopLevel::Module(m) = i {
+            Some(m)
+        } else {
+            None
+        }
+    }) {
+        for dep in &mod_block.depends {
+            load_module_recursive(dep, module_root, result, loaded);
+        }
+    }
+
+    let type_defs: Vec<_> = items
+        .iter()
+        .filter_map(|i| {
+            if let TopLevel::TypeDef(td) = i {
+                Some(td.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let fn_defs: Vec<_> = items
+        .iter()
+        .filter_map(|i| {
+            if let TopLevel::FnDef(fd) = i {
+                if fd.name != "main" {
+                    Some(fd.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    result.push(ModuleInfo {
+        prefix: name.to_string(),
+        type_defs,
+        fn_defs,
+    });
 }
