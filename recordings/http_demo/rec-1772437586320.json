@@ -1,0 +1,319 @@
+{
+  "effects": [
+    {
+      "args": [
+        "https://httpbin.org/get"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": {
+          "$ok": {
+            "$record": {
+              "fields": {
+                "body": "{\n  \"args\": {}, \n  \"headers\": {\n    \"Accept\": \"*/*\", \n    \"Accept-Encoding\": \"gzip\", \n    \"Host\": \"httpbin.org\", \n    \"User-Agent\": \"ureq/2.12.1\", \n    \"X-Amzn-Trace-Id\": \"Root=1-69a54052-5edd41e106f9956c7403112c\"\n  }, \n  \"origin\": \"0.0.0.0\", \n  \"url\": \"https://httpbin.org/get\"\n}\n",
+                "headers": [
+                  {
+                    "$record": {
+                      "fields": {
+                        "name": "date",
+                        "value": "Mon, 02 Mar 2026 07:46:26 GMT"
+                      },
+                      "type": "Header"
+                    }
+                  },
+                  {
+                    "$record": {
+                      "fields": {
+                        "name": "content-type",
+                        "value": "application/json"
+                      },
+                      "type": "Header"
+                    }
+                  },
+                  {
+                    "$record": {
+                      "fields": {
+                        "name": "content-length",
+                        "value": "287"
+                      },
+                      "type": "Header"
+                    }
+                  },
+                  {
+                    "$record": {
+                      "fields": {
+                        "name": "connection",
+                        "value": "keep-alive"
+                      },
+                      "type": "Header"
+                    }
+                  },
+                  {
+                    "$record": {
+                      "fields": {
+                        "name": "server",
+                        "value": "gunicorn/19.9.0"
+                      },
+                      "type": "Header"
+                    }
+                  },
+                  {
+                    "$record": {
+                      "fields": {
+                        "name": "access-control-allow-origin",
+                        "value": "*"
+                      },
+                      "type": "Header"
+                    }
+                  },
+                  {
+                    "$record": {
+                      "fields": {
+                        "name": "access-control-allow-credentials",
+                        "value": "true"
+                      },
+                      "type": "Header"
+                    }
+                  }
+                ],
+                "status": 200
+              },
+              "type": "HttpResponse"
+            }
+          }
+        }
+      },
+      "seq": 1,
+      "type": "Http.get"
+    },
+    {
+      "args": [
+        "GET https://httpbin.org/get — status: 200, body length: 287"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 2,
+      "type": "Console.print"
+    },
+    {
+      "args": [
+        "https://httpbin.org/status/404"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": {
+          "$ok": {
+            "$record": {
+              "fields": {
+                "body": "",
+                "headers": [
+                  {
+                    "$record": {
+                      "fields": {
+                        "name": "date",
+                        "value": "Mon, 02 Mar 2026 07:46:27 GMT"
+                      },
+                      "type": "Header"
+                    }
+                  },
+                  {
+                    "$record": {
+                      "fields": {
+                        "name": "content-type",
+                        "value": "text/html; charset=utf-8"
+                      },
+                      "type": "Header"
+                    }
+                  },
+                  {
+                    "$record": {
+                      "fields": {
+                        "name": "content-length",
+                        "value": "0"
+                      },
+                      "type": "Header"
+                    }
+                  },
+                  {
+                    "$record": {
+                      "fields": {
+                        "name": "connection",
+                        "value": "keep-alive"
+                      },
+                      "type": "Header"
+                    }
+                  },
+                  {
+                    "$record": {
+                      "fields": {
+                        "name": "server",
+                        "value": "gunicorn/19.9.0"
+                      },
+                      "type": "Header"
+                    }
+                  },
+                  {
+                    "$record": {
+                      "fields": {
+                        "name": "access-control-allow-origin",
+                        "value": "*"
+                      },
+                      "type": "Header"
+                    }
+                  },
+                  {
+                    "$record": {
+                      "fields": {
+                        "name": "access-control-allow-credentials",
+                        "value": "true"
+                      },
+                      "type": "Header"
+                    }
+                  }
+                ],
+                "status": 404
+              },
+              "type": "HttpResponse"
+            }
+          }
+        }
+      },
+      "seq": 3,
+      "type": "Http.get"
+    },
+    {
+      "args": [
+        "404 endpoint returned status: 404"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 4,
+      "type": "Console.print"
+    },
+    {
+      "args": [
+        "https://httpbin.org/post",
+        "{}",
+        "application/json",
+        [
+          {
+            "$record": {
+              "fields": {
+                "name": "Authorization",
+                "value": "Bearer demo-token"
+              },
+              "type": "Header"
+            }
+          }
+        ]
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": {
+          "$ok": {
+            "$record": {
+              "fields": {
+                "body": "{\n  \"args\": {}, \n  \"data\": \"{}\", \n  \"files\": {}, \n  \"form\": {}, \n  \"headers\": {\n    \"Accept\": \"*/*\", \n    \"Accept-Encoding\": \"gzip\", \n    \"Authorization\": \"Bearer demo-token\", \n    \"Content-Length\": \"2\", \n    \"Content-Type\": \"application/json\", \n    \"Host\": \"httpbin.org\", \n    \"User-Agent\": \"ureq/2.12.1\", \n    \"X-Amzn-Trace-Id\": \"Root=1-69a54053-0a90f4423d86ebb33d2218bb\"\n  }, \n  \"json\": {}, \n  \"origin\": \"0.0.0.0\", \n  \"url\": \"https://httpbin.org/post\"\n}\n",
+                "headers": [
+                  {
+                    "$record": {
+                      "fields": {
+                        "name": "date",
+                        "value": "Mon, 02 Mar 2026 07:46:27 GMT"
+                      },
+                      "type": "Header"
+                    }
+                  },
+                  {
+                    "$record": {
+                      "fields": {
+                        "name": "content-type",
+                        "value": "application/json"
+                      },
+                      "type": "Header"
+                    }
+                  },
+                  {
+                    "$record": {
+                      "fields": {
+                        "name": "content-length",
+                        "value": "463"
+                      },
+                      "type": "Header"
+                    }
+                  },
+                  {
+                    "$record": {
+                      "fields": {
+                        "name": "connection",
+                        "value": "keep-alive"
+                      },
+                      "type": "Header"
+                    }
+                  },
+                  {
+                    "$record": {
+                      "fields": {
+                        "name": "server",
+                        "value": "gunicorn/19.9.0"
+                      },
+                      "type": "Header"
+                    }
+                  },
+                  {
+                    "$record": {
+                      "fields": {
+                        "name": "access-control-allow-origin",
+                        "value": "*"
+                      },
+                      "type": "Header"
+                    }
+                  },
+                  {
+                    "$record": {
+                      "fields": {
+                        "name": "access-control-allow-credentials",
+                        "value": "true"
+                      },
+                      "type": "Header"
+                    }
+                  }
+                ],
+                "status": 200
+              },
+              "type": "HttpResponse"
+            }
+          }
+        }
+      },
+      "seq": 5,
+      "type": "Http.post"
+    },
+    {
+      "args": [
+        "POST status: 200"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 6,
+      "type": "Console.print"
+    }
+  ],
+  "entry_fn": "main",
+  "input": null,
+  "module_root": ".",
+  "output": {
+    "kind": "value",
+    "value": null
+  },
+  "program_file": "examples/services/http_demo.av",
+  "request_id": "rec-1772437586320",
+  "schema_version": 1,
+  "timestamp": "unix-1772437586"
+}

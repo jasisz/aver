@@ -281,6 +281,7 @@ impl Interpreter {
             }
 
             _ => {
+                let skip_server = matches!(self.execution_mode, ExecutionMode::Record);
                 if let Some(r) = http_server::call_with_runtime(
                     name,
                     args,
@@ -293,6 +294,7 @@ impl Interpreter {
                             callback_effects,
                         )
                     },
+                    skip_server,
                 ) {
                     return r;
                 }

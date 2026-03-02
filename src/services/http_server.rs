@@ -54,13 +54,14 @@ pub fn call_with_runtime<F>(
     name: &str,
     args: &[Value],
     mut invoke_handler: F,
+    skip_server: bool,
 ) -> Option<Result<Value, RuntimeError>>
 where
     F: FnMut(Value, Vec<Value>, String) -> Result<Value, RuntimeError>,
 {
     match name {
-        "HttpServer.listen" => Some(listen(args, false, &mut invoke_handler)),
-        "HttpServer.listenWith" => Some(listen(args, true, &mut invoke_handler)),
+        "HttpServer.listen" => Some(listen(args, false, &mut invoke_handler, skip_server)),
+        "HttpServer.listenWith" => Some(listen(args, true, &mut invoke_handler, skip_server)),
         _ => None,
     }
 }
@@ -69,6 +70,7 @@ fn listen<F>(
     args: &[Value],
     with_context: bool,
     invoke_handler: &mut F,
+    skip_server: bool,
 ) -> Result<Value, RuntimeError>
 where
     F: FnMut(Value, Vec<Value>, String) -> Result<Value, RuntimeError>,
@@ -86,6 +88,10 @@ where
             expected,
             args.len()
         )));
+    }
+
+    if skip_server {
+        return Ok(Value::Unit);
     }
 
     let port = match &args[0] {
