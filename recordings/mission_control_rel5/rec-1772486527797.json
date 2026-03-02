@@ -1,0 +1,147 @@
+{
+  "effects": [
+    {
+      "args": [
+        "Mission Control demo"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 1,
+      "type": "Console.print"
+    },
+    {
+      "args": [
+        "Tip: record once, replay forever: aver run examples/mission_control.av --record recordings/"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 2,
+      "type": "Console.print"
+    },
+    {
+      "args": [
+        "MISSION OK"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 3,
+      "type": "Console.print"
+    },
+    {
+      "args": [
+        "ship=Odyssey-1 fuel=85 vel=35 orient=45 power=31 solar=true alive=true status=DRIFT"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 4,
+      "type": "Console.print"
+    },
+    {
+      "args": [
+        "History:"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 5,
+      "type": "Console.print"
+    },
+    {
+      "args": [
+        "  1. burn 20"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 6,
+      "type": "Console.print"
+    },
+    {
+      "args": [
+        "  2. rotate 45"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 7,
+      "type": "Console.print"
+    },
+    {
+      "args": [
+        "  3. deploy-solar"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 8,
+      "type": "Console.print"
+    },
+    {
+      "args": [
+        "  4. tick 8"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 9,
+      "type": "Console.print"
+    },
+    {
+      "args": [
+        "  5. burn 15"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 10,
+      "type": "Console.print"
+    },
+    {
+      "args": [
+        "  6. tick 3"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 11,
+      "type": "Console.print"
+    },
+    {
+      "args": [
+        "-- end of history --"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 12,
+      "type": "Console.print"
+    }
+  ],
+  "entry_fn": "main",
+  "input": null,
+  "module_root": ".",
+  "output": {
+    "kind": "value",
+    "value": null
+  },
+  "program_file": "examples/mission_control.av",
+  "request_id": "rec-1772486527797",
+  "schema_version": 1,
+  "timestamp": "unix-1772486527"
+}
