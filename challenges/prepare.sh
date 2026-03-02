@@ -82,6 +82,8 @@ prepare_one() {
 
     # Clean
     rm -f "$STAGING/challenges/$CHALLENGE/solution.av"
+    rm -f "$STAGING/challenges/$CHALLENGE/solution_compare."*
+    rm -f "$STAGING/challenges/$CHALLENGE/notes.md"
     rm -f "$STAGING/challenges/$CHALLENGE/.solution"*
 
     echo -e "  ${GREEN}✓${NC} $CHALLENGE → $STAGING"
@@ -94,7 +96,7 @@ print_prompt() {
 
     echo -e "${BOLD}─── $CHALLENGE ───${NC}"
     cat <<PROMPT
-You are an AI agent being tested on your ability to write a program in Aver, a programming language you have not seen before.
+You are an AI agent being tested on your ability to learn a new programming language and compare it with one you already know.
 
 Working directory: $STAGING
 
@@ -104,40 +106,39 @@ Your task:
 3. Read ALL files in examples/ — these show idiomatic Aver conventions
    Pay attention to: function descriptions, decision blocks, module structure, verify blocks
 4. Read challenges/$CHALLENGE/TASK.md — task requirements
-5. Write your solution to challenges/$CHALLENGE/solution.av
-   For larger solutions, consider splitting into modules (see examples/app.av for how)
-6. Verify it works by running:
+5. Implement the solution TWICE:
+   - challenges/$CHALLENGE/solution.av — in Aver
+   - challenges/$CHALLENGE/solution_compare.* — in a language of your choice (pick whatever fits best)
+   For larger Aver solutions, consider splitting into modules (see examples/app.av for how)
+6. Verify the Aver version works by running:
    aver check challenges/$CHALLENGE/solution.av
    aver verify challenges/$CHALLENGE/solution.av
    aver run challenges/$CHALLENGE/solution.av
+
 Rules:
 - Do not ask questions — everything you need is in the docs
 - Do not read files outside this directory
-- Do not modify any existing files — only create solution.av and notes.md
+- Do not modify any existing files — only create your solution files and notes.md
 
 You are done when ALL of these pass:
 - aver check — no type errors
 - aver verify — all verify cases pass
 - aver run — executes without runtime errors
+- solution_compare.* exists and runs
 
-When finished, write challenges/$CHALLENGE/notes.md covering:
+After both implementations are done, write challenges/$CHALLENGE/notes.md comparing them:
 
-Process:
-- Which docs you read and in what order
-- How many attempts before check/verify/run all passed
-- Which error messages helped you, which ones were unhelpful or misleading
+Comparison:
+- Which language made the problem easier to express? Why?
+- Where did Aver's constraints (no if/else, no loops, no mutation) help or hurt?
+- How did error handling compare (Result/match vs exceptions/try-catch/etc.)?
+- How did testability compare (verify blocks vs your language's test framework)?
+- What would you steal from Aver for your chosen language, and vice versa?
+- Which version do you prefer reading? Which do you prefer writing?
+- Lines of code comparison — is one significantly shorter?
+- If you had to maintain one of these for a year, which would you choose?
 
-Language review:
-- Rate Aver 1-10 for: readability, learnability, expressiveness, error messages
-- What felt natural or well-designed
-- What felt awkward, missing, or frustrating
-- Did the lack of if/else bother you? Was match sufficient?
-- How does Aver compare to languages you know (pick 2-3 specific comparisons)
-
-Suggestions:
-- What would you add to the language if you could
-- What would you change about the docs to learn faster
-- Would you use Aver for a real project? Why or why not
+Be honest and specific — reference actual code from both versions. We want genuine comparison, not flattery.
 PROMPT
     echo ""
 }
