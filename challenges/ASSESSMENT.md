@@ -1,6 +1,6 @@
 # Agent Assessment
 
-Questions and criteria to evaluate the agent after it completes (or fails) a challenge.
+How to evaluate the agent after it completes a challenge.
 
 ## Timing
 
@@ -8,44 +8,61 @@ Questions and criteria to evaluate the agent after it completes (or fails) a cha
 |---|---|
 | Wall time | Start → `CHALLENGE PASSED` (or give up) |
 | Iterations | How many edit-run cycles before green |
-| First working version | Time to first `cargo run -- run` success |
+| First working version | Time to first `aver run` success |
+| Comparison language | Which language did the agent pick? |
 
-## Post-challenge questions (ask the agent)
+## Deliverables checklist
 
-### 1. Language comprehension
-- What is Aver's branching construct? (expected: `match`, no `if`/`else`)
-- How do you handle errors in Aver? (expected: `Result<T,E>` with `Result.Ok`/`Result.Err`, `?` operator)
-- How does iteration work? (expected: `List.map`/`filter`/`fold`, no loops)
+- [ ] `solution.av` — passes evaluate.sh (13/13)
+- [ ] `solution_compare.*` — equivalent implementation in chosen language
+- [ ] `notes.md` — honest comparison of both implementations
 
-### 2. API discovery
-- Where did you find the function signatures? (expected: README and/or `docs/services.md`)
-- Name 3 List functions you used. (check if they used correct namespace calls)
-- What does `List.get` return? (expected: `Option<T>` — tests if agent read updated docs)
+## Evaluating notes.md
 
-### 3. Debugging process
-- What errors did you hit? How did you fix them?
-- Did you use `cargo run -- check` before `verify`? (good practice)
-- How many times did you re-read the docs?
+The notes are the most important output. Good notes should cover:
 
-### 4. Code quality (review `solution.av`)
-- Does every function have a `?` description?
-- Are there `verify` blocks with edge cases (empty list, not found, duplicates)?
-- Is there a `decision` block with meaningful reasoning?
-- Is the code readable without comments (self-documenting names)?
+### Comparison depth
+- Does it go beyond surface syntax ("Aver uses match, Python uses if")?
+- Does it discuss how constraints shaped the solution design?
+- Does it identify concrete trade-offs, not just list differences?
+
+### Honesty
+- Does it acknowledge where Aver is worse, not just better?
+- Does it give specific examples from the code, not generic statements?
+- Does it avoid sycophantic praise ("Aver's elegant design...")?
+
+### Key questions to look for in notes
+
+| Question | What a good answer looks like |
+|---|---|
+| Which was easier to write? | Specific — "the Aver version needed 3 helper functions for what Python does in a list comprehension" |
+| Which is easier to read? | References actual code — "the match chain in `withdraw` reads like a spec, but the Python version is more scannable" |
+| Where did no-mutation help? | Concrete — "I never had a bug from accidental state change" or "it made the transaction log trivial" |
+| Where did no-mutation hurt? | Concrete — "updating one field in a record required rebuilding the entire structure" |
+| verify vs tests? | Compared the experience — setup, discoverability, expressiveness, not just syntax |
+| What would you steal? | Something specific and non-obvious, not "I'd add match to Python" |
+
+### Red flags in notes
+- Generic praise without code references
+- No mention of Aver's weaknesses
+- Comparison is only about syntax, not about how it felt to solve the problem
+- Notes read like marketing copy
+- "Both languages have their strengths" without saying which strengths
 
 ## Scoring rubric
 
 | Category | Weight | Criteria |
 |---|---|---|
-| Correctness | 40% | evaluate.sh passes (13/13) |
-| Idiomatic code | 25% | match-only, namespaced calls, Result/Option, no workarounds |
-| Docs usage | 15% | Read README + docs/services.md, not trial-and-error |
-| Verify quality | 10% | Edge cases covered, not just happy path |
-| Speed | 10% | Under 10 min = excellent, 10-20 = good, 20+ = slow |
+| Aver correctness | 30% | evaluate.sh passes (13/13) |
+| Comparison implementation | 15% | Equivalent solution exists, runs, handles same cases |
+| Idiomatic Aver | 15% | match-only, namespaced calls, Result/Option, verify blocks |
+| Idiomatic comparison | 10% | Uses the chosen language's idioms, not a literal translation |
+| Notes quality | 30% | Honest, specific, comparative (see criteria above) |
 
-## Red flags (automatic deductions)
-- Used `if`/`else` (didn't read docs)
-- Flat builtins like `print()` or `len()` (didn't read namespace docs)
-- `List.get` returning `Result` (read stale docs or guessed)
-- Asked clarifying questions (instructions say don't ask)
-- Modified existing files
+## Post-challenge questions (optional, ask the agent)
+
+1. Why did you pick [language X] for comparison?
+2. If you had to maintain one of these for a year, which would you choose?
+3. What surprised you most about Aver?
+4. What was the hardest part of the Aver implementation?
+5. Would you use Aver for a real project? Under what conditions?

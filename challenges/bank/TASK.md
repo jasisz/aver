@@ -2,7 +2,10 @@
 
 ## Goal
 
-Build an Aver program (`solution.av`) that models a simple banking system.
+Build a simple banking system — **twice**.
+
+1. First, implement it in Aver (`solution.av`)
+2. Then, implement the same thing in a language of your choice (`solution_compare.*`)
 
 ## What the system should do
 
@@ -23,18 +26,34 @@ Think about: how do you represent a collection of accounts for efficient lookup?
 
 ## Main function
 
-Write `fn main()` that runs a realistic sequence of operations — create accounts, make deposits/withdrawals/transfers (including some that fail), then print a statement for one account.
+In both versions, write a `main` that runs a realistic sequence of operations — create accounts, make deposits/withdrawals/transfers (including some that fail), then print a statement for one account.
 
 ## Verification
 
-Include `verify` blocks that prove your functions work — cover happy paths, error cases (insufficient funds, account not found, self-transfer), and edge cases.
+In the Aver version, include `verify` blocks that prove your functions work — cover happy paths, error cases (insufficient funds, account not found, self-transfer), and edge cases.
 
-Your solution must pass:
+In the comparison version, write equivalent tests using the language's native test framework.
+
+Your Aver solution must pass:
 ```
 aver check challenges/bank/solution.av
 aver verify challenges/bank/solution.av
 aver run challenges/bank/solution.av
 ```
+
+## Comparison notes
+
+After implementing both versions, write `notes.md` with your comparison:
+
+- Which language made the problem easier to express? Why?
+- Where did Aver's constraints (no if/else, no loops, no mutation) help or hurt?
+- How did error handling compare (Result/match vs exceptions/try-catch/etc.)?
+- How did testability compare (verify blocks vs your language's test framework)?
+- What would you steal from Aver for your chosen language, and vice versa?
+- Which version do you prefer reading? Which do you prefer writing?
+- Lines of code comparison — is one significantly shorter?
+
+Be honest and specific. We want genuine comparison, not flattery.
 
 ## Getting started
 

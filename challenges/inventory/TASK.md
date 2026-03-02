@@ -2,7 +2,10 @@
 
 ## Goal
 
-Build an Aver program (`solution.av`) that models a product inventory for a small warehouse.
+Build a product inventory system for a small warehouse — **twice**.
+
+1. First, implement it in Aver (`solution.av`)
+2. Then, implement the same thing in a language of your choice (`solution_compare.*`)
 
 ## What the system should do
 
@@ -22,18 +25,34 @@ Think about: what data structures best fit this domain? How should errors be rep
 
 ## Main function
 
-Write `fn main()` that demonstrates all operations with sample data and prints results.
+In both versions, write a `main` that demonstrates all operations with sample data and prints results.
 
 ## Verification
 
-Include `verify` blocks that prove your functions work — cover both happy paths and error cases (not found, duplicates, empty inventory, edge cases).
+In the Aver version, include `verify` blocks that prove your functions work — cover both happy paths and error cases (not found, duplicates, empty inventory, edge cases).
 
-Your solution must pass:
+In the comparison version, write equivalent tests using the language's native test framework.
+
+Your Aver solution must pass:
 ```
 aver check challenges/inventory/solution.av
 aver verify challenges/inventory/solution.av
 aver run challenges/inventory/solution.av
 ```
+
+## Comparison notes
+
+After implementing both versions, write `notes.md` with your comparison:
+
+- Which language made the problem easier to express? Why?
+- Where did Aver's constraints (no if/else, no loops, no mutation) help or hurt?
+- How did error handling compare (Result/match vs exceptions/try-catch/etc.)?
+- How did testability compare (verify blocks vs your language's test framework)?
+- What would you steal from Aver for your chosen language, and vice versa?
+- Which version do you prefer reading? Which do you prefer writing?
+- Lines of code comparison — is one significantly shorter?
+
+Be honest and specific. We want genuine comparison, not flattery.
 
 ## Getting started
 
