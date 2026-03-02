@@ -55,6 +55,46 @@ pub(super) fn decode_entry_args(input: &JsonValue) -> Result<Vec<Value>, String>
     }
 }
 
+fn resolve_replay_module_root(path: &Path, recording: &SessionRecording) -> String {
+    let module_root = Path::new(&recording.module_root);
+    if module_root.is_absolute() {
+        return recording.module_root.clone();
+    }
+
+    if module_root.join(&recording.program_file).exists() {
+        return recording.module_root.clone();
+    }
+
+    if let Some(parent) = path.parent() {
+        for ancestor in parent.ancestors() {
+            let candidate = ancestor.join(module_root);
+            if candidate.join(&recording.program_file).exists() {
+                return candidate.to_string_lossy().into_owned();
+            }
+        }
+    }
+
+    recording.module_root.clone()
+}
+
+fn resolve_replay_program_file(recording: &SessionRecording, module_root: &str) -> String {
+    let program_file = Path::new(&recording.program_file);
+    if program_file.is_absolute() {
+        return recording.program_file.clone();
+    }
+
+    if program_file.exists() {
+        return recording.program_file.clone();
+    }
+
+    let rooted = Path::new(module_root).join(program_file);
+    if rooted.exists() {
+        return rooted.to_string_lossy().into_owned();
+    }
+
+    recording.program_file.clone()
+}
+
 pub(super) fn replay_recording_file(
     path: &Path,
     diff: bool,
@@ -65,8 +105,10 @@ pub(super) fn replay_recording_file(
     let recording: SessionRecording = parse_session_recording(&raw)
         .map_err(|e| format!("Invalid recording JSON '{}': {}", path.display(), e))?;
 
+    let replay_module_root = resolve_replay_module_root(path, &recording);
+    let replay_program_file = resolve_replay_program_file(&recording, &replay_module_root);
     let (mut interp, items, _) =
-        compile_program_for_exec(&recording.program_file, Some(&recording.module_root))?;
+        compile_program_for_exec(&replay_program_file, Some(&replay_module_root))?;
     interp.start_replay(recording.effects.clone(), check_args);
 
     run_top_level_statements(&mut interp, &items)?;

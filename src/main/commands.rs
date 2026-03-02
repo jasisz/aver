@@ -45,6 +45,62 @@ pub(super) fn prepare_recording_path(dir: &str, request_id: &str) -> Result<Path
     Ok(dir_path.join(format!("{}.json", request_id)))
 }
 
+fn path_to_string(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
+fn relativize_to(base: &Path, path: &Path) -> Option<String> {
+    let rel = path.strip_prefix(base).ok()?;
+    if rel.as_os_str().is_empty() {
+        Some(".".to_string())
+    } else {
+        Some(path_to_string(rel))
+    }
+}
+
+fn relativize_to_canonical(base: &Path, path: &Path) -> Option<String> {
+    let base_canon = std::fs::canonicalize(base).ok()?;
+    let path_canon = std::fs::canonicalize(path).ok()?;
+    relativize_to(&base_canon, &path_canon)
+}
+
+fn recording_paths(file: &str, module_root: &str) -> (String, String) {
+    let cwd = std::env::current_dir().ok();
+    let module_root_path = Path::new(module_root);
+    let file_path = Path::new(file);
+
+    let rec_module_root = if module_root_path.is_absolute() {
+        match cwd.as_ref().and_then(|cwd_path| {
+            relativize_to(cwd_path, module_root_path)
+                .or_else(|| relativize_to_canonical(cwd_path, module_root_path))
+        }) {
+            Some(rel) => rel,
+            None => module_root.to_string(),
+        }
+    } else {
+        module_root.to_string()
+    };
+
+    let rec_program_file = if file_path.is_absolute() {
+        if let Some(rel) = relativize_to(module_root_path, file_path) {
+            rel
+        } else if let Some(rel) = relativize_to_canonical(module_root_path, file_path) {
+            rel
+        } else if let Some(rel) = cwd.as_ref().and_then(|cwd_path| {
+            relativize_to(cwd_path, file_path)
+                .or_else(|| relativize_to_canonical(cwd_path, file_path))
+        }) {
+            rel
+        } else {
+            file.to_string()
+        }
+    } else {
+        file.to_string()
+    };
+
+    (rec_program_file, rec_module_root)
+}
+
 pub(super) fn cmd_run(
     file: &str,
     module_root_override: Option<&str>,
@@ -72,6 +128,7 @@ pub(super) fn cmd_run(
     let recording_target = if let Some(dir) = record_dir {
         let request_id = generate_request_id();
         let timestamp = generate_timestamp();
+        let (record_program_file, record_module_root) = recording_paths(file, &module_root);
         let out_path = match prepare_recording_path(dir, &request_id) {
             Ok(path) => path,
             Err(e) => {
@@ -83,8 +140,8 @@ pub(super) fn cmd_run(
             out_path.clone(),
             request_id.clone(),
             timestamp.clone(),
-            file.to_string(),
-            module_root.clone(),
+            record_program_file,
+            record_module_root,
             "main".to_string(),
             JsonValue::Null,
         );

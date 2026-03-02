@@ -489,6 +489,7 @@ Requires: Rust stable toolchain.
 | `lists.av` | List literals, map / filter / fold |
 | `map.av` | Typed maps: `Map.fromList`, `Map.set`, `Map.get`, `Map.entries` |
 | `grok_s_language.av` | S-expression parser + evaluator (`add/sub/mul/div`): recursive descent, custom ADT, parse + render + eval |
+| `mission_control.av` | Space mission simulator: command parser, pure state machine, effectful shell (great with replay) |
 | `shapes.av` | Sum types, qualified constructors (`Shape.Circle`), match on variants |
 | `user_record.av` | Record types, field access, positional match |
 | `fibonacci.av` | Tail recursion, records, decision blocks |
