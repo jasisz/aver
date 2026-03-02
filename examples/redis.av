@@ -63,8 +63,8 @@ verify respBulkLen
 fn sendArgAndRest(conn: Tcp.Connection, h: String, t: List<String>) -> Result<Tcp.Connection, String>
     ? "Sends one RESP bulk-string arg ('$len' + data), then recurses for the rest."
     ! [Tcp]
-    _ = Tcp.writeLine(conn, "${respBulkLen(h)}")?
-    _ = Tcp.writeLine(conn, h)?
+    _len = Tcp.writeLine(conn, "${respBulkLen(h)}")?
+    _data = Tcp.writeLine(conn, h)?
     sendArgs(conn, t)
 
 fn sendArgs(conn: Tcp.Connection, args: List<String>) -> Result<Tcp.Connection, String>
