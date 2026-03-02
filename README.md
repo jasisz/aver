@@ -488,6 +488,7 @@ Requires: Rust stable toolchain.
 | `calculator.av` | Result types, match, decision blocks |
 | `lists.av` | List literals, map / filter / fold |
 | `map.av` | Typed maps: `Map.fromList`, `Map.set`, `Map.get`, `Map.entries` |
+| `grok_s_language.av` | S-expression parser + evaluator (`add/sub/mul/div`): recursive descent, custom ADT, parse + render + eval |
 | `shapes.av` | Sum types, qualified constructors (`Shape.Circle`), match on variants |
 | `user_record.av` | Record types, field access, positional match |
 | `fibonacci.av` | Tail recursion, records, decision blocks |
