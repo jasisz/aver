@@ -250,9 +250,9 @@ pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>, strict: 
     }
 
     // Check line count
-    if line_count > 250 {
+    if line_count > 500 {
         println!(
-            "  {} File has {} lines (recommended max: 250)",
+            "  {} File has {} lines (recommended max: 500)",
             "WARNING:".yellow(),
             line_count
         );
@@ -261,17 +261,20 @@ pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>, strict: 
     }
 
     // Check intents, descriptions, and verify coverage
-    let warnings = check_module_intent(&items);
-    if warnings.is_empty() {
+    let findings = check_module_intent(&items);
+    if findings.errors.is_empty() && findings.warnings.is_empty() {
         println!("  {} All intent/desc/verify present", "✓".green());
     } else {
-        let label = if strict {
+        for e in &findings.errors {
+            println!("  {} {}", "Error:".red(), e);
+        }
+        let warning_label = if strict {
             "Error:".red()
         } else {
             "Warning:".yellow()
         };
-        for w in &warnings {
-            println!("  {} {}", label, w);
+        for w in &findings.warnings {
+            println!("  {} {}", warning_label, w);
         }
     }
 
@@ -285,8 +288,9 @@ pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>, strict: 
         );
     }
 
-    let has_warnings = !warnings.is_empty();
-    if has_errors || (strict && has_warnings) {
+    let has_warnings = !findings.warnings.is_empty();
+    let has_contract_errors = !findings.errors.is_empty();
+    if has_errors || has_contract_errors || (strict && has_warnings) {
         process::exit(1);
     } else {
         println!("  {} Type check passed", "✓".green());

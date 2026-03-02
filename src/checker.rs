@@ -13,6 +13,11 @@ pub struct VerifyResult {
     pub failures: Vec<(String, String, String)>, // (expr_src, expected, actual)
 }
 
+pub struct ModuleCheckFindings {
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
 pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult {
     let mut passed = 0;
     let mut failed = 0;
@@ -153,7 +158,8 @@ fn args_match_params(args: &[Expr], param_names: &[&str]) -> bool {
         .all(|(arg, expected)| matches!(arg, Expr::Ident(name) if name == *expected))
 }
 
-pub fn check_module_intent(items: &[TopLevel]) -> Vec<String> {
+pub fn check_module_intent(items: &[TopLevel]) -> ModuleCheckFindings {
+    let mut errors = Vec::new();
     let mut warnings = Vec::new();
 
     let verified_fns: std::collections::HashSet<&str> = items
@@ -179,14 +185,14 @@ pub fn check_module_intent(items: &[TopLevel]) -> Vec<String> {
                     warnings.push(format!("Function '{}' has no description (?)", f.name));
                 }
                 if fn_needs_verify(f) && !verified_fns.contains(f.name.as_str()) {
-                    warnings.push(format!("Function '{}' has no verify block", f.name));
+                    errors.push(format!("Function '{}' has no verify block", f.name));
                 }
             }
             _ => {}
         }
     }
 
-    warnings
+    ModuleCheckFindings { errors, warnings }
 }
 
 #[cfg(test)]
@@ -211,11 +217,19 @@ fn log(x: Int) -> Unit
     = Console.print(x)
 "#,
         );
-        let warnings = check_module_intent(&items);
+        let findings = check_module_intent(&items);
         assert!(
-            !warnings.iter().any(|w| w.contains("no verify block")),
-            "unexpected warnings: {:?}",
-            warnings
+            !findings
+                .warnings
+                .iter()
+                .any(|w| w.contains("no verify block"))
+                && !findings
+                    .errors
+                    .iter()
+                    .any(|e| e.contains("no verify block")),
+            "unexpected findings: errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
         );
     }
 
@@ -227,29 +241,39 @@ fn passthrough(x: Int) -> Int
     = inner(x)
 "#,
         );
-        let warnings = check_module_intent(&items);
+        let findings = check_module_intent(&items);
         assert!(
-            !warnings.iter().any(|w| w.contains("no verify block")),
-            "unexpected warnings: {:?}",
-            warnings
+            !findings
+                .warnings
+                .iter()
+                .any(|w| w.contains("no verify block"))
+                && !findings
+                    .errors
+                    .iter()
+                    .any(|e| e.contains("no verify block")),
+            "unexpected findings: errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
         );
     }
 
     #[test]
-    fn verify_warning_for_pure_non_trivial_logic() {
+    fn verify_error_for_pure_non_trivial_logic() {
         let items = parse_items(
             r#"
 fn add1(x: Int) -> Int
     = x + 1
 "#,
         );
-        let warnings = check_module_intent(&items);
+        let findings = check_module_intent(&items);
         assert!(
-            warnings
+            findings
+                .errors
                 .iter()
-                .any(|w| w == "Function 'add1' has no verify block"),
-            "expected verify warning, got: {:?}",
-            warnings
+                .any(|e| e == "Function 'add1' has no verify block"),
+            "expected verify error, got errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
         );
     }
 }
