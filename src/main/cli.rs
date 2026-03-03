@@ -12,6 +12,8 @@ pub(super) struct Cli {
 pub(super) enum Target {
     /// Transpile to a Rust/Cargo project (default)
     Rust,
+    /// Transpile pure core logic to a Lean 4 project
+    Lean,
 }
 
 #[derive(Subcommand)]

@@ -6,7 +6,7 @@
 /// self-edge).
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{Expr, FnBody, Stmt, TopLevel};
+use crate::ast::{Expr, FnBody, FnDef, Stmt, StrPart, TopLevel};
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -111,6 +111,281 @@ pub fn recursive_scc_ids(items: &[TopLevel]) -> HashMap<String, usize> {
     out
 }
 
+/// Deterministic function emission order for codegen backends.
+///
+/// Returns SCC components in callee-before-caller topological order.
+/// Each inner vector is one SCC (single function or mutual-recursive group).
+/// Function references passed as call arguments (e.g. `List.fold(xs, init, f)`)
+/// are treated as dependencies for ordering.
+pub fn ordered_fn_components<'a>(fns: &[&'a FnDef]) -> Vec<Vec<&'a FnDef>> {
+    if fns.is_empty() {
+        return vec![];
+    }
+
+    let fn_map: HashMap<String, &FnDef> = fns.iter().map(|fd| (fd.name.clone(), *fd)).collect();
+    let names: Vec<String> = fn_map.keys().cloned().collect();
+    let name_set: HashSet<String> = names.iter().cloned().collect();
+
+    let mut graph: HashMap<String, Vec<String>> = HashMap::new();
+    for fd in fns {
+        let mut deps = HashSet::new();
+        collect_codegen_deps_body(&fd.body, &name_set, &mut deps);
+        let mut sorted = deps.into_iter().collect::<Vec<_>>();
+        sorted.sort();
+        graph.insert(fd.name.clone(), sorted);
+    }
+
+    let sccs = tarjan_all_sccs(&names, &graph);
+    let mut comp_of: HashMap<String, usize> = HashMap::new();
+    for (idx, comp) in sccs.iter().enumerate() {
+        for name in comp {
+            comp_of.insert(name.clone(), idx);
+        }
+    }
+
+    let mut comp_graph: HashMap<usize, HashSet<usize>> = HashMap::new();
+    for (caller, deps) in &graph {
+        let from = comp_of[caller];
+        for callee in deps {
+            let to = comp_of[callee];
+            if from != to {
+                comp_graph.entry(from).or_default().insert(to);
+            }
+        }
+    }
+
+    let comp_order = topo_components(&sccs, &comp_graph);
+    comp_order
+        .into_iter()
+        .map(|idx| {
+            let mut group: Vec<&FnDef> = sccs[idx]
+                .iter()
+                .filter_map(|name| fn_map.get(name).copied())
+                .collect();
+            group.sort_by(|a, b| a.name.cmp(&b.name));
+            group
+        })
+        .collect()
+}
+
+fn collect_codegen_deps_body(body: &FnBody, fn_names: &HashSet<String>, out: &mut HashSet<String>) {
+    match body {
+        FnBody::Expr(e) => collect_codegen_deps_expr(e, fn_names, out),
+        FnBody::Block(stmts) => {
+            for s in stmts {
+                match s {
+                    Stmt::Binding(_, _, e) | Stmt::Expr(e) => {
+                        collect_codegen_deps_expr(e, fn_names, out)
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn collect_codegen_deps_expr(expr: &Expr, fn_names: &HashSet<String>, out: &mut HashSet<String>) {
+    match expr {
+        Expr::FnCall(func, args) => {
+            if let Expr::Ident(name) = func.as_ref() {
+                if fn_names.contains(name) {
+                    out.insert(name.clone());
+                }
+            }
+            if let Some(qname) = expr_to_dotted_name(func.as_ref()) {
+                if fn_names.contains(&qname) {
+                    out.insert(qname);
+                }
+            }
+
+            collect_codegen_deps_expr(func, fn_names, out);
+            for arg in args {
+                // function-as-value dependency, e.g. List.fold(xs, init, f)
+                if let Expr::Ident(name) = arg {
+                    if fn_names.contains(name) {
+                        out.insert(name.clone());
+                    }
+                }
+                if let Some(qname) = expr_to_dotted_name(arg) {
+                    if fn_names.contains(&qname) {
+                        out.insert(qname);
+                    }
+                }
+                collect_codegen_deps_expr(arg, fn_names, out);
+            }
+        }
+        Expr::TailCall(boxed) => {
+            if fn_names.contains(&boxed.0) {
+                out.insert(boxed.0.clone());
+            }
+            for arg in &boxed.1 {
+                collect_codegen_deps_expr(arg, fn_names, out);
+            }
+        }
+        Expr::Attr(obj, _) => collect_codegen_deps_expr(obj, fn_names, out),
+        Expr::BinOp(_, l, r) | Expr::Pipe(l, r) => {
+            collect_codegen_deps_expr(l, fn_names, out);
+            collect_codegen_deps_expr(r, fn_names, out);
+        }
+        Expr::Match { subject, arms, .. } => {
+            collect_codegen_deps_expr(subject, fn_names, out);
+            for arm in arms {
+                collect_codegen_deps_expr(&arm.body, fn_names, out);
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) => {
+            for it in items {
+                collect_codegen_deps_expr(it, fn_names, out);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                collect_codegen_deps_expr(k, fn_names, out);
+                collect_codegen_deps_expr(v, fn_names, out);
+            }
+        }
+        Expr::Constructor(_, maybe) => {
+            if let Some(inner) = maybe {
+                collect_codegen_deps_expr(inner, fn_names, out);
+            }
+        }
+        Expr::ErrorProp(inner) => collect_codegen_deps_expr(inner, fn_names, out),
+        Expr::InterpolatedStr(parts) => {
+            for p in parts {
+                if let StrPart::Parsed(e) = p {
+                    collect_codegen_deps_expr(e, fn_names, out);
+                }
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, e) in fields {
+                collect_codegen_deps_expr(e, fn_names, out);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            collect_codegen_deps_expr(base, fn_names, out);
+            for (_, e) in updates {
+                collect_codegen_deps_expr(e, fn_names, out);
+            }
+        }
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => {}
+    }
+}
+
+fn expr_to_dotted_name(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Ident(name) => Some(name.clone()),
+        Expr::Attr(obj, field) => {
+            let head = expr_to_dotted_name(obj)?;
+            Some(format!("{}.{}", head, field))
+        }
+        _ => None,
+    }
+}
+
+fn tarjan_all_sccs(nodes: &[String], graph: &HashMap<String, Vec<String>>) -> Vec<Vec<String>> {
+    struct TarjanAllState {
+        index: usize,
+        indices: HashMap<String, usize>,
+        lowlink: HashMap<String, usize>,
+        stack: Vec<String>,
+        on_stack: HashSet<String>,
+        components: Vec<Vec<String>>,
+    }
+
+    fn strong_connect(v: String, graph: &HashMap<String, Vec<String>>, st: &mut TarjanAllState) {
+        st.indices.insert(v.clone(), st.index);
+        st.lowlink.insert(v.clone(), st.index);
+        st.index += 1;
+        st.stack.push(v.clone());
+        st.on_stack.insert(v.clone());
+
+        if let Some(neighbors) = graph.get(&v) {
+            for w in neighbors {
+                if !st.indices.contains_key(w) {
+                    strong_connect(w.clone(), graph, st);
+                    let low_v = st.lowlink[&v];
+                    let low_w = st.lowlink[w];
+                    st.lowlink.insert(v.clone(), low_v.min(low_w));
+                } else if st.on_stack.contains(w) {
+                    let low_v = st.lowlink[&v];
+                    let idx_w = st.indices[w];
+                    st.lowlink.insert(v.clone(), low_v.min(idx_w));
+                }
+            }
+        }
+
+        if st.lowlink[&v] == st.indices[&v] {
+            let mut comp = Vec::new();
+            while let Some(w) = st.stack.pop() {
+                st.on_stack.remove(&w);
+                let done = w == v;
+                comp.push(w);
+                if done {
+                    break;
+                }
+            }
+            comp.sort();
+            st.components.push(comp);
+        }
+    }
+
+    let mut sorted_nodes = nodes.to_vec();
+    sorted_nodes.sort();
+    let mut st = TarjanAllState {
+        index: 0,
+        indices: HashMap::new(),
+        lowlink: HashMap::new(),
+        stack: Vec::new(),
+        on_stack: HashSet::new(),
+        components: Vec::new(),
+    };
+    for node in sorted_nodes {
+        if !st.indices.contains_key(&node) {
+            strong_connect(node, graph, &mut st);
+        }
+    }
+    st.components.sort_by(|a, b| a[0].cmp(&b[0]));
+    st.components
+}
+
+fn topo_components(
+    sccs: &[Vec<String>],
+    comp_graph: &HashMap<usize, HashSet<usize>>,
+) -> Vec<usize> {
+    let mut ids: Vec<usize> = (0..sccs.len()).collect();
+    ids.sort_by(|a, b| sccs[*a][0].cmp(&sccs[*b][0]));
+
+    let mut visited = HashSet::new();
+    let mut order = Vec::new();
+    for id in ids {
+        if !visited.contains(&id) {
+            topo_components_dfs(id, sccs, comp_graph, &mut visited, &mut order);
+        }
+    }
+    order
+}
+
+fn topo_components_dfs(
+    id: usize,
+    sccs: &[Vec<String>],
+    comp_graph: &HashMap<usize, HashSet<usize>>,
+    visited: &mut HashSet<usize>,
+    order: &mut Vec<usize>,
+) {
+    visited.insert(id);
+    let mut neighbors: Vec<usize> = comp_graph
+        .get(&id)
+        .map(|s| s.iter().copied().collect())
+        .unwrap_or_default();
+    neighbors.sort_by(|a, b| sccs[*a][0].cmp(&sccs[*b][0]));
+    for n in neighbors {
+        if !visited.contains(&n) {
+            topo_components_dfs(n, sccs, comp_graph, visited, order);
+        }
+    }
+    order.push(id);
+}
+
 // ---------------------------------------------------------------------------
 // Call graph construction
 // ---------------------------------------------------------------------------
@@ -162,7 +437,7 @@ fn is_recursive_scc(scc: &[String], graph: &HashMap<String, HashSet<String>>) ->
     false
 }
 
-fn collect_callees_body(body: &FnBody, callees: &mut HashSet<String>) {
+pub(crate) fn collect_callees_body(body: &FnBody, callees: &mut HashSet<String>) {
     match body {
         FnBody::Expr(e) => collect_callees_expr(e, callees),
         FnBody::Block(stmts) => {

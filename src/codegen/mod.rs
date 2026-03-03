@@ -1,7 +1,8 @@
 /// Aver → target language transpilation.
 ///
 /// The codegen module transforms a type-checked Aver AST into source code
-/// for a target language. The first (and currently only) backend is Rust.
+/// for a target language. Current backends: Rust and Lean (WIP).
+pub mod lean;
 pub mod rust;
 
 use std::collections::{HashMap, HashSet};

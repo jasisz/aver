@@ -178,6 +178,7 @@ aver check     file.av                   # type errors + intent/desc warnings
 aver verify    file.av                   # run all verify blocks
 aver compile   file.av -o out/           # transpile to a Rust project
 aver compile   file.av -t rust -o out/   # explicit target (rust is default)
+aver compile   file.av -t lean -o out/   # transpile pure core to a Lean 4 project (WIP)
 aver context   file.av                   # export project context (Markdown)
 aver context   file.av --json            # export project context (JSON)
 aver context   file.av --decisions-only        # decision blocks only (Markdown)
@@ -190,6 +191,18 @@ aver repl                              # interactive REPL
 `run`, `check`, `verify`, `compile`, and `context` also accept `--module-root <path>` to override import base (default: current working directory).
 
 See [docs/transpilation.md](docs/transpilation.md) for full transpilation documentation.
+
+### Lean target (`-t lean`, WIP)
+
+Lean transpilation emits a Lean 4 project (`lakefile.lean`, `lean-toolchain`, `<Project>.lean`) for pure core logic.
+
+- Pure functions, types, and decisions are emitted.
+- Effectful functions and `main` are intentionally skipped.
+- `verify` blocks are exported as Lean `example ... := by sorry` obligations.
+- Lean codegen now fails fast on unresolved internals:
+  - `Expr::Resolved` in codegen input → hard error
+  - `Type::Unknown` in codegen input → hard error
+  - no silent fallback `sorry` for those cases
 
 ---
 

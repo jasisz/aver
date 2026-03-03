@@ -9,6 +9,7 @@ use aver::ast::TopLevel;
 use aver::checker::{check_module_intent, index_decisions, run_verify};
 use aver::codegen;
 use aver::codegen::ModuleInfo;
+use aver::codegen::lean as lean_codegen;
 use aver::codegen::rust as rust_codegen;
 use aver::interpreter::{Interpreter, Value, aver_repr};
 use aver::replay::{JsonValue, RecordedOutcome, value_to_json};
@@ -466,6 +467,11 @@ pub(super) fn cmd_compile(
             let hint = format!("cd {} && cargo build && cargo run", output_dir);
             (out, hint)
         }
+        super::cli::Target::Lean => {
+            let out = lean_codegen::transpile(&ctx);
+            let hint = format!("cd {} && lake build", output_dir);
+            (out, hint)
+        }
     };
 
     // Write output files
@@ -492,6 +498,7 @@ pub(super) fn cmd_compile(
 
     let target_label = match target {
         super::cli::Target::Rust => "Rust",
+        super::cli::Target::Lean => "Lean 4",
     };
     println!(
         "{}",

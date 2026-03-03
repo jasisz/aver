@@ -115,6 +115,39 @@ Service runtimes are only emitted when the program actually uses them (detected 
 - **Console**: Direct `println!`/`eprintln!` + `stdin().read_line()`
 - **Disk**: `std::fs` operations mapped to Aver's `Result` type
 
+### `lean` (experimental / WIP)
+
+Generates a Lean 4 project:
+
+```
+out/
+  lakefile.lean
+  lean-toolchain
+  <Project>.lean
+```
+
+Example:
+
+```bash
+aver compile examples/fibonacci.av -t lean -o /tmp/fib-lean
+cd /tmp/fib-lean && lake build
+```
+
+#### Scope
+
+- Transpiles pure core logic (types + pure functions + decisions).
+- Skips effectful functions and `main`.
+- Emits `verify` blocks as Lean proof obligations:
+  - `example : <lhs> = <rhs> := by sorry`
+
+#### Hard-fail guarantees
+
+Lean codegen does not silently mask unresolved compiler internals:
+
+- `Expr::Resolved` in codegen input is a hard codegen error.
+- `Type::Unknown` in codegen input is a hard codegen error.
+- `sorry` is reserved for exported `verify` obligations (and not used as fallback for those internal states).
+
 ## Adding a new target
 
 To add a new transpilation target (e.g., `js`, `go`, `python`):

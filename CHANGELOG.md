@@ -2,6 +2,19 @@
 
 All notable changes to Aver are documented here.
 
+## 0.2.2
+
+### Added
+- Lean transpilation target in CLI: `aver compile -t lean`
+- Lean codegen backend module structure (`src/codegen/lean/*`)
+- Transpilation docs for Lean target in README and `docs/transpilation.md`
+
+### Fixed
+- Shared deterministic function ordering via call-graph SCC topo order (callee-before-caller) for codegen backends
+- Lean forward-reference failures in emitted code (e.g. helper emitted after use)
+- Lean prelude: avoid reserved keyword `from` in generated `String.slice`
+- Lean `AverMap.set` now preserves key order when updating existing keys
+
 ## 0.2.1
 
 ### Added
