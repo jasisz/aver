@@ -1256,7 +1256,7 @@ fn run_program(src: &str) -> Interpreter {
 #[test]
 fn sum_type_no_arg_variant_is_variant_value() {
     let src = "type Shape\n  Circle(Float)\n  Point\np = Shape.Point\n";
-    let mut interp = run_program(src);
+    let interp = run_program(src);
     let val = interp.lookup("p").expect("p not defined");
     assert_eq!(
         val,
@@ -1270,15 +1270,15 @@ fn sum_type_no_arg_variant_is_variant_value() {
 
 #[test]
 fn sum_type_constructor_creates_variant() {
-    let src = "type Shape\n  Circle(Float)\n  Point\nc = Shape.Circle(3.14)\n";
-    let mut interp = run_program(src);
+    let src = "type Shape\n  Circle(Float)\n  Point\nc = Shape.Circle(3.25)\n";
+    let interp = run_program(src);
     let val = interp.lookup("c").expect("c not defined");
     assert_eq!(
         val,
         Value::Variant {
             type_name: "Shape".to_string(),
             variant: "Circle".to_string(),
-            fields: vec![Value::Float(3.14)],
+            fields: vec![Value::Float(3.25)],
         }
     );
 }
@@ -1286,7 +1286,7 @@ fn sum_type_constructor_creates_variant() {
 #[test]
 fn sum_type_multi_field_constructor() {
     let src = "type Shape\n  Rect(Float, Float)\nr = Shape.Rect(3.0, 4.0)\n";
-    let mut interp = run_program(src);
+    let interp = run_program(src);
     let val = interp.lookup("r").expect("r not defined");
     assert_eq!(
         val,
@@ -1373,7 +1373,7 @@ fn sum_type_match_no_arg_variant() {
 #[test]
 fn record_creation_stores_fields() {
     let src = "record User\n  name: String\n  age: Int\nu = User(name = \"Alice\", age = 30)\n";
-    let mut interp = run_program(src);
+    let interp = run_program(src);
     let val = interp.lookup("u").expect("u not defined");
     assert_eq!(
         val,
@@ -1390,7 +1390,7 @@ fn record_creation_stores_fields() {
 #[test]
 fn record_creation_canonicalizes_field_order() {
     let src = "record User\n  name: String\n  age: Int\nu = User(age = 30, name = \"Alice\")\n";
-    let mut interp = run_program(src);
+    let interp = run_program(src);
     let val = interp.lookup("u").expect("u not defined");
     assert_eq!(
         val,
@@ -1407,7 +1407,7 @@ fn record_creation_canonicalizes_field_order() {
 #[test]
 fn record_field_access() {
     let src = "record User\n  name: String\n  age: Int\nu = User(name = \"Alice\", age = 30)\nn = u.name\n";
-    let mut interp = run_program(src);
+    let interp = run_program(src);
     let val = interp.lookup("n").expect("n not defined");
     assert_eq!(val, Value::Str("Alice".to_string()));
 }

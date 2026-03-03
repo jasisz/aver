@@ -155,24 +155,15 @@ impl Interpreter {
         Ok(())
     }
 
-    pub fn configure_recording_sink(
-        &mut self,
-        path: std::path::PathBuf,
-        request_id: String,
-        timestamp: String,
-        program_file: String,
-        module_root: String,
-        entry_fn: String,
-        input: JsonValue,
-    ) {
+    pub fn configure_recording_sink(&mut self, cfg: RecordingConfig) {
         self.recording_sink = Some(RecordingSink {
-            path,
-            request_id,
-            timestamp,
-            program_file,
-            module_root,
-            entry_fn,
-            input,
+            path: cfg.path,
+            request_id: cfg.request_id,
+            timestamp: cfg.timestamp,
+            program_file: cfg.program_file,
+            module_root: cfg.module_root,
+            entry_fn: cfg.entry_fn,
+            input: cfg.input,
         });
     }
 

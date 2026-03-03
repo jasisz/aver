@@ -12,7 +12,12 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     match expr {
         Expr::Literal(lit) => emit_literal(lit),
         Expr::Ident(name) => aver_name_to_rust(name),
-        Expr::Resolved(_) => "/* resolved */todo!()".to_string(),
+        Expr::Resolved(slot) => {
+            panic!(
+                "Rust codegen: encountered resolver-only Expr::Resolved({slot}). \
+                 Compile pipeline should emit source-level AST (Ident), not slot-indexed AST."
+            )
+        }
         Expr::Attr(obj, field) => {
             if let Expr::Ident(type_name) = obj.as_ref() {
                 // Option.None → None
@@ -262,7 +267,12 @@ pub(super) fn maybe_clone(code: String, expr: &Expr, ectx: &EmitCtx) -> String {
                 format!("{}.clone()", code)
             }
         }
-        Expr::Resolved(_) => format!("{}.clone()", code),
+        Expr::Resolved(slot) => {
+            panic!(
+                "Rust codegen: encountered resolver-only Expr::Resolved({slot}) in clone path. \
+                 Compile pipeline should emit source-level AST (Ident), not slot-indexed AST."
+            )
+        }
         Expr::Attr(obj, _) => {
             // Record field access — clone it (partial moves too complex)
             if !matches!(obj.as_ref(), Expr::Ident(n) if is_builtin_namespace(n)) {

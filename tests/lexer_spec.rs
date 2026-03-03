@@ -52,7 +52,7 @@ fn int_large() {
 
 #[test]
 fn float_basic() {
-    assert_eq!(lex("3.14"), vec![TokenKind::Float(3.14)]);
+    assert_eq!(lex("3.25"), vec![TokenKind::Float(3.25)]);
 }
 
 #[test]
@@ -314,7 +314,7 @@ fn interp_string_expression_part() {
     let kinds = lex("\"{x + 1}\"");
     if let TokenKind::InterpStr(parts) = &kinds[0] {
         assert_eq!(parts.len(), 1);
-        assert_eq!(parts[0].0, true); // is_expr
+        assert!(parts[0].0); // is_expr
         assert_eq!(parts[0].1, "x + 1");
     } else {
         panic!("expected InterpStr");

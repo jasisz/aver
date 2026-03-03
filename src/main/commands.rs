@@ -11,7 +11,7 @@ use aver::codegen;
 use aver::codegen::ModuleInfo;
 use aver::codegen::lean as lean_codegen;
 use aver::codegen::rust as rust_codegen;
-use aver::interpreter::{Interpreter, Value, aver_repr};
+use aver::interpreter::{Interpreter, RecordingConfig, Value, aver_repr};
 use aver::replay::{JsonValue, RecordedOutcome, value_to_json};
 use aver::resolver;
 use aver::source::find_module_file;
@@ -137,15 +137,15 @@ pub(super) fn cmd_run(
                 process::exit(1);
             }
         };
-        interp.configure_recording_sink(
-            out_path.clone(),
-            request_id.clone(),
-            timestamp.clone(),
-            record_program_file,
-            record_module_root,
-            "main".to_string(),
-            JsonValue::Null,
-        );
+        interp.configure_recording_sink(RecordingConfig {
+            path: out_path.clone(),
+            request_id: request_id.clone(),
+            timestamp: timestamp.clone(),
+            program_file: record_program_file,
+            module_root: record_module_root,
+            entry_fn: "main".to_string(),
+            input: JsonValue::Null,
+        });
         interp.start_recording();
         if let Err(e) = interp.persist_recording_snapshot(RecordedOutcome::Value(JsonValue::Null)) {
             eprintln!("{}", e.to_string().red());

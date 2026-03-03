@@ -48,6 +48,17 @@ struct RecordingSink {
     input: JsonValue,
 }
 
+#[derive(Debug, Clone)]
+pub struct RecordingConfig {
+    pub path: PathBuf,
+    pub request_id: String,
+    pub timestamp: String,
+    pub program_file: String,
+    pub module_root: String,
+    pub entry_fn: String,
+    pub input: JsonValue,
+}
+
 /// Per-function memo cache with collision-safe buckets and true LRU eviction.
 #[derive(Debug, Default, Clone)]
 struct FnMemoCache {
