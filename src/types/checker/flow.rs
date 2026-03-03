@@ -114,6 +114,13 @@ impl TypeChecker {
         ));
         for item in items {
             if let TopLevel::Verify(vb) = item {
+                if vb.cases.is_empty() {
+                    self.error(format!(
+                        "Verify block '{}' must contain at least one case",
+                        vb.fn_name
+                    ));
+                    continue;
+                }
                 let caller = format!("<verify:{}>", vb.fn_name);
                 for (left, right) in &vb.cases {
                     let _ = self.infer_type(left);

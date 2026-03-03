@@ -162,16 +162,21 @@ pub fn check_module_intent(items: &[TopLevel]) -> ModuleCheckFindings {
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
 
-    let verified_fns: std::collections::HashSet<&str> = items
-        .iter()
-        .filter_map(|item| {
-            if let TopLevel::Verify(v) = item {
-                Some(v.fn_name.as_str())
+    let mut verified_fns: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut empty_verify_fns: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for item in items {
+        if let TopLevel::Verify(v) = item {
+            if v.cases.is_empty() {
+                errors.push(format!(
+                    "Verify block '{}' must contain at least one case",
+                    v.fn_name
+                ));
+                empty_verify_fns.insert(v.fn_name.as_str());
             } else {
-                None
+                verified_fns.insert(v.fn_name.as_str());
             }
-        })
-        .collect();
+        }
+    }
 
     for item in items {
         match item {
@@ -184,7 +189,10 @@ pub fn check_module_intent(items: &[TopLevel]) -> ModuleCheckFindings {
                 if f.desc.is_none() && fn_needs_desc(f) {
                     warnings.push(format!("Function '{}' has no description (?)", f.name));
                 }
-                if fn_needs_verify(f) && !verified_fns.contains(f.name.as_str()) {
+                if fn_needs_verify(f)
+                    && !verified_fns.contains(f.name.as_str())
+                    && !empty_verify_fns.contains(f.name.as_str())
+                {
                     errors.push(format!("Function '{}' has no verify block", f.name));
                 }
             }
@@ -272,6 +280,37 @@ fn add1(x: Int) -> Int
                 .iter()
                 .any(|e| e == "Function 'add1' has no verify block"),
             "expected verify error, got errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
+        );
+    }
+
+    #[test]
+    fn empty_verify_block_is_rejected() {
+        let items = parse_items(
+            r#"
+fn add1(x: Int) -> Int
+    = x + 1
+
+verify add1
+"#,
+        );
+        let findings = check_module_intent(&items);
+        assert!(
+            findings
+                .errors
+                .iter()
+                .any(|e| e == "Verify block 'add1' must contain at least one case"),
+            "expected empty verify error, got errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
+        );
+        assert!(
+            !findings
+                .errors
+                .iter()
+                .any(|e| e == "Function 'add1' has no verify block"),
+            "expected no duplicate missing-verify error, got errors={:?}, warnings={:?}",
             findings.errors,
             findings.warnings
         );

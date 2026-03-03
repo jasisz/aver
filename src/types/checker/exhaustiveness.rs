@@ -2,6 +2,8 @@ use std::collections::HashSet;
 
 use super::*;
 
+const EXHAUSTIVENESS_MAX_DEPTH: usize = 64;
+
 #[derive(Debug, Clone, PartialEq)]
 enum CoverPat {
     Wild,
@@ -52,17 +54,27 @@ impl TypeChecker {
             .map(|arm| vec![normalize_pattern(&arm.pattern)])
             .collect();
         let mut seen = HashSet::new();
-        if let Some(witness_vec) =
-            self.find_uncovered_vector(std::slice::from_ref(subject_ty), &rows, &mut seen)
+        if let Some(witness_vec) = self.find_uncovered_vector(
+            std::slice::from_ref(subject_ty),
+            &rows,
+            &mut seen,
+            0,
+        )
         {
-            let witness = if let Some(first) = witness_vec.first() {
-                format_cover_pattern(first)
+            let witness_msg = if let Some(first) = witness_vec.first() {
+                if is_catch_all_witness(first) {
+                    "missing catch-all (_) pattern".to_string()
+                } else if matches!(first, CoverPat::Cons(_, _)) {
+                    "missing pattern [h, ..t]".to_string()
+                } else {
+                    format!("missing pattern {}", format_cover_pattern(first))
+                }
             } else {
-                "_".to_string()
+                "missing catch-all (_) pattern".to_string()
             };
             self.error_at_line(
                 line,
-                format!("Non-exhaustive match: missing pattern {}", witness),
+                format!("Non-exhaustive match: {}", witness_msg),
             );
         }
     }
@@ -72,9 +84,13 @@ impl TypeChecker {
         types: &[Type],
         rows: &[Vec<CoverPat>],
         seen: &mut HashSet<String>,
+        depth: usize,
     ) -> Option<Vec<CoverPat>> {
         if types.is_empty() {
             return if rows.is_empty() { Some(vec![]) } else { None };
+        }
+        if depth >= EXHAUSTIVENESS_MAX_DEPTH {
+            return None;
         }
 
         let key = state_key(types, rows);
@@ -95,7 +111,7 @@ impl TypeChecker {
                 sub_types.extend_from_slice(tail_tys);
 
                 if let Some(mut sub_witness) =
-                    self.find_uncovered_vector(&sub_types, &specialized, seen)
+                    self.find_uncovered_vector(&sub_types, &specialized, seen, depth + 1)
                 {
                     let arg_count = ctor.arg_types.len();
                     let args = sub_witness.drain(..arg_count).collect::<Vec<_>>();
@@ -110,7 +126,7 @@ impl TypeChecker {
         } else {
             let default_rows = default_matrix(rows);
             if let Some(mut tail_witness) =
-                self.find_uncovered_vector(tail_tys, &default_rows, seen)
+                self.find_uncovered_vector(tail_tys, &default_rows, seen, depth + 1)
             {
                 let mut full = vec![CoverPat::Wild];
                 full.append(&mut tail_witness);
@@ -357,6 +373,14 @@ fn format_cover_pattern(pat: &CoverPat) -> String {
                 format!("{}({})", name, parts.join(", "))
             }
         }
+    }
+}
+
+fn is_catch_all_witness(pat: &CoverPat) -> bool {
+    match pat {
+        CoverPat::Wild => true,
+        CoverPat::Tuple(items) => items.iter().all(is_catch_all_witness),
+        _ => false,
     }
 }
 
