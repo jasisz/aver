@@ -15,7 +15,7 @@ use std::rc::Rc;
 use crate::ast::*;
 
 /// Run the resolver on all top-level function definitions.
-pub fn resolve_program(items: &mut Vec<TopLevel>) {
+pub fn resolve_program(items: &mut [TopLevel]) {
     for item in items.iter_mut() {
         if let TopLevel::FnDef(fd) = item {
             resolve_fn(fd);

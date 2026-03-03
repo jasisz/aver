@@ -54,12 +54,8 @@ impl TypeChecker {
             .map(|arm| vec![normalize_pattern(&arm.pattern)])
             .collect();
         let mut seen = HashSet::new();
-        if let Some(witness_vec) = self.find_uncovered_vector(
-            std::slice::from_ref(subject_ty),
-            &rows,
-            &mut seen,
-            0,
-        )
+        if let Some(witness_vec) =
+            self.find_uncovered_vector(std::slice::from_ref(subject_ty), &rows, &mut seen, 0)
         {
             let witness_msg = if let Some(first) = witness_vec.first() {
                 if is_catch_all_witness(first) {
@@ -72,10 +68,7 @@ impl TypeChecker {
             } else {
                 "missing catch-all (_) pattern".to_string()
             };
-            self.error_at_line(
-                line,
-                format!("Non-exhaustive match: {}", witness_msg),
-            );
+            self.error_at_line(line, format!("Non-exhaustive match: {}", witness_msg));
         }
     }
 

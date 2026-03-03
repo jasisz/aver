@@ -12,12 +12,10 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     match expr {
         Expr::Literal(lit) => emit_literal(lit),
         Expr::Ident(name) => aver_name_to_rust(name),
-        Expr::Resolved(slot) => {
-            panic!(
-                "Rust codegen: encountered resolver-only Expr::Resolved({slot}). \
-                 Compile pipeline should emit source-level AST (Ident), not slot-indexed AST."
-            )
-        }
+        Expr::Resolved(slot) => emit_codegen_error_expr(format!(
+            "Rust codegen: encountered resolver-only Expr::Resolved({slot}). \
+             Compile pipeline should emit source-level AST (Ident), not slot-indexed AST."
+        )),
         Expr::Attr(obj, field) => {
             if let Expr::Ident(type_name) = obj.as_ref() {
                 // Option.None → None
@@ -193,6 +191,14 @@ fn emit_literal(lit: &Literal) -> String {
     }
 }
 
+fn emit_codegen_error_expr(message: String) -> String {
+    let message_lit = format!("{:?}", message);
+    format!(
+        "{{ compile_error!({}); unreachable!(\"unreachable after compile_error\") }}",
+        message_lit
+    )
+}
+
 fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     // Check if this is a builtin call like Console.print, List.map, etc.
     let fn_name = expr_to_dotted_name(fn_expr);
@@ -267,12 +273,8 @@ pub(super) fn maybe_clone(code: String, expr: &Expr, ectx: &EmitCtx) -> String {
                 format!("{}.clone()", code)
             }
         }
-        Expr::Resolved(slot) => {
-            panic!(
-                "Rust codegen: encountered resolver-only Expr::Resolved({slot}) in clone path. \
-                 Compile pipeline should emit source-level AST (Ident), not slot-indexed AST."
-            )
-        }
+        // `emit_expr` already encodes this as a compile_error! expression.
+        Expr::Resolved(_) => code,
         Expr::Attr(obj, _) => {
             // Record field access — clone it (partial moves too complex)
             if !matches!(obj.as_ref(), Expr::Ident(n) if is_builtin_namespace(n)) {

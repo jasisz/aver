@@ -27,6 +27,14 @@ pub(super) struct FileContext {
     pub(super) decisions: Vec<DecisionBlock>,
 }
 
+struct ContextFnFlags {
+    auto_memo: HashSet<String>,
+    auto_tco: HashSet<String>,
+    memo_qual: HashMap<String, Vec<String>>,
+    recursive_callsites: HashMap<String, usize>,
+    recursive_scc_id: HashMap<String, usize>,
+}
+
 fn expr_has_tail_call(expr: &aver::ast::Expr) -> bool {
     use aver::ast::Expr;
     match expr {
@@ -66,16 +74,7 @@ fn fn_has_tail_call(fd: &FnDef) -> bool {
     }
 }
 
-fn compute_context_fn_flags(
-    items: &[TopLevel],
-    module_root: &str,
-) -> (
-    HashSet<String>,
-    HashSet<String>,
-    HashMap<String, Vec<String>>,
-    HashMap<String, usize>,
-    HashMap<String, usize>,
-) {
+fn compute_context_fn_flags(items: &[TopLevel], module_root: &str) -> ContextFnFlags {
     let mut transformed = items.to_vec();
     tco::transform_program(&mut transformed);
     let tco_fns = transformed
@@ -104,13 +103,13 @@ fn compute_context_fn_flags(
                 memo_qual.insert(fd.name.clone(), qual);
             }
         }
-        return (
-            HashSet::new(),
-            tco_fns,
+        return ContextFnFlags {
+            auto_memo: HashSet::new(),
+            auto_tco: tco_fns,
             memo_qual,
             recursive_callsites,
             recursive_scc_id,
-        );
+        };
     }
 
     for item in &transformed {
@@ -134,13 +133,13 @@ fn compute_context_fn_flags(
         }
     }
 
-    (
-        compute_memo_fns(&transformed, &tc_result),
-        tco_fns,
+    ContextFnFlags {
+        auto_memo: compute_memo_fns(&transformed, &tc_result),
+        auto_tco: tco_fns,
         memo_qual,
         recursive_callsites,
         recursive_scc_id,
-    )
+    }
 }
 
 pub(super) fn collect_contexts(
@@ -216,13 +215,12 @@ pub(super) fn collect_contexts(
         }
     }
 
-    let (auto_memo, auto_tco, memo_qual, recursive_callsites, recursive_scc_id) =
-        compute_context_fn_flags(&items, module_root);
-    ctx.fn_auto_memo = auto_memo;
-    ctx.fn_auto_tco = auto_tco;
-    ctx.fn_memo_qual = memo_qual;
-    ctx.fn_recursive_callsites = recursive_callsites;
-    ctx.fn_recursive_scc_id = recursive_scc_id;
+    let flags = compute_context_fn_flags(&items, module_root);
+    ctx.fn_auto_memo = flags.auto_memo;
+    ctx.fn_auto_tco = flags.auto_tco;
+    ctx.fn_memo_qual = flags.memo_qual;
+    ctx.fn_recursive_callsites = flags.recursive_callsites;
+    ctx.fn_recursive_scc_id = flags.recursive_scc_id;
 
     // Filter functions by exposes if the list is non-empty
     if !ctx.exposes.is_empty() {
