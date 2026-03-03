@@ -135,7 +135,7 @@ pub fn ordered_fn_components<'a>(fns: &[&'a FnDef]) -> Vec<Vec<&'a FnDef>> {
         graph.insert(fd.name.clone(), sorted);
     }
 
-    let sccs = tarjan_all_sccs(&names, &graph);
+    let sccs = tarjan_sccs(&names, &graph);
     let mut comp_of: HashMap<String, usize> = HashMap::new();
     for (idx, comp) in sccs.iter().enumerate() {
         for name in comp {
@@ -282,7 +282,7 @@ fn expr_to_dotted_name(expr: &Expr) -> Option<String> {
     }
 }
 
-fn tarjan_all_sccs(nodes: &[String], graph: &HashMap<String, Vec<String>>) -> Vec<Vec<String>> {
+fn tarjan_sccs(nodes: &[String], graph: &HashMap<String, Vec<String>>) -> Vec<Vec<String>> {
     struct TarjanAllState {
         index: usize,
         indices: HashMap<String, usize>,
@@ -419,7 +419,23 @@ fn recursive_sccs(
     graph: &HashMap<String, HashSet<String>>,
     user_fns: &HashSet<String>,
 ) -> Vec<Vec<String>> {
-    tarjan_scc(graph, user_fns)
+    let mut names = user_fns.iter().cloned().collect::<Vec<_>>();
+    names.sort();
+
+    let mut adj: HashMap<String, Vec<String>> = HashMap::new();
+    for name in &names {
+        let mut deps = graph
+            .get(name)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|callee| user_fns.contains(callee))
+            .collect::<Vec<_>>();
+        deps.sort();
+        adj.insert(name.clone(), deps);
+    }
+
+    tarjan_sccs(&names, &adj)
         .into_iter()
         .filter(|scc| is_recursive_scc(scc, graph))
         .collect()
@@ -646,86 +662,6 @@ fn collect_callees_expr(expr: &Expr, callees: &mut HashSet<String>) {
                 collect_callees_expr(arg, callees);
             }
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Tarjan's SCC algorithm
-// ---------------------------------------------------------------------------
-
-struct TarjanState {
-    index_counter: usize,
-    stack: Vec<String>,
-    on_stack: HashSet<String>,
-    indices: HashMap<String, usize>,
-    lowlinks: HashMap<String, usize>,
-    sccs: Vec<Vec<String>>,
-}
-
-fn tarjan_scc(
-    graph: &HashMap<String, HashSet<String>>,
-    nodes: &HashSet<String>,
-) -> Vec<Vec<String>> {
-    let mut state = TarjanState {
-        index_counter: 0,
-        stack: Vec::new(),
-        on_stack: HashSet::new(),
-        indices: HashMap::new(),
-        lowlinks: HashMap::new(),
-        sccs: Vec::new(),
-    };
-
-    for node in nodes {
-        if !state.indices.contains_key(node) {
-            strongconnect(node, graph, &mut state);
-        }
-    }
-
-    state.sccs
-}
-
-fn strongconnect(v: &str, graph: &HashMap<String, HashSet<String>>, state: &mut TarjanState) {
-    let idx = state.index_counter;
-    state.index_counter += 1;
-    state.indices.insert(v.to_string(), idx);
-    state.lowlinks.insert(v.to_string(), idx);
-    state.stack.push(v.to_string());
-    state.on_stack.insert(v.to_string());
-
-    if let Some(callees) = graph.get(v) {
-        for w in callees {
-            if !state.indices.contains_key(w) {
-                // Only recurse into nodes that are in our function set
-                if graph.contains_key(w) {
-                    strongconnect(w, graph, state);
-                    let w_low = state.lowlinks[w];
-                    let v_low = state.lowlinks[v];
-                    if w_low < v_low {
-                        state.lowlinks.insert(v.to_string(), w_low);
-                    }
-                }
-            } else if state.on_stack.contains(w) {
-                let w_idx = state.indices[w];
-                let v_low = state.lowlinks[v];
-                if w_idx < v_low {
-                    state.lowlinks.insert(v.to_string(), w_idx);
-                }
-            }
-        }
-    }
-
-    // If v is a root node, pop the SCC
-    if state.lowlinks[v] == state.indices[v] {
-        let mut scc = Vec::new();
-        loop {
-            let w = state.stack.pop().unwrap();
-            state.on_stack.remove(&w);
-            scc.push(w.clone());
-            if w == v {
-                break;
-            }
-        }
-        state.sccs.push(scc);
     }
 }
 
