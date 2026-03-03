@@ -4,8 +4,8 @@
 
 Build a product inventory system for a small warehouse — **twice**.
 
-1. First, implement it in Aver (`solution.av`)
-2. Then, implement the same thing in a language of your choice (`solution_compare.*`)
+1. First, implement it in a language of your choice (`solution_compare.*`) — write it naturally, using whatever patterns you normally would
+2. Then, learn Aver and implement it again (`solution.av`) — write idiomatic Aver, not a line-by-line translation
 
 ## What the system should do
 

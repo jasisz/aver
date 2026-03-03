@@ -100,17 +100,24 @@ You are an AI agent being tested on your ability to learn a new programming lang
 
 Working directory: $STAGING
 
-Your task:
-1. Read README.md — the complete language reference
-2. Read docs/services.md — full API for all built-in namespaces
-3. Read ALL files in examples/ — these show idiomatic Aver conventions
+Your task (do these steps IN ORDER):
+
+PHASE 1 — Solve it in your language first:
+1. Read challenges/$CHALLENGE/TASK.md — task requirements
+2. Pick a language you're comfortable with and implement the solution:
+   challenges/$CHALLENGE/solution_compare.* (e.g. solution_compare.py, .ts, .rs)
+   Write it naturally — use whatever patterns, idioms, and structures you normally would.
+   Include tests using the language's native test framework.
+
+PHASE 2 — Now learn Aver and solve it again:
+3. Read README.md — the complete language reference
+4. Read docs/services.md — full API for all built-in namespaces
+5. Read ALL files in examples/ — these show idiomatic Aver conventions
    Pay attention to: function descriptions, decision blocks, module structure, verify blocks
-4. Read challenges/$CHALLENGE/TASK.md — task requirements
-5. Implement the solution TWICE:
-   - challenges/$CHALLENGE/solution.av — in Aver
-   - challenges/$CHALLENGE/solution_compare.* — in a language of your choice (pick whatever fits best)
-   For larger Aver solutions, consider splitting into modules (see examples/app.av for how)
-6. Verify the Aver version works by running:
+6. Implement the same solution in Aver: challenges/$CHALLENGE/solution.av
+   Do NOT just translate your first solution line-by-line — write idiomatic Aver.
+   For larger solutions, consider splitting into modules (see examples/app.av for how)
+7. Verify it works by running:
    aver check challenges/$CHALLENGE/solution.av
    aver verify challenges/$CHALLENGE/solution.av
    aver run challenges/$CHALLENGE/solution.av
@@ -119,12 +126,13 @@ Rules:
 - Do not ask questions — everything you need is in the docs
 - Do not read files outside this directory
 - Do not modify any existing files — only create your solution files and notes.md
+- IMPORTANT: finish Phase 1 completely before starting Phase 2
 
 You are done when ALL of these pass:
+- solution_compare.* exists and runs with tests passing
 - aver check — no type errors
 - aver verify — all verify cases pass
 - aver run — executes without runtime errors
-- solution_compare.* exists and runs
 
 After both implementations are done, write challenges/$CHALLENGE/notes.md comparing them:
 
