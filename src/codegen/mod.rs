@@ -2,6 +2,7 @@
 ///
 /// The codegen module transforms a type-checked Aver AST into source code
 /// for a target language. Current backends: Rust and Lean (WIP).
+pub(crate) mod common;
 pub mod lean;
 pub mod rust;
 

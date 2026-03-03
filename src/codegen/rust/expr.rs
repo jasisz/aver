@@ -3,6 +3,7 @@ use super::liveness::{EmitCtx, collect_vars, compute_args_used_after};
 use super::pattern::emit_pattern;
 use crate::ast::*;
 use crate::codegen::CodegenContext;
+use crate::codegen::common::{expr_to_dotted_name, is_user_type, resolve_module_call};
 /// Aver expressions → Rust expression strings.
 use std::collections::HashSet;
 
@@ -298,45 +299,6 @@ fn is_builtin_namespace(name: &str) -> bool {
             | "Result"
             | "Option"
     )
-}
-
-/// Check if a name is a user-defined type (sum or product) in the codegen context,
-/// including types from dependent modules.
-fn is_user_type(name: &str, ctx: &CodegenContext) -> bool {
-    let check_td = |td: &crate::ast::TypeDef| match td {
-        crate::ast::TypeDef::Sum { name: n, .. } => n == name,
-        crate::ast::TypeDef::Product { name: n, .. } => n == name,
-    };
-    ctx.type_defs.iter().any(check_td)
-        || ctx.modules.iter().any(|m| m.type_defs.iter().any(check_td))
-}
-
-/// Resolve a module-qualified dotted name to its bare local name.
-/// E.g. "Examples.Fibonacci.fib" → Some("fib"), "Console.print" → None.
-/// Uses longest-prefix matching to handle nested module paths.
-fn resolve_module_call(dotted_name: &str, ctx: &CodegenContext) -> Option<String> {
-    let mut best: Option<&str> = None;
-    for prefix in &ctx.module_prefixes {
-        let dotted_prefix = format!("{}.", prefix);
-        if dotted_name.starts_with(&dotted_prefix) {
-            if best.map_or(true, |b| prefix.len() > b.len()) {
-                best = Some(prefix.as_str());
-            }
-        }
-    }
-    best.map(|prefix| dotted_name[prefix.len() + 1..].to_string())
-}
-
-/// Try to extract a dotted name from an expression: `Console.print` → "Console.print".
-fn expr_to_dotted_name(expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::Ident(name) => Some(name.clone()),
-        Expr::Attr(obj, field) => {
-            let obj_name = expr_to_dotted_name(obj)?;
-            Some(format!("{}.{}", obj_name, field))
-        }
-        _ => None,
-    }
 }
 
 fn emit_constructor(

@@ -1,4 +1,5 @@
 /// Aver patterns → Lean 4 pattern strings.
+use super::shared::to_lower_first;
 use crate::ast::*;
 
 /// Emit a Lean 4 pattern from an Aver Pattern.
@@ -96,14 +97,5 @@ fn emit_constructor_pattern(name: &str, bindings: &[String]) -> String {
                 }
             }
         }
-    }
-}
-
-/// Convert first character to lowercase.
-fn to_lower_first(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(c) => c.to_lowercase().to_string() + chars.as_str(),
     }
 }

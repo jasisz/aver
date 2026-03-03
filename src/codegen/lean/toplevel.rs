@@ -2,6 +2,7 @@
 use std::collections::HashSet;
 
 use super::expr::{aver_name_to_lean, emit_expr, emit_stmt};
+use super::shared::to_lower_first;
 use super::types::type_annotation_to_lean;
 use crate::ast::*;
 use crate::codegen::CodegenContext;
@@ -292,12 +293,4 @@ pub fn emit_mutual_group(fns: &[&FnDef], ctx: &CodegenContext) -> String {
     }
     lines.push("end".to_string());
     lines.join("\n")
-}
-
-fn to_lower_first(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(c) => c.to_lowercase().to_string() + chars.as_str(),
-    }
 }

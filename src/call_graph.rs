@@ -184,91 +184,29 @@ fn collect_codegen_deps_body(body: &FnBody, fn_names: &HashSet<String>, out: &mu
 }
 
 fn collect_codegen_deps_expr(expr: &Expr, fn_names: &HashSet<String>, out: &mut HashSet<String>) {
-    match expr {
+    walk_expr(expr, &mut |node| match node {
         Expr::FnCall(func, args) => {
-            if let Expr::Ident(name) = func.as_ref() {
-                if fn_names.contains(name) {
-                    out.insert(name.clone());
-                }
+            if let Some(callee) = expr_to_dotted_name(func.as_ref())
+                && fn_names.contains(&callee)
+            {
+                out.insert(callee);
             }
-            if let Some(qname) = expr_to_dotted_name(func.as_ref()) {
-                if fn_names.contains(&qname) {
-                    out.insert(qname);
-                }
-            }
-
-            collect_codegen_deps_expr(func, fn_names, out);
             for arg in args {
                 // function-as-value dependency, e.g. List.fold(xs, init, f)
-                if let Expr::Ident(name) = arg {
-                    if fn_names.contains(name) {
-                        out.insert(name.clone());
-                    }
+                if let Some(qname) = expr_to_dotted_name(arg)
+                    && fn_names.contains(&qname)
+                {
+                    out.insert(qname);
                 }
-                if let Some(qname) = expr_to_dotted_name(arg) {
-                    if fn_names.contains(&qname) {
-                        out.insert(qname);
-                    }
-                }
-                collect_codegen_deps_expr(arg, fn_names, out);
             }
         }
         Expr::TailCall(boxed) => {
             if fn_names.contains(&boxed.0) {
                 out.insert(boxed.0.clone());
             }
-            for arg in &boxed.1 {
-                collect_codegen_deps_expr(arg, fn_names, out);
-            }
         }
-        Expr::Attr(obj, _) => collect_codegen_deps_expr(obj, fn_names, out),
-        Expr::BinOp(_, l, r) | Expr::Pipe(l, r) => {
-            collect_codegen_deps_expr(l, fn_names, out);
-            collect_codegen_deps_expr(r, fn_names, out);
-        }
-        Expr::Match { subject, arms, .. } => {
-            collect_codegen_deps_expr(subject, fn_names, out);
-            for arm in arms {
-                collect_codegen_deps_expr(&arm.body, fn_names, out);
-            }
-        }
-        Expr::List(items) | Expr::Tuple(items) => {
-            for it in items {
-                collect_codegen_deps_expr(it, fn_names, out);
-            }
-        }
-        Expr::MapLiteral(entries) => {
-            for (k, v) in entries {
-                collect_codegen_deps_expr(k, fn_names, out);
-                collect_codegen_deps_expr(v, fn_names, out);
-            }
-        }
-        Expr::Constructor(_, maybe) => {
-            if let Some(inner) = maybe {
-                collect_codegen_deps_expr(inner, fn_names, out);
-            }
-        }
-        Expr::ErrorProp(inner) => collect_codegen_deps_expr(inner, fn_names, out),
-        Expr::InterpolatedStr(parts) => {
-            for p in parts {
-                if let StrPart::Parsed(e) = p {
-                    collect_codegen_deps_expr(e, fn_names, out);
-                }
-            }
-        }
-        Expr::RecordCreate { fields, .. } => {
-            for (_, e) in fields {
-                collect_codegen_deps_expr(e, fn_names, out);
-            }
-        }
-        Expr::RecordUpdate { base, updates, .. } => {
-            collect_codegen_deps_expr(base, fn_names, out);
-            for (_, e) in updates {
-                collect_codegen_deps_expr(e, fn_names, out);
-            }
-        }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => {}
-    }
+        _ => {}
+    });
 }
 
 fn expr_to_dotted_name(expr: &Expr) -> Option<String> {
@@ -279,6 +217,70 @@ fn expr_to_dotted_name(expr: &Expr) -> Option<String> {
             Some(format!("{}.{}", head, field))
         }
         _ => None,
+    }
+}
+
+fn walk_expr(expr: &Expr, visit: &mut impl FnMut(&Expr)) {
+    visit(expr);
+    match expr {
+        Expr::FnCall(func, args) => {
+            walk_expr(func, visit);
+            for arg in args {
+                walk_expr(arg, visit);
+            }
+        }
+        Expr::TailCall(boxed) => {
+            for arg in &boxed.1 {
+                walk_expr(arg, visit);
+            }
+        }
+        Expr::Attr(obj, _) => walk_expr(obj, visit),
+        Expr::BinOp(_, l, r) | Expr::Pipe(l, r) => {
+            walk_expr(l, visit);
+            walk_expr(r, visit);
+        }
+        Expr::Match { subject, arms, .. } => {
+            walk_expr(subject, visit);
+            for arm in arms {
+                walk_expr(&arm.body, visit);
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) => {
+            for item in items {
+                walk_expr(item, visit);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                walk_expr(k, visit);
+                walk_expr(v, visit);
+            }
+        }
+        Expr::Constructor(_, maybe) => {
+            if let Some(inner) = maybe {
+                walk_expr(inner, visit);
+            }
+        }
+        Expr::ErrorProp(inner) => walk_expr(inner, visit),
+        Expr::InterpolatedStr(parts) => {
+            for part in parts {
+                if let StrPart::Parsed(e) = part {
+                    walk_expr(e, visit);
+                }
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, e) in fields {
+                walk_expr(e, visit);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            walk_expr(base, visit);
+            for (_, e) in updates {
+                walk_expr(e, visit);
+            }
+        }
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => {}
     }
 }
 
@@ -577,92 +579,17 @@ fn collect_callees_stmt(stmt: &Stmt, callees: &mut HashSet<String>) {
 }
 
 fn collect_callees_expr(expr: &Expr, callees: &mut HashSet<String>) {
-    match expr {
-        Expr::FnCall(func, args) => {
-            // Extract callee name
-            match func.as_ref() {
-                Expr::Ident(name) => {
-                    callees.insert(name.clone());
-                }
-                Expr::Attr(obj, member) => {
-                    if let Expr::Ident(ns) = obj.as_ref() {
-                        callees.insert(format!("{}.{}", ns, member));
-                    }
-                }
-                _ => collect_callees_expr(func, callees),
-            }
-            for arg in args {
-                collect_callees_expr(arg, callees);
-            }
-        }
-        Expr::Literal(_) | Expr::Resolved(_) => {}
-        Expr::Ident(_) => {}
-        Expr::Attr(obj, _) => collect_callees_expr(obj, callees),
-        Expr::BinOp(_, l, r) => {
-            collect_callees_expr(l, callees);
-            collect_callees_expr(r, callees);
-        }
-        Expr::Pipe(l, r) => {
-            collect_callees_expr(l, callees);
-            collect_callees_expr(r, callees);
-        }
-        Expr::Match {
-            subject: scrutinee,
-            arms,
-            ..
-        } => {
-            collect_callees_expr(scrutinee, callees);
-            for arm in arms {
-                collect_callees_expr(&arm.body, callees);
-            }
-        }
-        Expr::List(elems) => {
-            for e in elems {
-                collect_callees_expr(e, callees);
-            }
-        }
-        Expr::Tuple(items) => {
-            for item in items {
-                collect_callees_expr(item, callees);
-            }
-        }
-        Expr::MapLiteral(entries) => {
-            for (key, value) in entries {
-                collect_callees_expr(key, callees);
-                collect_callees_expr(value, callees);
-            }
-        }
-        Expr::Constructor(_, arg) => {
-            if let Some(a) = arg {
-                collect_callees_expr(a, callees);
-            }
-        }
-        Expr::ErrorProp(inner) => collect_callees_expr(inner, callees),
-        Expr::InterpolatedStr(parts) => {
-            for part in parts {
-                if let crate::ast::StrPart::Parsed(expr) = part {
-                    collect_callees_expr(expr, callees);
-                }
-            }
-        }
-        Expr::RecordCreate { fields, .. } => {
-            for (_, e) in fields {
-                collect_callees_expr(e, callees);
-            }
-        }
-        Expr::RecordUpdate { base, updates, .. } => {
-            collect_callees_expr(base, callees);
-            for (_, e) in updates {
-                collect_callees_expr(e, callees);
+    walk_expr(expr, &mut |node| match node {
+        Expr::FnCall(func, _) => {
+            if let Some(callee) = expr_to_dotted_name(func.as_ref()) {
+                callees.insert(callee);
             }
         }
         Expr::TailCall(boxed) => {
             callees.insert(boxed.0.clone());
-            for arg in &boxed.1 {
-                collect_callees_expr(arg, callees);
-            }
         }
-    }
+        _ => {}
+    });
 }
 
 #[cfg(test)]

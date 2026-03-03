@@ -6,6 +6,7 @@
 mod builtins;
 mod expr;
 mod pattern;
+mod shared;
 mod toplevel;
 mod types;
 

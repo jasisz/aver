@@ -1,8 +1,10 @@
 /// Aver expressions → Lean 4 expression strings.
 use super::builtins;
 use super::pattern::emit_pattern;
+use super::shared::to_lower_first;
 use crate::ast::*;
 use crate::codegen::CodegenContext;
+use crate::codegen::common::{expr_to_dotted_name, is_user_type, resolve_module_call};
 
 /// Emit a Lean 4 expression from an Aver Expr.
 pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
@@ -383,46 +385,5 @@ pub fn aver_name_to_lean(name: &str) -> String {
         "mutual" => "mutual'".to_string(),
         "partial" => "partial'".to_string(),
         _ => name.to_string(),
-    }
-}
-
-fn is_user_type(name: &str, ctx: &CodegenContext) -> bool {
-    let check_td = |td: &crate::ast::TypeDef| match td {
-        crate::ast::TypeDef::Sum { name: n, .. } => n == name,
-        crate::ast::TypeDef::Product { name: n, .. } => n == name,
-    };
-    ctx.type_defs.iter().any(check_td)
-        || ctx.modules.iter().any(|m| m.type_defs.iter().any(check_td))
-}
-
-fn resolve_module_call(dotted_name: &str, ctx: &CodegenContext) -> Option<String> {
-    let mut best: Option<&str> = None;
-    for prefix in &ctx.module_prefixes {
-        let dotted_prefix = format!("{}.", prefix);
-        if dotted_name.starts_with(&dotted_prefix) {
-            if best.map_or(true, |b| prefix.len() > b.len()) {
-                best = Some(prefix.as_str());
-            }
-        }
-    }
-    best.map(|prefix| dotted_name[prefix.len() + 1..].to_string())
-}
-
-fn expr_to_dotted_name(expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::Ident(name) => Some(name.clone()),
-        Expr::Attr(obj, field) => {
-            let obj_name = expr_to_dotted_name(obj)?;
-            Some(format!("{}.{}", obj_name, field))
-        }
-        _ => None,
-    }
-}
-
-fn to_lower_first(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(c) => c.to_lowercase().to_string() + chars.as_str(),
     }
 }
