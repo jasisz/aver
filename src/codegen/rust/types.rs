@@ -25,7 +25,12 @@ pub fn type_to_rust(ty: &Type) -> String {
             let ps: Vec<String> = params.iter().map(|t| type_to_rust(t)).collect();
             format!("fn({}) -> {}", ps.join(", "), type_to_rust(ret))
         }
-        Type::Unknown => "AverValue".to_string(), // fallback
+        Type::Unknown => {
+            panic!(
+                "Rust codegen: encountered Type::Unknown. \
+                 This indicates unresolved typing leaked into codegen."
+            )
+        }
         Type::Named(name) => {
             // Dotted names like Tcp.Connection → not supported in transpilation
             if name.contains('.') {
