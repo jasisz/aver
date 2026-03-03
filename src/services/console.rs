@@ -47,7 +47,7 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
         "Console.warn" => Some(one_msg(name, &args, |s| {
             eprintln!("[warn] {}", s);
         })),
-        "Console.readLine" => Some(read_line(&args)),
+        "Console.readLine" => Some(read_line(args)),
         _ => None,
     }
 }

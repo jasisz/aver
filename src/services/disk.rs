@@ -52,14 +52,14 @@ pub fn effects(name: &str) -> &'static [&'static str] {
 /// Returns `Some(result)` when `name` is owned by this service, `None` otherwise.
 pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
-        "Disk.readText" => Some(read_text(&args)),
-        "Disk.writeText" => Some(write_text(&args)),
-        "Disk.appendText" => Some(append_text(&args)),
-        "Disk.exists" => Some(exists(&args)),
-        "Disk.delete" => Some(delete(&args)),
-        "Disk.deleteDir" => Some(delete_dir(&args)),
-        "Disk.listDir" => Some(list_dir(&args)),
-        "Disk.makeDir" => Some(make_dir(&args)),
+        "Disk.readText" => Some(read_text(args)),
+        "Disk.writeText" => Some(write_text(args)),
+        "Disk.appendText" => Some(append_text(args)),
+        "Disk.exists" => Some(exists(args)),
+        "Disk.delete" => Some(delete(args)),
+        "Disk.deleteDir" => Some(delete_dir(args)),
+        "Disk.listDir" => Some(list_dir(args)),
+        "Disk.makeDir" => Some(make_dir(args)),
         _ => None,
     }
 }

@@ -50,15 +50,15 @@ pub fn effects(_name: &str) -> &'static [&'static str] {
 /// Returns `Some(result)` when `name` is owned by this namespace, `None` otherwise.
 pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
-        "Float.fromString" => Some(from_string(&args)),
-        "Float.fromInt" => Some(from_int(&args)),
-        "Float.toString" => Some(to_string(&args)),
-        "Float.abs" => Some(abs(&args)),
-        "Float.floor" => Some(floor(&args)),
-        "Float.ceil" => Some(ceil(&args)),
-        "Float.round" => Some(round(&args)),
-        "Float.min" => Some(min(&args)),
-        "Float.max" => Some(max(&args)),
+        "Float.fromString" => Some(from_string(args)),
+        "Float.fromInt" => Some(from_int(args)),
+        "Float.toString" => Some(to_string(args)),
+        "Float.abs" => Some(abs(args)),
+        "Float.floor" => Some(floor(args)),
+        "Float.ceil" => Some(ceil(args)),
+        "Float.round" => Some(round(args)),
+        "Float.min" => Some(min(args)),
+        "Float.max" => Some(max(args)),
         _ => None,
     }
 }

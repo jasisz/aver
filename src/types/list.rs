@@ -49,13 +49,13 @@ pub fn effects(_name: &str) -> &'static [&'static str] {
 /// Note: List.map, List.filter, List.fold are NOT handled here (they need interpreter access).
 pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
-        "List.len" => Some(len(&args)),
-        "List.get" => Some(get(&args)),
-        "List.push" => Some(push(&args)),
-        "List.head" => Some(head(&args)),
-        "List.tail" => Some(tail(&args)),
-        "List.contains" => Some(contains(&args)),
-        "List.zip" => Some(zip(&args)),
+        "List.len" => Some(len(args)),
+        "List.get" => Some(get(args)),
+        "List.push" => Some(push(args)),
+        "List.head" => Some(head(args)),
+        "List.tail" => Some(tail(args)),
+        "List.contains" => Some(contains(args)),
+        "List.zip" => Some(zip(args)),
         _ => None,
     }
 }

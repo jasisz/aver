@@ -60,12 +60,12 @@ pub fn effects(name: &str) -> &'static [&'static str] {
 /// Returns `Some(result)` when `name` is owned by this service, `None` otherwise.
 pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
-        "Tcp.send" => Some(tcp_send(&args)),
-        "Tcp.ping" => Some(tcp_ping(&args)),
-        "Tcp.connect" => Some(tcp_connect(&args)),
-        "Tcp.writeLine" => Some(tcp_write_line(&args)),
-        "Tcp.readLine" => Some(tcp_read_line(&args)),
-        "Tcp.close" => Some(tcp_close(&args)),
+        "Tcp.send" => Some(tcp_send(args)),
+        "Tcp.ping" => Some(tcp_ping(args)),
+        "Tcp.connect" => Some(tcp_connect(args)),
+        "Tcp.writeLine" => Some(tcp_write_line(args)),
+        "Tcp.readLine" => Some(tcp_read_line(args)),
+        "Tcp.close" => Some(tcp_close(args)),
         _ => None,
     }
 }
