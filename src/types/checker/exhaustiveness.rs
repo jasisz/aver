@@ -1,200 +1,395 @@
+use std::collections::HashSet;
+
 use super::*;
+
+#[derive(Debug, Clone, PartialEq)]
+enum CoverPat {
+    Wild,
+    Lit(Literal),
+    EmptyList,
+    Cons(Box<CoverPat>, Box<CoverPat>),
+    Tuple(Vec<CoverPat>),
+    Constructor(String, Vec<CoverPat>),
+}
+
+#[derive(Debug, Clone)]
+enum CtorTag {
+    Bool(bool),
+    ResultOk,
+    ResultErr,
+    OptionSome,
+    OptionNone,
+    ListEmpty,
+    ListCons,
+    Tuple,
+    Named(String), // fully-qualified constructor name
+}
+
+#[derive(Debug, Clone)]
+struct CtorSpec {
+    tag: CtorTag,
+    arg_types: Vec<Type>,
+}
 
 impl TypeChecker {
     /// Check whether a match expression covers all possible values of the subject type.
-    /// Emits a type error if any variants/cases are missing and no catch-all arm exists.
+    /// Emits a type error if any cases are missing.
     pub(super) fn check_match_exhaustiveness(
         &mut self,
         subject_ty: &Type,
         arms: &[crate::ast::MatchArm],
         line: usize,
     ) {
-        // A catch-all pattern (_  or bare identifier) makes any match exhaustive.
-        for arm in arms {
-            if is_catch_all(&arm.pattern) {
-                return;
-            }
-        }
-
+        // Preserve historical behavior: these domains are not exhaustiveness-checked.
         match subject_ty {
-            Type::Bool => {
-                let has_true = arms
-                    .iter()
-                    .any(|a| matches!(&a.pattern, Pattern::Literal(Literal::Bool(true))));
-                let has_false = arms
-                    .iter()
-                    .any(|a| matches!(&a.pattern, Pattern::Literal(Literal::Bool(false))));
-                let mut missing = Vec::new();
-                if !has_true {
-                    missing.push("true");
-                }
-                if !has_false {
-                    missing.push("false");
-                }
-                if !missing.is_empty() {
-                    self.error_at_line(
-                        line,
-                        format!("Non-exhaustive match: missing {}", missing.join(", ")),
-                    );
-                }
-            }
-
-            Type::Result(_, _) => {
-                self.check_constructor_exhaustiveness(
-                    arms,
-                    &["Result.Ok", "Result.Err"],
-                    "Result",
-                    line,
-                );
-            }
-
-            Type::Option(_) => {
-                self.check_constructor_exhaustiveness(
-                    arms,
-                    &["Option.Some", "Option.None"],
-                    "Option",
-                    line,
-                );
-            }
-
-            Type::Named(name) => {
-                if let Some(variant_names) = self.type_variants.get(name).cloned() {
-                    let qualified: Vec<String> = variant_names
-                        .iter()
-                        .map(|v| format!("{}.{}", name, v))
-                        .collect();
-                    let qualified_refs: Vec<&str> = qualified.iter().map(|s| s.as_str()).collect();
-                    self.check_constructor_exhaustiveness(arms, &qualified_refs, name, line);
-                }
-                // If the type is not in type_variants (e.g. a record type), skip checking.
-            }
-
-            Type::List(_) => {
-                let has_empty = arms
-                    .iter()
-                    .any(|a| matches!(&a.pattern, Pattern::EmptyList));
-                let has_cons = arms
-                    .iter()
-                    .any(|a| matches!(&a.pattern, Pattern::Cons(_, _)));
-                let mut missing = Vec::new();
-                if !has_empty {
-                    missing.push("[]");
-                }
-                if !has_cons {
-                    missing.push("[h, ..t]");
-                }
-                if !missing.is_empty() {
-                    self.error_at_line(
-                        line,
-                        format!("Non-exhaustive match: missing {}", missing.join(", ")),
-                    );
-                }
-            }
-
-            // Infinite domains — only exhaustive with a catch-all (already checked above).
-            Type::Tuple(item_tys) => {
-                let has_total_tuple_arm = arms
-                    .iter()
-                    .any(|arm| tuple_pattern_is_total(&arm.pattern, item_tys));
-                if !has_total_tuple_arm {
-                    self.error_at_line(
-                        line,
-                        "Non-exhaustive match: missing catch-all (_) pattern".to_string(),
-                    );
-                }
-            }
-            Type::Int | Type::Float | Type::Str => {
-                self.error_at_line(
-                    line,
-                    "Non-exhaustive match: missing catch-all (_) pattern".to_string(),
-                );
-            }
-
-            // Map, Fn, Unit, Unknown — skip checking.
+            Type::Map(_, _) | Type::Fn(_, _, _) | Type::Unit | Type::Unknown => return,
+            Type::Named(name) if !self.type_variants.contains_key(name) => return, // records
             _ => {}
         }
-    }
 
-    /// Helper: check that all expected constructor names appear in the match arms.
-    /// Accepts both qualified ("Shape.Circle") and unqualified ("Circle") pattern names.
-    fn check_constructor_exhaustiveness(
-        &mut self,
-        arms: &[crate::ast::MatchArm],
-        expected: &[&str],
-        type_name: &str,
-        line: usize,
-    ) {
-        let present: Vec<&str> = arms
+        let rows: Vec<Vec<CoverPat>> = arms
             .iter()
-            .filter_map(|a| match &a.pattern {
-                Pattern::Constructor(name, _) => Some(name.as_str()),
-                _ => None,
-            })
+            .map(|arm| vec![normalize_pattern(&arm.pattern)])
             .collect();
-
-        let is_covered = |qualified: &str| -> bool {
-            // Match either "Shape.Circle" or just "Circle"
-            let short = qualified.rsplit('.').next().unwrap_or(qualified);
-            present.iter().any(|p| *p == qualified || *p == short)
-        };
-
-        let missing: Vec<String> = expected
-            .iter()
-            .filter(|&&name| !is_covered(name))
-            .map(|&name| {
-                // Show a nice pattern: "Result.Ok(_)" for constructors with args,
-                // "Option.None" for nullary constructors.
-                let has_args = self
-                    .fn_sigs
-                    .get(name)
-                    .map(|sig| !sig.params.is_empty())
-                    .unwrap_or(false);
-                if has_args {
-                    format!("{}(_)", name)
-                } else {
-                    name.to_string()
-                }
-            })
-            .collect();
-
-        if !missing.is_empty() {
+        let mut seen = HashSet::new();
+        if let Some(witness_vec) =
+            self.find_uncovered_vector(std::slice::from_ref(subject_ty), &rows, &mut seen)
+        {
+            let witness = if let Some(first) = witness_vec.first() {
+                format_cover_pattern(first)
+            } else {
+                "_".to_string()
+            };
             self.error_at_line(
                 line,
-                format!(
-                    "Non-exhaustive match on {}: missing {}",
-                    type_name,
-                    missing.join(", ")
-                ),
+                format!("Non-exhaustive match: missing pattern {}", witness),
             );
         }
     }
-}
 
-/// A catch-all pattern covers all possible values.
-fn is_catch_all(pattern: &Pattern) -> bool {
-    matches!(pattern, Pattern::Wildcard | Pattern::Ident(_))
-}
+    fn find_uncovered_vector(
+        &self,
+        types: &[Type],
+        rows: &[Vec<CoverPat>],
+        seen: &mut HashSet<String>,
+    ) -> Option<Vec<CoverPat>> {
+        if types.is_empty() {
+            return if rows.is_empty() { Some(vec![]) } else { None };
+        }
 
-fn tuple_pattern_is_total(pattern: &Pattern, tuple_items: &[Type]) -> bool {
-    match pattern {
-        Pattern::Tuple(items) if items.len() == tuple_items.len() => items
+        let key = state_key(types, rows);
+        // Recursive types (List / recursive sum) can re-enter the same state.
+        // A repeated state here means we've reached a fixed point for coverage.
+        if !seen.insert(key.clone()) {
+            return None;
+        }
+
+        let head_ty = &types[0];
+        let tail_tys = &types[1..];
+
+        let out = if let Some(ctors) = self.constructors_for_type(head_ty) {
+            let mut missing = None;
+            for ctor in ctors {
+                let specialized = specialize_rows_for_ctor(rows, &ctor);
+                let mut sub_types = ctor.arg_types.clone();
+                sub_types.extend_from_slice(tail_tys);
+
+                if let Some(mut sub_witness) =
+                    self.find_uncovered_vector(&sub_types, &specialized, seen)
+                {
+                    let arg_count = ctor.arg_types.len();
+                    let args = sub_witness.drain(..arg_count).collect::<Vec<_>>();
+                    let head_pat = build_witness_head(&ctor, args);
+                    let mut full = vec![head_pat];
+                    full.extend(sub_witness);
+                    missing = Some(full);
+                    break;
+                }
+            }
+            missing
+        } else {
+            let default_rows = default_matrix(rows);
+            if let Some(mut tail_witness) =
+                self.find_uncovered_vector(tail_tys, &default_rows, seen)
+            {
+                let mut full = vec![CoverPat::Wild];
+                full.append(&mut tail_witness);
+                Some(full)
+            } else {
+                None
+            }
+        };
+
+        seen.remove(&key);
+        out
+    }
+
+    fn constructors_for_type(&self, ty: &Type) -> Option<Vec<CtorSpec>> {
+        match ty {
+            Type::Bool => Some(vec![
+                CtorSpec {
+                    tag: CtorTag::Bool(true),
+                    arg_types: vec![],
+                },
+                CtorSpec {
+                    tag: CtorTag::Bool(false),
+                    arg_types: vec![],
+                },
+            ]),
+            Type::Result(ok_ty, err_ty) => Some(vec![
+                CtorSpec {
+                    tag: CtorTag::ResultOk,
+                    arg_types: vec![*ok_ty.clone()],
+                },
+                CtorSpec {
+                    tag: CtorTag::ResultErr,
+                    arg_types: vec![*err_ty.clone()],
+                },
+            ]),
+            Type::Option(inner) => Some(vec![
+                CtorSpec {
+                    tag: CtorTag::OptionSome,
+                    arg_types: vec![*inner.clone()],
+                },
+                CtorSpec {
+                    tag: CtorTag::OptionNone,
+                    arg_types: vec![],
+                },
+            ]),
+            Type::List(elem) => Some(vec![
+                CtorSpec {
+                    tag: CtorTag::ListEmpty,
+                    arg_types: vec![],
+                },
+                CtorSpec {
+                    tag: CtorTag::ListCons,
+                    arg_types: vec![*elem.clone(), Type::List(elem.clone())],
+                },
+            ]),
+            Type::Tuple(items) => Some(vec![CtorSpec {
+                tag: CtorTag::Tuple,
+                arg_types: items.clone(),
+            }]),
+            Type::Named(name) => {
+                let variants = self.type_variants.get(name)?;
+                let mut out = Vec::new();
+                for variant in variants {
+                    out.push(CtorSpec {
+                        tag: CtorTag::Named(format!("{}.{}", name, variant)),
+                        arg_types: self.named_variant_arg_types(name, variant),
+                    });
+                }
+                Some(out)
+            }
+            // Infinite / unenumerated domains.
+            Type::Int
+            | Type::Float
+            | Type::Str
+            | Type::Map(_, _)
+            | Type::Fn(_, _, _)
+            | Type::Unit
+            | Type::Unknown => None,
+        }
+    }
+
+    fn named_variant_arg_types(&self, type_name: &str, variant: &str) -> Vec<Type> {
+        let local_key = format!("{}.{}", type_name, variant);
+        if let Some(sig) = self.fn_sigs.get(&local_key) {
+            return sig.params.clone();
+        }
+
+        let suffix = format!(".{}.{}", type_name, variant);
+        let mut matches = self
+            .fn_sigs
             .iter()
-            .zip(tuple_items.iter())
-            .all(|(item, item_ty)| pattern_is_total_for_type(item, item_ty)),
-        _ => false,
+            .filter_map(|(name, sig)| {
+                if name.ends_with(&suffix) {
+                    Some(sig.params.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        if matches.len() == 1 {
+            return matches.pop().unwrap_or_default();
+        }
+
+        // Zero-arg constructors are values, not fn_sigs entries.
+        Vec::new()
     }
 }
 
-fn pattern_is_total_for_type(pattern: &Pattern, ty: &Type) -> bool {
+fn normalize_pattern(pattern: &Pattern) -> CoverPat {
     match pattern {
-        Pattern::Wildcard | Pattern::Ident(_) => true,
-        Pattern::Tuple(items) => match ty {
-            Type::Tuple(elem_tys) if items.len() == elem_tys.len() => items
-                .iter()
-                .zip(elem_tys.iter())
-                .all(|(item, item_ty)| pattern_is_total_for_type(item, item_ty)),
-            _ => false,
-        },
-        _ => false,
+        Pattern::Wildcard | Pattern::Ident(_) => CoverPat::Wild,
+        Pattern::Literal(lit) => CoverPat::Lit(lit.clone()),
+        Pattern::EmptyList => CoverPat::EmptyList,
+        Pattern::Cons(_, _) => CoverPat::Cons(Box::new(CoverPat::Wild), Box::new(CoverPat::Wild)),
+        Pattern::Tuple(items) => CoverPat::Tuple(items.iter().map(normalize_pattern).collect()),
+        Pattern::Constructor(name, bindings) => {
+            CoverPat::Constructor(name.clone(), vec![CoverPat::Wild; bindings.len()])
+        }
+    }
+}
+
+fn specialize_rows_for_ctor(rows: &[Vec<CoverPat>], ctor: &CtorSpec) -> Vec<Vec<CoverPat>> {
+    let mut out = Vec::new();
+    for row in rows {
+        if row.is_empty() {
+            continue;
+        }
+        if let Some(mut head_args) = specialize_head_pattern(&row[0], ctor) {
+            head_args.extend_from_slice(&row[1..]);
+            out.push(head_args);
+        }
+    }
+    out
+}
+
+fn specialize_head_pattern(pat: &CoverPat, ctor: &CtorSpec) -> Option<Vec<CoverPat>> {
+    if matches!(pat, CoverPat::Wild) {
+        return Some(vec![CoverPat::Wild; ctor.arg_types.len()]);
+    }
+
+    match (&ctor.tag, pat) {
+        (CtorTag::Bool(expected), CoverPat::Lit(Literal::Bool(actual))) if expected == actual => {
+            Some(vec![])
+        }
+        (CtorTag::ResultOk, CoverPat::Constructor(name, args))
+            if ctor_name_matches(name, "Result.Ok") && args.len() == 1 =>
+        {
+            Some(args.clone())
+        }
+        (CtorTag::ResultErr, CoverPat::Constructor(name, args))
+            if ctor_name_matches(name, "Result.Err") && args.len() == 1 =>
+        {
+            Some(args.clone())
+        }
+        (CtorTag::OptionSome, CoverPat::Constructor(name, args))
+            if ctor_name_matches(name, "Option.Some") && args.len() == 1 =>
+        {
+            Some(args.clone())
+        }
+        (CtorTag::OptionNone, CoverPat::Constructor(name, args))
+            if ctor_name_matches(name, "Option.None") && args.is_empty() =>
+        {
+            Some(vec![])
+        }
+        (CtorTag::ListEmpty, CoverPat::EmptyList) => Some(vec![]),
+        (CtorTag::ListCons, CoverPat::Cons(head, tail)) => {
+            Some(vec![(**head).clone(), (**tail).clone()])
+        }
+        (CtorTag::Tuple, CoverPat::Tuple(items)) if items.len() == ctor.arg_types.len() => {
+            Some(items.clone())
+        }
+        (CtorTag::Named(expected), CoverPat::Constructor(name, args))
+            if ctor_name_matches(name, expected) && args.len() == ctor.arg_types.len() =>
+        {
+            Some(args.clone())
+        }
+        _ => None,
+    }
+}
+
+fn default_matrix(rows: &[Vec<CoverPat>]) -> Vec<Vec<CoverPat>> {
+    rows.iter()
+        .filter_map(|row| {
+            if row.first().is_some_and(|p| matches!(p, CoverPat::Wild)) {
+                Some(row[1..].to_vec())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn build_witness_head(ctor: &CtorSpec, args: Vec<CoverPat>) -> CoverPat {
+    match &ctor.tag {
+        CtorTag::Bool(v) => CoverPat::Lit(Literal::Bool(*v)),
+        CtorTag::ResultOk => CoverPat::Constructor("Result.Ok".to_string(), args),
+        CtorTag::ResultErr => CoverPat::Constructor("Result.Err".to_string(), args),
+        CtorTag::OptionSome => CoverPat::Constructor("Option.Some".to_string(), args),
+        CtorTag::OptionNone => CoverPat::Constructor("Option.None".to_string(), vec![]),
+        CtorTag::ListEmpty => CoverPat::EmptyList,
+        CtorTag::ListCons => {
+            let head = args.first().cloned().unwrap_or(CoverPat::Wild);
+            let tail = args.get(1).cloned().unwrap_or(CoverPat::Wild);
+            CoverPat::Cons(Box::new(head), Box::new(tail))
+        }
+        CtorTag::Tuple => CoverPat::Tuple(args),
+        CtorTag::Named(name) => CoverPat::Constructor(name.clone(), args),
+    }
+}
+
+fn ctor_name_matches(pattern_name: &str, expected_full: &str) -> bool {
+    if pattern_name == expected_full {
+        return true;
+    }
+    let expected_short = expected_full.rsplit('.').next().unwrap_or(expected_full);
+    let pattern_short = pattern_name.rsplit('.').next().unwrap_or(pattern_name);
+    pattern_short == expected_short
+}
+
+fn format_cover_pattern(pat: &CoverPat) -> String {
+    match pat {
+        CoverPat::Wild => "_".to_string(),
+        CoverPat::Lit(Literal::Int(i)) => i.to_string(),
+        CoverPat::Lit(Literal::Float(f)) => f.to_string(),
+        CoverPat::Lit(Literal::Str(s)) => format!("{:?}", s),
+        CoverPat::Lit(Literal::Bool(b)) => b.to_string(),
+        CoverPat::EmptyList => "[]".to_string(),
+        CoverPat::Cons(head, tail) => {
+            format!(
+                "[{}, ..{}]",
+                format_cover_pattern(head),
+                format_cover_pattern(tail)
+            )
+        }
+        CoverPat::Tuple(items) => {
+            let parts = items.iter().map(format_cover_pattern).collect::<Vec<_>>();
+            format!("({})", parts.join(", "))
+        }
+        CoverPat::Constructor(name, args) => {
+            if args.is_empty() {
+                name.clone()
+            } else {
+                let parts = args.iter().map(format_cover_pattern).collect::<Vec<_>>();
+                format!("{}({})", name, parts.join(", "))
+            }
+        }
+    }
+}
+
+fn state_key(types: &[Type], rows: &[Vec<CoverPat>]) -> String {
+    let ts = types
+        .iter()
+        .map(Type::display)
+        .collect::<Vec<_>>()
+        .join("|");
+    let rs = rows
+        .iter()
+        .map(|row| row.iter().map(pattern_sig).collect::<Vec<_>>().join(","))
+        .collect::<Vec<_>>()
+        .join(";");
+    format!("{}#{}", ts, rs)
+}
+
+fn pattern_sig(pat: &CoverPat) -> String {
+    match pat {
+        CoverPat::Wild => "_".to_string(),
+        CoverPat::Lit(Literal::Int(i)) => format!("i{}", i),
+        CoverPat::Lit(Literal::Float(f)) => format!("f{}", f),
+        CoverPat::Lit(Literal::Str(s)) => format!("s{:?}", s),
+        CoverPat::Lit(Literal::Bool(b)) => format!("b{}", b),
+        CoverPat::EmptyList => "[]".to_string(),
+        CoverPat::Cons(h, t) => format!("[{},..{}]", pattern_sig(h), pattern_sig(t)),
+        CoverPat::Tuple(items) => {
+            let parts = items.iter().map(pattern_sig).collect::<Vec<_>>();
+            format!("({})", parts.join(","))
+        }
+        CoverPat::Constructor(name, args) => {
+            let parts = args.iter().map(pattern_sig).collect::<Vec<_>>();
+            format!("{}({})", name, parts.join(","))
+        }
     }
 }

@@ -123,3 +123,87 @@ fn non_exhaustive_match_reports_match_line() {
     );
     assert_eq!(hit.expect("checked above").line, 7);
 }
+
+#[test]
+fn tuple_union_patterns_can_be_exhaustive_without_single_total_arm() {
+    let f = FnDef {
+        name: "f".to_string(),
+        line: 1,
+        params: vec![("t".to_string(), "(Bool, Bool)".to_string())],
+        return_type: "Int".to_string(),
+        effects: vec![],
+        desc: None,
+        body: std::rc::Rc::new(FnBody::Expr(Expr::Match {
+            subject: Box::new(Expr::Ident("t".to_string())),
+            arms: vec![
+                MatchArm {
+                    pattern: Pattern::Tuple(vec![
+                        Pattern::Literal(Literal::Bool(true)),
+                        Pattern::Wildcard,
+                    ]),
+                    body: Box::new(Expr::Literal(Literal::Int(1))),
+                },
+                MatchArm {
+                    pattern: Pattern::Tuple(vec![
+                        Pattern::Literal(Literal::Bool(false)),
+                        Pattern::Wildcard,
+                    ]),
+                    body: Box::new(Expr::Literal(Literal::Int(0))),
+                },
+            ],
+            line: 9,
+        })),
+        resolution: None,
+    };
+
+    let errs = type_errors(vec![TopLevel::FnDef(f)]);
+    assert!(
+        !errs
+            .iter()
+            .any(|e| e.message.contains("Non-exhaustive match")),
+        "did not expect non-exhaustive error, got: {errs:?}"
+    );
+}
+
+#[test]
+fn nested_tuple_union_still_reports_missing_case() {
+    let f = FnDef {
+        name: "f".to_string(),
+        line: 1,
+        params: vec![("t".to_string(), "(Bool, Bool)".to_string())],
+        return_type: "Int".to_string(),
+        effects: vec![],
+        desc: None,
+        body: std::rc::Rc::new(FnBody::Expr(Expr::Match {
+            subject: Box::new(Expr::Ident("t".to_string())),
+            arms: vec![
+                MatchArm {
+                    pattern: Pattern::Tuple(vec![
+                        Pattern::Literal(Literal::Bool(true)),
+                        Pattern::Wildcard,
+                    ]),
+                    body: Box::new(Expr::Literal(Literal::Int(1))),
+                },
+                MatchArm {
+                    pattern: Pattern::Tuple(vec![
+                        Pattern::Wildcard,
+                        Pattern::Literal(Literal::Bool(true)),
+                    ]),
+                    body: Box::new(Expr::Literal(Literal::Int(2))),
+                },
+            ],
+            line: 13,
+        })),
+        resolution: None,
+    };
+
+    let errs = type_errors(vec![TopLevel::FnDef(f)]);
+    let hit = errs
+        .iter()
+        .find(|e| e.message.contains("Non-exhaustive match"));
+    assert!(
+        hit.is_some(),
+        "expected non-exhaustive match error, got: {errs:?}"
+    );
+    assert_eq!(hit.expect("checked above").line, 13);
+}
