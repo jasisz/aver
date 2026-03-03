@@ -158,12 +158,82 @@ fn args_match_params(args: &[Expr], param_names: &[&str]) -> bool {
         .all(|(arg, expected)| matches!(arg, Expr::Ident(name) if name == *expected))
 }
 
+fn verify_case_calls_target(left: &Expr, fn_name: &str) -> bool {
+    match left {
+        Expr::FnCall(callee, args) => {
+            callee_is_target(callee, fn_name)
+                || verify_case_calls_target(callee, fn_name)
+                || args
+                    .iter()
+                    .any(|arg| verify_case_calls_target(arg, fn_name))
+        }
+        Expr::Pipe(left_expr, right_expr) => {
+            pipe_target_is_target(right_expr, fn_name)
+                || verify_case_calls_target(left_expr, fn_name)
+                || verify_case_calls_target(right_expr, fn_name)
+        }
+        Expr::BinOp(_, left_expr, right_expr) => {
+            verify_case_calls_target(left_expr, fn_name)
+                || verify_case_calls_target(right_expr, fn_name)
+        }
+        Expr::Match { subject, arms, .. } => {
+            verify_case_calls_target(subject, fn_name)
+                || arms
+                    .iter()
+                    .any(|arm| verify_case_calls_target(&arm.body, fn_name))
+        }
+        Expr::Constructor(_, Some(inner)) => verify_case_calls_target(inner, fn_name),
+        Expr::ErrorProp(inner) => verify_case_calls_target(inner, fn_name),
+        Expr::List(elems) => elems
+            .iter()
+            .any(|elem| verify_case_calls_target(elem, fn_name)),
+        Expr::Tuple(items) => items
+            .iter()
+            .any(|item| verify_case_calls_target(item, fn_name)),
+        Expr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
+            verify_case_calls_target(k, fn_name) || verify_case_calls_target(v, fn_name)
+        }),
+        Expr::Attr(obj, _) => verify_case_calls_target(obj, fn_name),
+        Expr::RecordCreate { fields, .. } => fields
+            .iter()
+            .any(|(_, expr)| verify_case_calls_target(expr, fn_name)),
+        Expr::RecordUpdate { base, updates, .. } => {
+            verify_case_calls_target(base, fn_name)
+                || updates
+                    .iter()
+                    .any(|(_, expr)| verify_case_calls_target(expr, fn_name))
+        }
+        Expr::TailCall(boxed) => {
+            boxed.0 == fn_name
+                || boxed
+                    .1
+                    .iter()
+                    .any(|arg| verify_case_calls_target(arg, fn_name))
+        }
+        Expr::Literal(_) | Expr::Ident(_) | Expr::InterpolatedStr(_) | Expr::Resolved(_) => false,
+        Expr::Constructor(_, None) => false,
+    }
+}
+
+fn callee_is_target(callee: &Expr, fn_name: &str) -> bool {
+    matches!(callee, Expr::Ident(name) if name == fn_name)
+}
+
+fn pipe_target_is_target(target: &Expr, fn_name: &str) -> bool {
+    match target {
+        Expr::Ident(name) => name == fn_name,
+        Expr::FnCall(callee, _) => callee_is_target(callee, fn_name),
+        _ => false,
+    }
+}
+
 pub fn check_module_intent(items: &[TopLevel]) -> ModuleCheckFindings {
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
 
     let mut verified_fns: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut empty_verify_fns: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut invalid_verify_fns: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for item in items {
         if let TopLevel::Verify(v) = item {
             if v.cases.is_empty() {
@@ -173,7 +243,24 @@ pub fn check_module_intent(items: &[TopLevel]) -> ModuleCheckFindings {
                 ));
                 empty_verify_fns.insert(v.fn_name.as_str());
             } else {
-                verified_fns.insert(v.fn_name.as_str());
+                let mut block_valid = true;
+                for (idx, (left, _right)) in v.cases.iter().enumerate() {
+                    if !verify_case_calls_target(left, &v.fn_name) {
+                        errors.push(format!(
+                            "line {}: Verify block '{}' case #{} must call '{}' on the left side",
+                            v.line,
+                            v.fn_name,
+                            idx + 1,
+                            v.fn_name
+                        ));
+                        block_valid = false;
+                    }
+                }
+                if block_valid {
+                    verified_fns.insert(v.fn_name.as_str());
+                } else {
+                    invalid_verify_fns.insert(v.fn_name.as_str());
+                }
             }
         }
     }
@@ -192,6 +279,7 @@ pub fn check_module_intent(items: &[TopLevel]) -> ModuleCheckFindings {
                 if fn_needs_verify(f)
                     && !verified_fns.contains(f.name.as_str())
                     && !empty_verify_fns.contains(f.name.as_str())
+                    && !invalid_verify_fns.contains(f.name.as_str())
                 {
                     errors.push(format!("Function '{}' has no verify block", f.name));
                 }
@@ -311,6 +399,57 @@ verify add1
                 .iter()
                 .any(|e| e == "Function 'add1' has no verify block"),
             "expected no duplicate missing-verify error, got errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
+        );
+    }
+
+    #[test]
+    fn verify_case_must_call_verified_function_on_left_side() {
+        let items = parse_items(
+            r#"
+fn add1(x: Int) -> Int
+    = x + 1
+
+verify add1
+    true => true
+"#,
+        );
+        let findings = check_module_intent(&items);
+        assert!(
+            findings.errors.iter().any(|e| {
+                e.contains("Verify block 'add1' case #1 must call 'add1' on the left side")
+            }),
+            "expected verify-case-call error, got errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
+        );
+        assert!(
+            !findings
+                .errors
+                .iter()
+                .any(|e| e == "Function 'add1' has no verify block"),
+            "expected no duplicate missing-verify error, got errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
+        );
+    }
+
+    #[test]
+    fn verify_case_pipe_into_target_is_allowed() {
+        let items = parse_items(
+            r#"
+fn add1(x: Int) -> Int
+    = x + 1
+
+verify add1
+    41 |> add1 => 42
+"#,
+        );
+        let findings = check_module_intent(&items);
+        assert!(
+            !findings.errors.iter().any(|e| e.contains("case #")),
+            "did not expect verify-case-call error, got errors={:?}, warnings={:?}",
             findings.errors,
             findings.warnings
         );

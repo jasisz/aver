@@ -13,12 +13,15 @@ pub fn emit_pattern(pat: &Pattern, string_context: bool, _ctx: &CodegenContext) 
             "[]".to_string()
         }
         Pattern::Cons(head, tail) => {
-            // [h, ..t] → [head, tail @ ..]
-            format!(
-                "[{}, {} @ ..]",
-                super::expr::aver_name_to_rust(head),
-                super::expr::aver_name_to_rust(tail)
-            )
+            // [h, ..t] with wildcard-aware lowering.
+            let h = super::expr::aver_name_to_rust(head);
+            let t = super::expr::aver_name_to_rust(tail);
+            match (head.as_str(), tail.as_str()) {
+                ("_", "_") => "[_, ..]".to_string(),
+                (_, "_") => format!("[{}, ..]", h),
+                ("_", _) => format!("[_, {} @ ..]", t),
+                _ => format!("[{}, {} @ ..]", h, t),
+            }
         }
         Pattern::Tuple(pats) => {
             let parts: Vec<String> = pats.iter().map(|p| emit_pattern(p, false, _ctx)).collect();

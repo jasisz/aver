@@ -496,12 +496,15 @@ pub fn emit_builtin_call(
         // ---- Byte ----
         "Byte.toHex" => {
             let arg = emit_expr(&args[0], ctx, ectx);
-            Some(format!("format!(\"{{:02x}}\", {} as u8)", arg))
+            Some(format!(
+                "{{ let __n = {}; if (0i64..=255i64).contains(&__n) {{ Ok(format!(\"{{:02x}}\", __n as u8)) }} else {{ Err(format!(\"Byte.toHex: {{}} is out of range 0–255\", __n)) }} }}",
+                arg
+            ))
         }
         "Byte.fromHex" => {
             let arg = emit_expr(&args[0], ctx, ectx);
             Some(format!(
-                "i64::from_str_radix(&{}, 16).map_err(|e| e.to_string())",
+                "{{ let __s = {}; if __s.len() != 2 {{ Err(format!(\"Byte.fromHex: expected exactly 2 hex chars, got '{{}}'\", __s)) }} else {{ u8::from_str_radix(&__s, 16).map(|n| n as i64).map_err(|_| format!(\"Byte.fromHex: invalid hex '{{}}'\", __s)) }} }}",
                 arg
             ))
         }

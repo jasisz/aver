@@ -136,6 +136,7 @@ pub struct Module {
 #[derive(Debug, Clone, PartialEq)]
 pub struct VerifyBlock {
     pub fn_name: String,
+    pub line: usize,
     pub cases: Vec<(Expr, Expr)>,
 }
 

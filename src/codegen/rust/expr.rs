@@ -4,8 +4,12 @@ use super::pattern::emit_pattern;
 use crate::ast::*;
 use crate::codegen::CodegenContext;
 use crate::codegen::common::{expr_to_dotted_name, is_user_type, resolve_module_call};
+use crate::types::Type;
 /// Aver expressions → Rust expression strings.
 use std::collections::HashSet;
+
+pub use super::syntax::{aver_name_to_rust, emit_stmt};
+pub(super) use super::syntax::{has_list_patterns, has_string_literal_patterns};
 
 /// Emit a Rust expression from an Aver Expr.
 pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
@@ -217,10 +221,19 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &Emit
                 if is_user_type(type_name, ctx) {
                     let arg_ctxs =
                         compute_args_used_after(args, &ectx.used_after, &ectx.local_types);
+                    let boxed_positions = constructor_boxed_positions(&bare, ctx);
                     let arg_strs: Vec<String> = args
                         .iter()
+                        .enumerate()
                         .zip(arg_ctxs.iter())
-                        .map(|(a, ac)| clone_arg(a, ctx, ac))
+                        .map(|((idx, a), ac)| {
+                            let arg = clone_arg(a, ctx, ac);
+                            if boxed_positions.contains(&idx) {
+                                format!("Box::new({})", arg)
+                            } else {
+                                arg
+                            }
+                        })
                         .collect();
                     return format!("{}::{}({})", type_name, variant_name, arg_strs.join(", "));
                 }
@@ -240,10 +253,19 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &Emit
             let variant_name = &name[dot_pos + 1..];
             if is_user_type(type_name, ctx) {
                 let arg_ctxs = compute_args_used_after(args, &ectx.used_after, &ectx.local_types);
+                let boxed_positions = constructor_boxed_positions(name, ctx);
                 let arg_strs: Vec<String> = args
                     .iter()
+                    .enumerate()
                     .zip(arg_ctxs.iter())
-                    .map(|(a, ac)| clone_arg(a, ctx, ac))
+                    .map(|((idx, a), ac)| {
+                        let arg = clone_arg(a, ctx, ac);
+                        if boxed_positions.contains(&idx) {
+                            format!("Box::new({})", arg)
+                        } else {
+                            arg
+                        }
+                    })
                     .collect();
                 return format!("{}::{}({})", type_name, variant_name, arg_strs.join(", "));
             }
@@ -416,19 +438,7 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
         let pat = emit_pattern(&arm.pattern, needs_as_str, ctx);
         // Each arm body is independent — use parent's used_after
         let body = emit_expr(&arm.body, ctx, ectx);
-        // For Cons patterns, rebind head and tail to owned types
-        // (head is &T from slice, tail is &[T] from slice — need .clone() and .to_vec())
-        let rebindings = if let Pattern::Cons(head, tail) = &arm.pattern {
-            format!(
-                "let {} = {}.clone();\n            let {} = {}.to_vec();\n            ",
-                aver_name_to_rust(head),
-                aver_name_to_rust(head),
-                aver_name_to_rust(tail),
-                aver_name_to_rust(tail)
-            )
-        } else {
-            String::new()
-        };
+        let rebindings = emit_pattern_rebindings(&arm.pattern, ctx);
         arm_strs.push(format!(
             "        {} => {{\n            {}{}\n        }}",
             pat, rebindings, body
@@ -448,61 +458,83 @@ fn subject_might_be_list(_subject: &Expr, _arms: &[MatchArm], _ctx: &CodegenCont
     true
 }
 
-pub(super) fn has_string_literal_patterns(arms: &[MatchArm]) -> bool {
-    arms.iter()
-        .any(|arm| matches!(&arm.pattern, Pattern::Literal(Literal::Str(_))))
-}
-
-pub(super) fn has_list_patterns(arms: &[MatchArm]) -> bool {
-    arms.iter()
-        .any(|arm| matches!(&arm.pattern, Pattern::EmptyList | Pattern::Cons(_, _)))
-}
-
-/// Emit a statement as Rust code.
-pub fn emit_stmt(stmt: &Stmt, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
-    match stmt {
-        Stmt::Binding(name, _type_ann, expr) => {
-            let val = emit_expr(expr, ctx, ectx);
-            format!("let {} = {};", aver_name_to_rust(name), val)
-        }
-        Stmt::Expr(expr) => {
-            let val = emit_expr(expr, ctx, ectx);
-            format!("{};", val)
+pub(super) fn constructor_boxed_positions(name: &str, ctx: &CodegenContext) -> HashSet<usize> {
+    let mut out = HashSet::new();
+    let Some((params, ret, _)) = ctx.fn_sigs.get(name) else {
+        return out;
+    };
+    let Type::Named(ret_name) = ret else {
+        return out;
+    };
+    for (idx, param) in params.iter().enumerate() {
+        if let Type::Named(param_name) = param
+            && param_name == ret_name
+        {
+            out.insert(idx);
         }
     }
+    out
 }
 
-/// Convert an Aver identifier to a valid Rust identifier.
-/// Handles snake_case and reserved words.
-pub fn aver_name_to_rust(name: &str) -> String {
-    // Rust reserved words that might conflict
-    match name {
-        "type" => "r#type".to_string(),
-        "match" => "r#match".to_string(),
-        "fn" => "r#fn".to_string(),
-        "let" => "r#let".to_string(),
-        "use" => "r#use".to_string(),
-        "mod" => "r#mod".to_string(),
-        "impl" => "r#impl".to_string(),
-        "trait" => "r#trait".to_string(),
-        "struct" => "r#struct".to_string(),
-        "enum" => "r#enum".to_string(),
-        "self" => "r#self".to_string(),
-        "super" => "r#super".to_string(),
-        "crate" => "r#crate".to_string(),
-        "where" => "r#where".to_string(),
-        "async" => "r#async".to_string(),
-        "await" => "r#await".to_string(),
-        "move" => "r#move".to_string(),
-        "ref" => "r#ref".to_string(),
-        "mut" => "r#mut".to_string(),
-        "loop" => "r#loop".to_string(),
-        "break" => "r#break".to_string(),
-        "continue" => "r#continue".to_string(),
-        "return" => "r#return".to_string(),
-        "yield" => "r#yield".to_string(),
-        "box" => "r#box".to_string(),
-        "in" => "r#in".to_string(),
-        _ => name.to_string(),
+pub(super) fn constructor_boxed_bindings(
+    name: &str,
+    bindings: &[String],
+    ctx: &CodegenContext,
+) -> Vec<String> {
+    let mut sig_name = None;
+    if ctx.fn_sigs.contains_key(name) {
+        sig_name = Some(name.to_string());
+    } else if !name.contains('.') {
+        let suffix = format!(".{}", name);
+        let mut matches = ctx
+            .fn_sigs
+            .keys()
+            .filter(|k| k.ends_with(&suffix))
+            .cloned()
+            .collect::<Vec<_>>();
+        matches.sort();
+        if matches.len() == 1 {
+            sig_name = matches.into_iter().next();
+        }
+    }
+    let Some(sig_name) = sig_name else {
+        return Vec::new();
+    };
+    let boxed = constructor_boxed_positions(&sig_name, ctx);
+    bindings
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, b)| {
+            if b != "_" && boxed.contains(&idx) {
+                Some(b.clone())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn emit_pattern_rebindings(pattern: &Pattern, ctx: &CodegenContext) -> String {
+    let mut lines = Vec::new();
+    if let Pattern::Cons(head, tail) = pattern {
+        if head != "_" {
+            let h = aver_name_to_rust(head);
+            lines.push(format!("let {} = {}.clone();", h, h));
+        }
+        if tail != "_" {
+            let t = aver_name_to_rust(tail);
+            lines.push(format!("let {} = {}.to_vec();", t, t));
+        }
+    }
+    if let Pattern::Constructor(name, bindings) = pattern {
+        for b in constructor_boxed_bindings(name, bindings, ctx) {
+            let b = aver_name_to_rust(&b);
+            lines.push(format!("let {} = (*{}).clone();", b, b));
+        }
+    }
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n            ", lines.join("\n            "))
     }
 }

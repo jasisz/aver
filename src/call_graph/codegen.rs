@@ -1,0 +1,63 @@
+use std::collections::{HashMap, HashSet};
+
+use crate::ast::FnDef;
+
+use super::collect_codegen_deps_body;
+use super::scc::{tarjan_sccs, topo_components};
+
+/// Deterministic function emission order for codegen backends.
+///
+/// Returns SCC components in callee-before-caller topological order.
+/// Each inner vector is one SCC (single function or mutual-recursive group).
+/// Function references passed as call arguments (e.g. `List.fold(xs, init, f)`)
+/// are treated as dependencies for ordering.
+pub fn ordered_fn_components<'a>(fns: &[&'a FnDef]) -> Vec<Vec<&'a FnDef>> {
+    if fns.is_empty() {
+        return vec![];
+    }
+
+    let fn_map: HashMap<String, &FnDef> = fns.iter().map(|fd| (fd.name.clone(), *fd)).collect();
+    let names: Vec<String> = fn_map.keys().cloned().collect();
+    let name_set: HashSet<String> = names.iter().cloned().collect();
+
+    let mut graph: HashMap<String, Vec<String>> = HashMap::new();
+    for fd in fns {
+        let mut deps = HashSet::new();
+        collect_codegen_deps_body(&fd.body, &name_set, &mut deps);
+        let mut sorted = deps.into_iter().collect::<Vec<_>>();
+        sorted.sort();
+        graph.insert(fd.name.clone(), sorted);
+    }
+
+    let sccs = tarjan_sccs(&names, &graph);
+    let mut comp_of: HashMap<String, usize> = HashMap::new();
+    for (idx, comp) in sccs.iter().enumerate() {
+        for name in comp {
+            comp_of.insert(name.clone(), idx);
+        }
+    }
+
+    let mut comp_graph: HashMap<usize, HashSet<usize>> = HashMap::new();
+    for (caller, deps) in &graph {
+        let from = comp_of[caller];
+        for callee in deps {
+            let to = comp_of[callee];
+            if from != to {
+                comp_graph.entry(from).or_default().insert(to);
+            }
+        }
+    }
+
+    let comp_order = topo_components(&sccs, &comp_graph);
+    comp_order
+        .into_iter()
+        .map(|idx| {
+            let mut group: Vec<&FnDef> = sccs[idx]
+                .iter()
+                .filter_map(|name| fn_map.get(name).copied())
+                .collect();
+            group.sort_by(|a, b| a.name.cmp(&b.name));
+            group
+        })
+        .collect()
+}

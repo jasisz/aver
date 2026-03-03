@@ -30,3 +30,14 @@ fn main()
   Console.print(describe(c))
   Console.print(describe(r))
   Console.print(describe(p))
+
+
+verify area
+    area(Shape.Circle(1.0)) => 3.14159
+    area(Shape.Rect(3.0, 4.0)) => 12.0
+    area(Shape.Point) => 0.0
+
+verify describe
+    describe(Shape.Circle(1.0)) => "Circle with radius"
+    describe(Shape.Rect(3.0, 4.0)) => "Rectangle"
+    describe(Shape.Point) => "Point"

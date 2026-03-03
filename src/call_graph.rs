@@ -6,7 +6,12 @@
 /// self-edge).
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{Expr, FnBody, FnDef, Stmt, StrPart, TopLevel};
+use crate::ast::{Expr, FnBody, Stmt, StrPart, TopLevel};
+
+mod codegen;
+mod scc;
+
+pub use codegen::ordered_fn_components;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -109,63 +114,6 @@ pub fn recursive_scc_ids(items: &[TopLevel]) -> HashMap<String, usize> {
         }
     }
     out
-}
-
-/// Deterministic function emission order for codegen backends.
-///
-/// Returns SCC components in callee-before-caller topological order.
-/// Each inner vector is one SCC (single function or mutual-recursive group).
-/// Function references passed as call arguments (e.g. `List.fold(xs, init, f)`)
-/// are treated as dependencies for ordering.
-pub fn ordered_fn_components<'a>(fns: &[&'a FnDef]) -> Vec<Vec<&'a FnDef>> {
-    if fns.is_empty() {
-        return vec![];
-    }
-
-    let fn_map: HashMap<String, &FnDef> = fns.iter().map(|fd| (fd.name.clone(), *fd)).collect();
-    let names: Vec<String> = fn_map.keys().cloned().collect();
-    let name_set: HashSet<String> = names.iter().cloned().collect();
-
-    let mut graph: HashMap<String, Vec<String>> = HashMap::new();
-    for fd in fns {
-        let mut deps = HashSet::new();
-        collect_codegen_deps_body(&fd.body, &name_set, &mut deps);
-        let mut sorted = deps.into_iter().collect::<Vec<_>>();
-        sorted.sort();
-        graph.insert(fd.name.clone(), sorted);
-    }
-
-    let sccs = tarjan_sccs(&names, &graph);
-    let mut comp_of: HashMap<String, usize> = HashMap::new();
-    for (idx, comp) in sccs.iter().enumerate() {
-        for name in comp {
-            comp_of.insert(name.clone(), idx);
-        }
-    }
-
-    let mut comp_graph: HashMap<usize, HashSet<usize>> = HashMap::new();
-    for (caller, deps) in &graph {
-        let from = comp_of[caller];
-        for callee in deps {
-            let to = comp_of[callee];
-            if from != to {
-                comp_graph.entry(from).or_default().insert(to);
-            }
-        }
-    }
-
-    let comp_order = topo_components(&sccs, &comp_graph);
-    comp_order
-        .into_iter()
-        .map(|idx| {
-            let mut group: Vec<&FnDef> = sccs[idx]
-                .iter()
-                .filter_map(|name| fn_map.get(name).copied())
-                .collect();
-            group.sort_by(|a, b| a.name.cmp(&b.name));
-            group
-        })
-        .collect()
 }
 
 fn collect_codegen_deps_body(body: &FnBody, fn_names: &HashSet<String>, out: &mut HashSet<String>) {
@@ -284,110 +232,6 @@ fn walk_expr(expr: &Expr, visit: &mut impl FnMut(&Expr)) {
     }
 }
 
-fn tarjan_sccs(nodes: &[String], graph: &HashMap<String, Vec<String>>) -> Vec<Vec<String>> {
-    struct TarjanAllState {
-        index: usize,
-        indices: HashMap<String, usize>,
-        lowlink: HashMap<String, usize>,
-        stack: Vec<String>,
-        on_stack: HashSet<String>,
-        components: Vec<Vec<String>>,
-    }
-
-    fn strong_connect(v: String, graph: &HashMap<String, Vec<String>>, st: &mut TarjanAllState) {
-        st.indices.insert(v.clone(), st.index);
-        st.lowlink.insert(v.clone(), st.index);
-        st.index += 1;
-        st.stack.push(v.clone());
-        st.on_stack.insert(v.clone());
-
-        if let Some(neighbors) = graph.get(&v) {
-            for w in neighbors {
-                if !st.indices.contains_key(w) {
-                    strong_connect(w.clone(), graph, st);
-                    let low_v = st.lowlink[&v];
-                    let low_w = st.lowlink[w];
-                    st.lowlink.insert(v.clone(), low_v.min(low_w));
-                } else if st.on_stack.contains(w) {
-                    let low_v = st.lowlink[&v];
-                    let idx_w = st.indices[w];
-                    st.lowlink.insert(v.clone(), low_v.min(idx_w));
-                }
-            }
-        }
-
-        if st.lowlink[&v] == st.indices[&v] {
-            let mut comp = Vec::new();
-            while let Some(w) = st.stack.pop() {
-                st.on_stack.remove(&w);
-                let done = w == v;
-                comp.push(w);
-                if done {
-                    break;
-                }
-            }
-            comp.sort();
-            st.components.push(comp);
-        }
-    }
-
-    let mut sorted_nodes = nodes.to_vec();
-    sorted_nodes.sort();
-    let mut st = TarjanAllState {
-        index: 0,
-        indices: HashMap::new(),
-        lowlink: HashMap::new(),
-        stack: Vec::new(),
-        on_stack: HashSet::new(),
-        components: Vec::new(),
-    };
-    for node in sorted_nodes {
-        if !st.indices.contains_key(&node) {
-            strong_connect(node, graph, &mut st);
-        }
-    }
-    st.components.sort_by(|a, b| a[0].cmp(&b[0]));
-    st.components
-}
-
-fn topo_components(
-    sccs: &[Vec<String>],
-    comp_graph: &HashMap<usize, HashSet<usize>>,
-) -> Vec<usize> {
-    let mut ids: Vec<usize> = (0..sccs.len()).collect();
-    ids.sort_by(|a, b| sccs[*a][0].cmp(&sccs[*b][0]));
-
-    let mut visited = HashSet::new();
-    let mut order = Vec::new();
-    for id in ids {
-        if !visited.contains(&id) {
-            topo_components_dfs(id, sccs, comp_graph, &mut visited, &mut order);
-        }
-    }
-    order
-}
-
-fn topo_components_dfs(
-    id: usize,
-    sccs: &[Vec<String>],
-    comp_graph: &HashMap<usize, HashSet<usize>>,
-    visited: &mut HashSet<usize>,
-    order: &mut Vec<usize>,
-) {
-    visited.insert(id);
-    let mut neighbors: Vec<usize> = comp_graph
-        .get(&id)
-        .map(|s| s.iter().copied().collect())
-        .unwrap_or_default();
-    neighbors.sort_by(|a, b| sccs[*a][0].cmp(&sccs[*b][0]));
-    for n in neighbors {
-        if !visited.contains(&n) {
-            topo_components_dfs(n, sccs, comp_graph, visited, order);
-        }
-    }
-    order.push(id);
-}
-
 // ---------------------------------------------------------------------------
 // Call graph construction
 // ---------------------------------------------------------------------------
@@ -437,7 +281,7 @@ fn recursive_sccs(
         adj.insert(name.clone(), deps);
     }
 
-    tarjan_sccs(&names, &adj)
+    scc::tarjan_sccs(&names, &adj)
         .into_iter()
         .filter(|scc| is_recursive_scc(scc, graph))
         .collect()
@@ -593,128 +437,4 @@ fn collect_callees_expr(expr: &Expr, callees: &mut HashSet<String>) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn detects_self_recursion() {
-        let src = r#"
-fn fib(n: Int) -> Int
-    match n
-        0 -> 0
-        1 -> 1
-        _ -> fib(n - 1) + fib(n - 2)
-"#;
-        let items = parse(src);
-        let rec = find_recursive_fns(&items);
-        assert!(
-            rec.contains("fib"),
-            "fib should be recursive, got: {:?}",
-            rec
-        );
-    }
-
-    #[test]
-    fn non_recursive_fn() {
-        let src = "fn double(x: Int) -> Int\n    = x + x\n";
-        let items = parse(src);
-        let rec = find_recursive_fns(&items);
-        assert!(
-            rec.is_empty(),
-            "double should not be recursive, got: {:?}",
-            rec
-        );
-    }
-
-    #[test]
-    fn mutual_recursion() {
-        let src = r#"
-fn isEven(n: Int) -> Bool
-    match n
-        0 -> true
-        _ -> isOdd(n - 1)
-
-fn isOdd(n: Int) -> Bool
-    match n
-        0 -> false
-        _ -> isEven(n - 1)
-"#;
-        let items = parse(src);
-        let rec = find_recursive_fns(&items);
-        assert!(rec.contains("isEven"), "isEven should be recursive");
-        assert!(rec.contains("isOdd"), "isOdd should be recursive");
-    }
-
-    #[test]
-    fn recursive_callsites_count_syntactic_occurrences() {
-        let src = r#"
-fn fib(n: Int) -> Int
-    match n
-        0 -> 0
-        1 -> 1
-        _ -> fib(n - 1) + fib(n - 2)
-"#;
-        let items = parse(src);
-        let counts = recursive_callsite_counts(&items);
-        assert_eq!(counts.get("fib").copied().unwrap_or(0), 2);
-    }
-
-    #[test]
-    fn recursive_callsites_are_scoped_to_scc() {
-        let src = r#"
-fn a(n: Int) -> Int
-    match n
-        0 -> 0
-        _ -> b(n - 1) + fib(n)
-
-fn b(n: Int) -> Int
-    match n
-        0 -> 0
-        _ -> a(n - 1)
-
-fn fib(n: Int) -> Int
-    match n
-        0 -> 0
-        1 -> 1
-        _ -> fib(n - 1) + fib(n - 2)
-"#;
-        let items = parse(src);
-        let counts = recursive_callsite_counts(&items);
-        assert_eq!(counts.get("a").copied().unwrap_or(0), 1);
-        assert_eq!(counts.get("b").copied().unwrap_or(0), 1);
-        assert_eq!(counts.get("fib").copied().unwrap_or(0), 2);
-    }
-
-    #[test]
-    fn recursive_scc_ids_are_deterministic_by_group_name() {
-        let src = r#"
-fn z(n: Int) -> Int
-    match n
-        0 -> 0
-        _ -> z(n - 1)
-
-fn a(n: Int) -> Int
-    match n
-        0 -> 0
-        _ -> b(n - 1)
-
-fn b(n: Int) -> Int
-    match n
-        0 -> 0
-        _ -> a(n - 1)
-"#;
-        let items = parse(src);
-        let ids = recursive_scc_ids(&items);
-        // Group {a,b} gets id=1 (min name "a"), group {z} gets id=2.
-        assert_eq!(ids.get("a").copied().unwrap_or(0), 1);
-        assert_eq!(ids.get("b").copied().unwrap_or(0), 1);
-        assert_eq!(ids.get("z").copied().unwrap_or(0), 2);
-    }
-
-    fn parse(src: &str) -> Vec<TopLevel> {
-        let mut lexer = crate::lexer::Lexer::new(src);
-        let tokens = lexer.tokenize().expect("lex failed");
-        let mut parser = crate::parser::Parser::new(tokens);
-        parser.parse().expect("parse failed")
-    }
-}
+mod tests;

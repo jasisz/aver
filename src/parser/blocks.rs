@@ -11,6 +11,7 @@ impl Parser {
             TokenKind::Ident(s) => s,
             _ => unreachable!(),
         };
+        let line = fn_name_tok.line;
         self.skip_newlines();
 
         let mut cases = Vec::new();
@@ -37,7 +38,11 @@ impl Parser {
             }
         }
 
-        Ok(VerifyBlock { fn_name, cases })
+        Ok(VerifyBlock {
+            fn_name,
+            line,
+            cases,
+        })
     }
 
     // -------------------------------------------------------------------------

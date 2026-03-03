@@ -99,8 +99,6 @@ fn query(config: DbConfig, sql: String) -> Result<String, String>
             false -> Result.Err("Query failed - HTTP {resp.status}: {resp.body}")
             true  -> Result.Ok(resp.body)
 
-verify query
-
 fn execute(config: DbConfig, sql: String) -> Result<String, String>
     ? "Executes non-SELECT statement. Returns Ok(rawJson) on success."
     ! [Http]
@@ -110,8 +108,6 @@ fn execute(config: DbConfig, sql: String) -> Result<String, String>
         Result.Ok(resp) -> match is2xx(resp.status)
             false -> Result.Err("Execute failed - HTTP {resp.status}: {resp.body}")
             true  -> Result.Ok(resp.body)
-
-verify execute
 
 fn ping(config: DbConfig) -> Result<Int, String>
     ? "Health-checks the gateway. Returns Ok(httpStatus) when reachable."
@@ -123,16 +119,12 @@ fn ping(config: DbConfig) -> Result<Int, String>
             false -> Result.Err("Ping failed - HTTP {resp.status}")
             true  -> Result.Ok(resp.status)
 
-verify ping
-
 fn logResult(label: String, result: Result<String, String>) -> Unit
     ? "Prints labeled Ok/Err result to the console."
     ! [Console]
     match result
         Result.Ok(body) -> Console.print("{label} OK: {body}")
         Result.Err(msg) -> Console.error("{label} FAILED: {msg}")
-
-verify logResult
 
 fn main() -> Unit
     ! [Http, Console]

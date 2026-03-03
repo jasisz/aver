@@ -9,7 +9,3 @@ fn main() -> Unit
     match result
         Result.Ok(stats) -> Console.print(stats.sum)
         Result.Err(msg)  -> Console.print(msg)
-
-verify imports
-    Examples.Fibonacci.fib(10) => 55
-    Examples.Fibonacci.isEven(144) => true

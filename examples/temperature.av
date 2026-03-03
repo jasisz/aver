@@ -95,3 +95,10 @@ verify isFreezing
     isFreezing(0.0)  => true
     isFreezing(-10.0) => true
     isFreezing(1.0)  => false
+
+
+verify classify
+    classify(-5.0) => "freezing"
+    classify(10.0) => "cold"
+    classify(25.0) => "comfortable"
+    classify(40.0) => "hot"

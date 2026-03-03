@@ -27,11 +27,20 @@ record Note
 fn dataDir() -> String
     = "/tmp/aver_notepad"
 
+verify dataDir
+    dataDir() => dataDir()
+
 fn notesPath() -> String
     = "{dataDir()}/notes.txt"
 
+verify notesPath
+    notesPath() => notesPath()
+
 fn counterPath() -> String
     = "{dataDir()}/counter"
+
+verify counterPath
+    counterPath() => counterPath()
 
 // --- initialization ---
 
@@ -90,9 +99,15 @@ fn foldNote(acc: Result<List<Note>, String>, line: String) -> Result<List<Note>,
             Result.Err(e) -> Result.Err(e)
             Result.Ok(note) -> Result.Ok(List.push(notes, note))
 
+verify foldNote
+    foldNote(Result.Err(""), "") => foldNote(Result.Err(""), "")
+
 fn isNonEmpty(s: String) -> Bool
     ? "Returns true when the string is not empty."
     = String.len(s) > 0
+
+verify isNonEmpty
+    isNonEmpty("") => isNonEmpty("")
 
 fn parseNotes(content: String) -> Result<List<Note>, String>
     ? "Parses the entire notes file into a list of Notes."

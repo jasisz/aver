@@ -27,7 +27,14 @@ fn emit_sum_type(name: &str, variants: &[TypeVariant]) -> String {
             let field_types: Vec<String> = v
                 .fields
                 .iter()
-                .map(|f| type_annotation_to_rust(f))
+                .map(|f| {
+                    let rust_ty = type_annotation_to_rust(f);
+                    if f == name {
+                        format!("Box<{}>", rust_ty)
+                    } else {
+                        rust_ty
+                    }
+                })
                 .collect();
             lines.push(format!("    {}({}),", v.name, field_types.join(", ")));
         }
@@ -407,18 +414,27 @@ fn emit_tco_expr(
             for arm in arms {
                 let pat = super::pattern::emit_pattern(&arm.pattern, needs_as_str, ctx);
                 let body = emit_tco_expr(&arm.body, params, ctx, ectx);
-                // For Cons patterns, rebind head and tail to owned types
-                let rebindings = if let Pattern::Cons(head, tail) = &arm.pattern {
-                    format!(
-                        "{{ let {} = {}.clone(); let {} = {}.to_vec(); {} }}",
-                        aver_name_to_rust(head),
-                        aver_name_to_rust(head),
-                        aver_name_to_rust(tail),
-                        aver_name_to_rust(tail),
-                        body
-                    )
-                } else {
+                let mut rebinding_lines: Vec<String> = Vec::new();
+                if let Pattern::Cons(head, tail) = &arm.pattern {
+                    if head != "_" {
+                        let h = aver_name_to_rust(head);
+                        rebinding_lines.push(format!("let {} = {}.clone();", h, h));
+                    }
+                    if tail != "_" {
+                        let t = aver_name_to_rust(tail);
+                        rebinding_lines.push(format!("let {} = {}.to_vec();", t, t));
+                    }
+                }
+                if let Pattern::Constructor(name, bindings) = &arm.pattern {
+                    for b in super::expr::constructor_boxed_bindings(name, bindings, ctx) {
+                        let b = aver_name_to_rust(&b);
+                        rebinding_lines.push(format!("let {} = (*{}).clone();", b, b));
+                    }
+                }
+                let rebindings = if rebinding_lines.is_empty() {
                     body
+                } else {
+                    format!("{{ {} {} }}", rebinding_lines.join(" "), body)
                 };
                 arm_strs.push(format!("            {} => {}", pat, rebindings));
             }

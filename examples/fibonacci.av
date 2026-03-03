@@ -201,3 +201,7 @@ verify goldenApprox
     approxEq(goldenApprox(1)?, 1.0, 0.000001) => true
     approxEq(goldenApprox(2)?, 2.0, 0.000001) => true
     approxEq(goldenApprox(10)?, 1.618181818, 0.00001) => true
+
+
+verify buildFibStatsTR
+    buildFibStatsTR(FibAcc(i = 0, n = 0, a = 0, b = 1, fibs = [], sum = 0, mx = 0, evens = [])) => FibStats(fibs = [0], sum = 0, mx = 0, evens = [0])

@@ -7,6 +7,7 @@ mod liveness;
 mod pattern;
 mod project;
 mod runtime;
+mod syntax;
 mod toplevel;
 mod types;
 
@@ -14,6 +15,7 @@ use std::collections::HashSet;
 
 use crate::ast::TopLevel;
 use crate::codegen::{CodegenContext, ProjectOutput};
+use crate::types::Type;
 
 /// Transpile an Aver program to a Rust project.
 pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
@@ -28,41 +30,49 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
     sections.push(runtime::generate_runtime());
     sections.push(String::new());
 
-    // Collect info about which services are used
+    // Collect info about which services are used at runtime
     let used_services = detect_used_services(ctx);
+    let needs_http_types = needs_named_type(ctx, "Header")
+        || needs_named_type(ctx, "HttpResponse")
+        || needs_named_type(ctx, "HttpRequest");
+    let needs_tcp_types = needs_named_type(ctx, "Tcp.Connection");
 
-    // Service type definitions (conditionally emitted)
-    let has_tcp = used_services.contains("Tcp");
-    let has_http = used_services.contains("Http");
-    let has_http_server = used_services.contains("HttpServer");
+    // Service runtimes and service type definitions (separately gated).
+    let has_tcp_runtime = used_services.contains("Tcp");
+    let has_http_runtime = used_services.contains("Http");
+    let has_http_server_runtime = used_services.contains("HttpServer");
 
-    if has_tcp {
+    let has_tcp_types = has_tcp_runtime || needs_tcp_types;
+    let has_http_types = has_http_runtime || has_http_server_runtime || needs_http_types;
+    let has_http_server_types = has_http_server_runtime || needs_named_type(ctx, "HttpRequest");
+
+    if has_tcp_types {
         sections.push(runtime::generate_tcp_types());
         sections.push(String::new());
     }
 
-    if has_http || has_http_server {
+    if has_http_types {
         sections.push(runtime::generate_http_types());
         sections.push(String::new());
     }
 
-    if has_http_server {
+    if has_http_server_types {
         sections.push(runtime::generate_http_server_types());
         sections.push(String::new());
     }
 
     // Service runtime modules
-    if has_tcp {
+    if has_tcp_runtime {
         sections.push(runtime::generate_tcp_runtime());
         sections.push(String::new());
     }
 
-    if has_http {
+    if has_http_runtime {
         sections.push(runtime::generate_http_runtime());
         sections.push(String::new());
     }
 
-    if has_http_server {
+    if has_http_server_runtime {
         sections.push(runtime::generate_http_server_runtime());
         sections.push(String::new());
     }
@@ -163,4 +173,27 @@ fn detect_used_services(ctx: &CodegenContext) -> HashSet<String> {
         }
     }
     services
+}
+
+fn needs_named_type(ctx: &CodegenContext, wanted: &str) -> bool {
+    ctx.fn_sigs.values().any(|(params, ret, _effects)| {
+        params.iter().any(|p| type_contains_named(p, wanted)) || type_contains_named(ret, wanted)
+    })
+}
+
+fn type_contains_named(ty: &Type, wanted: &str) -> bool {
+    match ty {
+        Type::Named(name) => name == wanted,
+        Type::Result(ok, err) => {
+            type_contains_named(ok, wanted) || type_contains_named(err, wanted)
+        }
+        Type::Option(inner) | Type::List(inner) => type_contains_named(inner, wanted),
+        Type::Tuple(items) => items.iter().any(|t| type_contains_named(t, wanted)),
+        Type::Map(k, v) => type_contains_named(k, wanted) || type_contains_named(v, wanted),
+        Type::Fn(params, ret, _effects) => {
+            params.iter().any(|t| type_contains_named(t, wanted))
+                || type_contains_named(ret, wanted)
+        }
+        Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit | Type::Unknown => false,
+    }
 }

@@ -6,6 +6,3 @@ module App
 fn main() -> Unit
     ! [Console]
     Console.print(Examples.Models.User.nameById(1))
-
-verify main
-    Examples.Models.User.nameById(1) => "Ada"

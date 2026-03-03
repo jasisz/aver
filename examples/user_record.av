@@ -21,3 +21,12 @@ fn main()
   Console.print(greet(bob))
   Console.print(is_adult(alice))
   Console.print(is_adult(bob))
+
+
+verify greet
+    greet(User(name = "Alice", age = 30)) => "Alice"
+    greet(User(name = "Bob", age = 15)) => "Bob"
+
+verify is_adult
+    is_adult(User(name = "Alice", age = 30)) => true
+    is_adult(User(name = "Bob", age = 15)) => false

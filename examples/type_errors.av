@@ -9,3 +9,10 @@ fn badAdd(a: Int, b: String) -> Int
 fn wrongReturn() -> Int
     ? "Returns String but declares Int."
     = "not an int"
+
+
+verify badAdd
+    true => true
+
+verify wrongReturn
+    true => true

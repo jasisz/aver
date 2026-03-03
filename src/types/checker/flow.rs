@@ -1,6 +1,79 @@
 use super::*;
 
 impl TypeChecker {
+    fn verify_case_calls_target(left: &Expr, fn_name: &str) -> bool {
+        match left {
+            Expr::FnCall(callee, args) => {
+                Self::callee_is_verify_target(callee, fn_name)
+                    || Self::verify_case_calls_target(callee, fn_name)
+                    || args
+                        .iter()
+                        .any(|arg| Self::verify_case_calls_target(arg, fn_name))
+            }
+            Expr::Pipe(left_expr, right_expr) => {
+                Self::pipe_target_is_verify_target(right_expr, fn_name)
+                    || Self::verify_case_calls_target(left_expr, fn_name)
+                    || Self::verify_case_calls_target(right_expr, fn_name)
+            }
+            Expr::BinOp(_, left_expr, right_expr) => {
+                Self::verify_case_calls_target(left_expr, fn_name)
+                    || Self::verify_case_calls_target(right_expr, fn_name)
+            }
+            Expr::Match { subject, arms, .. } => {
+                Self::verify_case_calls_target(subject, fn_name)
+                    || arms
+                        .iter()
+                        .any(|arm| Self::verify_case_calls_target(&arm.body, fn_name))
+            }
+            Expr::Constructor(_, Some(inner)) => Self::verify_case_calls_target(inner, fn_name),
+            Expr::ErrorProp(inner) => Self::verify_case_calls_target(inner, fn_name),
+            Expr::List(elems) => elems
+                .iter()
+                .any(|elem| Self::verify_case_calls_target(elem, fn_name)),
+            Expr::Tuple(items) => items
+                .iter()
+                .any(|item| Self::verify_case_calls_target(item, fn_name)),
+            Expr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
+                Self::verify_case_calls_target(k, fn_name)
+                    || Self::verify_case_calls_target(v, fn_name)
+            }),
+            Expr::Attr(obj, _) => Self::verify_case_calls_target(obj, fn_name),
+            Expr::RecordCreate { fields, .. } => fields
+                .iter()
+                .any(|(_, expr)| Self::verify_case_calls_target(expr, fn_name)),
+            Expr::RecordUpdate { base, updates, .. } => {
+                Self::verify_case_calls_target(base, fn_name)
+                    || updates
+                        .iter()
+                        .any(|(_, expr)| Self::verify_case_calls_target(expr, fn_name))
+            }
+            Expr::TailCall(boxed) => {
+                boxed.0 == fn_name
+                    || boxed
+                        .1
+                        .iter()
+                        .any(|arg| Self::verify_case_calls_target(arg, fn_name))
+            }
+            Expr::Literal(_)
+            | Expr::Ident(_)
+            | Expr::InterpolatedStr(_)
+            | Expr::Resolved(_)
+            | Expr::Constructor(_, None) => false,
+        }
+    }
+
+    fn callee_is_verify_target(callee: &Expr, fn_name: &str) -> bool {
+        matches!(callee, Expr::Ident(name) if name == fn_name)
+    }
+
+    fn pipe_target_is_verify_target(target: &Expr, fn_name: &str) -> bool {
+        match target {
+            Expr::Ident(name) => name == fn_name,
+            Expr::FnCall(callee, _) => Self::callee_is_verify_target(callee, fn_name),
+            _ => false,
+        }
+    }
+
     pub(super) fn check_fn(&mut self, f: &FnDef) {
         self.current_fn_line = Some(f.line);
         // Start with globals and overlay parameter bindings.
@@ -122,7 +195,18 @@ impl TypeChecker {
                     continue;
                 }
                 let caller = format!("<verify:{}>", vb.fn_name);
-                for (left, right) in &vb.cases {
+                for (idx, (left, right)) in vb.cases.iter().enumerate() {
+                    if !Self::verify_case_calls_target(left, &vb.fn_name) {
+                        self.error_at_line(
+                            vb.line,
+                            format!(
+                                "Verify block '{}' case #{} must call '{}' on the left side",
+                                vb.fn_name,
+                                idx + 1,
+                                vb.fn_name
+                            ),
+                        );
+                    }
                     let _ = self.infer_type(left);
                     self.check_effects_in_expr(left, &caller, &no_effects);
                     let _ = self.infer_type(right);

@@ -42,3 +42,8 @@ verify isPositive
     isPositive(1)  => true
     isPositive(0)  => false
     isPositive(-5) => false
+
+
+verify add
+    add(1, 2) => 3
+    add(-2, 5) => 3

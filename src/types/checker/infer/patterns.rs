@@ -1,0 +1,142 @@
+use super::*;
+
+impl TypeChecker {
+    pub(in super::super) fn infer_type_with_pattern_bindings(
+        &mut self,
+        pattern: &Pattern,
+        subject_ty: &Type,
+        body: &Expr,
+    ) -> Type {
+        let mut bindings = Vec::new();
+        self.collect_pattern_bindings(pattern, subject_ty, &mut bindings);
+
+        let mut prev = Vec::new();
+        for (bind_name, bind_ty) in bindings {
+            let old = self.locals.get(&bind_name).cloned();
+            prev.push((bind_name.clone(), old));
+            self.locals.insert(bind_name, bind_ty);
+        }
+
+        let out_ty = self.infer_type(body);
+
+        for (name, old) in prev {
+            if let Some(old_val) = old {
+                self.locals.insert(name, old_val);
+            } else {
+                self.locals.remove(&name);
+            }
+        }
+
+        out_ty
+    }
+
+    fn pattern_constructor_binding_types(
+        &self,
+        ctor_name: &str,
+        subject_ty: &Type,
+        arity: usize,
+    ) -> Vec<Type> {
+        let ctor_base = ctor_name.rsplit('.').next().unwrap_or(ctor_name);
+        let unknowns = || vec![Type::Unknown; arity];
+
+        let from_sig = |name: &str| -> Option<Vec<Type>> {
+            self.fn_sigs.get(name).and_then(|sig| {
+                if sig.params.len() == arity {
+                    Some(sig.params.clone())
+                } else {
+                    None
+                }
+            })
+        };
+
+        match subject_ty {
+            Type::Result(ok_ty, err_ty) => match ctor_base {
+                "Ok" if arity == 1 => return vec![*ok_ty.clone()],
+                "Err" if arity == 1 => return vec![*err_ty.clone()],
+                _ => {}
+            },
+            Type::Option(inner_ty) => match ctor_base {
+                "Some" if arity == 1 => return vec![*inner_ty.clone()],
+                "None" if arity == 0 => return Vec::new(),
+                _ => {}
+            },
+            Type::Named(type_name) => {
+                let qualified = if ctor_name.contains('.') {
+                    ctor_name.to_string()
+                } else {
+                    format!("{}.{}", type_name, ctor_name)
+                };
+                if let Some(params) = from_sig(&qualified) {
+                    return params;
+                }
+            }
+            _ => {}
+        }
+
+        if let Some(params) = from_sig(ctor_name) {
+            return params;
+        }
+
+        if !ctor_name.contains('.') {
+            let suffix = format!(".{}", ctor_name);
+            let mut matching = self
+                .fn_sigs
+                .iter()
+                .filter_map(|(name, sig)| {
+                    if name.ends_with(&suffix) && sig.params.len() == arity {
+                        Some(sig.params.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            if matching.len() == 1 {
+                return matching.pop().unwrap_or_else(unknowns);
+            }
+        }
+
+        unknowns()
+    }
+
+    pub(in super::super) fn collect_pattern_bindings(
+        &self,
+        pattern: &Pattern,
+        subject_ty: &Type,
+        out: &mut Vec<(String, Type)>,
+    ) {
+        match pattern {
+            Pattern::Ident(name) if name != "_" => out.push((name.clone(), subject_ty.clone())),
+            Pattern::Cons(head, tail) => {
+                let elem_ty = match subject_ty {
+                    Type::List(inner) => *inner.clone(),
+                    _ => Type::Unknown,
+                };
+                if head != "_" {
+                    out.push((head.clone(), elem_ty.clone()));
+                }
+                if tail != "_" {
+                    out.push((tail.clone(), Type::List(Box::new(elem_ty))));
+                }
+            }
+            Pattern::Constructor(name, bindings) => {
+                let binding_tys =
+                    self.pattern_constructor_binding_types(name, subject_ty, bindings.len());
+                for (bind_name, bind_ty) in bindings.iter().zip(binding_tys.into_iter()) {
+                    if bind_name != "_" {
+                        out.push((bind_name.clone(), bind_ty));
+                    }
+                }
+            }
+            Pattern::Tuple(items) => {
+                let elem_tys = match subject_ty {
+                    Type::Tuple(elems) if elems.len() == items.len() => elems.clone(),
+                    _ => vec![Type::Unknown; items.len()],
+                };
+                for (item, elem_ty) in items.iter().zip(elem_tys.iter()) {
+                    self.collect_pattern_bindings(item, elem_ty, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}

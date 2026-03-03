@@ -174,3 +174,9 @@ fn main() -> Result<Unit, String>
 
     conn = Examples.Redis.connect(RedisConfig(host = config.redisHost, port = config.redisPort))?
     startServer(WeatherContext(config = config, conn = conn))
+
+
+verify extractCityFromParts
+    extractCityFromParts(["", "weather", "Warsaw"]) => Result.Ok("Warsaw")
+    extractCityFromParts(["", "other", "Warsaw"]) => Result.Err("Not a weather endpoint")
+    extractCityFromParts(["", "weather"]) => Result.Err("Missing city")

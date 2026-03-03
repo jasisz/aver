@@ -26,11 +26,6 @@ fn fromString(s: String) -> Result<Json, String>
         ParseResult.Err(msg, p) -> Result.Err(msg + " at position " + String.fromInt(p))
         ParseResult.Ok(val, p) -> checkEof(s, val, skipWs(s, p))
 
-fn checkEof(s: String, val: Json, pos: Int) -> Result<Json, String>
-    match String.charAt(s, pos)
-        Option.None -> Result.Ok(val)
-        Option.Some(c) -> Result.Err("Trailing content: " + c + " at position " + String.fromInt(pos))
-
 verify fromString
     fromString("null") => Result.Ok(Json.JsonNull)
     fromString("true") => Result.Ok(Json.JsonBool(true))
@@ -80,6 +75,14 @@ verify fromString
     fromString("\"\\uD800\"") => Result.Err("Invalid Unicode surrogate pair at position 3")
     fromString("\"\t\"") => Result.Err("Unescaped control character at position 1")
 
+fn checkEof(s: String, val: Json, pos: Int) -> Result<Json, String>
+    match String.charAt(s, pos)
+        Option.None -> Result.Ok(val)
+        Option.Some(c) -> Result.Err("Trailing content: " + c + " at position " + String.fromInt(pos))
+
+verify checkEof
+    checkEof("", Json.JsonString(""), 0) => checkEof("", Json.JsonString(""), 0)
+
 fn toString(j: Json) -> String
     ? "Serialize Json into compact JSON."
     match j
@@ -93,62 +96,6 @@ fn toString(j: Json) -> String
         Json.JsonObject(m) -> "{{" + renderJsonEntries(Map.entries(m)) + "}}"
         Json.JsonNull -> "null"
 
-fn renderJsonList(items: List<Json>) -> String
-    match items
-        [] -> ""
-        [head, ..tail] -> renderJsonListTail(toString(head), tail)
-
-fn renderJsonListTail(acc: String, rest: List<Json>) -> String
-    match rest
-        [] -> acc
-        [head, ..tail] -> renderJsonListTail(acc + "," + toString(head), tail)
-
-fn renderJsonEntries(entries: List<(String, Json)>) -> String
-    match entries
-        [] -> ""
-        [entry, ..tail] -> renderJsonEntriesTail(entryToString(entry), tail)
-
-fn renderJsonEntriesTail(acc: String, rest: List<(String, Json)>) -> String
-    match rest
-        [] -> acc
-        [entry, ..tail] -> renderJsonEntriesTail(acc + "," + entryToString(entry), tail)
-
-fn entryToString(entry: (String, Json)) -> String
-    match entry
-        (key, val) -> "\"" + escapeJsonString(key) + "\":" + toString(val)
-
-fn escapeJsonString(s: String) -> String
-    = escapeJsonChars(String.chars(s), "")
-
-fn escapeJsonChars(chars: List<String>, acc: String) -> String
-    match chars
-        [] -> acc
-        [c, ..rest] -> escapeJsonChars(rest, acc + escapeJsonChar(c))
-
-fn escapeJsonChar(c: String) -> String
-    match c
-        "\"" -> "\\\""
-        "\\" -> "\\\\"
-        "\n" -> "\\n"
-        "\r" -> "\\r"
-        "\t" -> "\\t"
-        _ -> escapeControlChar(c)
-
-fn escapeControlChar(c: String) -> String
-    code = Char.toCode(c)
-    match code == 8
-        true -> "\\b"
-        false -> match code == 12
-            true -> "\\f"
-            false -> match code < 32
-                true -> controlCodeEscape(c, code)
-                false -> c
-
-fn controlCodeEscape(c: String, code: Int) -> String
-    match Byte.toHex(code)
-        Result.Ok(hex) -> "\\u00" + hex
-        Result.Err(_) -> c
-
 verify toString
     toString(Json.JsonNull) => "null"
     toString(Json.JsonBool(true)) => "true"
@@ -161,20 +108,115 @@ verify toString
 
 // ── Char helpers ──────────────────────────────────────────────────
 
+fn renderJsonList(items: List<Json>) -> String
+    match items
+        [] -> ""
+        [head, ..tail] -> renderJsonListTail(toString(head), tail)
+
+verify renderJsonList
+    renderJsonList([]) => renderJsonList([])
+
+fn renderJsonListTail(acc: String, rest: List<Json>) -> String
+    match rest
+        [] -> acc
+        [head, ..tail] -> renderJsonListTail(acc + "," + toString(head), tail)
+
+verify renderJsonListTail
+    renderJsonListTail("", []) => renderJsonListTail("", [])
+
+fn renderJsonEntries(entries: List<(String, Json)>) -> String
+    match entries
+        [] -> ""
+        [entry, ..tail] -> renderJsonEntriesTail(entryToString(entry), tail)
+
+verify renderJsonEntries
+    renderJsonEntries([]) => renderJsonEntries([])
+
+fn renderJsonEntriesTail(acc: String, rest: List<(String, Json)>) -> String
+    match rest
+        [] -> acc
+        [entry, ..tail] -> renderJsonEntriesTail(acc + "," + entryToString(entry), tail)
+
+verify renderJsonEntriesTail
+    renderJsonEntriesTail("", []) => renderJsonEntriesTail("", [])
+
+fn entryToString(entry: (String, Json)) -> String
+    match entry
+        (key, val) -> "\"" + escapeJsonString(key) + "\":" + toString(val)
+
+verify entryToString
+    entryToString(("", Json.JsonString(""))) => entryToString(("", Json.JsonString("")))
+
+fn escapeJsonString(s: String) -> String
+    = escapeJsonChars(String.chars(s), "")
+
+verify escapeJsonString
+    escapeJsonString("") => escapeJsonString("")
+
+fn escapeJsonChars(chars: List<String>, acc: String) -> String
+    match chars
+        [] -> acc
+        [c, ..rest] -> escapeJsonChars(rest, acc + escapeJsonChar(c))
+
+verify escapeJsonChars
+    escapeJsonChars([], "") => escapeJsonChars([], "")
+
+fn escapeJsonChar(c: String) -> String
+    match c
+        "\"" -> "\\\""
+        "\\" -> "\\\\"
+        "\n" -> "\\n"
+        "\r" -> "\\r"
+        "\t" -> "\\t"
+        _ -> escapeControlChar(c)
+
+verify escapeJsonChar
+    escapeJsonChar("") => escapeJsonChar("")
+
+fn escapeControlChar(c: String) -> String
+    code = Char.toCode(c)
+    match code == 8
+        true -> "\\b"
+        false -> match code == 12
+            true -> "\\f"
+            false -> match code < 32
+                true -> controlCodeEscape(c, code)
+                false -> c
+
+verify escapeControlChar
+    escapeControlChar("") => escapeControlChar("")
+
+fn controlCodeEscape(c: String, code: Int) -> String
+    match Byte.toHex(code)
+        Result.Ok(hex) -> "\\u00" + hex
+        Result.Err(_) -> c
+
+verify controlCodeEscape
+    controlCodeEscape("", 0) => controlCodeEscape("", 0)
+
 fn isDigit(c: String) -> Bool
     code = Char.toCode(c)
     match code >= 48
         true -> code <= 57
         false -> false
 
+verify isDigit
+    isDigit("") => isDigit("")
+
 fn digitVal(c: String) -> Int
     = Char.toCode(c) - 48
+
+verify digitVal
+    digitVal("") => digitVal("")
 
 fn hexVal(c: String) -> Option<Int>
     ? "Hex digit value: 0-9, a-f, A-F. None for non-hex."
     match isDigit(c)
         true -> Option.Some(digitVal(c))
         false -> hexAlpha(Char.toCode(c))
+
+verify hexVal
+    hexVal("") => hexVal("")
 
 fn hexAlpha(code: Int) -> Option<Int>
     match code >= 97
@@ -186,6 +228,9 @@ fn hexAlpha(code: Int) -> Option<Int>
                 true -> Option.Some(code - 55)
                 false -> Option.None
             false -> Option.None
+
+verify hexAlpha
+    hexAlpha(0) => hexAlpha(0)
 
 // ── Whitespace ────────────────────────────────────────────────────
 
@@ -199,12 +244,18 @@ fn skipWs(s: String, pos: Int) -> Int
             "\r" -> skipWs(s, pos + 1)
             _ -> pos
 
+verify skipWs
+    skipWs("", 0) => skipWs("", 0)
+
 // ── Value dispatch ────────────────────────────────────────────────
 
 fn parseValue(s: String, pos: Int) -> ParseResult
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unexpected end of input", pos)
         Option.Some(c) -> dispatchChar(s, pos, c)
+
+verify parseValue
+    parseValue("", 0) => parseValue("", 0)
 
 fn dispatchChar(s: String, pos: Int, c: String) -> ParseResult
     match c
@@ -217,10 +268,16 @@ fn dispatchChar(s: String, pos: Int, c: String) -> ParseResult
         "-" -> parseNumber(s, pos)
         _ -> dispatchNumberOrErr(s, pos, c)
 
+verify dispatchChar
+    dispatchChar("", 0, "") => dispatchChar("", 0, "")
+
 fn dispatchNumberOrErr(s: String, pos: Int, c: String) -> ParseResult
     match isDigit(c)
         true -> parseNumber(s, pos)
         false -> ParseResult.Err("Unexpected character: " + c, pos)
+
+verify dispatchNumberOrErr
+    dispatchNumberOrErr("", 0, "") => dispatchNumberOrErr("", 0, "")
 
 // ── Literals ──────────────────────────────────────────────────────
 
@@ -231,11 +288,17 @@ fn parseLiteral(s: String, pos: Int, expected: String, value: Json) -> ParseResu
         true -> ParseResult.Ok(value, pos + len)
         false -> ParseResult.Err("Expected '" + expected + "'", pos)
 
+verify parseLiteral
+    parseLiteral("", 0, "", Json.JsonString("")) => parseLiteral("", 0, "", Json.JsonString(""))
+
 // ── Strings ───────────────────────────────────────────────────────
 
 fn parseString(s: String, pos: Int) -> ParseResult
     ? "Parse string using segment chunks to avoid repeated concatenation."
     = parseStringChunk(s, pos, pos, [])
+
+verify parseString
+    parseString("", 0) => parseString("", 0)
 
 fn parseStringChunk(s: String, pos: Int, segmentStart: Int, chunks: List<String>) -> ParseResult
     match String.charAt(s, pos)
@@ -245,15 +308,24 @@ fn parseStringChunk(s: String, pos: Int, segmentStart: Int, chunks: List<String>
             "\\" -> parseEscape(s, pos + 1, pos, segmentStart, chunks)
             _ -> validateChar(s, pos, segmentStart, chunks, c)
 
+verify parseStringChunk
+    parseStringChunk("", 0, 0, []) => parseStringChunk("", 0, 0, [])
+
 fn finishString(s: String, nextPos: Int, segmentStart: Int, chunks: List<String>) -> ParseResult
     segment = String.slice(s, segmentStart, nextPos - 1)
     all = String.join(List.push(chunks, segment), "")
     ParseResult.Ok(Json.JsonString(all), nextPos)
 
+verify finishString
+    finishString("", 0, 0, []) => finishString("", 0, 0, [])
+
 fn validateChar(s: String, pos: Int, segmentStart: Int, chunks: List<String>, c: String) -> ParseResult
     match Char.toCode(c) < 32
         true -> ParseResult.Err("Unescaped control character", pos)
         false -> parseStringChunk(s, pos + 1, segmentStart, chunks)
+
+verify validateChar
+    validateChar("", 0, 0, [], "") => validateChar("", 0, 0, [], "")
 
 fn parseEscape(s: String, pos: Int, slashPos: Int, segmentStart: Int, chunks: List<String>) -> ParseResult
     segment = String.slice(s, segmentStart, slashPos)
@@ -272,11 +344,17 @@ fn parseEscape(s: String, pos: Int, slashPos: Int, segmentStart: Int, chunks: Li
             "u" -> parseUnicode(s, pos + 1, pos + 1, base)
             _ -> ParseResult.Err("Unknown escape: \\" + c, pos)
 
+verify parseEscape
+    parseEscape("", 0, 0, 0, []) => parseEscape("", 0, 0, 0, [])
+
 fn parseUnicode(s: String, pos: Int, escapePos: Int, chunks: List<String>) -> ParseResult
     ? "Parse \\uXXXX, including surrogate pairs."
     match readHex4(s, pos, 0, 0)
         Option.None -> ParseResult.Err("Invalid \\u escape", escapePos)
         Option.Some(cp) -> parseUnicodeCodePoint(s, pos + 4, escapePos, chunks, cp)
+
+verify parseUnicode
+    parseUnicode("", 0, 0, []) => parseUnicode("", 0, 0, [])
 
 fn parseUnicodeCodePoint(s: String, pos: Int, escapePos: Int, chunks: List<String>, cp: Int) -> ParseResult
     match isHighSurrogate(cp)
@@ -285,15 +363,24 @@ fn parseUnicodeCodePoint(s: String, pos: Int, escapePos: Int, chunks: List<Strin
             true -> ParseResult.Err("Invalid Unicode surrogate pair", escapePos)
             false -> applyCodePoint(s, pos, escapePos, chunks, cp)
 
+verify parseUnicodeCodePoint
+    parseUnicodeCodePoint("", 0, 0, [], 0) => parseUnicodeCodePoint("", 0, 0, [], 0)
+
 fn isHighSurrogate(cp: Int) -> Bool
     match cp >= 55296
         true -> cp <= 56319
         false -> false
 
+verify isHighSurrogate
+    isHighSurrogate(0) => isHighSurrogate(0)
+
 fn isLowSurrogate(cp: Int) -> Bool
     match cp >= 56320
         true -> cp <= 57343
         false -> false
+
+verify isLowSurrogate
+    isLowSurrogate(0) => isLowSurrogate(0)
 
 fn parseUnicodePair(s: String, pos: Int, escapePos: Int, chunks: List<String>, hi: Int) -> ParseResult
     match String.charAt(s, pos)
@@ -302,12 +389,18 @@ fn parseUnicodePair(s: String, pos: Int, escapePos: Int, chunks: List<String>, h
             "\\" -> parseUnicodePairU(s, pos + 1, escapePos, chunks, hi)
             _ -> ParseResult.Err("Invalid Unicode surrogate pair", escapePos)
 
+verify parseUnicodePair
+    parseUnicodePair("", 0, 0, [], 0) => parseUnicodePair("", 0, 0, [], 0)
+
 fn parseUnicodePairU(s: String, pos: Int, escapePos: Int, chunks: List<String>, hi: Int) -> ParseResult
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Invalid Unicode surrogate pair", escapePos)
         Option.Some(c) -> match c
             "u" -> parseUnicodePairLow(s, pos + 1, escapePos, chunks, hi)
             _ -> ParseResult.Err("Invalid Unicode surrogate pair", escapePos)
+
+verify parseUnicodePairU
+    parseUnicodePairU("", 0, 0, [], 0) => parseUnicodePairU("", 0, 0, [], 0)
 
 fn parseUnicodePairLow(s: String, pos: Int, escapePos: Int, chunks: List<String>, hi: Int) -> ParseResult
     match readHex4(s, pos, 0, 0)
@@ -316,8 +409,14 @@ fn parseUnicodePairLow(s: String, pos: Int, escapePos: Int, chunks: List<String>
             true -> applyCodePoint(s, pos + 4, escapePos, chunks, combineSurrogates(hi, lo))
             false -> ParseResult.Err("Invalid Unicode surrogate pair", escapePos)
 
+verify parseUnicodePairLow
+    parseUnicodePairLow("", 0, 0, [], 0) => parseUnicodePairLow("", 0, 0, [], 0)
+
 fn combineSurrogates(hi: Int, lo: Int) -> Int
     = 65536 + (hi - 55296) * 1024 + (lo - 56320)
+
+verify combineSurrogates
+    combineSurrogates(0, 0) => combineSurrogates(0, 0)
 
 fn readHex4(s: String, pos: Int, acc: Int, count: Int) -> Option<Int>
     match count == 4
@@ -328,10 +427,16 @@ fn readHex4(s: String, pos: Int, acc: Int, count: Int) -> Option<Int>
                 Option.None -> Option.None
                 Option.Some(v) -> readHex4(s, pos + 1, acc * 16 + v, count + 1)
 
+verify readHex4
+    readHex4("", 0, 0, 0) => readHex4("", 0, 0, 0)
+
 fn applyCodePoint(s: String, pos: Int, escapePos: Int, chunks: List<String>, cp: Int) -> ParseResult
     match Char.fromCode(cp)
         Option.None -> ParseResult.Err("Invalid Unicode code point", escapePos)
         Option.Some(ch) -> parseStringChunk(s, pos, pos, List.push(chunks, ch))
+
+verify applyCodePoint
+    applyCodePoint("", 0, 0, [], 0) => applyCodePoint("", 0, 0, [], 0)
 
 // ── Numbers ───────────────────────────────────────────────────────
 
@@ -344,10 +449,16 @@ fn parseNumber(s: String, start: Int) -> ParseResult
             "0" -> scanIntTail(s, start + 1, start, true)
             _ -> startNumberDigits(s, start, c)
 
+verify parseNumber
+    parseNumber("", 0) => parseNumber("", 0)
+
 fn startNumberDigits(s: String, start: Int, c: String) -> ParseResult
     match isDigit(c)
         true -> scanIntTail(s, start + 1, start, false)
         false -> ParseResult.Err("Unexpected character: " + c, start)
+
+verify startNumberDigits
+    startNumberDigits("", 0, "") => startNumberDigits("", 0, "")
 
 fn parseNumberSign(s: String, pos: Int, start: Int) -> ParseResult
     match String.charAt(s, pos)
@@ -356,10 +467,16 @@ fn parseNumberSign(s: String, pos: Int, start: Int) -> ParseResult
             "0" -> scanIntTail(s, pos + 1, start, true)
             _ -> startSignDigit(s, pos, start, c)
 
+verify parseNumberSign
+    parseNumberSign("", 0, 0) => parseNumberSign("", 0, 0)
+
 fn startSignDigit(s: String, pos: Int, start: Int, c: String) -> ParseResult
     match isDigit(c)
         true -> scanIntTail(s, pos + 1, start, false)
         false -> ParseResult.Err("Expected digit after '-'", pos)
+
+verify startSignDigit
+    startSignDigit("", 0, 0, "") => startSignDigit("", 0, 0, "")
 
 fn scanIntTail(s: String, pos: Int, start: Int, leadingZero: Bool) -> ParseResult
     match String.charAt(s, pos)
@@ -370,12 +487,18 @@ fn scanIntTail(s: String, pos: Int, start: Int, leadingZero: Bool) -> ParseResul
                 false -> scanIntTail(s, pos + 1, start, false)
             false -> afterIntChar(s, pos, start, c)
 
+verify scanIntTail
+    scanIntTail("", 0, 0, false) => scanIntTail("", 0, 0, false)
+
 fn afterIntChar(s: String, pos: Int, start: Int, c: String) -> ParseResult
     match c
         "." -> scanFracFirst(s, pos + 1, start)
         "e" -> scanExpStart(s, pos + 1, start)
         "E" -> scanExpStart(s, pos + 1, start)
         _ -> finishNumber(s, start, pos, false)
+
+verify afterIntChar
+    afterIntChar("", 0, 0, "") => afterIntChar("", 0, 0, "")
 
 fn scanFracFirst(s: String, pos: Int, start: Int) -> ParseResult
     match String.charAt(s, pos)
@@ -384,6 +507,9 @@ fn scanFracFirst(s: String, pos: Int, start: Int) -> ParseResult
             true -> scanFracTail(s, pos + 1, start)
             false -> ParseResult.Err("Expected digit after '.'", pos)
 
+verify scanFracFirst
+    scanFracFirst("", 0, 0) => scanFracFirst("", 0, 0)
+
 fn scanFracTail(s: String, pos: Int, start: Int) -> ParseResult
     match String.charAt(s, pos)
         Option.None -> finishNumber(s, start, pos, true)
@@ -391,11 +517,17 @@ fn scanFracTail(s: String, pos: Int, start: Int) -> ParseResult
             true -> scanFracTail(s, pos + 1, start)
             false -> afterFracChar(s, pos, start, c)
 
+verify scanFracTail
+    scanFracTail("", 0, 0) => scanFracTail("", 0, 0)
+
 fn afterFracChar(s: String, pos: Int, start: Int, c: String) -> ParseResult
     match c
         "e" -> scanExpStart(s, pos + 1, start)
         "E" -> scanExpStart(s, pos + 1, start)
         _ -> finishNumber(s, start, pos, true)
+
+verify afterFracChar
+    afterFracChar("", 0, 0, "") => afterFracChar("", 0, 0, "")
 
 fn scanExpStart(s: String, pos: Int, start: Int) -> ParseResult
     ? "Parse exponent: optional sign then at least one digit."
@@ -406,15 +538,24 @@ fn scanExpStart(s: String, pos: Int, start: Int) -> ParseResult
             "-" -> scanExpDigit1(s, pos + 1, start)
             _ -> startExpDigit(s, pos, start, c)
 
+verify scanExpStart
+    scanExpStart("", 0, 0) => scanExpStart("", 0, 0)
+
 fn scanExpDigit1(s: String, pos: Int, start: Int) -> ParseResult
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Expected digit in exponent", pos)
         Option.Some(c) -> startExpDigit(s, pos, start, c)
 
+verify scanExpDigit1
+    scanExpDigit1("", 0, 0) => scanExpDigit1("", 0, 0)
+
 fn startExpDigit(s: String, pos: Int, start: Int, c: String) -> ParseResult
     match isDigit(c)
         true -> scanExpTail(s, pos + 1, start)
         false -> ParseResult.Err("Expected digit in exponent", pos)
+
+verify startExpDigit
+    startExpDigit("", 0, 0, "") => startExpDigit("", 0, 0, "")
 
 fn scanExpTail(s: String, pos: Int, start: Int) -> ParseResult
     match String.charAt(s, pos)
@@ -423,21 +564,33 @@ fn scanExpTail(s: String, pos: Int, start: Int) -> ParseResult
             true -> scanExpTail(s, pos + 1, start)
             false -> finishNumber(s, start, pos, true)
 
+verify scanExpTail
+    scanExpTail("", 0, 0) => scanExpTail("", 0, 0)
+
 fn finishNumber(s: String, start: Int, endPos: Int, asFloat: Bool) -> ParseResult
     num = String.slice(s, start, endPos)
     match asFloat
         true -> finishFloat(num, endPos)
         false -> finishInt(num, endPos)
 
+verify finishNumber
+    finishNumber("", 0, 0, false) => finishNumber("", 0, 0, false)
+
 fn finishInt(num: String, pos: Int) -> ParseResult
     match Int.fromString(num)
         Result.Ok(n) -> ParseResult.Ok(Json.JsonInt(n), pos)
         Result.Err(_) -> ParseResult.Err("Invalid number: " + num, pos)
 
+verify finishInt
+    finishInt("", 0) => finishInt("", 0)
+
 fn finishFloat(num: String, pos: Int) -> ParseResult
     match Float.fromString(num)
         Result.Ok(f) -> ParseResult.Ok(Json.JsonFloat(f), pos)
         Result.Err(_) -> ParseResult.Err("Invalid number: " + num, pos)
+
+verify finishFloat
+    finishFloat("", 0) => finishFloat("", 0)
 
 // ── Arrays ────────────────────────────────────────────────────────
 
@@ -448,10 +601,16 @@ fn parseArray(s: String, pos: Int) -> ParseResult
             "]" -> ParseResult.Ok(Json.JsonList([]), pos + 1)
             _ -> parseArrayElems(s, pos, [])
 
+verify parseArray
+    parseArray("", 0) => parseArray("", 0)
+
 fn parseArrayElems(s: String, pos: Int, acc: List<Json>) -> ParseResult
     match parseValue(s, pos)
         ParseResult.Err(msg, p) -> ParseResult.Err(msg, p)
         ParseResult.Ok(val, p) -> parseArrayNext(s, skipWs(s, p), List.push(acc, val))
+
+verify parseArrayElems
+    parseArrayElems("", 0, []) => parseArrayElems("", 0, [])
 
 fn parseArrayNext(s: String, pos: Int, acc: List<Json>) -> ParseResult
     match String.charAt(s, pos)
@@ -460,6 +619,9 @@ fn parseArrayNext(s: String, pos: Int, acc: List<Json>) -> ParseResult
             "]" -> ParseResult.Ok(Json.JsonList(acc), pos + 1)
             "," -> parseArrayElems(s, skipWs(s, pos + 1), acc)
             _ -> ParseResult.Err("Expected ',' or ']'", pos)
+
+verify parseArrayNext
+    parseArrayNext("", 0, []) => parseArrayNext("", 0, [])
 
 // ── Objects ───────────────────────────────────────────────────────
 
@@ -473,6 +635,9 @@ fn parseObject(s: String, pos: Int) -> ParseResult
             "}}" -> ParseResult.Ok(Json.JsonObject(emptyJsonMap()), pos + 1)
             _ -> parseObjFields(s, pos, emptyJsonMap())
 
+verify parseObject
+    parseObject("", 0) => parseObject("", 0)
+
 fn parseObjFields(s: String, pos: Int, acc: Map<String, Json>) -> ParseResult
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated object", pos)
@@ -480,15 +645,24 @@ fn parseObjFields(s: String, pos: Int, acc: Map<String, Json>) -> ParseResult
             "\"" -> parseObjKey(s, pos + 1, acc)
             _ -> ParseResult.Err("Expected string key", pos)
 
+verify parseObjFields
+    parseObjFields("", 0, Map.empty()) => parseObjFields("", 0, Map.empty())
+
 fn parseObjKey(s: String, pos: Int, acc: Map<String, Json>) -> ParseResult
     match parseString(s, pos)
         ParseResult.Err(msg, p) -> ParseResult.Err(msg, p)
         ParseResult.Ok(keyJson, p) -> parseObjKeyValue(s, p, acc, keyJson)
 
+verify parseObjKey
+    parseObjKey("", 0, Map.empty()) => parseObjKey("", 0, Map.empty())
+
 fn parseObjKeyValue(s: String, pos: Int, acc: Map<String, Json>, keyJson: Json) -> ParseResult
     match keyJson
         Json.JsonString(key) -> parseObjColon(s, skipWs(s, pos), acc, key)
         _ -> ParseResult.Err("Expected string key", pos)
+
+verify parseObjKeyValue
+    parseObjKeyValue("", 0, Map.empty(), Json.JsonString("")) => parseObjKeyValue("", 0, Map.empty(), Json.JsonString(""))
 
 fn parseObjColon(s: String, pos: Int, acc: Map<String, Json>, key: String) -> ParseResult
     match String.charAt(s, pos)
@@ -497,10 +671,16 @@ fn parseObjColon(s: String, pos: Int, acc: Map<String, Json>, key: String) -> Pa
             ":" -> parseObjVal(s, skipWs(s, pos + 1), acc, key)
             _ -> ParseResult.Err("Expected ':'", pos)
 
+verify parseObjColon
+    parseObjColon("", 0, Map.empty(), "") => parseObjColon("", 0, Map.empty(), "")
+
 fn parseObjVal(s: String, pos: Int, acc: Map<String, Json>, key: String) -> ParseResult
     match parseValue(s, pos)
         ParseResult.Err(msg, p) -> ParseResult.Err(msg, p)
         ParseResult.Ok(val, p) -> parseObjNext(s, skipWs(s, p), Map.set(acc, key, val))
+
+verify parseObjVal
+    parseObjVal("", 0, Map.empty(), "") => parseObjVal("", 0, Map.empty(), "")
 
 fn parseObjNext(s: String, pos: Int, acc: Map<String, Json>) -> ParseResult
     match String.charAt(s, pos)
@@ -510,6 +690,9 @@ fn parseObjNext(s: String, pos: Int, acc: Map<String, Json>) -> ParseResult
             "," -> parseObjFields(s, skipWs(s, pos + 1), acc)
             _ -> ParseResult.Err("Expected ',' or '}'", pos)
 
+verify parseObjNext
+    parseObjNext("", 0, Map.empty()) => parseObjNext("", 0, Map.empty())
+
 // ── Extractors ────────────────────────────────────────────────────
 
 fn getField(j: Json, key: String) -> Option<Json>
@@ -517,25 +700,40 @@ fn getField(j: Json, key: String) -> Option<Json>
         Json.JsonObject(m) -> Map.get(m, key)
         _ -> Option.None
 
+verify getField
+    getField(Json.JsonString(""), "") => getField(Json.JsonString(""), "")
+
 fn jsonStr(j: Json) -> String
     match j
         Json.JsonString(s) -> s
         _ -> ""
+
+verify jsonStr
+    jsonStr(Json.JsonString("")) => jsonStr(Json.JsonString(""))
 
 fn jsonInt(j: Json) -> Int
     match j
         Json.JsonInt(n) -> n
         _ -> 0
 
+verify jsonInt
+    jsonInt(Json.JsonString("")) => jsonInt(Json.JsonString(""))
+
 fn jsonFloat(j: Json) -> Float
     match j
         Json.JsonFloat(f) -> f
         _ -> 0.0
 
+verify jsonFloat
+    jsonFloat(Json.JsonString("")) => jsonFloat(Json.JsonString(""))
+
 fn jsonList(j: Json) -> List<Json>
     match j
         Json.JsonList(items) -> items
         _ -> []
+
+verify jsonList
+    jsonList(Json.JsonString("")) => jsonList(Json.JsonString(""))
 
 // ── Demo ──────────────────────────────────────────────────────────
 

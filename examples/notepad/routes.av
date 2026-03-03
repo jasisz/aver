@@ -60,23 +60,44 @@ fn jsonHeaders() -> List<Header>
 
 // --- response builders ---
 
+verify jsonHeaders
+    jsonHeaders() => jsonHeaders()
+
 fn ok(body: String) -> HttpResponse
     = HttpResponse(status = 200, body = body, headers = jsonHeaders())
+
+verify ok
+    ok("") => ok("")
 
 fn created(body: String) -> HttpResponse
     = HttpResponse(status = 201, body = body, headers = jsonHeaders())
 
+verify created
+    created("") => created("")
+
 fn notFound(msg: String) -> HttpResponse
     = HttpResponse(status = 404, body = jsonErr(msg), headers = jsonHeaders())
+
+verify notFound
+    notFound("") => notFound("")
 
 fn badRequest(msg: String) -> HttpResponse
     = HttpResponse(status = 400, body = jsonErr(msg), headers = jsonHeaders())
 
+verify badRequest
+    badRequest("") => badRequest("")
+
 fn serverError(msg: String) -> HttpResponse
     = HttpResponse(status = 500, body = jsonErr(msg), headers = jsonHeaders())
 
+verify serverError
+    serverError("") => serverError("")
+
 fn methodNotAllowed() -> HttpResponse
     = HttpResponse(status = 405, body = jsonErr("Method not allowed"), headers = jsonHeaders())
+
+verify methodNotAllowed
+    methodNotAllowed() => methodNotAllowed()
 
 // --- path parsing ---
 

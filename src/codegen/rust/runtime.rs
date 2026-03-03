@@ -116,6 +116,11 @@ pub fn generate_runtime() -> String {
         fn aver_display_inner(&self) -> String { self.aver_display() }
     }
 
+    impl<T: AverDisplay> AverDisplay for Box<T> {
+        fn aver_display(&self) -> String { (**self).aver_display() }
+        fn aver_display_inner(&self) -> String { (**self).aver_display_inner() }
+    }
+
     impl<T: AverDisplay> AverDisplay for Vec<T> {
         fn aver_display(&self) -> String {
             let parts: Vec<String> = self.iter().map(|x| x.aver_display_inner()).collect();

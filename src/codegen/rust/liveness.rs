@@ -171,15 +171,23 @@ pub fn pattern_bindings(pat: &Pattern) -> HashSet<String> {
     let mut bindings = HashSet::new();
     match pat {
         Pattern::Ident(name) => {
-            bindings.insert(name.clone());
+            if name != "_" {
+                bindings.insert(name.clone());
+            }
         }
         Pattern::Cons(head, tail) => {
-            bindings.insert(head.clone());
-            bindings.insert(tail.clone());
+            if head != "_" {
+                bindings.insert(head.clone());
+            }
+            if tail != "_" {
+                bindings.insert(tail.clone());
+            }
         }
         Pattern::Constructor(_, fields) => {
             for f in fields {
-                bindings.insert(f.clone());
+                if f != "_" {
+                    bindings.insert(f.clone());
+                }
             }
         }
         Pattern::Tuple(pats) => {
