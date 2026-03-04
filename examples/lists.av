@@ -29,6 +29,15 @@ verify add
     add(1, 2) => 3
     add(-2, 5) => 3
 
+verify add law commutative
+    given a: Int = -3..3
+    given b: Int = -3..3
+    add(a, b) => add(b, a)
+
+verify add law identity_zero
+    given a: Int = -5..5
+    add(a, 0) => a
+
 fn main() -> Unit
     ! [Console]
     numbers = [1, 2, 3, 4, 5]

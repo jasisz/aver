@@ -18,6 +18,11 @@ verify incCount
     incCount(Map.empty(), "a") => {"a" => 1}
     incCount({"a" => 1}, "a") => {"a" => 2}
 
+verify incCount law keyPresent
+    given counts: Map<String, Int> = [Map.empty(), {"a" => 1}, {"x" => 2, "y" => 4}]
+    given word: String = ["a", "z", "new"]
+    Map.has(incCount(counts, word), word) => true
+
 fn countWords(words: List<String>) -> Map<String, Int>
     ? "Counts occurrences of each word."
     = List.fold(words, emptyCounts(), incCount)
