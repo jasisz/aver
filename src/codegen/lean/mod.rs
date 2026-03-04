@@ -12,7 +12,7 @@ mod types;
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{BinOp, Expr, FnBody, FnDef, MatchArm, Pattern, Stmt, TopLevel};
+use crate::ast::{BinOp, Expr, FnBody, FnDef, MatchArm, Pattern, Stmt, TopLevel, VerifyKind};
 use crate::call_graph;
 use crate::codegen::{CodegenContext, ProjectOutput};
 
@@ -76,6 +76,13 @@ fn recursive_pure_fn_names(ctx: &CodegenContext) -> HashSet<String> {
         .into_iter()
         .filter(|name| pure_names.contains(name))
         .collect()
+}
+
+fn verify_counter_key(vb: &crate::ast::VerifyBlock) -> String {
+    match &vb.kind {
+        VerifyKind::Cases => format!("fn:{}", vb.fn_name),
+        VerifyKind::Law(law) => format!("law:{}::{}", vb.fn_name, law.name),
+    }
 }
 
 fn expr_to_dotted_name(expr: &Expr) -> Option<String> {
@@ -833,9 +840,10 @@ pub fn transpile_for_proof_mode(
     let mut verify_case_counters: HashMap<String, usize> = HashMap::new();
     for item in &ctx.items {
         if let TopLevel::Verify(vb) = item {
-            let start_idx = *verify_case_counters.get(&vb.fn_name).unwrap_or(&0);
+            let key = verify_counter_key(vb);
+            let start_idx = *verify_case_counters.get(&key).unwrap_or(&0);
             let (emitted, next_idx) = toplevel::emit_verify_block(vb, ctx, verify_mode, start_idx);
-            verify_case_counters.insert(vb.fn_name.clone(), next_idx);
+            verify_case_counters.insert(key, next_idx);
             sections.push(emitted);
             sections.push(String::new());
         }
@@ -914,9 +922,10 @@ pub fn transpile_with_verify_mode(
     let mut verify_case_counters: HashMap<String, usize> = HashMap::new();
     for item in &ctx.items {
         if let TopLevel::Verify(vb) = item {
-            let start_idx = *verify_case_counters.get(&vb.fn_name).unwrap_or(&0);
+            let key = verify_counter_key(vb);
+            let start_idx = *verify_case_counters.get(&key).unwrap_or(&0);
             let (emitted, next_idx) = toplevel::emit_verify_block(vb, ctx, verify_mode, start_idx);
-            verify_case_counters.insert(vb.fn_name.clone(), next_idx);
+            verify_case_counters.insert(key, next_idx);
             sections.push(emitted);
             sections.push(String::new());
         }
@@ -1285,7 +1294,7 @@ mod tests {
     };
     use crate::ast::{
         BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, TopLevel, TypeDef, TypeVariant,
-        VerifyBlock, VerifyKind,
+        VerifyBlock, VerifyGiven, VerifyGivenDomain, VerifyKind, VerifyLaw,
     };
     use crate::codegen::CodegenContext;
     use std::collections::{HashMap, HashSet};
@@ -1338,6 +1347,67 @@ mod tests {
                 Expr::Literal(Literal::Int(2)),
             )],
             kind: VerifyKind::Cases,
+        }));
+        ctx
+    }
+
+    fn empty_ctx_with_verify_law() -> CodegenContext {
+        let mut ctx = empty_ctx();
+        ctx.items.push(TopLevel::Verify(VerifyBlock {
+            fn_name: "add".to_string(),
+            line: 1,
+            cases: vec![
+                (
+                    Expr::FnCall(
+                        Box::new(Expr::Ident("add".to_string())),
+                        vec![
+                            Expr::Literal(Literal::Int(1)),
+                            Expr::Literal(Literal::Int(2)),
+                        ],
+                    ),
+                    Expr::FnCall(
+                        Box::new(Expr::Ident("add".to_string())),
+                        vec![
+                            Expr::Literal(Literal::Int(2)),
+                            Expr::Literal(Literal::Int(1)),
+                        ],
+                    ),
+                ),
+                (
+                    Expr::FnCall(
+                        Box::new(Expr::Ident("add".to_string())),
+                        vec![
+                            Expr::Literal(Literal::Int(2)),
+                            Expr::Literal(Literal::Int(3)),
+                        ],
+                    ),
+                    Expr::FnCall(
+                        Box::new(Expr::Ident("add".to_string())),
+                        vec![
+                            Expr::Literal(Literal::Int(3)),
+                            Expr::Literal(Literal::Int(2)),
+                        ],
+                    ),
+                ),
+            ],
+            kind: VerifyKind::Law(VerifyLaw {
+                name: "commutative".to_string(),
+                givens: vec![
+                    VerifyGiven {
+                        name: "a".to_string(),
+                        type_name: "Int".to_string(),
+                        domain: VerifyGivenDomain::IntRange { start: 1, end: 2 },
+                    },
+                    VerifyGiven {
+                        name: "b".to_string(),
+                        type_name: "Int".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![
+                            Expr::Literal(Literal::Int(2)),
+                            Expr::Literal(Literal::Int(3)),
+                        ]),
+                    },
+                ],
+            }),
         }));
         ctx
     }
@@ -1420,6 +1490,64 @@ mod tests {
             .expect("expected generated Lean file");
         assert!(lean.contains("theorem f_verify_1 : 1 = 1 := by"));
         assert!(lean.contains("theorem f_verify_2 : 2 = 2 := by"));
+    }
+
+    #[test]
+    fn transpile_emits_named_theorems_for_verify_law() {
+        let out = transpile(&empty_ctx_with_verify_law());
+        let lean = out
+            .files
+            .iter()
+            .find_map(|(name, content)| (name == "Verify_mode.lean").then_some(content))
+            .expect("expected generated Lean file");
+        assert!(lean.contains("-- verify law add.commutative (2 cases)"));
+        assert!(lean.contains("-- given a: Int = 1..2"));
+        assert!(lean.contains("-- given b: Int = [2, 3]"));
+        assert!(
+            lean.contains("theorem add_law_commutative_1 : add 1 2 = add 2 1 := by native_decide")
+        );
+        assert!(
+            lean.contains("theorem add_law_commutative_2 : add 2 3 = add 3 2 := by native_decide")
+        );
+    }
+
+    #[test]
+    fn verify_law_numbering_is_scoped_per_law_name() {
+        let mut ctx = empty_ctx();
+        ctx.items.push(TopLevel::Verify(VerifyBlock {
+            fn_name: "f".to_string(),
+            line: 1,
+            cases: vec![(
+                Expr::Literal(Literal::Int(1)),
+                Expr::Literal(Literal::Int(1)),
+            )],
+            kind: VerifyKind::Cases,
+        }));
+        ctx.items.push(TopLevel::Verify(VerifyBlock {
+            fn_name: "f".to_string(),
+            line: 2,
+            cases: vec![(
+                Expr::Literal(Literal::Int(2)),
+                Expr::Literal(Literal::Int(2)),
+            )],
+            kind: VerifyKind::Law(VerifyLaw {
+                name: "identity".to_string(),
+                givens: vec![VerifyGiven {
+                    name: "x".to_string(),
+                    type_name: "Int".to_string(),
+                    domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(2))]),
+                }],
+            }),
+        }));
+        let out = transpile_with_verify_mode(&ctx, VerifyEmitMode::TheoremSkeleton);
+        let lean = out
+            .files
+            .iter()
+            .find_map(|(name, content)| (name == "Verify_mode.lean").then_some(content))
+            .expect("expected generated Lean file");
+        assert!(lean.contains("theorem f_verify_1 : 1 = 1 := by"));
+        assert!(lean.contains("theorem f_law_identity_1 : 2 = 2 := by"));
+        assert!(!lean.contains("theorem f_law_identity_2 : 2 = 2 := by"));
     }
 
     #[test]

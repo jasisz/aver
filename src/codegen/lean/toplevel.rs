@@ -301,6 +301,10 @@ pub fn emit_verify_block(
     verify_mode: VerifyEmitMode,
     case_index_start: usize,
 ) -> (String, usize) {
+    if let VerifyKind::Law(law) = &vb.kind {
+        return emit_verify_law_block(vb, law, ctx, verify_mode, case_index_start);
+    }
+
     let mut lines = Vec::new();
     for (idx, (left, right)) in vb.cases.iter().enumerate() {
         let left_str = emit_expr(left, ctx);
@@ -333,6 +337,76 @@ pub fn emit_verify_block(
         }
     }
     (lines.join("\n"), case_index_start + vb.cases.len())
+}
+
+fn emit_verify_law_block(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    verify_mode: VerifyEmitMode,
+    case_index_start: usize,
+) -> (String, usize) {
+    let mut lines = Vec::new();
+    let fn_name = aver_name_to_lean(&vb.fn_name);
+    let law_name = aver_name_to_lean(&law.name);
+    let theorem_base = format!("{}_law_{}", fn_name, law_name);
+
+    lines.push(format!(
+        "-- verify law {}.{} ({} cases)",
+        fn_name,
+        law_name,
+        vb.cases.len()
+    ));
+    for given in &law.givens {
+        lines.push(format!(
+            "-- given {}: {} = {}",
+            aver_name_to_lean(&given.name),
+            given.type_name,
+            law_given_domain_to_lean(&given.domain, ctx)
+        ));
+    }
+
+    for (idx, (left, right)) in vb.cases.iter().enumerate() {
+        let theorem_name = format!("{}_{}", theorem_base, case_index_start + idx + 1);
+        let left_str = emit_expr(left, ctx);
+        let right_str = emit_expr(right, ctx);
+        match verify_mode {
+            VerifyEmitMode::NativeDecide => {
+                lines.push(format!(
+                    "theorem {} : {} = {} := by native_decide",
+                    theorem_name, left_str, right_str
+                ));
+            }
+            VerifyEmitMode::Sorry => {
+                lines.push(format!(
+                    "theorem {} : {} = {} := by sorry",
+                    theorem_name, left_str, right_str
+                ));
+            }
+            VerifyEmitMode::TheoremSkeleton => {
+                lines.push(format!(
+                    "theorem {} : {} = {} := by",
+                    theorem_name, left_str, right_str
+                ));
+                lines.push("  sorry".to_string());
+            }
+        }
+    }
+    (lines.join("\n"), case_index_start + vb.cases.len())
+}
+
+fn law_given_domain_to_lean(domain: &VerifyGivenDomain, ctx: &CodegenContext) -> String {
+    match domain {
+        VerifyGivenDomain::IntRange { start, end } => format!("{}..{}", start, end),
+        VerifyGivenDomain::Explicit(values) => format!(
+            "[{}]",
+            values
+                .iter()
+                .map(|v| emit_expr(v, ctx))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
 }
 
 /// Emit a decision block as a Lean 4 block comment.
