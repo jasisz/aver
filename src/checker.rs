@@ -1,6 +1,6 @@
 use colored::Colorize;
 
-use crate::ast::{DecisionBlock, Expr, FnBody, FnDef, Stmt, TopLevel, VerifyBlock};
+use crate::ast::{DecisionBlock, Expr, FnBody, FnDef, Stmt, TopLevel, VerifyBlock, VerifyKind};
 use crate::interpreter::{Interpreter, aver_repr};
 use crate::types::{Type, parse_type_str_strict};
 use crate::value::{RuntimeError, Value};
@@ -344,10 +344,22 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
     let mut passed = 0;
     let mut failed = 0;
     let mut failures = Vec::new();
-    let mut shape_contract = build_verify_shape_contract(block, interp);
+    let is_law = matches!(block.kind, VerifyKind::Law(_));
+    let mut shape_contract = if is_law {
+        None
+    } else {
+        build_verify_shape_contract(block, interp)
+    };
 
-    println!("Verify: {}", block.fn_name.cyan());
-    interp.start_verify_match_coverage(&block.fn_name);
+    match &block.kind {
+        VerifyKind::Cases => println!("Verify: {}", block.fn_name.cyan()),
+        VerifyKind::Law(law) => {
+            println!("Verify: {} law {}", block.fn_name.cyan(), law.name.cyan())
+        }
+    }
+    if !is_law {
+        interp.start_verify_match_coverage(&block.fn_name);
+    }
 
     for (left_expr, right_expr) in &block.cases {
         let case_str = format!("{} == {}", expr_to_str(left_expr), expr_to_str(right_expr));
@@ -409,26 +421,28 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
         }
     }
 
-    let coverage_misses = interp.finish_verify_match_coverage();
-    for miss in coverage_misses {
-        failed += 1;
-        let missing_1_based: Vec<String> = miss
-            .missing_arms
-            .iter()
-            .map(|idx| (idx + 1).to_string())
-            .collect();
-        let msg = format!(
-            "match at line {} missing covered arm(s): {} (of {})",
-            miss.line,
-            missing_1_based.join(", "),
-            miss.total_arms
-        );
-        println!("  {} {}", "✗".red(), msg);
-        failures.push((
-            format!("match-coverage:{}", miss.line),
-            format!("all {} arms covered", miss.total_arms),
-            msg,
-        ));
+    if !is_law {
+        let coverage_misses = interp.finish_verify_match_coverage();
+        for miss in coverage_misses {
+            failed += 1;
+            let missing_1_based: Vec<String> = miss
+                .missing_arms
+                .iter()
+                .map(|idx| (idx + 1).to_string())
+                .collect();
+            let msg = format!(
+                "match at line {} missing covered arm(s): {} (of {})",
+                miss.line,
+                missing_1_based.join(", "),
+                miss.total_arms
+            );
+            println!("  {} {}", "✗".red(), msg);
+            failures.push((
+                format!("match-coverage:{}", miss.line),
+                format!("all {} arms covered", miss.total_arms),
+                msg,
+            ));
+        }
     }
 
     if let Some(contract) = shape_contract {
@@ -486,17 +500,25 @@ pub fn index_decisions(items: &[TopLevel]) -> Vec<&DecisionBlock> {
 
 pub fn merge_verify_blocks(items: &[TopLevel]) -> Vec<VerifyBlock> {
     let mut merged: Vec<VerifyBlock> = Vec::new();
-    let mut by_fn: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut by_fn_cases: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
 
     for item in items {
         let TopLevel::Verify(vb) = item else {
             continue;
         };
-        if let Some(&idx) = by_fn.get(&vb.fn_name) {
-            merged[idx].cases.extend(vb.cases.clone());
-        } else {
-            by_fn.insert(vb.fn_name.clone(), merged.len());
-            merged.push(vb.clone());
+        match &vb.kind {
+            VerifyKind::Cases => {
+                if let Some(&idx) = by_fn_cases.get(&vb.fn_name) {
+                    merged[idx].cases.extend(vb.cases.clone());
+                } else {
+                    by_fn_cases.insert(vb.fn_name.clone(), merged.len());
+                    merged.push(vb.clone());
+                }
+            }
+            VerifyKind::Law(_) => {
+                merged.push(vb.clone());
+            }
         }
     }
 
@@ -653,28 +675,30 @@ pub fn check_module_intent(items: &[TopLevel]) -> ModuleCheckFindings {
                 empty_verify_fns.insert(v.fn_name.as_str());
             } else {
                 let mut block_valid = true;
-                for (idx, (left, _right)) in v.cases.iter().enumerate() {
-                    if !verify_case_calls_target(left, &v.fn_name) {
-                        errors.push(format!(
-                            "line {}: Verify block '{}' case #{} must call '{}' on the left side",
-                            v.line,
-                            v.fn_name,
-                            idx + 1,
-                            v.fn_name
-                        ));
-                        block_valid = false;
+                if matches!(v.kind, VerifyKind::Cases) {
+                    for (idx, (left, _right)) in v.cases.iter().enumerate() {
+                        if !verify_case_calls_target(left, &v.fn_name) {
+                            errors.push(format!(
+                                "line {}: Verify block '{}' case #{} must call '{}' on the left side",
+                                v.line,
+                                v.fn_name,
+                                idx + 1,
+                                v.fn_name
+                            ));
+                            block_valid = false;
+                        }
                     }
-                }
-                for (idx, (_left, right)) in v.cases.iter().enumerate() {
-                    if verify_case_calls_target(right, &v.fn_name) {
-                        errors.push(format!(
-                            "line {}: Verify block '{}' case #{} must not call '{}' on the right side",
-                            v.line,
-                            v.fn_name,
-                            idx + 1,
-                            v.fn_name
-                        ));
-                        block_valid = false;
+                    for (idx, (_left, right)) in v.cases.iter().enumerate() {
+                        if verify_case_calls_target(right, &v.fn_name) {
+                            errors.push(format!(
+                                "line {}: Verify block '{}' case #{} must not call '{}' on the right side",
+                                v.line,
+                                v.fn_name,
+                                idx + 1,
+                                v.fn_name
+                            ));
+                            block_valid = false;
+                        }
                     }
                 }
                 if block_valid {
@@ -899,6 +923,45 @@ verify add1
     }
 
     #[test]
+    fn verify_law_skips_left_right_call_heuristics() {
+        let items = parse_items(
+            r#"
+fn add1(x: Int) -> Int
+    = x + 1
+
+verify add1 law reflexive
+    given x: Int = [1, 2, 3]
+    x => x
+"#,
+        );
+        let findings = check_module_intent(&items);
+        assert!(
+            !findings
+                .errors
+                .iter()
+                .any(|e| e.contains("must call 'add1' on the left side")),
+            "did not expect lhs-call heuristic for law verify, got errors={:?}",
+            findings.errors
+        );
+        assert!(
+            !findings
+                .errors
+                .iter()
+                .any(|e| e.contains("must not call 'add1' on the right side")),
+            "did not expect rhs-call heuristic for law verify, got errors={:?}",
+            findings.errors
+        );
+        assert!(
+            !findings
+                .errors
+                .iter()
+                .any(|e| e == "Function 'add1' has no verify block"),
+            "law verify should satisfy verify requirement, got errors={:?}",
+            findings.errors
+        );
+    }
+
+    #[test]
     fn merge_verify_blocks_coalesces_cases_by_function() {
         let items = parse_items(
             r#"
@@ -916,6 +979,36 @@ verify f
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].fn_name, "f");
         assert_eq!(merged[0].cases.len(), 2);
+    }
+
+    #[test]
+    fn merge_verify_blocks_keeps_law_blocks_separate() {
+        let items = parse_items(
+            r#"
+fn f(x: Int) -> Int
+    = x
+
+verify f
+    f(1) => 1
+
+verify f law l1
+    given x: Int = [1]
+    x => x
+
+verify f law l2
+    given x: Int = [2]
+    x => x
+
+verify f
+    f(2) => 2
+"#,
+        );
+        let merged = merge_verify_blocks(&items);
+        assert_eq!(merged.len(), 3);
+        assert!(matches!(merged[0].kind, VerifyKind::Cases));
+        assert_eq!(merged[0].cases.len(), 2);
+        assert!(matches!(merged[1].kind, VerifyKind::Law(_)));
+        assert!(matches!(merged[2].kind, VerifyKind::Law(_)));
     }
 }
 

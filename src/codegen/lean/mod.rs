@@ -1285,7 +1285,7 @@ mod tests {
     };
     use crate::ast::{
         BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, TopLevel, TypeDef, TypeVariant,
-        VerifyBlock,
+        VerifyBlock, VerifyKind,
     };
     use crate::codegen::CodegenContext;
     use std::collections::{HashMap, HashSet};
@@ -1314,6 +1314,7 @@ mod tests {
                 Expr::Literal(Literal::Int(1)),
                 Expr::Literal(Literal::Int(1)),
             )],
+            kind: VerifyKind::Cases,
         }));
         ctx
     }
@@ -1327,6 +1328,7 @@ mod tests {
                 Expr::Literal(Literal::Int(1)),
                 Expr::Literal(Literal::Int(1)),
             )],
+            kind: VerifyKind::Cases,
         }));
         ctx.items.push(TopLevel::Verify(VerifyBlock {
             fn_name: "f".to_string(),
@@ -1335,6 +1337,7 @@ mod tests {
                 Expr::Literal(Literal::Int(2)),
                 Expr::Literal(Literal::Int(2)),
             )],
+            kind: VerifyKind::Cases,
         }));
         ctx
     }

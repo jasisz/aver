@@ -196,7 +196,9 @@ impl TypeChecker {
                 }
                 let caller = format!("<verify:{}>", vb.fn_name);
                 for (idx, (left, right)) in vb.cases.iter().enumerate() {
-                    if !Self::verify_case_calls_target(left, &vb.fn_name) {
+                    if matches!(vb.kind, crate::ast::VerifyKind::Cases)
+                        && !Self::verify_case_calls_target(left, &vb.fn_name)
+                    {
                         self.error_at_line(
                             vb.line,
                             format!(

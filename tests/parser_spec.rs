@@ -783,6 +783,54 @@ fn verify_case_with_comparison_inside() {
     }
 }
 
+#[test]
+fn verify_law_parses_given_domains_and_expands_cases() {
+    let src = r#"
+verify add law commutative
+    given a: Int = 1..3
+    given b: Int = [10, 20]
+    add(a, b) => add(b, a)
+"#;
+    let items = parse(src);
+    assert_eq!(items.len(), 1);
+    if let TopLevel::Verify(vb) = &items[0] {
+        assert!(matches!(vb.kind, VerifyKind::Law(_)));
+        assert_eq!(vb.cases.len(), 6);
+    } else {
+        panic!("expected Verify");
+    }
+}
+
+#[test]
+fn verify_law_requires_given_lines() {
+    let src = r#"
+verify add law commutative
+    add(1, 2) => add(2, 1)
+"#;
+    let msg = parse_error(src);
+    assert!(
+        msg.contains("at least one 'given'"),
+        "unexpected parse error: {}",
+        msg
+    );
+}
+
+#[test]
+fn verify_law_requires_single_assertion_line() {
+    let src = r#"
+verify add law commutative
+    given a: Int = [1]
+    add(a, 2) => add(2, a)
+    add(a, 3) => add(3, a)
+"#;
+    let msg = parse_error(src);
+    assert!(
+        msg.contains("exactly one assertion"),
+        "unexpected parse error: {}",
+        msg
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Decision blocks
 // ---------------------------------------------------------------------------

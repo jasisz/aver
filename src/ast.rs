@@ -134,10 +134,38 @@ pub struct Module {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum VerifyGivenDomain {
+    /// Integer range domain in verify law: `1..50` (inclusive).
+    IntRange { start: i64, end: i64 },
+    /// Explicit domain values in verify law: `[v1, v2, ...]`.
+    Explicit(Vec<Expr>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VerifyGiven {
+    pub name: String,
+    pub type_name: String,
+    pub domain: VerifyGivenDomain,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VerifyLaw {
+    pub name: String,
+    pub givens: Vec<VerifyGiven>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum VerifyKind {
+    Cases,
+    Law(VerifyLaw),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct VerifyBlock {
     pub fn_name: String,
     pub line: usize,
     pub cases: Vec<(Expr, Expr)>,
+    pub kind: VerifyKind,
 }
 
 #[derive(Debug, Clone, PartialEq)]
