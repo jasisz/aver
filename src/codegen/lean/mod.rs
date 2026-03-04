@@ -5,6 +5,7 @@
 /// Effectful functions and `main` are skipped.
 mod builtins;
 mod expr;
+mod law_auto;
 mod pattern;
 mod shared;
 mod toplevel;
@@ -51,6 +52,60 @@ pub enum RecursionPlan {
         metric_param_index: usize,
     },
 }
+
+const AVER_MAP_PRELUDE: &str = r#"namespace AverMap
+def empty : List (α × β) := []
+def get [BEq α] (m : List (α × β)) (k : α) : Option β :=
+  match m with
+  | [] => none
+  | (k', v) :: rest => if k == k' then some v else AverMap.get rest k
+def set [BEq α] (m : List (α × β)) (k : α) (v : β) : List (α × β) :=
+  let rec go : List (α × β) → List (α × β)
+    | [] => [(k, v)]
+    | (k', v') :: rest => if k == k' then (k, v) :: rest else (k', v') :: go rest
+  go m
+def has [BEq α] (m : List (α × β)) (k : α) : Bool :=
+  m.any (fun p => p.1 == k)
+def remove [BEq α] (m : List (α × β)) (k : α) : List (α × β) :=
+  m.filter (fun p => !(p.1 == k))
+def keys (m : List (α × β)) : List α := m.map Prod.fst
+def values (m : List (α × β)) : List β := m.map Prod.snd
+def entries (m : List (α × β)) : List (α × β) := m
+def len (m : List (α × β)) : Nat := m.length
+def fromList (entries : List (α × β)) : List (α × β) := entries
+
+private theorem any_set_go_self [BEq α] (k : α) (v : β) :
+    ∀ (m : List (α × β)), List.any (AverMap.set.go k v m) (fun p => p.1 == k) = true := by
+  intro m
+  induction m with
+  | nil =>
+      simp [AverMap.set.go, List.any, beq_self_eq_true]
+  | cons p tl ih =>
+      simp only [AverMap.set.go]
+      split <;> simp_all [List.any, beq_self_eq_true]
+
+theorem has_set_self [BEq α] (m : List (α × β)) (k : α) (v : β) :
+    AverMap.has (AverMap.set m k v) k = true := by
+  simp [AverMap.has, AverMap.set]
+  exact any_set_go_self k v m
+
+private theorem get_set_go_self [BEq α] (k : α) (v : β) :
+    ∀ (m : List (α × β)), AverMap.get (AverMap.set.go k v m) k = some v := by
+  intro m
+  induction m with
+  | nil =>
+      simp [AverMap.set.go, AverMap.get, beq_self_eq_true]
+  | cons p tl ih =>
+      simp only [AverMap.set.go]
+      split
+      · simp [AverMap.get, beq_self_eq_true]
+      · simp [AverMap.get, beq_self_eq_true, ih]
+
+theorem get_set_self [BEq α] (m : List (α × β)) (k : α) (v : β) :
+    AverMap.get (AverMap.set m k v) k = some v := by
+  simp [AverMap.set]
+  exact get_set_go_self k v m
+end AverMap"#;
 
 fn pure_fns<'a>(ctx: &'a CodegenContext) -> Vec<&'a FnDef> {
     ctx.modules
@@ -1074,31 +1129,8 @@ fn generate_prelude() -> String {
     lines.push("instance : HAdd String String String := ⟨String.append⟩".to_string());
     lines.push(String::new());
 
-    // Map helpers (Map<K,V> = List (K × V))
-    lines.push("namespace AverMap".to_string());
-    lines.push("def empty : List (α × β) := []".to_string());
-    lines.push("def get [BEq α] (m : List (α × β)) (k : α) : Option β :=".to_string());
-    lines.push("  match m with".to_string());
-    lines.push("  | [] => none".to_string());
-    lines.push("  | (k', v) :: rest => if k == k' then some v else AverMap.get rest k".to_string());
-    lines.push("def set [BEq α] (m : List (α × β)) (k : α) (v : β) : List (α × β) :=".to_string());
-    lines.push("  let rec go : List (α × β) → List (α × β)".to_string());
-    lines.push("    | [] => [(k, v)]".to_string());
-    lines.push(
-        "    | (k', v') :: rest => if k == k' then (k, v) :: rest else (k', v') :: go rest"
-            .to_string(),
-    );
-    lines.push("  go m".to_string());
-    lines.push("def has [BEq α] (m : List (α × β)) (k : α) : Bool :=".to_string());
-    lines.push("  m.any (fun p => p.1 == k)".to_string());
-    lines.push("def remove [BEq α] (m : List (α × β)) (k : α) : List (α × β) :=".to_string());
-    lines.push("  m.filter (fun p => !(p.1 == k))".to_string());
-    lines.push("def keys (m : List (α × β)) : List α := m.map Prod.fst".to_string());
-    lines.push("def values (m : List (α × β)) : List β := m.map Prod.snd".to_string());
-    lines.push("def entries (m : List (α × β)) : List (α × β) := m".to_string());
-    lines.push("def len (m : List (α × β)) : Nat := m.length".to_string());
-    lines.push("def fromList (entries : List (α × β)) : List (α × β) := entries".to_string());
-    lines.push("end AverMap".to_string());
+    // Map helpers and core lemmas (Map<K,V> = List (K × V))
+    lines.push(AVER_MAP_PRELUDE.to_string());
     lines.push(String::new());
 
     lines.push("namespace AverList".to_string());
@@ -1293,8 +1325,8 @@ mod tests {
         transpile_with_verify_mode,
     };
     use crate::ast::{
-        BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, TopLevel, TypeDef, TypeVariant,
-        VerifyBlock, VerifyGiven, VerifyGivenDomain, VerifyKind, VerifyLaw,
+        BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Stmt, TopLevel, TypeDef,
+        TypeVariant, VerifyBlock, VerifyGiven, VerifyGivenDomain, VerifyKind, VerifyLaw,
     };
     use crate::codegen::CodegenContext;
     use std::collections::{HashMap, HashSet};
@@ -1464,6 +1496,19 @@ mod tests {
         assert!(
             prelude.contains("else if n >= 55296 && n <= 57343 then none"),
             "Char.fromCode should reject surrogate code points"
+        );
+    }
+
+    #[test]
+    fn prelude_includes_map_set_helper_lemmas() {
+        let prelude = generate_prelude();
+        assert!(
+            prelude.contains("theorem has_set_self [BEq α]"),
+            "missing AverMap.has_set_self helper theorem"
+        );
+        assert!(
+            prelude.contains("theorem get_set_self [BEq α]"),
+            "missing AverMap.get_set_self helper theorem"
         );
     }
 
@@ -1705,6 +1750,614 @@ mod tests {
         ));
         assert!(lean.contains("  intro a b c"));
         assert!(lean.contains("  simp [add, Int.add_assoc]"));
+    }
+
+    #[test]
+    fn transpile_auto_proves_sub_laws() {
+        let mut ctx = empty_ctx();
+        let sub = FnDef {
+            name: "sub".to_string(),
+            line: 1,
+            params: vec![
+                ("a".to_string(), "Int".to_string()),
+                ("b".to_string(), "Int".to_string()),
+            ],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::Expr(Expr::BinOp(
+                BinOp::Sub,
+                Box::new(Expr::Ident("a".to_string())),
+                Box::new(Expr::Ident("b".to_string())),
+            ))),
+            resolution: None,
+        };
+        ctx.fn_defs.push(sub.clone());
+        ctx.items.push(TopLevel::FnDef(sub));
+
+        ctx.items.push(TopLevel::Verify(VerifyBlock {
+            fn_name: "sub".to_string(),
+            line: 10,
+            cases: vec![(
+                Expr::FnCall(
+                    Box::new(Expr::Ident("sub".to_string())),
+                    vec![
+                        Expr::Literal(Literal::Int(2)),
+                        Expr::Literal(Literal::Int(0)),
+                    ],
+                ),
+                Expr::Literal(Literal::Int(2)),
+            )],
+            kind: VerifyKind::Law(VerifyLaw {
+                name: "rightIdentity".to_string(),
+                givens: vec![VerifyGiven {
+                    name: "a".to_string(),
+                    type_name: "Int".to_string(),
+                    domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(2))]),
+                }],
+                lhs: Expr::FnCall(
+                    Box::new(Expr::Ident("sub".to_string())),
+                    vec![Expr::Ident("a".to_string()), Expr::Literal(Literal::Int(0))],
+                ),
+                rhs: Expr::Ident("a".to_string()),
+            }),
+        }));
+        ctx.items.push(TopLevel::Verify(VerifyBlock {
+            fn_name: "sub".to_string(),
+            line: 20,
+            cases: vec![(
+                Expr::FnCall(
+                    Box::new(Expr::Ident("sub".to_string())),
+                    vec![
+                        Expr::Literal(Literal::Int(2)),
+                        Expr::Literal(Literal::Int(1)),
+                    ],
+                ),
+                Expr::BinOp(
+                    BinOp::Sub,
+                    Box::new(Expr::Literal(Literal::Int(0))),
+                    Box::new(Expr::FnCall(
+                        Box::new(Expr::Ident("sub".to_string())),
+                        vec![
+                            Expr::Literal(Literal::Int(1)),
+                            Expr::Literal(Literal::Int(2)),
+                        ],
+                    )),
+                ),
+            )],
+            kind: VerifyKind::Law(VerifyLaw {
+                name: "antiCommutative".to_string(),
+                givens: vec![
+                    VerifyGiven {
+                        name: "a".to_string(),
+                        type_name: "Int".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(2))]),
+                    },
+                    VerifyGiven {
+                        name: "b".to_string(),
+                        type_name: "Int".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(1))]),
+                    },
+                ],
+                lhs: Expr::FnCall(
+                    Box::new(Expr::Ident("sub".to_string())),
+                    vec![Expr::Ident("a".to_string()), Expr::Ident("b".to_string())],
+                ),
+                rhs: Expr::BinOp(
+                    BinOp::Sub,
+                    Box::new(Expr::Literal(Literal::Int(0))),
+                    Box::new(Expr::FnCall(
+                        Box::new(Expr::Ident("sub".to_string())),
+                        vec![Expr::Ident("b".to_string()), Expr::Ident("a".to_string())],
+                    )),
+                ),
+            }),
+        }));
+
+        let out = transpile(&ctx);
+        let lean = out
+            .files
+            .iter()
+            .find_map(|(name, content)| (name == "Verify_mode.lean").then_some(content))
+            .expect("expected generated Lean file");
+        assert!(lean.contains("theorem sub_law_rightIdentity : ∀ (a : Int), sub a 0 = a := by"));
+        assert!(lean.contains("  simp [sub]"));
+        assert!(lean.contains(
+            "theorem sub_law_antiCommutative : ∀ (a : Int) (b : Int), sub a b = (-sub b a) := by"
+        ));
+        assert!(lean.contains("  simp [sub, sub_eq_add_neg, add_comm, add_left_comm, add_assoc]"));
+    }
+
+    #[test]
+    fn transpile_auto_proves_unary_wrapper_equivalence_law() {
+        let mut ctx = empty_ctx();
+        let add = FnDef {
+            name: "add".to_string(),
+            line: 1,
+            params: vec![
+                ("a".to_string(), "Int".to_string()),
+                ("b".to_string(), "Int".to_string()),
+            ],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::Expr(Expr::BinOp(
+                BinOp::Add,
+                Box::new(Expr::Ident("a".to_string())),
+                Box::new(Expr::Ident("b".to_string())),
+            ))),
+            resolution: None,
+        };
+        let add_one = FnDef {
+            name: "addOne".to_string(),
+            line: 2,
+            params: vec![("n".to_string(), "Int".to_string())],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::Expr(Expr::BinOp(
+                BinOp::Add,
+                Box::new(Expr::Ident("n".to_string())),
+                Box::new(Expr::Literal(Literal::Int(1))),
+            ))),
+            resolution: None,
+        };
+        ctx.fn_defs.push(add.clone());
+        ctx.fn_defs.push(add_one.clone());
+        ctx.items.push(TopLevel::FnDef(add));
+        ctx.items.push(TopLevel::FnDef(add_one));
+        ctx.items.push(TopLevel::Verify(VerifyBlock {
+            fn_name: "addOne".to_string(),
+            line: 3,
+            cases: vec![(
+                Expr::FnCall(
+                    Box::new(Expr::Ident("addOne".to_string())),
+                    vec![Expr::Literal(Literal::Int(2))],
+                ),
+                Expr::FnCall(
+                    Box::new(Expr::Ident("add".to_string())),
+                    vec![
+                        Expr::Literal(Literal::Int(2)),
+                        Expr::Literal(Literal::Int(1)),
+                    ],
+                ),
+            )],
+            kind: VerifyKind::Law(VerifyLaw {
+                name: "identityViaAdd".to_string(),
+                givens: vec![VerifyGiven {
+                    name: "n".to_string(),
+                    type_name: "Int".to_string(),
+                    domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(2))]),
+                }],
+                lhs: Expr::FnCall(
+                    Box::new(Expr::Ident("addOne".to_string())),
+                    vec![Expr::Ident("n".to_string())],
+                ),
+                rhs: Expr::FnCall(
+                    Box::new(Expr::Ident("add".to_string())),
+                    vec![Expr::Ident("n".to_string()), Expr::Literal(Literal::Int(1))],
+                ),
+            }),
+        }));
+        let out = transpile(&ctx);
+        let lean = out
+            .files
+            .iter()
+            .find_map(|(name, content)| (name == "Verify_mode.lean").then_some(content))
+            .expect("expected generated Lean file");
+        assert!(
+            lean.contains(
+                "theorem addOne_law_identityViaAdd : ∀ (n : Int), addOne n = add n 1 := by"
+            )
+        );
+        assert!(lean.contains("  simp [addOne, add]"));
+    }
+
+    #[test]
+    fn transpile_auto_proves_direct_map_set_laws() {
+        let mut ctx = empty_ctx();
+
+        let map_set = |m: Expr, k: Expr, v: Expr| {
+            Expr::FnCall(
+                Box::new(Expr::Attr(
+                    Box::new(Expr::Ident("Map".to_string())),
+                    "set".to_string(),
+                )),
+                vec![m, k, v],
+            )
+        };
+        let map_has = |m: Expr, k: Expr| {
+            Expr::FnCall(
+                Box::new(Expr::Attr(
+                    Box::new(Expr::Ident("Map".to_string())),
+                    "has".to_string(),
+                )),
+                vec![m, k],
+            )
+        };
+        let map_get = |m: Expr, k: Expr| {
+            Expr::FnCall(
+                Box::new(Expr::Attr(
+                    Box::new(Expr::Ident("Map".to_string())),
+                    "get".to_string(),
+                )),
+                vec![m, k],
+            )
+        };
+        let some = |v: Expr| {
+            Expr::FnCall(
+                Box::new(Expr::Attr(
+                    Box::new(Expr::Ident("Option".to_string())),
+                    "Some".to_string(),
+                )),
+                vec![v],
+            )
+        };
+
+        ctx.items.push(TopLevel::Verify(VerifyBlock {
+            fn_name: "map".to_string(),
+            line: 1,
+            cases: vec![(
+                map_has(
+                    map_set(
+                        Expr::Ident("m".to_string()),
+                        Expr::Ident("k".to_string()),
+                        Expr::Ident("v".to_string()),
+                    ),
+                    Expr::Ident("k".to_string()),
+                ),
+                Expr::Literal(Literal::Bool(true)),
+            )],
+            kind: VerifyKind::Law(VerifyLaw {
+                name: "setHasKey".to_string(),
+                givens: vec![
+                    VerifyGiven {
+                        name: "m".to_string(),
+                        type_name: "Map<String, Int>".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![Expr::FnCall(
+                            Box::new(Expr::Attr(
+                                Box::new(Expr::Ident("Map".to_string())),
+                                "empty".to_string(),
+                            )),
+                            vec![],
+                        )]),
+                    },
+                    VerifyGiven {
+                        name: "k".to_string(),
+                        type_name: "String".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Str(
+                            "a".to_string(),
+                        ))]),
+                    },
+                    VerifyGiven {
+                        name: "v".to_string(),
+                        type_name: "Int".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(1))]),
+                    },
+                ],
+                lhs: map_has(
+                    map_set(
+                        Expr::Ident("m".to_string()),
+                        Expr::Ident("k".to_string()),
+                        Expr::Ident("v".to_string()),
+                    ),
+                    Expr::Ident("k".to_string()),
+                ),
+                rhs: Expr::Literal(Literal::Bool(true)),
+            }),
+        }));
+
+        ctx.items.push(TopLevel::Verify(VerifyBlock {
+            fn_name: "map".to_string(),
+            line: 2,
+            cases: vec![(
+                map_get(
+                    map_set(
+                        Expr::Ident("m".to_string()),
+                        Expr::Ident("k".to_string()),
+                        Expr::Ident("v".to_string()),
+                    ),
+                    Expr::Ident("k".to_string()),
+                ),
+                some(Expr::Ident("v".to_string())),
+            )],
+            kind: VerifyKind::Law(VerifyLaw {
+                name: "setGetKey".to_string(),
+                givens: vec![
+                    VerifyGiven {
+                        name: "m".to_string(),
+                        type_name: "Map<String, Int>".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![Expr::FnCall(
+                            Box::new(Expr::Attr(
+                                Box::new(Expr::Ident("Map".to_string())),
+                                "empty".to_string(),
+                            )),
+                            vec![],
+                        )]),
+                    },
+                    VerifyGiven {
+                        name: "k".to_string(),
+                        type_name: "String".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Str(
+                            "a".to_string(),
+                        ))]),
+                    },
+                    VerifyGiven {
+                        name: "v".to_string(),
+                        type_name: "Int".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(1))]),
+                    },
+                ],
+                lhs: map_get(
+                    map_set(
+                        Expr::Ident("m".to_string()),
+                        Expr::Ident("k".to_string()),
+                        Expr::Ident("v".to_string()),
+                    ),
+                    Expr::Ident("k".to_string()),
+                ),
+                rhs: some(Expr::Ident("v".to_string())),
+            }),
+        }));
+
+        let out = transpile(&ctx);
+        let lean = out
+            .files
+            .iter()
+            .find_map(|(name, content)| (name == "Verify_mode.lean").then_some(content))
+            .expect("expected generated Lean file");
+        assert!(lean.contains("simpa using AverMap.has_set_self m k v"));
+        assert!(lean.contains("simpa using AverMap.get_set_self m k v"));
+    }
+
+    #[test]
+    fn transpile_auto_proves_map_update_laws() {
+        let mut ctx = empty_ctx();
+
+        let map_get = |m: Expr, k: Expr| {
+            Expr::FnCall(
+                Box::new(Expr::Attr(
+                    Box::new(Expr::Ident("Map".to_string())),
+                    "get".to_string(),
+                )),
+                vec![m, k],
+            )
+        };
+        let map_set = |m: Expr, k: Expr, v: Expr| {
+            Expr::FnCall(
+                Box::new(Expr::Attr(
+                    Box::new(Expr::Ident("Map".to_string())),
+                    "set".to_string(),
+                )),
+                vec![m, k, v],
+            )
+        };
+        let map_has = |m: Expr, k: Expr| {
+            Expr::FnCall(
+                Box::new(Expr::Attr(
+                    Box::new(Expr::Ident("Map".to_string())),
+                    "has".to_string(),
+                )),
+                vec![m, k],
+            )
+        };
+        let option_some = |v: Expr| {
+            Expr::FnCall(
+                Box::new(Expr::Attr(
+                    Box::new(Expr::Ident("Option".to_string())),
+                    "Some".to_string(),
+                )),
+                vec![v],
+            )
+        };
+        let option_with_default = |opt: Expr, def: Expr| {
+            Expr::FnCall(
+                Box::new(Expr::Attr(
+                    Box::new(Expr::Ident("Option".to_string())),
+                    "withDefault".to_string(),
+                )),
+                vec![opt, def],
+            )
+        };
+
+        let add_one = FnDef {
+            name: "addOne".to_string(),
+            line: 1,
+            params: vec![("n".to_string(), "Int".to_string())],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::Expr(Expr::BinOp(
+                BinOp::Add,
+                Box::new(Expr::Ident("n".to_string())),
+                Box::new(Expr::Literal(Literal::Int(1))),
+            ))),
+            resolution: None,
+        };
+        ctx.fn_defs.push(add_one.clone());
+        ctx.items.push(TopLevel::FnDef(add_one));
+
+        let inc_count = FnDef {
+            name: "incCount".to_string(),
+            line: 2,
+            params: vec![
+                ("counts".to_string(), "Map<String, Int>".to_string()),
+                ("word".to_string(), "String".to_string()),
+            ],
+            return_type: "Map<String, Int>".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::Block(vec![
+                Stmt::Binding(
+                    "current".to_string(),
+                    None,
+                    map_get(
+                        Expr::Ident("counts".to_string()),
+                        Expr::Ident("word".to_string()),
+                    ),
+                ),
+                Stmt::Expr(Expr::Match {
+                    subject: Box::new(Expr::Ident("current".to_string())),
+                    arms: vec![
+                        MatchArm {
+                            pattern: Pattern::Constructor(
+                                "Some".to_string(),
+                                vec!["n".to_string()],
+                            ),
+                            body: Box::new(map_set(
+                                Expr::Ident("counts".to_string()),
+                                Expr::Ident("word".to_string()),
+                                Expr::BinOp(
+                                    BinOp::Add,
+                                    Box::new(Expr::Ident("n".to_string())),
+                                    Box::new(Expr::Literal(Literal::Int(1))),
+                                ),
+                            )),
+                        },
+                        MatchArm {
+                            pattern: Pattern::Constructor("None".to_string(), vec![]),
+                            body: Box::new(map_set(
+                                Expr::Ident("counts".to_string()),
+                                Expr::Ident("word".to_string()),
+                                Expr::Literal(Literal::Int(1)),
+                            )),
+                        },
+                    ],
+                    line: 2,
+                }),
+            ])),
+            resolution: None,
+        };
+        ctx.fn_defs.push(inc_count.clone());
+        ctx.items.push(TopLevel::FnDef(inc_count));
+
+        ctx.items.push(TopLevel::Verify(VerifyBlock {
+            fn_name: "incCount".to_string(),
+            line: 10,
+            cases: vec![(
+                map_has(
+                    Expr::FnCall(
+                        Box::new(Expr::Ident("incCount".to_string())),
+                        vec![
+                            Expr::Ident("counts".to_string()),
+                            Expr::Ident("word".to_string()),
+                        ],
+                    ),
+                    Expr::Ident("word".to_string()),
+                ),
+                Expr::Literal(Literal::Bool(true)),
+            )],
+            kind: VerifyKind::Law(VerifyLaw {
+                name: "keyPresent".to_string(),
+                givens: vec![
+                    VerifyGiven {
+                        name: "counts".to_string(),
+                        type_name: "Map<String, Int>".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![Expr::FnCall(
+                            Box::new(Expr::Attr(
+                                Box::new(Expr::Ident("Map".to_string())),
+                                "empty".to_string(),
+                            )),
+                            vec![],
+                        )]),
+                    },
+                    VerifyGiven {
+                        name: "word".to_string(),
+                        type_name: "String".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Str(
+                            "a".to_string(),
+                        ))]),
+                    },
+                ],
+                lhs: map_has(
+                    Expr::FnCall(
+                        Box::new(Expr::Ident("incCount".to_string())),
+                        vec![
+                            Expr::Ident("counts".to_string()),
+                            Expr::Ident("word".to_string()),
+                        ],
+                    ),
+                    Expr::Ident("word".to_string()),
+                ),
+                rhs: Expr::Literal(Literal::Bool(true)),
+            }),
+        }));
+
+        ctx.items.push(TopLevel::Verify(VerifyBlock {
+            fn_name: "incCount".to_string(),
+            line: 20,
+            cases: vec![(
+                map_get(
+                    Expr::FnCall(
+                        Box::new(Expr::Ident("incCount".to_string())),
+                        vec![
+                            Expr::Ident("counts".to_string()),
+                            Expr::Literal(Literal::Str("a".to_string())),
+                        ],
+                    ),
+                    Expr::Literal(Literal::Str("a".to_string())),
+                ),
+                option_some(Expr::FnCall(
+                    Box::new(Expr::Ident("addOne".to_string())),
+                    vec![option_with_default(
+                        map_get(
+                            Expr::Ident("counts".to_string()),
+                            Expr::Literal(Literal::Str("a".to_string())),
+                        ),
+                        Expr::Literal(Literal::Int(0)),
+                    )],
+                )),
+            )],
+            kind: VerifyKind::Law(VerifyLaw {
+                name: "existingKeyIncrements".to_string(),
+                givens: vec![VerifyGiven {
+                    name: "counts".to_string(),
+                    type_name: "Map<String, Int>".to_string(),
+                    domain: VerifyGivenDomain::Explicit(vec![Expr::FnCall(
+                        Box::new(Expr::Attr(
+                            Box::new(Expr::Ident("Map".to_string())),
+                            "empty".to_string(),
+                        )),
+                        vec![],
+                    )]),
+                }],
+                lhs: map_get(
+                    Expr::FnCall(
+                        Box::new(Expr::Ident("incCount".to_string())),
+                        vec![
+                            Expr::Ident("counts".to_string()),
+                            Expr::Literal(Literal::Str("a".to_string())),
+                        ],
+                    ),
+                    Expr::Literal(Literal::Str("a".to_string())),
+                ),
+                rhs: option_some(Expr::FnCall(
+                    Box::new(Expr::Ident("addOne".to_string())),
+                    vec![option_with_default(
+                        map_get(
+                            Expr::Ident("counts".to_string()),
+                            Expr::Literal(Literal::Str("a".to_string())),
+                        ),
+                        Expr::Literal(Literal::Int(0)),
+                    )],
+                )),
+            }),
+        }));
+
+        let out = transpile(&ctx);
+        let lean = out
+            .files
+            .iter()
+            .find_map(|(name, content)| (name == "Verify_mode.lean").then_some(content))
+            .expect("expected generated Lean file");
+        assert!(
+            lean.contains("cases h : AverMap.get counts word <;> simp [AverMap.has_set_self]"),
+            "expected keyPresent auto-proof with has_set_self"
+        );
+        assert!(
+            lean.contains("cases h : AverMap.get counts \"a\" <;> simp [AverMap.get_set_self, addOne, incCount]"),
+            "expected existingKeyIncrements auto-proof with get_set_self"
+        );
     }
 
     #[test]
