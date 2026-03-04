@@ -156,6 +156,8 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
 fn emit_expr_atom(expr: &Expr, ctx: &CodegenContext) -> String {
     let s = emit_expr(expr, ctx);
     match expr {
+        Expr::Literal(Literal::Int(i)) if *i < 0 => format!("({})", s),
+        Expr::Literal(Literal::Float(f)) if *f < 0.0 => format!("({})", s),
         Expr::Literal(_) | Expr::Ident(_) | Expr::List(_) | Expr::Tuple(_) => s,
         _ => {
             if s.starts_with('(')
@@ -382,6 +384,7 @@ pub fn aver_name_to_lean(name: &str) -> String {
         "section" => "section'".to_string(),
         "end" => "end'".to_string(),
         "import" => "import'".to_string(),
+        "id" => "id'".to_string(),
         "mutual" => "mutual'".to_string(),
         "partial" => "partial'".to_string(),
         _ => name.to_string(),

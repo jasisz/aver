@@ -19,9 +19,9 @@ pub(super) enum Target {
 /// Lean verify emission mode.
 #[derive(Clone, Debug, ValueEnum)]
 pub(super) enum LeanVerifyMode {
-    /// Emit `example ... := by native_decide`
-    #[value(name = "native-decide")]
-    NativeDecide,
+    /// Auto mode: regular cases use `native_decide`; supported law universals get auto-proofs.
+    #[value(name = "auto")]
+    Auto,
     /// Emit `example ... := by sorry`
     #[value(name = "sorry")]
     Sorry,
@@ -118,7 +118,7 @@ pub(super) enum Commands {
         #[arg(long)]
         module_root: Option<String>,
         /// Lean-only: how to emit `verify` proofs in generated Lean
-        #[arg(long, default_value = "native-decide")]
+        #[arg(long, default_value = "auto")]
         lean_verify: LeanVerifyMode,
         /// Lean-only: fail fast when source needs non-proof features (e.g. `partial`, unsafe Eq)
         #[arg(long)]

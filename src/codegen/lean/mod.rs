@@ -1353,6 +1353,25 @@ mod tests {
 
     fn empty_ctx_with_verify_law() -> CodegenContext {
         let mut ctx = empty_ctx();
+        let add = FnDef {
+            name: "add".to_string(),
+            line: 1,
+            params: vec![
+                ("a".to_string(), "Int".to_string()),
+                ("b".to_string(), "Int".to_string()),
+            ],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::Expr(Expr::BinOp(
+                BinOp::Add,
+                Box::new(Expr::Ident("a".to_string())),
+                Box::new(Expr::Ident("b".to_string())),
+            ))),
+            resolution: None,
+        };
+        ctx.fn_defs.push(add.clone());
+        ctx.items.push(TopLevel::FnDef(add));
         ctx.items.push(TopLevel::Verify(VerifyBlock {
             fn_name: "add".to_string(),
             line: 1,
@@ -1514,6 +1533,8 @@ mod tests {
         assert!(lean.contains(
             "theorem add_law_commutative : ∀ (a : Int) (b : Int), add a b = add b a := by"
         ));
+        assert!(lean.contains("  intro a b"));
+        assert!(lean.contains("  simp [add, Int.add_comm]"));
         assert!(lean.contains(
             "theorem add_law_commutative_sample_1 : add 1 2 = add 2 1 := by native_decide"
         ));
@@ -1523,8 +1544,261 @@ mod tests {
     }
 
     #[test]
+    fn transpile_auto_proves_reflexive_law_with_rfl() {
+        let mut ctx = empty_ctx();
+        ctx.items.push(TopLevel::Verify(VerifyBlock {
+            fn_name: "idLaw".to_string(),
+            line: 1,
+            cases: vec![(
+                Expr::Literal(Literal::Int(1)),
+                Expr::Literal(Literal::Int(1)),
+            )],
+            kind: VerifyKind::Law(VerifyLaw {
+                name: "reflexive".to_string(),
+                givens: vec![VerifyGiven {
+                    name: "x".to_string(),
+                    type_name: "Int".to_string(),
+                    domain: VerifyGivenDomain::IntRange { start: 1, end: 2 },
+                }],
+                lhs: Expr::Ident("x".to_string()),
+                rhs: Expr::Ident("x".to_string()),
+            }),
+        }));
+        let out = transpile(&ctx);
+        let lean = out
+            .files
+            .iter()
+            .find_map(|(name, content)| (name == "Verify_mode.lean").then_some(content))
+            .expect("expected generated Lean file");
+        assert!(lean.contains("theorem idLaw_law_reflexive : ∀ (x : Int), x = x := by"));
+        assert!(lean.contains("  intro x"));
+        assert!(lean.contains("  rfl"));
+    }
+
+    #[test]
+    fn transpile_auto_proves_identity_law_for_int_add_wrapper() {
+        let mut ctx = empty_ctx_with_verify_law();
+        ctx.items.push(TopLevel::Verify(VerifyBlock {
+            fn_name: "add".to_string(),
+            line: 10,
+            cases: vec![(
+                Expr::FnCall(
+                    Box::new(Expr::Ident("add".to_string())),
+                    vec![
+                        Expr::Literal(Literal::Int(1)),
+                        Expr::Literal(Literal::Int(0)),
+                    ],
+                ),
+                Expr::Literal(Literal::Int(1)),
+            )],
+            kind: VerifyKind::Law(VerifyLaw {
+                name: "identityZero".to_string(),
+                givens: vec![VerifyGiven {
+                    name: "a".to_string(),
+                    type_name: "Int".to_string(),
+                    domain: VerifyGivenDomain::Explicit(vec![
+                        Expr::Literal(Literal::Int(0)),
+                        Expr::Literal(Literal::Int(1)),
+                    ]),
+                }],
+                lhs: Expr::FnCall(
+                    Box::new(Expr::Ident("add".to_string())),
+                    vec![Expr::Ident("a".to_string()), Expr::Literal(Literal::Int(0))],
+                ),
+                rhs: Expr::Ident("a".to_string()),
+            }),
+        }));
+        let out = transpile(&ctx);
+        let lean = out
+            .files
+            .iter()
+            .find_map(|(name, content)| (name == "Verify_mode.lean").then_some(content))
+            .expect("expected generated Lean file");
+        assert!(lean.contains("theorem add_law_identityZero : ∀ (a : Int), add a 0 = a := by"));
+        assert!(lean.contains("  intro a"));
+        assert!(lean.contains("  simp [add]"));
+    }
+
+    #[test]
+    fn transpile_auto_proves_associative_law_for_int_add_wrapper() {
+        let mut ctx = empty_ctx_with_verify_law();
+        ctx.items.push(TopLevel::Verify(VerifyBlock {
+            fn_name: "add".to_string(),
+            line: 20,
+            cases: vec![(
+                Expr::FnCall(
+                    Box::new(Expr::Ident("add".to_string())),
+                    vec![
+                        Expr::FnCall(
+                            Box::new(Expr::Ident("add".to_string())),
+                            vec![
+                                Expr::Literal(Literal::Int(1)),
+                                Expr::Literal(Literal::Int(2)),
+                            ],
+                        ),
+                        Expr::Literal(Literal::Int(3)),
+                    ],
+                ),
+                Expr::FnCall(
+                    Box::new(Expr::Ident("add".to_string())),
+                    vec![
+                        Expr::Literal(Literal::Int(1)),
+                        Expr::FnCall(
+                            Box::new(Expr::Ident("add".to_string())),
+                            vec![
+                                Expr::Literal(Literal::Int(2)),
+                                Expr::Literal(Literal::Int(3)),
+                            ],
+                        ),
+                    ],
+                ),
+            )],
+            kind: VerifyKind::Law(VerifyLaw {
+                name: "associative".to_string(),
+                givens: vec![
+                    VerifyGiven {
+                        name: "a".to_string(),
+                        type_name: "Int".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(1))]),
+                    },
+                    VerifyGiven {
+                        name: "b".to_string(),
+                        type_name: "Int".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(2))]),
+                    },
+                    VerifyGiven {
+                        name: "c".to_string(),
+                        type_name: "Int".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(3))]),
+                    },
+                ],
+                lhs: Expr::FnCall(
+                    Box::new(Expr::Ident("add".to_string())),
+                    vec![
+                        Expr::FnCall(
+                            Box::new(Expr::Ident("add".to_string())),
+                            vec![Expr::Ident("a".to_string()), Expr::Ident("b".to_string())],
+                        ),
+                        Expr::Ident("c".to_string()),
+                    ],
+                ),
+                rhs: Expr::FnCall(
+                    Box::new(Expr::Ident("add".to_string())),
+                    vec![
+                        Expr::Ident("a".to_string()),
+                        Expr::FnCall(
+                            Box::new(Expr::Ident("add".to_string())),
+                            vec![Expr::Ident("b".to_string()), Expr::Ident("c".to_string())],
+                        ),
+                    ],
+                ),
+            }),
+        }));
+        let out = transpile(&ctx);
+        let lean = out
+            .files
+            .iter()
+            .find_map(|(name, content)| (name == "Verify_mode.lean").then_some(content))
+            .expect("expected generated Lean file");
+        assert!(lean.contains(
+            "theorem add_law_associative : ∀ (a : Int) (b : Int) (c : Int), add (add a b) c = add a (add b c) := by"
+        ));
+        assert!(lean.contains("  intro a b c"));
+        assert!(lean.contains("  simp [add, Int.add_assoc]"));
+    }
+
+    #[test]
+    fn transpile_parenthesizes_negative_int_call_args_in_law_samples() {
+        let mut ctx = empty_ctx();
+        let add = FnDef {
+            name: "add".to_string(),
+            line: 1,
+            params: vec![
+                ("a".to_string(), "Int".to_string()),
+                ("b".to_string(), "Int".to_string()),
+            ],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::Expr(Expr::BinOp(
+                BinOp::Add,
+                Box::new(Expr::Ident("a".to_string())),
+                Box::new(Expr::Ident("b".to_string())),
+            ))),
+            resolution: None,
+        };
+        ctx.fn_defs.push(add.clone());
+        ctx.items.push(TopLevel::FnDef(add));
+        ctx.items.push(TopLevel::Verify(VerifyBlock {
+            fn_name: "add".to_string(),
+            line: 1,
+            cases: vec![(
+                Expr::FnCall(
+                    Box::new(Expr::Ident("add".to_string())),
+                    vec![
+                        Expr::Literal(Literal::Int(-2)),
+                        Expr::Literal(Literal::Int(-1)),
+                    ],
+                ),
+                Expr::FnCall(
+                    Box::new(Expr::Ident("add".to_string())),
+                    vec![
+                        Expr::Literal(Literal::Int(-1)),
+                        Expr::Literal(Literal::Int(-2)),
+                    ],
+                ),
+            )],
+            kind: VerifyKind::Law(VerifyLaw {
+                name: "commutative".to_string(),
+                givens: vec![
+                    VerifyGiven {
+                        name: "a".to_string(),
+                        type_name: "Int".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(-2))]),
+                    },
+                    VerifyGiven {
+                        name: "b".to_string(),
+                        type_name: "Int".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(-1))]),
+                    },
+                ],
+                lhs: Expr::FnCall(
+                    Box::new(Expr::Ident("add".to_string())),
+                    vec![Expr::Ident("a".to_string()), Expr::Ident("b".to_string())],
+                ),
+                rhs: Expr::FnCall(
+                    Box::new(Expr::Ident("add".to_string())),
+                    vec![Expr::Ident("b".to_string()), Expr::Ident("a".to_string())],
+                ),
+            }),
+        }));
+
+        let out = transpile(&ctx);
+        let lean = out
+            .files
+            .iter()
+            .find_map(|(name, content)| (name == "Verify_mode.lean").then_some(content))
+            .expect("expected generated Lean file");
+        assert!(lean.contains(
+            "theorem add_law_commutative_sample_1 : add (-2) (-1) = add (-1) (-2) := by native_decide"
+        ));
+    }
+
+    #[test]
     fn verify_law_numbering_is_scoped_per_law_name() {
         let mut ctx = empty_ctx();
+        let f = FnDef {
+            name: "f".to_string(),
+            line: 1,
+            params: vec![("x".to_string(), "Int".to_string())],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::Expr(Expr::Ident("x".to_string()))),
+            resolution: None,
+        };
+        ctx.fn_defs.push(f.clone());
+        ctx.items.push(TopLevel::FnDef(f));
         ctx.items.push(TopLevel::Verify(VerifyBlock {
             fn_name: "f".to_string(),
             line: 1,

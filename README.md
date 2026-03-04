@@ -181,10 +181,10 @@ aver format    path/to/file.av --check   # check formatting only (non-zero if ch
 aver compile   file.av -o out/           # transpile to a Rust project
 aver compile   file.av -t rust -o out/   # explicit target (rust is default)
 aver compile   file.av -t lean -o out/   # transpile pure core to a Lean 4 project (WIP)
-aver compile   file.av -t lean --lean-verify native-decide -o out/  # Lean verify via executable proofs
+aver compile   file.av -t lean --lean-verify auto -o out/           # Lean verify auto mode (native_decide + law auto-proofs)
 aver compile   file.av -t lean --lean-verify sorry -o out/          # Lean verify as obligations (`sorry`)
 aver compile   file.av -t lean --lean-verify theorem-skeleton -o out/ # named theorem stubs (`theorem ... := by sorry`)
-aver compile   file.av -t lean --lean-proof-mode -o out/            # fail fast on non-proof Lean features
+aver compile   file.av -t lean --lean-proof-mode -o out/            # fail fast on non-proof Lean features (requires --lean-verify auto)
 aver context   file.av                   # export project context (Markdown)
 aver context   file.av --json            # export project context (JSON)
 aver context   file.av --decisions-only        # decision blocks only (Markdown)
@@ -217,7 +217,11 @@ Lean transpilation emits a Lean 4 project (`lakefile.lean`, `lean-toolchain`, `<
 
 - Pure functions, types, and decisions are emitted.
 - Effectful functions and `main` are intentionally skipped.
-- `verify` blocks are exported as Lean `example ... := by sorry` obligations.
+- `verify` blocks are exported as Lean proof obligations (default `--lean-verify auto`, which emits `example ... := by native_decide` for standard cases; configurable via `--lean-verify`).
+- `verify ... law ...` emits:
+  - universal theorem skeleton (`theorem ... : ∀ ..., lhs = rhs := by ...`)
+  - sample theorems from `given` domains (`theorem ..._sample_n := by native_decide`)
+- Universal law theorem gets conservative auto-proofs for simple cases (reflexive and selected `Int` `+/*` laws); otherwise it falls back to `sorry`.
 - Lean codegen now fails fast on unresolved internals:
   - `Expr::Resolved` in codegen input → hard error
   - `Type::Unknown` in codegen input → hard error

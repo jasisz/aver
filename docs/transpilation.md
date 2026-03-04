@@ -25,7 +25,7 @@ Options:
   -t, --target <TARGET>       Transpilation target (default: rust)
       --name <NAME>           Project/binary name (default: derived from file)
       --module-root <PATH>    Module resolution root (default: cwd)
-      --lean-verify <MODE>    Lean verify emission: native-decide | sorry | theorem-skeleton
+      --lean-verify <MODE>    Lean verify emission: auto | sorry | theorem-skeleton
       --lean-proof-mode       Lean-only fail-fast gate for proof-unsafe constructs
 ```
 
@@ -140,9 +140,18 @@ cd /tmp/fib-lean && lake build
 - Transpiles pure core logic (types + pure functions + decisions).
 - Skips effectful functions and `main`.
 - Emits `verify` blocks as Lean proof obligations:
-  - default: `example : <lhs> = <rhs> := by native_decide`
+  - default (`--lean-verify auto`): `example : <lhs> = <rhs> := by native_decide`
   - optional fallback: `--lean-verify sorry` → `example : <lhs> = <rhs> := by sorry`
   - theorem stubs: `--lean-verify theorem-skeleton` → named `theorem ... := by sorry`
+  - `verify ... law ...` emits both:
+    - universal theorem skeleton: `theorem <fn>_law_<name> : ∀ ..., lhs = rhs := by ...`
+    - expanded sample theorems from `given` domains: `theorem ..._sample_n := by native_decide`
+  - conservative auto-proofs for universal law theorem (when `--lean-verify auto`):
+    - reflexive law shape (`lhs` and `rhs` syntactically identical) → `rfl`
+    - commutative law on simple `Int` binary wrappers (`a + b`, `a * b`)
+    - associative law on same wrapper shape (`f(f(a,b),c) = f(a,f(b,c))`)
+    - identity law on same wrapper shape (`f(a,0)=a`, `f(0,a)=a`, `f(a,1)=a`, `f(1,a)=a`)
+  - all other `verify law` cases fall back to `sorry` in the universal theorem, while sample theorems still run.
 - Optional strict gate: `--lean-proof-mode`
   - accepts only supported recursion schemes for total Lean emission:
     - single-function `Int` countdown on first parameter (`n -> n - 1`)
@@ -161,7 +170,7 @@ Lean codegen does not silently mask unresolved compiler internals:
 - `Type::Unknown` in codegen input is a hard codegen error.
 - `sorry` can be emitted only when explicitly requested (`--lean-verify sorry`), and is not used as fallback for internal compiler states.
 - `--lean-proof-mode` rejects unsupported recursion patterns before files are generated.
-- `--lean-proof-mode` requires `--lean-verify native-decide` (rejects `sorry` and `theorem-skeleton`).
+- `--lean-proof-mode` requires `--lean-verify auto` (rejects `sorry` and `theorem-skeleton`).
 
 ## Adding a new target
 

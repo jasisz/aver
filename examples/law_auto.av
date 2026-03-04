@@ -1,0 +1,67 @@
+module LawAuto
+    intent =
+        "Demonstrates verify law with Lean auto verification mode."
+        "Shows auto-proven universal laws and one sampled-only fallback law."
+
+fn id(x: Int) -> Int
+    ? "Identity helper used for reflexive law demo."
+    = x
+
+verify id law reflexive
+    given x: Int = -2..2
+    x => x
+
+fn add(a: Int, b: Int) -> Int
+    ? "Integer addition wrapper for law proofs."
+    = a + b
+
+verify add law commutative
+    given a: Int = -2..2
+    given b: Int = -2..2
+    add(a, b) => add(b, a)
+
+verify add law associative
+    given a: Int = -1..1
+    given b: Int = -1..1
+    given c: Int = -1..1
+    add(add(a, b), c) => add(a, add(b, c))
+
+verify add law identityZero
+    given a: Int = -3..3
+    add(a, 0) => a
+
+fn mul(a: Int, b: Int) -> Int
+    ? "Integer multiplication wrapper for law proofs."
+    = a * b
+
+verify mul law commutative
+    given a: Int = -2..2
+    given b: Int = -2..2
+    mul(a, b) => mul(b, a)
+
+verify mul law associative
+    given a: Int = -1..1
+    given b: Int = -1..1
+    given c: Int = -1..1
+    mul(mul(a, b), c) => mul(a, mul(b, c))
+
+verify mul law identityOne
+    given a: Int = -3..3
+    mul(a, 1) => a
+
+fn incCount(counts: Map<String, Int>, word: String) -> Map<String, Int>
+    ? "Increment one word count in a map."
+    current = Map.get(counts, word)
+    match current
+        Option.Some(n) -> Map.set(counts, word, n + 1)
+        Option.None -> Map.set(counts, word, 1)
+
+verify incCount law keyPresent
+    given counts: Map<String, Int> = [Map.empty(), {"a" => 1}, {"x" => 2, "y" => 4}]
+    given word: String = ["a", "z", "new"]
+    Map.has(incCount(counts, word), word) => true
+
+fn main() -> Unit
+    ! [Console]
+    Console.print("LawAuto: run `aver verify examples/law_auto.av`")
+    Console.print("LawAuto: compile with `aver compile examples/law_auto.av -t lean --lean-verify auto`")

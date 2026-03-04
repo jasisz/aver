@@ -480,7 +480,8 @@ pub(super) fn cmd_compile(
             {
                 eprintln!(
                     "{}",
-                    "Lean proof mode requires --lean-verify native-decide (not sorry/theorem-skeleton).".red()
+                    "Lean proof mode requires --lean-verify auto (not sorry/theorem-skeleton)."
+                        .red()
                 );
                 process::exit(1);
             }
@@ -497,9 +498,7 @@ pub(super) fn cmd_compile(
             }
 
             let verify_mode = match lean_verify {
-                super::cli::LeanVerifyMode::NativeDecide => {
-                    lean_codegen::VerifyEmitMode::NativeDecide
-                }
+                super::cli::LeanVerifyMode::Auto => lean_codegen::VerifyEmitMode::NativeDecide,
                 super::cli::LeanVerifyMode::Sorry => lean_codegen::VerifyEmitMode::Sorry,
                 super::cli::LeanVerifyMode::TheoremSkeleton => {
                     lean_codegen::VerifyEmitMode::TheoremSkeleton
