@@ -5,6 +5,7 @@ use crate::ast::*;
 use crate::codegen::CodegenContext;
 /// Top-level Aver items → Rust items (structs, enums, functions, tests).
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
 /// Emit a Rust struct or enum from an Aver TypeDef.
 pub fn emit_type_def(td: &TypeDef) -> String {
@@ -15,14 +16,12 @@ pub fn emit_type_def(td: &TypeDef) -> String {
 }
 
 fn emit_sum_type(name: &str, variants: &[TypeVariant]) -> String {
-    let mut lines = Vec::new();
-    lines.push(format!(
-        "#[derive(Clone, Debug, PartialEq)]\nenum {} {{",
-        name
-    ));
+    let mut out = String::new();
+    writeln!(out, "#[derive(Clone, Debug, PartialEq)]").unwrap();
+    writeln!(out, "enum {} {{", name).unwrap();
     for v in variants {
         if v.fields.is_empty() {
-            lines.push(format!("    {},", v.name));
+            writeln!(out, "    {},", v.name).unwrap();
         } else {
             let field_types: Vec<String> = v
                 .fields
@@ -36,65 +35,73 @@ fn emit_sum_type(name: &str, variants: &[TypeVariant]) -> String {
                     }
                 })
                 .collect();
-            lines.push(format!("    {}({}),", v.name, field_types.join(", ")));
+            writeln!(out, "    {}({}),", v.name, field_types.join(", ")).unwrap();
         }
     }
-    lines.push("}".to_string());
+    writeln!(out, "}}").unwrap();
 
     // Generate AverDisplay impl
-    lines.push(String::new());
-    lines.push(format!("impl aver_rt::AverDisplay for {} {{", name));
-    lines.push("    fn aver_display(&self) -> String {".to_string());
-    lines.push("        match self {".to_string());
+    writeln!(out).unwrap();
+    writeln!(out, "impl aver_rt::AverDisplay for {} {{", name).unwrap();
+    writeln!(out, "    fn aver_display(&self) -> String {{").unwrap();
+    writeln!(out, "        match self {{").unwrap();
     for v in variants {
         if v.fields.is_empty() {
-            lines.push(format!(
+            writeln!(
+                out,
                 "            {}::{} => \"{}\".to_string(),",
                 name, v.name, v.name
-            ));
+            )
+            .unwrap();
         } else {
             let bindings: Vec<String> = (0..v.fields.len()).map(|i| format!("f{}", i)).collect();
             let display_parts: Vec<String> = bindings
                 .iter()
                 .map(|b| format!("{}.aver_display_inner()", b))
                 .collect();
-            lines.push(format!(
+            writeln!(
+                out,
                 "            {}::{}({}) => format!(\"{}({{}})\", vec![{}].join(\", \")),",
                 name,
                 v.name,
                 bindings.join(", "),
                 v.name,
                 display_parts.join(", ")
-            ));
+            )
+            .unwrap();
         }
     }
-    lines.push("        }".to_string());
-    lines.push("    }".to_string());
-    lines.push("    fn aver_display_inner(&self) -> String { self.aver_display() }".to_string());
-    lines.push("}".to_string());
+    writeln!(out, "        }}").unwrap();
+    writeln!(out, "    }}").unwrap();
+    writeln!(
+        out,
+        "    fn aver_display_inner(&self) -> String {{ self.aver_display() }}"
+    )
+    .unwrap();
+    writeln!(out, "}}").unwrap();
 
-    lines.join("\n")
+    out.trim_end().to_string()
 }
 
 fn emit_product_type(name: &str, fields: &[(String, String)]) -> String {
-    let mut lines = Vec::new();
-    lines.push(format!(
-        "#[derive(Clone, Debug, PartialEq)]\nstruct {} {{",
-        name
-    ));
+    let mut out = String::new();
+    writeln!(out, "#[derive(Clone, Debug, PartialEq)]").unwrap();
+    writeln!(out, "struct {} {{", name).unwrap();
     for (field_name, field_type) in fields {
-        lines.push(format!(
+        writeln!(
+            out,
             "    {}: {},",
             aver_name_to_rust(field_name),
             type_annotation_to_rust(field_type)
-        ));
+        )
+        .unwrap();
     }
-    lines.push("}".to_string());
+    writeln!(out, "}}").unwrap();
 
     // Generate AverDisplay impl
-    lines.push(String::new());
-    lines.push(format!("impl aver_rt::AverDisplay for {} {{", name));
-    lines.push("    fn aver_display(&self) -> String {".to_string());
+    writeln!(out).unwrap();
+    writeln!(out, "impl aver_rt::AverDisplay for {} {{", name).unwrap();
+    writeln!(out, "    fn aver_display(&self) -> String {{").unwrap();
     let parts: Vec<String> = fields
         .iter()
         .map(|(field_name, _)| {
@@ -105,16 +112,22 @@ fn emit_product_type(name: &str, fields: &[(String, String)]) -> String {
             )
         })
         .collect();
-    lines.push(format!(
+    writeln!(
+        out,
         "        format!(\"{}({{}})\", vec![{}].join(\", \"))",
         name,
         parts.join(", ")
-    ));
-    lines.push("    }".to_string());
-    lines.push("    fn aver_display_inner(&self) -> String { self.aver_display() }".to_string());
-    lines.push("}".to_string());
+    )
+    .unwrap();
+    writeln!(out, "    }}").unwrap();
+    writeln!(
+        out,
+        "    fn aver_display_inner(&self) -> String {{ self.aver_display() }}"
+    )
+    .unwrap();
+    writeln!(out, "}}").unwrap();
 
-    lines.join("\n")
+    out.trim_end().to_string()
 }
 
 /// Build an EmitCtx for a function from its parameter types in fn_sigs.
@@ -487,34 +500,43 @@ fn emit_memo_fn(
 
     let params = emit_fn_params(&fd.params, false);
 
-    let mut lines = Vec::new();
-
-    lines.push(format!(
-        "thread_local! {{\n    static {}: std::cell::RefCell<HashMap<{}, {}>> = std::cell::RefCell::new(HashMap::new());\n}}",
+    let mut out = String::new();
+    writeln!(out, "thread_local! {{").unwrap();
+    writeln!(
+        out,
+        "    static {}: std::cell::RefCell<HashMap<{}, {}>> = std::cell::RefCell::new(HashMap::new());",
         cache_name, key_type, ret_type
-    ));
-    lines.push(String::new());
-    lines.push(format!("fn {}({}) -> {} {{", fn_name, params, ret_type));
-    lines.push(format!("    {}.with(|cache| {{", cache_name));
-    lines.push(format!(
+    )
+    .unwrap();
+    writeln!(out, "}}").unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "fn {}({}) -> {} {{", fn_name, params, ret_type).unwrap();
+    writeln!(out, "    {}.with(|cache| {{", cache_name).unwrap();
+    writeln!(
+        out,
         "        if let Some(r) = cache.borrow().get(&{}).cloned() {{ return r; }}",
         key_expr
-    ));
+    )
+    .unwrap();
 
     // Emit the actual body
-    lines.push(format!(
+    writeln!(
+        out,
         "        let __result = {{ {} }};",
         emit_memo_inner_body(&fd.body, ctx, ectx)
-    ));
-    lines.push(format!(
+    )
+    .unwrap();
+    writeln!(
+        out,
         "        cache.borrow_mut().insert({}, __result.clone());",
         key_expr
-    ));
-    lines.push("        __result".to_string());
-    lines.push("    })".to_string());
-    lines.push("}".to_string());
+    )
+    .unwrap();
+    writeln!(out, "        __result").unwrap();
+    writeln!(out, "    }})").unwrap();
+    writeln!(out, "}}").unwrap();
 
-    lines.join("\n")
+    out.trim_end().to_string()
 }
 
 fn emit_memo_inner_body(body: &FnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
@@ -544,7 +566,7 @@ fn emit_memo_inner_body(body: &FnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> 
 
 /// Emit the main function, incorporating top-level statements.
 pub fn emit_main(main_fn: Option<&FnDef>, top_stmts: &[&Stmt], ctx: &CodegenContext) -> String {
-    let mut lines = Vec::new();
+    let mut out = String::new();
     let ectx = EmitCtx::empty();
 
     // Check if main returns a Result (needed for ? operator support)
@@ -552,14 +574,14 @@ pub fn emit_main(main_fn: Option<&FnDef>, top_stmts: &[&Stmt], ctx: &CodegenCont
 
     if returns_result {
         let ret_type = type_annotation_to_rust(&main_fn.unwrap().return_type);
-        lines.push(format!("fn main() -> {} {{", ret_type));
+        writeln!(out, "fn main() -> {} {{", ret_type).unwrap();
     } else {
-        lines.push("fn main() {".to_string());
+        writeln!(out, "fn main() {{").unwrap();
     }
 
     // Top-level statements first
     for stmt in top_stmts {
-        lines.push(format!("    {}", emit_stmt(stmt, ctx, &ectx)));
+        writeln!(out, "    {}", emit_stmt(stmt, ctx, &ectx)).unwrap();
     }
 
     // Main function body
@@ -568,9 +590,9 @@ pub fn emit_main(main_fn: Option<&FnDef>, top_stmts: &[&Stmt], ctx: &CodegenCont
         match &*fd.body {
             FnBody::Expr(expr) => {
                 if returns_result {
-                    lines.push(format!("    {}", emit_expr(expr, ctx, &main_ectx)));
+                    writeln!(out, "    {}", emit_expr(expr, ctx, &main_ectx)).unwrap();
                 } else {
-                    lines.push(format!("    {};", emit_expr(expr, ctx, &main_ectx)));
+                    writeln!(out, "    {};", emit_expr(expr, ctx, &main_ectx)).unwrap();
                 }
             }
             FnBody::Block(stmts) => {
@@ -583,33 +605,33 @@ pub fn emit_main(main_fn: Option<&FnDef>, top_stmts: &[&Stmt], ctx: &CodegenCont
                         // Last expression is the return value
                         match stmt {
                             Stmt::Binding(_, _, _) => {
-                                lines.push(format!("    {}", emit_stmt(stmt, ctx, sctx)));
+                                writeln!(out, "    {}", emit_stmt(stmt, ctx, sctx)).unwrap();
                             }
                             Stmt::Expr(expr) => {
-                                lines.push(format!("    {}", emit_expr(expr, ctx, sctx)));
+                                writeln!(out, "    {}", emit_expr(expr, ctx, sctx)).unwrap();
                             }
                         }
                     } else {
-                        lines.push(format!("    {}", emit_stmt(stmt, ctx, sctx)));
+                        writeln!(out, "    {}", emit_stmt(stmt, ctx, sctx)).unwrap();
                     }
                 }
             }
         }
     }
 
-    lines.push("}".to_string());
-    lines.join("\n")
+    writeln!(out, "}}").unwrap();
+    out.trim_end().to_string()
 }
 
 /// Emit verify blocks as Rust #[cfg(test)] module.
 pub fn emit_verify_blocks(verify_blocks: &[&VerifyBlock], ctx: &CodegenContext) -> String {
-    let mut lines = Vec::new();
+    let mut out = String::new();
     let ectx = EmitCtx::empty();
 
-    lines.push("#[cfg(test)]".to_string());
-    lines.push("mod tests {".to_string());
-    lines.push("    use super::*;".to_string());
-    lines.push(String::new());
+    writeln!(out, "#[cfg(test)]").unwrap();
+    writeln!(out, "mod tests {{").unwrap();
+    writeln!(out, "    use super::*;").unwrap();
+    writeln!(out).unwrap();
 
     // Use per-function counters to handle multiple verify blocks for the same function
     let mut fn_counters: std::collections::HashMap<String, usize> =
@@ -626,20 +648,20 @@ pub fn emit_verify_blocks(verify_blocks: &[&VerifyBlock], ctx: &CodegenContext) 
             // Check if either side uses `?` operator
             let uses_error_prop = expr_uses_error_prop(left) || expr_uses_error_prop(right);
 
-            lines.push("    #[test]".to_string());
+            writeln!(out, "    #[test]").unwrap();
             if uses_error_prop {
-                lines.push(format!("    fn {}() -> Result<(), String> {{", test_name));
-                lines.push(format!("        assert_eq!({}, {});", left_str, right_str));
-                lines.push("        Ok(())".to_string());
+                writeln!(out, "    fn {}() -> Result<(), String> {{", test_name).unwrap();
+                writeln!(out, "        assert_eq!({}, {});", left_str, right_str).unwrap();
+                writeln!(out, "        Ok(())").unwrap();
             } else {
-                lines.push(format!("    fn {}() {{", test_name));
-                lines.push(format!("        assert_eq!({}, {});", left_str, right_str));
+                writeln!(out, "    fn {}() {{", test_name).unwrap();
+                writeln!(out, "        assert_eq!({}, {});", left_str, right_str).unwrap();
             }
-            lines.push("    }".to_string());
-            lines.push(String::new());
+            writeln!(out, "    }}").unwrap();
+            writeln!(out).unwrap();
         }
     }
 
-    lines.push("}".to_string());
-    lines.join("\n")
+    writeln!(out, "}}").unwrap();
+    out.trim_end().to_string()
 }
