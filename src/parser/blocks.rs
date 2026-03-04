@@ -70,56 +70,72 @@ impl Parser {
             self.skip_newlines();
 
             while !self.is_dedent() && !self.is_eof() {
-                match self.current().kind.clone() {
-                    TokenKind::Newline => {
-                        self.advance();
-                    }
-                    TokenKind::Date => {
-                        self.advance();
-                        self.expect_exact(&TokenKind::Assign)?;
+                if self.is_newline() {
+                    self.advance();
+                    continue;
+                }
+
+                let field_tok = self.expect_kind(
+                    &TokenKind::Ident(String::new()),
+                    "Expected decision field name",
+                )?;
+                let field_name = match field_tok.kind {
+                    TokenKind::Ident(s) => s,
+                    _ => unreachable!(),
+                };
+
+                self.expect_exact(&TokenKind::Assign)?;
+                match field_name.as_str() {
+                    "date" => {
                         if let TokenKind::Str(s) = self.current().kind.clone() {
                             date = s;
                             self.advance();
+                        } else {
+                            return Err(
+                                self.error("Expected string value for decision 'date'".to_string())
+                            );
                         }
                         self.skip_newlines();
                     }
-                    TokenKind::Reason => {
-                        self.advance();
-                        self.expect_exact(&TokenKind::Assign)?;
+                    "reason" => {
                         self.skip_newlines();
                         reason = self.parse_multiline_text()?;
                     }
-                    TokenKind::Chosen => {
-                        self.advance();
-                        self.expect_exact(&TokenKind::Assign)?;
+                    "chosen" => {
                         if let TokenKind::Ident(s) = self.current().kind.clone() {
                             chosen = s;
                             self.advance();
+                        } else {
+                            return Err(self.error(
+                                "Expected identifier value for decision 'chosen'".to_string(),
+                            ));
                         }
                         self.skip_newlines();
                     }
-                    TokenKind::Rejected => {
-                        self.advance();
-                        self.expect_exact(&TokenKind::Assign)?;
+                    "rejected" => {
                         rejected = self.parse_ident_list()?;
                         self.skip_newlines();
                     }
-                    TokenKind::Impacts => {
-                        self.advance();
-                        self.expect_exact(&TokenKind::Assign)?;
+                    "impacts" => {
                         impacts = self.parse_ident_list()?;
                         self.skip_newlines();
                     }
-                    TokenKind::Author => {
-                        self.advance();
-                        self.expect_exact(&TokenKind::Assign)?;
+                    "author" => {
                         if let TokenKind::Str(s) = self.current().kind.clone() {
                             author = Some(s);
                             self.advance();
+                        } else {
+                            return Err(self
+                                .error("Expected string value for decision 'author'".to_string()));
                         }
                         self.skip_newlines();
                     }
-                    _ => break,
+                    _ => {
+                        return Err(self.error(format!(
+                            "Unknown decision field '{}'. Allowed: date, reason, chosen, rejected, impacts, author",
+                            field_name
+                        )));
+                    }
                 }
             }
 

@@ -2,7 +2,8 @@ use colored::Colorize;
 
 use crate::ast::{DecisionBlock, Expr, FnBody, FnDef, Stmt, TopLevel, VerifyBlock};
 use crate::interpreter::{Interpreter, aver_repr};
-use crate::value::RuntimeError;
+use crate::types::{Type, parse_type_str_strict};
+use crate::value::{RuntimeError, Value};
 
 pub struct VerifyResult {
     #[allow(dead_code)]
@@ -18,10 +19,332 @@ pub struct ModuleCheckFindings {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum VerifyOutputShape {
+    BoolTrue,
+    BoolFalse,
+    Some,
+    None,
+    Ok,
+    Err,
+    Variant(String),
+}
+
+impl VerifyOutputShape {
+    fn display(&self) -> String {
+        match self {
+            VerifyOutputShape::BoolTrue => "true".to_string(),
+            VerifyOutputShape::BoolFalse => "false".to_string(),
+            VerifyOutputShape::Some => "Option.Some".to_string(),
+            VerifyOutputShape::None => "Option.None".to_string(),
+            VerifyOutputShape::Ok => "Result.Ok".to_string(),
+            VerifyOutputShape::Err => "Result.Err".to_string(),
+            VerifyOutputShape::Variant(name) => name.clone(),
+        }
+    }
+}
+
+struct VerifyShapeContract {
+    return_type: Type,
+    expected: Vec<VerifyOutputShape>,
+    seen: std::collections::HashSet<VerifyOutputShape>,
+}
+
+impl VerifyShapeContract {
+    fn observe(&mut self, value: &Value) {
+        if let Some(shape) = observed_output_shape_for_type(&self.return_type, value) {
+            self.seen.insert(shape);
+        }
+    }
+
+    fn observe_shape(&mut self, shape: VerifyOutputShape) {
+        self.seen.insert(shape);
+    }
+
+    fn missing(&self) -> Vec<VerifyOutputShape> {
+        self.expected
+            .iter()
+            .filter(|shape| !self.seen.contains(*shape))
+            .cloned()
+            .collect()
+    }
+}
+
+fn build_verify_shape_contract(
+    block: &VerifyBlock,
+    interp: &Interpreter,
+) -> Option<VerifyShapeContract> {
+    let fn_val = interp.lookup(&block.fn_name).ok()?;
+    let Value::Fn {
+        return_type, body, ..
+    } = fn_val
+    else {
+        return None;
+    };
+    let ret_ty = parse_type_str_strict(&return_type).ok()?;
+
+    let all_shapes = expected_output_shapes_for_type(&ret_ty, interp)?;
+    let mut declared_shapes = std::collections::HashSet::new();
+    collect_declared_output_shapes_from_body(body.as_ref(), &ret_ty, &mut declared_shapes);
+    let expected: Vec<VerifyOutputShape> = all_shapes
+        .into_iter()
+        .filter(|shape| declared_shapes.contains(shape))
+        .collect();
+    if expected.len() < 2 {
+        return None;
+    }
+
+    Some(VerifyShapeContract {
+        return_type: ret_ty,
+        expected,
+        seen: std::collections::HashSet::new(),
+    })
+}
+
+fn expected_output_shapes_for_type(
+    ty: &Type,
+    interp: &Interpreter,
+) -> Option<Vec<VerifyOutputShape>> {
+    match ty {
+        Type::Bool => Some(vec![
+            VerifyOutputShape::BoolTrue,
+            VerifyOutputShape::BoolFalse,
+        ]),
+        Type::Option(_) => Some(vec![VerifyOutputShape::Some, VerifyOutputShape::None]),
+        Type::Result(_, _) => Some(vec![VerifyOutputShape::Ok, VerifyOutputShape::Err]),
+        Type::Named(type_name) => {
+            let ns = interp.lookup(type_name).ok()?;
+            let Value::Namespace { members, .. } = ns else {
+                return None;
+            };
+
+            let ctor_prefix = format!("__ctor:{}:", type_name);
+            let mut variants = std::collections::BTreeSet::new();
+
+            for (member_name, member_value) in members {
+                match member_value {
+                    Value::Variant { type_name: t, .. } if t == type_name.as_str() => {
+                        variants.insert(member_name);
+                    }
+                    Value::Builtin(builtin_name) if builtin_name.starts_with(&ctor_prefix) => {
+                        variants.insert(member_name);
+                    }
+                    _ => {}
+                }
+            }
+
+            if variants.is_empty() {
+                return None;
+            }
+
+            Some(
+                variants
+                    .into_iter()
+                    .map(VerifyOutputShape::Variant)
+                    .collect(),
+            )
+        }
+        _ => None,
+    }
+}
+
+fn observed_output_shape_for_type(ty: &Type, value: &Value) -> Option<VerifyOutputShape> {
+    match ty {
+        Type::Bool => match value {
+            Value::Bool(true) => Some(VerifyOutputShape::BoolTrue),
+            Value::Bool(false) => Some(VerifyOutputShape::BoolFalse),
+            _ => None,
+        },
+        Type::Option(_) => match value {
+            Value::Some(_) => Some(VerifyOutputShape::Some),
+            Value::None => Some(VerifyOutputShape::None),
+            _ => None,
+        },
+        Type::Result(_, _) => match value {
+            Value::Ok(_) => Some(VerifyOutputShape::Ok),
+            Value::Err(_) => Some(VerifyOutputShape::Err),
+            _ => None,
+        },
+        Type::Named(type_name) => match value {
+            Value::Variant {
+                type_name: actual_type,
+                variant,
+                ..
+            } if actual_type == type_name => Some(VerifyOutputShape::Variant(variant.clone())),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn collect_declared_output_shapes_from_body(
+    body: &FnBody,
+    ret_ty: &Type,
+    out: &mut std::collections::HashSet<VerifyOutputShape>,
+) {
+    match body {
+        FnBody::Expr(expr) => collect_declared_output_shapes_from_tail_expr(expr, ret_ty, out),
+        FnBody::Block(stmts) => {
+            if let Some(last) = stmts.last() {
+                match last {
+                    Stmt::Expr(expr) => {
+                        collect_declared_output_shapes_from_tail_expr(expr, ret_ty, out)
+                    }
+                    Stmt::Binding(_, _, _) => {}
+                }
+            }
+        }
+    }
+}
+
+fn collect_declared_output_shapes_from_tail_expr(
+    expr: &Expr,
+    ret_ty: &Type,
+    out: &mut std::collections::HashSet<VerifyOutputShape>,
+) {
+    match expr {
+        Expr::Match { arms, .. } => {
+            for arm in arms {
+                collect_declared_output_shapes_from_tail_expr(&arm.body, ret_ty, out);
+            }
+        }
+        _ => {
+            if let Some(shape) = declared_output_shape_from_expr(ret_ty, expr) {
+                out.insert(shape);
+            }
+        }
+    }
+}
+
+fn declared_output_shape_from_expr(ret_ty: &Type, expr: &Expr) -> Option<VerifyOutputShape> {
+    match ret_ty {
+        Type::Bool => match expr {
+            Expr::Literal(crate::ast::Literal::Bool(true)) => Some(VerifyOutputShape::BoolTrue),
+            Expr::Literal(crate::ast::Literal::Bool(false)) => Some(VerifyOutputShape::BoolFalse),
+            _ => None,
+        },
+        Type::Option(_) => match expr {
+            Expr::FnCall(callee, _) => match dotted_name(callee) {
+                Some(path) if path == "Option.Some" => Some(VerifyOutputShape::Some),
+                _ => None,
+            },
+            _ => match dotted_name(expr) {
+                Some(path) if path == "Option.None" => Some(VerifyOutputShape::None),
+                _ => None,
+            },
+        },
+        Type::Result(_, _) => match expr {
+            Expr::FnCall(callee, _) => match dotted_name(callee) {
+                Some(path) if path == "Result.Ok" => Some(VerifyOutputShape::Ok),
+                Some(path) if path == "Result.Err" => Some(VerifyOutputShape::Err),
+                _ => None,
+            },
+            _ => None,
+        },
+        Type::Named(type_name) => {
+            let prefix = format!("{}.", type_name);
+            match expr {
+                Expr::Attr(_, _) => {
+                    let path = dotted_name(expr)?;
+                    let variant = path.strip_prefix(&prefix)?;
+                    if variant.is_empty() {
+                        None
+                    } else {
+                        Some(VerifyOutputShape::Variant(variant.to_string()))
+                    }
+                }
+                Expr::FnCall(callee, _) => {
+                    let path = dotted_name(callee)?;
+                    let variant = path.strip_prefix(&prefix)?;
+                    if variant.is_empty() {
+                        None
+                    } else {
+                        Some(VerifyOutputShape::Variant(variant.to_string()))
+                    }
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn dotted_name(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Ident(name) => Some(name.clone()),
+        Expr::Attr(base, field) => {
+            let mut prefix = dotted_name(base)?;
+            prefix.push('.');
+            prefix.push_str(field);
+            Some(prefix)
+        }
+        _ => None,
+    }
+}
+
+fn verify_case_uses_error_prop_on_target(expr: &Expr, fn_name: &str) -> bool {
+    match expr {
+        Expr::ErrorProp(inner) => {
+            verify_case_calls_target(inner, fn_name)
+                || verify_case_uses_error_prop_on_target(inner, fn_name)
+        }
+        Expr::FnCall(callee, args) => {
+            verify_case_uses_error_prop_on_target(callee, fn_name)
+                || args
+                    .iter()
+                    .any(|arg| verify_case_uses_error_prop_on_target(arg, fn_name))
+        }
+        Expr::Pipe(left, right) | Expr::BinOp(_, left, right) => {
+            verify_case_uses_error_prop_on_target(left, fn_name)
+                || verify_case_uses_error_prop_on_target(right, fn_name)
+        }
+        Expr::Match { subject, arms, .. } => {
+            verify_case_uses_error_prop_on_target(subject, fn_name)
+                || arms
+                    .iter()
+                    .any(|arm| verify_case_uses_error_prop_on_target(&arm.body, fn_name))
+        }
+        Expr::Constructor(_, Some(inner)) => verify_case_uses_error_prop_on_target(inner, fn_name),
+        Expr::List(elems) => elems
+            .iter()
+            .any(|elem| verify_case_uses_error_prop_on_target(elem, fn_name)),
+        Expr::Tuple(items) => items
+            .iter()
+            .any(|item| verify_case_uses_error_prop_on_target(item, fn_name)),
+        Expr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
+            verify_case_uses_error_prop_on_target(k, fn_name)
+                || verify_case_uses_error_prop_on_target(v, fn_name)
+        }),
+        Expr::Attr(obj, _) => verify_case_uses_error_prop_on_target(obj, fn_name),
+        Expr::RecordCreate { fields, .. } => fields
+            .iter()
+            .any(|(_, expr)| verify_case_uses_error_prop_on_target(expr, fn_name)),
+        Expr::RecordUpdate { base, updates, .. } => {
+            verify_case_uses_error_prop_on_target(base, fn_name)
+                || updates
+                    .iter()
+                    .any(|(_, expr)| verify_case_uses_error_prop_on_target(expr, fn_name))
+        }
+        Expr::TailCall(boxed) => {
+            boxed.0 == fn_name
+                || boxed
+                    .1
+                    .iter()
+                    .any(|arg| verify_case_uses_error_prop_on_target(arg, fn_name))
+        }
+        Expr::Literal(_)
+        | Expr::Ident(_)
+        | Expr::InterpolatedStr(_)
+        | Expr::Resolved(_)
+        | Expr::Constructor(_, None) => false,
+    }
+}
+
 pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult {
     let mut passed = 0;
     let mut failed = 0;
     let mut failures = Vec::new();
+    let mut shape_contract = build_verify_shape_contract(block, interp);
 
     println!("Verify: {}", block.fn_name.cyan());
     interp.start_verify_match_coverage(&block.fn_name);
@@ -31,6 +354,25 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
 
         let left_result = interp.eval_expr(left_expr);
         let right_result = interp.eval_expr(right_expr);
+
+        if let Ok(left_val) = &left_result {
+            if let Some(contract) = shape_contract.as_mut() {
+                contract.observe(left_val);
+            }
+        }
+        if verify_case_uses_error_prop_on_target(left_expr, &block.fn_name) {
+            if let Some(contract) = shape_contract.as_mut() {
+                if matches!(contract.return_type, Type::Result(_, _)) {
+                    match &left_result {
+                        Ok(_) => contract.observe_shape(VerifyOutputShape::Ok),
+                        Err(RuntimeError::ErrProp(_)) => {
+                            contract.observe_shape(VerifyOutputShape::Err)
+                        }
+                        Err(_) => {}
+                    }
+                }
+            }
+        }
 
         match (left_result, right_result) {
             (Ok(left_val), Ok(right_val)) => {
@@ -87,6 +429,31 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
             format!("all {} arms covered", miss.total_arms),
             msg,
         ));
+    }
+
+    if let Some(contract) = shape_contract {
+        let missing = contract.missing();
+        if !missing.is_empty() {
+            failed += 1;
+            let missing_labels: Vec<String> =
+                missing.iter().map(VerifyOutputShape::display).collect();
+            let expected_labels: Vec<String> = contract
+                .expected
+                .iter()
+                .map(VerifyOutputShape::display)
+                .collect();
+            let msg = format!(
+                "missing output shape(s) for {}: {}",
+                contract.return_type.display(),
+                missing_labels.join(", ")
+            );
+            println!("  {} {}", "✗".red(), msg);
+            failures.push((
+                format!("shape-coverage:{}", block.fn_name),
+                format!("covered output shapes: {}", expected_labels.join(", ")),
+                msg,
+            ));
+        }
     }
 
     let total = passed + failed;

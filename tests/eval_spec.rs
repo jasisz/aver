@@ -2208,6 +2208,172 @@ verify classify
     }
 }
 
+#[test]
+fn verify_output_shape_does_not_require_unreachable_shapes() {
+    let src = r#"
+fn onlyOk(n: Int) -> Result<Int, String>
+    Result.Ok(n)
+
+verify onlyOk
+    onlyOk(7) => Result.Ok(7)
+"#;
+    let items = parse(src);
+    let mut interp = Interpreter::new();
+    for item in &items {
+        if let TopLevel::FnDef(fd) = item {
+            interp.exec_fn_def(fd).unwrap();
+        }
+    }
+    for item in &items {
+        if let TopLevel::Verify(vb) = item {
+            let result = aver::checker::run_verify(vb, &mut interp);
+            assert_eq!(result.passed, 1);
+            assert_eq!(result.failed, 0);
+        }
+    }
+}
+
+#[test]
+fn verify_output_shape_requires_all_declared_option_shapes() {
+    let src = r#"
+fn maybe(n: Int) -> Option<Int>
+    match n
+        0 -> Option.None
+        _ -> Option.Some(n)
+
+verify maybe
+    maybe(1) => Option.Some(1)
+"#;
+    let items = parse(src);
+    let mut interp = Interpreter::new();
+    for item in &items {
+        if let TopLevel::FnDef(fd) = item {
+            interp.exec_fn_def(fd).unwrap();
+        }
+    }
+    for item in &items {
+        if let TopLevel::Verify(vb) = item {
+            let result = aver::checker::run_verify(vb, &mut interp);
+            assert_eq!(result.passed, 1);
+            assert!(result.failed >= 1);
+            assert!(
+                result
+                    .failures
+                    .iter()
+                    .any(|(_, _, actual)| actual.contains("Option.None"))
+            );
+        }
+    }
+}
+
+#[test]
+fn verify_output_shape_requires_all_declared_result_shapes() {
+    let src = r#"
+fn mayFail(n: Int) -> Result<Int, String>
+    match n
+        0 -> Result.Err("zero")
+        _ -> Result.Ok(n)
+
+verify mayFail
+    mayFail(1) => Result.Ok(1)
+"#;
+    let items = parse(src);
+    let mut interp = Interpreter::new();
+    for item in &items {
+        if let TopLevel::FnDef(fd) = item {
+            interp.exec_fn_def(fd).unwrap();
+        }
+    }
+    for item in &items {
+        if let TopLevel::Verify(vb) = item {
+            let result = aver::checker::run_verify(vb, &mut interp);
+            assert_eq!(result.passed, 1);
+            assert!(result.failed >= 1);
+            assert!(
+                result
+                    .failures
+                    .iter()
+                    .any(|(_, _, actual)| actual.contains("Result.Err"))
+            );
+        }
+    }
+}
+
+#[test]
+fn verify_output_shape_requires_all_declared_bool_shapes() {
+    let src = r#"
+fn sign(n: Int) -> Bool
+    match n
+        0 -> true
+        _ -> false
+
+verify sign
+    sign(0) => true
+"#;
+    let items = parse(src);
+    let mut interp = Interpreter::new();
+    for item in &items {
+        if let TopLevel::FnDef(fd) = item {
+            interp.exec_fn_def(fd).unwrap();
+        }
+    }
+    for item in &items {
+        if let TopLevel::Verify(vb) = item {
+            let result = aver::checker::run_verify(vb, &mut interp);
+            assert_eq!(result.passed, 1);
+            assert!(result.failed >= 1);
+            assert!(
+                result
+                    .failures
+                    .iter()
+                    .any(|(_, _, actual)| actual.contains("false"))
+            );
+        }
+    }
+}
+
+#[test]
+fn verify_output_shape_requires_all_declared_variants_for_named_sum() {
+    let src = r#"
+type Mode
+    Fast
+    Safe
+
+fn chooseMode(n: Int) -> Mode
+    match n
+        0 -> Mode.Fast
+        _ -> Mode.Safe
+
+verify chooseMode
+    chooseMode(0) => Mode.Fast
+"#;
+    let items = parse(src);
+    let mut interp = Interpreter::new();
+    for item in &items {
+        if let TopLevel::TypeDef(td) = item {
+            interp.register_type_def(td);
+        }
+    }
+    for item in &items {
+        if let TopLevel::FnDef(fd) = item {
+            interp.exec_fn_def(fd).unwrap();
+        }
+    }
+    for item in &items {
+        if let TopLevel::Verify(vb) = item {
+            let result = aver::checker::run_verify(vb, &mut interp);
+            assert_eq!(result.passed, 1);
+            assert!(result.failed >= 1);
+            assert!(
+                result
+                    .failures
+                    .iter()
+                    .any(|(_, _, actual)| actual.contains("Safe"))
+            );
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Module runtime semantics
 // ---------------------------------------------------------------------------

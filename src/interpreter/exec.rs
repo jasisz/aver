@@ -70,6 +70,7 @@ impl Interpreter {
         let val = Value::Fn {
             name: fd.name.clone(),
             params: fd.params.clone(),
+            return_type: fd.return_type.clone(),
             effects: self.expand_effects(&fd.effects),
             body: Rc::clone(&fd.body),
             resolution: fd.resolution.clone(),

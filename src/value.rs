@@ -83,6 +83,7 @@ pub enum Value {
     Fn {
         name: String,
         params: Vec<(String, String)>,
+        return_type: String,
         effects: Vec<String>,
         body: Rc<FnBody>,
         /// Compile-time resolution metadata (slot layout for locals).
@@ -143,6 +144,7 @@ impl PartialEq for Value {
                 Value::Fn {
                     name: n1,
                     params: p1,
+                    return_type: r1,
                     effects: e1,
                     body: b1,
                     ..
@@ -150,11 +152,12 @@ impl PartialEq for Value {
                 Value::Fn {
                     name: n2,
                     params: p2,
+                    return_type: r2,
                     effects: e2,
                     body: b2,
                     ..
                 },
-            ) => n1 == n2 && p1 == p2 && e1 == e2 && b1 == b2,
+            ) => n1 == n2 && p1 == p2 && r1 == r2 && e1 == e2 && b1 == b2,
             (Value::Builtin(a), Value::Builtin(b)) => a == b,
             (
                 Value::Variant {
@@ -262,6 +265,7 @@ impl std::hash::Hash for Value {
             Value::Fn {
                 name,
                 params,
+                return_type,
                 effects,
                 body,
                 ..
@@ -269,6 +273,7 @@ impl std::hash::Hash for Value {
                 11u8.hash(state);
                 name.hash(state);
                 params.hash(state);
+                return_type.hash(state);
                 effects.hash(state);
                 format!("{:?}", body).hash(state);
             }

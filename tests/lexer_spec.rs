@@ -145,6 +145,21 @@ fn keyword_module() {
     assert_eq!(lex("module"), vec![TokenKind::Module]);
 }
 
+#[test]
+fn decision_fields_are_regular_identifiers() {
+    assert_eq!(
+        lex("date author reason chosen rejected impacts"),
+        vec![
+            TokenKind::Ident("date".to_string()),
+            TokenKind::Ident("author".to_string()),
+            TokenKind::Ident("reason".to_string()),
+            TokenKind::Ident("chosen".to_string()),
+            TokenKind::Ident("rejected".to_string()),
+            TokenKind::Ident("impacts".to_string()),
+        ]
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Constructors
 // ---------------------------------------------------------------------------

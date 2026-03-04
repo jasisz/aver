@@ -825,6 +825,17 @@ fn decision_multiple_rejected() {
     }
 }
 
+#[test]
+fn decision_field_names_are_allowed_as_bindings() {
+    let src = "date = 1\nauthor = 2\nreason = 3\nchosen = 4\nrejected = 5\nimpacts = 6\n";
+    let items = parse(src);
+    let stmt_count = items
+        .iter()
+        .filter(|item| matches!(item, TopLevel::Stmt(_)))
+        .count();
+    assert_eq!(stmt_count, 6);
+}
+
 // ---------------------------------------------------------------------------
 // Multiple top-level items
 // ---------------------------------------------------------------------------
