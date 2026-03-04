@@ -2,6 +2,28 @@
 
 All notable changes to Aver are documented here.
 
+## 0.2.3
+
+### Added
+- `verify ... law ...` blocks with typed `given` domains (`a..b` ranges and explicit lists)
+- Lean emission for `verify law`: named law theorems, sample theorems, and universal theorem skeletons
+- Lean verify modes in CLI: `--lean-verify auto|sorry|theorem-skeleton`
+- `--lean-proof-mode` fail-fast gate for proof-unsafe Lean transpilation paths
+- Deeper match exhaustiveness analysis for nested and recursive patterns
+
+### Changed
+- `aver check` now treats missing verify on pure non-trivial functions as an error
+- `verify law` skips regular case-level target-call heuristics used by `verify` case blocks
+- Decision block fields (`date`, `author`, `reason`, `chosen`, `impacts`, etc.) are contextual (no longer globally reserved keywords)
+- File-based commands require exactly one `module` declaration as the first top-level item
+
+### Fixed
+- Exhaustiveness checker stack overflow on recursive sum types with 2+ variants
+- Empty `verify` blocks are rejected explicitly
+- Rust codegen now fails fast on unresolved unknown types instead of panicking
+- Lean codegen/parser ordering and mutual-recursion proof-mode integration issues
+- Multiple Clippy-level borrow/style issues in builtin dispatcher paths
+
 ## 0.2.2
 
 ### Added
