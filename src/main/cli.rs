@@ -16,6 +16,20 @@ pub(super) enum Target {
     Lean,
 }
 
+/// Lean verify emission mode.
+#[derive(Clone, Debug, ValueEnum)]
+pub(super) enum LeanVerifyMode {
+    /// Emit `example ... := by native_decide`
+    #[value(name = "native-decide")]
+    NativeDecide,
+    /// Emit `example ... := by sorry`
+    #[value(name = "sorry")]
+    Sorry,
+    /// Emit named theorem stubs `theorem ... := by sorry`
+    #[value(name = "theorem-skeleton")]
+    TheoremSkeleton,
+}
+
 #[derive(Subcommand)]
 pub(super) enum Commands {
     /// Run an Aver file
@@ -47,6 +61,15 @@ pub(super) enum Commands {
         /// Resolve `depends [...]` from this root (default: current working directory)
         #[arg(long)]
         module_root: Option<String>,
+    },
+    /// Format Aver source files
+    Format {
+        /// File or directory to format (default: current directory)
+        #[arg(default_value = ".")]
+        path: String,
+        /// Check formatting only (non-zero exit if changes would be made)
+        #[arg(long)]
+        check: bool,
     },
     /// Replay an execution from recorded effects JSON
     Replay {
@@ -94,6 +117,12 @@ pub(super) enum Commands {
         /// Resolve `depends [...]` from this root (default: current working directory)
         #[arg(long)]
         module_root: Option<String>,
+        /// Lean-only: how to emit `verify` proofs in generated Lean
+        #[arg(long, default_value = "native-decide")]
+        lean_verify: LeanVerifyMode,
+        /// Lean-only: fail fast when source needs non-proof features (e.g. `partial`, unsafe Eq)
+        #[arg(long)]
+        lean_proof_mode: bool,
     },
     /// Export decision blocks (ADR-style) and optionally update docs
     Decisions {

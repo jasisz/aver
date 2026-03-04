@@ -234,7 +234,7 @@ pub fn emit_fn_def_proof(
                             let lean_s = aver_name_to_lean(s_name);
                             let lean_pos = aver_name_to_lean(pos_name);
                             lines.push(format!(
-                                "termination_by Int.natAbs ((Int.ofNat ({}.length)) - {})",
+                                "termination_by (({}.data.length) - ({}.toNat))",
                                 lean_s, lean_pos
                             ));
                             lines.push("decreasing_by".to_string());
@@ -416,128 +416,46 @@ pub fn emit_mutual_group_proof(
         for line in body.lines() {
             lines.push(format!("  {}", line));
         }
+        match plans.get(&fd.name).copied() {
+            Some(RecursionPlan::MutualIntCountdown) => {
+                if let Some((first_name, _)) = fd.params.first() {
+                    let lean_first = aver_name_to_lean(first_name);
+                    lines.push(format!("  termination_by Int.natAbs {}", lean_first));
+                    lines.push("  decreasing_by".to_string());
+                    lines.push("    simp_wf".to_string());
+                }
+            }
+            Some(RecursionPlan::MutualStringPosAdvance { rank }) => {
+                if let Some((s_name, _)) = fd.params.first() {
+                    if let Some((pos_name, _)) = fd.params.get(1) {
+                        let lean_s = aver_name_to_lean(s_name);
+                        let lean_pos = aver_name_to_lean(pos_name);
+                        lines.push(format!(
+                            "  termination_by (({}.data.length) - ({}.toNat), {})",
+                            lean_s, lean_pos, rank
+                        ));
+                        lines.push("  decreasing_by".to_string());
+                        lines.push("    simp_wf".to_string());
+                    }
+                }
+            }
+            Some(RecursionPlan::MutualSizeOfRanked {
+                rank,
+                metric_param_index,
+            }) => {
+                if let Some((metric_name, _)) = fd.params.get(metric_param_index) {
+                    let lean_metric = aver_name_to_lean(metric_name);
+                    lines.push(format!(
+                        "  termination_by (sizeOf {}, {})",
+                        lean_metric, rank
+                    ));
+                    lines.push("  decreasing_by".to_string());
+                    lines.push("    simp_wf".to_string());
+                }
+            }
+            _ => {}
+        }
         lines.push(String::new());
-    }
-
-    let all_mutual_int = fns
-        .iter()
-        .all(|fd| matches!(plans.get(&fd.name), Some(RecursionPlan::MutualIntCountdown)));
-    let all_mutual_string_pos = fns.iter().all(|fd| {
-        matches!(
-            plans.get(&fd.name),
-            Some(RecursionPlan::MutualStringPosAdvance { .. })
-        )
-    });
-    let all_mutual_sizeof = fns.iter().all(|fd| {
-        matches!(
-            plans.get(&fd.name),
-            Some(RecursionPlan::MutualSizeOfRanked { .. })
-        )
-    });
-    if all_mutual_int {
-        lines.push("termination_by".to_string());
-        for fd in fns {
-            if !is_pure_fn(fd) {
-                continue;
-            }
-            let fn_name = aver_name_to_lean(&fd.name);
-            let mut lhs_params: Vec<String> = Vec::new();
-            let mut first_param = "x".to_string();
-            for (idx, (name, _)) in fd.params.iter().enumerate() {
-                if idx == 0 {
-                    let lean = aver_name_to_lean(name);
-                    first_param = lean.clone();
-                    lhs_params.push(lean);
-                } else {
-                    lhs_params.push("_".to_string());
-                }
-            }
-            let lhs = if lhs_params.is_empty() {
-                "_".to_string()
-            } else {
-                lhs_params.join(" ")
-            };
-            lines.push(format!(
-                "  {} {} => Int.natAbs {}",
-                fn_name, lhs, first_param
-            ));
-        }
-        lines.push("decreasing_by".to_string());
-        lines.push("  simp_wf".to_string());
-    } else if all_mutual_string_pos {
-        lines.push("termination_by".to_string());
-        for fd in fns {
-            if !is_pure_fn(fd) {
-                continue;
-            }
-            let fn_name = aver_name_to_lean(&fd.name);
-            let mut lhs_params: Vec<String> = Vec::new();
-            let mut s_param = "s".to_string();
-            let mut pos_param = "pos".to_string();
-            for (idx, (name, _)) in fd.params.iter().enumerate() {
-                if idx == 0 {
-                    s_param = aver_name_to_lean(name);
-                    lhs_params.push(s_param.clone());
-                } else if idx == 1 {
-                    pos_param = aver_name_to_lean(name);
-                    lhs_params.push(pos_param.clone());
-                } else {
-                    lhs_params.push("_".to_string());
-                }
-            }
-            let lhs = if lhs_params.is_empty() {
-                "_".to_string()
-            } else {
-                lhs_params.join(" ")
-            };
-            let rank = match plans.get(&fd.name) {
-                Some(RecursionPlan::MutualStringPosAdvance { rank }) => *rank,
-                _ => 0,
-            };
-            lines.push(format!(
-                "  {} {} => (Int.natAbs ((Int.ofNat ({}.length)) - {}), {})",
-                fn_name, lhs, s_param, pos_param, rank
-            ));
-        }
-        lines.push("decreasing_by".to_string());
-        lines.push("  simp_wf".to_string());
-    } else if all_mutual_sizeof {
-        lines.push("termination_by".to_string());
-        for fd in fns {
-            if !is_pure_fn(fd) {
-                continue;
-            }
-            let fn_name = aver_name_to_lean(&fd.name);
-            let (metric_idx, rank) = match plans.get(&fd.name) {
-                Some(RecursionPlan::MutualSizeOfRanked {
-                    rank,
-                    metric_param_index,
-                }) => (*metric_param_index, *rank),
-                _ => (0, 0),
-            };
-            let mut lhs_params: Vec<String> = Vec::new();
-            let mut metric_param = "x".to_string();
-            for (idx, (name, _)) in fd.params.iter().enumerate() {
-                if idx == metric_idx {
-                    let lean = aver_name_to_lean(name);
-                    metric_param = lean.clone();
-                    lhs_params.push(lean);
-                } else {
-                    lhs_params.push("_".to_string());
-                }
-            }
-            let lhs = if lhs_params.is_empty() {
-                "_".to_string()
-            } else {
-                lhs_params.join(" ")
-            };
-            lines.push(format!(
-                "  {} {} => (sizeOf {}, {})",
-                fn_name, lhs, metric_param, rank
-            ));
-        }
-        lines.push("decreasing_by".to_string());
-        lines.push("  simp_wf".to_string());
     }
 
     lines.push("end".to_string());

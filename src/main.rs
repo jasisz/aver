@@ -12,6 +12,8 @@ mod context_data;
 mod context_format;
 #[path = "main/decisions_cmd.rs"]
 mod decisions_cmd;
+#[path = "main/format_cmd.rs"]
+mod format_cmd;
 #[path = "main/repl.rs"]
 mod repl;
 #[path = "main/replay_cmd.rs"]
@@ -42,6 +44,9 @@ fn main() {
         }
         Commands::Verify { file, module_root } => {
             commands::cmd_verify(file, module_root.as_deref());
+        }
+        Commands::Format { path, check } => {
+            format_cmd::cmd_format(path, *check);
         }
         Commands::Replay {
             recording,
@@ -75,6 +80,8 @@ fn main() {
             target,
             name,
             module_root,
+            lean_verify,
+            lean_proof_mode,
         } => {
             commands::cmd_compile(
                 file,
@@ -82,6 +89,8 @@ fn main() {
                 target,
                 name.as_deref(),
                 module_root.as_deref(),
+                lean_verify,
+                *lean_proof_mode,
             );
         }
         Commands::Decisions {

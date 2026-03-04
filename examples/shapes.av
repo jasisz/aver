@@ -1,4 +1,7 @@
-// Sum type example: geometric shapes
+module Shapes
+    intent =
+        "Sum type example with geometric shapes."
+    exposes [Shape, area, describe]
 
 type Shape
   Circle(Float)
@@ -12,12 +15,22 @@ fn area(s: Shape) -> Float
     Shape.Rect(w, h) -> w * h
     Shape.Point -> 0.0
 
+verify area
+    area(Shape.Circle(1.0)) => 3.14159
+    area(Shape.Rect(3.0, 4.0)) => 12.0
+    area(Shape.Point) => 0.0
+
 fn describe(s: Shape) -> String
   ? "Describe a shape as a human-readable string"
   match s
     Shape.Circle(r) -> "Circle with radius"
     Shape.Rect(w, h) -> "Rectangle"
     Shape.Point -> "Point"
+
+verify describe
+    describe(Shape.Circle(1.0)) => "Circle with radius"
+    describe(Shape.Rect(3.0, 4.0)) => "Rectangle"
+    describe(Shape.Point) => "Point"
 
 fn main()
   ! [Console]
@@ -30,14 +43,3 @@ fn main()
   Console.print(describe(c))
   Console.print(describe(r))
   Console.print(describe(p))
-
-
-verify area
-    area(Shape.Circle(1.0)) => 3.14159
-    area(Shape.Rect(3.0, 4.0)) => 12.0
-    area(Shape.Point) => 0.0
-
-verify describe
-    describe(Shape.Circle(1.0)) => "Circle with radius"
-    describe(Shape.Rect(3.0, 4.0)) => "Rectangle"
-    describe(Shape.Point) => "Point"

@@ -237,6 +237,7 @@ impl TypeChecker {
                 .map_err(|e| format!("Cannot read '{}': {}", path.display(), e))?;
             let items = parse_source(&src)
                 .map_err(|e| format!("Parse error in '{}': {}", path.display(), e))?;
+            require_module_declaration(&items, &path.to_string_lossy())?;
             let mut module_effect_aliases: HashMap<String, Vec<String>> = HashMap::new();
             for item in &items {
                 if let TopLevel::EffectSet { name, effects } = item {

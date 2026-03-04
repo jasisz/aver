@@ -74,15 +74,36 @@ fn fibTR(n: Int, a: Int, b: Int) -> Int
         0 -> a
         _ -> fibTR(n - 1, b, a + b)
 
+verify fibTR
+    fibTR(0, 0, 1)  => 0
+    fibTR(1, 0, 1)  => 1
+    fibTR(5, 0, 1)  => 5
+    fibTR(12, 0, 1) => 144
+
 fn fib(n: Int) -> Int
     ? "Computes Fibonacci number F(n). Returns 0 for negative n."
     match n < 0
         true  -> 0
         false -> fibTR(n, 0, 1)
 
+verify fib
+    fib(-1) => 0
+    fib(0)  => 0
+    fib(1)  => 1
+    fib(5)  => 5
+    fib(10) => 55
+    fib(12) => 144
+
 fn isEven(n: Int) -> Bool
     ? "Even check via integer division trick (no modulo in Aver)."
     = n / 2 * 2 == n
+
+verify isEven
+    isEven(0)   => true
+    isEven(1)   => false
+    isEven(2)   => true
+    isEven(7)   => false
+    isEven(144) => true
 
 fn bigger(a: Int, b: Int) -> Int
     ? "Returns the larger of two integers."
@@ -90,11 +111,22 @@ fn bigger(a: Int, b: Int) -> Int
         true  -> a
         false -> b
 
+verify bigger
+    bigger(3, 5) => 5
+    bigger(5, 3) => 5
+    bigger(4, 4) => 4
+
 fn pushIfEven(xs: List<Int>, n: Int) -> List<Int>
     ? "Appends n to xs only when n is even."
     match isEven(n)
         true  -> List.push(xs, n)
         false -> xs
+
+verify pushIfEven
+    pushIfEven([], 0)  => [0]
+    pushIfEven([], 1)  => []
+    pushIfEven([0], 2) => [0, 2]
+    pushIfEven([0], 3) => [0]
 
 fn buildFibStatsTR(acc: FibAcc) -> FibStats
     ? "Single-pass builder: advances accumulator state one step until i > n."
@@ -102,11 +134,19 @@ fn buildFibStatsTR(acc: FibAcc) -> FibStats
         true  -> FibStats(fibs = acc.fibs, sum = acc.sum, mx = acc.mx, evens = acc.evens)
         false -> buildFibStatsTR(FibAcc(i = acc.i + 1, n = acc.n, a = acc.b, b = acc.a + acc.b, fibs = List.push(acc.fibs, acc.a), sum = acc.sum + acc.a, mx = bigger(acc.a, acc.mx), evens = pushIfEven(acc.evens, acc.a)))
 
+verify buildFibStatsTR
+    buildFibStatsTR(FibAcc(i = 0, n = 0, a = 0, b = 1, fibs = [], sum = 0, mx = 0, evens = [])) => FibStats(fibs = [0], sum = 0, mx = 0, evens = [0])
+
 fn buildFibStats(n: Int) -> Result<FibStats, String>
     ? "Computes FibStats for F(0)..F(n) in one pass. Err for n < 0."
     match n < 0
         true  -> Result.Err("Need n >= 0")
         false -> Result.Ok(buildFibStatsTR(FibAcc(i = 0, n = n, a = 0, b = 1, fibs = [], sum = 0, mx = 0, evens = [])))
+
+verify buildFibStats
+    buildFibStats(-1) => Result.Err("Need n >= 0")
+    buildFibStats(0)  => Result.Ok(FibStats(fibs = [0], sum = 0, mx = 0, evens = [0]))
+    buildFibStats(4)  => Result.Ok(FibStats(fibs = [0, 1, 1, 2, 3], sum = 7, mx = 3, evens = [0, 2]))
 
 fn printStats(s: FibStats) -> Unit
     ? "Print all fields of a FibStats record to stdout."
@@ -126,15 +166,31 @@ fn absF(x: Float) -> Float
         true  -> 0.0 - x
         false -> x
 
+verify absF
+    absF(-2.5) => 2.5
+    absF(0.0)  => 0.0
+    absF(3.25) => 3.25
+
 fn approxEq(x: Float, y: Float, eps: Float) -> Bool
     ? "Returns true when |x - y| <= eps."
     = absF(x - y) <= eps
+
+verify approxEq
+    approxEq(1.0, 1.0, 0.0)      => true
+    approxEq(1.0, 1.0001, 0.001) => true
+    approxEq(1.0, 1.01, 0.001)   => false
 
 fn goldenApprox(n: Int) -> Result<Float, String>
     ? "Approximates golden ratio as F(n+1)/F(n). Requires n >= 1."
     match n < 1
         true  -> Result.Err("Need n >= 1")
         false -> Result.Ok(Int.toFloat(fib(n + 1)) / Int.toFloat(fib(n)))
+
+verify goldenApprox
+    goldenApprox(0) => Result.Err("Need n >= 1")
+    approxEq(goldenApprox(1)?, 1.0, 0.000001) => true
+    approxEq(goldenApprox(2)?, 2.0, 0.000001) => true
+    approxEq(goldenApprox(10)?, 1.618181818, 0.00001) => true
 
 fn main() -> Unit
     ! [Console]
@@ -148,60 +204,3 @@ fn main() -> Unit
     Console.print(goldenApprox(10))
     Console.print("Golden ratio approx (n=12):")
     Console.print(goldenApprox(12))
-
-verify fibTR
-    fibTR(0, 0, 1)  => 0
-    fibTR(1, 0, 1)  => 1
-    fibTR(5, 0, 1)  => 5
-    fibTR(12, 0, 1) => 144
-
-verify fib
-    fib(-1) => 0
-    fib(0)  => 0
-    fib(1)  => 1
-    fib(5)  => 5
-    fib(10) => 55
-    fib(12) => 144
-
-verify isEven
-    isEven(0)   => true
-    isEven(1)   => false
-    isEven(2)   => true
-    isEven(7)   => false
-    isEven(144) => true
-
-verify bigger
-    bigger(3, 5) => 5
-    bigger(5, 3) => 5
-    bigger(4, 4) => 4
-
-verify pushIfEven
-    pushIfEven([], 0)  => [0]
-    pushIfEven([], 1)  => []
-    pushIfEven([0], 2) => [0, 2]
-    pushIfEven([0], 3) => [0]
-
-verify buildFibStats
-    buildFibStats(-1) => Result.Err("Need n >= 0")
-    buildFibStats(0)  => Result.Ok(FibStats(fibs = [0], sum = 0, mx = 0, evens = [0]))
-    buildFibStats(4)  => Result.Ok(FibStats(fibs = [0, 1, 1, 2, 3], sum = 7, mx = 3, evens = [0, 2]))
-
-verify absF
-    absF(-2.5) => 2.5
-    absF(0.0)  => 0.0
-    absF(3.25) => 3.25
-
-verify approxEq
-    approxEq(1.0, 1.0, 0.0)      => true
-    approxEq(1.0, 1.0001, 0.001) => true
-    approxEq(1.0, 1.01, 0.001)   => false
-
-verify goldenApprox
-    goldenApprox(0) => Result.Err("Need n >= 1")
-    approxEq(goldenApprox(1)?, 1.0, 0.000001) => true
-    approxEq(goldenApprox(2)?, 2.0, 0.000001) => true
-    approxEq(goldenApprox(10)?, 1.618181818, 0.00001) => true
-
-
-verify buildFibStatsTR
-    buildFibStatsTR(FibAcc(i = 0, n = 0, a = 0, b = 1, fibs = [], sum = 0, mx = 0, evens = [])) => FibStats(fibs = [0], sum = 0, mx = 0, evens = [0])

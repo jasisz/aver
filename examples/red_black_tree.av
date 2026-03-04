@@ -1,7 +1,7 @@
-// Red-Black Tree — Okasaki's purely functional balanced BST
-//
-// Color is encoded in the constructor name (Red/Black) instead of a
-// separate field, which halves the nesting depth needed for balance.
+module RedBlackTree
+    intent =
+        "Purely functional red-black tree with insert/delete, invariants, and pretty-print demo."
+    exposes [Tree, insert, delete, member, toSorted, blackDepth]
 
 decision BlackDepthConvention
   date = "2026-03-04"

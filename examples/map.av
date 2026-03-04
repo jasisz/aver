@@ -14,13 +14,25 @@ fn incCount(counts: Map<String, Int>, word: String) -> Map<String, Int>
         Option.Some(n) -> Map.set(counts, word, n + 1)
         Option.None    -> Map.set(counts, word, 1)
 
+verify incCount
+    incCount(Map.empty(), "a") => {"a" => 1}
+    incCount({"a" => 1}, "a") => {"a" => 2}
+
 fn countWords(words: List<String>) -> Map<String, Int>
     ? "Counts occurrences of each word."
     = List.fold(words, emptyCounts(), incCount)
 
+verify countWords
+    countWords([])                => Map.empty()
+    countWords(["a", "b", "a"])  => {"a" => 2, "b" => 1}
+
 fn containsWord(words: List<String>, word: String) -> Bool
     ? "Checks whether a word appears in a list."
     = List.contains(words, word)
+
+verify containsWord
+    containsWord(["a", "b"], "a") => true
+    containsWord(["a", "b"], "x") => false
 
 fn main() -> Unit
     ! [Console]
@@ -36,15 +48,3 @@ fn main() -> Unit
     Console.print(Map.entries(counts))
     Console.print("Contains 'eve':")
     Console.print(containsWord(words, "eve"))
-
-verify containsWord
-    containsWord(["a", "b"], "a") => true
-    containsWord(["a", "b"], "x") => false
-
-verify incCount
-    incCount(Map.empty(), "a") => {"a" => 1}
-    incCount({"a" => 1}, "a") => {"a" => 2}
-
-verify countWords
-    countWords([])                => Map.empty()
-    countWords(["a", "b", "a"])  => {"a" => 2, "b" => 1}

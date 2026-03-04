@@ -37,7 +37,7 @@ pub fn emit_builtin_call(name: &str, args: &[Expr], ctx: &CodegenContext) -> Opt
             let o = super::expr::emit_expr(&args[0], ctx);
             let d = super::expr::emit_expr(&args[1], ctx);
             Some(format!(
-                "{}.getD {}",
+                "({}.getD {})",
                 paren_if_complex(&o),
                 paren_if_complex(&d)
             ))
@@ -398,5 +398,45 @@ fn paren_if_complex(s: &str) -> String {
         format!("({})", s)
     } else {
         s.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::{Expr, Literal};
+    use crate::codegen::CodegenContext;
+    use std::collections::{HashMap, HashSet};
+
+    fn empty_ctx() -> CodegenContext {
+        CodegenContext {
+            items: vec![],
+            fn_sigs: HashMap::new(),
+            memo_fns: HashSet::new(),
+            memo_safe_types: HashSet::new(),
+            type_defs: vec![],
+            fn_defs: vec![],
+            project_name: "test".to_string(),
+            modules: vec![],
+            module_prefixes: HashSet::new(),
+        }
+    }
+
+    #[test]
+    fn option_with_default_wraps_getd_expression_in_parentheses() {
+        let ctx = empty_ctx();
+        let option_expr = Expr::FnCall(
+            Box::new(Expr::Attr(
+                Box::new(Expr::Ident("Char".to_string())),
+                "fromCode".to_string(),
+            )),
+            vec![Expr::Literal(Literal::Int(8))],
+        );
+        let default_expr = Expr::Literal(Literal::Str("".to_string()));
+
+        let emitted = emit_builtin_call("Option.withDefault", &[option_expr, default_expr], &ctx)
+            .expect("Option.withDefault should be emitted");
+
+        assert_eq!(emitted, "((Char.fromCode 8).getD \"\")");
     }
 }

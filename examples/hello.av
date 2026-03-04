@@ -7,9 +7,17 @@ fn greet(name: String) -> String
     ? "Returns a personalised greeting."
     = "Hello, {name}"
 
+verify greet
+    greet("Alice") => "Hello, Alice"
+    greet("World") => "Hello, World"
+
 fn shout(text: String) -> String
     ? "Emphasises a greeting with exclamation marks."
     = "{text}!!!"
+
+verify shout
+    shout("Hello") => "Hello!!!"
+    shout(greet("Alice")) => "Hello, Alice!!!"
 
 fn main() -> Unit
     ! [Console]
@@ -17,11 +25,3 @@ fn main() -> Unit
     Console.print(greeting)
     loud = greet("Aver") |> shout
     Console.print(loud)
-
-verify greet
-    greet("Alice") => "Hello, Alice"
-    greet("World") => "Hello, World"
-
-verify shout
-    shout("Hello") => "Hello!!!"
-    shout(greet("Alice")) => "Hello, Alice!!!"

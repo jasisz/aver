@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use aver::ast::{DecisionBlock, FnDef, TopLevel, TypeDef, VerifyBlock};
 use aver::call_graph::{find_recursive_fns, recursive_callsite_counts, recursive_scc_ids};
-use aver::source::{find_module_file, parse_source};
+use aver::source::{find_module_file, parse_source, require_module_declaration};
 use aver::tco;
 use aver::types::checker::run_type_check_full;
 
@@ -172,6 +172,10 @@ pub(super) fn collect_contexts(
             return vec![];
         }
     };
+    if let Err(e) = require_module_declaration(&items, file) {
+        eprintln!("{}", e);
+        return vec![];
+    }
 
     let mut ctx = FileContext {
         source_file: file.to_string(),

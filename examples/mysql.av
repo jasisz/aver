@@ -4,13 +4,16 @@ module MySql
         "All operations return Result: transport and SQL failures are values, never exceptions."
         "Pure Aver surface: no native driver, no binary protocol, no hidden connection state."
     exposes [query, execute, ping]
+
 record Header
     name: String
     value: String
+
 record DbConfig
     host: String
     database: String
     token: String
+
 decision UseHttpGateway
     date = "2026-02-25"
     reason =
@@ -20,6 +23,7 @@ decision UseHttpGateway
     chosen = HttpGateway
     rejected = [NativeWireProtocol, FFIBinding, EmbeddedDriver]
     impacts = [query, execute, ping]
+
 decision BearerTokenAuth
     date = "2026-02-25"
     reason =
@@ -29,6 +33,7 @@ decision BearerTokenAuth
     chosen = BearerToken
     rejected = [BasicAuth, ConnectionString, ImplicitEnvLookup]
     impacts = [authHeader, query, execute, ping]
+
 decision RawJsonBody
     date = "2026-02-25"
     reason =
@@ -38,6 +43,7 @@ decision RawJsonBody
     chosen = RawStringBody
     rejected = [ParsedRecord, DynamicMap, JsonValue]
     impacts = [query, execute]
+
 fn is2xx(status: Int) -> Bool
     ? "True when HTTP status is in [200, 299]."
     match status >= 200
@@ -45,6 +51,7 @@ fn is2xx(status: Int) -> Bool
         true  -> match status < 300
             true  -> true
             false -> false
+
 verify is2xx
     is2xx(200) => true
     is2xx(201) => true
@@ -54,6 +61,7 @@ verify is2xx
     is2xx(199) => false
     is2xx(404) => false
     is2xx(500) => false
+
 fn queryUrl(config: DbConfig) -> String
     ? "Builds the query endpoint URL for this database."
     = "https://{config.host}/v1/databases/{config.database}/query"

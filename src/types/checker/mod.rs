@@ -13,7 +13,9 @@ use std::path::Path;
 
 use super::{Type, parse_type_str_strict};
 use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, Module, Pattern, Stmt, TopLevel, TypeDef};
-use crate::source::{canonicalize_path, find_module_file, parse_source};
+use crate::source::{
+    canonicalize_path, find_module_file, parse_source, require_module_declaration,
+};
 
 mod builtins;
 mod exhaustiveness;

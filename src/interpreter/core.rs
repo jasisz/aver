@@ -641,6 +641,8 @@ impl Interpreter {
             let mut items = parse_source(&src).map_err(|e| {
                 RuntimeError::Error(format!("Parse error in '{}': {}", path.display(), e))
             })?;
+            require_module_declaration(&items, &path.to_string_lossy())
+                .map_err(RuntimeError::Error)?;
             crate::resolver::resolve_program(&mut items);
 
             if let Some(module) = Self::module_decl(&items) {

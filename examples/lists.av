@@ -7,13 +7,27 @@ fn double(n: Int) -> Int
     ? "Doubles an integer."
     = n * 2
 
+verify double
+    double(3) => 6
+    double(0) => 0
+    double(-2) => -4
+
 fn isPositive(n: Int) -> Bool
     ? "Returns true if n is greater than zero."
     = n > 0
 
+verify isPositive
+    isPositive(1)  => true
+    isPositive(0)  => false
+    isPositive(-5) => false
+
 fn add(a: Int, b: Int) -> Int
     ? "Adds two integers. Used as fold accumulator."
     = a + b
+
+verify add
+    add(1, 2) => 3
+    add(-2, 5) => 3
 
 fn main() -> Unit
     ! [Console]
@@ -32,18 +46,3 @@ fn main() -> Unit
     match oob
         Option.Some(v) -> Console.print("Got: {v}")
         Option.None -> Console.print("Out of bounds")
-
-verify double
-    double(3) => 6
-    double(0) => 0
-    double(-2) => -4
-
-verify isPositive
-    isPositive(1)  => true
-    isPositive(0)  => false
-    isPositive(-5) => false
-
-
-verify add
-    add(1, 2) => 3
-    add(-2, 5) => 3

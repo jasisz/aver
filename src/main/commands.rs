@@ -14,7 +14,7 @@ use aver::codegen::rust as rust_codegen;
 use aver::interpreter::{Interpreter, RecordingConfig, Value, aver_repr};
 use aver::replay::{JsonValue, RecordedOutcome, value_to_json};
 use aver::resolver;
-use aver::source::find_module_file;
+use aver::source::{find_module_file, require_module_declaration};
 use aver::tco;
 use aver::types::checker::{run_type_check_full, run_type_check_with_base};
 
@@ -239,6 +239,10 @@ pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>, strict: 
             process::exit(1);
         }
     };
+    if let Err(e) = require_module_declaration(&items, file) {
+        eprintln!("{}", e.red());
+        process::exit(1);
+    }
 
     println!("Check: {}", file.cyan());
 
@@ -314,6 +318,10 @@ pub(super) fn cmd_verify(file: &str, module_root_override: Option<&str>) {
             process::exit(1);
         }
     };
+    if let Err(e) = require_module_declaration(&items, file) {
+        eprintln!("{}", e.red());
+        process::exit(1);
+    }
 
     // TCO transform — rewrite tail-position calls in recursive SCCs
     tco::transform_program(&mut items);
@@ -404,6 +412,8 @@ pub(super) fn cmd_compile(
     target: &super::cli::Target,
     project_name: Option<&str>,
     module_root_override: Option<&str>,
+    lean_verify: &super::cli::LeanVerifyMode,
+    lean_proof_mode: bool,
 ) {
     let module_root = resolve_module_root(module_root_override);
     let source = match read_file(file) {
@@ -421,6 +431,10 @@ pub(super) fn cmd_compile(
             process::exit(1);
         }
     };
+    if let Err(e) = require_module_declaration(&items, file) {
+        eprintln!("{}", e.red());
+        process::exit(1);
+    }
 
     // TCO transform
     tco::transform_program(&mut items);
@@ -458,7 +472,44 @@ pub(super) fn cmd_compile(
             (out, hint)
         }
         super::cli::Target::Lean => {
-            let out = lean_codegen::transpile(&ctx);
+            if lean_proof_mode
+                && matches!(
+                    lean_verify,
+                    super::cli::LeanVerifyMode::Sorry | super::cli::LeanVerifyMode::TheoremSkeleton
+                )
+            {
+                eprintln!(
+                    "{}",
+                    "Lean proof mode requires --lean-verify native-decide (not sorry/theorem-skeleton).".red()
+                );
+                process::exit(1);
+            }
+
+            if lean_proof_mode {
+                let proof_issues = lean_codegen::proof_mode_issues(&ctx);
+                if !proof_issues.is_empty() {
+                    eprintln!("{}", "Lean proof mode blocked compilation:".red());
+                    for issue in proof_issues {
+                        eprintln!("  - {}", issue);
+                    }
+                    process::exit(1);
+                }
+            }
+
+            let verify_mode = match lean_verify {
+                super::cli::LeanVerifyMode::NativeDecide => {
+                    lean_codegen::VerifyEmitMode::NativeDecide
+                }
+                super::cli::LeanVerifyMode::Sorry => lean_codegen::VerifyEmitMode::Sorry,
+                super::cli::LeanVerifyMode::TheoremSkeleton => {
+                    lean_codegen::VerifyEmitMode::TheoremSkeleton
+                }
+            };
+            let out = if lean_proof_mode {
+                lean_codegen::transpile_for_proof_mode(&ctx, verify_mode)
+            } else {
+                lean_codegen::transpile_with_verify_mode(&ctx, verify_mode)
+            };
             let hint = format!("cd {} && lake build", output_dir);
             (out, hint)
         }
@@ -560,6 +611,10 @@ fn load_module_recursive(
             process::exit(1);
         }
     };
+    if let Err(e) = require_module_declaration(&items, path.to_str().unwrap_or(name)) {
+        eprintln!("{}", e.red());
+        process::exit(1);
+    }
 
     tco::transform_program(&mut items);
 

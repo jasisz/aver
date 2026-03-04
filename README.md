@@ -176,9 +176,15 @@ aver replay    recs/rec-123.json         # replay one recording offline
 aver replay    recs/ --test --diff       # replay suite; fail on output mismatch
 aver check     file.av                   # type errors + intent/desc warnings
 aver verify    file.av                   # run all verify blocks
+aver format    .                         # format all .av files under current directory
+aver format    path/to/file.av --check   # check formatting only (non-zero if changes needed)
 aver compile   file.av -o out/           # transpile to a Rust project
 aver compile   file.av -t rust -o out/   # explicit target (rust is default)
 aver compile   file.av -t lean -o out/   # transpile pure core to a Lean 4 project (WIP)
+aver compile   file.av -t lean --lean-verify native-decide -o out/  # Lean verify via executable proofs
+aver compile   file.av -t lean --lean-verify sorry -o out/          # Lean verify as obligations (`sorry`)
+aver compile   file.av -t lean --lean-verify theorem-skeleton -o out/ # named theorem stubs (`theorem ... := by sorry`)
+aver compile   file.av -t lean --lean-proof-mode -o out/            # fail fast on non-proof Lean features
 aver context   file.av                   # export project context (Markdown)
 aver context   file.av --json            # export project context (JSON)
 aver context   file.av --decisions-only        # decision blocks only (Markdown)
@@ -189,6 +195,19 @@ aver repl                              # interactive REPL
 ```
 
 `run`, `check`, `verify`, `compile`, and `context` also accept `--module-root <path>` to override import base (default: current working directory).
+For file-based commands, each `.av` file must declare exactly one `module`, and it must be the first top-level item.
+
+### Formatting rules (`aver format`)
+
+Current formatter is intentionally conservative (whitespace-only):
+
+- normalize line endings to `\n`
+- remove trailing spaces/tabs at end of line
+- convert **leading** tab indentation to 4 spaces
+- collapse long blank runs to max 2 consecutive empty lines (inside blocks)
+- enforce one blank line between top-level blocks
+- move `verify <fn>` blocks directly under matching `fn <fn>` declarations
+- enforce exactly one trailing newline at end of file
 
 See [docs/transpilation.md](docs/transpilation.md) for full transpilation documentation.
 
@@ -361,6 +380,7 @@ Self and mutual tail recursion is optimized automatically. A transform pass afte
 ### Modules
 
 Module imports resolve from a module root (`--module-root`, default: current working directory).
+Each module file must start with `module <Name>` and contain exactly one module declaration.
 
 ```aver
 module Payments

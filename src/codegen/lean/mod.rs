@@ -1575,7 +1575,7 @@ mod tests {
             .find_map(|(name, content)| (name == "Verify_mode.lean").then_some(content))
             .expect("expected generated Lean file");
         assert!(lean.contains("def skipWs (s : String) (pos : Int) : Int :="));
-        assert!(lean.contains("termination_by Int.natAbs ((Int.ofNat (s.length)) - pos)"));
+        assert!(lean.contains("termination_by ((s.data.length) - (pos.toNat))"));
         assert!(lean.contains("decreasing_by"));
     }
 
@@ -1750,7 +1750,7 @@ mod tests {
             .find_map(|(name, content)| (name == "Verify_mode.lean").then_some(content))
             .expect("expected generated Lean file");
         assert!(lean.contains("termination_by"));
-        assert!(lean.contains("(Int.natAbs ((Int.ofNat (s.length)) - pos),"));
+        assert!(lean.contains("termination_by ((s.data.length) - (pos.toNat),"));
         assert!(lean.contains("decreasing_by"));
     }
 

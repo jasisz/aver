@@ -58,12 +58,12 @@ fn jsonOk(city: String, weather: String) -> String
     ? "Builds a success JSON response body."
     = "{{\"city\": \"{city}\", \"weather\": {weather}, \"source\": \"cache_or_api\"}}"
 
+verify jsonOk
+    jsonOk("Warsaw", "\"sunny\"") => "{{\"city\": \"Warsaw\", \"weather\": \"sunny\", \"source\": \"cache_or_api\"}}"
+
 fn jsonErr(msg: String) -> String
     ? "Builds an error JSON response body."
     = "{{\"error\": \"{msg}\"}}"
-
-verify jsonOk
-    jsonOk("Warsaw", "\"sunny\"") => "{{\"city\": \"Warsaw\", \"weather\": \"sunny\", \"source\": \"cache_or_api\"}}"
 
 verify jsonErr
     jsonErr("not found") => "{{\"error\": \"not found\"}}"
@@ -94,13 +94,6 @@ fn extractCity(path: String) -> Result<String, String>
         false -> Result.Err("Invalid path")
         true  -> extractCityFromParts(parts)
 
-fn extractCityFromParts(parts: List<String>) -> Result<String, String>
-    ? "Validates endpoint segment and extracts city from already split path parts."
-    section = Option.toResult(List.get(parts, 1), "Missing path segment")?
-    match section == "weather"
-        false -> Result.Err("Not a weather endpoint")
-        true  -> Option.toResult(List.get(parts, 2), "Missing city")
-
 verify extractCity
     extractCity("/weather/Warsaw") => Result.Ok("Warsaw")
     extractCity("/weather/London") => Result.Ok("London")
@@ -108,6 +101,18 @@ verify extractCity
     extractCity("/")               => Result.Err("Invalid path")
 
 // Cache operations (effectful)
+
+fn extractCityFromParts(parts: List<String>) -> Result<String, String>
+    ? "Validates endpoint segment and extracts city from already split path parts."
+    section = Option.toResult(List.get(parts, 1), "Missing path segment")?
+    match section == "weather"
+        false -> Result.Err("Not a weather endpoint")
+        true  -> Option.toResult(List.get(parts, 2), "Missing city")
+
+verify extractCityFromParts
+    extractCityFromParts(["", "weather", "Warsaw"]) => Result.Ok("Warsaw")
+    extractCityFromParts(["", "other", "Warsaw"]) => Result.Err("Not a weather endpoint")
+    extractCityFromParts(["", "weather"]) => Result.Err("Missing city")
 
 fn cacheGet(conn: Tcp.Connection, city: String) -> Result<String, String>
     ? "Attempts to read cached weather for city from Redis."
@@ -174,9 +179,3 @@ fn main() -> Result<Unit, String>
 
     conn = Examples.Redis.connect(RedisConfig(host = config.redisHost, port = config.redisPort))?
     startServer(WeatherContext(config = config, conn = conn))
-
-
-verify extractCityFromParts
-    extractCityFromParts(["", "weather", "Warsaw"]) => Result.Ok("Warsaw")
-    extractCityFromParts(["", "other", "Warsaw"]) => Result.Err("Not a weather endpoint")
-    extractCityFromParts(["", "weather"]) => Result.Err("Missing city")

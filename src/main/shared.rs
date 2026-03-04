@@ -7,7 +7,7 @@ use aver::ast::TopLevel;
 use aver::call_graph::{find_recursive_fns, recursive_callsite_counts};
 use aver::interpreter::{Interpreter, Value};
 use aver::resolver;
-use aver::source::parse_source;
+use aver::source::{parse_source, require_module_declaration};
 use aver::tco;
 use aver::types;
 use aver::types::checker::{TypeCheckResult, TypeError, run_type_check_full};
@@ -125,6 +125,7 @@ pub(super) fn compile_program_for_exec(
     let module_root = resolve_module_root(module_root_override);
     let source = read_file(file)?;
     let mut items = parse_file(&source)?;
+    require_module_declaration(&items, file)?;
 
     // TCO transform — rewrite tail-position calls in recursive SCCs
     tco::transform_program(&mut items);

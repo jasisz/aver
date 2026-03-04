@@ -8,7 +8,6 @@ fn nameById(id: Int) -> String
         1 -> "Ada"
         _ -> "Unknown"
 
-
 verify nameById
     nameById(1) => "Ada"
     nameById(2) => "Unknown"

@@ -6,13 +6,12 @@ fn badAdd(a: Int, b: Int) -> Int
     ? "Adds two integers."
     = a + b
 
+verify badAdd
+    badAdd(1, 2) => 3
+
 fn wrongReturn() -> Int
     ? "Returns Int as declared."
     = 42
-
-
-verify badAdd
-    badAdd(1, 2) => 3
 
 verify wrongReturn
     wrongReturn() => 42
