@@ -370,6 +370,8 @@ impl Parser {
                 kind = VerifyKind::Law(VerifyLaw {
                     name: law_name,
                     givens,
+                    lhs: left,
+                    rhs: right,
                 });
             } else {
                 while !self.is_dedent() && !self.is_eof() {

@@ -152,6 +152,9 @@ pub struct VerifyGiven {
 pub struct VerifyLaw {
     pub name: String,
     pub givens: Vec<VerifyGiven>,
+    /// Template assertion from source before given-domain expansion.
+    pub lhs: Expr,
+    pub rhs: Expr,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -1407,6 +1407,14 @@ mod tests {
                         ]),
                     },
                 ],
+                lhs: Expr::FnCall(
+                    Box::new(Expr::Ident("add".to_string())),
+                    vec![Expr::Ident("a".to_string()), Expr::Ident("b".to_string())],
+                ),
+                rhs: Expr::FnCall(
+                    Box::new(Expr::Ident("add".to_string())),
+                    vec![Expr::Ident("b".to_string()), Expr::Ident("a".to_string())],
+                ),
             }),
         }));
         ctx
@@ -1503,12 +1511,15 @@ mod tests {
         assert!(lean.contains("-- verify law add.commutative (2 cases)"));
         assert!(lean.contains("-- given a: Int = 1..2"));
         assert!(lean.contains("-- given b: Int = [2, 3]"));
-        assert!(
-            lean.contains("theorem add_law_commutative_1 : add 1 2 = add 2 1 := by native_decide")
-        );
-        assert!(
-            lean.contains("theorem add_law_commutative_2 : add 2 3 = add 3 2 := by native_decide")
-        );
+        assert!(lean.contains(
+            "theorem add_law_commutative : ∀ (a : Int) (b : Int), add a b = add b a := by"
+        ));
+        assert!(lean.contains(
+            "theorem add_law_commutative_sample_1 : add 1 2 = add 2 1 := by native_decide"
+        ));
+        assert!(lean.contains(
+            "theorem add_law_commutative_sample_2 : add 2 3 = add 3 2 := by native_decide"
+        ));
     }
 
     #[test]
@@ -1537,6 +1548,8 @@ mod tests {
                     type_name: "Int".to_string(),
                     domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(2))]),
                 }],
+                lhs: Expr::Ident("x".to_string()),
+                rhs: Expr::Ident("x".to_string()),
             }),
         }));
         let out = transpile_with_verify_mode(&ctx, VerifyEmitMode::TheoremSkeleton);
@@ -1546,8 +1559,9 @@ mod tests {
             .find_map(|(name, content)| (name == "Verify_mode.lean").then_some(content))
             .expect("expected generated Lean file");
         assert!(lean.contains("theorem f_verify_1 : 1 = 1 := by"));
-        assert!(lean.contains("theorem f_law_identity_1 : 2 = 2 := by"));
-        assert!(!lean.contains("theorem f_law_identity_2 : 2 = 2 := by"));
+        assert!(lean.contains("theorem f_law_identity : ∀ (x : Int), x = x := by"));
+        assert!(lean.contains("theorem f_law_identity_sample_1 : 2 = 2 := by"));
+        assert!(!lean.contains("theorem f_law_identity_sample_2 : 2 = 2 := by"));
     }
 
     #[test]

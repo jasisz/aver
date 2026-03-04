@@ -350,6 +350,20 @@ fn emit_verify_law_block(
     let fn_name = aver_name_to_lean(&vb.fn_name);
     let law_name = aver_name_to_lean(&law.name);
     let theorem_base = format!("{}_law_{}", fn_name, law_name);
+    let lhs_template = emit_expr(&law.lhs, ctx);
+    let rhs_template = emit_expr(&law.rhs, ctx);
+    let quant_params = law
+        .givens
+        .iter()
+        .map(|given| {
+            format!(
+                "({} : {})",
+                aver_name_to_lean(&given.name),
+                type_annotation_to_lean(&given.type_name)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
 
     lines.push(format!(
         "-- verify law {}.{} ({} cases)",
@@ -365,9 +379,19 @@ fn emit_verify_law_block(
             law_given_domain_to_lean(&given.domain, ctx)
         ));
     }
+    if !quant_params.is_empty() {
+        lines.push(format!(
+            "theorem {} : ∀ {}, {} = {} := by",
+            theorem_base, quant_params, lhs_template, rhs_template
+        ));
+        lines.push(
+            "  -- verify law is sampled; universal proof must be provided manually".to_string(),
+        );
+        lines.push("  sorry".to_string());
+    }
 
     for (idx, (left, right)) in vb.cases.iter().enumerate() {
-        let theorem_name = format!("{}_{}", theorem_base, case_index_start + idx + 1);
+        let theorem_name = format!("{}_sample_{}", theorem_base, case_index_start + idx + 1);
         let left_str = emit_expr(left, ctx);
         let right_str = emit_expr(right, ctx);
         match verify_mode {
