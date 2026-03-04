@@ -103,6 +103,34 @@ verify charge
 
 `verify` blocks are intended to stay close to the function they cover (same module, usually right after the definition). `aver check` warns when a pure, non-trivial, non-`main` function has no `verify` block by name. It intentionally skips effectful functions (covered by replay) and trivial pass-through wrappers. Verify blocks run with `aver verify` (or `aver run --verify`) under the same type/effect checks as normal code.
 
+#### Verify syntax
+
+Regular verify (explicit cases):
+
+```aver
+verify add
+    add(1, 2) => 3
+    add(0, 0) => 0
+```
+
+Law verify (domain-driven expansion):
+
+```aver
+verify add law commutative
+    given a: Int = -2..2
+    given b: Int = [-1, 0, 1]
+    add(a, b) => add(b, a)
+```
+
+Rules for `verify ... law ...`:
+
+- must include at least one `given`
+- each `given` must have an explicit type
+- domain must be either `a..b` (Int range) or an explicit list `[x, y, ...]`
+- block has exactly one assertion line (`lhs => rhs`)
+- cases are generated as cartesian product of all `given` domains
+- max generated law cases: `10_000`
+
 ### "How do I test effectful code without flaky mocks?"
 
 Use deterministic replay.
