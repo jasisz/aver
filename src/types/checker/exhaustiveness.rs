@@ -129,7 +129,13 @@ impl TypeChecker {
             }
         };
 
-        seen.remove(&key);
+        // Only remove the key when a witness was found (Some).
+        // When out is None (covered), keep the key in `seen` so sibling
+        // constructors with identical (types, rows) return immediately
+        // instead of re-entering the same exponentially-branching search.
+        if out.is_some() {
+            seen.remove(&key);
+        }
         out
     }
 

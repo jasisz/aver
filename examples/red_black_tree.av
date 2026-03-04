@@ -1,0 +1,113 @@
+// Red-Black Tree — Okasaki's purely functional balanced BST
+//
+// Color is encoded in the constructor name (Red/Black) instead of a
+// separate field, which halves the nesting depth needed for balance.
+
+type Tree
+  Empty
+  Red(Tree, Int, Tree)
+  Black(Tree, Int, Tree)
+
+fn search(x: Int, left: Tree, value: Int, right: Tree) -> Bool
+  ? "Binary search within a non-empty node"
+  match x == value
+    true -> true
+    false -> match x < value
+      true -> member(x, left)
+      false -> member(x, right)
+
+fn member(x: Int, t: Tree) -> Bool
+  ? "Check if a value exists in the tree"
+  match t
+    Tree.Empty -> false
+    Tree.Red(left, value, right) -> search(x, left, value, right)
+    Tree.Black(left, value, right) -> search(x, left, value, right)
+
+fn checkRight(left: Tree, value: Int, right: Tree) -> Tree
+  ? "Check right subtree for red-red violations and rebalance"
+  match right
+    Tree.Red(rl, rv, rr) -> match rl
+      Tree.Red(b, y, c) -> Tree.Red(Tree.Black(left, value, b), y, Tree.Black(c, rv, rr))
+      _ -> match rr
+        Tree.Red(c, z, d) -> Tree.Red(Tree.Black(left, value, rl), rv, Tree.Black(c, z, d))
+        _ -> Tree.Black(left, value, right)
+    _ -> Tree.Black(left, value, right)
+
+fn balanceBlack(left: Tree, value: Int, right: Tree) -> Tree
+  ? "Rebalance a black node — handles all four rotation cases"
+  match left
+    Tree.Red(ll, lv, lr) -> match ll
+      Tree.Red(a, x, b) -> Tree.Red(Tree.Black(a, x, b), lv, Tree.Black(lr, value, right))
+      _ -> match lr
+        Tree.Red(b, y, c) -> Tree.Red(Tree.Black(ll, lv, b), y, Tree.Black(c, value, right))
+        _ -> checkRight(left, value, right)
+    _ -> checkRight(left, value, right)
+
+fn ins(x: Int, t: Tree) -> Tree
+  ? "Insert helper — preserves invariants except possibly at root"
+  match t
+    Tree.Empty -> Tree.Red(Tree.Empty, x, Tree.Empty)
+    Tree.Red(left, value, right) -> match x == value
+      true -> t
+      false -> match x < value
+        true -> Tree.Red(ins(x, left), value, right)
+        false -> Tree.Red(left, value, ins(x, right))
+    Tree.Black(left, value, right) -> match x == value
+      true -> t
+      false -> match x < value
+        true -> balanceBlack(ins(x, left), value, right)
+        false -> balanceBlack(left, value, ins(x, right))
+
+fn makeBlack(t: Tree) -> Tree
+  ? "Force the root to black"
+  match t
+    Tree.Red(left, value, right) -> Tree.Black(left, value, right)
+    _ -> t
+
+fn insert(x: Int, t: Tree) -> Tree
+  ? "Insert a value into the red-black tree"
+  makeBlack(ins(x, t))
+
+fn size(t: Tree) -> Int
+  ? "Count the number of elements"
+  match t
+    Tree.Empty -> 0
+    Tree.Red(left, _, right) -> 1 + size(left) + size(right)
+    Tree.Black(left, _, right) -> 1 + size(left) + size(right)
+
+fn blackDepth(t: Tree) -> Int
+  ? "Black depth — uniform on all paths in a valid RBT"
+  match t
+    Tree.Empty -> 1
+    Tree.Red(left, _, _) -> blackDepth(left)
+    Tree.Black(left, _, _) -> 1 + blackDepth(left)
+
+fn insertInto(t: Tree, x: Int) -> Tree
+  ? "Fold helper with reversed args for List.fold"
+  insert(x, t)
+
+fn fromList(items: List<Int>) -> Tree
+  ? "Build a tree from a list of integers"
+  List.fold(items, Tree.Empty, insertInto)
+
+verify member
+  member(3, fromList([3, 1, 5, 2, 4])) => true
+  member(1, fromList([3, 1, 5, 2, 4])) => true
+  member(5, fromList([3, 1, 5, 2, 4])) => true
+  member(6, fromList([3, 1, 5, 2, 4])) => false
+  member(0, fromList([3, 1, 5, 2, 4])) => false
+
+verify size
+  size(Tree.Empty) => 0
+  size(insert(1, Tree.Empty)) => 1
+  size(fromList([3, 1, 5, 2, 4])) => 5
+  size(fromList([1, 1, 1])) => 1
+
+fn main()
+  ! [Console]
+  t = fromList([5, 3, 7, 1, 4, 6, 8, 2])
+  Console.print("Red-Black Tree")
+  Console.print("Size: {size(t)}")
+  Console.print("Black depth: {blackDepth(t)}")
+  Console.print("Contains 4: {member(4, t)}")
+  Console.print("Contains 9: {member(9, t)}")
