@@ -63,9 +63,13 @@ impl Interpreter {
                 let rv = self.eval_expr(right)?;
                 self.eval_binop(op, lv, rv)
             }
-            Expr::Match { subject, arms, .. } => {
+            Expr::Match {
+                subject,
+                arms,
+                line,
+            } => {
                 let sv = self.eval_expr(subject)?;
-                self.eval_match(sv, arms)
+                self.eval_match(sv, arms, *line)
             }
             Expr::Pipe(left, right) => {
                 let left_val = self.eval_expr(left)?;

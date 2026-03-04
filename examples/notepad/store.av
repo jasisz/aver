@@ -25,24 +25,25 @@ record Note
 // --- paths ---
 
 fn dataDir() -> String
+    ? "Returns base directory for notepad files."
     = "/tmp/aver_notepad"
 
 verify dataDir
-    dataDir() => dataDir()
+    dataDir() => "/tmp/aver_notepad"
 
 fn notesPath() -> String
+    ? "Returns absolute path to notes file."
     = "{dataDir()}/notes.txt"
 
 verify notesPath
-    notesPath() => notesPath()
+    notesPath() => "/tmp/aver_notepad/notes.txt"
 
 fn counterPath() -> String
+    ? "Returns absolute path to counter file."
     = "{dataDir()}/counter"
 
 verify counterPath
-    counterPath() => counterPath()
-
-// --- initialization ---
+    counterPath() => "/tmp/aver_notepad/counter"
 
 fn initFileIfMissing(path: String, content: String) -> Result<Unit, String>
     ? "Creates a file with default content only when it does not already exist."
@@ -100,14 +101,17 @@ fn foldNote(acc: Result<List<Note>, String>, line: String) -> Result<List<Note>,
             Result.Ok(note) -> Result.Ok(List.push(notes, note))
 
 verify foldNote
-    foldNote(Result.Err(""), "") => foldNote(Result.Err(""), "")
+    foldNote(Result.Err("x"), "1\tA\tB") => Result.Err("x")
+    foldNote(Result.Ok([]), "bad") => Result.Err("Cannot parse 'bad' as Int")
+    foldNote(Result.Ok([Note(id = 1, title = "A", body = "a")]), "2\tB\tb") => Result.Ok([Note(id = 1, title = "A", body = "a"), Note(id = 2, title = "B", body = "b")])
 
 fn isNonEmpty(s: String) -> Bool
     ? "Returns true when the string is not empty."
     = String.len(s) > 0
 
 verify isNonEmpty
-    isNonEmpty("") => isNonEmpty("")
+    isNonEmpty("") => false
+    isNonEmpty("x") => true
 
 fn parseNotes(content: String) -> Result<List<Note>, String>
     ? "Parses the entire notes file into a list of Notes."

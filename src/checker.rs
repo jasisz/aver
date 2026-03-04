@@ -24,6 +24,7 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
     let mut failures = Vec::new();
 
     println!("Verify: {}", block.fn_name.cyan());
+    interp.start_verify_match_coverage(&block.fn_name);
 
     for (left_expr, right_expr) in &block.cases {
         let case_str = format!("{} == {}", expr_to_str(left_expr), expr_to_str(right_expr));
@@ -66,6 +67,28 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
         }
     }
 
+    let coverage_misses = interp.finish_verify_match_coverage();
+    for miss in coverage_misses {
+        failed += 1;
+        let missing_1_based: Vec<String> = miss
+            .missing_arms
+            .iter()
+            .map(|idx| (idx + 1).to_string())
+            .collect();
+        let msg = format!(
+            "match at line {} missing covered arm(s): {} (of {})",
+            miss.line,
+            missing_1_based.join(", "),
+            miss.total_arms
+        );
+        println!("  {} {}", "✗".red(), msg);
+        failures.push((
+            format!("match-coverage:{}", miss.line),
+            format!("all {} arms covered", miss.total_arms),
+            msg,
+        ));
+    }
+
     let total = passed + failed;
     if failed == 0 {
         println!("  {}", format!("{}/{} passed", passed, total).green());
@@ -92,6 +115,25 @@ pub fn index_decisions(items: &[TopLevel]) -> Vec<&DecisionBlock> {
             }
         })
         .collect()
+}
+
+pub fn merge_verify_blocks(items: &[TopLevel]) -> Vec<VerifyBlock> {
+    let mut merged: Vec<VerifyBlock> = Vec::new();
+    let mut by_fn: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
+    for item in items {
+        let TopLevel::Verify(vb) = item else {
+            continue;
+        };
+        if let Some(&idx) = by_fn.get(&vb.fn_name) {
+            merged[idx].cases.extend(vb.cases.clone());
+        } else {
+            by_fn.insert(vb.fn_name.clone(), merged.len());
+            merged.push(vb.clone());
+        }
+    }
+
+    merged
 }
 
 /// Returns true if a function requires a ? description annotation.
@@ -248,6 +290,18 @@ pub fn check_module_intent(items: &[TopLevel]) -> ModuleCheckFindings {
                     if !verify_case_calls_target(left, &v.fn_name) {
                         errors.push(format!(
                             "line {}: Verify block '{}' case #{} must call '{}' on the left side",
+                            v.line,
+                            v.fn_name,
+                            idx + 1,
+                            v.fn_name
+                        ));
+                        block_valid = false;
+                    }
+                }
+                for (idx, (_left, right)) in v.cases.iter().enumerate() {
+                    if verify_case_calls_target(right, &v.fn_name) {
+                        errors.push(format!(
+                            "line {}: Verify block '{}' case #{} must not call '{}' on the right side",
                             v.line,
                             v.fn_name,
                             idx + 1,
@@ -453,6 +507,48 @@ verify add1
             findings.errors,
             findings.warnings
         );
+    }
+
+    #[test]
+    fn verify_case_must_not_call_verified_function_on_right_side() {
+        let items = parse_items(
+            r#"
+fn add1(x: Int) -> Int
+    = x + 1
+
+verify add1
+    add1(1) => add1(1)
+"#,
+        );
+        let findings = check_module_intent(&items);
+        assert!(
+            findings.errors.iter().any(|e| {
+                e.contains("Verify block 'add1' case #1 must not call 'add1' on the right side")
+            }),
+            "expected verify-case-rhs error, got errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
+        );
+    }
+
+    #[test]
+    fn merge_verify_blocks_coalesces_cases_by_function() {
+        let items = parse_items(
+            r#"
+fn f(x: Int) -> Int
+    = x
+
+verify f
+    f(1) => 1
+
+verify f
+    f(2) => 2
+"#,
+        );
+        let merged = merge_verify_blocks(&items);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].fn_name, "f");
+        assert_eq!(merged[0].cases.len(), 2);
     }
 }
 

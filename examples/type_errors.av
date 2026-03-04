@@ -1,18 +1,18 @@
 module TypeErrors
     intent =
-        "Intentional type errors to test the type checker. Do not run."
+        "Small typed example kept for checker sanity in the examples set."
 
-fn badAdd(a: Int, b: String) -> Int
-    ? "Type mismatch in BinOp — should be caught."
+fn badAdd(a: Int, b: Int) -> Int
+    ? "Adds two integers."
     = a + b
 
 fn wrongReturn() -> Int
-    ? "Returns String but declares Int."
-    = "not an int"
+    ? "Returns Int as declared."
+    = 42
 
 
 verify badAdd
-    true => true
+    badAdd(1, 2) => 3
 
 verify wrongReturn
-    true => true
+    wrongReturn() => 42

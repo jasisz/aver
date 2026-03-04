@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use colored::Colorize;
 
 use aver::ast::TopLevel;
-use aver::checker::{check_module_intent, index_decisions, run_verify};
+use aver::checker::{check_module_intent, index_decisions, merge_verify_blocks, run_verify};
 use aver::codegen;
 use aver::codegen::ModuleInfo;
 use aver::codegen::lean as lean_codegen;
@@ -205,13 +205,12 @@ pub(super) fn cmd_run(
         let mut total_passed = 0;
         let mut total_failed = 0;
 
-        for item in &items {
-            if let TopLevel::Verify(vb) = item {
-                let result = run_verify(vb, &mut interp);
-                total_passed += result.passed;
-                total_failed += result.failed;
-                println!();
-            }
+        let verify_blocks = merge_verify_blocks(&items);
+        for vb in &verify_blocks {
+            let result = run_verify(vb, &mut interp);
+            total_passed += result.passed;
+            total_failed += result.failed;
+            println!();
         }
 
         if total_failed > 0 {
@@ -364,16 +363,7 @@ pub(super) fn cmd_verify(file: &str, module_root_override: Option<&str>) {
         }
     }
 
-    let verify_blocks: Vec<_> = items
-        .iter()
-        .filter_map(|item| {
-            if let TopLevel::Verify(vb) = item {
-                Some(vb)
-            } else {
-                None
-            }
-        })
-        .collect();
+    let verify_blocks = merge_verify_blocks(&items);
 
     if verify_blocks.is_empty() {
         println!(
@@ -386,7 +376,7 @@ pub(super) fn cmd_verify(file: &str, module_root_override: Option<&str>) {
     let mut total_passed = 0;
     let mut total_failed = 0;
 
-    for vb in verify_blocks {
+    for vb in &verify_blocks {
         let result = run_verify(vb, &mut interp);
         total_passed += result.passed;
         total_failed += result.failed;

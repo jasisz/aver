@@ -2143,6 +2143,71 @@ fn verify_error_prop_err_fails_test() {
     }
 }
 
+#[test]
+fn verify_match_requires_all_arms_covered() {
+    let src = r#"
+fn classify(n: Int) -> String
+    match n
+        0 -> "zero"
+        1 -> "one"
+        _ -> "many"
+
+verify classify
+    classify(0) => "zero"
+"#;
+    let items = parse(src);
+    let mut interp = Interpreter::new();
+    for item in &items {
+        if let TopLevel::FnDef(fd) = item {
+            interp.exec_fn_def(fd).unwrap();
+        }
+    }
+    for item in &items {
+        if let TopLevel::Verify(vb) = item {
+            let result = aver::checker::run_verify(vb, &mut interp);
+            assert!(
+                result.failed >= 1,
+                "expected at least one failure for uncovered match arms, got {:?}",
+                result.failed
+            );
+        }
+    }
+}
+
+#[test]
+fn verify_match_passes_when_all_arms_covered() {
+    let src = r#"
+fn classify(n: Int) -> String
+    match n
+        0 -> "zero"
+        1 -> "one"
+        _ -> "many"
+
+verify classify
+    classify(0) => "zero"
+    classify(1) => "one"
+    classify(2) => "many"
+"#;
+    let items = parse(src);
+    let mut interp = Interpreter::new();
+    for item in &items {
+        if let TopLevel::FnDef(fd) = item {
+            interp.exec_fn_def(fd).unwrap();
+        }
+    }
+    for item in &items {
+        if let TopLevel::Verify(vb) = item {
+            let result = aver::checker::run_verify(vb, &mut interp);
+            assert_eq!(
+                result.failed, 0,
+                "unexpected verify failures: {:?}",
+                result.failed
+            );
+            assert_eq!(result.passed, 3);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Module runtime semantics
 // ---------------------------------------------------------------------------

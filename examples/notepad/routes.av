@@ -58,48 +58,52 @@ fn jsonHeaders() -> List<Header>
     ? "Standard JSON Content-Type headers."
     = [Header(name = "Content-Type", value = "application/json")]
 
+verify jsonHeaders
+    jsonHeaders() => [Header(name = "Content-Type", value = "application/json")]
+
 // --- response builders ---
 
-verify jsonHeaders
-    jsonHeaders() => jsonHeaders()
-
 fn ok(body: String) -> HttpResponse
+    ? "Builds a 200 response with JSON headers."
     = HttpResponse(status = 200, body = body, headers = jsonHeaders())
 
 verify ok
-    ok("") => ok("")
+    ok("x") => HttpResponse(status = 200, body = "x", headers = jsonHeaders())
 
 fn created(body: String) -> HttpResponse
+    ? "Builds a 201 response with JSON headers."
     = HttpResponse(status = 201, body = body, headers = jsonHeaders())
 
 verify created
-    created("") => created("")
+    created("x") => HttpResponse(status = 201, body = "x", headers = jsonHeaders())
 
 fn notFound(msg: String) -> HttpResponse
+    ? "Builds a 404 JSON error response."
     = HttpResponse(status = 404, body = jsonErr(msg), headers = jsonHeaders())
 
 verify notFound
-    notFound("") => notFound("")
+    notFound("missing") => HttpResponse(status = 404, body = "{{\"error\":\"missing\"}}", headers = jsonHeaders())
 
 fn badRequest(msg: String) -> HttpResponse
+    ? "Builds a 400 JSON error response."
     = HttpResponse(status = 400, body = jsonErr(msg), headers = jsonHeaders())
 
 verify badRequest
-    badRequest("") => badRequest("")
+    badRequest("bad") => HttpResponse(status = 400, body = "{{\"error\":\"bad\"}}", headers = jsonHeaders())
 
 fn serverError(msg: String) -> HttpResponse
+    ? "Builds a 500 JSON error response."
     = HttpResponse(status = 500, body = jsonErr(msg), headers = jsonHeaders())
 
 verify serverError
-    serverError("") => serverError("")
+    serverError("boom") => HttpResponse(status = 500, body = "{{\"error\":\"boom\"}}", headers = jsonHeaders())
 
 fn methodNotAllowed() -> HttpResponse
+    ? "Builds a 405 JSON error response."
     = HttpResponse(status = 405, body = jsonErr("Method not allowed"), headers = jsonHeaders())
 
 verify methodNotAllowed
-    methodNotAllowed() => methodNotAllowed()
-
-// --- path parsing ---
+    methodNotAllowed() => HttpResponse(status = 405, body = "{{\"error\":\"Method not allowed\"}}", headers = jsonHeaders())
 
 fn extractNoteId(path: String) -> Result<Int, String>
     ? "Extracts a numeric ID from a /notes/<id> path."

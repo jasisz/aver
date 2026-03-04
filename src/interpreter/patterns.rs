@@ -5,9 +5,11 @@ impl Interpreter {
         &mut self,
         subject: Value,
         arms: &[MatchArm],
+        line: usize,
     ) -> Result<Value, RuntimeError> {
-        for arm in arms {
+        for (arm_idx, arm) in arms.iter().enumerate() {
             if let Some(bindings) = self.match_pattern(&arm.pattern, &subject) {
+                self.note_verify_match_arm(line, arms.len(), arm_idx);
                 // If we're in a resolved function and all bindings have slots,
                 // write directly into the Slots frame (no extra scope push).
                 if let Some(local_slots) = self.active_local_slots.clone() {

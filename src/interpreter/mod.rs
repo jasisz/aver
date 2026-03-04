@@ -48,6 +48,22 @@ struct RecordingSink {
     input: JsonValue,
 }
 
+type MatchSiteKey = (usize, usize); // (line, arm_count)
+
+#[derive(Debug, Clone)]
+struct VerifyMatchCoverageTracker {
+    target_fn: String,
+    expected_arms: std::collections::BTreeMap<MatchSiteKey, usize>,
+    visited_arms: HashMap<MatchSiteKey, HashSet<usize>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifyMatchCoverageMiss {
+    pub line: usize,
+    pub total_arms: usize,
+    pub missing_arms: Vec<usize>, // 0-based arm indices
+}
+
 #[derive(Debug, Clone)]
 pub struct RecordingConfig {
     pub path: PathBuf,
@@ -222,6 +238,7 @@ pub struct Interpreter {
     replay_pos: usize,
     validate_replay_args: bool,
     recording_sink: Option<RecordingSink>,
+    verify_match_coverage: Option<VerifyMatchCoverageTracker>,
 }
 
 mod api;

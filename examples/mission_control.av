@@ -51,9 +51,7 @@ fn initialState() -> ShipState
     = ShipState(name = "Odyssey-1", fuel = 120, velocity = 0, orientation = 0, power = 20, solarDeployed = false, alive = true, status = "CRUISE", history = [])
 
 verify initialState
-    initialState().fuel => 120
-    initialState().orientation => 0
-    initialState().alive => true
+    initialState() => ShipState(name = "Odyssey-1", fuel = 120, velocity = 0, orientation = 0, power = 20, solarDeployed = false, alive = true, status = "CRUISE", history = [])
 
 fn parseCommand(line: String) -> Result<Cmd, String>
     ? "Parse one command line: BURN n, ROTATE n, DEPLOY, TICK n, ABORT."
@@ -63,6 +61,7 @@ fn parseCommand(line: String) -> Result<Cmd, String>
         false -> parseCommandTokens(String.split(clean, " "))
 
 verify parseCommand
+    parseCommand("   ") => Result.Err("Empty command")
     parseCommand("BURN 12") => Result.Ok(Cmd.Burn(12))
     parseCommand("ROTATE -90") => Result.Ok(Cmd.Rotate(-90))
     parseCommand("DEPLOY") => Result.Ok(Cmd.DeploySolar)
@@ -77,8 +76,8 @@ fn parseCommandTokens(parts: List<String>) -> Result<Cmd, String>
         [head, ..tail] -> parseCommandHead(head, tail)
 
 verify parseCommandTokens
-    parseCommandTokens(["BURN", "7"]) => Result.Ok(Cmd.Burn(7))
     parseCommandTokens([]) => Result.Err("Empty command")
+    parseCommandTokens(["BURN", "3"]) => Result.Ok(Cmd.Burn(3))
 
 fn parseCommandHead(head: String, tail: List<String>) -> Result<Cmd, String>
     ? "Parse command-specific arguments."
@@ -91,7 +90,11 @@ fn parseCommandHead(head: String, tail: List<String>) -> Result<Cmd, String>
         _ -> Result.Err("Unknown command: " + head)
 
 verify parseCommandHead
+    parseCommandHead("BURN", ["10"]) => Result.Ok(Cmd.Burn(10))
+    parseCommandHead("ROTATE", ["-45"]) => Result.Ok(Cmd.Rotate(-45))
+    parseCommandHead("TICK", ["7"]) => Result.Ok(Cmd.Tick(7))
     parseCommandHead("DEPLOY", []) => Result.Ok(Cmd.DeploySolar)
+    parseCommandHead("ABORT", []) => Result.Ok(Cmd.Abort)
     parseCommandHead("WARP", []) => Result.Err("Unknown command: WARP")
 
 fn parseBurnArgs(args: List<String>) -> Result<Cmd, String>
@@ -101,8 +104,9 @@ fn parseBurnArgs(args: List<String>) -> Result<Cmd, String>
     Result.Ok(Cmd.Burn(value))
 
 verify parseBurnArgs
-    parseBurnArgs(["9"]) => Result.Ok(Cmd.Burn(9))
+    parseBurnArgs(["8"]) => Result.Ok(Cmd.Burn(8))
     parseBurnArgs([]) => Result.Err("BURN expects exactly 1 argument")
+    parseBurnArgs(["x"]) => Result.Err("BURN argument must be Int")
 
 fn parseRotateArgs(args: List<String>) -> Result<Cmd, String>
     ? "Parse ROTATE argument as integer degrees."
@@ -111,8 +115,8 @@ fn parseRotateArgs(args: List<String>) -> Result<Cmd, String>
     Result.Ok(Cmd.Rotate(value))
 
 verify parseRotateArgs
-    parseRotateArgs(["-45"]) => Result.Ok(Cmd.Rotate(-45))
-    parseRotateArgs(["bad"]) => Result.Err("ROTATE argument must be Int")
+    parseRotateArgs(["90"]) => Result.Ok(Cmd.Rotate(90))
+    parseRotateArgs(["x"]) => Result.Err("ROTATE argument must be Int")
 
 fn parseTickArgs(args: List<String>) -> Result<Cmd, String>
     ? "Parse TICK argument as integer seconds."
@@ -121,8 +125,8 @@ fn parseTickArgs(args: List<String>) -> Result<Cmd, String>
     Result.Ok(Cmd.Tick(value))
 
 verify parseTickArgs
-    parseTickArgs(["3"]) => Result.Ok(Cmd.Tick(3))
-    parseTickArgs(["oops"]) => Result.Err("TICK argument must be Int")
+    parseTickArgs(["5"]) => Result.Ok(Cmd.Tick(5))
+    parseTickArgs([]) => Result.Err("TICK expects exactly 1 argument")
 
 fn parseNoArgs(name: String, args: List<String>, cmd: Cmd) -> Result<Cmd, String>
     ? "Validate that command takes no arguments."
@@ -143,8 +147,9 @@ fn parseOneArg(name: String, args: List<String>) -> Result<String, String>
             false -> Result.Err(name + " expects exactly 1 argument")
 
 verify parseOneArg
-    parseOneArg("BURN", ["10"]) => Result.Ok("10")
     parseOneArg("BURN", []) => Result.Err("BURN expects exactly 1 argument")
+    parseOneArg("BURN", ["10"]) => Result.Ok("10")
+    parseOneArg("BURN", ["10", "20"]) => Result.Err("BURN expects exactly 1 argument")
 
 fn parseIntArg(name: String, arg: String) -> Result<Int, String>
     ? "Parse integer argument with command-specific error message."
@@ -153,8 +158,8 @@ fn parseIntArg(name: String, arg: String) -> Result<Int, String>
         Result.Err(_) -> Result.Err(name + " argument must be Int")
 
 verify parseIntArg
-    parseIntArg("BURN", "12") => Result.Ok(12)
-    parseIntArg("BURN", "x") => Result.Err("BURN argument must be Int")
+    parseIntArg("TICK", "7") => Result.Ok(7)
+    parseIntArg("TICK", "x") => Result.Err("TICK argument must be Int")
 
 fn runPlan(cmds: List<Cmd>) -> Result<ShipState, String>
     ? "Apply commands from initial state, failing fast on first invalid step."
@@ -172,6 +177,7 @@ fn runPlanFrom(state: ShipState, cmds: List<Cmd>) -> Result<ShipState, String>
 
 verify runPlanFrom
     runPlanFrom(initialState(), []) => Result.Ok(initialState())
+    runPlanFrom(initialState(), [Cmd.Burn(10)]) => Result.Ok(ShipState(name = "Odyssey-1", fuel = 110, velocity = 10, orientation = 0, power = 20, solarDeployed = false, alive = true, status = "BURN", history = ["burn 10"]))
 
 fn runPlanStep(state: ShipState, cmd: Cmd, tail: List<Cmd>) -> Result<ShipState, String>
     ? "Run one command and continue."
@@ -179,7 +185,7 @@ fn runPlanStep(state: ShipState, cmd: Cmd, tail: List<Cmd>) -> Result<ShipState,
     runPlanFrom(next, tail)
 
 verify runPlanStep
-    runPlanStep(initialState(), Cmd.Burn(5), []) => Result.Ok(ShipState(name = "Odyssey-1", fuel = 115, velocity = 5, orientation = 0, power = 20, solarDeployed = false, alive = true, status = "BURN", history = ["burn 5"]))
+    runPlanStep(initialState(), Cmd.Burn(10), [Cmd.Rotate(90)]) => Result.Ok(ShipState(name = "Odyssey-1", fuel = 110, velocity = 10, orientation = 90, power = 20, solarDeployed = false, alive = true, status = "ROTATE", history = ["burn 10", "rotate 90"]))
 
 fn applyCmd(state: ShipState, cmd: Cmd) -> Result<ShipState, String>
     ? "Apply one command to mission state."
@@ -188,9 +194,8 @@ fn applyCmd(state: ShipState, cmd: Cmd) -> Result<ShipState, String>
         true -> applyCmdActive(state, cmd)
 
 verify applyCmd
-    applyCmd(initialState(), Cmd.Burn(10)) => Result.Ok(ShipState(name = "Odyssey-1", fuel = 110, velocity = 10, orientation = 0, power = 20, solarDeployed = false, alive = true, status = "BURN", history = ["burn 10"]))
-    applyCmd(initialState(), Cmd.Rotate(-90)) => Result.Ok(ShipState(name = "Odyssey-1", fuel = 120, velocity = 0, orientation = 270, power = 20, solarDeployed = false, alive = true, status = "ROTATE", history = ["rotate -90"]))
-    applyCmd(initialState(), Cmd.Tick(5)) => Result.Ok(ShipState(name = "Odyssey-1", fuel = 120, velocity = 0, orientation = 0, power = 15, solarDeployed = false, alive = true, status = "DRIFT", history = ["tick 5"]))
+    applyCmd(ShipState.update(initialState(), alive = false), Cmd.Burn(1)) => Result.Err("Mission is not active")
+    applyCmd(initialState(), Cmd.Rotate(10)) => applyRotate(initialState(), 10)
 
 fn applyCmdActive(state: ShipState, cmd: Cmd) -> Result<ShipState, String>
     ? "Dispatch command-specific transition."
@@ -202,7 +207,11 @@ fn applyCmdActive(state: ShipState, cmd: Cmd) -> Result<ShipState, String>
         Cmd.Abort -> applyAbort(state)
 
 verify applyCmdActive
-    applyCmdActive(initialState(), Cmd.Rotate(45)) => Result.Ok(ShipState(name = "Odyssey-1", fuel = 120, velocity = 0, orientation = 45, power = 20, solarDeployed = false, alive = true, status = "ROTATE", history = ["rotate 45"]))
+    applyCmdActive(initialState(), Cmd.Burn(5)) => applyBurn(initialState(), 5)
+    applyCmdActive(initialState(), Cmd.Rotate(15)) => applyRotate(initialState(), 15)
+    applyCmdActive(initialState(), Cmd.DeploySolar) => applyDeploy(initialState())
+    applyCmdActive(initialState(), Cmd.Tick(3)) => applyTick(initialState(), 3)
+    applyCmdActive(initialState(), Cmd.Abort) => applyAbort(initialState())
 
 fn applyBurn(state: ShipState, amount: Int) -> Result<ShipState, String>
     ? "Burn fuel to increase velocity."
@@ -214,7 +223,8 @@ fn applyBurn(state: ShipState, amount: Int) -> Result<ShipState, String>
 
 verify applyBurn
     applyBurn(initialState(), 0) => Result.Err("Burn amount must be positive")
-    applyBurn(initialState(), 10) => Result.Ok(ShipState(name = "Odyssey-1", fuel = 110, velocity = 10, orientation = 0, power = 20, solarDeployed = false, alive = true, status = "BURN", history = ["burn 10"]))
+    applyBurn(initialState(), 200) => Result.Err("Insufficient fuel: need 200, have 120")
+    applyBurn(initialState(), 10) => finalizeBurn(initialState(), 10)
 
 fn finalizeBurn(state: ShipState, amount: Int) -> Result<ShipState, String>
     ? "Finalize valid burn update."
@@ -222,7 +232,7 @@ fn finalizeBurn(state: ShipState, amount: Int) -> Result<ShipState, String>
     Result.Ok(addHistory(next, "burn " + String.fromInt(amount)))
 
 verify finalizeBurn
-    finalizeBurn(initialState(), 5) => Result.Ok(ShipState(name = "Odyssey-1", fuel = 115, velocity = 5, orientation = 0, power = 20, solarDeployed = false, alive = true, status = "BURN", history = ["burn 5"]))
+    finalizeBurn(initialState(), 10) => Result.Ok(ShipState(name = "Odyssey-1", fuel = 110, velocity = 10, orientation = 0, power = 20, solarDeployed = false, alive = true, status = "BURN", history = ["burn 10"]))
 
 fn applyRotate(state: ShipState, deg: Int) -> Result<ShipState, String>
     ? "Rotate ship by degrees (wrap 0..359)."
@@ -231,7 +241,7 @@ fn applyRotate(state: ShipState, deg: Int) -> Result<ShipState, String>
     Result.Ok(addHistory(next, "rotate " + String.fromInt(deg)))
 
 verify applyRotate
-    applyRotate(initialState(), -90) => Result.Ok(ShipState(name = "Odyssey-1", fuel = 120, velocity = 0, orientation = 270, power = 20, solarDeployed = false, alive = true, status = "ROTATE", history = ["rotate -90"]))
+    applyRotate(initialState(), 450) => Result.Ok(ShipState(name = "Odyssey-1", fuel = 120, velocity = 0, orientation = 90, power = 20, solarDeployed = false, alive = true, status = "ROTATE", history = ["rotate 450"]))
 
 fn applyDeploy(state: ShipState) -> Result<ShipState, String>
     ? "Deploy solar panels once."
@@ -240,7 +250,8 @@ fn applyDeploy(state: ShipState) -> Result<ShipState, String>
         false -> finalizeDeploy(state)
 
 verify applyDeploy
-    applyDeploy(initialState()) => Result.Ok(ShipState(name = "Odyssey-1", fuel = 120, velocity = 0, orientation = 0, power = 20, solarDeployed = true, alive = true, status = "SOLAR", history = ["deploy-solar"]))
+    applyDeploy(ShipState.update(initialState(), solarDeployed = true)) => Result.Ok(ShipState(name = "Odyssey-1", fuel = 120, velocity = 0, orientation = 0, power = 20, solarDeployed = true, alive = true, status = "CRUISE", history = ["deploy-solar (already)"]))
+    applyDeploy(initialState()) => finalizeDeploy(initialState())
 
 fn finalizeDeploy(state: ShipState) -> Result<ShipState, String>
     ? "Finalize deploy update."
@@ -258,7 +269,7 @@ fn applyTick(state: ShipState, seconds: Int) -> Result<ShipState, String>
 
 verify applyTick
     applyTick(initialState(), 0) => Result.Err("Tick seconds must be positive")
-    applyTick(initialState(), 5) => Result.Ok(ShipState(name = "Odyssey-1", fuel = 120, velocity = 0, orientation = 0, power = 15, solarDeployed = false, alive = true, status = "DRIFT", history = ["tick 5"]))
+    applyTick(initialState(), 3) => finalizeTick(initialState(), 3)
 
 fn finalizeTick(state: ShipState, seconds: Int) -> Result<ShipState, String>
     ? "Finalize tick update with depletion checks."
@@ -269,8 +280,8 @@ fn finalizeTick(state: ShipState, seconds: Int) -> Result<ShipState, String>
         false -> tickOk(state, seconds, nextPower)
 
 verify finalizeTick
-    finalizeTick(initialState(), 25) => Result.Err("Power depleted during tick")
-    finalizeTick(initialState(), 3) => Result.Ok(ShipState(name = "Odyssey-1", fuel = 120, velocity = 0, orientation = 0, power = 17, solarDeployed = false, alive = true, status = "DRIFT", history = ["tick 3"]))
+    finalizeTick(initialState(), 30) => Result.Err("Power depleted during tick")
+    finalizeTick(ShipState.update(initialState(), solarDeployed = true), 5) => tickOk(ShipState.update(initialState(), solarDeployed = true), 5, 25)
 
 fn tickOk(state: ShipState, seconds: Int, nextPower: Int) -> Result<ShipState, String>
     ? "Write successful tick state."
@@ -278,7 +289,7 @@ fn tickOk(state: ShipState, seconds: Int, nextPower: Int) -> Result<ShipState, S
     Result.Ok(addHistory(next, "tick " + String.fromInt(seconds)))
 
 verify tickOk
-    tickOk(initialState(), 3, 17) => Result.Ok(ShipState(name = "Odyssey-1", fuel = 120, velocity = 0, orientation = 0, power = 17, solarDeployed = false, alive = true, status = "DRIFT", history = ["tick 3"]))
+    tickOk(initialState(), 4, 16) => Result.Ok(ShipState(name = "Odyssey-1", fuel = 120, velocity = 0, orientation = 0, power = 16, solarDeployed = false, alive = true, status = "DRIFT", history = ["tick 4"]))
 
 fn applyAbort(state: ShipState) -> Result<ShipState, String>
     ? "Abort mission permanently."
@@ -295,8 +306,8 @@ fn solarGain(solarDeployed: Bool, seconds: Int) -> Int
         false -> 0
 
 verify solarGain
-    solarGain(true, 4) => 8
-    solarGain(false, 4) => 0
+    solarGain(true, 3) => 6
+    solarGain(false, 3) => 0
 
 fn normalizeAngle(angle: Int) -> Int
     ? "Normalize arbitrary angle to [0, 359]."
@@ -305,11 +316,8 @@ fn normalizeAngle(angle: Int) -> Int
         false -> normalizeAnglePositive(angle)
 
 verify normalizeAngle
-    normalizeAngle(0) => 0
-    normalizeAngle(359) => 359
-    normalizeAngle(360) => 0
-    normalizeAngle(-90) => 270
-    normalizeAngle(765) => 45
+    normalizeAngle(-10) => 350
+    normalizeAngle(370) => 10
 
 fn normalizeAnglePositive(angle: Int) -> Int
     ? "Normalize non-negative angle by repeated wrap."
@@ -318,15 +326,15 @@ fn normalizeAnglePositive(angle: Int) -> Int
         false -> angle
 
 verify normalizeAnglePositive
-    normalizeAnglePositive(0) => 0
-    normalizeAnglePositive(361) => 1
+    normalizeAnglePositive(725) => 5
+    normalizeAnglePositive(45) => 45
 
 fn addHistory(state: ShipState, entry: String) -> ShipState
     ? "Append one command marker to mission history."
     = ShipState.update(state, history = List.push(state.history, entry))
 
 verify addHistory
-    addHistory(initialState(), "x").history => ["x"]
+    addHistory(initialState(), "x") => ShipState(name = "Odyssey-1", fuel = 120, velocity = 0, orientation = 0, power = 20, solarDeployed = false, alive = true, status = "CRUISE", history = ["x"])
 
 fn stateSummary(state: ShipState) -> String
     ? "Compact telemetry line."
@@ -343,7 +351,7 @@ fn parseCommands(lines: List<String>, acc: List<Cmd>) -> Result<List<Cmd>, Strin
 
 verify parseCommands
     parseCommands([], []) => Result.Ok([])
-    parseCommands(["BURN 2", "ROTATE 5"], []) => Result.Ok([Cmd.Burn(2), Cmd.Rotate(5)])
+    parseCommands(["BURN 3"], []) => Result.Ok([Cmd.Burn(3)])
 
 fn parseCommandsStep(line: String, tail: List<String>, acc: List<Cmd>) -> Result<List<Cmd>, String>
     ? "Parse one script line then continue."
@@ -351,7 +359,7 @@ fn parseCommandsStep(line: String, tail: List<String>, acc: List<Cmd>) -> Result
     parseCommands(tail, List.push(acc, cmd))
 
 verify parseCommandsStep
-    parseCommandsStep("BURN 2", [], []) => Result.Ok([Cmd.Burn(2)])
+    parseCommandsStep("ROTATE 5", [], []) => Result.Ok([Cmd.Rotate(5)])
 
 fn printHistory(entries: List<String>) -> Unit
     ? "Print numbered command history."

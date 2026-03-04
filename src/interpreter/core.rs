@@ -105,6 +105,7 @@ impl Interpreter {
             replay_pos: 0,
             validate_replay_args: false,
             recording_sink: None,
+            verify_match_coverage: None,
         }
     }
 
@@ -207,6 +208,170 @@ impl Interpreter {
     /// Register a named effect set alias.
     pub fn register_effect_set(&mut self, name: String, effects: Vec<String>) {
         self.effect_aliases.insert(name, effects);
+    }
+
+    pub fn start_verify_match_coverage(&mut self, fn_name: &str) {
+        let Ok(fn_val) = self.lookup(fn_name) else {
+            self.verify_match_coverage = None;
+            return;
+        };
+        let Value::Fn { body, .. } = fn_val else {
+            self.verify_match_coverage = None;
+            return;
+        };
+
+        let mut expected = std::collections::BTreeMap::new();
+        Self::collect_match_sites_from_fn_body(body.as_ref(), &mut expected);
+        if expected.is_empty() {
+            self.verify_match_coverage = None;
+            return;
+        }
+
+        self.verify_match_coverage = Some(VerifyMatchCoverageTracker {
+            target_fn: fn_name.to_string(),
+            expected_arms: expected,
+            visited_arms: HashMap::new(),
+        });
+    }
+
+    pub fn finish_verify_match_coverage(&mut self) -> Vec<VerifyMatchCoverageMiss> {
+        let Some(tracker) = self.verify_match_coverage.take() else {
+            return vec![];
+        };
+
+        let mut misses = Vec::new();
+        for ((line, arm_count), expected_total) in tracker.expected_arms {
+            let visited = tracker.visited_arms.get(&(line, arm_count));
+            let mut missing = Vec::new();
+            for arm_idx in 0..expected_total {
+                let covered = visited.is_some_and(|set| set.contains(&arm_idx));
+                if !covered {
+                    missing.push(arm_idx);
+                }
+            }
+            if !missing.is_empty() {
+                misses.push(VerifyMatchCoverageMiss {
+                    line,
+                    total_arms: expected_total,
+                    missing_arms: missing,
+                });
+            }
+        }
+        misses
+    }
+
+    pub(super) fn note_verify_match_arm(&mut self, line: usize, arm_count: usize, arm_idx: usize) {
+        let Some(tracker) = self.verify_match_coverage.as_mut() else {
+            return;
+        };
+        let Some(frame) = self.call_stack.last() else {
+            return;
+        };
+        if frame.name != tracker.target_fn {
+            return;
+        }
+        let key = (line, arm_count);
+        if !tracker.expected_arms.contains_key(&key) {
+            return;
+        }
+        tracker.visited_arms.entry(key).or_default().insert(arm_idx);
+    }
+
+    fn collect_match_sites_from_fn_body(
+        body: &FnBody,
+        out: &mut std::collections::BTreeMap<MatchSiteKey, usize>,
+    ) {
+        match body {
+            FnBody::Expr(expr) => Self::collect_match_sites_from_expr(expr, out),
+            FnBody::Block(stmts) => {
+                for stmt in stmts {
+                    Self::collect_match_sites_from_stmt(stmt, out);
+                }
+            }
+        }
+    }
+
+    fn collect_match_sites_from_stmt(
+        stmt: &Stmt,
+        out: &mut std::collections::BTreeMap<MatchSiteKey, usize>,
+    ) {
+        match stmt {
+            Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => {
+                Self::collect_match_sites_from_expr(expr, out);
+            }
+        }
+    }
+
+    fn collect_match_sites_from_expr(
+        expr: &Expr,
+        out: &mut std::collections::BTreeMap<MatchSiteKey, usize>,
+    ) {
+        match expr {
+            Expr::Match {
+                subject,
+                arms,
+                line,
+            } => {
+                out.insert((*line, arms.len()), arms.len());
+                Self::collect_match_sites_from_expr(subject, out);
+                for arm in arms {
+                    Self::collect_match_sites_from_expr(&arm.body, out);
+                }
+            }
+            Expr::FnCall(fn_expr, args) => {
+                Self::collect_match_sites_from_expr(fn_expr, out);
+                for arg in args {
+                    Self::collect_match_sites_from_expr(arg, out);
+                }
+            }
+            Expr::BinOp(_, left, right) | Expr::Pipe(left, right) => {
+                Self::collect_match_sites_from_expr(left, out);
+                Self::collect_match_sites_from_expr(right, out);
+            }
+            Expr::Attr(obj, _) | Expr::ErrorProp(obj) => {
+                Self::collect_match_sites_from_expr(obj, out);
+            }
+            Expr::Constructor(_, maybe_arg) => {
+                if let Some(arg) = maybe_arg {
+                    Self::collect_match_sites_from_expr(arg, out);
+                }
+            }
+            Expr::InterpolatedStr(parts) => {
+                for part in parts {
+                    if let StrPart::Parsed(expr) = part {
+                        Self::collect_match_sites_from_expr(expr, out);
+                    }
+                }
+            }
+            Expr::List(items) | Expr::Tuple(items) => {
+                for item in items {
+                    Self::collect_match_sites_from_expr(item, out);
+                }
+            }
+            Expr::MapLiteral(entries) => {
+                for (key, value) in entries {
+                    Self::collect_match_sites_from_expr(key, out);
+                    Self::collect_match_sites_from_expr(value, out);
+                }
+            }
+            Expr::RecordCreate { fields, .. } => {
+                for (_, expr) in fields {
+                    Self::collect_match_sites_from_expr(expr, out);
+                }
+            }
+            Expr::RecordUpdate { base, updates, .. } => {
+                Self::collect_match_sites_from_expr(base, out);
+                for (_, expr) in updates {
+                    Self::collect_match_sites_from_expr(expr, out);
+                }
+            }
+            Expr::TailCall(boxed) => {
+                for arg in &boxed.1 {
+                    Self::collect_match_sites_from_expr(arg, out);
+                }
+            }
+            Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => {}
+        }
     }
 
     /// Expand effect names one level: aliases → concrete effect names.
