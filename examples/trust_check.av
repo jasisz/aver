@@ -8,7 +8,8 @@ decision RequireVerification
     reason =
         "AI writes convincing code that may be subtly wrong."
         "Verify blocks make correctness visible, not assumed."
-    chosen = "VerifyBlocks"    rejected = ["TrustByDefault", "ManualReview"]
+    chosen = "VerifyBlocks"
+    rejected = ["TrustByDefault", "ManualReview"]
 
     impacts = [canTrust]
 

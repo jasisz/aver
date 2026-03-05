@@ -20,7 +20,8 @@ decision UseHttpGateway
         "Aver does not implement native MySQL wire framing (handshake, auth, COM_QUERY packets)."
         "Http gateways expose SQL semantics through a protocol already supported by the Http service."
         "This keeps the connector dependency-free and portable across Aver runtimes."
-    chosen = "HttpGateway"    rejected = ["NativeWireProtocol", "FFIBinding", "EmbeddedDriver"]
+    chosen = "HttpGateway"
+    rejected = ["NativeWireProtocol", "FFIBinding", "EmbeddedDriver"]
 
     impacts = [query, execute, ping]
 
@@ -30,7 +31,8 @@ decision BearerTokenAuth
         "Token auth is explicit and stateless: each request carries credentials."
         "No implicit pool or session state hidden inside runtime internals."
         "Token in DbConfig is visible at call sites and easy to swap in tests."
-    chosen = "BearerToken"    rejected = ["BasicAuth", "ConnectionString", "ImplicitEnvLookup"]
+    chosen = "BearerToken"
+    rejected = ["BasicAuth", "ConnectionString", "ImplicitEnvLookup"]
 
     impacts = [authHeader, query, execute, ping]
 
@@ -40,7 +42,8 @@ decision RawJsonBody
         "Aver has no JSON parser in the standard library yet."
         "Returning raw response body as String is honest about current capabilities."
         "Structured parsing can be layered later via external tools or future Json module."
-    chosen = "RawStringBody"    rejected = ["ParsedRecord", "DynamicMap", "JsonValue"]
+    chosen = "RawStringBody"
+    rejected = ["ParsedRecord", "DynamicMap", "JsonValue"]
 
     impacts = [query, execute]
 

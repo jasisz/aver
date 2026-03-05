@@ -14,7 +14,8 @@ decision DiskAsCapability
         "surface without any hidden implicit I/O."
         "Disk.delete is file-only; Disk.deleteDir is the explicit recursive variant —"
         "accidental tree deletion requires a conscious choice of the right method."
-    chosen = "BuiltinService"    rejected = ["ImplicitIO", "SeparateFileModule"]
+    chosen = "BuiltinService"
+    rejected = ["ImplicitIO", "SeparateFileModule"]
 
     impacts = [loadConfig, saveConfig, appendLog, listWorkdir, scaffold]
 

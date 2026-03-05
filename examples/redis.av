@@ -13,7 +13,8 @@ decision RespOverTcp
         "TCP. RESP commands are plain lines terminated by CRLF, which maps"
         "directly onto Tcp.writeLine / Tcp.readLine. No binary framing or"
         "external library is needed."
-    chosen = "RawTcpWithRespText"    rejected = ["HttpAdapter", "NativeRedisDriver"]
+    chosen = "RawTcpWithRespText"
+    rejected = ["HttpAdapter", "NativeRedisDriver"]
 
     impacts = [Redis]
     author = "szymon"
@@ -25,7 +26,8 @@ decision ConnectionIdPattern
         "Value directly. Tcp.connect returns an opaque Tcp.Connection record"
         "(id, host, port) that is threaded through subsequent calls."
         "The actual socket lives in a thread-local HashMap keyed by the id."
-    chosen = "OpaqueConnectionRecord"    rejected = ["StreamInValue", "GlobalConnectionPool", "BareStringHandle"]
+    chosen = "OpaqueConnectionRecord"
+    rejected = ["StreamInValue", "GlobalConnectionPool", "BareStringHandle"]
 
     impacts = [Redis, Tcp]
     author = "szymon"

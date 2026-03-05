@@ -12,7 +12,8 @@ decision DiskAsDatabase
         "Disk service provides atomic read/write which is sufficient for a demo."
         "No external dependencies required. Data survives restarts."
         "Real production apps would use a proper database service."
-    chosen = "DiskStorage"    rejected = ["InMemory", "ExternalDatabase"]
+    chosen = "DiskStorage"
+    rejected = ["InMemory", "ExternalDatabase"]
 
     impacts = [main]
 

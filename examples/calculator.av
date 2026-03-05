@@ -10,7 +10,8 @@ decision NoExceptions
         "Exceptions make error paths invisible at the call site."
         "Result forces the caller to acknowledge failure explicitly,"
         "which is essential when AI tooling reads code without running it."
-    chosen = "Result"    rejected = ["Exceptions", "Nullable"]
+    chosen = "Result"
+    rejected = ["Exceptions", "Nullable"]
 
     impacts = [safeDivide, safeRoot]
 

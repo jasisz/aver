@@ -15,7 +15,8 @@ decision HttpAsCapability
         "it visible in the signature — callers know the function goes outside the process."
         "4xx/5xx are Ok(response) because they are valid HTTP exchanges;"
         "only transport failures (timeout, DNS, refused) are Err."
-    chosen = "BuiltinService"    rejected = ["NetworkDotAv", "ImplicitIO"]
+    chosen = "BuiltinService"
+    rejected = ["NetworkDotAv", "ImplicitIO"]
 
     impacts = [fetch, checkStatus, post]
 

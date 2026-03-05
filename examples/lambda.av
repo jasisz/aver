@@ -8,7 +8,8 @@ decision NaiveSubstitution
     reason =
         "Naive substitution without alpha-renaming is sufficient for Church encodings."
         "Variable capture is possible but does not occur with careful variable naming."
-    chosen = "NaiveSubstitution"    rejected = ["DeBruijnIndices"]
+    chosen = "NaiveSubstitution"
+    rejected = ["DeBruijnIndices"]
 
     impacts = [subst]
 

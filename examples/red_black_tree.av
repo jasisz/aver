@@ -8,8 +8,8 @@ decision BlackDepthConvention
   reason =
     "blackDepth(Empty) = 1 treats the empty tree as a black sentinel leaf."
     "This matches Okasaki's convention and simplifies invariant checks."
-  chosen = "SentinelCountsAsBlack"  rejected = ["SentinelIsZero"]
-
+  chosen = "SentinelCountsAsBlack"
+  rejected = ["SentinelIsZero"]
   impacts = [blackDepth]
 
 decision KahrsDelete
@@ -18,8 +18,8 @@ decision KahrsDelete
     "Kahrs (2001) delete avoids DoubleBlack constructors by using fuse"
     "to merge subtrees and balDeleteLeft/Right for rebalancing."
     "Existing Tree type and insert functions remain untouched."
-  chosen = "KahrsFuse"  rejected = ["DoubleBlackVariant", "MinReplacementDelete"]
-
+  chosen = "KahrsFuse"
+  rejected = ["DoubleBlackVariant", "MinReplacementDelete"]
   impacts = [delete, del, fuse, balDeleteLeft, balDeleteRight]
 
 type Tree
@@ -147,12 +147,6 @@ fn balDeleteLeft(left: Tree, value: Int, right: Tree) -> Tree
         Tree.Black(a, z, b) -> Tree.Red(Tree.Black(left, value, a), z, balanceBlack(b, rv, redden(rr)))
         _ -> Tree.Black(left, value, right)
       _ -> Tree.Black(left, value, right)
-
-verify balDeleteLeft law leftRedShortPath
-  given left: Tree = [Tree.Red(Tree.Empty, 1, Tree.Empty)]
-  given value: Int = [2]
-  given right: Tree = [Tree.Empty]
-  balDeleteLeft(left, value, right) => Tree.Red(Tree.Black(Tree.Empty, 1, Tree.Empty), 2, Tree.Empty)
 
 fn balDeleteRight(left: Tree, value: Int, right: Tree) -> Tree
   ? "Rebalance after right subtree lost a black level"
@@ -321,13 +315,13 @@ fn fromList(items: List<Int>) -> Tree
   ? "Build a tree from a list of integers"
   List.fold(items, Tree.Empty, insertInto)
 
-verify fromList law emptyInput
-  given items: List<Int> = [[]]
-  fromList(items) => Tree.Empty
-
 fn appendTo(acc: List<Int>, x: Int) -> List<Int>
   ? "Push helper for List.fold"
   List.push(acc, x)
+
+verify fromList law emptyInput
+  given items: List<Int> = [[]]
+  fromList(items) => Tree.Empty
 
 fn append(a: List<Int>, b: List<Int>) -> List<Int>
   ? "Append b to the end of a"
@@ -468,3 +462,9 @@ fn main()
   Console.print("Contains 3: {member(3, t2)}")
   Console.print("")
   prettyPrint(t2)
+
+verify balDeleteLeft law leftRedShortPath
+  given left: Tree = [Tree.Red(Tree.Empty, 1, Tree.Empty)]
+  given value: Int = [2]
+  given right: Tree = [Tree.Empty]
+  balDeleteLeft(left, value, right) => Tree.Red(Tree.Black(Tree.Empty, 1, Tree.Empty), 2, Tree.Empty)

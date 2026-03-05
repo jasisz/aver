@@ -381,6 +381,100 @@ fn normalize_inline_module_intent(lines: Vec<String>) -> Vec<String> {
     out
 }
 
+const DECISION_FIELDS: [&str; 6] = ["date", "author", "reason", "chosen", "rejected", "impacts"];
+
+fn starts_with_decision_field(content: &str) -> bool {
+    DECISION_FIELDS
+        .iter()
+        .any(|field| content.starts_with(&format!("{field} =")))
+}
+
+fn find_next_decision_field_boundary(s: &str) -> Option<usize> {
+    let mut best: Option<usize> = None;
+    for field in DECISION_FIELDS {
+        let needle = format!(" {field} =");
+        let mut search_from = 0usize;
+        while let Some(rel) = s[search_from..].find(&needle) {
+            let idx = search_from + rel;
+            // Require at least two spaces before the next field marker, so
+            // normal single-space tokens don't split accidentally.
+            let spaces_before = s[..idx].chars().rev().take_while(|c| *c == ' ').count();
+            // `needle` starts at one of the separating spaces, so include it.
+            let total_separator_spaces = spaces_before + 1;
+            if total_separator_spaces >= 2 {
+                let field_start = idx + 1;
+                best = Some(best.map_or(field_start, |cur| cur.min(field_start)));
+                break;
+            }
+            search_from = idx + 1;
+        }
+    }
+    best
+}
+
+fn split_inline_decision_fields(content: &str) -> Vec<String> {
+    if !starts_with_decision_field(content) {
+        return vec![content.to_string()];
+    }
+    let mut out = Vec::new();
+    let mut rest = content.trim_end().to_string();
+    while let Some(idx) = find_next_decision_field_boundary(&rest) {
+        let left = rest[..idx].trim_end().to_string();
+        if left.is_empty() {
+            break;
+        }
+        out.push(left);
+        rest = rest[idx..].trim_start().to_string();
+    }
+    if !rest.is_empty() {
+        out.push(rest.trim_end().to_string());
+    }
+    if out.is_empty() {
+        vec![content.to_string()]
+    } else {
+        out
+    }
+}
+
+fn normalize_inline_decision_fields(lines: Vec<String>) -> Vec<String> {
+    let mut out = Vec::with_capacity(lines.len());
+    let mut in_decision = false;
+
+    for line in lines {
+        let trimmed = line.trim();
+        let indent = line.chars().take_while(|c| *c == ' ').count();
+
+        if indent == 0 && trimmed.starts_with("decision ") {
+            in_decision = true;
+            out.push(line);
+            continue;
+        }
+
+        if in_decision && indent == 0 && !trimmed.is_empty() && !trimmed.starts_with("//") {
+            in_decision = false;
+        }
+
+        if in_decision && trimmed.is_empty() {
+            continue;
+        }
+
+        if in_decision && indent > 0 {
+            let content = &line[indent..];
+            let parts = split_inline_decision_fields(content);
+            if parts.len() > 1 {
+                for part in parts {
+                    out.push(format!("{}{}", " ".repeat(indent), part));
+                }
+                continue;
+            }
+        }
+
+        out.push(line);
+    }
+
+    out
+}
+
 pub(super) fn format_source(source: &str) -> String {
     // 1) Normalize line endings.
     let normalized = source.replace("\r\n", "\n").replace('\r', "\n");
@@ -394,6 +488,7 @@ pub(super) fn format_source(source: &str) -> String {
         lines.push(line);
     }
     let lines = normalize_inline_module_intent(lines);
+    let lines = normalize_inline_decision_fields(lines);
 
     // 3) Split into top-level blocks and co-locate verify blocks under their functions.
     let blocks = split_top_level_blocks(&lines, ast_info.as_ref());
@@ -521,6 +616,34 @@ fn x() -> Int
 
 fn x() -> Int
     = 1
+"#
+        );
+    }
+
+    #[test]
+    fn splits_inline_decision_fields_to_separate_lines() {
+        let src = r#"module Demo
+    intent = "x"
+    exposes [main]
+
+decision D
+    date = "2026-03-02"
+    chosen = "A"    rejected = ["B"]
+    impacts = [main]
+"#;
+        let got = format_source(src);
+        assert_eq!(
+            got,
+            r#"module Demo
+    intent =
+        "x"
+    exposes [main]
+
+decision D
+    date = "2026-03-02"
+    chosen = "A"
+    rejected = ["B"]
+    impacts = [main]
 "#
         );
     }

@@ -26,7 +26,8 @@ decision TailRecurrenceForPerformance
     reason =
         "Naive fib(n-1)+fib(n-2) is exponential and easy for AI to generate."
         "Tail recursion makes fib linear time and predictable."
-    chosen = "TailRecursion"    rejected = ["NaiveRecursion"]
+    chosen = "TailRecursion"
+    rejected = ["NaiveRecursion"]
 
     impacts = [fib, fibTR]
 
@@ -36,7 +37,8 @@ decision SinglePassStats
         "Building a list then folding and filtering is three separate passes."
         "Accumulate sum, max, and even-filter alongside push in one traversal."
         "Result wrapped in FibStats record: named fields replace positional list indexing."
-    chosen = "SinglePassAccumulator"    rejected = ["SeparateFoldAndFilter"]
+    chosen = "SinglePassAccumulator"
+    rejected = ["SeparateFoldAndFilter"]
 
     impacts = [buildFibStats, buildFibStatsTR]
 
@@ -46,7 +48,8 @@ decision AccumulatorAsRecord
         "buildFibStatsTR originally took 8 positional parameters."
         "Eight positional args are a bug waiting to happen: easy to swap, hard to read."
         "FibAcc record gives each field a name at both call site and use site."
-    chosen = "FibAccRecord"    rejected = ["EightPositionalParams"]
+    chosen = "FibAccRecord"
+    rejected = ["EightPositionalParams"]
 
     impacts = [buildFibStatsTR, buildFibStats]
 
@@ -55,7 +58,8 @@ decision EvenCheckWithoutModulo
     reason =
         "Aver has no modulo operator."
         "Integer division truncates: n/2*2 equals n only when n is even."
-    chosen = "DivisionTrick"    rejected = ["ModuloOperator"]
+    chosen = "DivisionTrick"
+    rejected = ["ModuloOperator"]
 
     impacts = [isEven]
 
@@ -64,7 +68,8 @@ decision FloatChecksUseTolerance
     reason =
         "Exact float equality is brittle."
         "Use abs + epsilon for stable verifies."
-    chosen = "ApproxEq"    rejected = ["ExactFloatEquality"]
+    chosen = "ApproxEq"
+    rejected = ["ExactFloatEquality"]
 
     impacts = [goldenApprox, absF, approxEq]
 
@@ -116,17 +121,17 @@ verify bigger
     bigger(5, 3) => 5
     bigger(4, 4) => 4
 
-fn pushIfEven(xs: List<Int>, n: Int) -> List<Int>
-    ? "Appends n to xs only when n is even."
-    match isEven(n)
-        true  -> List.push(xs, n)
-        false -> xs
-
 verify pushIfEven
     pushIfEven([], 0)  => [0]
     pushIfEven([], 1)  => []
     pushIfEven([0], 2) => [0, 2]
     pushIfEven([0], 3) => [0]
+
+fn pushIfEven(xs: List<Int>, n: Int) -> List<Int>
+    ? "Appends n to xs only when n is even."
+    match isEven(n)
+        true  -> List.push(xs, n)
+        false -> xs
 
 fn buildFibStatsTR(acc: FibAcc) -> FibStats
     ? "Single-pass builder: advances accumulator state one step until i > n."
@@ -180,17 +185,17 @@ verify approxEq
     approxEq(1.0, 1.0001, 0.001) => true
     approxEq(1.0, 1.01, 0.001)   => false
 
-fn goldenApprox(n: Int) -> Result<Float, String>
-    ? "Approximates golden ratio as F(n+1)/F(n). Requires n >= 1."
-    match n < 1
-        true  -> Result.Err("Need n >= 1")
-        false -> Result.Ok(Int.toFloat(fib(n + 1)) / Int.toFloat(fib(n)))
-
 verify goldenApprox
     goldenApprox(0) => Result.Err("Need n >= 1")
     approxEq(goldenApprox(1)?, 1.0, 0.000001) => true
     approxEq(goldenApprox(2)?, 2.0, 0.000001) => true
     approxEq(goldenApprox(10)?, 1.618181818, 0.00001) => true
+
+fn goldenApprox(n: Int) -> Result<Float, String>
+    ? "Approximates golden ratio as F(n+1)/F(n). Requires n >= 1."
+    match n < 1
+        true  -> Result.Err("Need n >= 1")
+        false -> Result.Ok(Int.toFloat(fib(n + 1)) / Int.toFloat(fib(n)))
 
 fn main() -> Unit
     ! [Console]
