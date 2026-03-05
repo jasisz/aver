@@ -13,8 +13,19 @@ fn impact_texts(impacts: &[DecisionImpact]) -> Vec<String> {
         .collect()
 }
 
+fn impact_json_texts(impacts: &[DecisionImpact]) -> Vec<String> {
+    impacts
+        .iter()
+        .map(|impact| impact.text().to_string())
+        .collect()
+}
+
 fn decision_ref_text(reference: &DecisionImpact) -> String {
     reference.as_context_string()
+}
+
+fn decision_ref_json_text(reference: &DecisionImpact) -> &str {
+    reference.text()
 }
 const CONTEXT_SCHEMA_VERSION: u32 = 2;
 const ANALYSIS_ENCODING_VERSION: u32 = 1;
@@ -495,16 +506,16 @@ pub(super) fn format_context_json(contexts: &[FileContext], entry_file: &str) ->
             out.push_str(&format!("      \"date\": {},\n", json_str(&dec.date)));
             out.push_str(&format!(
                 "      \"chosen\": {},\n",
-                json_str(&decision_ref_text(&dec.chosen))
+                json_str(decision_ref_json_text(&dec.chosen))
             ));
             let rej: Vec<String> = dec
                 .rejected
                 .iter()
-                .map(|r| json_str(&decision_ref_text(r)))
+                .map(|r| json_str(decision_ref_json_text(r)))
                 .collect();
             out.push_str(&format!("      \"rejected\": [{}],\n", rej.join(", ")));
             out.push_str(&format!("      \"reason\": {},\n", json_str(&dec.reason)));
-            let imp: Vec<String> = impact_texts(&dec.impacts)
+            let imp: Vec<String> = impact_json_texts(&dec.impacts)
                 .iter()
                 .map(|i| json_str(i))
                 .collect();
@@ -583,16 +594,16 @@ pub(super) fn format_decisions_json(decisions: &[&DecisionBlock], entry_file: &s
             out.push_str(&format!("      \"date\": {},\n", json_str(&dec.date)));
             out.push_str(&format!(
                 "      \"chosen\": {},\n",
-                json_str(&decision_ref_text(&dec.chosen))
+                json_str(decision_ref_json_text(&dec.chosen))
             ));
             let rej: Vec<String> = dec
                 .rejected
                 .iter()
-                .map(|r| json_str(&decision_ref_text(r)))
+                .map(|r| json_str(decision_ref_json_text(r)))
                 .collect();
             out.push_str(&format!("      \"rejected\": [{}],\n", rej.join(", ")));
             out.push_str(&format!("      \"reason\": {},\n", json_str(&dec.reason)));
-            let imp: Vec<String> = impact_texts(&dec.impacts)
+            let imp: Vec<String> = impact_json_texts(&dec.impacts)
                 .iter()
                 .map(|i| json_str(i))
                 .collect();
