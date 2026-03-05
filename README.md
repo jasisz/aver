@@ -63,7 +63,29 @@ hosts = ["api.example.com", "*.internal.corp"]
 paths = ["./data/**"]
 ```
 
+Think of this as two orthogonal control layers:
+
+- effect declarations in code answer: **what kind of I/O is allowed?**
+- `aver.toml` answers: **which concrete destinations are allowed?**
+
+Example: this function is statically valid:
+
+```aver
+fn fetchUser(id: String) -> Result<HttpResponse, String>
+    ! [Http.get]
+    Http.get("https://evil.com/users/{id}")
+```
+
+but runtime policy can still block it:
+
+```toml
+[effects.Http]
+hosts = ["api.example.com"]
+```
+
 Policy lookup is method-first, then namespace fallback (`Http.get` first, then `Http`). Empty lists mean allow-all for that policy key.
+
+Policy violations are runtime errors in `run`/`verify` (and in generated Rust binaries), with non-zero exit. `check` remains static-only.
 
 ### "Why was this decision made?"
 
@@ -146,7 +168,7 @@ verify add
     add(0, 0) => 0
 ```
 
-Law verify (domain-driven expansion):
+Law verify (deterministic domain expansion):
 
 ```aver
 verify add law commutative
@@ -154,6 +176,8 @@ verify add law commutative
     given b: Int = [-1, 0, 1]
     add(a, b) => add(b, a)
 ```
+
+`verify ... law ...` is not random sampling. Cases are generated deterministically from explicit domains.
 
 Rules for `verify ... law ...`:
 
@@ -206,7 +230,7 @@ decision UseResultNotExceptions
     date = "2024-01-15"
     reason =
         "Invisible exceptions lose money at runtime."
-        "Callers must handle failure — Result forces that at compile time."
+        "Callers must handle failure — Result forces that at the call site."
     chosen = "Result"
     rejected = ["Exceptions", "Nullable"]
     impacts = [charge]
@@ -276,6 +300,7 @@ See [docs/transpilation.md](docs/transpilation.md) for full transpilation docume
 ### Lean target (`-t lean`, WIP)
 
 Lean transpilation emits a Lean 4 project (`lakefile.lean`, `lean-toolchain`, `<Project>.lean`) for pure core logic.
+The goal is to turn Aver contracts and verifies into machine-checked proof obligations, not just executable tests.
 
 - Pure functions, types, and decisions are emitted.
 - Effectful functions and `main` are intentionally skipped.
