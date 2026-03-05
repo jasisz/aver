@@ -16,19 +16,20 @@ PHASE 1 — Solve it in your language first:
    Include tests using the language's native test framework.
 
 PHASE 2 — Now learn Aver and solve it again:
-3. Read `README.md` — the complete language reference
-4. Read `docs/services.md` — full API reference
-5. Read `examples/calculator.av` — style reference
-6. Implement the same solution in Aver: `challenges/{{CHALLENGE}}/solution.av`
+3. Read `README.md` — project overview and workflow
+4. Read `docs/language.md` — surface-language guide
+5. Read `docs/services.md` — full API reference
+6. Read `examples/calculator.av` — style reference
+7. Implement the same solution in Aver: `challenges/{{CHALLENGE}}/solution.av`
    Do NOT just translate your first solution line-by-line — write idiomatic Aver.
-7. Verify it works:
+8. Verify it works:
    ```
    cargo run -- check challenges/{{CHALLENGE}}/solution.av
    cargo run -- verify challenges/{{CHALLENGE}}/solution.av
    cargo run -- run challenges/{{CHALLENGE}}/solution.av
    ```
-8. Write `challenges/{{CHALLENGE}}/notes.md` — an honest comparison of both implementations
-9. When done, run: `bash challenges/{{CHALLENGE}}/evaluate.sh`
+9. Write `challenges/{{CHALLENGE}}/notes.md` — an honest comparison of both implementations
+10. When done, run: `bash challenges/{{CHALLENGE}}/evaluate.sh`
 
 Rules:
 - Do not ask questions — everything you need is in the docs

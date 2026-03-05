@@ -4,8 +4,8 @@ impl TypeChecker {
     pub(super) fn check(&mut self, items: &[TopLevel], base_dir: Option<&str>) {
         self.build_signatures(items);
 
-        if let Some(base) = base_dir {
-            if let Some(module) = Self::module_decl(items) {
+        if let Some(base) = base_dir
+            && let Some(module) = Self::module_decl(items) {
                 let mut loading = Vec::new();
                 for dep_name in &module.depends {
                     if let Err(e) = self.load_module_sigs(dep_name, base, &mut loading) {
@@ -13,7 +13,6 @@ impl TypeChecker {
                     }
                 }
             }
-        }
 
         self.check_top_level_stmts(items);
         self.check_verify_blocks(items);
@@ -81,7 +80,7 @@ impl TypeChecker {
                 }
             }
         }
-        for (key, _) in &self.value_members {
+        for key in self.value_members.keys() {
             if key.starts_with(&prefix) && key.len() > prefix.len() {
                 found_variants = true;
                 // Zero-arg constructors carry no data — always safe

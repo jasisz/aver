@@ -98,7 +98,7 @@ pub(super) enum Commands {
         /// Output as JSON instead of Markdown
         #[arg(long)]
         json: bool,
-        /// Output only decision blocks (unified replacement for `aver decisions`)
+        /// Output only decision blocks
         #[arg(long)]
         decisions_only: bool,
     },
@@ -123,20 +123,5 @@ pub(super) enum Commands {
         /// Lean-only: fail fast when source needs non-proof features (e.g. `partial`, unsafe Eq)
         #[arg(long)]
         lean_proof_mode: bool,
-    },
-    /// Export decision blocks (ADR-style) and optionally update docs
-    Decisions {
-        /// File or directory with `.av` files containing `decision` blocks
-        /// (default: decisions/architecture.av)
-        source: Option<String>,
-        /// Write output to file instead of stdout
-        #[arg(short = 'o', long)]
-        output: Option<String>,
-        /// Output as JSON instead of Markdown
-        #[arg(long)]
-        json: bool,
-        /// Update docs/decisions.md generated section between markers
-        #[arg(long)]
-        docs: bool,
     },
 }

@@ -215,8 +215,8 @@ pub fn emit_fn_def_proof(
     lines.push(format!("def {} {} : {} :=", fn_name, params, ret_type));
     lines.push(emit_fn_body(&fd.body, ctx));
 
-    if let Some(plan) = recursion_plan {
-        if let Some((param_name, _)) = fd.params.first() {
+    if let Some(plan) = recursion_plan
+        && let Some((param_name, _)) = fd.params.first() {
             let lean_param = aver_name_to_lean(param_name);
             match plan {
                 RecursionPlan::IntCountdown | RecursionPlan::MutualIntCountdown => {
@@ -230,8 +230,8 @@ pub fn emit_fn_def_proof(
                     lines.push("  simp_wf".to_string());
                 }
                 RecursionPlan::StringPosAdvance => {
-                    if let Some((s_name, _)) = fd.params.first() {
-                        if let Some((pos_name, _)) = fd.params.get(1) {
+                    if let Some((s_name, _)) = fd.params.first()
+                        && let Some((pos_name, _)) = fd.params.get(1) {
                             let lean_s = aver_name_to_lean(s_name);
                             let lean_pos = aver_name_to_lean(pos_name);
                             lines.push(format!(
@@ -241,13 +241,11 @@ pub fn emit_fn_def_proof(
                             lines.push("decreasing_by".to_string());
                             lines.push("  simp_wf".to_string());
                         }
-                    }
                 }
                 RecursionPlan::MutualStringPosAdvance { .. }
                 | RecursionPlan::MutualSizeOfRanked { .. } => {}
             }
         }
-    }
 
     Some(lines.join("\n"))
 }
@@ -542,8 +540,8 @@ pub fn emit_mutual_group_proof(
                 }
             }
             Some(RecursionPlan::MutualStringPosAdvance { rank }) => {
-                if let Some((s_name, _)) = fd.params.first() {
-                    if let Some((pos_name, _)) = fd.params.get(1) {
+                if let Some((s_name, _)) = fd.params.first()
+                    && let Some((pos_name, _)) = fd.params.get(1) {
                         let lean_s = aver_name_to_lean(s_name);
                         let lean_pos = aver_name_to_lean(pos_name);
                         lines.push(format!(
@@ -553,7 +551,6 @@ pub fn emit_mutual_group_proof(
                         lines.push("  decreasing_by".to_string());
                         lines.push("    simp_wf".to_string());
                     }
-                }
             }
             Some(RecursionPlan::MutualSizeOfRanked {
                 rank,

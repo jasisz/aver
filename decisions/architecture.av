@@ -54,7 +54,7 @@ decision DecisionBlocksAsLanguageFeature
     reason =
         "Architecture Decision Records written in markdown files are invisible to the language tooling and decay silently."
         "Making decisions a first-class parse node means they can be indexed, searched, and rendered by any tool that reads Aver."
-        "When an AI resumes work on a codebase, it can run aver decisions to reconstruct the design rationale without reading prose."
+        "When an AI resumes work on a codebase, it can run aver context with --decisions-only to reconstruct the design rationale without reading prose."
     chosen = "FirstClassDecisions"
     rejected = ["MarkdownADR", "Comments", "ExternalWiki"]
     impacts = ["Lexer", "Parser", "Checker", "AIDeveloperExperience"]
@@ -125,4 +125,4 @@ fn main() -> Unit
     Console.print(describeDecision("RecordsAreDataMethodsInModules", "DataOnlyRecords"))
     Console.print(describeDecision("EffectContractsAreTransparentAcrossModules", "TransparentAcrossModules"))
     Console.print("")
-    Console.print("Run: cargo run -- decisions decisions/architecture.av")
+    Console.print("Run: cargo run -- context decisions/architecture.av --decisions-only")

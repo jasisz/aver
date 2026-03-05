@@ -43,7 +43,7 @@ impl EmitCtx {
     pub fn is_copy(&self, name: &str) -> bool {
         self.local_types
             .get(name)
-            .map_or(false, |ty| is_copy_type(ty))
+            .is_some_and(is_copy_type)
     }
 
     /// Should `.clone()` be skipped for this variable?

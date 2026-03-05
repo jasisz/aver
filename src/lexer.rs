@@ -531,7 +531,7 @@ impl Lexer {
             }
         }
 
-        let kind = keyword(&ident).unwrap_or_else(|| TokenKind::Ident(ident));
+        let kind = keyword(&ident).unwrap_or(TokenKind::Ident(ident));
         Token { kind, line, col }
     }
 

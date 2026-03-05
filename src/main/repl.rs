@@ -19,11 +19,10 @@ pub(super) fn is_incomplete(source: &str) -> bool {
     }
 
     // Inside a block: last non-empty line is indented
-    if let Some(last) = lines.iter().rev().find(|l| !l.trim().is_empty()) {
-        if last.starts_with("    ") || last.starts_with('\t') {
+    if let Some(last) = lines.iter().rev().find(|l| !l.trim().is_empty())
+        && (last.starts_with("    ") || last.starts_with('\t')) {
             return true;
         }
-    }
 
     // Block header without a body (only 1 line so far)
     let first = lines[0].trim();

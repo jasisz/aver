@@ -2,13 +2,13 @@ use super::*;
 
 impl Parser {
     fn is_upper_camel_segment(name: &str) -> bool {
-        name.chars().next().map_or(false, |c| c.is_uppercase())
+        name.chars().next().is_some_and(|c| c.is_uppercase())
     }
 
     fn is_constructor_path(path: &str) -> bool {
         path.rsplit('.')
             .next()
-            .map_or(false, Self::is_upper_camel_segment)
+            .is_some_and(Self::is_upper_camel_segment)
     }
 
     fn reject_zero_arg_constructor_call(&self, path: &str) -> Result<(), ParseError> {
@@ -134,11 +134,11 @@ impl Parser {
                 expr = Expr::Attr(Box::new(expr), field);
                 if self.check_exact(&TokenKind::LParen) {
                     // Detect `Type.update(base, field = val, ...)` for record update
-                    if let Some(path) = Self::dotted_name(&expr) {
-                        if path.ends_with(".update") {
+                    if let Some(path) = Self::dotted_name(&expr)
+                        && path.ends_with(".update") {
                             let prefix = &path[..path.len() - ".update".len()];
                             if !prefix.is_empty()
-                                && prefix.chars().next().map_or(false, |c| c.is_uppercase())
+                                && prefix.chars().next().is_some_and(|c| c.is_uppercase())
                             {
                                 self.advance(); // consume (
                                 let base = self.parse_expr()?;
@@ -158,14 +158,13 @@ impl Parser {
                                 continue;
                             }
                         }
-                    }
                     if let Some(path) = Self::dotted_name(&expr) {
                         self.reject_zero_arg_constructor_call(&path)?;
                     }
                     let named_arg_start = matches!(&self.peek(1).kind, TokenKind::Ident(_))
                         && self.peek(2).kind == TokenKind::Assign;
-                    if named_arg_start {
-                        if let Some(path) = Self::dotted_name(&expr) {
+                    if named_arg_start
+                        && let Some(path) = Self::dotted_name(&expr) {
                             if path == "Tcp.Connection" {
                                 return Err(self.error(
                                     "Cannot construct 'Tcp.Connection' directly. Use Tcp.connect(host, port)."
@@ -177,7 +176,6 @@ impl Parser {
                                 path
                             )));
                         }
-                    }
                     self.advance();
                     let args = self.parse_args()?;
                     self.expect_exact(&TokenKind::RParen)?;
@@ -216,7 +214,7 @@ impl Parser {
             // Detect by checking if token after `(` is `Ident` followed by `=`.
             // Use peek_skip_formatting to handle multiline constructor syntax.
             let is_record_create = if let Expr::Ident(ref name) = atom {
-                name.chars().next().map_or(false, |c| c.is_uppercase())
+                name.chars().next().is_some_and(|c| c.is_uppercase())
                     && matches!(&self.peek_skip_formatting(1).kind, TokenKind::Ident(_))
                     && self.peek_skip_formatting(2).kind == TokenKind::Assign
             } else {
@@ -225,17 +223,16 @@ impl Parser {
             let named_arg_start = matches!(&self.peek_skip_formatting(1).kind, TokenKind::Ident(_))
                 && self.peek_skip_formatting(2).kind == TokenKind::Assign;
 
-            if is_record_create {
-                if let Expr::Ident(type_name) = atom {
+            if is_record_create
+                && let Expr::Ident(type_name) = atom {
                     self.advance(); // consume (
                     let fields = self.parse_record_create_fields()?;
                     self.expect_exact(&TokenKind::RParen)?;
                     return Ok(Expr::RecordCreate { type_name, fields });
                 }
-            }
 
-            if named_arg_start {
-                if let Some(path) = Self::dotted_name(&atom) {
+            if named_arg_start
+                && let Some(path) = Self::dotted_name(&atom) {
                     if path == "Tcp.Connection" {
                         return Err(self.error(
                             "Cannot construct 'Tcp.Connection' directly. Use Tcp.connect(host, port)."
@@ -247,7 +244,6 @@ impl Parser {
                         path
                     )));
                 }
-            }
 
             self.advance();
             let args = self.parse_args()?;

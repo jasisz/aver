@@ -21,12 +21,12 @@ Compiled examples/hello.av → /tmp/hello-rs/ [Rust]
 aver compile <FILE> [OPTIONS]
 
 Options:
-  -o, --output <DIR>          Output directory (default: out)
-  -t, --target <TARGET>       Transpilation target (default: rust)
-      --name <NAME>           Project/binary name (default: derived from file)
-      --module-root <PATH>    Module resolution root (default: cwd)
-      --lean-verify <MODE>    Lean verify emission: auto | sorry | theorem-skeleton
-      --lean-proof-mode       Lean-only fail-fast gate for proof-unsafe constructs
+  -o, --output <OUTPUT>            Output directory for the generated project
+  -t, --target <TARGET>            Transpilation target backend (default: rust)
+      --name <NAME>                Project name (default: derived from file name)
+      --module-root <MODULE_ROOT>  Resolve `depends [...]` from this root (default: current working directory)
+      --lean-verify <LEAN_VERIFY>  Lean-only verify emission mode: auto | sorry | theorem-skeleton
+      --lean-proof-mode            Lean-only fail-fast gate for proof-unsafe constructs
 ```
 
 ## Targets
@@ -86,6 +86,8 @@ Everything the interpreter supports is transpilable:
 | `HttpServer` service (`listen`, `listenWith`) | OK |
 | `Tcp` service (persistent connections) | OK |
 | `Disk` service | OK |
+| `Env` service | OK |
+| `Time` service | OK |
 | `verify` blocks → `#[cfg(test)]` | OK |
 | Effect aliases (`effects X = [...]`) | OK (expanded at compile time) |
 

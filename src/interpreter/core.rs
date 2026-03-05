@@ -1,5 +1,11 @@
 use super::*;
 
+impl Default for Interpreter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Interpreter {
     pub fn new() -> Self {
         let mut global = HashMap::new();
@@ -244,13 +250,12 @@ impl Interpreter {
                     .check_disk_path(name, path)
                     .map_err(RuntimeError::Error)?;
             }
-        } else if name.starts_with("Env.") {
-            if let Some(Value::Str(key)) = args.first() {
+        } else if name.starts_with("Env.")
+            && let Some(Value::Str(key)) = args.first() {
                 policy
                     .check_env_key(name, key)
                     .map_err(RuntimeError::Error)?;
             }
-        }
 
         Ok(())
     }

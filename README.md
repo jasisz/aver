@@ -1,31 +1,146 @@
 # Aver
 
-> *Imagine AI writes 90% of your code. What do you need to trust it?*
+Aver is a statically typed language designed for AI to write in and humans to review, with a fast interpreter for iteration and a Rust transpiler for deployment.
 
-Aver is hard to write, clean to read — and in a world where AI does the writing, that's the only trade-off that matters.
+It is built around one idea: the risky part of AI-written code is usually not syntax, it is missing intent. Aver makes that intent explicit and machine-readable:
 
-Not better prompts. Not more reviews. You need a language that makes the AI's intent **verifiable** — statically, at the call site, before a single line runs.
+- effects are part of the function signature
+- decisions live next to the code they explain
+- pure behavior lives in colocated `verify` blocks
+- effectful behavior can be recorded and replayed deterministically
+- `aver context` exports the contract-level view of a module graph for humans or LLMs
+- `aver compile -t rust` turns an Aver module graph into a Rust/Cargo project
 
-Aver is that language. Read the [Aver Manifesto](https://jasisz.github.io/aver-language/) for the full story.
+This is not a language optimized for humans to type by hand all day. It is optimized for AI to generate code that humans can inspect, constrain, test, and ship.
 
----
-
-## The problem with AI-generated code
-
-LLMs are good at writing functions. They're terrible at communicating:
-
-- what a function is *allowed* to do (call the network? write files? read secrets?)
-- *why* a particular approach was chosen over the alternatives
-- whether a change *still passes* the invariants the original author had in mind
-- what an AI needs to know to continue working on a 50-file codebase it's never seen
-
-Traditional languages leave all of this as implicit knowledge in someone's head, in stale docs, or nowhere at all. That was fine when humans wrote all the code. It isn't now.
+Read the [Aver Manifesto](https://jasisz.github.io/aver-language/) for the longer argument.
 
 ---
 
-## Aver's answer, feature by feature
+## Quickstart
 
-### "How do I know this function doesn't make HTTP calls?"
+### Install from crates.io
+
+```bash
+cargo install aver-lang
+```
+
+Then try it with a tiny file:
+
+```bash
+cat > hello.av <<'EOF'
+module Hello
+    intent =
+        "Tiny intro module."
+    exposes [greet]
+
+fn greet(name: String) -> String
+    ? "Greets a user."
+    = "Hello, {name}"
+
+verify greet
+    greet("Aver") => "Hello, Aver"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(greet("Aver"))
+EOF
+
+aver run      hello.av
+aver verify   hello.av
+aver check    hello.av
+aver context  hello.av
+aver compile  hello.av -t rust -o out/
+(cd out && cargo run)
+```
+
+### Build from source
+
+```bash
+git clone https://github.com/jasisz/aver
+cd aver
+cargo build --release
+
+cargo run -- run      examples/calculator.av
+cargo run -- verify   examples/calculator.av
+cargo run -- check    examples/calculator.av
+cargo run -- context  examples/calculator.av
+cargo run -- compile  examples/calculator.av -t rust -o out/
+(cd out && cargo run)
+cargo run -- run      examples/services/console_demo.av --record recordings/
+cargo run -- replay   recordings/ --test --diff
+```
+
+Requires: Rust stable toolchain.
+
+---
+
+## Small example
+
+```aver
+module Payments
+    intent =
+        "Processes transactions with an explicit audit trail."
+    exposes [charge]
+
+decision UseResultNotExceptions
+    date = "2024-01-15"
+    reason =
+        "Invisible exceptions lose money at runtime."
+        "Callers must handle failure — Result forces that at the call site."
+    chosen = "Result"
+    rejected = ["Exceptions", "Nullable"]
+    impacts = [charge]
+
+fn charge(account: String, amount: Int) -> Result<String, String>
+    ? "Charges account. Returns txn ID or a human-readable error."
+    match amount
+        0 -> Result.Err("Cannot charge zero")
+        _ -> Result.Ok("txn-{account}-{amount}")
+
+verify charge
+    charge("alice", 100) => Result.Ok("txn-alice-100")
+    charge("bob",   0)   => Result.Err("Cannot charge zero")
+```
+
+No `if`/`else`. No loops. No exceptions. No nulls. No implicit side effects.
+
+---
+
+## Deliberate constraints
+
+Aver is intentionally opinionated. These omissions are part of the design, not missing features:
+
+- no `if`/`else` - branching goes through `match`
+- no `for`/`while` - iteration is recursion or data transformation
+- no exceptions - failure is `Result`
+- no `null` - absence is `Option`
+- no closures - functions are top-level and explicit
+
+The point is to remove classes of implicit behavior that are easy for AI to generate and annoying for humans to audit.
+
+For the fuller language rationale, see [docs/language.md](docs/language.md).
+
+---
+
+## Why Aver exists
+
+LLMs can produce function bodies quickly. They are much worse at preserving the information reviewers actually need:
+
+- what a function is allowed to do
+- why a design was chosen
+- what behavior must keep holding after a refactor
+- what a new human or model needs to understand the codebase without reading everything
+
+Traditional languages usually push that into comments, external docs, stale tests, or team memory. Aver makes those concerns part of the language and tooling.
+
+The intended workflow is explicit: AI writes Aver, humans review contracts and intent, and deployment happens either through the interpreter or by transpiling to Rust.
+
+---
+
+## What Aver makes explicit
+
+### Effects
 
 ```aver
 fn processPayment(amount: Int) -> Result<String, String>
@@ -42,18 +157,16 @@ fn fetchExchangeRate(currency: String) -> Result<HttpResponse, String>
     Http.get("https://api.ecb.europa.eu/rates/{currency}")
 ```
 
-Effect declarations (for example `! [Http.get]`, `! [Disk.readText]`, `! [Console.print]`) are part of the signature. The type checker enforces them — missing declarations are **type errors, not warnings**. The runtime enforces the same boundary as a backstop.
+Effects such as `Http.get`, `Disk.readText`, and `Console.print` are part of the signature. Missing declarations are type errors. The runtime enforces the same boundary as a backstop.
 
 Effects are hierarchical:
 
 - `! [Http.get]` allows only `Http.get`
-- `! [Http]` allows all `Http.*` methods (backward-compatible parent scope)
+- `! [Http]` allows all `Http.*` methods
 
-`aver check` enforces minimal effects: prefer granular method-level effects. Parent scopes like `Http`/`Disk`/`Console` are treated as non-minimal declarations.
+`aver check` also enforces minimal effects: prefer method-level declarations over broad namespace-level ones when possible.
 
-You can read any function in Aver and know exactly what it's capable of — without running it, without reading its body.
-
-Runtime policy can further restrict destinations with `aver.toml`:
+Runtime policy can narrow the allowed destinations further via `aver.toml`:
 
 ```toml
 [effects.Http]
@@ -66,31 +179,12 @@ paths = ["./data/**"]
 keys = ["APP_*", "PUBLIC_*"]
 ```
 
-Think of this as two orthogonal control layers:
+Think of this as two separate controls:
 
-- effect declarations in code answer: **what kind of I/O is allowed?**
-- `aver.toml` answers: **which concrete destinations are allowed?**
+- code answers: what kind of I/O is allowed?
+- policy answers: which concrete destinations are allowed?
 
-Example: this function is statically valid:
-
-```aver
-fn fetchUser(id: String) -> Result<HttpResponse, String>
-    ! [Http.get]
-    Http.get("https://evil.com/users/{id}")
-```
-
-but runtime policy can still block it:
-
-```toml
-[effects.Http]
-hosts = ["api.example.com"]
-```
-
-Policy lookup is method-first, then namespace fallback (`Http.get` first, then `Http`). Empty lists mean allow-all for that policy key.
-
-Policy violations are runtime errors in `run`/`verify` (and in generated Rust binaries), with non-zero exit. `check` remains static-only.
-
-### "Why was this decision made?"
+### Decisions
 
 ```aver
 decision UseResultNotExceptions
@@ -104,53 +198,40 @@ decision UseResultNotExceptions
     author = "team"
 ```
 
-`decision` blocks are first-class syntax, co-located with the code they describe. Not a Confluence page that goes stale. Not a commit message no one reads. Queryable:
+`decision` blocks are first-class syntax, colocated with the code they explain.
+
+Query only the decision history for a module graph:
 
 ```bash
-aver context payments.av --decisions-only
+aver context decisions/architecture.av --decisions-only
 ```
 
-`impacts` accepts two forms:
+`impacts`, `chosen`, and `rejected` accept either validated symbols or quoted semantic labels.
 
-- bare symbol (validated by `aver check`): function/module/type/decision/effect/effect-alias
-- quoted string for semantic impact text
-
-```aver
-impacts = [charge, Tcp, AppIO, "error handling strategy"]
-```
-
-`chosen` and `rejected` use the same rule:
-
-- bare symbol (validated by `aver check`)
-- quoted string for semantic option labels
-
-Three months later — human or AI — you know *why* the code looks the way it does.
-
-### "How does an AI understand this codebase without reading everything?"
+### Context export
 
 ```bash
-aver context payments.av
+aver context examples/calculator.av
 ```
 
-Aver traverses the dependency graph and emits a compact summary — module intents, public signatures, effect declarations, verify cases, and all decision blocks — typically 1–3k tokens. Enough for an LLM to understand contracts, boundaries, and rationale without the full source.
+Aver walks the dependency graph and emits a compact context summary: module intent, public signatures, effect declarations, verify samples, and decisions. The goal is not to dump the whole source tree; it is to export the contract-level view that another human or LLM needs first.
+
+Example shape:
 
 ```markdown
-## Module: Payments
-> Processes transactions with an explicit audit trail.
+## Module: Calculator
+> Safe calculator demonstrating Result types, match expressions, and co-located verification.
 
-### `charge(account: String, amount: Int) -> Result<String, String>` ! [Http, Ledger]
-> Charges account. Returns txn ID or a human-readable error.
-verify: `charge("alice", 100)` → `Result.Ok("txn-alice-100")`, `charge("bob", 0)` → `Result.Err("Cannot charge zero")`
+### `safeDivide(a: Int, b: Int) -> Result<Int, String>`
+> Safe integer division. Returns Err when divisor is zero.
+verify: `safeDivide(10, 2)` → `Result.Ok(5)`
 
 ## Decisions
-### UseResultNotExceptions (2024-01-15)
+### NoExceptions (2024-01-15)
 **Chosen:** Result — **Rejected:** Exceptions, Nullable
-> Invisible exceptions lose money at runtime...
 ```
 
-This is what AI-assisted development actually needs: context that travels with the code, not context that lives in someone's memory.
-
-### "How do I know a refactor didn't break anything?"
+### Verify
 
 ```aver
 verify charge
@@ -159,11 +240,9 @@ verify charge
     charge("x",    -1)   => Result.Ok("txn-x--1")
 ```
 
-`verify` blocks are intended to stay close to the function they cover (same module, usually right after the definition). `aver check` warns when a pure, non-trivial, non-`main` function has no `verify` block by name. It intentionally skips effectful functions (covered by replay) and trivial pass-through wrappers. Verify blocks run with `aver verify` (or `aver run --verify`) under the same type/effect checks as normal code.
+`verify` blocks stay next to the function they cover. `aver check` treats a missing `verify` block on a pure, non-trivial, non-`main` function as a contract error. Effectful flows are intentionally handled separately via replay.
 
-#### Verify syntax
-
-Regular verify (explicit cases):
+Regular verify:
 
 ```aver
 verify add
@@ -171,7 +250,7 @@ verify add
     add(0, 0) => 0
 ```
 
-Law verify (deterministic domain expansion):
+Law verify:
 
 ```aver
 verify add law commutative
@@ -180,463 +259,95 @@ verify add law commutative
     add(a, b) => add(b, a)
 ```
 
-`verify ... law ...` is not random sampling. Cases are generated deterministically from explicit domains.
+`verify ... law ...` is deterministic, not random sampling. Cases are generated as the cartesian product of explicit domains, capped at `10_000`.
 
-Rules for `verify ... law ...`:
+### Replay
 
-- must include at least one `given`
-- each `given` must have an explicit type
-- domain must be either `a..b` (Int range) or an explicit list `[x, y, ...]`
-- block has exactly one assertion line (`lhs => rhs`)
-- cases are generated as cartesian product of all `given` domains
-- max generated law cases: `10_000`
+Use deterministic replay for effectful code:
 
-### "How do I test effectful code without flaky mocks?"
-
-Use deterministic replay.
-
-1. Run once against real services and record the effect trace.
-2. Replay offline: same effect sequence, same outcomes, no real network/disk/TCP calls.
-3. Use `--diff`/`--test` to turn recordings into a regression suite.
+1. run once against real services and record the effect trace
+2. replay offline with no real network, disk, or TCP calls
+3. use `--diff` and `--test` to turn recordings into a regression suite
 
 ```bash
-# Real execution + capture
-aver run payments.av --record recordings/
-
-# Deterministic replay (single file or whole directory)
+aver run    examples/services/console_demo.av --record recordings/
 aver replay recordings/rec-123.json --diff
 aver replay recordings/ --test --diff
 ```
 
-No mock framework. No mock code. No mock maintenance.
-
-In Aver, effectful tests are just replay files:
-
-1. capture once,
-2. replay forever,
-3. optionally tweak one recorded effect outcome to create a new edge-case test.
-
-Pure logic stays in `verify`; effectful flows are covered by replay recordings. Testing stays embarrassingly simple.
+Pure logic belongs in `verify`. Effectful flows belong in replay recordings.
 
 ---
 
-## Full example
+## Common commands
 
-```aver
-module Payments
-    intent =
-        "Processes transactions with an explicit audit trail."
-    depends [Ledger, Models.User]
-    exposes [charge]
-
-decision UseResultNotExceptions
-    date = "2024-01-15"
-    reason =
-        "Invisible exceptions lose money at runtime."
-        "Callers must handle failure — Result forces that at the call site."
-    chosen = "Result"
-    rejected = ["Exceptions", "Nullable"]
-    impacts = [charge]
-
-fn charge(account: String, amount: Int) -> Result<String, String>
-    ? "Charges account. Returns txn ID or a human-readable error."
-    ! [Http, Ledger]
-    match amount
-        0 -> Result.Err("Cannot charge zero")
-        _ -> Result.Ok("txn-{account}-{amount}")
-
-verify charge
-    charge("alice", 100) => Result.Ok("txn-alice-100")
-    charge("bob",   0)   => Result.Err("Cannot charge zero")
+```
+aver check   file.av
+aver run     file.av
+aver verify  file.av
+aver context file.av
+aver compile file.av -t rust -o out/
 ```
 
-No `if`/`else`. No loops. No exceptions. No nulls. No magic.
+For replay, formatting, REPL, and the full command surface, use `aver --help` and the docs below.
 
 ---
 
-## CLI
+## Language and runtime
 
-```
-aver run       file.av                   # type-check, then execute
-aver run       file.av --verify          # execute + run verify blocks
-aver run       file.av --record recs/    # execute + record effect trace
-aver replay    recs/rec-123.json         # replay one recording offline
-aver replay    recs/ --test --diff       # replay suite; fail on output mismatch
-aver check     file.av                   # static gate: types/effects + intent/desc/verify policy
-aver check     file.av --deps            # also check transitive depends modules
-aver verify    file.av                   # run all verify blocks
-aver format    .                         # format all .av files under current directory
-aver format    path/to/file.av --check   # check formatting only (non-zero if changes needed)
-aver compile   file.av -o out/           # transpile to a Rust project
-aver compile   file.av -t rust -o out/   # explicit target (rust is default)
-aver compile   file.av -t lean -o out/   # transpile pure core to a Lean 4 project (WIP)
-aver compile   file.av -t lean --lean-verify auto -o out/           # Lean verify auto mode (native_decide + law auto-proofs)
-aver compile   file.av -t lean --lean-verify sorry -o out/          # Lean verify as obligations (`sorry`)
-aver compile   file.av -t lean --lean-verify theorem-skeleton -o out/ # named theorem stubs (`theorem ... := by sorry`)
-aver compile   file.av -t lean --lean-proof-mode -o out/            # fail fast on non-proof Lean features (requires --lean-verify auto)
-aver context   file.av                   # export project context (Markdown)
-aver context   file.av --json            # export project context (JSON)
-aver context   file.av --decisions-only        # decision blocks only (Markdown)
-aver context   file.av --decisions-only --json # decision blocks only (JSON)
-aver decisions                          # ADR-style decisions from decisions/architecture.av
-aver decisions --docs                   # regenerate docs/decisions.md from decision blocks
-aver repl                              # interactive REPL
-```
+Aver is intentionally small. The core model is:
 
-`run`, `check`, `verify`, `compile`, and `context` also accept `--module-root <path>` to override import base (default: current working directory).
-For file-based commands, each `.av` file must declare exactly one `module`, and it must be the first top-level item.
+- immutable bindings only
+- `match` instead of `if`/`else`
+- `Result` and `Option` instead of exceptions and `null`
+- top-level functions only, with no closures
+- explicit effects and named effect aliases
+- module-based structure via `module`, `depends`, and `exposes`
+- automatic memoization and tail-call optimization for eligible code
 
-### Formatting rules (`aver format`)
+For the surface-language guide, see [docs/language.md](docs/language.md).
 
-Current formatter is intentionally conservative (whitespace-only):
+For constructor rules and edge cases, see [docs/constructors.md](docs/constructors.md).
 
-- normalize line endings to `\n`
-- remove trailing spaces/tabs at end of line
-- convert **leading** tab indentation to 4 spaces
-- collapse long blank runs to max 2 consecutive empty lines (inside blocks)
-- enforce one blank line between top-level blocks
-- move `verify <fn>` blocks directly under matching `fn <fn>` declarations
-- enforce exactly one trailing newline at end of file
+For namespaces, effectful services, and the standard library, see [docs/services.md](docs/services.md).
 
-See [docs/transpilation.md](docs/transpilation.md) for full transpilation documentation.
+## Interpreter and transpiler
 
-### Lean target (`-t lean`, WIP)
+Aver has three execution paths:
 
-Lean transpilation emits a Lean 4 project (`lakefile.lean`, `lean-toolchain`, `<Project>.lean`) for pure core logic.
-Lean is an optional proof-checking backend: write in Aver, transpile pure code, and let Lean machine-check your verify blocks as formal theorems.
+- interpreter-first workflow for `run`, `check`, `verify`, `replay`, and `context`
+- Rust transpilation for generating a native Cargo project with `aver compile -t rust`
+- optional Lean backend for proof-oriented export of pure core logic
 
-- Pure functions, types, and decisions are emitted.
-- Effectful functions and `main` are intentionally skipped.
-- `verify` blocks are exported as Lean proof obligations (default `--lean-verify auto`, which emits `example ... := by native_decide` for standard cases; configurable via `--lean-verify`).
-- `verify ... law ...` emits:
-  - universal theorem skeleton (`theorem ... : ∀ ..., lhs = rhs := by ...`)
-  - sample theorems from `given` domains (`theorem ..._sample_n := by native_decide`)
-- Universal law theorem gets conservative auto-proofs for simple cases (reflexive and selected `Int` `+/*` laws); otherwise it falls back to `sorry`.
-- Lean codegen now fails fast on unresolved internals:
-  - `Expr::Resolved` in codegen input → hard error
-  - `Type::Unknown` in codegen input → hard error
-  - no silent fallback `sorry` for those cases
-
----
-
-## Language reference
-
-### Types
-
-Primitive: `Int`, `Float`, `String`, `Bool`, `Unit`
-Compound: `Result<T, E>`, `Option<T>`, `List<T>`, `Map<K, V>`, `(A, B, ...)`, `Fn(A) -> B`, `Fn(A) -> B ! [Effect]`
-User-defined sum types: `type Shape` → `Shape.Circle(Float)`, `Shape.Rect(Float, Float)`
-User-defined product types: `record User` → `User(name = "Alice", age = 30)`, `u.name`
-
-### Bindings
-
-All bindings are immutable. No `val`/`var` keywords — they are parse errors.
-
-```aver
-name = "Alice"
-age: Int = 30
-xs: List<Int> = []
-```
-
-Optional type annotation provides a hint to the type checker; the annotation wins over inference when both are compatible. Binding to an empty list literal without a type annotation (`x = []`) is a type error.
-
-Duplicate binding of the same name in the same scope is a type error.
-
-### Operators
-
-Arithmetic: `+`, `-`, `*`, `/` — operands must match (`Int+Int`, `Float+Float`, `String+String`). No implicit promotion; use `Int.toFloat` / `Float.fromInt` to convert.
-Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`.
-Pipe: `value |> fn` — passes the left-hand value as the sole argument to the right-hand function.
-Right-hand side must be a function reference (`fn` / `Ns.fn`), not a call (`fn(...)`).
-Error propagation: `expr?` — unwraps `Result.Ok`, propagates `Result.Err` as a `RuntimeError`.
-
-### String interpolation
-
-Expressions inside `{}` are evaluated at runtime:
-
-```aver
-greeting = "Hello, {name}! You are {age} years old."
-```
-
-### Constructors
-
-UpperCamel callee = constructor, lowerCamel = function call. Records use named args (`User(name = "A", age = 1)`), variants use positional args (`Shape.Circle(3.14)`), zero-arg constructors are bare singletons (`Option.None`, `Shape.Point`).
-
-All constructors are namespaced — no bare `Ok`/`Err`/`Some`/`None`:
-
-```aver
-Result.Ok(42)
-Result.Err("not found")
-Option.Some("hello")
-Option.None
-```
-
-### Match expressions
-
-`match` is the only branching construct (no `if`/`else`). Patterns:
-
-```aver
-match value
-    42 -> "exact"                          // literal
-    _ -> "anything"                        // wildcard
-    x -> "bound to {x}"                    // identifier binding
-    [] -> "empty list"                     // empty list
-    [h, ..t] -> "head {h}, tail {t}"       // list cons
-    Result.Ok(v) -> "success: {v}"         // constructor
-    Result.Err(e) -> "error: {e}"
-    Shape.Circle(r) -> "circle r={r}"
-    Shape.Point -> "point"
-    User(name, age) -> "user {name}"       // record positional destructuring
-    (a, b) -> "pair: {a}, {b}"             // tuple destructuring
-    ((x, y), z) -> "nested: {x}"          // nested tuple
-```
-
-Nested match in match arms is supported. Arm body must follow `->` on the same line — extract complex expressions into a named function.
-
-### Record update
-
-Creates a new record with overridden fields, preserving all other fields:
-
-```aver
-updated = User.update(u, age = 31)
-```
-
-### Map literals
-
-```aver
-m = {"key" => value, "other" => 42}
-```
-
-`=>` is required inside map literals; `:` stays type-only.
-
-### Effect aliases
-
-Named effect sets reduce repetition:
-
-```aver
-effects AppIO = [Console.print, Disk.readText]
-
-fn main() -> Unit
-    ! [AppIO]
-    // ...
-```
-
-### Functions
-
-```aver
-fn add(a: Int, b: Int) -> Int = a + b
-
-fn charge(account: String, amount: Int) -> Result<String, String>
-    ? "Charges account. Returns txn ID or error."
-    ! [Http.post]
-    match amount
-        0 -> Result.Err("Cannot charge zero")
-        _ -> Result.Ok("txn-{account}-{amount}")
-```
-
-- `? "..."` — optional prose description (part of the signature)
-- `! [Effect]` — optional effect declaration (statically and runtime enforced)
-- method-level effects are supported: `Http.get`, `Disk.readText`, `Console.print`
-- `= expr` — single-expression shorthand
-- Block body with indentation for multi-statement functions
-
-### No closures
-
-All user-defined functions are top-level. At call time, a function sees globals + its own parameters — no closure capture at definition time.
-There is no lambda syntax. Higher-order APIs (for example `List.map`, `List.filter`, `List.any`) take a top-level function name.
-
-### Common patterns (without closures)
-
-```aver
-fn double(n: Int) -> Int
-    ? "Doubles a number."
-    = n * 2
-
-doubled = List.map([1, 2, 3, 4], double)
-```
-
-```aver
-hasAlice = List.contains(["alice", "bob"], "alice")
-```
-
-```aver
-ages = Map.fromList([("alice", 30), ("bob", 25)])
-maybe_age = Map.get(ages, "alice")
-```
-
-### Auto-memoization
-
-Pure recursive functions with memo-safe arguments (scalars, records/variants of scalars) are automatically memoized at runtime. No keyword needed — the compiler detects eligibility via call-graph analysis (Tarjan SCC). Cache is capped at 4096 entries per function.
-
-### Tail-call optimization
-
-Self and mutual tail recursion is optimized automatically. A transform pass after parsing rewrites tail-position calls into a trampoline — no stack growth for recursive functions. Tail position = last expression in function body, or each arm body in a `match` at tail position.
-
-### Modules
-
-Module imports resolve from a module root (`--module-root`, default: current working directory).
-Each module file must start with `module <Name>` and contain exactly one module declaration.
-
-```aver
-module Payments
-    intent = "Processes transactions."
-    depends [Examples.Fibonacci]
-    exposes [charge]
-```
-
-`depends [Examples.Fibonacci]` → `examples/fibonacci.av`, call as `Examples.Fibonacci.fn(...)`.
-`depends [Examples.Models.User]` → `examples/models/user.av`, call as `Examples.Models.User.fn(...)`.
-
-### Static type checking
-
-Type errors block `run`, `check`, and `verify`. No partial execution. The checker covers function bodies, top-level statements, effect propagation, and duplicate binding detection.
-
----
-
-## What Aver deliberately omits
-
-| Absent | Reason |
-|--------|--------|
-| `if`/`else` | `match` is exhaustive — no silent missing cases |
-| `for`/`while` | Use `map`, `filter`, `fold` — iteration is data transformation |
-| `null` | `Option<T>` with `Some`/`None` only |
-| Exceptions | `Result<T, E>` only — errors are values |
-| Global mutable state | No shared mutable state by design |
-| Closures | All functions are top-level — no captured variables, explicit is better than implicit |
-| Magic | No decorators, no implicit behaviour, no runtime reflection |
-
----
-
-## Built-in services
-
-Aver ships built-in namespaces for I/O. All require explicit effect declarations — the typechecker and runtime both enforce this.
-
-| Namespace | Effect | Key functions |
-|-----------|--------|---------------|
-| `Console` | `! [Console.print]` (or other `Console.*`) | `print`, `error`, `warn`, `readLine` |
-| `Http` | `! [Http.get]` / `! [Http.post]` / etc. | `get`, `post`, `put`, `patch`, `head`, `delete` |
-| `HttpServer` | `! [HttpServer.listen]` / `! [HttpServer.listenWith]` | `listen`, `listenWith` |
-| `Disk` | `! [Disk.readText]` / `! [Disk.writeText]` / etc. | `readText`, `writeText`, `appendText`, `exists`, `delete`, `deleteDir`, `listDir`, `makeDir` |
-| `Env` | `! [Env.get]` / `! [Env.set]` | `get`, `set` |
-| `Tcp` | `! [Tcp.send]` / `! [Tcp.ping]` / etc. | `connect`, `writeLine`, `readLine`, `close`, `send`, `ping` |
-| `Time` | `! [Time.now]` / `! [Time.unixMs]` / `! [Time.sleep]` | `now`, `unixMs`, `sleep` |
-
-Each effectful namespace also supports method-level declarations (`Http.get`, `Disk.readText`, `Console.print`, etc.). Parent namespace effects stay valid (`Http` covers `Http.*`).
-
-Pure namespaces (no effects):
-
-| Namespace | Key functions |
-|-----------|---------------|
-| `Int` | `fromString`, `fromFloat`, `toString`, `toFloat`, `abs`, `min`, `max`, `mod` |
-| `Float` | `fromString`, `fromInt`, `toString`, `abs`, `floor`, `ceil`, `round`, `min`, `max` |
-| `String` | `len`, `byteLength`, `charAt`, `startsWith`, `endsWith`, `contains`, `slice`, `trim`, `split`, `replace`, `join`, `chars`, `fromInt`, `fromFloat`, `fromBool`, `toLower`, `toUpper` |
-| `List` | `len`, `map`, `filter`, `fold`, `get`, `push`, `head`, `tail`, `find`, `any`, `contains`, `zip`, `flatMap` |
-| `Map` | `empty`, `fromList`, `set`, `get`, `has`, `remove`, `keys`, `values`, `entries`, `len` |
-| `Char` | `toCode` (String→Int), `fromCode` (Int→Option\<String\>) — not a type, operates on String/Int |
-| `Byte` | `toHex` (Int→Result), `fromHex` (String→Result) — not a type, operates on Int/String |
-
-Full API reference: [docs/services.md](docs/services.md)
-
----
-
-## Editor support
-
-Aver ships with a VS Code extension and a Language Server Protocol (LSP) server.
-
-### Features
-
-| Feature | Description |
-|---------|-------------|
-| Syntax highlighting | TextMate grammar — keywords, types, effects, string interpolation, `?` descriptions |
-| Diagnostics | Lex, parse, and type errors shown inline. Project-policy diagnostics (`?`, `verify`, intent) are shown with source locations. |
-| Completion | Built-in namespaces (`List.`, `Console.`), user-defined types (`Shape.`), user functions, module members — all cross-module |
-| Hover | Full function source (≤12 lines), type definitions, variable types, namespace member signatures |
-| Go-to-definition | Jump to function, type, or binding — works cross-file for module dependencies |
-| Signature help | Parameter hints inside function calls |
-
-All features work cross-module — `depends [Examples.Redis]` is resolved from the workspace root, matching `aver run` behaviour.
-
-### Install
+Typical Rust transpilation flow:
 
 ```bash
-# Build the LSP server
-cargo install aver-lang   # installs `aver`
-cargo build -p aver-lsp --release
-ln -sf $(pwd)/target/release/aver-lsp /usr/local/bin/aver-lsp
-
-# Install the VS Code extension
-ln -sf $(pwd)/editors/vscode ~/.vscode/extensions/aver-lang-0.1.0
+aver compile examples/calculator.av -t rust -o out/
+cd out
+cargo run
 ```
-
-Open a `.av` file — the extension activates automatically.
-
-To point at a different binary, set `aver.lsp.path` in VS Code settings.
-
----
-
-## Getting started
-
-### Install from crates.io
-
-```bash
-cargo install aver-lang
-```
-
-This installs the `aver` binary. Then:
-
-```bash
-aver run      examples/calculator.av
-aver verify   examples/calculator.av
-aver check    examples/calculator.av
-aver repl
-```
-
-### Build from source
-
-```bash
-git clone https://github.com/jasisz/aver
-cd aver
-cargo build --release
-
-cargo run -- run      examples/calculator.av
-cargo run -- verify   examples/calculator.av
-cargo run -- check    examples/calculator.av
-cargo run -- run      examples/services/console_demo.av --record recordings/
-cargo run -- replay   recordings/ --test --diff
-cargo run -- context  decisions/architecture.av --decisions-only
-cargo run -- context  examples/calculator.av
-cargo run -- repl
-```
-
-Requires: Rust stable toolchain.
 
 ---
 
 ## Examples
 
+Curated examples:
+
 | File | Demonstrates |
 |------|-------------|
 | `hello.av` | Functions, string interpolation, pipe, verify |
 | `calculator.av` | Result types, match, decision blocks |
-| `lists.av` | List literals, map / filter / fold |
-| `effect_sets.av` | Named effect aliases with sub-effects (`effects AppIO = [Console.print]`) |
-| `map.av` | Typed maps: `Map.fromList`, `Map.set`, `Map.get`, `Map.entries` |
-| `grok_s_language.av` | S-expression parser + evaluator (`add/sub/mul/div`): recursive descent, custom ADT, parse + render + eval |
-| `mission_control.av` | Space mission simulator: command parser, pure state machine, effectful shell (great with replay) |
 | `shapes.av` | Sum types, qualified constructors (`Shape.Circle`), match on variants |
-| `user_record.av` | Record types, field access, positional match |
 | `fibonacci.av` | Tail recursion, records, decision blocks |
+| `mission_control.av` | Command parser, pure state machine, effectful shell |
 | `app.av` | Module imports via `depends [Examples.Fibonacci]` |
-| `app_dot.av` | Dot-path imports (`depends [Examples.Models.User]`) |
+| `services/console_demo.av` | Console service and replay-friendly effectful flow |
 | `services/http_demo.av` | HTTP service with sub-effects: `Http.get`, `Http.post` |
-| `services/disk_demo.av` | Disk service with sub-effects (`Disk.readText`, `Disk.writeText`, etc.) |
-| `services/console_demo.av` | Console service: print, error, warn, readLine |
-| `services/tcp_demo.av` | TCP persistent connections (`Tcp.Connection`) |
 | `services/weather.av` | End-to-end service: `HttpServer` + `Http` + `Tcp` |
 | `decisions/architecture.av` | The interpreter documents itself in Aver |
-| `rle.av` | Run-length encoding: fold with record accumulator, law roundtrip |
-| `date.av` | Pure date utilities on ISO 8601 strings from `Time.now()`: parsing, formatting, lexicographic comparison |
 | `test_errors.av` | Intentional `aver check` failures: type errors + verify/decision/effect diagnostics |
+
+See `examples/` for the full set.
 
 ---
 
@@ -644,8 +355,12 @@ Requires: Rust stable toolchain.
 
 | Document | Contents |
 |----------|----------|
+| [docs/language.md](docs/language.md) | Surface-language guide: syntax, semantics, modules, and deliberate omissions |
+| [docs/formatting.md](docs/formatting.md) | Formatter behavior and guarantees |
+| [docs/constructors.md](docs/constructors.md) | Constructor rules and parsing contract |
+| [editors/README.md](editors/README.md) | VS Code + LSP setup and Sublime Text support |
 | [docs/services.md](docs/services.md) | Full API reference for all namespaces (signatures, effects, notes) |
 | [docs/types.md](docs/types.md) | Key data types (compiler, AST, runtime) |
 | [docs/extending.md](docs/extending.md) | How to add keywords, namespace functions, expression types |
 | [docs/transpilation.md](docs/transpilation.md) | Transpilation (`aver compile`): targets, flags, supported features |
-| [docs/decisions.md](docs/decisions.md) | Partially generated ADR document from `decision` blocks |
+| [docs/decisions.md](docs/decisions.md) | Decision export generated via `aver context --decisions-only` |

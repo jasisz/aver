@@ -34,8 +34,8 @@ pub fn emit_verify_law_forall_auto_proof(
     let fn_lean = aver_name_to_lean(fn_name);
 
     // Law: f(a, b) = f(b, a)
-    if let Some(op_lemma) = op.as_ref().and_then(comm_lemma_for_op) {
-        if law.givens.len() == 2
+    if let Some(op_lemma) = op.as_ref().and_then(comm_lemma_for_op)
+        && law.givens.len() == 2
             && law.givens[0].type_name == "Int"
             && law.givens[1].type_name == "Int"
             && (matches_binary_call(&law.lhs, fn_name, &law.givens[0].name, &law.givens[1].name)
@@ -53,11 +53,10 @@ pub fn emit_verify_law_forall_auto_proof(
                 vec![format!("simp [{}, {}]", fn_lean, op_lemma)],
             ));
         }
-    }
 
     // Law: f(f(a,b),c) = f(a,f(b,c))
-    if let Some(assoc_lemma) = op.as_ref().and_then(assoc_lemma_for_op) {
-        if law.givens.len() == 3
+    if let Some(assoc_lemma) = op.as_ref().and_then(assoc_lemma_for_op)
+        && law.givens.len() == 3
             && law.givens.iter().all(|g| g.type_name == "Int")
             && (matches_assoc_nested(
                 &law.lhs,
@@ -90,7 +89,6 @@ pub fn emit_verify_law_forall_auto_proof(
                 vec![format!("simp [{}, {}]", fn_lean, assoc_lemma)],
             ));
         }
-    }
 
     // Law: f(a, id) = a OR f(id, a) = a (also symmetric equation direction)
     if law.givens.len() == 1 && law.givens[0].type_name == "Int" {
@@ -112,11 +110,10 @@ pub fn emit_verify_law_forall_auto_proof(
         }
     }
 
-    if let Some(op) = op.as_ref() {
-        if let Some(lines) = emit_sub_wrapper_law(vb, law, &intro_names, op, &fn_lean) {
+    if let Some(op) = op.as_ref()
+        && let Some(lines) = emit_sub_wrapper_law(vb, law, &intro_names, op, &fn_lean) {
             return Some(lines);
         }
-    }
     if let Some(lines) = emit_unary_wrapper_equivalence_law(vb, law, ctx, &intro_names) {
         return Some(lines);
     }
@@ -496,13 +493,11 @@ fn collect_user_fn_simp_names(
 ) {
     match expr {
         Expr::FnCall(callee, args) => {
-            if let Some(name) = expr_dotted_name(callee) {
-                if let Some(fd) = find_fn_def_by_call_name(ctx, &name) {
-                    if fd.effects.is_empty() && fd.name != "main" && fd.name != skip_fn {
+            if let Some(name) = expr_dotted_name(callee)
+                && let Some(fd) = find_fn_def_by_call_name(ctx, &name)
+                    && fd.effects.is_empty() && fd.name != "main" && fd.name != skip_fn {
                         out.insert(aver_name_to_lean(&fd.name));
                     }
-                }
-            }
             collect_user_fn_simp_names(callee, ctx, skip_fn, out);
             for arg in args {
                 collect_user_fn_simp_names(arg, ctx, skip_fn, out);

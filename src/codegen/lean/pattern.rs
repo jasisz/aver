@@ -17,7 +17,7 @@ pub fn emit_pattern(pat: &Pattern) -> String {
             )
         }
         Pattern::Tuple(pats) => {
-            let parts: Vec<String> = pats.iter().map(|p| emit_pattern(p)).collect();
+            let parts: Vec<String> = pats.iter().map(emit_pattern).collect();
             format!("({})", parts.join(", "))
         }
         Pattern::Constructor(name, bindings) => emit_constructor_pattern(name, bindings),

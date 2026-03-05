@@ -56,7 +56,7 @@ fn to_hex(args: &[Value]) -> Result<Value, RuntimeError> {
         ));
     };
     let n = *n;
-    if n < 0 || n > 255 {
+    if !(0..=255).contains(&n) {
         return Ok(Value::Err(Box::new(Value::Str(format!(
             "Byte.toHex: {} is out of range 0–255",
             n

@@ -2788,8 +2788,8 @@ fn call_fn_with_memo(src: &str, fn_name: &str, args: Vec<Value>) -> Value {
         }
     }
     for name in &recursive {
-        if let Some((params, _ret, effects)) = tc_result.fn_sigs.get(name) {
-            if effects.is_empty() {
+        if let Some((params, _ret, effects)) = tc_result.fn_sigs.get(name)
+            && effects.is_empty() {
                 if recursive_calls.get(name).copied().unwrap_or(0) < 2 {
                     continue;
                 }
@@ -2800,7 +2800,6 @@ fn call_fn_with_memo(src: &str, fn_name: &str, args: Vec<Value>) -> Value {
                     memo_fns.insert(name.clone());
                 }
             }
-        }
     }
 
     let mut interp = Interpreter::new();

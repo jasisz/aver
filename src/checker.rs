@@ -23,6 +23,9 @@ pub struct ModuleCheckFindings {
     pub warnings: Vec<CheckFinding>,
 }
 
+type FnSigSummary = (Vec<Type>, Type, Vec<String>);
+type FnSigMap = std::collections::HashMap<String, FnSigSummary>;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckFinding {
     pub line: usize,
@@ -415,14 +418,13 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
         let left_result = interp.eval_expr(left_expr);
         let right_result = interp.eval_expr(right_expr);
 
-        if let Ok(left_val) = &left_result {
-            if let Some(contract) = shape_contract.as_mut() {
+        if let Ok(left_val) = &left_result
+            && let Some(contract) = shape_contract.as_mut() {
                 contract.observe(left_val);
             }
-        }
-        if verify_case_uses_error_prop_on_target(left_expr, &block.fn_name) {
-            if let Some(contract) = shape_contract.as_mut() {
-                if matches!(contract.return_type, Type::Result(_, _)) {
+        if verify_case_uses_error_prop_on_target(left_expr, &block.fn_name)
+            && let Some(contract) = shape_contract.as_mut()
+                && matches!(contract.return_type, Type::Result(_, _)) {
                     match &left_result {
                         Ok(_) => contract.observe_shape(VerifyOutputShape::Ok),
                         Err(RuntimeError::ErrProp(_)) => {
@@ -431,8 +433,6 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
                         Err(_) => {}
                     }
                 }
-            }
-        }
 
         match (left_result, right_result) {
             (Ok(left_val), Ok(right_val)) => {
@@ -726,18 +726,17 @@ fn pipe_target_is_target(target: &Expr, fn_name: &str) -> bool {
 
 fn collect_used_effects_expr(
     expr: &Expr,
-    fn_sigs: &std::collections::HashMap<String, (Vec<Type>, Type, Vec<String>)>,
+    fn_sigs: &FnSigMap,
     out: &mut BTreeSet<String>,
 ) {
     match expr {
         Expr::FnCall(callee, args) => {
-            if let Some(callee_name) = dotted_name(callee) {
-                if let Some((_, _, effects)) = fn_sigs.get(&callee_name) {
+            if let Some(callee_name) = dotted_name(callee)
+                && let Some((_, _, effects)) = fn_sigs.get(&callee_name) {
                     for effect in effects {
                         out.insert(effect.clone());
                     }
                 }
-            }
             collect_used_effects_expr(callee, fn_sigs, out);
             for arg in args {
                 collect_used_effects_expr(arg, fn_sigs, out);
@@ -748,20 +747,18 @@ fn collect_used_effects_expr(
                 Expr::FnCall(callee, args) => Some((callee.as_ref(), args.as_slice())),
                 _ => None,
             } {
-                if let Some(callee_name) = dotted_name(callee) {
-                    if let Some((_, _, effects)) = fn_sigs.get(&callee_name) {
+                if let Some(callee_name) = dotted_name(callee)
+                    && let Some((_, _, effects)) = fn_sigs.get(&callee_name) {
                         for effect in effects {
                             out.insert(effect.clone());
                         }
                     }
-                }
-            } else if let Some(target_name) = dotted_name(right) {
-                if let Some((_, _, effects)) = fn_sigs.get(&target_name) {
+            } else if let Some(target_name) = dotted_name(right)
+                && let Some((_, _, effects)) = fn_sigs.get(&target_name) {
                     for effect in effects {
                         out.insert(effect.clone());
                     }
                 }
-            }
             collect_used_effects_expr(left, fn_sigs, out);
             collect_used_effects_expr(right, fn_sigs, out);
         }
@@ -821,7 +818,7 @@ fn collect_used_effects_expr(
 
 fn collect_used_effects(
     f: &FnDef,
-    fn_sigs: &std::collections::HashMap<String, (Vec<Type>, Type, Vec<String>)>,
+    fn_sigs: &FnSigMap,
 ) -> BTreeSet<String> {
     let mut used = BTreeSet::new();
     match f.body.as_ref() {
@@ -891,7 +888,7 @@ fn collect_declared_symbols(items: &[TopLevel]) -> std::collections::HashSet<Str
 }
 
 fn collect_known_effect_symbols(
-    fn_sigs: Option<&std::collections::HashMap<String, (Vec<Type>, Type, Vec<String>)>>,
+    fn_sigs: Option<&FnSigMap>,
 ) -> std::collections::HashSet<String> {
     let mut out = std::collections::HashSet::new();
     for builtin in ["Console", "Http", "Disk", "Tcp", "HttpServer"] {
@@ -921,14 +918,14 @@ pub fn check_module_intent(items: &[TopLevel]) -> ModuleCheckFindings {
 
 pub fn check_module_intent_with_sigs(
     items: &[TopLevel],
-    fn_sigs: Option<&std::collections::HashMap<String, (Vec<Type>, Type, Vec<String>)>>,
+    fn_sigs: Option<&FnSigMap>,
 ) -> ModuleCheckFindings {
     check_module_intent_with_sigs_in(items, fn_sigs, None)
 }
 
 pub fn check_module_intent_with_sigs_in(
     items: &[TopLevel],
-    fn_sigs: Option<&std::collections::HashMap<String, (Vec<Type>, Type, Vec<String>)>>,
+    fn_sigs: Option<&FnSigMap>,
     source_file: Option<&str>,
 ) -> ModuleCheckFindings {
     let mut errors = Vec::new();
@@ -1025,9 +1022,9 @@ pub fn check_module_intent_with_sigs_in(
                         message: format!("Function '{}' has no description (?)", f.name),
                     });
                 }
-                if let Some(sigs) = fn_sigs {
-                    if let Some((_, _, declared_effects)) = sigs.get(&f.name) {
-                        if !declared_effects.is_empty() {
+                if let Some(sigs) = fn_sigs
+                    && let Some((_, _, declared_effects)) = sigs.get(&f.name)
+                        && !declared_effects.is_empty() {
                             let used_effects = collect_used_effects(f, sigs);
                             let broad_replacements =
                                 collect_broad_effect_replacements(declared_effects, &used_effects);
@@ -1074,8 +1071,6 @@ pub fn check_module_intent_with_sigs_in(
                                 });
                             }
                         }
-                    }
-                }
                 if fn_needs_verify(f)
                     && !verified_fns.contains(f.name.as_str())
                     && !empty_verify_fns.contains(f.name.as_str())
@@ -1090,8 +1085,8 @@ pub fn check_module_intent_with_sigs_in(
                 }
             }
             TopLevel::Decision(d) => {
-                if let DecisionImpact::Symbol(name) = &d.chosen {
-                    if !decision_symbol_known(name, &declared_symbols, &known_effect_symbols) {
+                if let DecisionImpact::Symbol(name) = &d.chosen
+                    && !decision_symbol_known(name, &declared_symbols, &known_effect_symbols) {
                         errors.push(CheckFinding {
                             line: d.line,
                             module: module_name.clone(),
@@ -1102,10 +1097,9 @@ pub fn check_module_intent_with_sigs_in(
                             ),
                         });
                     }
-                }
                 for rejected in &d.rejected {
-                    if let DecisionImpact::Symbol(name) = rejected {
-                        if !decision_symbol_known(name, &declared_symbols, &known_effect_symbols) {
+                    if let DecisionImpact::Symbol(name) = rejected
+                        && !decision_symbol_known(name, &declared_symbols, &known_effect_symbols) {
                             errors.push(CheckFinding {
                                 line: d.line,
                                 module: module_name.clone(),
@@ -1116,11 +1110,10 @@ pub fn check_module_intent_with_sigs_in(
                                 ),
                             });
                         }
-                    }
                 }
                 for impact in &d.impacts {
-                    if let DecisionImpact::Symbol(name) = impact {
-                        if !decision_symbol_known(name, &declared_symbols, &known_effect_symbols) {
+                    if let DecisionImpact::Symbol(name) = impact
+                        && !decision_symbol_known(name, &declared_symbols, &known_effect_symbols) {
                             errors.push(CheckFinding {
                                 line: d.line,
                                 module: module_name.clone(),
@@ -1131,7 +1124,6 @@ pub fn check_module_intent_with_sigs_in(
                                 ),
                             });
                         }
-                    }
                 }
             }
             _ => {}
@@ -1139,6 +1131,116 @@ pub fn check_module_intent_with_sigs_in(
     }
 
     ModuleCheckFindings { errors, warnings }
+}
+
+pub fn expr_to_str(expr: &crate::ast::Expr) -> String {
+    use crate::ast::Expr;
+    use crate::ast::Literal;
+
+    match expr {
+        Expr::Literal(lit) => match lit {
+            Literal::Int(i) => i.to_string(),
+            Literal::Float(f) => f.to_string(),
+            Literal::Str(s) => format!("\"{}\"", s),
+            Literal::Bool(b) => if *b { "true" } else { "false" }.to_string(),
+        },
+        Expr::Ident(name) => name.clone(),
+        Expr::FnCall(fn_expr, args) => {
+            let fn_str = expr_to_str(fn_expr);
+            let args_str = args.iter().map(expr_to_str).collect::<Vec<_>>().join(", ");
+            format!("{}({})", fn_str, args_str)
+        }
+        Expr::Constructor(name, arg) => match arg {
+            None => name.clone(),
+            Some(a) => format!("{}({})", name, expr_to_str(a)),
+        },
+        Expr::BinOp(op, left, right) => {
+            use crate::ast::BinOp;
+            let op_str = match op {
+                BinOp::Add => "+",
+                BinOp::Sub => "-",
+                BinOp::Mul => "*",
+                BinOp::Div => "/",
+                BinOp::Eq => "==",
+                BinOp::Neq => "!=",
+                BinOp::Lt => "<",
+                BinOp::Gt => ">",
+                BinOp::Lte => "<=",
+                BinOp::Gte => ">=",
+            };
+            format!("{} {} {}", expr_to_str(left), op_str, expr_to_str(right))
+        }
+        Expr::InterpolatedStr(parts) => {
+            use crate::ast::StrPart;
+            let mut inner = String::new();
+            for part in parts {
+                match part {
+                    StrPart::Literal(s) => inner.push_str(s),
+                    StrPart::Parsed(e) => {
+                        inner.push('{');
+                        inner.push_str(&expr_to_str(e));
+                        inner.push('}');
+                    }
+                }
+            }
+            format!("\"{}\"", inner)
+        }
+        Expr::List(elements) => {
+            let parts: Vec<String> = elements.iter().map(expr_to_str).collect();
+            format!("[{}]", parts.join(", "))
+        }
+        Expr::Tuple(items) => {
+            let parts: Vec<String> = items.iter().map(expr_to_str).collect();
+            format!("({})", parts.join(", "))
+        }
+        Expr::MapLiteral(entries) => {
+            let parts = entries
+                .iter()
+                .map(|(key, value)| format!("{} => {}", expr_to_str(key), expr_to_str(value)))
+                .collect::<Vec<_>>();
+            format!("{{{}}}", parts.join(", "))
+        }
+        Expr::ErrorProp(inner) => format!("{}?", expr_to_str(inner)),
+        Expr::Attr(obj, field) => format!("{}.{}", expr_to_str(obj), field),
+        Expr::Pipe(left, right) => format!("{} |> {}", expr_to_str(left), expr_to_str(right)),
+        Expr::RecordCreate { type_name, fields } => {
+            let flds: Vec<String> = fields
+                .iter()
+                .map(|(name, expr)| format!("{} = {}", name, expr_to_str(expr)))
+                .collect();
+            format!("{}({})", type_name, flds.join(", "))
+        }
+        Expr::RecordUpdate {
+            type_name,
+            base,
+            updates,
+        } => {
+            let upds: Vec<String> = updates
+                .iter()
+                .map(|(name, expr)| format!("{} = {}", name, expr_to_str(expr)))
+                .collect();
+            format!(
+                "{}.update({}, {})",
+                type_name,
+                expr_to_str(base),
+                upds.join(", ")
+            )
+        }
+        Expr::TailCall(boxed) => {
+            let (target, args) = boxed.as_ref();
+            let a = args.iter().map(expr_to_str).collect::<Vec<_>>().join(", ");
+            format!("<tail-call:{}>({})", target, a)
+        }
+        Expr::Resolved(_) => "<resolved>".to_string(),
+        Expr::Match { subject, arms, .. } => {
+            let s = expr_to_str(subject);
+            let arms_str: Vec<String> = arms
+                .iter()
+                .map(|arm| format!("{:?} -> {}", arm.pattern, expr_to_str(&arm.body)))
+                .collect();
+            format!("match {} {}", s, arms_str.join(", "))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1752,115 +1854,5 @@ decision D
             findings.errors,
             findings.warnings
         );
-    }
-}
-
-pub fn expr_to_str(expr: &crate::ast::Expr) -> String {
-    use crate::ast::Expr;
-    use crate::ast::Literal;
-
-    match expr {
-        Expr::Literal(lit) => match lit {
-            Literal::Int(i) => i.to_string(),
-            Literal::Float(f) => f.to_string(),
-            Literal::Str(s) => format!("\"{}\"", s),
-            Literal::Bool(b) => if *b { "true" } else { "false" }.to_string(),
-        },
-        Expr::Ident(name) => name.clone(),
-        Expr::FnCall(fn_expr, args) => {
-            let fn_str = expr_to_str(fn_expr);
-            let args_str = args.iter().map(expr_to_str).collect::<Vec<_>>().join(", ");
-            format!("{}({})", fn_str, args_str)
-        }
-        Expr::Constructor(name, arg) => match arg {
-            None => name.clone(),
-            Some(a) => format!("{}({})", name, expr_to_str(a)),
-        },
-        Expr::BinOp(op, left, right) => {
-            use crate::ast::BinOp;
-            let op_str = match op {
-                BinOp::Add => "+",
-                BinOp::Sub => "-",
-                BinOp::Mul => "*",
-                BinOp::Div => "/",
-                BinOp::Eq => "==",
-                BinOp::Neq => "!=",
-                BinOp::Lt => "<",
-                BinOp::Gt => ">",
-                BinOp::Lte => "<=",
-                BinOp::Gte => ">=",
-            };
-            format!("{} {} {}", expr_to_str(left), op_str, expr_to_str(right))
-        }
-        Expr::InterpolatedStr(parts) => {
-            use crate::ast::StrPart;
-            let mut inner = String::new();
-            for part in parts {
-                match part {
-                    StrPart::Literal(s) => inner.push_str(s),
-                    StrPart::Parsed(e) => {
-                        inner.push('{');
-                        inner.push_str(&expr_to_str(e));
-                        inner.push('}');
-                    }
-                }
-            }
-            format!("\"{}\"", inner)
-        }
-        Expr::List(elements) => {
-            let parts: Vec<String> = elements.iter().map(expr_to_str).collect();
-            format!("[{}]", parts.join(", "))
-        }
-        Expr::Tuple(items) => {
-            let parts: Vec<String> = items.iter().map(expr_to_str).collect();
-            format!("({})", parts.join(", "))
-        }
-        Expr::MapLiteral(entries) => {
-            let parts = entries
-                .iter()
-                .map(|(key, value)| format!("{} => {}", expr_to_str(key), expr_to_str(value)))
-                .collect::<Vec<_>>();
-            format!("{{{}}}", parts.join(", "))
-        }
-        Expr::ErrorProp(inner) => format!("{}?", expr_to_str(inner)),
-        Expr::Attr(obj, field) => format!("{}.{}", expr_to_str(obj), field),
-        Expr::Pipe(left, right) => format!("{} |> {}", expr_to_str(left), expr_to_str(right)),
-        Expr::RecordCreate { type_name, fields } => {
-            let flds: Vec<String> = fields
-                .iter()
-                .map(|(name, expr)| format!("{} = {}", name, expr_to_str(expr)))
-                .collect();
-            format!("{}({})", type_name, flds.join(", "))
-        }
-        Expr::RecordUpdate {
-            type_name,
-            base,
-            updates,
-        } => {
-            let upds: Vec<String> = updates
-                .iter()
-                .map(|(name, expr)| format!("{} = {}", name, expr_to_str(expr)))
-                .collect();
-            format!(
-                "{}.update({}, {})",
-                type_name,
-                expr_to_str(base),
-                upds.join(", ")
-            )
-        }
-        Expr::TailCall(boxed) => {
-            let (target, args) = boxed.as_ref();
-            let a = args.iter().map(expr_to_str).collect::<Vec<_>>().join(", ");
-            format!("<tail-call:{}>({})", target, a)
-        }
-        Expr::Resolved(_) => "<resolved>".to_string(),
-        Expr::Match { subject, arms, .. } => {
-            let s = expr_to_str(subject);
-            let arms_str: Vec<String> = arms
-                .iter()
-                .map(|arm| format!("{:?} -> {}", arm.pattern, expr_to_str(&arm.body)))
-                .collect();
-            format!("match {} {}", s, arms_str.join(", "))
-        }
     }
 }

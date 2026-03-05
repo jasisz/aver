@@ -20,16 +20,13 @@ use crate::types::Type;
 
 /// Transpile an Aver program to a Rust project.
 pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
-    let mut sections = Vec::new();
-
-    // Preamble
-    sections.push("#![allow(unused_variables, unused_mut, dead_code, unused_imports, unused_parens, non_snake_case, non_camel_case_types, unreachable_patterns)]".to_string());
-    sections.push("use std::collections::HashMap;".to_string());
-    sections.push(String::new());
-
-    // Runtime helpers
-    sections.push(runtime::generate_runtime());
-    sections.push(String::new());
+    let mut sections = vec![
+        "#![allow(unused_variables, unused_mut, dead_code, unused_imports, unused_parens, non_snake_case, non_camel_case_types, unreachable_patterns)]".to_string(),
+        "use std::collections::HashMap;".to_string(),
+        String::new(),
+        runtime::generate_runtime(),
+        String::new(),
+    ];
 
     // Policy module (from aver.toml, if present)
     if let Some(ref config) = ctx.policy {

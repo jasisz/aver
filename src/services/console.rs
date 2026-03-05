@@ -41,13 +41,13 @@ pub fn effects(name: &str) -> &'static [&'static str] {
 /// Returns `Some(result)` when `name` is owned by this service, `None` otherwise.
 pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
-        "Console.print" => Some(one_msg(name, &args, |s| {
+        "Console.print" => Some(one_msg(name, args, |s| {
             println!("{}", s);
         })),
-        "Console.error" => Some(one_msg(name, &args, |s| {
+        "Console.error" => Some(one_msg(name, args, |s| {
             eprintln!("{}", s);
         })),
-        "Console.warn" => Some(one_msg(name, &args, |s| {
+        "Console.warn" => Some(one_msg(name, args, |s| {
             eprintln!("[warn] {}", s);
         })),
         "Console.readLine" => Some(read_line(args)),

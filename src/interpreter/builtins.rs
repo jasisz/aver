@@ -99,7 +99,7 @@ impl Interpreter {
                         args.len()
                     )));
                 }
-                return Ok(Value::Ok(Box::new(args[0].clone())));
+                Ok(Value::Ok(Box::new(args[0].clone())))
             }
             "__ctor:Result.Err" => {
                 if args.len() != 1 {
@@ -108,7 +108,7 @@ impl Interpreter {
                         args.len()
                     )));
                 }
-                return Ok(Value::Err(Box::new(args[0].clone())));
+                Ok(Value::Err(Box::new(args[0].clone())))
             }
             "__ctor:Option.Some" => {
                 if args.len() != 1 {
@@ -117,7 +117,7 @@ impl Interpreter {
                         args.len()
                     )));
                 }
-                return Ok(Value::Some(Box::new(args[0].clone())));
+                Ok(Value::Some(Box::new(args[0].clone())))
             }
             "List.map" => {
                 if args.len() != 2 {

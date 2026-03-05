@@ -136,8 +136,8 @@ fn collect_check_units(
         let items = parse_file(&source)?;
         require_module_declaration(&items, &path_str)?;
 
-        if include_deps {
-            if let Some(m) = items.iter().find_map(|item| {
+        if include_deps
+            && let Some(m) = items.iter().find_map(|item| {
                 if let TopLevel::Module(m) = item {
                     Some(m)
                 } else {
@@ -154,7 +154,6 @@ fn collect_check_units(
                     stack.push(dep_path);
                 }
             }
-        }
 
         out.push((path_str, source, items));
     }
@@ -178,11 +177,10 @@ fn display_check_path(path: &str, module_root: &str) -> String {
         if let Some(rel) = relativize_to(root, p).or_else(|| relativize_to_canonical(root, p)) {
             return rel;
         }
-        if let Some(cwd) = std::env::current_dir().ok() {
-            if let Some(rel) = relativize_to(&cwd, p).or_else(|| relativize_to_canonical(&cwd, p)) {
+        if let Ok(cwd) = std::env::current_dir()
+            && let Some(rel) = relativize_to(&cwd, p).or_else(|| relativize_to_canonical(&cwd, p)) {
                 return rel;
             }
-        }
     }
 
     path.to_string()
@@ -245,8 +243,8 @@ pub(super) fn cmd_run(
     let mut runtime_failure: Option<String> = run_top_level_statements(&mut interp, &items).err();
 
     let mut main_result: Option<Result<Value, String>> = None;
-    if runtime_failure.is_none() {
-        if interp.lookup("main").is_ok() {
+    if runtime_failure.is_none()
+        && interp.lookup("main").is_ok() {
             let result = run_entry_function(&mut interp, "main", vec![]);
             if let Ok(Value::Err(err)) = &result {
                 runtime_failure = Some(format!("Main returned error: {}", aver_repr(err)));
@@ -255,7 +253,6 @@ pub(super) fn cmd_run(
             }
             main_result = Some(result);
         }
-    }
 
     if recording_target.is_some() {
         let output = if let Some(msg) = &runtime_failure {
@@ -457,12 +454,11 @@ pub(super) fn cmd_verify(file: &str, module_root_override: Option<&str>) {
 
     // Register all functions
     for item in &items {
-        if let TopLevel::FnDef(fd) = item {
-            if let Err(e) = interp.exec_fn_def(fd) {
+        if let TopLevel::FnDef(fd) = item
+            && let Err(e) = interp.exec_fn_def(fd) {
                 eprintln!("{}", e.to_string().red());
                 process::exit(1);
             }
-        }
     }
 
     let verify_blocks = merge_verify_blocks(&items);
@@ -623,15 +619,14 @@ pub(super) fn cmd_compile(
     let out_path = Path::new(output_dir);
     for (rel_path, content) in &output.files {
         let full_path = out_path.join(rel_path);
-        if let Some(parent) = full_path.parent() {
-            if let Err(e) = fs::create_dir_all(parent) {
+        if let Some(parent) = full_path.parent()
+            && let Err(e) = fs::create_dir_all(parent) {
                 eprintln!(
                     "{}",
                     format!("Cannot create dir '{}': {}", parent.display(), e).red()
                 );
                 process::exit(1);
             }
-        }
         if let Err(e) = fs::write(&full_path, content) {
             eprintln!(
                 "{}",

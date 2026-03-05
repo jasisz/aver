@@ -252,7 +252,7 @@ fn normalize_path(path: &str) -> String {
             std::path::Component::CurDir => {} // skip .
             std::path::Component::ParentDir => {
                 // Only pop if the last component is a normal segment (not "..")
-                if components.last().map_or(false, |c| c != "..") {
+                if components.last().is_some_and(|c| c != "..") {
                     components.pop();
                 } else if !is_absolute {
                     // Preserve leading ".." for relative paths — never silently drop them

@@ -12,8 +12,8 @@ Do these steps **in order**:
 3. **Write `challenges/inventory/solution_compare.*`** — implement it naturally, using whatever patterns and idioms you normally would. Include tests.
 
 ### Phase 2 — Learn Aver and solve it again
-4. **Read `README.md`** in the project root — it explains Aver, its philosophy, and its features
-5. **Read the docs** in `docs/` — especially `docs/services.md` for the full API reference
+4. **Read `README.md`** in the project root — it explains Aver, its philosophy, and its workflow
+5. **Read `docs/language.md` and `docs/services.md`** — surface language plus the full API reference
 6. **Read `examples/calculator.av`** as a style and convention reference
 7. **Write `challenges/inventory/solution.av`** — do NOT translate line-by-line, write idiomatic Aver
 8. **Verify the Aver version** by running:

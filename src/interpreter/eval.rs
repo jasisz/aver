@@ -1,6 +1,11 @@
 use super::*;
 
 impl Interpreter {
+    fn empty_slots(local_count: u16) -> Vec<Rc<Value>> {
+        let unit = Rc::new(Value::Unit);
+        vec![unit; local_count as usize]
+    }
+
     pub fn eval_expr(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
         match expr {
             Expr::Literal(lit) => Ok(self.eval_literal(lit)),
@@ -402,7 +407,7 @@ impl Interpreter {
         let result = if let Some(res) = resolution {
             // Resolved path: push Slots frame only.
             // lookup_rc skips Slots frames, so globals at env[0] are visible.
-            let mut slots = vec![Rc::new(Value::Unit); res.local_count as usize];
+            let mut slots = Self::empty_slots(res.local_count);
             for ((param_name, _), arg_val) in params.iter().zip(args.into_iter()) {
                 if let Some(&slot) = res.local_slots.get(param_name) {
                     slots[slot as usize] = Rc::new(arg_val);
@@ -441,11 +446,10 @@ impl Interpreter {
         };
 
         self.active_local_slots = prev_local_slots;
-        if let Some(prev) = prev_global {
-            if let Some(global) = self.env.first_mut() {
+        if let Some(prev) = prev_global
+            && let Some(global) = self.env.first_mut() {
                 *global = prev;
             }
-        }
         self.env.truncate(1);
         self.env.extend(saved_frames);
 
@@ -521,7 +525,7 @@ impl Interpreter {
 
             // Execute body with new args
             let exec_result = if let Some(ref res) = cur_resolution {
-                let mut slots = vec![Rc::new(Value::Unit); res.local_count as usize];
+                let mut slots = Self::empty_slots(res.local_count);
                 for ((param_name, _), arg_val) in cur_params.iter().zip(new_args.into_iter()) {
                     if let Some(&slot) = res.local_slots.get(param_name) {
                         slots[slot as usize] = Rc::new(arg_val);

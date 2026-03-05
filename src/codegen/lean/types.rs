@@ -16,7 +16,7 @@ pub fn type_to_lean(ty: &Type) -> String {
         Type::Option(inner) => format!("Option {}", type_to_lean_atom(inner)),
         Type::List(inner) => format!("List {}", type_to_lean_atom(inner)),
         Type::Tuple(items) => {
-            let parts: Vec<String> = items.iter().map(|t| type_to_lean(t)).collect();
+            let parts: Vec<String> = items.iter().map(type_to_lean).collect();
             format!("({})", parts.join(" × "))
         }
         Type::Map(key, value) => {
@@ -24,7 +24,7 @@ pub fn type_to_lean(ty: &Type) -> String {
             format!("List ({} × {})", type_to_lean(key), type_to_lean(value))
         }
         Type::Fn(params, ret, _effects) => {
-            let mut parts: Vec<String> = params.iter().map(|t| type_to_lean_atom(t)).collect();
+            let mut parts: Vec<String> = params.iter().map(type_to_lean_atom).collect();
             parts.push(type_to_lean(ret));
             parts.join(" → ")
         }

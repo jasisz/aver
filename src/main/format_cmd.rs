@@ -40,15 +40,14 @@ pub(super) fn cmd_format(path: &str, check: bool) {
         let formatted = format_source(&src);
         if formatted != src {
             changed.push(file.clone());
-            if !check {
-                if let Err(e) = fs::write(file, formatted) {
+            if !check
+                && let Err(e) = fs::write(file, formatted) {
                     eprintln!(
                         "{}",
                         format!("Cannot write '{}': {}", file.display(), e).red()
                     );
                     process::exit(1);
                 }
-            }
         }
     }
 

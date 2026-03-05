@@ -43,8 +43,8 @@ pub fn effects(name: &str) -> &'static [&'static str] {
 /// Returns `Some(result)` when `name` is owned by this service, `None` otherwise.
 pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
-        "Http.get" | "Http.head" | "Http.delete" => Some(call_simple(name, &args)),
-        "Http.post" | "Http.put" | "Http.patch" => Some(call_with_body(name, &args)),
+        "Http.get" | "Http.head" | "Http.delete" => Some(call_simple(name, args)),
+        "Http.post" | "Http.put" | "Http.patch" => Some(call_with_body(name, args)),
         _ => None,
     }
 }

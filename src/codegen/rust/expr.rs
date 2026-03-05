@@ -32,8 +32,8 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
                 }
             }
             // Check if this is a module-qualified reference: Examples.Fibonacci.fib
-            if let Some(full_dotted) = expr_to_dotted_name(expr) {
-                if let Some(bare) = resolve_module_call(&full_dotted, ctx) {
+            if let Some(full_dotted) = expr_to_dotted_name(expr)
+                && let Some(bare) = resolve_module_call(&full_dotted, ctx) {
                     // Could be a simple function name or a type.variant
                     if let Some(dot_pos) = bare.find('.') {
                         let type_name = &bare[..dot_pos];
@@ -44,7 +44,6 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
                     }
                     return aver_name_to_rust(&bare);
                 }
-            }
             let obj_str = emit_expr(obj, ctx, ectx);
             format!("{}.{}", obj_str, aver_name_to_rust(field))
         }

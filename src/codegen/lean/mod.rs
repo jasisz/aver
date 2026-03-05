@@ -263,7 +263,7 @@ def fromHex (s : String) : Except String Int :=
   | _ => .error ("Byte.fromHex: expected exactly 2 hex chars, got '" ++ s ++ "'")
 end AverByte"#;
 
-fn pure_fns<'a>(ctx: &'a CodegenContext) -> Vec<&'a FnDef> {
+fn pure_fns(ctx: &CodegenContext) -> Vec<&FnDef> {
     ctx.modules
         .iter()
         .flat_map(|m| m.fn_defs.iter())
@@ -423,7 +423,7 @@ fn collect_calls_from_expr<'a>(expr: &'a Expr, out: &mut Vec<(String, Vec<&'a Ex
     }
 }
 
-fn collect_calls_from_body<'a>(body: &'a FnBody) -> Vec<(String, Vec<&'a Expr>)> {
+fn collect_calls_from_body(body: &FnBody) -> Vec<(String, Vec<&Expr>)> {
     let mut out = Vec::new();
     match body {
         FnBody::Expr(expr) => collect_calls_from_expr(expr, &mut out),
@@ -658,11 +658,10 @@ fn classify_string_pos_edge(
     }
     if let Expr::FnCall(callee, args) = expr {
         let name = expr_to_dotted_name(callee)?;
-        if call_matches(&name, "skipWs") && args.len() == 2 && is_ident(&args[0], string_param) {
-            if matches!(&args[1], Expr::Ident(id) if id != pos_param) {
+        if call_matches(&name, "skipWs") && args.len() == 2 && is_ident(&args[0], string_param)
+            && matches!(&args[1], Expr::Ident(id) if id != pos_param) {
                 return Some(StringPosEdge::Advance);
             }
-        }
     }
     if matches!(expr, Expr::Ident(id) if id != pos_param) {
         return Some(StringPosEdge::Advance);
@@ -803,12 +802,8 @@ fn supports_mutual_string_pos_advance(component: &[&FnDef]) -> Option<HashMap<St
             };
             any_intra = true;
 
-            let Some(arg0) = args.first().copied() else {
-                return None;
-            };
-            let Some(arg1) = args.get(1).copied() else {
-                return None;
-            };
+            let arg0 = args.first().copied()?;
+            let arg1 = args.get(1).copied()?;
 
             if !is_ident(arg0, string_param) {
                 return None;
@@ -875,9 +870,7 @@ fn supports_mutual_sizeof_ranked(component: &[&FnDef]) -> Option<HashMap<String,
             };
             any_intra = true;
             let callee_metric_idx = metric_idx.get(&callee).copied()?;
-            let Some(metric_arg) = args.get(callee_metric_idx).copied() else {
-                return None;
-            };
+            let metric_arg = args.get(callee_metric_idx).copied()?;
             if is_ident(metric_arg, caller_metric_param) {
                 if let Some(edges) = same_edges.get_mut(&fd.name) {
                     edges.insert(callee);

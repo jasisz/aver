@@ -14,6 +14,29 @@ use aver::value::RuntimeError;
 
 use crate::shared::compile_program_for_exec;
 
+fn collect_recording_files_from_dir(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = fs::read_dir(dir)
+        .map_err(|e| format!("Cannot read recording directory '{}': {}", dir.display(), e))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let entry_path = entry.path();
+        if entry_path.is_dir() {
+            collect_recording_files_from_dir(&entry_path, files)?;
+            continue;
+        }
+        if entry_path.is_file()
+            && entry_path
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(|s| s.eq_ignore_ascii_case("json"))
+                .unwrap_or(false)
+        {
+            files.push(entry_path);
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn collect_recording_files(path: &str) -> Result<Vec<PathBuf>, String> {
     let p = Path::new(path);
     if p.is_file() {
@@ -26,24 +49,13 @@ pub(super) fn collect_recording_files(path: &str) -> Result<Vec<PathBuf>, String
         ));
     }
     let mut files = Vec::new();
-    let entries = fs::read_dir(p)
-        .map_err(|e| format!("Cannot read recording directory '{}': {}", path, e))?;
-    for entry in entries {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let entry_path = entry.path();
-        if entry_path.is_file()
-            && entry_path
-                .extension()
-                .and_then(|s| s.to_str())
-                .map(|s| s.eq_ignore_ascii_case("json"))
-                .unwrap_or(false)
-        {
-            files.push(entry_path);
-        }
-    }
+    collect_recording_files_from_dir(p, &mut files)?;
     files.sort();
     if files.is_empty() {
-        return Err(format!("No .json recordings found in '{}'", path));
+        return Err(format!(
+            "No .json recordings found in '{}' or its subdirectories",
+            path
+        ));
     }
     Ok(files)
 }
@@ -342,5 +354,43 @@ pub(super) fn cmd_replay(recording: &str, diff: bool, test_mode: bool, check_arg
 
     if test_mode && !all_match {
         process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collect_recording_files;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_dir() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("aver_replay_collect_{nanos}"))
+    }
+
+    #[test]
+    fn collect_recording_files_recurses_into_subdirectories() {
+        let root = unique_temp_dir();
+        let nested = root.join("services/console");
+        fs::create_dir_all(&nested).expect("create nested recording dirs");
+        let top = root.join("top.json");
+        let nested_json = nested.join("nested.json");
+        let ignored = nested.join("notes.txt");
+        fs::write(&top, "{}").expect("write top recording");
+        fs::write(&nested_json, "{}").expect("write nested recording");
+        fs::write(&ignored, "ignore").expect("write ignored file");
+
+        let mut files =
+            collect_recording_files(root.to_str().expect("temp path should be utf-8"))
+                .expect("collect recordings");
+        files.sort();
+
+        assert_eq!(files, vec![nested_json, top]);
+
+        fs::remove_dir_all(&root).expect("remove temp recording tree");
     }
 }

@@ -15,14 +15,14 @@ pub fn type_to_rust(ty: &Type) -> String {
         Type::Option(inner) => format!("Option<{}>", type_to_rust(inner)),
         Type::List(inner) => format!("Vec<{}>", type_to_rust(inner)),
         Type::Tuple(items) => {
-            let parts: Vec<String> = items.iter().map(|t| type_to_rust(t)).collect();
+            let parts: Vec<String> = items.iter().map(type_to_rust).collect();
             format!("({})", parts.join(", "))
         }
         Type::Map(key, value) => {
             format!("HashMap<{}, {}>", type_to_rust(key), type_to_rust(value))
         }
         Type::Fn(params, ret, _effects) => {
-            let ps: Vec<String> = params.iter().map(|t| type_to_rust(t)).collect();
+            let ps: Vec<String> = params.iter().map(type_to_rust).collect();
             format!("fn({}) -> {}", ps.join(", "), type_to_rust(ret))
         }
         Type::Unknown => {

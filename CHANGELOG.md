@@ -11,6 +11,7 @@ All notable changes to Aver are documented here.
 - `aver check` contract diagnostics now always include line numbers
 - Decision `impacts` now accepts both validated symbols and semantic strings
 - `input`, `expect`, `case`, `where`, `effect`, `service`, `needs` are no longer reserved keywords
+- Removed `aver decisions`; decision export now lives under `aver context --decisions-only`
 
 ### Fixed
 - `decisions/*.av` updated to conform to strict impacts validation and namespaced console usage

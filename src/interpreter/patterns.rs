@@ -105,29 +105,26 @@ impl Interpreter {
                     ("Option.None", Value::None) => Some(HashMap::new()),
                     ("Result.Ok", Value::Ok(inner)) => {
                         let mut map = HashMap::new();
-                        if let Some(name) = bindings.first() {
-                            if name != "_" {
+                        if let Some(name) = bindings.first()
+                            && name != "_" {
                                 map.insert(name.clone(), *inner.clone());
                             }
-                        }
                         Some(map)
                     }
                     ("Result.Err", Value::Err(inner)) => {
                         let mut map = HashMap::new();
-                        if let Some(name) = bindings.first() {
-                            if name != "_" {
+                        if let Some(name) = bindings.first()
+                            && name != "_" {
                                 map.insert(name.clone(), *inner.clone());
                             }
-                        }
                         Some(map)
                     }
                     ("Option.Some", Value::Some(inner)) => {
                         let mut map = HashMap::new();
-                        if let Some(name) = bindings.first() {
-                            if name != "_" {
+                        if let Some(name) = bindings.first()
+                            && name != "_" {
                                 map.insert(name.clone(), *inner.clone());
                             }
-                        }
                         Some(map)
                     }
                     // User-defined variant: match by variant name, qualified or unqualified
@@ -143,8 +140,8 @@ impl Interpreter {
                         let matches = if ctor.contains('.') {
                             // Qualified: "Shape.Circle"
                             let mut parts = ctor.splitn(2, '.');
-                            parts.next().map_or(false, |t| t == type_name)
-                                && parts.next().map_or(false, |v| v == variant)
+                            parts.next().is_some_and(|t| t == type_name)
+                                && parts.next().is_some_and(|v| v == variant)
                         } else {
                             // Unqualified (builtins like Ok/Err handled above; this catches
                             // any legacy unqualified user-defined patterns)

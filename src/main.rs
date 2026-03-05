@@ -10,8 +10,6 @@ mod context_cmd;
 mod context_data;
 #[path = "main/context_format.rs"]
 mod context_format;
-#[path = "main/decisions_cmd.rs"]
-mod decisions_cmd;
 #[path = "main/format_cmd.rs"]
 mod format_cmd;
 #[path = "main/repl.rs"]
@@ -92,14 +90,6 @@ fn main() {
                 lean_verify,
                 *lean_proof_mode,
             );
-        }
-        Commands::Decisions {
-            source,
-            output,
-            json,
-            docs,
-        } => {
-            decisions_cmd::cmd_decisions(source.as_deref(), output.as_deref(), *json, *docs);
         }
     }
 }

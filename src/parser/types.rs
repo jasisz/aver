@@ -167,8 +167,8 @@ impl Parser {
         }
 
         // Function type annotation: Fn(A, B) -> C ! [Effect]
-        if let TokenKind::Ident(name) = &self.current().kind {
-            if name == "Fn" && matches!(self.peek(1).kind, TokenKind::LParen) {
+        if let TokenKind::Ident(name) = &self.current().kind
+            && name == "Fn" && matches!(self.peek(1).kind, TokenKind::LParen) {
                 self.advance(); // Fn
                 self.expect_exact(&TokenKind::LParen)?;
 
@@ -196,7 +196,6 @@ impl Parser {
                 }
                 return Ok(out);
             }
-        }
 
         let mut base = match &self.current().kind {
             TokenKind::Ident(s) => {
@@ -218,20 +217,17 @@ impl Parser {
         };
 
         // Dotted type name: e.g. Tcp.Connection
-        if self.check_exact(&TokenKind::Dot) {
-            if let Some(Token {
+        if self.check_exact(&TokenKind::Dot)
+            && let Some(Token {
                 kind: TokenKind::Ident(next),
                 ..
             }) = self.tokens.get(self.pos + 1)
-            {
-                if next.chars().next().map_or(false, |c| c.is_uppercase()) {
+                && next.chars().next().is_some_and(|c| c.is_uppercase()) {
                     let next = next.clone();
                     self.advance(); // dot
                     self.advance(); // ident
                     base = format!("{}.{}", base, next);
                 }
-            }
-        }
 
         if self.check_exact(&TokenKind::Lt) {
             self.advance(); // <

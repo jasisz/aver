@@ -104,20 +104,18 @@ impl Parser {
                 }
             }
             // User-defined constructor: starts with uppercase (e.g. Shape.Circle, Point)
-            TokenKind::Ident(ref s) if s.chars().next().map_or(false, |c| c.is_uppercase()) => {
+            TokenKind::Ident(ref s) if s.chars().next().is_some_and(|c| c.is_uppercase()) => {
                 let mut name = s.clone();
                 self.advance();
                 // Qualified constructor: Shape.Circle
-                if self.check_exact(&TokenKind::Dot) {
-                    if let TokenKind::Ident(ref variant) = self.peek(1).kind.clone() {
-                        if variant.chars().next().map_or(false, |c| c.is_uppercase()) {
+                if self.check_exact(&TokenKind::Dot)
+                    && let TokenKind::Ident(ref variant) = self.peek(1).kind.clone()
+                        && variant.chars().next().is_some_and(|c| c.is_uppercase()) {
                             let variant = variant.clone();
                             self.advance(); // consume '.'
                             self.advance(); // consume variant name
                             name = format!("{}.{}", name, variant);
                         }
-                    }
-                }
                 let mut bindings = vec![];
                 if self.check_exact(&TokenKind::LParen) {
                     self.advance();

@@ -15,7 +15,7 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 
 ### Language features
 
-See [README.md](README.md#language-reference) for complete language reference (syntax, types, operators, patterns, modules).
+See [README.md](README.md) for project overview and workflow, [docs/language.md](docs/language.md) for the surface-language guide, and [docs/services.md](docs/services.md) for the standard library and effectful services.
 
 Below: implementation details relevant to development only.
 
@@ -46,7 +46,7 @@ Below: implementation details relevant to development only.
 
 ### Design omissions
 
-See [README.md](README.md#what-aver-deliberately-omits) for the full list of intentional omissions (no `if`/`else`, no loops, no `null`, no exceptions, no mutable state, no magic).
+See [docs/language.md](docs/language.md#what-aver-deliberately-omits) for the full list of intentional omissions (no `if`/`else`, no loops, no `null`, no exceptions, no mutable state, no magic).
 
 ## Architecture in one page
 
@@ -149,7 +149,7 @@ cargo run -- verify examples/lists.av
 cargo run -- check examples/hello.av
 cargo run -- check examples/calculator.av
 cargo run -- context decisions/architecture.av --decisions-only
-cargo run -- decisions --docs
+cargo run -- context decisions/architecture.av --decisions-only -o docs/decisions.md
 cargo run -- context examples/calculator.av
 ```
 
@@ -278,7 +278,7 @@ To create a new pure namespace, follow the pattern in `src/types/char.rs` or `sr
 
 ## Next steps (prioritised)
 
-1. **`aver decisions` query flags** — `--impacts Module`, `--since 2024-01-01`, `--rejected Technology` for searchable architectural history
+1. **`aver context --decisions-only` query flags** — `--impacts Module`, `--since 2024-01-01`, `--rejected Technology` for searchable architectural history
 
 ## Agreed direction: modules vs DI (2026-02-25)
 

@@ -29,8 +29,8 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
                 }
             }
             // Check module-qualified reference
-            if let Some(full_dotted) = expr_to_dotted_name(expr) {
-                if let Some(bare) = resolve_module_call(&full_dotted, ctx) {
+            if let Some(full_dotted) = expr_to_dotted_name(expr)
+                && let Some(bare) = resolve_module_call(&full_dotted, ctx) {
                     if let Some(dot_pos) = bare.find('.') {
                         let type_name = &bare[..dot_pos];
                         let variant = &bare[dot_pos + 1..];
@@ -40,7 +40,6 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
                     }
                     return aver_name_to_lean(&bare);
                 }
-            }
             let obj_str = emit_expr(obj, ctx);
             format!("{}.{}", obj_str, aver_name_to_lean(field))
         }
@@ -330,7 +329,7 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext) -> String
 }
 
 /// If all arms are `true -> expr` and `false -> expr`, return (true_body, false_body).
-fn extract_bool_arms<'a>(arms: &'a [MatchArm]) -> Option<(&'a Expr, &'a Expr)> {
+fn extract_bool_arms(arms: &[MatchArm]) -> Option<(&Expr, &Expr)> {
     if arms.len() != 2 {
         return None;
     }

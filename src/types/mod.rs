@@ -171,7 +171,7 @@ pub fn parse_type_str_strict(s: &str) -> Result<Type, String> {
 
             // Capitalized identifier with only alphanumeric/_ and dot chars = user-defined type name
             // Supports dotted names like "Tcp.Connection"
-            if s.chars().next().map_or(false, |c| c.is_uppercase())
+            if s.chars().next().is_some_and(|c| c.is_uppercase())
                 && s.chars()
                     .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
             {
@@ -196,11 +196,10 @@ pub fn parse_type_str(s: &str) -> Type {
     }
     if s.starts_with('(') && s.ends_with(')') {
         let inner = &s[1..s.len() - 1];
-        if let Ok(parts) = split_top_level(inner, ',') {
-            if parts.len() >= 2 {
+        if let Ok(parts) = split_top_level(inner, ',')
+            && parts.len() >= 2 {
                 return Type::Tuple(parts.into_iter().map(parse_type_str).collect());
             }
-        }
         return Type::Unknown;
     }
     match s {
@@ -227,17 +226,16 @@ pub fn parse_type_str(s: &str) -> Type {
             if let Some(inner) = strip_wrapper(s, "List<", ">") {
                 return Type::List(Box::new(parse_type_str(inner)));
             }
-            if let Some(inner) = strip_wrapper(s, "Map<", ">") {
-                if let Some((key_str, value_str)) = split_top_level_comma(inner) {
+            if let Some(inner) = strip_wrapper(s, "Map<", ">")
+                && let Some((key_str, value_str)) = split_top_level_comma(inner) {
                     return Type::Map(
                         Box::new(parse_type_str(key_str)),
                         Box::new(parse_type_str(value_str)),
                     );
                 }
-            }
             // Capitalized identifier with only alphanumeric/_ and dot chars = user-defined type
             // Supports dotted names like "Tcp.Connection"
-            if s.chars().next().map_or(false, |c| c.is_uppercase())
+            if s.chars().next().is_some_and(|c| c.is_uppercase())
                 && s.chars()
                     .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
                 && s != "Any"
@@ -363,7 +361,7 @@ fn find_top_level_bang(s: &str) -> Option<usize> {
     None
 }
 
-fn split_top_level<'a>(s: &'a str, delimiter: char) -> Result<Vec<&'a str>, String> {
+fn split_top_level(s: &str, delimiter: char) -> Result<Vec<&str>, String> {
     let mut out = Vec::new();
     let mut start = 0usize;
     let mut angle = 0usize;

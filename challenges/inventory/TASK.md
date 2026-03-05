@@ -56,6 +56,7 @@ Be honest and specific. We want genuine comparison, not flattery.
 
 ## Getting started
 
-1. Read `README.md` — the complete language reference
-2. Read `docs/services.md` — full API for all built-in namespaces
-3. Study `examples/calculator.av` — conventions and style
+1. Read `README.md` — project overview and workflow
+2. Read `docs/language.md` — surface-language guide
+3. Read `docs/services.md` — full API for all built-in namespaces
+4. Study `examples/calculator.av` — conventions and style

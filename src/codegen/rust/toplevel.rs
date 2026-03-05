@@ -570,7 +570,7 @@ pub fn emit_main(main_fn: Option<&FnDef>, top_stmts: &[&Stmt], ctx: &CodegenCont
     let ectx = EmitCtx::empty();
 
     // Check if main returns a Result (needed for ? operator support)
-    let returns_result = main_fn.map_or(false, |fd| fd.return_type.starts_with("Result<"));
+    let returns_result = main_fn.is_some_and(|fd| fd.return_type.starts_with("Result<"));
 
     if returns_result {
         let ret_type = type_annotation_to_rust(&main_fn.unwrap().return_type);
@@ -637,7 +637,7 @@ pub fn emit_verify_blocks(verify_blocks: &[&VerifyBlock], ctx: &CodegenContext) 
     let mut fn_counters: std::collections::HashMap<String, usize> =
         std::collections::HashMap::new();
     for vb in verify_blocks {
-        for (_i, (left, right)) in vb.cases.iter().enumerate() {
+        for (left, right) in vb.cases.iter() {
             let fn_key = aver_name_to_rust(&vb.fn_name);
             let counter = fn_counters.entry(fn_key.clone()).or_insert(0);
             *counter += 1;

@@ -285,18 +285,15 @@ impl TypeChecker {
     }
 
     pub(super) fn callable_effects(&self, fn_expr: &Expr) -> Option<(String, Vec<String>)> {
-        if let Some(callee_name) = Self::callee_key(fn_expr) {
-            if let Some(callee_sig) = self.fn_sigs.get(&callee_name) {
+        if let Some(callee_name) = Self::callee_key(fn_expr)
+            && let Some(callee_sig) = self.fn_sigs.get(&callee_name) {
                 return Some((callee_name, callee_sig.effects.clone()));
             }
-        }
-        if let Expr::Ident(name) = fn_expr {
-            if let Some(ty) = self.binding_type(name) {
-                if let Type::Fn(_, _, effects) = ty {
+        if let Expr::Ident(name) = fn_expr
+            && let Some(ty) = self.binding_type(name)
+                && let Type::Fn(_, _, effects) = ty {
                     return Some((name.clone(), effects));
                 }
-            }
-        }
         None
     }
 
