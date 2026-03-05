@@ -634,6 +634,8 @@ Requires: Rust stable toolchain.
 | `services/tcp_demo.av` | TCP persistent connections (`Tcp.Connection`) |
 | `services/weather.av` | End-to-end service: `HttpServer` + `Http` + `Tcp` |
 | `decisions/architecture.av` | The interpreter documents itself in Aver |
+| `rle.av` | Run-length encoding: fold with record accumulator, law roundtrip |
+| `date.av` | Pure date utilities on ISO 8601 strings from `Time.now()`: parsing, formatting, lexicographic comparison |
 | `test_errors.av` | Intentional `aver check` failures: type errors + verify/decision/effect diagnostics |
 
 ---

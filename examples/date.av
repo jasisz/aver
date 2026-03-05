@@ -1,0 +1,76 @@
+module Date
+    intent =
+        "Pure date/time utilities built on top of Time.now() ISO strings."
+        "Parses RFC3339-like timestamps into a Date record and provides"
+        "formatting and comparison helpers. No external dependencies."
+    exposes [Date, parse, format, isBefore]
+
+record Date
+    year: Int
+    month: Int
+    day: Int
+    hour: Int
+    minute: Int
+    second: Int
+
+fn parseIntSlice(s: String, from: Int, to: Int) -> Int
+    ? "Extract a substring and parse it as Int. Panics on bad input."
+    part = String.slice(s, from, to)
+    result = Int.fromString(part)
+    Result.withDefault(result, 0)
+
+fn parse(s: String) -> Date
+    ? "Parse an ISO 8601 / RFC3339 string like 2026-03-05T15:42:01.123Z into a Date record."
+    Date(
+        year = parseIntSlice(s, 0, 4),
+        month = parseIntSlice(s, 5, 7),
+        day = parseIntSlice(s, 8, 10),
+        hour = parseIntSlice(s, 11, 13),
+        minute = parseIntSlice(s, 14, 16),
+        second = parseIntSlice(s, 17, 19)
+    )
+
+verify parse
+    parse("2026-03-05T15:42:01.123Z") => Date(year = 2026, month = 3, day = 5, hour = 15, minute = 42, second = 1)
+    parse("2000-01-01T00:00:00.000Z") => Date(year = 2000, month = 1, day = 1, hour = 0, minute = 0, second = 0)
+    parse("1999-12-31T23:59:59.999Z") => Date(year = 1999, month = 12, day = 31, hour = 23, minute = 59, second = 59)
+
+fn padTwo(n: Int) -> String
+    ? "Pad a single-digit number with a leading zero."
+    match n < 10
+        true -> "0{Int.toString(n)}"
+        false -> Int.toString(n)
+
+fn format(d: Date) -> String
+    ? "Format a Date as YYYY-MM-DD HH:MM:SS."
+    y = Int.toString(d.year)
+    m = padTwo(d.month)
+    da = padTwo(d.day)
+    h = padTwo(d.hour)
+    mi = padTwo(d.minute)
+    s = padTwo(d.second)
+    "{y}-{m}-{da} {h}:{mi}:{s}"
+
+verify format
+    format(Date(year = 2026, month = 3, day = 5, hour = 9, minute = 1, second = 7)) => "2026-03-05 09:01:07"
+    format(Date(year = 2000, month = 12, day = 25, hour = 23, minute = 59, second = 59)) => "2000-12-25 23:59:59"
+
+fn isBefore(a: String, b: String) -> Bool
+    ? "Compare two ISO 8601 timestamps. ISO is lexicographically sortable by design."
+    = a < b
+
+verify isBefore
+    isBefore("2025-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z") => true
+    isBefore("2026-01-01T00:00:00.000Z", "2025-01-01T00:00:00.000Z") => false
+    isBefore("2026-03-05T10:00:00.000Z", "2026-03-05T10:00:01.000Z") => true
+    isBefore("2026-03-05T10:00:00.000Z", "2026-03-05T10:00:00.000Z") => false
+
+fn main()
+    ! [Console, Time.now]
+    now = Time.now()
+    d = parse(now)
+    Console.print("Raw:    {now}")
+    Console.print("Parsed: {format(d)}")
+    Console.print("Year:   {Int.toString(d.year)}")
+    Console.print("Month:  {Int.toString(d.month)}")
+    Console.print("Day:    {Int.toString(d.day)}")
