@@ -26,6 +26,8 @@ pub struct ModuleCheckFindings {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckFinding {
     pub line: usize,
+    pub module: Option<String>,
+    pub file: Option<String>,
     pub message: String,
 }
 
@@ -890,10 +892,25 @@ pub fn check_module_intent_with_sigs(
     items: &[TopLevel],
     fn_sigs: Option<&std::collections::HashMap<String, (Vec<Type>, Type, Vec<String>)>>,
 ) -> ModuleCheckFindings {
+    check_module_intent_with_sigs_in(items, fn_sigs, None)
+}
+
+pub fn check_module_intent_with_sigs_in(
+    items: &[TopLevel],
+    fn_sigs: Option<&std::collections::HashMap<String, (Vec<Type>, Type, Vec<String>)>>,
+    source_file: Option<&str>,
+) -> ModuleCheckFindings {
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
     let declared_symbols = collect_declared_symbols(items);
     let known_effect_symbols = collect_known_effect_symbols(fn_sigs);
+    let module_name = items.iter().find_map(|item| {
+        if let TopLevel::Module(m) = item {
+            Some(m.name.clone())
+        } else {
+            None
+        }
+    });
 
     let mut verified_fns: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut empty_verify_fns: std::collections::HashSet<&str> = std::collections::HashSet::new();
@@ -903,6 +920,8 @@ pub fn check_module_intent_with_sigs(
             if v.cases.is_empty() {
                 errors.push(CheckFinding {
                     line: v.line,
+                    module: module_name.clone(),
+                    file: source_file.map(|s| s.to_string()),
                     message: format!(
                         "Verify block '{}' must contain at least one case",
                         v.fn_name
@@ -916,6 +935,8 @@ pub fn check_module_intent_with_sigs(
                         if !verify_case_calls_target(left, &v.fn_name) {
                             errors.push(CheckFinding {
                                 line: v.line,
+                                module: module_name.clone(),
+                                file: source_file.map(|s| s.to_string()),
                                 message: format!(
                                     "Verify block '{}' case #{} must call '{}' on the left side",
                                     v.fn_name,
@@ -930,6 +951,8 @@ pub fn check_module_intent_with_sigs(
                         if verify_case_calls_target(right, &v.fn_name) {
                             errors.push(CheckFinding {
                                 line: v.line,
+                                module: module_name.clone(),
+                                file: source_file.map(|s| s.to_string()),
                                 message: format!(
                                     "Verify block '{}' case #{} must not call '{}' on the right side",
                                     v.fn_name,
@@ -956,6 +979,8 @@ pub fn check_module_intent_with_sigs(
                 if m.intent.is_empty() {
                     warnings.push(CheckFinding {
                         line: m.line,
+                        module: Some(m.name.clone()),
+                        file: source_file.map(|s| s.to_string()),
                         message: format!("Module '{}' has no intent block", m.name),
                     });
                 }
@@ -964,6 +989,8 @@ pub fn check_module_intent_with_sigs(
                 if f.desc.is_none() && fn_needs_desc(f) {
                     warnings.push(CheckFinding {
                         line: f.line,
+                        module: module_name.clone(),
+                        file: source_file.map(|s| s.to_string()),
                         message: format!("Function '{}' has no description (?)", f.name),
                     });
                 }
@@ -984,6 +1011,8 @@ pub fn check_module_intent_with_sigs(
                                 };
                                 warnings.push(CheckFinding {
                                     line: f.line,
+                                    module: module_name.clone(),
+                                    file: source_file.map(|s| s.to_string()),
                                     message: format!(
                                         "Function '{}' declares unused effect(s): {} (used: {})",
                                         f.name,
@@ -1002,6 +1031,8 @@ pub fn check_module_intent_with_sigs(
                 {
                     errors.push(CheckFinding {
                         line: f.line,
+                        module: module_name.clone(),
+                        file: source_file.map(|s| s.to_string()),
                         message: format!("Function '{}' has no verify block", f.name),
                     });
                 }
@@ -1013,6 +1044,8 @@ pub fn check_module_intent_with_sigs(
                         {
                             errors.push(CheckFinding {
                                 line: d.line,
+                                module: module_name.clone(),
+                                file: source_file.map(|s| s.to_string()),
                                 message: format!(
                                     "Decision '{}' references unknown impact symbol '{}'. Use quoted string for semantic impact.",
                                     d.name, name

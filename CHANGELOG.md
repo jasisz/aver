@@ -2,6 +2,20 @@
 
 All notable changes to Aver are documented here.
 
+## Unreleased
+
+### Added
+- `aver check --deps` to run contract checks for transitive `depends [...]` modules
+
+### Changed
+- `aver check` contract diagnostics now always include line numbers
+- Decision `impacts` now accepts both validated symbols and semantic strings
+- `input`, `expect`, `case`, `where`, `effect`, `service`, `needs` are no longer reserved keywords
+
+### Fixed
+- `decisions/*.av` updated to conform to strict impacts validation and namespaced console usage
+- Renamed `examples/type_errors.av` to `examples/test_errors.av` with expanded checker diagnostics coverage
+
 ## 0.2.3
 
 ### Added

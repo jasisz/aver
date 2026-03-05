@@ -7,7 +7,8 @@ use colored::Colorize;
 
 use aver::ast::TopLevel;
 use aver::checker::{
-    check_module_intent_with_sigs, index_decisions, merge_verify_blocks, run_verify,
+    CheckFinding, check_module_intent_with_sigs_in, index_decisions, merge_verify_blocks,
+    run_verify,
 };
 use aver::codegen;
 use aver::codegen::ModuleInfo;
@@ -102,6 +103,71 @@ fn recording_paths(file: &str, module_root: &str) -> (String, String) {
     };
 
     (rec_program_file, rec_module_root)
+}
+
+fn module_name(items: &[TopLevel]) -> Option<String> {
+    items.iter().find_map(|item| {
+        if let TopLevel::Module(m) = item {
+            Some(m.name.clone())
+        } else {
+            None
+        }
+    })
+}
+
+fn collect_check_units(
+    file: &str,
+    module_root: &str,
+    include_deps: bool,
+) -> Result<Vec<(String, String, Vec<TopLevel>)>, String> {
+    let mut out = Vec::new();
+    let mut stack = vec![PathBuf::from(file)];
+    let mut visited = std::collections::HashSet::new();
+
+    while let Some(path) = stack.pop() {
+        let canonical = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        let key = canonical.to_string_lossy().to_string();
+        if !visited.insert(key) {
+            continue;
+        }
+
+        let path_str = path.to_string_lossy().to_string();
+        let source = read_file(&path_str)?;
+        let items = parse_file(&source)?;
+        require_module_declaration(&items, &path_str)?;
+
+        if include_deps {
+            if let Some(m) = items.iter().find_map(|item| {
+                if let TopLevel::Module(m) = item {
+                    Some(m)
+                } else {
+                    None
+                }
+            }) {
+                for dep in m.depends.iter().rev() {
+                    let dep_path = find_module_file(dep, module_root).ok_or_else(|| {
+                        format!(
+                            "Module '{}' not found in '{}' (required by '{}')",
+                            dep, module_root, path_str
+                        )
+                    })?;
+                    stack.push(dep_path);
+                }
+            }
+        }
+
+        out.push((path_str, source, items));
+    }
+
+    Ok(out)
+}
+
+fn finding_location(f: &CheckFinding, entry_module: Option<&str>) -> String {
+    match (&f.module, entry_module) {
+        (Some(module), Some(entry)) if module == entry => f.line.to_string(),
+        (Some(module), _) => format!("{}:{}", module, f.line),
+        (None, _) => f.line.to_string(),
+    }
 }
 
 pub(super) fn cmd_run(
@@ -222,79 +288,81 @@ pub(super) fn cmd_run(
     }
 }
 
-pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>) {
+pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>, deps: bool) {
     let module_root = resolve_module_root(module_root_override);
-    let source = match read_file(file) {
-        Ok(s) => s,
+    let units = match collect_check_units(file, &module_root, deps) {
+        Ok(units) => units,
         Err(e) => {
             eprintln!("{}", e.red());
             process::exit(1);
         }
     };
 
-    let line_count = source.lines().count();
+    let entry_module = units.first().and_then(|(_, _, items)| module_name(items));
+    let mut has_any_error = false;
 
-    let items = match parse_file(&source) {
-        Ok(i) => i,
-        Err(e) => {
-            eprintln!("{}", e.red());
-            process::exit(1);
+    for (idx, (path, source, items)) in units.iter().enumerate() {
+        if idx > 0 {
+            println!();
         }
-    };
-    if let Err(e) = require_module_declaration(&items, file) {
-        eprintln!("{}", e.red());
+        println!("Check: {}", path.cyan());
+        let line_count = source.lines().count();
+
+        // --- Type errors (hard errors) ---
+        let tc_result = run_type_check_full(items, Some(&module_root));
+        let has_errors = !tc_result.errors.is_empty();
+        for te in &tc_result.errors {
+            println!("  {}", format!("error[{}]: {}", te.line, te.message).red());
+        }
+
+        // Check line count
+        if line_count > 500 {
+            println!(
+                "  {} File has {} lines (recommended max: 500)",
+                "WARNING:".yellow(),
+                line_count
+            );
+        } else {
+            println!("  {} Size OK ({} lines)", "✓".green(), line_count);
+        }
+
+        // Check intents, descriptions, and verify coverage
+        let findings =
+            check_module_intent_with_sigs_in(items, Some(&tc_result.fn_sigs), Some(path));
+        if findings.errors.is_empty() && findings.warnings.is_empty() {
+            println!("  {} All intent/desc/verify present", "✓".green());
+        } else {
+            for e in &findings.errors {
+                let loc = finding_location(e, entry_module.as_deref());
+                println!("  {}", format!("error[{}]: {}", loc, e.message).red());
+            }
+            for w in &findings.warnings {
+                let loc = finding_location(w, entry_module.as_deref());
+                println!("  {}", format!("error[{}]: {}", loc, w.message).red());
+            }
+        }
+
+        // Count decisions
+        let decisions = index_decisions(items);
+        if !decisions.is_empty() {
+            println!(
+                "  {} Found {} decision block(s)",
+                "✓".green(),
+                decisions.len()
+            );
+        }
+
+        let has_warnings = !findings.warnings.is_empty();
+        let has_contract_errors = !findings.errors.is_empty();
+        if has_errors || has_contract_errors || has_warnings {
+            has_any_error = true;
+        } else {
+            println!("  {} Type check passed", "✓".green());
+        }
+    }
+
+    if has_any_error {
         process::exit(1);
-    }
-
-    println!("Check: {}", file.cyan());
-
-    // --- Type errors (hard errors) ---
-    let tc_result = run_type_check_full(&items, Some(&module_root));
-    let has_errors = !tc_result.errors.is_empty();
-    for te in &tc_result.errors {
-        println!("  {}", format!("error[{}]: {}", te.line, te.message).red());
-    }
-
-    // Check line count
-    if line_count > 500 {
-        println!(
-            "  {} File has {} lines (recommended max: 500)",
-            "WARNING:".yellow(),
-            line_count
-        );
-    } else {
-        println!("  {} Size OK ({} lines)", "✓".green(), line_count);
-    }
-
-    // Check intents, descriptions, and verify coverage
-    let findings = check_module_intent_with_sigs(&items, Some(&tc_result.fn_sigs));
-    if findings.errors.is_empty() && findings.warnings.is_empty() {
-        println!("  {} All intent/desc/verify present", "✓".green());
-    } else {
-        for e in &findings.errors {
-            println!("  {}", format!("error[{}]: {}", e.line, e.message).red());
-        }
-        for w in &findings.warnings {
-            println!("  {}", format!("error[{}]: {}", w.line, w.message).red());
-        }
-    }
-
-    // Count decisions
-    let decisions = index_decisions(&items);
-    if !decisions.is_empty() {
-        println!(
-            "  {} Found {} decision block(s)",
-            "✓".green(),
-            decisions.len()
-        );
-    }
-
-    let has_warnings = !findings.warnings.is_empty();
-    let has_contract_errors = !findings.errors.is_empty();
-    if has_errors || has_contract_errors || has_warnings {
-        process::exit(1);
-    } else {
-        println!("  {} Type check passed", "✓".green());
     }
 }
 

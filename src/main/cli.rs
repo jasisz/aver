@@ -51,6 +51,9 @@ pub(super) enum Commands {
         /// Resolve `depends [...]` from this root (default: current working directory)
         #[arg(long)]
         module_root: Option<String>,
+        /// Also run contract checks for transitive `depends [...]` modules
+        #[arg(long)]
+        deps: bool,
     },
     /// Run all verify blocks
     Verify {

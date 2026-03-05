@@ -212,6 +212,7 @@ aver run       file.av --record recs/    # execute + record effect trace
 aver replay    recs/rec-123.json         # replay one recording offline
 aver replay    recs/ --test --diff       # replay suite; fail on output mismatch
 aver check     file.av                   # static gate: types/effects + intent/desc/verify policy
+aver check     file.av --deps            # also check transitive depends modules
 aver verify    file.av                   # run all verify blocks
 aver format    .                         # format all .av files under current directory
 aver format    path/to/file.av --check   # check formatting only (non-zero if changes needed)
