@@ -66,6 +66,15 @@ decision UseResultNotExceptions
 aver context payments.av --decisions-only
 ```
 
+`impacts` accepts two forms:
+
+- bare symbol (validated by `aver check`): function/module/type/decision/effect/effect-alias
+- quoted string for semantic impact text
+
+```aver
+impacts = [charge, Tcp, AppIO, "error handling strategy"]
+```
+
 Three months later — human or AI — you know *why* the code looks the way it does.
 
 ### "How does an AI understand this codebase without reading everything?"
