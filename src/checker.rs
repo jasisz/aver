@@ -839,6 +839,29 @@ fn collect_used_effects(
     used
 }
 
+fn collect_broad_effect_replacements(
+    declared_effects: &[String],
+    used_effects: &BTreeSet<String>,
+) -> Vec<(String, Vec<String>)> {
+    let declared_unique: BTreeSet<String> = declared_effects.iter().cloned().collect();
+    let mut out = Vec::new();
+    for declared in declared_unique {
+        if declared.contains('.') {
+            continue;
+        }
+        let prefix = format!("{}.", declared);
+        let matched_children: Vec<String> = used_effects
+            .iter()
+            .filter(|used| used.starts_with(&prefix))
+            .cloned()
+            .collect();
+        if !matched_children.is_empty() {
+            out.push((declared, matched_children));
+        }
+    }
+    out
+}
+
 fn collect_declared_symbols(items: &[TopLevel]) -> std::collections::HashSet<String> {
     let mut out = std::collections::HashSet::new();
     for item in items {
@@ -882,6 +905,14 @@ fn collect_known_effect_symbols(
         }
     }
     out
+}
+
+fn decision_symbol_known(
+    name: &str,
+    declared_symbols: &std::collections::HashSet<String>,
+    known_effect_symbols: &std::collections::HashSet<String>,
+) -> bool {
+    declared_symbols.contains(name) || known_effect_symbols.contains(name)
 }
 
 pub fn check_module_intent(items: &[TopLevel]) -> ModuleCheckFindings {
@@ -998,9 +1029,17 @@ pub fn check_module_intent_with_sigs_in(
                     if let Some((_, _, declared_effects)) = sigs.get(&f.name) {
                         if !declared_effects.is_empty() {
                             let used_effects = collect_used_effects(f, sigs);
+                            let broad_replacements =
+                                collect_broad_effect_replacements(declared_effects, &used_effects);
                             let unused_effects: Vec<String> = declared_effects
                                 .iter()
-                                .filter(|effect| !used_effects.contains(*effect))
+                                .filter(|declared| {
+                                    // A declared effect is "used" if it satisfies any used effect
+                                    // e.g. declared "Console" satisfies used "Console.print"
+                                    !used_effects.iter().any(|used| {
+                                        crate::effects::effect_satisfies(declared, used)
+                                    })
+                                })
                                 .cloned()
                                 .collect();
                             if !unused_effects.is_empty() {
@@ -1021,6 +1060,19 @@ pub fn check_module_intent_with_sigs_in(
                                     ),
                                 });
                             }
+                            for (parent, children) in broad_replacements {
+                                warnings.push(CheckFinding {
+                                    line: f.line,
+                                    module: module_name.clone(),
+                                    file: source_file.map(|s| s.to_string()),
+                                    message: format!(
+                                        "Function '{}' declares broad effect '{}'. Prefer granular sub-effects: {}",
+                                        f.name,
+                                        parent,
+                                        children.join(", ")
+                                    ),
+                                });
+                            }
                         }
                     }
                 }
@@ -1038,10 +1090,37 @@ pub fn check_module_intent_with_sigs_in(
                 }
             }
             TopLevel::Decision(d) => {
+                if let DecisionImpact::Symbol(name) = &d.chosen {
+                    if !decision_symbol_known(name, &declared_symbols, &known_effect_symbols) {
+                        errors.push(CheckFinding {
+                            line: d.line,
+                            module: module_name.clone(),
+                            file: source_file.map(|s| s.to_string()),
+                            message: format!(
+                                "Decision '{}' references unknown chosen symbol '{}'. Use quoted string for semantic chosen value.",
+                                d.name, name
+                            ),
+                        });
+                    }
+                }
+                for rejected in &d.rejected {
+                    if let DecisionImpact::Symbol(name) = rejected {
+                        if !decision_symbol_known(name, &declared_symbols, &known_effect_symbols) {
+                            errors.push(CheckFinding {
+                                line: d.line,
+                                module: module_name.clone(),
+                                file: source_file.map(|s| s.to_string()),
+                                message: format!(
+                                    "Decision '{}' references unknown rejected symbol '{}'. Use quoted string for semantic rejected value.",
+                                    d.name, name
+                                ),
+                            });
+                        }
+                    }
+                }
                 for impact in &d.impacts {
                     if let DecisionImpact::Symbol(name) = impact {
-                        if !declared_symbols.contains(name) && !known_effect_symbols.contains(name)
-                        {
+                        if !decision_symbol_known(name, &declared_symbols, &known_effect_symbols) {
                             errors.push(CheckFinding {
                                 line: d.line,
                                 module: module_name.clone(),
@@ -1120,7 +1199,7 @@ fn log(x: Int) -> Unit
             findings.warnings.iter().any(|w| {
                 w.message.contains("declares unused effect(s)")
                     && w.message.contains("Http")
-                    && w.message.contains("used: Console")
+                    && w.message.contains("used: Console.print")
             }),
             "expected unused-effect warning, got errors={:?}, warnings={:?}",
             findings.errors,
@@ -1133,7 +1212,7 @@ fn log(x: Int) -> Unit
         let items = parse_items(
             r#"
 fn log(x: Int) -> Unit
-    ! [Console]
+    ! [Console.print]
     = Console.print(x)
 "#,
         );
@@ -1150,6 +1229,41 @@ fn log(x: Int) -> Unit
                 .iter()
                 .any(|w| w.message.contains("declares unused effect(s)")),
             "did not expect unused-effect warning, got errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
+        );
+        assert!(
+            !findings
+                .warnings
+                .iter()
+                .any(|w| w.message.contains("declares broad effect")),
+            "did not expect broad-effect warning, got errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
+        );
+    }
+
+    #[test]
+    fn warns_on_broad_effects_when_sub_effects_are_used() {
+        let items = parse_items(
+            r#"
+fn fetch(url: String) -> Result<HttpResponse, String>
+    ! [Http]
+    Http.get(url)
+"#,
+        );
+        let tc = crate::types::checker::run_type_check_full(&items, None);
+        assert!(
+            tc.errors.is_empty(),
+            "unexpected type errors: {:?}",
+            tc.errors
+        );
+        let findings = check_module_intent_with_sigs(&items, Some(&tc.fn_sigs));
+        assert!(
+            findings.warnings.iter().any(|w| {
+                w.message.contains("declares broad effect 'Http'") && w.message.contains("Http.get")
+            }),
+            "expected broad-effect warning, got errors={:?}, warnings={:?}",
             findings.errors,
             findings.warnings
         );
@@ -1412,7 +1526,7 @@ decision D
     date = "2026-03-05"
     reason =
         "x"
-    chosen = ExistingChoice
+    chosen = "ExistingChoice"
     rejected = []
     impacts = [existing, missingThing]
 "#,
@@ -1446,7 +1560,7 @@ decision D
     date = "2026-03-05"
     reason =
         "x"
-    chosen = ExistingChoice
+    chosen = "ExistingChoice"
     rejected = []
     impacts = [existing, "error handling strategy"]
 "#,
@@ -1458,6 +1572,111 @@ decision D
                 .iter()
                 .any(|e| e.message.contains("references unknown impact symbol")),
             "did not expect unknown-impact error, got errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
+        );
+    }
+
+    #[test]
+    fn decision_unknown_chosen_symbol_is_error() {
+        let items = parse_items(
+            r#"
+module M
+    intent =
+        "x"
+
+fn existing() -> Int
+    = 1
+
+verify existing
+    existing() => 1
+
+decision D
+    date = "2026-03-05"
+    reason =
+        "x"
+    chosen = MissingChoice
+    rejected = []
+    impacts = [existing]
+"#,
+        );
+        let findings = check_module_intent(&items);
+        assert!(
+            findings
+                .errors
+                .iter()
+                .any(|e| e.message.contains("unknown chosen symbol 'MissingChoice'")),
+            "expected unknown-chosen error, got errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
+        );
+    }
+
+    #[test]
+    fn decision_unknown_rejected_symbol_is_error() {
+        let items = parse_items(
+            r#"
+module M
+    intent =
+        "x"
+
+fn existing() -> Int
+    = 1
+
+verify existing
+    existing() => 1
+
+decision D
+    date = "2026-03-05"
+    reason =
+        "x"
+    chosen = "Keep"
+    rejected = [MissingAlternative]
+    impacts = [existing]
+"#,
+        );
+        let findings = check_module_intent(&items);
+        assert!(
+            findings.errors.iter().any(|e| e
+                .message
+                .contains("unknown rejected symbol 'MissingAlternative'")),
+            "expected unknown-rejected error, got errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
+        );
+    }
+
+    #[test]
+    fn decision_semantic_string_chosen_and_rejected_are_allowed() {
+        let items = parse_items(
+            r#"
+module M
+    intent =
+        "x"
+
+fn existing() -> Int
+    = 1
+
+verify existing
+    existing() => 1
+
+decision D
+    date = "2026-03-05"
+    reason =
+        "x"
+    chosen = "Keep explicit context"
+    rejected = ["Closure capture", "Global mutable state"]
+    impacts = [existing]
+"#,
+        );
+        let findings = check_module_intent(&items);
+        assert!(
+            !findings
+                .errors
+                .iter()
+                .any(|e| e.message.contains("unknown chosen symbol")
+                    || e.message.contains("unknown rejected symbol")),
+            "did not expect chosen/rejected symbol errors, got errors={:?}, warnings={:?}",
             findings.errors,
             findings.warnings
         );
@@ -1481,7 +1700,7 @@ decision D
     date = "2026-03-05"
     reason =
         "x"
-    chosen = ExistingChoice
+    chosen = "ExistingChoice"
     rejected = []
     impacts = [existing, Tcp]
 "#,
@@ -1519,7 +1738,7 @@ decision D
     date = "2026-03-05"
     reason =
         "x"
-    chosen = ExistingChoice
+    chosen = "ExistingChoice"
     rejected = []
     impacts = [existing, AppIO]
 "#,

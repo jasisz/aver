@@ -216,7 +216,7 @@ pub(super) fn cmd_repl() {
                     };
                     println!("{}", format!("defined type: {}", name).cyan());
                 }
-                TopLevel::EffectSet { name, effects } => {
+                TopLevel::EffectSet { name, effects, .. } => {
                     interp.register_effect_set(name.clone(), effects.clone());
                     println!("{}", format!("defined effects: {}", name).cyan());
                 }

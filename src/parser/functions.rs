@@ -49,14 +49,19 @@ impl Parser {
                     self.advance();
                     while !self.check_exact(&TokenKind::RBracket) && !self.is_eof() {
                         match self.current().kind.clone() {
-                            TokenKind::Ident(s) => {
-                                effects.push(s);
-                                self.advance();
+                            TokenKind::Ident(_) => {
+                                let name = self.parse_qualified_ident()?;
+                                effects.push(name);
                             }
                             TokenKind::Comma => {
                                 self.advance();
                             }
-                            _ => break,
+                            _ => {
+                                return Err(self.error(format!(
+                                    "Expected effect name in ! [...], found {}",
+                                    self.current().kind
+                                )));
+                            }
                         }
                     }
                     self.expect_exact(&TokenKind::RBracket)?;

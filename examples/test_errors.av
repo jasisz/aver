@@ -8,8 +8,8 @@ decision MixedImpacts
     date = "2026-03-05"
     reason =
         "Demonstrates decision impact validation."
-    chosen = ExplicitImpacts
-    rejected = [ImplicitImpacts]
+    chosen = "ExplicitImpacts"    rejected = ["ImplicitImpacts"]
+
     impacts = [pureNoVerify, Tcp, AppIO, "error handling strategy", missingImpact]
 
 fn badAdd(a: Int, b: Int) -> Int

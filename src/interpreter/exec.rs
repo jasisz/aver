@@ -9,7 +9,7 @@ impl Interpreter {
                 TopLevel::Verify(_) => {}
                 TopLevel::Decision(_) => {}
                 TopLevel::TypeDef(td) => self.register_type_def(td),
-                TopLevel::EffectSet { name, effects } => {
+                TopLevel::EffectSet { name, effects, .. } => {
                     self.register_effect_set(name.clone(), effects.clone());
                 }
                 TopLevel::Stmt(s) => {

@@ -38,13 +38,32 @@ fn processPayment(amount: Int) -> Result<String, String>
 ```aver
 fn fetchExchangeRate(currency: String) -> Result<HttpResponse, String>
     ? "Fetches live rate from the ECB feed."
-    ! [Http]
+    ! [Http.get]
     Http.get("https://api.ecb.europa.eu/rates/{currency}")
 ```
 
-Effect declarations (`! [Http]`, `! [Disk]`, `! [Console]`, `! [Tcp]`, `! [HttpServer]`) are part of the signature. The type checker enforces them — a function that calls `Http.get` without declaring `! [Http]` is a **type error, not a warning**. The runtime enforces the same boundary as a backstop.
+Effect declarations (for example `! [Http.get]`, `! [Disk.readText]`, `! [Console.print]`) are part of the signature. The type checker enforces them — missing declarations are **type errors, not warnings**. The runtime enforces the same boundary as a backstop.
+
+Effects are hierarchical:
+
+- `! [Http.get]` allows only `Http.get`
+- `! [Http]` allows all `Http.*` methods (backward-compatible parent scope)
+
+`aver check` enforces minimal effects: prefer granular method-level effects. Parent scopes like `Http`/`Disk`/`Console` are treated as non-minimal declarations.
 
 You can read any function in Aver and know exactly what it's capable of — without running it, without reading its body.
+
+Runtime policy can further restrict destinations with `aver.toml`:
+
+```toml
+[effects.Http]
+hosts = ["api.example.com", "*.internal.corp"]
+
+[effects.Disk]
+paths = ["./data/**"]
+```
+
+Policy lookup is method-first, then namespace fallback (`Http.get` first, then `Http`). Empty lists mean allow-all for that policy key.
 
 ### "Why was this decision made?"
 
@@ -54,8 +73,8 @@ decision UseResultNotExceptions
     reason =
         "Invisible exceptions lose money at runtime."
         "Callers must handle failure — Result forces that at the call site."
-    chosen = Result
-    rejected = [Exceptions, Nullable]
+    chosen = "Result"
+    rejected = ["Exceptions", "Nullable"]
     impacts = [charge, refund, settle]
     author = "team"
 ```
@@ -74,6 +93,11 @@ aver context payments.av --decisions-only
 ```aver
 impacts = [charge, Tcp, AppIO, "error handling strategy"]
 ```
+
+`chosen` and `rejected` use the same rule:
+
+- bare symbol (validated by `aver check`)
+- quoted string for semantic option labels
 
 Three months later — human or AI — you know *why* the code looks the way it does.
 
@@ -183,8 +207,8 @@ decision UseResultNotExceptions
     reason =
         "Invisible exceptions lose money at runtime."
         "Callers must handle failure — Result forces that at compile time."
-    chosen = Result
-    rejected = [Exceptions, Nullable]
+    chosen = "Result"
+    rejected = ["Exceptions", "Nullable"]
     impacts = [charge]
 
 fn charge(account: String, amount: Int) -> Result<String, String>
@@ -362,7 +386,7 @@ m = {"key" => value, "other" => 42}
 Named effect sets reduce repetition:
 
 ```aver
-effects AppIO = [Console, Disk]
+effects AppIO = [Console.print, Disk.readText]
 
 fn main() -> Unit
     ! [AppIO]
@@ -376,7 +400,7 @@ fn add(a: Int, b: Int) -> Int = a + b
 
 fn charge(account: String, amount: Int) -> Result<String, String>
     ? "Charges account. Returns txn ID or error."
-    ! [Http]
+    ! [Http.post]
     match amount
         0 -> Result.Err("Cannot charge zero")
         _ -> Result.Ok("txn-{account}-{amount}")
@@ -384,6 +408,7 @@ fn charge(account: String, amount: Int) -> Result<String, String>
 
 - `? "..."` — optional prose description (part of the signature)
 - `! [Effect]` — optional effect declaration (statically and runtime enforced)
+- method-level effects are supported: `Http.get`, `Disk.readText`, `Console.print`
 - `= expr` — single-expression shorthand
 - Block body with indentation for multi-statement functions
 
@@ -460,11 +485,13 @@ Aver ships built-in namespaces for I/O. All require explicit effect declarations
 
 | Namespace | Effect | Key functions |
 |-----------|--------|---------------|
-| `Console` | `! [Console]` | `print`, `error`, `warn`, `readLine` |
-| `Http` | `! [Http]` | `get`, `post`, `put`, `patch`, `head`, `delete` |
-| `HttpServer` | `! [HttpServer]` | `listen`, `listenWith` |
-| `Disk` | `! [Disk]` | `readText`, `writeText`, `appendText`, `exists`, `delete`, `deleteDir`, `listDir`, `makeDir` |
-| `Tcp` | `! [Tcp]` | `connect`, `writeLine`, `readLine`, `close`, `send`, `ping` |
+| `Console` | `! [Console.print]` (or other `Console.*`) | `print`, `error`, `warn`, `readLine` |
+| `Http` | `! [Http.get]` / `! [Http.post]` / etc. | `get`, `post`, `put`, `patch`, `head`, `delete` |
+| `HttpServer` | `! [HttpServer.listen]` / `! [HttpServer.listenWith]` | `listen`, `listenWith` |
+| `Disk` | `! [Disk.readText]` / `! [Disk.writeText]` / etc. | `readText`, `writeText`, `appendText`, `exists`, `delete`, `deleteDir`, `listDir`, `makeDir` |
+| `Tcp` | `! [Tcp.send]` / `! [Tcp.ping]` / etc. | `connect`, `writeLine`, `readLine`, `close`, `send`, `ping` |
+
+Each effectful namespace also supports method-level declarations (`Http.get`, `Disk.readText`, `Console.print`, etc.). Parent namespace effects stay valid (`Http` covers `Http.*`).
 
 Pure namespaces (no effects):
 
@@ -562,6 +589,7 @@ Requires: Rust stable toolchain.
 | `hello.av` | Functions, string interpolation, pipe, verify |
 | `calculator.av` | Result types, match, decision blocks |
 | `lists.av` | List literals, map / filter / fold |
+| `effect_sets.av` | Named effect aliases with sub-effects (`effects AppIO = [Console.print]`) |
 | `map.av` | Typed maps: `Map.fromList`, `Map.set`, `Map.get`, `Map.entries` |
 | `grok_s_language.av` | S-expression parser + evaluator (`add/sub/mul/div`): recursive descent, custom ADT, parse + render + eval |
 | `mission_control.av` | Space mission simulator: command parser, pure state machine, effectful shell (great with replay) |
@@ -570,8 +598,8 @@ Requires: Rust stable toolchain.
 | `fibonacci.av` | Tail recursion, records, decision blocks |
 | `app.av` | Module imports via `depends [Examples.Fibonacci]` |
 | `app_dot.av` | Dot-path imports (`depends [Examples.Models.User]`) |
-| `services/http_demo.av` | HTTP service: GET, POST, response handling |
-| `services/disk_demo.av` | Disk service: full I/O walkthrough |
+| `services/http_demo.av` | HTTP service with sub-effects: `Http.get`, `Http.post` |
+| `services/disk_demo.av` | Disk service with sub-effects (`Disk.readText`, `Disk.writeText`, etc.) |
 | `services/console_demo.av` | Console service: print, error, warn, readLine |
 | `services/tcp_demo.av` | TCP persistent connections (`Tcp.Connection`) |
 | `services/weather.av` | End-to-end service: `HttpServer` + `Http` + `Tcp` |

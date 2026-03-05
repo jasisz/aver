@@ -8,8 +8,8 @@ decision NoLoops
     reason =
         "Temperature conversion is a pure mapping problem."
         "Each conversion is a single expression — no iteration needed."
-    chosen = FunctionalPipeline
-    rejected = [ImperativeLoop]
+    chosen = "FunctionalPipeline"    rejected = ["ImperativeLoop"]
+
     impacts = ["convertBatch"]
 
 fn celsiusToFahr(c: Float) -> Float

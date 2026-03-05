@@ -241,6 +241,8 @@ pub struct Interpreter {
     validate_replay_args: bool,
     recording_sink: Option<RecordingSink>,
     verify_match_coverage: Option<VerifyMatchCoverageTracker>,
+    /// Runtime policy from `aver.toml` — constrains Http hosts, Disk paths, etc.
+    runtime_policy: Option<crate::config::ProjectConfig>,
 }
 
 mod api;

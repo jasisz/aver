@@ -1,8 +1,9 @@
 module EffectSets
     intent =
         "Demonstrates named effect sets — aliases for groups of effects."
+        "Also shows granular sub-effects via Console.print."
 
-effects AppIO = [Console]
+effects AppIO = [Console.print]
 
 fn greet(name: String) -> Unit
     ? "Prints a greeting. Declares AppIO instead of listing Console directly."
@@ -15,6 +16,6 @@ fn farewell(name: String) -> Unit
     Console.print("Goodbye, {name}!")
 
 fn main() -> Unit
-    ! [Console]
+    ! [Console.print]
     greet("Ada")
     farewell("Ada")

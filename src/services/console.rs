@@ -30,7 +30,10 @@ pub fn register(global: &mut HashMap<String, Value>) {
 
 pub fn effects(name: &str) -> &'static [&'static str] {
     match name {
-        "Console.print" | "Console.error" | "Console.warn" | "Console.readLine" => &["Console"],
+        "Console.print" => &["Console.print"],
+        "Console.error" => &["Console.error"],
+        "Console.warn" => &["Console.warn"],
+        "Console.readLine" => &["Console.readLine"],
         _ => &[],
     }
 }

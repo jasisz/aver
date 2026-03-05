@@ -14,8 +14,8 @@ decision CacheFirstArchitecture
         "External weather API has rate limits and latency."
         "Redis cache with TTL-like key naming avoids redundant calls."
         "Cache miss triggers fetch and store; cache hit returns immediately."
-    chosen = CacheFirst
-    rejected = [AlwaysFetch, LocalInMemoryCache]
+    chosen = "CacheFirst"    rejected = ["AlwaysFetch", "LocalInMemoryCache"]
+
     impacts = [handleWeather, cacheKey]
 
 decision SimpleJsonTemplates
@@ -25,8 +25,8 @@ decision SimpleJsonTemplates
         "Aver has no JSON builder yet."
         "String interpolation produces valid JSON for simple flat responses."
         "Structured JSON support can be layered later via a Json module."
-    chosen = StringInterpolationJson
-    rejected = [JsonBuilder, RawConcatenation]
+    chosen = "StringInterpolationJson"    rejected = ["JsonBuilder", "RawConcatenation"]
+
     impacts = [jsonOk, jsonErr]
 
 decision HttpServerContextParameter
@@ -37,8 +37,8 @@ decision HttpServerContextParameter
         "Closure captures hide dependencies from signatures and context export."
         "Mutable module-level state contradicts explicit-everything philosophy."
         "A context record parameter keeps dependencies visible, typed, and queryable."
-    chosen = ExplicitContextRecord
-    rejected = [ClosureCapture, MutableModuleState, GlobalRegistry]
+    chosen = "ExplicitContextRecord"    rejected = ["ClosureCapture", "MutableModuleState", "GlobalRegistry"]
+
     impacts = [HttpServer, "HandlerSignature", "AIContext"]
 
 record WeatherConfig
@@ -128,7 +128,7 @@ fn cacheSet(conn: Tcp.Connection, city: String, data: String) -> Result<String, 
 
 fn fetchWeather(config: WeatherConfig, city: String) -> Result<String, String>
     ? "Fetches current weather from external API. Returns raw JSON body."
-    ! [Http]
+    ! [Http.get]
     result = Http.get(weatherUrl(config, city))
     match result
         Result.Err(msg)  -> Result.Err("Transport error: {msg}")
@@ -138,7 +138,7 @@ fn fetchWeather(config: WeatherConfig, city: String) -> Result<String, String>
 
 fn fetchAndCache(config: WeatherConfig, conn: Tcp.Connection, city: String) -> Result<String, String>
     ? "Fetches from API and stores result in Redis before returning it."
-    ! [Tcp, Http]
+    ! [Tcp, Http.get]
     fresh = fetchWeather(config, city)?
     _ = cacheSet(conn, city, fresh)
     Result.Ok(fresh)
@@ -147,7 +147,7 @@ fn fetchAndCache(config: WeatherConfig, conn: Tcp.Connection, city: String) -> R
 
 fn getWeather(config: WeatherConfig, conn: Tcp.Connection, city: String) -> Result<String, String>
     ? "Returns weather for city. Tries Redis cache first, falls back to API fetch and caches result."
-    ! [Tcp, Http]
+    ! [Tcp, Http.get]
     match cacheGet(conn, city)
         Result.Ok(cached) -> Result.Ok(cached)
         Result.Err(_)     -> fetchAndCache(config, conn, city)
@@ -156,7 +156,7 @@ fn getWeather(config: WeatherConfig, conn: Tcp.Connection, city: String) -> Resu
 
 fn handleWeather(context: WeatherContext, req: HttpRequest) -> HttpResponse
     ? "Routes incoming HTTP request. GET /weather/<city> returns weather JSON."
-    ! [Tcp, Http]
+    ! [Tcp, Http.get]
     match req.method == "GET"
         false -> HttpResponse(status = 405, body = jsonErr("Method not allowed"), headers = [])
         true  -> match extractCity(req.path)
@@ -167,14 +167,14 @@ fn handleWeather(context: WeatherContext, req: HttpRequest) -> HttpResponse
 
 fn startServer(context: WeatherContext) -> Result<Unit, String>
     ? "Prints startup info and starts blocking HttpServer loop with explicit context."
-    ! [HttpServer, Console]
+    ! [HttpServer.listenWith, Console.print]
     Console.print("Weather service starting on port {context.config.serverPort}")
     Result.Ok(HttpServer.listenWith(context.config.serverPort, context, handleWeather))
 
 // Entry point
 
 fn main() -> Result<Unit, String>
-    ! [HttpServer, Tcp, Console]
+    ! [HttpServer.listenWith, Tcp, Console.print]
     config = WeatherConfig(apiHost = "api.weather.com", apiKey = "demo-key", redisHost = "127.0.0.1", redisPort = 6379, serverPort = 8080)
 
     conn = Examples.Redis.connect(RedisConfig(host = config.redisHost, port = config.redisPort))?

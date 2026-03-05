@@ -11,8 +11,8 @@ decision HostLanguage
         "Rust provides memory safety without a garbage collector, which matters for a language runtime."
         "Its algebraic types (enum, Result, Option) map directly onto Aver concepts and kept the implementation honest."
         "The rich ecosystem (clap, colored, thiserror) let us ship a polished CLI without boilerplate."
-    chosen = Rust
-    rejected = [Python, Go, Haskell]
+    chosen = "Rust"    rejected = ["Python", "Go", "Haskell"]
+
     impacts = ["Lexer", "Parser", "Interpreter", "Checker"]
 
 decision SignificantIndentation
@@ -22,8 +22,8 @@ decision SignificantIndentation
         "Braces are syntactic noise that adds no meaning and forces style debates."
         "Indentation is already how humans read code, so making it structural removes a class of inconsistency."
         "The lexer emits explicit INDENT and DEDENT tokens, keeping the parser context-free and easy to extend."
-    chosen = Indentation
-    rejected = [Braces, BeginEnd, Keywords]
+    chosen = "Indentation"    rejected = ["Braces", "BeginEnd", "Keywords"]
+
     impacts = ["Lexer", "Parser", "AllModules"]
 
 decision ResultOverExceptions
@@ -33,8 +33,8 @@ decision ResultOverExceptions
         "Exceptions hide control flow: a function that throws is indistinguishable from one that does not at the call site."
         "Result types make every error path visible in the signature, which is essential when an AI reads code without running it."
         "The match expression and the ? operator together give ergonomic error handling without sacrificing explicitness."
-    chosen = Result
-    rejected = [Exceptions, Nullable, Panic]
+    chosen = "Result"    rejected = ["Exceptions", "Nullable", "Panic"]
+
     impacts = ["Calculator", "Interpreter", "Checker"]
 
 decision ColocatedVerify
@@ -44,8 +44,8 @@ decision ColocatedVerify
         "Tests that live in a separate directory rot faster because nobody reads them when changing the function."
         "A verify block immediately below its function is the minimum viable specification: it says what the function must do."
         "Co-location also makes it trivial for an AI to regenerate or extend tests without searching the repository."
-    chosen = ColocatedVerifyBlocks
-    rejected = [SeparateTestFiles, ExternalTestFramework]
+    chosen = "ColocatedVerifyBlocks"    rejected = ["SeparateTestFiles", "ExternalTestFramework"]
+
     impacts = ["Checker", "AllFunctions"]
 
 decision DecisionBlocksAsLanguageFeature
@@ -55,8 +55,8 @@ decision DecisionBlocksAsLanguageFeature
         "Architecture Decision Records written in markdown files are invisible to the language tooling and decay silently."
         "Making decisions a first-class parse node means they can be indexed, searched, and rendered by any tool that reads Aver."
         "When an AI resumes work on a codebase, it can run aver decisions to reconstruct the design rationale without reading prose."
-    chosen = FirstClassDecisions
-    rejected = [MarkdownADR, Comments, ExternalWiki]
+    chosen = "FirstClassDecisions"    rejected = ["MarkdownADR", "Comments", "ExternalWiki"]
+
     impacts = ["Lexer", "Parser", "Checker", "AIDeveloperExperience"]
 
 decision HybridExecutionModel
@@ -66,8 +66,8 @@ decision HybridExecutionModel
         "Interpreter keeps feedback loop fast for language work (run/check/verify/context)."
         "Transpilation gives a deployment path to native projects without shipping the Aver runtime."
         "These paths solve different problems, so they should coexist instead of replacing each other."
-    chosen = InterpreterPlusTranspiler
-    rejected = [InterpreterOnly, TranspilerOnly, BytecodeVM]
+    chosen = "InterpreterPlusTranspiler"    rejected = ["InterpreterOnly", "TranspilerOnly", "BytecodeVM"]
+
     impacts = ["Interpreter", "Transpiler", "CLI", "Performance"]
 
 decision RecordsAreDataMethodsInModules
@@ -77,8 +77,8 @@ decision RecordsAreDataMethodsInModules
         "Keeping records as data-only keeps the object model small and predictable."
         "Module namespaces already provide a clear place for behavior via Module.fn(record, ...)."
         "This avoids introducing two parallel styles too early: methods on records and module functions."
-    chosen = DataOnlyRecords
-    rejected = [RecordMethods, ImplicitThis]
+    chosen = "DataOnlyRecords"    rejected = ["RecordMethods", "ImplicitThis"]
+
     impacts = ["TypeSystem", "RecordModel", "ModuleNamespaces"]
 
 decision EffectContractsAreTransparentAcrossModules
@@ -88,8 +88,8 @@ decision EffectContractsAreTransparentAcrossModules
         "Current Aver model keeps module imports and capability effects as two explicit contracts."
         "`depends [X]` controls which module code is visible, while `! [Effect]` controls which side effects a function may use."
         "Effect requirements propagate through cross-module calls, so callers must declare the effects required by imported functions."
-    chosen = TransparentAcrossModules
-    rejected = [OpaqueModuleContracts, ImplicitModuleCapabilities]
+    chosen = "TransparentAcrossModules"    rejected = ["OpaqueModuleContracts", "ImplicitModuleCapabilities"]
+
     impacts = ["ModuleSystem", "Effects", "TypeChecker", "RuntimeGate"]
 
 decision ConstructorContract
@@ -100,8 +100,8 @@ decision ConstructorContract
         "UpperCamel callee distinguishes constructors from functions at parse time with one token of lookahead."
         "Records use named args (=), variants use positional args. Zero-arg constructors are bare singletons without parens."
         "This removes the need for TypeAscription and all cross-cutting heuristics in the parser."
-    chosen = UpperCamelCalleeContract
-    rejected = [TypeAscriptionBased, KeywordConstructors, UniformParens]
+    chosen = "UpperCamelCalleeContract"    rejected = ["TypeAscriptionBased", "KeywordConstructors", "UniformParens"]
+
     impacts = ["Parser", "Interpreter", "TypeChecker", "AllModules"]
 
 fn describeDecision(decName: String, pick: String) -> String

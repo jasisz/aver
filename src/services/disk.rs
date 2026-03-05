@@ -43,8 +43,14 @@ pub fn register(global: &mut HashMap<String, Value>) {
 
 pub fn effects(name: &str) -> &'static [&'static str] {
     match name {
-        "Disk.readText" | "Disk.writeText" | "Disk.appendText" | "Disk.exists" | "Disk.delete"
-        | "Disk.deleteDir" | "Disk.listDir" | "Disk.makeDir" => &["Disk"],
+        "Disk.readText" => &["Disk.readText"],
+        "Disk.writeText" => &["Disk.writeText"],
+        "Disk.appendText" => &["Disk.appendText"],
+        "Disk.exists" => &["Disk.exists"],
+        "Disk.delete" => &["Disk.delete"],
+        "Disk.deleteDir" => &["Disk.deleteDir"],
+        "Disk.listDir" => &["Disk.listDir"],
+        "Disk.makeDir" => &["Disk.makeDir"],
         _ => &[],
     }
 }

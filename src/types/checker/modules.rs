@@ -3,9 +3,40 @@ use super::*;
 impl TypeChecker {
     pub(super) fn build_signatures(&mut self, items: &[TopLevel]) {
         // Pass A: collect effect aliases so they can be expanded in function sigs below
+        let mut alias_lines: HashMap<String, usize> = HashMap::new();
         for item in items {
-            if let TopLevel::EffectSet { name, effects } = item {
+            if let TopLevel::EffectSet {
+                name,
+                effects,
+                line,
+            } = item
+            {
                 self.effect_aliases.insert(name.clone(), effects.clone());
+                alias_lines.insert(name.clone(), *line);
+            }
+        }
+
+        // Detect cyclic aliases — report as error, remove to prevent silent empty expansion
+        let cycles = crate::effects::find_cycles(&self.effect_aliases);
+        for cycle in &cycles {
+            let line = cycle
+                .first()
+                .and_then(|n| alias_lines.get(n))
+                .copied()
+                .unwrap_or(1);
+            self.error_at_line(
+                line,
+                format!(
+                    "Cyclic effect alias: {} -> {}",
+                    cycle.join(" -> "),
+                    cycle[0]
+                ),
+            );
+        }
+        // Remove cyclic aliases so they don't silently expand to empty
+        for cycle in &cycles {
+            for name in cycle {
+                self.effect_aliases.remove(name);
             }
         }
 
@@ -240,20 +271,23 @@ impl TypeChecker {
             require_module_declaration(&items, &path.to_string_lossy())?;
             let mut module_effect_aliases: HashMap<String, Vec<String>> = HashMap::new();
             for item in &items {
-                if let TopLevel::EffectSet { name, effects } = item {
+                if let TopLevel::EffectSet { name, effects, .. } = item {
                     module_effect_aliases.insert(name.clone(), effects.clone());
                 }
             }
+            // Detect cycles in dependent module aliases
+            let dep_cycles = crate::effects::find_cycles(&module_effect_aliases);
+            if !dep_cycles.is_empty() {
+                let cycle = &dep_cycles[0];
+                return Err(format!(
+                    "Cyclic effect alias in '{}': {} -> {}",
+                    path.display(),
+                    cycle.join(" -> "),
+                    cycle[0]
+                ));
+            }
             let expand_module_effects = |effects: &[String]| -> Vec<String> {
-                let mut out = Vec::new();
-                for effect in effects {
-                    if let Some(expanded) = module_effect_aliases.get(effect) {
-                        out.extend(expanded.iter().cloned());
-                    } else {
-                        out.push(effect.clone());
-                    }
-                }
-                out
+                crate::effects::expand_effects(effects, &module_effect_aliases)
             };
 
             if let Some(module) = Self::module_decl(&items) {

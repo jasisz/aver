@@ -563,7 +563,7 @@ fn error_verify_undeclared_console_effect() {
 #[test]
 fn error_undeclared_effect_from_function_typed_callback() {
     let src = "fn applyOnce(f: Fn(Int) -> Int ! [Console], x: Int) -> Int\n    = f(x)\nfn pureInc(n: Int) -> Int\n    = n + 1\n";
-    assert_error_containing(src, "has effect 'Console'");
+    assert_error_containing(src, "has effect 'Console");
 }
 
 #[test]
@@ -753,7 +753,7 @@ fn error_effect_set_alias_insufficient() {
         "    ! [Silent]\n",
         "    Console.print(\"hi\")\n",
     );
-    assert_error_containing(src, "has effect 'Console'");
+    assert_error_containing(src, "has effect 'Console.print'");
 }
 
 // ---------------------------------------------------------------------------
@@ -766,7 +766,7 @@ fn error_network_get_without_effect() {
         "fn fetch(url: String) -> Result<HttpResponse, String>\n",
         "    Http.get(url)\n",
     );
-    assert_error_containing(src, "has effect 'Http'");
+    assert_error_containing(src, "has effect 'Http.get'");
 }
 
 #[test]
@@ -775,7 +775,7 @@ fn error_network_post_without_effect() {
         "fn send(url: String, body: String) -> Result<HttpResponse, String>\n",
         "    Http.post(url, body, \"application/json\", [])\n",
     );
-    assert_error_containing(src, "has effect 'Http'");
+    assert_error_containing(src, "has effect 'Http.post'");
 }
 
 #[test]
@@ -839,7 +839,7 @@ fn error_disk_read_without_effect() {
         "fn loadCfg() -> Result<String, String>\n",
         "    = Disk.readText(\"config.av\")\n",
     );
-    assert_error_containing(src, "has effect 'Disk'");
+    assert_error_containing(src, "has effect 'Disk.readText'");
 }
 
 #[test]
@@ -848,7 +848,7 @@ fn error_disk_write_without_effect() {
         "fn save() -> Result<Unit, String>\n",
         "    = Disk.writeText(\"out.txt\", \"data\")\n",
     );
-    assert_error_containing(src, "has effect 'Disk'");
+    assert_error_containing(src, "has effect 'Disk.writeText'");
 }
 
 #[test]
@@ -887,7 +887,7 @@ fn error_console_error_without_effect() {
         "fn report(msg: String) -> Unit\n",
         "    = Console.error(msg)\n",
     );
-    assert_error_containing(src, "has effect 'Console'");
+    assert_error_containing(src, "has effect 'Console.error'");
 }
 
 #[test]
@@ -896,7 +896,7 @@ fn error_console_warn_without_effect() {
         "fn report(msg: String) -> Unit\n",
         "    = Console.warn(msg)\n",
     );
-    assert_error_containing(src, "has effect 'Console'");
+    assert_error_containing(src, "has effect 'Console.warn'");
 }
 
 #[test]
@@ -905,7 +905,7 @@ fn error_console_read_line_without_effect() {
         "fn ask() -> Result<String, String>\n",
         "    = Console.readLine()\n",
     );
-    assert_error_containing(src, "has effect 'Console'");
+    assert_error_containing(src, "has effect 'Console.readLine'");
 }
 
 #[test]
@@ -1018,7 +1018,7 @@ fn error_tcp_send_without_effect() {
         "fn talk(host: String, port: Int, msg: String) -> Result<String, String>\n",
         "    = Tcp.send(host, port, msg)\n",
     );
-    assert_error_containing(src, "has effect 'Tcp'");
+    assert_error_containing(src, "has effect 'Tcp.send'");
 }
 
 #[test]
@@ -1027,7 +1027,7 @@ fn error_tcp_ping_without_effect() {
         "fn check(host: String, port: Int) -> Result<Unit, String>\n",
         "    = Tcp.ping(host, port)\n",
     );
-    assert_error_containing(src, "has effect 'Tcp'");
+    assert_error_containing(src, "has effect 'Tcp.ping'");
 }
 
 #[test]
@@ -1040,6 +1040,18 @@ fn valid_http_server_listen_with_context() {
         "    HttpServer.listenWith(8080, \"ok\", handle)\n",
     );
     assert_no_errors(src);
+}
+
+#[test]
+fn error_http_server_listen_with_bad_handler_signature_uses_any_in_message() {
+    let src = concat!(
+        "fn bad(ctx: Int, req: Int) -> HttpResponse\n",
+        "    = HttpResponse(status = 200, body = \"ok\", headers = [])\n",
+        "fn main() -> Unit\n",
+        "    ! [HttpServer]\n",
+        "    HttpServer.listenWith(8080, \"ok\", bad)\n",
+    );
+    assert_error_containing(src, "expected Fn(Any, HttpRequest) -> HttpResponse");
 }
 
 #[test]
@@ -1519,4 +1531,125 @@ fn error_non_exhaustive_tuple_with_literal_only() {
         "    (0, x) -> x\n",
     );
     assert_error_containing(src, "catch-all");
+}
+
+// ---------------------------------------------------------------------------
+// Granular sub-effects
+// ---------------------------------------------------------------------------
+
+#[test]
+fn valid_granular_effect_http_get() {
+    // ! [Http.get] allows Http.get
+    let src = concat!(
+        "fn fetch(url: String) -> Result<HttpResponse, String>\n",
+        "    ! [Http.get]\n",
+        "    Http.get(url)\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_parent_effect_covers_child() {
+    // ! [Http] allows Http.get (backward compatibility)
+    let src = concat!(
+        "fn fetch(url: String) -> Result<HttpResponse, String>\n",
+        "    ! [Http]\n",
+        "    Http.get(url)\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn error_granular_effect_blocks_other_method() {
+    // ! [Http.get] does NOT allow Http.post
+    let src = concat!(
+        "fn send(url: String) -> Result<HttpResponse, String>\n",
+        "    ! [Http.get]\n",
+        "    Http.post(url, \"{}\", \"application/json\", [])\n",
+    );
+    assert_error_containing(src, "has effect 'Http.post'");
+}
+
+#[test]
+fn valid_granular_effect_set_alias() {
+    // effects ReadOnly = [Http.get, Disk.readText]
+    let src = concat!(
+        "effects ReadOnly = [Http.get, Disk.readText]\n",
+        "fn load(url: String, path: String) -> Result<String, String>\n",
+        "    ! [ReadOnly]\n",
+        "    Http.get(url)\n",
+        "    Disk.readText(path)\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn error_granular_effect_set_alias_blocks_write() {
+    // effects ReadOnly = [Http.get, Disk.readText] blocks Disk.writeText
+    let src = concat!(
+        "effects ReadOnly = [Http.get, Disk.readText]\n",
+        "fn save(path: String) -> Result<Unit, String>\n",
+        "    ! [ReadOnly]\n",
+        "    Disk.writeText(path, \"data\")\n",
+    );
+    assert_error_containing(src, "has effect 'Disk.writeText'");
+}
+
+#[test]
+fn valid_mix_parent_and_granular_effects() {
+    // ! [Http, Disk.readText] allows Http.post + Disk.readText but not Disk.writeText
+    let src = concat!(
+        "fn mixed(url: String, path: String) -> Result<String, String>\n",
+        "    ! [Http, Disk.readText]\n",
+        "    Http.post(url, \"{}\", \"application/json\", [])\n",
+        "    Disk.readText(path)\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn error_mix_parent_and_granular_blocks_uncovered() {
+    // ! [Http, Disk.readText] does NOT cover Disk.writeText
+    let src = concat!(
+        "fn mixed(url: String, path: String) -> Result<Unit, String>\n",
+        "    ! [Http, Disk.readText]\n",
+        "    Disk.writeText(path, \"data\")\n",
+    );
+    assert_error_containing(src, "has effect 'Disk.writeText'");
+}
+
+#[test]
+fn valid_multiple_granular_console_effects() {
+    // ! [Console.print, Console.error] allows both
+    let src = concat!(
+        "fn log(msg: String) -> Unit\n",
+        "    ! [Console.print, Console.error]\n",
+        "    Console.print(msg)\n",
+        "    Console.error(msg)\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn error_granular_console_blocks_other_method() {
+    // ! [Console.print] does NOT allow Console.readLine
+    let src = concat!(
+        "fn ask() -> Result<String, String>\n",
+        "    ! [Console.print]\n",
+        "    Console.readLine()\n",
+    );
+    assert_error_containing(src, "has effect 'Console.readLine'");
+}
+
+#[test]
+fn error_cyclic_effect_alias() {
+    // Cyclic aliases should be reported as errors
+    let src = concat!(
+        "effects A = [B]\n",
+        "effects B = [A]\n",
+        "fn greet() -> Unit\n",
+        "    ! [A]\n",
+        "    Console.print(\"hi\")\n",
+    );
+    assert_error_containing(src, "Cyclic effect alias");
 }

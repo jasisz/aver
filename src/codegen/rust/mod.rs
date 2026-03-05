@@ -5,6 +5,7 @@ mod builtins;
 mod expr;
 mod liveness;
 mod pattern;
+mod policy;
 mod project;
 mod runtime;
 mod syntax;
@@ -29,6 +30,12 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
     // Runtime helpers
     sections.push(runtime::generate_runtime());
     sections.push(String::new());
+
+    // Policy module (from aver.toml, if present)
+    if let Some(ref config) = ctx.policy {
+        sections.push(policy::generate_policy_runtime(config));
+        sections.push(String::new());
+    }
 
     // Collect info about which services are used at runtime
     let used_services = detect_used_services(ctx);
@@ -145,7 +152,8 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
     }
 
     let main_rs = sections.join("\n");
-    let cargo_toml = project::generate_cargo_toml(&ctx.project_name, &used_services);
+    let cargo_toml =
+        project::generate_cargo_toml(&ctx.project_name, &used_services, ctx.policy.is_some());
 
     ProjectOutput {
         files: vec![

@@ -1298,6 +1298,7 @@ mod tests {
             project_name: "verify_mode".to_string(),
             modules: vec![],
             module_prefixes: HashSet::new(),
+            policy: None,
         }
     }
 

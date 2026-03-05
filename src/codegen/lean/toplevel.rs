@@ -444,9 +444,16 @@ pub fn emit_decision(db: &DecisionBlock) -> String {
     lines.push(format!("/- Decision: {}", db.name));
     lines.push(format!("   Date: {}", db.date));
     lines.push(format!("   Reason: {}", db.reason));
-    lines.push(format!("   Chosen: {}", db.chosen));
+    lines.push(format!("   Chosen: {}", db.chosen.as_context_string()));
     if !db.rejected.is_empty() {
-        lines.push(format!("   Rejected: {}", db.rejected.join(", ")));
+        lines.push(format!(
+            "   Rejected: {}",
+            db.rejected
+                .iter()
+                .map(|r| r.as_context_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
     }
     if !db.impacts.is_empty() {
         let impacts = db

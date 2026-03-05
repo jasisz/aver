@@ -155,17 +155,9 @@ impl TypeChecker {
         tc
     }
 
-    /// Expand a list of effect names, resolving any aliases one level deep.
+    /// Expand a list of effect names, resolving aliases recursively with cycle detection.
     fn expand_effects(&self, effects: &[String]) -> Vec<String> {
-        let mut result = Vec::new();
-        for e in effects {
-            if let Some(expanded) = self.effect_aliases.get(e) {
-                result.extend(expanded.iter().cloned());
-            } else {
-                result.push(e.clone());
-            }
-        }
-        result
+        crate::effects::expand_effects(effects, &self.effect_aliases)
     }
 
     /// Check whether `required_effect` is satisfied by `caller_effects` (with alias expansion).
@@ -173,9 +165,11 @@ impl TypeChecker {
         let expanded_caller = self.expand_effects(caller_effects);
         // Also expand the required effect (in case it's itself an alias)
         let expanded_required = self.expand_effects(&[required_effect.to_string()]);
-        expanded_required
-            .iter()
-            .all(|e| expanded_caller.contains(e))
+        expanded_required.iter().all(|req| {
+            expanded_caller
+                .iter()
+                .any(|declared| crate::effects::effect_satisfies(declared, req))
+        })
     }
 
     fn error(&mut self, msg: impl Into<String>) {

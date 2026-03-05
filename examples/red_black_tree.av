@@ -8,8 +8,8 @@ decision BlackDepthConvention
   reason =
     "blackDepth(Empty) = 1 treats the empty tree as a black sentinel leaf."
     "This matches Okasaki's convention and simplifies invariant checks."
-  chosen = SentinelCountsAsBlack
-  rejected = [SentinelIsZero]
+  chosen = "SentinelCountsAsBlack"  rejected = ["SentinelIsZero"]
+
   impacts = [blackDepth]
 
 decision KahrsDelete
@@ -18,8 +18,8 @@ decision KahrsDelete
     "Kahrs (2001) delete avoids DoubleBlack constructors by using fuse"
     "to merge subtrees and balDeleteLeft/Right for rebalancing."
     "Existing Tree type and insert functions remain untouched."
-  chosen = KahrsFuse
-  rejected = [DoubleBlackVariant, MinReplacementDelete]
+  chosen = "KahrsFuse"  rejected = ["DoubleBlackVariant", "MinReplacementDelete"]
+
   impacts = [delete, del, fuse, balDeleteLeft, balDeleteRight]
 
 type Tree

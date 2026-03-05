@@ -419,6 +419,7 @@ mod tests {
             project_name: "test".to_string(),
             modules: vec![],
             module_prefixes: HashSet::new(),
+            policy: None,
         }
     }
 

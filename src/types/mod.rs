@@ -60,7 +60,10 @@ impl Type {
                 p1.len() == p2.len()
                     && p1.iter().zip(p2.iter()).all(|(a, b)| a.compatible(b))
                     && r1.compatible(r2)
-                    && e1.iter().all(|eff| e2.contains(eff))
+                    && e1.iter().all(|actual| {
+                        e2.iter()
+                            .any(|expected| crate::effects::effect_satisfies(expected, actual))
+                    })
             }
             (Type::Named(a), Type::Named(b)) => a == b,
             _ => false,
@@ -538,6 +541,19 @@ mod tests {
 
         assert!(pure.compatible(&console));
         assert!(!console.compatible(&pure));
+
+        let child = Type::Fn(
+            vec![Type::Int],
+            Box::new(Type::Int),
+            vec!["Http.get".to_string()],
+        );
+        let parent = Type::Fn(
+            vec![Type::Int],
+            Box::new(Type::Int),
+            vec!["Http".to_string()],
+        );
+        assert!(child.compatible(&parent));
+        assert!(!parent.compatible(&child));
     }
 
     #[test]

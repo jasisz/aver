@@ -138,7 +138,13 @@ fn parse_decisions_from_files(files: &[PathBuf]) -> Result<Vec<DecisionBlock>, S
             if let TopLevel::Decision(d) = item {
                 let key = format!(
                     "{}|{}|{}|{}|{:?}|{:?}|{:?}",
-                    d.name, d.date, d.chosen, d.reason, d.rejected, d.impacts, d.author
+                    d.name,
+                    d.date,
+                    d.chosen.as_context_string(),
+                    d.reason,
+                    d.rejected,
+                    d.impacts,
+                    d.author
                 );
                 if seen.insert(key) {
                     decisions.push(d);

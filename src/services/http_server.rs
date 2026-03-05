@@ -41,7 +41,8 @@ pub fn register(global: &mut HashMap<String, Value>) {
 
 pub fn effects(name: &str) -> &'static [&'static str] {
     match name {
-        "HttpServer.listen" | "HttpServer.listenWith" => &["HttpServer"],
+        "HttpServer.listen" => &["HttpServer.listen"],
+        "HttpServer.listenWith" => &["HttpServer.listenWith"],
         _ => &[],
     }
 }

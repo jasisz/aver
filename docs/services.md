@@ -139,7 +139,7 @@ Source: `src/types/byte.rs` — not a type, operates on `Int`/`String`.
 
 ## Effectful namespaces
 
-### `Console` namespace — `! [Console]`
+### `Console` namespace — use `! [Console.print]`, `! [Console.error]`, etc.
 
 Source: `src/services/console.rs`
 
@@ -150,7 +150,7 @@ Source: `src/services/console.rs`
 | `Console.warn` | `T -> Unit` (writes to stderr) |
 | `Console.readLine` | `() -> Result<String, String>` |
 
-### `Http` namespace — `! [Http]`
+### `Http` namespace — use granular effects (`! [Http.get]`, `! [Http.post]`, etc.)
 
 Source: `src/services/http.rs`
 
@@ -166,7 +166,7 @@ Source: `src/services/http.rs`
 `HttpResponse` record: `{ status: Int, body: String, headers: List<Header> }`.
 `Header` record: `{ name: String, value: String }`.
 
-### `HttpServer` namespace — `! [HttpServer]`
+### `HttpServer` namespace — use `! [HttpServer.listen]` or `! [HttpServer.listenWith]`
 
 Source: `src/services/http_server.rs`
 
@@ -175,7 +175,7 @@ Source: `src/services/http_server.rs`
 | `HttpServer.listen` | `(Int, Fn(HttpRequest) -> HttpResponse ! [Console, Http, Disk, Tcp, HttpServer]) -> Unit` |
 | `HttpServer.listenWith` | `(Int, T, Fn(T, HttpRequest) -> HttpResponse ! [Console, Http, Disk, Tcp, HttpServer]) -> Unit` |
 
-### `Disk` namespace — `! [Disk]`
+### `Disk` namespace — use granular effects (`! [Disk.readText]`, `! [Disk.writeText]`, etc.)
 
 Source: `src/services/disk.rs`
 
@@ -190,7 +190,7 @@ Source: `src/services/disk.rs`
 | `Disk.listDir` | `String -> Result<List<String>, String>` | |
 | `Disk.makeDir` | `String -> Result<Unit, String>` | Creates parents |
 
-### `Tcp` namespace — `! [Tcp]`
+### `Tcp` namespace — use granular effects (`! [Tcp.send]`, `! [Tcp.ping]`, etc.)
 
 Source: `src/services/tcp.rs`
 

@@ -1,5 +1,57 @@
 use super::*;
 
+fn display_type_for_expected(ty: &Type) -> String {
+    match ty {
+        Type::Unknown => "Any".to_string(),
+        Type::Int => "Int".to_string(),
+        Type::Float => "Float".to_string(),
+        Type::Str => "String".to_string(),
+        Type::Bool => "Bool".to_string(),
+        Type::Unit => "Unit".to_string(),
+        Type::Result(ok, err) => format!(
+            "Result<{}, {}>",
+            display_type_for_expected(ok),
+            display_type_for_expected(err)
+        ),
+        Type::Option(inner) => format!("Option<{}>", display_type_for_expected(inner)),
+        Type::List(inner) => format!("List<{}>", display_type_for_expected(inner)),
+        Type::Tuple(items) => format!(
+            "({})",
+            items
+                .iter()
+                .map(display_type_for_expected)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Type::Map(key, value) => format!(
+            "Map<{}, {}>",
+            display_type_for_expected(key),
+            display_type_for_expected(value)
+        ),
+        Type::Fn(params, ret, effects) => {
+            let ps = params
+                .iter()
+                .map(display_type_for_expected)
+                .collect::<Vec<_>>();
+            if effects.is_empty() {
+                format!(
+                    "Fn({}) -> {}",
+                    ps.join(", "),
+                    display_type_for_expected(ret)
+                )
+            } else {
+                format!(
+                    "Fn({}) -> {} ! [{}]",
+                    ps.join(", "),
+                    display_type_for_expected(ret),
+                    effects.join(", ")
+                )
+            }
+        }
+        Type::Named(name) => name.clone(),
+    }
+}
+
 impl TypeChecker {
     pub(in super::super) fn infer_type(&mut self, expr: &Expr) -> Type {
         match expr {
@@ -52,7 +104,7 @@ impl TypeChecker {
                                     "Argument {} of '{}': expected {}, got {}",
                                     i + 1,
                                     display_name,
-                                    param_ty.display(),
+                                    display_type_for_expected(param_ty),
                                     arg_ty.display()
                                 ));
                             }

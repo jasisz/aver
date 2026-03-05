@@ -426,6 +426,16 @@ pub(super) fn cmd_verify(file: &str, module_root_override: Option<&str>) {
     let mut interp = Interpreter::new();
     interp.enable_memo(memo_fns);
 
+    // Load aver.toml runtime policy if present
+    match aver::config::ProjectConfig::load_from_dir(std::path::Path::new(&module_root)) {
+        Ok(Some(config)) => interp.set_runtime_policy(config),
+        Ok(None) => {}
+        Err(e) => {
+            eprintln!("{}", format!("aver.toml: {}", e).red());
+            process::exit(1);
+        }
+    }
+
     if let Err(e) = load_dep_modules(&mut interp, &items, &module_root) {
         eprintln!("{}", e.red());
         process::exit(1);
@@ -433,7 +443,7 @@ pub(super) fn cmd_verify(file: &str, module_root_override: Option<&str>) {
 
     // Register effect sets first (needed before FnDef expansion)
     for item in &items {
-        if let TopLevel::EffectSet { name, effects } = item {
+        if let TopLevel::EffectSet { name, effects, .. } = item {
             interp.register_effect_set(name.clone(), effects.clone());
         }
     }
@@ -545,8 +555,19 @@ pub(super) fn cmd_compile(
     // Load dependent modules for codegen
     let modules = load_compile_deps(&items, &module_root);
 
+    // Load aver.toml runtime policy for codegen
+    let policy =
+        match aver::config::ProjectConfig::load_from_dir(std::path::Path::new(&module_root)) {
+            Ok(config) => config,
+            Err(e) => {
+                eprintln!("{}", format!("aver.toml: {}", e).red());
+                process::exit(1);
+            }
+        };
+
     // Build codegen context
-    let ctx = codegen::build_context(items, &tc_result, memo_fns, name, modules);
+    let mut ctx = codegen::build_context(items, &tc_result, memo_fns, name, modules);
+    ctx.policy = policy;
 
     // Transpile to the selected target
     let (output, build_hint) = match target {

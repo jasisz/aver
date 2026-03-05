@@ -85,10 +85,13 @@ impl Interpreter {
     where
         I: IntoIterator<Item = &'a str>,
     {
-        let allowed = self.current_allowed_effects();
+        let allowed = self.expand_effects(self.current_allowed_effects());
         let mut missing = Vec::new();
         for effect in required_effects {
-            if !allowed.iter().any(|e| e == effect) {
+            if !allowed
+                .iter()
+                .any(|a| crate::effects::effect_satisfies(a, effect))
+            {
                 missing.push(effect.to_string());
             }
         }

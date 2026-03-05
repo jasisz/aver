@@ -26,8 +26,8 @@ decision TailRecurrenceForPerformance
     reason =
         "Naive fib(n-1)+fib(n-2) is exponential and easy for AI to generate."
         "Tail recursion makes fib linear time and predictable."
-    chosen = TailRecursion
-    rejected = [NaiveRecursion]
+    chosen = "TailRecursion"    rejected = ["NaiveRecursion"]
+
     impacts = [fib, fibTR]
 
 decision SinglePassStats
@@ -36,8 +36,8 @@ decision SinglePassStats
         "Building a list then folding and filtering is three separate passes."
         "Accumulate sum, max, and even-filter alongside push in one traversal."
         "Result wrapped in FibStats record: named fields replace positional list indexing."
-    chosen = SinglePassAccumulator
-    rejected = [SeparateFoldAndFilter]
+    chosen = "SinglePassAccumulator"    rejected = ["SeparateFoldAndFilter"]
+
     impacts = [buildFibStats, buildFibStatsTR]
 
 decision AccumulatorAsRecord
@@ -46,8 +46,8 @@ decision AccumulatorAsRecord
         "buildFibStatsTR originally took 8 positional parameters."
         "Eight positional args are a bug waiting to happen: easy to swap, hard to read."
         "FibAcc record gives each field a name at both call site and use site."
-    chosen = FibAccRecord
-    rejected = [EightPositionalParams]
+    chosen = "FibAccRecord"    rejected = ["EightPositionalParams"]
+
     impacts = [buildFibStatsTR, buildFibStats]
 
 decision EvenCheckWithoutModulo
@@ -55,8 +55,8 @@ decision EvenCheckWithoutModulo
     reason =
         "Aver has no modulo operator."
         "Integer division truncates: n/2*2 equals n only when n is even."
-    chosen = DivisionTrick
-    rejected = [ModuloOperator]
+    chosen = "DivisionTrick"    rejected = ["ModuloOperator"]
+
     impacts = [isEven]
 
 decision FloatChecksUseTolerance
@@ -64,8 +64,8 @@ decision FloatChecksUseTolerance
     reason =
         "Exact float equality is brittle."
         "Use abs + epsilon for stable verifies."
-    chosen = ApproxEq
-    rejected = [ExactFloatEquality]
+    chosen = "ApproxEq"    rejected = ["ExactFloatEquality"]
+
     impacts = [goldenApprox, absF, approxEq]
 
 fn fibTR(n: Int, a: Int, b: Int) -> Int

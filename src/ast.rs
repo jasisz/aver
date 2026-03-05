@@ -178,8 +178,8 @@ pub struct DecisionBlock {
     pub line: usize,
     pub date: String,
     pub reason: String,
-    pub chosen: String,
-    pub rejected: Vec<String>,
+    pub chosen: DecisionImpact,
+    pub rejected: Vec<DecisionImpact>,
     pub impacts: Vec<DecisionImpact>,
     pub author: Option<String>,
 }
@@ -242,5 +242,6 @@ pub enum TopLevel {
     EffectSet {
         name: String,
         effects: Vec<String>,
+        line: usize,
     },
 }

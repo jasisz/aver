@@ -9,8 +9,8 @@ decision UseResultOverExceptions
         "Exceptions are invisible in function signatures."
         "Result forces explicit error handling and is"
         "fully readable by AI tooling without execution."
-    chosen = Result
-    rejected = [Exceptions, Nullable]
+    chosen = "Result"    rejected = ["Exceptions", "Nullable"]
+
     impacts = ["Calculator", "PaymentService"]
 
 decision IndentationOverBraces
@@ -19,8 +19,8 @@ decision IndentationOverBraces
         "Significant indentation reduces syntactic noise."
         "Code reads like well-formatted prose."
         "It also eliminates brace-placement style debates entirely."
-    chosen = Indentation
-    rejected = [Braces, BeginEnd]
+    chosen = "Indentation"    rejected = ["Braces", "BeginEnd"]
+
     impacts = ["Lexer", "Parser", "AllModules"]
 
 decision MatchOverIf
@@ -29,8 +29,8 @@ decision MatchOverIf
         "match with exhaustive checking forces handling of every case."
         "if/else allows silent omission of branches."
         "Exhaustiveness is enforced at the language level, not by convention."
-    chosen = Match
-    rejected = [IfElse, Ternary]
+    chosen = "Match"    rejected = ["IfElse", "Ternary"]
+
     impacts = ["AllModules"]
 
 decision ColocatedVerify
@@ -39,8 +39,8 @@ decision ColocatedVerify
         "Tests in separate directories rot faster because nobody reads them"
         "when changing the function they test."
         "A verify block immediately below its function is a minimal specification."
-    chosen = ColocatedVerify
-    rejected = [SeparateTestFiles, ExternalFramework]
+    chosen = "ColocatedVerify"    rejected = ["SeparateTestFiles", "ExternalFramework"]
+
     impacts = ["AllFunctions"]
 
 fn summarise(name: String, pick: String) -> String

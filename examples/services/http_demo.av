@@ -1,7 +1,8 @@
 module HttpDemo
     intent =
         "Demonstrates the built-in Http service: GET, POST, and response handling."
-        "Http is a platform capability — declared with ! [Http], enforced statically."
+        "Use granular sub-effects like ! [Http.get] and ! [Http.post]."
+        "This keeps signatures minimal and explicit."
 
 record Header
     name: String
@@ -10,22 +11,22 @@ record Header
 decision HttpAsCapability
     date = "2025-01-01"
     reason =
-        "HTTP access is a side effect like any other. Declaring ! [Http] makes"
+        "HTTP access is a side effect like any other. Declaring ! [Http.get] or ! [Http.post] makes"
         "it visible in the signature — callers know the function goes outside the process."
         "4xx/5xx are Ok(response) because they are valid HTTP exchanges;"
         "only transport failures (timeout, DNS, refused) are Err."
-    chosen = BuiltinService
-    rejected = [NetworkDotAv, ImplicitIO]
+    chosen = "BuiltinService"    rejected = ["NetworkDotAv", "ImplicitIO"]
+
     impacts = [fetch, checkStatus, post]
 
 fn fetch(url: String) -> Result<HttpResponse, String>
     ? "GET a URL. Returns Ok(HttpResponse) on any HTTP reply, Err on transport failure."
-    ! [Http]
+    ! [Http.get]
     Http.get(url)
 
 fn checkStatus(url: String) -> Result<Int, String>
     ? "Returns Ok(status code as Int) or Err(transport error)."
-    ! [Http]
+    ! [Http.get]
     result = Http.get(url)
     match result
         Result.Ok(resp) -> Result.Ok(resp.status)
@@ -33,12 +34,12 @@ fn checkStatus(url: String) -> Result<Int, String>
 
 fn post(url: String, payload: String, token: String) -> Result<HttpResponse, String>
     ? "POST JSON with a Bearer token. Builds the Authorization header explicitly."
-    ! [Http]
+    ! [Http.post]
     auth = Header(name = "Authorization", value = "Bearer {token}")
     Http.post(url, payload, "application/json", [auth])
 
 fn main() -> Unit
-    ! [Http, Console]
+    ! [Http.get, Http.post, Console.print]
     url = "https://httpbin.org/get"
 
     r1 = fetch(url)

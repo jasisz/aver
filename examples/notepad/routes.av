@@ -11,8 +11,8 @@ decision JsonModuleSerialization
         "Examples.Json now provides fromString/toString API."
         "JSON should be built from typed Json values, not string templates."
         "Serializer handles escaping consistently."
-    chosen = TypedJsonValues
-    rejected = [StringTemplates, ManualConcatenation]
+    chosen = "TypedJsonValues"    rejected = ["StringTemplates", "ManualConcatenation"]
+
     impacts = [noteToJson, jsonNote, jsonNoteList, jsonOk, jsonErr]
 
 // --- JSON helpers ---

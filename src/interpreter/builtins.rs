@@ -87,6 +87,10 @@ impl Interpreter {
         name: &str,
         args: &[Value],
     ) -> Result<Value, RuntimeError> {
+        // Runtime policy check for Http/Disk calls
+        if name.starts_with("Http.") || name.starts_with("Disk.") {
+            self.check_runtime_policy(name, args)?;
+        }
         match name {
             "__ctor:Result.Ok" => {
                 if args.len() != 1 {

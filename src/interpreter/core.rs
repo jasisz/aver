@@ -106,6 +106,7 @@ impl Interpreter {
             validate_replay_args: false,
             recording_sink: None,
             verify_match_coverage: None,
+            runtime_policy: None,
         }
     }
 
@@ -208,6 +209,42 @@ impl Interpreter {
     /// Register a named effect set alias.
     pub fn register_effect_set(&mut self, name: String, effects: Vec<String>) {
         self.effect_aliases.insert(name, effects);
+    }
+
+    /// Set the runtime policy from an `aver.toml` configuration.
+    pub fn set_runtime_policy(&mut self, config: crate::config::ProjectConfig) {
+        self.runtime_policy = Some(config);
+    }
+
+    /// Check whether a builtin call is permitted by the runtime policy.
+    /// Skipped in Replay mode (deterministic playback).
+    pub(super) fn check_runtime_policy(
+        &self,
+        name: &str,
+        args: &[Value],
+    ) -> Result<(), RuntimeError> {
+        if self.execution_mode == ExecutionMode::Replay {
+            return Ok(());
+        }
+        let Some(policy) = &self.runtime_policy else {
+            return Ok(());
+        };
+
+        if name.starts_with("Http.") {
+            if let Some(Value::Str(url)) = args.first() {
+                policy
+                    .check_http_host(name, url)
+                    .map_err(RuntimeError::Error)?;
+            }
+        } else if name.starts_with("Disk.") {
+            if let Some(Value::Str(path)) = args.first() {
+                policy
+                    .check_disk_path(name, path)
+                    .map_err(RuntimeError::Error)?;
+            }
+        }
+
+        Ok(())
     }
 
     pub fn start_verify_match_coverage(&mut self, fn_name: &str) {
@@ -374,17 +411,9 @@ impl Interpreter {
         }
     }
 
-    /// Expand effect names one level: aliases → concrete effect names.
+    /// Expand effect names: aliases → concrete effect names (recursive, cycle-safe).
     pub(super) fn expand_effects(&self, effects: &[String]) -> Vec<String> {
-        let mut result = Vec::new();
-        for e in effects {
-            if let Some(expanded) = self.effect_aliases.get(e) {
-                result.extend(expanded.iter().cloned());
-            } else {
-                result.push(e.clone());
-            }
-        }
-        result
+        crate::effects::expand_effects(effects, &self.effect_aliases)
     }
 
     // -------------------------------------------------------------------------
@@ -668,7 +697,7 @@ impl Interpreter {
             }
 
             for item in &items {
-                if let TopLevel::EffectSet { name, effects } = item {
+                if let TopLevel::EffectSet { name, effects, .. } = item {
                     sub.register_effect_set(name.clone(), effects.clone());
                 }
             }

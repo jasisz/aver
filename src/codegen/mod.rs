@@ -41,6 +41,8 @@ pub struct CodegenContext {
     pub modules: Vec<ModuleInfo>,
     /// Set of module prefixes for qualified name resolution (e.g. "Examples.Fibonacci").
     pub module_prefixes: HashSet<String>,
+    /// Runtime policy from `aver.toml` (baked into generated code).
+    pub policy: Option<crate::config::ProjectConfig>,
 }
 
 /// Output files from a codegen backend.
@@ -91,5 +93,6 @@ pub fn build_context(
         project_name,
         modules,
         module_prefixes,
+        policy: None,
     }
 }

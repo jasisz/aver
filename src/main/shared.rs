@@ -145,11 +145,18 @@ pub(super) fn compile_program_for_exec(
     let mut interp = Interpreter::new();
     interp.enable_memo(memo_fns);
 
+    // Load aver.toml runtime policy if present
+    match aver::config::ProjectConfig::load_from_dir(std::path::Path::new(&module_root)) {
+        Ok(Some(config)) => interp.set_runtime_policy(config),
+        Ok(None) => {}
+        Err(e) => return Err(format!("aver.toml: {}", e)),
+    }
+
     load_dep_modules(&mut interp, &items, &module_root)?;
 
     // Register effect sets first (needed before FnDef expansion)
     for item in &items {
-        if let TopLevel::EffectSet { name, effects } = item {
+        if let TopLevel::EffectSet { name, effects, .. } = item {
             interp.register_effect_set(name.clone(), effects.clone());
         }
     }

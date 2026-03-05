@@ -30,9 +30,12 @@ pub fn register(global: &mut HashMap<String, Value>) {
 
 pub fn effects(name: &str) -> &'static [&'static str] {
     match name {
-        "Http.get" | "Http.head" | "Http.delete" | "Http.post" | "Http.put" | "Http.patch" => {
-            &["Http"]
-        }
+        "Http.get" => &["Http.get"],
+        "Http.head" => &["Http.head"],
+        "Http.delete" => &["Http.delete"],
+        "Http.post" => &["Http.post"],
+        "Http.put" => &["Http.put"],
+        "Http.patch" => &["Http.patch"],
         _ => &[],
     }
 }

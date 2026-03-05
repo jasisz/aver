@@ -2,6 +2,7 @@ use super::*;
 
 impl Parser {
     pub(super) fn parse_effect_set(&mut self) -> Result<TopLevel, ParseError> {
+        let line = self.current().line;
         self.expect_exact(&TokenKind::Effects)?;
         let name_tok =
             self.expect_kind(&TokenKind::Ident(String::new()), "Expected effect set name")?;
@@ -13,9 +14,14 @@ impl Parser {
         self.expect_exact(&TokenKind::LBracket)?;
         let mut effects = Vec::new();
         while !matches!(self.current().kind, TokenKind::RBracket | TokenKind::Eof) {
-            let tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected effect name")?;
-            if let TokenKind::Ident(eff) = tok.kind {
-                effects.push(eff);
+            if matches!(self.current().kind, TokenKind::Ident(_)) {
+                let eff_name = self.parse_qualified_ident()?;
+                effects.push(eff_name);
+            } else if !matches!(self.current().kind, TokenKind::Comma) {
+                return Err(self.error(format!(
+                    "Expected effect name, found {}",
+                    self.current().kind
+                )));
             }
             if matches!(self.current().kind, TokenKind::Comma) {
                 self.advance();
@@ -23,7 +29,11 @@ impl Parser {
         }
         self.expect_exact(&TokenKind::RBracket)?;
         self.skip_newlines();
-        Ok(TopLevel::EffectSet { name, effects })
+        Ok(TopLevel::EffectSet {
+            name,
+            effects,
+            line,
+        })
     }
 
     pub(super) fn parse_sum_type_def(&mut self) -> Result<TypeDef, ParseError> {
@@ -248,9 +258,9 @@ impl Parser {
         let mut effects = Vec::new();
         while !self.check_exact(&TokenKind::RBracket) && !self.is_eof() {
             match self.current().kind.clone() {
-                TokenKind::Ident(s) => {
-                    effects.push(s);
-                    self.advance();
+                TokenKind::Ident(_) => {
+                    let name = self.parse_qualified_ident()?;
+                    effects.push(name);
                 }
                 TokenKind::Comma => {
                     self.advance();

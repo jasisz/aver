@@ -51,8 +51,12 @@ pub fn register(global: &mut HashMap<String, Value>) {
 
 pub fn effects(name: &str) -> &'static [&'static str] {
     match name {
-        "Tcp.send" | "Tcp.ping" | "Tcp.connect" | "Tcp.writeLine" | "Tcp.readLine"
-        | "Tcp.close" => &["Tcp"],
+        "Tcp.send" => &["Tcp.send"],
+        "Tcp.ping" => &["Tcp.ping"],
+        "Tcp.connect" => &["Tcp.connect"],
+        "Tcp.writeLine" => &["Tcp.writeLine"],
+        "Tcp.readLine" => &["Tcp.readLine"],
+        "Tcp.close" => &["Tcp.close"],
         _ => &[],
     }
 }

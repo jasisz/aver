@@ -2,48 +2,49 @@ module DiskDemo
     intent =
         "Demonstrates the built-in Disk service: readText, writeText, appendText,"
         "exists, delete, deleteDir, listDir, makeDir."
-        "Disk is a platform capability — declared with ! [Disk], enforced statically."
+        "Use granular sub-effects like ! [Disk.readText], ! [Disk.writeText], etc."
+        "This keeps signatures minimal and explicit."
 
 decision DiskAsCapability
     date = "2025-01-01"
     reason =
-        "File I/O is a side effect like any other. Declaring ! [Disk] makes"
-        "it visible in the signature — callers know the function touches the filesystem."
+        "File I/O is a side effect like any other. Declaring granular effects (for example ! [Disk.readText])"
+        "makes it visible in the signature — callers know the function touches the filesystem."
         "read/write/append/exists/delete/deleteDir/listDir/makeDir cover the full CRUD"
         "surface without any hidden implicit I/O."
         "Disk.delete is file-only; Disk.deleteDir is the explicit recursive variant —"
         "accidental tree deletion requires a conscious choice of the right method."
-    chosen = BuiltinService
-    rejected = [ImplicitIO, SeparateFileModule]
+    chosen = "BuiltinService"    rejected = ["ImplicitIO", "SeparateFileModule"]
+
     impacts = [loadConfig, saveConfig, appendLog, listWorkdir, scaffold]
 
 fn loadConfig(path: String) -> Result<String, String>
     ? "Read a text file and return its contents, or Err on I/O failure."
-    ! [Disk]
+    ! [Disk.readText]
     Disk.readText(path)
 
 fn saveConfig(path: String, content: String) -> Result<Unit, String>
     ? "Write content to a file, overwriting if it already exists."
-    ! [Disk]
+    ! [Disk.writeText]
     Disk.writeText(path, content)
 
 fn appendLog(path: String, line: String) -> Result<Unit, String>
     ? "Append a single log line to a file, creating it if absent."
-    ! [Disk]
+    ! [Disk.appendText]
     Disk.appendText(path, line)
 
 fn listWorkdir(path: String) -> Result<List<String>, String>
     ? "Return the names of entries in a directory."
-    ! [Disk]
+    ! [Disk.listDir]
     Disk.listDir(path)
 
 fn scaffold(dir: String) -> Result<Unit, String>
     ? "Create a directory tree, including any missing parents."
-    ! [Disk]
+    ! [Disk.makeDir]
     Disk.makeDir(dir)
 
 fn main() -> Unit
-    ! [Disk, Console]
+    ! [Disk.makeDir, Disk.writeText, Disk.readText, Disk.appendText, Disk.exists, Disk.listDir, Disk.delete, Disk.deleteDir, Console.print]
     tmp = "/tmp/aver_disk_demo"
 
     // Create a directory

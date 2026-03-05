@@ -419,7 +419,7 @@ impl Parser {
 
         let mut date = String::new();
         let mut reason = String::new();
-        let mut chosen = String::new();
+        let mut chosen = DecisionImpact::Semantic(String::new());
         let mut rejected = Vec::new();
         let mut impacts = Vec::new();
         let mut author = None;
@@ -461,22 +461,15 @@ impl Parser {
                         reason = self.parse_multiline_text()?;
                     }
                     "chosen" => {
-                        if let TokenKind::Ident(s) = self.current().kind.clone() {
-                            chosen = s;
-                            self.advance();
-                        } else {
-                            return Err(self.error(
-                                "Expected identifier value for decision 'chosen'".to_string(),
-                            ));
-                        }
+                        chosen = self.parse_decision_ref("chosen")?;
                         self.skip_newlines();
                     }
                     "rejected" => {
-                        rejected = self.parse_ident_list()?;
+                        rejected = self.parse_decision_refs_list("rejected")?;
                         self.skip_newlines();
                     }
                     "impacts" => {
-                        impacts = self.parse_decision_impacts_list()?;
+                        impacts = self.parse_decision_refs_list("impacts")?;
                         self.skip_newlines();
                     }
                     "author" => {
@@ -543,33 +536,27 @@ impl Parser {
         Ok(parts.join(" "))
     }
 
-    pub(super) fn parse_ident_list(&mut self) -> Result<Vec<String>, ParseError> {
-        let mut items = Vec::new();
-
-        if self.check_exact(&TokenKind::LBracket) {
-            self.advance();
-            while !self.check_exact(&TokenKind::RBracket) && !self.is_eof() {
-                match self.current().kind.clone() {
-                    TokenKind::Ident(s) => {
-                        items.push(s);
-                        self.advance();
-                    }
-                    TokenKind::Comma => {
-                        self.advance();
-                    }
-                    _ => break,
-                }
+    fn parse_decision_ref(&mut self, field_name: &str) -> Result<DecisionImpact, ParseError> {
+        match self.current().kind.clone() {
+            TokenKind::Ident(s) => {
+                self.advance();
+                Ok(DecisionImpact::Symbol(s))
             }
-            self.expect_exact(&TokenKind::RBracket)?;
-        } else if let TokenKind::Ident(s) = self.current().kind.clone() {
-            items.push(s);
-            self.advance();
+            TokenKind::Str(s) => {
+                self.advance();
+                Ok(DecisionImpact::Semantic(s))
+            }
+            _ => Err(self.error(format!(
+                "Expected identifier or string value for decision '{}'",
+                field_name
+            ))),
         }
-
-        Ok(items)
     }
 
-    fn parse_decision_impacts_list(&mut self) -> Result<Vec<DecisionImpact>, ParseError> {
+    fn parse_decision_refs_list(
+        &mut self,
+        field_name: &str,
+    ) -> Result<Vec<DecisionImpact>, ParseError> {
         let mut items = Vec::new();
 
         if self.check_exact(&TokenKind::LBracket) {
@@ -588,9 +575,10 @@ impl Parser {
                         self.advance();
                     }
                     _ => {
-                        return Err(self.error(
-                            "Expected identifier or string in decision 'impacts' list".to_string(),
-                        ));
+                        return Err(self.error(format!(
+                            "Expected identifier or string in decision '{}' list",
+                            field_name
+                        )));
                     }
                 }
             }

@@ -13,8 +13,8 @@ decision FlatFileStorage
         "No external database required. Disk service provides atomic read/write."
         "Tab-separated format is trivial to parse with String.split."
         "Good enough for a demo; real apps would use a proper DB."
-    chosen = SingleFlatFile
-    rejected = [OneFilePerNote, Sqlite, InMemoryOnly]
+    chosen = "SingleFlatFile"    rejected = ["OneFilePerNote", "Sqlite", "InMemoryOnly"]
+
     impacts = [loadAll, saveAll, addNote, removeNote]
 
 record Note

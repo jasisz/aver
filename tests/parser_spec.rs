@@ -843,8 +843,11 @@ fn decision_basic() {
     if let TopLevel::Decision(d) = &items[0] {
         assert_eq!(d.name, "UseResult");
         assert_eq!(d.date, "2024-01-01");
-        assert_eq!(d.chosen, "Result");
-        assert_eq!(d.rejected, vec!["Exceptions".to_string()]);
+        assert_eq!(d.chosen, DecisionImpact::Symbol("Result".to_string()));
+        assert_eq!(
+            d.rejected,
+            vec![DecisionImpact::Symbol("Exceptions".to_string())]
+        );
         assert_eq!(
             d.impacts,
             vec![DecisionImpact::Symbol("AllModules".to_string())]
@@ -886,6 +889,24 @@ fn decision_impacts_accepts_mixed_symbol_and_semantic_entries() {
             vec![
                 DecisionImpact::Symbol("doThing".to_string()),
                 DecisionImpact::Semantic("error handling strategy".to_string())
+            ]
+        );
+    } else {
+        panic!("expected Decision");
+    }
+}
+
+#[test]
+fn decision_chosen_and_rejected_accept_mixed_symbol_and_semantic_entries() {
+    let src = "decision D\n    date = \"2026-03-05\"\n    reason =\n        \"R.\"\n    chosen = \"Keep\"\n    rejected = [OldPath, \"global mutable state\"]\n    impacts = []\n";
+    let items = parse(src);
+    if let TopLevel::Decision(d) = &items[0] {
+        assert_eq!(d.chosen, DecisionImpact::Semantic("Keep".to_string()));
+        assert_eq!(
+            d.rejected,
+            vec![
+                DecisionImpact::Symbol("OldPath".to_string()),
+                DecisionImpact::Semantic("global mutable state".to_string()),
             ]
         );
     } else {
@@ -1099,7 +1120,7 @@ fn parse_singleton_variant_with_parens_is_parse_error() {
 #[test]
 fn effect_set_single() {
     let items = parse("effects AppIO = [Console]");
-    if let TopLevel::EffectSet { name, effects } = &items[0] {
+    if let TopLevel::EffectSet { name, effects, .. } = &items[0] {
         assert_eq!(name, "AppIO");
         assert_eq!(effects, &["Console"]);
     } else {
@@ -1110,7 +1131,7 @@ fn effect_set_single() {
 #[test]
 fn effect_set_multiple() {
     let items = parse("effects AppIO = [Console, Disk, Http]");
-    if let TopLevel::EffectSet { name, effects } = &items[0] {
+    if let TopLevel::EffectSet { name, effects, .. } = &items[0] {
         assert_eq!(name, "AppIO");
         assert_eq!(effects, &["Console", "Disk", "Http"]);
     } else {

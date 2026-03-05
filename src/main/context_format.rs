@@ -12,6 +12,10 @@ fn impact_texts(impacts: &[DecisionImpact]) -> Vec<String> {
         .map(DecisionImpact::as_context_string)
         .collect()
 }
+
+fn decision_ref_text(reference: &DecisionImpact) -> String {
+    reference.as_context_string()
+}
 const CONTEXT_SCHEMA_VERSION: u32 = 2;
 const ANALYSIS_ENCODING_VERSION: u32 = 1;
 const ANALYSIS_FLAG_AUTO_MEMO: u8 = 1;
@@ -187,9 +191,15 @@ pub(super) fn format_context_md(contexts: &[FileContext], entry_file: &str) -> S
         out.push_str("---\n\n## Decisions\n\n");
         for dec in all_decisions {
             out.push_str(&format!("### {} ({})\n", dec.name, dec.date));
-            out.push_str(&format!("**Chosen:** {}", dec.chosen));
+            out.push_str(&format!("**Chosen:** {}", decision_ref_text(&dec.chosen)));
             if !dec.rejected.is_empty() {
-                out.push_str(&format!(" — **Rejected:** {}", dec.rejected.join(", ")));
+                let rejected = dec
+                    .rejected
+                    .iter()
+                    .map(decision_ref_text)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                out.push_str(&format!(" — **Rejected:** {}", rejected));
             }
             out.push('\n');
             if !dec.reason.is_empty() {
@@ -483,8 +493,15 @@ pub(super) fn format_context_json(contexts: &[FileContext], entry_file: &str) ->
             out.push_str("    {\n");
             out.push_str(&format!("      \"name\": {},\n", json_str(&dec.name)));
             out.push_str(&format!("      \"date\": {},\n", json_str(&dec.date)));
-            out.push_str(&format!("      \"chosen\": {},\n", json_str(&dec.chosen)));
-            let rej: Vec<String> = dec.rejected.iter().map(|r| json_str(r)).collect();
+            out.push_str(&format!(
+                "      \"chosen\": {},\n",
+                json_str(&decision_ref_text(&dec.chosen))
+            ));
+            let rej: Vec<String> = dec
+                .rejected
+                .iter()
+                .map(|r| json_str(&decision_ref_text(r)))
+                .collect();
             out.push_str(&format!("      \"rejected\": [{}],\n", rej.join(", ")));
             out.push_str(&format!("      \"reason\": {},\n", json_str(&dec.reason)));
             let imp: Vec<String> = impact_texts(&dec.impacts)
@@ -523,9 +540,15 @@ pub(super) fn format_decisions_md(decisions: &[&DecisionBlock], entry_file: &str
 
     for dec in decisions {
         out.push_str(&format!("## {} ({})\n\n", dec.name, dec.date));
-        out.push_str(&format!("**Chosen:** {}\n", dec.chosen));
+        out.push_str(&format!("**Chosen:** {}\n", decision_ref_text(&dec.chosen)));
         if !dec.rejected.is_empty() {
-            out.push_str(&format!("**Rejected:** {}\n", dec.rejected.join(", ")));
+            let rejected = dec
+                .rejected
+                .iter()
+                .map(decision_ref_text)
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!("**Rejected:** {}\n", rejected));
         }
         if !dec.impacts.is_empty() {
             out.push_str(&format!(
@@ -558,8 +581,15 @@ pub(super) fn format_decisions_json(decisions: &[&DecisionBlock], entry_file: &s
             out.push_str("    {\n");
             out.push_str(&format!("      \"name\": {},\n", json_str(&dec.name)));
             out.push_str(&format!("      \"date\": {},\n", json_str(&dec.date)));
-            out.push_str(&format!("      \"chosen\": {},\n", json_str(&dec.chosen)));
-            let rej: Vec<String> = dec.rejected.iter().map(|r| json_str(r)).collect();
+            out.push_str(&format!(
+                "      \"chosen\": {},\n",
+                json_str(&decision_ref_text(&dec.chosen))
+            ));
+            let rej: Vec<String> = dec
+                .rejected
+                .iter()
+                .map(|r| json_str(&decision_ref_text(r)))
+                .collect();
             out.push_str(&format!("      \"rejected\": [{}],\n", rej.join(", ")));
             out.push_str(&format!("      \"reason\": {},\n", json_str(&dec.reason)));
             let imp: Vec<String> = impact_texts(&dec.impacts)

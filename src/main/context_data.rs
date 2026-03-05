@@ -210,7 +210,7 @@ pub(super) fn collect_contexts(
             }
             TopLevel::FnDef(fd) => ctx.fn_defs.push(fd.clone()),
             TopLevel::TypeDef(td) => ctx.type_defs.push(td.clone()),
-            TopLevel::EffectSet { name, effects } => {
+            TopLevel::EffectSet { name, effects, .. } => {
                 ctx.effect_sets.push((name.clone(), effects.clone()))
             }
             TopLevel::Verify(vb) => ctx.verify_blocks.push(vb.clone()),

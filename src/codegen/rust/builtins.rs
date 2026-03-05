@@ -21,6 +21,37 @@ pub fn emit_builtin_call(
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> Option<String> {
+    let result = emit_builtin_call_inner(name, args, ctx, ectx)?;
+
+    // Wrap Http/Disk calls with policy checks when aver.toml policy is present.
+    // Use .expect() instead of ? because the call may occur in a non-Result context
+    // (e.g. Disk.exists returns Bool). Policy violations are fatal.
+    if ctx.policy.is_some() {
+        if name.starts_with("Http.") && !args.is_empty() {
+            let url_arg = emit_expr(&args[0], ctx, ectx);
+            return Some(format!(
+                "{{ aver_policy::check_http(\"{}\", &{}).expect(\"aver.toml policy violation\"); {} }}",
+                name, url_arg, result
+            ));
+        }
+        if name.starts_with("Disk.") && !args.is_empty() {
+            let path_arg = emit_expr(&args[0], ctx, ectx);
+            return Some(format!(
+                "{{ aver_policy::check_disk(\"{}\", &{}).expect(\"aver.toml policy violation\"); {} }}",
+                name, path_arg, result
+            ));
+        }
+    }
+
+    Some(result)
+}
+
+fn emit_builtin_call_inner(
+    name: &str,
+    args: &[Expr],
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> Option<String> {
     let arg_ctxs = compute_args_used_after(args, &ectx.used_after, &ectx.local_types);
 
     match name {

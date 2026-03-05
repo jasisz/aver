@@ -23,8 +23,8 @@
 | `FnDef` | `src/ast.rs` | Name, params, return type, effects, optional description, body |
 | `Module` | `src/ast.rs` | Name + source line, depends, exposes, intent string |
 | `VerifyBlock` | `src/ast.rs` | Function name + list of `(left_expr, right_expr)` equality cases |
-| `DecisionBlock` | `src/ast.rs` | Name + source line, date, reason, chosen, rejected list, impacts list, optional author |
-| `DecisionImpact` | `src/ast.rs` | `Symbol(String)` (validated identifier) or `Semantic(String)` (free-form text) |
+| `DecisionBlock` | `src/ast.rs` | Name + source line, date, reason, chosen ref, rejected refs, impacts refs, optional author |
+| `DecisionImpact` | `src/ast.rs` | Reusable decision reference: `Symbol(String)` (validated identifier) or `Semantic(String)` (free-form text) |
 | `TopLevel` | `src/ast.rs` | Top-level item: `Module`, `FnDef`, `Verify`, `Decision`, `Stmt`, `TypeDef`, `EffectSet` |
 | `TypeDef` | `src/ast.rs` | `Sum { name, variants: Vec<TypeVariant> }` or `Product { name, fields: Vec<(String, String)> }` |
 

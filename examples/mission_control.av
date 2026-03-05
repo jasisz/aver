@@ -13,8 +13,8 @@ decision FuelSafetyInvariant
         "Mission scripts must never produce negative fuel."
         "Rejecting invalid burn commands keeps physics and accounting explicit."
         "Errors are values (Result), not hidden exceptions."
-    chosen = RejectInsufficientFuel
-    rejected = [ClampToZero, ImplicitDebtMode]
+    chosen = "RejectInsufficientFuel"    rejected = ["ClampToZero", "ImplicitDebtMode"]
+
     impacts = [applyBurn, runPlan]
 
 decision EffectsAtTheEdge
@@ -24,8 +24,8 @@ decision EffectsAtTheEdge
         "State transition logic should be deterministic and testable with verify."
         "Console output belongs to outer shell only."
         "Replay mode then captures behavior without mocking."
-    chosen = PureCoreEffectfulShell
-    rejected = [PrintInsideCore, GlobalMutableState]
+    chosen = "PureCoreEffectfulShell"    rejected = ["PrintInsideCore", "GlobalMutableState"]
+
     impacts = [runPlan, main]
 
 type Cmd
