@@ -39,7 +39,7 @@ decision HttpServerContextParameter
         "A context record parameter keeps dependencies visible, typed, and queryable."
     chosen = ExplicitContextRecord
     rejected = [ClosureCapture, MutableModuleState, GlobalRegistry]
-    impacts = [HttpServer, HandlerSignature, AIContext]
+    impacts = [HttpServer, "HandlerSignature", "AIContext"]
 
 record WeatherConfig
     apiHost: String

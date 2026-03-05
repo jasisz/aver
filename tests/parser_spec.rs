@@ -845,7 +845,10 @@ fn decision_basic() {
         assert_eq!(d.date, "2024-01-01");
         assert_eq!(d.chosen, "Result");
         assert_eq!(d.rejected, vec!["Exceptions".to_string()]);
-        assert_eq!(d.impacts, vec!["AllModules".to_string()]);
+        assert_eq!(
+            d.impacts,
+            vec![DecisionImpact::Symbol("AllModules".to_string())]
+        );
     } else {
         panic!("expected Decision");
     }
@@ -868,6 +871,23 @@ fn decision_multiple_rejected() {
     let items = parse(src);
     if let TopLevel::Decision(d) = &items[0] {
         assert_eq!(d.rejected.len(), 3);
+    } else {
+        panic!("expected Decision");
+    }
+}
+
+#[test]
+fn decision_impacts_accepts_mixed_symbol_and_semantic_entries() {
+    let src = "decision D\n    date = \"2026-03-05\"\n    reason =\n        \"R.\"\n    chosen = C\n    rejected = []\n    impacts = [doThing, \"error handling strategy\"]\n";
+    let items = parse(src);
+    if let TopLevel::Decision(d) = &items[0] {
+        assert_eq!(
+            d.impacts,
+            vec![
+                DecisionImpact::Symbol("doThing".to_string()),
+                DecisionImpact::Semantic("error handling strategy".to_string())
+            ]
+        );
     } else {
         panic!("expected Decision");
     }

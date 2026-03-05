@@ -1,7 +1,9 @@
 use colored::Colorize;
+use std::collections::BTreeSet;
 
 use crate::ast::{
-    DecisionBlock, Expr, FnBody, FnDef, Stmt, TopLevel, VerifyBlock, VerifyGivenDomain, VerifyKind,
+    DecisionBlock, DecisionImpact, Expr, FnBody, FnDef, Stmt, TopLevel, VerifyBlock,
+    VerifyGivenDomain, VerifyKind,
 };
 use crate::interpreter::{Interpreter, aver_repr};
 use crate::types::{Type, parse_type_str_strict};
@@ -17,8 +19,14 @@ pub struct VerifyResult {
 }
 
 pub struct ModuleCheckFindings {
-    pub errors: Vec<String>,
-    pub warnings: Vec<String>,
+    pub errors: Vec<CheckFinding>,
+    pub warnings: Vec<CheckFinding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckFinding {
+    pub line: usize,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -714,9 +722,178 @@ fn pipe_target_is_target(target: &Expr, fn_name: &str) -> bool {
     }
 }
 
+fn collect_used_effects_expr(
+    expr: &Expr,
+    fn_sigs: &std::collections::HashMap<String, (Vec<Type>, Type, Vec<String>)>,
+    out: &mut BTreeSet<String>,
+) {
+    match expr {
+        Expr::FnCall(callee, args) => {
+            if let Some(callee_name) = dotted_name(callee) {
+                if let Some((_, _, effects)) = fn_sigs.get(&callee_name) {
+                    for effect in effects {
+                        out.insert(effect.clone());
+                    }
+                }
+            }
+            collect_used_effects_expr(callee, fn_sigs, out);
+            for arg in args {
+                collect_used_effects_expr(arg, fn_sigs, out);
+            }
+        }
+        Expr::Pipe(left, right) => {
+            if let Some((callee, _)) = match right.as_ref() {
+                Expr::FnCall(callee, args) => Some((callee.as_ref(), args.as_slice())),
+                _ => None,
+            } {
+                if let Some(callee_name) = dotted_name(callee) {
+                    if let Some((_, _, effects)) = fn_sigs.get(&callee_name) {
+                        for effect in effects {
+                            out.insert(effect.clone());
+                        }
+                    }
+                }
+            } else if let Some(target_name) = dotted_name(right) {
+                if let Some((_, _, effects)) = fn_sigs.get(&target_name) {
+                    for effect in effects {
+                        out.insert(effect.clone());
+                    }
+                }
+            }
+            collect_used_effects_expr(left, fn_sigs, out);
+            collect_used_effects_expr(right, fn_sigs, out);
+        }
+        Expr::TailCall(boxed) => {
+            let (target, args) = boxed.as_ref();
+            if let Some((_, _, effects)) = fn_sigs.get(target) {
+                for effect in effects {
+                    out.insert(effect.clone());
+                }
+            }
+            for arg in args {
+                collect_used_effects_expr(arg, fn_sigs, out);
+            }
+        }
+        Expr::BinOp(_, left, right) => {
+            collect_used_effects_expr(left, fn_sigs, out);
+            collect_used_effects_expr(right, fn_sigs, out);
+        }
+        Expr::Match { subject, arms, .. } => {
+            collect_used_effects_expr(subject, fn_sigs, out);
+            for arm in arms {
+                collect_used_effects_expr(&arm.body, fn_sigs, out);
+            }
+        }
+        Expr::ErrorProp(inner) => collect_used_effects_expr(inner, fn_sigs, out),
+        Expr::List(items) | Expr::Tuple(items) => {
+            for item in items {
+                collect_used_effects_expr(item, fn_sigs, out);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (key, value) in entries {
+                collect_used_effects_expr(key, fn_sigs, out);
+                collect_used_effects_expr(value, fn_sigs, out);
+            }
+        }
+        Expr::Attr(obj, _) => collect_used_effects_expr(obj, fn_sigs, out),
+        Expr::RecordCreate { fields, .. } => {
+            for (_, expr) in fields {
+                collect_used_effects_expr(expr, fn_sigs, out);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            collect_used_effects_expr(base, fn_sigs, out);
+            for (_, expr) in updates {
+                collect_used_effects_expr(expr, fn_sigs, out);
+            }
+        }
+        Expr::Constructor(_, Some(inner)) => collect_used_effects_expr(inner, fn_sigs, out),
+        Expr::Literal(_)
+        | Expr::Ident(_)
+        | Expr::InterpolatedStr(_)
+        | Expr::Resolved(_)
+        | Expr::Constructor(_, None) => {}
+    }
+}
+
+fn collect_used_effects(
+    f: &FnDef,
+    fn_sigs: &std::collections::HashMap<String, (Vec<Type>, Type, Vec<String>)>,
+) -> BTreeSet<String> {
+    let mut used = BTreeSet::new();
+    match f.body.as_ref() {
+        FnBody::Expr(expr) => collect_used_effects_expr(expr, fn_sigs, &mut used),
+        FnBody::Block(stmts) => {
+            for stmt in stmts {
+                match stmt {
+                    Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => {
+                        collect_used_effects_expr(expr, fn_sigs, &mut used)
+                    }
+                }
+            }
+        }
+    }
+    used
+}
+
+fn collect_declared_symbols(items: &[TopLevel]) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    for item in items {
+        match item {
+            TopLevel::FnDef(f) => {
+                out.insert(f.name.clone());
+            }
+            TopLevel::Module(m) => {
+                out.insert(m.name.clone());
+            }
+            TopLevel::TypeDef(t) => match t {
+                crate::ast::TypeDef::Sum { name, .. }
+                | crate::ast::TypeDef::Product { name, .. } => {
+                    out.insert(name.clone());
+                }
+            },
+            TopLevel::Decision(d) => {
+                out.insert(d.name.clone());
+            }
+            TopLevel::EffectSet { name, .. } => {
+                out.insert(name.clone());
+            }
+            TopLevel::Verify(_) | TopLevel::Stmt(_) => {}
+        }
+    }
+    out
+}
+
+fn collect_known_effect_symbols(
+    fn_sigs: Option<&std::collections::HashMap<String, (Vec<Type>, Type, Vec<String>)>>,
+) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    for builtin in ["Console", "Http", "Disk", "Tcp", "HttpServer"] {
+        out.insert(builtin.to_string());
+    }
+    if let Some(sigs) = fn_sigs {
+        for (_, _, effects) in sigs.values() {
+            for effect in effects {
+                out.insert(effect.clone());
+            }
+        }
+    }
+    out
+}
+
 pub fn check_module_intent(items: &[TopLevel]) -> ModuleCheckFindings {
+    check_module_intent_with_sigs(items, None)
+}
+
+pub fn check_module_intent_with_sigs(
+    items: &[TopLevel],
+    fn_sigs: Option<&std::collections::HashMap<String, (Vec<Type>, Type, Vec<String>)>>,
+) -> ModuleCheckFindings {
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
+    let declared_symbols = collect_declared_symbols(items);
+    let known_effect_symbols = collect_known_effect_symbols(fn_sigs);
 
     let mut verified_fns: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut empty_verify_fns: std::collections::HashSet<&str> = std::collections::HashSet::new();
@@ -724,35 +901,42 @@ pub fn check_module_intent(items: &[TopLevel]) -> ModuleCheckFindings {
     for item in items {
         if let TopLevel::Verify(v) = item {
             if v.cases.is_empty() {
-                errors.push(format!(
-                    "Verify block '{}' must contain at least one case",
-                    v.fn_name
-                ));
+                errors.push(CheckFinding {
+                    line: v.line,
+                    message: format!(
+                        "Verify block '{}' must contain at least one case",
+                        v.fn_name
+                    ),
+                });
                 empty_verify_fns.insert(v.fn_name.as_str());
             } else {
                 let mut block_valid = true;
                 if matches!(v.kind, VerifyKind::Cases) {
                     for (idx, (left, _right)) in v.cases.iter().enumerate() {
                         if !verify_case_calls_target(left, &v.fn_name) {
-                            errors.push(format!(
-                                "line {}: Verify block '{}' case #{} must call '{}' on the left side",
-                                v.line,
-                                v.fn_name,
-                                idx + 1,
-                                v.fn_name
-                            ));
+                            errors.push(CheckFinding {
+                                line: v.line,
+                                message: format!(
+                                    "Verify block '{}' case #{} must call '{}' on the left side",
+                                    v.fn_name,
+                                    idx + 1,
+                                    v.fn_name
+                                ),
+                            });
                             block_valid = false;
                         }
                     }
                     for (idx, (_left, right)) in v.cases.iter().enumerate() {
                         if verify_case_calls_target(right, &v.fn_name) {
-                            errors.push(format!(
-                                "line {}: Verify block '{}' case #{} must not call '{}' on the right side",
-                                v.line,
-                                v.fn_name,
-                                idx + 1,
-                                v.fn_name
-                            ));
+                            errors.push(CheckFinding {
+                                line: v.line,
+                                message: format!(
+                                    "Verify block '{}' case #{} must not call '{}' on the right side",
+                                    v.fn_name,
+                                    idx + 1,
+                                    v.fn_name
+                                ),
+                            });
                             block_valid = false;
                         }
                     }
@@ -770,19 +954,72 @@ pub fn check_module_intent(items: &[TopLevel]) -> ModuleCheckFindings {
         match item {
             TopLevel::Module(m) => {
                 if m.intent.is_empty() {
-                    warnings.push(format!("Module '{}' has no intent block", m.name));
+                    warnings.push(CheckFinding {
+                        line: m.line,
+                        message: format!("Module '{}' has no intent block", m.name),
+                    });
                 }
             }
             TopLevel::FnDef(f) => {
                 if f.desc.is_none() && fn_needs_desc(f) {
-                    warnings.push(format!("Function '{}' has no description (?)", f.name));
+                    warnings.push(CheckFinding {
+                        line: f.line,
+                        message: format!("Function '{}' has no description (?)", f.name),
+                    });
+                }
+                if let Some(sigs) = fn_sigs {
+                    if let Some((_, _, declared_effects)) = sigs.get(&f.name) {
+                        if !declared_effects.is_empty() {
+                            let used_effects = collect_used_effects(f, sigs);
+                            let unused_effects: Vec<String> = declared_effects
+                                .iter()
+                                .filter(|effect| !used_effects.contains(*effect))
+                                .cloned()
+                                .collect();
+                            if !unused_effects.is_empty() {
+                                let used = if used_effects.is_empty() {
+                                    "none".to_string()
+                                } else {
+                                    used_effects.into_iter().collect::<Vec<_>>().join(", ")
+                                };
+                                warnings.push(CheckFinding {
+                                    line: f.line,
+                                    message: format!(
+                                        "Function '{}' declares unused effect(s): {} (used: {})",
+                                        f.name,
+                                        unused_effects.join(", "),
+                                        used
+                                    ),
+                                });
+                            }
+                        }
+                    }
                 }
                 if fn_needs_verify(f)
                     && !verified_fns.contains(f.name.as_str())
                     && !empty_verify_fns.contains(f.name.as_str())
                     && !invalid_verify_fns.contains(f.name.as_str())
                 {
-                    errors.push(format!("Function '{}' has no verify block", f.name));
+                    errors.push(CheckFinding {
+                        line: f.line,
+                        message: format!("Function '{}' has no verify block", f.name),
+                    });
+                }
+            }
+            TopLevel::Decision(d) => {
+                for impact in &d.impacts {
+                    if let DecisionImpact::Symbol(name) = impact {
+                        if !declared_symbols.contains(name) && !known_effect_symbols.contains(name)
+                        {
+                            errors.push(CheckFinding {
+                                line: d.line,
+                                message: format!(
+                                    "Decision '{}' references unknown impact symbol '{}'. Use quoted string for semantic impact.",
+                                    d.name, name
+                                ),
+                            });
+                        }
+                    }
                 }
             }
             _ => {}
@@ -819,12 +1056,67 @@ fn log(x: Int) -> Unit
             !findings
                 .warnings
                 .iter()
-                .any(|w| w.contains("no verify block"))
+                .any(|w| w.message.contains("no verify block"))
                 && !findings
                     .errors
                     .iter()
-                    .any(|e| e.contains("no verify block")),
+                    .any(|e| e.message.contains("no verify block")),
             "unexpected findings: errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
+        );
+    }
+
+    #[test]
+    fn warns_on_unused_declared_effects() {
+        let items = parse_items(
+            r#"
+fn log(x: Int) -> Unit
+    ! [Console, Http]
+    = Console.print(x)
+"#,
+        );
+        let tc = crate::types::checker::run_type_check_full(&items, None);
+        assert!(
+            tc.errors.is_empty(),
+            "unexpected type errors: {:?}",
+            tc.errors
+        );
+        let findings = check_module_intent_with_sigs(&items, Some(&tc.fn_sigs));
+        assert!(
+            findings.warnings.iter().any(|w| {
+                w.message.contains("declares unused effect(s)")
+                    && w.message.contains("Http")
+                    && w.message.contains("used: Console")
+            }),
+            "expected unused-effect warning, got errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
+        );
+    }
+
+    #[test]
+    fn no_unused_effect_warning_when_declared_effects_are_minimal() {
+        let items = parse_items(
+            r#"
+fn log(x: Int) -> Unit
+    ! [Console]
+    = Console.print(x)
+"#,
+        );
+        let tc = crate::types::checker::run_type_check_full(&items, None);
+        assert!(
+            tc.errors.is_empty(),
+            "unexpected type errors: {:?}",
+            tc.errors
+        );
+        let findings = check_module_intent_with_sigs(&items, Some(&tc.fn_sigs));
+        assert!(
+            !findings
+                .warnings
+                .iter()
+                .any(|w| w.message.contains("declares unused effect(s)")),
+            "did not expect unused-effect warning, got errors={:?}, warnings={:?}",
             findings.errors,
             findings.warnings
         );
@@ -843,11 +1135,11 @@ fn passthrough(x: Int) -> Int
             !findings
                 .warnings
                 .iter()
-                .any(|w| w.contains("no verify block"))
+                .any(|w| w.message.contains("no verify block"))
                 && !findings
                     .errors
                     .iter()
-                    .any(|e| e.contains("no verify block")),
+                    .any(|e| e.message.contains("no verify block")),
             "unexpected findings: errors={:?}, warnings={:?}",
             findings.errors,
             findings.warnings
@@ -867,7 +1159,7 @@ fn add1(x: Int) -> Int
             findings
                 .errors
                 .iter()
-                .any(|e| e == "Function 'add1' has no verify block"),
+                .any(|e| e.message == "Function 'add1' has no verify block"),
             "expected verify error, got errors={:?}, warnings={:?}",
             findings.errors,
             findings.warnings
@@ -889,7 +1181,7 @@ verify add1
             findings
                 .errors
                 .iter()
-                .any(|e| e == "Verify block 'add1' must contain at least one case"),
+                .any(|e| e.message == "Verify block 'add1' must contain at least one case"),
             "expected empty verify error, got errors={:?}, warnings={:?}",
             findings.errors,
             findings.warnings
@@ -898,7 +1190,7 @@ verify add1
             !findings
                 .errors
                 .iter()
-                .any(|e| e == "Function 'add1' has no verify block"),
+                .any(|e| e.message == "Function 'add1' has no verify block"),
             "expected no duplicate missing-verify error, got errors={:?}, warnings={:?}",
             findings.errors,
             findings.warnings
@@ -919,7 +1211,8 @@ verify add1
         let findings = check_module_intent(&items);
         assert!(
             findings.errors.iter().any(|e| {
-                e.contains("Verify block 'add1' case #1 must call 'add1' on the left side")
+                e.message
+                    .contains("Verify block 'add1' case #1 must call 'add1' on the left side")
             }),
             "expected verify-case-call error, got errors={:?}, warnings={:?}",
             findings.errors,
@@ -929,7 +1222,7 @@ verify add1
             !findings
                 .errors
                 .iter()
-                .any(|e| e == "Function 'add1' has no verify block"),
+                .any(|e| e.message == "Function 'add1' has no verify block"),
             "expected no duplicate missing-verify error, got errors={:?}, warnings={:?}",
             findings.errors,
             findings.warnings
@@ -949,7 +1242,7 @@ verify add1
         );
         let findings = check_module_intent(&items);
         assert!(
-            !findings.errors.iter().any(|e| e.contains("case #")),
+            !findings.errors.iter().any(|e| e.message.contains("case #")),
             "did not expect verify-case-call error, got errors={:?}, warnings={:?}",
             findings.errors,
             findings.warnings
@@ -970,7 +1263,8 @@ verify add1
         let findings = check_module_intent(&items);
         assert!(
             findings.errors.iter().any(|e| {
-                e.contains("Verify block 'add1' case #1 must not call 'add1' on the right side")
+                e.message
+                    .contains("Verify block 'add1' case #1 must not call 'add1' on the right side")
             }),
             "expected verify-case-rhs error, got errors={:?}, warnings={:?}",
             findings.errors,
@@ -995,7 +1289,7 @@ verify add1 law reflexive
             !findings
                 .errors
                 .iter()
-                .any(|e| e.contains("must call 'add1' on the left side")),
+                .any(|e| e.message.contains("must call 'add1' on the left side")),
             "did not expect lhs-call heuristic for law verify, got errors={:?}",
             findings.errors
         );
@@ -1003,7 +1297,7 @@ verify add1 law reflexive
             !findings
                 .errors
                 .iter()
-                .any(|e| e.contains("must not call 'add1' on the right side")),
+                .any(|e| e.message.contains("must not call 'add1' on the right side")),
             "did not expect rhs-call heuristic for law verify, got errors={:?}",
             findings.errors
         );
@@ -1011,7 +1305,7 @@ verify add1 law reflexive
             !findings
                 .errors
                 .iter()
-                .any(|e| e == "Function 'add1' has no verify block"),
+                .any(|e| e.message == "Function 'add1' has no verify block"),
             "law verify should satisfy verify requirement, got errors={:?}",
             findings.errors
         );
@@ -1065,6 +1359,147 @@ verify f
         assert_eq!(merged[0].cases.len(), 2);
         assert!(matches!(merged[1].kind, VerifyKind::Law(_)));
         assert!(matches!(merged[2].kind, VerifyKind::Law(_)));
+    }
+
+    #[test]
+    fn decision_unknown_symbol_impact_is_error() {
+        let items = parse_items(
+            r#"
+module M
+    intent =
+        "x"
+
+fn existing() -> Int
+    = 1
+
+verify existing
+    existing() => 1
+
+decision D
+    date = "2026-03-05"
+    reason =
+        "x"
+    chosen = ExistingChoice
+    rejected = []
+    impacts = [existing, missingThing]
+"#,
+        );
+        let findings = check_module_intent(&items);
+        assert!(
+            findings.errors.iter().any(|e| e
+                .message
+                .contains("Decision 'D' references unknown impact symbol 'missingThing'")),
+            "expected unknown-impact error, got errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
+        );
+    }
+
+    #[test]
+    fn decision_semantic_string_impact_is_allowed() {
+        let items = parse_items(
+            r#"
+module M
+    intent =
+        "x"
+
+fn existing() -> Int
+    = 1
+
+verify existing
+    existing() => 1
+
+decision D
+    date = "2026-03-05"
+    reason =
+        "x"
+    chosen = ExistingChoice
+    rejected = []
+    impacts = [existing, "error handling strategy"]
+"#,
+        );
+        let findings = check_module_intent(&items);
+        assert!(
+            !findings
+                .errors
+                .iter()
+                .any(|e| e.message.contains("references unknown impact symbol")),
+            "did not expect unknown-impact error, got errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
+        );
+    }
+
+    #[test]
+    fn decision_builtin_effect_impact_is_allowed() {
+        let items = parse_items(
+            r#"
+module M
+    intent =
+        "x"
+
+fn existing() -> Int
+    = 1
+
+verify existing
+    existing() => 1
+
+decision D
+    date = "2026-03-05"
+    reason =
+        "x"
+    chosen = ExistingChoice
+    rejected = []
+    impacts = [existing, Tcp]
+"#,
+        );
+        let tc = crate::types::checker::run_type_check_full(&items, None);
+        let findings = check_module_intent_with_sigs(&items, Some(&tc.fn_sigs));
+        assert!(
+            !findings
+                .errors
+                .iter()
+                .any(|e| e.message.contains("references unknown impact symbol 'Tcp'")),
+            "did not expect Tcp impact error, got errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
+        );
+    }
+
+    #[test]
+    fn decision_effect_alias_impact_is_allowed() {
+        let items = parse_items(
+            r#"
+module M
+    intent =
+        "x"
+
+effects AppIO = [Console, Disk]
+
+fn existing() -> Int
+    = 1
+
+verify existing
+    existing() => 1
+
+decision D
+    date = "2026-03-05"
+    reason =
+        "x"
+    chosen = ExistingChoice
+    rejected = []
+    impacts = [existing, AppIO]
+"#,
+        );
+        let findings = check_module_intent(&items);
+        assert!(
+            !findings.errors.iter().any(|e| e
+                .message
+                .contains("references unknown impact symbol 'AppIO'")),
+            "did not expect AppIO impact error, got errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
+        );
     }
 }
 

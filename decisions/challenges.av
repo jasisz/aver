@@ -12,7 +12,7 @@ decision DecisionVersioningUsesGitHistory
         "Adding in-language decision version links is extra complexity for a low-frequency case."
     chosen = CurrentStateInCode
     rejected = [SupersedesChains]
-    impacts = [DecisionBlocks, GitHistory, AIContext]
+    impacts = ["DecisionBlocks", "GitHistory", "AIContext"]
 
 decision ErrorMessagesAreAIFirst
     date = "2026-02-25"
@@ -23,7 +23,7 @@ decision ErrorMessagesAreAIFirst
         "Line numbers remain useful even when identifiers are unique in a module."
     chosen = ActionableAIErrors
     rejected = [HumanOnlyDiagnostics, VerboseHintsByDefault]
-    impacts = [TypeChecker, RuntimeErrors, DeveloperExperience]
+    impacts = ["TypeChecker", "RuntimeErrors", "DeveloperExperience"]
 
 decision ConcurrencyUsesParShapes
     date = "2026-02-25"
@@ -34,7 +34,7 @@ decision ConcurrencyUsesParShapes
         "Effects remain capability contracts and are not overloaded with scheduling semantics."
     chosen = ParListAndTuple
     rejected = [AsyncAwaitPromises, SpawnJoinApi]
-    impacts = [ConcurrencyModel, Effects, Runtime]
+    impacts = ["ConcurrencyModel", "Effects", "Runtime"]
 
 decision DebuggingIsVerifyFirst
     date = "2026-02-25"
@@ -45,7 +45,7 @@ decision DebuggingIsVerifyFirst
         "This workflow is naturally AI-friendly because it is declarative and reviewable."
     chosen = VerifyDrivenDebugging
     rejected = [BreakpointFirstWorkflow, PrintOnlyDebugging]
-    impacts = [VerifyBlocks, TestingDiscipline, AIWorkflow]
+    impacts = ["VerifyBlocks", "TestingDiscipline", "AIWorkflow"]
 
 decision FormattingUsesExplicitFunctions
     date = "2026-02-25"
@@ -56,7 +56,7 @@ decision FormattingUsesExplicitFunctions
         "This fits Aver's preference for obvious and composable primitives."
     chosen = ExplicitFormattingFns
     rejected = [StringFormatMiniLanguage]
-    impacts = [Stdlib, Readability, Simplicity]
+    impacts = ["Stdlib", "Readability", "Simplicity"]
 
 decision NetworkSafetyUsesRuntimeAllowlists
     date = "2026-02-25"
@@ -67,7 +67,7 @@ decision NetworkSafetyUsesRuntimeAllowlists
         "Allowlists in configuration with runtime enforcement provide honest and practical control."
     chosen = RuntimeAllowlistEnforcement
     rejected = [StaticUrlChecking]
-    impacts = [SecurityModel, Runtime, Configuration]
+    impacts = ["SecurityModel", "Runtime", "Configuration"]
 
 decision PackageManagementUsesFilesystem
     date = "2026-02-25"
@@ -78,7 +78,7 @@ decision PackageManagementUsesFilesystem
         "Directory conventions like libs make external code origin visible without new tooling."
     chosen = DotPathFileImports
     rejected = [RegistryFirstPackages, InstallCommand]
-    impacts = [ModuleSystem, ProjectLayout, Tooling]
+    impacts = ["ModuleSystem", "ProjectLayout", "Tooling"]
 
 decision VersioningDefersSemverInfrastructure
     date = "2026-02-25"
@@ -89,7 +89,7 @@ decision VersioningDefersSemverInfrastructure
         "Additional infrastructure is deferred until concrete scaling pain appears."
     chosen = FilePinningWithGit
     rejected = [SemverNow, LockfileNow]
-    impacts = [DependencyModel, Simplicity, Maintenance]
+    impacts = ["DependencyModel", "Simplicity", "Maintenance"]
 
 decision AIWorkflowPrioritizesConsistencyOverReuse
     date = "2026-02-25"
@@ -100,7 +100,7 @@ decision AIWorkflowPrioritizesConsistencyOverReuse
         "In this model consistency is often more valuable than maximal reuse."
     chosen = ContextLocalCodegen
     rejected = [PackageHeavyReuse]
-    impacts = [ArchitectureStyle, AIWorkflow, CodeQuality]
+    impacts = ["ArchitectureStyle", "AIWorkflow", "CodeQuality"]
 
 decision ExternalBoundariesStayMinimal
     date = "2026-02-25"
@@ -111,7 +111,7 @@ decision ExternalBoundariesStayMinimal
         "This supports constrained power without broad runtime magic."
     chosen = MinimalBoundaryServices
     rejected = [FFIFirstDesign, BroadBuiltinSurface]
-    impacts = [Interop, Security, RuntimeDesign]
+    impacts = ["Interop", "Security", "RuntimeDesign"]
 
 decision TcpStaysTextOrientedAtAverBoundary
     date = "2026-02-25"
@@ -122,7 +122,7 @@ decision TcpStaysTextOrientedAtAverBoundary
         "Binary protocol framing and parsing belongs in host services, not in core Aver code."
     chosen = TextTcpBoundary
     rejected = [BinarySocketApiInCoreAver]
-    impacts = [Tcp, Interop, LanguageScope]
+    impacts = [Tcp, "Interop", "LanguageScope"]
 
 decision EffectsAreFlatCapabilities
     date = "2026-02-25"
@@ -133,7 +133,7 @@ decision EffectsAreFlatCapabilities
         "Flat effects reduce conceptual overhead and keep contracts explicit."
     chosen = FlatCapabilities
     rejected = [EffectHierarchy]
-    impacts = [Effects, TypeChecker, MentalModel]
+    impacts = ["Effects", "TypeChecker", "MentalModel"]
 
 decision ServiceNamingShouldBePrecise
     date = "2026-02-25"
@@ -144,7 +144,7 @@ decision ServiceNamingShouldBePrecise
         "Precise naming improves readability for both humans and AI agents."
     chosen = PreferHttpName
     rejected = [NetworkAsUmbrellaName]
-    impacts = [Services, Documentation, UX]
+    impacts = ["Services", "Documentation", "UX"]
 
 decision ToolingIsReadFirst
     date = "2026-02-25"
@@ -155,7 +155,7 @@ decision ToolingIsReadFirst
         "LSP investment is deferred while AI-first workflows remain primary."
     chosen = ReadFirstTooling
     rejected = [LspFirstRoadmap]
-    impacts = [Tooling, EditorSupport, AIWorkflow]
+    impacts = ["Tooling", "EditorSupport", "AIWorkflow"]
 
 decision InteropTargetsUniversalInterfaces
     date = "2026-02-25"
@@ -166,7 +166,7 @@ decision InteropTargetsUniversalInterfaces
         "Aver intentionally treats these interfaces as primary integration boundaries."
     chosen = HttpAndDiskInterop
     rejected = [FFIHeavyInterop]
-    impacts = [Interop, Portability, Architecture]
+    impacts = ["Interop", "Portability", "Architecture"]
 
 decision LanguageScopeDefersGenericsTraits
     date = "2026-02-25"
@@ -177,7 +177,7 @@ decision LanguageScopeDefersGenericsTraits
         "Adding generics and trait systems now would increase complexity and blur language focus."
     chosen = ConcreteDomainTypes
     rejected = [GenericsNow, TraitsNow]
-    impacts = [TypeSystem, LanguageScope, Simplicity]
+    impacts = ["TypeSystem", "LanguageScope", "Simplicity"]
 
 decision FullNamespaceEverywhere
     date = "2026-02-26"
@@ -188,7 +188,7 @@ decision FullNamespaceEverywhere
         "One convention for everything: services, types, constructors, helpers."
     chosen = UniformNamespacing
     rejected = [BareBuiltins, MethodSyntax, Overloading]
-    impacts = [Stdlib, Readability, AIContext, LanguageScope]
+    impacts = ["Stdlib", "Readability", "AIContext", "LanguageScope"]
 
 decision NamespacedConstructors
     date = "2026-02-26"
@@ -198,4 +198,4 @@ decision NamespacedConstructors
         "Result.Ok and Option.Some follow the same dotted convention as Shape.Circle."
     chosen = QualifiedConstructors
     rejected = [BareConstructors]
-    impacts = [Result, Option, Consistency]
+    impacts = ["Result", "Option", "Consistency"]

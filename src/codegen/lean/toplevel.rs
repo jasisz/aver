@@ -449,7 +449,13 @@ pub fn emit_decision(db: &DecisionBlock) -> String {
         lines.push(format!("   Rejected: {}", db.rejected.join(", ")));
     }
     if !db.impacts.is_empty() {
-        lines.push(format!("   Impacts: {}", db.impacts.join(", ")));
+        let impacts = db
+            .impacts
+            .iter()
+            .map(|impact| impact.as_context_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("   Impacts: {}", impacts));
     }
     if let Some(author) = &db.author {
         lines.push(format!("   Author: {}", author));

@@ -2,6 +2,7 @@ use super::*;
 
 impl Parser {
     pub(super) fn parse_module(&mut self) -> Result<Module, ParseError> {
+        let line = self.current().line;
         self.expect_exact(&TokenKind::Module)?;
         let name_tok =
             self.expect_kind(&TokenKind::Ident(String::new()), "Expected module name")?;
@@ -42,6 +43,7 @@ impl Parser {
 
         Ok(Module {
             name,
+            line,
             depends,
             exposes,
             intent,

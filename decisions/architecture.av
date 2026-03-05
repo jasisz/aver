@@ -13,7 +13,7 @@ decision HostLanguage
         "The rich ecosystem (clap, colored, thiserror) let us ship a polished CLI without boilerplate."
     chosen = Rust
     rejected = [Python, Go, Haskell]
-    impacts = [Lexer, Parser, Interpreter, Checker]
+    impacts = ["Lexer", "Parser", "Interpreter", "Checker"]
 
 decision SignificantIndentation
     date = "2024-01-20"
@@ -24,7 +24,7 @@ decision SignificantIndentation
         "The lexer emits explicit INDENT and DEDENT tokens, keeping the parser context-free and easy to extend."
     chosen = Indentation
     rejected = [Braces, BeginEnd, Keywords]
-    impacts = [Lexer, Parser, AllModules]
+    impacts = ["Lexer", "Parser", "AllModules"]
 
 decision ResultOverExceptions
     date = "2024-01-15"
@@ -35,7 +35,7 @@ decision ResultOverExceptions
         "The match expression and the ? operator together give ergonomic error handling without sacrificing explicitness."
     chosen = Result
     rejected = [Exceptions, Nullable, Panic]
-    impacts = [Calculator, Interpreter, Checker]
+    impacts = ["Calculator", "Interpreter", "Checker"]
 
 decision ColocatedVerify
     date = "2024-01-25"
@@ -46,7 +46,7 @@ decision ColocatedVerify
         "Co-location also makes it trivial for an AI to regenerate or extend tests without searching the repository."
     chosen = ColocatedVerifyBlocks
     rejected = [SeparateTestFiles, ExternalTestFramework]
-    impacts = [Checker, AllFunctions]
+    impacts = ["Checker", "AllFunctions"]
 
 decision DecisionBlocksAsLanguageFeature
     date = "2024-02-01"
@@ -57,7 +57,7 @@ decision DecisionBlocksAsLanguageFeature
         "When an AI resumes work on a codebase, it can run aver decisions to reconstruct the design rationale without reading prose."
     chosen = FirstClassDecisions
     rejected = [MarkdownADR, Comments, ExternalWiki]
-    impacts = [Lexer, Parser, Checker, AIDeveloperExperience]
+    impacts = ["Lexer", "Parser", "Checker", "AIDeveloperExperience"]
 
 decision HybridExecutionModel
     date = "2026-03-01"
@@ -68,7 +68,7 @@ decision HybridExecutionModel
         "These paths solve different problems, so they should coexist instead of replacing each other."
     chosen = InterpreterPlusTranspiler
     rejected = [InterpreterOnly, TranspilerOnly, BytecodeVM]
-    impacts = [Interpreter, Transpiler, CLI, Performance]
+    impacts = ["Interpreter", "Transpiler", "CLI", "Performance"]
 
 decision RecordsAreDataMethodsInModules
     date = "2026-02-25"
@@ -79,7 +79,7 @@ decision RecordsAreDataMethodsInModules
         "This avoids introducing two parallel styles too early: methods on records and module functions."
     chosen = DataOnlyRecords
     rejected = [RecordMethods, ImplicitThis]
-    impacts = [TypeSystem, RecordModel, ModuleNamespaces]
+    impacts = ["TypeSystem", "RecordModel", "ModuleNamespaces"]
 
 decision EffectContractsAreTransparentAcrossModules
     date = "2026-02-25"
@@ -90,7 +90,7 @@ decision EffectContractsAreTransparentAcrossModules
         "Effect requirements propagate through cross-module calls, so callers must declare the effects required by imported functions."
     chosen = TransparentAcrossModules
     rejected = [OpaqueModuleContracts, ImplicitModuleCapabilities]
-    impacts = [ModuleSystem, Effects, TypeChecker, RuntimeGate]
+    impacts = ["ModuleSystem", "Effects", "TypeChecker", "RuntimeGate"]
 
 decision ConstructorContract
     date = "2026-02-26"
@@ -102,7 +102,7 @@ decision ConstructorContract
         "This removes the need for TypeAscription and all cross-cutting heuristics in the parser."
     chosen = UpperCamelCalleeContract
     rejected = [TypeAscriptionBased, KeywordConstructors, UniformParens]
-    impacts = [Parser, Interpreter, TypeChecker, AllModules]
+    impacts = ["Parser", "Interpreter", "TypeChecker", "AllModules"]
 
 fn describeDecision(decName: String, pick: String) -> String
     ? "Formats a one-line summary of an architectural decision."

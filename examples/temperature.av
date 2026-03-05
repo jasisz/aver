@@ -10,7 +10,7 @@ decision NoLoops
         "Each conversion is a single expression — no iteration needed."
     chosen = FunctionalPipeline
     rejected = [ImperativeLoop]
-    impacts = [convertBatch]
+    impacts = ["convertBatch"]
 
 fn celsiusToFahr(c: Float) -> Float
     ? "Converts Celsius to Fahrenheit using the standard formula."

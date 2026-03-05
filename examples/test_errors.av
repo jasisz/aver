@@ -1,0 +1,46 @@
+module TestErrors
+    intent =
+        "Intentional checker failures for manual smoke-testing `aver check`."
+
+effects AppIO = [Console, Disk]
+
+decision MixedImpacts
+    date = "2026-03-05"
+    reason =
+        "Demonstrates decision impact validation."
+    chosen = ExplicitImpacts
+    rejected = [ImplicitImpacts]
+    impacts = [pureNoVerify, Tcp, AppIO, "error handling strategy", missingImpact]
+
+fn badAdd(a: Int, b: Int) -> Int
+    ? "Simple valid function with verify."
+    = a + b
+
+verify badAdd
+    badAdd(1, 2) => 3
+
+fn noDescription(x: Int) -> Int
+    = x + 1
+
+verify noDescription
+    noDescription(1) => 2
+
+fn pureNoVerify(x: Int) -> Int
+    ? "Pure non-trivial function without verify (should be an error)."
+    = x + 2
+
+fn wrongReturn() -> Int
+    ? "Returns wrong type (type checker error)."
+    = "oops"
+
+fn overDeclaredEffects(msg: String) -> Unit
+    ? "Declares more effects than it uses (should warn about Http)."
+    ! [Console, Http]
+    = Console.print(msg)
+
+fn invalidVerifyRhs(x: Int) -> Int
+    ? "Verify RHS calls target function (should be checker error)."
+    = x + 1
+
+verify invalidVerifyRhs
+    invalidVerifyRhs(1) => invalidVerifyRhs(1)

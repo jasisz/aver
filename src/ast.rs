@@ -128,6 +128,7 @@ pub struct FnDef {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Module {
     pub name: String,
+    pub line: usize,
     pub depends: Vec<String>,
     pub exposes: Vec<String>,
     pub intent: String,
@@ -174,12 +175,34 @@ pub struct VerifyBlock {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DecisionBlock {
     pub name: String,
+    pub line: usize,
     pub date: String,
     pub reason: String,
     pub chosen: String,
     pub rejected: Vec<String>,
-    pub impacts: Vec<String>,
+    pub impacts: Vec<DecisionImpact>,
     pub author: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum DecisionImpact {
+    Symbol(String),
+    Semantic(String),
+}
+
+impl DecisionImpact {
+    pub fn text(&self) -> &str {
+        match self {
+            DecisionImpact::Symbol(s) | DecisionImpact::Semantic(s) => s,
+        }
+    }
+
+    pub fn as_context_string(&self) -> String {
+        match self {
+            DecisionImpact::Symbol(s) => s.clone(),
+            DecisionImpact::Semantic(s) => format!("\"{}\"", s),
+        }
+    }
 }
 
 /// A variant in a sum type definition.

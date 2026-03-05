@@ -6,7 +6,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use colored::Colorize;
 
 use aver::ast::TopLevel;
-use aver::checker::{check_module_intent, index_decisions, merge_verify_blocks, run_verify};
+use aver::checker::{
+    check_module_intent_with_sigs, index_decisions, merge_verify_blocks, run_verify,
+};
 use aver::codegen;
 use aver::codegen::ModuleInfo;
 use aver::codegen::lean as lean_codegen;
@@ -16,7 +18,7 @@ use aver::replay::{JsonValue, RecordedOutcome, value_to_json};
 use aver::resolver;
 use aver::source::{find_module_file, require_module_declaration};
 use aver::tco;
-use aver::types::checker::{run_type_check_full, run_type_check_with_base};
+use aver::types::checker::run_type_check_full;
 
 use crate::shared::{
     compile_program_for_exec, compute_memo_fns, load_dep_modules, parse_file, print_type_errors,
@@ -247,9 +249,9 @@ pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>) {
     println!("Check: {}", file.cyan());
 
     // --- Type errors (hard errors) ---
-    let type_errors = run_type_check_with_base(&items, Some(&module_root));
-    let has_errors = !type_errors.is_empty();
-    for te in &type_errors {
+    let tc_result = run_type_check_full(&items, Some(&module_root));
+    let has_errors = !tc_result.errors.is_empty();
+    for te in &tc_result.errors {
         println!("  {}", format!("error[{}]: {}", te.line, te.message).red());
     }
 
@@ -265,15 +267,15 @@ pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>) {
     }
 
     // Check intents, descriptions, and verify coverage
-    let findings = check_module_intent(&items);
+    let findings = check_module_intent_with_sigs(&items, Some(&tc_result.fn_sigs));
     if findings.errors.is_empty() && findings.warnings.is_empty() {
         println!("  {} All intent/desc/verify present", "✓".green());
     } else {
         for e in &findings.errors {
-            println!("  {} {}", "Error:".red(), e);
+            println!("  {}", format!("error[{}]: {}", e.line, e.message).red());
         }
         for w in &findings.warnings {
-            println!("  {} {}", "Error:".red(), w);
+            println!("  {}", format!("error[{}]: {}", w.line, w.message).red());
         }
     }
 

@@ -407,6 +407,7 @@ impl Parser {
     // Decision block
     // -------------------------------------------------------------------------
     pub(super) fn parse_decision(&mut self) -> Result<DecisionBlock, ParseError> {
+        let line = self.current().line;
         self.expect_exact(&TokenKind::Decision)?;
         let name_tok =
             self.expect_kind(&TokenKind::Ident(String::new()), "Expected decision name")?;
@@ -475,7 +476,7 @@ impl Parser {
                         self.skip_newlines();
                     }
                     "impacts" => {
-                        impacts = self.parse_ident_list()?;
+                        impacts = self.parse_decision_impacts_list()?;
                         self.skip_newlines();
                     }
                     "author" => {
@@ -504,6 +505,7 @@ impl Parser {
 
         Ok(DecisionBlock {
             name,
+            line,
             date,
             reason,
             chosen,
@@ -562,6 +564,39 @@ impl Parser {
         } else if let TokenKind::Ident(s) = self.current().kind.clone() {
             items.push(s);
             self.advance();
+        }
+
+        Ok(items)
+    }
+
+    fn parse_decision_impacts_list(&mut self) -> Result<Vec<DecisionImpact>, ParseError> {
+        let mut items = Vec::new();
+
+        if self.check_exact(&TokenKind::LBracket) {
+            self.advance();
+            while !self.check_exact(&TokenKind::RBracket) && !self.is_eof() {
+                match self.current().kind.clone() {
+                    TokenKind::Ident(s) => {
+                        items.push(DecisionImpact::Symbol(s));
+                        self.advance();
+                    }
+                    TokenKind::Str(s) => {
+                        items.push(DecisionImpact::Semantic(s));
+                        self.advance();
+                    }
+                    TokenKind::Comma => {
+                        self.advance();
+                    }
+                    _ => {
+                        return Err(self.error(
+                            "Expected identifier or string in decision 'impacts' list".to_string(),
+                        ));
+                    }
+                }
+            }
+            self.expect_exact(&TokenKind::RBracket)?;
+        } else {
+            return Err(self.error("Expected '[' to start list".to_string()));
         }
 
         Ok(items)

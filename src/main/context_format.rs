@@ -1,10 +1,17 @@
-use aver::ast::{DecisionBlock, FnDef, TypeDef};
+use aver::ast::{DecisionBlock, DecisionImpact, FnDef, TypeDef};
 use aver::checker::expr_to_str;
 
 use crate::context_data::FileContext;
 
 const JSON_VERIFY_SAMPLE_LIMIT: usize = 3;
 const VERIFY_SAMPLE_POLICY_ID: &str = "source_head_3";
+
+fn impact_texts(impacts: &[DecisionImpact]) -> Vec<String> {
+    impacts
+        .iter()
+        .map(DecisionImpact::as_context_string)
+        .collect()
+}
 const CONTEXT_SCHEMA_VERSION: u32 = 2;
 const ANALYSIS_ENCODING_VERSION: u32 = 1;
 const ANALYSIS_FLAG_AUTO_MEMO: u8 = 1;
@@ -194,7 +201,10 @@ pub(super) fn format_context_md(contexts: &[FileContext], entry_file: &str) -> S
                 out.push_str(&format!("> {}\n", reason));
             }
             if !dec.impacts.is_empty() {
-                out.push_str(&format!("impacts: `{}`\n", dec.impacts.join("`, `")));
+                out.push_str(&format!(
+                    "impacts: `{}`\n",
+                    impact_texts(&dec.impacts).join("`, `")
+                ));
             }
             out.push('\n');
         }
@@ -477,7 +487,10 @@ pub(super) fn format_context_json(contexts: &[FileContext], entry_file: &str) ->
             let rej: Vec<String> = dec.rejected.iter().map(|r| json_str(r)).collect();
             out.push_str(&format!("      \"rejected\": [{}],\n", rej.join(", ")));
             out.push_str(&format!("      \"reason\": {},\n", json_str(&dec.reason)));
-            let imp: Vec<String> = dec.impacts.iter().map(|i| json_str(i)).collect();
+            let imp: Vec<String> = impact_texts(&dec.impacts)
+                .iter()
+                .map(|i| json_str(i))
+                .collect();
             out.push_str(&format!("      \"impacts\": [{}],\n", imp.join(", ")));
             match &dec.author {
                 Some(a) => out.push_str(&format!("      \"author\": {}\n", json_str(a))),
@@ -515,7 +528,10 @@ pub(super) fn format_decisions_md(decisions: &[&DecisionBlock], entry_file: &str
             out.push_str(&format!("**Rejected:** {}\n", dec.rejected.join(", ")));
         }
         if !dec.impacts.is_empty() {
-            out.push_str(&format!("**Impacts:** {}\n", dec.impacts.join(", ")));
+            out.push_str(&format!(
+                "**Impacts:** {}\n",
+                impact_texts(&dec.impacts).join(", ")
+            ));
         }
         if !dec.reason.is_empty() {
             out.push_str(&format!("\n> {}\n", dec.reason));
@@ -546,7 +562,10 @@ pub(super) fn format_decisions_json(decisions: &[&DecisionBlock], entry_file: &s
             let rej: Vec<String> = dec.rejected.iter().map(|r| json_str(r)).collect();
             out.push_str(&format!("      \"rejected\": [{}],\n", rej.join(", ")));
             out.push_str(&format!("      \"reason\": {},\n", json_str(&dec.reason)));
-            let imp: Vec<String> = dec.impacts.iter().map(|i| json_str(i)).collect();
+            let imp: Vec<String> = impact_texts(&dec.impacts)
+                .iter()
+                .map(|i| json_str(i))
+                .collect();
             out.push_str(&format!("      \"impacts\": [{}],\n", imp.join(", ")));
             match &dec.author {
                 Some(a) => out.push_str(&format!("      \"author\": {}\n", json_str(a))),

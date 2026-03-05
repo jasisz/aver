@@ -339,7 +339,7 @@ fn valid_services_weather_av() {
 
 #[test]
 fn valid_call_to_exposed_module_member() {
-    let src = "module App\n    depends [Secret]\n    intent =\n        \"Uses exported function\"\nfn main() -> Unit\n    x = Secret.pub()\n";
+    let src = "module App\n    depends [models.User]\n    intent =\n        \"Uses exported function\"\nfn main() -> Unit\n    x = models.User.nameById(1)\n";
     let errs = errors_with_base(src, "examples");
     assert!(
         errs.is_empty(),
@@ -568,11 +568,11 @@ fn error_undeclared_effect_from_function_typed_callback() {
 
 #[test]
 fn error_call_to_unexposed_module_member() {
-    let src = "module App\n    depends [Secret]\n    intent =\n        \"Tries to use hidden member\"\nfn main() -> Unit\n    x = Secret.hidden()\n";
+    let src = "module App\n    depends [models.User]\n    intent =\n        \"Tries to use hidden member\"\nfn main() -> Unit\n    x = models.User.hidden()\n";
     let errs = errors_with_base(src, "examples");
     assert!(
-        errs.iter().any(|e| e.contains("Secret.hidden")),
-        "expected exposes error mentioning Secret.hidden, got:\n  {}",
+        errs.iter().any(|e| e.contains("models.User.hidden")),
+        "expected exposes error mentioning models.User.hidden, got:\n  {}",
         if errs.is_empty() {
             "<no errors>".to_string()
         } else {

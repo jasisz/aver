@@ -566,7 +566,7 @@ Requires: Rust stable toolchain.
 | `services/tcp_demo.av` | TCP persistent connections (`Tcp.Connection`) |
 | `services/weather.av` | End-to-end service: `HttpServer` + `Http` + `Tcp` |
 | `decisions/architecture.av` | The interpreter documents itself in Aver |
-| `type_errors.av` | Intentional type errors — shows what the checker catches |
+| `test_errors.av` | Intentional `aver check` failures: type errors + verify/decision/effect diagnostics |
 
 ---
 
