@@ -220,7 +220,7 @@ pub(super) fn cmd_run(
     }
 }
 
-pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>, strict: bool) {
+pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>) {
     let module_root = resolve_module_root(module_root_override);
     let source = match read_file(file) {
         Ok(s) => s,
@@ -272,13 +272,8 @@ pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>, strict: 
         for e in &findings.errors {
             println!("  {} {}", "Error:".red(), e);
         }
-        let warning_label = if strict {
-            "Error:".red()
-        } else {
-            "Warning:".yellow()
-        };
         for w in &findings.warnings {
-            println!("  {} {}", warning_label, w);
+            println!("  {} {}", "Error:".red(), w);
         }
     }
 
@@ -294,7 +289,7 @@ pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>, strict: 
 
     let has_warnings = !findings.warnings.is_empty();
     let has_contract_errors = !findings.errors.is_empty();
-    if has_errors || has_contract_errors || (strict && has_warnings) {
+    if has_errors || has_contract_errors || has_warnings {
         process::exit(1);
     } else {
         println!("  {} Type check passed", "✓".green());

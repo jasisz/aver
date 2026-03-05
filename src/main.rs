@@ -35,12 +35,8 @@ fn main() {
         } => {
             commands::cmd_run(file, module_root.as_deref(), *verify, record.as_deref());
         }
-        Commands::Check {
-            file,
-            module_root,
-            strict,
-        } => {
-            commands::cmd_check(file, module_root.as_deref(), *strict);
+        Commands::Check { file, module_root } => {
+            commands::cmd_check(file, module_root.as_deref());
         }
         Commands::Verify { file, module_root } => {
             commands::cmd_verify(file, module_root.as_deref());

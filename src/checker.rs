@@ -428,7 +428,9 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
             (Ok(left_val), Ok(right_val)) => {
                 if interp.aver_eq(&left_val, &right_val) {
                     passed += 1;
-                    println!("  {} {}", "✓".green(), case_label);
+                    if !is_law {
+                        println!("  {} {}", "✓".green(), case_label);
+                    }
                 } else {
                     failed += 1;
                     println!("  {} {}", "✗".red(), case_label);
@@ -518,6 +520,13 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
     }
 
     let total = passed + failed;
+    if is_law && failed == 0 {
+        println!(
+            "  {} all {} generated case(s) passed",
+            "✓".green(),
+            block.cases.len()
+        );
+    }
     if failed == 0 {
         println!("  {}", format!("{}/{} passed", passed, total).green());
     } else {

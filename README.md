@@ -202,7 +202,7 @@ aver run       file.av --verify          # execute + run verify blocks
 aver run       file.av --record recs/    # execute + record effect trace
 aver replay    recs/rec-123.json         # replay one recording offline
 aver replay    recs/ --test --diff       # replay suite; fail on output mismatch
-aver check     file.av                   # type errors + intent/desc warnings
+aver check     file.av                   # static gate: types/effects + intent/desc/verify policy
 aver verify    file.av                   # run all verify blocks
 aver format    .                         # format all .av files under current directory
 aver format    path/to/file.av --check   # check formatting only (non-zero if changes needed)
@@ -481,7 +481,7 @@ Aver ships with a VS Code extension and a Language Server Protocol (LSP) server.
 | Feature | Description |
 |---------|-------------|
 | Syntax highlighting | TextMate grammar — keywords, types, effects, string interpolation, `?` descriptions |
-| Diagnostics | Lex, parse, and type errors shown inline. `check` warnings (missing `?`, missing `verify`) as yellow underlines |
+| Diagnostics | Lex, parse, and type errors shown inline. Project-policy diagnostics (`?`, `verify`, intent) are shown with source locations. |
 | Completion | Built-in namespaces (`List.`, `Console.`), user-defined types (`Shape.`), user functions, module members — all cross-module |
 | Hover | Full function source (≤12 lines), type definitions, variable types, namespace member signatures |
 | Go-to-definition | Jump to function, type, or binding — works cross-file for module dependencies |

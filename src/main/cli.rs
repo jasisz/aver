@@ -51,9 +51,6 @@ pub(super) enum Commands {
         /// Resolve `depends [...]` from this root (default: current working directory)
         #[arg(long)]
         module_root: Option<String>,
-        /// Treat all warnings as errors (exit 1 if any warning)
-        #[arg(long)]
-        strict: bool,
     },
     /// Run all verify blocks
     Verify {
