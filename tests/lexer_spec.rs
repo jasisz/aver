@@ -160,6 +160,22 @@ fn decision_fields_are_regular_identifiers() {
     );
 }
 
+#[test]
+fn legacy_keywords_are_plain_identifiers() {
+    assert_eq!(
+        lex("effect service needs case where input expect"),
+        vec![
+            TokenKind::Ident("effect".to_string()),
+            TokenKind::Ident("service".to_string()),
+            TokenKind::Ident("needs".to_string()),
+            TokenKind::Ident("case".to_string()),
+            TokenKind::Ident("where".to_string()),
+            TokenKind::Ident("input".to_string()),
+            TokenKind::Ident("expect".to_string()),
+        ]
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Constructors
 // ---------------------------------------------------------------------------
