@@ -688,6 +688,14 @@ fn emit_builtin_call_inner(
             ))
         }
 
+        // ---- Time ----
+        "Time.now" => Some("aver_rt::time_now()".to_string()),
+        "Time.unixMs" => Some("aver_rt::time_unix_ms()".to_string()),
+        "Time.sleep" => {
+            let ms = emit_expr(&args[0], ctx, ectx);
+            Some(format!("aver_rt::time_sleep({})", ms))
+        }
+
         _ => None,
     }
 }

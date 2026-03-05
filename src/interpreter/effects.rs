@@ -22,6 +22,10 @@ impl Interpreter {
         if !e.is_empty() {
             return e;
         }
+        let e = time::effects(name);
+        if !e.is_empty() {
+            return e;
+        }
         let e = int::effects(name);
         if !e.is_empty() {
             return e;

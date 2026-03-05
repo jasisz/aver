@@ -515,6 +515,7 @@ Aver ships built-in namespaces for I/O. All require explicit effect declarations
 | `HttpServer` | `! [HttpServer.listen]` / `! [HttpServer.listenWith]` | `listen`, `listenWith` |
 | `Disk` | `! [Disk.readText]` / `! [Disk.writeText]` / etc. | `readText`, `writeText`, `appendText`, `exists`, `delete`, `deleteDir`, `listDir`, `makeDir` |
 | `Tcp` | `! [Tcp.send]` / `! [Tcp.ping]` / etc. | `connect`, `writeLine`, `readLine`, `close`, `send`, `ping` |
+| `Time` | `! [Time.now]` / `! [Time.unixMs]` / `! [Time.sleep]` | `now`, `unixMs`, `sleep` |
 
 Each effectful namespace also supports method-level declarations (`Http.get`, `Disk.readText`, `Console.print`, etc.). Parent namespace effects stay valid (`Http` covers `Http.*`).
 
@@ -642,36 +643,3 @@ Requires: Rust stable toolchain.
 | [docs/extending.md](docs/extending.md) | How to add keywords, namespace functions, expression types |
 | [docs/transpilation.md](docs/transpilation.md) | Transpilation (`aver compile`): targets, flags, supported features |
 | [docs/decisions.md](docs/decisions.md) | Partially generated ADR document from `decision` blocks |
-
----
-
-## Project status
-
-Implemented in Rust with extensive automated test coverage.
-
-- [x] Lexer with significant indentation (Python-style INDENT/DEDENT)
-- [x] Recursive-descent parser — hand-written, no libraries
-- [x] Static type checker — blocks execution on type errors
-- [x] Effect system — statically enforced + runtime call-edge gate
-- [x] `verify` block runner — co-located tests
-- [x] `decision` tooling — queryable ADRs via `aver context --decisions-only` and docs generation via `aver decisions --docs`
-- [x] List builtins: `map`, `filter`, `fold`, `get`, `head`, `tail`, `push`, `find`, `any`, `contains`, `zip`, `flatMap`
-- [x] User-defined sum types (`type`) and product types (`record`)
-- [x] List pattern matching (`[]`, `[h, ..t]`), tuple patterns (`(a, b)`, nested)
-- [x] Module imports (`depends [Examples.Foo]`, `depends [Examples.Models.User]`)
-- [x] AI context export — `aver context` emits Markdown or JSON
-- [x] Interactive REPL — persistent state, multi-line, type-checked
-- [x] Built-in services — Console, Http, HttpServer, Disk, Tcp — `! [Effect]` enforced everywhere
-- [x] Deterministic replay — `aver run --record` + `aver replay` for effectful regression testing
-- [x] Record update — `User.update(u, age = 31)`
-- [x] Auto-memoization — pure recursive functions with scalar args
-- [x] Tail-call optimization — self and mutual recursion
-- [x] Effect aliases — `effects AppIO = [Console, Disk]`
-- [x] Map, Char, Byte pure namespaces
-- [x] Pipe operator — `value |> fn`
-- [x] Error propagation — `expr?` on Result values
-- [x] String interpolation — `"Hello, {name}!"`
-- [x] Transpilation — `aver compile` to Rust (all examples, modules, services)
-- [x] Compile-time variable resolution
-- [x] LSP server — diagnostics, completion, hover, go-to-definition, signature help (cross-module)
-- [x] VS Code extension — syntax highlighting + LSP client

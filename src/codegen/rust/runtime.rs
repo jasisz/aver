@@ -21,6 +21,76 @@ pub fn generate_runtime() -> String {
         Ok(buf)
     }
 
+    /// Current UTC timestamp in RFC3339-like form (with milliseconds).
+    pub fn time_now() -> String {
+        let (secs, nanos) = unix_parts_now();
+        format_utc_rfc3339_like(secs, nanos)
+    }
+
+    /// Unix epoch milliseconds as i64.
+    pub fn time_unix_ms() -> i64 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("Time.unixMs: system clock error");
+        i64::try_from(now.as_millis()).expect("Time.unixMs: value out of i64 range")
+    }
+
+    /// Sleep current thread for `ms` milliseconds.
+    pub fn time_sleep(ms: i64) {
+        if ms < 0 {
+            panic!("Time.sleep: ms must be non-negative");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+    }
+
+    fn unix_parts_now() -> (i64, u32) {
+        match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => (
+                i64::try_from(d.as_secs()).expect("Time.now: seconds out of i64 range"),
+                d.subsec_nanos(),
+            ),
+            Err(e) => {
+                let d = e.duration();
+                let secs = i64::try_from(d.as_secs()).expect("Time.now: seconds out of i64 range");
+                let nanos = d.subsec_nanos();
+                if nanos == 0 {
+                    (-secs, 0)
+                } else {
+                    (-(secs + 1), 1_000_000_000 - nanos)
+                }
+            }
+        }
+    }
+
+    fn format_utc_rfc3339_like(unix_secs: i64, nanos: u32) -> String {
+        let days = unix_secs.div_euclid(86_400);
+        let sod = unix_secs.rem_euclid(86_400);
+        let hour = sod / 3_600;
+        let minute = (sod % 3_600) / 60;
+        let second = sod % 60;
+        let millis = nanos / 1_000_000;
+        let (year, month, day) = civil_from_days(days);
+        format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+            year, month, day, hour, minute, second, millis
+        )
+    }
+
+    /// Convert days since unix epoch (1970-01-01) to Gregorian Y-M-D.
+    fn civil_from_days(days_since_epoch: i64) -> (i32, u32, u32) {
+        let z = days_since_epoch + 719_468;
+        let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+        let doe = z - era * 146_097; // [0, 146096]
+        let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365; // [0,399]
+        let y = yoe + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0,365]
+        let mp = (5 * doy + 2) / 153; // [0,11]
+        let day = doy - (153 * mp + 2) / 5 + 1; // [1,31]
+        let month = mp + if mp < 10 { 3 } else { -9 }; // [1,12]
+        let year = y + if month <= 2 { 1 } else { 0 };
+        (year as i32, month as u32, day as u32)
+    }
+
     /// Code-point based string slice, matching Aver's String.slice semantics.
     pub fn string_slice(s: &str, from: i64, to: i64) -> String {
         let chars: Vec<char> = s.chars().collect();

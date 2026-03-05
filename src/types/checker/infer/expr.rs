@@ -52,6 +52,24 @@ fn display_type_for_expected(ty: &Type) -> String {
     }
 }
 
+fn const_int_expr(expr: &Expr) -> Option<i64> {
+    match expr {
+        Expr::Literal(crate::ast::Literal::Int(i)) => Some(*i),
+        Expr::BinOp(op, left, right) => {
+            let l = const_int_expr(left)?;
+            let r = const_int_expr(right)?;
+            match op {
+                crate::ast::BinOp::Add => l.checked_add(r),
+                crate::ast::BinOp::Sub => l.checked_sub(r),
+                crate::ast::BinOp::Mul => l.checked_mul(r),
+                crate::ast::BinOp::Div => l.checked_div(r),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 impl TypeChecker {
     pub(in super::super) fn infer_type(&mut self, expr: &Expr) -> Type {
         match expr {
@@ -112,10 +130,25 @@ impl TypeChecker {
                     }
                     sig.ret
                 };
+                let validate_special_call =
+                    |tc: &mut Self, display_name: &str, call_args: &[Expr]| {
+                        if display_name == "Time.sleep"
+                            && call_args.len() == 1
+                            && let Some(ms) = const_int_expr(&call_args[0])
+                            && ms < 0
+                        {
+                            tc.error(
+                                "Argument 1 of 'Time.sleep' must be a non-negative Int constant"
+                                    .to_string(),
+                            );
+                        }
+                    };
 
                 if let Expr::Ident(name) = fn_expr.as_ref() {
                     if let Some(sig) = self.fn_sigs.get(name).cloned() {
-                        return check_call(self, name, sig);
+                        let ret = check_call(self, name, sig);
+                        validate_special_call(self, name, args);
+                        return ret;
                     }
                     if let Some(binding_ty) = self.binding_type(name) {
                         if let Some(sig) = Self::sig_from_callable_type(&binding_ty) {
@@ -181,7 +214,9 @@ impl TypeChecker {
                         _ => {}
                     }
                     if let Some(sig) = self.fn_sigs.get(&display_name).cloned() {
-                        return check_call(self, &display_name, sig);
+                        let ret = check_call(self, &display_name, sig);
+                        validate_special_call(self, &display_name, args);
+                        return ret;
                     }
                 }
 

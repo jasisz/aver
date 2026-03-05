@@ -68,6 +68,7 @@ impl TypeChecker {
                     "Disk".to_string(),
                     "Tcp".to_string(),
                     "HttpServer".to_string(),
+                    "Time".to_string(),
                 ],
             )
         };
@@ -81,6 +82,7 @@ impl TypeChecker {
                     "Disk".to_string(),
                     "Tcp".to_string(),
                     "HttpServer".to_string(),
+                    "Time".to_string(),
                 ],
             )
         };
@@ -209,6 +211,9 @@ impl TypeChecker {
                 Type::Result(Box::new(Type::Unit), Box::new(Type::Str)),
                 &["Tcp.close"],
             ),
+            ("Time.now", &[], Type::Str, &["Time.now"]),
+            ("Time.unixMs", &[], Type::Int, &["Time.unixMs"]),
+            ("Time.sleep", &[Type::Int], Type::Unit, &["Time.sleep"]),
         ];
         for (name, params, ret, effects) in service_sigs {
             self.insert_sig(name, params, ret.clone(), effects);

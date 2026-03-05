@@ -922,6 +922,52 @@ fn valid_console_all_methods_with_effect() {
 }
 
 // ---------------------------------------------------------------------------
+// Time service effect checking
+// ---------------------------------------------------------------------------
+
+#[test]
+fn error_time_now_without_effect() {
+    let src = concat!("fn ts() -> String\n", "    = Time.now()\n",);
+    assert_error_containing(src, "has effect 'Time.now'");
+}
+
+#[test]
+fn error_time_unix_ms_without_effect() {
+    let src = concat!("fn ts() -> Int\n", "    = Time.unixMs()\n",);
+    assert_error_containing(src, "has effect 'Time.unixMs'");
+}
+
+#[test]
+fn error_time_sleep_without_effect() {
+    let src = concat!("fn wait() -> Unit\n", "    Time.sleep(1)\n",);
+    assert_error_containing(src, "has effect 'Time.sleep'");
+}
+
+#[test]
+fn valid_time_calls_with_effect() {
+    let src = concat!(
+        "fn run() -> Int\n",
+        "    ! [Time]\n",
+        "    Time.sleep(1)\n",
+        "    Time.unixMs()\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn error_time_sleep_negative_constant() {
+    let src = concat!(
+        "fn wait() -> Unit\n",
+        "    ! [Time]\n",
+        "    Time.sleep(0 - 1)\n",
+    );
+    assert_error_containing(
+        src,
+        "Argument 1 of 'Time.sleep' must be a non-negative Int constant",
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Record field access type checking
 // ---------------------------------------------------------------------------
 

@@ -314,6 +314,9 @@ impl Interpreter {
                 if let Some(r) = tcp::call(name, args) {
                     return r;
                 }
+                if let Some(r) = time::call(name, args) {
+                    return r;
+                }
                 if let Some(r) = int::call(name, args) {
                     return r;
                 }

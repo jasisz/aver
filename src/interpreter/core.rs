@@ -9,6 +9,7 @@ impl Interpreter {
         http_server::register(&mut global);
         disk::register(&mut global);
         tcp::register(&mut global);
+        time::register(&mut global);
         int::register(&mut global);
         float::register(&mut global);
         string::register(&mut global);

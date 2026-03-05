@@ -1963,6 +1963,109 @@ mod console_tests {
 }
 
 // ---------------------------------------------------------------------------
+// Time service tests
+// ---------------------------------------------------------------------------
+
+mod time_tests {
+    use super::*;
+    use aver::interpreter::{Interpreter, Value};
+
+    fn run_time_fn(src: &str, fn_name: &str) -> Value {
+        let items = parse(src);
+        let mut interp = Interpreter::new();
+        for item in &items {
+            if let TopLevel::FnDef(fd) = item {
+                interp.exec_fn_def(fd).expect("exec_fn_def failed");
+            }
+        }
+        let fn_val = interp.lookup(fn_name).expect("fn not found");
+        let effects = Interpreter::callable_declared_effects(&fn_val);
+        interp
+            .call_value_with_effects_pub(fn_val, vec![], fn_name, effects)
+            .expect("call failed")
+    }
+
+    #[test]
+    fn time_now_returns_string() {
+        let src = concat!(
+            "fn now() -> String\n",
+            "    ! [Time]\n",
+            "    = Time.now()\n",
+        );
+        let val = run_time_fn(src, "now");
+        match val {
+            Value::Str(s) => {
+                assert!(!s.is_empty(), "expected non-empty timestamp");
+                assert!(
+                    s.contains('T') && s.ends_with('Z'),
+                    "unexpected format: {}",
+                    s
+                );
+            }
+            other => panic!("expected String, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn time_unix_ms_returns_int() {
+        let src = concat!(
+            "fn nowMs() -> Int\n",
+            "    ! [Time]\n",
+            "    = Time.unixMs()\n",
+        );
+        let val = run_time_fn(src, "nowMs");
+        match val {
+            Value::Int(ms) => assert!(ms > 0, "expected positive unix ms, got {}", ms),
+            other => panic!("expected Int, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn time_sleep_negative_returns_runtime_error() {
+        let src = concat!(
+            "fn wait() -> Unit\n",
+            "    ! [Time]\n",
+            "    Time.sleep(0 - 1)\n",
+        );
+        let items = parse(src);
+        let mut interp = Interpreter::new();
+        for item in &items {
+            if let TopLevel::FnDef(fd) = item {
+                interp.exec_fn_def(fd).expect("exec_fn_def failed");
+            }
+        }
+        let fn_val = interp.lookup("wait").expect("fn not found");
+        let effects = Interpreter::callable_declared_effects(&fn_val);
+        let err = interp
+            .call_value_with_effects_pub(fn_val, vec![], "wait", effects)
+            .expect_err("expected runtime error");
+        assert!(
+            err.to_string()
+                .contains("Time.sleep: ms must be non-negative"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn runtime_gate_blocks_time_now_without_effect() {
+        let items = parse("Time.now()");
+        let item = items.into_iter().next().expect("no items");
+        if let TopLevel::Stmt(Stmt::Expr(expr)) = item {
+            let mut interp = Interpreter::new();
+            let err = interp
+                .eval_expr(&expr)
+                .expect_err("expected runtime gate error");
+            let msg = err.to_string();
+            assert!(msg.contains("Runtime effect violation"), "got: {}", msg);
+            assert!(msg.contains("Time.now"), "got: {}", msg);
+        } else {
+            panic!("expected a single expression");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tcp builtins
 // ---------------------------------------------------------------------------
 
