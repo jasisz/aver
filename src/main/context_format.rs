@@ -27,7 +27,7 @@ fn decision_ref_text(reference: &DecisionImpact) -> String {
 fn decision_ref_json_text(reference: &DecisionImpact) -> &str {
     reference.text()
 }
-const CONTEXT_SCHEMA_VERSION: u32 = 2;
+const CONTEXT_SCHEMA_VERSION: u32 = 3;
 const ANALYSIS_ENCODING_VERSION: u32 = 1;
 const ANALYSIS_FLAG_AUTO_MEMO: u8 = 1;
 const ANALYSIS_FLAG_AUTO_TCO: u8 = 2;
@@ -74,6 +74,23 @@ pub(super) fn format_context_md(contexts: &[FileContext], entry_file: &str) -> S
 
         if let Some(intent) = &ctx.intent {
             out.push_str(&format!("> {}\n\n", intent));
+        }
+
+        out.push_str(&format!(
+            "api_effects: `[{}]`  \n",
+            ctx.api_effects.join(", ")
+        ));
+        out.push_str(&format!(
+            "module_effects: `[{}]`  \n",
+            ctx.module_effects.join(", ")
+        ));
+        if let Some(main_effects) = &ctx.main_effects {
+            out.push_str(&format!(
+                "main_effects: `[{}]`\n\n",
+                main_effects.join(", ")
+            ));
+        } else {
+            out.push_str("main_effects: `null`\n\n");
         }
 
         // Effect set aliases
@@ -284,6 +301,37 @@ pub(super) fn format_context_json(contexts: &[FileContext], entry_file: &str) ->
         match &ctx.intent {
             Some(i) => out.push_str(&format!("      \"intent\": {},\n", json_str(i))),
             None => out.push_str("      \"intent\": null,\n"),
+        }
+        let api_effects = ctx
+            .api_effects
+            .iter()
+            .map(|e| json_str(e))
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push_str(&format!("      \"api_effects\": [{}],\n", api_effects));
+        let module_effects = ctx
+            .module_effects
+            .iter()
+            .map(|e| json_str(e))
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push_str(&format!(
+            "      \"module_effects\": [{}],\n",
+            module_effects
+        ));
+        match &ctx.main_effects {
+            Some(main_effects) => {
+                let main_effects_json = main_effects
+                    .iter()
+                    .map(|e| json_str(e))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                out.push_str(&format!(
+                    "      \"main_effects\": [{}],\n",
+                    main_effects_json
+                ));
+            }
+            None => out.push_str("      \"main_effects\": null,\n"),
         }
 
         // effect_sets

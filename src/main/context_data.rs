@@ -15,6 +15,9 @@ pub(super) struct FileContext {
     pub(super) module_name: Option<String>,
     pub(super) intent: Option<String>,
     pub(super) exposes: Vec<String>,
+    pub(super) api_effects: Vec<String>,
+    pub(super) module_effects: Vec<String>,
+    pub(super) main_effects: Option<Vec<String>>,
     pub(super) fn_defs: Vec<FnDef>,
     pub(super) fn_auto_memo: HashSet<String>,
     pub(super) fn_memo_qual: HashMap<String, Vec<String>>,
@@ -25,6 +28,19 @@ pub(super) struct FileContext {
     pub(super) effect_sets: Vec<(String, Vec<String>)>,
     pub(super) verify_blocks: Vec<VerifyBlock>,
     pub(super) decisions: Vec<DecisionBlock>,
+}
+
+fn unique_sorted_effects<'a, I>(effects: I) -> Vec<String>
+where
+    I: Iterator<Item = &'a String>,
+{
+    let mut uniq = effects
+        .cloned()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    uniq.sort();
+    uniq
 }
 
 struct ContextFnFlags {
@@ -182,6 +198,9 @@ pub(super) fn collect_contexts(
         module_name: None,
         intent: None,
         exposes: vec![],
+        api_effects: vec![],
+        module_effects: vec![],
+        main_effects: None,
         fn_defs: vec![],
         fn_auto_memo: HashSet::new(),
         fn_memo_qual: HashMap::new(),
@@ -225,6 +244,21 @@ pub(super) fn collect_contexts(
     ctx.fn_memo_qual = flags.memo_qual;
     ctx.fn_recursive_callsites = flags.recursive_callsites;
     ctx.fn_recursive_scc_id = flags.recursive_scc_id;
+
+    // Effect summaries are calculated from the full function set
+    // before the public-function filtering done for display.
+    ctx.module_effects = unique_sorted_effects(ctx.fn_defs.iter().flat_map(|fd| fd.effects.iter()));
+    ctx.api_effects = unique_sorted_effects(
+        ctx.fn_defs
+            .iter()
+            .filter(|fd| ctx.exposes.contains(&fd.name))
+            .flat_map(|fd| fd.effects.iter()),
+    );
+    ctx.main_effects = ctx
+        .fn_defs
+        .iter()
+        .find(|fd| fd.name == "main")
+        .map(|fd| unique_sorted_effects(fd.effects.iter()));
 
     // Filter functions by exposes if the list is non-empty
     if !ctx.exposes.is_empty() {
