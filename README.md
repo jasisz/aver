@@ -300,7 +300,7 @@ See [docs/transpilation.md](docs/transpilation.md) for full transpilation docume
 ### Lean target (`-t lean`, WIP)
 
 Lean transpilation emits a Lean 4 project (`lakefile.lean`, `lean-toolchain`, `<Project>.lean`) for pure core logic.
-Lean is an optional proof-checking backend: write in Aver, transpile pure code, and let Lean machine-check correctness obligations.
+Lean is an optional proof-checking backend: write in Aver, transpile pure code, and let Lean machine-check your verify blocks as formal theorems.
 
 - Pure functions, types, and decisions are emitted.
 - Effectful functions and `main` are intentionally skipped.
