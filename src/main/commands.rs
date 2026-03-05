@@ -170,6 +170,24 @@ fn finding_location(f: &CheckFinding, entry_module: Option<&str>) -> String {
     }
 }
 
+fn display_check_path(path: &str, module_root: &str) -> String {
+    let p = Path::new(path);
+    let root = Path::new(module_root);
+
+    if p.is_absolute() {
+        if let Some(rel) = relativize_to(root, p).or_else(|| relativize_to_canonical(root, p)) {
+            return rel;
+        }
+        if let Some(cwd) = std::env::current_dir().ok() {
+            if let Some(rel) = relativize_to(&cwd, p).or_else(|| relativize_to_canonical(&cwd, p)) {
+                return rel;
+            }
+        }
+    }
+
+    path.to_string()
+}
+
 pub(super) fn cmd_run(
     file: &str,
     module_root_override: Option<&str>,
@@ -305,7 +323,8 @@ pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>, deps: bo
         if idx > 0 {
             println!();
         }
-        println!("Check: {}", path.cyan());
+        let shown_path = display_check_path(path, &module_root);
+        println!("Check: {}", shown_path.cyan());
         let line_count = source.lines().count();
 
         // --- Type errors (hard errors) ---

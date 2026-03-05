@@ -4,13 +4,15 @@ use std::process;
 
 use colored::Colorize;
 
-use aver::interpreter::{Value, aver_repr};
+use aver::ast::TopLevel;
+use aver::interpreter::{Interpreter, Value, aver_repr};
 use aver::replay::{
     JsonValue, RecordedOutcome, SessionRecording, first_diff_path, format_json, json_to_value,
     parse_session_recording, value_to_json,
 };
+use aver::value::RuntimeError;
 
-use crate::shared::{compile_program_for_exec, run_entry_function, run_top_level_statements};
+use crate::shared::compile_program_for_exec;
 
 pub(super) fn collect_recording_files(path: &str) -> Result<Vec<PathBuf>, String> {
     let p = Path::new(path);
@@ -53,6 +55,138 @@ pub(super) fn decode_entry_args(input: &JsonValue) -> Result<Vec<Value>, String>
         Value::List(args) => Ok(args),
         other => Ok(vec![other]),
     }
+}
+
+fn run_top_level_statements_runtime(
+    interp: &mut Interpreter,
+    items: &[TopLevel],
+) -> Result<(), RuntimeError> {
+    for item in items {
+        if let TopLevel::Stmt(stmt) = item {
+            interp.exec_stmt(stmt)?;
+        }
+    }
+    Ok(())
+}
+
+fn run_entry_function_runtime(
+    interp: &mut Interpreter,
+    entry_fn: &str,
+    args: Vec<Value>,
+) -> Result<Value, RuntimeError> {
+    let fn_val = interp
+        .lookup(entry_fn)
+        .map_err(|_| RuntimeError::Error(format!("Entry function '{}' not found", entry_fn)))?;
+    let allowed = Interpreter::callable_declared_effects(&fn_val);
+    interp.call_value_with_effects_pub(fn_val, args, &format!("<{}>", entry_fn), allowed)
+}
+
+fn truncate_for_cli(s: String, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s;
+    }
+    let mut out = s
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect::<String>();
+    out.push_str("...");
+    out
+}
+
+fn compact_json(v: &JsonValue) -> String {
+    let compact = format_json(v)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    truncate_for_cli(compact, 240)
+}
+
+fn compact_outcome(outcome: &RecordedOutcome) -> String {
+    match outcome {
+        RecordedOutcome::Value(v) => format!("value {}", compact_json(v)),
+        RecordedOutcome::RuntimeError(msg) => format!("runtime_error {:?}", msg),
+    }
+}
+
+fn compact_args(args: &[JsonValue]) -> String {
+    compact_json(&JsonValue::Array(args.to_vec()))
+}
+
+fn format_replay_runtime_error(
+    err: &RuntimeError,
+    recording: &SessionRecording,
+    interp: &Interpreter,
+) -> String {
+    let (consumed, total) = interp.replay_progress();
+    let mut lines = vec![
+        format!("Replay failed: {}", err),
+        format!(
+            "Progress: consumed {} of {} recorded effects",
+            consumed, total
+        ),
+    ];
+
+    match err {
+        RuntimeError::ReplayMismatch { seq, expected, got } => {
+            lines.push(format!(
+                "Effect mismatch at seq {}: expected '{}', got '{}'",
+                seq, expected, got
+            ));
+            if let Some(rec) = recording.effects.iter().find(|r| r.seq == *seq) {
+                lines.push(format!("Expected args: {}", compact_args(&rec.args)));
+                lines.push(format!(
+                    "Expected outcome: {}",
+                    compact_outcome(&rec.outcome)
+                ));
+            }
+        }
+        RuntimeError::ReplayArgsMismatch {
+            seq,
+            effect_type,
+            expected,
+            got,
+        } => {
+            lines.push(format!("Args mismatch at seq {} ('{}')", seq, effect_type));
+            lines.push(format!("Expected args: {}", expected));
+            lines.push(format!("Got args:      {}", got));
+            if let Some(rec) = recording.effects.iter().find(|r| r.seq == *seq) {
+                lines.push(format!(
+                    "Expected outcome: {}",
+                    compact_outcome(&rec.outcome)
+                ));
+            }
+        }
+        RuntimeError::ReplayExhausted {
+            effect_type,
+            position,
+        } => {
+            lines.push(format!(
+                "No recorded effect at position {} for call '{}'",
+                position, effect_type
+            ));
+            if let Some(next) = recording.effects.get(*position) {
+                lines.push(format!(
+                    "Next recorded effect: seq {} '{}'",
+                    next.seq, next.effect_type
+                ));
+            }
+        }
+        RuntimeError::ReplayUnconsumed { remaining } => {
+            let start = recording.effects.len().saturating_sub(*remaining);
+            if let Some(next) = recording.effects.get(start) {
+                lines.push(format!(
+                    "First unconsumed effect: seq {} '{}', args={}, outcome={}",
+                    next.seq,
+                    next.effect_type,
+                    compact_args(&next.args),
+                    compact_outcome(&next.outcome)
+                ));
+            }
+        }
+        _ => {}
+    }
+
+    lines.join("\n")
 }
 
 fn resolve_replay_module_root(path: &Path, recording: &SessionRecording) -> String {
@@ -111,19 +245,37 @@ pub(super) fn replay_recording_file(
         compile_program_for_exec(&replay_program_file, Some(&replay_module_root))?;
     interp.start_replay(recording.effects.clone(), check_args);
 
-    run_top_level_statements(&mut interp, &items)?;
+    run_top_level_statements_runtime(&mut interp, &items).map_err(|e| {
+        format!(
+            "Replay: {}\n{}",
+            path.display(),
+            format_replay_runtime_error(&e, &recording, &interp)
+        )
+    })?;
     let entry_args = decode_entry_args(&recording.input)?;
-    let run_out = run_entry_function(&mut interp, &recording.entry_fn, entry_args);
+    let run_out = run_entry_function_runtime(&mut interp, &recording.entry_fn, entry_args)
+        .map_err(|e| {
+            format!(
+                "Replay: {}\n{}",
+                path.display(),
+                format_replay_runtime_error(&e, &recording, &interp)
+            )
+        })?;
     let actual_outcome = match run_out {
-        Ok(Value::Err(err)) => RecordedOutcome::RuntimeError(format!(
+        Value::Err(err) => RecordedOutcome::RuntimeError(format!(
             "{} returned error: {}",
             recording.entry_fn,
             aver_repr(&err)
         )),
-        Ok(v) => RecordedOutcome::Value(value_to_json(&v)?),
-        Err(e) => RecordedOutcome::RuntimeError(e),
+        v => RecordedOutcome::Value(value_to_json(&v)?),
     };
-    interp.ensure_replay_consumed().map_err(|e| e.to_string())?;
+    interp.ensure_replay_consumed().map_err(|e| {
+        format!(
+            "Replay: {}\n{}",
+            path.display(),
+            format_replay_runtime_error(&e, &recording, &interp)
+        )
+    })?;
 
     let (consumed, total) = interp.replay_progress();
     let matched = actual_outcome == recording.output;
