@@ -142,6 +142,24 @@ fn valid_list_contains_requires_same_element_type() {
 }
 
 #[test]
+fn valid_list_prepend_preserves_inner_type() {
+    let src = "fn withZero(xs: List<Int>) -> List<Int>\n    = List.prepend(0, xs)\n";
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_list_append_requires_compatible_lists() {
+    let src = "fn extend(xs: List<Int>, ys: List<Int>) -> List<Int>\n    = List.append(xs, ys)\n";
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_list_reverse_preserves_inner_type() {
+    let src = "fn rev(xs: List<Int>) -> List<Int>\n    = List.reverse(xs)\n";
+    assert_no_errors(src);
+}
+
+#[test]
 fn valid_tuple_return() {
     let src = "fn pair() -> (Int, String)\n    = (1, \"x\")\n";
     assert_no_errors(src);
@@ -413,12 +431,6 @@ fn error_list_push_mismatched_element_type() {
 }
 
 #[test]
-fn error_list_filter_predicate_must_return_bool() {
-    let src = "fn bad(xs: List<Int>) -> List<Int>\n    = List.filter(xs, Int.toString)\n";
-    assert_error_containing(src, "predicate must return Bool");
-}
-
-#[test]
 fn error_list_contains_mismatched_element_type() {
     let src = "fn bad(xs: List<Int>) -> Bool\n    = List.contains(xs, \"x\")\n";
     assert_error_containing(
@@ -480,9 +492,15 @@ fn binding_empty_list_literal_is_error() {
 }
 
 #[test]
-fn error_list_fold_item_type_mismatch() {
-    let src = "fn step(acc: Int, s: String) -> Int\n    = acc + String.len(s)\nfn bad(xs: List<Int>) -> Int\n    = List.fold(xs, 0, step)\n";
-    assert_error_containing(src, "fold item param expects String, list has Int");
+fn error_list_prepend_mismatched_element_type() {
+    let src = "fn bad(xs: List<Int>) -> List<Int>\n    = List.prepend(\"x\", xs)\n";
+    assert_error_containing(src, "Argument 1 of 'List.prepend': expected Int, got String");
+}
+
+#[test]
+fn error_list_append_mismatched_element_type() {
+    let src = "fn bad(xs: List<Int>) -> List<Int>\n    = List.append(xs, [\"x\"])\n";
+    assert_error_containing(src, "list element types differ: Int vs String");
 }
 
 #[test]

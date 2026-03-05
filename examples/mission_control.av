@@ -259,7 +259,7 @@ verify stateSummary
 fn parseCommands(lines: List<String>, acc: List<Cmd>) -> Result<List<Cmd>, String>
     ? "Parse script lines to typed commands."
     match lines
-        [] -> Result.Ok(acc)
+        [] -> Result.Ok(List.reverse(acc))
         [line, ..tail] -> parseCommandsStep(line, tail, acc)
 
 verify parseCommands
@@ -269,7 +269,7 @@ verify parseCommands
 fn parseCommandsStep(line: String, tail: List<String>, acc: List<Cmd>) -> Result<List<Cmd>, String>
     ? "Parse one script line then continue."
     cmd = parseCommand(line)?
-    parseCommands(tail, List.push(acc, cmd))
+    parseCommands(tail, List.prepend(cmd, acc))
 
 fn printHistory(entries: List<String>) -> Unit
     ? "Print numbered command history."
@@ -325,9 +325,9 @@ verify parseTickArgs
 
 fn parseNoArgs(name: String, args: List<String>, cmd: Cmd) -> Result<Cmd, String>
     ? "Validate that command takes no arguments."
-    match List.len(args) == 0
-        true -> Result.Ok(cmd)
-        false -> Result.Err(name + " expects no arguments")
+    match args
+        [] -> Result.Ok(cmd)
+        _ -> Result.Err(name + " expects no arguments")
 
 verify parseNoArgs
     parseNoArgs("DEPLOY", [], Cmd.DeploySolar) => Result.Ok(Cmd.DeploySolar)
@@ -337,9 +337,9 @@ fn parseOneArg(name: String, args: List<String>) -> Result<String, String>
     ? "Validate exactly one argument and return it."
     match args
         [] -> Result.Err(name + " expects exactly 1 argument")
-        [arg, ..tail] -> match List.len(tail) == 0
-            true -> Result.Ok(arg)
-            false -> Result.Err(name + " expects exactly 1 argument")
+        [arg, ..tail] -> match tail
+            [] -> Result.Ok(arg)
+            _ -> Result.Err(name + " expects exactly 1 argument")
 
 verify parseOneArg
     parseOneArg("BURN", []) => Result.Err("BURN expects exactly 1 argument")

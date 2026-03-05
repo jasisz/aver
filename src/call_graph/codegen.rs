@@ -9,7 +9,7 @@ use super::scc::{tarjan_sccs, topo_components};
 ///
 /// Returns SCC components in callee-before-caller topological order.
 /// Each inner vector is one SCC (single function or mutual-recursive group).
-/// Function references passed as call arguments (e.g. `List.fold(xs, init, f)`)
+/// Function references passed as call arguments (e.g. `apply(f, x)`)
 /// are treated as dependencies for ordering.
 pub fn ordered_fn_components<'a>(fns: &[&'a FnDef]) -> Vec<Vec<&'a FnDef>> {
     if fns.is_empty() {

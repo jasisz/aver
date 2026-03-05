@@ -901,6 +901,18 @@ verify jsonList
     jsonList(Json.JsonList([Json.JsonInt(1)])) => [Json.JsonInt(1)]
     jsonList(Json.JsonInt(1)) => []
 
+fn renderJsonStringList(items: List<Json>) -> String
+    ? "Formats a JSON string list as a human-readable comma-separated line."
+    = match items
+        [] -> ""
+        [item, ..rest] -> match rest
+            [] -> jsonStr(item)
+            _ -> "{jsonStr(item)}, {renderJsonStringList(rest)}"
+
+verify renderJsonStringList
+    renderJsonStringList([]) => ""
+    renderJsonStringList([Json.JsonString("Jan"), Json.JsonString("Anna")]) => "Jan, Anna"
+
 fn main() -> Unit
     ! [Console.print]
     json = "{{ \"name\": \"Aver Labs\", \"score\": 9.75, \"motto\": \"caf\\u00e9 au code\", \"team\": [\"Jan\", \"Anna\"] }}"
@@ -922,5 +934,5 @@ fn printResult(root: Json) -> Unit
         Option.Some(v) -> Console.print("Motto: " + jsonStr(v))
         Option.None -> Console.print("Motto: ?")
     match getField(root, "team")
-        Option.Some(t) -> Console.print("Team: " + String.join(List.map(jsonList(t), jsonStr), ", "))
+        Option.Some(t) -> Console.print("Team: " + renderJsonStringList(jsonList(t)))
         Option.None -> Console.print("Team: ?")

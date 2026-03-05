@@ -22,7 +22,7 @@ Below: implementation details relevant to development only.
 ### Implementation notes
 
 - **Constructor routing**: `Result.Ok(v)`, `Result.Err(v)`, `Option.Some(v)` route through `call_builtin` (`__ctor:Result.Ok` etc.). `Result` and `Option` registered as `Value::Namespace`. Match patterns use qualified names.
-- **No flat builtins** (decision: `FullNamespaceEverywhere`). `List.map/filter/fold` stay in `interpreter/builtins.rs` because they need `self.call_value()`.
+- **No flat builtins** (decision: `FullNamespaceEverywhere`). Namespace helpers live under their owning modules (`List`, `Map`, `String`, etc.), with pure list operations implemented in `src/types/list.rs`.
 - **`Type::Named(String)`** in the type system: capitalized identifiers (including dotted names like `Tcp.Connection`) in type annotations resolve to named types. Compatible only with the same name or internal `Unknown` fallback.
 - **`Tcp.Connection` opaque record**: fields `id: String`, `host: String`, `port: Int`. Actual socket in thread-local `HashMap` keyed by `id`. `NEXT_ID: AtomicU64` generates "tcp-1", "tcp-2", etc.
 - **Static type checker** (`src/types/checker/`): internal `Type::Unknown` recovery after earlier errors so analysis can continue. Bare `Unknown` does **not** satisfy concrete types in constraints — only nested `Unknown` is tolerated (gradual typing). Match pattern bindings are typed: `Result.Ok(x)` on `Result<Int, String>` gives `x: Int`.
@@ -128,11 +128,11 @@ src/
     shared.rs         — shared helpers (compile_program_for_exec, load_dep_modules)
 
   services/           — Effectful namespace implementations:
-    console.rs        — Console.print/error/warn/readLine  ! [Console]
-    http.rs           — Http.get/head/delete/post/put/patch  ! [Http]
-    http_server.rs    — HttpServer.listen (standalone runtime)  ! [HttpServer]
-    disk.rs           — Disk.readText/writeText/appendText/exists/delete/...  ! [Disk]
-    tcp.rs            — Tcp.send/ping + connect/writeLine/readLine/close  ! [Tcp]
+    console.rs        — Console.print/error/warn/readLine  ! [Console.print] / friends
+    http.rs           — Http.get/head/delete/post/put/patch  ! [Http.get] / friends
+    http_server.rs    — HttpServer.listen (standalone runtime)  ! [HttpServer.listen]
+    disk.rs           — Disk.readText/writeText/appendText/exists/delete/...  ! [Disk.readText] / friends
+    tcp.rs            — Tcp.send/ping + connect/writeLine/readLine/close  ! [Tcp.send] / friends
 ```
 
 ## How to run

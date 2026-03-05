@@ -557,85 +557,32 @@ fn get_out_of_bounds_returns_none() {
 }
 
 #[test]
-fn head_returns_first() {
+fn prepend_adds_element_to_front() {
     assert_eq!(
-        eval("List.head([42, 1, 2])"),
-        Value::Some(Box::new(Value::Int(42)))
+        eval("List.prepend(1, [2, 3])"),
+        Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
     );
 }
 
 #[test]
-fn head_empty_list_returns_none() {
-    assert_eq!(eval("List.head([])"), Value::None);
-}
-
-#[test]
-fn tail_returns_rest() {
+fn append_concatenates_lists() {
     assert_eq!(
-        eval("List.tail([1, 2, 3])"),
-        Value::Some(Box::new(Value::List(vec![Value::Int(2), Value::Int(3)])))
+        eval("List.append([1, 2], [3, 4])"),
+        Value::List(vec![
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3),
+            Value::Int(4)
+        ])
     );
 }
 
 #[test]
-fn tail_single_element_returns_empty() {
+fn reverse_returns_reversed_copy() {
     assert_eq!(
-        eval("List.tail([99])"),
-        Value::Some(Box::new(Value::List(vec![])))
+        eval("List.reverse([1, 2, 3])"),
+        Value::List(vec![Value::Int(3), Value::Int(2), Value::Int(1)])
     );
-}
-
-#[test]
-fn tail_empty_list_returns_none() {
-    assert_eq!(eval("List.tail([])"), Value::None);
-}
-
-// ---------------------------------------------------------------------------
-// List.find / List.any
-// ---------------------------------------------------------------------------
-
-#[test]
-fn list_find_returns_first_match() {
-    let src = "fn isEven(n: Int) -> Bool\n    = Int.mod(n, 2) == Result.Ok(0)\nfn main() -> Unit\n    = List.find([1, 3, 4, 6], isEven)\n";
-    let mut interp = run_program(src);
-    let main_val = interp.lookup("main").unwrap();
-    let result = interp
-        .call_value_with_effects_pub(main_val, vec![], "main", vec![])
-        .unwrap();
-    assert_eq!(result, Value::Some(Box::new(Value::Int(4))));
-}
-
-#[test]
-fn list_find_returns_none_when_no_match() {
-    let src = "fn isNeg(n: Int) -> Bool\n    = n < 0\nfn main() -> Unit\n    = List.find([1, 2, 3], isNeg)\n";
-    let mut interp = run_program(src);
-    let main_val = interp.lookup("main").unwrap();
-    let result = interp
-        .call_value_with_effects_pub(main_val, vec![], "main", vec![])
-        .unwrap();
-    assert_eq!(result, Value::None);
-}
-
-#[test]
-fn list_any_returns_true() {
-    let src = "fn isNeg(n: Int) -> Bool\n    = n < 0\nfn main() -> Unit\n    = List.any([1, -2, 3], isNeg)\n";
-    let mut interp = run_program(src);
-    let main_val = interp.lookup("main").unwrap();
-    let result = interp
-        .call_value_with_effects_pub(main_val, vec![], "main", vec![])
-        .unwrap();
-    assert_eq!(result, Value::Bool(true));
-}
-
-#[test]
-fn list_any_returns_false() {
-    let src = "fn isNeg(n: Int) -> Bool\n    = n < 0\nfn main() -> Unit\n    = List.any([1, 2, 3], isNeg)\n";
-    let mut interp = run_program(src);
-    let main_val = interp.lookup("main").unwrap();
-    let result = interp
-        .call_value_with_effects_pub(main_val, vec![], "main", vec![])
-        .unwrap();
-    assert_eq!(result, Value::Bool(false));
 }
 
 #[test]
@@ -1049,71 +996,61 @@ fn binding_used_in_body() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn map_doubles_list() {
-    let src = "fn double(x: Int) -> Int\n    = x + x\n";
-    let items = parse(src);
+fn prepend_builtin_adds_front() {
     let mut interp = Interpreter::new();
-    for item in &items {
-        if let TopLevel::FnDef(fd) = item {
-            interp.exec_fn_def(fd).unwrap();
-        }
-    }
-    let list = Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
-    let double_fn = interp.lookup("double").unwrap();
-    let map_fn = Value::Builtin("List.map".to_string());
+    let prepend_fn = Value::Builtin("List.prepend".to_string());
     let result = interp
-        .call_value_pub(map_fn, vec![list, double_fn])
+        .call_value_pub(
+            prepend_fn,
+            vec![
+                Value::Int(1),
+                Value::List(vec![Value::Int(2), Value::Int(3)]),
+            ],
+        )
         .unwrap();
     assert_eq!(
         result,
-        Value::List(vec![Value::Int(2), Value::Int(4), Value::Int(6)])
+        Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
     );
 }
 
 #[test]
-fn filter_keeps_positives() {
-    let src = "fn is_pos(x: Int) -> Bool\n    = x > 0\n";
-    let items = parse(src);
+fn append_builtin_concatenates_lists() {
     let mut interp = Interpreter::new();
-    for item in &items {
-        if let TopLevel::FnDef(fd) = item {
-            interp.exec_fn_def(fd).unwrap();
-        }
-    }
-    let list = Value::List(vec![
-        Value::Int(-1),
-        Value::Int(2),
-        Value::Int(-3),
-        Value::Int(4),
-    ]);
-    let pred = interp.lookup("is_pos").unwrap();
-    let filter_fn = Value::Builtin("List.filter".to_string());
-    let result = interp.call_value_pub(filter_fn, vec![list, pred]).unwrap();
-    assert_eq!(result, Value::List(vec![Value::Int(2), Value::Int(4)]));
+    let append_fn = Value::Builtin("List.append".to_string());
+    let result = interp
+        .call_value_pub(
+            append_fn,
+            vec![
+                Value::List(vec![Value::Int(1), Value::Int(2)]),
+                Value::List(vec![Value::Int(3), Value::Int(4)]),
+            ],
+        )
+        .unwrap();
+    assert_eq!(
+        result,
+        Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)])
+    );
 }
 
 #[test]
-fn fold_sum() {
-    let src = "fn add(acc: Int, x: Int) -> Int\n    = acc + x\n";
-    let items = parse(src);
+fn reverse_builtin_flips_order() {
     let mut interp = Interpreter::new();
-    for item in &items {
-        if let TopLevel::FnDef(fd) = item {
-            interp.exec_fn_def(fd).unwrap();
-        }
-    }
-    let list = Value::List(vec![
-        Value::Int(1),
-        Value::Int(2),
-        Value::Int(3),
-        Value::Int(4),
-    ]);
-    let add_fn = interp.lookup("add").unwrap();
-    let fold_fn = Value::Builtin("List.fold".to_string());
+    let reverse_fn = Value::Builtin("List.reverse".to_string());
     let result = interp
-        .call_value_pub(fold_fn, vec![list, Value::Int(0), add_fn])
+        .call_value_pub(
+            reverse_fn,
+            vec![Value::List(vec![
+                Value::Int(1),
+                Value::Int(2),
+                Value::Int(3),
+            ])],
+        )
         .unwrap();
-    assert_eq!(result, Value::Int(10));
+    assert_eq!(
+        result,
+        Value::List(vec![Value::Int(3), Value::Int(2), Value::Int(1)])
+    );
 }
 
 #[test]

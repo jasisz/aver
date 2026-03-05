@@ -1,57 +1,24 @@
 module Lists
     intent =
-        "Demonstrates list values and higher-order functions."
-        "Aver has no loops — iteration happens through List.map, List.filter, and List.fold."
-
-fn double(n: Int) -> Int
-    ? "Doubles an integer."
-    = n * 2
-
-verify double
-    double(3) => 6
-    double(0) => 0
-    double(-2) => -4
-
-fn isPositive(n: Int) -> Bool
-    ? "Returns true if n is greater than zero."
-    = n > 0
-
-verify isPositive
-    isPositive(1)  => true
-    isPositive(0)  => false
-    isPositive(-5) => false
-
-fn add(a: Int, b: Int) -> Int
-    ? "Adds two integers. Used as fold accumulator."
-    = a + b
-
-verify add
-    add(1, 2) => 3
-    add(-2, 5) => 3
-
-verify add law commutative
-    given a: Int = -3..3
-    given b: Int = -3..3
-    add(a, b) => add(b, a)
-
-verify add law identity_zero
-    given a: Int = -5..5
-    add(a, 0) => a
+        "Demonstrates the core List API without callbacks."
+        "Aver prefers recursion, pattern matching, and first-order helpers."
 
 fn main() -> Unit
     ! [Console.print]
-    numbers = [1, 2, 3, 4, 5]
-    doubled = List.map(numbers, double)
-    Console.print(doubled)
-    positives = List.filter([-1, 0, 2, 3], isPositive)
-    Console.print(positives)
-    total = List.fold(numbers, 0, add)
-    Console.print(total)
-    first = List.get(numbers, 0)
-    match first
-        Option.Some(v) -> Console.print("First: {v}")
-        Option.None -> Console.print("No element")
-    oob = List.get(numbers, 99)
-    match oob
-        Option.Some(v) -> Console.print("Got: {v}")
-        Option.None -> Console.print("Out of bounds")
+    numbers = [1, 2, 3]
+    Console.print("len:")
+    Console.print(List.len(numbers))
+    Console.print("get 0:")
+    Console.print(List.get(numbers, 0))
+    Console.print("push 4:")
+    Console.print(List.push(numbers, 4))
+    Console.print("prepend 0:")
+    Console.print(List.prepend(0, numbers))
+    Console.print("append:")
+    Console.print(List.append(numbers, [4, 5]))
+    Console.print("reverse:")
+    Console.print(List.reverse(numbers))
+    Console.print("contains 2:")
+    Console.print(List.contains(numbers, 2))
+    Console.print("zip:")
+    Console.print(List.zip(["a", "b", "c"], numbers))

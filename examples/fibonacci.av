@@ -35,7 +35,7 @@ decision SinglePassStats
     date = "2026-02-25"
     reason =
         "Building a list then folding and filtering is three separate passes."
-        "Accumulate sum, max, and even-filter alongside push in one traversal."
+        "Accumulate sum, max, and even-filter alongside list building in one traversal."
         "Result wrapped in FibStats record: named fields replace positional list indexing."
     chosen = "SinglePassAccumulator"
     rejected = ["SeparateFoldAndFilter"]
@@ -121,23 +121,30 @@ verify bigger
     bigger(5, 3) => 5
     bigger(4, 4) => 4
 
-verify pushIfEven
-    pushIfEven([], 0)  => [0]
-    pushIfEven([], 1)  => []
-    pushIfEven([0], 2) => [0, 2]
-    pushIfEven([0], 3) => [0]
+verify prependIfEven
+    prependIfEven([], 0)  => [0]
+    prependIfEven([], 1)  => []
+    prependIfEven([2], 0) => [0, 2]
+    prependIfEven([2], 3) => [2]
 
-fn pushIfEven(xs: List<Int>, n: Int) -> List<Int>
-    ? "Appends n to xs only when n is even."
+fn prependIfEven(xs: List<Int>, n: Int) -> List<Int>
+    ? "Prepends n to xs only when n is even."
     match isEven(n)
-        true  -> List.push(xs, n)
+        true  -> List.prepend(n, xs)
         false -> xs
+
+fn finalizeFibStats(acc: FibAcc) -> FibStats
+    ? "Flips accumulator-owned lists back into presentation order."
+    = FibStats(fibs = List.reverse(acc.fibs), sum = acc.sum, mx = acc.mx, evens = List.reverse(acc.evens))
+
+verify finalizeFibStats
+    finalizeFibStats(FibAcc(i = 1, n = 1, a = 1, b = 1, fibs = [2, 1, 0], sum = 3, mx = 2, evens = [2, 0])) => FibStats(fibs = [0, 1, 2], sum = 3, mx = 2, evens = [0, 2])
 
 fn buildFibStatsTR(acc: FibAcc) -> FibStats
     ? "Single-pass builder: advances accumulator state one step until i > n."
     match acc.i > acc.n
-        true  -> FibStats(fibs = acc.fibs, sum = acc.sum, mx = acc.mx, evens = acc.evens)
-        false -> buildFibStatsTR(FibAcc(i = acc.i + 1, n = acc.n, a = acc.b, b = acc.a + acc.b, fibs = List.push(acc.fibs, acc.a), sum = acc.sum + acc.a, mx = bigger(acc.a, acc.mx), evens = pushIfEven(acc.evens, acc.a)))
+        true  -> finalizeFibStats(acc)
+        false -> buildFibStatsTR(FibAcc(i = acc.i + 1, n = acc.n, a = acc.b, b = acc.a + acc.b, fibs = List.prepend(acc.a, acc.fibs), sum = acc.sum + acc.a, mx = bigger(acc.a, acc.mx), evens = prependIfEven(acc.evens, acc.a)))
 
 verify buildFibStatsTR
     buildFibStatsTR(FibAcc(i = 0, n = 0, a = 0, b = 1, fibs = [], sum = 0, mx = 0, evens = [])) => FibStats(fibs = [0], sum = 0, mx = 0, evens = [0])

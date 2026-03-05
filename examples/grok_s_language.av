@@ -281,7 +281,7 @@ fn parseListItems(s: String, pos: Int, acc: List<Sexpr>) -> ParseResult
     match String.charAt(s, ws)
         Option.None -> ParseResult.Err("Unterminated list", ws)
         Option.Some(c) -> match c
-            ")" -> ParseResult.Ok(Sexpr.List(acc), ws + 1)
+            ")" -> ParseResult.Ok(Sexpr.List(List.reverse(acc)), ws + 1)
             _ -> parseListItemsValue(s, ws, acc)
 
 verify parseListItems
@@ -293,7 +293,7 @@ fn parseListItemsValue(s: String, pos: Int, acc: List<Sexpr>) -> ParseResult
     ? "Parse one list item and continue with remaining input."
     match parseSexpr(s, pos)
         ParseResult.Err(msg, p) -> ParseResult.Err(msg, p)
-        ParseResult.Ok(val, p) -> parseListItems(s, p, List.push(acc, val))
+        ParseResult.Ok(val, p) -> parseListItems(s, p, List.prepend(val, acc))
 
 verify parseListItemsValue
     parseListItemsValue(")", 0, []) => ParseResult.Err("Unexpected ')'", 0)

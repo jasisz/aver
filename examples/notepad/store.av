@@ -116,40 +116,50 @@ verify isNonEmpty
 
 fn parseNotes(content: String) -> Result<List<Note>, String>
     ? "Parses the entire notes file into a list of Notes."
-    lines = String.split(content, "\n")
-    nonEmpty = List.filter(lines, isNonEmpty)
-    List.fold(nonEmpty, Result.Ok([]), foldNote)
+    parseNotesLines(String.split(content, "\n"), Result.Ok([]))
 
 verify parseNotes
     parseNotes("") => Result.Ok([])
     parseNotes("1\tBuy milk\tFrom the store") => Result.Ok([Note(id = 1, title = "Buy milk", body = "From the store")])
 
+fn parseNotesLines(lines: List<String>, acc: Result<List<Note>, String>) -> Result<List<Note>, String>
+    ? "Recursively parses note lines, skipping empties and preserving order."
+    = match lines
+        [] -> acc
+        [line, ..rest] -> match isNonEmpty(line)
+            false -> parseNotesLines(rest, acc)
+            true -> parseNotesLines(rest, foldNote(acc, line))
+
+verify parseNotesLines
+    parseNotesLines([], Result.Ok([])) => Result.Ok([])
+    parseNotesLines(["", "1\tA\tB"], Result.Ok([])) => Result.Ok([Note(id = 1, title = "A", body = "B")])
+
 // --- lookup helpers (recursive, no closures needed) ---
 
 fn findById(notes: List<Note>, id: Int) -> Option<Note>
     ? "Walks the list to find a note with the given ID."
-    = match List.head(notes)
-        Option.None -> Option.None
-        Option.Some(note) -> match note.id == id
+    = match notes
+        [] -> Option.None
+        [note, ..rest] -> match note.id == id
             true -> Option.Some(note)
-            false -> findById(Option.withDefault(List.tail(notes), []), id)
+            false -> findById(rest, id)
 
 verify findById
     findById([Note(id = 1, title = "A", body = "a"), Note(id = 2, title = "B", body = "b")], 2) => Option.Some(Note(id = 2, title = "B", body = "b"))
     findById([Note(id = 1, title = "A", body = "a")], 99) => Option.None
     findById([], 1) => Option.None
 
-fn withoutId(notes: List<Note>, id: Int, acc: List<Note>) -> List<Note>
+fn withoutId(notes: List<Note>, id: Int) -> List<Note>
     ? "Builds a new list excluding the note with the given ID."
-    = match List.head(notes)
-        Option.None -> acc
-        Option.Some(note) -> match note.id == id
-            true -> withoutId(Option.withDefault(List.tail(notes), []), id, acc)
-            false -> withoutId(Option.withDefault(List.tail(notes), []), id, List.push(acc, note))
+    = match notes
+        [] -> []
+        [note, ..rest] -> match note.id == id
+            true -> withoutId(rest, id)
+            false -> List.prepend(note, withoutId(rest, id))
 
 verify withoutId
-    withoutId([Note(id = 1, title = "A", body = "a"), Note(id = 2, title = "B", body = "b")], 1, []) => [Note(id = 2, title = "B", body = "b")]
-    withoutId([], 1, []) => []
+    withoutId([Note(id = 1, title = "A", body = "a"), Note(id = 2, title = "B", body = "b")], 1) => [Note(id = 2, title = "B", body = "b")]
+    withoutId([], 1) => []
 
 // --- CRUD ---
 
@@ -162,8 +172,18 @@ fn loadAll() -> Result<List<Note>, String>
 fn saveAll(notes: List<Note>) -> Result<Unit, String>
     ? "Overwrites the notes file with the given list."
     ! [Disk.writeText]
-    lines = List.map(notes, serializeLine)
+    lines = serializeLines(notes)
     Disk.writeText(notesPath(), "{String.join(lines, "\n")}\n")
+
+fn serializeLines(notes: List<Note>) -> List<String>
+    ? "Serializes a note list into note-file lines."
+    = match notes
+        [] -> []
+        [note, ..rest] -> List.prepend(serializeLine(note), serializeLines(rest))
+
+verify serializeLines
+    serializeLines([]) => []
+    serializeLines([Note(id = 1, title = "A", body = "a"), Note(id = 2, title = "B", body = "b")]) => ["1\tA\ta", "2\tB\tb"]
 
 fn addNote(title: String, body: String) -> Result<Note, String>
     ? "Creates a new note with the next available ID and persists it."
@@ -177,5 +197,5 @@ fn removeNote(id: Int) -> Result<Unit, String>
     ? "Deletes a note by ID. Rewrites the storage file without the deleted note."
     ! [Disk.readText, Disk.writeText]
     notes = loadAll()?
-    remaining = withoutId(notes, id, [])
+    remaining = withoutId(notes, id)
     saveAll(remaining)

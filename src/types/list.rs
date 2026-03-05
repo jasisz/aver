@@ -4,28 +4,21 @@
 ///   List.len(list)           → Int                    — number of elements
 ///   List.get(list, index)    → Option<T>              — element at index
 ///   List.push(list, val)     → List<T>                — append element (returns new list)
-///   List.head(list)          → Option<T>              — first element
-///   List.tail(list)          → Option<List<T>>        — all but first
+///   List.prepend(val, list)  → List<T>                — prepend element
+///   List.append(a, b)        → List<T>                — concatenate two lists
+///   List.reverse(list)       → List<T>                — reverse elements
 ///   List.contains(list, val) → Bool                   — membership by `==`
 ///   List.zip(a, b)           → List<(A, B)>           — pair elements from two lists
-///
-/// Note: List.map, List.filter, List.fold, List.find, List.any, List.flatMap are handled
-/// directly in the interpreter because they need to invoke closures via
-/// `self.call_value`.
 ///
 /// No effects required.
 use std::collections::HashMap;
 
-use crate::value::{
-    RuntimeError, Value, list_from_vec, list_head, list_len, list_slice, list_tail_view,
-    list_to_vec,
-};
+use crate::value::{RuntimeError, Value, list_from_vec, list_len, list_slice, list_to_vec};
 
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
     for method in &[
-        "len", "map", "filter", "fold", "get", "push", "head", "tail", "find", "any", "zip",
-        "flatMap", "contains",
+        "len", "get", "push", "prepend", "append", "reverse", "contains", "zip",
     ] {
         members.insert(
             method.to_string(),
@@ -46,14 +39,14 @@ pub fn effects(_name: &str) -> &'static [&'static str] {
 }
 
 /// Returns `Some(result)` when `name` is owned by this namespace, `None` otherwise.
-/// Note: List.map, List.filter, List.fold are NOT handled here (they need interpreter access).
 pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
         "List.len" => Some(len(args)),
         "List.get" => Some(get(args)),
         "List.push" => Some(push(args)),
-        "List.head" => Some(head(args)),
-        "List.tail" => Some(tail(args)),
+        "List.prepend" => Some(prepend(args)),
+        "List.append" => Some(append(args)),
+        "List.reverse" => Some(reverse(args)),
         "List.contains" => Some(contains(args)),
         "List.zip" => Some(zip(args)),
         _ => None,
@@ -113,36 +106,51 @@ fn push(args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(list_from_vec(list))
 }
 
-fn head(args: &[Value]) -> Result<Value, RuntimeError> {
-    if args.len() != 1 {
+fn prepend(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 2 {
         return Err(RuntimeError::Error(format!(
-            "List.head() takes 1 argument, got {}",
+            "List.prepend() takes 2 arguments (val, list), got {}",
             args.len()
         )));
     }
-    match list_head(&args[0]) {
-        Some(v) => Ok(Value::Some(Box::new(v))),
-        None if list_len(&args[0]).is_some() => Ok(Value::None),
-        None => Err(RuntimeError::Error(
-            "List.head() argument must be a List".to_string(),
-        )),
-    }
+    let items = list_slice(&args[1]).ok_or_else(|| {
+        RuntimeError::Error("List.prepend() second argument must be a List".to_string())
+    })?;
+    let mut out = Vec::with_capacity(items.len() + 1);
+    out.push(args[0].clone());
+    out.extend(items.iter().cloned());
+    Ok(list_from_vec(out))
 }
 
-fn tail(args: &[Value]) -> Result<Value, RuntimeError> {
-    if args.len() != 1 {
+fn append(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 2 {
         return Err(RuntimeError::Error(format!(
-            "List.tail() takes 1 argument, got {}",
+            "List.append() takes 2 arguments (list, list), got {}",
             args.len()
         )));
     }
-    match list_tail_view(&args[0]) {
-        Some(v) => Ok(Value::Some(Box::new(v))),
-        None if list_len(&args[0]).is_some() => Ok(Value::None),
-        None => Err(RuntimeError::Error(
-            "List.tail() argument must be a List".to_string(),
-        )),
+    let mut left = list_to_vec(&args[0]).ok_or_else(|| {
+        RuntimeError::Error("List.append() first argument must be a List".to_string())
+    })?;
+    let right = list_slice(&args[1]).ok_or_else(|| {
+        RuntimeError::Error("List.append() second argument must be a List".to_string())
+    })?;
+    left.extend(right.iter().cloned());
+    Ok(list_from_vec(left))
+}
+
+fn reverse(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::Error(format!(
+            "List.reverse() takes 1 argument, got {}",
+            args.len()
+        )));
     }
+    let mut items = list_to_vec(&args[0]).ok_or_else(|| {
+        RuntimeError::Error("List.reverse() argument must be a List".to_string())
+    })?;
+    items.reverse();
+    Ok(list_from_vec(items))
 }
 
 fn contains(args: &[Value]) -> Result<Value, RuntimeError> {

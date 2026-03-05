@@ -14,7 +14,7 @@ record RleAcc
     count: Int
 
 fn encodeFold(acc: RleAcc, char: String) -> RleAcc
-    ? "Fold step: extends current run or starts a new one."
+    ? "Accumulator step: extends current run or starts a new one."
     match acc.count == 0
         true -> RleAcc(runs = acc.runs, current = char, count = 1)
         false -> match acc.current == char
@@ -36,9 +36,19 @@ verify flushAcc
     flushAcc(RleAcc(runs = [], current = "", count = 0)) => []
     flushAcc(RleAcc(runs = [Run(char = "a", count = 2)], current = "b", count = 1)) => [Run(char = "a", count = 2), Run(char = "b", count = 1)]
 
+fn encodeLoop(chars: List<String>, acc: RleAcc) -> List<Run>
+    ? "Walks characters recursively, threading the run accumulator."
+    match chars
+        [] -> flushAcc(acc)
+        [char, ..rest] -> encodeLoop(rest, encodeFold(acc, char))
+
+verify encodeLoop
+    encodeLoop([], RleAcc(runs = [], current = "", count = 0)) => []
+    encodeLoop(["a", "a", "b"], RleAcc(runs = [], current = "", count = 0)) => [Run(char = "a", count = 2), Run(char = "b", count = 1)]
+
 fn encode(xs: List<String>) -> List<Run>
-    ? "Compresses a list of single characters into run-length pairs."
-    = flushAcc(List.fold(xs, RleAcc(runs = [], current = "", count = 0), encodeFold))
+    ? "Compresses a list of single characters into run-length pairs with recursive traversal."
+    = encodeLoop(xs, RleAcc(runs = [], current = "", count = 0))
 
 verify encode
     encode([]) => []
@@ -67,7 +77,9 @@ verify expandRun
 
 fn decode(runs: List<Run>) -> List<String>
     ? "Decompresses run-length pairs back into a character list."
-    = List.flatMap(runs, expandRun)
+    = match runs
+        [] -> []
+        [run, ..rest] -> List.append(expandRun(run), decode(rest))
 
 verify decode
     decode([]) => []
@@ -100,7 +112,9 @@ verify showRun
 
 fn showRuns(runs: List<Run>) -> String
     ? "Formats encoded runs as a compact string like a3b2c1."
-    = String.join(List.map(runs, showRun), "")
+    = match runs
+        [] -> ""
+        [run, ..rest] -> "{showRun(run)}{showRuns(rest)}"
 
 verify showRuns
     showRuns(encodeString("aaabbc")) => "a3b2c1"

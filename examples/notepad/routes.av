@@ -32,9 +32,19 @@ fn jsonNote(note: Note) -> String
 verify jsonNote
     Examples.Json.fromString(jsonNote(Note(id = 1, title = "Hi", body = "there"))) => Result.Ok(noteToJson(Note(id = 1, title = "Hi", body = "there")))
 
+fn jsonNoteValues(notes: List<Note>) -> List<Json>
+    ? "Converts note records into JSON values, preserving order."
+    = match notes
+        [] -> []
+        [note, ..rest] -> List.prepend(noteToJson(note), jsonNoteValues(rest))
+
+verify jsonNoteValues
+    jsonNoteValues([]) => []
+    jsonNoteValues([Note(id = 1, title = "A", body = "a")]) => [noteToJson(Note(id = 1, title = "A", body = "a"))]
+
 fn jsonNoteList(notes: List<Note>) -> String
     ? "Serializes a list of Notes as a JSON array."
-    values = List.map(notes, noteToJson)
+    values = jsonNoteValues(notes)
     Examples.Json.toString(Examples.Json.Json.JsonList(values))
 
 verify jsonNoteList
@@ -133,12 +143,24 @@ verify parseTitle
 fn extractBody(raw: String) -> String
     ? "Extracts the body portion (everything after the first line)."
     lines = String.split(raw, "\n")
-    tail = Option.withDefault(List.tail(lines), [])
-    String.join(tail, "\n")
+    match List.len(lines) <= 1
+        true -> ""
+        false -> joinKnownLine(lines, 1)
 
 verify extractBody
     extractBody("title\nbody text") => "body text"
     extractBody("title only") => ""
+
+fn joinKnownLine(lines: List<String>, index: Int) -> String
+    ? "Joins lines starting from a known-valid index onward."
+    line = Option.withDefault(List.get(lines, index), "")
+    match index + 1 >= List.len(lines)
+        true -> line
+        false -> "{line}\n{joinKnownLine(lines, index + 1)}"
+
+verify joinKnownLine
+    joinKnownLine(["title", "body"], 1) => "body"
+    joinKnownLine(["title", "body", "more"], 1) => "body\nmore"
 
 // --- route handlers ---
 

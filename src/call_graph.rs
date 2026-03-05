@@ -140,7 +140,7 @@ fn collect_codegen_deps_expr(expr: &Expr, fn_names: &HashSet<String>, out: &mut 
                 out.insert(callee);
             }
             for arg in args {
-                // function-as-value dependency, e.g. List.fold(xs, init, f)
+                // function-as-value dependency, e.g. apply(f, x)
                 if let Some(qname) = expr_to_dotted_name(arg)
                     && fn_names.contains(&qname)
                 {

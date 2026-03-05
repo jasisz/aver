@@ -302,30 +302,27 @@ verify blackDepth
   blackDepth(Tree.Black(Tree.Empty, 1, Tree.Empty)) => 2
   blackDepth(Tree.Red(Tree.Empty, 1, Tree.Empty)) => 1
 
-fn insertInto(t: Tree, x: Int) -> Tree
-  ? "Fold helper with reversed args for List.fold"
-  insert(x, t)
-
-verify insertInto law foldAdapter
-  given t: Tree = [Tree.Empty]
-  given x: Int = [2]
-  insertInto(t, x) => Tree.Black(Tree.Empty, 2, Tree.Empty)
-
 fn fromList(items: List<Int>) -> Tree
   ? "Build a tree from a list of integers"
-  List.fold(items, Tree.Empty, insertInto)
-
-fn appendTo(acc: List<Int>, x: Int) -> List<Int>
-  ? "Push helper for List.fold"
-  List.push(acc, x)
+  fromListAcc(items, Tree.Empty)
 
 verify fromList law emptyInput
   given items: List<Int> = [[]]
   fromList(items) => Tree.Empty
 
+fn fromListAcc(items: List<Int>, acc: Tree) -> Tree
+  ? "Builds a tree by inserting items from left to right."
+  match items
+    [] -> acc
+    [item, ..rest] -> fromListAcc(rest, insert(item, acc))
+
+verify fromListAcc
+  fromListAcc([], Tree.Empty) => Tree.Empty
+  fromListAcc([2], Tree.Empty) => Tree.Black(Tree.Empty, 2, Tree.Empty)
+
 fn append(a: List<Int>, b: List<Int>) -> List<Int>
   ? "Append b to the end of a"
-  List.fold(b, a, appendTo)
+  List.append(a, b)
 
 verify append law keepsOrder
   given a: List<Int> = [[1, 2]]
@@ -334,7 +331,7 @@ verify append law keepsOrder
 
 fn collectInOrder(left: Tree, value: Int, right: Tree) -> List<Int>
   ? "Collect elements from a node in sorted order"
-  append(List.push(toSorted(left), value), toSorted(right))
+  append(List.append(toSorted(left), [value]), toSorted(right))
 
 verify collectInOrder law singletonNode
   given left: Tree = [Tree.Empty]

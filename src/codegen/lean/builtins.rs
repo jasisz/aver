@@ -215,49 +215,20 @@ pub fn emit_builtin_call(name: &str, args: &[Expr], ctx: &CodegenContext) -> Opt
             let arg = super::expr::emit_expr(&args[0], ctx);
             Some(format!("{}.length", paren_if_complex(&arg)))
         }
-        "List.map" => {
-            let list = super::expr::emit_expr(&args[0], ctx);
-            let func = super::expr::emit_expr(&args[1], ctx);
-            Some(format!(
-                "{}.map {}",
-                paren_if_complex(&list),
-                paren_if_complex(&func)
-            ))
-        }
-        "List.filter" => {
-            let list = super::expr::emit_expr(&args[0], ctx);
-            let func = super::expr::emit_expr(&args[1], ctx);
-            Some(format!(
-                "{}.filter {}",
-                paren_if_complex(&list),
-                paren_if_complex(&func)
-            ))
-        }
-        "List.fold" => {
-            // Aver: List.fold(xs, init, f) where f(acc, x)
-            // Lean: xs.foldl f init (note: args reordered!)
-            let list = super::expr::emit_expr(&args[0], ctx);
-            let init = super::expr::emit_expr(&args[1], ctx);
-            let func = super::expr::emit_expr(&args[2], ctx);
-            Some(format!(
-                "{}.foldl {} {}",
-                paren_if_complex(&list),
-                paren_if_complex(&func),
-                paren_if_complex(&init)
-            ))
-        }
         "List.push" => {
             let list = super::expr::emit_expr(&args[0], ctx);
             let item = super::expr::emit_expr(&args[1], ctx);
             Some(format!("{} ++ [{}]", paren_if_complex(&list), item))
         }
-        "List.head" => {
-            let list = super::expr::emit_expr(&args[0], ctx);
-            Some(format!("{}.head?", paren_if_complex(&list)))
+        "List.prepend" => {
+            let item = super::expr::emit_expr(&args[0], ctx);
+            let list = super::expr::emit_expr(&args[1], ctx);
+            Some(format!("{} :: {}", item, paren_if_complex(&list)))
         }
-        "List.tail" => {
-            let list = super::expr::emit_expr(&args[0], ctx);
-            Some(format!("{}.tail?", paren_if_complex(&list)))
+        "List.append" => {
+            let a = super::expr::emit_expr(&args[0], ctx);
+            let b = super::expr::emit_expr(&args[1], ctx);
+            Some(format!("{} ++ {}", paren_if_complex(&a), paren_if_complex(&b)))
         }
         "List.get" => {
             let list = super::expr::emit_expr(&args[0], ctx);
@@ -266,24 +237,6 @@ pub fn emit_builtin_call(name: &str, args: &[Expr], ctx: &CodegenContext) -> Opt
                 "{}.get? {}",
                 paren_if_complex(&list),
                 paren_if_complex(&idx)
-            ))
-        }
-        "List.find" => {
-            let list = super::expr::emit_expr(&args[0], ctx);
-            let func = super::expr::emit_expr(&args[1], ctx);
-            Some(format!(
-                "{}.find? {}",
-                paren_if_complex(&list),
-                paren_if_complex(&func)
-            ))
-        }
-        "List.any" => {
-            let list = super::expr::emit_expr(&args[0], ctx);
-            let func = super::expr::emit_expr(&args[1], ctx);
-            Some(format!(
-                "{}.any {}",
-                paren_if_complex(&list),
-                paren_if_complex(&func)
             ))
         }
         "List.contains" => {
@@ -299,20 +252,6 @@ pub fn emit_builtin_call(name: &str, args: &[Expr], ctx: &CodegenContext) -> Opt
             let list = super::expr::emit_expr(&args[0], ctx);
             Some(format!("{}.reverse", paren_if_complex(&list)))
         }
-        "List.range" => {
-            let from = super::expr::emit_expr(&args[0], ctx);
-            let to = super::expr::emit_expr(&args[1], ctx);
-            Some(format!("List.range' {} ({} - {} + 1)", from, to, from))
-        }
-        "List.flatMap" => {
-            let list = super::expr::emit_expr(&args[0], ctx);
-            let func = super::expr::emit_expr(&args[1], ctx);
-            Some(format!(
-                "{}.bind {}",
-                paren_if_complex(&list),
-                paren_if_complex(&func)
-            ))
-        }
         "List.zip" => {
             let a = super::expr::emit_expr(&args[0], ctx);
             let b = super::expr::emit_expr(&args[1], ctx);
@@ -321,10 +260,6 @@ pub fn emit_builtin_call(name: &str, args: &[Expr], ctx: &CodegenContext) -> Opt
                 paren_if_complex(&a),
                 paren_if_complex(&b)
             ))
-        }
-        "List.sort" => {
-            let list = super::expr::emit_expr(&args[0], ctx);
-            Some(format!("AverList.sort {}", paren_if_complex(&list)))
         }
 
         // ---- Map ----

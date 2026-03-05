@@ -6,25 +6,18 @@ All functions live in namespaces — no flat builtins (decision: `FullNamespaceE
 
 ### `List` namespace
 
-Source: `src/types/list.rs` (pure helpers) + `src/interpreter/builtins.rs` (`map`/`filter`/`fold`/`find`/`any`/`flatMap`).
-
-Note: Aver has no lambdas/closures. Function-valued parameters (`Fn(...) -> ...`) must be passed as top-level function names.
+Source: `src/types/list.rs`
 
 | Function | Signature | Notes |
 |---|---|---|
 | `List.len` | `List<T> -> Int` | |
 | `List.get` | `(List<T>, Int) -> Option<T>` | Returns `Option.None` on out-of-bounds |
 | `List.push` | `(List<T>, T) -> List<T>` | Appends element, returns new list |
-| `List.head` | `List<T> -> Option<T>` | Returns `Option.None` on empty |
-| `List.tail` | `List<T> -> Option<List<T>>` | Returns `Option.None` on empty |
-| `List.map` | `(List<T>, Fn(T) -> U) -> List<U>` | |
-| `List.filter` | `(List<T>, Fn(T) -> Bool) -> List<T>` | |
-| `List.fold` | `(List<T>, U, Fn(U, T) -> U) -> U` | |
-| `List.find` | `(List<T>, Fn(T) -> Bool) -> Option<T>` | First matching element |
-| `List.any` | `(List<T>, Fn(T) -> Bool) -> Bool` | True if any element matches |
+| `List.prepend` | `(T, List<T>) -> List<T>` | Prepends element, returns new list |
+| `List.append` | `(List<T>, List<T>) -> List<T>` | Concatenates two lists |
+| `List.reverse` | `List<T> -> List<T>` | Returns a reversed copy |
 | `List.contains` | `(List<T>, T) -> Bool` | Membership check via `==` |
 | `List.zip` | `(List<A>, List<B>) -> List<(A, B)>` | Pairs elements, truncates to shorter list |
-| `List.flatMap` | `(List<T>, Fn(T) -> List<U>) -> List<U>` | Map then flatten |
 
 ### `Result` namespace
 

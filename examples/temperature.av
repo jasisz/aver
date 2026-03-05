@@ -1,7 +1,7 @@
 module Temperature
     intent =
         "Converts temperatures between Celsius, Fahrenheit, and Kelvin."
-        "Demonstrates Result types, collection helpers, and co-located verification."
+        "Demonstrates Result types, recursive list processing, and co-located verification."
 
 decision NoLoops
     date = "2026-02-24"
@@ -76,6 +76,30 @@ verify classify
     classify(25.0) => "comfortable"
     classify(40.0) => "hot"
 
+fn collectBoilingTemps(temps: List<Float>) -> List<Float>
+    ? "Collects boiling temperatures from a list."
+    = match temps
+        [] -> []
+        [temp, ..rest] -> match isBoiling(temp)
+            true -> List.prepend(temp, collectBoilingTemps(rest))
+            false -> collectBoilingTemps(rest)
+
+verify collectBoilingTemps
+    collectBoilingTemps([0.0, 100.0, 110.0]) => [100.0, 110.0]
+    collectBoilingTemps([10.0, 20.0]) => []
+
+fn collectFreezingTemps(temps: List<Float>) -> List<Float>
+    ? "Collects freezing temperatures from a list."
+    = match temps
+        [] -> []
+        [temp, ..rest] -> match isFreezing(temp)
+            true -> List.prepend(temp, collectFreezingTemps(rest))
+            false -> collectFreezingTemps(rest)
+
+verify collectFreezingTemps
+    collectFreezingTemps([0.0, -10.0, 4.0]) => [0.0, -10.0]
+    collectFreezingTemps([5.0, 10.0]) => []
+
 fn main() -> Unit
     ! [Console.print]
     boiling = celsiusToFahr(100.0)
@@ -95,10 +119,10 @@ fn main() -> Unit
     Console.print(invalid)
 
     temps = [0.0, 15.0, 25.0, 37.0, 100.0]
-    boilingTemps = List.filter(temps, isBoiling)
+    boilingTemps = collectBoilingTemps(temps)
     Console.print("Boiling:")
     Console.print(boilingTemps)
 
-    freezingTemps = List.filter(temps, isFreezing)
+    freezingTemps = collectFreezingTemps(temps)
     Console.print("Freezing:")
     Console.print(freezingTemps)

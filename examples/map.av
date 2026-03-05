@@ -1,7 +1,7 @@
 module MapExample
     intent =
         "Demonstrates typed Map usage in Aver."
-        "Shows map literals, Map.get, Map.entries, and counting with List.fold."
+        "Shows map literals, Map.get, Map.entries, and recursive counting."
 
 fn emptyCounts() -> Map<String, Int>
     ? "Creates an empty word-count map."
@@ -25,7 +25,9 @@ verify incCount law keyPresent
 
 fn countWords(words: List<String>) -> Map<String, Int>
     ? "Counts occurrences of each word."
-    = List.fold(words, emptyCounts(), incCount)
+    = match words
+        [] -> emptyCounts()
+        [word, ..rest] -> incCount(countWords(rest), word)
 
 verify countWords
     countWords([])                => Map.empty()

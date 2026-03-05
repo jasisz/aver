@@ -165,16 +165,15 @@ decision UseResultNotExceptions
 ## No closures
 
 All user-defined functions are top-level. At call time, a function sees globals + its own parameters — no closure capture at definition time.
-There is no lambda syntax. Higher-order APIs (for example `List.map`, `List.filter`, `List.any`) take a top-level function name.
+There is no lambda syntax. List processing is typically written with recursion and pattern matching rather than callback-based helpers.
 
-## Common patterns (without closures)
+## Common patterns
 
 ```aver
-fn double(n: Int) -> Int
-    ? "Doubles a number."
-    = n * 2
-
-doubled = List.map([1, 2, 3, 4], double)
+fn sum(xs: List<Int>) -> Int
+    = match xs
+        [] -> 0
+        [head, ..tail] -> head + sum(tail)
 ```
 
 ```aver
@@ -218,7 +217,7 @@ Type errors block `run`, `check`, and `verify`. No partial execution. The checke
 | Absent | Reason |
 |--------|--------|
 | `if`/`else` | `match` is exhaustive — no silent missing cases |
-| `for`/`while` | Use `map`, `filter`, `fold` — iteration is data transformation |
+| `for`/`while` | Use recursion, pattern matching, and explicit list operations |
 | `null` | `Option<T>` with `Some`/`None` only |
 | Exceptions | `Result<T, E>` only — errors are values |
 | Global mutable state | No shared mutable state by design |

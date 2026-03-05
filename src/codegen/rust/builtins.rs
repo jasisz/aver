@@ -308,112 +308,37 @@ fn emit_builtin_call_inner(
                 ))
             }
         }
-        "List.head" => {
-            let list = emit_expr(&args[0], ctx, ectx);
-            Some(format!("{}.first().cloned()", list))
-        }
-        "List.tail" => {
-            let list = emit_expr(&args[0], ctx, ectx);
-            Some(format!(
-                "if {list}.len() > 1 {{ Some({list}[1..].to_vec()) }} else if {list}.len() == 1 {{ Some(vec![]) }} else {{ None }}",
-                list = list
-            ))
-        }
-        "List.map" => {
-            let list_expr = &args[0];
-            let last_use = is_last_use_ident(list_expr, &arg_ctxs[0]);
-            let list = emit_expr(list_expr, ctx, &arg_ctxs[0]);
-            let func = emit_expr(&args[1], ctx, &arg_ctxs[1]);
+        "List.prepend" => {
+            let list_expr = &args[1];
+            let last_use = is_last_use_ident(list_expr, &arg_ctxs[1]);
+            let item = emit_expr(&args[0], ctx, &arg_ctxs[0]);
+            let list = emit_expr(list_expr, ctx, &arg_ctxs[1]);
             if last_use {
                 Some(format!(
-                    "{}.into_iter().map(|x| {}(x)).collect::<Vec<_>>()",
-                    list, func
+                    "{{ let mut v = {}; v.insert(0, {}); v }}",
+                    list, item
                 ))
             } else {
                 Some(format!(
-                    "{}.iter().map(|x| {}(x.clone())).collect::<Vec<_>>()",
-                    list, func
+                    "{{ let mut v = {}.clone(); v.insert(0, {}); v }}",
+                    list, item
                 ))
             }
         }
-        "List.filter" => {
-            let list_expr = &args[0];
-            let last_use = is_last_use_ident(list_expr, &arg_ctxs[0]);
-            let list = emit_expr(list_expr, ctx, &arg_ctxs[0]);
-            let func = emit_expr(&args[1], ctx, &arg_ctxs[1]);
+        "List.append" => {
+            let left_expr = &args[0];
+            let last_use = is_last_use_ident(left_expr, &arg_ctxs[0]);
+            let left = emit_expr(left_expr, ctx, &arg_ctxs[0]);
+            let right = emit_expr(&args[1], ctx, &arg_ctxs[1]);
             if last_use {
-                // into_iter gives owned x, but filter takes &x — clone is unavoidable for the predicate call
                 Some(format!(
-                    "{}.into_iter().filter(|x| {}(x.clone())).collect::<Vec<_>>()",
-                    list, func
+                    "{{ let mut v = {}; v.extend({}.into_iter()); v }}",
+                    left, right
                 ))
             } else {
                 Some(format!(
-                    "{}.iter().filter(|x| {}((*x).clone())).cloned().collect::<Vec<_>>()",
-                    list, func
-                ))
-            }
-        }
-        "List.fold" => {
-            let list_expr = &args[0];
-            let last_use = is_last_use_ident(list_expr, &arg_ctxs[0]);
-            let list = emit_expr(list_expr, ctx, &arg_ctxs[0]);
-            let init = emit_expr(&args[1], ctx, &arg_ctxs[1]);
-            let func = emit_expr(&args[2], ctx, &arg_ctxs[2]);
-            if last_use {
-                Some(format!(
-                    "{}.into_iter().fold({}, |acc, x| {}(acc, x))",
-                    list, init, func
-                ))
-            } else {
-                Some(format!(
-                    "{}.iter().fold({}, |acc, x| {}(acc, x.clone()))",
-                    list, init, func
-                ))
-            }
-        }
-        "List.find" => {
-            let list_expr = &args[0];
-            let last_use = is_last_use_ident(list_expr, &arg_ctxs[0]);
-            let list = emit_expr(list_expr, ctx, &arg_ctxs[0]);
-            let func = emit_expr(&args[1], ctx, &arg_ctxs[1]);
-            if last_use {
-                Some(format!(
-                    "{}.into_iter().find(|x| {}(x.clone()))",
-                    list, func
-                ))
-            } else {
-                Some(format!(
-                    "{}.iter().find(|x| {}((*x).clone())).cloned()",
-                    list, func
-                ))
-            }
-        }
-        "List.any" => {
-            let list_expr = &args[0];
-            let last_use = is_last_use_ident(list_expr, &arg_ctxs[0]);
-            let list = emit_expr(list_expr, ctx, &arg_ctxs[0]);
-            let func = emit_expr(&args[1], ctx, &arg_ctxs[1]);
-            if last_use {
-                Some(format!("{}.into_iter().any(|x| {}(x))", list, func))
-            } else {
-                Some(format!("{}.iter().any(|x| {}((*x).clone()))", list, func))
-            }
-        }
-        "List.flatMap" => {
-            let list_expr = &args[0];
-            let last_use = is_last_use_ident(list_expr, &arg_ctxs[0]);
-            let list = emit_expr(list_expr, ctx, &arg_ctxs[0]);
-            let func = emit_expr(&args[1], ctx, &arg_ctxs[1]);
-            if last_use {
-                Some(format!(
-                    "{}.into_iter().flat_map(|x| {}(x)).collect::<Vec<_>>()",
-                    list, func
-                ))
-            } else {
-                Some(format!(
-                    "{}.iter().flat_map(|x| {}(x.clone())).collect::<Vec<_>>()",
-                    list, func
+                    "{{ let mut v = {}.clone(); v.extend({}.into_iter()); v }}",
+                    left, right
                 ))
             }
         }
@@ -430,16 +355,6 @@ fn emit_builtin_call_inner(
                 ))
             }
         }
-        "List.sort" => {
-            let list_expr = &args[0];
-            let last_use = is_last_use_ident(list_expr, &arg_ctxs[0]);
-            let list = emit_expr(list_expr, ctx, &arg_ctxs[0]);
-            if last_use {
-                Some(format!("{{ let mut v = {}; v.sort(); v }}", list))
-            } else {
-                Some(format!("{{ let mut v = {}.clone(); v.sort(); v }}", list))
-            }
-        }
         "List.contains" => {
             let list = emit_expr(&args[0], ctx, ectx);
             let item = emit_expr(&args[1], ctx, ectx);
@@ -453,12 +368,6 @@ fn emit_builtin_call_inner(
                 a, b
             ))
         }
-        "List.range" => {
-            let from = emit_expr(&args[0], ctx, ectx);
-            let to = emit_expr(&args[1], ctx, ectx);
-            Some(format!("({}..={}).collect::<Vec<i64>>()", from, to))
-        }
-
         // ---- Map ----
         "Map.empty" => Some("HashMap::new()".to_string()),
         "Map.fromList" => {

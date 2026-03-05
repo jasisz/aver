@@ -311,24 +311,6 @@ impl TypeChecker {
         let list_sigs: &[(&str, &[Type], Type, &[&str])] = &[
             ("List.len", &[Type::List(Box::new(any()))], Type::Int, &[]),
             (
-                "List.map",
-                &[Type::Unknown, Type::Unknown],
-                Type::List(Box::new(any())),
-                &[],
-            ),
-            (
-                "List.filter",
-                &[Type::Unknown, Type::Unknown],
-                Type::List(Box::new(any())),
-                &[],
-            ),
-            (
-                "List.fold",
-                &[Type::Unknown, Type::Unknown, Type::Unknown],
-                any(),
-                &[],
-            ),
-            (
                 "List.get",
                 &[Type::Unknown, Type::Int],
                 Type::Option(Box::new(any())),
@@ -341,31 +323,35 @@ impl TypeChecker {
                 &[],
             ),
             (
-                "List.head",
-                &[Type::Unknown],
-                Type::Option(Box::new(any())),
-                &[],
-            ),
-            (
-                "List.tail",
-                &[Type::Unknown],
-                Type::Option(Box::new(Type::List(Box::new(any())))),
-                &[],
-            ),
-            (
-                "List.find",
+                "List.prepend",
                 &[Type::Unknown, Type::Unknown],
-                Type::Option(Box::new(any())),
+                Type::List(Box::new(any())),
                 &[],
             ),
-            ("List.any", &[Type::Unknown, Type::Unknown], Type::Bool, &[]),
+            (
+                "List.append",
+                &[Type::Unknown, Type::Unknown],
+                Type::List(Box::new(any())),
+                &[],
+            ),
+            (
+                "List.reverse",
+                &[Type::Unknown],
+                Type::List(Box::new(any())),
+                &[],
+            ),
             (
                 "List.contains",
                 &[Type::Unknown, Type::Unknown],
                 Type::Bool,
                 &[],
             ),
-            // List.zip and List.flatMap have special-case inference in infer_list_call_type
+            (
+                "List.zip",
+                &[Type::Unknown, Type::Unknown],
+                Type::List(Box::new(Type::Tuple(vec![any(), any()]))),
+                &[],
+            ),
         ];
         for (name, params, ret, effects) in list_sigs {
             self.insert_sig(name, params, ret.clone(), effects);
