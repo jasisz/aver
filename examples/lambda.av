@@ -97,8 +97,8 @@ fn applyN(n: Int) -> Term
         _ -> Term.App(Term.Var("f"), applyN(n - 1))
 
 verify applyN
-    termToString(applyN(0)) => "x"
-    termToString(applyN(2)) => "(f (f x))"
+    applyN(0) => Term.Var("x")
+    applyN(2) => Term.App(Term.Var("f"), Term.App(Term.Var("f"), Term.Var("x")))
 
 fn church(n: Int) -> Term
     ? "Church numeral: λf.λx. f^n(x)"
@@ -163,20 +163,20 @@ fn testSucc(n: Int) -> Int
     ? "Applies Church successor and decodes the result."
     = unchurch(eval(Term.App(churchSucc(), church(n))))
 
-fn testPlus(a: Int, b: Int) -> Int
-    ? "Applies Church addition and decodes the result."
-    = unchurch(eval(Term.App(Term.App(churchPlus(), church(a)), church(b))))
-
-fn testMult(a: Int, b: Int) -> Int
-    ? "Applies Church multiplication and decodes the result."
-    = unchurch(eval(Term.App(Term.App(churchMult(), church(a)), church(b))))
-
 verify testSucc
     testSucc(0) => 1
     testSucc(2) => 3
 
+fn testPlus(a: Int, b: Int) -> Int
+    ? "Applies Church addition and decodes the result."
+    = unchurch(eval(Term.App(Term.App(churchPlus(), church(a)), church(b))))
+
 verify testPlus
     testPlus(2, 3) => 5
+
+fn testMult(a: Int, b: Int) -> Int
+    ? "Applies Church multiplication and decodes the result."
+    = unchurch(eval(Term.App(Term.App(churchMult(), church(a)), church(b))))
 
 verify testMult
     testMult(2, 3) => 6
@@ -204,6 +204,11 @@ fn unchurchBool(t: Term) -> String
         Term.Var(name) -> name
         _ -> "?"
 
+verify unchurchBool
+    unchurchBool(churchTrue()) => "T"
+    unchurchBool(churchFalse()) => "F"
+    unchurchBool(Term.Var("x")) => "?"
+
 fn churchAnd() -> Term
     ? "AND = λp.λq. p q p"
     = Term.Lam("p", Term.Lam("q", Term.App(Term.App(Term.Var("p"), Term.Var("q")), Term.Var("p"))))
@@ -222,18 +227,13 @@ fn testAnd(a: Term, b: Term) -> String
     ? "Applies Church AND and decodes the result."
     = unchurchBool(eval(Term.App(Term.App(churchAnd(), a), b)))
 
-fn testNot(t: Term) -> String
-    ? "Applies Church NOT and decodes the result."
-    = unchurchBool(eval(Term.App(churchNot(), t)))
-
-verify unchurchBool
-    unchurchBool(churchTrue()) => "T"
-    unchurchBool(churchFalse()) => "F"
-    unchurchBool(Term.Var("x")) => "?"
-
 verify testAnd
     testAnd(churchTrue(), churchTrue()) => "T"
     testAnd(churchTrue(), churchFalse()) => "F"
+
+fn testNot(t: Term) -> String
+    ? "Applies Church NOT and decodes the result."
+    = unchurchBool(eval(Term.App(churchNot(), t)))
 
 verify testNot
     testNot(churchTrue()) => "F"

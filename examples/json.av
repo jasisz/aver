@@ -76,6 +76,7 @@ verify fromString
     fromString("\"\t\"") => Result.Err("Unescaped control character at position 1")
 
 fn checkEof(s: String, val: Json, pos: Int) -> Result<Json, String>
+    ? "JSON helper: checkEof."
     match String.charAt(s, pos)
         Option.None -> Result.Ok(val)
         Option.Some(c) -> Result.Err("Trailing content: " + c + " at position " + String.fromInt(pos))
@@ -111,6 +112,7 @@ verify toString
 // ── Char helpers ──────────────────────────────────────────────────
 
 fn renderJsonList(items: List<Json>) -> String
+    ? "JSON helper: renderJsonList."
     match items
         [] -> ""
         [head, ..tail] -> renderJsonListTail(toString(head), tail)
@@ -120,6 +122,7 @@ verify renderJsonList
     renderJsonList([Json.JsonInt(1), Json.JsonNull]) => "1,null"
 
 fn renderJsonListTail(acc: String, rest: List<Json>) -> String
+    ? "JSON helper: renderJsonListTail."
     match rest
         [] -> acc
         [head, ..tail] -> renderJsonListTail(acc + "," + toString(head), tail)
@@ -129,6 +132,7 @@ verify renderJsonListTail
     renderJsonListTail("1", [Json.JsonInt(2), Json.JsonInt(3)]) => "1,2,3"
 
 fn renderJsonEntries(entries: List<(String, Json)>) -> String
+    ? "JSON helper: renderJsonEntries."
     match entries
         [] -> ""
         [entry, ..tail] -> renderJsonEntriesTail(entryToString(entry), tail)
@@ -138,6 +142,7 @@ verify renderJsonEntries
     renderJsonEntries([("a", Json.JsonInt(1)), ("b", Json.JsonBool(false))]) => "\"a\":1,\"b\":false"
 
 fn renderJsonEntriesTail(acc: String, rest: List<(String, Json)>) -> String
+    ? "JSON helper: renderJsonEntriesTail."
     match rest
         [] -> acc
         [entry, ..tail] -> renderJsonEntriesTail(acc + "," + entryToString(entry), tail)
@@ -147,6 +152,7 @@ verify renderJsonEntriesTail
     renderJsonEntriesTail("\"a\":1", [("b", Json.JsonInt(2))]) => "\"a\":1,\"b\":2"
 
 fn entryToString(entry: (String, Json)) -> String
+    ? "JSON helper: entryToString."
     match entry
         (key, val) -> "\"" + escapeJsonString(key) + "\":" + toString(val)
 
@@ -154,12 +160,14 @@ verify entryToString
     entryToString(("a\"b", Json.JsonInt(1))) => "\"a\\\"b\":1"
 
 fn escapeJsonString(s: String) -> String
+    ? "JSON helper: escapeJsonString."
     = escapeJsonChars(String.chars(s), "")
 
 verify escapeJsonString
     escapeJsonString("a\"b\nc") => "a\\\"b\\nc"
 
 fn escapeJsonChars(chars: List<String>, acc: String) -> String
+    ? "JSON helper: escapeJsonChars."
     match chars
         [] -> acc
         [c, ..rest] -> escapeJsonChars(rest, acc + escapeJsonChar(c))
@@ -169,6 +177,7 @@ verify escapeJsonChars
     escapeJsonChars(["a", "\"", "b"], "") => "a\\\"b"
 
 fn escapeJsonChar(c: String) -> String
+    ? "JSON helper: escapeJsonChar."
     match c
         "\"" -> "\\\""
         "\\" -> "\\\\"
@@ -186,6 +195,7 @@ verify escapeJsonChar
     escapeJsonChar("a") => "a"
 
 fn escapeControlChar(c: String) -> String
+    ? "JSON helper: escapeControlChar."
     code = Char.toCode(c)
     match code == 8
         true -> "\\b"
@@ -202,6 +212,7 @@ verify escapeControlChar
     escapeControlChar("A") => "A"
 
 fn controlCodeEscape(c: String, code: Int) -> String
+    ? "JSON helper: controlCodeEscape."
     match Byte.toHex(code)
         Result.Ok(hex) -> "\\u00" + hex
         Result.Err(_) -> c
@@ -211,6 +222,7 @@ verify controlCodeEscape
     controlCodeEscape("x", 300) => "x"
 
 fn isDigit(c: String) -> Bool
+    ? "JSON helper: isDigit."
     code = Char.toCode(c)
     match code >= 48
         true -> code <= 57
@@ -222,6 +234,7 @@ verify isDigit
     isDigit("a") => false
 
 fn digitVal(c: String) -> Int
+    ? "JSON helper: digitVal."
     = Char.toCode(c) - 48
 
 verify digitVal
@@ -239,6 +252,7 @@ verify hexVal
     hexVal("Z") => Option.None
 
 fn hexAlpha(code: Int) -> Option<Int>
+    ? "JSON helper: hexAlpha."
     match code >= 97
         true -> match code <= 102
             true -> Option.Some(code - 87)
@@ -257,6 +271,7 @@ verify hexAlpha
     hexAlpha(47) => Option.None
 
 fn skipWs(s: String, pos: Int) -> Int
+    ? "JSON helper: skipWs."
     match String.charAt(s, pos)
         Option.None -> pos
         Option.Some(c) -> match c
@@ -275,6 +290,7 @@ verify skipWs
     skipWs("abc", 0) => 0
 
 fn parseValue(s: String, pos: Int) -> ParseResult
+    ? "JSON helper: parseValue."
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unexpected end of input", pos)
         Option.Some(c) -> dispatchChar(s, pos, c)
@@ -284,6 +300,7 @@ verify parseValue
     parseValue("1", 0) => ParseResult.Ok(Json.JsonInt(1), 1)
 
 fn dispatchChar(s: String, pos: Int, c: String) -> ParseResult
+    ? "JSON helper: dispatchChar."
     match c
         "\"" -> parseString(s, pos + 1)
         "{{" -> parseObject(s, skipWs(s, pos + 1))
@@ -305,6 +322,7 @@ verify dispatchChar
     dispatchChar("9", 0, "9") => ParseResult.Ok(Json.JsonInt(9), 1)
 
 fn dispatchNumberOrErr(s: String, pos: Int, c: String) -> ParseResult
+    ? "JSON helper: dispatchNumberOrErr."
     match isDigit(c)
         true -> parseNumber(s, pos)
         false -> ParseResult.Err("Unexpected character: " + c, pos)
@@ -333,6 +351,7 @@ verify parseString
     parseString("abc\"", 0) => ParseResult.Ok(Json.JsonString("abc"), 4)
 
 fn parseStringChunk(s: String, pos: Int, segmentStart: Int, chunks: List<String>) -> ParseResult
+    ? "JSON helper: parseStringChunk."
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated string", pos)
         Option.Some(c) -> match c
@@ -347,6 +366,7 @@ verify parseStringChunk
     parseStringChunk("a\"", 0, 0, []) => ParseResult.Ok(Json.JsonString("a"), 2)
 
 fn finishString(s: String, nextPos: Int, segmentStart: Int, chunks: List<String>) -> ParseResult
+    ? "JSON helper: finishString."
     segment = String.slice(s, segmentStart, nextPos - 1)
     all = String.join(List.push(chunks, segment), "")
     ParseResult.Ok(Json.JsonString(all), nextPos)
@@ -355,6 +375,7 @@ verify finishString
     finishString("abc\"", 4, 0, []) => ParseResult.Ok(Json.JsonString("abc"), 4)
 
 fn validateChar(s: String, pos: Int, segmentStart: Int, chunks: List<String>, c: String) -> ParseResult
+    ? "JSON helper: validateChar."
     match Char.toCode(c) < 32
         true -> ParseResult.Err("Unescaped control character", pos)
         false -> parseStringChunk(s, pos + 1, segmentStart, chunks)
@@ -364,6 +385,7 @@ verify validateChar
     validateChar("a\"", 0, 0, [], "a") => ParseResult.Ok(Json.JsonString("a"), 2)
 
 fn parseEscape(s: String, pos: Int, slashPos: Int, segmentStart: Int, chunks: List<String>) -> ParseResult
+    ? "JSON helper: parseEscape."
     segment = String.slice(s, segmentStart, slashPos)
     base = List.push(chunks, segment)
     match String.charAt(s, pos)
@@ -404,6 +426,7 @@ verify parseUnicode
     parseUnicode("XX", 0, 0, []) => ParseResult.Err("Invalid \\u escape", 0)
 
 fn parseUnicodeCodePoint(s: String, pos: Int, escapePos: Int, chunks: List<String>, cp: Int) -> ParseResult
+    ? "JSON helper: parseUnicodeCodePoint."
     match isHighSurrogate(cp)
         true -> parseUnicodePair(s, pos, escapePos, chunks, cp)
         false -> match isLowSurrogate(cp)
@@ -416,6 +439,7 @@ verify parseUnicodeCodePoint
     parseUnicodeCodePoint("\"", 0, 0, [], 65) => ParseResult.Ok(Json.JsonString("A"), 1)
 
 fn isHighSurrogate(cp: Int) -> Bool
+    ? "JSON helper: isHighSurrogate."
     match cp >= 55296
         true -> cp <= 56319
         false -> false
@@ -425,6 +449,7 @@ verify isHighSurrogate
     isHighSurrogate(65) => false
 
 fn isLowSurrogate(cp: Int) -> Bool
+    ? "JSON helper: isLowSurrogate."
     match cp >= 56320
         true -> cp <= 57343
         false -> false
@@ -434,6 +459,7 @@ verify isLowSurrogate
     isLowSurrogate(65) => false
 
 fn parseUnicodePair(s: String, pos: Int, escapePos: Int, chunks: List<String>, hi: Int) -> ParseResult
+    ? "JSON helper: parseUnicodePair."
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Invalid Unicode surrogate pair", escapePos)
         Option.Some(c) -> match c
@@ -446,6 +472,7 @@ verify parseUnicodePair
     parseUnicodePair("\\uDE00\"", 0, 0, [], 55357) => ParseResult.Ok(Json.JsonString("😀"), 7)
 
 fn parseUnicodePairU(s: String, pos: Int, escapePos: Int, chunks: List<String>, hi: Int) -> ParseResult
+    ? "JSON helper: parseUnicodePairU."
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Invalid Unicode surrogate pair", escapePos)
         Option.Some(c) -> match c
@@ -458,6 +485,7 @@ verify parseUnicodePairU
     parseUnicodePairU("uDE00\"", 0, 0, [], 55357) => ParseResult.Ok(Json.JsonString("😀"), 6)
 
 fn parseUnicodePairLow(s: String, pos: Int, escapePos: Int, chunks: List<String>, hi: Int) -> ParseResult
+    ? "JSON helper: parseUnicodePairLow."
     match readHex4(s, pos, 0, 0)
         Option.None -> ParseResult.Err("Invalid \\u escape", pos - 1)
         Option.Some(lo) -> match isLowSurrogate(lo)
@@ -470,12 +498,14 @@ verify parseUnicodePairLow
     parseUnicodePairLow("0041\"", 0, 0, [], 55357) => ParseResult.Err("Invalid Unicode surrogate pair", 0)
 
 fn combineSurrogates(hi: Int, lo: Int) -> Int
+    ? "JSON helper: combineSurrogates."
     = 65536 + (hi - 55296) * 1024 + (lo - 56320)
 
 verify combineSurrogates
     combineSurrogates(55357, 56832) => 128512
 
 fn readHex4(s: String, pos: Int, acc: Int, count: Int) -> Option<Int>
+    ? "JSON helper: readHex4."
     match count == 4
         true -> Option.Some(acc)
         false -> match String.charAt(s, pos)
@@ -491,6 +521,7 @@ verify readHex4
     readHex4("0041", 0, 0, 0) => Option.Some(65)
 
 fn applyCodePoint(s: String, pos: Int, escapePos: Int, chunks: List<String>, cp: Int) -> ParseResult
+    ? "JSON helper: applyCodePoint."
     match Char.fromCode(cp)
         Option.None -> ParseResult.Err("Invalid Unicode code point", escapePos)
         Option.Some(ch) -> parseStringChunk(s, pos, pos, List.push(chunks, ch))
@@ -515,6 +546,7 @@ verify parseNumber
     parseNumber("9", 0) => ParseResult.Ok(Json.JsonInt(9), 1)
 
 fn startNumberDigits(s: String, start: Int, c: String) -> ParseResult
+    ? "JSON helper: startNumberDigits."
     match isDigit(c)
         true -> scanIntTail(s, start + 1, start, false)
         false -> ParseResult.Err("Unexpected character: " + c, start)
@@ -524,6 +556,7 @@ verify startNumberDigits
     startNumberDigits("x", 0, "x") => ParseResult.Err("Unexpected character: x", 0)
 
 fn parseNumberSign(s: String, pos: Int, start: Int) -> ParseResult
+    ? "JSON helper: parseNumberSign."
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Expected digit after '-'", pos)
         Option.Some(c) -> match c
@@ -536,6 +569,7 @@ verify parseNumberSign
     parseNumberSign("-8", 1, 0) => ParseResult.Ok(Json.JsonInt(-8), 2)
 
 fn startSignDigit(s: String, pos: Int, start: Int, c: String) -> ParseResult
+    ? "JSON helper: startSignDigit."
     match isDigit(c)
         true -> scanIntTail(s, pos + 1, start, false)
         false -> ParseResult.Err("Expected digit after '-'", pos)
@@ -545,6 +579,7 @@ verify startSignDigit
     startSignDigit("-x", 1, 0, "x") => ParseResult.Err("Expected digit after '-'", 1)
 
 fn scanIntTail(s: String, pos: Int, start: Int, leadingZero: Bool) -> ParseResult
+    ? "JSON helper: scanIntTail."
     match String.charAt(s, pos)
         Option.None -> finishNumber(s, start, pos, false)
         Option.Some(c) -> match isDigit(c)
@@ -560,6 +595,7 @@ verify scanIntTail
     scanIntTail("1.", 1, 0, false) => ParseResult.Err("Expected digit after '.'", 2)
 
 fn afterIntChar(s: String, pos: Int, start: Int, c: String) -> ParseResult
+    ? "JSON helper: afterIntChar."
     match c
         "." -> scanFracFirst(s, pos + 1, start)
         "e" -> scanExpStart(s, pos + 1, start)
@@ -573,6 +609,7 @@ verify afterIntChar
     afterIntChar("1]", 1, 0, "]") => ParseResult.Ok(Json.JsonInt(1), 1)
 
 fn scanFracFirst(s: String, pos: Int, start: Int) -> ParseResult
+    ? "JSON helper: scanFracFirst."
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Expected digit after '.'", pos)
         Option.Some(c) -> match isDigit(c)
@@ -585,6 +622,7 @@ verify scanFracFirst
     scanFracFirst("1.x", 2, 0) => ParseResult.Err("Expected digit after '.'", 2)
 
 fn scanFracTail(s: String, pos: Int, start: Int) -> ParseResult
+    ? "JSON helper: scanFracTail."
     match String.charAt(s, pos)
         Option.None -> finishNumber(s, start, pos, true)
         Option.Some(c) -> match isDigit(c)
@@ -597,6 +635,7 @@ verify scanFracTail
     scanFracTail("1.5e2", 3, 0) => ParseResult.Ok(Json.JsonFloat(150.0), 5)
 
 fn afterFracChar(s: String, pos: Int, start: Int, c: String) -> ParseResult
+    ? "JSON helper: afterFracChar."
     match c
         "e" -> scanExpStart(s, pos + 1, start)
         "E" -> scanExpStart(s, pos + 1, start)
@@ -623,6 +662,7 @@ verify scanExpStart
     scanExpStart("1e2", 2, 0) => ParseResult.Ok(Json.JsonFloat(100.0), 3)
 
 fn scanExpDigit1(s: String, pos: Int, start: Int) -> ParseResult
+    ? "JSON helper: scanExpDigit1."
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Expected digit in exponent", pos)
         Option.Some(c) -> startExpDigit(s, pos, start, c)
@@ -632,6 +672,7 @@ verify scanExpDigit1
     scanExpDigit1("1e+2", 3, 0) => ParseResult.Ok(Json.JsonFloat(100.0), 4)
 
 fn startExpDigit(s: String, pos: Int, start: Int, c: String) -> ParseResult
+    ? "JSON helper: startExpDigit."
     match isDigit(c)
         true -> scanExpTail(s, pos + 1, start)
         false -> ParseResult.Err("Expected digit in exponent", pos)
@@ -641,6 +682,7 @@ verify startExpDigit
     startExpDigit("1ex", 2, 0, "x") => ParseResult.Err("Expected digit in exponent", 2)
 
 fn scanExpTail(s: String, pos: Int, start: Int) -> ParseResult
+    ? "JSON helper: scanExpTail."
     match String.charAt(s, pos)
         Option.None -> finishNumber(s, start, pos, true)
         Option.Some(c) -> match isDigit(c)
@@ -653,6 +695,7 @@ verify scanExpTail
     scanExpTail("1e2]", 3, 0) => ParseResult.Ok(Json.JsonFloat(100.0), 3)
 
 fn finishNumber(s: String, start: Int, endPos: Int, asFloat: Bool) -> ParseResult
+    ? "JSON helper: finishNumber."
     num = String.slice(s, start, endPos)
     match asFloat
         true -> finishFloat(num, endPos)
@@ -663,6 +706,7 @@ verify finishNumber
     finishNumber("4.2", 0, 3, true) => ParseResult.Ok(Json.JsonFloat(4.2), 3)
 
 fn finishInt(num: String, pos: Int) -> ParseResult
+    ? "JSON helper: finishInt."
     match Int.fromString(num)
         Result.Ok(n) -> ParseResult.Ok(Json.JsonInt(n), pos)
         Result.Err(_) -> ParseResult.Err("Invalid number: " + num, pos)
@@ -672,6 +716,7 @@ verify finishInt
     finishInt("x", 1) => ParseResult.Err("Invalid number: x", 1)
 
 fn finishFloat(num: String, pos: Int) -> ParseResult
+    ? "JSON helper: finishFloat."
     match Float.fromString(num)
         Result.Ok(f) -> ParseResult.Ok(Json.JsonFloat(f), pos)
         Result.Err(_) -> ParseResult.Err("Invalid number: " + num, pos)
@@ -681,6 +726,7 @@ verify finishFloat
     finishFloat("x", 1) => ParseResult.Err("Invalid number: x", 1)
 
 fn parseArray(s: String, pos: Int) -> ParseResult
+    ? "JSON helper: parseArray."
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated array", pos)
         Option.Some(c) -> match c
@@ -693,6 +739,7 @@ verify parseArray
     parseArray("1]", 0) => ParseResult.Ok(Json.JsonList([Json.JsonInt(1)]), 2)
 
 fn parseArrayElems(s: String, pos: Int, acc: List<Json>) -> ParseResult
+    ? "JSON helper: parseArrayElems."
     match parseValue(s, pos)
         ParseResult.Err(msg, p) -> ParseResult.Err(msg, p)
         ParseResult.Ok(val, p) -> parseArrayNext(s, skipWs(s, p), List.push(acc, val))
@@ -702,6 +749,7 @@ verify parseArrayElems
     parseArrayElems("1]", 0, []) => ParseResult.Ok(Json.JsonList([Json.JsonInt(1)]), 2)
 
 fn parseArrayNext(s: String, pos: Int, acc: List<Json>) -> ParseResult
+    ? "JSON helper: parseArrayNext."
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated array", pos)
         Option.Some(c) -> match c
@@ -716,9 +764,11 @@ verify parseArrayNext
     parseArrayNext("x", 0, []) => ParseResult.Err("Expected ',' or ']'", 0)
 
 fn emptyJsonMap() -> Map<String, Json>
+    ? "JSON helper: emptyJsonMap."
     = Map.empty()
 
 fn parseObject(s: String, pos: Int) -> ParseResult
+    ? "JSON helper: parseObject."
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated object", pos)
         Option.Some(c) -> match c
@@ -731,6 +781,7 @@ verify parseObject
     parseObject("\"a\":1}}", 0) => ParseResult.Ok(Json.JsonObject({"a" => Json.JsonInt(1)}), 6)
 
 fn parseObjFields(s: String, pos: Int, acc: Map<String, Json>) -> ParseResult
+    ? "JSON helper: parseObjFields."
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated object", pos)
         Option.Some(c) -> match c
@@ -743,6 +794,7 @@ verify parseObjFields
     parseObjFields("x", 0, emptyJsonMap()) => ParseResult.Err("Expected string key", 0)
 
 fn parseObjKey(s: String, pos: Int, acc: Map<String, Json>) -> ParseResult
+    ? "JSON helper: parseObjKey."
     match parseString(s, pos)
         ParseResult.Err(msg, p) -> ParseResult.Err(msg, p)
         ParseResult.Ok(keyJson, p) -> parseObjKeyValue(s, p, acc, keyJson)
@@ -752,6 +804,7 @@ verify parseObjKey
     parseObjKey("a\":1}}", 0, emptyJsonMap()) => ParseResult.Ok(Json.JsonObject({"a" => Json.JsonInt(1)}), 5)
 
 fn parseObjKeyValue(s: String, pos: Int, acc: Map<String, Json>, keyJson: Json) -> ParseResult
+    ? "JSON helper: parseObjKeyValue."
     match keyJson
         Json.JsonString(key) -> parseObjColon(s, skipWs(s, pos), acc, key)
         _ -> ParseResult.Err("Expected string key", pos)
@@ -761,6 +814,7 @@ verify parseObjKeyValue
     parseObjKeyValue(":1}}", 0, emptyJsonMap(), Json.JsonInt(1)) => ParseResult.Err("Expected string key", 0)
 
 fn parseObjColon(s: String, pos: Int, acc: Map<String, Json>, key: String) -> ParseResult
+    ? "JSON helper: parseObjColon."
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated object", pos)
         Option.Some(c) -> match c
@@ -773,6 +827,7 @@ verify parseObjColon
     parseObjColon("x", 0, emptyJsonMap(), "a") => ParseResult.Err("Expected ':'", 0)
 
 fn parseObjVal(s: String, pos: Int, acc: Map<String, Json>, key: String) -> ParseResult
+    ? "JSON helper: parseObjVal."
     match parseValue(s, pos)
         ParseResult.Err(msg, p) -> ParseResult.Err(msg, p)
         ParseResult.Ok(val, p) -> parseObjNext(s, skipWs(s, p), Map.set(acc, key, val))
@@ -782,6 +837,7 @@ verify parseObjVal
     parseObjVal("1}}", 0, emptyJsonMap(), "a") => ParseResult.Ok(Json.JsonObject({"a" => Json.JsonInt(1)}), 2)
 
 fn parseObjNext(s: String, pos: Int, acc: Map<String, Json>) -> ParseResult
+    ? "JSON helper: parseObjNext."
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated object", pos)
         Option.Some(c) -> match c
@@ -796,6 +852,7 @@ verify parseObjNext
     parseObjNext("x", 0, emptyJsonMap()) => ParseResult.Err("Expected ',' or '}'", 0)
 
 fn getField(j: Json, key: String) -> Option<Json>
+    ? "JSON helper: getField."
     match j
         Json.JsonObject(m) -> Map.get(m, key)
         _ -> Option.None
@@ -805,6 +862,7 @@ verify getField
     getField(Json.JsonInt(1), "a") => Option.None
 
 fn jsonStr(j: Json) -> String
+    ? "JSON helper: jsonStr."
     match j
         Json.JsonString(s) -> s
         _ -> ""
@@ -814,6 +872,7 @@ verify jsonStr
     jsonStr(Json.JsonInt(1)) => ""
 
 fn jsonInt(j: Json) -> Int
+    ? "JSON helper: jsonInt."
     match j
         Json.JsonInt(n) -> n
         _ -> 0
@@ -823,6 +882,7 @@ verify jsonInt
     jsonInt(Json.JsonString("x")) => 0
 
 fn jsonFloat(j: Json) -> Float
+    ? "JSON helper: jsonFloat."
     match j
         Json.JsonFloat(f) -> f
         _ -> 0.0
@@ -832,6 +892,7 @@ verify jsonFloat
     jsonFloat(Json.JsonString("x")) => 0.0
 
 fn jsonList(j: Json) -> List<Json>
+    ? "JSON helper: jsonList."
     match j
         Json.JsonList(items) -> items
         _ -> []
@@ -849,6 +910,7 @@ fn main() -> Unit
         Result.Ok(root) -> printResult(root)
 
 fn printResult(root: Json) -> Unit
+    ? "JSON helper: printResult."
     ! [Console]
     match getField(root, "name")
         Option.Some(v) -> Console.print("Name: " + jsonStr(v))
