@@ -111,10 +111,6 @@ impl Parser {
                     .collect(),
                 line: *line,
             },
-            Expr::Pipe(left, right) => Expr::Pipe(
-                Box::new(Self::substitute_expr(left, bindings)),
-                Box::new(Self::substitute_expr(right, bindings)),
-            ),
             Expr::Constructor(name, arg) => Expr::Constructor(
                 name.clone(),
                 arg.as_ref()
@@ -285,7 +281,7 @@ impl Parser {
             }
             VerifyGivenDomain::IntRange { start, end }
         } else {
-            let domain_expr = self.parse_pipe()?;
+            let domain_expr = self.parse_expr()?;
             let Expr::List(values) = domain_expr else {
                 return Err(self.error(
                     "Given domain must be list literal ([...]) or Int range (a..b)".to_string(),
@@ -354,9 +350,9 @@ impl Parser {
                     ));
                 }
 
-                let left = self.parse_pipe()?;
+                let left = self.parse_expr()?;
                 self.expect_exact(&TokenKind::FatArrow)?;
-                let right = self.parse_pipe()?;
+                let right = self.parse_expr()?;
                 self.skip_newlines();
 
                 if !self.is_dedent() && !self.is_eof() {
@@ -380,9 +376,9 @@ impl Parser {
                         continue;
                     }
 
-                    let left = self.parse_pipe()?;
+                    let left = self.parse_expr()?;
                     self.expect_exact(&TokenKind::FatArrow)?;
-                    let right = self.parse_pipe()?;
+                    let right = self.parse_expr()?;
                     cases.push((left, right));
                     self.skip_newlines();
                 }

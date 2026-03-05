@@ -22,28 +22,7 @@ impl Parser {
     }
 
     pub fn parse_expr(&mut self) -> Result<Expr, ParseError> {
-        self.parse_pipe()
-    }
-
-    /// Parse an expression for use inside verify cases.
-    /// `==` is reserved as the separator between left and right sides.
-    /// Other comparisons (`!=`, `<`, `>`, `<=`, `>=`) are allowed.
-    pub(super) fn parse_pipe(&mut self) -> Result<Expr, ParseError> {
-        let mut left = self.parse_comparison()?;
-
-        while self.check_exact(&TokenKind::Pipe) {
-            self.advance();
-            let right = self.parse_call_or_atom()?;
-            if matches!(right, Expr::FnCall(_, _)) {
-                return Err(self.error(
-                    "Pipe right side must be a function reference (for example `f` or `Ns.f`), not a call (`f(...)`)."
-                        .to_string(),
-                ));
-            }
-            left = Expr::Pipe(Box::new(left), Box::new(right));
-        }
-
-        Ok(left)
+        self.parse_comparison()
     }
 
     pub(super) fn parse_comparison(&mut self) -> Result<Expr, ParseError> {
@@ -135,47 +114,47 @@ impl Parser {
                 if self.check_exact(&TokenKind::LParen) {
                     // Detect `Type.update(base, field = val, ...)` for record update
                     if let Some(path) = Self::dotted_name(&expr)
-                        && path.ends_with(".update") {
-                            let prefix = &path[..path.len() - ".update".len()];
-                            if !prefix.is_empty()
-                                && prefix.chars().next().is_some_and(|c| c.is_uppercase())
-                            {
-                                self.advance(); // consume (
-                                let base = self.parse_expr()?;
-                                let updates = if self.check_exact(&TokenKind::Comma) {
-                                    self.advance();
-                                    self.skip_formatting();
-                                    self.parse_record_create_fields()?
-                                } else {
-                                    Vec::new()
-                                };
-                                self.expect_exact(&TokenKind::RParen)?;
-                                expr = Expr::RecordUpdate {
-                                    type_name: prefix.to_string(),
-                                    base: Box::new(base),
-                                    updates,
-                                };
-                                continue;
-                            }
+                        && path.ends_with(".update")
+                    {
+                        let prefix = &path[..path.len() - ".update".len()];
+                        if !prefix.is_empty()
+                            && prefix.chars().next().is_some_and(|c| c.is_uppercase())
+                        {
+                            self.advance(); // consume (
+                            let base = self.parse_expr()?;
+                            let updates = if self.check_exact(&TokenKind::Comma) {
+                                self.advance();
+                                self.skip_formatting();
+                                self.parse_record_create_fields()?
+                            } else {
+                                Vec::new()
+                            };
+                            self.expect_exact(&TokenKind::RParen)?;
+                            expr = Expr::RecordUpdate {
+                                type_name: prefix.to_string(),
+                                base: Box::new(base),
+                                updates,
+                            };
+                            continue;
                         }
+                    }
                     if let Some(path) = Self::dotted_name(&expr) {
                         self.reject_zero_arg_constructor_call(&path)?;
                     }
                     let named_arg_start = matches!(&self.peek(1).kind, TokenKind::Ident(_))
                         && self.peek(2).kind == TokenKind::Assign;
-                    if named_arg_start
-                        && let Some(path) = Self::dotted_name(&expr) {
-                            if path == "Tcp.Connection" {
-                                return Err(self.error(
+                    if named_arg_start && let Some(path) = Self::dotted_name(&expr) {
+                        if path == "Tcp.Connection" {
+                            return Err(self.error(
                                     "Cannot construct 'Tcp.Connection' directly. Use Tcp.connect(host, port)."
                                         .to_string(),
                                 ));
-                            }
-                            return Err(self.error(format!(
+                        }
+                        return Err(self.error(format!(
                                 "Named-field call syntax is only valid for direct record constructors like User(...), not '{}(...)'",
                                 path
                             )));
-                        }
+                    }
                     self.advance();
                     let args = self.parse_args()?;
                     self.expect_exact(&TokenKind::RParen)?;
@@ -223,27 +202,25 @@ impl Parser {
             let named_arg_start = matches!(&self.peek_skip_formatting(1).kind, TokenKind::Ident(_))
                 && self.peek_skip_formatting(2).kind == TokenKind::Assign;
 
-            if is_record_create
-                && let Expr::Ident(type_name) = atom {
-                    self.advance(); // consume (
-                    let fields = self.parse_record_create_fields()?;
-                    self.expect_exact(&TokenKind::RParen)?;
-                    return Ok(Expr::RecordCreate { type_name, fields });
-                }
+            if is_record_create && let Expr::Ident(type_name) = atom {
+                self.advance(); // consume (
+                let fields = self.parse_record_create_fields()?;
+                self.expect_exact(&TokenKind::RParen)?;
+                return Ok(Expr::RecordCreate { type_name, fields });
+            }
 
-            if named_arg_start
-                && let Some(path) = Self::dotted_name(&atom) {
-                    if path == "Tcp.Connection" {
-                        return Err(self.error(
-                            "Cannot construct 'Tcp.Connection' directly. Use Tcp.connect(host, port)."
-                                .to_string(),
-                        ));
-                    }
-                    return Err(self.error(format!(
+            if named_arg_start && let Some(path) = Self::dotted_name(&atom) {
+                if path == "Tcp.Connection" {
+                    return Err(self.error(
+                        "Cannot construct 'Tcp.Connection' directly. Use Tcp.connect(host, port)."
+                            .to_string(),
+                    ));
+                }
+                return Err(self.error(format!(
                         "Named-field call syntax is only valid for direct record constructors like User(...), not '{}(...)'",
                         path
                     )));
-                }
+            }
 
             self.advance();
             let args = self.parse_args()?;

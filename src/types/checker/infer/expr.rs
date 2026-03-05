@@ -381,12 +381,6 @@ impl TypeChecker {
                 }
             }
 
-            Expr::Pipe(left, right) => {
-                // x |> f is equivalent to f(x)
-                let call = Expr::FnCall(Box::new((**right).clone()), vec![(**left).clone()]);
-                self.infer_type(&call)
-            }
-
             Expr::ErrorProp(inner) => {
                 // expr? unwraps Result<T,E> → T, propagating E as early return.
                 let ty = self.infer_type(inner);

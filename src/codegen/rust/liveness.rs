@@ -41,9 +41,7 @@ impl EmitCtx {
 
     /// Is this variable a Copy type in Rust (i64, f64, bool, ())?
     pub fn is_copy(&self, name: &str) -> bool {
-        self.local_types
-            .get(name)
-            .is_some_and(is_copy_type)
+        self.local_types.get(name).is_some_and(is_copy_type)
     }
 
     /// Should `.clone()` be skipped for this variable?
@@ -107,10 +105,6 @@ fn collect_vars_inner(expr: &Expr, vars: &mut HashSet<String>) {
                     }
                 }
             }
-        }
-        Expr::Pipe(left, right) => {
-            collect_vars_inner(left, vars);
-            collect_vars_inner(right, vars);
         }
         Expr::Constructor(_, Some(inner)) => collect_vars_inner(inner, vars),
         Expr::Constructor(_, None) => {}

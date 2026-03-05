@@ -131,7 +131,7 @@ contexts:
       scope: entity.name.type.aver
 
   operators:
-    - match: '->|=>|\|>'
+    - match: '->|=>'
       scope: keyword.operator.arrow.aver
     - match: '==|!=|<=|>=|<|>'
       scope: keyword.operator.comparison.aver

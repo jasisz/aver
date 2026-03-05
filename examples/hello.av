@@ -1,7 +1,7 @@
 module Hello
     intent =
         "Demonstrates basic Aver syntax: functions, string interpolation,"
-        "val bindings, and the pipe operator."
+        "local bindings, and verify blocks."
 
 fn greet(name: String) -> String
     ? "Returns a personalised greeting."
@@ -20,8 +20,8 @@ verify shout
     shout(greet("Alice")) => "Hello, Alice!!!"
 
 fn main() -> Unit
-    ! [Console]
+    ! [Console.print]
     greeting = greet("World")
     Console.print(greeting)
-    loud = greet("Aver") |> shout
+    loud = shout(greet("Aver"))
     Console.print(loud)

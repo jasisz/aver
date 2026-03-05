@@ -301,24 +301,24 @@ verify parseListItemsValue
 
 fn printSexpr(e: Sexpr) -> Unit
     ? "Print one parsed expression."
-    ! [Console]
+    ! [Console.print]
     Console.print(toString(e))
 
 fn printEval(e: Sexpr) -> Unit
     ? "Evaluate and print one expression."
-    ! [Console]
+    ! [Console.print]
     match eval(e)
         Result.Ok(n) -> Console.print("=> " + String.fromInt(n))
         Result.Err(msg) -> printErr(msg)
 
 fn printErr(msg: String) -> Unit
     ? "Print parser error."
-    ! [Console]
+    ! [Console.print]
     Console.print("ERROR: " + msg)
 
 fn replLoop() -> Unit
     ? "Read-eval-print loop."
-    ! [Console]
+    ! [Console.print, Console.readLine]
     Console.print("> ")
     lineResult = Console.readLine()
     match lineResult
@@ -332,7 +332,7 @@ fn replLoop() -> Unit
 
 fn main() -> Unit
     ? "Start interactive s-expression REPL."
-    ! [Console]
+    ! [Console.print, Console.readLine]
     Console.print("Mini s-expr REPL. Type expressions or hit Ctrl+C to exit.")
     Console.print("Examples: 42    hello    'world    (add 1 2)    (quote 'pizza)")
     Console.print("")

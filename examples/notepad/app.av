@@ -19,7 +19,7 @@ decision DiskAsDatabase
 
 fn main() -> Result<Unit, String>
     ? "Initializes the store and starts the HTTP server on port 3000."
-    ! [HttpServer, Disk, Console]
+    ! [HttpServer.listen, Disk.makeDir, Disk.exists, Disk.writeText, Disk.appendText, Console.print]
     _ = Examples.Notepad.Store.initStore()?
     Console.print("Notepad API running on http://localhost:3000")
     Console.print("")

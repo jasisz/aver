@@ -144,21 +144,21 @@ verify extractBody
 
 fn handleListNotes() -> HttpResponse
     ? "GET /notes — returns all notes as a JSON array."
-    ! [Disk]
+    ! [Disk.readText]
     match Examples.Notepad.Store.loadAll()
         Result.Ok(notes) -> ok(jsonNoteList(notes))
         Result.Err(msg)  -> serverError(msg)
 
 fn handleGetNote(path: String) -> HttpResponse
     ? "GET /notes/:id — returns one note as JSON."
-    ! [Disk]
+    ! [Disk.readText]
     match extractNoteId(path)
         Result.Err(msg) -> badRequest(msg)
         Result.Ok(id)   -> lookupNote(id)
 
 fn lookupNote(id: Int) -> HttpResponse
     ? "Loads all notes and finds the one matching the given ID."
-    ! [Disk]
+    ! [Disk.readText]
     match Examples.Notepad.Store.loadAll()
         Result.Err(msg)  -> serverError(msg)
         Result.Ok(notes) -> match Examples.Notepad.Store.findById(notes, id)
@@ -167,28 +167,28 @@ fn lookupNote(id: Int) -> HttpResponse
 
 fn handleCreateNote(body: String) -> HttpResponse
     ? "POST /notes — creates a new note from the request body."
-    ! [Disk]
+    ! [Disk.readText, Disk.writeText, Disk.appendText]
     match parseTitle(body)
         Result.Err(msg)  -> badRequest(msg)
         Result.Ok(title) -> createNote(title, extractBody(body))
 
 fn createNote(title: String, body: String) -> HttpResponse
     ? "Persists a new note and returns the created JSON."
-    ! [Disk]
+    ! [Disk.readText, Disk.writeText, Disk.appendText]
     match Examples.Notepad.Store.addNote(title, body)
         Result.Ok(note) -> created(jsonNote(note))
         Result.Err(msg) -> serverError(msg)
 
 fn handleDeleteNote(path: String) -> HttpResponse
     ? "DELETE /notes/:id — removes a note by ID."
-    ! [Disk]
+    ! [Disk.readText, Disk.writeText]
     match extractNoteId(path)
         Result.Err(msg) -> badRequest(msg)
         Result.Ok(id)   -> deleteNote(id)
 
 fn deleteNote(id: Int) -> HttpResponse
     ? "Deletes a note and returns a success message."
-    ! [Disk]
+    ! [Disk.readText, Disk.writeText]
     match Examples.Notepad.Store.removeNote(id)
         Result.Ok(_)    -> ok(jsonOk("deleted"))
         Result.Err(msg) -> serverError(msg)
@@ -197,7 +197,7 @@ fn deleteNote(id: Int) -> HttpResponse
 
 fn handleRequest(req: HttpRequest) -> HttpResponse
     ? "Routes an incoming HTTP request to the correct handler."
-    ! [Disk]
+    ! [Disk.readText, Disk.writeText, Disk.appendText]
     match req.method
         "GET" -> match req.path == "/notes"
             true  -> handleListNotes()

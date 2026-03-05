@@ -10,11 +10,6 @@ impl TypeChecker {
                         .iter()
                         .any(|arg| Self::verify_case_calls_target(arg, fn_name))
             }
-            Expr::Pipe(left_expr, right_expr) => {
-                Self::pipe_target_is_verify_target(right_expr, fn_name)
-                    || Self::verify_case_calls_target(left_expr, fn_name)
-                    || Self::verify_case_calls_target(right_expr, fn_name)
-            }
             Expr::BinOp(_, left_expr, right_expr) => {
                 Self::verify_case_calls_target(left_expr, fn_name)
                     || Self::verify_case_calls_target(right_expr, fn_name)
@@ -64,14 +59,6 @@ impl TypeChecker {
 
     fn callee_is_verify_target(callee: &Expr, fn_name: &str) -> bool {
         matches!(callee, Expr::Ident(name) if name == fn_name)
-    }
-
-    fn pipe_target_is_verify_target(target: &Expr, fn_name: &str) -> bool {
-        match target {
-            Expr::Ident(name) => name == fn_name,
-            Expr::FnCall(callee, _) => Self::callee_is_verify_target(callee, fn_name),
-            _ => false,
-        }
     }
 
     pub(super) fn check_fn(&mut self, f: &FnDef) {
@@ -286,14 +273,16 @@ impl TypeChecker {
 
     pub(super) fn callable_effects(&self, fn_expr: &Expr) -> Option<(String, Vec<String>)> {
         if let Some(callee_name) = Self::callee_key(fn_expr)
-            && let Some(callee_sig) = self.fn_sigs.get(&callee_name) {
-                return Some((callee_name, callee_sig.effects.clone()));
-            }
+            && let Some(callee_sig) = self.fn_sigs.get(&callee_name)
+        {
+            return Some((callee_name, callee_sig.effects.clone()));
+        }
         if let Expr::Ident(name) = fn_expr
             && let Some(ty) = self.binding_type(name)
-                && let Type::Fn(_, _, effects) = ty {
-                    return Some((name.clone(), effects));
-                }
+            && let Type::Fn(_, _, effects) = ty
+        {
+            return Some((name.clone(), effects));
+        }
         None
     }
 
@@ -322,21 +311,6 @@ impl TypeChecker {
             }
             Expr::BinOp(_, left, right) => {
                 self.check_effects_in_expr(left, caller_name, caller_effects);
-                self.check_effects_in_expr(right, caller_name, caller_effects);
-            }
-            Expr::Pipe(left, right) => {
-                self.check_effects_in_expr(left, caller_name, caller_effects);
-                // x |> f counts as calling f — check f's effects
-                if let Some((callee_name, effects)) = self.callable_effects(right) {
-                    for effect in &effects {
-                        if !self.caller_has_effect(caller_effects, effect) {
-                            self.error(format!(
-                                "Function '{}' pipes into '{}' which has effect '{}', but '{}' does not declare it",
-                                caller_name, callee_name, effect, caller_name
-                            ));
-                        }
-                    }
-                }
                 self.check_effects_in_expr(right, caller_name, caller_effects);
             }
             Expr::Match { subject, arms, .. } => {

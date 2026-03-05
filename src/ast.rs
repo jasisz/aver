@@ -61,7 +61,6 @@ pub enum Expr {
         arms: Vec<MatchArm>,
         line: usize,
     },
-    Pipe(Box<Expr>, Box<Expr>),
     Constructor(String, Option<Box<Expr>>),
     ErrorProp(Box<Expr>),
     InterpolatedStr(Vec<StrPart>),

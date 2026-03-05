@@ -273,14 +273,14 @@ fn parseCommandsStep(line: String, tail: List<String>, acc: List<Cmd>) -> Result
 
 fn printHistory(entries: List<String>) -> Unit
     ? "Print numbered command history."
-    ! [Console]
+    ! [Console.print]
     match entries
         [] -> Console.print("history: <empty>")
         [head, ..tail] -> printHistoryLoop(1, head, tail)
 
 fn printHistoryLoop(index: Int, current: String, rest: List<String>) -> Unit
     ? "Tail-recursive history printer."
-    ! [Console]
+    ! [Console.print]
     Console.print("  " + String.fromInt(index) + ". " + current)
     match rest
         [] -> Console.print("-- end of history --")
@@ -288,14 +288,14 @@ fn printHistoryLoop(index: Int, current: String, rest: List<String>) -> Unit
 
 fn runMission(cmds: List<Cmd>) -> Unit
     ? "Effectful wrapper around pure runPlan."
-    ! [Console]
+    ! [Console.print]
     match runPlan(cmds)
         Result.Err(msg) -> Console.print("MISSION FAILED: " + msg)
         Result.Ok(state) -> reportMission(state)
 
 fn reportMission(state: ShipState) -> Unit
     ? "Print mission result and telemetry."
-    ! [Console]
+    ! [Console.print]
     Console.print("MISSION OK")
     Console.print(stateSummary(state))
     Console.print("History:")
@@ -303,7 +303,7 @@ fn reportMission(state: ShipState) -> Unit
 
 fn main() -> Unit
     ? "Run one deterministic space mission script."
-    ! [Console]
+    ! [Console.print]
     Console.print("Mission Control demo")
     Console.print("Tip: record once, replay forever: aver run examples/mission_control.av --record recordings/")
     script = ["BURN 20", "ROTATE 45", "DEPLOY", "TICK 8", "BURN 15", "TICK 3"]

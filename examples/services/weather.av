@@ -119,12 +119,12 @@ verify extractCityFromParts
 
 fn cacheGet(conn: Tcp.Connection, city: String) -> Result<String, String>
     ? "Attempts to read cached weather for city from Redis."
-    ! [Tcp]
+    ! [Tcp.readLine, Tcp.writeLine]
     Examples.Redis.get(conn, cacheKey(city))
 
 fn cacheSet(conn: Tcp.Connection, city: String, data: String) -> Result<String, String>
     ? "Stores weather data in Redis cache."
-    ! [Tcp]
+    ! [Tcp.readLine, Tcp.writeLine]
     Examples.Redis.set(conn, cacheKey(city), data)
 
 // Weather fetching (effectful)
@@ -141,7 +141,7 @@ fn fetchWeather(config: WeatherConfig, city: String) -> Result<String, String>
 
 fn fetchAndCache(config: WeatherConfig, conn: Tcp.Connection, city: String) -> Result<String, String>
     ? "Fetches from API and stores result in Redis before returning it."
-    ! [Tcp, Http.get]
+    ! [Tcp.readLine, Tcp.writeLine, Http.get]
     fresh = fetchWeather(config, city)?
     _ = cacheSet(conn, city, fresh)
     Result.Ok(fresh)
@@ -150,7 +150,7 @@ fn fetchAndCache(config: WeatherConfig, conn: Tcp.Connection, city: String) -> R
 
 fn getWeather(config: WeatherConfig, conn: Tcp.Connection, city: String) -> Result<String, String>
     ? "Returns weather for city. Tries Redis cache first, falls back to API fetch and caches result."
-    ! [Tcp, Http.get]
+    ! [Tcp.readLine, Tcp.writeLine, Http.get]
     match cacheGet(conn, city)
         Result.Ok(cached) -> Result.Ok(cached)
         Result.Err(_)     -> fetchAndCache(config, conn, city)
@@ -159,7 +159,7 @@ fn getWeather(config: WeatherConfig, conn: Tcp.Connection, city: String) -> Resu
 
 fn handleWeather(context: WeatherContext, req: HttpRequest) -> HttpResponse
     ? "Routes incoming HTTP request. GET /weather/<city> returns weather JSON."
-    ! [Tcp, Http.get]
+    ! [Tcp.readLine, Tcp.writeLine, Http.get]
     match req.method == "GET"
         false -> HttpResponse(status = 405, body = jsonErr("Method not allowed"), headers = [])
         true  -> match extractCity(req.path)
@@ -177,7 +177,7 @@ fn startServer(context: WeatherContext) -> Result<Unit, String>
 // Entry point
 
 fn main() -> Result<Unit, String>
-    ! [HttpServer.listenWith, Tcp, Console.print]
+    ! [HttpServer.listenWith, Tcp.connect, Console.print]
     config = WeatherConfig(apiHost = "api.weather.com", apiKey = "demo-key", redisHost = "127.0.0.1", redisPort = 6379, serverPort = 8080)
 
     conn = Examples.Redis.connect(RedisConfig(host = config.redisHost, port = config.redisPort))?

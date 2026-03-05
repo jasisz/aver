@@ -309,7 +309,7 @@ fn verify_case_uses_error_prop_on_target(expr: &Expr, fn_name: &str) -> bool {
                     .iter()
                     .any(|arg| verify_case_uses_error_prop_on_target(arg, fn_name))
         }
-        Expr::Pipe(left, right) | Expr::BinOp(_, left, right) => {
+        Expr::BinOp(_, left, right) => {
             verify_case_uses_error_prop_on_target(left, fn_name)
                 || verify_case_uses_error_prop_on_target(right, fn_name)
         }
@@ -419,20 +419,20 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
         let right_result = interp.eval_expr(right_expr);
 
         if let Ok(left_val) = &left_result
-            && let Some(contract) = shape_contract.as_mut() {
-                contract.observe(left_val);
-            }
+            && let Some(contract) = shape_contract.as_mut()
+        {
+            contract.observe(left_val);
+        }
         if verify_case_uses_error_prop_on_target(left_expr, &block.fn_name)
             && let Some(contract) = shape_contract.as_mut()
-                && matches!(contract.return_type, Type::Result(_, _)) {
-                    match &left_result {
-                        Ok(_) => contract.observe_shape(VerifyOutputShape::Ok),
-                        Err(RuntimeError::ErrProp(_)) => {
-                            contract.observe_shape(VerifyOutputShape::Err)
-                        }
-                        Err(_) => {}
-                    }
-                }
+            && matches!(contract.return_type, Type::Result(_, _))
+        {
+            match &left_result {
+                Ok(_) => contract.observe_shape(VerifyOutputShape::Ok),
+                Err(RuntimeError::ErrProp(_)) => contract.observe_shape(VerifyOutputShape::Err),
+                Err(_) => {}
+            }
+        }
 
         match (left_result, right_result) {
             (Ok(left_val), Ok(right_val)) => {
@@ -664,11 +664,6 @@ fn verify_case_calls_target(left: &Expr, fn_name: &str) -> bool {
                     .iter()
                     .any(|arg| verify_case_calls_target(arg, fn_name))
         }
-        Expr::Pipe(left_expr, right_expr) => {
-            pipe_target_is_target(right_expr, fn_name)
-                || verify_case_calls_target(left_expr, fn_name)
-                || verify_case_calls_target(right_expr, fn_name)
-        }
         Expr::BinOp(_, left_expr, right_expr) => {
             verify_case_calls_target(left_expr, fn_name)
                 || verify_case_calls_target(right_expr, fn_name)
@@ -716,51 +711,20 @@ fn callee_is_target(callee: &Expr, fn_name: &str) -> bool {
     matches!(callee, Expr::Ident(name) if name == fn_name)
 }
 
-fn pipe_target_is_target(target: &Expr, fn_name: &str) -> bool {
-    match target {
-        Expr::Ident(name) => name == fn_name,
-        Expr::FnCall(callee, _) => callee_is_target(callee, fn_name),
-        _ => false,
-    }
-}
-
-fn collect_used_effects_expr(
-    expr: &Expr,
-    fn_sigs: &FnSigMap,
-    out: &mut BTreeSet<String>,
-) {
+fn collect_used_effects_expr(expr: &Expr, fn_sigs: &FnSigMap, out: &mut BTreeSet<String>) {
     match expr {
         Expr::FnCall(callee, args) => {
             if let Some(callee_name) = dotted_name(callee)
-                && let Some((_, _, effects)) = fn_sigs.get(&callee_name) {
-                    for effect in effects {
-                        out.insert(effect.clone());
-                    }
+                && let Some((_, _, effects)) = fn_sigs.get(&callee_name)
+            {
+                for effect in effects {
+                    out.insert(effect.clone());
                 }
+            }
             collect_used_effects_expr(callee, fn_sigs, out);
             for arg in args {
                 collect_used_effects_expr(arg, fn_sigs, out);
             }
-        }
-        Expr::Pipe(left, right) => {
-            if let Some((callee, _)) = match right.as_ref() {
-                Expr::FnCall(callee, args) => Some((callee.as_ref(), args.as_slice())),
-                _ => None,
-            } {
-                if let Some(callee_name) = dotted_name(callee)
-                    && let Some((_, _, effects)) = fn_sigs.get(&callee_name) {
-                        for effect in effects {
-                            out.insert(effect.clone());
-                        }
-                    }
-            } else if let Some(target_name) = dotted_name(right)
-                && let Some((_, _, effects)) = fn_sigs.get(&target_name) {
-                    for effect in effects {
-                        out.insert(effect.clone());
-                    }
-                }
-            collect_used_effects_expr(left, fn_sigs, out);
-            collect_used_effects_expr(right, fn_sigs, out);
         }
         Expr::TailCall(boxed) => {
             let (target, args) = boxed.as_ref();
@@ -816,10 +780,7 @@ fn collect_used_effects_expr(
     }
 }
 
-fn collect_used_effects(
-    f: &FnDef,
-    fn_sigs: &FnSigMap,
-) -> BTreeSet<String> {
+fn collect_used_effects(f: &FnDef, fn_sigs: &FnSigMap) -> BTreeSet<String> {
     let mut used = BTreeSet::new();
     match f.body.as_ref() {
         FnBody::Expr(expr) => collect_used_effects_expr(expr, fn_sigs, &mut used),
@@ -887,9 +848,7 @@ fn collect_declared_symbols(items: &[TopLevel]) -> std::collections::HashSet<Str
     out
 }
 
-fn collect_known_effect_symbols(
-    fn_sigs: Option<&FnSigMap>,
-) -> std::collections::HashSet<String> {
+fn collect_known_effect_symbols(fn_sigs: Option<&FnSigMap>) -> std::collections::HashSet<String> {
     let mut out = std::collections::HashSet::new();
     for builtin in ["Console", "Http", "Disk", "Tcp", "HttpServer"] {
         out.insert(builtin.to_string());
@@ -1024,41 +983,42 @@ pub fn check_module_intent_with_sigs_in(
                 }
                 if let Some(sigs) = fn_sigs
                     && let Some((_, _, declared_effects)) = sigs.get(&f.name)
-                        && !declared_effects.is_empty() {
-                            let used_effects = collect_used_effects(f, sigs);
-                            let broad_replacements =
-                                collect_broad_effect_replacements(declared_effects, &used_effects);
-                            let unused_effects: Vec<String> = declared_effects
+                    && !declared_effects.is_empty()
+                {
+                    let used_effects = collect_used_effects(f, sigs);
+                    let broad_replacements =
+                        collect_broad_effect_replacements(declared_effects, &used_effects);
+                    let unused_effects: Vec<String> = declared_effects
+                        .iter()
+                        .filter(|declared| {
+                            // A declared effect is "used" if it satisfies any used effect
+                            // e.g. declared "Console" satisfies used "Console.print"
+                            !used_effects
                                 .iter()
-                                .filter(|declared| {
-                                    // A declared effect is "used" if it satisfies any used effect
-                                    // e.g. declared "Console" satisfies used "Console.print"
-                                    !used_effects.iter().any(|used| {
-                                        crate::effects::effect_satisfies(declared, used)
-                                    })
-                                })
-                                .cloned()
-                                .collect();
-                            if !unused_effects.is_empty() {
-                                let used = if used_effects.is_empty() {
-                                    "none".to_string()
-                                } else {
-                                    used_effects.into_iter().collect::<Vec<_>>().join(", ")
-                                };
-                                warnings.push(CheckFinding {
-                                    line: f.line,
-                                    module: module_name.clone(),
-                                    file: source_file.map(|s| s.to_string()),
-                                    message: format!(
-                                        "Function '{}' declares unused effect(s): {} (used: {})",
-                                        f.name,
-                                        unused_effects.join(", "),
-                                        used
-                                    ),
-                                });
-                            }
-                            for (parent, children) in broad_replacements {
-                                warnings.push(CheckFinding {
+                                .any(|used| crate::effects::effect_satisfies(declared, used))
+                        })
+                        .cloned()
+                        .collect();
+                    if !unused_effects.is_empty() {
+                        let used = if used_effects.is_empty() {
+                            "none".to_string()
+                        } else {
+                            used_effects.into_iter().collect::<Vec<_>>().join(", ")
+                        };
+                        warnings.push(CheckFinding {
+                            line: f.line,
+                            module: module_name.clone(),
+                            file: source_file.map(|s| s.to_string()),
+                            message: format!(
+                                "Function '{}' declares unused effect(s): {} (used: {})",
+                                f.name,
+                                unused_effects.join(", "),
+                                used
+                            ),
+                        });
+                    }
+                    for (parent, children) in broad_replacements {
+                        warnings.push(CheckFinding {
                                     line: f.line,
                                     module: module_name.clone(),
                                     file: source_file.map(|s| s.to_string()),
@@ -1069,8 +1029,8 @@ pub fn check_module_intent_with_sigs_in(
                                         children.join(", ")
                                     ),
                                 });
-                            }
-                        }
+                    }
+                }
                 if fn_needs_verify(f)
                     && !verified_fns.contains(f.name.as_str())
                     && !empty_verify_fns.contains(f.name.as_str())
@@ -1086,8 +1046,9 @@ pub fn check_module_intent_with_sigs_in(
             }
             TopLevel::Decision(d) => {
                 if let DecisionImpact::Symbol(name) = &d.chosen
-                    && !decision_symbol_known(name, &declared_symbols, &known_effect_symbols) {
-                        errors.push(CheckFinding {
+                    && !decision_symbol_known(name, &declared_symbols, &known_effect_symbols)
+                {
+                    errors.push(CheckFinding {
                             line: d.line,
                             module: module_name.clone(),
                             file: source_file.map(|s| s.to_string()),
@@ -1096,11 +1057,12 @@ pub fn check_module_intent_with_sigs_in(
                                 d.name, name
                             ),
                         });
-                    }
+                }
                 for rejected in &d.rejected {
                     if let DecisionImpact::Symbol(name) = rejected
-                        && !decision_symbol_known(name, &declared_symbols, &known_effect_symbols) {
-                            errors.push(CheckFinding {
+                        && !decision_symbol_known(name, &declared_symbols, &known_effect_symbols)
+                    {
+                        errors.push(CheckFinding {
                                 line: d.line,
                                 module: module_name.clone(),
                                 file: source_file.map(|s| s.to_string()),
@@ -1109,12 +1071,13 @@ pub fn check_module_intent_with_sigs_in(
                                     d.name, name
                                 ),
                             });
-                        }
+                    }
                 }
                 for impact in &d.impacts {
                     if let DecisionImpact::Symbol(name) = impact
-                        && !decision_symbol_known(name, &declared_symbols, &known_effect_symbols) {
-                            errors.push(CheckFinding {
+                        && !decision_symbol_known(name, &declared_symbols, &known_effect_symbols)
+                    {
+                        errors.push(CheckFinding {
                                 line: d.line,
                                 module: module_name.clone(),
                                 file: source_file.map(|s| s.to_string()),
@@ -1123,7 +1086,7 @@ pub fn check_module_intent_with_sigs_in(
                                     d.name, name
                                 ),
                             });
-                        }
+                    }
                 }
             }
             _ => {}
@@ -1202,7 +1165,6 @@ pub fn expr_to_str(expr: &crate::ast::Expr) -> String {
         }
         Expr::ErrorProp(inner) => format!("{}?", expr_to_str(inner)),
         Expr::Attr(obj, field) => format!("{}.{}", expr_to_str(obj), field),
-        Expr::Pipe(left, right) => format!("{} |> {}", expr_to_str(left), expr_to_str(right)),
         Expr::RecordCreate { type_name, fields } => {
             let flds: Vec<String> = fields
                 .iter()
@@ -1473,26 +1435,6 @@ verify add1
                 .iter()
                 .any(|e| e.message == "Function 'add1' has no verify block"),
             "expected no duplicate missing-verify error, got errors={:?}, warnings={:?}",
-            findings.errors,
-            findings.warnings
-        );
-    }
-
-    #[test]
-    fn verify_case_pipe_into_target_is_allowed() {
-        let items = parse_items(
-            r#"
-fn add1(x: Int) -> Int
-    = x + 1
-
-verify add1
-    41 |> add1 => 42
-"#,
-        );
-        let findings = check_module_intent(&items);
-        assert!(
-            !findings.errors.iter().any(|e| e.message.contains("case #")),
-            "did not expect verify-case-call error, got errors={:?}, warnings={:?}",
             findings.errors,
             findings.warnings
         );

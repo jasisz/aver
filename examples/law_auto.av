@@ -100,7 +100,7 @@ verify addOne law identityViaAdd
     addOne(n) => add(n, 1)
 
 fn main() -> Unit
-    ! [Console]
+    ! [Console.print]
     Console.print("LawAuto: run `aver verify examples/law_auto.av`")
     Console.print("LawAuto: compile with `aver compile examples/law_auto.av -t lean --lean-verify auto`")
     Console.print("LawAuto: inspect generated theorems for auto and sampled fallback laws")

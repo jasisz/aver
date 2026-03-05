@@ -150,10 +150,6 @@
     "operators": {
       "patterns": [
         {
-          "name": "keyword.operator.pipe.aver",
-          "match": "\\|>"
-        },
-        {
           "name": "keyword.operator.arrow.aver",
           "match": "->"
         },

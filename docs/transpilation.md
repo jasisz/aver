@@ -76,7 +76,6 @@ Everything the interpreter supports is transpilable:
 | List literals, `List.*` operations | OK |
 | Map literals, `Map.*` operations | OK |
 | Tuple literals, tuple patterns | OK |
-| Pipe operator (`\|>`) | OK |
 | Error propagation (`?`) | OK |
 | Auto-memoization | OK |
 | Tail-call optimization | OK |

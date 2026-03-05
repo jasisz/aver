@@ -25,7 +25,7 @@ verify is_adult
     is_adult(User(name = "Bob", age = 15)) => false
 
 fn main()
-  ! [Console]
+  ! [Console.print]
   alice = User(name = "Alice", age = 30)
   bob = User(name = "Bob", age = 15)
   Console.print(greet(alice))

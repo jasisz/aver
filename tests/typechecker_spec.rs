@@ -257,12 +257,6 @@ fn invalid_int_float_no_widening() {
     );
 }
 
-#[test]
-fn valid_pipe_operator() {
-    let src = "fn double(x: Int) -> Int\n    = x + x\nfn main() -> Unit\n    r = 5 |> double\n";
-    assert_no_errors(src);
-}
-
 // --- Real example files ---
 
 #[test]

@@ -323,24 +323,8 @@ fn expr_comparison_lt() {
 }
 
 #[test]
-fn expr_pipe() {
-    let items = parse("x |> f");
-    if let TopLevel::Stmt(Stmt::Expr(Expr::Pipe(left, right))) = &items[0] {
-        assert!(matches!(**left, Expr::Ident(_)));
-        assert!(matches!(**right, Expr::Ident(_)));
-    } else {
-        panic!("expected Pipe");
-    }
-}
-
-#[test]
-fn expr_pipe_rhs_call_is_parse_error() {
-    let msg = parse_error("x |> f(1)");
-    assert!(
-        msg.contains("Pipe right side must be a function reference"),
-        "unexpected parse error: {}",
-        msg
-    );
+fn expr_pipe_is_rejected() {
+    assert!(parse_fails("x |> f"));
 }
 
 #[test]

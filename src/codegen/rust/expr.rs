@@ -33,17 +33,18 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
             }
             // Check if this is a module-qualified reference: Examples.Fibonacci.fib
             if let Some(full_dotted) = expr_to_dotted_name(expr)
-                && let Some(bare) = resolve_module_call(&full_dotted, ctx) {
-                    // Could be a simple function name or a type.variant
-                    if let Some(dot_pos) = bare.find('.') {
-                        let type_name = &bare[..dot_pos];
-                        let variant = &bare[dot_pos + 1..];
-                        if is_user_type(type_name, ctx) {
-                            return format!("{}::{}", type_name, variant);
-                        }
+                && let Some(bare) = resolve_module_call(&full_dotted, ctx)
+            {
+                // Could be a simple function name or a type.variant
+                if let Some(dot_pos) = bare.find('.') {
+                    let type_name = &bare[..dot_pos];
+                    let variant = &bare[dot_pos + 1..];
+                    if is_user_type(type_name, ctx) {
+                        return format!("{}::{}", type_name, variant);
                     }
-                    return aver_name_to_rust(&bare);
                 }
+                return aver_name_to_rust(&bare);
+            }
             let obj_str = emit_expr(obj, ctx, ectx);
             format!("{}.{}", obj_str, aver_name_to_rust(field))
         }
@@ -85,14 +86,6 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
             }
         }
         Expr::Match { subject, arms, .. } => emit_match(subject, arms, ctx, ectx),
-        Expr::Pipe(left, right) => {
-            // a |> f → f(a)
-            let right_vars = collect_vars(right);
-            let left_ectx = ectx.with_used_after(&right_vars);
-            let arg = clone_arg(left, ctx, &left_ectx);
-            let func = emit_expr(right, ctx, ectx);
-            format!("{}({})", func, arg)
-        }
         Expr::Constructor(name, arg) => emit_constructor(name, arg, ctx, ectx),
         Expr::ErrorProp(inner) => {
             let inner_str = emit_expr(inner, ctx, ectx);

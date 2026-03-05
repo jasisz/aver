@@ -30,16 +30,17 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
             }
             // Check module-qualified reference
             if let Some(full_dotted) = expr_to_dotted_name(expr)
-                && let Some(bare) = resolve_module_call(&full_dotted, ctx) {
-                    if let Some(dot_pos) = bare.find('.') {
-                        let type_name = &bare[..dot_pos];
-                        let variant = &bare[dot_pos + 1..];
-                        if is_user_type(type_name, ctx) {
-                            return format!("{}.{}", type_name, to_lower_first(variant));
-                        }
+                && let Some(bare) = resolve_module_call(&full_dotted, ctx)
+            {
+                if let Some(dot_pos) = bare.find('.') {
+                    let type_name = &bare[..dot_pos];
+                    let variant = &bare[dot_pos + 1..];
+                    if is_user_type(type_name, ctx) {
+                        return format!("{}.{}", type_name, to_lower_first(variant));
                     }
-                    return aver_name_to_lean(&bare);
                 }
+                return aver_name_to_lean(&bare);
+            }
             let obj_str = emit_expr(obj, ctx);
             format!("{}.{}", obj_str, aver_name_to_lean(field))
         }
@@ -67,24 +68,6 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
             format!("({} {} {})", l, op_str, r)
         }
         Expr::Match { subject, arms, .. } => emit_match(subject, arms, ctx),
-        Expr::Pipe(left, right) => {
-            let arg = emit_expr(left, ctx);
-            // Check if the right side is a function call with additional args
-            // Otherwise, pipe as function application
-            match right.as_ref() {
-                Expr::Ident(name) => {
-                    format!("{} |> {}", arg, aver_name_to_lean(name))
-                }
-                Expr::Attr(..) => {
-                    let func = emit_expr(right, ctx);
-                    format!("{} |> {}", arg, func)
-                }
-                _ => {
-                    let func = emit_expr(right, ctx);
-                    format!("{} |> {}", arg, func)
-                }
-            }
-        }
         Expr::Constructor(name, arg) => emit_constructor(name, arg, ctx),
         Expr::ErrorProp(inner) => {
             // ? operator — unwrap Except using withDefault

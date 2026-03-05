@@ -31,8 +31,6 @@ Duplicate binding of the same name in the same scope is a type error.
 
 Arithmetic: `+`, `-`, `*`, `/` — operands must match (`Int+Int`, `Float+Float`, `String+String`). No implicit promotion; use `Int.toFloat` / `Float.fromInt` to convert.
 Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`.
-Pipe: `value |> fn` — passes the left-hand value as the sole argument to the right-hand function.
-Right-hand side must be a function reference (`fn` / `Ns.fn`), not a call (`fn(...)`).
 Error propagation: `expr?` — unwraps `Result.Ok`, propagates `Result.Err` as a `RuntimeError`.
 
 ## String interpolation

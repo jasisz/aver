@@ -335,7 +335,7 @@ Curated examples:
 
 | File | Demonstrates |
 |------|-------------|
-| `hello.av` | Functions, string interpolation, pipe, verify |
+| `hello.av` | Functions, string interpolation, verify |
 | `calculator.av` | Result types, match, decision blocks |
 | `shapes.av` | Sum types, qualified constructors (`Shape.Circle`), match on variants |
 | `fibonacci.av` | Tail recursion, records, decision blocks |

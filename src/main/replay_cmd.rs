@@ -384,9 +384,8 @@ mod tests {
         fs::write(&nested_json, "{}").expect("write nested recording");
         fs::write(&ignored, "ignore").expect("write ignored file");
 
-        let mut files =
-            collect_recording_files(root.to_str().expect("temp path should be utf-8"))
-                .expect("collect recordings");
+        let mut files = collect_recording_files(root.to_str().expect("temp path should be utf-8"))
+            .expect("collect recordings");
         files.sort();
 
         assert_eq!(files, vec![nested_json, top]);

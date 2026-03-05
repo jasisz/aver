@@ -48,14 +48,14 @@ verify counterPath
 
 fn initFileIfMissing(path: String, content: String) -> Result<Unit, String>
     ? "Creates a file with default content only when it does not already exist."
-    ! [Disk]
+    ! [Disk.exists, Disk.writeText, Disk.appendText]
     match Disk.exists(path)
         false -> Disk.writeText(path, content)
         true -> Disk.appendText(path, "")
 
 fn initStore() -> Result<Unit, String>
     ? "Ensures the data directory and storage files exist."
-    ! [Disk]
+    ! [Disk.makeDir, Disk.exists, Disk.writeText, Disk.appendText]
     d = Disk.makeDir(dataDir())?
     n = initFileIfMissing(notesPath(), "")?
     initFileIfMissing(counterPath(), "1")
@@ -64,7 +64,7 @@ fn initStore() -> Result<Unit, String>
 
 fn bumpCounter() -> Result<Int, String>
     ? "Reads the ID counter, increments it on disk, returns the old value."
-    ! [Disk]
+    ! [Disk.readText, Disk.writeText]
     text = Disk.readText(counterPath())?
     current = Int.fromString(String.trim(text))?
     _ = Disk.writeText(counterPath(), "{current + 1}")?
@@ -155,19 +155,19 @@ verify withoutId
 
 fn loadAll() -> Result<List<Note>, String>
     ? "Reads all notes from disk."
-    ! [Disk]
+    ! [Disk.readText]
     content = Disk.readText(notesPath())?
     parseNotes(content)
 
 fn saveAll(notes: List<Note>) -> Result<Unit, String>
     ? "Overwrites the notes file with the given list."
-    ! [Disk]
+    ! [Disk.writeText]
     lines = List.map(notes, serializeLine)
     Disk.writeText(notesPath(), "{String.join(lines, "\n")}\n")
 
 fn addNote(title: String, body: String) -> Result<Note, String>
     ? "Creates a new note with the next available ID and persists it."
-    ! [Disk]
+    ! [Disk.readText, Disk.writeText, Disk.appendText]
     id = bumpCounter()?
     note = Note(id = id, title = title, body = body)
     _ = Disk.appendText(notesPath(), "{serializeLine(note)}\n")?
@@ -175,7 +175,7 @@ fn addNote(title: String, body: String) -> Result<Note, String>
 
 fn removeNote(id: Int) -> Result<Unit, String>
     ? "Deletes a note by ID. Rewrites the storage file without the deleted note."
-    ! [Disk]
+    ! [Disk.readText, Disk.writeText]
     notes = loadAll()?
     remaining = withoutId(notes, id, [])
     saveAll(remaining)

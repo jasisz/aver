@@ -241,7 +241,7 @@ verify testNot
     testNot(churchFalse()) => "T"
 
 fn main()
-    ! [Console]
+    ! [Console.print]
     id = Term.Lam("x", Term.Var("x"))
     result = eval(Term.App(id, Term.Var("hello")))
     Console.print("(λx.x) hello = {termToString(result)}")

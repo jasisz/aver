@@ -255,8 +255,8 @@ fn op_gt() {
 }
 
 #[test]
-fn op_pipe() {
-    assert_eq!(lex("|>"), vec![TokenKind::Pipe]);
+fn pipe_operator_is_lex_error() {
+    assert!(lex_err("|>"));
 }
 
 #[test]
@@ -444,12 +444,6 @@ fn fn_call_tokens() {
 fn arrow_not_confused_with_gt_minus() {
     // -> is Arrow, not Gt + Minus
     assert_eq!(lex("->"), vec![TokenKind::Arrow]);
-}
-
-#[test]
-fn pipe_not_confused_with_bar_gt() {
-    // |> is Pipe
-    assert_eq!(lex("|>"), vec![TokenKind::Pipe]);
 }
 
 // ---------------------------------------------------------------------------

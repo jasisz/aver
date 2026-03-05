@@ -32,9 +32,10 @@ pub fn transform_program(items: &mut [TopLevel]) {
 
     for item in items.iter_mut() {
         if let TopLevel::FnDef(fd) = item
-            && let Some(scc_members) = fn_to_scc.get(&fd.name) {
-                transform_fn(fd, scc_members);
-            }
+            && let Some(scc_members) = fn_to_scc.get(&fd.name)
+        {
+            transform_fn(fd, scc_members);
+        }
     }
 }
 
@@ -47,9 +48,10 @@ fn transform_fn(fd: &mut FnDef, scc_members: &HashSet<String>) {
         FnBody::Block(stmts) => {
             // Only the last Stmt::Expr is in tail position
             if let Some(last) = stmts.last_mut()
-                && let Stmt::Expr(expr) = last {
-                    transform_tail_expr(expr, scc_members);
-                }
+                && let Stmt::Expr(expr) = last
+            {
+                transform_tail_expr(expr, scc_members);
+            }
         }
     }
     fd.body = std::rc::Rc::new(body);
@@ -61,11 +63,12 @@ fn transform_tail_expr(expr: &mut Expr, scc_members: &HashSet<String>) {
         // Direct call: `f(args)` where f is Ident in SCC
         Expr::FnCall(fn_expr, args) => {
             if let Expr::Ident(name) = fn_expr.as_ref()
-                && scc_members.contains(name) {
-                    let name = name.clone();
-                    let args = std::mem::take(args);
-                    *expr = Expr::TailCall(Box::new((name, args)));
-                }
+                && scc_members.contains(name)
+            {
+                let name = name.clone();
+                let args = std::mem::take(args);
+                *expr = Expr::TailCall(Box::new((name, args)));
+            }
         }
         // Match: each arm body is in tail position
         Expr::Match { arms, .. } => {

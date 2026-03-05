@@ -39,7 +39,7 @@ verify add law identity_zero
     add(a, 0) => a
 
 fn main() -> Unit
-    ! [Console]
+    ! [Console.print]
     numbers = [1, 2, 3, 4, 5]
     doubled = List.map(numbers, double)
     Console.print(doubled)

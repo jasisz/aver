@@ -40,7 +40,7 @@ verify containsWord
     containsWord(["a", "b"], "x") => false
 
 fn main() -> Unit
-    ! [Console]
+    ! [Console.print]
     words = ["alice", "bob", "alice", "eve"]
     counts = countWords(words)
     Console.print("Counts:")

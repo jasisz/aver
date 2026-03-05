@@ -21,11 +21,20 @@ fn encodeFold(acc: RleAcc, char: String) -> RleAcc
             true -> RleAcc(runs = acc.runs, current = acc.current, count = acc.count + 1)
             false -> RleAcc(runs = List.push(acc.runs, Run(char = acc.current, count = acc.count)), current = char, count = 1)
 
+verify encodeFold
+    encodeFold(RleAcc(runs = [], current = "", count = 0), "a") => RleAcc(runs = [], current = "a", count = 1)
+    encodeFold(RleAcc(runs = [], current = "a", count = 1), "a") => RleAcc(runs = [], current = "a", count = 2)
+    encodeFold(RleAcc(runs = [], current = "a", count = 2), "b") => RleAcc(runs = [Run(char = "a", count = 2)], current = "b", count = 1)
+
 fn flushAcc(acc: RleAcc) -> List<Run>
     ? "Flushes the final run from the accumulator."
     match acc.count == 0
         true -> acc.runs
         false -> List.push(acc.runs, Run(char = acc.current, count = acc.count))
+
+verify flushAcc
+    flushAcc(RleAcc(runs = [], current = "", count = 0)) => []
+    flushAcc(RleAcc(runs = [Run(char = "a", count = 2)], current = "b", count = 1)) => [Run(char = "a", count = 2), Run(char = "b", count = 1)]
 
 fn encode(xs: List<String>) -> List<Run>
     ? "Compresses a list of single characters into run-length pairs."
@@ -52,6 +61,10 @@ fn expandRun(run: Run) -> List<String>
     ? "Expands a single run back into repeated characters."
     = repeat(run.char, run.count)
 
+verify expandRun
+    expandRun(Run(char = "x", count = 0)) => []
+    expandRun(Run(char = "x", count = 3)) => ["x", "x", "x"]
+
 fn decode(runs: List<Run>) -> List<String>
     ? "Decompresses run-length pairs back into a character list."
     = List.flatMap(runs, expandRun)
@@ -73,9 +86,17 @@ fn decodeString(runs: List<Run>) -> String
     ? "Decompresses run-length pairs back into a string."
     = String.join(decode(runs), "")
 
+verify decodeString
+    decodeString([]) => ""
+    decodeString([Run(char = "a", count = 3), Run(char = "b", count = 2)]) => "aaabb"
+
 fn showRun(run: Run) -> String
     ? "Formats a single run as char followed by count."
     = "{run.char}{run.count}"
+
+verify showRun
+    showRun(Run(char = "a", count = 3)) => "a3"
+    showRun(Run(char = "z", count = 1)) => "z1"
 
 fn showRuns(runs: List<Run>) -> String
     ? "Formats encoded runs as a compact string like a3b2c1."
@@ -90,7 +111,7 @@ verify encodeString law string_roundtrip
     decodeString(encodeString(s)) => s
 
 fn main()
-    ! [Console]
+    ! [Console.print]
     text = "aaabbbccdddddd"
     runs = encodeString(text)
     Console.print("Input:    {text}")

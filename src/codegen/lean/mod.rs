@@ -380,10 +380,6 @@ fn collect_calls_from_expr<'a>(expr: &'a Expr, out: &mut Vec<(String, Vec<&'a Ex
                 collect_calls_from_expr(&arm.body, out);
             }
         }
-        Expr::Pipe(left, right) => {
-            collect_calls_from_expr(left, out);
-            collect_calls_from_expr(right, out);
-        }
         Expr::Constructor(_, inner) => {
             if let Some(inner) = inner {
                 collect_calls_from_expr(inner, out);
@@ -472,7 +468,7 @@ fn collect_list_tail_binders_from_expr(
             }
         }
         Expr::Attr(obj, _) => collect_list_tail_binders_from_expr(obj, list_param_name, tails),
-        Expr::BinOp(_, left, right) | Expr::Pipe(left, right) => {
+        Expr::BinOp(_, left, right) => {
             collect_list_tail_binders_from_expr(left, list_param_name, tails);
             collect_list_tail_binders_from_expr(right, list_param_name, tails);
         }
@@ -658,10 +654,13 @@ fn classify_string_pos_edge(
     }
     if let Expr::FnCall(callee, args) = expr {
         let name = expr_to_dotted_name(callee)?;
-        if call_matches(&name, "skipWs") && args.len() == 2 && is_ident(&args[0], string_param)
-            && matches!(&args[1], Expr::Ident(id) if id != pos_param) {
-                return Some(StringPosEdge::Advance);
-            }
+        if call_matches(&name, "skipWs")
+            && args.len() == 2
+            && is_ident(&args[0], string_param)
+            && matches!(&args[1], Expr::Ident(id) if id != pos_param)
+        {
+            return Some(StringPosEdge::Advance);
+        }
     }
     if matches!(expr, Expr::Ident(id) if id != pos_param) {
         return Some(StringPosEdge::Advance);

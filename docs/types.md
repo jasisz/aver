@@ -17,7 +17,7 @@
 | `BinOp` | `src/ast.rs` | Arithmetic and comparison operators as enum variants |
 | `Pattern` | `src/ast.rs` | Match arm pattern: `Wildcard`, `Literal`, `Ident`, `EmptyList`, `Cons`, `Constructor` |
 | `StrPart` | `src/ast.rs` | Piece of an interpolated string: `Literal(String)` or `Parsed(Box<Expr>)` |
-| `Expr` | `src/ast.rs` | Every expression form: `Literal`, `Ident`, `Resolved(u16)`, `Attr`, `FnCall`, `BinOp`, `Match`, `Pipe`, `Constructor`, `ErrorProp`, `InterpolatedStr`, `List(Vec<Expr>)`, `Tuple(Vec<Expr>)`, `MapLiteral(Vec<(Expr, Expr)>)`, `RecordCreate { type_name, fields }`, `RecordUpdate { type_name, base, updates }`, `TailCall(Box<(String, Vec<Expr>)>)` |
+| `Expr` | `src/ast.rs` | Every expression form: `Literal`, `Ident`, `Resolved(u16)`, `Attr`, `FnCall`, `BinOp`, `Match`, `Constructor`, `ErrorProp`, `InterpolatedStr`, `List(Vec<Expr>)`, `Tuple(Vec<Expr>)`, `MapLiteral(Vec<(Expr, Expr)>)`, `RecordCreate { type_name, fields }`, `RecordUpdate { type_name, base, updates }`, `TailCall(Box<(String, Vec<Expr>)>)` |
 | `Stmt` | `src/ast.rs` | `Binding(name, Option<type_ann>, expr)`, `Expr(expr)` |
 | `FnBody` | `src/ast.rs` | `Expr(Expr)` for `= expr` shorthand, or `Block(Vec<Stmt>)` |
 | `FnDef` | `src/ast.rs` | Name, params, return type, effects, optional description, body |

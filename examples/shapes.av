@@ -33,7 +33,7 @@ verify describe
     describe(Shape.Point) => "Point"
 
 fn main()
-  ! [Console]
+  ! [Console.print]
   c = Shape.Circle(5.0)
   r = Shape.Rect(3.0, 4.0)
   p = Shape.Point

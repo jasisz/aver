@@ -4,7 +4,7 @@ module App
         "Demonstrates module imports via depends."
 
 fn main() -> Unit
-    ! [Console]
+    ! [Console.print]
     result = Examples.Fibonacci.buildFibStats(10)
     match result
         Result.Ok(stats) -> Console.print(stats.sum)

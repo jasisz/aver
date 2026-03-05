@@ -197,9 +197,10 @@ pub fn parse_type_str(s: &str) -> Type {
     if s.starts_with('(') && s.ends_with(')') {
         let inner = &s[1..s.len() - 1];
         if let Ok(parts) = split_top_level(inner, ',')
-            && parts.len() >= 2 {
-                return Type::Tuple(parts.into_iter().map(parse_type_str).collect());
-            }
+            && parts.len() >= 2
+        {
+            return Type::Tuple(parts.into_iter().map(parse_type_str).collect());
+        }
         return Type::Unknown;
     }
     match s {
@@ -227,12 +228,13 @@ pub fn parse_type_str(s: &str) -> Type {
                 return Type::List(Box::new(parse_type_str(inner)));
             }
             if let Some(inner) = strip_wrapper(s, "Map<", ">")
-                && let Some((key_str, value_str)) = split_top_level_comma(inner) {
-                    return Type::Map(
-                        Box::new(parse_type_str(key_str)),
-                        Box::new(parse_type_str(value_str)),
-                    );
-                }
+                && let Some((key_str, value_str)) = split_top_level_comma(inner)
+            {
+                return Type::Map(
+                    Box::new(parse_type_str(key_str)),
+                    Box::new(parse_type_str(value_str)),
+                );
+            }
             // Capitalized identifier with only alphanumeric/_ and dot chars = user-defined type
             // Supports dotted names like "Tcp.Connection"
             if s.chars().next().is_some_and(|c| c.is_uppercase())

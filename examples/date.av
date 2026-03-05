@@ -19,6 +19,11 @@ fn parseIntSlice(s: String, from: Int, to: Int) -> Int
     result = Int.fromString(part)
     Result.withDefault(result, 0)
 
+verify parseIntSlice
+    parseIntSlice("2026-03-05T15:42:01.123Z", 0, 4) => 2026
+    parseIntSlice("2026-03-05T15:42:01.123Z", 5, 7) => 3
+    parseIntSlice("2026-03-05T15:42:01.123Z", 17, 19) => 1
+
 fn parse(s: String) -> Date
     ? "Parse an ISO 8601 / RFC3339 string like 2026-03-05T15:42:01.123Z into a Date record."
     Date(
@@ -40,6 +45,11 @@ fn padTwo(n: Int) -> String
     match n < 10
         true -> "0{Int.toString(n)}"
         false -> Int.toString(n)
+
+verify padTwo
+    padTwo(0) => "00"
+    padTwo(7) => "07"
+    padTwo(12) => "12"
 
 fn format(d: Date) -> String
     ? "Format a Date as YYYY-MM-DD HH:MM:SS."
@@ -66,7 +76,7 @@ verify isBefore
     isBefore("2026-03-05T10:00:00.000Z", "2026-03-05T10:00:00.000Z") => false
 
 fn main()
-    ! [Console, Time.now]
+    ! [Console.print, Time.now]
     now = Time.now()
     d = parse(now)
     Console.print("Raw:    {now}")

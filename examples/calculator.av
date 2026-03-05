@@ -40,7 +40,7 @@ verify safeRoot
     safeRoot(-99) => Result.Err("Cannot take root of negative number")
 
 fn main() -> Unit
-    ! [Console]
+    ! [Console.print]
     r1 = safeDivide(10, 2)
     Console.print(r1)
     r2 = safeDivide(7, 0)

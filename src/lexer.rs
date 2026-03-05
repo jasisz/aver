@@ -25,7 +25,6 @@ pub enum TokenKind {
     Match,
     // Operators
     Arrow,    // ->
-    Pipe,     // |>
     FatArrow, // =>
     Eq,       // ==
     Neq,      // !=
@@ -77,7 +76,6 @@ impl fmt::Display for TokenKind {
             TokenKind::Verify => write!(f, "'verify'"),
             TokenKind::Match => write!(f, "'match'"),
             TokenKind::Arrow => write!(f, "'->'"),
-            TokenKind::Pipe => write!(f, "'|>'"),
             TokenKind::FatArrow => write!(f, "'=>'"),
             TokenKind::Eq => write!(f, "'=='"),
             TokenKind::Neq => write!(f, "'!='"),
@@ -544,10 +542,6 @@ impl Lexer {
             '-' if self.current() == Some('>') => {
                 self.advance();
                 TokenKind::Arrow
-            }
-            '|' if self.current() == Some('>') => {
-                self.advance();
-                TokenKind::Pipe
             }
             '=' if self.current() == Some('>') => {
                 self.advance();

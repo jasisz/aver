@@ -251,11 +251,12 @@ impl Interpreter {
                     .map_err(RuntimeError::Error)?;
             }
         } else if name.starts_with("Env.")
-            && let Some(Value::Str(key)) = args.first() {
-                policy
-                    .check_env_key(name, key)
-                    .map_err(RuntimeError::Error)?;
-            }
+            && let Some(Value::Str(key)) = args.first()
+        {
+            policy
+                .check_env_key(name, key)
+                .map_err(RuntimeError::Error)?;
+        }
 
         Ok(())
     }
@@ -374,7 +375,7 @@ impl Interpreter {
                     Self::collect_match_sites_from_expr(arg, out);
                 }
             }
-            Expr::BinOp(_, left, right) | Expr::Pipe(left, right) => {
+            Expr::BinOp(_, left, right) => {
                 Self::collect_match_sites_from_expr(left, out);
                 Self::collect_match_sites_from_expr(right, out);
             }

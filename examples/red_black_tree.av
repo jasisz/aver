@@ -422,14 +422,14 @@ verify deletePreservesInvariants
 
 fn printNode(linePrefix: String, childPrefix: String, label: String, v: Int, l: Tree, r: Tree) -> Unit
   ? "Print one labeled tree node and recurse into both children."
-  ! [Console]
+  ! [Console.print]
   Console.print("{linePrefix}{label}:{v}")
   printTree(l, "{childPrefix}├─ ", "{childPrefix}│  ")
   printTree(r, "{childPrefix}└─ ", "{childPrefix}   ")
 
 fn printTree(t: Tree, linePrefix: String, childPrefix: String) -> Unit
   ? "Print a tree node with box-drawing prefixes"
-  ! [Console]
+  ! [Console.print]
   match t
     Tree.Empty -> Console.print("{linePrefix}·")
     Tree.Red(l, v, r) -> printNode(linePrefix, childPrefix, "R", v, l, r)
@@ -437,14 +437,14 @@ fn printTree(t: Tree, linePrefix: String, childPrefix: String) -> Unit
 
 fn prettyPrint(t: Tree) -> Unit
   ? "Pretty-print the tree structure with box-drawing lines"
-  ! [Console]
+  ! [Console.print]
   match t
     Tree.Empty -> Console.print("·")
     Tree.Red(l, v, r) -> printNode("", "", "R", v, l, r)
     Tree.Black(l, v, r) -> printNode("", "", "B", v, l, r)
 
 fn main()
-  ! [Console]
+  ! [Console.print]
   t = fromList([5, 3, 7, 1, 4, 6, 8, 2])
   Console.print("Red-Black Tree")
   Console.print("Size: {size(t)}")

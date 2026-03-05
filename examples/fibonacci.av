@@ -155,7 +155,7 @@ verify buildFibStats
 
 fn printStats(s: FibStats) -> Unit
     ? "Print all fields of a FibStats record to stdout."
-    ! [Console]
+    ! [Console.print]
     Console.print("Fibonacci [0..{List.len(s.fibs) - 1}]:")
     Console.print(s.fibs)
     Console.print("Sum:")
@@ -198,7 +198,7 @@ fn goldenApprox(n: Int) -> Result<Float, String>
         false -> Result.Ok(Int.toFloat(fib(n + 1)) / Int.toFloat(fib(n)))
 
 fn main() -> Unit
-    ! [Console]
+    ! [Console.print]
     result = buildFibStats(12)
     match result
         Result.Ok(stats) -> printStats(stats)

@@ -1,14 +1,14 @@
 module Temperature
     intent =
         "Converts temperatures between Celsius, Fahrenheit, and Kelvin."
-        "Demonstrates Result types, pipe operator, and co-located verification."
+        "Demonstrates Result types, collection helpers, and co-located verification."
 
 decision NoLoops
     date = "2026-02-24"
     reason =
         "Temperature conversion is a pure mapping problem."
         "Each conversion is a single expression — no iteration needed."
-    chosen = "FunctionalPipeline"
+    chosen = "PureFunctions"
     rejected = ["ImperativeLoop"]
 
     impacts = ["convertBatch"]
@@ -77,12 +77,12 @@ verify classify
     classify(40.0) => "hot"
 
 fn main() -> Unit
-    ! [Console]
-    boiling = 100.0 |> celsiusToFahr
+    ! [Console.print]
+    boiling = celsiusToFahr(100.0)
     Console.print("100 C in Fahrenheit:")
     Console.print(boiling)
 
-    body = 98.6 |> fahrToCelsius
+    body = fahrToCelsius(98.6)
     Console.print("98.6 F in Celsius:")
     Console.print(body)
 

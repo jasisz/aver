@@ -5,14 +5,15 @@ impl TypeChecker {
         self.build_signatures(items);
 
         if let Some(base) = base_dir
-            && let Some(module) = Self::module_decl(items) {
-                let mut loading = Vec::new();
-                for dep_name in &module.depends {
-                    if let Err(e) = self.load_module_sigs(dep_name, base, &mut loading) {
-                        self.error(e);
-                    }
+            && let Some(module) = Self::module_decl(items)
+        {
+            let mut loading = Vec::new();
+            for dep_name in &module.depends {
+                if let Err(e) = self.load_module_sigs(dep_name, base, &mut loading) {
+                    self.error(e);
                 }
             }
+        }
 
         self.check_top_level_stmts(items);
         self.check_verify_blocks(items);

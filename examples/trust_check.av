@@ -32,12 +32,12 @@ verify canTrust
 
 fn reviewAndReport(review: CodeReview) -> Unit
     ? "Reviews code and reports the verdict."
-    ! [Console]
+    ! [Console.print]
     match canTrust(review)
         Result.Ok(msg) -> Console.print("PASS: {msg}")
         Result.Err(msg) -> Console.print("FAIL: {msg}")
 
 fn main() -> Unit
-    ! [Console]
+    ! [Console.print]
     thisProgram = CodeReview(hasVerify = true, hasIntent = true)
     reviewAndReport(thisProgram)

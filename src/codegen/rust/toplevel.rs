@@ -243,7 +243,6 @@ fn expr_uses_error_prop(expr: &Expr) -> bool {
         Expr::ErrorProp(_) => true,
         Expr::FnCall(f, args) => expr_uses_error_prop(f) || args.iter().any(expr_uses_error_prop),
         Expr::BinOp(_, l, r) => expr_uses_error_prop(l) || expr_uses_error_prop(r),
-        Expr::Pipe(l, r) => expr_uses_error_prop(l) || expr_uses_error_prop(r),
         Expr::Match { subject, arms, .. } => {
             expr_uses_error_prop(subject) || arms.iter().any(|a| expr_uses_error_prop(&a.body))
         }

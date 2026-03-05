@@ -106,25 +106,28 @@ impl Interpreter {
                     ("Result.Ok", Value::Ok(inner)) => {
                         let mut map = HashMap::new();
                         if let Some(name) = bindings.first()
-                            && name != "_" {
-                                map.insert(name.clone(), *inner.clone());
-                            }
+                            && name != "_"
+                        {
+                            map.insert(name.clone(), *inner.clone());
+                        }
                         Some(map)
                     }
                     ("Result.Err", Value::Err(inner)) => {
                         let mut map = HashMap::new();
                         if let Some(name) = bindings.first()
-                            && name != "_" {
-                                map.insert(name.clone(), *inner.clone());
-                            }
+                            && name != "_"
+                        {
+                            map.insert(name.clone(), *inner.clone());
+                        }
                         Some(map)
                     }
                     ("Option.Some", Value::Some(inner)) => {
                         let mut map = HashMap::new();
                         if let Some(name) = bindings.first()
-                            && name != "_" {
-                                map.insert(name.clone(), *inner.clone());
-                            }
+                            && name != "_"
+                        {
+                            map.insert(name.clone(), *inner.clone());
+                        }
                         Some(map)
                     }
                     // User-defined variant: match by variant name, qualified or unqualified

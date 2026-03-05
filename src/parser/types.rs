@@ -168,34 +168,36 @@ impl Parser {
 
         // Function type annotation: Fn(A, B) -> C ! [Effect]
         if let TokenKind::Ident(name) = &self.current().kind
-            && name == "Fn" && matches!(self.peek(1).kind, TokenKind::LParen) {
-                self.advance(); // Fn
-                self.expect_exact(&TokenKind::LParen)?;
+            && name == "Fn"
+            && matches!(self.peek(1).kind, TokenKind::LParen)
+        {
+            self.advance(); // Fn
+            self.expect_exact(&TokenKind::LParen)?;
 
-                let mut params = Vec::new();
-                while !self.check_exact(&TokenKind::RParen) && !self.is_eof() {
-                    if self.check_exact(&TokenKind::Comma) {
-                        self.advance();
-                        continue;
-                    }
-                    params.push(self.parse_type()?);
-                    if self.check_exact(&TokenKind::Comma) {
-                        self.advance();
-                    }
+            let mut params = Vec::new();
+            while !self.check_exact(&TokenKind::RParen) && !self.is_eof() {
+                if self.check_exact(&TokenKind::Comma) {
+                    self.advance();
+                    continue;
                 }
-                self.expect_exact(&TokenKind::RParen)?;
-                self.expect_exact(&TokenKind::Arrow)?;
-
-                let ret = self.parse_type()?;
-                let mut out = format!("Fn({}) -> {}", params.join(", "), ret);
-
-                if self.check_exact(&TokenKind::Bang) {
-                    self.advance(); // !
-                    let effects = self.parse_effect_ident_list()?;
-                    out.push_str(&format!(" ! [{}]", effects.join(", ")));
+                params.push(self.parse_type()?);
+                if self.check_exact(&TokenKind::Comma) {
+                    self.advance();
                 }
-                return Ok(out);
             }
+            self.expect_exact(&TokenKind::RParen)?;
+            self.expect_exact(&TokenKind::Arrow)?;
+
+            let ret = self.parse_type()?;
+            let mut out = format!("Fn({}) -> {}", params.join(", "), ret);
+
+            if self.check_exact(&TokenKind::Bang) {
+                self.advance(); // !
+                let effects = self.parse_effect_ident_list()?;
+                out.push_str(&format!(" ! [{}]", effects.join(", ")));
+            }
+            return Ok(out);
+        }
 
         let mut base = match &self.current().kind {
             TokenKind::Ident(s) => {
@@ -222,12 +224,13 @@ impl Parser {
                 kind: TokenKind::Ident(next),
                 ..
             }) = self.tokens.get(self.pos + 1)
-                && next.chars().next().is_some_and(|c| c.is_uppercase()) {
-                    let next = next.clone();
-                    self.advance(); // dot
-                    self.advance(); // ident
-                    base = format!("{}.{}", base, next);
-                }
+            && next.chars().next().is_some_and(|c| c.is_uppercase())
+        {
+            let next = next.clone();
+            self.advance(); // dot
+            self.advance(); // ident
+            base = format!("{}.{}", base, next);
+        }
 
         if self.check_exact(&TokenKind::Lt) {
             self.advance(); // <

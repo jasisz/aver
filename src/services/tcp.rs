@@ -294,9 +294,10 @@ fn conn_id_arg(val: &Value, method: &str) -> Result<String, RuntimeError> {
         Value::Record { type_name, fields } if type_name == "Tcp.Connection" => {
             for (name, v) in fields {
                 if name == "id"
-                    && let Value::Str(s) = v {
-                        return Ok(s.clone());
-                    }
+                    && let Value::Str(s) = v
+                {
+                    return Ok(s.clone());
+                }
             }
             Err(RuntimeError::Error(format!(
                 "{}: Tcp.Connection record missing 'id' field",

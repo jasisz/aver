@@ -76,11 +76,6 @@ impl Interpreter {
                 let sv = self.eval_expr(subject)?;
                 self.eval_match(sv, arms, *line)
             }
-            Expr::Pipe(left, right) => {
-                let left_val = self.eval_expr(left)?;
-                let fn_val = self.eval_expr(right)?;
-                self.call_value(fn_val, vec![left_val])
-            }
             Expr::Constructor(name, arg) => {
                 let arg_val = match arg {
                     Some(a) => self.eval_expr(a)?,
@@ -447,9 +442,10 @@ impl Interpreter {
 
         self.active_local_slots = prev_local_slots;
         if let Some(prev) = prev_global
-            && let Some(global) = self.env.first_mut() {
-                *global = prev;
-            }
+            && let Some(global) = self.env.first_mut()
+        {
+            *global = prev;
+        }
         self.env.truncate(1);
         self.env.extend(saved_frames);
 

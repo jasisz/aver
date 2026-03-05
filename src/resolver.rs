@@ -104,10 +104,6 @@ fn collect_expr_bindings(expr: &Expr, local_slots: &mut HashMap<String, u16>, ne
                 collect_expr_bindings(arg, local_slots, next_slot);
             }
         }
-        Expr::Pipe(left, right) => {
-            collect_expr_bindings(left, local_slots, next_slot);
-            collect_expr_bindings(right, local_slots, next_slot);
-        }
         Expr::ErrorProp(inner) => {
             collect_expr_bindings(inner, local_slots, next_slot);
         }
@@ -227,10 +223,6 @@ fn resolve_expr(expr: &mut Expr, local_slots: &HashMap<String, u16>) {
             for arm in arms {
                 resolve_expr(&mut arm.body, local_slots);
             }
-        }
-        Expr::Pipe(left, right) => {
-            resolve_expr(left, local_slots);
-            resolve_expr(right, local_slots);
         }
         Expr::Constructor(_, Some(inner)) => {
             resolve_expr(inner, local_slots);

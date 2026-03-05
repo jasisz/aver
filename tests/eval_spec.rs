@@ -1035,23 +1035,6 @@ fn interp_expression() {
 }
 
 // ---------------------------------------------------------------------------
-// Pipe operator
-// ---------------------------------------------------------------------------
-
-#[test]
-fn pipe_single() {
-    let src = "fn double(x: Int) -> Int\n    = x + x\nfn apply(x: Int) -> Int\n    = x |> double\n";
-    assert_eq!(call_fn(src, "apply", vec![Value::Int(5)]), Value::Int(10));
-}
-
-#[test]
-fn pipe_chained() {
-    let src =
-        "fn inc(x: Int) -> Int\n    = x + 1\nfn apply(x: Int) -> Int\n    = x |> inc |> inc\n";
-    assert_eq!(call_fn(src, "apply", vec![Value::Int(0)]), Value::Int(2));
-}
-
-// ---------------------------------------------------------------------------
 // Val / Var bindings in function bodies
 // ---------------------------------------------------------------------------
 
@@ -2789,17 +2772,18 @@ fn call_fn_with_memo(src: &str, fn_name: &str, args: Vec<Value>) -> Value {
     }
     for name in &recursive {
         if let Some((params, _ret, effects)) = tc_result.fn_sigs.get(name)
-            && effects.is_empty() {
-                if recursive_calls.get(name).copied().unwrap_or(0) < 2 {
-                    continue;
-                }
-                let all_safe = params
-                    .iter()
-                    .all(|ty| is_memo_safe_param(ty, &tc_result.memo_safe_types));
-                if all_safe {
-                    memo_fns.insert(name.clone());
-                }
+            && effects.is_empty()
+        {
+            if recursive_calls.get(name).copied().unwrap_or(0) < 2 {
+                continue;
             }
+            let all_safe = params
+                .iter()
+                .all(|ty| is_memo_safe_param(ty, &tc_result.memo_safe_types));
+            if all_safe {
+                memo_fns.insert(name.clone());
+            }
+        }
     }
 
     let mut interp = Interpreter::new();
