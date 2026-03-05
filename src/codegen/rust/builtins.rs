@@ -23,7 +23,7 @@ pub fn emit_builtin_call(
 ) -> Option<String> {
     let result = emit_builtin_call_inner(name, args, ctx, ectx)?;
 
-    // Wrap Http/Disk calls with policy checks when aver.toml policy is present.
+    // Wrap Http/Disk/Env calls with policy checks when aver.toml policy is present.
     // Use .expect() instead of ? because the call may occur in a non-Result context
     // (e.g. Disk.exists returns Bool). Policy violations are fatal.
     if ctx.policy.is_some() {
@@ -39,6 +39,13 @@ pub fn emit_builtin_call(
             return Some(format!(
                 "{{ aver_policy::check_disk(\"{}\", &{}).expect(\"aver.toml policy violation\"); {} }}",
                 name, path_arg, result
+            ));
+        }
+        if name.starts_with("Env.") && !args.is_empty() {
+            let key_arg = emit_expr(&args[0], ctx, ectx);
+            return Some(format!(
+                "{{ aver_policy::check_env(\"{}\", &{}).expect(\"aver.toml policy violation\"); {} }}",
+                name, key_arg, result
             ));
         }
     }
@@ -685,6 +692,20 @@ fn emit_builtin_call_inner(
             Some(format!(
                 "std::fs::create_dir_all(&{}).map(|_| ()).map_err(|e| e.to_string())",
                 path
+            ))
+        }
+
+        // ---- Env ----
+        "Env.get" => {
+            let key = emit_expr(&args[0], ctx, ectx);
+            Some(format!("std::env::var(&{}).ok()", key))
+        }
+        "Env.set" => {
+            let key = emit_expr(&args[0], ctx, ectx);
+            let value = emit_expr(&args[1], ctx, ectx);
+            Some(format!(
+                "{{ unsafe {{ std::env::set_var(&{}, &{}); }} () }}",
+                key, value
             ))
         }
 

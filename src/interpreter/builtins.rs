@@ -87,8 +87,8 @@ impl Interpreter {
         name: &str,
         args: &[Value],
     ) -> Result<Value, RuntimeError> {
-        // Runtime policy check for Http/Disk calls
-        if name.starts_with("Http.") || name.starts_with("Disk.") {
+        // Runtime policy check for Http/Disk/Env calls
+        if name.starts_with("Http.") || name.starts_with("Disk.") || name.starts_with("Env.") {
             self.check_runtime_policy(name, args)?;
         }
         match name {
@@ -309,6 +309,9 @@ impl Interpreter {
                     return r;
                 }
                 if let Some(r) = disk::call(name, args) {
+                    return r;
+                }
+                if let Some(r) = env::call(name, args) {
                     return r;
                 }
                 if let Some(r) = tcp::call(name, args) {

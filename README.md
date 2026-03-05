@@ -61,6 +61,9 @@ hosts = ["api.example.com", "*.internal.corp"]
 
 [effects.Disk]
 paths = ["./data/**"]
+
+[effects.Env]
+keys = ["APP_*", "PUBLIC_*"]
 ```
 
 Think of this as two orthogonal control layers:
@@ -514,6 +517,7 @@ Aver ships built-in namespaces for I/O. All require explicit effect declarations
 | `Http` | `! [Http.get]` / `! [Http.post]` / etc. | `get`, `post`, `put`, `patch`, `head`, `delete` |
 | `HttpServer` | `! [HttpServer.listen]` / `! [HttpServer.listenWith]` | `listen`, `listenWith` |
 | `Disk` | `! [Disk.readText]` / `! [Disk.writeText]` / etc. | `readText`, `writeText`, `appendText`, `exists`, `delete`, `deleteDir`, `listDir`, `makeDir` |
+| `Env` | `! [Env.get]` / `! [Env.set]` | `get`, `set` |
 | `Tcp` | `! [Tcp.send]` / `! [Tcp.ping]` / etc. | `connect`, `writeLine`, `readLine`, `close`, `send`, `ping` |
 | `Time` | `! [Time.now]` / `! [Time.unixMs]` / `! [Time.sleep]` | `now`, `unixMs`, `sleep` |
 

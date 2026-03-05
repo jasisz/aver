@@ -221,3 +221,19 @@ Source: `src/services/time.rs`
 | `Time.now` | `() -> String` | Current UTC timestamp string (`...Z`) |
 | `Time.unixMs` | `() -> Int` | Unix epoch milliseconds |
 | `Time.sleep` | `Int -> Unit` | Sleeps current thread for ms, runtime error on negative |
+
+### `Env` namespace — use granular effects (`! [Env.get]`, `! [Env.set]`)
+
+Source: `src/services/env.rs`
+
+| Function | Signature | Notes |
+|---|---|---|
+| `Env.get` | `String -> Option<String>` | Returns `Option.None` for missing/unreadable variable |
+| `Env.set` | `(String, String) -> Unit` | Runtime error on invalid key/value format |
+
+Runtime policy (`aver.toml`) can restrict allowed keys:
+
+```toml
+[effects.Env]
+keys = ["APP_*", "PUBLIC_*"]
+```

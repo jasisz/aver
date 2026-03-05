@@ -2066,6 +2066,120 @@ mod time_tests {
 }
 
 // ---------------------------------------------------------------------------
+// Env service tests
+// ---------------------------------------------------------------------------
+
+mod env_tests {
+    use super::*;
+    use aver::config::ProjectConfig;
+    use aver::interpreter::{Interpreter, Value};
+
+    fn unique_key(prefix: &str) -> String {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        format!("AVER_TEST_{}_{}_{}", prefix, std::process::id(), ts)
+    }
+
+    fn run_env_fn(src: &str, fn_name: &str) -> Value {
+        let items = parse(src);
+        let mut interp = Interpreter::new();
+        for item in &items {
+            if let TopLevel::FnDef(fd) = item {
+                interp.exec_fn_def(fd).expect("exec_fn_def failed");
+            }
+        }
+        let fn_val = interp.lookup(fn_name).expect("fn not found");
+        let effects = Interpreter::callable_declared_effects(&fn_val);
+        interp
+            .call_value_with_effects_pub(fn_val, vec![], fn_name, effects)
+            .expect("call failed")
+    }
+
+    #[test]
+    fn env_get_missing_returns_none() {
+        let key = unique_key("MISSING");
+        let src = format!(
+            "fn read() -> Option<String>\n    ! [Env.get]\n    Env.get(\"{}\")\n",
+            key
+        );
+        let val = run_env_fn(&src, "read");
+        assert_eq!(val, Value::None);
+    }
+
+    #[test]
+    fn env_set_then_get_returns_some() {
+        let key = unique_key("SET");
+        let src = format!(
+            concat!(
+                "fn run() -> Option<String>\n",
+                "    ! [Env]\n",
+                "    Env.set(\"{k}\", \"ok\")\n",
+                "    Env.get(\"{k}\")\n"
+            ),
+            k = key
+        );
+        let val = run_env_fn(&src, "run");
+        assert_eq!(val, Value::Some(Box::new(Value::Str("ok".to_string()))));
+    }
+
+    #[test]
+    fn runtime_gate_blocks_env_get_without_effect() {
+        let items = parse("Env.get(\"HOME\")");
+        let item = items.into_iter().next().expect("no items");
+        if let TopLevel::Stmt(Stmt::Expr(expr)) = item {
+            let mut interp = Interpreter::new();
+            let err = interp
+                .eval_expr(&expr)
+                .expect_err("expected runtime gate error");
+            let msg = err.to_string();
+            assert!(msg.contains("Runtime effect violation"), "got: {}", msg);
+            assert!(msg.contains("Env.get"), "got: {}", msg);
+        } else {
+            panic!("expected a single expression");
+        }
+    }
+
+    #[test]
+    fn runtime_policy_blocks_env_key() {
+        let key = unique_key("DENY");
+        let src = format!(
+            concat!(
+                "fn run() -> Unit\n",
+                "    ! [Env.set]\n",
+                "    Env.set(\"{k}\", \"ok\")\n"
+            ),
+            k = key
+        );
+        let items = parse(&src);
+        let mut interp = Interpreter::new();
+        interp.set_runtime_policy(
+            ProjectConfig::parse(
+                r#"
+[effects.Env]
+keys = ["SAFE_*"]
+"#,
+            )
+            .expect("parse policy"),
+        );
+        for item in &items {
+            if let TopLevel::FnDef(fd) = item {
+                interp.exec_fn_def(fd).expect("exec_fn_def failed");
+            }
+        }
+        let fn_val = interp.lookup("run").expect("fn not found");
+        let effects = Interpreter::callable_declared_effects(&fn_val);
+        let err = interp
+            .call_value_with_effects_pub(fn_val, vec![], "run", effects)
+            .expect_err("expected policy denial");
+        let msg = err.to_string();
+        assert!(msg.contains("denied by aver.toml policy"), "got: {}", msg);
+        assert!(msg.contains("Env.set"), "got: {}", msg);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tcp builtins
 // ---------------------------------------------------------------------------
 

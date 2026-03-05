@@ -8,6 +8,7 @@ impl Interpreter {
         http::register(&mut global);
         http_server::register(&mut global);
         disk::register(&mut global);
+        env::register(&mut global);
         tcp::register(&mut global);
         time::register(&mut global);
         int::register(&mut global);
@@ -241,6 +242,12 @@ impl Interpreter {
             if let Some(Value::Str(path)) = args.first() {
                 policy
                     .check_disk_path(name, path)
+                    .map_err(RuntimeError::Error)?;
+            }
+        } else if name.starts_with("Env.") {
+            if let Some(Value::Str(key)) = args.first() {
+                policy
+                    .check_env_key(name, key)
                     .map_err(RuntimeError::Error)?;
             }
         }

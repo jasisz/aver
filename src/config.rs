@@ -3,6 +3,7 @@
 /// Currently supports runtime effect policies:
 ///   [effects.Http]   hosts = ["api.example.com", "*.internal.corp"]
 ///   [effects.Disk]   paths = ["./data/**"]
+///   [effects.Env]    keys  = ["APP_*", "TOKEN"]
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -13,6 +14,8 @@ pub struct EffectPolicy {
     pub hosts: Vec<String>,
     /// Allowed filesystem paths (exact or recursive `/**`).
     pub paths: Vec<String>,
+    /// Allowed environment variable keys (exact or wildcard `PREFIX_*`).
+    pub keys: Vec<String>,
 }
 
 /// Project-level configuration loaded from `aver.toml`.
@@ -88,7 +91,26 @@ impl ProjectConfig {
                     Vec::new()
                 };
 
-                effect_policies.insert(name.clone(), EffectPolicy { hosts, paths });
+                let keys = if let Some(val) = section.get("keys") {
+                    let arr = val.as_array().ok_or_else(|| {
+                        format!("aver.toml: [effects.{}].keys must be an array", name)
+                    })?;
+                    arr.iter()
+                        .enumerate()
+                        .map(|(i, v)| {
+                            v.as_str().map(|s| s.to_string()).ok_or_else(|| {
+                                format!(
+                                    "aver.toml: [effects.{}].keys[{}] must be a string",
+                                    name, i
+                                )
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?
+                } else {
+                    Vec::new()
+                };
+
+                effect_policies.insert(name.clone(), EffectPolicy { hosts, paths, keys });
             }
         }
 
@@ -163,6 +185,35 @@ impl ProjectConfig {
         Err(format!(
             "{} on '{}' denied by aver.toml policy (path not in allowed list)",
             method_name, path_str
+        ))
+    }
+
+    /// Check whether an Env operation on `key` is allowed by the policy.
+    /// Returns Ok(()) if allowed, Err(message) if denied.
+    pub fn check_env_key(&self, method_name: &str, key: &str) -> Result<(), String> {
+        let namespace = method_name.split('.').next().unwrap_or(method_name);
+        let policy = self
+            .effect_policies
+            .get(method_name)
+            .or_else(|| self.effect_policies.get(namespace));
+
+        let Some(policy) = policy else {
+            return Ok(());
+        };
+
+        if policy.keys.is_empty() {
+            return Ok(());
+        }
+
+        for allowed in &policy.keys {
+            if env_key_matches(key, allowed) {
+                return Ok(());
+            }
+        }
+
+        Err(format!(
+            "{} on '{}' denied by aver.toml policy (key not in allowed list)",
+            method_name, key
         ))
     }
 }
@@ -253,6 +304,19 @@ fn path_matches(normalized: &str, pattern: &str) -> bool {
     false
 }
 
+/// Check if an env key matches an allowed pattern.
+/// Supports exact match and suffix wildcard `PREFIX_*`.
+fn env_key_matches(key: &str, pattern: &str) -> bool {
+    if pattern == key {
+        return true;
+    }
+    if let Some(prefix) = pattern.strip_suffix('*') {
+        key.starts_with(prefix)
+    } else {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,6 +349,17 @@ paths = ["./data/**"]
         let config = ProjectConfig::parse(toml).unwrap();
         let policy = config.effect_policies.get("Disk").unwrap();
         assert_eq!(policy.paths, vec!["./data/**"]);
+    }
+
+    #[test]
+    fn test_parse_env_keys() {
+        let toml = r#"
+[effects.Env]
+keys = ["APP_*", "TOKEN"]
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        let policy = config.effect_policies.get("Env").unwrap();
+        assert_eq!(policy.keys, vec!["APP_*", "TOKEN"]);
     }
 
     #[test]
@@ -398,6 +473,7 @@ paths = ["./data/**"]
                 .is_ok()
         );
         assert!(config.check_disk_path("Disk.readText", "/any/path").is_ok());
+        assert!(config.check_env_key("Env.get", "ANY_KEY").is_ok());
     }
 
     #[test]
@@ -443,6 +519,58 @@ paths = [true]
     }
 
     #[test]
+    fn test_non_string_keys_are_rejected() {
+        let toml = r#"
+[effects.Env]
+keys = [1]
+"#;
+        let result = ProjectConfig::parse(toml);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must be a string"));
+    }
+
+    #[test]
+    fn test_check_env_key_allowed_exact() {
+        let toml = r#"
+[effects.Env]
+keys = ["SECRET_TOKEN"]
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        assert!(config.check_env_key("Env.get", "SECRET_TOKEN").is_ok());
+        assert!(config.check_env_key("Env.get", "SECRET_TOKEN_2").is_err());
+    }
+
+    #[test]
+    fn test_check_env_key_allowed_prefix_wildcard() {
+        let toml = r#"
+[effects.Env]
+keys = ["APP_*"]
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        assert!(config.check_env_key("Env.get", "APP_PORT").is_ok());
+        assert!(config.check_env_key("Env.set", "APP_MODE").is_ok());
+        assert!(config.check_env_key("Env.get", "HOME").is_err());
+    }
+
+    #[test]
+    fn test_check_env_key_method_specific_overrides_namespace() {
+        let toml = r#"
+[effects.Env]
+keys = ["APP_*"]
+
+[effects."Env.get"]
+keys = ["PUBLIC_*"]
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        // Env.get uses method-specific key list
+        assert!(config.check_env_key("Env.get", "PUBLIC_KEY").is_ok());
+        assert!(config.check_env_key("Env.get", "APP_KEY").is_err());
+        // Env.set falls back to namespace key list
+        assert!(config.check_env_key("Env.set", "APP_KEY").is_ok());
+        assert!(config.check_env_key("Env.set", "PUBLIC_KEY").is_err());
+    }
+
+    #[test]
     fn host_matches_exact() {
         assert!(host_matches("api.example.com", "api.example.com"));
         assert!(!host_matches("other.com", "api.example.com"));
@@ -453,5 +581,18 @@ paths = [true]
         assert!(host_matches("sub.example.com", "*.example.com"));
         assert!(host_matches("deep.sub.example.com", "*.example.com"));
         assert!(!host_matches("example.com", "*.example.com"));
+    }
+
+    #[test]
+    fn env_key_matches_exact() {
+        assert!(env_key_matches("TOKEN", "TOKEN"));
+        assert!(!env_key_matches("TOKEN", "TOK"));
+    }
+
+    #[test]
+    fn env_key_matches_prefix_wildcard() {
+        assert!(env_key_matches("APP_PORT", "APP_*"));
+        assert!(env_key_matches("APP_", "APP_*"));
+        assert!(!env_key_matches("PORT", "APP_*"));
     }
 }

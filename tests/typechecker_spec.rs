@@ -968,6 +968,46 @@ fn error_time_sleep_negative_constant() {
 }
 
 // ---------------------------------------------------------------------------
+// Env service effect checking
+// ---------------------------------------------------------------------------
+
+#[test]
+fn error_env_get_without_effect() {
+    let src = concat!(
+        "fn read(k: String) -> Option<String>\n",
+        "    = Env.get(k)\n",
+    );
+    assert_error_containing(src, "has effect 'Env.get'");
+}
+
+#[test]
+fn error_env_set_without_effect() {
+    let src = concat!("fn write() -> Unit\n", "    Env.set(\"A\", \"1\")\n",);
+    assert_error_containing(src, "has effect 'Env.set'");
+}
+
+#[test]
+fn valid_env_get_and_set_with_effect() {
+    let src = concat!(
+        "fn run() -> Option<String>\n",
+        "    ! [Env]\n",
+        "    Env.set(\"A\", \"1\")\n",
+        "    Env.get(\"A\")\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn env_get_only_does_not_allow_env_set() {
+    let src = concat!(
+        "fn run() -> Unit\n",
+        "    ! [Env.get]\n",
+        "    Env.set(\"A\", \"1\")\n",
+    );
+    assert_error_containing(src, "has effect 'Env.set'");
+}
+
+// ---------------------------------------------------------------------------
 // Record field access type checking
 // ---------------------------------------------------------------------------
 

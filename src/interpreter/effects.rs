@@ -18,6 +18,10 @@ impl Interpreter {
         if !e.is_empty() {
             return e;
         }
+        let e = env::effects(name);
+        if !e.is_empty() {
+            return e;
+        }
         let e = tcp::effects(name);
         if !e.is_empty() {
             return e;
