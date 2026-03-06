@@ -127,12 +127,12 @@ src/
     context_format.rs — Markdown context formatting
     shared.rs         — shared helpers (compile_program_for_exec, load_dep_modules)
 
-  services/           — Effectful namespace implementations:
+  services/           — Effectful namespace adapters over shared `aver-rt` runtime:
     console.rs        — Console.print/error/warn/readLine  ! [Console.print] / friends
-    http.rs           — Http.get/head/delete/post/put/patch  ! [Http.get] / friends
-    http_server.rs    — HttpServer.listen (standalone runtime)  ! [HttpServer.listen]
-    disk.rs           — Disk.readText/writeText/appendText/exists/delete/...  ! [Disk.readText] / friends
-    tcp.rs            — Tcp.send/ping + connect/writeLine/readLine/close  ! [Tcp.send] / friends
+    http.rs           — Http.get/head/delete/post/put/patch via `aver_rt::http`
+    http_server.rs    — HttpServer.listen/listenWith via `aver_rt::http_server`
+    disk.rs           — Disk.readText/writeText/appendText/exists/delete/... via shared helpers
+    tcp.rs            — Tcp.send/ping + connect/writeLine/readLine/close via `aver_rt::tcp`
 ```
 
 ## How to run

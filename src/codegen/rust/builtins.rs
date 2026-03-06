@@ -56,17 +56,16 @@ fn emit_builtin_call_inner(
         // ---- Console ----
         "Console.print" => {
             let arg = emit_expr(&args[0], ctx, ectx);
-            Some(format!(
-                "println!(\"{{}}\", aver_rt::aver_display(&{}))",
-                arg
-            ))
+            Some(format!("aver_rt::console_print(&{})", arg))
         }
         "Console.error" | "Console.warn" => {
             let arg = emit_expr(&args[0], ctx, ectx);
-            Some(format!(
-                "eprintln!(\"{{}}\", aver_rt::aver_display(&{}))",
-                arg
-            ))
+            let helper = if name == "Console.warn" {
+                "console_warn"
+            } else {
+                "console_error"
+            };
+            Some(format!("aver_rt::{}(&{})", helper, arg))
         }
         "Console.readLine" => Some("aver_rt::read_line()".to_string()),
 
@@ -421,45 +420,45 @@ fn emit_builtin_call_inner(
         "Tcp.connect" => {
             let host = emit_expr(&args[0], ctx, ectx);
             let port = emit_expr(&args[1], ctx, ectx);
-            Some(format!("aver_tcp::connect(&{}, {})", host, port))
+            Some(format!("aver_rt::tcp::connect(&{}, {})", host, port))
         }
         "Tcp.writeLine" => {
             let conn = emit_expr(&args[0], ctx, ectx);
             let line = emit_expr(&args[1], ctx, ectx);
-            Some(format!("aver_tcp::write_line(&{}, &{})", conn, line))
+            Some(format!("aver_rt::tcp::write_line(&{}, &{})", conn, line))
         }
         "Tcp.readLine" => {
             let conn = emit_expr(&args[0], ctx, ectx);
-            Some(format!("aver_tcp::read_line(&{})", conn))
+            Some(format!("aver_rt::tcp::read_line(&{})", conn))
         }
         "Tcp.close" => {
             let conn = emit_expr(&args[0], ctx, ectx);
-            Some(format!("aver_tcp::close(&{})", conn))
+            Some(format!("aver_rt::tcp::close(&{})", conn))
         }
         "Tcp.send" => {
             let host = emit_expr(&args[0], ctx, ectx);
             let port = emit_expr(&args[1], ctx, ectx);
             let msg = emit_expr(&args[2], ctx, ectx);
-            Some(format!("aver_tcp::send(&{}, {}, &{})", host, port, msg))
+            Some(format!("aver_rt::tcp::send(&{}, {}, &{})", host, port, msg))
         }
         "Tcp.ping" => {
             let host = emit_expr(&args[0], ctx, ectx);
             let port = emit_expr(&args[1], ctx, ectx);
-            Some(format!("aver_tcp::ping(&{}, {})", host, port))
+            Some(format!("aver_rt::tcp::ping(&{}, {})", host, port))
         }
 
         // ---- Http ----
         "Http.get" => {
             let url = emit_expr(&args[0], ctx, ectx);
-            Some(format!("aver_http::get(&{})", url))
+            Some(format!("aver_rt::http::get(&{})", url))
         }
         "Http.head" => {
             let url = emit_expr(&args[0], ctx, ectx);
-            Some(format!("aver_http::head(&{})", url))
+            Some(format!("aver_rt::http::head(&{})", url))
         }
         "Http.delete" => {
             let url = emit_expr(&args[0], ctx, ectx);
-            Some(format!("aver_http::delete(&{})", url))
+            Some(format!("aver_rt::http::delete(&{})", url))
         }
         "Http.post" => {
             let url = emit_expr(&args[0], ctx, ectx);
@@ -467,7 +466,7 @@ fn emit_builtin_call_inner(
             let ct = emit_expr(&args[2], ctx, ectx);
             let headers = emit_expr(&args[3], ctx, ectx);
             Some(format!(
-                "aver_http::post(&{}, &{}, &{}, &{})",
+                "aver_rt::http::post(&{}, &{}, &{}, &{})",
                 url, body, ct, headers
             ))
         }
@@ -477,7 +476,7 @@ fn emit_builtin_call_inner(
             let ct = emit_expr(&args[2], ctx, ectx);
             let headers = emit_expr(&args[3], ctx, ectx);
             Some(format!(
-                "aver_http::put(&{}, &{}, &{}, &{})",
+                "aver_rt::http::put(&{}, &{}, &{}, &{})",
                 url, body, ct, headers
             ))
         }
@@ -487,7 +486,7 @@ fn emit_builtin_call_inner(
             let ct = emit_expr(&args[2], ctx, ectx);
             let headers = emit_expr(&args[3], ctx, ectx);
             Some(format!(
-                "aver_http::patch(&{}, &{}, &{}, &{})",
+                "aver_rt::http::patch(&{}, &{}, &{}, &{})",
                 url, body, ct, headers
             ))
         }
@@ -496,14 +495,17 @@ fn emit_builtin_call_inner(
         "HttpServer.listen" => {
             let port = emit_expr(&args[0], ctx, ectx);
             let handler = emit_expr(&args[1], ctx, ectx);
-            Some(format!("aver_http_server::listen({}, {})", port, handler))
+            Some(format!(
+                "{{ if let Err(e) = aver_rt::http_server::listen({}, {}) {{ panic!(\"{{}}\", e); }} }}",
+                port, handler
+            ))
         }
         "HttpServer.listenWith" => {
             let port = emit_expr(&args[0], ctx, ectx);
             let context = emit_expr(&args[1], ctx, ectx);
             let handler = emit_expr(&args[2], ctx, ectx);
             Some(format!(
-                "aver_http_server::listen_with({}, {}.clone(), {})",
+                "{{ if let Err(e) = aver_rt::http_server::listen_with({}, {}.clone(), {}) {{ panic!(\"{{}}\", e); }} }}",
                 port, context, handler
             ))
         }
@@ -511,18 +513,12 @@ fn emit_builtin_call_inner(
         // ---- Disk ----
         "Disk.readText" => {
             let path = emit_expr(&args[0], ctx, ectx);
-            Some(format!(
-                "std::fs::read_to_string(&{}).map_err(|e| e.to_string())",
-                path
-            ))
+            Some(format!("aver_rt::read_text(&{})", path))
         }
         "Disk.writeText" => {
             let path = emit_expr(&args[0], ctx, ectx);
             let content = emit_expr(&args[1], ctx, ectx);
-            Some(format!(
-                "std::fs::write(&{}, &{}).map(|_| ()).map_err(|e| e.to_string())",
-                path, content
-            ))
+            Some(format!("aver_rt::write_text(&{}, &{})", path, content))
         }
         "Disk.appendText" => {
             let path = emit_expr(&args[0], ctx, ectx);
@@ -531,21 +527,15 @@ fn emit_builtin_call_inner(
         }
         "Disk.exists" => {
             let path = emit_expr(&args[0], ctx, ectx);
-            Some(format!("std::path::Path::new(&{}).exists()", path))
+            Some(format!("aver_rt::path_exists(&{})", path))
         }
         "Disk.delete" => {
             let path = emit_expr(&args[0], ctx, ectx);
-            Some(format!(
-                "std::fs::remove_file(&{}).map(|_| ()).map_err(|e| e.to_string())",
-                path
-            ))
+            Some(format!("aver_rt::delete_file(&{})", path))
         }
         "Disk.deleteDir" => {
             let path = emit_expr(&args[0], ctx, ectx);
-            Some(format!(
-                "std::fs::remove_dir_all(&{}).map(|_| ()).map_err(|e| e.to_string())",
-                path
-            ))
+            Some(format!("aver_rt::delete_dir(&{})", path))
         }
         "Disk.listDir" => {
             let path = emit_expr(&args[0], ctx, ectx);
@@ -553,24 +543,18 @@ fn emit_builtin_call_inner(
         }
         "Disk.makeDir" => {
             let path = emit_expr(&args[0], ctx, ectx);
-            Some(format!(
-                "std::fs::create_dir_all(&{}).map(|_| ()).map_err(|e| e.to_string())",
-                path
-            ))
+            Some(format!("aver_rt::make_dir(&{})", path))
         }
 
         // ---- Env ----
         "Env.get" => {
             let key = emit_expr(&args[0], ctx, ectx);
-            Some(format!("std::env::var(&{}).ok()", key))
+            Some(format!("aver_rt::env_get(&{})", key))
         }
         "Env.set" => {
             let key = emit_expr(&args[0], ctx, ectx);
             let value = emit_expr(&args[1], ctx, ectx);
-            Some(format!(
-                "{{ unsafe {{ std::env::set_var(&{}, &{}); }} () }}",
-                key, value
-            ))
+            Some(format!("aver_rt::env_set(&{}, &{}).expect(\"Env.set failed\")", key, value))
         }
 
         // ---- Time ----

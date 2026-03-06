@@ -67,7 +67,6 @@ dependencies = [
  "colored",
  "thiserror",
  "toml",
- "ureq",
  "url",
 ]
 
@@ -83,7 +82,10 @@ dependencies = [
 
 [[package]]
 name = "aver-rt"
-version = "0.1.0"
+version = "0.0.1"
+dependencies = [
+ "ureq",
+]
 
 [[package]]
 name = "base64"

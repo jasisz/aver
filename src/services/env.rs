@@ -56,9 +56,9 @@ fn get(args: &[Value]) -> Result<Value, RuntimeError> {
             "Env.get: key must be a String".to_string(),
         ));
     };
-    match std::env::var(key) {
-        Ok(v) => Ok(Value::Some(Box::new(Value::Str(v)))),
-        Err(_) => Ok(Value::None),
+    match aver_rt::env_get(key) {
+        Some(v) => Ok(Value::Some(Box::new(Value::Str(v)))),
+        None => Ok(Value::None),
     }
 }
 
@@ -80,35 +80,8 @@ fn set(args: &[Value]) -> Result<Value, RuntimeError> {
         ));
     };
 
-    validate_key(key)?;
-    if value.contains('\0') {
-        return Err(RuntimeError::Error(
-            "Env.set: value must not contain NUL".to_string(),
-        ));
-    }
-
-    // SAFETY: key/value are validated to avoid unsupported env names/values.
-    unsafe {
-        std::env::set_var(key, value);
+    if let Err(e) = aver_rt::env_set(key, value) {
+        return Err(RuntimeError::Error(e));
     }
     Ok(Value::Unit)
-}
-
-fn validate_key(key: &str) -> Result<(), RuntimeError> {
-    if key.is_empty() {
-        return Err(RuntimeError::Error(
-            "Env.set: key must not be empty".to_string(),
-        ));
-    }
-    if key.contains('=') {
-        return Err(RuntimeError::Error(
-            "Env.set: key must not contain '='".to_string(),
-        ));
-    }
-    if key.contains('\0') {
-        return Err(RuntimeError::Error(
-            "Env.set: key must not contain NUL".to_string(),
-        ));
-    }
-    Ok(())
 }

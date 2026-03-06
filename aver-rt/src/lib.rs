@@ -1,3 +1,21 @@
+#![doc = include_str!("../README.md")]
+
+mod display;
+#[cfg(feature = "http")]
+pub mod http;
+pub mod http_server;
+mod runtime;
+mod service_types;
+pub mod tcp;
+
+pub use display::{AverDisplay, aver_display};
+pub use runtime::{
+    append_text, console_error, console_print, console_warn, delete_dir, delete_file, env_get,
+    env_set, list_dir, make_dir, path_exists, read_line, read_text, string_slice, time_now,
+    time_sleep, time_unix_ms, write_text,
+};
+pub use service_types::{Header, HttpRequest, HttpResponse, TcpConnection};
+
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::iter::FusedIterator;
@@ -289,7 +307,7 @@ pub fn string_join<S: AsRef<str>>(parts: &AverList<S>, sep: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::AverList;
+    use super::{AverList, aver_display, env_set, string_slice};
 
     #[test]
     fn prepend_and_tail_share_structure() {
@@ -305,5 +323,28 @@ mod tests {
         let right = AverList::from_vec(vec![3, 4]);
         let joined = AverList::concat(&left, &right);
         assert_eq!(joined.to_vec(), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn aver_display_quotes_strings_inside_lists() {
+        let parts = AverList::from_vec(vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(aver_display(&parts), "[\"a\", \"b\"]");
+    }
+
+    #[test]
+    fn string_slice_uses_code_point_indices() {
+        assert_eq!(string_slice("zażółć", 1, 4), "ażó");
+    }
+
+    #[test]
+    fn env_set_rejects_invalid_keys() {
+        assert_eq!(
+            env_set("", "x"),
+            Err("Env.set: key must not be empty".to_string())
+        );
+        assert_eq!(
+            env_set("A=B", "x"),
+            Err("Env.set: key must not contain '='".to_string())
+        );
     }
 }

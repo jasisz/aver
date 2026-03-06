@@ -43,8 +43,8 @@ out/
 ```
 
 The generated `main.rs` includes:
-- Runtime helpers (`aver_rt` module with `AverDisplay` trait, map support, and re-exports from the shared `aver-rt` crate)
-- Service runtimes (only when the program uses them — conditional emission)
+- Runtime bridge (`aver_rt` module re-exporting the shared `aver-rt` crate)
+- Shared runtime type imports for built-in service records (`Header`, `HttpResponse`, `HttpRequest`, `Tcp_Connection`) when needed
 - User-defined types as Rust `struct`s and `enum`s
 - All functions (including inlined module dependencies)
 - `fn main()` entry point
@@ -52,14 +52,14 @@ The generated `main.rs` includes:
 
 #### Dependencies
 
-`Cargo.toml` is generated with the shared `aver-rt` runtime crate plus any extra dependencies needed by the program:
+`Cargo.toml` is generated around the shared `aver-rt` runtime crate. Service-specific runtime features are enabled only when needed:
 
 | Aver service | Rust crate |
 |-------------|------------|
-| core runtime | `aver-rt` (path dependency to the local workspace crate) |
-| `Http` | `ureq` (blocking HTTP client) |
+| no `Http` effects | `aver-rt = { path = "...", version = "=0.0.1" }` |
+| `Http` effects present | `aver-rt = { path = "...", version = "=0.0.1", features = ["http"] }` |
 
-`Tcp` and `HttpServer` use `std::net` — no extra crates needed.
+`ureq` is pulled transitively by `aver-rt/http`; generated projects no longer declare it directly.
 
 #### Supported features
 
@@ -110,13 +110,12 @@ No Rust `mod` blocks are generated — everything lives at the top level for sim
 
 #### Service runtime architecture
 
-Service runtimes are only emitted when the program actually uses them (detected via effect declarations):
+Generated `main.rs` now re-exports `aver-rt` and, when needed, imports shared service record types. The actual service implementations live in `aver-rt`:
 
-- **Tcp**: Thread-local connection map, `AtomicU64` for connection IDs, `BufReader<TcpStream>` for persistent connections
-- **Http**: `ureq` client with 10s timeout, maps to Aver's `HttpResponse` struct
-- **HttpServer**: Blocking `TcpListener`, parses HTTP/1.1 requests, calls handler function per request. `listenWith` supports a generic context parameter (cloned per request)
-- **Console**: Direct `println!`/`eprintln!` + `stdin().read_line()`
-- **Disk**: `std::fs` operations mapped to Aver's `Result` type
+- **Tcp**: shared `aver-rt::tcp` runtime with persistent connection map
+- **Http**: shared `aver-rt::http` client (enabled by the `http` feature)
+- **HttpServer**: shared `aver-rt::http_server` loop and request/response types
+- **Console / Time / Disk / Env**: shared helpers from `aver-rt`
 
 ### `lean` (experimental / WIP)
 

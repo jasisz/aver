@@ -123,6 +123,11 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
             }
         }
         Expr::RecordCreate { type_name, fields } => {
+            let rust_type = if type_name == "Tcp.Connection" {
+                "Tcp_Connection"
+            } else {
+                type_name
+            };
             let field_exprs: Vec<Expr> = fields.iter().map(|(_, e)| e.clone()).collect();
             let field_ctxs =
                 compute_args_used_after(&field_exprs, &ectx.used_after, &ectx.local_types);
@@ -137,13 +142,18 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
                     )
                 })
                 .collect();
-            format!("{} {{ {} }}", type_name, parts.join(", "))
+            format!("{} {{ {} }}", rust_type, parts.join(", "))
         }
         Expr::RecordUpdate {
             type_name,
             base,
             updates,
         } => {
+            let rust_type = if type_name == "Tcp.Connection" {
+                "Tcp_Connection"
+            } else {
+                type_name
+            };
             let base_str = emit_expr(base, ctx, ectx);
             let parts: Vec<String> = updates
                 .iter()
@@ -155,7 +165,7 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
                     )
                 })
                 .collect();
-            format!("{} {{ {}, ..{} }}", type_name, parts.join(", "), base_str)
+            format!("{} {{ {}, ..{} }}", rust_type, parts.join(", "), base_str)
         }
         Expr::TailCall(boxed) => {
             // TailCall outside of a TCO loop → emit as regular function call

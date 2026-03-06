@@ -20,10 +20,9 @@ name = "aver"
 path = "src/main.rs"
 
 [dependencies]
-aver-rt = { path = "aver-rt" }
+aver-rt = { path = "aver-rt", version = "=0.0.1", features = ["http"] }
 clap = { version = "4", features = ["derive"] }
 colored = "2"
 thiserror = "1"
 toml = "0.8"
-ureq = "2"
 url = "2"

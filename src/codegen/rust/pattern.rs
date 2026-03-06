@@ -57,6 +57,7 @@ fn emit_constructor_pattern(name: &str, bindings: &[String]) -> String {
         "Result.Err" => "Err",
         "Option.Some" => "Some",
         "Option.None" => return "None".to_string(),
+        "Tcp.Connection" => return emit_record_or_variant_pattern("Tcp_Connection", bindings),
         _ => {
             // User-defined type: Shape.Circle → Shape::Circle
             // Or record pattern: User(name, age) → User { name, age }

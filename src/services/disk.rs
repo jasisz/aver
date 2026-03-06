@@ -74,7 +74,7 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
 
 fn read_text(args: &[Value]) -> Result<Value, RuntimeError> {
     let path = one_str_arg("Disk.readText", args)?;
-    match std::fs::read_to_string(&path) {
+    match aver_rt::read_text(&path) {
         Ok(text) => Ok(Value::Ok(Box::new(Value::Str(text)))),
         Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
     }
@@ -82,43 +82,28 @@ fn read_text(args: &[Value]) -> Result<Value, RuntimeError> {
 
 fn write_text(args: &[Value]) -> Result<Value, RuntimeError> {
     let (path, content) = two_str_args("Disk.writeText", args)?;
-    match std::fs::write(&path, &content) {
+    match aver_rt::write_text(&path, &content) {
         Ok(_) => Ok(Value::Ok(Box::new(Value::Unit))),
         Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
     }
 }
 
 fn append_text(args: &[Value]) -> Result<Value, RuntimeError> {
-    use std::io::Write;
     let (path, content) = two_str_args("Disk.appendText", args)?;
-    match std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
-        Ok(mut f) => match f.write_all(content.as_bytes()) {
-            Ok(_) => Ok(Value::Ok(Box::new(Value::Unit))),
-            Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
-        },
+    match aver_rt::append_text(&path, &content) {
+        Ok(_) => Ok(Value::Ok(Box::new(Value::Unit))),
         Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
     }
 }
 
 fn exists(args: &[Value]) -> Result<Value, RuntimeError> {
     let path = one_str_arg("Disk.exists", args)?;
-    Ok(Value::Bool(std::path::Path::new(&path).exists()))
+    Ok(Value::Bool(aver_rt::path_exists(&path)))
 }
 
 fn delete(args: &[Value]) -> Result<Value, RuntimeError> {
     let path = one_str_arg("Disk.delete", args)?;
-    let p = std::path::Path::new(&path);
-    if p.is_dir() {
-        return Ok(Value::Err(Box::new(Value::Str(
-            "Disk.delete: path is a directory — use Disk.deleteDir to remove directories"
-                .to_string(),
-        ))));
-    }
-    match std::fs::remove_file(p) {
+    match aver_rt::delete_file(&path) {
         Ok(_) => Ok(Value::Ok(Box::new(Value::Unit))),
         Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
     }
@@ -126,13 +111,7 @@ fn delete(args: &[Value]) -> Result<Value, RuntimeError> {
 
 fn delete_dir(args: &[Value]) -> Result<Value, RuntimeError> {
     let path = one_str_arg("Disk.deleteDir", args)?;
-    let p = std::path::Path::new(&path);
-    if !p.is_dir() {
-        return Ok(Value::Err(Box::new(Value::Str(
-            "Disk.deleteDir: path is not a directory — use Disk.delete to remove files".to_string(),
-        ))));
-    }
-    match std::fs::remove_dir_all(p) {
+    match aver_rt::delete_dir(&path) {
         Ok(_) => Ok(Value::Ok(Box::new(Value::Unit))),
         Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
     }
@@ -140,24 +119,17 @@ fn delete_dir(args: &[Value]) -> Result<Value, RuntimeError> {
 
 fn list_dir(args: &[Value]) -> Result<Value, RuntimeError> {
     let path = one_str_arg("Disk.listDir", args)?;
-    match std::fs::read_dir(&path) {
-        Ok(entries) => {
-            let mut names = Vec::new();
-            for entry in entries {
-                match entry {
-                    Ok(e) => names.push(Value::Str(e.file_name().to_string_lossy().into_owned())),
-                    Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
-                }
-            }
-            Ok(Value::Ok(Box::new(list_from_vec(names))))
-        }
+    match aver_rt::list_dir(&path) {
+        Ok(entries) => Ok(Value::Ok(Box::new(list_from_vec(
+            entries.into_iter().map(Value::Str).collect(),
+        )))),
         Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
     }
 }
 
 fn make_dir(args: &[Value]) -> Result<Value, RuntimeError> {
     let path = one_str_arg("Disk.makeDir", args)?;
-    match std::fs::create_dir_all(&path) {
+    match aver_rt::make_dir(&path) {
         Ok(_) => Ok(Value::Ok(Box::new(Value::Unit))),
         Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
     }

@@ -65,25 +65,12 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
         sections.push(String::new());
     }
 
-    // Service runtime modules
-    if has_tcp_runtime {
-        sections.push(runtime::generate_tcp_runtime());
-        sections.push(String::new());
-    }
-
-    if has_http_runtime {
-        sections.push(runtime::generate_http_runtime());
-        sections.push(String::new());
-    }
-
-    if has_http_server_runtime {
-        sections.push(runtime::generate_http_server_runtime());
-        sections.push(String::new());
-    }
-
     // Module type definitions (inlined from depends)
     for module in &ctx.modules {
         for td in &module.type_defs {
+            if is_shared_runtime_type(td) {
+                continue;
+            }
             sections.push(toplevel::emit_type_def(td));
             sections.push(String::new());
         }
@@ -100,6 +87,9 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
 
     // Type definitions (structs and enums)
     for td in &ctx.type_defs {
+        if is_shared_runtime_type(td) {
+            continue;
+        }
         sections.push(toplevel::emit_type_def(td));
         sections.push(String::new());
     }
@@ -171,6 +161,9 @@ fn detect_used_services(ctx: &CodegenContext) -> HashSet<String> {
         if let TopLevel::FnDef(fd) = item {
             for eff in &fd.effects {
                 services.insert(eff.clone());
+                if let Some((service, _)) = eff.split_once('.') {
+                    services.insert(service.to_string());
+                }
             }
         }
     }
@@ -178,10 +171,21 @@ fn detect_used_services(ctx: &CodegenContext) -> HashSet<String> {
         for fd in &module.fn_defs {
             for eff in &fd.effects {
                 services.insert(eff.clone());
+                if let Some((service, _)) = eff.split_once('.') {
+                    services.insert(service.to_string());
+                }
             }
         }
     }
     services
+}
+
+fn is_shared_runtime_type(td: &crate::ast::TypeDef) -> bool {
+    matches!(
+        td,
+        crate::ast::TypeDef::Product { name, .. }
+            if matches!(name.as_str(), "Header" | "HttpResponse" | "HttpRequest")
+    )
 }
 
 fn needs_named_type(ctx: &CodegenContext, wanted: &str) -> bool {

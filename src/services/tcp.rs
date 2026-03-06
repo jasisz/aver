@@ -11,26 +11,11 @@
 ///   `Tcp.close(conn)`                   → Result<Unit, String>
 ///
 /// All methods require `! [Tcp]`.
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+
+use aver_rt::TcpConnection;
 
 use crate::value::{RuntimeError, Value};
-
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-const IO_TIMEOUT: Duration = Duration::from_secs(30);
-const BODY_LIMIT: usize = 10 * 1024 * 1024; // 10 MB
-const MAX_CONNECTIONS: usize = 256;
-
-static NEXT_ID: AtomicU64 = AtomicU64::new(1);
-
-thread_local! {
-    static CONNECTIONS: RefCell<HashMap<String, BufReader<TcpStream>>> =
-        RefCell::new(HashMap::new());
-}
 
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
@@ -74,8 +59,6 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     }
 }
 
-// ─── One-shot helpers ─────────────────────────────────────────────────────────
-
 fn tcp_send(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 3 {
         return Err(RuntimeError::Error(format!(
@@ -87,43 +70,10 @@ fn tcp_send(args: &[Value]) -> Result<Value, RuntimeError> {
     let port = int_arg(&args[1], "Tcp.send: port must be an Int")?;
     let message = str_arg(&args[2], "Tcp.send: message must be a String")?;
 
-    let addr = format!("{}:{}", host, port);
-    let socket_addr = match resolve(&addr) {
-        Ok(a) => a,
-        Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
-    };
-    let mut stream = match TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT) {
-        Ok(s) => s,
-        Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
-    };
-
-    stream.set_read_timeout(Some(IO_TIMEOUT)).ok();
-    stream.set_write_timeout(Some(IO_TIMEOUT)).ok();
-
-    if let Err(e) = stream.write_all(message.as_bytes()) {
-        return Ok(Value::Err(Box::new(Value::Str(e.to_string()))));
+    match aver_rt::tcp::send(&host, port, &message) {
+        Ok(response) => Ok(Value::Ok(Box::new(Value::Str(response)))),
+        Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
     }
-
-    // Signal end-of-write so the server can detect EOF if it reads until close.
-    stream.shutdown(std::net::Shutdown::Write).ok();
-
-    let mut buf = Vec::new();
-    use std::io::Read;
-    if let Err(e) = std::io::Read::by_ref(&mut stream)
-        .take(BODY_LIMIT as u64 + 1)
-        .read_to_end(&mut buf)
-    {
-        return Ok(Value::Err(Box::new(Value::Str(e.to_string()))));
-    }
-
-    if buf.len() > BODY_LIMIT {
-        return Ok(Value::Err(Box::new(Value::Str(
-            "Tcp.send: response exceeds 10 MB limit".to_string(),
-        ))));
-    }
-
-    let response = String::from_utf8_lossy(&buf).into_owned();
-    Ok(Value::Ok(Box::new(Value::Str(response))))
 }
 
 fn tcp_ping(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -136,15 +86,11 @@ fn tcp_ping(args: &[Value]) -> Result<Value, RuntimeError> {
     let host = str_arg(&args[0], "Tcp.ping: host must be a String")?;
     let port = int_arg(&args[1], "Tcp.ping: port must be an Int")?;
 
-    let addr = format!("{}:{}", host, port);
-    let socket_addr = resolve(&addr)?;
-    match TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT) {
-        Ok(_) => Ok(Value::Ok(Box::new(Value::Unit))),
-        Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+    match aver_rt::tcp::ping(&host, port) {
+        Ok(()) => Ok(Value::Ok(Box::new(Value::Unit))),
+        Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
     }
 }
-
-// ─── Persistent-connection helpers ────────────────────────────────────────────
 
 fn tcp_connect(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
@@ -156,43 +102,10 @@ fn tcp_connect(args: &[Value]) -> Result<Value, RuntimeError> {
     let host = str_arg(&args[0], "Tcp.connect: host must be a String")?;
     let port = int_arg(&args[1], "Tcp.connect: port must be an Int")?;
 
-    // Guard against unbounded connection growth
-    let count = CONNECTIONS.with(|map| map.borrow().len());
-    if count >= MAX_CONNECTIONS {
-        return Ok(Value::Err(Box::new(Value::Str(format!(
-            "Tcp.connect: connection limit reached ({} max). Close unused connections first.",
-            MAX_CONNECTIONS
-        )))));
+    match aver_rt::tcp::connect(&host, port) {
+        Ok(conn) => Ok(Value::Ok(Box::new(tcp_connection_to_value(conn)))),
+        Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
     }
-
-    let addr = format!("{}:{}", host, port);
-    let socket_addr = match resolve(&addr) {
-        Ok(a) => a,
-        Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
-    };
-
-    let stream = match TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT) {
-        Ok(s) => s,
-        Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
-    };
-
-    stream.set_read_timeout(Some(IO_TIMEOUT)).ok();
-    stream.set_write_timeout(Some(IO_TIMEOUT)).ok();
-
-    let id = format!("tcp-{}", NEXT_ID.fetch_add(1, Ordering::Relaxed));
-    CONNECTIONS.with(|map| {
-        map.borrow_mut().insert(id.clone(), BufReader::new(stream));
-    });
-
-    let conn_record = Value::Record {
-        type_name: "Tcp.Connection".to_string(),
-        fields: vec![
-            ("id".to_string(), Value::Str(id)),
-            ("host".to_string(), Value::Str(host)),
-            ("port".to_string(), Value::Int(port as i64)),
-        ],
-    };
-    Ok(Value::Ok(Box::new(conn_record)))
 }
 
 fn tcp_write_line(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -202,24 +115,10 @@ fn tcp_write_line(args: &[Value]) -> Result<Value, RuntimeError> {
             args.len()
         )));
     }
-    let conn_id = conn_id_arg(&args[0], "Tcp.writeLine")?;
+    let conn = tcp_connection_arg(&args[0], "Tcp.writeLine")?;
     let line = str_arg(&args[1], "Tcp.writeLine: line must be a String")?;
 
-    let result = CONNECTIONS.with(|map| {
-        let mut borrow = map.borrow_mut();
-        match borrow.get_mut(&conn_id) {
-            None => Err(format!("Tcp.writeLine: unknown connection '{}'", conn_id)),
-            Some(reader) => {
-                let msg = format!("{}\r\n", line);
-                reader
-                    .get_mut()
-                    .write_all(msg.as_bytes())
-                    .map_err(|e| e.to_string())
-            }
-        }
-    });
-
-    match result {
+    match aver_rt::tcp::write_line(&conn, &line) {
         Ok(()) => Ok(Value::Ok(Box::new(Value::Unit))),
         Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
     }
@@ -232,28 +131,9 @@ fn tcp_read_line(args: &[Value]) -> Result<Value, RuntimeError> {
             args.len()
         )));
     }
-    let conn_id = conn_id_arg(&args[0], "Tcp.readLine")?;
+    let conn = tcp_connection_arg(&args[0], "Tcp.readLine")?;
 
-    let result = CONNECTIONS.with(|map| {
-        let mut borrow = map.borrow_mut();
-        match borrow.get_mut(&conn_id) {
-            None => Err(format!("Tcp.readLine: unknown connection '{}'", conn_id)),
-            Some(reader) => {
-                let mut line = String::new();
-                reader.read_line(&mut line).map_err(|e| e.to_string())?;
-                // Strip trailing \r\n or \n
-                if line.ends_with('\n') {
-                    line.pop();
-                    if line.ends_with('\r') {
-                        line.pop();
-                    }
-                }
-                Ok(line)
-            }
-        }
-    });
-
-    match result {
+    match aver_rt::tcp::read_line(&conn) {
         Ok(line) => Ok(Value::Ok(Box::new(Value::Str(line)))),
         Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
     }
@@ -266,43 +146,49 @@ fn tcp_close(args: &[Value]) -> Result<Value, RuntimeError> {
             args.len()
         )));
     }
-    let conn_id = conn_id_arg(&args[0], "Tcp.close")?;
+    let conn = tcp_connection_arg(&args[0], "Tcp.close")?;
 
-    let removed = CONNECTIONS.with(|map| map.borrow_mut().remove(&conn_id));
-    match removed {
-        Some(_) => Ok(Value::Ok(Box::new(Value::Unit))),
-        None => Ok(Value::Err(Box::new(Value::Str(format!(
-            "Tcp.close: unknown connection '{}'",
-            conn_id
-        ))))),
+    match aver_rt::tcp::close(&conn) {
+        Ok(()) => Ok(Value::Ok(Box::new(Value::Unit))),
+        Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
     }
 }
 
-// ─── Shared utilities ─────────────────────────────────────────────────────────
-
-fn resolve(addr: &str) -> Result<std::net::SocketAddr, RuntimeError> {
-    addr.to_socket_addrs()
-        .map_err(|e| {
-            RuntimeError::Error(format!("Tcp: DNS resolution failed for {}: {}", addr, e))
-        })?
-        .next()
-        .ok_or_else(|| RuntimeError::Error(format!("Tcp: no address found for {}", addr)))
+fn tcp_connection_to_value(conn: TcpConnection) -> Value {
+    Value::Record {
+        type_name: "Tcp.Connection".to_string(),
+        fields: vec![
+            ("id".to_string(), Value::Str(conn.id)),
+            ("host".to_string(), Value::Str(conn.host)),
+            ("port".to_string(), Value::Int(conn.port)),
+        ],
+    }
 }
 
-fn conn_id_arg(val: &Value, method: &str) -> Result<String, RuntimeError> {
+fn tcp_connection_arg(val: &Value, method: &str) -> Result<TcpConnection, RuntimeError> {
     match val {
         Value::Record { type_name, fields } if type_name == "Tcp.Connection" => {
-            for (name, v) in fields {
-                if name == "id"
-                    && let Value::Str(s) = v
-                {
-                    return Ok(s.clone());
+            let mut id = None;
+            let mut host = None;
+            let mut port = None;
+            for (name, value) in fields {
+                match (name.as_str(), value) {
+                    ("id", Value::Str(s)) => id = Some(s.clone()),
+                    ("host", Value::Str(s)) => host = Some(s.clone()),
+                    ("port", Value::Int(n)) => port = Some(*n),
+                    _ => {}
                 }
             }
-            Err(RuntimeError::Error(format!(
-                "{}: Tcp.Connection record missing 'id' field",
-                method
-            )))
+            let id = id.ok_or_else(|| {
+                RuntimeError::Error(format!("{}: Tcp.Connection record missing 'id' field", method))
+            })?;
+            let host = host.ok_or_else(|| {
+                RuntimeError::Error(format!("{}: Tcp.Connection record missing 'host' field", method))
+            })?;
+            let port = port.ok_or_else(|| {
+                RuntimeError::Error(format!("{}: Tcp.Connection record missing 'port' field", method))
+            })?;
+            Ok(TcpConnection { id, host, port })
         }
         _ => Err(RuntimeError::Error(format!(
             "{}: first argument must be a Tcp.Connection, got {:?}",
@@ -318,9 +204,9 @@ fn str_arg(val: &Value, msg: &str) -> Result<String, RuntimeError> {
     }
 }
 
-fn int_arg(val: &Value, msg: &str) -> Result<u16, RuntimeError> {
+fn int_arg(val: &Value, msg: &str) -> Result<i64, RuntimeError> {
     match val {
-        Value::Int(n) if (0..=65535).contains(n) => Ok(*n as u16),
+        Value::Int(n) if (0..=65535).contains(n) => Ok(*n),
         Value::Int(n) => Err(RuntimeError::Error(format!(
             "Tcp: port {} is out of range (0–65535)",
             n

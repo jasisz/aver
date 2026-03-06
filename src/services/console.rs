@@ -78,19 +78,8 @@ fn read_line(args: &[Value]) -> Result<Value, RuntimeError> {
             args.len()
         )));
     }
-    let mut line = String::new();
-    match std::io::stdin().read_line(&mut line) {
-        Ok(0) => Ok(Value::Err(Box::new(Value::Str("EOF".to_string())))),
-        Ok(_) => {
-            // Strip trailing newline
-            if line.ends_with('\n') {
-                line.pop();
-            }
-            if line.ends_with('\r') {
-                line.pop();
-            }
-            Ok(Value::Ok(Box::new(Value::Str(line))))
-        }
-        Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+    match aver_rt::read_line() {
+        Ok(line) => Ok(Value::Ok(Box::new(Value::Str(line)))),
+        Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
     }
 }

@@ -9,6 +9,8 @@
 /// `Err(String)`. Response bodies are capped at 10 MB.
 use std::collections::HashMap;
 
+use aver_rt::{AverList, Header, HttpResponse};
+
 use crate::value::{RuntimeError, Value, list_from_vec, list_view};
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -49,8 +51,6 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     }
 }
 
-// ─── Private helpers ──────────────────────────────────────────────────────────
-
 fn call_simple(name: &str, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::Error(format!(
@@ -60,10 +60,12 @@ fn call_simple(name: &str, args: &[Value]) -> Result<Value, RuntimeError> {
         )));
     }
     let url = str_arg(&args[0], "Http: url must be a String")?;
-    let method = name.trim_start_matches("Http.").to_uppercase();
-    let result = ureq::request(&method, &url)
-        .timeout(std::time::Duration::from_secs(10))
-        .call();
+    let result = match name {
+        "Http.get" => aver_rt::http::get(&url),
+        "Http.head" => aver_rt::http::head(&url),
+        "Http.delete" => aver_rt::http::delete(&url),
+        _ => unreachable!(),
+    };
     response_value(result)
 }
 
@@ -80,14 +82,13 @@ fn call_with_body(name: &str, args: &[Value]) -> Result<Value, RuntimeError> {
     let content_type = str_arg(&args[2], "Http: contentType must be a String")?;
     let extra_headers = parse_request_headers(&args[3])?;
 
-    let method = name.trim_start_matches("Http.").to_uppercase();
-    let mut req = ureq::request(&method, &url)
-        .timeout(std::time::Duration::from_secs(10))
-        .set("Content-Type", &content_type);
-    for (k, v) in &extra_headers {
-        req = req.set(k, v);
-    }
-    response_value(req.send_string(&body))
+    let result = match name {
+        "Http.post" => aver_rt::http::post(&url, &body, &content_type, &extra_headers),
+        "Http.put" => aver_rt::http::put(&url, &body, &content_type, &extra_headers),
+        "Http.patch" => aver_rt::http::patch(&url, &body, &content_type, &extra_headers),
+        _ => unreachable!(),
+    };
+    response_value(result)
 }
 
 fn str_arg(val: &Value, msg: &str) -> Result<String, RuntimeError> {
@@ -97,7 +98,7 @@ fn str_arg(val: &Value, msg: &str) -> Result<String, RuntimeError> {
     }
 }
 
-fn parse_request_headers(val: &Value) -> Result<Vec<(String, String)>, RuntimeError> {
+fn parse_request_headers(val: &Value) -> Result<AverList<Header>, RuntimeError> {
     let items = list_view(val)
         .ok_or_else(|| RuntimeError::Error("Http: headers must be a List".to_string()))?;
     let mut out = Vec::new();
@@ -129,56 +130,40 @@ fn parse_request_headers(val: &Value) -> Result<Vec<(String, String)>, RuntimeEr
                     ))
                 })
         };
-        out.push((get("name")?, get("value")?));
+        out.push(Header {
+            name: get("name")?,
+            value: get("value")?,
+        });
     }
-    Ok(out)
+    Ok(AverList::from_vec(out))
 }
 
-fn response_value(result: Result<ureq::Response, ureq::Error>) -> Result<Value, RuntimeError> {
+fn response_value(result: Result<HttpResponse, String>) -> Result<Value, RuntimeError> {
     match result {
-        Ok(resp) => build_response(resp),
-        Err(ureq::Error::Status(_, resp)) => build_response(resp),
-        Err(ureq::Error::Transport(e)) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+        Ok(resp) => Ok(Value::Ok(Box::new(http_response_to_value(resp)))),
+        Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
     }
 }
 
-fn build_response(resp: ureq::Response) -> Result<Value, RuntimeError> {
-    use std::io::Read;
-    let status = resp.status() as i64;
-    let header_names = resp.headers_names();
-    let headers: Vec<Value> = header_names
-        .iter()
-        .map(|name| {
-            let value = resp.header(name).unwrap_or("").to_string();
-            Value::Record {
-                type_name: "Header".to_string(),
-                fields: vec![
-                    ("name".to_string(), Value::Str(name.clone())),
-                    ("value".to_string(), Value::Str(value)),
-                ],
-            }
+fn http_response_to_value(resp: HttpResponse) -> Value {
+    let headers = resp
+        .headers
+        .into_iter()
+        .map(|header| Value::Record {
+            type_name: "Header".to_string(),
+            fields: vec![
+                ("name".to_string(), Value::Str(header.name)),
+                ("value".to_string(), Value::Str(header.value)),
+            ],
         })
         .collect();
 
-    const BODY_LIMIT: u64 = 10 * 1024 * 1024; // 10 MB
-    let mut buf = Vec::new();
-    let bytes_read = resp
-        .into_reader()
-        .take(BODY_LIMIT + 1)
-        .read_to_end(&mut buf)
-        .map_err(|e| RuntimeError::Error(format!("Http: failed to read response body: {}", e)))?;
-    if bytes_read as u64 > BODY_LIMIT {
-        return Ok(Value::Err(Box::new(Value::Str(
-            "Http: response body exceeds 10 MB limit".to_string(),
-        ))));
-    }
-    let body = String::from_utf8_lossy(&buf).into_owned();
-    Ok(Value::Ok(Box::new(Value::Record {
+    Value::Record {
         type_name: "HttpResponse".to_string(),
         fields: vec![
-            ("status".to_string(), Value::Int(status)),
-            ("body".to_string(), Value::Str(body)),
+            ("status".to_string(), Value::Int(resp.status)),
+            ("body".to_string(), Value::Str(resp.body)),
             ("headers".to_string(), list_from_vec(headers)),
         ],
-    })))
+    }
 }
