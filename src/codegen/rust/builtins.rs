@@ -554,7 +554,10 @@ fn emit_builtin_call_inner(
         "Env.set" => {
             let key = emit_expr(&args[0], ctx, ectx);
             let value = emit_expr(&args[1], ctx, ectx);
-            Some(format!("aver_rt::env_set(&{}, &{}).expect(\"Env.set failed\")", key, value))
+            Some(format!(
+                "aver_rt::env_set(&{}, &{}).expect(\"Env.set failed\")",
+                key, value
+            ))
         }
 
         // ---- Time ----

@@ -7,6 +7,7 @@ use aver::call_graph::{find_recursive_fns, recursive_callsite_counts, recursive_
 use aver::source::{find_module_file, parse_source, require_module_declaration};
 use aver::tco;
 use aver::types::checker::run_type_check_full;
+use aver::verify_law::canonical_spec_ref;
 
 use crate::shared::{compute_memo_fns, is_memo_safe_type};
 
@@ -24,6 +25,7 @@ pub(super) struct FileContext {
     pub(super) fn_auto_tco: HashSet<String>,
     pub(super) fn_recursive_callsites: HashMap<String, usize>,
     pub(super) fn_recursive_scc_id: HashMap<String, usize>,
+    pub(super) fn_specs: HashMap<String, Vec<String>>,
     pub(super) type_defs: Vec<TypeDef>,
     pub(super) effect_sets: Vec<(String, Vec<String>)>,
     pub(super) verify_blocks: Vec<VerifyBlock>,
@@ -49,6 +51,7 @@ struct ContextFnFlags {
     memo_qual: HashMap<String, Vec<String>>,
     recursive_callsites: HashMap<String, usize>,
     recursive_scc_id: HashMap<String, usize>,
+    fn_sigs: HashMap<String, (Vec<aver::types::Type>, aver::types::Type, Vec<String>)>,
 }
 
 fn expr_has_tail_call(expr: &aver::ast::Expr) -> bool {
@@ -80,14 +83,11 @@ fn expr_has_tail_call(expr: &aver::ast::Expr) -> bool {
 }
 
 fn fn_has_tail_call(fd: &FnDef) -> bool {
-    match fd.body.as_ref() {
-        aver::ast::FnBody::Expr(expr) => expr_has_tail_call(expr),
-        aver::ast::FnBody::Block(stmts) => stmts.iter().any(|stmt| match stmt {
-            aver::ast::Stmt::Binding(_, _, expr) | aver::ast::Stmt::Expr(expr) => {
-                expr_has_tail_call(expr)
-            }
-        }),
-    }
+    fd.body.stmts().iter().any(|stmt| match stmt {
+        aver::ast::Stmt::Binding(_, _, expr) | aver::ast::Stmt::Expr(expr) => {
+            expr_has_tail_call(expr)
+        }
+    })
 }
 
 fn compute_context_fn_flags(items: &[TopLevel], module_root: &str) -> ContextFnFlags {
@@ -125,6 +125,7 @@ fn compute_context_fn_flags(items: &[TopLevel], module_root: &str) -> ContextFnF
             memo_qual,
             recursive_callsites,
             recursive_scc_id,
+            fn_sigs: tc_result.fn_sigs,
         };
     }
 
@@ -155,6 +156,7 @@ fn compute_context_fn_flags(items: &[TopLevel], module_root: &str) -> ContextFnF
         memo_qual,
         recursive_callsites,
         recursive_scc_id,
+        fn_sigs: tc_result.fn_sigs,
     }
 }
 
@@ -207,6 +209,7 @@ pub(super) fn collect_contexts(
         fn_auto_tco: HashSet::new(),
         fn_recursive_callsites: HashMap::new(),
         fn_recursive_scc_id: HashMap::new(),
+        fn_specs: HashMap::new(),
         type_defs: vec![],
         effect_sets: vec![],
         verify_blocks: vec![],
@@ -239,11 +242,35 @@ pub(super) fn collect_contexts(
     }
 
     let flags = compute_context_fn_flags(&items, module_root);
-    ctx.fn_auto_memo = flags.auto_memo;
-    ctx.fn_auto_tco = flags.auto_tco;
-    ctx.fn_memo_qual = flags.memo_qual;
-    ctx.fn_recursive_callsites = flags.recursive_callsites;
-    ctx.fn_recursive_scc_id = flags.recursive_scc_id;
+    let ContextFnFlags {
+        auto_memo,
+        auto_tco,
+        memo_qual,
+        recursive_callsites,
+        recursive_scc_id,
+        fn_sigs,
+    } = flags;
+    ctx.fn_auto_memo = auto_memo;
+    ctx.fn_auto_tco = auto_tco;
+    ctx.fn_memo_qual = memo_qual;
+    ctx.fn_recursive_callsites = recursive_callsites;
+    ctx.fn_recursive_scc_id = recursive_scc_id;
+    for vb in &ctx.verify_blocks {
+        let aver::ast::VerifyKind::Law(law) = &vb.kind else {
+            continue;
+        };
+        let Some(spec_ref) = canonical_spec_ref(&vb.fn_name, law, &fn_sigs) else {
+            continue;
+        };
+        ctx.fn_specs
+            .entry(vb.fn_name.clone())
+            .or_default()
+            .push(spec_ref.spec_fn_name);
+    }
+    for specs in ctx.fn_specs.values_mut() {
+        specs.sort();
+        specs.dedup();
+    }
 
     // Effect summaries are calculated from the full function set
     // before the public-function filtering done for display.

@@ -27,7 +27,7 @@ fn decision_ref_text(reference: &DecisionImpact) -> String {
 fn decision_ref_json_text(reference: &DecisionImpact) -> &str {
     reference.text()
 }
-const CONTEXT_SCHEMA_VERSION: u32 = 3;
+const CONTEXT_SCHEMA_VERSION: u32 = 4;
 const ANALYSIS_ENCODING_VERSION: u32 = 1;
 const ANALYSIS_FLAG_AUTO_MEMO: u8 = 1;
 const ANALYSIS_FLAG_AUTO_TCO: u8 = 2;
@@ -180,6 +180,11 @@ pub(super) fn format_context_md(contexts: &[FileContext], entry_file: &str) -> S
                 "recursive_scc_id: `{}`  \n",
                 ctx.fn_recursive_scc_id.get(&fd.name).copied().unwrap_or(0)
             ));
+            let specs = ctx.fn_specs.get(&fd.name).cloned().unwrap_or_default();
+            if !specs.is_empty() {
+                let label = if specs.len() == 1 { "spec" } else { "specs" };
+                out.push_str(&format!("{label}: `[{}]`  \n", specs.join(", ")));
+            }
 
             if let Some(desc) = &fd.desc {
                 out.push_str(&format!("> {}\n", desc));
@@ -490,6 +495,13 @@ pub(super) fn format_context_json(contexts: &[FileContext], entry_file: &str) ->
                     Some(d) => out.push_str(&format!("          \"desc\": {},\n", json_str(d))),
                     None => out.push_str("          \"desc\": null,\n"),
                 }
+                let specs = ctx.fn_specs.get(&fd.name).cloned().unwrap_or_default();
+                let specs_json = specs
+                    .iter()
+                    .map(|spec| json_str(spec))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                out.push_str(&format!("          \"specs\": [{}],\n", specs_json));
 
                 // verify cases (compact JSON: first sample + full count)
                 let verify_total = ctx
@@ -666,4 +678,55 @@ pub(super) fn format_decisions_json(decisions: &[&DecisionBlock], entry_file: &s
     }
     out.push('}');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::{HashMap, HashSet};
+
+    fn file_context_with_spec() -> FileContext {
+        FileContext {
+            source_file: "examples/spec.av".to_string(),
+            module_name: Some("Spec".to_string()),
+            intent: Some("spec demo".to_string()),
+            exposes: vec!["fib".to_string()],
+            api_effects: vec![],
+            module_effects: vec![],
+            main_effects: None,
+            fn_defs: vec![FnDef {
+                name: "fib".to_string(),
+                line: 1,
+                params: vec![("n".to_string(), "Int".to_string())],
+                return_type: "Int".to_string(),
+                effects: vec![],
+                desc: Some("demo".to_string()),
+                body: std::rc::Rc::new(aver::ast::FnBody::Block(vec![])),
+                resolution: None,
+            }],
+            fn_auto_memo: HashSet::new(),
+            fn_memo_qual: HashMap::new(),
+            fn_auto_tco: HashSet::new(),
+            fn_recursive_callsites: HashMap::new(),
+            fn_recursive_scc_id: HashMap::new(),
+            fn_specs: HashMap::from([("fib".to_string(), vec!["fibSpec".to_string()])]),
+            type_defs: vec![],
+            effect_sets: vec![],
+            verify_blocks: vec![],
+            decisions: vec![],
+        }
+    }
+
+    #[test]
+    fn markdown_context_renders_spec_refs() {
+        let out = format_context_md(&[file_context_with_spec()], "examples/spec.av");
+        assert!(out.contains("spec: `[fibSpec]`"));
+    }
+
+    #[test]
+    fn json_context_renders_specs_array() {
+        let out = format_context_json(&[file_context_with_spec()], "examples/spec.av");
+        assert!(out.contains("\"schema_version\": 4"));
+        assert!(out.contains("\"specs\": [\"fibSpec\"]"));
+    }
 }

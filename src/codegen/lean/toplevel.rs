@@ -1,5 +1,5 @@
 /// Top-level Aver items → Lean 4 items (defs, inductives, structures, examples).
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::expr::{aver_name_to_lean, emit_expr, emit_stmt};
 use super::law_auto::emit_verify_law_forall_auto_proof;
@@ -8,6 +8,8 @@ use super::types::type_annotation_to_lean;
 use super::{RecursionPlan, VerifyEmitMode};
 use crate::ast::*;
 use crate::codegen::CodegenContext;
+use crate::codegen::common::expr_to_dotted_name;
+use crate::verify_law::canonical_spec_ref;
 
 /// Emit a Lean 4 type definition from an Aver TypeDef.
 pub fn emit_type_def(td: &TypeDef) -> String {
@@ -141,6 +143,412 @@ pub fn emit_recursive_decidable_eq(name: &str) -> String {
     lines.join("\n")
 }
 
+const STRING_POS_FUEL_VAR: &str = "fuel'";
+const PROOF_FUEL_EXHAUSTED: &str = "panic! \"Aver proof fuel exhausted\"";
+
+fn fuel_helper_name(name: &str) -> String {
+    format!("{}__fuel", aver_name_to_lean(name))
+}
+
+fn emit_fn_param_names(params: &[(String, String)]) -> String {
+    params
+        .iter()
+        .map(|(name, _)| aver_name_to_lean(name))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn indent_lines(block: &str, prefix: &str) -> Vec<String> {
+    block
+        .lines()
+        .map(|line| format!("{prefix}{line}"))
+        .collect()
+}
+
+fn emit_doc_comment(desc: &Option<String>) -> Vec<String> {
+    desc.as_ref()
+        .map(|text| vec![format!("/-- {} -/", text)])
+        .unwrap_or_default()
+}
+
+fn ret_type_or_unit(fd: &FnDef) -> String {
+    if fd.return_type.is_empty() {
+        "Unit".to_string()
+    } else {
+        type_annotation_to_lean(&fd.return_type)
+    }
+}
+
+fn emit_fuel_helper_def(
+    helper_name: &str,
+    params: &str,
+    ret_type: &str,
+    body: &str,
+    outer_indent: &str,
+) -> Vec<String> {
+    let branch_indent = format!("{outer_indent}    ");
+    [
+        vec![format!(
+            "{outer_indent}def {} (fuel : Nat) {} : {} :=",
+            helper_name, params, ret_type
+        )],
+        vec![format!("{outer_indent}  match fuel with")],
+        vec![format!("{outer_indent}  | 0 => {}", PROOF_FUEL_EXHAUSTED)],
+        vec![format!("{outer_indent}  | {} + 1 =>", STRING_POS_FUEL_VAR)],
+        indent_lines(body, &branch_indent),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+fn emit_string_pos_wrapper(fd: &FnDef, helper_name: &str, rank_budget: usize) -> Vec<String> {
+    let fn_name = aver_name_to_lean(&fd.name);
+    let params = emit_fn_params(&fd.params);
+    let ret_type = ret_type_or_unit(fd);
+    let arg_names = emit_fn_param_names(&fd.params);
+    let (s_name, _) = &fd.params[0];
+    let (pos_name, _) = &fd.params[1];
+    vec![
+        format!("def {} {} : {} :=", fn_name, params, ret_type),
+        format!(
+            "  {} (averStringPosFuel {} {} {}) {}",
+            helper_name,
+            aver_name_to_lean(s_name),
+            aver_name_to_lean(pos_name),
+            rank_budget,
+            arg_names
+        ),
+    ]
+}
+
+fn emit_int_countdown_wrapper(fd: &FnDef, helper_name: &str, param_index: usize) -> Vec<String> {
+    let fn_name = aver_name_to_lean(&fd.name);
+    let params = emit_fn_params(&fd.params);
+    let ret_type = ret_type_or_unit(fd);
+    let arg_names = emit_fn_param_names(&fd.params);
+    let metric_name = fd
+        .params
+        .get(param_index)
+        .map(|(name, _)| aver_name_to_lean(name))
+        .unwrap_or_else(|| "0".to_string());
+    vec![
+        format!("def {} {} : {} :=", fn_name, params, ret_type),
+        format!("  {} ((Int.natAbs {}) + 1) {}", helper_name, metric_name, arg_names),
+    ]
+}
+
+fn rewrite_recursive_calls_expr(expr: &Expr, targets: &HashSet<String>, fuel_var: &str) -> Expr {
+    match expr {
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => expr.clone(),
+        Expr::Attr(obj, field) => Expr::Attr(
+            Box::new(rewrite_recursive_calls_expr(obj, targets, fuel_var)),
+            field.clone(),
+        ),
+        Expr::FnCall(callee, args) => {
+            let rewritten_args: Vec<Expr> = args
+                .iter()
+                .map(|arg| rewrite_recursive_calls_expr(arg, targets, fuel_var))
+                .collect();
+            if let Some(name) = expr_to_dotted_name(callee)
+                && targets.contains(&name)
+            {
+                let mut call_args = Vec::with_capacity(rewritten_args.len() + 1);
+                call_args.push(Expr::Ident(fuel_var.to_string()));
+                call_args.extend(rewritten_args);
+                Expr::FnCall(Box::new(Expr::Ident(fuel_helper_name(&name))), call_args)
+            } else {
+                Expr::FnCall(
+                    Box::new(rewrite_recursive_calls_expr(callee, targets, fuel_var)),
+                    rewritten_args,
+                )
+            }
+        }
+        Expr::BinOp(op, left, right) => Expr::BinOp(
+            op.clone(),
+            Box::new(rewrite_recursive_calls_expr(left, targets, fuel_var)),
+            Box::new(rewrite_recursive_calls_expr(right, targets, fuel_var)),
+        ),
+        Expr::Match {
+            subject,
+            arms,
+            line,
+        } => Expr::Match {
+            subject: Box::new(rewrite_recursive_calls_expr(subject, targets, fuel_var)),
+            arms: arms
+                .iter()
+                .map(|arm| MatchArm {
+                    pattern: arm.pattern.clone(),
+                    body: Box::new(rewrite_recursive_calls_expr(&arm.body, targets, fuel_var)),
+                })
+                .collect(),
+            line: *line,
+        },
+        Expr::Constructor(name, arg) => Expr::Constructor(
+            name.clone(),
+            arg.as_ref()
+                .map(|inner| Box::new(rewrite_recursive_calls_expr(inner, targets, fuel_var))),
+        ),
+        Expr::ErrorProp(inner) => Expr::ErrorProp(Box::new(rewrite_recursive_calls_expr(
+            inner, targets, fuel_var,
+        ))),
+        Expr::InterpolatedStr(parts) => Expr::InterpolatedStr(
+            parts
+                .iter()
+                .map(|part| match part {
+                    StrPart::Literal(_) => part.clone(),
+                    StrPart::Parsed(inner) => StrPart::Parsed(Box::new(
+                        rewrite_recursive_calls_expr(inner, targets, fuel_var),
+                    )),
+                })
+                .collect(),
+        ),
+        Expr::List(items) => Expr::List(
+            items
+                .iter()
+                .map(|item| rewrite_recursive_calls_expr(item, targets, fuel_var))
+                .collect(),
+        ),
+        Expr::Tuple(items) => Expr::Tuple(
+            items
+                .iter()
+                .map(|item| rewrite_recursive_calls_expr(item, targets, fuel_var))
+                .collect(),
+        ),
+        Expr::MapLiteral(entries) => Expr::MapLiteral(
+            entries
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        rewrite_recursive_calls_expr(k, targets, fuel_var),
+                        rewrite_recursive_calls_expr(v, targets, fuel_var),
+                    )
+                })
+                .collect(),
+        ),
+        Expr::RecordCreate { type_name, fields } => Expr::RecordCreate {
+            type_name: type_name.clone(),
+            fields: fields
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        name.clone(),
+                        rewrite_recursive_calls_expr(value, targets, fuel_var),
+                    )
+                })
+                .collect(),
+        },
+        Expr::RecordUpdate {
+            type_name,
+            base,
+            updates,
+        } => Expr::RecordUpdate {
+            type_name: type_name.clone(),
+            base: Box::new(rewrite_recursive_calls_expr(base, targets, fuel_var)),
+            updates: updates
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        name.clone(),
+                        rewrite_recursive_calls_expr(value, targets, fuel_var),
+                    )
+                })
+                .collect(),
+        },
+        Expr::TailCall(boxed) => {
+            let (target, args) = boxed.as_ref();
+            let rewritten_args: Vec<Expr> = args
+                .iter()
+                .map(|arg| rewrite_recursive_calls_expr(arg, targets, fuel_var))
+                .collect();
+            if targets.contains(target) {
+                let mut call_args = Vec::with_capacity(rewritten_args.len() + 1);
+                call_args.push(Expr::Ident(fuel_var.to_string()));
+                call_args.extend(rewritten_args);
+                Expr::FnCall(Box::new(Expr::Ident(fuel_helper_name(target))), call_args)
+            } else {
+                Expr::TailCall(Box::new((target.clone(), rewritten_args)))
+            }
+        }
+    }
+}
+
+fn rewrite_recursive_calls_body(
+    body: &FnBody,
+    targets: &HashSet<String>,
+    fuel_var: &str,
+) -> FnBody {
+    FnBody::Block(
+        body.stmts()
+            .iter()
+            .map(|stmt| match stmt {
+                Stmt::Binding(name, ty, expr) => Stmt::Binding(
+                    name.clone(),
+                    ty.clone(),
+                    rewrite_recursive_calls_expr(expr, targets, fuel_var),
+                ),
+                Stmt::Expr(expr) => {
+                    Stmt::Expr(rewrite_recursive_calls_expr(expr, targets, fuel_var))
+                }
+            })
+            .collect(),
+    )
+}
+
+fn emit_fuelized_string_pos_fn(fd: &FnDef, ctx: &CodegenContext) -> String {
+    let helper_name = fuel_helper_name(&fd.name);
+    let params = emit_fn_params(&fd.params);
+    let ret_type = ret_type_or_unit(fd);
+    let rewritten = rewrite_recursive_calls_body(
+        &fd.body,
+        &HashSet::from([fd.name.clone()]),
+        STRING_POS_FUEL_VAR,
+    );
+    let body = emit_fn_body(&rewritten, ctx);
+
+    [
+        emit_doc_comment(&fd.desc),
+        emit_fuel_helper_def(&helper_name, &params, &ret_type, &body, ""),
+        vec![String::new()],
+        emit_string_pos_wrapper(fd, &helper_name, 1),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join("\n")
+}
+
+fn emit_fuelized_int_countdown_fn(fd: &FnDef, ctx: &CodegenContext, param_index: usize) -> String {
+    let helper_name = fuel_helper_name(&fd.name);
+    let params = emit_fn_params(&fd.params);
+    let ret_type = ret_type_or_unit(fd);
+    let rewritten = rewrite_recursive_calls_body(
+        &fd.body,
+        &HashSet::from([fd.name.clone()]),
+        STRING_POS_FUEL_VAR,
+    );
+    let body = emit_fn_body(&rewritten, ctx);
+
+    [
+        emit_doc_comment(&fd.desc),
+        emit_fuel_helper_def(&helper_name, &params, &ret_type, &body, ""),
+        vec![String::new()],
+        emit_int_countdown_wrapper(fd, &helper_name, param_index),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join("\n")
+}
+
+fn emit_fuelized_mutual_string_pos_group(
+    fns: &[&FnDef],
+    ctx: &CodegenContext,
+    plans: &HashMap<String, RecursionPlan>,
+) -> String {
+    let targets: HashSet<String> = fns.iter().map(|fd| fd.name.clone()).collect();
+    let max_rank = fns
+        .iter()
+        .filter_map(|fd| match plans.get(&fd.name) {
+            Some(RecursionPlan::MutualStringPosAdvance { rank }) => Some(*rank),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(1);
+
+    let mut helper_lines = vec!["mutual".to_string()];
+    for fd in fns {
+        if !is_pure_fn(fd) {
+            continue;
+        }
+        let helper_name = fuel_helper_name(&fd.name);
+        let params = emit_fn_params(&fd.params);
+        let ret_type = ret_type_or_unit(fd);
+        let rewritten = rewrite_recursive_calls_body(&fd.body, &targets, STRING_POS_FUEL_VAR);
+        let body = emit_fn_body(&rewritten, ctx);
+
+        helper_lines.extend(
+            emit_doc_comment(&fd.desc)
+                .into_iter()
+                .map(|line| format!("  {line}")),
+        );
+        helper_lines.extend(emit_fuel_helper_def(
+            &helper_name,
+            &params,
+            &ret_type,
+            &body,
+            "  ",
+        ));
+        helper_lines.push(String::new());
+    }
+    helper_lines.push("end".to_string());
+
+    let wrapper_lines: Vec<String> = fns
+        .iter()
+        .filter(|fd| is_pure_fn(fd))
+        .flat_map(|fd| {
+            let helper_name = fuel_helper_name(&fd.name);
+            let mut lines = emit_string_pos_wrapper(fd, &helper_name, max_rank);
+            lines.push(String::new());
+            lines
+        })
+        .collect();
+
+    [helper_lines, vec![String::new()], wrapper_lines]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn emit_fuelized_mutual_int_countdown_group(fns: &[&FnDef], ctx: &CodegenContext) -> String {
+    let targets: HashSet<String> = fns.iter().map(|fd| fd.name.clone()).collect();
+
+    let mut helper_lines = vec!["mutual".to_string()];
+    for fd in fns {
+        if !is_pure_fn(fd) {
+            continue;
+        }
+        let helper_name = fuel_helper_name(&fd.name);
+        let params = emit_fn_params(&fd.params);
+        let ret_type = ret_type_or_unit(fd);
+        let rewritten = rewrite_recursive_calls_body(&fd.body, &targets, STRING_POS_FUEL_VAR);
+        let body = emit_fn_body(&rewritten, ctx);
+
+        helper_lines.extend(
+            emit_doc_comment(&fd.desc)
+                .into_iter()
+                .map(|line| format!("  {line}")),
+        );
+        helper_lines.extend(emit_fuel_helper_def(
+            &helper_name,
+            &params,
+            &ret_type,
+            &body,
+            "  ",
+        ));
+        helper_lines.push(String::new());
+    }
+    helper_lines.push("end".to_string());
+
+    let wrapper_lines: Vec<String> = fns
+        .iter()
+        .filter(|fd| is_pure_fn(fd))
+        .flat_map(|fd| {
+            let helper_name = fuel_helper_name(&fd.name);
+            let mut lines = emit_int_countdown_wrapper(fd, &helper_name, 0);
+            lines.push(String::new());
+            lines
+        })
+        .collect();
+
+    [helper_lines, vec![String::new()], wrapper_lines]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Check if a function is pure (no effects) and not main.
 pub fn is_pure_fn(fd: &FnDef) -> bool {
     fd.effects.is_empty() && fd.name != "main"
@@ -200,6 +608,14 @@ pub fn emit_fn_def_proof(
         return None;
     }
 
+    if let Some(RecursionPlan::IntCountdown { param_index }) = recursion_plan {
+        return Some(emit_fuelized_int_countdown_fn(fd, ctx, param_index));
+    }
+
+    if matches!(recursion_plan, Some(RecursionPlan::StringPosAdvance)) {
+        return Some(emit_fuelized_string_pos_fn(fd, ctx));
+    }
+
     let mut lines = Vec::new();
     if let Some(desc) = &fd.desc {
         lines.push(format!("/-- {} -/", desc));
@@ -215,35 +631,28 @@ pub fn emit_fn_def_proof(
     lines.push(format!("def {} {} : {} :=", fn_name, params, ret_type));
     lines.push(emit_fn_body(&fd.body, ctx));
 
-    if let Some(plan) = recursion_plan
-        && let Some((param_name, _)) = fd.params.first()
-    {
-        let lean_param = aver_name_to_lean(param_name);
+    if let Some(plan) = recursion_plan {
         match plan {
-            RecursionPlan::IntCountdown | RecursionPlan::MutualIntCountdown => {
+            RecursionPlan::IntCountdown { .. } => {}
+            RecursionPlan::MutualIntCountdown => {
+                let Some((param_name, _)) = fd.params.first() else {
+                    return Some(lines.join("\n"));
+                };
+                let lean_param = aver_name_to_lean(param_name);
                 lines.push(format!("termination_by Int.natAbs {}", lean_param));
                 lines.push("decreasing_by".to_string());
-                lines.push("  simp_wf".to_string());
+                lines.push("  omega".to_string());
             }
             RecursionPlan::ListStructural => {
+                let Some((param_name, _)) = fd.params.first() else {
+                    return Some(lines.join("\n"));
+                };
+                let lean_param = aver_name_to_lean(param_name);
                 lines.push(format!("termination_by {}.length", lean_param));
                 lines.push("decreasing_by".to_string());
-                lines.push("  simp_wf".to_string());
+                lines.push("  decreasing_tactic".to_string());
             }
-            RecursionPlan::StringPosAdvance => {
-                if let Some((s_name, _)) = fd.params.first()
-                    && let Some((pos_name, _)) = fd.params.get(1)
-                {
-                    let lean_s = aver_name_to_lean(s_name);
-                    let lean_pos = aver_name_to_lean(pos_name);
-                    lines.push(format!(
-                        "termination_by (({}.data.length) - ({}.toNat))",
-                        lean_s, lean_pos
-                    ));
-                    lines.push("decreasing_by".to_string());
-                    lines.push("  simp_wf".to_string());
-                }
-            }
+            RecursionPlan::StringPosAdvance => {}
             RecursionPlan::MutualStringPosAdvance { .. }
             | RecursionPlan::MutualSizeOfRanked { .. } => {}
         }
@@ -265,31 +674,24 @@ fn emit_fn_params(params: &[(String, String)]) -> String {
 }
 
 fn emit_fn_body(body: &FnBody, ctx: &CodegenContext) -> String {
-    match body {
-        FnBody::Expr(expr) => {
-            format!("  {}", emit_expr(expr, ctx))
-        }
-        FnBody::Block(stmts) => {
-            let mut lines = Vec::new();
-            for (i, stmt) in stmts.iter().enumerate() {
-                let is_last = i == stmts.len() - 1;
-                match stmt {
-                    Stmt::Binding(_, _, _) => {
-                        lines.push(format!("  {}", emit_stmt(stmt, ctx)));
-                    }
-                    Stmt::Expr(expr) => {
-                        if is_last {
-                            lines.push(format!("  {}", emit_expr(expr, ctx)));
-                        } else {
-                            // Non-last expression — emit as let _ :=
-                            lines.push(format!("  let _ := {}", emit_expr(expr, ctx)));
-                        }
-                    }
+    let stmts = body.stmts();
+    let mut lines = Vec::new();
+    for (i, stmt) in stmts.iter().enumerate() {
+        let is_last = i == stmts.len() - 1;
+        match stmt {
+            Stmt::Binding(_, _, _) => {
+                lines.push(format!("  {}", emit_stmt(stmt, ctx)));
+            }
+            Stmt::Expr(expr) => {
+                if is_last {
+                    lines.push(format!("  {}", emit_expr(expr, ctx)));
+                } else {
+                    lines.push(format!("  let _ := {}", emit_expr(expr, ctx)));
                 }
             }
-            lines.join("\n")
         }
     }
+    lines.join("\n")
 }
 
 /// Emit verify blocks as Lean 4 `example` declarations.
@@ -350,7 +752,11 @@ fn emit_verify_law_block(
     let mut lines = Vec::new();
     let fn_name = aver_name_to_lean(&vb.fn_name);
     let law_name = aver_name_to_lean(&law.name);
-    let theorem_base = format!("{}_law_{}", fn_name, law_name);
+    let spec_ref = canonical_spec_ref(&vb.fn_name, law, &ctx.fn_sigs);
+    let theorem_base = match &spec_ref {
+        Some(spec_ref) => format!("{}_eq_{}", fn_name, aver_name_to_lean(&spec_ref.spec_fn_name)),
+        None => format!("{}_law_{}", fn_name, law_name),
+    };
     let lhs_template = emit_expr(&law.lhs, ctx);
     let rhs_template = emit_expr(&law.rhs, ctx);
     let quant_params = law
@@ -366,12 +772,16 @@ fn emit_verify_law_block(
         .collect::<Vec<_>>()
         .join(" ");
 
-    lines.push(format!(
-        "-- verify law {}.{} ({} cases)",
-        fn_name,
-        law_name,
-        vb.cases.len()
-    ));
+    match &spec_ref {
+        Some(spec_ref) => lines.push(format!(
+            "-- verify law {}.spec {} ({} cases)",
+            fn_name, spec_ref.spec_fn_name, vb.cases.len()
+        )),
+        None => lines.push(format!(
+            "-- verify law {}.{} ({} cases)",
+            fn_name, law_name, vb.cases.len()
+        )),
+    }
     for given in &law.givens {
         lines.push(format!(
             "-- given {}: {} = {}",
@@ -381,13 +791,22 @@ fn emit_verify_law_block(
         ));
     }
     if !quant_params.is_empty() {
-        lines.push(format!(
-            "theorem {} : ∀ {}, {} = {} := by",
-            theorem_base, quant_params, lhs_template, rhs_template
-        ));
         if let Some(auto_proof) = emit_verify_law_forall_auto_proof(vb, law, ctx, verify_mode) {
+            lines.push(format!(
+                "theorem {} : ∀ {}, {} = {} := by",
+                theorem_base, quant_params, lhs_template, rhs_template
+            ));
             lines.extend(auto_proof);
+        } else if verify_mode == VerifyEmitMode::NativeDecide {
+            lines.push(format!(
+                "-- universal theorem {} omitted: sampled law shape is not auto-proved yet",
+                theorem_base
+            ));
         } else {
+            lines.push(format!(
+                "theorem {} : ∀ {}, {} = {} := by",
+                theorem_base, quant_params, lhs_template, rhs_template
+            ));
             lines.push(
                 "  -- verify law is sampled; universal proof must be provided manually".to_string(),
             );
@@ -511,6 +930,22 @@ pub fn emit_mutual_group_proof(
     ctx: &CodegenContext,
     plans: &std::collections::HashMap<String, RecursionPlan>,
 ) -> String {
+    if fns
+        .iter()
+        .all(|fd| matches!(plans.get(&fd.name), Some(RecursionPlan::MutualIntCountdown)))
+    {
+        return emit_fuelized_mutual_int_countdown_group(fns, ctx);
+    }
+
+    if fns.iter().all(|fd| {
+        matches!(
+            plans.get(&fd.name),
+            Some(RecursionPlan::MutualStringPosAdvance { .. })
+        )
+    }) {
+        return emit_fuelized_mutual_string_pos_group(fns, ctx, plans);
+    }
+
     let mut lines = Vec::new();
     lines.push("mutual".to_string());
     for fd in fns {
@@ -538,7 +973,7 @@ pub fn emit_mutual_group_proof(
                     let lean_first = aver_name_to_lean(first_name);
                     lines.push(format!("  termination_by Int.natAbs {}", lean_first));
                     lines.push("  decreasing_by".to_string());
-                    lines.push("    simp_wf".to_string());
+                    lines.push("    omega".to_string());
                 }
             }
             Some(RecursionPlan::MutualStringPosAdvance { rank }) => {
@@ -556,19 +991,9 @@ pub fn emit_mutual_group_proof(
                 }
             }
             Some(RecursionPlan::MutualSizeOfRanked {
-                rank,
-                metric_param_index,
-            }) => {
-                if let Some((metric_name, _)) = fd.params.get(metric_param_index) {
-                    let lean_metric = aver_name_to_lean(metric_name);
-                    lines.push(format!(
-                        "  termination_by (sizeOf {}, {})",
-                        lean_metric, rank
-                    ));
-                    lines.push("  decreasing_by".to_string());
-                    lines.push("    simp_wf".to_string());
-                }
-            }
+                rank: _,
+                metric_param_index: _,
+            }) => {}
             _ => {}
         }
         lines.push(String::new());

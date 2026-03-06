@@ -203,38 +203,28 @@ fn emit_fn_params(params: &[(String, String)], mutable: bool) -> String {
 }
 
 fn emit_fn_body(body: &FnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
-    match body {
-        FnBody::Expr(expr) => {
-            format!("    {}", emit_expr(expr, ctx, ectx))
-        }
-        FnBody::Block(stmts) => {
-            // Compute per-statement used_after sets
-            let stmt_ctxs = compute_block_used_after(stmts, &ectx.used_after, &ectx.local_types);
-            let mut lines = Vec::new();
-            for (i, stmt) in stmts.iter().enumerate() {
-                let is_last = i == stmts.len() - 1;
-                let sctx = &stmt_ctxs[i];
-                match stmt {
-                    Stmt::Binding(name, type_ann, _) => {
-                        lines.push(format!("    {}", emit_stmt(stmt, ctx, sctx)));
-                        // Track the binding type for subsequent statements
-                        // (already handled by local_types propagation in sctx,
-                        //  but we can enrich for bindings with type annotations)
-                        let _ = (name, type_ann); // used for enrichment if needed
-                    }
-                    Stmt::Expr(expr) => {
-                        if is_last {
-                            // Last expression is the return value
-                            lines.push(format!("    {}", emit_expr(expr, ctx, sctx)));
-                        } else {
-                            lines.push(format!("    {};", emit_expr(expr, ctx, sctx)));
-                        }
-                    }
+    let stmts = body.stmts();
+    // Compute per-statement used_after sets
+    let stmt_ctxs = compute_block_used_after(stmts, &ectx.used_after, &ectx.local_types);
+    let mut lines = Vec::new();
+    for (i, stmt) in stmts.iter().enumerate() {
+        let is_last = i == stmts.len() - 1;
+        let sctx = &stmt_ctxs[i];
+        match stmt {
+            Stmt::Binding(name, type_ann, _) => {
+                lines.push(format!("    {}", emit_stmt(stmt, ctx, sctx)));
+                let _ = (name, type_ann);
+            }
+            Stmt::Expr(expr) => {
+                if is_last {
+                    lines.push(format!("    {}", emit_expr(expr, ctx, sctx)));
+                } else {
+                    lines.push(format!("    {};", emit_expr(expr, ctx, sctx)));
                 }
             }
-            lines.join("\n")
         }
     }
+    lines.join("\n")
 }
 
 /// Recursively check if an expression contains the `?` (ErrorProp) operator.
@@ -263,13 +253,10 @@ fn expr_uses_error_prop(expr: &Expr) -> bool {
 }
 
 fn body_has_self_tailcall(body: &FnBody, fn_name: &str) -> bool {
-    match body {
-        FnBody::Expr(expr) => expr_has_self_tailcall(expr, fn_name),
-        FnBody::Block(stmts) => stmts.iter().any(|s| match s {
-            Stmt::Expr(e) => expr_has_self_tailcall(e, fn_name),
-            Stmt::Binding(_, _, e) => expr_has_self_tailcall(e, fn_name),
-        }),
-    }
+    body.stmts().iter().any(|s| match s {
+        Stmt::Expr(e) => expr_has_self_tailcall(e, fn_name),
+        Stmt::Binding(_, _, e) => expr_has_self_tailcall(e, fn_name),
+    })
 }
 
 fn expr_has_self_tailcall(expr: &Expr, fn_name: &str) -> bool {
@@ -313,40 +300,33 @@ fn emit_tco_body(
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> String {
-    match body {
-        FnBody::Expr(expr) => {
-            format!("        return {};", emit_tco_expr(expr, params, ctx, ectx))
-        }
-        FnBody::Block(stmts) => {
-            // Compute per-statement used_after
-            let stmt_ctxs = compute_block_used_after(stmts, &ectx.used_after, &ectx.local_types);
-            let mut lines = Vec::new();
-            for (i, stmt) in stmts.iter().enumerate() {
-                let is_last = i == stmts.len() - 1;
-                let sctx = &stmt_ctxs[i];
-                match stmt {
-                    Stmt::Binding(name, _, expr) => {
-                        lines.push(format!(
-                            "        let {} = {};",
-                            aver_name_to_rust(name),
-                            emit_expr(expr, ctx, sctx)
-                        ));
-                    }
-                    Stmt::Expr(expr) => {
-                        if is_last {
-                            lines.push(format!(
-                                "        return {};",
-                                emit_tco_expr(expr, params, ctx, sctx)
-                            ));
-                        } else {
-                            lines.push(format!("        {};", emit_expr(expr, ctx, sctx)));
-                        }
-                    }
+    let stmts = body.stmts();
+    let stmt_ctxs = compute_block_used_after(stmts, &ectx.used_after, &ectx.local_types);
+    let mut lines = Vec::new();
+    for (i, stmt) in stmts.iter().enumerate() {
+        let is_last = i == stmts.len() - 1;
+        let sctx = &stmt_ctxs[i];
+        match stmt {
+            Stmt::Binding(name, _, expr) => {
+                lines.push(format!(
+                    "        let {} = {};",
+                    aver_name_to_rust(name),
+                    emit_expr(expr, ctx, sctx)
+                ));
+            }
+            Stmt::Expr(expr) => {
+                if is_last {
+                    lines.push(format!(
+                        "        return {};",
+                        emit_tco_expr(expr, params, ctx, sctx)
+                    ));
+                } else {
+                    lines.push(format!("        {};", emit_expr(expr, ctx, sctx)));
                 }
             }
-            lines.join("\n")
         }
     }
+    lines.join("\n")
 }
 
 fn emit_tco_expr(
@@ -538,28 +518,24 @@ fn emit_memo_fn(
 }
 
 fn emit_memo_inner_body(body: &FnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
-    match body {
-        FnBody::Expr(expr) => emit_expr(expr, ctx, ectx),
-        FnBody::Block(stmts) => {
-            let stmt_ctxs = compute_block_used_after(stmts, &ectx.used_after, &ectx.local_types);
-            let mut parts = Vec::new();
-            for (i, stmt) in stmts.iter().enumerate() {
-                let is_last = i == stmts.len() - 1;
-                let sctx = &stmt_ctxs[i];
-                match stmt {
-                    Stmt::Binding(_, _, _) => parts.push(emit_stmt(stmt, ctx, sctx)),
-                    Stmt::Expr(expr) => {
-                        if is_last {
-                            parts.push(emit_expr(expr, ctx, sctx));
-                        } else {
-                            parts.push(format!("{};", emit_expr(expr, ctx, sctx)));
-                        }
-                    }
+    let stmts = body.stmts();
+    let stmt_ctxs = compute_block_used_after(stmts, &ectx.used_after, &ectx.local_types);
+    let mut parts = Vec::new();
+    for (i, stmt) in stmts.iter().enumerate() {
+        let is_last = i == stmts.len() - 1;
+        let sctx = &stmt_ctxs[i];
+        match stmt {
+            Stmt::Binding(_, _, _) => parts.push(emit_stmt(stmt, ctx, sctx)),
+            Stmt::Expr(expr) => {
+                if is_last {
+                    parts.push(emit_expr(expr, ctx, sctx));
+                } else {
+                    parts.push(format!("{};", emit_expr(expr, ctx, sctx)));
                 }
             }
-            parts.join(" ")
         }
     }
+    parts.join(" ")
 }
 
 /// Emit the main function, incorporating top-level statements.
@@ -585,34 +561,23 @@ pub fn emit_main(main_fn: Option<&FnDef>, top_stmts: &[&Stmt], ctx: &CodegenCont
     // Main function body
     if let Some(fd) = main_fn {
         let main_ectx = build_fn_ectx(fd, ctx);
-        match &*fd.body {
-            FnBody::Expr(expr) => {
-                if returns_result {
-                    writeln!(out, "    {}", emit_expr(expr, ctx, &main_ectx)).unwrap();
-                } else {
-                    writeln!(out, "    {};", emit_expr(expr, ctx, &main_ectx)).unwrap();
-                }
-            }
-            FnBody::Block(stmts) => {
-                let stmt_ctxs =
-                    compute_block_used_after(stmts, &main_ectx.used_after, &main_ectx.local_types);
-                for (i, stmt) in stmts.iter().enumerate() {
-                    let is_last = i == stmts.len() - 1;
-                    let sctx = &stmt_ctxs[i];
-                    if is_last && returns_result {
-                        // Last expression is the return value
-                        match stmt {
-                            Stmt::Binding(_, _, _) => {
-                                writeln!(out, "    {}", emit_stmt(stmt, ctx, sctx)).unwrap();
-                            }
-                            Stmt::Expr(expr) => {
-                                writeln!(out, "    {}", emit_expr(expr, ctx, sctx)).unwrap();
-                            }
-                        }
-                    } else {
+        let stmts = fd.body.stmts();
+        let stmt_ctxs =
+            compute_block_used_after(stmts, &main_ectx.used_after, &main_ectx.local_types);
+        for (i, stmt) in stmts.iter().enumerate() {
+            let is_last = i == stmts.len() - 1;
+            let sctx = &stmt_ctxs[i];
+            if is_last && returns_result {
+                match stmt {
+                    Stmt::Binding(_, _, _) => {
                         writeln!(out, "    {}", emit_stmt(stmt, ctx, sctx)).unwrap();
                     }
+                    Stmt::Expr(expr) => {
+                        writeln!(out, "    {}", emit_expr(expr, ctx, sctx)).unwrap();
+                    }
                 }
+            } else {
+                writeln!(out, "    {}", emit_stmt(stmt, ctx, sctx)).unwrap();
             }
         }
     }
@@ -698,7 +663,9 @@ mod tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::Expr(Expr::Literal(crate::ast::Literal::Int(0)))),
+            body: Rc::new(FnBody::from_expr(Expr::Literal(crate::ast::Literal::Int(
+                0,
+            )))),
             resolution: None,
         }
     }

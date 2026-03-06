@@ -28,7 +28,8 @@ pub fn connect(host: &str, port: i64) -> Result<TcpConnection, String> {
     }
 
     let socket_addr = resolve(&format!("{}:{}", host, port))?;
-    let stream = TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT).map_err(|e| e.to_string())?;
+    let stream =
+        TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT).map_err(|e| e.to_string())?;
     stream.set_read_timeout(Some(IO_TIMEOUT)).ok();
     stream.set_write_timeout(Some(IO_TIMEOUT)).ok();
 
@@ -90,10 +91,13 @@ pub fn close(conn: &TcpConnection) -> Result<(), String> {
 
 pub fn send(host: &str, port: i64, message: &str) -> Result<String, String> {
     let socket_addr = resolve(&format!("{}:{}", host, port))?;
-    let mut stream = TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT).map_err(|e| e.to_string())?;
+    let mut stream =
+        TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT).map_err(|e| e.to_string())?;
     stream.set_read_timeout(Some(IO_TIMEOUT)).ok();
     stream.set_write_timeout(Some(IO_TIMEOUT)).ok();
-    stream.write_all(message.as_bytes()).map_err(|e| e.to_string())?;
+    stream
+        .write_all(message.as_bytes())
+        .map_err(|e| e.to_string())?;
     stream.shutdown(std::net::Shutdown::Write).ok();
 
     let mut buf = Vec::new();
@@ -109,8 +113,7 @@ pub fn send(host: &str, port: i64, message: &str) -> Result<String, String> {
 
 pub fn ping(host: &str, port: i64) -> Result<(), String> {
     let socket_addr = resolve(&format!("{}:{}", host, port))?;
-    TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT)
-        .map_err(|e| e.to_string())?;
+    TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT).map_err(|e| e.to_string())?;
     Ok(())
 }
 

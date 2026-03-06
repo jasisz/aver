@@ -75,21 +75,19 @@ fn main() {
         Commands::Compile {
             file,
             output,
-            target,
             name,
             module_root,
-            lean_verify,
-            lean_proof_mode,
         } => {
-            commands::cmd_compile(
-                file,
-                output,
-                target,
-                name.as_deref(),
-                module_root.as_deref(),
-                lean_verify,
-                *lean_proof_mode,
-            );
+            commands::cmd_compile(file, output, name.as_deref(), module_root.as_deref());
+        }
+        Commands::Proof {
+            file,
+            output,
+            name,
+            module_root,
+            verify_mode,
+        } => {
+            commands::cmd_proof(file, output, name.as_deref(), module_root.as_deref(), verify_mode);
         }
     }
 }

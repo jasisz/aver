@@ -35,25 +35,11 @@ fn resolve_fn(fd: &mut FnDef) {
     }
 
     // Scan body for val/var bindings to pre-allocate slots
-    match fd.body.as_ref() {
-        FnBody::Expr(expr) => {
-            collect_expr_bindings(expr, &mut local_slots, &mut next_slot);
-        }
-        FnBody::Block(stmts) => {
-            collect_binding_slots(stmts, &mut local_slots, &mut next_slot);
-        }
-    }
+    collect_binding_slots(fd.body.stmts(), &mut local_slots, &mut next_slot);
 
     // Resolve expressions in the body
     let mut body = fd.body.as_ref().clone();
-    match &mut body {
-        FnBody::Expr(expr) => {
-            resolve_expr(expr, &local_slots);
-        }
-        FnBody::Block(stmts) => {
-            resolve_stmts(stmts, &local_slots);
-        }
-    }
+    resolve_stmts(body.stmts_mut(), &local_slots);
     fd.body = Rc::new(body);
 
     fd.resolution = Some(FnResolution {
@@ -300,7 +286,7 @@ mod tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::Expr(Expr::BinOp(
+            body: Rc::new(FnBody::from_expr(Expr::BinOp(
                 BinOp::Add,
                 Box::new(Expr::Ident("a".to_string())),
                 Box::new(Expr::Ident("b".to_string())),
@@ -313,8 +299,8 @@ mod tests {
         assert_eq!(res.local_slots["b"], 1);
         assert_eq!(res.local_count, 2);
 
-        match fd.body.as_ref() {
-            FnBody::Expr(Expr::BinOp(_, left, right)) => {
+        match fd.body.tail_expr() {
+            Some(Expr::BinOp(_, left, right)) => {
                 assert_eq!(**left, Expr::Resolved(0));
                 assert_eq!(**right, Expr::Resolved(1));
             }
@@ -331,18 +317,16 @@ mod tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::Expr(Expr::FnCall(
+            body: Rc::new(FnBody::from_expr(Expr::FnCall(
                 Box::new(Expr::Ident("Console".to_string())),
                 vec![Expr::Ident("x".to_string())],
             ))),
             resolution: None,
         };
         resolve_fn(&mut fd);
-        match fd.body.as_ref() {
-            FnBody::Expr(Expr::FnCall(func, args)) => {
-                // Console stays as Ident (global)
+        match fd.body.tail_expr() {
+            Some(Expr::FnCall(func, args)) => {
                 assert_eq!(**func, Expr::Ident("Console".to_string()));
-                // x is resolved to slot 0
                 assert_eq!(args[0], Expr::Resolved(0));
             }
             other => panic!("unexpected body: {:?}", other),
@@ -378,22 +362,18 @@ mod tests {
         assert_eq!(res.local_slots["y"], 1);
         assert_eq!(res.local_count, 2);
 
-        match fd.body.as_ref() {
-            FnBody::Block(stmts) => {
-                // val y = x + 1  →  val y = Resolved(0,0) + 1
-                match &stmts[0] {
-                    Stmt::Binding(_, _, Expr::BinOp(_, left, _)) => {
-                        assert_eq!(**left, Expr::Resolved(0));
-                    }
-                    other => panic!("unexpected stmt: {:?}", other),
-                }
-                // y  →  Resolved(0,1)
-                match &stmts[1] {
-                    Stmt::Expr(Expr::Resolved(1)) => {}
-                    other => panic!("unexpected stmt: {:?}", other),
-                }
+        let stmts = fd.body.stmts();
+        // val y = x + 1  →  val y = Resolved(0,0) + 1
+        match &stmts[0] {
+            Stmt::Binding(_, _, Expr::BinOp(_, left, _)) => {
+                assert_eq!(**left, Expr::Resolved(0));
             }
-            other => panic!("unexpected body: {:?}", other),
+            other => panic!("unexpected stmt: {:?}", other),
+        }
+        // y  →  Resolved(0,1)
+        match &stmts[1] {
+            Stmt::Expr(Expr::Resolved(1)) => {}
+            other => panic!("unexpected stmt: {:?}", other),
         }
     }
 
@@ -407,7 +387,7 @@ mod tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::Expr(Expr::Match {
+            body: Rc::new(FnBody::from_expr(Expr::Match {
                 subject: Box::new(Expr::Ident("x".to_string())),
                 arms: vec![
                     MatchArm {
@@ -431,9 +411,8 @@ mod tests {
         // x=0, v=1
         assert_eq!(res.local_slots["v"], 1);
 
-        match fd.body.as_ref() {
-            FnBody::Expr(Expr::Match { arms, .. }) => {
-                // v in arm body should be Resolved(0, 1)
+        match fd.body.tail_expr() {
+            Some(Expr::Match { arms, .. }) => {
                 assert_eq!(*arms[0].body, Expr::Resolved(1));
             }
             other => panic!("unexpected body: {:?}", other),

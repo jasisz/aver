@@ -39,7 +39,11 @@ fn runtime_override_path() -> Option<String> {
         .map(|value| value.replace('\\', "/"))
 }
 
-fn runtime_dependency_line(runtime_version: &str, needs_http: bool, local_path: Option<&str>) -> String {
+fn runtime_dependency_line(
+    runtime_version: &str,
+    needs_http: bool,
+    local_path: Option<&str>,
+) -> String {
     match (needs_http, local_path) {
         (true, Some(path)) => format!(
             "aver-rt = {{ path = {:?}, version = {:?}, features = [\"http\"] }}",

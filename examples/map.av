@@ -1,7 +1,7 @@
 module MapExample
     intent =
         "Demonstrates typed Map usage in Aver."
-        "Shows map literals, Map.get, Map.entries, and recursive counting."
+        "Shows map literals, Map.get, Map.entries, recursive counting, and proof-oriented map laws."
 
 fn emptyCounts() -> Map<String, Int>
     ? "Creates an empty word-count map."
@@ -23,6 +23,11 @@ verify incCount law keyPresent
     given word: String = ["a", "z", "new"]
     Map.has(incCount(counts, word), word) => true
 
+verify incCount law trackedCountStepsByOne
+    given counts: Map<String, Int> = [Map.empty(), {"a" => 1}, {"a" => 5, "x" => 2}]
+    given word: String = ["a", "new"]
+    Option.withDefault(Map.get(incCount(counts, word), word), 0) => Option.withDefault(Map.get(counts, word), 0) + 1
+
 fn countWords(words: List<String>) -> Map<String, Int>
     ? "Counts occurrences of each word."
     match words
@@ -32,6 +37,30 @@ fn countWords(words: List<String>) -> Map<String, Int>
 verify countWords
     countWords([])                => Map.empty()
     countWords(["a", "b", "a"])  => {"a" => 2, "b" => 1}
+
+fn countWord(words: List<String>, target: String) -> Int
+    ? "Counts one tracked word by direct list recursion."
+    match words
+        [] -> 0
+        [word, ..rest] -> match word == target
+            true -> countWord(rest, target) + 1
+            false -> countWord(rest, target)
+
+verify countWord
+    countWord([], "a") => 0
+    countWord(["a", "b", "a"], "a") => 2
+    countWord(["a", "b", "a"], "b") => 1
+    countWord(["a", "b", "a"], "x") => 0
+
+verify countWords law presenceMatchesContains
+    given words: List<String> = [[], ["a"], ["a", "b", "a"], ["b", "b", "c"]]
+    given word: String = ["a", "b", "c", "missing"]
+    Map.has(countWords(words), word) => containsWord(words, word)
+
+verify countWords law trackedWordCount
+    given words: List<String> = [[], ["a"], ["a", "b", "a"], ["b", "b", "c"]]
+    given word: String = ["a", "b", "c", "missing"]
+    Option.withDefault(Map.get(countWords(words), word), 0) => countWord(words, word)
 
 fn containsWord(words: List<String>, word: String) -> Bool
     ? "Checks whether a word appears in a list."

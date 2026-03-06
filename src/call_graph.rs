@@ -117,16 +117,9 @@ pub fn recursive_scc_ids(items: &[TopLevel]) -> HashMap<String, usize> {
 }
 
 fn collect_codegen_deps_body(body: &FnBody, fn_names: &HashSet<String>, out: &mut HashSet<String>) {
-    match body {
-        FnBody::Expr(e) => collect_codegen_deps_expr(e, fn_names, out),
-        FnBody::Block(stmts) => {
-            for s in stmts {
-                match s {
-                    Stmt::Binding(_, _, e) | Stmt::Expr(e) => {
-                        collect_codegen_deps_expr(e, fn_names, out)
-                    }
-                }
-            }
+    for s in body.stmts() {
+        match s {
+            Stmt::Binding(_, _, e) | Stmt::Expr(e) => collect_codegen_deps_expr(e, fn_names, out),
         }
     }
 }
@@ -300,24 +293,14 @@ fn is_recursive_scc(scc: &[String], graph: &HashMap<String, HashSet<String>>) ->
 }
 
 pub(crate) fn collect_callees_body(body: &FnBody, callees: &mut HashSet<String>) {
-    match body {
-        FnBody::Expr(e) => collect_callees_expr(e, callees),
-        FnBody::Block(stmts) => {
-            for s in stmts {
-                collect_callees_stmt(s, callees);
-            }
-        }
+    for s in body.stmts() {
+        collect_callees_stmt(s, callees);
     }
 }
 
 fn count_recursive_calls_body(body: &FnBody, recursive: &HashSet<String>, out: &mut usize) {
-    match body {
-        FnBody::Expr(e) => count_recursive_calls_expr(e, recursive, out),
-        FnBody::Block(stmts) => {
-            for s in stmts {
-                count_recursive_calls_stmt(s, recursive, out);
-            }
-        }
+    for s in body.stmts() {
+        count_recursive_calls_stmt(s, recursive, out);
     }
 }
 

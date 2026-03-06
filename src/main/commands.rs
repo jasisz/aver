@@ -498,15 +498,11 @@ pub(super) fn cmd_verify(file: &str, module_root_override: Option<&str>) {
     }
 }
 
-pub(super) fn cmd_compile(
+fn build_codegen_context(
     file: &str,
-    output_dir: &str,
-    target: &super::cli::Target,
     project_name: Option<&str>,
     module_root_override: Option<&str>,
-    lean_verify: &super::cli::LeanVerifyMode,
-    lean_proof_mode: bool,
-) {
+) -> (codegen::CodegenContext, String) {
     let module_root = resolve_module_root(module_root_override);
     let source = match read_file(file) {
         Ok(s) => s,
@@ -566,57 +562,16 @@ pub(super) fn cmd_compile(
     // Build codegen context
     let mut ctx = codegen::build_context(items, &tc_result, memo_fns, name, modules);
     ctx.policy = policy;
+    (ctx, module_root)
+}
 
-    // Transpile to the selected target
-    let (output, build_hint) = match target {
-        super::cli::Target::Rust => {
-            let out = rust_codegen::transpile(&ctx);
-            let hint = format!("cd {} && cargo build && cargo run", output_dir);
-            (out, hint)
-        }
-        super::cli::Target::Lean => {
-            if lean_proof_mode
-                && matches!(
-                    lean_verify,
-                    super::cli::LeanVerifyMode::Sorry | super::cli::LeanVerifyMode::TheoremSkeleton
-                )
-            {
-                eprintln!(
-                    "{}",
-                    "Lean proof mode requires --lean-verify auto (not sorry/theorem-skeleton)."
-                        .red()
-                );
-                process::exit(1);
-            }
-
-            if lean_proof_mode {
-                let proof_issues = lean_codegen::proof_mode_issues(&ctx);
-                if !proof_issues.is_empty() {
-                    eprintln!("{}", "Lean proof mode blocked compilation:".red());
-                    for issue in proof_issues {
-                        eprintln!("  - {}", issue);
-                    }
-                    process::exit(1);
-                }
-            }
-
-            let verify_mode = match lean_verify {
-                super::cli::LeanVerifyMode::Auto => lean_codegen::VerifyEmitMode::NativeDecide,
-                super::cli::LeanVerifyMode::Sorry => lean_codegen::VerifyEmitMode::Sorry,
-                super::cli::LeanVerifyMode::TheoremSkeleton => {
-                    lean_codegen::VerifyEmitMode::TheoremSkeleton
-                }
-            };
-            let out = if lean_proof_mode {
-                lean_codegen::transpile_for_proof_mode(&ctx, verify_mode)
-            } else {
-                lean_codegen::transpile_with_verify_mode(&ctx, verify_mode)
-            };
-            let hint = format!("cd {} && lake build", output_dir);
-            (out, hint)
-        }
-    };
-
+fn write_codegen_output(
+    file: &str,
+    output_dir: &str,
+    target_label: &str,
+    build_hint: &str,
+    output: &codegen::ProjectOutput,
+) {
     // Write output files
     let out_path = Path::new(output_dir);
     for (rel_path, content) in &output.files {
@@ -639,15 +594,57 @@ pub(super) fn cmd_compile(
         }
     }
 
-    let target_label = match target {
-        super::cli::Target::Rust => "Rust",
-        super::cli::Target::Lean => "Lean 4",
-    };
     println!(
         "{}",
         format!("Compiled {} → {}/ [{}]", file, output_dir, target_label).green()
     );
     println!("  {}", build_hint.cyan());
+}
+
+pub(super) fn cmd_compile(
+    file: &str,
+    output_dir: &str,
+    project_name: Option<&str>,
+    module_root_override: Option<&str>,
+) {
+    let (ctx, _module_root) = build_codegen_context(file, project_name, module_root_override);
+    let output = rust_codegen::transpile(&ctx);
+    let build_hint = format!("cd {} && cargo build && cargo run", output_dir);
+    write_codegen_output(file, output_dir, "Rust", &build_hint, &output);
+}
+
+pub(super) fn cmd_proof(
+    file: &str,
+    output_dir: &str,
+    project_name: Option<&str>,
+    module_root_override: Option<&str>,
+    verify_mode: &super::cli::ProofVerifyMode,
+) {
+    let (ctx, _module_root) = build_codegen_context(file, project_name, module_root_override);
+
+    let proof_issues = lean_codegen::proof_mode_issues(&ctx);
+    if !proof_issues.is_empty() {
+        eprintln!(
+            "{}",
+            "Proof-mode warnings (unsupported recursive shapes will fall back to partial defs):"
+                .yellow()
+        );
+        for issue in proof_issues {
+            eprintln!("  - {}", issue);
+        }
+    }
+
+    let verify_mode = match verify_mode {
+        super::cli::ProofVerifyMode::Auto => lean_codegen::VerifyEmitMode::NativeDecide,
+        super::cli::ProofVerifyMode::Sorry => lean_codegen::VerifyEmitMode::Sorry,
+        super::cli::ProofVerifyMode::TheoremSkeleton => {
+            lean_codegen::VerifyEmitMode::TheoremSkeleton
+        }
+    };
+
+    let output = lean_codegen::transpile_for_proof_mode(&ctx, verify_mode);
+    let build_hint = format!("cd {} && lake build", output_dir);
+    write_codegen_output(file, output_dir, "Lean 4", &build_hint, &output);
 }
 
 /// Load dependent modules for codegen (recursive, with circular import detection).

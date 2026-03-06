@@ -332,13 +332,8 @@ impl Interpreter {
         body: &FnBody,
         out: &mut std::collections::BTreeMap<MatchSiteKey, usize>,
     ) {
-        match body {
-            FnBody::Expr(expr) => Self::collect_match_sites_from_expr(expr, out),
-            FnBody::Block(stmts) => {
-                for stmt in stmts {
-                    Self::collect_match_sites_from_stmt(stmt, out);
-                }
-            }
+        for stmt in body.stmts() {
+            Self::collect_match_sites_from_stmt(stmt, out);
         }
     }
 

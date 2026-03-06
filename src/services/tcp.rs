@@ -180,13 +180,22 @@ fn tcp_connection_arg(val: &Value, method: &str) -> Result<TcpConnection, Runtim
                 }
             }
             let id = id.ok_or_else(|| {
-                RuntimeError::Error(format!("{}: Tcp.Connection record missing 'id' field", method))
+                RuntimeError::Error(format!(
+                    "{}: Tcp.Connection record missing 'id' field",
+                    method
+                ))
             })?;
             let host = host.ok_or_else(|| {
-                RuntimeError::Error(format!("{}: Tcp.Connection record missing 'host' field", method))
+                RuntimeError::Error(format!(
+                    "{}: Tcp.Connection record missing 'host' field",
+                    method
+                ))
             })?;
             let port = port.ok_or_else(|| {
-                RuntimeError::Error(format!("{}: Tcp.Connection record missing 'port' field", method))
+                RuntimeError::Error(format!(
+                    "{}: Tcp.Connection record missing 'port' field",
+                    method
+                ))
             })?;
             Ok(TcpConnection { id, host, port })
         }

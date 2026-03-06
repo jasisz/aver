@@ -95,18 +95,15 @@ fn binding_in_fn_body() {
     let src = "fn f() -> Int\n    x = 10\n    x\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Block(stmts) = &*fd.body {
-            assert!(
-                matches!(stmts[0], Stmt::Binding(_, _, _)),
-                "first stmt should be Binding"
-            );
-            assert!(
-                matches!(stmts[1], Stmt::Expr(_)),
-                "second stmt should be Expr"
-            );
-        } else {
-            panic!("expected block body");
-        }
+        let stmts = fd.body.stmts();
+        assert!(
+            matches!(stmts[0], Stmt::Binding(_, _, _)),
+            "first stmt should be Binding"
+        );
+        assert!(
+            matches!(stmts[1], Stmt::Expr(_)),
+            "second stmt should be Expr"
+        );
     } else {
         panic!("expected FnDef");
     }
@@ -141,15 +138,12 @@ fn typed_binding_in_fn_body() {
     let src = "fn f() -> Int\n    x: Int = 10\n    x\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Block(stmts) = &*fd.body {
-            if let Stmt::Binding(name, type_ann, _) = &stmts[0] {
-                assert_eq!(name, "x");
-                assert_eq!(type_ann.as_deref(), Some("Int"));
-            } else {
-                panic!("expected typed binding");
-            }
+        let stmts = fd.body.stmts();
+        if let Stmt::Binding(name, type_ann, _) = &stmts[0] {
+            assert_eq!(name, "x");
+            assert_eq!(type_ann.as_deref(), Some("Int"));
         } else {
-            panic!("expected block body");
+            panic!("expected typed binding");
         }
     } else {
         panic!("expected FnDef");

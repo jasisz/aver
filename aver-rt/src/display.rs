@@ -116,7 +116,13 @@ impl<K: AverDisplay + Eq + std::hash::Hash + Ord, V: AverDisplay> AverDisplay
         keys.sort();
         let parts: Vec<String> = keys
             .iter()
-            .map(|k| format!("{}: {}", k.aver_display_inner(), self[*k].aver_display_inner()))
+            .map(|k| {
+                format!(
+                    "{}: {}",
+                    k.aver_display_inner(),
+                    self[*k].aver_display_inner()
+                )
+            })
             .collect();
         format!("{{{}}}", parts.join(", "))
     }

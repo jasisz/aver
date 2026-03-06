@@ -1,6 +1,6 @@
 module LawAuto
     intent =
-        "Demonstrates verify law with Lean auto verification mode."
+        "Demonstrates Lean proof export for pure Aver code."
         "Shows auto-proven universal laws, symmetric variants, and sampled-only fallback laws."
 
 fn id(x: Int) -> Int
@@ -102,5 +102,5 @@ verify addOne law identityViaAdd
 fn main() -> Unit
     ! [Console.print]
     Console.print("LawAuto: run `aver verify examples/law_auto.av`")
-    Console.print("LawAuto: compile with `aver compile examples/law_auto.av -t lean --lean-verify auto`")
+    Console.print("LawAuto: proof with `aver proof examples/law_auto.av --verify-mode auto`")
     Console.print("LawAuto: inspect generated theorems for auto and sampled fallback laws")

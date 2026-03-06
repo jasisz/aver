@@ -75,31 +75,14 @@ impl TypeChecker {
 
             self.current_fn_ret = Some(declared_ret.clone());
 
-            match &*f.body {
-                FnBody::Expr(expr) => {
-                    let inferred = self.infer_type(expr);
-                    if !Self::constraint_compatible(&inferred, &declared_ret) {
-                        self.error(format!(
-                            "Function '{}': body returns {} but declared return type is {}",
-                            f.name,
-                            inferred.display(),
-                            declared_ret.display()
-                        ));
-                    }
-                    // Check effect propagation in expression
-                    self.check_effects_in_expr(expr, &f.name, &declared_effects);
-                }
-                FnBody::Block(stmts) => {
-                    let last_type = self.check_stmts(stmts, &f.name, &declared_effects);
-                    if !Self::constraint_compatible(&last_type, &declared_ret) {
-                        self.error(format!(
-                            "Function '{}': body returns {} but declared return type is {}",
-                            f.name,
-                            last_type.display(),
-                            declared_ret.display()
-                        ));
-                    }
-                }
+            let last_type = self.check_stmts(f.body.stmts(), &f.name, &declared_effects);
+            if !Self::constraint_compatible(&last_type, &declared_ret) {
+                self.error(format!(
+                    "Function '{}': body returns {} but declared return type is {}",
+                    f.name,
+                    last_type.display(),
+                    declared_ret.display()
+                ));
             }
 
             self.current_fn_ret = None;

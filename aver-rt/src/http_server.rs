@@ -9,7 +9,8 @@ where
 {
     let listener = bind_listener(port)?;
     for incoming in listener.incoming() {
-        let mut stream = incoming.map_err(|e| format!("HttpServer.listen: failed to accept connection: {}", e))?;
+        let mut stream = incoming
+            .map_err(|e| format!("HttpServer.listen: failed to accept connection: {}", e))?;
         serve_one(&mut stream, &mut handler);
     }
     Ok(())
@@ -22,7 +23,8 @@ where
 {
     let listener = bind_listener(port)?;
     for incoming in listener.incoming() {
-        let mut stream = incoming.map_err(|e| format!("HttpServer.listen: failed to accept connection: {}", e))?;
+        let mut stream = incoming
+            .map_err(|e| format!("HttpServer.listen: failed to accept connection: {}", e))?;
         let ctx = context.clone();
         serve_one(&mut stream, |request| handler(ctx.clone(), request));
     }
@@ -83,7 +85,9 @@ where
 fn parse_http_request(stream: &mut TcpStream) -> Result<HttpRequest, String> {
     const BODY_LIMIT: usize = 10 * 1024 * 1024;
 
-    let reader_stream = stream.try_clone().map_err(|e| format!("cannot clone TCP stream: {}", e))?;
+    let reader_stream = stream
+        .try_clone()
+        .map_err(|e| format!("cannot clone TCP stream: {}", e))?;
     let mut reader = BufReader::new(reader_stream);
 
     let mut request_line = String::new();

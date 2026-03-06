@@ -410,10 +410,7 @@ impl Interpreter {
             }
             self.active_local_slots = Some(res.local_slots.clone());
             self.push_env(EnvFrame::Slots(slots));
-            let r = match &**body {
-                FnBody::Expr(e) => self.eval_expr(e),
-                FnBody::Block(stmts) => self.exec_body_resolved(stmts, &res.local_slots),
-            };
+            let r = self.exec_body_resolved(body.stmts(), &res.local_slots);
             self.pop_env();
             r
         } else {
@@ -423,10 +420,7 @@ impl Interpreter {
                 params_scope.insert(param_name.clone(), Rc::new(arg_val));
             }
             self.push_env(EnvFrame::Owned(params_scope));
-            let r = match &**body {
-                FnBody::Expr(e) => self.eval_expr(e),
-                FnBody::Block(stmts) => self.exec_body(stmts),
-            };
+            let r = self.exec_body(body.stmts());
             self.pop_env();
             r
         };
@@ -529,10 +523,7 @@ impl Interpreter {
                 }
                 self.active_local_slots = Some(res.local_slots.clone());
                 self.push_env(EnvFrame::Slots(slots));
-                let r = match &*cur_body {
-                    FnBody::Expr(e) => self.eval_expr(e),
-                    FnBody::Block(stmts) => self.exec_body_resolved(stmts, &res.local_slots),
-                };
+                let r = self.exec_body_resolved(cur_body.stmts(), &res.local_slots);
                 self.pop_env();
                 r
             } else {
@@ -542,10 +533,7 @@ impl Interpreter {
                 }
                 let saved_frames: Vec<EnvFrame> = self.env.drain(1..).collect();
                 self.push_env(EnvFrame::Owned(params_scope));
-                let r = match &*cur_body {
-                    FnBody::Expr(e) => self.eval_expr(e),
-                    FnBody::Block(stmts) => self.exec_body(stmts),
-                };
+                let r = self.exec_body(cur_body.stmts());
                 self.pop_env();
                 self.env.extend(saved_frames);
                 r

@@ -1,6 +1,6 @@
 # Aver
 
-Aver is a statically typed language designed for AI to write in and humans to review, with a fast interpreter for iteration and a Rust transpiler for deployment.
+Aver is a statically typed language designed for AI to write in and humans to review, with a fast interpreter for iteration, a Rust backend for deployment, and Lean proof export for pure core logic.
 
 It is built around one idea: the risky part of AI-written code is usually not syntax, it is missing intent. Aver makes that intent explicit and machine-readable:
 
@@ -9,7 +9,8 @@ It is built around one idea: the risky part of AI-written code is usually not sy
 - pure behavior lives in colocated `verify` blocks
 - effectful behavior can be recorded and replayed deterministically
 - `aver context` exports the contract-level view of a module graph for humans or LLMs
-- `aver compile -t rust` turns an Aver module graph into a Rust/Cargo project
+- `aver compile` turns an Aver module graph into a Rust/Cargo project
+- `aver proof` exports the pure subset of an Aver module graph to a Lean 4 proof project
 
 This is not a language optimized for humans to type by hand all day. It is optimized for AI to generate code that humans can inspect, constrain, test, and ship.
 
@@ -50,7 +51,7 @@ aver run      hello.av
 aver verify   hello.av
 aver check    hello.av
 aver context  hello.av
-aver compile  hello.av -t rust -o out/
+aver compile  hello.av -o out/
 (cd out && cargo run)
 ```
 
@@ -65,8 +66,10 @@ cargo run -- run      examples/calculator.av
 cargo run -- verify   examples/calculator.av
 cargo run -- check    examples/calculator.av
 cargo run -- context  examples/calculator.av
-cargo run -- compile  examples/calculator.av -t rust -o out/
+cargo run -- compile  examples/calculator.av -o out/
 (cd out && cargo run)
+cargo run -- proof    examples/law_auto.av -o proof/
+(cd proof && lake build)
 cargo run -- run      examples/services/console_demo.av --record recordings/
 cargo run -- replay   recordings/ --test --diff
 ```
@@ -261,6 +264,8 @@ verify add law commutative
 
 `verify ... law ...` is deterministic, not random sampling. Cases are generated as the cartesian product of explicit domains, capped at `10_000`.
 
+For the proof-oriented style where a law relates an implementation to a pure spec function, see [docs/language.md](docs/language.md) and [docs/lean.md](docs/lean.md).
+
 ### Replay
 
 Use deterministic replay for effectful code:
@@ -286,7 +291,7 @@ aver check   file.av
 aver run     file.av
 aver verify  file.av
 aver context file.av
-aver compile file.av -t rust -o out/
+aver compile file.av -o out/
 ```
 
 For replay, formatting, REPL, and the full command surface, use `aver --help` and the docs below.
@@ -311,21 +316,35 @@ For constructor rules and edge cases, see [docs/constructors.md](docs/constructo
 
 For namespaces, effectful services, and the standard library, see [docs/services.md](docs/services.md).
 
-## Interpreter and transpiler
+## Execution and proof backends
 
-Aver has three execution paths:
+Aver has three backend paths:
 
 - interpreter-first workflow for `run`, `check`, `verify`, `replay`, and `context`
-- Rust transpilation for generating a native Cargo project with `aver compile -t rust`
-- optional Lean backend for proof-oriented export of pure core logic
+- Rust compilation for generating a native Cargo project with `aver compile`
+- Lean proof export for pure core logic and `verify` / `verify law` obligations with `aver proof`
 
-Typical Rust transpilation flow:
+Typical Rust flow:
 
 ```bash
-aver compile examples/calculator.av -t rust -o out/
+aver compile examples/calculator.av -o out/
 cd out
 cargo run
 ```
+
+Typical Lean flow:
+
+```bash
+aver proof examples/law_auto.av --verify-mode auto -o out/
+cd out
+lake build
+```
+
+Rust is the deployment backend. Lean is the proof-export backend for the pure subset of Aver.
+
+For backend-specific details, see:
+- [docs/rust.md](docs/rust.md) for Cargo generation and deployment flow
+- [docs/lean.md](docs/lean.md) for proof export, formal-verification path, and current Lean examples
 
 ---
 
@@ -339,6 +358,8 @@ Curated examples:
 | `calculator.av` | Result types, match, decision blocks |
 | `shapes.av` | Sum types, qualified constructors (`Shape.Circle`), match on variants |
 | `fibonacci.av` | Tail recursion, records, decision blocks |
+| `law_auto.av` | Lean proof export, `verify law`, auto-proved universal theorems |
+| `spec_laws.av` | Implementation-vs-spec laws (`verify foo law fooSpec`) and Lean spec theorems |
 | `mission_control.av` | Command parser, pure state machine, effectful shell |
 | `app.av` | Module imports via `depends [Examples.Fibonacci]` |
 | `services/console_demo.av` | Console service and replay-friendly effectful flow |
@@ -362,5 +383,7 @@ See `examples/` for the full set.
 | [docs/services.md](docs/services.md) | Full API reference for all namespaces (signatures, effects, notes) |
 | [docs/types.md](docs/types.md) | Key data types (compiler, AST, runtime) |
 | [docs/extending.md](docs/extending.md) | How to add keywords, namespace functions, expression types |
-| [docs/transpilation.md](docs/transpilation.md) | Transpilation (`aver compile`): targets, flags, supported features |
+| [docs/transpilation.md](docs/transpilation.md) | Overview of `aver compile` and `aver proof` |
+| [docs/rust.md](docs/rust.md) | Rust backend: deployment-oriented Cargo generation |
+| [docs/lean.md](docs/lean.md) | Lean backend: proof export and formal-verification path |
 | [docs/decisions.md](docs/decisions.md) | Decision export generated via `aver context --decisions-only` |

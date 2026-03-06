@@ -1,7 +1,7 @@
 /// Aver → target language transpilation.
 ///
 /// The codegen module transforms a type-checked Aver AST into source code
-/// for a target language. Current backends: Rust and Lean (WIP).
+/// for a target language. Current backends: Rust deployment and Lean proof export.
 pub(crate) mod common;
 pub mod lean;
 pub mod rust;

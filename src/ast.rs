@@ -96,8 +96,39 @@ pub enum Stmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FnBody {
-    Expr(Expr),
     Block(Vec<Stmt>),
+}
+
+impl FnBody {
+    pub fn from_expr(expr: Expr) -> Self {
+        Self::Block(vec![Stmt::Expr(expr)])
+    }
+
+    pub fn stmts(&self) -> &[Stmt] {
+        match self {
+            Self::Block(stmts) => stmts,
+        }
+    }
+
+    pub fn stmts_mut(&mut self) -> &mut Vec<Stmt> {
+        match self {
+            Self::Block(stmts) => stmts,
+        }
+    }
+
+    pub fn tail_expr(&self) -> Option<&Expr> {
+        match self.stmts().last() {
+            Some(Stmt::Expr(expr)) => Some(expr),
+            _ => None,
+        }
+    }
+
+    pub fn tail_expr_mut(&mut self) -> Option<&mut Expr> {
+        match self.stmts_mut().last_mut() {
+            Some(Stmt::Expr(expr)) => Some(expr),
+            _ => None,
+        }
+    }
 }
 
 /// Compile-time resolution metadata for a function body.

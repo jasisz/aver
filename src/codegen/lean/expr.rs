@@ -67,7 +67,12 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
             };
             format!("({} {} {})", l, op_str, r)
         }
-        Expr::Match { subject, arms, .. } => emit_match(subject, arms, ctx),
+        Expr::Match {
+            subject,
+            arms,
+            line,
+            ..
+        } => emit_match(subject, arms, *line, ctx),
         Expr::Constructor(name, arg) => emit_constructor(name, arg, ctx),
         Expr::ErrorProp(inner) => {
             // ? operator — unwrap Except using withDefault
@@ -292,7 +297,7 @@ fn emit_interpolated_str(parts: &[StrPart], ctx: &CodegenContext) -> String {
     result
 }
 
-fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext) -> String {
+fn emit_match(subject: &Expr, arms: &[MatchArm], line: usize, ctx: &CodegenContext) -> String {
     // Bool match → if/then/else (avoids Lean dependent elimination issues)
     if let Some((true_body, false_body)) = extract_bool_arms(arms) {
         let cond = emit_expr(subject, ctx);
@@ -302,13 +307,14 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext) -> String
     }
 
     let subj = emit_expr(subject, ctx);
+    let eq_name = format!("h_{}", line);
     let mut arm_strs = Vec::new();
     for arm in arms {
         let pat = emit_pattern(&arm.pattern);
         let body = emit_expr(&arm.body, ctx);
         arm_strs.push(format!("  | {} => {}", pat, body));
     }
-    format!("match {} with\n{}", subj, arm_strs.join("\n"))
+    format!("match {} : {} with\n{}", eq_name, subj, arm_strs.join("\n"))
 }
 
 /// If all arms are `true -> expr` and `false -> expr`, return (true_body, false_body).
@@ -343,19 +349,32 @@ pub fn emit_stmt(stmt: &Stmt, ctx: &CodegenContext) -> String {
 pub fn aver_name_to_lean(name: &str) -> String {
     // Lean reserved words
     match name {
+        "abbrev" => "abbrev'".to_string(),
+        "axiom" => "axiom'".to_string(),
+        "by" => "by'".to_string(),
+        "calc" => "calc'".to_string(),
         "def" => "def'".to_string(),
+        "decreasing_by" => "decreasing_by'".to_string(),
+        "deriving" => "deriving'".to_string(),
         "let" => "let'".to_string(),
         "where" => "where'".to_string(),
         "match" => "match'".to_string(),
+        "macro" => "macro'".to_string(),
         "with" => "with'".to_string(),
         "do" => "do'".to_string(),
         "if" => "if'".to_string(),
         "then" => "then'".to_string(),
         "else" => "else'".to_string(),
+        "have" => "have'".to_string(),
+        "opaque" => "opaque'".to_string(),
         "return" => "return'".to_string(),
         "in" => "in'".to_string(),
         "fun" => "fun'".to_string(),
+        "repeat" => "repeat'".to_string(),
+        "show" => "show'".to_string(),
+        "syntax" => "syntax'".to_string(),
         "theorem" => "theorem'".to_string(),
+        "termination_by" => "termination_by'".to_string(),
         "example" => "example'".to_string(),
         "class" => "class'".to_string(),
         "instance" => "instance'".to_string(),
@@ -370,5 +389,18 @@ pub fn aver_name_to_lean(name: &str) -> String {
         "mutual" => "mutual'".to_string(),
         "partial" => "partial'".to_string(),
         _ => name.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::aver_name_to_lean;
+
+    #[test]
+    fn aver_name_to_lean_escapes_lean_reserved_words() {
+        assert_eq!(aver_name_to_lean("repeat"), "repeat'");
+        assert_eq!(aver_name_to_lean("by"), "by'");
+        assert_eq!(aver_name_to_lean("termination_by"), "termination_by'");
+        assert_eq!(aver_name_to_lean("value"), "value");
     }
 }

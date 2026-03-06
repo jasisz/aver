@@ -8,6 +8,7 @@ use crate::ast::{
 use crate::interpreter::{Interpreter, aver_repr};
 use crate::types::{Type, parse_type_str_strict};
 use crate::value::{RuntimeError, Value};
+use crate::verify_law::{canonical_spec_ref, named_law_function};
 
 pub struct VerifyResult {
     #[allow(dead_code)]
@@ -197,18 +198,8 @@ fn collect_declared_output_shapes_from_body(
     ret_ty: &Type,
     out: &mut std::collections::HashSet<VerifyOutputShape>,
 ) {
-    match body {
-        FnBody::Expr(expr) => collect_declared_output_shapes_from_tail_expr(expr, ret_ty, out),
-        FnBody::Block(stmts) => {
-            if let Some(last) = stmts.last() {
-                match last {
-                    Stmt::Expr(expr) => {
-                        collect_declared_output_shapes_from_tail_expr(expr, ret_ty, out)
-                    }
-                    Stmt::Binding(_, _, _) => {}
-                }
-            }
-        }
+    if let Some(expr) = body.tail_expr() {
+        collect_declared_output_shapes_from_tail_expr(expr, ret_ty, out);
     }
 }
 
@@ -379,7 +370,14 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
     match &block.kind {
         VerifyKind::Cases => println!("Verify: {}", block.fn_name.cyan()),
         VerifyKind::Law(law) => {
-            println!("Verify: {} law {}", block.fn_name.cyan(), law.name.cyan());
+            if let Ok(Value::Fn { effects, .. }) = interp.lookup(&law.name)
+                && effects.is_empty()
+                && crate::verify_law::canonical_spec_shape(&block.fn_name, law, &law.name)
+            {
+                println!("Verify: {} spec {}", block.fn_name.cyan(), law.name.cyan());
+            } else {
+                println!("Verify: {} law {}", block.fn_name.cyan(), law.name.cyan());
+            }
             for given in &law.givens {
                 println!(
                     "  {} {}: {} = {}",
@@ -615,18 +613,12 @@ fn fn_needs_verify(f: &FnDef) -> bool {
 fn is_trivial_passthrough_wrapper(f: &FnDef) -> bool {
     let param_names: Vec<&str> = f.params.iter().map(|(name, _)| name.as_str()).collect();
 
-    match f.body.as_ref() {
-        FnBody::Expr(expr) => expr_is_passthrough(expr, &param_names),
-        FnBody::Block(stmts) => {
-            if stmts.len() != 1 {
-                return false;
-            }
-            match &stmts[0] {
-                Stmt::Expr(expr) => expr_is_passthrough(expr, &param_names),
-                Stmt::Binding(_, _, _) => false,
-            }
-        }
+    if f.body.stmts().len() != 1 {
+        return false;
     }
+    f.body
+        .tail_expr()
+        .is_some_and(|expr| expr_is_passthrough(expr, &param_names))
 }
 
 fn expr_is_passthrough(expr: &Expr, param_names: &[&str]) -> bool {
@@ -782,15 +774,10 @@ fn collect_used_effects_expr(expr: &Expr, fn_sigs: &FnSigMap, out: &mut BTreeSet
 
 fn collect_used_effects(f: &FnDef, fn_sigs: &FnSigMap) -> BTreeSet<String> {
     let mut used = BTreeSet::new();
-    match f.body.as_ref() {
-        FnBody::Expr(expr) => collect_used_effects_expr(expr, fn_sigs, &mut used),
-        FnBody::Block(stmts) => {
-            for stmt in stmts {
-                match stmt {
-                    Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => {
-                        collect_used_effects_expr(expr, fn_sigs, &mut used)
-                    }
-                }
+    for stmt in f.body.stmts() {
+        match stmt {
+            Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => {
+                collect_used_effects_expr(expr, fn_sigs, &mut used)
             }
         }
     }
@@ -900,6 +887,7 @@ pub fn check_module_intent_with_sigs_in(
     });
 
     let mut verified_fns: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut spec_fns: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut empty_verify_fns: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut invalid_verify_fns: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for item in items {
@@ -949,6 +937,35 @@ pub fn check_module_intent_with_sigs_in(
                             });
                             block_valid = false;
                         }
+                    }
+                }
+                if let VerifyKind::Law(law) = &v.kind
+                    && let Some(sigs) = fn_sigs
+                    && let Some(named_fn) = named_law_function(law, sigs)
+                {
+                    if !named_fn.is_pure {
+                        errors.push(CheckFinding {
+                            line: v.line,
+                            module: module_name.clone(),
+                            file: source_file.map(|s| s.to_string()),
+                            message: format!(
+                                "Verify law '{}.{}' resolves to effectful function '{}'; spec functions must be pure",
+                                v.fn_name, law.name, named_fn.name
+                            ),
+                        });
+                        block_valid = false;
+                    } else if let Some(spec_ref) = canonical_spec_ref(&v.fn_name, law, sigs) {
+                        spec_fns.insert(spec_ref.spec_fn_name);
+                    } else {
+                        warnings.push(CheckFinding {
+                            line: v.line,
+                            module: module_name.clone(),
+                            file: source_file.map(|s| s.to_string()),
+                            message: format!(
+                                "Verify law '{}.{}' names pure function '{}' but the law body never calls it; use '{}' in the assertion or rename the law",
+                                v.fn_name, law.name, named_fn.name, named_fn.name
+                            ),
+                        });
                     }
                 }
                 if block_valid {
@@ -1033,6 +1050,7 @@ pub fn check_module_intent_with_sigs_in(
                 }
                 if fn_needs_verify(f)
                     && !verified_fns.contains(f.name.as_str())
+                    && !spec_fns.contains(&f.name)
                     && !empty_verify_fns.contains(f.name.as_str())
                     && !invalid_verify_fns.contains(f.name.as_str())
                 {
@@ -1499,6 +1517,90 @@ verify add1 law reflexive
                 .any(|e| e.message == "Function 'add1' has no verify block"),
             "law verify should satisfy verify requirement, got errors={:?}",
             findings.errors
+        );
+    }
+
+    #[test]
+    fn verify_law_named_effectful_function_is_an_error() {
+        let items = parse_items(
+            r#"
+fn add1(x: Int) -> Int
+    x + 1
+
+fn specFn(x: Int) -> Int
+    ! [Console.print]
+    Console.print("{x}")
+    x
+
+verify add1 law specFn
+    given x: Int = [1, 2]
+    add1(x) => add1(x)
+"#,
+        );
+        let tc = crate::types::checker::run_type_check_full(&items, None);
+        let findings = check_module_intent_with_sigs(&items, Some(&tc.fn_sigs));
+        assert!(
+            findings.errors.iter().any(|e| e.message.contains(
+                "Verify law 'add1.specFn' resolves to effectful function 'specFn'; spec functions must be pure"
+            )),
+            "expected effectful-spec error, got errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
+        );
+    }
+
+    #[test]
+    fn verify_law_named_pure_function_must_appear_in_law_body() {
+        let items = parse_items(
+            r#"
+fn add1(x: Int) -> Int
+    x + 1
+
+fn add1Spec(x: Int) -> Int
+    x + 1
+
+verify add1 law add1Spec
+    given x: Int = [1, 2]
+    add1(x) => x + 1
+"#,
+        );
+        let tc = crate::types::checker::run_type_check_full(&items, None);
+        let findings = check_module_intent_with_sigs(&items, Some(&tc.fn_sigs));
+        assert!(
+            findings.warnings.iter().any(|w| w.message.contains(
+                "Verify law 'add1.add1Spec' names pure function 'add1Spec' but the law body never calls it"
+            )),
+            "expected unused-spec warning, got errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
+        );
+    }
+
+    #[test]
+    fn canonical_spec_function_does_not_need_its_own_verify_block() {
+        let items = parse_items(
+            r#"
+fn add1(x: Int) -> Int
+    x + 1
+
+fn add1Spec(x: Int) -> Int
+    x + 1
+
+verify add1 law add1Spec
+    given x: Int = [1, 2]
+    add1(x) => add1Spec(x)
+"#,
+        );
+        let tc = crate::types::checker::run_type_check_full(&items, None);
+        let findings = check_module_intent_with_sigs(&items, Some(&tc.fn_sigs));
+        assert!(
+            !findings
+                .errors
+                .iter()
+                .any(|e| e.message == "Function 'add1Spec' has no verify block"),
+            "spec function should not need its own verify block, got errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
         );
     }
 

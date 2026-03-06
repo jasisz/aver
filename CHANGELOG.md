@@ -4,6 +4,16 @@ All notable changes to Aver are documented here.
 
 ## Unreleased
 
+### Added
+- `aver proof` as a dedicated Lean proof-export command
+- `aver --version`
+
+### Changed
+- **Breaking:** `aver compile` now targets Rust only
+- **Breaking:** Lean export moved from `aver compile -t lean` to `aver proof`
+- **Breaking:** Lean CLI flags were renamed from `--lean-verify` to `--verify-mode`
+- CLI/docs were split around two separate backend intents: deployment (`compile`) and proof export (`proof`)
+
 ## 0.3.0
 
 ### Added

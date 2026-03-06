@@ -77,7 +77,8 @@ pub fn append_text(path: &str, content: &str) -> Result<(), String> {
         .append(true)
         .open(path)
         .map_err(|e| e.to_string())?;
-    file.write_all(content.as_bytes()).map_err(|e| e.to_string())
+    file.write_all(content.as_bytes())
+        .map_err(|e| e.to_string())
 }
 
 pub fn path_exists(path: &str) -> bool {
@@ -101,8 +102,7 @@ pub fn delete_dir(path: &str) -> Result<(), String> {
     let p = std::path::Path::new(path);
     if !p.is_dir() {
         return Err(
-            "Disk.deleteDir: path is not a directory — use Disk.delete to remove files"
-                .to_string(),
+            "Disk.deleteDir: path is not a directory — use Disk.delete to remove files".to_string(),
         );
     }
     std::fs::remove_dir_all(p)

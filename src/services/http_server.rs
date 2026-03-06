@@ -102,21 +102,11 @@ where
     let result = if with_context {
         let context = args[1].clone();
         aver_rt::http_server::listen_with(port, context, |ctx, request| {
-            dispatch_handler(
-                &handler,
-                Some(ctx),
-                request,
-                invoke_handler,
-            )
+            dispatch_handler(&handler, Some(ctx), request, invoke_handler)
         })
     } else {
         aver_rt::http_server::listen(port, |request| {
-            dispatch_handler(
-                &handler,
-                None,
-                request,
-                invoke_handler,
-            )
+            dispatch_handler(&handler, None, request, invoke_handler)
         })
     };
 

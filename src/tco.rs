@@ -6,7 +6,6 @@
 ///
 /// A call is in tail position if its result is the direct return value of the
 /// function — no further computation wraps it. Specifically:
-///   - The expression body of `FnBody::Expr`
 ///   - The last `Stmt::Expr` in `FnBody::Block`
 ///   - Each arm body of a `match` in tail position
 use std::collections::HashSet;
@@ -41,18 +40,9 @@ pub fn transform_program(items: &mut [TopLevel]) {
 
 fn transform_fn(fd: &mut FnDef, scc_members: &HashSet<String>) {
     let mut body = fd.body.as_ref().clone();
-    match &mut body {
-        FnBody::Expr(expr) => {
-            transform_tail_expr(expr, scc_members);
-        }
-        FnBody::Block(stmts) => {
-            // Only the last Stmt::Expr is in tail position
-            if let Some(last) = stmts.last_mut()
-                && let Stmt::Expr(expr) = last
-            {
-                transform_tail_expr(expr, scc_members);
-            }
-        }
+    // Only the last Stmt::Expr is in tail position
+    if let Some(expr) = body.tail_expr_mut() {
+        transform_tail_expr(expr, scc_members);
     }
     fd.body = std::rc::Rc::new(body);
 }
@@ -95,16 +85,10 @@ mod tests {
     /// Helper: extract the match arms from a fn body.
     /// The parser produces `Block([Expr(Match{subject, arms, ..})])` for indented match bodies.
     fn extract_match_arms(fd: &FnDef) -> &[MatchArm] {
-        match fd.body.as_ref() {
-            FnBody::Expr(Expr::Match { arms, .. }) => arms,
-            FnBody::Block(stmts) => {
-                if let Some(Stmt::Expr(Expr::Match { arms, .. })) = stmts.last() {
-                    arms
-                } else {
-                    panic!("expected Match in block body, got {:?}", fd.body)
-                }
-            }
-            other => panic!("expected Match body, got {:?}", other),
+        if let Some(Stmt::Expr(Expr::Match { arms, .. })) = fd.body.stmts().last() {
+            arms
+        } else {
+            panic!("expected Match in block body, got {:?}", fd.body)
         }
     }
 

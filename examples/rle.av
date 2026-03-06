@@ -57,12 +57,13 @@ verify encode
     encode(["a", "a", "b", "c", "c"]) => [Run(char = "a", count = 2), Run(char = "b", count = 1), Run(char = "c", count = 2)]
 
 fn repeat(char: String, n: Int) -> List<String>
-    ? "Produces a list of n copies of char."
-    match n
-        0 -> []
-        _ -> List.append(repeat(char, n - 1), char)
+    ? "Produces a list of n copies of char. Non-positive counts yield []."
+    match n <= 0
+        true -> []
+        false -> List.append(repeat(char, n - 1), char)
 
 verify repeat
+    repeat("x", -1) => []
     repeat("x", 0) => []
     repeat("x", 1) => ["x"]
     repeat("x", 3) => ["x", "x", "x"]

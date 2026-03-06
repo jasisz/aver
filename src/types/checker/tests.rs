@@ -102,7 +102,7 @@ fn non_exhaustive_match_reports_match_line() {
         return_type: "Int".to_string(),
         effects: vec![],
         desc: None,
-        body: std::rc::Rc::new(FnBody::Expr(Expr::Match {
+        body: std::rc::Rc::new(FnBody::from_expr(Expr::Match {
             subject: Box::new(Expr::Ident("b".to_string())),
             arms: vec![MatchArm {
                 pattern: Pattern::Literal(Literal::Bool(true)),
@@ -133,7 +133,7 @@ fn tuple_union_patterns_can_be_exhaustive_without_single_total_arm() {
         return_type: "Int".to_string(),
         effects: vec![],
         desc: None,
-        body: std::rc::Rc::new(FnBody::Expr(Expr::Match {
+        body: std::rc::Rc::new(FnBody::from_expr(Expr::Match {
             subject: Box::new(Expr::Ident("t".to_string())),
             arms: vec![
                 MatchArm {
@@ -174,7 +174,7 @@ fn nested_tuple_union_still_reports_missing_case() {
         return_type: "Int".to_string(),
         effects: vec![],
         desc: None,
-        body: std::rc::Rc::new(FnBody::Expr(Expr::Match {
+        body: std::rc::Rc::new(FnBody::from_expr(Expr::Match {
             subject: Box::new(Expr::Ident("t".to_string())),
             arms: vec![
                 MatchArm {

@@ -6,7 +6,7 @@ pub fn generate_runtime() -> String {
     r##"mod aver_rt {
     pub use ::aver_rt::*;
 }"##
-        .to_string()
+    .to_string()
 }
 
 /// Bring the shared Tcp connection type into the generated program under the

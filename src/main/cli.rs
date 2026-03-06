@@ -1,24 +1,15 @@
 use clap::{Parser as ClapParser, Subcommand, ValueEnum};
 
 #[derive(ClapParser)]
-#[command(name = "aver", about = "The Aver language interpreter and transpiler")]
+#[command(name = "aver", version, about = "The Aver language toolchain")]
 pub(super) struct Cli {
     #[command(subcommand)]
     pub(super) command: Commands,
 }
 
-/// Transpilation target backend.
+/// Proof verify emission mode.
 #[derive(Clone, Debug, ValueEnum)]
-pub(super) enum Target {
-    /// Transpile to a Rust/Cargo project (default)
-    Rust,
-    /// Transpile pure core logic to a Lean 4 project
-    Lean,
-}
-
-/// Lean verify emission mode.
-#[derive(Clone, Debug, ValueEnum)]
-pub(super) enum LeanVerifyMode {
+pub(super) enum ProofVerifyMode {
     /// Auto mode: regular cases use `native_decide`; supported law universals get auto-proofs.
     #[value(name = "auto")]
     Auto,
@@ -102,26 +93,33 @@ pub(super) enum Commands {
         #[arg(long)]
         decisions_only: bool,
     },
-    /// Compile (transpile) an Aver file to a target language project
+    /// Compile an Aver file to a Rust/Cargo project
     Compile {
         file: String,
         /// Output directory for the generated project
         #[arg(short = 'o', long, default_value = "out")]
         output: String,
-        /// Transpilation target backend
-        #[arg(short = 't', long, default_value = "rust")]
-        target: Target,
         /// Project name (default: derived from file name)
         #[arg(long)]
         name: Option<String>,
         /// Resolve `depends [...]` from this root (default: current working directory)
         #[arg(long)]
         module_root: Option<String>,
-        /// Lean-only: how to emit `verify` proofs in generated Lean
-        #[arg(long, default_value = "auto")]
-        lean_verify: LeanVerifyMode,
-        /// Lean-only: fail fast when source needs non-proof features (e.g. `partial`, unsafe Eq)
+    },
+    /// Export pure Aver code to a Lean 4 proof project
+    Proof {
+        file: String,
+        /// Output directory for the generated project
+        #[arg(short = 'o', long, default_value = "out")]
+        output: String,
+        /// Project name (default: derived from file name)
         #[arg(long)]
-        lean_proof_mode: bool,
+        name: Option<String>,
+        /// Resolve `depends [...]` from this root (default: current working directory)
+        #[arg(long)]
+        module_root: Option<String>,
+        /// How to emit `verify` cases and law theorems in generated Lean
+        #[arg(long, default_value = "auto")]
+        verify_mode: ProofVerifyMode,
     },
 }
