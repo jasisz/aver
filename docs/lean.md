@@ -68,6 +68,24 @@ verify fib law fibSpec
     fib(n) => fibSpec(n)
 ```
 
+## Specs over invariants
+
+This is the intended proof style in Aver:
+
+- the author writes a simple pure spec function
+- the author writes `verify impl law implSpec`
+- the proof backend tries to connect implementation and spec
+
+The goal is to avoid making the surface language proof-engineer-first.
+
+Invariants still exist as a proof concept, especially for optimized implementations such as tail-recursive helpers, parsers with state, or accumulator-heavy code. But Aver tries to push those invariants down into the proof backend whenever possible, instead of making users write them first.
+
+In short:
+
+- user-facing Aver should prefer explicit specs
+- the proof backend should absorb invariants where it can
+- dropping to explicit invariant reasoning should be the exception, not the default workflow
+
 If Aver cannot auto-prove the universal law shape in `--verify-mode auto`, it omits that theorem and leaves a comment instead of emitting a fake `sorry` proof.
 
 Conservative auto-proofs currently cover:

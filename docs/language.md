@@ -143,6 +143,8 @@ verify add law commutative
 
 If the identifier after `law` is the name of an existing pure function and the law body compares `foo(args)` against `fooSpec(args)`, Aver treats that as a spec law. `verify fib law fibSpec` is the preferred way to say "fib should match fibSpec".
 
+This is an intentional style choice. In Aver, the author should usually write a simple spec function and a law relating the implementation to that spec, instead of writing proof-oriented invariants directly in surface code.
+
 `verify` is deterministic, not random. Regular cases run exactly as written. `verify ... law ...` expands the cartesian product of explicit `given` domains, capped at `10_000` cases.
 
 `aver check` expects pure, non-trivial, non-`main` functions to carry a colocated `verify` block. Effectful flows should be tested through record/replay rather than `verify`.
