@@ -228,7 +228,11 @@ pub fn emit_builtin_call(name: &str, args: &[Expr], ctx: &CodegenContext) -> Opt
         "List.concat" => {
             let a = super::expr::emit_expr(&args[0], ctx);
             let b = super::expr::emit_expr(&args[1], ctx);
-            Some(format!("{} ++ {}", paren_if_complex(&a), paren_if_complex(&b)))
+            Some(format!(
+                "{} ++ {}",
+                paren_if_complex(&a),
+                paren_if_complex(&b)
+            ))
         }
         "List.get" => {
             let list = super::expr::emit_expr(&args[0], ctx);

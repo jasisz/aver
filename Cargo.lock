@@ -62,6 +62,7 @@ dependencies = [
 name = "aver-lang"
 version = "0.2.3"
 dependencies = [
+ "aver-rt",
  "clap",
  "colored",
  "thiserror",
@@ -79,6 +80,10 @@ dependencies = [
  "tokio",
  "tower-lsp-server",
 ]
+
+[[package]]
+name = "aver-rt"
+version = "0.1.0"
 
 [[package]]
 name = "base64"

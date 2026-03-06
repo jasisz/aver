@@ -6,7 +6,7 @@ use aver::ast::{Stmt, TopLevel};
 use aver::interpreter::{Interpreter, Value};
 use aver::lexer::Lexer;
 use aver::parser::Parser;
-use aver::value::list_to_vec;
+use aver::value::{list_from_vec, list_to_vec};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -438,7 +438,7 @@ fn string_trim() {
 fn string_split() {
     assert_eq!(
         eval("String.split(\"a,b,c\", \",\")"),
-        Value::List(vec![
+        list_from_vec(vec![
             Value::Str("a".to_string()),
             Value::Str("b".to_string()),
             Value::Str("c".to_string()),
@@ -466,7 +466,7 @@ fn string_join() {
 fn string_chars() {
     assert_eq!(
         eval("String.chars(\"hi\")"),
-        Value::List(vec![
+        list_from_vec(vec![
             Value::Str("h".to_string()),
             Value::Str("i".to_string()),
         ])
@@ -514,14 +514,14 @@ fn list_len_empty() {
 
 #[test]
 fn list_empty() {
-    assert_eq!(eval("[]"), Value::List(vec![]));
+    assert_eq!(eval("[]"), list_from_vec(vec![]));
 }
 
 #[test]
 fn list_int_literal() {
     assert_eq!(
         eval("[1, 2, 3]"),
-        Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
+        list_from_vec(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
     );
 }
 
@@ -529,7 +529,7 @@ fn list_int_literal() {
 fn list_string_literal() {
     assert_eq!(
         eval("[\"a\", \"b\"]"),
-        Value::List(vec![
+        list_from_vec(vec![
             Value::Str("a".to_string()),
             Value::Str("b".to_string())
         ])
@@ -561,7 +561,7 @@ fn get_out_of_bounds_returns_none() {
 fn prepend_adds_element_to_front() {
     assert_eq!(
         eval("List.prepend(1, [2, 3])"),
-        Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
+        list_from_vec(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
     );
 }
 
@@ -569,7 +569,7 @@ fn prepend_adds_element_to_front() {
 fn concat_concatenates_lists() {
     assert_eq!(
         eval("List.concat([1, 2], [3, 4])"),
-        Value::List(vec![
+        list_from_vec(vec![
             Value::Int(1),
             Value::Int(2),
             Value::Int(3),
@@ -582,7 +582,7 @@ fn concat_concatenates_lists() {
 fn reverse_returns_reversed_copy() {
     assert_eq!(
         eval("List.reverse([1, 2, 3])"),
-        Value::List(vec![Value::Int(3), Value::Int(2), Value::Int(1)])
+        list_from_vec(vec![Value::Int(3), Value::Int(2), Value::Int(1)])
     );
 }
 
@@ -701,14 +701,14 @@ fn map_remove_drops_key() {
 fn map_from_list_and_entries_roundtrip() {
     assert_eq!(
         eval("Map.keys(Map.fromList([(\"a\", 1), (\"b\", 2)]))"),
-        Value::List(vec![
+        list_from_vec(vec![
             Value::Str("a".to_string()),
             Value::Str("b".to_string()),
         ])
     );
     assert_eq!(
         eval("Map.entries(Map.fromList([(\"a\", 1), (\"b\", 2)]))"),
-        Value::List(vec![
+        list_from_vec(vec![
             Value::Tuple(vec![Value::Str("a".to_string()), Value::Int(1)]),
             Value::Tuple(vec![Value::Str("b".to_string()), Value::Int(2)]),
         ])
@@ -759,13 +759,16 @@ fn map_literal_rejects_non_scalar_key() {
 fn append_adds_element_to_end() {
     assert_eq!(
         eval("List.append([1, 2], 3)"),
-        Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
+        list_from_vec(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
     );
 }
 
 #[test]
 fn append_to_empty_list() {
-    assert_eq!(eval("List.append([], 1)"), Value::List(vec![Value::Int(1)]));
+    assert_eq!(
+        eval("List.append([], 1)"),
+        list_from_vec(vec![Value::Int(1)])
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -866,14 +869,14 @@ fn match_bool_literal() {
 fn match_empty_list_pattern() {
     let src = "fn is_empty(xs: List<Int>) -> Bool\n    = match xs\n        [] -> true\n        [_, ..rest] -> false\n";
     assert_eq!(
-        call_fn(src, "is_empty", vec![Value::List(vec![])]),
+        call_fn(src, "is_empty", vec![list_from_vec(vec![])]),
         Value::Bool(true)
     );
     assert_eq!(
         call_fn(
             src,
             "is_empty",
-            vec![Value::List(vec![Value::Int(1), Value::Int(2)])]
+            vec![list_from_vec(vec![Value::Int(1), Value::Int(2)])]
         ),
         Value::Bool(false)
     );
@@ -886,7 +889,7 @@ fn match_list_cons_binds_head_and_tail() {
         call_fn(
             src,
             "score",
-            vec![Value::List(vec![
+            vec![list_from_vec(vec![
                 Value::Int(5),
                 Value::Int(9),
                 Value::Int(11)
@@ -895,11 +898,11 @@ fn match_list_cons_binds_head_and_tail() {
         Value::Int(7)
     );
     assert_eq!(
-        call_fn(src, "score", vec![Value::List(vec![Value::Int(5)])]),
+        call_fn(src, "score", vec![list_from_vec(vec![Value::Int(5)])]),
         Value::Int(5)
     );
     assert_eq!(
-        call_fn(src, "score", vec![Value::List(vec![])]),
+        call_fn(src, "score", vec![list_from_vec(vec![])]),
         Value::Int(0)
     );
 }
@@ -1005,13 +1008,13 @@ fn prepend_builtin_adds_front() {
             prepend_fn,
             vec![
                 Value::Int(1),
-                Value::List(vec![Value::Int(2), Value::Int(3)]),
+                list_from_vec(vec![Value::Int(2), Value::Int(3)]),
             ],
         )
         .unwrap();
     assert_eq!(
         result,
-        Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
+        list_from_vec(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
     );
 }
 
@@ -1023,14 +1026,19 @@ fn concat_builtin_concatenates_lists() {
         .call_value_pub(
             concat_fn,
             vec![
-                Value::List(vec![Value::Int(1), Value::Int(2)]),
-                Value::List(vec![Value::Int(3), Value::Int(4)]),
+                list_from_vec(vec![Value::Int(1), Value::Int(2)]),
+                list_from_vec(vec![Value::Int(3), Value::Int(4)]),
             ],
         )
         .unwrap();
     assert_eq!(
         result,
-        Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)])
+        list_from_vec(vec![
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3),
+            Value::Int(4)
+        ])
     );
 }
 
@@ -1041,7 +1049,7 @@ fn reverse_builtin_flips_order() {
     let result = interp
         .call_value_pub(
             reverse_fn,
-            vec![Value::List(vec![
+            vec![list_from_vec(vec![
                 Value::Int(1),
                 Value::Int(2),
                 Value::Int(3),
@@ -1050,7 +1058,7 @@ fn reverse_builtin_flips_order() {
         .unwrap();
     assert_eq!(
         result,
-        Value::List(vec![Value::Int(3), Value::Int(2), Value::Int(1)])
+        list_from_vec(vec![Value::Int(3), Value::Int(2), Value::Int(1)])
     );
 }
 
@@ -3109,7 +3117,7 @@ fn check() -> Bool
                                     ("name".to_string(), Value::Str("Ada".to_string())),
                                 ],
                             },
-                            Value::List(vec![
+                            list_from_vec(vec![
                                 Value::Some(Box::new(Value::Int(1))),
                                 Value::None,
                                 Value::Ok(Box::new(Value::Str("ok".to_string()))),
@@ -3128,7 +3136,7 @@ fn check() -> Bool
 
     #[test]
     fn value_json_roundtrip_list_with_nested_structures() {
-        let value = Value::List(vec![
+        let value = list_from_vec(vec![
             Value::Record {
                 type_name: "Point".to_string(),
                 fields: vec![
@@ -3147,7 +3155,7 @@ fn check() -> Bool
                     ],
                 }],
             },
-            Value::Ok(Box::new(Value::List(vec![
+            Value::Ok(Box::new(list_from_vec(vec![
                 Value::Bool(true),
                 Value::Some(Box::new(Value::Str("v".to_string()))),
             ]))),

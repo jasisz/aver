@@ -149,8 +149,12 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
     }
 
     let main_rs = sections.join("\n");
-    let cargo_toml =
-        project::generate_cargo_toml(&ctx.project_name, &used_services, ctx.policy.is_some());
+    let cargo_toml = project::generate_cargo_toml(
+        &ctx.project_name,
+        &used_services,
+        ctx.policy.is_some(),
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("aver-rt"),
+    );
 
     ProjectOutput {
         files: vec![

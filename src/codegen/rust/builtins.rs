@@ -321,7 +321,10 @@ fn emit_builtin_call_inner(
         "Map.empty" => Some("HashMap::new()".to_string()),
         "Map.fromList" => {
             let list = clone_arg(&args[0], ctx, &arg_ctxs[0]);
-            Some(format!("{}.iter().cloned().collect::<HashMap<_, _>>()", list))
+            Some(format!(
+                "{}.iter().cloned().collect::<HashMap<_, _>>()",
+                list
+            ))
         }
         "Map.entries" => {
             let map = emit_expr(&args[0], ctx, ectx);

@@ -103,9 +103,7 @@ impl Workload {
 }
 
 fn make_int_list(size: usize) -> Value {
-    let items = (0..size)
-        .map(|i| Value::Int(i as i64))
-        .collect::<Vec<_>>();
+    let items = (0..size).map(|i| Value::Int(i as i64)).collect::<Vec<_>>();
     list_from_vec(items)
 }
 
@@ -143,7 +141,9 @@ fn run_workload(
     size: usize,
     iters: usize,
 ) -> Result<Duration, String> {
-    let fn_val = interp.lookup(workload.fn_name()).map_err(|e| e.to_string())?;
+    let fn_val = interp
+        .lookup(workload.fn_name())
+        .map_err(|e| e.to_string())?;
     let args = workload.args(size);
 
     black_box(

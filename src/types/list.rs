@@ -14,8 +14,8 @@
 use std::collections::HashMap;
 
 use crate::value::{
-    RuntimeError, Value, list_append, list_concat, list_get, list_len, list_prepend,
-    list_reverse, list_view,
+    RuntimeError, Value, list_append, list_concat, list_get, list_len, list_prepend, list_reverse,
+    list_view,
 };
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -145,9 +145,8 @@ fn reverse(args: &[Value]) -> Result<Value, RuntimeError> {
             args.len()
         )));
     }
-    list_reverse(&args[0]).ok_or_else(|| {
-        RuntimeError::Error("List.reverse() argument must be a List".to_string())
-    })
+    list_reverse(&args[0])
+        .ok_or_else(|| RuntimeError::Error("List.reverse() argument must be a List".to_string()))
 }
 
 fn contains(args: &[Value]) -> Result<Value, RuntimeError> {

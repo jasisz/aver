@@ -1,7 +1,13 @@
 /// Cargo.toml generation for the transpiled project.
 use std::collections::HashSet;
+use std::path::Path;
 
-pub fn generate_cargo_toml(name: &str, services: &HashSet<String>, has_policy: bool) -> String {
+pub fn generate_cargo_toml(
+    name: &str,
+    services: &HashSet<String>,
+    has_policy: bool,
+    runtime_path: &Path,
+) -> String {
     let mut lines = Vec::new();
     lines.push("[package]".to_string());
     lines.push(format!("name = \"{}\"", name));
@@ -10,6 +16,8 @@ pub fn generate_cargo_toml(name: &str, services: &HashSet<String>, has_policy: b
     lines.push(String::new());
 
     let mut deps = Vec::new();
+    let runtime_path = runtime_path.to_string_lossy().replace('\\', "/");
+    deps.push(format!("aver-rt = {{ path = {:?} }}", runtime_path));
     if services.contains("Http") {
         deps.push("ureq = \"2\"".to_string());
     }

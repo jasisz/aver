@@ -1,6 +1,6 @@
 # Transpilation (`aver compile`)
 
-Aver programs can be transpiled to standalone native projects. The generated code is human-readable, builds with the target language's standard toolchain, and runs without the Aver interpreter.
+Aver programs can be transpiled to native projects. The generated code is human-readable, builds with the target language's standard toolchain, and runs without the Aver interpreter.
 
 ## Quick start
 
@@ -43,7 +43,7 @@ out/
 ```
 
 The generated `main.rs` includes:
-- Runtime helpers (`aver_rt` module with `AverDisplay` trait, list operations, map support)
+- Runtime helpers (`aver_rt` module with `AverDisplay` trait, map support, and re-exports from the shared `aver-rt` crate)
 - Service runtimes (only when the program uses them — conditional emission)
 - User-defined types as Rust `struct`s and `enum`s
 - All functions (including inlined module dependencies)
@@ -52,12 +52,12 @@ The generated `main.rs` includes:
 
 #### Dependencies
 
-`Cargo.toml` is generated with only the dependencies needed by the program:
+`Cargo.toml` is generated with the shared `aver-rt` runtime crate plus any extra dependencies needed by the program:
 
 | Aver service | Rust crate |
 |-------------|------------|
+| core runtime | `aver-rt` (path dependency to the local workspace crate) |
 | `Http` | `ureq` (blocking HTTP client) |
-| (no services) | no external dependencies |
 
 `Tcp` and `HttpServer` use `std::net` — no extra crates needed.
 

@@ -3,8 +3,8 @@
 /// Lives in its own module so both the interpreter and the service
 /// implementations (`services::*`) can import it without circular
 /// dependencies.
+use aver_rt::AverList;
 use std::collections::HashMap;
-use std::iter::FusedIterator;
 use std::rc::Rc;
 use thiserror::Error;
 
@@ -72,25 +72,7 @@ pub enum Value {
     Err(Box<Value>),
     Some(Box<Value>),
     None,
-    List(Vec<Value>),
-    /// Shared list view (`items[start..]`) to avoid O(n^2) tail copying in
-    /// recursive list processing.
-    ListSlice {
-        items: Rc<Vec<Value>>,
-        start: usize,
-    },
-    /// Lazy cons node: O(1) prepend while preserving immutable sharing.
-    ListPrepend {
-        head: Box<Value>,
-        tail: Rc<Value>,
-        len: usize,
-    },
-    /// Lazy concatenation node: O(1) append while preserving immutable sharing.
-    ListConcat {
-        left: Rc<Value>,
-        right: Rc<Value>,
-        len: usize,
-    },
+    List(AverList<Value>),
     Tuple(Vec<Value>),
     Map(HashMap<Value, Value>),
     Fn {
@@ -321,10 +303,7 @@ impl std::hash::Hash for Value {
                     }
                 }
             }
-            Value::List(_)
-            | Value::ListSlice { .. }
-            | Value::ListPrepend { .. }
-            | Value::ListConcat { .. } => unreachable!("list hashed above"),
+            Value::List(_) => unreachable!("list hashed above"),
         }
     }
 }
@@ -348,191 +327,33 @@ pub type Env = Vec<EnvFrame>;
 // List helpers
 // ---------------------------------------------------------------------------
 
-/// Opaque read-only view over an Aver list.
-///
-/// Runtime code should prefer this API over matching on list variants or
-/// assuming a particular backing container. That keeps future representation
-/// changes local to this module.
-#[derive(Clone, Copy)]
-pub(crate) struct ListView<'a> {
-    root: &'a Value,
-}
-
-#[derive(Clone, Copy)]
-enum ListCursor<'a> {
-    Node(&'a Value),
-    Slice(&'a [Value], usize),
-}
-
-pub(crate) struct ListIter<'a> {
-    stack: Vec<ListCursor<'a>>,
-    remaining: usize,
-}
-
-impl<'a> ListIter<'a> {
-    fn new(root: &'a Value) -> Self {
-        Self {
-            stack: vec![ListCursor::Node(root)],
-            remaining: list_len_cached(root).unwrap_or(0),
-        }
-    }
-}
-
-impl<'a> Iterator for ListIter<'a> {
-    type Item = &'a Value;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        while let Some(cursor) = self.stack.pop() {
-            match cursor {
-                ListCursor::Slice(items, index) => {
-                    if let Some(item) = items.get(index) {
-                        self.stack.push(ListCursor::Slice(items, index + 1));
-                        self.remaining = self.remaining.saturating_sub(1);
-                        return Some(item);
-                    }
-                }
-                ListCursor::Node(value) => match value {
-                    Value::List(items) => {
-                        if !items.is_empty() {
-                            self.stack
-                                .push(ListCursor::Slice(items.as_slice(), 0));
-                        }
-                    }
-                    Value::ListSlice { items, start } => {
-                        let slice = items.get(*start..).unwrap_or(&[]);
-                        if !slice.is_empty() {
-                            self.stack.push(ListCursor::Slice(slice, 0));
-                        }
-                    }
-                    Value::ListPrepend { head, tail, .. } => {
-                        self.stack.push(ListCursor::Node(tail.as_ref()));
-                        self.remaining = self.remaining.saturating_sub(1);
-                        return Some(head.as_ref());
-                    }
-                    Value::ListConcat { left, right, .. } => {
-                        self.stack.push(ListCursor::Node(right.as_ref()));
-                        self.stack.push(ListCursor::Node(left.as_ref()));
-                    }
-                    _ => unreachable!("ListIter only traverses list values"),
-                },
-            }
-        }
-        None
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.remaining, Some(self.remaining))
-    }
-}
-
-impl ExactSizeIterator for ListIter<'_> {
-    fn len(&self) -> usize {
-        self.remaining
-    }
-}
-
-impl FusedIterator for ListIter<'_> {}
-
-fn list_len_cached(value: &Value) -> Option<usize> {
-    match value {
-        Value::List(items) => Some(items.len()),
-        Value::ListSlice { items, start } => Some(items.len().saturating_sub(*start)),
-        Value::ListPrepend { len, .. } | Value::ListConcat { len, .. } => Some(*len),
-        _ => None,
-    }
-}
-
-fn make_list_concat(left: &Value, right: &Value) -> Option<Value> {
-    let left_len = list_len_cached(left)?;
-    let right_len = list_len_cached(right)?;
-    if left_len == 0 {
-        return Some(right.clone());
-    }
-    if right_len == 0 {
-        return Some(left.clone());
-    }
-    Some(Value::ListConcat {
-        left: Rc::new(left.clone()),
-        right: Rc::new(right.clone()),
-        len: left_len + right_len,
-    })
-}
-
-fn make_list_prepend(head: Value, tail: &Value) -> Option<Value> {
-    let tail_len = list_len_cached(tail)?;
-    if tail_len == 0 {
-        return Some(list_from_vec(vec![head]));
-    }
-    Some(Value::ListPrepend {
-        head: Box::new(head),
-        tail: Rc::new(tail.clone()),
-        len: tail_len + 1,
-    })
-}
-
-impl<'a> ListView<'a> {
-    pub(crate) fn len(self) -> usize {
-        list_len_cached(self.root).expect("ListView root must be a list")
-    }
-
-    pub(crate) fn is_empty(self) -> bool {
-        self.len() == 0
-    }
-
-    pub(crate) fn get(self, index: usize) -> Option<&'a Value> {
-        self.iter().nth(index)
-    }
-
-    pub(crate) fn first(self) -> Option<&'a Value> {
-        self.iter().next()
-    }
-
-    pub(crate) fn iter(self) -> ListIter<'a> {
-        ListIter::new(self.root)
-    }
-
-    pub(crate) fn to_vec(self) -> Vec<Value> {
-        let mut out = Vec::with_capacity(self.len());
-        out.extend(self.iter().cloned());
-        out
-    }
-}
+pub(crate) type ListView<'a> = &'a AverList<Value>;
 
 pub(crate) fn list_view(value: &Value) -> Option<ListView<'_>> {
     match value {
-        Value::List(_)
-        | Value::ListSlice { .. }
-        | Value::ListPrepend { .. }
-        | Value::ListConcat { .. } => Some(ListView { root: value }),
+        Value::List(items) => Some(items),
         _ => None,
     }
 }
 
 pub fn list_slice(value: &Value) -> Option<&[Value]> {
-    match value {
-        Value::List(items) => Some(items.as_slice()),
-        Value::ListSlice { items, start } => Some(items.get(*start..).unwrap_or(&[])),
-        _ => None,
-    }
+    list_view(value).and_then(AverList::as_slice)
 }
 
 pub fn list_from_vec(items: Vec<Value>) -> Value {
-    Value::ListSlice {
-        items: Rc::new(items),
-        start: 0,
-    }
+    Value::List(AverList::from_vec(items))
 }
 
 pub(crate) fn list_empty() -> Value {
-    list_from_vec(vec![])
+    Value::List(AverList::empty())
 }
 
 pub fn list_to_vec(value: &Value) -> Option<Vec<Value>> {
-    list_view(value).map(ListView::to_vec)
+    list_view(value).map(AverList::to_vec)
 }
 
 pub fn list_len(value: &Value) -> Option<usize> {
-    list_view(value).map(ListView::len)
+    list_view(value).map(AverList::len)
 }
 
 pub(crate) fn list_get(value: &Value, index: usize) -> Option<Value> {
@@ -544,61 +365,25 @@ pub fn list_head(value: &Value) -> Option<Value> {
 }
 
 pub fn list_tail_view(value: &Value) -> Option<Value> {
-    match value {
-        Value::List(items) => {
-            if items.is_empty() {
-                None
-            } else {
-                Some(Value::ListSlice {
-                    items: Rc::new(items.clone()),
-                    start: 1,
-                })
-            }
-        }
-        Value::ListSlice { items, start } => {
-            if *start >= items.len() {
-                None
-            } else {
-                Some(Value::ListSlice {
-                    items: Rc::clone(items),
-                    start: start + 1,
-                })
-            }
-        }
-        Value::ListPrepend { tail, .. } => Some((**tail).clone()),
-        Value::ListConcat { left, right, .. } => {
-            let left_len = list_len_cached(left.as_ref()).expect("left side must be a list");
-            if left_len == 0 {
-                list_tail_view(right.as_ref())
-            } else if left_len == 1 {
-                Some((**right).clone())
-            } else {
-                let left_tail =
-                    list_tail_view(left.as_ref()).expect("non-empty left side must have a tail");
-                make_list_concat(&left_tail, right.as_ref())
-            }
-        }
-        _ => None,
-    }
+    list_view(value).and_then(AverList::tail).map(Value::List)
 }
 
 pub(crate) fn list_append(list: &Value, item: Value) -> Option<Value> {
-    let singleton = list_from_vec(vec![item]);
-    make_list_concat(list, &singleton)
+    list_view(list).map(|items| Value::List(AverList::append(items, item)))
 }
 
 pub(crate) fn list_prepend(item: Value, list: &Value) -> Option<Value> {
-    make_list_prepend(item, list)
+    list_view(list).map(|items| Value::List(AverList::prepend(item, items)))
 }
 
 pub(crate) fn list_concat(left: &Value, right: &Value) -> Option<Value> {
-    make_list_concat(left, right)
+    let left = list_view(left)?;
+    let right = list_view(right)?;
+    Some(Value::List(AverList::concat(left, right)))
 }
 
 pub(crate) fn list_reverse(list: &Value) -> Option<Value> {
-    let mut out = list_to_vec(list)?;
-    out.reverse();
-    Some(list_from_vec(out))
+    list_view(list).map(|items| Value::List(items.reverse()))
 }
 
 // ---------------------------------------------------------------------------
@@ -626,10 +411,7 @@ pub fn aver_repr(val: &Value) -> String {
             let parts: Vec<String> = items.iter().map(aver_repr_inner).collect();
             format!("({})", parts.join(", "))
         }
-        Value::List(_)
-        | Value::ListSlice { .. }
-        | Value::ListPrepend { .. }
-        | Value::ListConcat { .. } => unreachable!("handled via list_view above"),
+        Value::List(_) => unreachable!("handled via list_view above"),
         Value::Map(entries) => {
             let mut pairs = entries
                 .iter()
@@ -678,10 +460,7 @@ fn aver_repr_inner(val: &Value) -> String {
             let parts: Vec<String> = items.iter().map(aver_repr_inner).collect();
             format!("({})", parts.join(", "))
         }
-        Value::List(_)
-        | Value::ListSlice { .. }
-        | Value::ListPrepend { .. }
-        | Value::ListConcat { .. } => unreachable!("handled via list_view above"),
+        Value::List(_) => unreachable!("handled via list_view above"),
         other => aver_repr(other),
     }
 }

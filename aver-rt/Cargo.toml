@@ -1,0 +1,10 @@
+[package]
+name = "aver-rt"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Shared Rust runtime pieces for Aver-generated programs"
+
+[lib]
+name = "aver_rt"
+path = "src/lib.rs"

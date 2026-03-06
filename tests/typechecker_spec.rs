@@ -494,7 +494,10 @@ fn binding_empty_list_literal_is_error() {
 #[test]
 fn error_list_prepend_mismatched_element_type() {
     let src = "fn bad(xs: List<Int>) -> List<Int>\n    = List.prepend(\"x\", xs)\n";
-    assert_error_containing(src, "Argument 1 of 'List.prepend': expected Int, got String");
+    assert_error_containing(
+        src,
+        "Argument 1 of 'List.prepend': expected Int, got String",
+    );
 }
 
 #[test]
