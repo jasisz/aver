@@ -4,18 +4,30 @@ All notable changes to Aver are documented here.
 
 ## Unreleased
 
+## 0.3.0
+
 ### Added
+- `aver-rt` as a shared Rust runtime crate for transpiled projects and interpreter adapters
 - `aver check --deps` to run contract checks for transitive `depends [...]` modules
+- deterministic replay now walks nested recording directories
+- recursion-first list runtime based on persistent `AverList`
 
 ### Changed
+- **Breaking:** function bodies now use indentation only; `fn ... = expr` shorthand was removed
+- **Breaking:** `|>` pipe operator was removed
+- **Breaking:** `List` was simplified to a recursion-first API: `len`, `get`, `prepend`, `append`, `concat`, `reverse`, `contains`, `zip`
+- **Breaking:** `List.push`, `List.head`, `List.tail`, `List.map`, `List.filter`, `List.fold`, `List.find`, `List.any`, and `List.flatMap` were removed
+- **Breaking:** removed `aver decisions`; decision export now lives under `aver context --decisions-only`
+- Rust transpilation now depends on the published `aver-rt` crate by default, with optional `AVER_RUNTIME_PATH` override for local runtime hacking
 - `aver check` contract diagnostics now always include line numbers
 - Decision `impacts` now accepts both validated symbols and semantic strings
 - `input`, `expect`, `case`, `where`, `effect`, `service`, `needs` are no longer reserved keywords
-- Removed `aver decisions`; decision export now lives under `aver context --decisions-only`
+- README and docs were restructured around quickstart, AI-first positioning, and the current CLI/runtime model
 
 ### Fixed
+- old `= expr` syntax now fails consistently in parser and formatter with an actionable migration error
 - `decisions/*.av` updated to conform to strict impacts validation and namespaced console usage
-- Renamed `examples/type_errors.av` to `examples/test_errors.av` with expanded checker diagnostics coverage
+- renamed `examples/type_errors.av` to `examples/test_errors.av` with expanded checker diagnostics coverage
 
 ## 0.2.3
 

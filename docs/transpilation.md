@@ -56,10 +56,16 @@ The generated `main.rs` includes:
 
 | Aver service | Rust crate |
 |-------------|------------|
-| no `Http` effects | `aver-rt = { path = "...", version = "=0.0.1" }` |
-| `Http` effects present | `aver-rt = { path = "...", version = "=0.0.1", features = ["http"] }` |
+| no `Http` effects | `aver-rt = { version = "=0.1.0" }` |
+| `Http` effects present | `aver-rt = { version = "=0.1.0", features = ["http"] }` |
 
 `ureq` is pulled transitively by `aver-rt/http`; generated projects no longer declare it directly.
+
+For local runtime development from the Aver repository, set `AVER_RUNTIME_PATH` before running `aver compile` to force a path dependency instead of the crates.io release:
+
+```bash
+AVER_RUNTIME_PATH="$(pwd)/aver-rt" aver compile examples/hello.av -o /tmp/hello-rs
+```
 
 #### Supported features
 

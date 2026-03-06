@@ -31,6 +31,32 @@ fn runtime_version(runtime_path: &Path) -> String {
         })
 }
 
+fn runtime_override_path() -> Option<String> {
+    std::env::var("AVER_RUNTIME_PATH")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(|value| value.replace('\\', "/"))
+}
+
+fn runtime_dependency_line(runtime_version: &str, needs_http: bool, local_path: Option<&str>) -> String {
+    match (needs_http, local_path) {
+        (true, Some(path)) => format!(
+            "aver-rt = {{ path = {:?}, version = {:?}, features = [\"http\"] }}",
+            path, runtime_version
+        ),
+        (false, Some(path)) => format!(
+            "aver-rt = {{ path = {:?}, version = {:?} }}",
+            path, runtime_version
+        ),
+        (true, None) => format!(
+            "aver-rt = {{ version = {:?}, features = [\"http\"] }}",
+            runtime_version
+        ),
+        (false, None) => format!("aver-rt = {{ version = {:?} }}", runtime_version),
+    }
+}
+
 pub fn generate_cargo_toml(
     name: &str,
     services: &HashSet<String>,
@@ -46,18 +72,12 @@ pub fn generate_cargo_toml(
 
     let mut deps = Vec::new();
     let runtime_version = runtime_version(runtime_path);
-    let runtime_path = runtime_path.to_string_lossy().replace('\\', "/");
-    if services.contains("Http") {
-        deps.push(format!(
-            "aver-rt = {{ path = {:?}, version = {:?}, features = [\"http\"] }}",
-            runtime_path, runtime_version
-        ));
-    } else {
-        deps.push(format!(
-            "aver-rt = {{ path = {:?}, version = {:?} }}",
-            runtime_path, runtime_version
-        ));
-    }
+    let runtime_path = runtime_override_path();
+    deps.push(runtime_dependency_line(
+        &runtime_version,
+        services.contains("Http"),
+        runtime_path.as_deref(),
+    ));
     if has_policy {
         deps.push("url = \"2\"".to_string());
     }
@@ -68,4 +88,33 @@ pub fn generate_cargo_toml(
     }
 
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::runtime_dependency_line;
+
+    #[test]
+    fn runtime_dependency_defaults_to_registry_pin() {
+        let dep = runtime_dependency_line("=0.1.0", false, None);
+        assert_eq!(dep, "aver-rt = { version = \"=0.1.0\" }");
+    }
+
+    #[test]
+    fn runtime_dependency_enables_http_feature_when_needed() {
+        let dep = runtime_dependency_line("=0.1.0", true, None);
+        assert_eq!(
+            dep,
+            "aver-rt = { version = \"=0.1.0\", features = [\"http\"] }"
+        );
+    }
+
+    #[test]
+    fn runtime_dependency_can_use_local_override_path() {
+        let dep = runtime_dependency_line("=0.1.0", true, Some("/tmp/aver-rt"));
+        assert_eq!(
+            dep,
+            "aver-rt = { path = \"/tmp/aver-rt\", version = \"=0.1.0\", features = [\"http\"] }"
+        );
+    }
 }

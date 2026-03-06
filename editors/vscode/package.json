@@ -2,7 +2,7 @@
   "name": "aver-lang",
   "displayName": "Aver Language",
   "description": "Syntax highlighting and LSP support for the Aver programming language",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "publisher": "aver",
   "engines": {
     "vscode": "^1.75.0"
