@@ -13,7 +13,7 @@ pub fn type_to_rust(ty: &Type) -> String {
             format!("Result<{}, {}>", type_to_rust(ok), type_to_rust(err))
         }
         Type::Option(inner) => format!("Option<{}>", type_to_rust(inner)),
-        Type::List(inner) => format!("Vec<{}>", type_to_rust(inner)),
+        Type::List(inner) => format!("aver_rt::AverList<{}>", type_to_rust(inner)),
         Type::Tuple(items) => {
             let parts: Vec<String> = items.iter().map(type_to_rust).collect();
             format!("({})", parts.join(", "))

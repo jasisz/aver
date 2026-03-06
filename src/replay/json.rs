@@ -101,7 +101,10 @@ pub fn value_to_json(value: &Value) -> Result<JsonValue, String> {
         Value::Err(inner) => Ok(wrap_marker("$err", value_to_json(inner)?)),
         Value::Some(inner) => Ok(wrap_marker("$some", value_to_json(inner)?)),
         Value::None => Ok(wrap_marker("$none", JsonValue::Bool(true))),
-        Value::List(_) | Value::ListSlice { .. } => unreachable!("handled via list_view above"),
+        Value::List(_)
+        | Value::ListSlice { .. }
+        | Value::ListPrepend { .. }
+        | Value::ListConcat { .. } => unreachable!("handled via list_view above"),
         Value::Tuple(items) => {
             let mut arr = Vec::with_capacity(items.len());
             for item in items {

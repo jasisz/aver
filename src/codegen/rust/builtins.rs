@@ -4,15 +4,6 @@ use super::liveness::{EmitCtx, compute_args_used_after};
 use crate::ast::Expr;
 use crate::codegen::CodegenContext;
 
-/// Check if an expression is a last-use identifier (can be moved, not cloned).
-fn is_last_use_ident(expr: &Expr, ectx: &EmitCtx) -> bool {
-    if let Expr::Ident(name) = expr {
-        ectx.skip_clone(name)
-    } else {
-        false
-    }
-}
-
 /// Try to emit a builtin call as Rust code.
 /// Returns `None` if the name is not a builtin (i.e. it's a user function).
 pub fn emit_builtin_call(
@@ -248,14 +239,14 @@ fn emit_builtin_call_inner(
             let s = emit_expr(&args[0], ctx, ectx);
             let delim = emit_expr(&args[1], ctx, ectx);
             Some(format!(
-                "{}.split(&*{}).map(|s| s.to_string()).collect::<Vec<_>>()",
+                "aver_rt::AverList::from_vec({}.split(&*{}).map(|s| s.to_string()).collect::<Vec<_>>())",
                 s, delim
             ))
         }
         "String.join" => {
             let parts = emit_expr(&args[0], ctx, ectx);
             let delim = emit_expr(&args[1], ctx, ectx);
-            Some(format!("{}.join(&*{})", parts, delim))
+            Some(format!("aver_rt::string_join(&{}, &{})", parts, delim))
         }
         "String.replace" => {
             let s = emit_expr(&args[0], ctx, ectx);
@@ -266,7 +257,7 @@ fn emit_builtin_call_inner(
         "String.chars" => {
             let arg = emit_expr(&args[0], ctx, ectx);
             Some(format!(
-                "{}.chars().map(|c| c.to_string()).collect::<Vec<_>>()",
+                "aver_rt::AverList::from_vec({}.chars().map(|c| c.to_string()).collect::<Vec<_>>())",
                 arg
             ))
         }
@@ -295,65 +286,23 @@ fn emit_builtin_call_inner(
             Some(format!("{}.get({} as usize).cloned()", list, idx))
         }
         "List.push" => {
-            let list_expr = &args[0];
-            let last_use = is_last_use_ident(list_expr, &arg_ctxs[0]);
-            let list = emit_expr(list_expr, ctx, &arg_ctxs[0]);
+            let list = emit_expr(&args[0], ctx, &arg_ctxs[0]);
             let item = emit_expr(&args[1], ctx, &arg_ctxs[1]);
-            if last_use {
-                Some(format!("{{ let mut v = {}; v.push({}); v }}", list, item))
-            } else {
-                Some(format!(
-                    "{{ let mut v = {}.clone(); v.push({}); v }}",
-                    list, item
-                ))
-            }
+            Some(format!("aver_rt::AverList::push(&{}, {})", list, item))
         }
         "List.prepend" => {
-            let list_expr = &args[1];
-            let last_use = is_last_use_ident(list_expr, &arg_ctxs[1]);
             let item = emit_expr(&args[0], ctx, &arg_ctxs[0]);
-            let list = emit_expr(list_expr, ctx, &arg_ctxs[1]);
-            if last_use {
-                Some(format!(
-                    "{{ let mut v = {}; v.insert(0, {}); v }}",
-                    list, item
-                ))
-            } else {
-                Some(format!(
-                    "{{ let mut v = {}.clone(); v.insert(0, {}); v }}",
-                    list, item
-                ))
-            }
+            let list = emit_expr(&args[1], ctx, &arg_ctxs[1]);
+            Some(format!("aver_rt::AverList::prepend({}, &{})", item, list))
         }
         "List.append" => {
-            let left_expr = &args[0];
-            let last_use = is_last_use_ident(left_expr, &arg_ctxs[0]);
-            let left = emit_expr(left_expr, ctx, &arg_ctxs[0]);
+            let left = emit_expr(&args[0], ctx, &arg_ctxs[0]);
             let right = emit_expr(&args[1], ctx, &arg_ctxs[1]);
-            if last_use {
-                Some(format!(
-                    "{{ let mut v = {}; v.extend({}.into_iter()); v }}",
-                    left, right
-                ))
-            } else {
-                Some(format!(
-                    "{{ let mut v = {}.clone(); v.extend({}.into_iter()); v }}",
-                    left, right
-                ))
-            }
+            Some(format!("aver_rt::AverList::append(&{}, &{})", left, right))
         }
         "List.reverse" => {
-            let list_expr = &args[0];
-            let last_use = is_last_use_ident(list_expr, &arg_ctxs[0]);
-            let list = emit_expr(list_expr, ctx, &arg_ctxs[0]);
-            if last_use {
-                Some(format!("{{ let mut v = {}; v.reverse(); v }}", list))
-            } else {
-                Some(format!(
-                    "{{ let mut v = {}.clone(); v.reverse(); v }}",
-                    list
-                ))
-            }
+            let list = emit_expr(&args[0], ctx, &arg_ctxs[0]);
+            Some(format!("{}.reverse()", list))
         }
         "List.contains" => {
             let list = emit_expr(&args[0], ctx, ectx);
@@ -364,7 +313,7 @@ fn emit_builtin_call_inner(
             let a = emit_expr(&args[0], ctx, ectx);
             let b = emit_expr(&args[1], ctx, ectx);
             Some(format!(
-                "{}.iter().zip({}.iter()).map(|(a, b)| (a.clone(), b.clone())).collect::<Vec<_>>()",
+                "aver_rt::AverList::from_vec({}.iter().zip({}.iter()).map(|(a, b)| (a.clone(), b.clone())).collect::<Vec<_>>())",
                 a, b
             ))
         }
@@ -372,12 +321,12 @@ fn emit_builtin_call_inner(
         "Map.empty" => Some("HashMap::new()".to_string()),
         "Map.fromList" => {
             let list = clone_arg(&args[0], ctx, &arg_ctxs[0]);
-            Some(format!("{}.into_iter().collect::<HashMap<_, _>>()", list))
+            Some(format!("{}.iter().cloned().collect::<HashMap<_, _>>()", list))
         }
         "Map.entries" => {
             let map = emit_expr(&args[0], ctx, ectx);
             Some(format!(
-                "{{ let mut es: Vec<_> = {}.iter().map(|(k, v)| (k.clone(), v.clone())).collect(); es.sort_by(|a, b| a.0.cmp(&b.0)); es }}",
+                "{{ let mut es: Vec<_> = {}.iter().map(|(k, v)| (k.clone(), v.clone())).collect(); es.sort_by(|a, b| a.0.cmp(&b.0)); aver_rt::AverList::from_vec(es) }}",
                 map
             ))
         }
@@ -411,13 +360,16 @@ fn emit_builtin_call_inner(
         "Map.keys" => {
             let map = emit_expr(&args[0], ctx, ectx);
             Some(format!(
-                "{{ let mut ks: Vec<_> = {}.keys().cloned().collect(); ks.sort(); ks }}",
+                "{{ let mut ks: Vec<_> = {}.keys().cloned().collect(); ks.sort(); aver_rt::AverList::from_vec(ks) }}",
                 map
             ))
         }
         "Map.values" => {
             let map = emit_expr(&args[0], ctx, ectx);
-            Some(format!("{}.values().cloned().collect::<Vec<_>>()", map))
+            Some(format!(
+                "aver_rt::AverList::from_vec({}.values().cloned().collect::<Vec<_>>())",
+                map
+            ))
         }
         "Map.len" => {
             let map = emit_expr(&args[0], ctx, ectx);

@@ -379,7 +379,7 @@ fn emit_tco_expr(
             let arg_strs: Vec<String> = args
                 .iter()
                 .zip(arg_ctxs.iter())
-                .map(|(a, ac)| emit_expr(a, ctx, ac))
+                .map(|(a, ac)| clone_arg(a, ctx, ac))
                 .collect();
 
             let mut lines = Vec::new();
@@ -412,12 +412,14 @@ fn emit_tco_expr(
             let subj_ectx = ectx.with_used_after(&arms_vars);
             let subj = emit_expr(subject, ctx, &subj_ectx);
             let needs_as_str = super::expr::has_string_literal_patterns(arms);
-            let needs_as_slice = super::expr::has_list_patterns(arms);
+            if super::expr::has_list_patterns(arms) {
+                return super::expr::emit_list_match(subj, arms, ctx, |arm| {
+                    emit_tco_expr(&arm.body, params, ctx, ectx)
+                });
+            }
 
             let match_expr = if needs_as_str {
                 format!("{}.as_str()", subj)
-            } else if needs_as_slice {
-                format!("{}.as_slice()", subj)
             } else {
                 subj
             };
@@ -432,10 +434,7 @@ fn emit_tco_expr(
                         let h = aver_name_to_rust(head);
                         rebinding_lines.push(format!("let {} = {}.clone();", h, h));
                     }
-                    if tail != "_" {
-                        let t = aver_name_to_rust(tail);
-                        rebinding_lines.push(format!("let {} = {}.to_vec();", t, t));
-                    }
+                    let _ = tail;
                 }
                 if let Pattern::Constructor(name, bindings) = &arm.pattern {
                     for b in super::expr::constructor_boxed_bindings(name, bindings, ctx) {
@@ -663,4 +662,124 @@ pub fn emit_verify_blocks(verify_blocks: &[&VerifyBlock], ctx: &CodegenContext) 
 
     writeln!(out, "}}").unwrap();
     out.trim_end().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::{BinOp, Expr, FnBody, FnDef};
+    use crate::codegen::CodegenContext;
+    use std::collections::{HashMap, HashSet};
+    use std::rc::Rc;
+
+    fn empty_ctx() -> CodegenContext {
+        CodegenContext {
+            items: vec![],
+            fn_sigs: HashMap::new(),
+            memo_fns: HashSet::new(),
+            memo_safe_types: HashSet::new(),
+            type_defs: vec![],
+            fn_defs: vec![],
+            project_name: "test".to_string(),
+            modules: vec![],
+            module_prefixes: HashSet::new(),
+            policy: None,
+        }
+    }
+
+    fn list_param_fn(name: &str, params: Vec<(&str, &str)>) -> FnDef {
+        FnDef {
+            name: name.to_string(),
+            line: 1,
+            params: params
+                .into_iter()
+                .map(|(n, ty)| (n.to_string(), ty.to_string()))
+                .collect(),
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::Expr(Expr::Literal(crate::ast::Literal::Int(0)))),
+            resolution: None,
+        }
+    }
+
+    #[test]
+    fn self_tco_clones_param_reused_in_later_arg() {
+        let ctx = empty_ctx();
+        let fd = list_param_fn(
+            "repeatSum",
+            vec![("xs", "List<Int>"), ("remaining", "Int"), ("sink", "Int")],
+        );
+        let ectx = build_fn_ectx(&fd, &ctx);
+        let expr = Expr::TailCall(Box::new((
+            "repeatSum".to_string(),
+            vec![
+                Expr::Ident("xs".to_string()),
+                Expr::BinOp(
+                    BinOp::Sub,
+                    Box::new(Expr::Ident("remaining".to_string())),
+                    Box::new(Expr::Literal(crate::ast::Literal::Int(1))),
+                ),
+                Expr::BinOp(
+                    BinOp::Add,
+                    Box::new(Expr::Ident("sink".to_string())),
+                    Box::new(Expr::FnCall(
+                        Box::new(Expr::Ident("sumList".to_string())),
+                        vec![
+                            Expr::Ident("xs".to_string()),
+                            Expr::Literal(crate::ast::Literal::Int(0)),
+                        ],
+                    )),
+                ),
+            ],
+        )));
+
+        let code = emit_tco_expr(&expr, &fd.params, &ctx, &ectx);
+        assert!(code.contains("let __tmp0 = xs.clone();"));
+        assert!(code.contains("let __tmp1 = (remaining - 1i64);"));
+        assert!(code.contains("let __tmp2 = (sink + &sumList(xs, 0i64));"));
+    }
+
+    #[test]
+    fn self_tco_clones_multiple_list_params_reused_in_later_arg() {
+        let ctx = empty_ctx();
+        let fd = list_param_fn(
+            "repeatAppend",
+            vec![
+                ("a", "List<Int>"),
+                ("b", "List<Int>"),
+                ("remaining", "Int"),
+                ("sink", "Int"),
+            ],
+        );
+        let ectx = build_fn_ectx(&fd, &ctx);
+        let expr = Expr::TailCall(Box::new((
+            "repeatAppend".to_string(),
+            vec![
+                Expr::Ident("a".to_string()),
+                Expr::Ident("b".to_string()),
+                Expr::BinOp(
+                    BinOp::Sub,
+                    Box::new(Expr::Ident("remaining".to_string())),
+                    Box::new(Expr::Literal(crate::ast::Literal::Int(1))),
+                ),
+                Expr::BinOp(
+                    BinOp::Add,
+                    Box::new(Expr::Ident("sink".to_string())),
+                    Box::new(Expr::FnCall(
+                        Box::new(Expr::Ident("List.len".to_string())),
+                        vec![Expr::FnCall(
+                            Box::new(Expr::Ident("appendLists".to_string())),
+                            vec![Expr::Ident("a".to_string()), Expr::Ident("b".to_string())],
+                        )],
+                    )),
+                ),
+            ],
+        )));
+
+        let code = emit_tco_expr(&expr, &fd.params, &ctx, &ectx);
+        assert!(code.contains("let __tmp0 = a.clone();"));
+        assert!(code.contains("let __tmp1 = b.clone();"));
+        assert!(code.contains("let __tmp3 = (sink + &(appendLists(a, b).len() as i64));"));
+    }
 }

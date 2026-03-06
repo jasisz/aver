@@ -94,10 +94,10 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
         Expr::InterpolatedStr(parts) => emit_interpolated_str(parts, ctx, ectx),
         Expr::List(elements) => {
             if elements.is_empty() {
-                "vec![]".to_string()
+                "aver_rt::AverList::empty()".to_string()
             } else {
                 let parts: Vec<String> = elements.iter().map(|e| emit_expr(e, ctx, ectx)).collect();
-                format!("vec![{}]", parts.join(", "))
+                format!("aver_rt::AverList::from_vec(vec![{}])", parts.join(", "))
             }
         }
         Expr::Tuple(items) => {
@@ -415,12 +415,14 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
 
     // Determine if subject needs special treatment
     let needs_as_str = subject_might_be_string(subject, ctx);
-    let needs_as_slice = subject_might_be_list(subject, arms, ctx);
+    let _needs_as_slice = subject_might_be_list(subject, arms, ctx);
+
+    if has_list_patterns(arms) {
+        return emit_list_match(subj, arms, ctx, |arm| emit_expr(&arm.body, ctx, ectx));
+    }
 
     let match_expr = if needs_as_str && has_string_literal_patterns(arms) {
         format!("{}.as_str()", subj)
-    } else if needs_as_slice && has_list_patterns(arms) {
-        format!("{}.as_slice()", subj)
     } else {
         subj
     };
@@ -448,6 +450,85 @@ fn subject_might_be_string(_subject: &Expr, _ctx: &CodegenContext) -> bool {
 
 fn subject_might_be_list(_subject: &Expr, _arms: &[MatchArm], _ctx: &CodegenContext) -> bool {
     true
+}
+
+pub(super) fn emit_list_match<F>(
+    subject: String,
+    arms: &[MatchArm],
+    ctx: &CodegenContext,
+    body_for_arm: F,
+) -> String
+where
+    F: Fn(&MatchArm) -> String,
+{
+    let subject_name = "__list_subject";
+    let arms_code = emit_list_match_arms(subject_name, arms, ctx, &body_for_arm);
+    format!("{{ let {} = {}; {} }}", subject_name, subject, arms_code)
+}
+
+fn emit_list_match_arms<F>(
+    subject_name: &str,
+    arms: &[MatchArm],
+    ctx: &CodegenContext,
+    body_for_arm: &F,
+) -> String
+where
+    F: Fn(&MatchArm) -> String,
+{
+    let Some((first, rest)) = arms.split_first() else {
+        return "panic!(\"Aver Rust codegen: empty list match\")".to_string();
+    };
+
+    let body = emit_list_arm_body(first, ctx, body_for_arm(first));
+    let fallback = if rest.is_empty() {
+        "panic!(\"Aver Rust codegen: non-exhaustive list match\")".to_string()
+    } else {
+        emit_list_match_arms(subject_name, rest, ctx, body_for_arm)
+    };
+
+    match &first.pattern {
+        Pattern::EmptyList => format!(
+            "if {}.is_empty() {{ {} }} else {{ {} }}",
+            subject_name, body, fallback
+        ),
+        Pattern::Cons(head, tail) => {
+            let head_pat = if head == "_" {
+                "_".to_string()
+            } else {
+                aver_name_to_rust(head)
+            };
+            let tail_pat = if tail == "_" {
+                "_".to_string()
+            } else {
+                aver_name_to_rust(tail)
+            };
+            format!(
+                "if let Some(({}, {})) = aver_rt::list_uncons(&{}) {{ {} }} else {{ {} }}",
+                head_pat, tail_pat, subject_name, body, fallback
+            )
+        }
+        Pattern::Wildcard => body,
+        Pattern::Ident(name) => {
+            let name = aver_name_to_rust(name);
+            format!("{{ let {} = {}.clone(); {} }}", name, subject_name, body)
+        }
+        other => {
+            let pat = emit_pattern(other, false, ctx);
+            format!(
+                "match &{} {{ {} => {{ {} }}, _ => {{ {} }} }}",
+                subject_name, pat, body, fallback
+            )
+        }
+    }
+}
+
+fn emit_list_arm_body(arm: &MatchArm, ctx: &CodegenContext, body: String) -> String {
+    let rebindings = emit_pattern_rebindings(&arm.pattern, ctx);
+    if rebindings.is_empty() {
+        body
+    } else {
+        format!("{{ {}{} }}", rebindings, body)
+    }
 }
 
 pub(super) fn constructor_boxed_positions(name: &str, ctx: &CodegenContext) -> HashSet<usize> {
@@ -513,10 +594,7 @@ fn emit_pattern_rebindings(pattern: &Pattern, ctx: &CodegenContext) -> String {
             let h = aver_name_to_rust(head);
             lines.push(format!("let {} = {}.clone();", h, h));
         }
-        if tail != "_" {
-            let t = aver_name_to_rust(tail);
-            lines.push(format!("let {} = {}.to_vec();", t, t));
-        }
+        let _ = tail;
     }
     if let Pattern::Constructor(name, bindings) = pattern {
         for b in constructor_boxed_bindings(name, bindings, ctx) {

@@ -5,6 +5,7 @@ members = [".", "aver-lsp"]
 name = "aver-lang"
 version = "0.2.3"
 edition = "2024"
+default-run = "aver"
 description = "Interpreter and transpiler for Aver, a statically-typed language designed for AI-assisted development"
 license = "MIT"
 repository = "https://github.com/jasisz/aver"
