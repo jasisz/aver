@@ -312,7 +312,14 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], line: usize, ctx: &CodegenConte
     for arm in arms {
         let pat = emit_pattern(&arm.pattern);
         let body = emit_expr(&arm.body, ctx);
-        arm_strs.push(format!("  | {} => {}", pat, body));
+        if body.contains('\n') {
+            let body_lines: Vec<&str> = body.lines().collect();
+            let mut rendered = vec![format!("  | {} => {}", pat, body_lines[0])];
+            rendered.extend(body_lines.iter().skip(1).map(|line| format!("    {}", line)));
+            arm_strs.push(rendered.join("\n"));
+        } else {
+            arm_strs.push(format!("  | {} => {}", pat, body));
+        }
     }
     format!("match {} : {} with\n{}", eq_name, subj, arm_strs.join("\n"))
 }
@@ -362,6 +369,7 @@ pub fn aver_name_to_lean(name: &str) -> String {
         "macro" => "macro'".to_string(),
         "with" => "with'".to_string(),
         "do" => "do'".to_string(),
+        "from" => "from'".to_string(),
         "if" => "if'".to_string(),
         "then" => "then'".to_string(),
         "else" => "else'".to_string(),
@@ -399,6 +407,7 @@ mod tests {
     #[test]
     fn aver_name_to_lean_escapes_lean_reserved_words() {
         assert_eq!(aver_name_to_lean("repeat"), "repeat'");
+        assert_eq!(aver_name_to_lean("from"), "from'");
         assert_eq!(aver_name_to_lean("by"), "by'");
         assert_eq!(aver_name_to_lean("termination_by"), "termination_by'");
         assert_eq!(aver_name_to_lean("value"), "value");

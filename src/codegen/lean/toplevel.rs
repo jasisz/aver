@@ -5,7 +5,7 @@ use super::expr::{aver_name_to_lean, emit_expr, emit_stmt};
 use super::law_auto::emit_verify_law_forall_auto_proof;
 use super::shared::to_lower_first;
 use super::types::type_annotation_to_lean;
-use super::{RecursionPlan, VerifyEmitMode};
+use super::{RecursionPlan, VerifyEmitMode, sizeof_measure_param_indices};
 use crate::ast::*;
 use crate::codegen::CodegenContext;
 use crate::codegen::common::expr_to_dotted_name;
@@ -104,6 +104,237 @@ fn emit_product_type(name: &str, fields: &[(String, String)]) -> String {
         lines.push("  deriving Repr, BEq, Inhabited, DecidableEq".to_string());
     }
     lines.join("\n")
+}
+
+fn measure_fn_name(type_name: &str) -> String {
+    format!("averMeasure{}", type_name)
+}
+
+fn measure_list_fn_name(type_name: &str) -> String {
+    format!("{}List", measure_fn_name(type_name))
+}
+
+fn split_top_level(s: &str, delim: char) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut depth_angle = 0usize;
+    let mut depth_paren = 0usize;
+    let mut current = String::new();
+    for ch in s.chars() {
+        match ch {
+            '<' => {
+                depth_angle += 1;
+                current.push(ch);
+            }
+            '>' => {
+                depth_angle = depth_angle.saturating_sub(1);
+                current.push(ch);
+            }
+            '(' => {
+                depth_paren += 1;
+                current.push(ch);
+            }
+            ')' => {
+                depth_paren = depth_paren.saturating_sub(1);
+                current.push(ch);
+            }
+            _ if ch == delim && depth_angle == 0 && depth_paren == 0 => {
+                parts.push(current.trim().to_string());
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+    if !current.trim().is_empty() {
+        parts.push(current.trim().to_string());
+    }
+    parts
+}
+
+fn unwrap_generic<'a>(type_name: &'a str, prefix: &str) -> Option<&'a str> {
+    type_name
+        .strip_prefix(prefix)
+        .and_then(|rest| rest.strip_suffix('>'))
+}
+
+fn type_measure_expr(
+    type_name: &str,
+    value_expr: &str,
+    recursive_types: &HashSet<String>,
+    self_type: Option<&str>,
+) -> Option<String> {
+    let trimmed = type_name.trim();
+    if recursive_types.contains(trimmed) {
+        return Some(format!("{} {}", measure_fn_name(trimmed), value_expr));
+    }
+
+    if let Some(inner) = unwrap_generic(trimmed, "List<") {
+        if recursive_types.contains(inner.trim()) {
+            return Some(format!("{} {}", measure_list_fn_name(inner.trim()), value_expr));
+        }
+        let item_measure = type_measure_expr(inner, "item", recursive_types, self_type)
+            .unwrap_or_else(|| "1".to_string());
+        return Some(format!("AverMeasure.list (fun item => {}) {}", item_measure, value_expr));
+    }
+
+    if let Some(inner) = unwrap_generic(trimmed, "Option<") {
+        if self_type == Some(inner.trim()) {
+            return Some(format!(
+                "(match {} with | .none => 1 | .some item => {} item + 1)",
+                value_expr,
+                measure_fn_name(inner.trim())
+            ));
+        }
+        let item_measure = type_measure_expr(inner, "item", recursive_types, self_type)
+            .unwrap_or_else(|| "1".to_string());
+        return Some(format!("AverMeasure.option (fun item => {}) {}", item_measure, value_expr));
+    }
+
+    if let Some(inner) = unwrap_generic(trimmed, "Result<") {
+        let args = split_top_level(inner, ',');
+        if args.len() == 2 {
+            let ok_measure = type_measure_expr(&args[0], "okVal", recursive_types, self_type)
+                .unwrap_or_else(|| "1".to_string());
+            let err_measure = type_measure_expr(&args[1], "errVal", recursive_types, self_type)
+                .unwrap_or_else(|| "1".to_string());
+            return Some(format!(
+                "AverMeasure.except (fun errVal => {}) (fun okVal => {}) {}",
+                err_measure, ok_measure, value_expr
+            ));
+        }
+    }
+
+    if trimmed.starts_with('(') && trimmed.ends_with(')') {
+        let inner = &trimmed[1..trimmed.len() - 1];
+        let parts = split_top_level(inner, ',');
+        if !parts.is_empty() {
+            let measures: Vec<String> = parts
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, part)| {
+                    type_measure_expr(
+                        part,
+                        &format!("{}.{}", value_expr, idx + 1),
+                        recursive_types,
+                        self_type,
+                    )
+                })
+                .collect();
+            if !measures.is_empty() {
+                return Some(format!("({}) + 1", measures.join(" + ")));
+            }
+        }
+    }
+
+    None
+}
+
+fn emit_recursive_sum_measure(
+    name: &str,
+    variants: &[TypeVariant],
+    recursive_types: &HashSet<String>,
+) -> String {
+    let mut lines = vec!["mutual".to_string()];
+    lines.push(format!(
+        "  def {} (value : {}) : Nat :=",
+        measure_fn_name(name),
+        name
+    ));
+    lines.push("    match value with".to_string());
+    for variant in variants {
+        let ctor = to_lower_first(&variant.name);
+        if variant.fields.is_empty() {
+            lines.push(format!("    | .{} => 1", ctor));
+            continue;
+        }
+
+        let binders: Vec<String> = (0..variant.fields.len()).map(|idx| format!("x{idx}")).collect();
+        let field_measures: Vec<String> = variant
+            .fields
+            .iter()
+            .zip(binders.iter())
+            .filter_map(|(field_ty, binder)| {
+                type_measure_expr(field_ty, binder, recursive_types, Some(name))
+            })
+            .collect();
+        if field_measures.is_empty() {
+            lines.push(format!("    | .{} {} => 1", ctor, binders.join(" ")));
+        } else {
+            lines.push(format!(
+                "    | .{} {} => ({}) + 1",
+                ctor,
+                binders.join(" "),
+                field_measures.join(" + ")
+            ));
+        }
+    }
+    lines.push(format!(
+        "  def {} (items : List {}) : Nat :=",
+        measure_list_fn_name(name),
+        name
+    ));
+    lines.push("    match items with".to_string());
+    lines.push("    | [] => 1".to_string());
+    lines.push(format!(
+        "    | head :: tail => {} head + {} tail + 1",
+        measure_fn_name(name),
+        measure_list_fn_name(name)
+    ));
+    lines.push("end".to_string());
+    lines.join("\n")
+}
+
+fn emit_recursive_product_measure(
+    name: &str,
+    fields: &[(String, String)],
+    recursive_types: &HashSet<String>,
+) -> String {
+    let field_measures: Vec<String> = fields
+        .iter()
+        .filter_map(|(field_name, field_ty)| {
+            type_measure_expr(
+                field_ty,
+                &format!("value.{}", aver_name_to_lean(field_name)),
+                recursive_types,
+                Some(name),
+            )
+        })
+        .collect();
+    let body = if field_measures.is_empty() {
+        "1".to_string()
+    } else {
+        format!("({}) + 1", field_measures.join(" + "))
+    };
+    [
+        "mutual".to_string(),
+        format!("  def {} (value : {}) : Nat :=", measure_fn_name(name), name),
+        format!("    {}", body),
+        format!(
+            "  def {} (items : List {}) : Nat :=",
+            measure_list_fn_name(name),
+            name
+        ),
+        "    match items with".to_string(),
+        "    | [] => 1".to_string(),
+        format!(
+            "    | head :: tail => {} head + {} tail + 1",
+            measure_fn_name(name),
+            measure_list_fn_name(name)
+        ),
+        "end".to_string(),
+    ]
+    .join("\n")
+}
+
+pub fn emit_recursive_measure(td: &TypeDef, recursive_types: &HashSet<String>) -> Option<String> {
+    match td {
+        TypeDef::Sum { name, variants, .. } if is_recursive_type(name, variants) => {
+            Some(emit_recursive_sum_measure(name, variants, recursive_types))
+        }
+        TypeDef::Product { name, fields, .. } if is_recursive_product(name, fields) => {
+            Some(emit_recursive_product_measure(name, fields, recursive_types))
+        }
+        _ => None,
+    }
 }
 
 /// Check if a type definition is self-referencing (#18).
@@ -235,6 +466,150 @@ fn emit_int_countdown_wrapper(fd: &FnDef, helper_name: &str, param_index: usize)
     vec![
         format!("def {} {} : {} :=", fn_name, params, ret_type),
         format!("  {} ((Int.natAbs {}) + 1) {}", helper_name, metric_name, arg_names),
+    ]
+}
+
+fn fib_nat_helper_name(fn_name: &str) -> String {
+    format!("{}__nat", aver_name_to_lean(fn_name))
+}
+
+fn matches_bool_match_arm(arm: &MatchArm, value: bool) -> bool {
+    matches!(&arm.pattern, Pattern::Literal(crate::ast::Literal::Bool(v)) if *v == value)
+}
+
+fn matches_int_match_arm(arm: &MatchArm, value: i64) -> bool {
+    matches!(&arm.pattern, Pattern::Literal(crate::ast::Literal::Int(v)) if *v == value)
+}
+
+fn matches_self_sub_call(expr: &Expr, fn_name: &str, param_name: &str, amount: i64) -> bool {
+    let Expr::FnCall(callee, args) = expr else {
+        return false;
+    };
+    if !matches!(callee.as_ref(), Expr::Ident(name) if name == fn_name) || args.len() != 1 {
+        return false;
+    }
+    matches!(
+        &args[0],
+        Expr::BinOp(
+            BinOp::Sub,
+            left,
+            right
+        ) if matches!(left.as_ref(), Expr::Ident(name) if name == param_name)
+            && matches!(right.as_ref(), Expr::Literal(crate::ast::Literal::Int(v)) if *v == amount)
+    )
+}
+
+fn detects_fibonacci_spec(fd: &FnDef) -> bool {
+    let [(param_name, param_type)] = fd.params.as_slice() else {
+        return false;
+    };
+    if param_type != "Int" {
+        return false;
+    }
+    let Some(expr) = fd.body.tail_expr() else {
+        return false;
+    };
+    let Expr::Match { subject, arms, .. } = expr else {
+        return false;
+    };
+    let Expr::BinOp(BinOp::Lt, left, right) = subject.as_ref() else {
+        return false;
+    };
+    if !matches!(left.as_ref(), Expr::Ident(name) if name == param_name)
+        || !matches!(right.as_ref(), Expr::Literal(crate::ast::Literal::Int(0)))
+        || arms.len() != 2
+        || !matches_bool_match_arm(&arms[0], true)
+        || !matches_bool_match_arm(&arms[1], false)
+        || !matches!(arms[0].body.as_ref(), Expr::Literal(crate::ast::Literal::Int(0)))
+    {
+        return false;
+    }
+    let Expr::Match {
+        subject: inner_subject,
+        arms: inner_arms,
+        ..
+    } = arms[1].body.as_ref()
+    else {
+        return false;
+    };
+    if !matches!(inner_subject.as_ref(), Expr::Ident(name) if name == param_name)
+        || inner_arms.len() != 3
+        || !matches_int_match_arm(&inner_arms[0], 0)
+        || !matches!(inner_arms[0].body.as_ref(), Expr::Literal(crate::ast::Literal::Int(0)))
+        || !matches_int_match_arm(&inner_arms[1], 1)
+        || !matches!(inner_arms[1].body.as_ref(), Expr::Literal(crate::ast::Literal::Int(1)))
+        || !matches!(inner_arms[2].pattern, Pattern::Wildcard)
+    {
+        return false;
+    }
+    matches!(
+        inner_arms[2].body.as_ref(),
+        Expr::BinOp(BinOp::Add, left, right)
+            if matches_self_sub_call(left, &fd.name, param_name, 1)
+                && matches_self_sub_call(right, &fd.name, param_name, 2)
+    )
+}
+
+fn emit_nat_fibonacci_spec_fn(fd: &FnDef) -> String {
+    let fn_name = aver_name_to_lean(&fd.name);
+    let helper_name = fib_nat_helper_name(&fd.name);
+    let (param_name, _) = &fd.params[0];
+    let lean_param = aver_name_to_lean(param_name);
+    let ret_type = ret_type_or_unit(fd);
+
+    [
+        emit_doc_comment(&fd.desc),
+        vec![
+            format!("private def {} : Nat -> {} ", helper_name, ret_type),
+            "  | 0 => 0".to_string(),
+            "  | 1 => 1".to_string(),
+            format!(
+                "  | n + 2 => {} (n + 1) + {} n",
+                helper_name, helper_name
+            ),
+            String::new(),
+            format!("def {} ({} : Int) : {} :=", fn_name, lean_param, ret_type),
+            format!(
+                "  if {} < 0 then 0 else {} {}.toNat",
+                lean_param, helper_name, lean_param
+            ),
+        ],
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join("\n")
+}
+
+fn emit_sizeof_measure_expr(fd: &FnDef, recursive_types: &HashSet<String>) -> Option<String> {
+    let measure_terms: Vec<String> = sizeof_measure_param_indices(fd)
+        .into_iter()
+        .filter_map(|idx| {
+            fd.params.get(idx).and_then(|(name, type_name)| {
+                type_measure_expr(type_name, &aver_name_to_lean(name), recursive_types, None)
+            })
+        })
+        .collect();
+
+    (!measure_terms.is_empty()).then(|| measure_terms.join(" + "))
+}
+
+fn emit_mutual_sizeof_wrapper(
+    fd: &FnDef,
+    helper_name: &str,
+    rank_budget: usize,
+    recursive_types: &HashSet<String>,
+) -> Vec<String> {
+    let fn_name = aver_name_to_lean(&fd.name);
+    let params = emit_fn_params(&fd.params);
+    let ret_type = ret_type_or_unit(fd);
+    let arg_names = emit_fn_param_names(&fd.params);
+    let fuel_expr = emit_sizeof_measure_expr(fd, recursive_types)
+        .map(|measure| format!("(({}) + 1) * {}", measure, rank_budget))
+        .unwrap_or_else(|| rank_budget.to_string());
+    vec![
+        format!("def {} {} : {} :=", fn_name, params, ret_type),
+        format!("  {} ({}) {}", helper_name, fuel_expr, arg_names),
     ]
 }
 
@@ -418,10 +793,59 @@ fn emit_fuelized_string_pos_fn(fd: &FnDef, ctx: &CodegenContext) -> String {
     .join("\n")
 }
 
+fn strip_match_eq_binders(body: String) -> String {
+    body.lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            let indent_len = line.len() - trimmed.len();
+            let indent = &line[..indent_len];
+            let Some(rest) = trimmed.strip_prefix("match h_") else {
+                return line.to_string();
+            };
+            let Some(colon_idx) = rest.find(" : ") else {
+                return line.to_string();
+            };
+            format!("{indent}match {}", &rest[colon_idx + 3..])
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn emit_fuelized_int_countdown_fn(fd: &FnDef, ctx: &CodegenContext, param_index: usize) -> String {
     let helper_name = fuel_helper_name(&fd.name);
     let params = emit_fn_params(&fd.params);
     let ret_type = ret_type_or_unit(fd);
+    let rewritten = rewrite_recursive_calls_body(
+        &fd.body,
+        &HashSet::from([fd.name.clone()]),
+        STRING_POS_FUEL_VAR,
+    );
+    let body = strip_match_eq_binders(emit_fn_body(&rewritten, ctx));
+
+    [
+        emit_doc_comment(&fd.desc),
+        emit_fuel_helper_def(&helper_name, &params, &ret_type, &body, ""),
+        vec![String::new()],
+        emit_int_countdown_wrapper(fd, &helper_name, param_index),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join("\n")
+}
+
+fn emit_fuelized_sizeof_fn(fd: &FnDef, ctx: &CodegenContext) -> String {
+    let helper_name = fuel_helper_name(&fd.name);
+    let params = emit_fn_params(&fd.params);
+    let ret_type = ret_type_or_unit(fd);
+    let recursive_types: HashSet<String> = ctx
+        .modules
+        .iter()
+        .flat_map(|m| m.type_defs.iter())
+        .chain(ctx.type_defs.iter())
+        .filter(|td| is_recursive_type_def(td))
+        .map(|td| type_def_name(td).to_string())
+        .collect();
     let rewritten = rewrite_recursive_calls_body(
         &fd.body,
         &HashSet::from([fd.name.clone()]),
@@ -433,7 +857,7 @@ fn emit_fuelized_int_countdown_fn(fd: &FnDef, ctx: &CodegenContext, param_index:
         emit_doc_comment(&fd.desc),
         emit_fuel_helper_def(&helper_name, &params, &ret_type, &body, ""),
         vec![String::new()],
-        emit_int_countdown_wrapper(fd, &helper_name, param_index),
+        emit_mutual_sizeof_wrapper(fd, &helper_name, 1, &recursive_types),
     ]
     .into_iter()
     .flatten()
@@ -513,7 +937,7 @@ fn emit_fuelized_mutual_int_countdown_group(fns: &[&FnDef], ctx: &CodegenContext
         let params = emit_fn_params(&fd.params);
         let ret_type = ret_type_or_unit(fd);
         let rewritten = rewrite_recursive_calls_body(&fd.body, &targets, STRING_POS_FUEL_VAR);
-        let body = emit_fn_body(&rewritten, ctx);
+        let body = strip_match_eq_binders(emit_fn_body(&rewritten, ctx));
 
         helper_lines.extend(
             emit_doc_comment(&fd.desc)
@@ -537,6 +961,76 @@ fn emit_fuelized_mutual_int_countdown_group(fns: &[&FnDef], ctx: &CodegenContext
         .flat_map(|fd| {
             let helper_name = fuel_helper_name(&fd.name);
             let mut lines = emit_int_countdown_wrapper(fd, &helper_name, 0);
+            lines.push(String::new());
+            lines
+        })
+        .collect();
+
+    [helper_lines, vec![String::new()], wrapper_lines]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn emit_fuelized_mutual_sizeof_group(
+    fns: &[&FnDef],
+    ctx: &CodegenContext,
+    plans: &HashMap<String, RecursionPlan>,
+) -> String {
+    let targets: HashSet<String> = fns.iter().map(|fd| fd.name.clone()).collect();
+    let recursive_types: HashSet<String> = ctx
+        .modules
+        .iter()
+        .flat_map(|m| m.type_defs.iter())
+        .chain(ctx.type_defs.iter())
+        .filter(|td| is_recursive_type_def(td))
+        .map(|td| type_def_name(td).to_string())
+        .collect();
+    let rank_budget = fns
+        .iter()
+        .filter_map(|fd| match plans.get(&fd.name) {
+            Some(RecursionPlan::MutualSizeOfRanked { rank }) => Some(*rank),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(1)
+        + 1;
+
+    let mut helper_lines = vec!["mutual".to_string()];
+    for fd in fns {
+        if !is_pure_fn(fd) {
+            continue;
+        }
+        let helper_name = fuel_helper_name(&fd.name);
+        let params = emit_fn_params(&fd.params);
+        let ret_type = ret_type_or_unit(fd);
+        let rewritten = rewrite_recursive_calls_body(&fd.body, &targets, STRING_POS_FUEL_VAR);
+        let body = emit_fn_body(&rewritten, ctx);
+
+        helper_lines.extend(
+            emit_doc_comment(&fd.desc)
+                .into_iter()
+                .map(|line| format!("  {line}")),
+        );
+        helper_lines.extend(emit_fuel_helper_def(
+            &helper_name,
+            &params,
+            &ret_type,
+            &body,
+            "  ",
+        ));
+        helper_lines.push(String::new());
+    }
+    helper_lines.push("end".to_string());
+
+    let wrapper_lines: Vec<String> = fns
+        .iter()
+        .filter(|fd| is_pure_fn(fd))
+        .flat_map(|fd| {
+            let helper_name = fuel_helper_name(&fd.name);
+            let mut lines =
+                emit_mutual_sizeof_wrapper(fd, &helper_name, rank_budget, &recursive_types);
             lines.push(String::new());
             lines
         })
@@ -609,7 +1103,14 @@ pub fn emit_fn_def_proof(
     }
 
     if let Some(RecursionPlan::IntCountdown { param_index }) = recursion_plan {
+        if detects_fibonacci_spec(fd) {
+            return Some(emit_nat_fibonacci_spec_fn(fd));
+        }
         return Some(emit_fuelized_int_countdown_fn(fd, ctx, param_index));
+    }
+
+    if matches!(recursion_plan, Some(RecursionPlan::SizeOfStructural)) {
+        return Some(emit_fuelized_sizeof_fn(fd, ctx));
     }
 
     if matches!(recursion_plan, Some(RecursionPlan::StringPosAdvance)) {
@@ -652,6 +1153,7 @@ pub fn emit_fn_def_proof(
                 lines.push("decreasing_by".to_string());
                 lines.push("  decreasing_tactic".to_string());
             }
+            RecursionPlan::SizeOfStructural => {}
             RecursionPlan::StringPosAdvance => {}
             RecursionPlan::MutualStringPosAdvance { .. }
             | RecursionPlan::MutualSizeOfRanked { .. } => {}
@@ -792,11 +1294,12 @@ fn emit_verify_law_block(
     }
     if !quant_params.is_empty() {
         if let Some(auto_proof) = emit_verify_law_forall_auto_proof(vb, law, ctx, verify_mode) {
+            lines.extend(auto_proof.support_lines);
             lines.push(format!(
                 "theorem {} : ∀ {}, {} = {} := by",
                 theorem_base, quant_params, lhs_template, rhs_template
             ));
-            lines.extend(auto_proof);
+            lines.extend(auto_proof.proof_lines);
         } else if verify_mode == VerifyEmitMode::NativeDecide {
             lines.push(format!(
                 "-- universal theorem {} omitted: sampled law shape is not auto-proved yet",
@@ -811,6 +1314,37 @@ fn emit_verify_law_block(
                 "  -- verify law is sampled; universal proof must be provided manually".to_string(),
             );
             lines.push("  sorry".to_string());
+        }
+    }
+
+    if !vb.cases.is_empty() {
+        let domain_theorem_name = format!("{}_checked_domain", theorem_base);
+        let domain_prop = vb
+            .cases
+            .iter()
+            .map(|(left, right)| format!("({} = {})", emit_expr(left, ctx), emit_expr(right, ctx)))
+            .collect::<Vec<_>>()
+            .join(" ∧ ");
+        match verify_mode {
+            VerifyEmitMode::NativeDecide => {
+                lines.push(format!(
+                    "theorem {} : {} := by native_decide",
+                    domain_theorem_name, domain_prop
+                ));
+            }
+            VerifyEmitMode::Sorry => {
+                lines.push(format!(
+                    "theorem {} : {} := by sorry",
+                    domain_theorem_name, domain_prop
+                ));
+            }
+            VerifyEmitMode::TheoremSkeleton => {
+                lines.push(format!(
+                    "theorem {} : {} := by",
+                    domain_theorem_name, domain_prop
+                ));
+                lines.push("  sorry".to_string());
+            }
         }
     }
 
@@ -946,6 +1480,15 @@ pub fn emit_mutual_group_proof(
         return emit_fuelized_mutual_string_pos_group(fns, ctx, plans);
     }
 
+    if fns.iter().all(|fd| {
+        matches!(
+            plans.get(&fd.name),
+            Some(RecursionPlan::MutualSizeOfRanked { .. })
+        )
+    }) {
+        return emit_fuelized_mutual_sizeof_group(fns, ctx, plans);
+    }
+
     let mut lines = Vec::new();
     lines.push("mutual".to_string());
     for fd in fns {
@@ -990,10 +1533,7 @@ pub fn emit_mutual_group_proof(
                     lines.push("    simp_wf".to_string());
                 }
             }
-            Some(RecursionPlan::MutualSizeOfRanked {
-                rank: _,
-                metric_param_index: _,
-            }) => {}
+            Some(RecursionPlan::MutualSizeOfRanked { .. }) => {}
             _ => {}
         }
         lines.push(String::new());

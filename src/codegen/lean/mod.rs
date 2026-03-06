@@ -13,7 +13,7 @@ mod types;
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{BinOp, Expr, FnBody, FnDef, MatchArm, Pattern, Stmt, TopLevel, VerifyKind};
+use crate::ast::{BinOp, Expr, FnBody, FnDef, MatchArm, Pattern, Stmt, TopLevel, TypeDef, VerifyKind};
 use crate::call_graph;
 use crate::codegen::{CodegenContext, ProjectOutput};
 
@@ -37,6 +37,8 @@ pub enum RecursionPlan {
     IntCountdown { param_index: usize },
     /// Single-function structural recursion on first `List<_>` parameter.
     ListStructural,
+    /// Single-function structural recursion on a recursive user-defined type parameter.
+    SizeOfStructural,
     /// Single-function recursion where first `String` stays the same and second `Int`
     /// parameter strictly advances (`pos + k`, `k >= 1`).
     StringPosAdvance,
@@ -45,11 +47,10 @@ pub enum RecursionPlan {
     /// Mutual recursion group where first `String` is preserved and second `Int`
     /// either stays the same across rank-decreasing edges, or strictly advances.
     MutualStringPosAdvance { rank: usize },
-    /// Generic mutual recursion plan using `sizeOf` on a selected parameter,
-    /// plus rank for same-parameter edges.
+    /// Generic mutual recursion plan using `sizeOf` on structural parameters,
+    /// plus rank for same-measure edges.
     MutualSizeOfRanked {
         rank: usize,
-        metric_param_index: usize,
     },
 }
 
@@ -92,6 +93,18 @@ const LEAN_PRELUDE_STRING_HADD: &str = r#"instance : HAdd String String String :
 
 const LEAN_PRELUDE_PROOF_FUEL: &str = r#"def averStringPosFuel (s : String) (pos : Int) (rankBudget : Nat) : Nat :=
   (((s.data.length) - pos.toNat) + 1) * rankBudget"#;
+
+const LEAN_PRELUDE_AVER_MEASURE: &str = r#"namespace AverMeasure
+def list (elemMeasure : α → Nat) : List α → Nat
+  | [] => 1
+  | x :: xs => elemMeasure x + list elemMeasure xs + 1
+def option (elemMeasure : α → Nat) : Option α → Nat
+  | none => 1
+  | some x => elemMeasure x + 1
+def except (errMeasure : ε → Nat) (okMeasure : α → Nat) : Except ε α → Nat
+  | .error e => errMeasure e + 1
+  | .ok v => okMeasure v + 1
+end AverMeasure"#;
 
 const AVER_MAP_PRELUDE_BASE: &str = r#"namespace AverMap
 def empty : List (α × β) := []
@@ -317,6 +330,16 @@ fn pure_fns(ctx: &CodegenContext) -> Vec<&FnDef> {
         .collect()
 }
 
+fn recursive_type_names(ctx: &CodegenContext) -> HashSet<String> {
+    ctx.modules
+        .iter()
+        .flat_map(|m| m.type_defs.iter())
+        .chain(ctx.type_defs.iter())
+        .filter(|td| toplevel::is_recursive_type_def(td))
+        .map(|td| toplevel::type_def_name(td).to_string())
+        .collect()
+}
+
 fn recursive_pure_fn_names(ctx: &CodegenContext) -> HashSet<String> {
     let pure_names: HashSet<String> = pure_fns(ctx)
         .into_iter()
@@ -387,11 +410,11 @@ fn call_matches_any(name: &str, targets: &HashSet<String>) -> bool {
     }
 }
 
-fn is_int_minus_one(expr: &Expr, param_name: &str) -> bool {
+fn is_int_minus_positive(expr: &Expr, param_name: &str) -> bool {
     match expr {
         Expr::BinOp(BinOp::Sub, left, right) => {
             matches!(left.as_ref(), Expr::Ident(id) if id == param_name)
-                && matches!(right.as_ref(), Expr::Literal(crate::ast::Literal::Int(1)))
+                && matches!(right.as_ref(), Expr::Literal(crate::ast::Literal::Int(n)) if *n >= 1)
         }
         Expr::FnCall(callee, args) => {
             let Some(name) = expr_to_dotted_name(callee) else {
@@ -400,7 +423,7 @@ fn is_int_minus_one(expr: &Expr, param_name: &str) -> bool {
             (name == "Int.sub" || name == "int.sub")
                 && args.len() == 2
                 && matches!(&args[0], Expr::Ident(id) if id == param_name)
-                && matches!(&args[1], Expr::Literal(crate::ast::Literal::Int(1)))
+                && matches!(&args[1], Expr::Literal(crate::ast::Literal::Int(n)) if *n >= 1)
         }
         _ => false,
     }
@@ -573,6 +596,140 @@ fn collect_list_tail_binders(fd: &FnDef, list_param_name: &str) -> HashSet<Strin
     tails
 }
 
+fn find_type_def<'a>(ctx: &'a CodegenContext, type_name: &str) -> Option<&'a TypeDef> {
+    ctx.modules
+        .iter()
+        .flat_map(|m| m.type_defs.iter())
+        .chain(ctx.type_defs.iter())
+        .find(|td| toplevel::type_def_name(td) == type_name)
+}
+
+fn recursive_constructor_binders(
+    td: &TypeDef,
+    variant_name: &str,
+    binders: &[String],
+) -> Vec<String> {
+    let variant_short = variant_name.rsplit('.').next().unwrap_or(variant_name);
+    match td {
+        TypeDef::Sum { name, variants, .. } => variants
+            .iter()
+            .find(|variant| variant.name == variant_short)
+            .map(|variant| {
+                variant
+                    .fields
+                    .iter()
+                    .zip(binders.iter())
+                    .filter_map(|(field_ty, binder)| (field_ty.trim() == name).then_some(binder.clone()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        TypeDef::Product { .. } => Vec::new(),
+    }
+}
+
+fn grow_recursive_subterm_binders_from_expr(
+    expr: &Expr,
+    tracked: &HashSet<String>,
+    td: &TypeDef,
+    out: &mut HashSet<String>,
+) {
+    match expr {
+        Expr::Match { subject, arms, .. } => {
+            if let Expr::Ident(subject_name) = subject.as_ref()
+                && tracked.contains(subject_name)
+            {
+                for arm in arms {
+                    if let Pattern::Constructor(variant_name, binders) = &arm.pattern {
+                        out.extend(recursive_constructor_binders(td, variant_name, binders));
+                    }
+                }
+            }
+            grow_recursive_subterm_binders_from_expr(subject, tracked, td, out);
+            for arm in arms {
+                grow_recursive_subterm_binders_from_expr(&arm.body, tracked, td, out);
+            }
+        }
+        Expr::FnCall(callee, args) => {
+            grow_recursive_subterm_binders_from_expr(callee, tracked, td, out);
+            for arg in args {
+                grow_recursive_subterm_binders_from_expr(arg, tracked, td, out);
+            }
+        }
+        Expr::Attr(obj, _) => grow_recursive_subterm_binders_from_expr(obj, tracked, td, out),
+        Expr::BinOp(_, left, right) => {
+            grow_recursive_subterm_binders_from_expr(left, tracked, td, out);
+            grow_recursive_subterm_binders_from_expr(right, tracked, td, out);
+        }
+        Expr::Constructor(_, Some(inner)) | Expr::ErrorProp(inner) => {
+            grow_recursive_subterm_binders_from_expr(inner, tracked, td, out)
+        }
+        Expr::InterpolatedStr(parts) => {
+            for part in parts {
+                if let crate::ast::StrPart::Parsed(inner) = part {
+                    grow_recursive_subterm_binders_from_expr(inner, tracked, td, out);
+                }
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) => {
+            for item in items {
+                grow_recursive_subterm_binders_from_expr(item, tracked, td, out);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                grow_recursive_subterm_binders_from_expr(k, tracked, td, out);
+                grow_recursive_subterm_binders_from_expr(v, tracked, td, out);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, v) in fields {
+                grow_recursive_subterm_binders_from_expr(v, tracked, td, out);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            grow_recursive_subterm_binders_from_expr(base, tracked, td, out);
+            for (_, v) in updates {
+                grow_recursive_subterm_binders_from_expr(v, tracked, td, out);
+            }
+        }
+        Expr::TailCall(boxed) => {
+            for arg in &boxed.1 {
+                grow_recursive_subterm_binders_from_expr(arg, tracked, td, out);
+            }
+        }
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) | Expr::Constructor(_, None) => {}
+    }
+}
+
+fn collect_recursive_subterm_binders(
+    fd: &FnDef,
+    param_name: &str,
+    param_type: &str,
+    ctx: &CodegenContext,
+) -> HashSet<String> {
+    let Some(td) = find_type_def(ctx, param_type) else {
+        return HashSet::new();
+    };
+    let mut tracked: HashSet<String> = HashSet::from([param_name.to_string()]);
+    loop {
+        let mut discovered = HashSet::new();
+        for stmt in fd.body.stmts() {
+            match stmt {
+                Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => {
+                    grow_recursive_subterm_binders_from_expr(expr, &tracked, td, &mut discovered);
+                }
+            }
+        }
+        let before = tracked.len();
+        tracked.extend(discovered);
+        if tracked.len() == before {
+            break;
+        }
+    }
+    tracked.remove(param_name);
+    tracked
+}
+
 fn single_int_countdown_param_index(fd: &FnDef) -> Option<usize> {
     let recursive_calls: Vec<Vec<&Expr>> = collect_calls_from_body(fd.body.as_ref())
         .into_iter()
@@ -592,10 +749,64 @@ fn single_int_countdown_param_index(fd: &FnDef) -> Option<usize> {
             }
             let ok = recursive_calls.iter().all(|args| {
                 args.get(idx).copied()
-                    .is_some_and(|arg| is_int_minus_one(arg, param_name))
+                    .is_some_and(|arg| is_int_minus_positive(arg, param_name))
             });
             ok.then_some(idx)
         })
+}
+
+fn supports_single_sizeof_structural(fd: &FnDef, ctx: &CodegenContext) -> bool {
+    let recursive_calls: Vec<Vec<&Expr>> = collect_calls_from_body(fd.body.as_ref())
+        .into_iter()
+        .filter(|(name, _)| call_matches(name, &fd.name))
+        .map(|(_, args)| args)
+        .collect();
+    if recursive_calls.is_empty() {
+        return false;
+    }
+
+    let metric_indices = sizeof_measure_param_indices(fd);
+    if metric_indices.is_empty() {
+        return false;
+    }
+
+    let binder_sets: HashMap<usize, HashSet<String>> = metric_indices
+        .iter()
+        .filter_map(|idx| {
+            let (param_name, param_type) = fd.params.get(*idx)?;
+            recursive_type_names(ctx)
+                .contains(param_type)
+                .then(|| (*idx, collect_recursive_subterm_binders(fd, param_name, param_type, ctx)))
+        })
+        .collect();
+
+    if binder_sets.values().all(HashSet::is_empty) {
+        return false;
+    }
+
+    recursive_calls.iter().all(|args| {
+        let mut strictly_smaller = false;
+        for idx in &metric_indices {
+            let Some((param_name, _)) = fd.params.get(*idx) else {
+                return false;
+            };
+            let Some(arg) = args.get(*idx).copied() else {
+                return false;
+            };
+            if is_ident(arg, param_name) {
+                continue;
+            }
+            let Some(binders) = binder_sets.get(idx) else {
+                return false;
+            };
+            if matches!(arg, Expr::Ident(id) if binders.contains(id)) {
+                strictly_smaller = true;
+                continue;
+            }
+            return false;
+        }
+        strictly_smaller
+    })
 }
 
 fn supports_single_list_structural(fd: &FnDef) -> bool {
@@ -814,7 +1025,7 @@ fn supports_mutual_int_countdown(component: &[&FnDef]) -> bool {
             let Some(arg0) = args.first().copied() else {
                 return false;
             };
-            if !is_int_minus_one(arg0, param_name) {
+            if !is_int_minus_positive(arg0, param_name) {
                 return false;
             }
         }
@@ -875,30 +1086,34 @@ fn supports_mutual_string_pos_advance(component: &[&FnDef]) -> Option<HashMap<St
     ranks_from_same_edges(&names, &same_edges)
 }
 
-fn metric_param_index_for_fn(fd: &FnDef) -> usize {
-    if fd.params.len() >= 2
-        && fd.params[0].1 == "String"
-        && (fd.params[1].1 == "Int"
-            || fd.params[1].1 == "List"
-            || fd.params[1].1.starts_with("List<"))
-    {
-        return 1;
-    }
-    0
+fn is_scalar_like_type(type_name: &str) -> bool {
+    matches!(
+        type_name,
+        "Int" | "Float" | "Bool" | "String" | "Char" | "Byte" | "Unit"
+    )
 }
 
-fn supports_mutual_sizeof_ranked(component: &[&FnDef]) -> Option<HashMap<String, (usize, usize)>> {
+pub(super) fn sizeof_measure_param_indices(fd: &FnDef) -> Vec<usize> {
+    fd.params
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, (_, type_name))| (!is_scalar_like_type(type_name)).then_some(idx))
+        .collect()
+}
+
+fn supports_mutual_sizeof_ranked(component: &[&FnDef]) -> Option<HashMap<String, usize>> {
     if component.len() < 2 {
         return None;
     }
     let names: HashSet<String> = component.iter().map(|fd| fd.name.clone()).collect();
-    let metric_idx: HashMap<String, usize> = component
+    let metric_indices: HashMap<String, Vec<usize>> = component
         .iter()
-        .map(|fd| (fd.name.clone(), metric_param_index_for_fn(fd)))
+        .map(|fd| (fd.name.clone(), sizeof_measure_param_indices(fd)))
         .collect();
     if component.iter().any(|fd| {
-        let idx = metric_idx.get(&fd.name).copied().unwrap_or(usize::MAX);
-        idx >= fd.params.len()
+        metric_indices
+            .get(&fd.name)
+            .is_none_or(|indices| indices.is_empty())
     }) {
         return None;
     }
@@ -907,16 +1122,25 @@ fn supports_mutual_sizeof_ranked(component: &[&FnDef]) -> Option<HashMap<String,
         names.iter().map(|n| (n.clone(), HashSet::new())).collect();
     let mut any_intra = false;
     for fd in component {
-        let caller_metric_idx = metric_idx.get(&fd.name).copied()?;
-        let caller_metric_param = &fd.params[caller_metric_idx].0;
+        let caller_metric_indices = metric_indices.get(&fd.name)?;
+        let caller_metric_params: Vec<&str> = caller_metric_indices
+            .iter()
+            .filter_map(|idx| fd.params.get(*idx).map(|(name, _)| name.as_str()))
+            .collect();
         for (callee_raw, args) in collect_calls_from_body(fd.body.as_ref()) {
             let Some(callee) = canonical_callee_name(&callee_raw, &names) else {
                 continue;
             };
             any_intra = true;
-            let callee_metric_idx = metric_idx.get(&callee).copied()?;
-            let metric_arg = args.get(callee_metric_idx).copied()?;
-            if is_ident(metric_arg, caller_metric_param) {
+            let callee_metric_indices = metric_indices.get(&callee)?;
+            let is_same_edge = callee_metric_indices.len() == caller_metric_params.len()
+                && callee_metric_indices.iter().enumerate().all(|(pos, callee_idx)| {
+                    let Some(arg) = args.get(*callee_idx).copied() else {
+                        return false;
+                    };
+                    is_ident(arg, caller_metric_params[pos])
+                });
+            if is_same_edge {
                 if let Some(edges) = same_edges.get_mut(&fd.name) {
                     edges.insert(callee);
                 } else {
@@ -933,8 +1157,7 @@ fn supports_mutual_sizeof_ranked(component: &[&FnDef]) -> Option<HashMap<String,
     let mut out = HashMap::new();
     for fd in component {
         let rank = ranks.get(&fd.name).copied()?;
-        let idx = metric_idx.get(&fd.name).copied()?;
-        out.insert(fd.name.clone(), (rank, idx));
+        out.insert(fd.name.clone(), rank);
     }
     Some(out)
 }
@@ -975,13 +1198,10 @@ fn proof_mode_recursion_analysis(
                 }
             } else if let Some(rankings) = supports_mutual_sizeof_ranked(&component) {
                 for fd in &component {
-                    if let Some((rank, metric_param_index)) = rankings.get(&fd.name).copied() {
+                    if let Some(rank) = rankings.get(&fd.name).copied() {
                         plans.insert(
                             fd.name.clone(),
-                            RecursionPlan::MutualSizeOfRanked {
-                                rank,
-                                metric_param_index,
-                            },
+                            RecursionPlan::MutualSizeOfRanked { rank },
                         );
                     }
                 }
@@ -1002,13 +1222,15 @@ fn proof_mode_recursion_analysis(
         let fd = component[0];
         if let Some(param_index) = single_int_countdown_param_index(fd) {
             plans.insert(fd.name.clone(), RecursionPlan::IntCountdown { param_index });
+        } else if supports_single_sizeof_structural(fd, ctx) {
+            plans.insert(fd.name.clone(), RecursionPlan::SizeOfStructural);
         } else if supports_single_list_structural(fd) {
             plans.insert(fd.name.clone(), RecursionPlan::ListStructural);
         } else if supports_single_string_pos_advance(fd) {
             plans.insert(fd.name.clone(), RecursionPlan::StringPosAdvance);
         } else {
             issues.push(format!(
-                "recursive function '{}' is outside proof subset (currently supported: Int countdown, List structural, String+position, mutual Int countdown, mutual String+position, and ranked sizeOf recursion)",
+                "recursive function '{}' is outside proof subset (currently supported: Int countdown, structural recursion on List/recursive ADTs, String+position, mutual Int countdown, mutual String+position, and ranked sizeOf recursion)",
                 fd.name
             ));
         }
@@ -1041,6 +1263,7 @@ pub fn transpile_for_proof_mode(
 ) -> ProjectOutput {
     let (plans, _issues) = proof_mode_recursion_analysis(ctx);
     let recursive_names = recursive_pure_fn_names(ctx);
+    let recursive_types = recursive_type_names(ctx);
 
     let mut sections = Vec::new();
 
@@ -1052,6 +1275,9 @@ pub fn transpile_for_proof_mode(
                 sections.push(toplevel::emit_recursive_decidable_eq(
                     toplevel::type_def_name(td),
                 ));
+                if let Some(measure) = toplevel::emit_recursive_measure(td, &recursive_types) {
+                    sections.push(measure);
+                }
             }
             sections.push(String::new());
         }
@@ -1062,6 +1288,9 @@ pub fn transpile_for_proof_mode(
             sections.push(toplevel::emit_recursive_decidable_eq(
                 toplevel::type_def_name(td),
             ));
+            if let Some(measure) = toplevel::emit_recursive_measure(td, &recursive_types) {
+                sections.push(measure);
+            }
         }
         sections.push(String::new());
     }
@@ -1282,6 +1511,10 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
 
     if include_all_helpers || body.contains("averStringPosFuel") {
         parts.push(LEAN_PRELUDE_PROOF_FUEL.to_string());
+    }
+
+    if include_all_helpers || body.contains("AverMeasure.") {
+        parts.push(LEAN_PRELUDE_AVER_MEASURE.to_string());
     }
 
     if include_all_helpers || body.contains("AverMap.") {
@@ -1705,6 +1938,7 @@ verify absVal law absValSpec
         assert!(lean.contains(
             "theorem absVal_eq_absValSpec : ∀ (x : Int), absVal x = absValSpec x := by"
         ));
+        assert!(lean.contains("theorem absVal_eq_absValSpec_checked_domain :"));
         assert!(lean.contains("theorem absVal_eq_absValSpec_sample_1 :"));
         assert!(!lean.contains("theorem absVal_law_absValSpec :"));
     }
@@ -1735,6 +1969,38 @@ verify foo law fooSpec
         assert!(lean.contains("-- verify law foo.fooSpec (2 cases)"));
         assert!(lean.contains("theorem foo_law_fooSpec : ∀ (x : Int), foo x = fooSpec 1 x := by"));
         assert!(!lean.contains("theorem foo_eq_fooSpec :"));
+    }
+
+    #[test]
+    fn transpile_omits_universal_theorem_for_nontrivial_canonical_spec_law_in_auto_mode() {
+        let ctx = ctx_from_source(
+            r#"
+module SpecGap
+    intent =
+        "nontrivial canonical spec law"
+
+fn inc(x: Int) -> Int
+    x + 1
+
+fn incSpec(x: Int) -> Int
+    x + 2 - 1
+
+verify inc law incSpec
+    given x: Int = [0, 1, 2]
+    inc(x) => incSpec(x)
+"#,
+            "spec_gap",
+        );
+        let out = transpile(&ctx);
+        let lean = generated_lean_file(&out);
+
+        assert!(lean.contains("-- verify law inc.spec incSpec (3 cases)"));
+        assert!(lean.contains(
+            "-- universal theorem inc_eq_incSpec omitted: sampled law shape is not auto-proved yet"
+        ));
+        assert!(!lean.contains("theorem inc_eq_incSpec :"));
+        assert!(lean.contains("theorem inc_eq_incSpec_checked_domain :"));
+        assert!(lean.contains("theorem inc_eq_incSpec_sample_1 :"));
     }
 
     #[test]
@@ -3100,6 +3366,8 @@ verify foo law fooSpec
         let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
         assert!(lean.contains("mutual"));
+        assert!(lean.contains("def f__fuel"));
+        assert!(lean.contains("def g__fuel"));
         assert!(!lean.contains("partial def f"));
         assert!(!lean.contains("partial def g"));
     }
@@ -3287,5 +3555,99 @@ verify foo law fooSpec
         assert!(lean.contains("def fibTR (n : Int) (a : Int) (b : Int) : Int :="));
         assert!(lean.contains("fibTR__fuel ((Int.natAbs n) + 1) n a b"));
         assert!(!lean.contains("partial def fibTR"));
+    }
+
+    #[test]
+    fn fibonacci_example_auto_proves_canonical_spec_law() {
+        let ctx = ctx_from_source(include_str!("../../../examples/fibonacci.av"), "fibonacci");
+        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let lean = generated_lean_file(&out);
+
+        assert!(lean.contains("private def fibSpec__nat : Nat -> Int"));
+        assert!(lean.contains("private theorem fib_eq_fibSpec__helper_step_nat"));
+        assert!(lean.contains("private theorem fib_eq_fibSpec__helper_state"));
+        assert!(lean.contains("private theorem fib_eq_fibSpec__advance_eq_spec_pair"));
+        assert!(lean.contains("theorem fib_eq_fibSpec : ∀ (n : Int), fib n = fibSpec n := by"));
+        assert!(!lean.contains(
+            "-- universal theorem fib_eq_fibSpec omitted: sampled law shape is not auto-proved yet"
+        ));
+    }
+
+    #[test]
+    fn date_example_stays_inside_proof_subset() {
+        let ctx = ctx_from_source(include_str!("../../../examples/date.av"), "date");
+        let issues = proof_mode_issues(&ctx);
+        assert!(
+            issues.is_empty(),
+            "expected date example to stay inside proof subset, got: {:?}",
+            issues
+        );
+
+        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let lean = generated_lean_file(&out);
+        assert!(!lean.contains("partial def"));
+        assert!(lean.contains("def parseIntSlice (s : String) (from' : Int) (to : Int) : Int :="));
+    }
+
+    #[test]
+    fn temperature_example_stays_inside_proof_subset() {
+        let ctx = ctx_from_source(include_str!("../../../examples/temperature.av"), "temperature");
+        let issues = proof_mode_issues(&ctx);
+        assert!(
+            issues.is_empty(),
+            "expected temperature example to stay inside proof subset, got: {:?}",
+            issues
+        );
+
+        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let lean = generated_lean_file(&out);
+        assert!(!lean.contains("partial def"));
+        assert!(
+            lean.contains("example : celsiusToFahr 0.0 = 32.0 := by native_decide"),
+            "expected verify examples to survive proof export, got:\n{}",
+            lean
+        );
+    }
+
+    #[test]
+    fn grok_s_language_example_uses_total_ranked_sizeof_mutual_recursion() {
+        let ctx = ctx_from_source(
+            include_str!("../../../examples/grok_s_language.av"),
+            "grok_s_language",
+        );
+        let issues = proof_mode_issues(&ctx);
+        assert!(
+            issues.is_empty(),
+            "expected grok_s_language example to stay inside proof subset, got: {:?}",
+            issues
+        );
+
+        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let lean = generated_lean_file(&out);
+        assert!(lean.contains("mutual"));
+        assert!(lean.contains("def eval__fuel"));
+        assert!(lean.contains("def parseListItems__fuel"));
+        assert!(!lean.contains("partial def eval"));
+        assert!(!lean.contains("termination_by (sizeOf e,"));
+    }
+
+    #[test]
+    fn lambda_example_keeps_only_eval_outside_proof_subset() {
+        let ctx = ctx_from_source(include_str!("../../../examples/lambda.av"), "lambda");
+        let issues = proof_mode_issues(&ctx);
+        assert_eq!(
+            issues,
+            vec!["recursive function 'eval' is outside proof subset (currently supported: Int countdown, structural recursion on List/recursive ADTs, String+position, mutual Int countdown, mutual String+position, and ranked sizeOf recursion)".to_string()]
+        );
+
+        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let lean = generated_lean_file(&out);
+        assert!(lean.contains("def termToString__fuel"));
+        assert!(lean.contains("def subst__fuel"));
+        assert!(lean.contains("def countS__fuel"));
+        assert!(!lean.contains("partial def termToString"));
+        assert!(!lean.contains("partial def subst"));
+        assert!(!lean.contains("partial def countS"));
+        assert!(lean.contains("partial def eval"));
     }
 }

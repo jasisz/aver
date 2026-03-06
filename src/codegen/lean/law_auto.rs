@@ -12,12 +12,17 @@ use super::expr::aver_name_to_lean;
 use crate::ast::{VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 
+pub struct AutoProof {
+    pub support_lines: Vec<String>,
+    pub proof_lines: Vec<String>,
+}
+
 pub fn emit_verify_law_forall_auto_proof(
     vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,
     verify_mode: VerifyEmitMode,
-) -> Option<Vec<String>> {
+) -> Option<AutoProof> {
     if verify_mode != VerifyEmitMode::NativeDecide {
         return None;
     }
@@ -29,17 +34,62 @@ pub fn emit_verify_law_forall_auto_proof(
         .collect();
 
     if law.lhs == law.rhs {
-        return Some(intro_then(&intro_names, vec!["rfl".to_string()]));
+        return Some(AutoProof {
+            support_lines: Vec::new(),
+            proof_lines: intro_then(&intro_names, vec!["rfl".to_string()]),
+        });
     }
 
     arithmetic::emit_binary_wrapper_law(vb, law, ctx, &intro_names)
-        .or_else(|| arithmetic::emit_unary_wrapper_equivalence_law(vb, law, ctx, &intro_names))
+        .map(|proof_lines| AutoProof {
+            support_lines: Vec::new(),
+            proof_lines,
+        })
+        .or_else(|| {
+            arithmetic::emit_unary_wrapper_equivalence_law(vb, law, ctx, &intro_names).map(
+                |proof_lines| AutoProof {
+                    support_lines: Vec::new(),
+                    proof_lines,
+                },
+            )
+        })
         .or_else(|| spec::emit_spec_function_equivalence_law(vb, law, ctx, &intro_names))
-        .or_else(|| maps::emit_direct_map_set_law(law, ctx, &intro_names))
-        .or_else(|| maps::emit_map_update_law(vb, law, ctx, &intro_names))
-        .or_else(|| maps::emit_map_increment_tracked_count_law(vb, law, ctx, &intro_names))
-        .or_else(|| maps::emit_recursive_map_presence_law(vb, law, ctx, &intro_names))
-        .or_else(|| maps::emit_recursive_map_tracked_count_law(vb, law, ctx, &intro_names))
+        .or_else(|| {
+            maps::emit_direct_map_set_law(law, ctx, &intro_names).map(|proof_lines| AutoProof {
+                support_lines: Vec::new(),
+                proof_lines,
+            })
+        })
+        .or_else(|| {
+            maps::emit_map_update_law(vb, law, ctx, &intro_names).map(|proof_lines| AutoProof {
+                support_lines: Vec::new(),
+                proof_lines,
+            })
+        })
+        .or_else(|| {
+            maps::emit_map_increment_tracked_count_law(vb, law, ctx, &intro_names).map(
+                |proof_lines| AutoProof {
+                    support_lines: Vec::new(),
+                    proof_lines,
+                },
+            )
+        })
+        .or_else(|| {
+            maps::emit_recursive_map_presence_law(vb, law, ctx, &intro_names).map(
+                |proof_lines| AutoProof {
+                    support_lines: Vec::new(),
+                    proof_lines,
+                },
+            )
+        })
+        .or_else(|| {
+            maps::emit_recursive_map_tracked_count_law(vb, law, ctx, &intro_names).map(
+                |proof_lines| AutoProof {
+                    support_lines: Vec::new(),
+                    proof_lines,
+                },
+            )
+        })
 }
 
 pub(super) fn intro_then(intro_names: &[String], steps: Vec<String>) -> Vec<String> {

@@ -12,8 +12,6 @@ record FibStats
   evens: List<Int>
 
 record FibAcc
-  i: Int
-  n: Int
   a: Int
   b: Int
   fibs: List<Int>
@@ -138,27 +136,62 @@ fn finalizeFibStats(acc: FibAcc) -> FibStats
     FibStats(fibs = List.reverse(acc.fibs), sum = acc.sum, mx = acc.mx, evens = List.reverse(acc.evens))
 
 verify finalizeFibStats
-    finalizeFibStats(FibAcc(i = 1, n = 1, a = 1, b = 1, fibs = [2, 1, 0], sum = 3, mx = 2, evens = [2, 0])) => FibStats(fibs = [0, 1, 2], sum = 3, mx = 2, evens = [0, 2])
+    finalizeFibStats(FibAcc(a = 1, b = 1, fibs = [2, 1, 0], sum = 3, mx = 2, evens = [2, 0])) => FibStats(fibs = [0, 1, 2], sum = 3, mx = 2, evens = [0, 2])
 
-fn buildFibStatsTR(acc: FibAcc) -> FibStats
-    ? "Single-pass builder: advances accumulator state one step until i > n."
-    match acc.i > acc.n
+fn buildFibStatsTR(remaining: Int, acc: FibAcc) -> FibStats
+    ? "Single-pass builder: advances accumulator state once per remaining Fibonacci slot."
+    match remaining <= 0
         true  -> finalizeFibStats(acc)
-        false -> buildFibStatsTR(FibAcc(i = acc.i + 1, n = acc.n, a = acc.b, b = acc.a + acc.b, fibs = List.prepend(acc.a, acc.fibs), sum = acc.sum + acc.a, mx = bigger(acc.a, acc.mx), evens = prependIfEven(acc.evens, acc.a)))
+        false -> buildFibStatsTR(remaining - 1, FibAcc(a = acc.b, b = acc.a + acc.b, fibs = List.prepend(acc.a, acc.fibs), sum = acc.sum + acc.a, mx = bigger(acc.a, acc.mx), evens = prependIfEven(acc.evens, acc.a)))
 
 verify buildFibStatsTR
-    buildFibStatsTR(FibAcc(i = 0, n = 0, a = 0, b = 1, fibs = [], sum = 0, mx = 0, evens = [])) => FibStats(fibs = [0], sum = 0, mx = 0, evens = [0])
+    buildFibStatsTR(1, FibAcc(a = 0, b = 1, fibs = [], sum = 0, mx = 0, evens = [])) => FibStats(fibs = [0], sum = 0, mx = 0, evens = [0])
+    buildFibStatsTR(5, FibAcc(a = 0, b = 1, fibs = [], sum = 0, mx = 0, evens = [])) => FibStats(fibs = [0, 1, 1, 2, 3], sum = 7, mx = 3, evens = [0, 2])
 
 fn buildFibStats(n: Int) -> Result<FibStats, String>
     ? "Computes FibStats for F(0)..F(n) in one pass. Err for n < 0."
     match n < 0
         true  -> Result.Err("Need n >= 0")
-        false -> Result.Ok(buildFibStatsTR(FibAcc(i = 0, n = n, a = 0, b = 1, fibs = [], sum = 0, mx = 0, evens = [])))
+        false -> Result.Ok(buildFibStatsTR(n + 1, FibAcc(a = 0, b = 1, fibs = [], sum = 0, mx = 0, evens = [])))
 
 verify buildFibStats
     buildFibStats(-1) => Result.Err("Need n >= 0")
     buildFibStats(0)  => Result.Ok(FibStats(fibs = [0], sum = 0, mx = 0, evens = [0]))
     buildFibStats(4)  => Result.Ok(FibStats(fibs = [0, 1, 1, 2, 3], sum = 7, mx = 3, evens = [0, 2]))
+
+fn nthOrZero(xs: List<Int>, index: Int) -> Int
+    ? "Returns the nth element of xs, or 0 when index is out of bounds."
+    match xs
+        [] -> 0
+        [head, ..tail] -> match index <= 0
+            true -> head
+            false -> nthOrZero(tail, index - 1)
+
+verify nthOrZero
+    nthOrZero([], 0) => 0
+    nthOrZero([4], 0) => 4
+    nthOrZero([4, 5, 6], 2) => 6
+    nthOrZero([4, 5], 9) => 0
+
+fn fibSpec(n: Int) -> Int
+    ? "Specification for fib as the direct Fibonacci recurrence."
+    match n < 0
+        true -> 0
+        false -> match n
+            0 -> 0
+            1 -> 1
+            _ -> fibSpec(n - 1) + fibSpec(n - 2)
+
+verify fibSpec
+    fibSpec(-1) => 0
+    fibSpec(0)  => 0
+    fibSpec(1)  => 1
+    fibSpec(5)  => 5
+    fibSpec(10) => 55
+
+verify fib law fibSpec
+    given n: Int = -1..10
+    fib(n) => fibSpec(n)
 
 fn printStats(s: FibStats) -> Unit
     ? "Print all fields of a FibStats record to stdout."

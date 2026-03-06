@@ -115,7 +115,7 @@ The current proof export supports:
 - single-function `String + pos` recursion on `(String, Int)` signatures
 - mutual recursion SCC with first-parameter `Int` countdown
 - mutual recursion SCC with ranked `String + pos` progress
-- mutual recursion SCC with ranked `sizeOf` descent
+- mutual recursion SCC with ranked structural descent over recursive parameters
 
 ## Current end-to-end examples
 
@@ -124,9 +124,19 @@ These examples currently go through Lean export and `lake build` end to end:
 - `examples/spec_laws.av`
 - `examples/law_auto.av`
 - `examples/map.av`
+- `examples/date.av`
 - `examples/fibonacci.av`
+- `examples/grok_s_language.av`
+- `examples/lambda.av`
 - `examples/rle.av`
 - `examples/json.av`
+- `examples/temperature.av`
+- `examples/trust_check.av`
+- `examples/user_record.av`
+- `examples/lists.av`
+- `examples/calculator.av`
+- `examples/shapes.av`
+- `examples/effect_sets.av`
 
 These examples currently build with plain Lean export:
 
