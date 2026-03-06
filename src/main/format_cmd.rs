@@ -37,7 +37,16 @@ pub(super) fn cmd_format(path: &str, check: bool) {
                 process::exit(1);
             }
         };
-        let formatted = format_source(&src);
+        let formatted = match try_format_source(&src) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!(
+                    "{}",
+                    format!("Cannot format '{}': {}", file.display(), e).red()
+                );
+                process::exit(1);
+            }
+        };
         if formatted != src {
             changed.push(file.clone());
             if !check && let Err(e) = fs::write(file, formatted) {
@@ -297,11 +306,11 @@ fn reorder_verify_blocks(blocks: Vec<TopBlock>) -> Vec<TopBlock> {
     out
 }
 
-fn parse_ast_info(source: &str) -> Option<FormatAstInfo> {
+fn parse_ast_info_checked(source: &str) -> Result<FormatAstInfo, String> {
     let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().ok()?;
+    let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
     let mut parser = Parser::new(tokens);
-    let items = parser.parse().ok()?;
+    let items = parser.parse().map_err(|e| e.to_string())?;
 
     let mut info = FormatAstInfo::default();
     for item in items {
@@ -317,7 +326,21 @@ fn parse_ast_info(source: &str) -> Option<FormatAstInfo> {
             _ => {}
         }
     }
-    Some(info)
+    Ok(info)
+}
+
+fn normalize_source_lines(source: &str) -> Vec<String> {
+    let normalized = source.replace("\r\n", "\n").replace('\r', "\n");
+
+    let mut lines = Vec::new();
+    for raw in normalized.split('\n') {
+        let trimmed = raw.trim_end_matches([' ', '\t']);
+        let line = normalize_leading_indent(trimmed);
+        lines.push(line);
+    }
+
+    let lines = normalize_inline_module_intent(lines);
+    normalize_inline_decision_fields(lines)
 }
 
 fn normalize_internal_blank_runs(text: &str) -> String {
@@ -473,23 +496,13 @@ fn normalize_inline_decision_fields(lines: Vec<String>) -> Vec<String> {
     out
 }
 
-pub(super) fn format_source(source: &str) -> String {
-    // 1) Normalize line endings.
-    let normalized = source.replace("\r\n", "\n").replace('\r', "\n");
-    let ast_info = parse_ast_info(&normalized);
-
-    // 2) Whitespace normalization per line.
-    let mut lines = Vec::new();
-    for raw in normalized.split('\n') {
-        let trimmed = raw.trim_end_matches([' ', '\t']);
-        let line = normalize_leading_indent(trimmed);
-        lines.push(line);
-    }
-    let lines = normalize_inline_module_intent(lines);
-    let lines = normalize_inline_decision_fields(lines);
+fn try_format_source(source: &str) -> Result<String, String> {
+    let lines = normalize_source_lines(source);
+    let normalized = lines.join("\n");
+    let ast_info = parse_ast_info_checked(&normalized)?;
 
     // 3) Split into top-level blocks and co-locate verify blocks under their functions.
-    let blocks = split_top_level_blocks(&lines, ast_info.as_ref());
+    let blocks = split_top_level_blocks(&lines, Some(&ast_info));
     let reordered = reorder_verify_blocks(blocks);
 
     // 4) Rejoin with one blank line between top-level blocks.
@@ -503,16 +516,24 @@ pub(super) fn format_source(source: &str) -> String {
     }
 
     if non_empty_blocks.is_empty() {
-        return "\n".to_string();
+        return Ok("\n".to_string());
     }
     let mut out = non_empty_blocks.join("\n\n");
     out.push('\n');
-    out
+    Ok(out)
+}
+
+#[cfg(test)]
+pub(super) fn format_source(source: &str) -> String {
+    match try_format_source(source) {
+        Ok(formatted) => formatted,
+        Err(err) => panic!("format_source received invalid Aver source: {err}"),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::format_source;
+    use super::{format_source, try_format_source};
 
     #[test]
     fn normalizes_line_endings_and_trailing_ws() {
@@ -540,6 +561,17 @@ mod tests {
         let src = "module A\nfn x() -> Int\n    1\n\n\n";
         let got = format_source(src);
         assert_eq!(got, "module A\n\nfn x() -> Int\n    1\n");
+    }
+
+    #[test]
+    fn rejects_removed_eq_expr_syntax() {
+        let src = "fn x() -> Int\n    = 1\n";
+        let err = try_format_source(src).expect_err("old '= expr' syntax should fail");
+        assert!(
+            err.contains("no longer use '= expr'"),
+            "unexpected error: {}",
+            err
+        );
     }
 
     #[test]

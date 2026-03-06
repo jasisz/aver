@@ -963,6 +963,17 @@ fn eq_shorthand_after_binding_is_parse_error() {
 }
 
 #[test]
+fn eq_shorthand_on_fn_header_is_parse_error() {
+    let src = "fn f(x: Int) -> String = \"result\"\n";
+    let msg = parse_error(src);
+    assert!(
+        msg.contains("no longer use '= expr'"),
+        "unexpected parse error: {}",
+        msg
+    );
+}
+
+#[test]
 fn lambda_syntax_shows_actionable_error() {
     let src = "fn apply(f: Fn(Int) -> Bool, x: Int) -> Bool\n    f(x)\nfn main() -> Bool\n    apply(fn(x: Int) -> Bool\n        x > 1, 1)\n";
     let msg = parse_error(src);

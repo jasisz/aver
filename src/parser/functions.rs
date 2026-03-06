@@ -21,6 +21,12 @@ impl Parser {
             return_type = self.parse_type()?;
         }
 
+        if self.check_exact(&TokenKind::Assign) {
+            return Err(self.error(
+                "Function bodies no longer use '= expr'. Write the expression as an indented line directly.".to_string(),
+            ));
+        }
+
         self.skip_newlines();
 
         let mut desc = None;

@@ -32,6 +32,6 @@
 
 | Type | Location | Description |
 |---|---|---|
-| `Value` | `src/value.rs` | Runtime value: `Int`, `Float`, `Str`, `Bool`, `Unit`, `Ok(Box<Value>)`, `Err(Box<Value>)`, `Some(Box<Value>)`, `None`, `List(Vec<Value>)`, `Fn{..}`, `Builtin(String)`, `Variant { type_name, variant, fields }`, `Record { type_name, fields }`, `Namespace { name, members }` |
+| `Value` | `src/value.rs` | Runtime value: `Int`, `Float`, `Str`, `Bool`, `Unit`, `Ok(Box<Value>)`, `Err(Box<Value>)`, `Some(Box<Value>)`, `None`, `List(AverList<Value>)`, `Fn{..}`, `Builtin(String)`, `Variant { type_name, variant, fields }`, `Record { type_name, fields }`, `Namespace { name, members }` |
 | `Env` | `src/value.rs` | `Vec<EnvFrame>` — scope stack (`Owned(HashMap)` or `Slots(Vec<Rc<Value>>)`), innermost last |
 | `RuntimeError` | `src/value.rs` | Error enum: `Error(String)`, `ErrProp(Box<Value>)`, `TailCall(Box<(String, Vec<Value>)>)`, `ReplayMismatch(String)`, `ReplayExhausted` |
