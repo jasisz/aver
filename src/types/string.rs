@@ -22,7 +22,7 @@
 /// No effects required.
 use std::collections::HashMap;
 
-use crate::value::{RuntimeError, Value, list_from_vec, list_slice};
+use crate::value::{RuntimeError, Value, list_from_vec, list_view};
 
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
@@ -208,7 +208,7 @@ fn replace(args: &[Value]) -> Result<Value, RuntimeError> {
 
 fn join(args: &[Value]) -> Result<Value, RuntimeError> {
     let [a, b] = two_args("String.join", args)?;
-    let items = list_slice(a).ok_or_else(|| {
+    let items = list_view(a).ok_or_else(|| {
         RuntimeError::Error("String.join: first argument must be a List".to_string())
     })?;
     let Value::Str(sep) = b else {

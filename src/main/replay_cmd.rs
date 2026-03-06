@@ -10,7 +10,7 @@ use aver::replay::{
     JsonValue, RecordedOutcome, SessionRecording, first_diff_path, format_json, json_to_value,
     parse_session_recording, value_to_json,
 };
-use aver::value::RuntimeError;
+use aver::value::{RuntimeError, list_to_vec};
 
 use crate::shared::compile_program_for_exec;
 
@@ -62,10 +62,12 @@ pub(super) fn collect_recording_files(path: &str) -> Result<Vec<PathBuf>, String
 
 pub(super) fn decode_entry_args(input: &JsonValue) -> Result<Vec<Value>, String> {
     let val = json_to_value(input)?;
-    match val {
-        Value::Unit => Ok(vec![]),
-        Value::List(args) => Ok(args),
-        other => Ok(vec![other]),
+    if matches!(&val, Value::Unit) {
+        Ok(vec![])
+    } else if let Some(args) = list_to_vec(&val) {
+        Ok(args)
+    } else {
+        Ok(vec![val])
     }
 }
 

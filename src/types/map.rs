@@ -18,7 +18,7 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-use crate::value::{RuntimeError, Value, aver_repr, list_from_vec, list_slice};
+use crate::value::{RuntimeError, Value, aver_repr, list_from_vec, list_view};
 
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
@@ -177,7 +177,7 @@ fn len(args: &[Value]) -> Result<Value, RuntimeError> {
 
 fn from_list(args: &[Value]) -> Result<Value, RuntimeError> {
     let [pairs] = one_arg("Map.fromList", args)?;
-    let items = list_slice(pairs).ok_or_else(|| {
+    let items = list_view(pairs).ok_or_else(|| {
         RuntimeError::Error(
             "Map.fromList() argument must be a List of (key, value) tuples".to_string(),
         )

@@ -13,7 +13,10 @@
 /// No effects required.
 use std::collections::HashMap;
 
-use crate::value::{RuntimeError, Value, list_from_vec, list_len, list_slice, list_to_vec};
+use crate::value::{
+    RuntimeError, Value, list_append, list_get, list_len, list_prepend, list_push,
+    list_reverse, list_view,
+};
 
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
@@ -74,7 +77,7 @@ fn get(args: &[Value]) -> Result<Value, RuntimeError> {
             args.len()
         )));
     }
-    let list = list_slice(&args[0]).ok_or_else(|| {
+    list_view(&args[0]).ok_or_else(|| {
         RuntimeError::Error("List.get() first argument must be a List".to_string())
     })?;
     let index = match &args[1] {
@@ -85,10 +88,13 @@ fn get(args: &[Value]) -> Result<Value, RuntimeError> {
             ));
         }
     };
-    if index < 0 || index as usize >= list.len() {
+    if index < 0 {
         Ok(Value::None)
     } else {
-        Ok(Value::Some(Box::new(list[index as usize].clone())))
+        Ok(match list_get(&args[0], index as usize) {
+            Some(value) => Value::Some(Box::new(value)),
+            None => Value::None,
+        })
     }
 }
 
@@ -99,11 +105,9 @@ fn push(args: &[Value]) -> Result<Value, RuntimeError> {
             args.len()
         )));
     }
-    let mut list = list_to_vec(&args[0]).ok_or_else(|| {
+    list_push(&args[0], args[1].clone()).ok_or_else(|| {
         RuntimeError::Error("List.push() first argument must be a List".to_string())
-    })?;
-    list.push(args[1].clone());
-    Ok(list_from_vec(list))
+    })
 }
 
 fn prepend(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -113,13 +117,9 @@ fn prepend(args: &[Value]) -> Result<Value, RuntimeError> {
             args.len()
         )));
     }
-    let items = list_slice(&args[1]).ok_or_else(|| {
+    list_prepend(args[0].clone(), &args[1]).ok_or_else(|| {
         RuntimeError::Error("List.prepend() second argument must be a List".to_string())
-    })?;
-    let mut out = Vec::with_capacity(items.len() + 1);
-    out.push(args[0].clone());
-    out.extend(items.iter().cloned());
-    Ok(list_from_vec(out))
+    })
 }
 
 fn append(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -129,14 +129,13 @@ fn append(args: &[Value]) -> Result<Value, RuntimeError> {
             args.len()
         )));
     }
-    let mut left = list_to_vec(&args[0]).ok_or_else(|| {
+    list_view(&args[0]).ok_or_else(|| {
         RuntimeError::Error("List.append() first argument must be a List".to_string())
     })?;
-    let right = list_slice(&args[1]).ok_or_else(|| {
+    list_view(&args[1]).ok_or_else(|| {
         RuntimeError::Error("List.append() second argument must be a List".to_string())
     })?;
-    left.extend(right.iter().cloned());
-    Ok(list_from_vec(left))
+    Ok(list_append(&args[0], &args[1]).expect("validated list arguments above"))
 }
 
 fn reverse(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -146,11 +145,9 @@ fn reverse(args: &[Value]) -> Result<Value, RuntimeError> {
             args.len()
         )));
     }
-    let mut items = list_to_vec(&args[0]).ok_or_else(|| {
+    list_reverse(&args[0]).ok_or_else(|| {
         RuntimeError::Error("List.reverse() argument must be a List".to_string())
-    })?;
-    items.reverse();
-    Ok(list_from_vec(items))
+    })
 }
 
 fn contains(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -160,7 +157,7 @@ fn contains(args: &[Value]) -> Result<Value, RuntimeError> {
             args.len()
         )));
     }
-    let list = list_slice(&args[0]).ok_or_else(|| {
+    let list = list_view(&args[0]).ok_or_else(|| {
         RuntimeError::Error("List.contains() first argument must be a List".to_string())
     })?;
     let target = &args[1];
@@ -174,10 +171,10 @@ fn zip(args: &[Value]) -> Result<Value, RuntimeError> {
             args.len()
         )));
     }
-    let a = list_slice(&args[0]).ok_or_else(|| {
+    let a = list_view(&args[0]).ok_or_else(|| {
         RuntimeError::Error("List.zip() first argument must be a List".to_string())
     })?;
-    let b = list_slice(&args[1]).ok_or_else(|| {
+    let b = list_view(&args[1]).ok_or_else(|| {
         RuntimeError::Error("List.zip() second argument must be a List".to_string())
     })?;
     let pairs: Vec<Value> = a
@@ -185,5 +182,5 @@ fn zip(args: &[Value]) -> Result<Value, RuntimeError> {
         .zip(b.iter())
         .map(|(x, y)| Value::Tuple(vec![x.clone(), y.clone()]))
         .collect();
-    Ok(list_from_vec(pairs))
+    Ok(crate::value::list_from_vec(pairs))
 }

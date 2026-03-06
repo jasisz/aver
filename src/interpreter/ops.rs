@@ -22,7 +22,7 @@ impl Interpreter {
     }
 
     pub fn aver_eq(&self, a: &Value, b: &Value) -> bool {
-        if let (Some(xs), Some(ys)) = (list_slice(a), list_slice(b)) {
+        if let (Some(xs), Some(ys)) = (list_view(a), list_view(b)) {
             return xs.len() == ys.len()
                 && xs.iter().zip(ys.iter()).all(|(x, y)| self.aver_eq(x, y));
         }

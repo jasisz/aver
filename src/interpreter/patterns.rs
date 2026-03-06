@@ -70,18 +70,21 @@ impl Interpreter {
                 }
             }
             Pattern::Cons(head, tail) => {
-                let items = list_slice(value)?;
+                let items = list_view(value)?;
                 if items.is_empty() {
                     return None;
                 }
                 let mut map = HashMap::new();
                 if head != "_" {
-                    map.insert(head.clone(), items[0].clone());
+                    map.insert(
+                        head.clone(),
+                        items.first().expect("non-empty list checked above").clone(),
+                    );
                 }
                 if tail != "_" {
                     map.insert(
                         tail.clone(),
-                        list_tail_view(value).unwrap_or_else(|| list_from_vec(vec![])),
+                        list_tail_view(value).unwrap_or_else(list_empty),
                     );
                 }
                 Some(map)

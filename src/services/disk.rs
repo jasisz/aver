@@ -13,7 +13,7 @@
 /// All methods require `! [Disk]`.
 use std::collections::HashMap;
 
-use crate::value::{RuntimeError, Value};
+use crate::value::{RuntimeError, Value, list_from_vec};
 
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
@@ -149,7 +149,7 @@ fn list_dir(args: &[Value]) -> Result<Value, RuntimeError> {
                     Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
                 }
             }
-            Ok(Value::Ok(Box::new(Value::List(names))))
+            Ok(Value::Ok(Box::new(list_from_vec(names))))
         }
         Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
     }

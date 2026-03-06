@@ -9,7 +9,7 @@
 /// `Err(String)`. Response bodies are capped at 10 MB.
 use std::collections::HashMap;
 
-use crate::value::{RuntimeError, Value, list_from_vec, list_slice};
+use crate::value::{RuntimeError, Value, list_from_vec, list_view};
 
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
@@ -98,10 +98,10 @@ fn str_arg(val: &Value, msg: &str) -> Result<String, RuntimeError> {
 }
 
 fn parse_request_headers(val: &Value) -> Result<Vec<(String, String)>, RuntimeError> {
-    let items = list_slice(val)
+    let items = list_view(val)
         .ok_or_else(|| RuntimeError::Error("Http: headers must be a List".to_string()))?;
     let mut out = Vec::new();
-    for item in items {
+    for item in items.iter() {
         let fields = match item {
             Value::Record { fields, .. } => fields,
             _ => {

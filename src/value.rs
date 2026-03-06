@@ -116,8 +116,8 @@ pub enum Value {
 
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
-        match (list_slice(self), list_slice(other)) {
-            (Some(xs), Some(ys)) => return xs == ys,
+        match (list_view(self), list_view(other)) {
+            (Some(xs), Some(ys)) => return xs.iter().eq(ys.iter()),
             (Some(_), None) | (None, Some(_)) => return false,
             (None, None) => {}
         }
@@ -200,10 +200,10 @@ impl Eq for Value {}
 
 impl std::hash::Hash for Value {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        if let Some(items) = list_slice(self) {
+        if let Some(items) = list_view(self) {
             8u8.hash(state);
             items.len().hash(state);
-            for item in items {
+            for item in items.iter() {
                 item.hash(state);
             }
             return;
@@ -332,12 +332,56 @@ pub type Env = Vec<EnvFrame>;
 // List helpers
 // ---------------------------------------------------------------------------
 
-pub fn list_slice(value: &Value) -> Option<&[Value]> {
+/// Opaque read-only view over an Aver list.
+///
+/// Runtime code should prefer this API over matching on list variants or
+/// assuming a particular backing container. That keeps future representation
+/// changes local to this module.
+#[derive(Clone, Copy)]
+pub(crate) struct ListView<'a> {
+    items: &'a [Value],
+}
+
+impl<'a> ListView<'a> {
+    pub(crate) fn len(self) -> usize {
+        self.items.len()
+    }
+
+    pub(crate) fn is_empty(self) -> bool {
+        self.items.is_empty()
+    }
+
+    pub(crate) fn get(self, index: usize) -> Option<&'a Value> {
+        self.items.get(index)
+    }
+
+    pub(crate) fn first(self) -> Option<&'a Value> {
+        self.items.first()
+    }
+
+    pub(crate) fn iter(self) -> impl ExactSizeIterator<Item = &'a Value> + 'a {
+        self.items.iter()
+    }
+
+    pub(crate) fn to_vec(self) -> Vec<Value> {
+        self.items.to_vec()
+    }
+}
+
+pub(crate) fn list_view(value: &Value) -> Option<ListView<'_>> {
     match value {
-        Value::List(items) => Some(items.as_slice()),
-        Value::ListSlice { items, start } => Some(items.get(*start..).unwrap_or(&[])),
+        Value::List(items) => Some(ListView {
+            items: items.as_slice(),
+        }),
+        Value::ListSlice { items, start } => Some(ListView {
+            items: items.get(*start..).unwrap_or(&[]),
+        }),
         _ => None,
     }
+}
+
+pub fn list_slice(value: &Value) -> Option<&[Value]> {
+    list_view(value).map(|list| list.items)
 }
 
 pub fn list_from_vec(items: Vec<Value>) -> Value {
@@ -347,16 +391,24 @@ pub fn list_from_vec(items: Vec<Value>) -> Value {
     }
 }
 
+pub(crate) fn list_empty() -> Value {
+    list_from_vec(vec![])
+}
+
 pub fn list_to_vec(value: &Value) -> Option<Vec<Value>> {
-    list_slice(value).map(|items| items.to_vec())
+    list_view(value).map(ListView::to_vec)
 }
 
 pub fn list_len(value: &Value) -> Option<usize> {
-    list_slice(value).map(|items| items.len())
+    list_view(value).map(ListView::len)
+}
+
+pub(crate) fn list_get(value: &Value, index: usize) -> Option<Value> {
+    list_view(value).and_then(|items| items.get(index).cloned())
 }
 
 pub fn list_head(value: &Value) -> Option<Value> {
-    list_slice(value).and_then(|items| items.first().cloned())
+    list_view(value).and_then(|items| items.first().cloned())
 }
 
 pub fn list_tail_view(value: &Value) -> Option<Value> {
@@ -385,12 +437,44 @@ pub fn list_tail_view(value: &Value) -> Option<Value> {
     }
 }
 
+pub(crate) fn list_push(list: &Value, item: Value) -> Option<Value> {
+    let mut out = list_to_vec(list)?;
+    out.push(item);
+    Some(list_from_vec(out))
+}
+
+pub(crate) fn list_prepend(item: Value, list: &Value) -> Option<Value> {
+    let items = list_view(list)?;
+    let mut out = Vec::with_capacity(items.len() + 1);
+    out.push(item);
+    out.extend(items.iter().cloned());
+    Some(list_from_vec(out))
+}
+
+pub(crate) fn list_append(left: &Value, right: &Value) -> Option<Value> {
+    let mut out = list_to_vec(left)?;
+    let right = list_view(right)?;
+    out.extend(right.iter().cloned());
+    Some(list_from_vec(out))
+}
+
+pub(crate) fn list_reverse(list: &Value) -> Option<Value> {
+    let mut out = list_to_vec(list)?;
+    out.reverse();
+    Some(list_from_vec(out))
+}
+
 // ---------------------------------------------------------------------------
 // Display helpers
 // ---------------------------------------------------------------------------
 
 /// Human-readable representation of a value (used by `str()` and `:env`).
 pub fn aver_repr(val: &Value) -> String {
+    if let Some(items) = list_view(val) {
+        let parts: Vec<String> = items.iter().map(aver_repr_inner).collect();
+        return format!("[{}]", parts.join(", "));
+    }
+
     match val {
         Value::Int(i) => i.to_string(),
         Value::Float(f) => f.to_string(),
@@ -401,15 +485,11 @@ pub fn aver_repr(val: &Value) -> String {
         Value::Err(v) => format!("Result.Err({})", aver_repr_inner(v)),
         Value::Some(v) => format!("Option.Some({})", aver_repr_inner(v)),
         Value::None => "Option.None".to_string(),
-        Value::List(_) | Value::ListSlice { .. } => {
-            let items = list_slice(val).expect("list variants must have a slice view");
-            let parts: Vec<String> = items.iter().map(aver_repr_inner).collect();
-            format!("[{}]", parts.join(", "))
-        }
         Value::Tuple(items) => {
             let parts: Vec<String> = items.iter().map(aver_repr_inner).collect();
             format!("({})", parts.join(", "))
         }
+        Value::List(_) | Value::ListSlice { .. } => unreachable!("handled via list_view above"),
         Value::Map(entries) => {
             let mut pairs = entries
                 .iter()
@@ -447,17 +527,18 @@ pub fn aver_repr(val: &Value) -> String {
 
 /// Like `aver_repr` but strings get quoted — used inside constructors and lists.
 fn aver_repr_inner(val: &Value) -> String {
+    if let Some(items) = list_view(val) {
+        let parts: Vec<String> = items.iter().map(aver_repr_inner).collect();
+        return format!("[{}]", parts.join(", "));
+    }
+
     match val {
         Value::Str(s) => format!("\"{}\"", s),
         Value::Tuple(items) => {
             let parts: Vec<String> = items.iter().map(aver_repr_inner).collect();
             format!("({})", parts.join(", "))
         }
-        Value::List(_) | Value::ListSlice { .. } => {
-            let items = list_slice(val).expect("list variants must have a slice view");
-            let parts: Vec<String> = items.iter().map(aver_repr_inner).collect();
-            format!("[{}]", parts.join(", "))
-        }
+        Value::List(_) | Value::ListSlice { .. } => unreachable!("handled via list_view above"),
         other => aver_repr(other),
     }
 }

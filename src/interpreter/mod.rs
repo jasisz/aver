@@ -15,7 +15,7 @@ use crate::source::{
 use crate::types::{byte, char, float, int, list, map, option, result, string};
 // Re-export value types so existing `use aver::interpreter::Value` imports keep working.
 pub use crate::value::{Env, EnvFrame, RuntimeError, Value, aver_display, aver_repr};
-use crate::value::{list_from_vec, list_len, list_slice, list_tail_view};
+use crate::value::{list_empty, list_from_vec, list_len, list_tail_view, list_view};
 
 #[derive(Debug, Clone)]
 struct CallFrame {

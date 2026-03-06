@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
 
-use crate::value::{RuntimeError, Value, list_from_vec, list_to_vec};
+use crate::value::{RuntimeError, Value, list_from_vec, list_view};
 
 #[derive(Debug, Clone)]
 struct ServerRequest {
@@ -364,12 +364,12 @@ fn http_response_from_value(val: Value) -> Result<ServerResponse, RuntimeError> 
 }
 
 fn parse_http_response_headers(val: Value) -> Result<Vec<(String, String)>, RuntimeError> {
-    let list = list_to_vec(&val).ok_or_else(|| {
+    let list = list_view(&val).ok_or_else(|| {
         RuntimeError::Error("HttpResponse.headers must be List<Header>".to_string())
     })?;
 
     let mut out = Vec::new();
-    for item in list {
+    for item in list.iter() {
         let fields = match item {
             Value::Record { fields, .. } => fields,
             _ => {
@@ -383,8 +383,8 @@ fn parse_http_response_headers(val: Value) -> Result<Vec<(String, String)>, Runt
         let mut value = None;
         for (field_name, field_val) in fields {
             match (field_name.as_str(), field_val) {
-                ("name", Value::Str(s)) => name = Some(s),
-                ("value", Value::Str(s)) => value = Some(s),
+                ("name", Value::Str(s)) => name = Some(s.clone()),
+                ("value", Value::Str(s)) => value = Some(s.clone()),
                 _ => {}
             }
         }

@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
 
-use crate::value::{Value, aver_repr, list_slice};
+use crate::value::{Value, aver_repr, list_from_vec, list_view};
 
 mod parser;
 
@@ -78,6 +78,14 @@ pub fn json_values_to_values(values: &[JsonValue]) -> Result<Vec<Value>, String>
 }
 
 pub fn value_to_json(value: &Value) -> Result<JsonValue, String> {
+    if let Some(items) = list_view(value) {
+        let mut arr = Vec::with_capacity(items.len());
+        for item in items.iter() {
+            arr.push(value_to_json(item)?);
+        }
+        return Ok(JsonValue::Array(arr));
+    }
+
     match value {
         Value::Int(i) => Ok(JsonValue::Int(*i)),
         Value::Float(f) => {
@@ -93,15 +101,7 @@ pub fn value_to_json(value: &Value) -> Result<JsonValue, String> {
         Value::Err(inner) => Ok(wrap_marker("$err", value_to_json(inner)?)),
         Value::Some(inner) => Ok(wrap_marker("$some", value_to_json(inner)?)),
         Value::None => Ok(wrap_marker("$none", JsonValue::Bool(true))),
-        Value::List(_) | Value::ListSlice { .. } => {
-            let items =
-                list_slice(value).ok_or_else(|| "invalid list representation".to_string())?;
-            let mut arr = Vec::with_capacity(items.len());
-            for item in items {
-                arr.push(value_to_json(item)?);
-            }
-            Ok(JsonValue::Array(arr))
-        }
+        Value::List(_) | Value::ListSlice { .. } => unreachable!("handled via list_view above"),
         Value::Tuple(items) => {
             let mut arr = Vec::with_capacity(items.len());
             for item in items {
@@ -171,7 +171,7 @@ pub fn json_to_value(json: &JsonValue) -> Result<Value, String> {
             for item in items {
                 out.push(json_to_value(item)?);
             }
-            Ok(Value::List(out))
+            Ok(list_from_vec(out))
         }
         JsonValue::Object(obj) => {
             if let Some((marker, payload)) = marker_single_key(obj) {

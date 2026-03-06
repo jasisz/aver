@@ -6,6 +6,7 @@ use aver::ast::{Stmt, TopLevel};
 use aver::interpreter::{Interpreter, Value};
 use aver::lexer::Lexer;
 use aver::parser::Parser;
+use aver::value::list_to_vec;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1757,7 +1758,8 @@ mod disk_tests {
         let val2 = run_disk_fn(&src2, "run");
         match val2 {
             Value::Ok(inner) => match *inner {
-                Value::List(items) => {
+                list if list_to_vec(&list).is_some() => {
+                    let items = list_to_vec(&list).expect("checked above");
                     assert!(items.contains(&Value::Str("a.txt".to_string())));
                 }
                 other => panic!("expected List, got {:?}", other),
