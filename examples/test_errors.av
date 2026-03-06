@@ -15,33 +15,33 @@ decision MixedImpacts
 
 fn badAdd(a: Int, b: Int) -> Int
     ? "Simple valid function with verify."
-    = a + b
+    a + b
 
 verify badAdd
     badAdd(1, 2) => 3
 
 fn noDescription(x: Int) -> Int
-    = x + 1
+    x + 1
 
 verify noDescription
     noDescription(1) => 2
 
 fn pureNoVerify(x: Int) -> Int
     ? "Pure non-trivial function without verify (should be an error)."
-    = x + 2
+    x + 2
 
 fn wrongReturn() -> Int
     ? "Returns wrong type (type checker error)."
-    = "oops"
+    "oops"
 
 fn overDeclaredEffects(msg: String) -> Unit
     ? "Declares more effects than it uses (should warn about Http)."
     ! [Console, Http]
-    = Console.print(msg)
+    Console.print(msg)
 
 fn invalidVerifyRhs(x: Int) -> Int
     ? "Verify RHS calls target function (should be checker error)."
-    = x + 1
+    x + 1
 
 verify invalidVerifyRhs
     invalidVerifyRhs(1) => invalidVerifyRhs(1)

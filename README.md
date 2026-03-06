@@ -36,7 +36,7 @@ module Hello
 
 fn greet(name: String) -> String
     ? "Greets a user."
-    = "Hello, {name}"
+    "Hello, {name}"
 
 verify greet
     greet("Aver") => "Hello, Aver"

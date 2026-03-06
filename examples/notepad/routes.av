@@ -20,21 +20,21 @@ decision JsonModuleSerialization
 
 fn noteToJson(note: Note) -> Json
     ? "Converts a Note record into a Json object value."
-    = Examples.Json.Json.JsonObject({"id" => Examples.Json.Json.JsonInt(note.id), "title" => Examples.Json.Json.JsonString(note.title), "body" => Examples.Json.Json.JsonString(note.body)})
+    Examples.Json.Json.JsonObject({"id" => Examples.Json.Json.JsonInt(note.id), "title" => Examples.Json.Json.JsonString(note.title), "body" => Examples.Json.Json.JsonString(note.body)})
 
 verify noteToJson
     noteToJson(Note(id = 1, title = "Hi", body = "there")) => Examples.Json.Json.JsonObject({"id" => Examples.Json.Json.JsonInt(1), "title" => Examples.Json.Json.JsonString("Hi"), "body" => Examples.Json.Json.JsonString("there")})
 
 fn jsonNote(note: Note) -> String
     ? "Serializes a Note as a JSON object."
-    = Examples.Json.toString(noteToJson(note))
+    Examples.Json.toString(noteToJson(note))
 
 verify jsonNote
     Examples.Json.fromString(jsonNote(Note(id = 1, title = "Hi", body = "there"))) => Result.Ok(noteToJson(Note(id = 1, title = "Hi", body = "there")))
 
 fn jsonNoteValues(notes: List<Note>) -> List<Json>
     ? "Converts note records into JSON values, preserving order."
-    = match notes
+    match notes
         [] -> []
         [note, ..rest] -> List.prepend(noteToJson(note), jsonNoteValues(rest))
 
@@ -53,21 +53,21 @@ verify jsonNoteList
 
 fn jsonOk(msg: String) -> String
     ? "Wraps a message in a JSON success envelope."
-    = Examples.Json.toString(Examples.Json.Json.JsonObject({"ok" => Examples.Json.Json.JsonString(msg)}))
+    Examples.Json.toString(Examples.Json.Json.JsonObject({"ok" => Examples.Json.Json.JsonString(msg)}))
 
 verify jsonOk
     jsonOk("done") => "{{\"ok\":\"done\"}}"
 
 fn jsonErr(msg: String) -> String
     ? "Wraps a message in a JSON error envelope."
-    = Examples.Json.toString(Examples.Json.Json.JsonObject({"error" => Examples.Json.Json.JsonString(msg)}))
+    Examples.Json.toString(Examples.Json.Json.JsonObject({"error" => Examples.Json.Json.JsonString(msg)}))
 
 verify jsonErr
     jsonErr("oops") => "{{\"error\":\"oops\"}}"
 
 fn jsonHeaders() -> List<Header>
     ? "Standard JSON Content-Type headers."
-    = [Header(name = "Content-Type", value = "application/json")]
+    [Header(name = "Content-Type", value = "application/json")]
 
 verify jsonHeaders
     jsonHeaders() => [Header(name = "Content-Type", value = "application/json")]
@@ -76,42 +76,42 @@ verify jsonHeaders
 
 fn ok(body: String) -> HttpResponse
     ? "Builds a 200 response with JSON headers."
-    = HttpResponse(status = 200, body = body, headers = jsonHeaders())
+    HttpResponse(status = 200, body = body, headers = jsonHeaders())
 
 verify ok
     ok("x") => HttpResponse(status = 200, body = "x", headers = jsonHeaders())
 
 fn created(body: String) -> HttpResponse
     ? "Builds a 201 response with JSON headers."
-    = HttpResponse(status = 201, body = body, headers = jsonHeaders())
+    HttpResponse(status = 201, body = body, headers = jsonHeaders())
 
 verify created
     created("x") => HttpResponse(status = 201, body = "x", headers = jsonHeaders())
 
 fn notFound(msg: String) -> HttpResponse
     ? "Builds a 404 JSON error response."
-    = HttpResponse(status = 404, body = jsonErr(msg), headers = jsonHeaders())
+    HttpResponse(status = 404, body = jsonErr(msg), headers = jsonHeaders())
 
 verify notFound
     notFound("missing") => HttpResponse(status = 404, body = "{{\"error\":\"missing\"}}", headers = jsonHeaders())
 
 fn badRequest(msg: String) -> HttpResponse
     ? "Builds a 400 JSON error response."
-    = HttpResponse(status = 400, body = jsonErr(msg), headers = jsonHeaders())
+    HttpResponse(status = 400, body = jsonErr(msg), headers = jsonHeaders())
 
 verify badRequest
     badRequest("bad") => HttpResponse(status = 400, body = "{{\"error\":\"bad\"}}", headers = jsonHeaders())
 
 fn serverError(msg: String) -> HttpResponse
     ? "Builds a 500 JSON error response."
-    = HttpResponse(status = 500, body = jsonErr(msg), headers = jsonHeaders())
+    HttpResponse(status = 500, body = jsonErr(msg), headers = jsonHeaders())
 
 verify serverError
     serverError("boom") => HttpResponse(status = 500, body = "{{\"error\":\"boom\"}}", headers = jsonHeaders())
 
 fn methodNotAllowed() -> HttpResponse
     ? "Builds a 405 JSON error response."
-    = HttpResponse(status = 405, body = jsonErr("Method not allowed"), headers = jsonHeaders())
+    HttpResponse(status = 405, body = jsonErr("Method not allowed"), headers = jsonHeaders())
 
 verify methodNotAllowed
     methodNotAllowed() => HttpResponse(status = 405, body = "{{\"error\":\"Method not allowed\"}}", headers = jsonHeaders())

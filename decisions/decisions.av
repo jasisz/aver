@@ -45,13 +45,13 @@ decision ColocatedVerify
 
 fn summarise(name: String, pick: String) -> String
     ? "Formats a one-line decision summary."
-    = "{name} -> {pick}"
+    "{name} -> {pick}"
 
 verify summarise
     summarise("Foo", "Bar") => "Foo -> Bar"
 
 fn main() -> Unit
-    ! [Console]
+    ! [Console.print]
     Console.print(summarise("UseResultOverExceptions", "Result"))
     Console.print(summarise("IndentationOverBraces", "Indentation"))
     Console.print(summarise("MatchOverIf", "Match"))

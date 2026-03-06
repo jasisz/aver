@@ -42,7 +42,7 @@ record RedisConfig
 
 fn respBulkLen(s: String) -> String
     ? "Returns the byte-length of s as a string, used to build RESP bulk-string headers."
-    = Int.toString(String.byteLength(s))
+    Int.toString(String.byteLength(s))
 
 verify respBulkLen
     respBulkLen("PING") => "4"

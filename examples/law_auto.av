@@ -5,7 +5,7 @@ module LawAuto
 
 fn id(x: Int) -> Int
     ? "Identity helper used for reflexive law demo."
-    = x
+    x
 
 verify id law reflexive
     given x: Int = -2..2
@@ -13,7 +13,7 @@ verify id law reflexive
 
 fn add(a: Int, b: Int) -> Int
     ? "Integer addition wrapper for law proofs."
-    = a + b
+    a + b
 
 verify add law commutative
     given a: Int = -2..2
@@ -41,7 +41,7 @@ verify add law identityZeroLeft
 
 fn mul(a: Int, b: Int) -> Int
     ? "Integer multiplication wrapper for law proofs."
-    = a * b
+    a * b
 
 verify mul law commutative
     given a: Int = -2..2
@@ -64,7 +64,7 @@ verify mul law identityOneLeft
 
 fn sub(a: Int, b: Int) -> Int
     ? "Integer subtraction wrapper (sampled law fallback in Lean auto mode)."
-    = a - b
+    a - b
 
 verify sub law rightIdentity
     given a: Int = -3..3
@@ -93,7 +93,7 @@ verify incCount law existingKeyIncrements
 
 fn addOne(n: Int) -> Int
     ? "Small helper for map-based law expectations."
-    = n + 1
+    n + 1
 
 verify addOne law identityViaAdd
     given n: Int = -3..3

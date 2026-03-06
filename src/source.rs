@@ -85,14 +85,14 @@ mod tests {
 
     #[test]
     fn require_module_accepts_single_first_module() {
-        let src = "module Demo\n    intent = \"ok\"\nfn x() -> Int\n    = 1\n";
+        let src = "module Demo\n    intent = \"ok\"\nfn x() -> Int\n    1\n";
         let items = parse_source(src).expect("parse");
         require_module_declaration(&items, "demo.av").expect("module declaration should pass");
     }
 
     #[test]
     fn require_module_rejects_missing_module() {
-        let src = "fn x() -> Int\n    = 1\n";
+        let src = "fn x() -> Int\n    1\n";
         let items = parse_source(src).expect("parse");
         let err = require_module_declaration(&items, "demo.av").expect_err("expected error");
         assert!(err.contains("must declare `module <Name>`"));
@@ -100,7 +100,7 @@ mod tests {
 
     #[test]
     fn require_module_rejects_module_not_first() {
-        let src = "fn x() -> Int\n    = 1\nmodule Demo\n";
+        let src = "fn x() -> Int\n    1\nmodule Demo\n";
         let items = parse_source(src).expect("parse");
         let err = require_module_declaration(&items, "demo.av").expect_err("expected error");
         assert!(err.contains("must place `module <Name>` as the first"));

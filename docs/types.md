@@ -19,7 +19,7 @@
 | `StrPart` | `src/ast.rs` | Piece of an interpolated string: `Literal(String)` or `Parsed(Box<Expr>)` |
 | `Expr` | `src/ast.rs` | Every expression form: `Literal`, `Ident`, `Resolved(u16)`, `Attr`, `FnCall`, `BinOp`, `Match`, `Constructor`, `ErrorProp`, `InterpolatedStr`, `List(Vec<Expr>)`, `Tuple(Vec<Expr>)`, `MapLiteral(Vec<(Expr, Expr)>)`, `RecordCreate { type_name, fields }`, `RecordUpdate { type_name, base, updates }`, `TailCall(Box<(String, Vec<Expr>)>)` |
 | `Stmt` | `src/ast.rs` | `Binding(name, Option<type_ann>, expr)`, `Expr(expr)` |
-| `FnBody` | `src/ast.rs` | `Expr(Expr)` for `= expr` shorthand, or `Block(Vec<Stmt>)` |
+| `FnBody` | `src/ast.rs` | `Block(Vec<Stmt>)` for parsed source; `Expr(Expr)` remains as an internal compact form used by some compiler/codegen tests |
 | `FnDef` | `src/ast.rs` | Name, params, return type, effects, optional description, body |
 | `Module` | `src/ast.rs` | Name + source line, depends, exposes, intent string |
 | `VerifyBlock` | `src/ast.rs` | Function name + list of `(left_expr, right_expr)` equality cases |

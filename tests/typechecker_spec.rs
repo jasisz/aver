@@ -67,101 +67,102 @@ fn assert_error_containing(src: &str, snippet: &str) {
 
 #[test]
 fn valid_int_function() {
-    assert_no_errors("fn add(a: Int, b: Int) -> Int\n    = a + b\n");
+    assert_no_errors("fn add(a: Int, b: Int) -> Int\n    a + b\n");
 }
 
 #[test]
 fn valid_string_function() {
-    assert_no_errors("fn greet(name: String) -> String\n    = \"Hello\"\n");
+    assert_no_errors("fn greet(name: String) -> String\n    \"Hello\"\n");
 }
 
 #[test]
 fn valid_bool_function() {
-    assert_no_errors("fn negate(b: Bool) -> Bool\n    = b\n");
+    assert_no_errors("fn negate(b: Bool) -> Bool\n    b\n");
 }
 
 #[test]
 fn valid_float_function() {
-    assert_no_errors("fn scale(x: Float) -> Float\n    = x\n");
+    assert_no_errors("fn scale(x: Float) -> Float\n    x\n");
 }
 
 #[test]
 fn valid_unit_function() {
-    assert_no_errors("fn noop() -> Unit\n    ! [Console]\n    = Console.print(\"hi\")\n");
+    assert_no_errors("fn noop() -> Unit\n    ! [Console]\n    Console.print(\"hi\")\n");
 }
 
 #[test]
 fn valid_result_return() {
-    assert_no_errors("fn safe_div(a: Int, b: Int) -> Result<Int, String>\n    = Result.Ok(a)\n");
+    assert_no_errors("fn safe_div(a: Int, b: Int) -> Result<Int, String>\n    Result.Ok(a)\n");
 }
 
 #[test]
 fn valid_option_return() {
-    assert_no_errors("fn maybe(x: Int) -> Option<Int>\n    = Option.Some(x)\n");
+    assert_no_errors("fn maybe(x: Int) -> Option<Int>\n    Option.Some(x)\n");
 }
 
 #[test]
 fn valid_list_return() {
-    assert_no_errors("fn wrap(x: Int) -> List<Int>\n    = [x]\n");
+    assert_no_errors("fn wrap(x: Int) -> List<Int>\n    [x]\n");
 }
 
 #[test]
 fn valid_option_with_default_infers_type() {
-    let src = "fn unwrap(x: Option<String>) -> String\n    = Option.withDefault(x, \"fallback\")\n";
+    let src = "fn unwrap(x: Option<String>) -> String\n    Option.withDefault(x, \"fallback\")\n";
     assert_no_errors(src);
 }
 
 #[test]
 fn valid_result_with_default_infers_type() {
-    let src = "fn unwrap(x: Result<Int, String>) -> Int\n    = Result.withDefault(x, 0)\n";
+    let src = "fn unwrap(x: Result<Int, String>) -> Int\n    Result.withDefault(x, 0)\n";
     assert_no_errors(src);
 }
 
 #[test]
 fn valid_option_to_result_infers_type() {
-    let src = "fn convert(x: Option<Int>) -> Result<Int, String>\n    = Option.toResult(x, \"missing\")\n";
+    let src =
+        "fn convert(x: Option<Int>) -> Result<Int, String>\n    Option.toResult(x, \"missing\")\n";
     assert_no_errors(src);
 }
 
 #[test]
 fn valid_list_get_preserves_inner_type() {
-    let src = "fn first(xs: List<Int>) -> Option<Int>\n    = List.get(xs, 0)\n";
+    let src = "fn first(xs: List<Int>) -> Option<Int>\n    List.get(xs, 0)\n";
     assert_no_errors(src);
 }
 
 #[test]
 fn valid_list_pattern_matching() {
-    let src = "fn score(xs: List<Int>) -> Int\n    = match xs\n        [] -> 0\n        [h, ..t] -> h + List.len(t)\n";
+    let src = "fn score(xs: List<Int>) -> Int\n    match xs\n        [] -> 0\n        [h, ..t] -> h + List.len(t)\n";
     assert_no_errors(src);
 }
 
 #[test]
 fn valid_list_contains_requires_same_element_type() {
-    let src = "fn hasTwo(xs: List<Int>) -> Bool\n    = List.contains(xs, 2)\n";
+    let src = "fn hasTwo(xs: List<Int>) -> Bool\n    List.contains(xs, 2)\n";
     assert_no_errors(src);
 }
 
 #[test]
 fn valid_list_prepend_preserves_inner_type() {
-    let src = "fn withZero(xs: List<Int>) -> List<Int>\n    = List.prepend(0, xs)\n";
+    let src = "fn withZero(xs: List<Int>) -> List<Int>\n    List.prepend(0, xs)\n";
     assert_no_errors(src);
 }
 
 #[test]
 fn valid_list_concat_requires_compatible_lists() {
-    let src = "fn extend(xs: List<Int>, ys: List<Int>) -> List<Int>\n    = List.concat(xs, ys)\n";
+    let src = "fn extend(xs: List<Int>, ys: List<Int>) -> List<Int>\n    List.concat(xs, ys)\n";
     assert_no_errors(src);
 }
 
 #[test]
 fn valid_list_reverse_preserves_inner_type() {
-    let src = "fn rev(xs: List<Int>) -> List<Int>\n    = List.reverse(xs)\n";
+    let src = "fn rev(xs: List<Int>) -> List<Int>\n    List.reverse(xs)\n";
     assert_no_errors(src);
 }
 
 #[test]
 fn valid_tuple_return() {
-    let src = "fn pair() -> (Int, String)\n    = (1, \"x\")\n";
+    let src = "fn pair() -> (Int, String)\n    (1, \"x\")\n";
     assert_no_errors(src);
 }
 
@@ -180,7 +181,7 @@ fn valid_map_set_get_infers_types() {
 fn valid_map_from_list_tuples() {
     let src = concat!(
         "fn build() -> Map<String, Int>\n",
-        "    = Map.fromList([(\"a\", 1), (\"b\", 2)])\n",
+        "    Map.fromList([(\"a\", 1), (\"b\", 2)])\n",
     );
     assert_no_errors(src);
 }
@@ -208,13 +209,13 @@ fn valid_byte_namespace_signatures() {
 
 #[test]
 fn error_char_to_code_argument_type() {
-    let src = "fn f() -> Int\n    = Char.toCode(1)\n";
+    let src = "fn f() -> Int\n    Char.toCode(1)\n";
     assert_error_containing(src, "Argument 1 of 'Char.toCode': expected String, got Int");
 }
 
 #[test]
 fn error_byte_from_hex_argument_type() {
-    let src = "fn f() -> Result<Int, String>\n    = Byte.fromHex(42)\n";
+    let src = "fn f() -> Result<Int, String>\n    Byte.fromHex(42)\n";
     assert_error_containing(
         src,
         "Argument 1 of 'Byte.fromHex': expected String, got Int",
@@ -233,31 +234,32 @@ fn valid_map_literal_infers_types() {
 
 #[test]
 fn valid_empty_map_literal_with_annotation() {
-    let src = "fn empty() -> Map<String, Int>\n    = {}\n";
+    let src = "fn empty() -> Map<String, Int>\n    {}\n";
     assert_no_errors(src);
 }
 
 #[test]
 fn valid_call_correct_args() {
-    let src = "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    r = add(1, 2)\n";
+    let src = "fn add(a: Int, b: Int) -> Int\n    a + b\nfn main() -> Unit\n    r = add(1, 2)\n";
     assert_no_errors(src);
 }
 
 #[test]
 fn valid_call_chain() {
-    let src = "fn double(x: Int) -> Int\n    = x + x\nfn quadruple(x: Int) -> Int\n    = double(double(x))\n";
+    let src =
+        "fn double(x: Int) -> Int\n    x + x\nfn quadruple(x: Int) -> Int\n    double(double(x))\n";
     assert_no_errors(src);
 }
 
 #[test]
 fn valid_higher_order_function_param_call() {
-    let src = "fn applyTwice(f: Fn(Int) -> Int, x: Int) -> Int\n    = f(f(x))\nfn inc(n: Int) -> Int\n    = n + 1\nfn main() -> Unit\n    r = applyTwice(inc, 10)\n";
+    let src = "fn applyTwice(f: Fn(Int) -> Int, x: Int) -> Int\n    f(f(x))\nfn inc(n: Int) -> Int\n    n + 1\nfn main() -> Unit\n    r = applyTwice(inc, 10)\n";
     assert_no_errors(src);
 }
 
 #[test]
 fn valid_pure_callback_for_effectful_slot() {
-    let src = "fn applyOnce(f: Fn(Int) -> Int ! [Console], x: Int) -> Int\n    ! [Console]\n    = f(x)\nfn pureInc(n: Int) -> Int\n    = n + 1\nfn main() -> Unit\n    ! [Console]\n    r = applyOnce(pureInc, 10)\n";
+    let src = "fn applyOnce(f: Fn(Int) -> Int ! [Console], x: Int) -> Int\n    ! [Console]\n    f(x)\nfn pureInc(n: Int) -> Int\n    n + 1\nfn main() -> Unit\n    ! [Console]\n    r = applyOnce(pureInc, 10)\n";
     assert_no_errors(src);
 }
 
@@ -270,7 +272,7 @@ fn valid_simple_binding_in_fn() {
 fn invalid_int_float_no_widening() {
     // Int + Float is no longer allowed (no implicit widening)
     assert_error_containing(
-        "fn f(a: Int, b: Float) -> Float\n    = a + b\n",
+        "fn f(a: Int, b: Float) -> Float\n    a + b\n",
         "matching types",
     );
 }
@@ -366,15 +368,14 @@ fn valid_call_to_exposed_module_member() {
 
 #[test]
 fn error_wrong_arg_count_too_few() {
-    let src = "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    r = add(1)\n";
+    let src = "fn add(a: Int, b: Int) -> Int\n    a + b\nfn main() -> Unit\n    r = add(1)\n";
     // actual: "Function 'add' expects 2 argument(s), got 1"
     assert_error_containing(src, "argument(s)");
 }
 
 #[test]
 fn error_wrong_arg_count_too_many() {
-    let src =
-        "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    r = add(1, 2, 3)\n";
+    let src = "fn add(a: Int, b: Int) -> Int\n    a + b\nfn main() -> Unit\n    r = add(1, 2, 3)\n";
     // actual: "Function 'add' expects 2 argument(s), got 3"
     assert_error_containing(src, "argument(s)");
 }
@@ -388,14 +389,14 @@ fn error_zero_arg_constructor_called_like_function() {
 #[test]
 fn error_arg_type_mismatch_string_for_int() {
     let src =
-        "fn add(a: Int, b: Int) -> Int\n    = a + b\nfn main() -> Unit\n    r = add(1, \"two\")\n";
+        "fn add(a: Int, b: Int) -> Int\n    a + b\nfn main() -> Unit\n    r = add(1, \"two\")\n";
     // actual: "Argument 2 of 'add': expected Int, got String"
     assert_error_containing(src, "got String");
 }
 
 #[test]
 fn error_list_get_wrong_declared_inner_type() {
-    let src = "fn first(xs: List<Int>) -> Option<String>\n    = List.get(xs, 0)\n";
+    let src = "fn first(xs: List<Int>) -> Option<String>\n    List.get(xs, 0)\n";
     assert_error_containing(src, "body returns Option<Int>");
 }
 
@@ -403,7 +404,7 @@ fn error_list_get_wrong_declared_inner_type() {
 fn error_unknown_does_not_satisfy_declared_return_type() {
     let src = concat!(
         "fn bad() -> Int\n",
-        "    = match []\n",
+        "    match []\n",
         "        [h, ..t] -> h\n",
         "        []       -> 0\n",
     );
@@ -414,7 +415,7 @@ fn error_unknown_does_not_satisfy_declared_return_type() {
 fn error_unknown_does_not_satisfy_call_argument_type() {
     let src = concat!(
         "fn takesInt(x: Int) -> Int\n",
-        "    = x + 1\n",
+        "    x + 1\n",
         "fn bad() -> Int\n",
         "    n = match []\n",
         "        [h, ..t] -> h\n",
@@ -426,13 +427,13 @@ fn error_unknown_does_not_satisfy_call_argument_type() {
 
 #[test]
 fn error_list_append_mismatched_element_type() {
-    let src = "fn bad(xs: List<Int>) -> List<Int>\n    = List.append(xs, \"x\")\n";
+    let src = "fn bad(xs: List<Int>) -> List<Int>\n    List.append(xs, \"x\")\n";
     assert_error_containing(src, "Argument 2 of 'List.append': expected Int, got String");
 }
 
 #[test]
 fn error_list_contains_mismatched_element_type() {
-    let src = "fn bad(xs: List<Int>) -> Bool\n    = List.contains(xs, \"x\")\n";
+    let src = "fn bad(xs: List<Int>) -> Bool\n    List.contains(xs, \"x\")\n";
     assert_error_containing(
         src,
         "Argument 2 of 'List.contains': expected Int, got String",
@@ -453,7 +454,7 @@ fn error_map_set_key_type_mismatch() {
 fn error_map_key_type_must_be_hashable_scalar() {
     let src = concat!(
         "fn bad() -> Map<List<Int>, Int>\n",
-        "    = Map.fromList([([1], 2)])\n",
+        "    Map.fromList([([1], 2)])\n",
     );
     assert_error_containing(src, "map key type must be Int, Float, String, or Bool");
 }
@@ -462,14 +463,14 @@ fn error_map_key_type_must_be_hashable_scalar() {
 fn error_map_from_list_requires_tuple_pairs() {
     let src = concat!(
         "fn bad() -> Map<String, Int>\n",
-        "    = Map.fromList([[\"a\", 1]])\n",
+        "    Map.fromList([[\"a\", 1]])\n",
     );
     assert_error_containing(src, "expected List<(K, V)>");
 }
 
 #[test]
 fn error_map_literal_key_must_be_hashable_scalar() {
-    let src = concat!("fn bad() -> Map<String, Int>\n", "    = {[1] => 2}\n",);
+    let src = concat!("fn bad() -> Map<String, Int>\n", "    {[1] => 2}\n",);
     assert_error_containing(
         src,
         "Map literal key type must be Int, Float, String, or Bool",
@@ -480,7 +481,7 @@ fn error_map_literal_key_must_be_hashable_scalar() {
 fn error_map_literal_incompatible_key_types() {
     let src = concat!(
         "fn bad() -> Map<String, Int>\n",
-        "    = {\"a\" => 1, 2 => 3}\n",
+        "    {\"a\" => 1, 2 => 3}\n",
     );
     assert_error_containing(src, "Map literal contains incompatible key types");
 }
@@ -493,7 +494,7 @@ fn binding_empty_list_literal_is_error() {
 
 #[test]
 fn error_list_prepend_mismatched_element_type() {
-    let src = "fn bad(xs: List<Int>) -> List<Int>\n    = List.prepend(\"x\", xs)\n";
+    let src = "fn bad(xs: List<Int>) -> List<Int>\n    List.prepend(\"x\", xs)\n";
     assert_error_containing(
         src,
         "Argument 1 of 'List.prepend': expected Int, got String",
@@ -502,13 +503,13 @@ fn error_list_prepend_mismatched_element_type() {
 
 #[test]
 fn error_list_concat_mismatched_element_type() {
-    let src = "fn bad(xs: List<Int>) -> List<Int>\n    = List.concat(xs, [\"x\"])\n";
+    let src = "fn bad(xs: List<Int>) -> List<Int>\n    List.concat(xs, [\"x\"])\n";
     assert_error_containing(src, "list element types differ: Int vs String");
 }
 
 #[test]
 fn error_effectful_callback_passed_to_pure_slot() {
-    let src = "fn applyPure(f: Fn(Int) -> Int, x: Int) -> Int\n    = f(x)\nfn logInc(n: Int) -> Int\n    ! [Console]\n    Console.print(n)\n    n + 1\nfn main() -> Unit\n    ! [Console]\n    r = applyPure(logInc, 1)\n";
+    let src = "fn applyPure(f: Fn(Int) -> Int, x: Int) -> Int\n    f(x)\nfn logInc(n: Int) -> Int\n    ! [Console]\n    Console.print(n)\n    n + 1\nfn main() -> Unit\n    ! [Console]\n    r = applyPure(logInc, 1)\n";
     assert_error_containing(src, "Fn(Int) -> Int ! [Console]");
 }
 
@@ -516,7 +517,7 @@ fn error_effectful_callback_passed_to_pure_slot() {
 fn error_unknown_type_annotation() {
     // Capitalized typos are now parsed as Named types; the error surfaces as a type mismatch
     // (body returns Named("Intger") but declared return is Unit)
-    let src = "fn f(x: Intger) -> Unit\n    = x\n";
+    let src = "fn f(x: Intger) -> Unit\n    x\n";
     assert_error_containing(src, "Intger");
 }
 
@@ -524,7 +525,7 @@ fn error_unknown_type_annotation() {
 fn error_unknown_return_type() {
     // Capitalized typos are now parsed as Named types; the error surfaces as a type mismatch
     // (body returns String but declared return is Named("Strng"))
-    let src = "fn f() -> Strng\n    = \"hi\"\n";
+    let src = "fn f() -> Strng\n    \"hi\"\n";
     assert_error_containing(src, "Strng");
 }
 
@@ -536,13 +537,13 @@ fn error_duplicate_binding_in_fn() {
 
 #[test]
 fn error_unknown_ident_inside_interpolated_string() {
-    let src = "fn f() -> String\n    = \"hello {bogus}\"\n";
+    let src = "fn f() -> String\n    \"hello {bogus}\"\n";
     assert_error_containing(src, "Unknown identifier 'bogus'");
 }
 
 #[test]
 fn error_binop_int_plus_string() {
-    let src = "fn f(a: Int, b: String) -> Int\n    = a + b\n";
+    let src = "fn f(a: Int, b: String) -> Int\n    a + b\n";
     // actual: "Operator '+' requires Int/Float or String on both sides, got Int and String"
     assert_error_containing(src, "requires");
 }
@@ -550,13 +551,13 @@ fn error_binop_int_plus_string() {
 #[test]
 fn error_undeclared_effect() {
     // Calling a function with an effect from a function without that effect declared
-    let src = "fn log(msg: String) -> Unit\n    ! [Io]\n    = Console.print(msg)\nfn caller(x: String) -> Unit\n    = log(x)\n";
+    let src = "fn log(msg: String) -> Unit\n    ! [Io]\n    Console.print(msg)\nfn caller(x: String) -> Unit\n    log(x)\n";
     assert_error_containing(src, "Io");
 }
 
 #[test]
 fn error_main_undeclared_console_effect() {
-    let src = "fn main() -> Unit\n    = Console.print(\"hi\")\n";
+    let src = "fn main() -> Unit\n    Console.print(\"hi\")\n";
     assert_error_containing(src, "main");
     assert_error_containing(src, "Console");
 }
@@ -570,14 +571,15 @@ fn error_top_level_undeclared_console_effect() {
 
 #[test]
 fn error_verify_undeclared_console_effect() {
-    let src = "fn main() -> Int\n    = 0\nverify main\n    Console.print(\"x\") => Console.print(\"x\")\n";
+    let src =
+        "fn main() -> Int\n    0\nverify main\n    Console.print(\"x\") => Console.print(\"x\")\n";
     assert_error_containing(src, "<verify:main>");
     assert_error_containing(src, "Console");
 }
 
 #[test]
 fn error_undeclared_effect_from_function_typed_callback() {
-    let src = "fn applyOnce(f: Fn(Int) -> Int ! [Console], x: Int) -> Int\n    = f(x)\nfn pureInc(n: Int) -> Int\n    = n + 1\n";
+    let src = "fn applyOnce(f: Fn(Int) -> Int ! [Console], x: Int) -> Int\n    f(x)\nfn pureInc(n: Int) -> Int\n    n + 1\n";
     assert_error_containing(src, "has effect 'Console");
 }
 
@@ -603,7 +605,7 @@ fn error_call_to_unexposed_module_member() {
 #[test]
 fn valid_effect_propagated_correctly() {
     // caller declares the same effect as callee
-    let src = "fn log(msg: String) -> Unit\n    ! [Console]\n    = Console.print(msg)\nfn caller(x: String) -> Unit\n    ! [Console]\n    = log(x)\n";
+    let src = "fn log(msg: String) -> Unit\n    ! [Console]\n    Console.print(msg)\nfn caller(x: String) -> Unit\n    ! [Console]\n    log(x)\n";
     assert_no_errors(src);
 }
 
@@ -614,28 +616,28 @@ fn valid_effect_propagated_correctly() {
 #[test]
 fn valid_error_prop_in_result_fn() {
     // ? on a Result<Int, String> inside a function returning Result<Int, String> — valid.
-    let src = "fn safe(r: Result<Int, String>) -> Result<Int, String>\n    = Result.Ok(r?)\n";
+    let src = "fn safe(r: Result<Int, String>) -> Result<Int, String>\n    Result.Ok(r?)\n";
     assert_no_errors(src);
 }
 
 #[test]
 fn error_prop_in_non_result_fn() {
     // ? used inside a function that returns Int — type error.
-    let src = "fn bad(r: Result<Int, String>) -> Int\n    = r?\n";
+    let src = "fn bad(r: Result<Int, String>) -> Int\n    r?\n";
     assert_error_containing(src, "not Result");
 }
 
 #[test]
 fn error_prop_on_non_result_type() {
     // ? applied to an Int — type error.
-    let src = "fn bad(n: Int) -> Result<Int, String>\n    = n?\n";
+    let src = "fn bad(n: Int) -> Result<Int, String>\n    n?\n";
     assert_error_containing(src, "can only be applied to Result");
 }
 
 #[test]
 fn error_prop_incompatible_err_types() {
     // Inner Err is String, outer function expects Err = Int — incompatible.
-    let src = "fn inner(x: Int) -> Result<Int, String>\n    = Result.Ok(x)\nfn outer(x: Int) -> Result<Int, Int>\n    = Result.Ok(inner(x)?)\n";
+    let src = "fn inner(x: Int) -> Result<Int, String>\n    Result.Ok(x)\nfn outer(x: Int) -> Result<Int, Int>\n    Result.Ok(inner(x)?)\n";
     assert_error_containing(src, "incompatible");
 }
 
@@ -725,7 +727,7 @@ fn valid_function_using_user_type_parameter() {
         "  Point\n",
         "fn area(s: Shape) -> Float\n",
         "  ? \"area\"\n",
-        "  = match s\n",
+        "  match s\n",
         "    Circle(r) -> r * r\n",
         "    Point -> 0.0\n",
     );
@@ -852,7 +854,7 @@ fn valid_network_all_methods_with_effect() {
 fn error_disk_read_without_effect() {
     let src = concat!(
         "fn loadCfg() -> Result<String, String>\n",
-        "    = Disk.readText(\"config.av\")\n",
+        "    Disk.readText(\"config.av\")\n",
     );
     assert_error_containing(src, "has effect 'Disk.readText'");
 }
@@ -861,7 +863,7 @@ fn error_disk_read_without_effect() {
 fn error_disk_write_without_effect() {
     let src = concat!(
         "fn save() -> Result<Unit, String>\n",
-        "    = Disk.writeText(\"out.txt\", \"data\")\n",
+        "    Disk.writeText(\"out.txt\", \"data\")\n",
     );
     assert_error_containing(src, "has effect 'Disk.writeText'");
 }
@@ -871,7 +873,7 @@ fn valid_disk_read_with_effect() {
     let src = concat!(
         "fn loadCfg() -> Result<String, String>\n",
         "    ! [Disk]\n",
-        "    = Disk.readText(\"config.av\")\n",
+        "    Disk.readText(\"config.av\")\n",
     );
     assert_no_errors(src);
 }
@@ -900,7 +902,7 @@ fn valid_disk_all_methods_with_effect() {
 fn error_console_error_without_effect() {
     let src = concat!(
         "fn report(msg: String) -> Unit\n",
-        "    = Console.error(msg)\n",
+        "    Console.error(msg)\n",
     );
     assert_error_containing(src, "has effect 'Console.error'");
 }
@@ -909,7 +911,7 @@ fn error_console_error_without_effect() {
 fn error_console_warn_without_effect() {
     let src = concat!(
         "fn report(msg: String) -> Unit\n",
-        "    = Console.warn(msg)\n",
+        "    Console.warn(msg)\n",
     );
     assert_error_containing(src, "has effect 'Console.warn'");
 }
@@ -918,7 +920,7 @@ fn error_console_warn_without_effect() {
 fn error_console_read_line_without_effect() {
     let src = concat!(
         "fn ask() -> Result<String, String>\n",
-        "    = Console.readLine()\n",
+        "    Console.readLine()\n",
     );
     assert_error_containing(src, "has effect 'Console.readLine'");
 }
@@ -942,13 +944,13 @@ fn valid_console_all_methods_with_effect() {
 
 #[test]
 fn error_time_now_without_effect() {
-    let src = concat!("fn ts() -> String\n", "    = Time.now()\n",);
+    let src = concat!("fn ts() -> String\n", "    Time.now()\n",);
     assert_error_containing(src, "has effect 'Time.now'");
 }
 
 #[test]
 fn error_time_unix_ms_without_effect() {
-    let src = concat!("fn ts() -> Int\n", "    = Time.unixMs()\n",);
+    let src = concat!("fn ts() -> Int\n", "    Time.unixMs()\n",);
     assert_error_containing(src, "has effect 'Time.unixMs'");
 }
 
@@ -988,10 +990,7 @@ fn error_time_sleep_negative_constant() {
 
 #[test]
 fn error_env_get_without_effect() {
-    let src = concat!(
-        "fn read(k: String) -> Option<String>\n",
-        "    = Env.get(k)\n",
-    );
+    let src = concat!("fn read(k: String) -> Option<String>\n", "    Env.get(k)\n",);
     assert_error_containing(src, "has effect 'Env.get'");
 }
 
@@ -1031,17 +1030,14 @@ fn valid_network_response_field_access() {
     // resp.status is Int — comparison with Int should pass
     let src = concat!(
         "fn isOk(resp: HttpResponse) -> Bool\n",
-        "    = resp.status < 400\n",
+        "    resp.status < 400\n",
     );
     assert_no_errors(src);
 }
 
 #[test]
 fn valid_network_response_body_field() {
-    let src = concat!(
-        "fn body(resp: HttpResponse) -> String\n",
-        "    = resp.body\n",
-    );
+    let src = concat!("fn body(resp: HttpResponse) -> String\n", "    resp.body\n",);
     assert_no_errors(src);
 }
 
@@ -1052,7 +1048,7 @@ fn valid_header_field_access() {
         "    name: String\n",
         "    value: String\n",
         "fn headerName(h: Header) -> String\n",
-        "    = h.name\n",
+        "    h.name\n",
     );
     assert_no_errors(src);
 }
@@ -1064,17 +1060,14 @@ fn valid_user_record_field_access() {
         "    name: String\n",
         "    age: Int\n",
         "fn getName(u: User) -> String\n",
-        "    = u.name\n",
+        "    u.name\n",
     );
     assert_no_errors(src);
 }
 
 #[test]
 fn error_network_response_unknown_field() {
-    let src = concat!(
-        "fn bad(resp: HttpResponse) -> String\n",
-        "    = resp.fooo\n",
-    );
+    let src = concat!("fn bad(resp: HttpResponse) -> String\n", "    resp.fooo\n",);
     assert_error_containing(src, "has no field 'fooo'");
 }
 
@@ -1084,7 +1077,7 @@ fn error_user_record_unknown_field() {
         "record User\n",
         "    name: String\n",
         "fn bad(u: User) -> String\n",
-        "    = u.email\n",
+        "    u.email\n",
     );
     assert_error_containing(src, "has no field 'email'");
 }
@@ -1098,7 +1091,7 @@ fn valid_tcp_send_with_effect() {
     let src = concat!(
         "fn talk(host: String, port: Int, msg: String) -> Result<String, String>\n",
         "    ! [Tcp]\n",
-        "    = Tcp.send(host, port, msg)\n",
+        "    Tcp.send(host, port, msg)\n",
     );
     assert_no_errors(src);
 }
@@ -1108,7 +1101,7 @@ fn valid_tcp_ping_with_effect() {
     let src = concat!(
         "fn check(host: String, port: Int) -> Result<Unit, String>\n",
         "    ! [Tcp]\n",
-        "    = Tcp.ping(host, port)\n",
+        "    Tcp.ping(host, port)\n",
     );
     assert_no_errors(src);
 }
@@ -1117,7 +1110,7 @@ fn valid_tcp_ping_with_effect() {
 fn error_tcp_send_without_effect() {
     let src = concat!(
         "fn talk(host: String, port: Int, msg: String) -> Result<String, String>\n",
-        "    = Tcp.send(host, port, msg)\n",
+        "    Tcp.send(host, port, msg)\n",
     );
     assert_error_containing(src, "has effect 'Tcp.send'");
 }
@@ -1126,7 +1119,7 @@ fn error_tcp_send_without_effect() {
 fn error_tcp_ping_without_effect() {
     let src = concat!(
         "fn check(host: String, port: Int) -> Result<Unit, String>\n",
-        "    = Tcp.ping(host, port)\n",
+        "    Tcp.ping(host, port)\n",
     );
     assert_error_containing(src, "has effect 'Tcp.ping'");
 }
@@ -1135,7 +1128,7 @@ fn error_tcp_ping_without_effect() {
 fn valid_http_server_listen_with_context() {
     let src = concat!(
         "fn handle(ctx: String, req: HttpRequest) -> HttpResponse\n",
-        "    = HttpResponse(status = 200, body = ctx, headers = [])\n",
+        "    HttpResponse(status = 200, body = ctx, headers = [])\n",
         "fn main() -> Unit\n",
         "    ! [HttpServer]\n",
         "    HttpServer.listenWith(8080, \"ok\", handle)\n",
@@ -1147,7 +1140,7 @@ fn valid_http_server_listen_with_context() {
 fn error_http_server_listen_with_bad_handler_signature_uses_any_in_message() {
     let src = concat!(
         "fn bad(ctx: Int, req: Int) -> HttpResponse\n",
-        "    = HttpResponse(status = 200, body = \"ok\", headers = [])\n",
+        "    HttpResponse(status = 200, body = \"ok\", headers = [])\n",
         "fn main() -> Unit\n",
         "    ! [HttpServer]\n",
         "    HttpServer.listenWith(8080, \"ok\", bad)\n",
@@ -1160,7 +1153,7 @@ fn valid_tcp_connect_returns_connection() {
     let src = concat!(
         "fn open(host: String, port: Int) -> Result<Tcp.Connection, String>\n",
         "    ! [Tcp]\n",
-        "    = Tcp.connect(host, port)\n",
+        "    Tcp.connect(host, port)\n",
     );
     assert_no_errors(src);
 }
@@ -1170,7 +1163,7 @@ fn valid_tcp_write_line_with_connection() {
     let src = concat!(
         "fn send(conn: Tcp.Connection, msg: String) -> Result<Unit, String>\n",
         "    ! [Tcp]\n",
-        "    = Tcp.writeLine(conn, msg)\n",
+        "    Tcp.writeLine(conn, msg)\n",
     );
     assert_no_errors(src);
 }
@@ -1180,7 +1173,7 @@ fn valid_tcp_read_line_with_connection() {
     let src = concat!(
         "fn recv(conn: Tcp.Connection) -> Result<String, String>\n",
         "    ! [Tcp]\n",
-        "    = Tcp.readLine(conn)\n",
+        "    Tcp.readLine(conn)\n",
     );
     assert_no_errors(src);
 }
@@ -1190,7 +1183,7 @@ fn valid_tcp_close_with_connection() {
     let src = concat!(
         "fn done(conn: Tcp.Connection) -> Result<Unit, String>\n",
         "    ! [Tcp]\n",
-        "    = Tcp.close(conn)\n",
+        "    Tcp.close(conn)\n",
     );
     assert_no_errors(src);
 }
@@ -1199,7 +1192,7 @@ fn valid_tcp_close_with_connection() {
 fn valid_tcp_connection_field_access() {
     let src = concat!(
         "fn getId(conn: Tcp.Connection) -> String\n",
-        "    = conn.id\n",
+        "    conn.id\n",
     );
     assert_no_errors(src);
 }
@@ -1209,7 +1202,7 @@ fn error_tcp_write_line_with_string() {
     let src = concat!(
         "fn send(conn: String, msg: String) -> Result<Unit, String>\n",
         "    ! [Tcp]\n",
-        "    = Tcp.writeLine(conn, msg)\n",
+        "    Tcp.writeLine(conn, msg)\n",
     );
     assert_error_containing(src, "expected Tcp.Connection");
 }
@@ -1220,125 +1213,125 @@ fn error_tcp_write_line_with_string() {
 
 #[test]
 fn valid_int_to_string() {
-    assert_no_errors("fn f(n: Int) -> String\n    = Int.toString(n)\n");
+    assert_no_errors("fn f(n: Int) -> String\n    Int.toString(n)\n");
 }
 
 #[test]
 fn valid_int_from_string() {
-    assert_no_errors("fn f(s: String) -> Result<Int, String>\n    = Int.fromString(s)\n");
+    assert_no_errors("fn f(s: String) -> Result<Int, String>\n    Int.fromString(s)\n");
 }
 
 #[test]
 fn valid_int_abs() {
-    assert_no_errors("fn f(n: Int) -> Int\n    = Int.abs(n)\n");
+    assert_no_errors("fn f(n: Int) -> Int\n    Int.abs(n)\n");
 }
 
 #[test]
 fn valid_int_min_max() {
-    assert_no_errors("fn f(a: Int, b: Int) -> Int\n    = Int.min(a, Int.max(a, b))\n");
+    assert_no_errors("fn f(a: Int, b: Int) -> Int\n    Int.min(a, Int.max(a, b))\n");
 }
 
 #[test]
 fn valid_int_mod() {
-    assert_no_errors("fn f(a: Int, b: Int) -> Result<Int, String>\n    = Int.mod(a, b)\n");
+    assert_no_errors("fn f(a: Int, b: Int) -> Result<Int, String>\n    Int.mod(a, b)\n");
 }
 
 #[test]
 fn valid_int_to_float() {
-    assert_no_errors("fn f(n: Int) -> Float\n    = Int.toFloat(n)\n");
+    assert_no_errors("fn f(n: Int) -> Float\n    Int.toFloat(n)\n");
 }
 
 #[test]
 fn valid_float_abs() {
-    assert_no_errors("fn f(x: Float) -> Float\n    = Float.abs(x)\n");
+    assert_no_errors("fn f(x: Float) -> Float\n    Float.abs(x)\n");
 }
 
 #[test]
 fn valid_float_floor_ceil_round() {
-    assert_no_errors("fn f(x: Float) -> Int\n    = Float.floor(x)\n");
-    assert_no_errors("fn f(x: Float) -> Int\n    = Float.ceil(x)\n");
-    assert_no_errors("fn f(x: Float) -> Int\n    = Float.round(x)\n");
+    assert_no_errors("fn f(x: Float) -> Int\n    Float.floor(x)\n");
+    assert_no_errors("fn f(x: Float) -> Int\n    Float.ceil(x)\n");
+    assert_no_errors("fn f(x: Float) -> Int\n    Float.round(x)\n");
 }
 
 #[test]
 fn valid_float_from_int() {
-    assert_no_errors("fn f(n: Int) -> Float\n    = Float.fromInt(n)\n");
+    assert_no_errors("fn f(n: Int) -> Float\n    Float.fromInt(n)\n");
 }
 
 #[test]
 fn valid_float_to_string() {
-    assert_no_errors("fn f(x: Float) -> String\n    = Float.toString(x)\n");
+    assert_no_errors("fn f(x: Float) -> String\n    Float.toString(x)\n");
 }
 
 #[test]
 fn valid_string_length() {
-    assert_no_errors("fn f(s: String) -> Int\n    = String.len(s)\n");
+    assert_no_errors("fn f(s: String) -> Int\n    String.len(s)\n");
 }
 
 #[test]
 fn valid_string_byte_length() {
-    assert_no_errors("fn f(s: String) -> Int\n    = String.byteLength(s)\n");
+    assert_no_errors("fn f(s: String) -> Int\n    String.byteLength(s)\n");
 }
 
 #[test]
 fn valid_string_starts_with() {
-    assert_no_errors("fn f(s: String, p: String) -> Bool\n    = String.startsWith(s, p)\n");
+    assert_no_errors("fn f(s: String, p: String) -> Bool\n    String.startsWith(s, p)\n");
 }
 
 #[test]
 fn valid_string_contains() {
-    assert_no_errors("fn f(s: String, sub: String) -> Bool\n    = String.contains(s, sub)\n");
+    assert_no_errors("fn f(s: String, sub: String) -> Bool\n    String.contains(s, sub)\n");
 }
 
 #[test]
 fn valid_string_slice() {
-    assert_no_errors("fn f(s: String) -> String\n    = String.slice(s, 0, 3)\n");
+    assert_no_errors("fn f(s: String) -> String\n    String.slice(s, 0, 3)\n");
 }
 
 #[test]
 fn valid_string_trim() {
-    assert_no_errors("fn f(s: String) -> String\n    = String.trim(s)\n");
+    assert_no_errors("fn f(s: String) -> String\n    String.trim(s)\n");
 }
 
 #[test]
 fn valid_string_split() {
-    assert_no_errors("fn f(s: String) -> List<String>\n    = String.split(s, \",\")\n");
+    assert_no_errors("fn f(s: String) -> List<String>\n    String.split(s, \",\")\n");
 }
 
 #[test]
 fn valid_string_replace() {
-    assert_no_errors("fn f(s: String) -> String\n    = String.replace(s, \"a\", \"b\")\n");
+    assert_no_errors("fn f(s: String) -> String\n    String.replace(s, \"a\", \"b\")\n");
 }
 
 #[test]
 fn valid_string_join() {
-    assert_no_errors("fn f(xs: List<String>) -> String\n    = String.join(xs, \",\")\n");
+    assert_no_errors("fn f(xs: List<String>) -> String\n    String.join(xs, \",\")\n");
 }
 
 #[test]
 fn valid_string_chars() {
-    assert_no_errors("fn f(s: String) -> List<String>\n    = String.chars(s)\n");
+    assert_no_errors("fn f(s: String) -> List<String>\n    String.chars(s)\n");
 }
 
 #[test]
 fn valid_string_from_int() {
-    assert_no_errors("fn f(n: Int) -> String\n    = String.fromInt(n)\n");
+    assert_no_errors("fn f(n: Int) -> String\n    String.fromInt(n)\n");
 }
 
 #[test]
 fn valid_string_from_float() {
-    assert_no_errors("fn f(x: Float) -> String\n    = String.fromFloat(x)\n");
+    assert_no_errors("fn f(x: Float) -> String\n    String.fromFloat(x)\n");
 }
 
 #[test]
 fn valid_string_from_bool() {
-    assert_no_errors("fn f(b: Bool) -> String\n    = String.fromBool(b)\n");
+    assert_no_errors("fn f(b: Bool) -> String\n    String.fromBool(b)\n");
 }
 
 #[test]
 fn error_int_to_string_wrong_arg() {
     assert_error_containing(
-        "fn f(s: String) -> String\n    = Int.toString(s)\n",
+        "fn f(s: String) -> String\n    Int.toString(s)\n",
         "expected Int, got String",
     );
 }
@@ -1347,7 +1340,7 @@ fn error_int_to_string_wrong_arg() {
 fn error_float_abs_wrong_arg() {
     // String is incompatible with Float (unlike Int which widens)
     assert_error_containing(
-        "fn f(s: String) -> Float\n    = Float.abs(s)\n",
+        "fn f(s: String) -> Float\n    Float.abs(s)\n",
         "expected Float, got String",
     );
 }
@@ -1355,9 +1348,9 @@ fn error_float_abs_wrong_arg() {
 #[test]
 fn valid_no_effects_for_helpers() {
     // Int/Float/String namespace methods don't require effects
-    assert_no_errors("fn f(n: Int) -> String\n    = Int.toString(n)\n");
-    assert_no_errors("fn f(x: Float) -> Int\n    = Float.floor(x)\n");
-    assert_no_errors("fn f(s: String) -> Int\n    = String.len(s)\n");
+    assert_no_errors("fn f(n: Int) -> String\n    Int.toString(n)\n");
+    assert_no_errors("fn f(x: Float) -> Int\n    Float.floor(x)\n");
+    assert_no_errors("fn f(s: String) -> Int\n    String.len(s)\n");
 }
 
 #[test]
@@ -1419,7 +1412,7 @@ record User
     age: Int
 
 fn f(u: User) -> User
-    = User.update(u, age = 31)
+    User.update(u, age = 31)
 "#;
     assert_no_errors(src);
 }
@@ -1432,7 +1425,7 @@ record User
     age: Int
 
 fn f(u: User) -> User
-    = User.update(u, foo = 1)
+    User.update(u, foo = 1)
 "#;
     assert_error_containing(src, "Record 'User' has no field 'foo'");
 }
@@ -1445,7 +1438,7 @@ record User
     age: Int
 
 fn f(u: User) -> User
-    = User.update(u, age = "old")
+    User.update(u, age = "old")
 "#;
     assert_error_containing(src, "Record 'User' field 'age' expects Int, got String");
 }
@@ -1462,7 +1455,7 @@ record Point
     y: Int
 
 fn f(u: User) -> Point
-    = Point.update(u, x = 1)
+    Point.update(u, x = 1)
 "#;
     assert_error_containing(src, "Point.update: base has type User, expected Point");
 }
@@ -1475,7 +1468,7 @@ fn f(u: User) -> Point
 fn exhaustive_bool_both_branches() {
     let src = concat!(
         "fn f(b: Bool) -> Int\n",
-        "  = match b\n",
+        "  match b\n",
         "    true -> 1\n",
         "    false -> 0\n",
     );
@@ -1484,7 +1477,7 @@ fn exhaustive_bool_both_branches() {
 
 #[test]
 fn error_non_exhaustive_bool_missing_false() {
-    let src = concat!("fn f(b: Bool) -> Int\n", "  = match b\n", "    true -> 1\n",);
+    let src = concat!("fn f(b: Bool) -> Int\n", "  match b\n", "    true -> 1\n",);
     assert_error_containing(src, "false");
 }
 
@@ -1492,7 +1485,7 @@ fn error_non_exhaustive_bool_missing_false() {
 fn exhaustive_result_both_constructors() {
     let src = concat!(
         "fn f(r: Result<Int, String>) -> Int\n",
-        "  = match r\n",
+        "  match r\n",
         "    Result.Ok(x) -> x\n",
         "    Result.Err(e) -> 0\n",
     );
@@ -1503,7 +1496,7 @@ fn exhaustive_result_both_constructors() {
 fn error_non_exhaustive_result_missing_err() {
     let src = concat!(
         "fn f(r: Result<Int, String>) -> Int\n",
-        "  = match r\n",
+        "  match r\n",
         "    Result.Ok(x) -> x\n",
     );
     assert_error_containing(src, "Result.Err");
@@ -1513,7 +1506,7 @@ fn error_non_exhaustive_result_missing_err() {
 fn exhaustive_option_both_constructors() {
     let src = concat!(
         "fn f(o: Option<Int>) -> Int\n",
-        "  = match o\n",
+        "  match o\n",
         "    Option.Some(x) -> x\n",
         "    Option.None -> 0\n",
     );
@@ -1524,7 +1517,7 @@ fn exhaustive_option_both_constructors() {
 fn error_non_exhaustive_option_missing_none() {
     let src = concat!(
         "fn f(o: Option<Int>) -> Int\n",
-        "  = match o\n",
+        "  match o\n",
         "    Option.Some(x) -> x\n",
     );
     assert_error_containing(src, "Option.None");
@@ -1538,7 +1531,7 @@ fn exhaustive_user_sum_type_all_variants() {
         "  Rect(Float, Float)\n",
         "  Point\n",
         "fn area(s: Shape) -> Float\n",
-        "  = match s\n",
+        "  match s\n",
         "    Circle(r) -> r * r\n",
         "    Rect(w, h) -> w * h\n",
         "    Point -> 0.0\n",
@@ -1554,7 +1547,7 @@ fn error_non_exhaustive_user_sum_type_missing_variant() {
         "  Rect(Float, Float)\n",
         "  Point\n",
         "fn area(s: Shape) -> Float\n",
-        "  = match s\n",
+        "  match s\n",
         "    Circle(r) -> r * r\n",
     );
     assert_error_containing(src, "Rect");
@@ -1564,7 +1557,7 @@ fn error_non_exhaustive_user_sum_type_missing_variant() {
 fn exhaustive_list_both_patterns() {
     let src = concat!(
         "fn f(xs: List<Int>) -> Int\n",
-        "  = match xs\n",
+        "  match xs\n",
         "    [] -> 0\n",
         "    [h, ..t] -> h\n",
     );
@@ -1575,7 +1568,7 @@ fn exhaustive_list_both_patterns() {
 fn error_non_exhaustive_list_missing_cons() {
     let src = concat!(
         "fn f(xs: List<Int>) -> Int\n",
-        "  = match xs\n",
+        "  match xs\n",
         "    [] -> 0\n",
     );
     assert_error_containing(src, "[h, ..t]");
@@ -1585,7 +1578,7 @@ fn error_non_exhaustive_list_missing_cons() {
 fn error_non_exhaustive_int_without_catch_all() {
     let src = concat!(
         "fn f(n: Int) -> Int\n",
-        "  = match n\n",
+        "  match n\n",
         "    0 -> 1\n",
         "    1 -> 2\n",
     );
@@ -1596,7 +1589,7 @@ fn error_non_exhaustive_int_without_catch_all() {
 fn exhaustive_int_with_wildcard() {
     let src = concat!(
         "fn f(n: Int) -> Int\n",
-        "  = match n\n",
+        "  match n\n",
         "    0 -> 1\n",
         "    _ -> 0\n",
     );
@@ -1607,7 +1600,7 @@ fn exhaustive_int_with_wildcard() {
 fn exhaustive_with_ident_catch_all() {
     let src = concat!(
         "fn f(n: Int) -> Int\n",
-        "  = match n\n",
+        "  match n\n",
         "    0 -> 1\n",
         "    x -> x\n",
     );
@@ -1618,7 +1611,7 @@ fn exhaustive_with_ident_catch_all() {
 fn exhaustive_tuple_with_binding_wildcards() {
     let src = concat!(
         "fn f(p: (Int, Int)) -> Int\n",
-        "  = match p\n",
+        "  match p\n",
         "    (_, x) -> x\n",
     );
     assert_no_errors(src);
@@ -1628,7 +1621,7 @@ fn exhaustive_tuple_with_binding_wildcards() {
 fn error_non_exhaustive_tuple_with_literal_only() {
     let src = concat!(
         "fn f(p: (Int, Int)) -> Int\n",
-        "  = match p\n",
+        "  match p\n",
         "    (0, x) -> x\n",
     );
     assert_error_containing(src, "catch-all");

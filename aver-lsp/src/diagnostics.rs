@@ -74,60 +74,38 @@ pub fn diagnose(source: &str, base_dir: Option<&str>) -> Vec<Diagnostic> {
         diagnostics.push(type_error_to_diagnostic(te));
     }
 
-    // Phase 5: Check warnings (missing intent, descriptions, verify blocks)
-    let warnings = aver::checker::check_module_intent(&items);
-    for warning in &warnings {
-        diagnostics.push(warning_to_diagnostic(warning, &items, source));
+    // Phase 5: Contract-level findings (missing intent, descriptions, verify blocks)
+    let findings = aver::checker::check_module_intent(&items);
+    for warning in &findings.warnings {
+        diagnostics.push(check_finding_to_diagnostic(
+            warning,
+            DiagnosticSeverity::WARNING,
+        ));
+    }
+    for error in &findings.errors {
+        diagnostics.push(check_finding_to_diagnostic(
+            error,
+            DiagnosticSeverity::ERROR,
+        ));
     }
 
     diagnostics
 }
 
-/// Convert a check warning to an LSP diagnostic, placing it at the relevant line.
-fn warning_to_diagnostic(
-    warning: &str,
-    items: &[aver::ast::TopLevel],
-    _source: &str,
+/// Convert a checker finding to an LSP diagnostic.
+fn check_finding_to_diagnostic(
+    finding: &aver::checker::CheckFinding,
+    severity: DiagnosticSeverity,
 ) -> Diagnostic {
-    use aver::ast::TopLevel;
-
-    let mut line = 0u32;
-
-    // Try to locate the warning at the relevant function or module
-    if let Some(fn_name) = warning
-        .strip_prefix("Function '")
-        .and_then(|s| s.split('\'').next())
-    {
-        for item in items {
-            if let TopLevel::FnDef(fd) = item {
-                if fd.name == fn_name {
-                    line = fd.line.saturating_sub(1) as u32;
-                    break;
-                }
-            }
-        }
-    } else if let Some(mod_name) = warning
-        .strip_prefix("Module '")
-        .and_then(|s| s.split('\'').next())
-    {
-        for item in items {
-            if let TopLevel::Module(m) = item {
-                if m.name == mod_name {
-                    // Module block doesn't have a line field; use line 0
-                    break;
-                }
-            }
-        }
-    }
-
+    let line = finding.line.saturating_sub(1) as u32;
     Diagnostic {
         range: Range {
             start: Position { line, character: 0 },
             end: Position { line, character: 0 },
         },
-        severity: Some(DiagnosticSeverity::WARNING),
+        severity: Some(severity),
         source: Some("aver".to_string()),
-        message: warning.to_string(),
+        message: finding.message.clone(),
         ..Default::default()
     }
 }

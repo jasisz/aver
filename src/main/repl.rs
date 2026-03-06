@@ -27,7 +27,7 @@ pub(super) fn is_incomplete(source: &str) -> bool {
 
     // Block header without a body (only 1 line so far)
     let first = lines[0].trim();
-    let needs_body = (first.starts_with("fn ") && !first.contains(" = "))
+    let needs_body = first.starts_with("fn ")
         || first.starts_with("type ")
         || first.starts_with("record ")
         || first.starts_with("verify ")

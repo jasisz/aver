@@ -67,7 +67,7 @@ verify format
 
 fn isBefore(a: String, b: String) -> Bool
     ? "Compare two ISO 8601 timestamps. ISO is lexicographically sortable by design."
-    = a < b
+    a < b
 
 verify isBefore
     isBefore("2025-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z") => true

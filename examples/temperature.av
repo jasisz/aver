@@ -15,7 +15,7 @@ decision NoLoops
 
 fn celsiusToFahr(c: Float) -> Float
     ? "Converts Celsius to Fahrenheit using the standard formula."
-    = c * 1.8 + 32.0
+    c * 1.8 + 32.0
 
 verify celsiusToFahr
     celsiusToFahr(0.0)   => 32.0
@@ -24,7 +24,7 @@ verify celsiusToFahr
 
 fn fahrToCelsius(f: Float) -> Float
     ? "Converts Fahrenheit to Celsius."
-    = (f - 32.0) / 1.8
+    (f - 32.0) / 1.8
 
 verify fahrToCelsius
     fahrToCelsius(32.0)  => 0.0
@@ -44,7 +44,7 @@ verify celsiusToKelvin
 
 fn isBoiling(c: Float) -> Bool
     ? "Returns true if a Celsius temperature is at or above the boiling point of water."
-    = c >= 100.0
+    c >= 100.0
 
 verify isBoiling
     isBoiling(100.0) => true
@@ -53,7 +53,7 @@ verify isBoiling
 
 fn isFreezing(c: Float) -> Bool
     ? "Returns true if a Celsius temperature is at or below the freezing point of water."
-    = c <= 0.0
+    c <= 0.0
 
 verify isFreezing
     isFreezing(0.0)  => true
@@ -78,7 +78,7 @@ verify classify
 
 fn collectBoilingTemps(temps: List<Float>) -> List<Float>
     ? "Collects boiling temperatures from a list."
-    = match temps
+    match temps
         [] -> []
         [temp, ..rest] -> match isBoiling(temp)
             true -> List.prepend(temp, collectBoilingTemps(rest))
@@ -90,7 +90,7 @@ verify collectBoilingTemps
 
 fn collectFreezingTemps(temps: List<Float>) -> List<Float>
     ? "Collects freezing temperatures from a list."
-    = match temps
+    match temps
         [] -> []
         [temp, ..rest] -> match isFreezing(temp)
             true -> List.prepend(temp, collectFreezingTemps(rest))

@@ -67,35 +67,35 @@ verify is2xx
 
 fn queryUrl(config: DbConfig) -> String
     ? "Builds the query endpoint URL for this database."
-    = "https://{config.host}/v1/databases/{config.database}/query"
+    "https://{config.host}/v1/databases/{config.database}/query"
 
 verify queryUrl
     queryUrl(DbConfig(host = "db.example.com", database = "shop", token = "t")) => "https://db.example.com/v1/databases/shop/query"
 
 fn executeUrl(config: DbConfig) -> String
     ? "Builds execute endpoint URL for non-SELECT statements."
-    = "https://{config.host}/v1/databases/{config.database}/execute"
+    "https://{config.host}/v1/databases/{config.database}/execute"
 
 verify executeUrl
     executeUrl(DbConfig(host = "db.example.com", database = "shop", token = "t")) => "https://db.example.com/v1/databases/shop/execute"
 
 fn pingUrl(config: DbConfig) -> String
     ? "Builds health-check URL for this database host."
-    = "https://{config.host}/v1/health"
+    "https://{config.host}/v1/health"
 
 verify pingUrl
     pingUrl(DbConfig(host = "db.example.com", database = "shop", token = "t")) => "https://db.example.com/v1/health"
 
 fn authHeader(config: DbConfig) -> Header
     ? "Constructs Authorization: Bearer header from DbConfig token."
-    = Header(name = "Authorization", value = "Bearer {config.token}")
+    Header(name = "Authorization", value = "Bearer {config.token}")
 
 verify authHeader
     authHeader(DbConfig(host = "h", database = "d", token = "abc")) => Header(name = "Authorization", value = "Bearer abc")
 
 fn sqlBody(sql: String) -> String
     ? "Wraps SQL statement in JSON envelope expected by the gateway."
-    = "{{\"sql\": \"{sql}\"}}"
+    "{{\"sql\": \"{sql}\"}}"
 
 verify sqlBody
     sqlBody("SELECT 1") => "{{\"sql\": \"SELECT 1\"}}"

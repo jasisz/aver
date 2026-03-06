@@ -107,7 +107,8 @@ fn main() -> Unit
 ## Functions
 
 ```aver
-fn add(a: Int, b: Int) -> Int = a + b
+fn add(a: Int, b: Int) -> Int
+    a + b
 
 fn fetchUser(id: String) -> Result<HttpResponse, String>
     ? "Fetches a user record from an API."
@@ -118,8 +119,8 @@ fn fetchUser(id: String) -> Result<HttpResponse, String>
 - `? "..."` — optional prose description (part of the signature)
 - `! [Effect]` — optional effect declaration (statically and runtime enforced)
 - method-level effects are supported: `Http.get`, `Disk.readText`, `Console.print`
-- `= expr` — single-expression shorthand
-- block bodies use indentation for multi-statement functions
+- function bodies use indentation
+- the last expression in a function body is the return value
 
 ## Verify blocks
 
@@ -171,7 +172,7 @@ There is no lambda syntax. List processing is typically written with recursion a
 
 ```aver
 fn sum(xs: List<Int>) -> Int
-    = match xs
+    match xs
         [] -> 0
         [head, ..tail] -> head + sum(tail)
 ```

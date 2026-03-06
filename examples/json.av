@@ -161,7 +161,7 @@ verify entryToString
 
 fn escapeJsonString(s: String) -> String
     ? "JSON helper: escapeJsonString."
-    = escapeJsonChars(String.chars(s), "")
+    escapeJsonChars(String.chars(s), "")
 
 verify escapeJsonString
     escapeJsonString("a\"b\nc") => "a\\\"b\\nc"
@@ -235,7 +235,7 @@ verify isDigit
 
 fn digitVal(c: String) -> Int
     ? "JSON helper: digitVal."
-    = Char.toCode(c) - 48
+    Char.toCode(c) - 48
 
 verify digitVal
     digitVal("7") => 7
@@ -344,7 +344,7 @@ verify parseLiteral
 
 fn parseString(s: String, pos: Int) -> ParseResult
     ? "Parse string using segment chunks to avoid repeated concatenation."
-    = parseStringChunk(s, pos, pos, [])
+    parseStringChunk(s, pos, pos, [])
 
 verify parseString
     parseString("\"", 0) => ParseResult.Ok(Json.JsonString(""), 1)
@@ -499,7 +499,7 @@ verify parseUnicodePairLow
 
 fn combineSurrogates(hi: Int, lo: Int) -> Int
     ? "JSON helper: combineSurrogates."
-    = 65536 + (hi - 55296) * 1024 + (lo - 56320)
+    65536 + (hi - 55296) * 1024 + (lo - 56320)
 
 verify combineSurrogates
     combineSurrogates(55357, 56832) => 128512
@@ -765,7 +765,7 @@ verify parseArrayNext
 
 fn emptyJsonMap() -> Map<String, Json>
     ? "JSON helper: emptyJsonMap."
-    = Map.empty()
+    Map.empty()
 
 fn parseObject(s: String, pos: Int) -> ParseResult
     ? "JSON helper: parseObject."
@@ -903,7 +903,7 @@ verify jsonList
 
 fn renderJsonStringList(items: List<Json>) -> String
     ? "Formats a JSON string list as a human-readable comma-separated line."
-    = match items
+    match items
         [] -> ""
         [item, ..rest] -> match rest
             [] -> jsonStr(item)

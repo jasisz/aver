@@ -241,12 +241,7 @@ fn extract_fn_source(fd: &FnDef, source: &str) -> Option<String> {
     }
 
     if fn_lines.len() <= 1 {
-        // Expression body on same line: `fn foo(x) = expr`
-        // Already captured in header
-        match &*fd.body {
-            FnBody::Expr(_) => return Some(fn_lines.join("\n")),
-            _ => return None,
-        }
+        return None;
     }
 
     Some(fn_lines.join("\n"))

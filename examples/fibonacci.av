@@ -101,7 +101,7 @@ verify fib
 
 fn isEven(n: Int) -> Bool
     ? "Even check via integer division trick (no modulo in Aver)."
-    = n / 2 * 2 == n
+    n / 2 * 2 == n
 
 verify isEven
     isEven(0)   => true
@@ -135,7 +135,7 @@ fn prependIfEven(xs: List<Int>, n: Int) -> List<Int>
 
 fn finalizeFibStats(acc: FibAcc) -> FibStats
     ? "Flips accumulator-owned lists back into presentation order."
-    = FibStats(fibs = List.reverse(acc.fibs), sum = acc.sum, mx = acc.mx, evens = List.reverse(acc.evens))
+    FibStats(fibs = List.reverse(acc.fibs), sum = acc.sum, mx = acc.mx, evens = List.reverse(acc.evens))
 
 verify finalizeFibStats
     finalizeFibStats(FibAcc(i = 1, n = 1, a = 1, b = 1, fibs = [2, 1, 0], sum = 3, mx = 2, evens = [2, 0])) => FibStats(fibs = [0, 1, 2], sum = 3, mx = 2, evens = [0, 2])
@@ -185,7 +185,7 @@ verify absF
 
 fn approxEq(x: Float, y: Float, eps: Float) -> Bool
     ? "Returns true when |x - y| <= eps."
-    = absF(x - y) <= eps
+    absF(x - y) <= eps
 
 verify approxEq
     approxEq(1.0, 1.0, 0.0)      => true

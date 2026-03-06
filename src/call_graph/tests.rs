@@ -20,7 +20,7 @@ fn fib(n: Int) -> Int
 
 #[test]
 fn non_recursive_fn() {
-    let src = "fn double(x: Int) -> Int\n    = x + x\n";
+    let src = "fn double(x: Int) -> Int\n    x + x\n";
     let items = parse(src);
     let rec = find_recursive_fns(&items);
     assert!(

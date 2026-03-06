@@ -5,7 +5,7 @@ module MapExample
 
 fn emptyCounts() -> Map<String, Int>
     ? "Creates an empty word-count map."
-    = Map.empty()
+    Map.empty()
 
 fn incCount(counts: Map<String, Int>, word: String) -> Map<String, Int>
     ? "Increments the counter for one word."
@@ -25,7 +25,7 @@ verify incCount law keyPresent
 
 fn countWords(words: List<String>) -> Map<String, Int>
     ? "Counts occurrences of each word."
-    = match words
+    match words
         [] -> emptyCounts()
         [word, ..rest] -> incCount(countWords(rest), word)
 
@@ -35,7 +35,7 @@ verify countWords
 
 fn containsWord(words: List<String>, word: String) -> Bool
     ? "Checks whether a word appears in a list."
-    = List.contains(words, word)
+    List.contains(words, word)
 
 verify containsWord
     containsWord(["a", "b"], "a") => true

@@ -516,30 +516,30 @@ mod tests {
 
     #[test]
     fn normalizes_line_endings_and_trailing_ws() {
-        let src = "module A\r\n    fn x() -> Int   \r\n        = 1\t \r\n";
+        let src = "module A\r\n    fn x() -> Int   \r\n        1\t \r\n";
         let got = format_source(src);
-        assert_eq!(got, "module A\n    fn x() -> Int\n        = 1\n");
+        assert_eq!(got, "module A\n    fn x() -> Int\n        1\n");
     }
 
     #[test]
     fn converts_leading_tabs_only() {
-        let src = "\tfn x() -> String\n\t\t= \"a\\tb\"\n";
+        let src = "\tfn x() -> String\n\t\t\"a\\tb\"\n";
         let got = format_source(src);
-        assert_eq!(got, "    fn x() -> String\n        = \"a\\tb\"\n");
+        assert_eq!(got, "    fn x() -> String\n        \"a\\tb\"\n");
     }
 
     #[test]
     fn collapses_long_blank_runs() {
-        let src = "module A\n\n\n\nfn x() -> Int\n    = 1\n";
+        let src = "module A\n\n\n\nfn x() -> Int\n    1\n";
         let got = format_source(src);
-        assert_eq!(got, "module A\n\nfn x() -> Int\n    = 1\n");
+        assert_eq!(got, "module A\n\nfn x() -> Int\n    1\n");
     }
 
     #[test]
     fn keeps_single_final_newline() {
-        let src = "module A\nfn x() -> Int\n    = 1\n\n\n";
+        let src = "module A\nfn x() -> Int\n    1\n\n\n";
         let got = format_source(src);
-        assert_eq!(got, "module A\n\nfn x() -> Int\n    = 1\n");
+        assert_eq!(got, "module A\n\nfn x() -> Int\n    1\n");
     }
 
     #[test]
@@ -547,10 +547,10 @@ mod tests {
         let src = r#"module Demo
 
 fn a(x: Int) -> Int
-    = x + 1
+    x + 1
 
 fn b(x: Int) -> Int
-    = x + 2
+    x + 2
 
 verify a
     a(1) => 2
@@ -564,13 +564,13 @@ verify b
             r#"module Demo
 
 fn a(x: Int) -> Int
-    = x + 1
+    x + 1
 
 verify a
     a(1) => 2
 
 fn b(x: Int) -> Int
-    = x + 2
+    x + 2
 
 verify b
     b(1) => 3
@@ -602,7 +602,7 @@ verify missing
     intent = "Inline intent."
     exposes [x]
 fn x() -> Int
-    = 1
+    1
 "#;
         let got = format_source(src);
         assert_eq!(
@@ -613,7 +613,7 @@ fn x() -> Int
     exposes [x]
 
 fn x() -> Int
-    = 1
+    1
 "#
         );
     }

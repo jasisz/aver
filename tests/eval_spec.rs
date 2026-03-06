@@ -191,7 +191,7 @@ fn runtime_gate_blocks_top_level_print() {
 
 #[test]
 fn runtime_gate_allows_effectful_entrypoint_with_grant() {
-    let src = "fn log(n: Int) -> Unit\n    ! [Console]\n    = Console.print(n)\n";
+    let src = "fn log(n: Int) -> Unit\n    ! [Console]\n    Console.print(n)\n";
     let items = parse(src);
     let mut interp = Interpreter::new();
     for item in &items {
@@ -804,7 +804,7 @@ fn none_is_none() {
 
 #[test]
 fn match_literal_zero() {
-    let src = "fn classify(n: Int) -> String\n    = match n\n        0 -> \"zero\"\n        _ -> \"other\"\n";
+    let src = "fn classify(n: Int) -> String\n    match n\n        0 -> \"zero\"\n        _ -> \"other\"\n";
     assert_eq!(
         call_fn(src, "classify", vec![Value::Int(0)]),
         Value::Str("zero".to_string())
@@ -813,7 +813,7 @@ fn match_literal_zero() {
 
 #[test]
 fn match_literal_wildcard() {
-    let src = "fn classify(n: Int) -> String\n    = match n\n        0 -> \"zero\"\n        _ -> \"other\"\n";
+    let src = "fn classify(n: Int) -> String\n    match n\n        0 -> \"zero\"\n        _ -> \"other\"\n";
     assert_eq!(
         call_fn(src, "classify", vec![Value::Int(99)]),
         Value::Str("other".to_string())
@@ -822,7 +822,7 @@ fn match_literal_wildcard() {
 
 #[test]
 fn match_ok_constructor() {
-    let src = "fn unwrap(r: Result<Int, String>) -> Int\n    = match r\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n";
+    let src = "fn unwrap(r: Result<Int, String>) -> Int\n    match r\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n";
     assert_eq!(
         call_fn(src, "unwrap", vec![Value::Ok(Box::new(Value::Int(42)))]),
         Value::Int(42)
@@ -831,7 +831,7 @@ fn match_ok_constructor() {
 
 #[test]
 fn match_err_constructor() {
-    let src = "fn unwrap(r: Result<Int, String>) -> Int\n    = match r\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n";
+    let src = "fn unwrap(r: Result<Int, String>) -> Int\n    match r\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n";
     assert_eq!(
         call_fn(
             src,
@@ -844,7 +844,7 @@ fn match_err_constructor() {
 
 #[test]
 fn match_some_none() {
-    let src = "fn extract(o: Option<Int>) -> Int\n    = match o\n        Option.Some(v) -> v\n        Option.None -> 0\n";
+    let src = "fn extract(o: Option<Int>) -> Int\n    match o\n        Option.Some(v) -> v\n        Option.None -> 0\n";
     assert_eq!(
         call_fn(src, "extract", vec![Value::Some(Box::new(Value::Int(7)))]),
         Value::Int(7)
@@ -854,7 +854,7 @@ fn match_some_none() {
 
 #[test]
 fn match_bool_literal() {
-    let src = "fn yes_no(b: Bool) -> String\n    = match b\n        true -> \"yes\"\n        false -> \"no\"\n";
+    let src = "fn yes_no(b: Bool) -> String\n    match b\n        true -> \"yes\"\n        false -> \"no\"\n";
     assert_eq!(
         call_fn(src, "yes_no", vec![Value::Bool(true)]),
         Value::Str("yes".to_string())
@@ -867,7 +867,7 @@ fn match_bool_literal() {
 
 #[test]
 fn match_empty_list_pattern() {
-    let src = "fn is_empty(xs: List<Int>) -> Bool\n    = match xs\n        [] -> true\n        [_, ..rest] -> false\n";
+    let src = "fn is_empty(xs: List<Int>) -> Bool\n    match xs\n        [] -> true\n        [_, ..rest] -> false\n";
     assert_eq!(
         call_fn(src, "is_empty", vec![list_from_vec(vec![])]),
         Value::Bool(true)
@@ -884,7 +884,7 @@ fn match_empty_list_pattern() {
 
 #[test]
 fn match_list_cons_binds_head_and_tail() {
-    let src = "fn score(xs: List<Int>) -> Int\n    = match xs\n        [h, ..t] -> h + List.len(t)\n        [] -> 0\n";
+    let src = "fn score(xs: List<Int>) -> Int\n    match xs\n        [h, ..t] -> h + List.len(t)\n        [] -> 0\n";
     assert_eq!(
         call_fn(
             src,
@@ -909,7 +909,8 @@ fn match_list_cons_binds_head_and_tail() {
 
 #[test]
 fn match_tuple_pattern_binds_values() {
-    let src = "fn sum_pair(p: (Int, Int)) -> Int\n    = match p\n        (a, b) -> a + b\n        _ -> 0\n";
+    let src =
+        "fn sum_pair(p: (Int, Int)) -> Int\n    match p\n        (a, b) -> a + b\n        _ -> 0\n";
     assert_eq!(
         call_fn(
             src,
@@ -922,8 +923,7 @@ fn match_tuple_pattern_binds_values() {
 
 #[test]
 fn match_tuple_pattern_with_wildcard() {
-    let src =
-        "fn first(p: (Int, Int)) -> Int\n    = match p\n        (x, _) -> x\n        _ -> 0\n";
+    let src = "fn first(p: (Int, Int)) -> Int\n    match p\n        (x, _) -> x\n        _ -> 0\n";
     assert_eq!(
         call_fn(
             src,
@@ -936,7 +936,7 @@ fn match_tuple_pattern_with_wildcard() {
 
 #[test]
 fn match_nested_tuple_pattern() {
-    let src = "fn flatten(p: ((Int, Int), Int)) -> Int\n    = match p\n        ((a, b), c) -> a + b + c\n        _ -> 0\n";
+    let src = "fn flatten(p: ((Int, Int), Int)) -> Int\n    match p\n        ((a, b), c) -> a + b + c\n        _ -> 0\n";
     assert_eq!(
         call_fn(
             src,
@@ -952,7 +952,7 @@ fn match_nested_tuple_pattern() {
 
 #[test]
 fn tuple_pattern_arity_mismatch_falls_through() {
-    let src = "fn test(p: (Int, Int)) -> Int\n    = match p\n        (a, b, c) -> a + b + c\n        _ -> 42\n";
+    let src = "fn test(p: (Int, Int)) -> Int\n    match p\n        (a, b, c) -> a + b + c\n        _ -> 42\n";
     assert_eq!(
         call_fn(
             src,
@@ -969,7 +969,7 @@ fn tuple_pattern_arity_mismatch_falls_through() {
 
 #[test]
 fn interp_simple() {
-    let src = "fn greet(name: String) -> String\n    = \"Hello, {name}!\"\n";
+    let src = "fn greet(name: String) -> String\n    \"Hello, {name}!\"\n";
     assert_eq!(
         call_fn(src, "greet", vec![Value::Str("Alice".to_string())]),
         Value::Str("Hello, Alice!".to_string())
@@ -978,7 +978,7 @@ fn interp_simple() {
 
 #[test]
 fn interp_expression() {
-    let src = "fn show(x: Int) -> String\n    = \"value: {x + 1}\"\n";
+    let src = "fn show(x: Int) -> String\n    \"value: {x + 1}\"\n";
     assert_eq!(
         call_fn(src, "show", vec![Value::Int(4)]),
         Value::Str("value: 5".to_string())
@@ -1064,7 +1064,7 @@ fn reverse_builtin_flips_order() {
 
 #[test]
 fn higher_order_apply_twice_with_function_typed_param() {
-    let src = "fn applyTwice(f: Fn(Int) -> Int, x: Int) -> Int\n    = f(f(x))\nfn inc(n: Int) -> Int\n    = n + 1\n";
+    let src = "fn applyTwice(f: Fn(Int) -> Int, x: Int) -> Int\n    f(f(x))\nfn inc(n: Int) -> Int\n    n + 1\n";
     let items = parse(src);
     let mut interp = Interpreter::new();
     for item in &items {
@@ -1086,7 +1086,7 @@ fn higher_order_apply_twice_with_function_typed_param() {
 
 #[test]
 fn error_prop_unwraps_ok() {
-    let src = "fn get_ok(r: Result<Int, String>) -> Int\n    = r?\n";
+    let src = "fn get_ok(r: Result<Int, String>) -> Int\n    r?\n";
     assert_eq!(
         call_fn(src, "get_ok", vec![Value::Ok(Box::new(Value::Int(99)))]),
         Value::Int(99)
@@ -1096,7 +1096,7 @@ fn error_prop_unwraps_ok() {
 #[test]
 fn error_prop_early_return_on_err() {
     // ? on Err causes early return: the function returns Err(e), not a crash.
-    let src = "fn get_val(r: Result<Int, String>) -> Result<Int, String>\n    = r?\n";
+    let src = "fn get_val(r: Result<Int, String>) -> Result<Int, String>\n    r?\n";
     let result = call_fn(
         src,
         "get_val",
@@ -1138,11 +1138,11 @@ fn error_prop_chain_short_circuits() {
 
 #[test]
 fn closure_captures_outer_val() {
-    let _src = "fn make_adder(n: Int) -> Fn(Int) -> Int\n    fn add(x: Int) -> Int\n        = x + n\n    add\n";
+    let _src = "fn make_adder(n: Int) -> Fn(Int) -> Int\n    fn add(x: Int) -> Int\n        x + n\n    add\n";
     // Note: nested function definitions are not a first-class feature in Aver.
     // This test verifies the closure capture mechanism via lambda-style usage.
     // We use map with a pre-defined function instead.
-    let src2 = "fn double(x: Int) -> Int\n    = x + x\n";
+    let src2 = "fn double(x: Int) -> Int\n    x + x\n";
     let items = parse(src2);
     let mut interp = Interpreter::new();
     for item in &items {
@@ -1235,7 +1235,7 @@ fn sum_type_match_single_field_variant() {
         "  Point\n",
         "fn area(s: Shape) -> Float\n",
         "  ? \"area\"\n",
-        "  = match s\n",
+        "  match s\n",
         "    Circle(r) -> r * r\n",
         "    Point -> 0.0\n",
     );
@@ -1269,7 +1269,7 @@ fn sum_type_match_no_arg_variant() {
         "  Point\n",
         "fn area(s: Shape) -> Float\n",
         "  ? \"area\"\n",
-        "  = match s\n",
+        "  match s\n",
         "    Circle(r) -> r * r\n",
         "    Point -> 0.0\n",
     );
@@ -1349,7 +1349,7 @@ fn record_positional_match() {
         "  age: Int\n",
         "fn get_name(u: User) -> String\n",
         "  ? \"get name\"\n",
-        "  = match u\n",
+        "  match u\n",
         "    User(name, age) -> name\n",
     );
     let items = parse(src);
@@ -1917,11 +1917,7 @@ mod time_tests {
 
     #[test]
     fn time_now_returns_string() {
-        let src = concat!(
-            "fn now() -> String\n",
-            "    ! [Time]\n",
-            "    = Time.now()\n",
-        );
+        let src = concat!("fn now() -> String\n", "    ! [Time]\n", "    Time.now()\n",);
         let val = run_time_fn(src, "now");
         match val {
             Value::Str(s) => {
@@ -1941,7 +1937,7 @@ mod time_tests {
         let src = concat!(
             "fn nowMs() -> Int\n",
             "    ! [Time]\n",
-            "    = Time.unixMs()\n",
+            "    Time.unixMs()\n",
         );
         let val = run_time_fn(src, "nowMs");
         match val {
@@ -2138,7 +2134,7 @@ mod tcp_tests {
         let src = concat!(
             "fn check() -> Result<Unit, String>\n",
             "    ! [Tcp]\n",
-            "    = Tcp.ping(\"127.0.0.1\", 1)\n",
+            "    Tcp.ping(\"127.0.0.1\", 1)\n",
         );
         let val = run_tcp_fn(src, "check");
         assert!(matches!(val, Value::Err(_)), "expected Err, got {:?}", val);
@@ -2149,7 +2145,7 @@ mod tcp_tests {
         let src = concat!(
             "fn talk() -> Result<String, String>\n",
             "    ! [Tcp]\n",
-            "    = Tcp.send(\"127.0.0.1\", 1, \"hello\")\n",
+            "    Tcp.send(\"127.0.0.1\", 1, \"hello\")\n",
         );
         let val = run_tcp_fn(src, "talk");
         assert!(matches!(val, Value::Err(_)), "expected Err, got {:?}", val);
@@ -2168,7 +2164,7 @@ mod tcp_tests {
         });
 
         let src = format!(
-            "fn check() -> Result<Unit, String>\n    ! [Tcp]\n    = Tcp.ping(\"127.0.0.1\", {})\n",
+            "fn check() -> Result<Unit, String>\n    ! [Tcp]\n    Tcp.ping(\"127.0.0.1\", {})\n",
             port
         );
         let val = run_tcp_fn(&src, "check");
@@ -2188,7 +2184,7 @@ mod tcp_tests {
         });
 
         let src = format!(
-            "fn open() -> Result<Tcp.Connection, String>\n    ! [Tcp]\n    = Tcp.connect(\"127.0.0.1\", {})\n",
+            "fn open() -> Result<Tcp.Connection, String>\n    ! [Tcp]\n    Tcp.connect(\"127.0.0.1\", {})\n",
             port
         );
         let val = run_tcp_fn(&src, "open");
@@ -2235,7 +2231,7 @@ mod tcp_tests {
         });
 
         let src = format!(
-            "fn talk() -> Result<String, String>\n    ! [Tcp]\n    = Tcp.send(\"127.0.0.1\", {}, \"echo me\")\n",
+            "fn talk() -> Result<String, String>\n    ! [Tcp]\n    Tcp.send(\"127.0.0.1\", {}, \"echo me\")\n",
             port
         );
         let val = run_tcp_fn(&src, "talk");
@@ -2253,7 +2249,7 @@ mod tcp_tests {
 #[test]
 fn verify_error_prop_ok_unwraps() {
     // `?` on Ok in a verify case should unwrap normally
-    let src = "fn ok() -> Result<Int, String>\n    = Result.Ok(42)\n\nverify ok\n    ok()? => 42\n";
+    let src = "fn ok() -> Result<Int, String>\n    Result.Ok(42)\n\nverify ok\n    ok()? => 42\n";
     let items = parse(src);
     let mut interp = Interpreter::new();
     for item in &items {
@@ -2273,7 +2269,7 @@ fn verify_error_prop_ok_unwraps() {
 #[test]
 fn verify_error_prop_err_fails_test() {
     // `?` on Err in a verify case should produce a test failure, not a panic/crash
-    let src = "fn fail() -> Result<Int, String>\n    = Result.Err(\"boom\")\n\nverify fail\n    fail()? => 42\n";
+    let src = "fn fail() -> Result<Int, String>\n    Result.Err(\"boom\")\n\nverify fail\n    fail()? => 42\n";
     let items = parse(src);
     let mut interp = Interpreter::new();
     for item in &items {
@@ -2613,7 +2609,7 @@ module Math
         "Math module"
 
 fn fib(n: Int) -> Int
-    = n + 100
+    n + 100
 "#;
         std::fs::write(root.join("Math.av"), math_src).expect("write Math.av failed");
 
@@ -2656,14 +2652,14 @@ effects IO = [Console]
 
 fn hi() -> Unit
     ! [IO]
-    = Console.print("hello")
+    Console.print("hello")
 "#;
         std::fs::write(root.join("Lib.av"), lib_src).expect("write Lib.av failed");
 
         let app_src = r#"
 fn main() -> Unit
     ! [Console]
-    = Lib.hi()
+    Lib.hi()
 "#;
 
         let mut interp = Interpreter::new();
@@ -2792,7 +2788,7 @@ fn fib(n: Int) -> Int
 #[test]
 fn memo_non_recursive_fn_still_works() {
     // Non-recursive functions should work normally (not memoized but not broken)
-    let src = "fn double(x: Int) -> Int\n    = x + x\n";
+    let src = "fn double(x: Int) -> Int\n    x + x\n";
     assert_eq!(
         call_fn_with_memo(src, "double", vec![Value::Int(5)]),
         Value::Int(10)
@@ -3027,7 +3023,7 @@ mod replay_tests {
         let src = r#"
 fn ping() -> Unit
     ! [Console]
-    = Console.print("hello")
+    Console.print("hello")
 "#;
         let mut interp = Interpreter::new();
         interp.start_recording();
@@ -3050,7 +3046,7 @@ fn ping() -> Unit
         let src = r#"
 fn check() -> Bool
     ! [Disk]
-    = Disk.exists("/definitely/not/existing/path")
+    Disk.exists("/definitely/not/existing/path")
 "#;
         let mut interp = Interpreter::new();
         interp.start_replay(
@@ -3076,7 +3072,7 @@ fn check() -> Bool
         let src = r#"
 fn check() -> Bool
     ! [Disk]
-    = Disk.exists("/tmp/x")
+    Disk.exists("/tmp/x")
 "#;
         let mut interp = Interpreter::new();
         let mut outcome = BTreeMap::new();

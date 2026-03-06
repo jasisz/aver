@@ -59,7 +59,7 @@ record WeatherContext
 
 fn jsonOk(city: String, weather: String) -> String
     ? "Builds a success JSON response body."
-    = "{{\"city\": \"{city}\", \"weather\": {weather}, \"source\": \"cache_or_api\"}}"
+    "{{\"city\": \"{city}\", \"weather\": {weather}, \"source\": \"cache_or_api\"}}"
 
 verify jsonOk
     jsonOk("Warsaw", "\"sunny\"") => "{{\"city\": \"Warsaw\", \"weather\": \"sunny\", \"source\": \"cache_or_api\"}}"
@@ -71,11 +71,11 @@ verify jsonErr
 
 fn jsonErr(msg: String) -> String
     ? "Builds an error JSON response body."
-    = "{{\"error\": \"{msg}\"}}"
+    "{{\"error\": \"{msg}\"}}"
 
 fn weatherUrl(config: WeatherConfig, city: String) -> String
     ? "Builds external weather API URL for a given city."
-    = "https://{config.apiHost}/v1/current?city={city}&key={config.apiKey}"
+    "https://{config.apiHost}/v1/current?city={city}&key={config.apiKey}"
 
 verify weatherUrl
     weatherUrl(WeatherConfig(apiHost = "api.weather.com", apiKey = "abc", redisHost = "h", redisPort = 6379, serverPort = 8080), "Warsaw") => "https://api.weather.com/v1/current?city=Warsaw&key=abc"
@@ -88,7 +88,7 @@ verify cacheKey
 
 fn cacheKey(city: String) -> String
     ? "Builds Redis cache key for a city's weather data."
-    = "weather:{city}"
+    "weather:{city}"
 
 fn extractCity(path: String) -> Result<String, String>
     ? "Extracts city name from request path. Expects /weather/<city>."

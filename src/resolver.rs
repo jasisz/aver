@@ -399,7 +399,7 @@ mod tests {
 
     #[test]
     fn resolves_match_pattern_bindings() {
-        // fn f(x: Int) -> Int = match x: Result.Ok(v) -> v, _ -> 0
+        // fn f(x: Int) -> Int / match x: Result.Ok(v) -> v, _ -> 0
         let mut fd = FnDef {
             name: "f".to_string(),
             line: 1,

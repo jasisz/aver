@@ -26,7 +26,6 @@ impl Parser {
         let mut desc = None;
         let mut effects = Vec::new();
         let mut body_stmts = Vec::new();
-        let mut body_expr = None;
 
         if self.is_indent() {
             self.advance(); // consume INDENT
@@ -70,17 +69,12 @@ impl Parser {
             }
 
             // Parse body
-            (body_expr, body_stmts) = self.parse_fn_body()?;
+            body_stmts = self.parse_fn_body()?;
 
             if self.is_dedent() {
                 self.advance();
             }
         }
-
-        let body = match body_expr {
-            Some(e) => FnBody::Expr(e),
-            None => FnBody::Block(body_stmts),
-        };
 
         Ok(FnDef {
             name,
@@ -89,7 +83,7 @@ impl Parser {
             return_type,
             effects,
             desc,
-            body: Rc::new(body),
+            body: Rc::new(FnBody::Block(body_stmts)),
             resolution: None,
         })
     }
@@ -125,7 +119,7 @@ impl Parser {
         Ok(params)
     }
 
-    pub(super) fn parse_fn_body(&mut self) -> Result<(Option<Expr>, Vec<Stmt>), ParseError> {
+    pub(super) fn parse_fn_body(&mut self) -> Result<Vec<Stmt>, ParseError> {
         let mut stmts = Vec::new();
 
         while !self.is_dedent() && !self.is_eof() {
@@ -135,16 +129,9 @@ impl Parser {
             }
 
             if self.check_exact(&TokenKind::Assign) {
-                if !stmts.is_empty() {
-                    return Err(self.error(
-                        "Unexpected '=' in function body. The '= expr' shorthand is only valid as the entire body. Use a plain expression as the last line instead.".to_string()
-                    ));
-                }
-                // Single-expression return: = expr
-                self.advance();
-                let expr = self.parse_expr()?;
-                self.skip_newlines();
-                return Ok((Some(expr), Vec::new()));
+                return Err(self.error(
+                    "Function bodies no longer use '= expr'. Write the expression as an indented line directly.".to_string(),
+                ));
             } else if matches!(&self.current().kind, TokenKind::Ident(s) if s == "val" || s == "var")
             {
                 let kw = match &self.current().kind {
@@ -170,7 +157,7 @@ impl Parser {
             }
         }
 
-        Ok((None, stmts))
+        Ok(stmts)
     }
 
     // -------------------------------------------------------------------------

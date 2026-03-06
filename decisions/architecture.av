@@ -104,16 +104,38 @@ decision ConstructorContract
     rejected = ["TypeAscriptionBased", "KeywordConstructors", "UniformParens"]
     impacts = ["Parser", "Interpreter", "TypeChecker", "AllModules"]
 
+decision FunctionBodiesUseIndentationOnly
+    date = "2026-03-06"
+    author = "Aver core team"
+    reason =
+        "Aver block bodies already return their last expression, so `= expr` duplicated an existing body model without adding semantics."
+        "Using syntax to hint 'this is probably a trivial wrapper' blurred the boundary between surface syntax and checker heuristics."
+        "One body form is easier for humans to scan, easier for AI to emit consistently, and cheaper to maintain across parser, REPL, formatter, docs, and tests."
+    chosen = "IndentedBodiesOnly"
+    rejected = ["EqShorthand", "EqOnlyForPassthroughs", "DualBodyForms"]
+    impacts = ["Parser", "REPL", "Formatter", "Docs", "Examples", "AllFunctions"]
+
+decision ListBranchingStaysInMatch
+    date = "2026-03-06"
+    author = "Aver core team"
+    reason =
+        "List cases are pattern matching, not a separate kind of function definition."
+        "Pulling list patterns into function clauses would create a second branching notation next to `match`, weakening one of Aver's core simplifications."
+        "Keeping list branching inside `match` preserves one place for exhaustiveness, one place for pattern syntax, and one mental model for recursive case splits."
+    chosen = "MatchOwnsListBranching"
+    rejected = ["FunctionClauses", "ListSpecificFunctionSyntax", "ErlangStyleHeads"]
+    impacts = ["Parser", "PatternMatching", "TypeChecker", "Docs", "AllListFunctions"]
+
 fn describeDecision(decName: String, pick: String) -> String
     ? "Formats a one-line summary of an architectural decision."
-    = "Decision: {decName} -> chosen = {pick}"
+    "Decision: {decName} -> chosen = {pick}"
 
 verify describeDecision
     describeDecision("HostLanguage", "Rust") => "Decision: HostLanguage -> chosen = Rust"
     describeDecision("HybridExecutionModel", "InterpreterPlusTranspiler") => "Decision: HybridExecutionModel -> chosen = InterpreterPlusTranspiler"
 
 fn main() -> Unit
-    ! [Console]
+    ! [Console.print]
     Console.print("=== Aver Architecture ===")
     Console.print("")
     Console.print(describeDecision("HostLanguage", "Rust"))
@@ -124,5 +146,7 @@ fn main() -> Unit
     Console.print(describeDecision("HybridExecutionModel", "InterpreterPlusTranspiler"))
     Console.print(describeDecision("RecordsAreDataMethodsInModules", "DataOnlyRecords"))
     Console.print(describeDecision("EffectContractsAreTransparentAcrossModules", "TransparentAcrossModules"))
+    Console.print(describeDecision("FunctionBodiesUseIndentationOnly", "IndentedBodiesOnly"))
+    Console.print(describeDecision("ListBranchingStaysInMatch", "MatchOwnsListBranching"))
     Console.print("")
     Console.print("Run: cargo run -- context decisions/architecture.av --decisions-only")

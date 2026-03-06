@@ -48,7 +48,7 @@ record ShipState
 
 fn initialState() -> ShipState
     ? "Initial mission state for Odyssey-1."
-    = ShipState(name = "Odyssey-1", fuel = 120, velocity = 0, orientation = 0, power = 20, solarDeployed = false, alive = true, status = "CRUISE", history = [])
+    ShipState(name = "Odyssey-1", fuel = 120, velocity = 0, orientation = 0, power = 20, solarDeployed = false, alive = true, status = "CRUISE", history = [])
 
 verify initialState
     initialState() => ShipState(name = "Odyssey-1", fuel = 120, velocity = 0, orientation = 0, power = 20, solarDeployed = false, alive = true, status = "CRUISE", history = [])
@@ -128,7 +128,7 @@ verify parseIntArg
 
 fn runPlan(cmds: List<Cmd>) -> Result<ShipState, String>
     ? "Apply commands from initial state, failing fast on first invalid step."
-    = runPlanFrom(initialState(), cmds)
+    runPlanFrom(initialState(), cmds)
 
 verify runPlan
     runPlan([Cmd.Burn(10), Cmd.Rotate(90), Cmd.DeploySolar, Cmd.Tick(4)]) => Result.Ok(ShipState(name = "Odyssey-1", fuel = 110, velocity = 10, orientation = 90, power = 24, solarDeployed = true, alive = true, status = "DRIFT", history = ["burn 10", "rotate 90", "deploy-solar", "tick 4"]))
@@ -251,7 +251,7 @@ verify addHistory
 
 fn stateSummary(state: ShipState) -> String
     ? "Compact telemetry line."
-    = "ship={state.name} fuel={state.fuel} vel={state.velocity} orient={state.orientation} power={state.power} solar={state.solarDeployed} alive={state.alive} status={state.status}"
+    "ship={state.name} fuel={state.fuel} vel={state.velocity} orient={state.orientation} power={state.power} solar={state.solarDeployed} alive={state.alive} status={state.status}"
 
 verify stateSummary
     stateSummary(initialState()) => "ship=Odyssey-1 fuel=120 vel=0 orient=0 power=20 solar=false alive=true status=CRUISE"
@@ -396,7 +396,7 @@ verify normalizeAnglePositive
 
 fn addHistory(state: ShipState, entry: String) -> ShipState
     ? "Append one command marker to mission history."
-    = ShipState.update(state, history = List.append(state.history, entry))
+    ShipState.update(state, history = List.append(state.history, entry))
 
 verify parseCommandsStep
     parseCommandsStep("ROTATE 5", [], []) => Result.Ok([Cmd.Rotate(5)])

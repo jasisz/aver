@@ -48,7 +48,7 @@ verify encodeLoop
 
 fn encode(xs: List<String>) -> List<Run>
     ? "Compresses a list of single characters into run-length pairs with recursive traversal."
-    = encodeLoop(xs, RleAcc(runs = [], current = "", count = 0))
+    encodeLoop(xs, RleAcc(runs = [], current = "", count = 0))
 
 verify encode
     encode([]) => []
@@ -69,7 +69,7 @@ verify repeat
 
 fn expandRun(run: Run) -> List<String>
     ? "Expands a single run back into repeated characters."
-    = repeat(run.char, run.count)
+    repeat(run.char, run.count)
 
 verify expandRun
     expandRun(Run(char = "x", count = 0)) => []
@@ -77,7 +77,7 @@ verify expandRun
 
 fn decode(runs: List<Run>) -> List<String>
     ? "Decompresses run-length pairs back into a character list."
-    = match runs
+    match runs
         [] -> []
         [run, ..rest] -> List.concat(expandRun(run), decode(rest))
 
@@ -92,11 +92,11 @@ verify encode law roundtrip
 
 fn encodeString(s: String) -> List<Run>
     ? "Compresses a string into run-length pairs."
-    = encode(String.chars(s))
+    encode(String.chars(s))
 
 fn decodeString(runs: List<Run>) -> String
     ? "Decompresses run-length pairs back into a string."
-    = String.join(decode(runs), "")
+    String.join(decode(runs), "")
 
 verify decodeString
     decodeString([]) => ""
@@ -104,7 +104,7 @@ verify decodeString
 
 fn showRun(run: Run) -> String
     ? "Formats a single run as char followed by count."
-    = "{run.char}{run.count}"
+    "{run.char}{run.count}"
 
 verify showRun
     showRun(Run(char = "a", count = 3)) => "a3"
@@ -112,7 +112,7 @@ verify showRun
 
 fn showRuns(runs: List<Run>) -> String
     ? "Formats encoded runs as a compact string like a3b2c1."
-    = match runs
+    match runs
         [] -> ""
         [run, ..rest] -> "{showRun(run)}{showRuns(rest)}"
 

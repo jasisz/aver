@@ -24,7 +24,7 @@ fn buildAppend(n: Int, acc: List<Int>) -> List<Int>
         _ -> buildAppend(n - 1, List.append(acc, n))
 
 fn finishPrepend(n: Int) -> List<Int>
-    = List.reverse(buildPrepend(n, []))
+    List.reverse(buildPrepend(n, []))
 
 fn sumList(xs: List<Int>, acc: Int) -> Int
     match xs
@@ -32,10 +32,10 @@ fn sumList(xs: List<Int>, acc: Int) -> Int
         [h, ..t] -> sumList(t, acc + h)
 
 fn concatLists(a: List<Int>, b: List<Int>) -> List<Int>
-    = List.concat(a, b)
+    List.concat(a, b)
 
 fn reverseList(xs: List<Int>) -> List<Int>
-    = List.reverse(xs)
+    List.reverse(xs)
 "#;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

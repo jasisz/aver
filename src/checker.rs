@@ -1224,7 +1224,7 @@ mod tests {
             r#"
 fn log(x: Int) -> Unit
     ! [Console]
-    = Console.print(x)
+    Console.print(x)
 "#,
         );
         let findings = check_module_intent(&items);
@@ -1249,7 +1249,7 @@ fn log(x: Int) -> Unit
             r#"
 fn log(x: Int) -> Unit
     ! [Console, Http]
-    = Console.print(x)
+    Console.print(x)
 "#,
         );
         let tc = crate::types::checker::run_type_check_full(&items, None);
@@ -1277,7 +1277,7 @@ fn log(x: Int) -> Unit
             r#"
 fn log(x: Int) -> Unit
     ! [Console.print]
-    = Console.print(x)
+    Console.print(x)
 "#,
         );
         let tc = crate::types::checker::run_type_check_full(&items, None);
@@ -1338,7 +1338,7 @@ fn fetch(url: String) -> Result<HttpResponse, String>
         let items = parse_items(
             r#"
 fn passthrough(x: Int) -> Int
-    = inner(x)
+    inner(x)
 "#,
         );
         let findings = check_module_intent(&items);
@@ -1362,7 +1362,7 @@ fn passthrough(x: Int) -> Int
         let items = parse_items(
             r#"
 fn add1(x: Int) -> Int
-    = x + 1
+    x + 1
 "#,
         );
         let findings = check_module_intent(&items);
@@ -1382,7 +1382,7 @@ fn add1(x: Int) -> Int
         let items = parse_items(
             r#"
 fn add1(x: Int) -> Int
-    = x + 1
+    x + 1
 
 verify add1
 "#,
@@ -1413,7 +1413,7 @@ verify add1
         let items = parse_items(
             r#"
 fn add1(x: Int) -> Int
-    = x + 1
+    x + 1
 
 verify add1
     true => true
@@ -1445,7 +1445,7 @@ verify add1
         let items = parse_items(
             r#"
 fn add1(x: Int) -> Int
-    = x + 1
+    x + 1
 
 verify add1
     add1(1) => add1(1)
@@ -1468,7 +1468,7 @@ verify add1
         let items = parse_items(
             r#"
 fn add1(x: Int) -> Int
-    = x + 1
+    x + 1
 
 verify add1 law reflexive
     given x: Int = [1, 2, 3]
@@ -1507,7 +1507,7 @@ verify add1 law reflexive
         let items = parse_items(
             r#"
 fn f(x: Int) -> Int
-    = x
+    x
 
 verify f
     f(1) => 1
@@ -1527,7 +1527,7 @@ verify f
         let items = parse_items(
             r#"
 fn f(x: Int) -> Int
-    = x
+    x
 
 verify f
     f(1) => 1
@@ -1561,7 +1561,7 @@ module M
         "x"
 
 fn existing() -> Int
-    = 1
+    1
 
 verify existing
     existing() => 1
@@ -1595,7 +1595,7 @@ module M
         "x"
 
 fn existing() -> Int
-    = 1
+    1
 
 verify existing
     existing() => 1
@@ -1630,7 +1630,7 @@ module M
         "x"
 
 fn existing() -> Int
-    = 1
+    1
 
 verify existing
     existing() => 1
@@ -1665,7 +1665,7 @@ module M
         "x"
 
 fn existing() -> Int
-    = 1
+    1
 
 verify existing
     existing() => 1
@@ -1699,7 +1699,7 @@ module M
         "x"
 
 fn existing() -> Int
-    = 1
+    1
 
 verify existing
     existing() => 1
@@ -1735,7 +1735,7 @@ module M
         "x"
 
 fn existing() -> Int
-    = 1
+    1
 
 verify existing
     existing() => 1
@@ -1773,7 +1773,7 @@ module M
 effects AppIO = [Console, Disk]
 
 fn existing() -> Int
-    = 1
+    1
 
 verify existing
     existing() => 1

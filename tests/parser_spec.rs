@@ -37,6 +37,16 @@ fn parse_error(src: &str) -> String {
         .to_string()
 }
 
+fn single_expr_body(fd: &FnDef) -> &Expr {
+    match fd.body.as_ref() {
+        FnBody::Block(stmts) if stmts.len() == 1 => match &stmts[0] {
+            Stmt::Expr(expr) => expr,
+            other => panic!("expected single expression body, got {:?}", other),
+        },
+        other => panic!("expected single expression block body, got {:?}", other),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Bindings
 // ---------------------------------------------------------------------------
@@ -162,14 +172,15 @@ fn var_keyword_is_parse_error() {
 
 #[test]
 fn fn_single_expr_body() {
-    let src = "fn double(x: Int) -> Int\n    = x + x\n";
+    let src = "fn double(x: Int) -> Int\n    x + x\n";
     let items = parse(src);
     assert_eq!(items.len(), 1);
     if let TopLevel::FnDef(fd) = &items[0] {
         assert_eq!(fd.name, "double");
         assert_eq!(fd.params, vec![("x".to_string(), "Int".to_string())]);
         assert_eq!(fd.return_type, "Int");
-        assert!(matches!(*fd.body, FnBody::Expr(_)), "expected Expr body");
+        assert!(matches!(*fd.body, FnBody::Block(_)), "expected Block body");
+        assert!(matches!(single_expr_body(fd), Expr::BinOp(_, _, _)));
     } else {
         panic!("expected FnDef");
     }
@@ -188,7 +199,7 @@ fn fn_block_body() {
 
 #[test]
 fn fn_with_desc() {
-    let src = "fn add(a: Int, b: Int) -> Int\n    ? \"Adds two numbers.\"\n    = a + b\n";
+    let src = "fn add(a: Int, b: Int) -> Int\n    ? \"Adds two numbers.\"\n    a + b\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         assert_eq!(fd.desc, Some("Adds two numbers.".to_string()));
@@ -199,7 +210,7 @@ fn fn_with_desc() {
 
 #[test]
 fn fn_with_effects() {
-    let src = "fn log(msg: String) -> Unit\n    ! [Io]\n    = print(msg)\n";
+    let src = "fn log(msg: String) -> Unit\n    ! [Io]\n    print(msg)\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         assert_eq!(fd.effects, vec!["Io".to_string()]);
@@ -210,7 +221,7 @@ fn fn_with_effects() {
 
 #[test]
 fn fn_multiple_params() {
-    let src = "fn add(a: Int, b: Int) -> Int\n    = a + b\n";
+    let src = "fn add(a: Int, b: Int) -> Int\n    a + b\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         assert_eq!(
@@ -227,7 +238,7 @@ fn fn_multiple_params() {
 
 #[test]
 fn fn_no_params() {
-    let src = "fn unit() -> Unit\n    = print(\"hi\")\n";
+    let src = "fn unit() -> Unit\n    print(\"hi\")\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         assert!(fd.params.is_empty());
@@ -238,7 +249,7 @@ fn fn_no_params() {
 
 #[test]
 fn fn_result_return_type() {
-    let src = "fn safe_div(a: Int, b: Int) -> Result<Int, String>\n    = Result.Ok(a)\n";
+    let src = "fn safe_div(a: Int, b: Int) -> Result<Int, String>\n    Result.Ok(a)\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         assert_eq!(fd.return_type, "Result<Int, String>");
@@ -249,7 +260,7 @@ fn fn_result_return_type() {
 
 #[test]
 fn fn_with_function_typed_param() {
-    let src = "fn applyTwice(f: Fn(Int) -> Int, x: Int) -> Int\n    = f(f(x))\n";
+    let src = "fn applyTwice(f: Fn(Int) -> Int, x: Int) -> Int\n    f(f(x))\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         assert_eq!(
@@ -266,8 +277,7 @@ fn fn_with_function_typed_param() {
 
 #[test]
 fn fn_with_effectful_function_typed_param() {
-    let src =
-        "fn apply(f: Fn(Int) -> Int ! [Console], x: Int) -> Int\n    ! [Console]\n    = f(x)\n";
+    let src = "fn apply(f: Fn(Int) -> Int ! [Console], x: Int) -> Int\n    ! [Console]\n    f(x)\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         assert_eq!(
@@ -497,11 +507,11 @@ fn expr_error_propagation() {
 
 #[test]
 fn fn_with_tuple_type_annotation() {
-    let src = "fn pair() -> (Int, String)\n    = (1, \"x\")\n";
+    let src = "fn pair() -> (Int, String)\n    (1, \"x\")\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         assert_eq!(fd.return_type, "(Int, String)");
-        assert!(matches!(&*fd.body, FnBody::Expr(Expr::Tuple(_))));
+        assert!(matches!(single_expr_body(fd), Expr::Tuple(_)));
     } else {
         panic!("expected FnDef");
     }
@@ -514,10 +524,10 @@ fn fn_with_tuple_type_annotation() {
 #[test]
 fn match_with_wildcard() {
     let src =
-        "fn f(n: Int) -> String\n    = match n\n        0 -> \"zero\"\n        _ -> \"other\"\n";
+        "fn f(n: Int) -> String\n    match n\n        0 -> \"zero\"\n        _ -> \"other\"\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Expr(Expr::Match { arms, .. }) = &*fd.body {
+        if let Expr::Match { arms, .. } = single_expr_body(fd) {
             assert_eq!(arms.len(), 2);
             assert!(matches!(arms[0].pattern, Pattern::Literal(Literal::Int(0))));
             assert!(matches!(arms[1].pattern, Pattern::Wildcard));
@@ -540,10 +550,10 @@ fn match_subject_colon_is_not_type_ascription() {
 
 #[test]
 fn match_constructor_patterns() {
-    let src = "fn f(r: Result<Int, String>) -> Int\n    = match r\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n";
+    let src = "fn f(r: Result<Int, String>) -> Int\n    match r\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Expr(Expr::Match { arms, .. }) = &*fd.body {
+        if let Expr::Match { arms, .. } = single_expr_body(fd) {
             assert_eq!(arms.len(), 2);
             assert!(matches!(
                 &arms[0].pattern,
@@ -563,10 +573,10 @@ fn match_constructor_patterns() {
 
 #[test]
 fn match_ident_binding() {
-    let src = "fn f(x: Int) -> Int\n    = match x\n        n -> n\n";
+    let src = "fn f(x: Int) -> Int\n    match x\n        n -> n\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Expr(Expr::Match { arms, .. }) = &*fd.body {
+        if let Expr::Match { arms, .. } = single_expr_body(fd) {
             assert!(matches!(&arms[0].pattern, Pattern::Ident(s) if s == "n"));
         } else {
             panic!("expected match");
@@ -578,11 +588,10 @@ fn match_ident_binding() {
 
 #[test]
 fn match_list_empty_pattern() {
-    let src =
-        "fn f(xs: List<Int>) -> Int\n    = match xs\n        [] -> 0\n        [h, ..t] -> h\n";
+    let src = "fn f(xs: List<Int>) -> Int\n    match xs\n        [] -> 0\n        [h, ..t] -> h\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Expr(Expr::Match { arms, .. }) = &*fd.body {
+        if let Expr::Match { arms, .. } = single_expr_body(fd) {
             assert_eq!(arms.len(), 2);
             assert!(matches!(&arms[0].pattern, Pattern::EmptyList));
             assert!(matches!(
@@ -599,10 +608,10 @@ fn match_list_empty_pattern() {
 
 #[test]
 fn match_list_cons_pattern_with_underscore() {
-    let src = "fn f(xs: List<Int>) -> Int\n    = match xs\n        [_, ..rest] -> len(rest)\n        [] -> 0\n";
+    let src = "fn f(xs: List<Int>) -> Int\n    match xs\n        [_, ..rest] -> len(rest)\n        [] -> 0\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Expr(Expr::Match { arms, .. }) = &*fd.body {
+        if let Expr::Match { arms, .. } = single_expr_body(fd) {
             assert!(matches!(
                 &arms[0].pattern,
                 Pattern::Cons(head, tail) if head == "_" && tail == "rest"
@@ -617,10 +626,10 @@ fn match_list_cons_pattern_with_underscore() {
 
 #[test]
 fn match_tuple_pattern_binds_items() {
-    let src = "fn f(p: (Int, Int)) -> Int\n    = match p\n        (a, b) -> a\n        _ -> 0\n";
+    let src = "fn f(p: (Int, Int)) -> Int\n    match p\n        (a, b) -> a\n        _ -> 0\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Expr(Expr::Match { arms, .. }) = &*fd.body {
+        if let Expr::Match { arms, .. } = single_expr_body(fd) {
             assert_eq!(arms.len(), 2);
             assert!(matches!(
                 &arms[0].pattern,
@@ -640,10 +649,10 @@ fn match_tuple_pattern_binds_items() {
 
 #[test]
 fn match_nested_tuple_pattern_parses() {
-    let src = "fn f(p: ((Int, Int), Int)) -> Int\n    = match p\n        ((x, y), z) -> x\n        _ -> 0\n";
+    let src = "fn f(p: ((Int, Int), Int)) -> Int\n    match p\n        ((x, y), z) -> x\n        _ -> 0\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Expr(Expr::Match { arms, .. }) = &*fd.body {
+        if let Expr::Match { arms, .. } = single_expr_body(fd) {
             assert!(matches!(
                 &arms[0].pattern,
                 Pattern::Tuple(items)
@@ -665,7 +674,7 @@ fn match_nested_tuple_pattern_parses() {
 
 #[test]
 fn match_arm_body_after_newline_is_error() {
-    let src = "fn f(x: Int) -> Int\n    = match x\n        1 ->\n            42\n        _ -> 0\n";
+    let src = "fn f(x: Int) -> Int\n    match x\n        1 ->\n            42\n        _ -> 0\n";
     let msg = parse_error(src);
     assert!(
         msg.contains("same line"),
@@ -915,7 +924,7 @@ fn decision_field_names_are_allowed_as_bindings() {
 
 #[test]
 fn multiple_fn_defs() {
-    let src = "fn a() -> Unit\n    = print(\"a\")\nfn b() -> Unit\n    = print(\"b\")\n";
+    let src = "fn a() -> Unit\n    print(\"a\")\nfn b() -> Unit\n    print(\"b\")\n";
     let items = parse(src);
     let fns: Vec<_> = items
         .iter()
@@ -926,7 +935,7 @@ fn multiple_fn_defs() {
 
 #[test]
 fn module_then_fn() {
-    let src = "module M\n    intent =\n        \"M.\"\nfn f() -> Unit\n    = print(\"f\")\n";
+    let src = "module M\n    intent =\n        \"M.\"\nfn f() -> Unit\n    print(\"f\")\n";
     let items = parse(src);
     assert!(matches!(items[0], TopLevel::Module(_)));
     assert!(matches!(items[1], TopLevel::FnDef(_)));
@@ -944,11 +953,10 @@ fn val_keyword_error_in_fn_body() {
 
 #[test]
 fn eq_shorthand_after_binding_is_parse_error() {
-    // `= expr` is only valid as the entire body, not after bindings
     let src = "fn f(x: Int) -> String\n    items = Int.abs(x)\n    = \"result\"\n";
     let msg = parse_error(src);
     assert!(
-        msg.contains("Unexpected '='"),
+        msg.contains("no longer use '= expr'"),
         "unexpected parse error: {}",
         msg
     );
@@ -956,7 +964,7 @@ fn eq_shorthand_after_binding_is_parse_error() {
 
 #[test]
 fn lambda_syntax_shows_actionable_error() {
-    let src = "fn apply(f: Fn(Int) -> Bool, x: Int) -> Bool\n    = f(x)\nfn main() -> Bool\n    = apply(fn(x: Int) -> Bool\n        = x > 1, 1)\n";
+    let src = "fn apply(f: Fn(Int) -> Bool, x: Int) -> Bool\n    f(x)\nfn main() -> Bool\n    apply(fn(x: Int) -> Bool\n        x > 1, 1)\n";
     let msg = parse_error(src);
     assert!(
         msg.contains("Anonymous functions are not supported"),
@@ -968,7 +976,7 @@ fn lambda_syntax_shows_actionable_error() {
 #[test]
 fn fn_missing_return_arrow_is_ok() {
     // -> return type is optional; missing it defaults to Unit
-    let src = "fn noop()\n    = print(\"ok\")\n";
+    let src = "fn noop()\n    print(\"ok\")\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         assert_eq!(fd.return_type, "Unit");
@@ -1043,10 +1051,10 @@ fn parse_record_create_expression() {
 
 #[test]
 fn parse_user_defined_constructor_pattern() {
-    let src = "fn classify(s: Shape) -> Float\n  = match s\n    Circle(r) -> r\n    Rect(w, h) -> w\n    Point -> 0.0\n";
+    let src = "fn classify(s: Shape) -> Float\n  match s\n    Circle(r) -> r\n    Rect(w, h) -> w\n    Point -> 0.0\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        if let FnBody::Expr(Expr::Match { arms, .. }) = &*fd.body {
+        if let Expr::Match { arms, .. } = single_expr_body(fd) {
             assert_eq!(arms.len(), 3);
             assert!(matches!(
                 &arms[0].pattern,
@@ -1070,7 +1078,7 @@ fn parse_user_defined_constructor_pattern() {
 
 #[test]
 fn parse_fails_on_any_type_annotation() {
-    let src = "fn f(x: Any) -> Int\n    = x\n";
+    let src = "fn f(x: Any) -> Int\n    x\n";
     assert!(parse_fails(src));
 }
 
@@ -1129,15 +1137,15 @@ fn effect_set_multiple() {
 
 #[test]
 fn record_update_parses() {
-    let src = "record User\n    name: String\n    age: Int\n\nfn f(u: User) -> User\n    = User.update(u, age = 31)\n";
+    let src = "record User\n    name: String\n    age: Int\n\nfn f(u: User) -> User\n    User.update(u, age = 31)\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[1] {
-        match fd.body.as_ref() {
-            FnBody::Expr(Expr::RecordUpdate {
+        match single_expr_body(fd) {
+            Expr::RecordUpdate {
                 type_name,
                 base,
                 updates,
-            }) => {
+            } => {
                 assert_eq!(type_name, "User");
                 assert!(matches!(base.as_ref(), Expr::Ident(n) if n == "u"));
                 assert_eq!(updates.len(), 1);
@@ -1152,13 +1160,13 @@ fn record_update_parses() {
 
 #[test]
 fn record_update_multiple_fields() {
-    let src = "record User\n    name: String\n    age: Int\n\nfn f(u: User) -> User\n    = User.update(u, name = \"Bob\", age = 31)\n";
+    let src = "record User\n    name: String\n    age: Int\n\nfn f(u: User) -> User\n    User.update(u, name = \"Bob\", age = 31)\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[1] {
-        match fd.body.as_ref() {
-            FnBody::Expr(Expr::RecordUpdate {
+        match single_expr_body(fd) {
+            Expr::RecordUpdate {
                 type_name, updates, ..
-            }) => {
+            } => {
                 assert_eq!(type_name, "User");
                 assert_eq!(updates.len(), 2);
                 assert_eq!(updates[0].0, "name");

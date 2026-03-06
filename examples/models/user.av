@@ -5,7 +5,7 @@ module User
 
 fn nameById(id: Int) -> String
     ? "Lookup demo user name by id."
-    = match id
+    match id
         1 -> "Ada"
         _ -> "Unknown"
 
