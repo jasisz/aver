@@ -3,9 +3,9 @@
 /// Methods:
 ///   List.len(list)           → Int                    — number of elements
 ///   List.get(list, index)    → Option<T>              — element at index
-///   List.push(list, val)     → List<T>                — append element (returns new list)
+///   List.append(list, val)    → List<T>                — append element (returns new list)
 ///   List.prepend(val, list)  → List<T>                — prepend element
-///   List.append(a, b)        → List<T>                — concatenate two lists
+///   List.concat(a, b)        → List<T>                — concatenate two lists
 ///   List.reverse(list)       → List<T>                — reverse elements
 ///   List.contains(list, val) → Bool                   — membership by `==`
 ///   List.zip(a, b)           → List<(A, B)>           — pair elements from two lists
@@ -14,14 +14,14 @@
 use std::collections::HashMap;
 
 use crate::value::{
-    RuntimeError, Value, list_append, list_get, list_len, list_prepend, list_push,
+    RuntimeError, Value, list_append, list_concat, list_get, list_len, list_prepend,
     list_reverse, list_view,
 };
 
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
     for method in &[
-        "len", "get", "push", "prepend", "append", "reverse", "contains", "zip",
+        "len", "get", "append", "prepend", "concat", "reverse", "contains", "zip",
     ] {
         members.insert(
             method.to_string(),
@@ -46,9 +46,9 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
         "List.len" => Some(len(args)),
         "List.get" => Some(get(args)),
-        "List.push" => Some(push(args)),
-        "List.prepend" => Some(prepend(args)),
         "List.append" => Some(append(args)),
+        "List.prepend" => Some(prepend(args)),
+        "List.concat" => Some(concat(args)),
         "List.reverse" => Some(reverse(args)),
         "List.contains" => Some(contains(args)),
         "List.zip" => Some(zip(args)),
@@ -98,15 +98,15 @@ fn get(args: &[Value]) -> Result<Value, RuntimeError> {
     }
 }
 
-fn push(args: &[Value]) -> Result<Value, RuntimeError> {
+fn append(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
         return Err(RuntimeError::Error(format!(
-            "List.push() takes 2 arguments (list, val), got {}",
+            "List.append() takes 2 arguments (list, val), got {}",
             args.len()
         )));
     }
-    list_push(&args[0], args[1].clone()).ok_or_else(|| {
-        RuntimeError::Error("List.push() first argument must be a List".to_string())
+    list_append(&args[0], args[1].clone()).ok_or_else(|| {
+        RuntimeError::Error("List.append() first argument must be a List".to_string())
     })
 }
 
@@ -122,20 +122,20 @@ fn prepend(args: &[Value]) -> Result<Value, RuntimeError> {
     })
 }
 
-fn append(args: &[Value]) -> Result<Value, RuntimeError> {
+fn concat(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
         return Err(RuntimeError::Error(format!(
-            "List.append() takes 2 arguments (list, list), got {}",
+            "List.concat() takes 2 arguments (list, list), got {}",
             args.len()
         )));
     }
     list_view(&args[0]).ok_or_else(|| {
-        RuntimeError::Error("List.append() first argument must be a List".to_string())
+        RuntimeError::Error("List.concat() first argument must be a List".to_string())
     })?;
     list_view(&args[1]).ok_or_else(|| {
-        RuntimeError::Error("List.append() second argument must be a List".to_string())
+        RuntimeError::Error("List.concat() second argument must be a List".to_string())
     })?;
-    Ok(list_append(&args[0], &args[1]).expect("validated list arguments above"))
+    Ok(list_concat(&args[0], &args[1]).expect("validated list arguments above"))
 }
 
 fn reverse(args: &[Value]) -> Result<Value, RuntimeError> {

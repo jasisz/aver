@@ -285,20 +285,20 @@ fn emit_builtin_call_inner(
             let idx = emit_expr(&args[1], ctx, ectx);
             Some(format!("{}.get({} as usize).cloned()", list, idx))
         }
-        "List.push" => {
+        "List.append" => {
             let list = emit_expr(&args[0], ctx, &arg_ctxs[0]);
             let item = emit_expr(&args[1], ctx, &arg_ctxs[1]);
-            Some(format!("aver_rt::AverList::push(&{}, {})", list, item))
+            Some(format!("aver_rt::AverList::append(&{}, {})", list, item))
         }
         "List.prepend" => {
             let item = emit_expr(&args[0], ctx, &arg_ctxs[0]);
             let list = emit_expr(&args[1], ctx, &arg_ctxs[1]);
             Some(format!("aver_rt::AverList::prepend({}, &{})", item, list))
         }
-        "List.append" => {
+        "List.concat" => {
             let left = emit_expr(&args[0], ctx, &arg_ctxs[0]);
             let right = emit_expr(&args[1], ctx, &arg_ctxs[1]);
-            Some(format!("aver_rt::AverList::append(&{}, &{})", left, right))
+            Some(format!("aver_rt::AverList::concat(&{}, &{})", left, right))
         }
         "List.reverse" => {
             let list = emit_expr(&args[0], ctx, &arg_ctxs[0]);

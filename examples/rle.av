@@ -19,7 +19,7 @@ fn encodeFold(acc: RleAcc, char: String) -> RleAcc
         true -> RleAcc(runs = acc.runs, current = char, count = 1)
         false -> match acc.current == char
             true -> RleAcc(runs = acc.runs, current = acc.current, count = acc.count + 1)
-            false -> RleAcc(runs = List.push(acc.runs, Run(char = acc.current, count = acc.count)), current = char, count = 1)
+            false -> RleAcc(runs = List.append(acc.runs, Run(char = acc.current, count = acc.count)), current = char, count = 1)
 
 verify encodeFold
     encodeFold(RleAcc(runs = [], current = "", count = 0), "a") => RleAcc(runs = [], current = "a", count = 1)
@@ -30,7 +30,7 @@ fn flushAcc(acc: RleAcc) -> List<Run>
     ? "Flushes the final run from the accumulator."
     match acc.count == 0
         true -> acc.runs
-        false -> List.push(acc.runs, Run(char = acc.current, count = acc.count))
+        false -> List.append(acc.runs, Run(char = acc.current, count = acc.count))
 
 verify flushAcc
     flushAcc(RleAcc(runs = [], current = "", count = 0)) => []
@@ -60,7 +60,7 @@ fn repeat(char: String, n: Int) -> List<String>
     ? "Produces a list of n copies of char."
     match n
         0 -> []
-        _ -> List.push(repeat(char, n - 1), char)
+        _ -> List.append(repeat(char, n - 1), char)
 
 verify repeat
     repeat("x", 0) => []
@@ -79,7 +79,7 @@ fn decode(runs: List<Run>) -> List<String>
     ? "Decompresses run-length pairs back into a character list."
     = match runs
         [] -> []
-        [run, ..rest] -> List.append(expandRun(run), decode(rest))
+        [run, ..rest] -> List.concat(expandRun(run), decode(rest))
 
 verify decode
     decode([]) => []

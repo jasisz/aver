@@ -60,7 +60,7 @@ impl TypeChecker {
                 }
                 Some(list_option(elem_ty))
             }
-            "List.push" => {
+            "List.append" => {
                 if let Err(fallback) = expect_arity(self, 2, Type::List(Box::new(Type::Unknown))) {
                     return Some(fallback);
                 }
@@ -96,7 +96,7 @@ impl TypeChecker {
                 }
                 Some(Type::List(Box::new(elem_ty)))
             }
-            "List.append" => {
+            "List.concat" => {
                 if let Err(fallback) = expect_arity(self, 2, Type::List(Box::new(Type::Unknown))) {
                     return Some(fallback);
                 }

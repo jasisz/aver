@@ -215,7 +215,7 @@ pub fn emit_builtin_call(name: &str, args: &[Expr], ctx: &CodegenContext) -> Opt
             let arg = super::expr::emit_expr(&args[0], ctx);
             Some(format!("{}.length", paren_if_complex(&arg)))
         }
-        "List.push" => {
+        "List.append" => {
             let list = super::expr::emit_expr(&args[0], ctx);
             let item = super::expr::emit_expr(&args[1], ctx);
             Some(format!("{} ++ [{}]", paren_if_complex(&list), item))
@@ -225,7 +225,7 @@ pub fn emit_builtin_call(name: &str, args: &[Expr], ctx: &CodegenContext) -> Opt
             let list = super::expr::emit_expr(&args[1], ctx);
             Some(format!("{} :: {}", item, paren_if_complex(&list)))
         }
-        "List.append" => {
+        "List.concat" => {
             let a = super::expr::emit_expr(&args[0], ctx);
             let b = super::expr::emit_expr(&args[1], ctx);
             Some(format!("{} ++ {}", paren_if_complex(&a), paren_if_complex(&b)))

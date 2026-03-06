@@ -320,18 +320,18 @@ verify fromListAcc
   fromListAcc([], Tree.Empty) => Tree.Empty
   fromListAcc([2], Tree.Empty) => Tree.Black(Tree.Empty, 2, Tree.Empty)
 
-fn append(a: List<Int>, b: List<Int>) -> List<Int>
-  ? "Append b to the end of a"
-  List.append(a, b)
+fn concatLists(a: List<Int>, b: List<Int>) -> List<Int>
+  ? "Concatenate two lists while preserving order"
+  List.concat(a, b)
 
-verify append law keepsOrder
+verify concatLists law keepsOrder
   given a: List<Int> = [[1, 2]]
   given b: List<Int> = [[3, 4]]
-  append(a, b) => [1, 2, 3, 4]
+  concatLists(a, b) => [1, 2, 3, 4]
 
 fn collectInOrder(left: Tree, value: Int, right: Tree) -> List<Int>
   ? "Collect elements from a node in sorted order"
-  append(List.append(toSorted(left), [value]), toSorted(right))
+  concatLists(List.concat(toSorted(left), [value]), toSorted(right))
 
 verify collectInOrder law singletonNode
   given left: Tree = [Tree.Empty]

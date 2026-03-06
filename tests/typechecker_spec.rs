@@ -148,8 +148,8 @@ fn valid_list_prepend_preserves_inner_type() {
 }
 
 #[test]
-fn valid_list_append_requires_compatible_lists() {
-    let src = "fn extend(xs: List<Int>, ys: List<Int>) -> List<Int>\n    = List.append(xs, ys)\n";
+fn valid_list_concat_requires_compatible_lists() {
+    let src = "fn extend(xs: List<Int>, ys: List<Int>) -> List<Int>\n    = List.concat(xs, ys)\n";
     assert_no_errors(src);
 }
 
@@ -425,9 +425,9 @@ fn error_unknown_does_not_satisfy_call_argument_type() {
 }
 
 #[test]
-fn error_list_push_mismatched_element_type() {
-    let src = "fn bad(xs: List<Int>) -> List<Int>\n    = List.push(xs, \"x\")\n";
-    assert_error_containing(src, "Argument 2 of 'List.push': expected Int, got String");
+fn error_list_append_mismatched_element_type() {
+    let src = "fn bad(xs: List<Int>) -> List<Int>\n    = List.append(xs, \"x\")\n";
+    assert_error_containing(src, "Argument 2 of 'List.append': expected Int, got String");
 }
 
 #[test]
@@ -498,8 +498,8 @@ fn error_list_prepend_mismatched_element_type() {
 }
 
 #[test]
-fn error_list_append_mismatched_element_type() {
-    let src = "fn bad(xs: List<Int>) -> List<Int>\n    = List.append(xs, [\"x\"])\n";
+fn error_list_concat_mismatched_element_type() {
+    let src = "fn bad(xs: List<Int>) -> List<Int>\n    = List.concat(xs, [\"x\"])\n";
     assert_error_containing(src, "list element types differ: Int vs String");
 }
 

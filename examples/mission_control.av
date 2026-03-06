@@ -396,7 +396,7 @@ verify normalizeAnglePositive
 
 fn addHistory(state: ShipState, entry: String) -> ShipState
     ? "Append one command marker to mission history."
-    = ShipState.update(state, history = List.push(state.history, entry))
+    = ShipState.update(state, history = List.append(state.history, entry))
 
 verify parseCommandsStep
     parseCommandsStep("ROTATE 5", [], []) => Result.Ok([Cmd.Rotate(5)])

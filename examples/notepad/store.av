@@ -99,7 +99,7 @@ fn foldNote(acc: Result<List<Note>, String>, line: String) -> Result<List<Note>,
         Result.Err(e) -> Result.Err(e)
         Result.Ok(notes) -> match deserializeLine(line)
             Result.Err(e) -> Result.Err(e)
-            Result.Ok(note) -> Result.Ok(List.push(notes, note))
+            Result.Ok(note) -> Result.Ok(List.append(notes, note))
 
 verify foldNote
     foldNote(Result.Err("x"), "1\tA\tB") => Result.Err("x")

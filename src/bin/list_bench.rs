@@ -18,10 +18,10 @@ fn buildPrepend(n: Int, acc: List<Int>) -> List<Int>
         0 -> acc
         _ -> buildPrepend(n - 1, List.prepend(n, acc))
 
-fn buildPush(n: Int, acc: List<Int>) -> List<Int>
+fn buildAppend(n: Int, acc: List<Int>) -> List<Int>
     match n
         0 -> acc
-        _ -> buildPush(n - 1, List.push(acc, n))
+        _ -> buildAppend(n - 1, List.append(acc, n))
 
 fn finishPrepend(n: Int) -> List<Int>
     = List.reverse(buildPrepend(n, []))
@@ -31,8 +31,8 @@ fn sumList(xs: List<Int>, acc: Int) -> Int
         [] -> acc
         [h, ..t] -> sumList(t, acc + h)
 
-fn appendLists(a: List<Int>, b: List<Int>) -> List<Int>
-    = List.append(a, b)
+fn concatLists(a: List<Int>, b: List<Int>) -> List<Int>
+    = List.concat(a, b)
 
 fn reverseList(xs: List<Int>) -> List<Int>
     = List.reverse(xs)
@@ -41,10 +41,10 @@ fn reverseList(xs: List<Int>) -> List<Int>
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Workload {
     PrependBuild,
-    PushBuild,
+    AppendBuild,
     PrependThenReverse,
     SumMatch,
-    AppendBuiltin,
+    ConcatBuiltin,
     ReverseBuiltin,
 }
 
@@ -52,10 +52,10 @@ impl Workload {
     fn all() -> &'static [Workload] {
         &[
             Workload::PrependBuild,
-            Workload::PushBuild,
+            Workload::AppendBuild,
             Workload::PrependThenReverse,
             Workload::SumMatch,
-            Workload::AppendBuiltin,
+            Workload::ConcatBuiltin,
             Workload::ReverseBuiltin,
         ]
     }
@@ -63,10 +63,10 @@ impl Workload {
     fn name(self) -> &'static str {
         match self {
             Workload::PrependBuild => "prepend_build",
-            Workload::PushBuild => "push_build",
+            Workload::AppendBuild => "append_build",
             Workload::PrependThenReverse => "prepend_reverse",
             Workload::SumMatch => "sum_match",
-            Workload::AppendBuiltin => "append_builtin",
+            Workload::ConcatBuiltin => "concat_builtin",
             Workload::ReverseBuiltin => "reverse_builtin",
         }
     }
@@ -74,10 +74,10 @@ impl Workload {
     fn fn_name(self) -> &'static str {
         match self {
             Workload::PrependBuild => "buildPrepend",
-            Workload::PushBuild => "buildPush",
+            Workload::AppendBuild => "buildAppend",
             Workload::PrependThenReverse => "finishPrepend",
             Workload::SumMatch => "sumList",
-            Workload::AppendBuiltin => "appendLists",
+            Workload::ConcatBuiltin => "concatLists",
             Workload::ReverseBuiltin => "reverseList",
         }
     }
@@ -93,10 +93,10 @@ impl Workload {
         let half = make_int_list(size / 2);
         match self {
             Workload::PrependBuild => vec![size_int, empty],
-            Workload::PushBuild => vec![Value::Int(size as i64), list_from_vec(vec![])],
+            Workload::AppendBuild => vec![Value::Int(size as i64), list_from_vec(vec![])],
             Workload::PrependThenReverse => vec![size_int],
             Workload::SumMatch => vec![ints, Value::Int(0)],
-            Workload::AppendBuiltin => vec![half.clone(), half],
+            Workload::ConcatBuiltin => vec![half.clone(), half],
             Workload::ReverseBuiltin => vec![ints],
         }
     }

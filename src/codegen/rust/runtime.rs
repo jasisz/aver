@@ -106,7 +106,7 @@ pub fn generate_runtime() -> String {
                         Some(right.clone())
                     } else {
                         let left_tail = left.tail().expect("non-empty left side must have a tail");
-                        Some(Self::append(&left_tail, right))
+                        Some(Self::concat(&left_tail, right))
                     }
                 }
             }
@@ -125,7 +125,7 @@ pub fn generate_runtime() -> String {
             }
         }
 
-        pub fn append(left: &Self, right: &Self) -> Self {
+        pub fn concat(left: &Self, right: &Self) -> Self {
             if left.is_empty() {
                 return right.clone();
             }
@@ -141,8 +141,8 @@ pub fn generate_runtime() -> String {
             }
         }
 
-        pub fn push(list: &Self, item: T) -> Self {
-            Self::append(list, &Self::from_vec(vec![item]))
+        pub fn append(list: &Self, item: T) -> Self {
+            Self::concat(list, &Self::from_vec(vec![item]))
         }
 
         pub fn to_vec(&self) -> Vec<T>

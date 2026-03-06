@@ -12,9 +12,9 @@ Source: `src/types/list.rs`
 |---|---|---|
 | `List.len` | `List<T> -> Int` | |
 | `List.get` | `(List<T>, Int) -> Option<T>` | Returns `Option.None` on out-of-bounds |
-| `List.push` | `(List<T>, T) -> List<T>` | Appends element, returns new list |
+| `List.append` | `(List<T>, T) -> List<T>` | Appends element, returns new list |
 | `List.prepend` | `(T, List<T>) -> List<T>` | Prepends element, returns new list |
-| `List.append` | `(List<T>, List<T>) -> List<T>` | Concatenates two lists |
+| `List.concat` | `(List<T>, List<T>) -> List<T>` | Concatenates two lists |
 | `List.reverse` | `List<T> -> List<T>` | Returns a reversed copy |
 | `List.contains` | `(List<T>, T) -> Bool` | Membership check via `==` |
 | `List.zip` | `(List<A>, List<B>) -> List<(A, B)>` | Pairs elements, truncates to shorter list |

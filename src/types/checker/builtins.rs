@@ -317,7 +317,7 @@ impl TypeChecker {
                 &[],
             ),
             (
-                "List.push",
+                "List.append",
                 &[Type::Unknown, Type::Unknown],
                 Type::List(Box::new(any())),
                 &[],
@@ -329,7 +329,7 @@ impl TypeChecker {
                 &[],
             ),
             (
-                "List.append",
+                "List.concat",
                 &[Type::Unknown, Type::Unknown],
                 Type::List(Box::new(any())),
                 &[],

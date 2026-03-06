@@ -566,9 +566,9 @@ fn prepend_adds_element_to_front() {
 }
 
 #[test]
-fn append_concatenates_lists() {
+fn concat_concatenates_lists() {
     assert_eq!(
-        eval("List.append([1, 2], [3, 4])"),
+        eval("List.concat([1, 2], [3, 4])"),
         Value::List(vec![
             Value::Int(1),
             Value::Int(2),
@@ -756,16 +756,16 @@ fn map_literal_rejects_non_scalar_key() {
 }
 
 #[test]
-fn push_appends_element() {
+fn append_adds_element_to_end() {
     assert_eq!(
-        eval("List.push([1, 2], 3)"),
+        eval("List.append([1, 2], 3)"),
         Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
     );
 }
 
 #[test]
-fn push_to_empty_list() {
-    assert_eq!(eval("List.push([], 1)"), Value::List(vec![Value::Int(1)]));
+fn append_to_empty_list() {
+    assert_eq!(eval("List.append([], 1)"), Value::List(vec![Value::Int(1)]));
 }
 
 // ---------------------------------------------------------------------------
@@ -1016,12 +1016,12 @@ fn prepend_builtin_adds_front() {
 }
 
 #[test]
-fn append_builtin_concatenates_lists() {
+fn concat_builtin_concatenates_lists() {
     let mut interp = Interpreter::new();
-    let append_fn = Value::Builtin("List.append".to_string());
+    let concat_fn = Value::Builtin("List.concat".to_string());
     let result = interp
         .call_value_pub(
-            append_fn,
+            concat_fn,
             vec![
                 Value::List(vec![Value::Int(1), Value::Int(2)]),
                 Value::List(vec![Value::Int(3), Value::Int(4)]),

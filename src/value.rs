@@ -582,7 +582,7 @@ pub fn list_tail_view(value: &Value) -> Option<Value> {
     }
 }
 
-pub(crate) fn list_push(list: &Value, item: Value) -> Option<Value> {
+pub(crate) fn list_append(list: &Value, item: Value) -> Option<Value> {
     let singleton = list_from_vec(vec![item]);
     make_list_concat(list, &singleton)
 }
@@ -591,7 +591,7 @@ pub(crate) fn list_prepend(item: Value, list: &Value) -> Option<Value> {
     make_list_prepend(item, list)
 }
 
-pub(crate) fn list_append(left: &Value, right: &Value) -> Option<Value> {
+pub(crate) fn list_concat(left: &Value, right: &Value) -> Option<Value> {
     make_list_concat(left, right)
 }
 
