@@ -7,11 +7,14 @@ All notable changes to Aver are documented here.
 ### Added
 - `aver proof` as a dedicated Lean proof-export command
 - `aver --version`
+- docs for `Unit`, `main` returning `Result<Unit, String>`, and the `HttpServer.listen` / `listenWith` callback model
 
 ### Changed
 - **Breaking:** `aver compile` now targets Rust only
 - **Breaking:** Lean export moved from `aver compile -t lean` to `aver proof`
 - **Breaking:** Lean CLI flags were renamed from `--lean-verify` to `--verify-mode`
+- **Breaking:** match patterns now reject positional record destructuring such as `User(name, age)`; bind the record and use field access instead
+- **Breaking:** constructor patterns must now be qualified (`Shape.Circle`, `Result.Ok`, `Option.None`) instead of bare `Circle` / `Some` / `None`
 - CLI/docs were split around two separate backend intents: deployment (`compile`) and proof export (`proof`)
 
 ## 0.3.0
