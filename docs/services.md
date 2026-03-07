@@ -165,8 +165,16 @@ Source: `src/services/http_server.rs`
 
 | Function | Signature |
 |---|---|
-| `HttpServer.listen` | `(Int, Fn(HttpRequest) -> HttpResponse ! [Console, Http, Disk, Tcp, HttpServer]) -> Unit` |
-| `HttpServer.listenWith` | `(Int, T, Fn(T, HttpRequest) -> HttpResponse ! [Console, Http, Disk, Tcp, HttpServer]) -> Unit` |
+| `HttpServer.listen` | `(Int, Fn(HttpRequest) -> HttpResponse ! [Console, Http, Disk, Env, Tcp, HttpServer, Time]) -> Unit` |
+| `HttpServer.listenWith` | `(Int, T, Fn(T, HttpRequest) -> HttpResponse ! [Console, Http, Disk, Env, Tcp, HttpServer, Time]) -> Unit` |
+
+`HttpServer.listen` and `HttpServer.listenWith` accept top-level function values. `listenWith` is the preferred form when a handler needs configuration, connections, or other app state, because the context stays explicit instead of being hidden in closure capture.
+
+`HttpRequest` record: `{ method: String, path: String, body: String, headers: List<Header> }`.
+`HttpResponse` record: `{ status: Int, body: String, headers: List<Header> }`.
+`Header` record: `{ name: String, value: String }`.
+
+The caller declares only `HttpServer.listen` / `HttpServer.listenWith`. The handler carries its own `! [...]` declaration; its effects are checked on the handler function itself rather than copied onto the caller.
 
 ### `Disk` namespace — use granular effects (`! [Disk.readText]`, `! [Disk.writeText]`, etc.)
 

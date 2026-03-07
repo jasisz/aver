@@ -113,4 +113,19 @@ mod tests {
         let err = require_module_declaration(&items, "demo.av").expect_err("expected error");
         assert!(err.contains("exactly one module declaration"));
     }
+
+    #[test]
+    fn parse_rejects_record_positional_pattern() {
+        let src = "module Demo\nrecord User\n    name: String\nfn f(u: User) -> String\n    match u\n        User(name) -> name\n";
+        let err = parse_source(src).expect_err("record positional patterns should be rejected");
+        assert!(err.contains("bind the whole value with a lower-case name"));
+    }
+
+    #[test]
+    fn parse_rejects_unqualified_constructor_pattern() {
+        let src = "module Demo\ntype Shape\n    Circle(Int)\nfn f(s: Shape) -> Int\n    match s\n        Circle(r) -> r\n";
+        let err =
+            parse_source(src).expect_err("unqualified constructor patterns should be rejected");
+        assert!(err.contains("Constructor patterns must be qualified"));
+    }
 }

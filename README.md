@@ -55,6 +55,8 @@ aver compile  hello.av -o out/
 (cd out && cargo run)
 ```
 
+`Unit` is Aver's "no meaningful value" type, roughly like `void` and rendered as `()` in diagnostics. `main` often returns `Unit`, but it can also return `Result<Unit, String>`; `aver run` treats `Result.Err(...)` from `main` as a process failure.
+
 ### Build from source
 
 ```bash

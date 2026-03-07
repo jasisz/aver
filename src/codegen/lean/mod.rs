@@ -2667,7 +2667,7 @@ verify inc law incSpec
                     arms: vec![
                         MatchArm {
                             pattern: Pattern::Constructor(
-                                "Some".to_string(),
+                                "Option.Some".to_string(),
                                 vec!["n".to_string()],
                             ),
                             body: Box::new(map_set(
@@ -2681,7 +2681,7 @@ verify inc law incSpec
                             )),
                         },
                         MatchArm {
-                            pattern: Pattern::Constructor("None".to_string(), vec![]),
+                            pattern: Pattern::Constructor("Option.None".to_string(), vec![]),
                             body: Box::new(map_set(
                                 Expr::Ident("counts".to_string()),
                                 Expr::Ident("word".to_string()),

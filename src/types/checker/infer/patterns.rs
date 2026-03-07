@@ -60,11 +60,11 @@ impl TypeChecker {
                 "None" if arity == 0 => return Vec::new(),
                 _ => {}
             },
-            Type::Named(type_name) => {
+            Type::Named(_type_name) => {
                 let qualified = if ctor_name.contains('.') {
                     ctor_name.to_string()
                 } else {
-                    format!("{}.{}", type_name, ctor_name)
+                    return unknowns();
                 };
                 if let Some(params) = from_sig(&qualified) {
                     return params;
@@ -75,24 +75,6 @@ impl TypeChecker {
 
         if let Some(params) = from_sig(ctor_name) {
             return params;
-        }
-
-        if !ctor_name.contains('.') {
-            let suffix = format!(".{}", ctor_name);
-            let mut matching = self
-                .fn_sigs
-                .iter()
-                .filter_map(|(name, sig)| {
-                    if name.ends_with(&suffix) && sig.params.len() == arity {
-                        Some(sig.params.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
-            if matching.len() == 1 {
-                return matching.pop().unwrap_or_else(unknowns);
-            }
         }
 
         unknowns()

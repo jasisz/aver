@@ -59,10 +59,9 @@ fn emit_constructor_pattern(name: &str, bindings: &[String]) -> String {
         "Option.None" => return "None".to_string(),
         "Tcp.Connection" => return emit_record_or_variant_pattern("Tcp_Connection", bindings),
         _ => {
-            // User-defined type: Shape.Circle → Shape::Circle
-            // Or record pattern: User(name, age) → User { name, age }
+            // Source syntax only produces qualified constructors here.
+            // Keep the bare-name fallback for manually-constructed ASTs in tests.
             if !name.contains('.') {
-                // Could be a record pattern: User(name, age) → User { name, age }
                 return emit_record_or_variant_pattern(name, bindings);
             }
             let rust_name = name.replace('.', "::");
@@ -92,9 +91,8 @@ fn emit_constructor_pattern(name: &str, bindings: &[String]) -> String {
 }
 
 fn emit_record_or_variant_pattern(name: &str, bindings: &[String]) -> String {
-    // This could be either a record destructure or a variant with no dot prefix.
-    // We'll treat bare names with bindings as record patterns: User { name, age }
-    // since sum type patterns always have a dot: Shape.Circle(r)
+    // Parser-rejected source forms should not reach codegen; this remains as a
+    // fallback for internal tests that build ASTs directly.
     if bindings.is_empty() {
         name.to_string()
     } else {

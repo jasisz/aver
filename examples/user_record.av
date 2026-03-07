@@ -17,8 +17,7 @@ verify greet
 
 fn is_adult(u: User) -> Bool
   ? "Check if a user is an adult (18+)"
-  match u
-    User(name, age) -> age >= 18
+  u.age >= 18
 
 verify is_adult
     is_adult(User(name = "Alice", age = 30)) => true

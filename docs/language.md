@@ -13,6 +13,8 @@ Compound: `Result<T, E>`, `Option<T>`, `List<T>`, `Map<K, V>`, `(A, B, ...)`, `F
 User-defined sum types: `type Shape` → `Shape.Circle(Float)`, `Shape.Rect(Float, Float)`
 User-defined product types: `record User` → `User(name = "Alice", age = 30)`, `u.name`
 
+`Unit` means "no meaningful value". It is similar to `void`, but still a real type; diagnostics render the value as `()`. Effectful functions such as `Console.print` commonly return `Unit`.
+
 ## Bindings
 
 All bindings are immutable. No `val`/`var` keywords — they are parse errors.
@@ -69,10 +71,11 @@ match value
     Result.Err(e) -> "error: {e}"
     Shape.Circle(r) -> "circle r={r}"
     Shape.Point -> "point"
-    User(name, age) -> "user {name}"       // record positional destructuring
     (a, b) -> "pair: {a}, {b}"             // tuple destructuring
     ((x, y), z) -> "nested: {x}"           // nested tuple
 ```
+
+Constructor patterns are always qualified (`Result.Ok`, `Option.None`, `Shape.Circle`). Records do not support positional destructuring in patterns; bind the whole record and use field access (`user.name`, `user.age`).
 
 Nested match in match arms is supported. Arm body must follow `->` on the same line — extract complex expressions into a named function.
 
@@ -117,8 +120,11 @@ fn fetchUser(id: String) -> Result<HttpResponse, String>
 ```
 
 - `? "..."` — optional prose description (part of the signature)
+- `aver check` warns when non-`main` functions omit the description
 - `! [Effect]` — optional effect declaration (statically and runtime enforced)
 - method-level effects are supported: `Http.get`, `Disk.readText`, `Console.print`
+- top-level functions are first-class values and can be passed where `Fn(...)` is expected
+- `main` often returns `Unit`, but `Result<Unit, String>` is also common; `aver run` treats `Result.Err(...)` returned from `main` as a runtime failure
 - function bodies use indentation
 - the last expression in a function body is the return value
 
@@ -170,6 +176,7 @@ decision UseResultNotExceptions
 ## No closures
 
 All user-defined functions are top-level. At call time, a function sees globals + its own parameters — no closure capture at definition time.
+Top-level functions are still first-class values, so higher-order builtins such as `HttpServer.listenWith(port, context, handle)` work without introducing lambda syntax or hidden captures.
 There is no lambda syntax. List processing is typically written with recursion and pattern matching rather than callback-based helpers.
 
 ## Common patterns

@@ -133,7 +133,7 @@ impl Interpreter {
                         }
                         Some(map)
                     }
-                    // User-defined variant: match by variant name, qualified or unqualified
+                    // User-defined variant: match by fully-qualified constructor name.
                     (
                         ctor,
                         Value::Variant {
@@ -144,14 +144,11 @@ impl Interpreter {
                         },
                     ) => {
                         let matches = if ctor.contains('.') {
-                            // Qualified: "Shape.Circle"
                             let mut parts = ctor.splitn(2, '.');
                             parts.next().is_some_and(|t| t == type_name)
                                 && parts.next().is_some_and(|v| v == variant)
                         } else {
-                            // Unqualified (builtins like Ok/Err handled above; this catches
-                            // any legacy unqualified user-defined patterns)
-                            ctor == variant
+                            false
                         };
                         if !matches {
                             return None;
@@ -161,26 +158,6 @@ impl Interpreter {
                         }
                         let mut map = HashMap::new();
                         for (name, val) in bindings.iter().zip(fields.iter()) {
-                            if name != "_" {
-                                map.insert(name.clone(), val.clone());
-                            }
-                        }
-                        Some(map)
-                    }
-                    // Record destructuring: positional, matched by type_name
-                    (
-                        ctor,
-                        Value::Record {
-                            type_name,
-                            fields: rf,
-                            ..
-                        },
-                    ) if ctor == type_name => {
-                        if !bindings.is_empty() && bindings.len() != rf.len() {
-                            return None;
-                        }
-                        let mut map = HashMap::new();
-                        for (name, (_, val)) in bindings.iter().zip(rf.iter()) {
                             if name != "_" {
                                 map.insert(name.clone(), val.clone());
                             }

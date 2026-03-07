@@ -70,7 +70,8 @@ fn emit_constructor_pattern(name: &str, bindings: &[String]) -> String {
         }
         "Option.None" => ".none".to_string(),
         _ => {
-            // User-defined type: Shape.Circle → .circle
+            // Source syntax only produces qualified constructors here.
+            // Keep the bare-name fallback for manually-constructed ASTs in tests.
             if let Some(dot_pos) = name.find('.') {
                 let variant = &name[dot_pos + 1..];
                 // Lean convention: lowercase constructor names
@@ -85,7 +86,6 @@ fn emit_constructor_pattern(name: &str, bindings: &[String]) -> String {
                     format!(".{} {}", lean_variant, parts.join(" "))
                 }
             } else {
-                // Record pattern: User(name, age) → { name, age }
                 if bindings.is_empty() {
                     format!("⟨⟩ /- {} -/", name)
                 } else {

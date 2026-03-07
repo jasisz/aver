@@ -337,12 +337,7 @@ fn build_witness_head(ctor: &CtorSpec, args: Vec<CoverPat>) -> CoverPat {
 }
 
 fn ctor_name_matches(pattern_name: &str, expected_full: &str) -> bool {
-    if pattern_name == expected_full {
-        return true;
-    }
-    let expected_short = expected_full.rsplit('.').next().unwrap_or(expected_full);
-    let pattern_short = pattern_name.rsplit('.').next().unwrap_or(pattern_name);
-    pattern_short == expected_short
+    pattern_name == expected_full
 }
 
 fn format_cover_pattern(pat: &CoverPat) -> String {

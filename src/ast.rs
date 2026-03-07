@@ -37,9 +37,9 @@ pub enum Pattern {
     Cons(String, String),
     /// Tuple pattern: `(a, b)` / `(_, x)` / nested tuples.
     Tuple(Vec<Pattern>),
-    /// Constructor pattern: name + list of binding names.
-    /// Built-ins: Ok(x), Err(x), Some(x), None → vec!["x"] or vec![]
-    /// User-defined: Circle(r), Rect(w, h), Point → vec!["r"], vec!["w","h"], vec![]
+    /// Constructor pattern: fully-qualified name + list of binding names.
+    /// Built-ins: Result.Ok(x), Result.Err(x), Option.Some(x), Option.None.
+    /// User-defined: Shape.Circle(r), Shape.Rect(w, h), Shape.Point.
     Constructor(String, Vec<String>),
 }
 

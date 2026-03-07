@@ -73,6 +73,8 @@ match shape
     Shape.Point -> 0.0
 ```
 
+That symmetry is for constructors. Records are still data-only values: bind the whole record in a pattern and use field access by name. There is no positional record pattern like `User(name, age)`.
+
 ### 7. Named and positional arguments never mix
 
 This is not an independent rule — it follows automatically from rules 4 and 5:

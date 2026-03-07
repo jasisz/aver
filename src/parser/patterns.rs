@@ -103,11 +103,11 @@ impl Parser {
                     Ok(first)
                 }
             }
-            // User-defined constructor: starts with uppercase (e.g. Shape.Circle, Point)
+            // Constructor patterns must be qualified: Shape.Circle, Result.Ok, Option.None.
             TokenKind::Ident(ref s) if s.chars().next().is_some_and(|c| c.is_uppercase()) => {
                 let mut name = s.clone();
                 self.advance();
-                // Qualified constructor: Shape.Circle
+                // Qualified constructor: Shape.Circle / Result.Ok / Option.None
                 if self.check_exact(&TokenKind::Dot)
                     && let TokenKind::Ident(ref variant) = self.peek(1).kind.clone()
                         && variant.chars().next().is_some_and(|c| c.is_uppercase()) {
@@ -115,7 +115,13 @@ impl Parser {
                             self.advance(); // consume '.'
                             self.advance(); // consume variant name
                             name = format!("{}.{}", name, variant);
-                        }
+                }
+                if !name.contains('.') {
+                    return Err(self.error(format!(
+                        "Constructor patterns must be qualified like 'Result.Ok(x)' or 'Shape.Circle(r)'. Bare UpperCamel patterns like '{}' are not supported; bind the whole value with a lower-case name and access record fields via '.'.",
+                        name
+                    )));
+                }
                 let mut bindings = vec![];
                 if self.check_exact(&TokenKind::LParen) {
                     self.advance();
