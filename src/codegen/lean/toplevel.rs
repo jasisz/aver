@@ -779,7 +779,7 @@ fn emit_fuelized_string_pos_fn(fd: &FnDef, ctx: &CodegenContext) -> String {
         &HashSet::from([fd.name.clone()]),
         STRING_POS_FUEL_VAR,
     );
-    let body = emit_fn_body(&rewritten, ctx);
+    let body = emit_fn_body_for(fd, &rewritten, ctx);
 
     [
         emit_doc_comment(&fd.desc),
@@ -820,7 +820,7 @@ fn emit_fuelized_int_countdown_fn(fd: &FnDef, ctx: &CodegenContext, param_index:
         &HashSet::from([fd.name.clone()]),
         STRING_POS_FUEL_VAR,
     );
-    let body = strip_match_eq_binders(emit_fn_body(&rewritten, ctx));
+    let body = strip_match_eq_binders(emit_fn_body_for(fd, &rewritten, ctx));
 
     [
         emit_doc_comment(&fd.desc),
@@ -851,7 +851,7 @@ fn emit_fuelized_sizeof_fn(fd: &FnDef, ctx: &CodegenContext) -> String {
         &HashSet::from([fd.name.clone()]),
         STRING_POS_FUEL_VAR,
     );
-    let body = emit_fn_body(&rewritten, ctx);
+    let body = emit_fn_body_for(fd, &rewritten, ctx);
 
     [
         emit_doc_comment(&fd.desc),
@@ -889,7 +889,7 @@ fn emit_fuelized_mutual_string_pos_group(
         let params = emit_fn_params(&fd.params);
         let ret_type = ret_type_or_unit(fd);
         let rewritten = rewrite_recursive_calls_body(&fd.body, &targets, STRING_POS_FUEL_VAR);
-        let body = emit_fn_body(&rewritten, ctx);
+        let body = emit_fn_body_for(fd, &rewritten, ctx);
 
         helper_lines.extend(
             emit_doc_comment(&fd.desc)
@@ -937,7 +937,7 @@ fn emit_fuelized_mutual_int_countdown_group(fns: &[&FnDef], ctx: &CodegenContext
         let params = emit_fn_params(&fd.params);
         let ret_type = ret_type_or_unit(fd);
         let rewritten = rewrite_recursive_calls_body(&fd.body, &targets, STRING_POS_FUEL_VAR);
-        let body = strip_match_eq_binders(emit_fn_body(&rewritten, ctx));
+        let body = strip_match_eq_binders(emit_fn_body_for(fd, &rewritten, ctx));
 
         helper_lines.extend(
             emit_doc_comment(&fd.desc)
@@ -1006,7 +1006,7 @@ fn emit_fuelized_mutual_sizeof_group(
         let params = emit_fn_params(&fd.params);
         let ret_type = ret_type_or_unit(fd);
         let rewritten = rewrite_recursive_calls_body(&fd.body, &targets, STRING_POS_FUEL_VAR);
-        let body = emit_fn_body(&rewritten, ctx);
+        let body = emit_fn_body_for(fd, &rewritten, ctx);
 
         helper_lines.extend(
             emit_doc_comment(&fd.desc)
@@ -1086,7 +1086,7 @@ pub fn emit_fn_def(
         "{}def {} {} : {} :=",
         prefix, fn_name, params, ret_type
     ));
-    lines.push(emit_fn_body(&fd.body, ctx));
+    lines.push(emit_fn_body_for(fd, &fd.body, ctx));
 
     Some(lines.join("\n"))
 }
@@ -1130,7 +1130,7 @@ pub fn emit_fn_def_proof(
         type_annotation_to_lean(&fd.return_type)
     };
     lines.push(format!("def {} {} : {} :=", fn_name, params, ret_type));
-    lines.push(emit_fn_body(&fd.body, ctx));
+    lines.push(emit_fn_body_for(fd, &fd.body, ctx));
 
     if let Some(plan) = recursion_plan {
         match plan {
@@ -1175,6 +1175,66 @@ fn emit_fn_params(params: &[(String, String)]) -> String {
         .join(" ")
 }
 
+fn expr_uses_error_prop(expr: &Expr) -> bool {
+    match expr {
+        Expr::ErrorProp(_) => true,
+        Expr::FnCall(callee, args) => {
+            expr_uses_error_prop(callee) || args.iter().any(expr_uses_error_prop)
+        }
+        Expr::Attr(obj, _) => expr_uses_error_prop(obj),
+        Expr::BinOp(_, left, right) => expr_uses_error_prop(left) || expr_uses_error_prop(right),
+        Expr::Match { subject, arms, .. } => {
+            expr_uses_error_prop(subject) || arms.iter().any(|arm| expr_uses_error_prop(&arm.body))
+        }
+        Expr::Constructor(_, Some(inner)) => expr_uses_error_prop(inner),
+        Expr::InterpolatedStr(parts) => parts.iter().any(|part| match part {
+            StrPart::Parsed(expr) => expr_uses_error_prop(expr),
+            StrPart::Literal(_) => false,
+        }),
+        Expr::List(items) | Expr::Tuple(items) => items.iter().any(expr_uses_error_prop),
+        Expr::MapLiteral(entries) => entries
+            .iter()
+            .any(|(key, value)| expr_uses_error_prop(key) || expr_uses_error_prop(value)),
+        Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, value)| expr_uses_error_prop(value)),
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_uses_error_prop(base)
+                || updates
+                    .iter()
+                    .any(|(_, value)| expr_uses_error_prop(value))
+        }
+        Expr::TailCall(boxed) => boxed.1.iter().any(expr_uses_error_prop),
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) | Expr::Constructor(_, None) => false,
+    }
+}
+
+fn body_uses_error_prop(body: &FnBody) -> bool {
+    body.stmts().iter().any(|stmt| match stmt {
+        Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr_uses_error_prop(expr),
+    })
+}
+
+fn fn_returns_result(fd: &FnDef) -> bool {
+    matches!(
+        crate::types::parse_type_str(&fd.return_type),
+        crate::types::Type::Result(_, _)
+    )
+}
+
+fn emit_do_stmt(stmt: &Stmt, ctx: &CodegenContext, is_last: bool) -> String {
+    match stmt {
+        Stmt::Binding(name, _, Expr::ErrorProp(inner)) => format!(
+            "  let {} <- {}",
+            aver_name_to_lean(name),
+            emit_expr(inner, ctx)
+        ),
+        Stmt::Binding(name, _, expr) => format!("  let {} := {}", aver_name_to_lean(name), emit_expr(expr, ctx)),
+        Stmt::Expr(Expr::ErrorProp(inner)) if is_last => format!("  {}", emit_expr(inner, ctx)),
+        Stmt::Expr(Expr::ErrorProp(inner)) => format!("  let _ <- {}", emit_expr(inner, ctx)),
+        Stmt::Expr(expr) if is_last => format!("  {}", emit_expr(expr, ctx)),
+        Stmt::Expr(expr) => format!("  let _ := {}", emit_expr(expr, ctx)),
+    }
+}
+
 fn emit_fn_body(body: &FnBody, ctx: &CodegenContext) -> String {
     let stmts = body.stmts();
     let mut lines = Vec::new();
@@ -1194,6 +1254,23 @@ fn emit_fn_body(body: &FnBody, ctx: &CodegenContext) -> String {
         }
     }
     lines.join("\n")
+}
+
+fn emit_fn_body_result_do(body: &FnBody, ctx: &CodegenContext) -> String {
+    let stmts = body.stmts();
+    let mut lines = vec!["  do".to_string()];
+    for (i, stmt) in stmts.iter().enumerate() {
+        lines.push(emit_do_stmt(stmt, ctx, i == stmts.len() - 1));
+    }
+    lines.join("\n")
+}
+
+fn emit_fn_body_for(fd: &FnDef, body: &FnBody, ctx: &CodegenContext) -> String {
+    if fn_returns_result(fd) && body_uses_error_prop(body) {
+        emit_fn_body_result_do(body, ctx)
+    } else {
+        emit_fn_body(body, ctx)
+    }
 }
 
 /// Emit verify blocks as Lean 4 `example` declarations.
@@ -1447,7 +1524,7 @@ pub fn emit_mutual_group(fns: &[&FnDef], ctx: &CodegenContext) -> String {
             "  partial def {} {} : {} :=",
             fn_name, params, ret_type
         ));
-        let body = emit_fn_body(&fd.body, ctx);
+        let body = emit_fn_body_for(fd, &fd.body, ctx);
         // Indent body by 2 more spaces
         for line in body.lines() {
             lines.push(format!("  {}", line));
@@ -1506,7 +1583,7 @@ pub fn emit_mutual_group_proof(
             type_annotation_to_lean(&fd.return_type)
         };
         lines.push(format!("  def {} {} : {} :=", fn_name, params, ret_type));
-        let body = emit_fn_body(&fd.body, ctx);
+        let body = emit_fn_body_for(fd, &fd.body, ctx);
         for line in body.lines() {
             lines.push(format!("  {}", line));
         }

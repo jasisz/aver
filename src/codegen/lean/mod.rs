@@ -243,7 +243,7 @@ end AverString"#;
 const LEAN_PRELUDE_NUMERIC_PARSE: &str = r#"def Int.fromString (s : String) : Except String Int :=
   match s.toInt? with
   | some n => .ok n
-  | none => .error ("Invalid integer: " ++ s)
+  | none => .error ("Cannot parse '" ++ s ++ "' as Int")
 
 private def charDigitsToNat (cs : List Char) : Nat :=
   cs.foldl (fun acc c => acc * 10 + (c.toNat - '0'.toNat)) 0
@@ -747,12 +747,63 @@ fn single_int_countdown_param_index(fd: &FnDef) -> Option<usize> {
             if param_ty != "Int" {
                 return None;
             }
-            let ok = recursive_calls.iter().all(|args| {
+            let countdown_ok = recursive_calls.iter().all(|args| {
                 args.get(idx).copied()
                     .is_some_and(|arg| is_int_minus_positive(arg, param_name))
             });
-            ok.then_some(idx)
+            if countdown_ok {
+                return Some(idx);
+            }
+
+            let ascent_ok = recursive_calls.iter().all(|args| {
+                args.get(idx).copied()
+                    .is_some_and(|arg| is_int_plus_positive(arg, param_name))
+            });
+            (ascent_ok && has_negative_guarded_ascent(fd, param_name)).then_some(idx)
         })
+}
+
+fn has_negative_guarded_ascent(fd: &FnDef, param_name: &str) -> bool {
+    let Some(Expr::Match { subject, arms, .. }) = fd.body.tail_expr() else {
+        return false;
+    };
+    let Expr::BinOp(BinOp::Lt, left, right) = subject.as_ref() else {
+        return false;
+    };
+    if !is_ident(left, param_name)
+        || !matches!(right.as_ref(), Expr::Literal(crate::ast::Literal::Int(0)))
+    {
+        return false;
+    }
+
+    let mut true_arm = None;
+    let mut false_arm = None;
+    for arm in arms {
+        match arm.pattern {
+            Pattern::Literal(crate::ast::Literal::Bool(true)) => true_arm = Some(arm.body.as_ref()),
+            Pattern::Literal(crate::ast::Literal::Bool(false)) => false_arm = Some(arm.body.as_ref()),
+            _ => return false,
+        }
+    }
+
+    let Some(true_arm) = true_arm else {
+        return false;
+    };
+    let Some(false_arm) = false_arm else {
+        return false;
+    };
+
+    let mut true_calls = Vec::new();
+    collect_calls_from_expr(true_arm, &mut true_calls);
+    let mut false_calls = Vec::new();
+    collect_calls_from_expr(false_arm, &mut false_calls);
+
+    true_calls
+        .iter()
+        .any(|(name, _)| call_matches(name, &fd.name))
+        && false_calls
+            .iter()
+            .all(|(name, _)| !call_matches(name, &fd.name))
 }
 
 fn supports_single_sizeof_structural(fd: &FnDef, ctx: &CodegenContext) -> bool {
@@ -3025,6 +3076,63 @@ verify inc law incSpec
     }
 
     #[test]
+    fn proof_mode_accepts_negative_guarded_int_ascent() {
+        let mut ctx = empty_ctx();
+        let normalize = FnDef {
+            name: "normalize".to_string(),
+            line: 1,
+            params: vec![("angle".to_string(), "Int".to_string())],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(Expr::Match {
+                subject: Box::new(Expr::BinOp(
+                    BinOp::Lt,
+                    Box::new(Expr::Ident("angle".to_string())),
+                    Box::new(Expr::Literal(Literal::Int(0))),
+                )),
+                arms: vec![
+                    MatchArm {
+                        pattern: Pattern::Literal(Literal::Bool(true)),
+                        body: Box::new(Expr::TailCall(Box::new((
+                            "normalize".to_string(),
+                            vec![Expr::BinOp(
+                                BinOp::Add,
+                                Box::new(Expr::Ident("angle".to_string())),
+                                Box::new(Expr::Literal(Literal::Int(360))),
+                            )],
+                        )))),
+                    },
+                    MatchArm {
+                        pattern: Pattern::Literal(Literal::Bool(false)),
+                        body: Box::new(Expr::Ident("angle".to_string())),
+                    },
+                ],
+                line: 1,
+            })),
+            resolution: None,
+        };
+        ctx.items.push(TopLevel::FnDef(normalize.clone()));
+        ctx.fn_defs.push(normalize);
+
+        let issues = proof_mode_issues(&ctx);
+        assert!(
+            issues.is_empty(),
+            "expected negative-guarded Int ascent recursion to be accepted, got: {:?}",
+            issues
+        );
+
+        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let lean = out
+            .files
+            .iter()
+            .find_map(|(name, content)| (name == "Verify_mode.lean").then_some(content))
+            .expect("expected generated Lean file");
+        assert!(lean.contains("def normalize__fuel"));
+        assert!(lean.contains("normalize__fuel ((Int.natAbs angle) + 1) angle"));
+    }
+
+    #[test]
     fn proof_mode_accepts_single_list_structural_recursion() {
         let mut ctx = empty_ctx();
         let len = FnDef {
@@ -3649,5 +3757,44 @@ verify inc law incSpec
         assert!(!lean.contains("partial def subst"));
         assert!(!lean.contains("partial def countS"));
         assert!(lean.contains("partial def eval"));
+    }
+
+    #[test]
+    fn mission_control_example_stays_inside_proof_subset() {
+        let ctx = ctx_from_source(
+            include_str!("../../../examples/mission_control.av"),
+            "mission_control",
+        );
+        let issues = proof_mode_issues(&ctx);
+        assert!(
+            issues.is_empty(),
+            "expected mission_control example to stay inside proof subset, got: {:?}",
+            issues
+        );
+
+        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let lean = generated_lean_file(&out);
+        assert!(!lean.contains("partial def normalizeAngle"));
+        assert!(lean.contains("def normalizeAngle__fuel"));
+    }
+
+    #[test]
+    fn notepad_store_example_stays_inside_proof_subset() {
+        let ctx = ctx_from_source(
+            include_str!("../../../examples/notepad/store.av"),
+            "notepad_store",
+        );
+        let issues = proof_mode_issues(&ctx);
+        assert!(
+            issues.is_empty(),
+            "expected notepad/store example to stay inside proof subset, got: {:?}",
+            issues
+        );
+
+        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let lean = generated_lean_file(&out);
+        assert!(lean.contains("def deserializeLine (line : String) : Except String Note :=\n  do"));
+        assert!(lean.contains("Except String (List Note)"));
+        assert!(!lean.contains("partial def deserializeLine"));
     }
 }

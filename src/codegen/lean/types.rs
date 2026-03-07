@@ -11,7 +11,11 @@ pub fn type_to_lean(ty: &Type) -> String {
         Type::Unit => "Unit".to_string(),
         Type::Result(ok, err) => {
             // Lean's Except has reversed order: Except Error Ok
-            format!("Except {} {}", type_to_lean(err), type_to_lean(ok))
+            format!(
+                "Except {} {}",
+                type_to_lean_atom(err),
+                type_to_lean_atom(ok)
+            )
         }
         Type::Option(inner) => format!("Option {}", type_to_lean_atom(inner)),
         Type::List(inner) => format!("List {}", type_to_lean_atom(inner)),
@@ -58,4 +62,17 @@ fn type_to_lean_atom(ty: &Type) -> String {
 pub fn type_annotation_to_lean(ann: &str) -> String {
     let ty = crate::types::parse_type_str(ann);
     type_to_lean(&ty)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::type_annotation_to_lean;
+
+    #[test]
+    fn nested_result_type_arguments_are_parenthesized() {
+        assert_eq!(
+            type_annotation_to_lean("Result<List<Cmd>, String>"),
+            "Except String (List Cmd)"
+        );
+    }
 }

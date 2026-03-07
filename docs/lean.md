@@ -130,6 +130,8 @@ These examples currently go through Lean export and `lake build` end to end:
 - `examples/lambda.av`
 - `examples/rle.av`
 - `examples/json.av`
+- `examples/mission_control.av`
+- `examples/notepad/store.av`
 - `examples/temperature.av`
 - `examples/trust_check.av`
 - `examples/user_record.av`
