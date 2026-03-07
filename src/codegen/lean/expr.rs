@@ -315,7 +315,12 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], line: usize, ctx: &CodegenConte
         if body.contains('\n') {
             let body_lines: Vec<&str> = body.lines().collect();
             let mut rendered = vec![format!("  | {} => {}", pat, body_lines[0])];
-            rendered.extend(body_lines.iter().skip(1).map(|line| format!("    {}", line)));
+            rendered.extend(
+                body_lines
+                    .iter()
+                    .skip(1)
+                    .map(|line| format!("    {}", line)),
+            );
             arm_strs.push(rendered.join("\n"));
         } else {
             arm_strs.push(format!("  | {} => {}", pat, body));

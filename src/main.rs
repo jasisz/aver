@@ -87,7 +87,13 @@ fn main() {
             module_root,
             verify_mode,
         } => {
-            commands::cmd_proof(file, output, name.as_deref(), module_root.as_deref(), verify_mode);
+            commands::cmd_proof(
+                file,
+                output,
+                name.as_deref(),
+                module_root.as_deref(),
+                verify_mode,
+            );
         }
     }
 }

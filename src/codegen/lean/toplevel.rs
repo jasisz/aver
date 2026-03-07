@@ -169,11 +169,18 @@ fn type_measure_expr(
 
     if let Some(inner) = unwrap_generic(trimmed, "List<") {
         if recursive_types.contains(inner.trim()) {
-            return Some(format!("{} {}", measure_list_fn_name(inner.trim()), value_expr));
+            return Some(format!(
+                "{} {}",
+                measure_list_fn_name(inner.trim()),
+                value_expr
+            ));
         }
         let item_measure = type_measure_expr(inner, "item", recursive_types, self_type)
             .unwrap_or_else(|| "1".to_string());
-        return Some(format!("AverMeasure.list (fun item => {}) {}", item_measure, value_expr));
+        return Some(format!(
+            "AverMeasure.list (fun item => {}) {}",
+            item_measure, value_expr
+        ));
     }
 
     if let Some(inner) = unwrap_generic(trimmed, "Option<") {
@@ -186,7 +193,10 @@ fn type_measure_expr(
         }
         let item_measure = type_measure_expr(inner, "item", recursive_types, self_type)
             .unwrap_or_else(|| "1".to_string());
-        return Some(format!("AverMeasure.option (fun item => {}) {}", item_measure, value_expr));
+        return Some(format!(
+            "AverMeasure.option (fun item => {}) {}",
+            item_measure, value_expr
+        ));
     }
 
     if let Some(inner) = unwrap_generic(trimmed, "Result<") {
@@ -247,7 +257,9 @@ fn emit_recursive_sum_measure(
             continue;
         }
 
-        let binders: Vec<String> = (0..variant.fields.len()).map(|idx| format!("x{idx}")).collect();
+        let binders: Vec<String> = (0..variant.fields.len())
+            .map(|idx| format!("x{idx}"))
+            .collect();
         let field_measures: Vec<String> = variant
             .fields
             .iter()
@@ -306,7 +318,11 @@ fn emit_recursive_product_measure(
     };
     [
         "mutual".to_string(),
-        format!("  def {} (value : {}) : Nat :=", measure_fn_name(name), name),
+        format!(
+            "  def {} (value : {}) : Nat :=",
+            measure_fn_name(name),
+            name
+        ),
         format!("    {}", body),
         format!(
             "  def {} (items : List {}) : Nat :=",
@@ -330,9 +346,9 @@ pub fn emit_recursive_measure(td: &TypeDef, recursive_types: &HashSet<String>) -
         TypeDef::Sum { name, variants, .. } if is_recursive_type(name, variants) => {
             Some(emit_recursive_sum_measure(name, variants, recursive_types))
         }
-        TypeDef::Product { name, fields, .. } if is_recursive_product(name, fields) => {
-            Some(emit_recursive_product_measure(name, fields, recursive_types))
-        }
+        TypeDef::Product { name, fields, .. } if is_recursive_product(name, fields) => Some(
+            emit_recursive_product_measure(name, fields, recursive_types),
+        ),
         _ => None,
     }
 }
@@ -465,7 +481,10 @@ fn emit_int_countdown_wrapper(fd: &FnDef, helper_name: &str, param_index: usize)
         .unwrap_or_else(|| "0".to_string());
     vec![
         format!("def {} {} : {} :=", fn_name, params, ret_type),
-        format!("  {} ((Int.natAbs {}) + 1) {}", helper_name, metric_name, arg_names),
+        format!(
+            "  {} ((Int.natAbs {}) + 1) {}",
+            helper_name, metric_name, arg_names
+        ),
     ]
 }
 
@@ -520,7 +539,10 @@ fn detects_fibonacci_spec(fd: &FnDef) -> bool {
         || arms.len() != 2
         || !matches_bool_match_arm(&arms[0], true)
         || !matches_bool_match_arm(&arms[1], false)
-        || !matches!(arms[0].body.as_ref(), Expr::Literal(crate::ast::Literal::Int(0)))
+        || !matches!(
+            arms[0].body.as_ref(),
+            Expr::Literal(crate::ast::Literal::Int(0))
+        )
     {
         return false;
     }
@@ -535,9 +557,15 @@ fn detects_fibonacci_spec(fd: &FnDef) -> bool {
     if !matches!(inner_subject.as_ref(), Expr::Ident(name) if name == param_name)
         || inner_arms.len() != 3
         || !matches_int_match_arm(&inner_arms[0], 0)
-        || !matches!(inner_arms[0].body.as_ref(), Expr::Literal(crate::ast::Literal::Int(0)))
+        || !matches!(
+            inner_arms[0].body.as_ref(),
+            Expr::Literal(crate::ast::Literal::Int(0))
+        )
         || !matches_int_match_arm(&inner_arms[1], 1)
-        || !matches!(inner_arms[1].body.as_ref(), Expr::Literal(crate::ast::Literal::Int(1)))
+        || !matches!(
+            inner_arms[1].body.as_ref(),
+            Expr::Literal(crate::ast::Literal::Int(1))
+        )
         || !matches!(inner_arms[2].pattern, Pattern::Wildcard)
     {
         return false;
@@ -563,10 +591,7 @@ fn emit_nat_fibonacci_spec_fn(fd: &FnDef) -> String {
             format!("private def {} : Nat -> {} ", helper_name, ret_type),
             "  | 0 => 0".to_string(),
             "  | 1 => 1".to_string(),
-            format!(
-                "  | n + 2 => {} (n + 1) + {} n",
-                helper_name, helper_name
-            ),
+            format!("  | n + 2 => {} (n + 1) + {} n", helper_name, helper_name),
             String::new(),
             format!("def {} ({} : Int) : {} :=", fn_name, lean_param, ret_type),
             format!(
@@ -1195,12 +1220,12 @@ fn expr_uses_error_prop(expr: &Expr) -> bool {
         Expr::MapLiteral(entries) => entries
             .iter()
             .any(|(key, value)| expr_uses_error_prop(key) || expr_uses_error_prop(value)),
-        Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, value)| expr_uses_error_prop(value)),
+        Expr::RecordCreate { fields, .. } => {
+            fields.iter().any(|(_, value)| expr_uses_error_prop(value))
+        }
         Expr::RecordUpdate { base, updates, .. } => {
             expr_uses_error_prop(base)
-                || updates
-                    .iter()
-                    .any(|(_, value)| expr_uses_error_prop(value))
+                || updates.iter().any(|(_, value)| expr_uses_error_prop(value))
         }
         Expr::TailCall(boxed) => boxed.1.iter().any(expr_uses_error_prop),
         Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) | Expr::Constructor(_, None) => false,
@@ -1227,7 +1252,11 @@ fn emit_do_stmt(stmt: &Stmt, ctx: &CodegenContext, is_last: bool) -> String {
             aver_name_to_lean(name),
             emit_expr(inner, ctx)
         ),
-        Stmt::Binding(name, _, expr) => format!("  let {} := {}", aver_name_to_lean(name), emit_expr(expr, ctx)),
+        Stmt::Binding(name, _, expr) => format!(
+            "  let {} := {}",
+            aver_name_to_lean(name),
+            emit_expr(expr, ctx)
+        ),
         Stmt::Expr(Expr::ErrorProp(inner)) if is_last => format!("  {}", emit_expr(inner, ctx)),
         Stmt::Expr(Expr::ErrorProp(inner)) => format!("  let _ <- {}", emit_expr(inner, ctx)),
         Stmt::Expr(expr) if is_last => format!("  {}", emit_expr(expr, ctx)),
@@ -1333,7 +1362,11 @@ fn emit_verify_law_block(
     let law_name = aver_name_to_lean(&law.name);
     let spec_ref = canonical_spec_ref(&vb.fn_name, law, &ctx.fn_sigs);
     let theorem_base = match &spec_ref {
-        Some(spec_ref) => format!("{}_eq_{}", fn_name, aver_name_to_lean(&spec_ref.spec_fn_name)),
+        Some(spec_ref) => format!(
+            "{}_eq_{}",
+            fn_name,
+            aver_name_to_lean(&spec_ref.spec_fn_name)
+        ),
         None => format!("{}_law_{}", fn_name, law_name),
     };
     let lhs_template = emit_expr(&law.lhs, ctx);
@@ -1354,11 +1387,15 @@ fn emit_verify_law_block(
     match &spec_ref {
         Some(spec_ref) => lines.push(format!(
             "-- verify law {}.spec {} ({} cases)",
-            fn_name, spec_ref.spec_fn_name, vb.cases.len()
+            fn_name,
+            spec_ref.spec_fn_name,
+            vb.cases.len()
         )),
         None => lines.push(format!(
             "-- verify law {}.{} ({} cases)",
-            fn_name, law_name, vb.cases.len()
+            fn_name,
+            law_name,
+            vb.cases.len()
         )),
     }
     for given in &law.givens {

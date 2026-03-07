@@ -85,16 +85,14 @@ fn emit_constructor_pattern(name: &str, bindings: &[String]) -> String {
                         .collect();
                     format!(".{} {}", lean_variant, parts.join(" "))
                 }
+            } else if bindings.is_empty() {
+                format!("⟨⟩ /- {} -/", name)
             } else {
-                if bindings.is_empty() {
-                    format!("⟨⟩ /- {} -/", name)
-                } else {
-                    let parts: Vec<String> = bindings
-                        .iter()
-                        .map(|b| super::expr::aver_name_to_lean(b))
-                        .collect();
-                    format!("⟨{}⟩ /- {} -/", parts.join(", "), name)
-                }
+                let parts: Vec<String> = bindings
+                    .iter()
+                    .map(|b| super::expr::aver_name_to_lean(b))
+                    .collect();
+                format!("⟨{}⟩ /- {} -/", parts.join(", "), name)
             }
         }
     }

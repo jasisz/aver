@@ -116,28 +116,65 @@ pub fn recursive_scc_ids(items: &[TopLevel]) -> HashMap<String, usize> {
     out
 }
 
-fn collect_codegen_deps_body(body: &FnBody, fn_names: &HashSet<String>, out: &mut HashSet<String>) {
+fn canonical_codegen_dep(
+    name: &str,
+    fn_names: &HashSet<String>,
+    module_prefixes: &HashSet<String>,
+) -> Option<String> {
+    if fn_names.contains(name) {
+        return Some(name.to_string());
+    }
+
+    let mut best_prefix: Option<&str> = None;
+    for prefix in module_prefixes {
+        let dotted_prefix = format!("{}.", prefix);
+        if name.starts_with(&dotted_prefix)
+            && best_prefix.is_none_or(|best| prefix.len() > best.len())
+        {
+            best_prefix = Some(prefix.as_str());
+        }
+    }
+
+    let prefix = best_prefix?;
+    let bare = &name[prefix.len() + 1..];
+    fn_names.contains(bare).then(|| bare.to_string())
+}
+
+fn collect_codegen_deps_body(
+    body: &FnBody,
+    fn_names: &HashSet<String>,
+    module_prefixes: &HashSet<String>,
+    out: &mut HashSet<String>,
+) {
     for s in body.stmts() {
         match s {
-            Stmt::Binding(_, _, e) | Stmt::Expr(e) => collect_codegen_deps_expr(e, fn_names, out),
+            Stmt::Binding(_, _, e) | Stmt::Expr(e) => {
+                collect_codegen_deps_expr(e, fn_names, module_prefixes, out)
+            }
         }
     }
 }
 
-fn collect_codegen_deps_expr(expr: &Expr, fn_names: &HashSet<String>, out: &mut HashSet<String>) {
+fn collect_codegen_deps_expr(
+    expr: &Expr,
+    fn_names: &HashSet<String>,
+    module_prefixes: &HashSet<String>,
+    out: &mut HashSet<String>,
+) {
     walk_expr(expr, &mut |node| match node {
         Expr::FnCall(func, args) => {
             if let Some(callee) = expr_to_dotted_name(func.as_ref())
-                && fn_names.contains(&callee)
+                && let Some(canonical) = canonical_codegen_dep(&callee, fn_names, module_prefixes)
             {
-                out.insert(callee);
+                out.insert(canonical);
             }
             for arg in args {
                 // function-as-value dependency, e.g. apply(f, x)
                 if let Some(qname) = expr_to_dotted_name(arg)
-                    && fn_names.contains(&qname)
+                    && let Some(canonical) =
+                        canonical_codegen_dep(&qname, fn_names, module_prefixes)
                 {
-                    out.insert(qname);
+                    out.insert(canonical);
                 }
             }
         }

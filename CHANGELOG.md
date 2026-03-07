@@ -4,6 +4,8 @@ All notable changes to Aver are documented here.
 
 ## Unreleased
 
+## 0.4.0
+
 ### Added
 - `aver proof` as a dedicated Lean proof-export command
 - `aver --version`
@@ -16,6 +18,13 @@ All notable changes to Aver are documented here.
 - **Breaking:** match patterns now reject positional record destructuring such as `User(name, age)`; bind the record and use field access instead
 - **Breaking:** constructor patterns must now be qualified (`Shape.Circle`, `Result.Ok`, `Option.None`) instead of bare `Circle` / `Some` / `None`
 - CLI/docs were split around two separate backend intents: deployment (`compile`) and proof export (`proof`)
+
+### Fixed
+- Lean proof export now respects qualified cross-module calls such as `Examples.Json.toString` during function emission ordering
+- Lean prelude now injects built-in `Header`, `HttpRequest`, `HttpResponse`, and `Tcp.Connection` support when generated code references those runtime types
+- Lean `List.get` now preserves Aver's `Int` index semantics, including negative indices returning `Option.None`
+- `examples/notepad/routes.av` proof export now builds successfully under Lean with `aver proof --verify-mode auto`
+- parser/typechecker/interpreter specs were aligned with the qualified-constructor pattern rules and explicit record binding model
 
 ## 0.3.0
 

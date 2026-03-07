@@ -238,7 +238,7 @@ pub fn emit_builtin_call(name: &str, args: &[Expr], ctx: &CodegenContext) -> Opt
             let list = super::expr::emit_expr(&args[0], ctx);
             let idx = super::expr::emit_expr(&args[1], ctx);
             Some(format!(
-                "{}.get? {}",
+                "AverList.get {} {}",
                 paren_if_complex(&list),
                 paren_if_complex(&idx)
             ))

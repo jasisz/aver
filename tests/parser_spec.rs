@@ -1056,22 +1056,22 @@ fn parse_record_create_expression() {
 
 #[test]
 fn parse_user_defined_constructor_pattern() {
-    let src = "fn classify(s: Shape) -> Float\n  match s\n    Circle(r) -> r\n    Rect(w, h) -> w\n    Point -> 0.0\n";
+    let src = "fn classify(s: Shape) -> Float\n  match s\n    Shape.Circle(r) -> r\n    Shape.Rect(w, h) -> w\n    Shape.Point -> 0.0\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         if let Expr::Match { arms, .. } = single_expr_body(fd) {
             assert_eq!(arms.len(), 3);
             assert!(matches!(
                 &arms[0].pattern,
-                Pattern::Constructor(name, bindings) if name == "Circle" && bindings == &["r"]
+                Pattern::Constructor(name, bindings) if name == "Shape.Circle" && bindings == &["r"]
             ));
             assert!(matches!(
                 &arms[1].pattern,
-                Pattern::Constructor(name, bindings) if name == "Rect" && bindings == &["w", "h"]
+                Pattern::Constructor(name, bindings) if name == "Shape.Rect" && bindings == &["w", "h"]
             ));
             assert!(matches!(
                 &arms[2].pattern,
-                Pattern::Constructor(name, bindings) if name == "Point" && bindings.is_empty()
+                Pattern::Constructor(name, bindings) if name == "Shape.Point" && bindings.is_empty()
             ));
         } else {
             panic!("expected match body");

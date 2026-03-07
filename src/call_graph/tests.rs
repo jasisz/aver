@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashSet;
 
 #[test]
 fn detects_self_recursion() {
@@ -113,6 +114,37 @@ fn b(n: Int) -> Int
     assert_eq!(ids.get("a").copied().unwrap_or(0), 1);
     assert_eq!(ids.get("b").copied().unwrap_or(0), 1);
     assert_eq!(ids.get("z").copied().unwrap_or(0), 2);
+}
+
+#[test]
+fn ordered_components_respect_module_qualified_dependencies() {
+    let src = r#"
+fn jsonErr() -> String
+    Examples.Json.toString(Json.JsonNull)
+
+fn toString(_j: Int) -> String
+    "ok"
+"#;
+    let items = parse(src);
+    let fns: Vec<_> = items
+        .iter()
+        .filter_map(|item| match item {
+            TopLevel::FnDef(fd) => Some(fd),
+            _ => None,
+        })
+        .collect();
+    let module_prefixes = HashSet::from(["Examples.Json".to_string()]);
+
+    let order = ordered_fn_components(&fns, &module_prefixes);
+    let flattened: Vec<_> = order
+        .into_iter()
+        .flat_map(|group| group.into_iter().map(|fd| fd.name.clone()))
+        .collect();
+
+    assert_eq!(
+        flattened,
+        vec!["toString".to_string(), "jsonErr".to_string()]
+    );
 }
 
 fn parse(src: &str) -> Vec<TopLevel> {

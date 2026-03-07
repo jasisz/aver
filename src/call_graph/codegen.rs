@@ -11,7 +11,10 @@ use super::scc::{tarjan_sccs, topo_components};
 /// Each inner vector is one SCC (single function or mutual-recursive group).
 /// Function references passed as call arguments (e.g. `apply(f, x)`)
 /// are treated as dependencies for ordering.
-pub fn ordered_fn_components<'a>(fns: &[&'a FnDef]) -> Vec<Vec<&'a FnDef>> {
+pub fn ordered_fn_components<'a>(
+    fns: &[&'a FnDef],
+    module_prefixes: &HashSet<String>,
+) -> Vec<Vec<&'a FnDef>> {
     if fns.is_empty() {
         return vec![];
     }
@@ -23,7 +26,7 @@ pub fn ordered_fn_components<'a>(fns: &[&'a FnDef]) -> Vec<Vec<&'a FnDef>> {
     let mut graph: HashMap<String, Vec<String>> = HashMap::new();
     for fd in fns {
         let mut deps = HashSet::new();
-        collect_codegen_deps_body(&fd.body, &name_set, &mut deps);
+        collect_codegen_deps_body(&fd.body, &name_set, module_prefixes, &mut deps);
         let mut sorted = deps.into_iter().collect::<Vec<_>>();
         sorted.sort();
         graph.insert(fd.name.clone(), sorted);

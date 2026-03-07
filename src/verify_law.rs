@@ -76,7 +76,9 @@ fn expr_calls_function(expr: &Expr, fn_name: &str) -> bool {
         }
         Expr::Match { subject, arms, .. } => {
             expr_calls_function(subject, fn_name)
-                || arms.iter().any(|arm| match_arm_calls_function(arm, fn_name))
+                || arms
+                    .iter()
+                    .any(|arm| match_arm_calls_function(arm, fn_name))
         }
         Expr::Constructor(_, Some(inner)) => expr_calls_function(inner, fn_name),
         Expr::ErrorProp(inner) => expr_calls_function(inner, fn_name),
@@ -87,9 +89,9 @@ fn expr_calls_function(expr: &Expr, fn_name: &str) -> bool {
         Expr::List(items) | Expr::Tuple(items) => {
             items.iter().any(|item| expr_calls_function(item, fn_name))
         }
-        Expr::MapLiteral(entries) => entries
-            .iter()
-            .any(|(key, value)| expr_calls_function(key, fn_name) || expr_calls_function(value, fn_name)),
+        Expr::MapLiteral(entries) => entries.iter().any(|(key, value)| {
+            expr_calls_function(key, fn_name) || expr_calls_function(value, fn_name)
+        }),
         Expr::RecordCreate { fields, .. } => fields
             .iter()
             .any(|(_, expr)| expr_calls_function(expr, fn_name)),
@@ -100,16 +102,9 @@ fn expr_calls_function(expr: &Expr, fn_name: &str) -> bool {
                     .any(|(_, expr)| expr_calls_function(expr, fn_name))
         }
         Expr::TailCall(boxed) => {
-            boxed.0 == fn_name
-                || boxed
-                    .1
-                    .iter()
-                    .any(|arg| expr_calls_function(arg, fn_name))
+            boxed.0 == fn_name || boxed.1.iter().any(|arg| expr_calls_function(arg, fn_name))
         }
-        Expr::Literal(_)
-        | Expr::Ident(_)
-        | Expr::Resolved(_)
-        | Expr::Constructor(_, None) => false,
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) | Expr::Constructor(_, None) => false,
     }
 }
 
@@ -176,7 +171,10 @@ mod tests {
                 spec_fn_name: "fooSpec".to_string()
             })
         );
-        assert_eq!(law_spec_ref(&verify_law, &fn_sigs), declared_spec_ref(&verify_law, &fn_sigs));
+        assert_eq!(
+            law_spec_ref(&verify_law, &fn_sigs),
+            declared_spec_ref(&verify_law, &fn_sigs)
+        );
         assert_eq!(
             canonical_spec_ref("foo", &verify_law, &fn_sigs),
             declared_spec_ref(&verify_law, &fn_sigs)
@@ -188,10 +186,18 @@ mod tests {
         let mut fn_sigs = FnSigMap::new();
         fn_sigs.insert(
             "fooSpec".to_string(),
-            (vec![Type::Int], Type::Int, vec!["Console.print".to_string()]),
+            (
+                vec![Type::Int],
+                Type::Int,
+                vec!["Console.print".to_string()],
+            ),
         );
 
-        let verify_law = law(Expr::Ident("x".to_string()), Expr::Ident("x".to_string()), "fooSpec");
+        let verify_law = law(
+            Expr::Ident("x".to_string()),
+            Expr::Ident("x".to_string()),
+            "fooSpec",
+        );
 
         assert!(declared_spec_ref(&verify_law, &fn_sigs).is_none());
         assert_eq!(
@@ -208,7 +214,11 @@ mod tests {
         let mut fn_sigs = FnSigMap::new();
         fn_sigs.insert("fooSpec".to_string(), int_sig());
 
-        let verify_law = law(Expr::Ident("x".to_string()), Expr::Ident("x".to_string()), "fooSpec");
+        let verify_law = law(
+            Expr::Ident("x".to_string()),
+            Expr::Ident("x".to_string()),
+            "fooSpec",
+        );
 
         assert!(declared_spec_ref(&verify_law, &fn_sigs).is_some());
         assert!(law_spec_ref(&verify_law, &fn_sigs).is_none());

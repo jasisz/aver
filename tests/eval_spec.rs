@@ -1236,8 +1236,8 @@ fn sum_type_match_single_field_variant() {
         "fn area(s: Shape) -> Float\n",
         "  ? \"area\"\n",
         "  match s\n",
-        "    Circle(r) -> r * r\n",
-        "    Point -> 0.0\n",
+        "    Shape.Circle(r) -> r * r\n",
+        "    Shape.Point -> 0.0\n",
     );
     let items = parse(src);
     let mut interp = Interpreter::new();
@@ -1270,8 +1270,8 @@ fn sum_type_match_no_arg_variant() {
         "fn area(s: Shape) -> Float\n",
         "  ? \"area\"\n",
         "  match s\n",
-        "    Circle(r) -> r * r\n",
-        "    Point -> 0.0\n",
+        "    Shape.Circle(r) -> r * r\n",
+        "    Shape.Point -> 0.0\n",
     );
     let items = parse(src);
     let mut interp = Interpreter::new();
@@ -1342,7 +1342,7 @@ fn record_field_access() {
 }
 
 #[test]
-fn record_positional_match() {
+fn record_match_binding_preserves_field_access() {
     let src = concat!(
         "record User\n",
         "  name: String\n",
@@ -1350,7 +1350,7 @@ fn record_positional_match() {
         "fn get_name(u: User) -> String\n",
         "  ? \"get name\"\n",
         "  match u\n",
-        "    User(name, age) -> name\n",
+        "    user -> user.name\n",
     );
     let items = parse(src);
     let mut interp = Interpreter::new();

@@ -728,8 +728,8 @@ fn valid_function_using_user_type_parameter() {
         "fn area(s: Shape) -> Float\n",
         "  ? \"area\"\n",
         "  match s\n",
-        "    Circle(r) -> r * r\n",
-        "    Point -> 0.0\n",
+        "    Shape.Circle(r) -> r * r\n",
+        "    Shape.Point -> 0.0\n",
     );
     assert_no_errors(src);
 }
@@ -1532,9 +1532,9 @@ fn exhaustive_user_sum_type_all_variants() {
         "  Point\n",
         "fn area(s: Shape) -> Float\n",
         "  match s\n",
-        "    Circle(r) -> r * r\n",
-        "    Rect(w, h) -> w * h\n",
-        "    Point -> 0.0\n",
+        "    Shape.Circle(r) -> r * r\n",
+        "    Shape.Rect(w, h) -> w * h\n",
+        "    Shape.Point -> 0.0\n",
     );
     assert_no_errors(src);
 }
@@ -1548,7 +1548,7 @@ fn error_non_exhaustive_user_sum_type_missing_variant() {
         "  Point\n",
         "fn area(s: Shape) -> Float\n",
         "  match s\n",
-        "    Circle(r) -> r * r\n",
+        "    Shape.Circle(r) -> r * r\n",
     );
     assert_error_containing(src, "Rect");
 }

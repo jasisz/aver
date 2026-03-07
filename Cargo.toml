@@ -3,12 +3,15 @@ members = [".", "aver-lsp", "aver-rt"]
 
 [package]
 name = "aver-lang"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 default-run = "aver"
 description = "Interpreter and transpiler for Aver, a statically-typed language designed for AI-assisted development"
 license = "MIT"
 repository = "https://github.com/jasisz/aver"
+homepage = "https://github.com/jasisz/aver"
+documentation = "https://docs.rs/aver-lang"
+readme = "README.md"
 keywords = ["language", "interpreter", "transpiler", "programming-language"]
 categories = ["compilers"]
 

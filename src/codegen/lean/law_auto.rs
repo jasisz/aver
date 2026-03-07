@@ -4,8 +4,8 @@
 /// matching and proof-shape logic lives in one place.
 mod arithmetic;
 mod maps;
-mod spec;
 mod shared;
+mod spec;
 
 use super::VerifyEmitMode;
 use super::expr::aver_name_to_lean;
@@ -75,12 +75,12 @@ pub fn emit_verify_law_forall_auto_proof(
             )
         })
         .or_else(|| {
-            maps::emit_recursive_map_presence_law(vb, law, ctx, &intro_names).map(
-                |proof_lines| AutoProof {
+            maps::emit_recursive_map_presence_law(vb, law, ctx, &intro_names).map(|proof_lines| {
+                AutoProof {
                     support_lines: Vec::new(),
                     proof_lines,
-                },
-            )
+                }
+            })
         })
         .or_else(|| {
             maps::emit_recursive_map_tracked_count_law(vb, law, ctx, &intro_names).map(

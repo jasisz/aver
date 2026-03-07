@@ -212,7 +212,10 @@ fn emit_fibonacci_spec_equivalence_law(
     let ret_type = type_annotation_to_lean(&impl_fd.return_type);
 
     let support_lines = vec![
-        format!("private def {} : Nat -> {} -> {} -> ({} × {})", advance_name, ret_type, ret_type, ret_type, ret_type),
+        format!(
+            "private def {} : Nat -> {} -> {} -> ({} × {})",
+            advance_name, ret_type, ret_type, ret_type, ret_type
+        ),
         format!("  | 0, a, b => (a, b)"),
         format!("  | Nat.succ m, a, b => {} m b (a + b)", advance_name),
         String::new(),
@@ -237,7 +240,10 @@ fn emit_fibonacci_spec_equivalence_law(
         "  induction m with".to_string(),
         "  | zero =>".to_string(),
         "      intro a b".to_string(),
-        format!("      simp [{}, {}, {}]", helper_name, helper_fuel_name, advance_name),
+        format!(
+            "      simp [{}, {}, {}]",
+            helper_name, helper_fuel_name, advance_name
+        ),
         "  | succ m ih =>".to_string(),
         "      intro a b".to_string(),
         format!("      rw [{}]", step_name),
@@ -266,7 +272,10 @@ fn emit_fibonacci_spec_equivalence_law(
         vec![
             format!("by_cases hneg : {} < 0", intro_name),
             format!("· simp [{}, {}, hneg]", impl_name, spec_name),
-            format!("· have hnonneg : 0 ≤ {} := (Int.not_lt).mp hneg", intro_name),
+            format!(
+                "· have hnonneg : 0 ≤ {} := (Int.not_lt).mp hneg",
+                intro_name
+            ),
             format!("  simp [{}, {}, hneg]", impl_name, spec_name),
             format!("  rw [← Int.toNat_of_nonneg hnonneg]"),
             "  calc".to_string(),
