@@ -1,0 +1,481 @@
+module Store
+    intent =
+        "Flat-file storage for projects and append-only task events."
+        "Projects stay as direct state in one file, while task mutation is persisted as"
+        "an event log so replay remains the source of truth for task projections."
+    exposes [dataDir, initStore, loadProjects, saveProjects, loadTaskEvents, appendTaskEvent, appendTaskEvents, serializeTaskEvent, latestEvent, eventsForTask, findTask, replayTask, replayAll]
+    depends [Domain.Types, Domain.Events, Infra.Codec]
+
+decision AppendOnlyTaskEventsWithFlatProjectState
+    date = "2026-03-08"
+    author = "Codex"
+    reason =
+        "Task lifecycle is where reviewable history matters, so an append-only event log pays for itself."
+        "Projects are much shallower, and storing them as current state avoids a second event system."
+        "This keeps the storage model simple while still exercising replay in a realistic place."
+    chosen = "TaskEventsPlusProjectState"
+    rejected = ["EverythingAsMutableState", "EverythingEventSourced", "InMemoryOnly"]
+    impacts = [loadProjects, saveProjects, loadTaskEvents, appendTaskEvents]
+
+effects StoreSetup = [Disk.makeDir, Disk.exists, Disk.writeText, Disk.appendText]
+effects StoreEnsureFile = [Disk.exists, Disk.writeText, Disk.appendText]
+effects StoreRead = [Disk.readText]
+effects StoreWrite = [Disk.writeText]
+effects StoreAppend = [Disk.appendText]
+
+fn dataDir() -> String
+    ? "Base directory for workflow engine files."
+    "/tmp/aver_workflow_engine"
+
+verify dataDir
+    dataDir() => "/tmp/aver_workflow_engine"
+
+fn projectsPath() -> String
+    ? "Path for current project state."
+    "{dataDir()}/projects.txt"
+
+verify projectsPath
+    projectsPath() => "/tmp/aver_workflow_engine/projects.txt"
+
+fn eventsPath() -> String
+    ? "Path for append-only task events."
+    "{dataDir()}/task_events.txt"
+
+verify eventsPath
+    eventsPath() => "/tmp/aver_workflow_engine/task_events.txt"
+
+fn initFileIfMissing(path: String) -> Result<Unit, String>
+    ? "Creates an empty file only when it does not already exist."
+    ! [StoreEnsureFile]
+    match Disk.exists(path)
+        true -> Disk.appendText(path, "")
+        false -> Disk.writeText(path, "")
+
+fn initStore() -> Result<Unit, String>
+    ? "Ensures the storage directory and core files exist."
+    ! [StoreSetup]
+    _dir = Disk.makeDir(dataDir())?
+    _projects = initFileIfMissing(projectsPath())?
+    initFileIfMissing(eventsPath())
+
+fn priorityText(priority: Priority) -> String
+    ? "Stable on-disk spelling for priorities."
+    match priority
+        Priority.Low -> "low"
+        Priority.Normal -> "normal"
+        Priority.High -> "high"
+        Priority.Urgent -> "urgent"
+
+verify priorityText
+    priorityText(Domain.Types.Priority.High) => "high"
+    priorityText(Domain.Types.Priority.Urgent) => "urgent"
+
+fn parsePriority(raw: String) -> Result<Priority, String>
+    ? "Parses one stored priority label."
+    match raw
+        "low" -> Result.Ok(Domain.Types.Priority.Low)
+        "normal" -> Result.Ok(Domain.Types.Priority.Normal)
+        "high" -> Result.Ok(Domain.Types.Priority.High)
+        "urgent" -> Result.Ok(Domain.Types.Priority.Urgent)
+        _ -> Result.Err("Invalid priority: " + raw)
+
+verify parsePriority
+    parsePriority("high") => Result.Ok(Domain.Types.Priority.High)
+    parsePriority("urgent") => Result.Ok(Domain.Types.Priority.Urgent)
+    parsePriority("x") => Result.Err("Invalid priority: x")
+
+fn serializeTags(tags: List<String>) -> String
+    ? "Tags are safe to join directly because validation keeps them comma-free."
+    match List.len(tags) == 0
+        true -> "-"
+        false -> String.join(tags, ",")
+
+verify serializeTags
+    serializeTags([]) => "-"
+    serializeTags(["ops", "waiting"]) => "ops,waiting"
+
+fn parseTags(raw: String) -> List<String>
+    ? "Parses the joined tag representation."
+    match raw
+        "-" -> []
+        "" -> []
+        _ -> String.split(raw, ",")
+
+verify parseTags
+    parseTags("-") => []
+    parseTags("ops,waiting") => ["ops", "waiting"]
+
+fn renderLines(lines: List<String>) -> String
+    ? "Turns serialized lines into whole-file text."
+    match List.len(lines) == 0
+        true -> ""
+        false -> "{String.join(lines, "\n")}\n"
+
+verify renderLines
+    renderLines([]) => ""
+    renderLines(["a", "b"]) => "a\nb\n"
+
+fn serializeProject(project: Project) -> String
+    ? "Encodes one project as a flat-file line."
+    String.join([project.id, Infra.Codec.escapeField(project.name), Infra.Codec.serializeBool(project.archived), project.createdAt, project.updatedAt], "|")
+
+verify serializeProject
+    serializeProject(Project(id = "alpha", name = "Alpha | team", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z")) => "alpha|Alpha %7C team|false|2026-03-08T12:00:00Z|2026-03-08T12:00:00Z"
+
+fn deserializeProject(line: String) -> Result<Project, String>
+    ? "Decodes one project line."
+    parts = String.split(line, "|")
+    id = Infra.Codec.fieldAt(parts, 0, "project")?
+    name = Infra.Codec.fieldAt(parts, 1, "project")?
+    archivedRaw = Infra.Codec.fieldAt(parts, 2, "project")?
+    archived = Infra.Codec.parseBool(archivedRaw)?
+    createdAt = Infra.Codec.fieldAt(parts, 3, "project")?
+    updatedAt = Infra.Codec.fieldAt(parts, 4, "project")?
+    Result.Ok(Project(id = id, name = name, archived = archived, createdAt = createdAt, updatedAt = updatedAt))
+
+verify deserializeProject
+    deserializeProject("alpha|Alpha %7C team|false|2026-03-08T12:00:00Z|2026-03-08T12:00:00Z") => Result.Ok(Project(id = "alpha", name = "Alpha | team", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z"))
+    deserializeProject("alpha|Alpha|x|2026-03-08T12:00:00Z|2026-03-08T12:00:00Z") => Result.Err("Invalid bool: x")
+
+fn parseProjectLines(lines: List<String>, acc: Result<List<Project>, String>) -> Result<List<Project>, String>
+    ? "Recursive parser for the project file."
+    match lines
+        [] -> acc
+        [line, ..rest] -> match acc
+            Result.Err(msg) -> Result.Err(msg)
+            Result.Ok(projects) -> match deserializeProject(line)
+                Result.Err(msg) -> Result.Err(msg)
+                Result.Ok(project) -> parseProjectLines(rest, Result.Ok(List.append(projects, project)))
+
+verify parseProjectLines
+    parseProjectLines([], Result.Ok([])) => Result.Ok([])
+    parseProjectLines(["alpha|Alpha|false|2026-03-08T12:00:00Z|2026-03-08T12:00:00Z"], Result.Ok([])) => Result.Ok([Project(id = "alpha", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z")])
+
+fn parseProjects(content: String) -> Result<List<Project>, String>
+    ? "Parses the full project file."
+    parseProjectLines(Infra.Codec.splitNonEmptyLines(content), Result.Ok([]))
+
+verify parseProjects
+    parseProjects("") => Result.Ok([])
+    parseProjects("alpha|Alpha|false|2026-03-08T12:00:00Z|2026-03-08T12:00:00Z\n") => Result.Ok([Project(id = "alpha", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z")])
+
+fn loadProjects() -> Result<List<Project>, String>
+    ? "Reads all projects from disk."
+    ! [StoreRead]
+    content = Disk.readText(projectsPath())?
+    parseProjects(content)
+
+fn saveProjects(projects: List<Project>) -> Result<Unit, String>
+    ? "Rewrites project state as one whole file."
+    ! [StoreWrite]
+    Disk.writeText(projectsPath(), renderLines(serializeProjectLines(projects)))
+
+fn serializeProjectLines(projects: List<Project>) -> List<String>
+    ? "Serializes projects for the project state file."
+    match projects
+        [] -> []
+        [project, ..rest] -> List.prepend(serializeProject(project), serializeProjectLines(rest))
+
+verify serializeProjectLines
+    serializeProjectLines([]) => []
+    serializeProjectLines([Project(id = "alpha", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z")]) => ["alpha|Alpha|false|2026-03-08T12:00:00Z|2026-03-08T12:00:00Z"]
+
+fn requiredPayload(raw: String, label: String, index: Int) -> Result<String, String>
+    ? "Reads one required event payload slot."
+    match Infra.Codec.decodeOption(raw)
+        Option.Some(value) -> Result.Ok(value)
+        Option.None -> Result.Err("Corrupt {label}: missing payload {Int.toString(index)}")
+
+verify requiredPayload
+    requiredPayload("hello", "event", 0) => Result.Ok("hello")
+    requiredPayload("-", "event", 1) => Result.Err("Corrupt event: missing payload 1")
+
+fn eventKind(event: TaskEvent) -> String
+    ? "Stable on-disk event label."
+    match event
+        TaskEvent.TaskCreated(_, _, _, _, _) -> "TaskCreated"
+        TaskEvent.TaskRenamed(_, _) -> "TaskRenamed"
+        TaskEvent.TaskStarted(_) -> "TaskStarted"
+        TaskEvent.TaskBlocked(_, _) -> "TaskBlocked"
+        TaskEvent.TaskCompleted(_) -> "TaskCompleted"
+        TaskEvent.TaskReopened(_, _) -> "TaskReopened"
+        TaskEvent.PriorityChanged(_, _) -> "PriorityChanged"
+        TaskEvent.TagAdded(_, _) -> "TagAdded"
+        TaskEvent.TagRemoved(_, _) -> "TagRemoved"
+        TaskEvent.CommentAdded(_) -> "CommentAdded"
+        TaskEvent.DeadlineSet(_, _) -> "DeadlineSet"
+        TaskEvent.DeadlineCleared(_) -> "DeadlineCleared"
+        TaskEvent.TaskArchived(_) -> "TaskArchived"
+
+verify eventKind
+    eventKind(Domain.Types.TaskEvent.TaskCompleted("2026-03-10T12:00:00Z")) => "TaskCompleted"
+    eventKind(Domain.Types.TaskEvent.CommentAdded(Comment(id = "c1", body = "hi", author = "alice", createdAt = "2026-03-10T12:00:00Z"))) => "CommentAdded"
+
+fn serializeTaskEvent(entry: TaskEventRecord) -> String
+    ? "Encodes one task event line with five payload slots."
+    match entry.event
+        TaskEvent.TaskCreated(title, priority, tags, deadline, at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "TaskCreated", Infra.Codec.escapeField(title), priorityText(priority), serializeTags(tags), Infra.Codec.encodeOption(deadline), at], "|")
+        TaskEvent.TaskRenamed(title, at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "TaskRenamed", Infra.Codec.escapeField(title), at, "-", "-", "-"], "|")
+        TaskEvent.TaskStarted(at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "TaskStarted", at, "-", "-", "-", "-"], "|")
+        TaskEvent.TaskBlocked(reason, at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "TaskBlocked", Infra.Codec.escapeField(reason), at, "-", "-", "-"], "|")
+        TaskEvent.TaskCompleted(at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "TaskCompleted", at, "-", "-", "-", "-"], "|")
+        TaskEvent.TaskReopened(reason, at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "TaskReopened", Infra.Codec.escapeField(reason), at, "-", "-", "-"], "|")
+        TaskEvent.PriorityChanged(priority, at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "PriorityChanged", priorityText(priority), at, "-", "-", "-"], "|")
+        TaskEvent.TagAdded(tag, at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "TagAdded", tag, at, "-", "-", "-"], "|")
+        TaskEvent.TagRemoved(tag, at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "TagRemoved", tag, at, "-", "-", "-"], "|")
+        TaskEvent.CommentAdded(comment) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "CommentAdded", comment.id, Infra.Codec.escapeField(comment.body), Infra.Codec.escapeField(comment.author), comment.createdAt, "-"], "|")
+        TaskEvent.DeadlineSet(deadline, at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "DeadlineSet", deadline, at, "-", "-", "-"], "|")
+        TaskEvent.DeadlineCleared(at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "DeadlineCleared", at, "-", "-", "-", "-"], "|")
+        TaskEvent.TaskArchived(at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "TaskArchived", at, "-", "-", "-", "-"], "|")
+
+verify serializeTaskEvent
+    serializeTaskEvent(TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Write notes", Domain.Types.Priority.High, ["ops"], Option.Some("2026-03-09T12:00:00Z"), "2026-03-08T12:00:00Z"))) => "t1|alpha|1|TaskCreated|Write notes|high|ops|2026-03-09T12:00:00Z|2026-03-08T12:00:00Z"
+    serializeTaskEvent(TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.CommentAdded(Comment(id = "t1-c2", body = "Needs | review", author = "alice", createdAt = "2026-03-08T13:00:00Z")))) => "t1|alpha|2|CommentAdded|t1-c2|Needs %7C review|alice|2026-03-08T13:00:00Z|-"
+
+fn deserializeTaskEvent(line: String) -> Result<TaskEventRecord, String>
+    ? "Decodes one serialized task event line."
+    parts = String.split(line, "|")
+    taskId = Infra.Codec.fieldAt(parts, 0, "event")?
+    projectId = Infra.Codec.fieldAt(parts, 1, "event")?
+    seqRaw = Infra.Codec.fieldAt(parts, 2, "event")?
+    seq = Int.fromString(seqRaw)?
+    kind = Infra.Codec.fieldAt(parts, 3, "event")?
+    p1 = Infra.Codec.optionalFieldAt(parts, 4)
+    p2 = Infra.Codec.optionalFieldAt(parts, 5)
+    p3 = Infra.Codec.optionalFieldAt(parts, 6)
+    p4 = Infra.Codec.optionalFieldAt(parts, 7)
+    p5 = Infra.Codec.optionalFieldAt(parts, 8)
+    event = decodeTaskEvent(kind, p1, p2, p3, p4, p5)?
+    Result.Ok(TaskEventRecord(taskId = taskId, projectId = projectId, seq = seq, event = event))
+
+verify deserializeTaskEvent
+    deserializeTaskEvent("t1|alpha|1|TaskCreated|Write notes|high|ops|2026-03-09T12:00:00Z|2026-03-08T12:00:00Z") => Result.Ok(TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Write notes", Domain.Types.Priority.High, ["ops"], Option.Some("2026-03-09T12:00:00Z"), "2026-03-08T12:00:00Z")))
+    deserializeTaskEvent("t1|alpha|2|CommentAdded|t1-c2|Needs %7C review|alice|2026-03-08T13:00:00Z|-") => Result.Ok(TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.CommentAdded(Comment(id = "t1-c2", body = "Needs | review", author = "alice", createdAt = "2026-03-08T13:00:00Z"))))
+
+fn decodeTaskEvent(kind: String, p1: String, p2: String, p3: String, p4: String, p5: String) -> Result<TaskEvent, String>
+    ? "Parses one event kind from its five payload slots."
+    match kind
+        "TaskCreated" -> decodeTaskCreated(p1, p2, p3, p4, p5)
+        "TaskRenamed" -> decodeTaskRenamed(p1, p2)
+        "TaskStarted" -> decodeTaskStarted(p1)
+        "TaskBlocked" -> decodeTaskBlocked(p1, p2)
+        "TaskCompleted" -> decodeTaskCompleted(p1)
+        "TaskReopened" -> decodeTaskReopened(p1, p2)
+        "PriorityChanged" -> decodePriorityChanged(p1, p2)
+        "TagAdded" -> decodeTagAdded(p1, p2)
+        "TagRemoved" -> decodeTagRemoved(p1, p2)
+        "CommentAdded" -> decodeCommentAdded(p1, p2, p3, p4)
+        "DeadlineSet" -> decodeDeadlineSet(p1, p2)
+        "DeadlineCleared" -> decodeDeadlineCleared(p1)
+        "TaskArchived" -> decodeTaskArchived(p1)
+        _ -> Result.Err("Unknown event kind: " + kind)
+
+verify decodeTaskEvent
+    decodeTaskEvent("TaskCompleted", "2026-03-10T12:00:00Z", "-", "-", "-", "-") => Result.Ok(Domain.Types.TaskEvent.TaskCompleted("2026-03-10T12:00:00Z"))
+    decodeTaskEvent("Unknown", "-", "-", "-", "-", "-") => Result.Err("Unknown event kind: Unknown")
+
+fn decodeTaskStarted(rawAt: String) -> Result<TaskEvent, String>
+    ? "Parses the TaskStarted payload."
+    at = requiredPayload(rawAt, "TaskStarted", 0)?
+    Result.Ok(Domain.Types.TaskEvent.TaskStarted(at))
+
+verify decodeTaskStarted
+    decodeTaskStarted("2026-03-08T12:00:00Z") => Result.Ok(Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z"))
+
+fn decodeTaskCompleted(rawAt: String) -> Result<TaskEvent, String>
+    ? "Parses the TaskCompleted payload."
+    at = requiredPayload(rawAt, "TaskCompleted", 0)?
+    Result.Ok(Domain.Types.TaskEvent.TaskCompleted(at))
+
+verify decodeTaskCompleted
+    decodeTaskCompleted("2026-03-08T12:00:00Z") => Result.Ok(Domain.Types.TaskEvent.TaskCompleted("2026-03-08T12:00:00Z"))
+
+fn decodeTaskCreated(rawTitle: String, rawPriority: String, rawTags: String, rawDeadline: String, rawAt: String) -> Result<TaskEvent, String>
+    ? "Parses the TaskCreated payload."
+    title = requiredPayload(rawTitle, "TaskCreated", 0)?
+    priorityLabel = requiredPayload(rawPriority, "TaskCreated", 1)?
+    priority = parsePriority(priorityLabel)?
+    tagsLabel = requiredPayload(rawTags, "TaskCreated", 2)?
+    deadline = Infra.Codec.decodeOption(rawDeadline)
+    at = requiredPayload(rawAt, "TaskCreated", 4)?
+    Result.Ok(Domain.Types.TaskEvent.TaskCreated(title, priority, parseTags(tagsLabel), deadline, at))
+
+verify decodeTaskCreated
+    decodeTaskCreated("Write notes", "high", "ops,waiting", "-", "2026-03-08T12:00:00Z") => Result.Ok(Domain.Types.TaskEvent.TaskCreated("Write notes", Domain.Types.Priority.High, ["ops", "waiting"], Option.None, "2026-03-08T12:00:00Z"))
+
+fn decodeTaskRenamed(rawTitle: String, rawAt: String) -> Result<TaskEvent, String>
+    ? "Parses the TaskRenamed payload."
+    title = requiredPayload(rawTitle, "TaskRenamed", 0)?
+    at = requiredPayload(rawAt, "TaskRenamed", 1)?
+    Result.Ok(Domain.Types.TaskEvent.TaskRenamed(title, at))
+
+verify decodeTaskRenamed
+    decodeTaskRenamed("New title", "2026-03-08T12:00:00Z") => Result.Ok(Domain.Types.TaskEvent.TaskRenamed("New title", "2026-03-08T12:00:00Z"))
+
+fn decodeTaskBlocked(rawReason: String, rawAt: String) -> Result<TaskEvent, String>
+    ? "Parses the TaskBlocked payload."
+    reason = requiredPayload(rawReason, "TaskBlocked", 0)?
+    at = requiredPayload(rawAt, "TaskBlocked", 1)?
+    Result.Ok(Domain.Types.TaskEvent.TaskBlocked(reason, at))
+
+verify decodeTaskBlocked
+    decodeTaskBlocked("Waiting on vendor", "2026-03-08T12:00:00Z") => Result.Ok(Domain.Types.TaskEvent.TaskBlocked("Waiting on vendor", "2026-03-08T12:00:00Z"))
+
+fn decodeTaskReopened(rawReason: String, rawAt: String) -> Result<TaskEvent, String>
+    ? "Parses the TaskReopened payload."
+    reason = requiredPayload(rawReason, "TaskReopened", 0)?
+    at = requiredPayload(rawAt, "TaskReopened", 1)?
+    Result.Ok(Domain.Types.TaskEvent.TaskReopened(reason, at))
+
+verify decodeTaskReopened
+    decodeTaskReopened("Regression found", "2026-03-08T12:00:00Z") => Result.Ok(Domain.Types.TaskEvent.TaskReopened("Regression found", "2026-03-08T12:00:00Z"))
+
+fn decodePriorityChanged(rawPriority: String, rawAt: String) -> Result<TaskEvent, String>
+    ? "Parses the PriorityChanged payload."
+    priorityLabel = requiredPayload(rawPriority, "PriorityChanged", 0)?
+    priority = parsePriority(priorityLabel)?
+    at = requiredPayload(rawAt, "PriorityChanged", 1)?
+    Result.Ok(Domain.Types.TaskEvent.PriorityChanged(priority, at))
+
+verify decodePriorityChanged
+    decodePriorityChanged("urgent", "2026-03-08T12:00:00Z") => Result.Ok(Domain.Types.TaskEvent.PriorityChanged(Domain.Types.Priority.Urgent, "2026-03-08T12:00:00Z"))
+
+fn decodeTagAdded(rawTag: String, rawAt: String) -> Result<TaskEvent, String>
+    ? "Parses the TagAdded payload."
+    tag = requiredPayload(rawTag, "TagAdded", 0)?
+    at = requiredPayload(rawAt, "TagAdded", 1)?
+    Result.Ok(Domain.Types.TaskEvent.TagAdded(tag, at))
+
+verify decodeTagAdded
+    decodeTagAdded("waiting", "2026-03-08T12:00:00Z") => Result.Ok(Domain.Types.TaskEvent.TagAdded("waiting", "2026-03-08T12:00:00Z"))
+
+fn decodeTagRemoved(rawTag: String, rawAt: String) -> Result<TaskEvent, String>
+    ? "Parses the TagRemoved payload."
+    tag = requiredPayload(rawTag, "TagRemoved", 0)?
+    at = requiredPayload(rawAt, "TagRemoved", 1)?
+    Result.Ok(Domain.Types.TaskEvent.TagRemoved(tag, at))
+
+verify decodeTagRemoved
+    decodeTagRemoved("waiting", "2026-03-08T12:00:00Z") => Result.Ok(Domain.Types.TaskEvent.TagRemoved("waiting", "2026-03-08T12:00:00Z"))
+
+fn decodeCommentAdded(rawId: String, rawBody: String, rawAuthor: String, rawAt: String) -> Result<TaskEvent, String>
+    ? "Parses the CommentAdded payload."
+    id = requiredPayload(rawId, "CommentAdded", 0)?
+    body = requiredPayload(rawBody, "CommentAdded", 1)?
+    author = requiredPayload(rawAuthor, "CommentAdded", 2)?
+    createdAt = requiredPayload(rawAt, "CommentAdded", 3)?
+    Result.Ok(Domain.Types.TaskEvent.CommentAdded(Comment(id = id, body = body, author = author, createdAt = createdAt)))
+
+verify decodeCommentAdded
+    decodeCommentAdded("t1-c2", "Needs | review", "alice", "2026-03-08T13:00:00Z") => Result.Ok(Domain.Types.TaskEvent.CommentAdded(Comment(id = "t1-c2", body = "Needs | review", author = "alice", createdAt = "2026-03-08T13:00:00Z")))
+
+fn decodeDeadlineSet(rawDeadline: String, rawAt: String) -> Result<TaskEvent, String>
+    ? "Parses the DeadlineSet payload."
+    deadline = requiredPayload(rawDeadline, "DeadlineSet", 0)?
+    at = requiredPayload(rawAt, "DeadlineSet", 1)?
+    Result.Ok(Domain.Types.TaskEvent.DeadlineSet(deadline, at))
+
+verify decodeDeadlineSet
+    decodeDeadlineSet("2026-03-09T12:00:00Z", "2026-03-08T12:00:00Z") => Result.Ok(Domain.Types.TaskEvent.DeadlineSet("2026-03-09T12:00:00Z", "2026-03-08T12:00:00Z"))
+
+fn decodeDeadlineCleared(rawAt: String) -> Result<TaskEvent, String>
+    ? "Parses the DeadlineCleared payload."
+    at = requiredPayload(rawAt, "DeadlineCleared", 0)?
+    Result.Ok(Domain.Types.TaskEvent.DeadlineCleared(at))
+
+verify decodeDeadlineCleared
+    decodeDeadlineCleared("2026-03-08T12:00:00Z") => Result.Ok(Domain.Types.TaskEvent.DeadlineCleared("2026-03-08T12:00:00Z"))
+
+fn decodeTaskArchived(rawAt: String) -> Result<TaskEvent, String>
+    ? "Parses the TaskArchived payload."
+    at = requiredPayload(rawAt, "TaskArchived", 0)?
+    Result.Ok(Domain.Types.TaskEvent.TaskArchived(at))
+
+verify decodeTaskArchived
+    decodeTaskArchived("2026-03-08T12:00:00Z") => Result.Ok(Domain.Types.TaskEvent.TaskArchived("2026-03-08T12:00:00Z"))
+
+fn parseEventLines(lines: List<String>, acc: Result<List<TaskEventRecord>, String>) -> Result<List<TaskEventRecord>, String>
+    ? "Recursive parser for the task event log."
+    match lines
+        [] -> acc
+        [line, ..rest] -> match acc
+            Result.Err(msg) -> Result.Err(msg)
+            Result.Ok(events) -> match deserializeTaskEvent(line)
+                Result.Err(msg) -> Result.Err(msg)
+                Result.Ok(event) -> parseEventLines(rest, Result.Ok(List.append(events, event)))
+
+verify parseEventLines
+    parseEventLines([], Result.Ok([])) => Result.Ok([])
+    parseEventLines(["t1|alpha|1|TaskStarted|2026-03-08T12:00:00Z|-|-|-|-"], Result.Ok([])) => Result.Ok([TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z"))])
+
+fn parseTaskEvents(content: String) -> Result<List<TaskEventRecord>, String>
+    ? "Parses the whole task event log."
+    parseEventLines(Infra.Codec.splitNonEmptyLines(content), Result.Ok([]))
+
+verify parseTaskEvents
+    parseTaskEvents("") => Result.Ok([])
+    parseTaskEvents("t1|alpha|1|TaskStarted|2026-03-08T12:00:00Z|-|-|-|-\n") => Result.Ok([TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z"))])
+
+fn loadTaskEvents() -> Result<List<TaskEventRecord>, String>
+    ? "Reads the append-only task event log."
+    ! [StoreRead]
+    content = Disk.readText(eventsPath())?
+    parseTaskEvents(content)
+
+fn appendTaskEvent(entry: TaskEventRecord) -> Result<Unit, String>
+    ? "Appends one serialized task event."
+    ! [StoreAppend]
+    Disk.appendText(eventsPath(), "{serializeTaskEvent(entry)}\n")
+
+fn appendTaskEvents(entries: List<TaskEventRecord>) -> Result<Unit, String>
+    ? "Appends many serialized task events in one write."
+    ! [StoreAppend]
+    Disk.appendText(eventsPath(), renderLines(serializeTaskEventLines(entries)))
+
+fn serializeTaskEventLines(entries: List<TaskEventRecord>) -> List<String>
+    ? "Serializes event records for batch appends."
+    match entries
+        [] -> []
+        [entry, ..rest] -> List.prepend(serializeTaskEvent(entry), serializeTaskEventLines(rest))
+
+verify serializeTaskEventLines
+    serializeTaskEventLines([]) => []
+    serializeTaskEventLines([TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z"))]) => ["t1|alpha|1|TaskStarted|2026-03-08T12:00:00Z|-|-|-|-"]
+
+fn latestEvent(events: List<TaskEventRecord>) -> Option<TaskEventRecord>
+    ? "Storage re-exports the domain helper for callers already depending on Store."
+    Domain.Events.latestEvent(events)
+
+verify latestEvent
+    latestEvent([]) => Option.None
+    latestEvent([TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z")), TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.TaskCompleted("2026-03-09T12:00:00Z"))]) => Option.Some(TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.TaskCompleted("2026-03-09T12:00:00Z")))
+
+fn eventsForTask(events: List<TaskEventRecord>, taskId: String) -> List<TaskEventRecord>
+    ? "Storage re-exports task-stream filtering from the domain."
+    Domain.Events.eventsForTask(events, taskId)
+
+verify eventsForTask
+    eventsForTask([TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z")), TaskEventRecord(taskId = "t2", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z"))], "t1") => [TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z"))]
+
+fn findTask(tasks: List<Task>, taskId: String) -> Option<Task>
+    ? "Storage re-exports task lookup from the domain."
+    Domain.Events.findTask(tasks, taskId)
+
+verify findTask
+    findTask([Task(id = "t1", projectId = "alpha", title = "Original title", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z")], "t1") => Option.Some(Task(id = "t1", projectId = "alpha", title = "Original title", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z"))
+    findTask([], "t1") => Option.None
+
+fn replayTask(events: List<TaskEventRecord>) -> Result<Task, String>
+    ? "Storage re-exports typed task replay from the domain."
+    Domain.Events.replayTask(events)
+
+verify replayTask
+    replayTask([TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Plan release", Domain.Types.Priority.High, ["ops"], Option.None, "2026-03-08T12:00:00Z")), TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.TaskStarted("2026-03-09T12:00:00Z"))]) => Result.Ok(Task(id = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.InProgress, priority = Domain.Types.Priority.High, tags = ["ops"], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-09T12:00:00Z", statusChangedAt = "2026-03-09T12:00:00Z"))
+    replayTask([]) => Result.Err("No events for task")
+
+fn replayAll(events: List<TaskEventRecord>) -> Result<List<Task>, String>
+    ? "Storage re-exports typed full-log replay from the domain."
+    Domain.Events.replayAll(events)
+
+verify replayAll
+    replayAll([TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Plan release", Domain.Types.Priority.High, [], Option.None, "2026-03-08T12:00:00Z")), TaskEventRecord(taskId = "t2", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Write docs", Domain.Types.Priority.Normal, ["docs"], Option.None, "2026-03-08T13:00:00Z"))]) => Result.Ok([Task(id = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.High, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z"), Task(id = "t2", projectId = "alpha", title = "Write docs", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = ["docs"], deadline = Option.None, comments = [], createdAt = "2026-03-08T13:00:00Z", updatedAt = "2026-03-08T13:00:00Z", statusChangedAt = "2026-03-08T13:00:00Z")])

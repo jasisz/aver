@@ -2,7 +2,7 @@ use colored::Colorize;
 use std::collections::BTreeSet;
 
 use crate::ast::{
-    DecisionBlock, DecisionImpact, Expr, FnBody, FnDef, Stmt, TopLevel, VerifyBlock,
+    DecisionBlock, DecisionImpact, Expr, FnDef, Pattern, Stmt, TopLevel, VerifyBlock,
     VerifyGivenDomain, VerifyKind,
 };
 use crate::interpreter::{Interpreter, aver_repr};
@@ -36,244 +36,14 @@ pub struct CheckFinding {
     pub message: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum VerifyOutputShape {
-    BoolTrue,
-    BoolFalse,
-    Some,
-    None,
-    Ok,
-    Err,
-    Variant(String),
-}
-
-impl VerifyOutputShape {
-    fn display(&self) -> String {
-        match self {
-            VerifyOutputShape::BoolTrue => "true".to_string(),
-            VerifyOutputShape::BoolFalse => "false".to_string(),
-            VerifyOutputShape::Some => "Option.Some".to_string(),
-            VerifyOutputShape::None => "Option.None".to_string(),
-            VerifyOutputShape::Ok => "Result.Ok".to_string(),
-            VerifyOutputShape::Err => "Result.Err".to_string(),
-            VerifyOutputShape::Variant(name) => name.clone(),
+fn module_name_for_items(items: &[TopLevel]) -> Option<String> {
+    items.iter().find_map(|item| {
+        if let TopLevel::Module(m) = item {
+            Some(m.name.clone())
+        } else {
+            None
         }
-    }
-}
-
-struct VerifyShapeContract {
-    return_type: Type,
-    expected: Vec<VerifyOutputShape>,
-    seen: std::collections::HashSet<VerifyOutputShape>,
-}
-
-impl VerifyShapeContract {
-    fn observe(&mut self, value: &Value) {
-        if let Some(shape) = observed_output_shape_for_type(&self.return_type, value) {
-            self.seen.insert(shape);
-        }
-    }
-
-    fn observe_shape(&mut self, shape: VerifyOutputShape) {
-        self.seen.insert(shape);
-    }
-
-    fn missing(&self) -> Vec<VerifyOutputShape> {
-        self.expected
-            .iter()
-            .filter(|shape| !self.seen.contains(*shape))
-            .cloned()
-            .collect()
-    }
-}
-
-fn build_verify_shape_contract(
-    block: &VerifyBlock,
-    interp: &Interpreter,
-) -> Option<VerifyShapeContract> {
-    let fn_val = interp.lookup(&block.fn_name).ok()?;
-    let Value::Fn {
-        return_type, body, ..
-    } = fn_val
-    else {
-        return None;
-    };
-    let ret_ty = parse_type_str_strict(&return_type).ok()?;
-
-    let all_shapes = expected_output_shapes_for_type(&ret_ty, interp)?;
-    let mut declared_shapes = std::collections::HashSet::new();
-    collect_declared_output_shapes_from_body(body.as_ref(), &ret_ty, &mut declared_shapes);
-    let expected: Vec<VerifyOutputShape> = all_shapes
-        .into_iter()
-        .filter(|shape| declared_shapes.contains(shape))
-        .collect();
-    if expected.len() < 2 {
-        return None;
-    }
-
-    Some(VerifyShapeContract {
-        return_type: ret_ty,
-        expected,
-        seen: std::collections::HashSet::new(),
     })
-}
-
-fn expected_output_shapes_for_type(
-    ty: &Type,
-    interp: &Interpreter,
-) -> Option<Vec<VerifyOutputShape>> {
-    match ty {
-        Type::Bool => Some(vec![
-            VerifyOutputShape::BoolTrue,
-            VerifyOutputShape::BoolFalse,
-        ]),
-        Type::Option(_) => Some(vec![VerifyOutputShape::Some, VerifyOutputShape::None]),
-        Type::Result(_, _) => Some(vec![VerifyOutputShape::Ok, VerifyOutputShape::Err]),
-        Type::Named(type_name) => {
-            let ns = interp.lookup(type_name).ok()?;
-            let Value::Namespace { members, .. } = ns else {
-                return None;
-            };
-
-            let ctor_prefix = format!("__ctor:{}:", type_name);
-            let mut variants = std::collections::BTreeSet::new();
-
-            for (member_name, member_value) in members {
-                match member_value {
-                    Value::Variant { type_name: t, .. } if t == type_name.as_str() => {
-                        variants.insert(member_name);
-                    }
-                    Value::Builtin(builtin_name) if builtin_name.starts_with(&ctor_prefix) => {
-                        variants.insert(member_name);
-                    }
-                    _ => {}
-                }
-            }
-
-            if variants.is_empty() {
-                return None;
-            }
-
-            Some(
-                variants
-                    .into_iter()
-                    .map(VerifyOutputShape::Variant)
-                    .collect(),
-            )
-        }
-        _ => None,
-    }
-}
-
-fn observed_output_shape_for_type(ty: &Type, value: &Value) -> Option<VerifyOutputShape> {
-    match ty {
-        Type::Bool => match value {
-            Value::Bool(true) => Some(VerifyOutputShape::BoolTrue),
-            Value::Bool(false) => Some(VerifyOutputShape::BoolFalse),
-            _ => None,
-        },
-        Type::Option(_) => match value {
-            Value::Some(_) => Some(VerifyOutputShape::Some),
-            Value::None => Some(VerifyOutputShape::None),
-            _ => None,
-        },
-        Type::Result(_, _) => match value {
-            Value::Ok(_) => Some(VerifyOutputShape::Ok),
-            Value::Err(_) => Some(VerifyOutputShape::Err),
-            _ => None,
-        },
-        Type::Named(type_name) => match value {
-            Value::Variant {
-                type_name: actual_type,
-                variant,
-                ..
-            } if actual_type == type_name => Some(VerifyOutputShape::Variant(variant.clone())),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-fn collect_declared_output_shapes_from_body(
-    body: &FnBody,
-    ret_ty: &Type,
-    out: &mut std::collections::HashSet<VerifyOutputShape>,
-) {
-    if let Some(expr) = body.tail_expr() {
-        collect_declared_output_shapes_from_tail_expr(expr, ret_ty, out);
-    }
-}
-
-fn collect_declared_output_shapes_from_tail_expr(
-    expr: &Expr,
-    ret_ty: &Type,
-    out: &mut std::collections::HashSet<VerifyOutputShape>,
-) {
-    match expr {
-        Expr::Match { arms, .. } => {
-            for arm in arms {
-                collect_declared_output_shapes_from_tail_expr(&arm.body, ret_ty, out);
-            }
-        }
-        _ => {
-            if let Some(shape) = declared_output_shape_from_expr(ret_ty, expr) {
-                out.insert(shape);
-            }
-        }
-    }
-}
-
-fn declared_output_shape_from_expr(ret_ty: &Type, expr: &Expr) -> Option<VerifyOutputShape> {
-    match ret_ty {
-        Type::Bool => match expr {
-            Expr::Literal(crate::ast::Literal::Bool(true)) => Some(VerifyOutputShape::BoolTrue),
-            Expr::Literal(crate::ast::Literal::Bool(false)) => Some(VerifyOutputShape::BoolFalse),
-            _ => None,
-        },
-        Type::Option(_) => match expr {
-            Expr::FnCall(callee, _) => match dotted_name(callee) {
-                Some(path) if path == "Option.Some" => Some(VerifyOutputShape::Some),
-                _ => None,
-            },
-            _ => match dotted_name(expr) {
-                Some(path) if path == "Option.None" => Some(VerifyOutputShape::None),
-                _ => None,
-            },
-        },
-        Type::Result(_, _) => match expr {
-            Expr::FnCall(callee, _) => match dotted_name(callee) {
-                Some(path) if path == "Result.Ok" => Some(VerifyOutputShape::Ok),
-                Some(path) if path == "Result.Err" => Some(VerifyOutputShape::Err),
-                _ => None,
-            },
-            _ => None,
-        },
-        Type::Named(type_name) => {
-            let prefix = format!("{}.", type_name);
-            match expr {
-                Expr::Attr(_, _) => {
-                    let path = dotted_name(expr)?;
-                    let variant = path.strip_prefix(&prefix)?;
-                    if variant.is_empty() {
-                        None
-                    } else {
-                        Some(VerifyOutputShape::Variant(variant.to_string()))
-                    }
-                }
-                Expr::FnCall(callee, _) => {
-                    let path = dotted_name(callee)?;
-                    let variant = path.strip_prefix(&prefix)?;
-                    if variant.is_empty() {
-                        None
-                    } else {
-                        Some(VerifyOutputShape::Variant(variant.to_string()))
-                    }
-                }
-                _ => None,
-            }
-        }
-        _ => None,
-    }
 }
 
 fn dotted_name(expr: &Expr) -> Option<String> {
@@ -289,62 +59,252 @@ fn dotted_name(expr: &Expr) -> Option<String> {
     }
 }
 
-fn verify_case_uses_error_prop_on_target(expr: &Expr, fn_name: &str) -> bool {
+fn normalize_constructor_tag(path: &str) -> Option<String> {
+    let mut parts = path.split('.').collect::<Vec<_>>();
+    if parts.len() < 2 {
+        return None;
+    }
+    let variant = parts.pop()?;
+    let type_name = parts.pop()?;
+    Some(format!("{}.{}", type_name, variant))
+}
+
+fn constructor_tag_from_pattern(pattern: &Pattern) -> Option<String> {
+    match pattern {
+        Pattern::Constructor(path, _) => normalize_constructor_tag(path),
+        _ => None,
+    }
+}
+
+fn constructor_tag_from_expr(expr: &Expr) -> Option<String> {
     match expr {
-        Expr::ErrorProp(inner) => {
-            verify_case_calls_target(inner, fn_name)
-                || verify_case_uses_error_prop_on_target(inner, fn_name)
-        }
+        Expr::Attr(_, _) => normalize_constructor_tag(&dotted_name(expr)?),
+        Expr::FnCall(callee, _) => normalize_constructor_tag(&dotted_name(callee)?),
+        Expr::Constructor(name, _) => normalize_constructor_tag(name),
+        _ => None,
+    }
+}
+
+fn collect_target_call_args<'a>(
+    expr: &'a Expr,
+    fn_name: &str,
+    arg_index: usize,
+    out: &mut Vec<&'a Expr>,
+) {
+    match expr {
         Expr::FnCall(callee, args) => {
-            verify_case_uses_error_prop_on_target(callee, fn_name)
-                || args
-                    .iter()
-                    .any(|arg| verify_case_uses_error_prop_on_target(arg, fn_name))
+            if callee_is_target(callee, fn_name)
+                && let Some(arg) = args.get(arg_index)
+            {
+                out.push(arg);
+            }
+            collect_target_call_args(callee, fn_name, arg_index, out);
+            for arg in args {
+                collect_target_call_args(arg, fn_name, arg_index, out);
+            }
         }
         Expr::BinOp(_, left, right) => {
-            verify_case_uses_error_prop_on_target(left, fn_name)
-                || verify_case_uses_error_prop_on_target(right, fn_name)
+            collect_target_call_args(left, fn_name, arg_index, out);
+            collect_target_call_args(right, fn_name, arg_index, out);
         }
         Expr::Match { subject, arms, .. } => {
-            verify_case_uses_error_prop_on_target(subject, fn_name)
-                || arms
-                    .iter()
-                    .any(|arm| verify_case_uses_error_prop_on_target(&arm.body, fn_name))
+            collect_target_call_args(subject, fn_name, arg_index, out);
+            for arm in arms {
+                collect_target_call_args(&arm.body, fn_name, arg_index, out);
+            }
         }
-        Expr::Constructor(_, Some(inner)) => verify_case_uses_error_prop_on_target(inner, fn_name),
-        Expr::List(elems) => elems
-            .iter()
-            .any(|elem| verify_case_uses_error_prop_on_target(elem, fn_name)),
-        Expr::Tuple(items) => items
-            .iter()
-            .any(|item| verify_case_uses_error_prop_on_target(item, fn_name)),
-        Expr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
-            verify_case_uses_error_prop_on_target(k, fn_name)
-                || verify_case_uses_error_prop_on_target(v, fn_name)
-        }),
-        Expr::Attr(obj, _) => verify_case_uses_error_prop_on_target(obj, fn_name),
-        Expr::RecordCreate { fields, .. } => fields
-            .iter()
-            .any(|(_, expr)| verify_case_uses_error_prop_on_target(expr, fn_name)),
+        Expr::Constructor(_, Some(inner)) | Expr::ErrorProp(inner) => {
+            collect_target_call_args(inner, fn_name, arg_index, out);
+        }
+        Expr::List(items) | Expr::Tuple(items) => {
+            for item in items {
+                collect_target_call_args(item, fn_name, arg_index, out);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (key, value) in entries {
+                collect_target_call_args(key, fn_name, arg_index, out);
+                collect_target_call_args(value, fn_name, arg_index, out);
+            }
+        }
+        Expr::Attr(obj, _) => collect_target_call_args(obj, fn_name, arg_index, out),
+        Expr::RecordCreate { fields, .. } => {
+            for (_, value) in fields {
+                collect_target_call_args(value, fn_name, arg_index, out);
+            }
+        }
         Expr::RecordUpdate { base, updates, .. } => {
-            verify_case_uses_error_prop_on_target(base, fn_name)
-                || updates
-                    .iter()
-                    .any(|(_, expr)| verify_case_uses_error_prop_on_target(expr, fn_name))
+            collect_target_call_args(base, fn_name, arg_index, out);
+            for (_, value) in updates {
+                collect_target_call_args(value, fn_name, arg_index, out);
+            }
         }
         Expr::TailCall(boxed) => {
-            boxed.0 == fn_name
-                || boxed
-                    .1
-                    .iter()
-                    .any(|arg| verify_case_uses_error_prop_on_target(arg, fn_name))
+            let (target, args) = boxed.as_ref();
+            if target == fn_name
+                && let Some(arg) = args.get(arg_index)
+            {
+                out.push(arg);
+            }
+            for arg in args {
+                collect_target_call_args(arg, fn_name, arg_index, out);
+            }
         }
         Expr::Literal(_)
         | Expr::Ident(_)
         | Expr::InterpolatedStr(_)
         | Expr::Resolved(_)
-        | Expr::Constructor(_, None) => false,
+        | Expr::Constructor(_, None) => {}
     }
+}
+
+fn expr_is_result_err_case(expr: &Expr) -> bool {
+    match expr {
+        Expr::FnCall(callee, _) => dotted_name(callee)
+            .and_then(|path| normalize_constructor_tag(&path))
+            .is_some_and(|tag| tag == "Result.Err"),
+        Expr::Constructor(name, _) => {
+            normalize_constructor_tag(name).is_some_and(|tag| tag == "Result.Err")
+        }
+        _ => false,
+    }
+}
+
+fn expr_is_option_none_case(expr: &Expr) -> bool {
+    match expr {
+        Expr::Attr(_, _) => dotted_name(expr)
+            .and_then(|path| normalize_constructor_tag(&path))
+            .is_some_and(|tag| tag == "Option.None"),
+        Expr::Constructor(name, None) => {
+            normalize_constructor_tag(name).is_some_and(|tag| tag == "Option.None")
+        }
+        _ => false,
+    }
+}
+
+fn verify_cases_block_is_well_formed(block: &VerifyBlock) -> bool {
+    matches!(block.kind, VerifyKind::Cases)
+        && !block.cases.is_empty()
+        && block.cases.iter().all(|(left, right)| {
+            verify_case_calls_target(left, &block.fn_name)
+                && !verify_case_calls_target(right, &block.fn_name)
+        })
+}
+
+fn enum_match_coverage_target(f: &FnDef) -> Option<(usize, Vec<String>)> {
+    let Expr::Match { subject, arms, .. } = f.body.tail_expr()? else {
+        return None;
+    };
+    let Expr::Ident(subject_name) = subject.as_ref() else {
+        return None;
+    };
+    let param_index = f.params.iter().position(|(name, _)| name == subject_name)?;
+    let constructors: BTreeSet<String> = arms
+        .iter()
+        .filter_map(|arm| constructor_tag_from_pattern(&arm.pattern))
+        .collect();
+    if constructors.is_empty() {
+        None
+    } else {
+        Some((param_index, constructors.into_iter().collect()))
+    }
+}
+
+pub fn collect_verify_coverage_warnings(items: &[TopLevel]) -> Vec<CheckFinding> {
+    collect_verify_coverage_warnings_in(items, None)
+}
+
+pub fn collect_verify_coverage_warnings_in(
+    items: &[TopLevel],
+    source_file: Option<&str>,
+) -> Vec<CheckFinding> {
+    let module_name = module_name_for_items(items);
+    let fn_defs: std::collections::HashMap<&str, &FnDef> = items
+        .iter()
+        .filter_map(|item| {
+            if let TopLevel::FnDef(f) = item {
+                Some((f.name.as_str(), f))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let mut warnings = Vec::new();
+    for block in merge_verify_blocks(items) {
+        if !verify_cases_block_is_well_formed(&block) {
+            continue;
+        }
+        let Some(f) = fn_defs.get(block.fn_name.as_str()).copied() else {
+            continue;
+        };
+
+        if let Ok(ret_ty) = parse_type_str_strict(&f.return_type) {
+            if matches!(ret_ty, Type::Result(_, _))
+                && !block
+                    .cases
+                    .iter()
+                    .any(|(_, right)| expr_is_result_err_case(right))
+            {
+                warnings.push(CheckFinding {
+                    line: block.line,
+                    module: module_name.clone(),
+                    file: source_file.map(|s| s.to_string()),
+                    message: format!(
+                        "verify examples for {} do not include any Result.Err case",
+                        block.fn_name
+                    ),
+                });
+            }
+
+            if matches!(ret_ty, Type::Option(_))
+                && !block
+                    .cases
+                    .iter()
+                    .any(|(_, right)| expr_is_option_none_case(right))
+            {
+                warnings.push(CheckFinding {
+                    line: block.line,
+                    module: module_name.clone(),
+                    file: source_file.map(|s| s.to_string()),
+                    message: format!(
+                        "verify examples for {} do not include any Option.None case",
+                        block.fn_name
+                    ),
+                });
+            }
+        }
+
+        if let Some((param_index, constructors)) = enum_match_coverage_target(f) {
+            let mut covered = BTreeSet::new();
+            for (left, _) in &block.cases {
+                let mut args = Vec::new();
+                collect_target_call_args(left, &block.fn_name, param_index, &mut args);
+                for arg in args {
+                    if let Some(tag) = constructor_tag_from_expr(arg)
+                        && constructors.contains(&tag)
+                    {
+                        covered.insert(tag);
+                    }
+                }
+            }
+            if covered.len() < constructors.len() {
+                warnings.push(CheckFinding {
+                    line: block.line,
+                    module: module_name.clone(),
+                    file: source_file.map(|s| s.to_string()),
+                    message: format!(
+                        "verify examples for {} cover {}/{} enum constructors",
+                        block.fn_name,
+                        covered.len(),
+                        constructors.len()
+                    ),
+                });
+            }
+        }
+    }
+
+    warnings
 }
 
 fn verify_given_domain_to_str(domain: &VerifyGivenDomain) -> String {
@@ -363,11 +323,6 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
     let mut skipped = 0;
     let mut failures = Vec::new();
     let is_law = matches!(block.kind, VerifyKind::Law(_));
-    let mut shape_contract = if is_law {
-        None
-    } else {
-        build_verify_shape_contract(block, interp)
-    };
 
     match &block.kind {
         VerifyKind::Cases => println!("Verify: {}", block.fn_name.cyan()),
@@ -400,9 +355,6 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
             );
             println!("  {} {}", "cases".dimmed(), block.cases.len());
         }
-    }
-    if !is_law {
-        interp.start_verify_match_coverage(&block.fn_name);
     }
 
     for (idx, (left_expr, right_expr)) in block.cases.iter().enumerate() {
@@ -463,22 +415,6 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
         let left_result = interp.eval_expr(left_expr);
         let right_result = interp.eval_expr(right_expr);
 
-        if let Ok(left_val) = &left_result
-            && let Some(contract) = shape_contract.as_mut()
-        {
-            contract.observe(left_val);
-        }
-        if verify_case_uses_error_prop_on_target(left_expr, &block.fn_name)
-            && let Some(contract) = shape_contract.as_mut()
-            && matches!(contract.return_type, Type::Result(_, _))
-        {
-            match &left_result {
-                Ok(_) => contract.observe_shape(VerifyOutputShape::Ok),
-                Err(RuntimeError::ErrProp(_)) => contract.observe_shape(VerifyOutputShape::Err),
-                Err(_) => {}
-            }
-        }
-
         match (left_result, right_result) {
             (Ok(left_val), Ok(right_val)) => {
                 if interp.aver_eq(&left_val, &right_val) {
@@ -522,55 +458,6 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
                 println!("      error: {}", e);
                 failures.push((failure_case, String::new(), format!("ERROR: {}", e)));
             }
-        }
-    }
-
-    if !is_law {
-        let coverage_misses = interp.finish_verify_match_coverage();
-        for miss in coverage_misses {
-            failed += 1;
-            let missing_1_based: Vec<String> = miss
-                .missing_arms
-                .iter()
-                .map(|idx| (idx + 1).to_string())
-                .collect();
-            let msg = format!(
-                "match at line {} missing covered arm(s): {} (of {})",
-                miss.line,
-                missing_1_based.join(", "),
-                miss.total_arms
-            );
-            println!("  {} {}", "✗".red(), msg);
-            failures.push((
-                format!("match-coverage:{}", miss.line),
-                format!("all {} arms covered", miss.total_arms),
-                msg,
-            ));
-        }
-    }
-
-    if let Some(contract) = shape_contract {
-        let missing = contract.missing();
-        if !missing.is_empty() {
-            failed += 1;
-            let missing_labels: Vec<String> =
-                missing.iter().map(VerifyOutputShape::display).collect();
-            let expected_labels: Vec<String> = contract
-                .expected
-                .iter()
-                .map(VerifyOutputShape::display)
-                .collect();
-            let msg = format!(
-                "missing output shape(s) for {}: {}",
-                contract.return_type.display(),
-                missing_labels.join(", ")
-            );
-            println!("  {} {}", "✗".red(), msg);
-            failures.push((
-                format!("shape-coverage:{}", block.fn_name),
-                format!("covered output shapes: {}", expected_labels.join(", ")),
-                msg,
-            ));
         }
     }
 
@@ -1191,6 +1078,7 @@ pub fn expr_to_str(expr: &crate::ast::Expr) -> String {
             Literal::Float(f) => f.to_string(),
             Literal::Str(s) => format!("\"{}\"", s),
             Literal::Bool(b) => if *b { "true" } else { "false" }.to_string(),
+            Literal::Unit => "Unit".to_string(),
         },
         Expr::Ident(name) => name.clone(),
         Expr::FnCall(fn_expr, args) => {
@@ -1720,6 +1608,103 @@ verify add1 law add1Spec
             findings.errors,
             findings.warnings
         );
+    }
+
+    #[test]
+    fn coverage_warns_when_result_verify_has_no_err_example() {
+        let items = parse_items(
+            r#"
+fn mayFail(n: Int) -> Result<Int, String>
+    match n
+        0 -> Result.Err("zero")
+        _ -> Result.Ok(n)
+
+verify mayFail
+    mayFail(1) => Result.Ok(1)
+"#,
+        );
+        let warnings = collect_verify_coverage_warnings(&items);
+        assert!(
+            warnings.iter().any(|w| {
+                w.message == "verify examples for mayFail do not include any Result.Err case"
+            }),
+            "expected missing-err warning, got {:?}",
+            warnings
+        );
+    }
+
+    #[test]
+    fn coverage_warns_when_option_verify_has_no_none_example() {
+        let items = parse_items(
+            r#"
+fn maybe(n: Int) -> Option<Int>
+    match n
+        0 -> Option.None
+        _ -> Option.Some(n)
+
+verify maybe
+    maybe(1) => Option.Some(1)
+"#,
+        );
+        let warnings = collect_verify_coverage_warnings(&items);
+        assert!(
+            warnings.iter().any(|w| {
+                w.message == "verify examples for maybe do not include any Option.None case"
+            }),
+            "expected missing-none warning, got {:?}",
+            warnings
+        );
+    }
+
+    #[test]
+    fn coverage_warns_when_enum_match_examples_cover_subset_of_constructors() {
+        let items = parse_items(
+            r#"
+type Input
+    Help
+    Exit
+    Echo(String)
+
+fn dispatch(input: Input) -> String
+    match input
+        Input.Help -> "help"
+        Input.Exit -> "exit"
+        Input.Echo(value) -> value
+
+verify dispatch
+    dispatch(Input.Help) => "help"
+"#,
+        );
+        let warnings = collect_verify_coverage_warnings(&items);
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.message == "verify examples for dispatch cover 1/3 enum constructors"),
+            "expected enum-coverage warning, got {:?}",
+            warnings
+        );
+    }
+
+    #[test]
+    fn coverage_does_not_warn_when_enum_and_output_examples_are_present() {
+        let items = parse_items(
+            r#"
+type Input
+    Help
+    Exit
+
+fn run(input: Input) -> Result<String, String>
+    match input
+        Input.Help -> Result.Ok("help")
+        Input.Exit -> Result.Err("exit")
+
+verify run
+    run(Input.Help) => Result.Ok("help")
+    run(Input.Exit) => Result.Err("exit")
+"#,
+        );
+        let warnings = collect_verify_coverage_warnings(&items);
+        assert!(warnings.is_empty(), "unexpected warnings: {:?}", warnings);
     }
 
     #[test]

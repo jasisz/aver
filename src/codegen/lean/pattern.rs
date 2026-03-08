@@ -30,6 +30,7 @@ fn emit_literal_pattern(lit: &Literal) -> String {
         Literal::Float(f) => format!("{}", f),
         Literal::Str(s) => format!("{:?}", s),
         Literal::Bool(b) => if *b { "true" } else { "false" }.to_string(),
+        Literal::Unit => "()".to_string(),
     }
 }
 

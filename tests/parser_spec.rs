@@ -104,6 +104,19 @@ fn binding_bool_true() {
 }
 
 #[test]
+fn binding_unit_singleton() {
+    let items = parse("done = Unit");
+    assert_eq!(
+        items,
+        vec![TopLevel::Stmt(Stmt::Binding(
+            "done".to_string(),
+            None,
+            Expr::Literal(Literal::Unit)
+        ))]
+    );
+}
+
+#[test]
 fn binding_in_fn_body() {
     let src = "fn f() -> Int\n    x = 10\n    x\n";
     let items = parse(src);

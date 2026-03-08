@@ -402,7 +402,7 @@ pub fn aver_repr(val: &Value) -> String {
         Value::Float(f) => f.to_string(),
         Value::Str(s) => s.clone(),
         Value::Bool(b) => if *b { "true" } else { "false" }.to_string(),
-        Value::Unit => "()".to_string(),
+        Value::Unit => "Unit".to_string(),
         Value::Ok(v) => format!("Result.Ok({})", aver_repr_inner(v)),
         Value::Err(v) => format!("Result.Err({})", aver_repr_inner(v)),
         Value::Some(v) => format!("Option.Some({})", aver_repr_inner(v)),

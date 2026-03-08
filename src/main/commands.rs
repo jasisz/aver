@@ -7,8 +7,8 @@ use colored::Colorize;
 
 use aver::ast::TopLevel;
 use aver::checker::{
-    CheckFinding, check_module_intent_with_sigs_in, index_decisions, merge_verify_blocks,
-    run_verify,
+    CheckFinding, check_module_intent_with_sigs_in, collect_verify_coverage_warnings_in,
+    index_decisions, merge_verify_blocks, run_verify,
 };
 use aver::codegen;
 use aver::codegen::ModuleInfo;
@@ -22,8 +22,9 @@ use aver::tco;
 use aver::types::checker::run_type_check_full;
 
 use crate::shared::{
-    compile_program_for_exec, compute_memo_fns, load_dep_modules, parse_file, print_type_errors,
-    read_file, resolve_module_root, run_entry_function, run_top_level_statements,
+    compile_program_for_exec, compute_memo_fns, format_type_errors, load_dep_modules, parse_file,
+    print_type_errors, read_file, resolve_module_root, run_entry_function,
+    run_top_level_statements,
 };
 
 pub(super) fn generate_request_id() -> String {
@@ -346,7 +347,11 @@ pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>, deps: bo
         // Check intents, descriptions, and verify coverage
         let findings =
             check_module_intent_with_sigs_in(items, Some(&tc_result.fn_sigs), Some(path));
-        if findings.errors.is_empty() && findings.warnings.is_empty() {
+        let coverage_warnings = collect_verify_coverage_warnings_in(items, Some(path));
+        if findings.errors.is_empty()
+            && findings.warnings.is_empty()
+            && coverage_warnings.is_empty()
+        {
             println!("  {} All intent/desc/verify present", "✓".green());
         } else {
             for e in &findings.errors {
@@ -355,7 +360,11 @@ pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>, deps: bo
             }
             for w in &findings.warnings {
                 let loc = finding_location(w, entry_module.as_deref());
-                println!("  {}", format!("error[{}]: {}", loc, w.message).red());
+                println!("  {}", format!("warning[{}]: {}", loc, w.message).yellow());
+            }
+            for w in &coverage_warnings {
+                let loc = finding_location(w, entry_module.as_deref());
+                println!("  {}", format!("warning[{}]: {}", loc, w.message).yellow());
             }
         }
 
@@ -369,9 +378,8 @@ pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>, deps: bo
             );
         }
 
-        let has_warnings = !findings.warnings.is_empty();
         let has_contract_errors = !findings.errors.is_empty();
-        if has_errors || has_contract_errors || has_warnings {
+        if has_errors || has_contract_errors {
             has_any_error = true;
         } else {
             println!("  {} Type check passed", "✓".green());
@@ -383,36 +391,17 @@ pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>, deps: bo
     }
 }
 
-pub(super) fn cmd_verify(file: &str, module_root_override: Option<&str>) {
-    let module_root = resolve_module_root(module_root_override);
-    let source = match read_file(file) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("{}", e.red());
-            process::exit(1);
-        }
-    };
-
-    let mut items = match parse_file(&source) {
-        Ok(i) => i,
-        Err(e) => {
-            eprintln!("{}", e.red());
-            process::exit(1);
-        }
-    };
-    if let Err(e) = require_module_declaration(&items, file) {
-        eprintln!("{}", e.red());
-        process::exit(1);
-    }
-
+fn run_verify_for_items(
+    mut items: Vec<TopLevel>,
+    module_root: &str,
+) -> Result<(usize, usize, bool), String> {
     // TCO transform — rewrite tail-position calls in recursive SCCs
     tco::transform_program(&mut items);
 
     // Static type check — verify should use the same soundness gate as run/check
     let tc_result = run_type_check_full(&items, Some(&module_root));
     if !tc_result.errors.is_empty() {
-        print_type_errors(&tc_result.errors);
-        process::exit(1);
+        return Err(format_type_errors(&tc_result.errors));
     }
 
     // Compile-time variable resolution
@@ -428,15 +417,11 @@ pub(super) fn cmd_verify(file: &str, module_root_override: Option<&str>) {
     match aver::config::ProjectConfig::load_from_dir(std::path::Path::new(&module_root)) {
         Ok(Some(config)) => interp.set_runtime_policy(config),
         Ok(None) => {}
-        Err(e) => {
-            eprintln!("{}", format!("aver.toml: {}", e).red());
-            process::exit(1);
-        }
+        Err(e) => return Err(format!("aver.toml: {}", e)),
     }
 
     if let Err(e) = load_dep_modules(&mut interp, &items, &module_root) {
-        eprintln!("{}", e.red());
-        process::exit(1);
+        return Err(e);
     }
 
     // Register effect sets first (needed before FnDef expansion)
@@ -458,19 +443,14 @@ pub(super) fn cmd_verify(file: &str, module_root_override: Option<&str>) {
         if let TopLevel::FnDef(fd) = item
             && let Err(e) = interp.exec_fn_def(fd)
         {
-            eprintln!("{}", e.to_string().red());
-            process::exit(1);
+            return Err(e.to_string());
         }
     }
 
     let verify_blocks = merge_verify_blocks(&items);
 
     if verify_blocks.is_empty() {
-        println!(
-            "{}",
-            format!("No verify blocks found in {}.", file).yellow()
-        );
-        return;
+        return Ok((0, 0, false));
     }
 
     let mut total_passed = 0;
@@ -481,6 +461,66 @@ pub(super) fn cmd_verify(file: &str, module_root_override: Option<&str>) {
         total_passed += result.passed;
         total_failed += result.failed;
         println!();
+    }
+
+    Ok((total_passed, total_failed, true))
+}
+
+pub(super) fn cmd_verify(file: &str, module_root_override: Option<&str>, deps: bool) {
+    let module_root = resolve_module_root(module_root_override);
+    let units = match collect_check_units(file, &module_root, deps) {
+        Ok(units) => units,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+
+    let mut total_passed = 0;
+    let mut total_failed = 0;
+    let mut saw_verify_blocks = false;
+
+    for (idx, (path, _source, items)) in units.into_iter().enumerate() {
+        if deps {
+            if idx > 0 {
+                println!();
+            }
+            println!(
+                "{}",
+                format!("Verify file: {}", display_check_path(&path, &module_root)).cyan()
+            );
+        }
+
+        let (passed, failed, had_blocks) = match run_verify_for_items(items, &module_root) {
+            Ok(counts) => counts,
+            Err(e) => {
+                if e.contains("error[") {
+                    eprintln!("{}", e.red());
+                } else {
+                    eprintln!("{}", e.red());
+                }
+                process::exit(1);
+            }
+        };
+
+        if had_blocks {
+            saw_verify_blocks = true;
+            total_passed += passed;
+            total_failed += failed;
+        }
+    }
+
+    if !saw_verify_blocks {
+        let scope = if deps {
+            format!("{} or its transitive dependencies", file)
+        } else {
+            file.to_string()
+        };
+        println!(
+            "{}",
+            format!("No verify blocks found in {}.", scope).yellow()
+        );
+        return;
     }
 
     let total = total_passed + total_failed;

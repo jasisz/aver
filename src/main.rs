@@ -40,8 +40,12 @@ fn main() {
         } => {
             commands::cmd_check(file, module_root.as_deref(), *deps);
         }
-        Commands::Verify { file, module_root } => {
-            commands::cmd_verify(file, module_root.as_deref());
+        Commands::Verify {
+            file,
+            module_root,
+            deps,
+        } => {
+            commands::cmd_verify(file, module_root.as_deref(), *deps);
         }
         Commands::Format { path, check } => {
             format_cmd::cmd_format(path, *check);

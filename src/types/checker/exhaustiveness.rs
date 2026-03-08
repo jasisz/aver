@@ -337,7 +337,23 @@ fn build_witness_head(ctor: &CtorSpec, args: Vec<CoverPat>) -> CoverPat {
 }
 
 fn ctor_name_matches(pattern_name: &str, expected_full: &str) -> bool {
-    pattern_name == expected_full
+    fn split_tail(name: &str) -> Option<(&str, &str)> {
+        let mut parts = name.rsplit('.');
+        let variant = parts.next()?;
+        let type_name = parts.next()?;
+        Some((type_name, variant))
+    }
+
+    if pattern_name == expected_full {
+        return true;
+    }
+
+    match (split_tail(pattern_name), split_tail(expected_full)) {
+        (Some((pat_type, pat_variant)), Some((exp_type, exp_variant))) => {
+            pat_type == exp_type && pat_variant == exp_variant
+        }
+        _ => false,
+    }
 }
 
 fn format_cover_pattern(pat: &CoverPat) -> String {
@@ -347,6 +363,7 @@ fn format_cover_pattern(pat: &CoverPat) -> String {
         CoverPat::Lit(Literal::Float(f)) => f.to_string(),
         CoverPat::Lit(Literal::Str(s)) => format!("{:?}", s),
         CoverPat::Lit(Literal::Bool(b)) => b.to_string(),
+        CoverPat::Lit(Literal::Unit) => "Unit".to_string(),
         CoverPat::EmptyList => "[]".to_string(),
         CoverPat::Cons(head, tail) => {
             format!(
@@ -399,6 +416,7 @@ fn pattern_sig(pat: &CoverPat) -> String {
         CoverPat::Lit(Literal::Float(f)) => format!("f{}", f),
         CoverPat::Lit(Literal::Str(s)) => format!("s{:?}", s),
         CoverPat::Lit(Literal::Bool(b)) => format!("b{}", b),
+        CoverPat::Lit(Literal::Unit) => "u".to_string(),
         CoverPat::EmptyList => "[]".to_string(),
         CoverPat::Cons(h, t) => format!("[{},..{}]", pattern_sig(h), pattern_sig(t)),
         CoverPat::Tuple(items) => {

@@ -1,0 +1,120 @@
+module Types
+    intent =
+        "Shared domain types for the workflow engine."
+        "Keeps records and enums in one place so command, rule, and store modules"
+        "can speak about the same application core without repeating shapes."
+    exposes [TaskStatus, Priority, Project, Comment, TaskEvent, TaskEventRecord, Task, TaskView, TaskSummary, Notification, AuditEntry, RuleResult, WorkflowSnapshot]
+
+type TaskStatus
+    Todo
+    InProgress
+    Blocked
+    Done
+    Archived
+
+type Priority
+    Low
+    Normal
+    High
+    Urgent
+
+record Project
+    id: String
+    name: String
+    archived: Bool
+    createdAt: String
+    updatedAt: String
+
+record Comment
+    id: String
+    body: String
+    author: String
+    createdAt: String
+
+type TaskEvent
+    TaskCreated(String, Priority, List<String>, Option<String>, String)
+    TaskRenamed(String, String)
+    TaskStarted(String)
+    TaskBlocked(String, String)
+    TaskCompleted(String)
+    TaskReopened(String, String)
+    PriorityChanged(Priority, String)
+    TagAdded(String, String)
+    TagRemoved(String, String)
+    CommentAdded(Comment)
+    DeadlineSet(String, String)
+    DeadlineCleared(String)
+    TaskArchived(String)
+
+record TaskEventRecord
+    taskId: String
+    projectId: String
+    seq: Int
+    event: TaskEvent
+
+record Task
+    id: String
+    projectId: String
+    title: String
+    status: TaskStatus
+    priority: Priority
+    tags: List<String>
+    deadline: Option<String>
+    comments: List<Comment>
+    createdAt: String
+    updatedAt: String
+    statusChangedAt: String
+
+record TaskView
+    taskId: String
+    projectId: String
+    title: String
+    status: TaskStatus
+    priority: Priority
+    tags: List<String>
+    deadline: Option<String>
+    overdue: Bool
+    deadlineSoon: Bool
+    derivedUrgent: Bool
+    stalled: Bool
+    missingClosingComment: Bool
+    needsReview: Bool
+
+record TaskSummary
+    taskId: String
+    title: String
+    projectId: String
+    status: TaskStatus
+    priority: Priority
+    derivedUrgent: Bool
+    overdue: Bool
+    stalled: Bool
+    tagSummary: String
+    deadlineText: String
+
+record Notification
+    key: String
+    taskId: String
+    kind: String
+    message: String
+    createdAt: String
+
+record AuditEntry
+    key: String
+    taskId: String
+    action: String
+    message: String
+    createdAt: String
+
+record RuleResult
+    taskId: String
+    events: List<TaskEventRecord>
+    notifications: List<Notification>
+    audits: List<AuditEntry>
+    notes: List<String>
+
+record WorkflowSnapshot
+    projects: List<Project>
+    taskEvents: List<TaskEventRecord>
+    audits: List<AuditEntry>
+    notifications: List<Notification>

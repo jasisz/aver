@@ -103,20 +103,24 @@ impl Parser {
                     Ok(first)
                 }
             }
-            // Constructor patterns must be qualified: Shape.Circle, Result.Ok, Option.None.
-            TokenKind::Ident(ref s) if s.chars().next().is_some_and(|c| c.is_uppercase()) => {
-                let mut name = s.clone();
-                self.advance();
-                // Qualified constructor: Shape.Circle / Result.Ok / Option.None
-                if self.check_exact(&TokenKind::Dot)
-                    && let TokenKind::Ident(ref variant) = self.peek(1).kind.clone()
-                        && variant.chars().next().is_some_and(|c| c.is_uppercase()) {
-                            let variant = variant.clone();
-                            self.advance(); // consume '.'
-                            self.advance(); // consume variant name
-                            name = format!("{}.{}", name, variant);
-                }
-                if !name.contains('.') {
+            // Constructor patterns must be qualified: Shape.Circle, Result.Ok,
+            // Domain.Types.TaskEvent.TaskStarted, etc.
+            TokenKind::Ident(ref s)
+                if s.chars().next().is_some_and(|c| c.is_uppercase())
+                    || matches!(self.peek(1).kind, TokenKind::Dot) =>
+            {
+                let name = self.parse_qualified_ident()?;
+                let parts: Vec<&str> = name.split('.').collect();
+                let looks_like_ctor = parts.len() >= 2
+                    && parts[parts.len() - 1]
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_uppercase())
+                    && parts[parts.len() - 2]
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_uppercase());
+                if !looks_like_ctor {
                     return Err(self.error(format!(
                         "Constructor patterns must be qualified like 'Result.Ok(x)' or 'Shape.Circle(r)'. Bare UpperCamel patterns like '{}' are not supported; bind the whole value with a lower-case name and access record fields via '.'.",
                         name

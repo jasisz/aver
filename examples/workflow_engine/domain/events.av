@@ -1,0 +1,281 @@
+module Events
+    intent =
+        "Pure event application and replay logic for workflow tasks."
+        "With typed sum payload matching now working across the toolchain, replay can live"
+        "in the domain again instead of reconstructing state from serialized event fields."
+    exposes [eventName, recordedAt, latestEvent, eventsForTask, findTask, replayTask, replayAll, applyEvent]
+    depends [Domain.Types, Domain.Validation]
+
+decision ReplayReturnsToDomain
+    date = "2026-03-08"
+    author = "Codex"
+    reason =
+        "Replay belongs with the domain semantics, not inside the storage adapter."
+        "Now that constructor payload matching is reliable enough, the natural typed version"
+        "is clearer than the old serialized-payload workaround."
+    chosen = "TypedReplayInDomain"
+    rejected = ["KeepReplayInInfraStore", "DeleteReplayHelpers"]
+    impacts = [replayTask, replayAll, applyEvent]
+
+fn eventName(event: TaskEvent) -> String
+    ? "Stable event kind label for rendering and audit helpers."
+    match event
+        TaskEvent.TaskCreated(_, _, _, _, _) -> "TaskCreated"
+        TaskEvent.TaskRenamed(_, _) -> "TaskRenamed"
+        TaskEvent.TaskStarted(_) -> "TaskStarted"
+        TaskEvent.TaskBlocked(_, _) -> "TaskBlocked"
+        TaskEvent.TaskCompleted(_) -> "TaskCompleted"
+        TaskEvent.TaskReopened(_, _) -> "TaskReopened"
+        TaskEvent.PriorityChanged(_, _) -> "PriorityChanged"
+        TaskEvent.TagAdded(_, _) -> "TagAdded"
+        TaskEvent.TagRemoved(_, _) -> "TagRemoved"
+        TaskEvent.CommentAdded(_) -> "CommentAdded"
+        TaskEvent.DeadlineSet(_, _) -> "DeadlineSet"
+        TaskEvent.DeadlineCleared(_) -> "DeadlineCleared"
+        TaskEvent.TaskArchived(_) -> "TaskArchived"
+
+verify eventName
+    eventName(Domain.Types.TaskEvent.TaskCreated("Plan release", Domain.Types.Priority.High, ["ops"], Option.None, "2026-03-08T12:00:00Z")) => "TaskCreated"
+    eventName(Domain.Types.TaskEvent.TaskReopened("Regression found", "2026-03-10T12:00:00Z")) => "TaskReopened"
+
+fn recordedAt(event: TaskEvent) -> String
+    ? "Extracts the effective timestamp from each event."
+    match event
+        TaskEvent.TaskCreated(_, _, _, _, at) -> at
+        TaskEvent.TaskRenamed(_, at) -> at
+        TaskEvent.TaskStarted(at) -> at
+        TaskEvent.TaskBlocked(_, at) -> at
+        TaskEvent.TaskCompleted(at) -> at
+        TaskEvent.TaskReopened(_, at) -> at
+        TaskEvent.PriorityChanged(_, at) -> at
+        TaskEvent.TagAdded(_, at) -> at
+        TaskEvent.TagRemoved(_, at) -> at
+        TaskEvent.CommentAdded(comment) -> comment.createdAt
+        TaskEvent.DeadlineSet(_, at) -> at
+        TaskEvent.DeadlineCleared(at) -> at
+        TaskEvent.TaskArchived(at) -> at
+
+verify recordedAt
+    recordedAt(Domain.Types.TaskEvent.TaskCompleted("2026-03-09T12:00:00Z")) => "2026-03-09T12:00:00Z"
+    recordedAt(Domain.Types.TaskEvent.CommentAdded(Comment(id = "c1", body = "Hi", author = "alice", createdAt = "2026-03-09T13:00:00Z"))) => "2026-03-09T13:00:00Z"
+
+fn latestEvent(events: List<TaskEventRecord>) -> Option<TaskEventRecord>
+    ? "Reads the last event in a task stream or flat log."
+    match events
+        [] -> Option.None
+        [event, ..rest] -> latestEventFrom(event, rest)
+
+verify latestEvent
+    latestEvent([]) => Option.None
+    latestEvent([sampleCreatedEvent(), sampleCompletedEvent()]) => Option.Some(sampleCompletedEvent())
+
+fn latestEventFrom(current: TaskEventRecord, rest: List<TaskEventRecord>) -> Option<TaskEventRecord>
+    ? "Tail-recursive helper for latest event lookup."
+    match rest
+        [] -> Option.Some(current)
+        [event, ..tail] -> latestEventFrom(event, tail)
+
+verify latestEventFrom
+    latestEventFrom(sampleCreatedEvent(), []) => Option.Some(sampleCreatedEvent())
+    latestEventFrom(sampleCreatedEvent(), [sampleCompletedEvent()]) => Option.Some(sampleCompletedEvent())
+
+fn eventsForTask(events: List<TaskEventRecord>, taskId: String) -> List<TaskEventRecord>
+    ? "Filters a flat event log down to one task."
+    match events
+        [] -> []
+        [event, ..rest] -> match event.taskId == taskId
+            true -> List.prepend(event, eventsForTask(rest, taskId))
+            false -> eventsForTask(rest, taskId)
+
+verify eventsForTask
+    eventsForTask([sampleCreatedEvent(), TaskEventRecord(taskId = "t2", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Write docs", Domain.Types.Priority.Normal, [], Option.None, "2026-03-08T12:30:00Z"))], "t1") => [sampleCreatedEvent()]
+    eventsForTask([sampleCreatedEvent()], "t2") => []
+
+fn findTask(tasks: List<Task>, taskId: String) -> Option<Task>
+    ? "Linear lookup for replayed tasks."
+    match tasks
+        [] -> Option.None
+        [task, ..rest] -> match task.id == taskId
+            true -> Option.Some(task)
+            false -> findTask(rest, taskId)
+
+verify findTask
+    findTask([sampleTask()], "t1") => Option.Some(sampleTask())
+    findTask([], "t1") => Option.None
+
+fn replayTask(events: List<TaskEventRecord>) -> Result<Task, String>
+    ? "Replays one task stream into its current projection."
+    replayTaskFrom(events, Option.None)
+
+verify replayTask
+    replayTask([sampleCreatedEvent(), TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.TaskStarted("2026-03-09T12:00:00Z"))]) => Result.Ok(Task(id = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.InProgress, priority = Domain.Types.Priority.High, tags = ["ops"], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-09T12:00:00Z", statusChangedAt = "2026-03-09T12:00:00Z"))
+    replayTask([]) => Result.Err("No events for task")
+
+fn replayTaskFrom(events: List<TaskEventRecord>, current: Option<Task>) -> Result<Task, String>
+    ? "Tail-recursive task replay."
+    match events
+        [] -> Option.toResult(current, "No events for task")
+        [event, ..rest] -> replayTaskStep(current, event, rest)
+
+verify replayTaskFrom
+    replayTaskFrom([], Option.Some(sampleTask())) => Result.Ok(sampleTask())
+    replayTaskFrom([], Option.None) => Result.Err("No events for task")
+
+fn replayTaskStep(current: Option<Task>, event: TaskEventRecord, rest: List<TaskEventRecord>) -> Result<Task, String>
+    ? "Applies one replay step for a single task."
+    next = applyEvent(current, event)?
+    replayTaskFrom(rest, Option.Some(next))
+
+verify replayTaskStep
+    replayTaskStep(Option.None, sampleCreatedEvent(), []) => Result.Ok(Task(id = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.High, tags = ["ops"], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z"))
+
+fn replayAll(events: List<TaskEventRecord>) -> Result<List<Task>, String>
+    ? "Replays the flat task event log into current task projections."
+    replayAllInto(events, [])
+
+verify replayAll
+    replayAll([sampleCreatedEvent(), TaskEventRecord(taskId = "t2", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Write docs", Domain.Types.Priority.Normal, ["docs"], Option.None, "2026-03-08T13:00:00Z"))]) => Result.Ok([Task(id = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.High, tags = ["ops"], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z"), Task(id = "t2", projectId = "alpha", title = "Write docs", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = ["docs"], deadline = Option.None, comments = [], createdAt = "2026-03-08T13:00:00Z", updatedAt = "2026-03-08T13:00:00Z", statusChangedAt = "2026-03-08T13:00:00Z")])
+
+fn replayAllInto(events: List<TaskEventRecord>, tasks: List<Task>) -> Result<List<Task>, String>
+    ? "Tail-recursive replay for the flat event log."
+    match events
+        [] -> Result.Ok(tasks)
+        [event, ..rest] -> replayAllStep(tasks, event, rest)
+
+verify replayAllInto
+    replayAllInto([], [sampleTask()]) => Result.Ok([sampleTask()])
+
+fn replayAllStep(tasks: List<Task>, event: TaskEventRecord, rest: List<TaskEventRecord>) -> Result<List<Task>, String>
+    ? "Applies one replay step to the full task list."
+    current = findTask(tasks, event.taskId)
+    next = applyEvent(current, event)?
+    replayAllInto(rest, putTask(tasks, next))
+
+verify replayAllStep
+    replayAllStep([], sampleCreatedEvent(), []) => Result.Ok([Task(id = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.High, tags = ["ops"], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z")])
+
+fn putTask(tasks: List<Task>, task: Task) -> List<Task>
+    ? "Replaces a task by ID or appends it when absent."
+    match tasks
+        [] -> [task]
+        [head, ..rest] -> match head.id == task.id
+            true -> List.prepend(task, rest)
+            false -> List.prepend(head, putTask(rest, task))
+
+verify putTask
+    putTask([], sampleTask()) => [sampleTask()]
+    putTask([sampleTask()], Task.update(sampleTask(), title = "Updated")) => [Task(id = "t1", projectId = "alpha", title = "Updated", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z")]
+
+fn applyEvent(current: Option<Task>, entry: TaskEventRecord) -> Result<Task, String>
+    ? "Applies one event to either an empty or existing projection."
+    match current
+        Option.None -> applyFirstEvent(entry)
+        Option.Some(task) -> applyExistingEvent(task, entry)
+
+verify applyEvent
+    applyEvent(Option.None, sampleCreatedEvent()) => Result.Ok(Task(id = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.High, tags = ["ops"], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z"))
+    applyEvent(Option.None, TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z"))) => Result.Err("Task 't1' must start with TaskCreated")
+
+fn applyFirstEvent(entry: TaskEventRecord) -> Result<Task, String>
+    ? "The first event in a stream must create the task."
+    match entry.event
+        TaskEvent.TaskCreated(title, priority, tags, deadline, at) -> Result.Ok(Task(id = entry.taskId, projectId = entry.projectId, title = title, status = Domain.Types.TaskStatus.Todo, priority = priority, tags = tags, deadline = deadline, comments = [], createdAt = at, updatedAt = at, statusChangedAt = at))
+        _ -> Result.Err("Task '{entry.taskId}' must start with TaskCreated")
+
+verify applyFirstEvent
+    applyFirstEvent(sampleCreatedEvent()) => Result.Ok(Task(id = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.High, tags = ["ops"], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z"))
+
+fn applyExistingEvent(task: Task, entry: TaskEventRecord) -> Result<Task, String>
+    ? "Applies an event to an existing task projection."
+    match entry.event
+        TaskEvent.TaskCreated(_, _, _, _, _) -> Result.Err("Task '{task.id}' already exists")
+        TaskEvent.TaskRenamed(title, at) -> Result.Ok(Task.update(task, title = title, updatedAt = at))
+        TaskEvent.TaskStarted(at) -> applyStartedEvent(task, at)
+        TaskEvent.TaskBlocked(_, at) -> applyStatusChange(task, Domain.Types.TaskStatus.Blocked, at)
+        TaskEvent.TaskCompleted(at) -> applyStatusChange(task, Domain.Types.TaskStatus.Done, at)
+        TaskEvent.TaskReopened(_, at) -> applyReopenedEvent(task, at)
+        TaskEvent.PriorityChanged(priority, at) -> Result.Ok(Task.update(task, priority = priority, updatedAt = at))
+        TaskEvent.TagAdded(tag, at) -> Result.Ok(Task.update(task, tags = appendTag(task.tags, tag), updatedAt = at))
+        TaskEvent.TagRemoved(tag, at) -> Result.Ok(Task.update(task, tags = removeTag(task.tags, tag), updatedAt = at))
+        TaskEvent.CommentAdded(comment) -> Result.Ok(Task.update(task, comments = List.append(task.comments, comment), updatedAt = comment.createdAt))
+        TaskEvent.DeadlineSet(deadline, at) -> Result.Ok(Task.update(task, deadline = Option.Some(deadline), updatedAt = at))
+        TaskEvent.DeadlineCleared(at) -> Result.Ok(Task.update(task, deadline = Option.None, updatedAt = at))
+        TaskEvent.TaskArchived(at) -> applyStatusChange(task, Domain.Types.TaskStatus.Archived, at)
+
+verify applyExistingEvent
+    applyExistingEvent(sampleTask(), TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.TaskRenamed("Updated", "2026-03-09T12:00:00Z"))) => Result.Ok(Task(id = "t1", projectId = "alpha", title = "Updated", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-09T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z"))
+
+fn applyStartedEvent(task: Task, at: String) -> Result<Task, String>
+    ? "TaskStarted is for todo and blocked work, not for reopening done tasks."
+    match task.status
+        TaskStatus.Todo -> applyStatusChange(task, Domain.Types.TaskStatus.InProgress, at)
+        TaskStatus.Blocked -> applyStatusChange(task, Domain.Types.TaskStatus.InProgress, at)
+        TaskStatus.InProgress -> Result.Err("Task '{task.id}' is already in progress")
+        TaskStatus.Done -> Result.Err("Task '{task.id}' must be reopened from done")
+        TaskStatus.Archived -> Result.Err("Task '{task.id}' is archived")
+
+verify applyStartedEvent
+    applyStartedEvent(sampleTask(), "2026-03-09T12:00:00Z") => Result.Ok(Task(id = "t1", projectId = "alpha", title = "Original title", status = Domain.Types.TaskStatus.InProgress, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-09T12:00:00Z", statusChangedAt = "2026-03-09T12:00:00Z"))
+    applyStartedEvent(Task.update(sampleTask(), status = Domain.Types.TaskStatus.Done), "2026-03-09T12:00:00Z") => Result.Err("Task 't1' must be reopened from done")
+
+fn applyReopenedEvent(task: Task, at: String) -> Result<Task, String>
+    ? "TaskReopened only applies to done work."
+    match task.status
+        TaskStatus.Done -> applyStatusChange(task, Domain.Types.TaskStatus.InProgress, at)
+        _ -> Result.Err("Task '{task.id}' can only be reopened from done")
+
+verify applyReopenedEvent
+    applyReopenedEvent(Task.update(sampleTask(), status = Domain.Types.TaskStatus.Done), "2026-03-11T12:00:00Z") => Result.Ok(Task(id = "t1", projectId = "alpha", title = "Original title", status = Domain.Types.TaskStatus.InProgress, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-11T12:00:00Z", statusChangedAt = "2026-03-11T12:00:00Z"))
+    applyReopenedEvent(sampleTask(), "2026-03-11T12:00:00Z") => Result.Err("Task 't1' can only be reopened from done")
+
+fn applyStatusChange(task: Task, next: TaskStatus, at: String) -> Result<Task, String>
+    ? "Status-changing replay uses the same transition table as command validation."
+    _checked = Domain.Validation.ensureTransition(task.status, next, task.id)?
+    Result.Ok(Task.update(task, status = next, updatedAt = at, statusChangedAt = at))
+
+verify applyStatusChange
+    applyStatusChange(sampleTask(), Domain.Types.TaskStatus.InProgress, "2026-03-09T12:00:00Z") => Result.Ok(Task(id = "t1", projectId = "alpha", title = "Original title", status = Domain.Types.TaskStatus.InProgress, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-09T12:00:00Z", statusChangedAt = "2026-03-09T12:00:00Z"))
+    applyStatusChange(Task.update(sampleTask(), status = Domain.Types.TaskStatus.Archived), Domain.Types.TaskStatus.Done, "2026-03-09T12:00:00Z") => Result.Err("Task 't1' cannot move from archived to done")
+
+fn appendTag(tags: List<String>, tag: String) -> List<String>
+    ? "Replay treats repeated tag-add events as idempotent."
+    match List.contains(tags, tag)
+        true -> tags
+        false -> List.append(tags, tag)
+
+verify appendTag
+    appendTag([], "waiting") => ["waiting"]
+    appendTag(["waiting"], "waiting") => ["waiting"]
+
+fn removeTag(tags: List<String>, tag: String) -> List<String>
+    ? "Removing a missing tag is a no-op during replay."
+    match tags
+        [] -> []
+        [head, ..rest] -> match head == tag
+            true -> removeTag(rest, tag)
+            false -> List.prepend(head, removeTag(rest, tag))
+
+verify removeTag
+    removeTag(["waiting", "ops"], "waiting") => ["ops"]
+    removeTag(["ops"], "waiting") => ["ops"]
+
+fn sampleCreatedEvent() -> TaskEventRecord
+    ? "Reusable event fixture."
+    TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Plan release", Domain.Types.Priority.High, ["ops"], Option.None, "2026-03-08T12:00:00Z"))
+
+verify sampleCreatedEvent
+    sampleCreatedEvent() => TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Plan release", Domain.Types.Priority.High, ["ops"], Option.None, "2026-03-08T12:00:00Z"))
+
+fn sampleCompletedEvent() -> TaskEventRecord
+    ? "Reusable event fixture for latest-event checks."
+    TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.TaskCompleted("2026-03-09T12:00:00Z"))
+
+verify sampleCompletedEvent
+    sampleCompletedEvent() => TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.TaskCompleted("2026-03-09T12:00:00Z"))
+
+fn sampleTask() -> Task
+    ? "Reusable projection fixture for replay verification."
+    Task(id = "t1", projectId = "alpha", title = "Original title", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z")
+
+verify sampleTask
+    sampleTask() => Task(id = "t1", projectId = "alpha", title = "Original title", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z")

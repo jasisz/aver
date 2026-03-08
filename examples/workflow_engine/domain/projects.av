@@ -1,0 +1,61 @@
+module Projects
+    intent =
+        "Pure project creation, lookup, and update helpers."
+        "Projects stay deliberately shallow: the task engine is event-sourced, but project"
+        "lifecycle is simple enough to keep as direct state."
+    exposes [findProject, putProject, createProject, archiveProject]
+    depends [Domain.Types, Domain.Validation]
+
+decision ProjectsStayStateBased
+    date = "2026-03-08"
+    author = "Codex"
+    reason =
+        "Project transitions are shallow compared with task lifecycle."
+        "A separate project event log would add ceremony without revealing new pressure."
+        "Keeping projects as direct state lets the task event stream stay focused on richer behavior."
+    chosen = "StateRecordsForProjects"
+    rejected = ["ProjectEventSourcing", "SingleGlobalAggregate"]
+    impacts = [createProject, archiveProject, putProject]
+
+fn findProject(projects: List<Project>, projectId: String) -> Option<Project>
+    ? "Linear lookup is sufficient for this intentionally small application core."
+    match projects
+        [] -> Option.None
+        [project, ..rest] -> match project.id == projectId
+            true -> Option.Some(project)
+            false -> findProject(rest, projectId)
+
+verify findProject
+    findProject([Project(id = "p1", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z")], "p1") => Option.Some(Project(id = "p1", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z"))
+    findProject([], "p1") => Option.None
+
+fn putProject(projects: List<Project>, project: Project) -> List<Project>
+    ? "Replaces an existing project by ID or appends a new one."
+    match projects
+        [] -> [project]
+        [head, ..rest] -> match head.id == project.id
+            true -> List.prepend(project, rest)
+            false -> List.prepend(head, putProject(rest, project))
+
+verify putProject
+    putProject([], Project(id = "p1", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z")) => [Project(id = "p1", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z")]
+    putProject([Project(id = "p1", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z")], Project(id = "p1", name = "Beta", archived = true, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-09T12:00:00Z")) => [Project(id = "p1", name = "Beta", archived = true, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-09T12:00:00Z")]
+
+fn createProject(id: String, name: String, now: String) -> Result<Project, String>
+    ? "Creates a project after field validation."
+    _ = Domain.Validation.validateProjectCreate(id, name)?
+    Result.Ok(Project(id = id, name = String.trim(name), archived = false, createdAt = now, updatedAt = now))
+
+verify createProject
+    createProject("alpha", "Alpha", "2026-03-08T12:00:00Z") => Result.Ok(Project(id = "alpha", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z"))
+    createProject("bad id", "Alpha", "2026-03-08T12:00:00Z") => Result.Err("Project ID must use letters, numbers, dash, or underscore")
+
+fn archiveProject(project: Project, now: String) -> Result<Project, String>
+    ? "Archives a project exactly once."
+    match project.archived
+        true -> Result.Err("Project '{project.id}' is already archived")
+        false -> Result.Ok(Project.update(project, archived = true, updatedAt = now))
+
+verify archiveProject
+    archiveProject(Project(id = "alpha", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z"), "2026-03-09T12:00:00Z") => Result.Ok(Project(id = "alpha", name = "Alpha", archived = true, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-09T12:00:00Z"))
+    archiveProject(Project(id = "alpha", name = "Alpha", archived = true, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-09T12:00:00Z"), "2026-03-10T12:00:00Z") => Result.Err("Project 'alpha' is already archived")

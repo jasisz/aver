@@ -174,6 +174,7 @@ fn emit_literal(lit: &Literal) -> String {
         }
         Literal::Str(s) => format!("\"{}\"", escape_lean_string(s)),
         Literal::Bool(b) => if *b { "true" } else { "false" }.to_string(),
+        Literal::Unit => "()".to_string(),
     }
 }
 

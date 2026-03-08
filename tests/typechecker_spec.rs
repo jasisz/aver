@@ -10,6 +10,7 @@ use aver::ast::TopLevel;
 use aver::lexer::Lexer;
 use aver::parser::Parser;
 use aver::types::checker::{run_type_check, run_type_check_with_base};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -36,6 +37,16 @@ fn errors_with_base(src: &str, base_dir: &str) -> Vec<String> {
         .into_iter()
         .map(|e| e.message)
         .collect()
+}
+
+fn temp_module_root(tag: &str) -> std::path::PathBuf {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock went backwards")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("aver_typechecker_{}_{}", tag, ts));
+    std::fs::create_dir_all(&dir).expect("create temp module dir failed");
+    dir
 }
 
 fn assert_no_errors(src: &str) {
@@ -88,6 +99,12 @@ fn valid_float_function() {
 #[test]
 fn valid_unit_function() {
     assert_no_errors("fn noop() -> Unit\n    ! [Console]\n    Console.print(\"hi\")\n");
+}
+
+#[test]
+fn valid_pure_result_unit_singleton() {
+    let src = "fn ok() -> Result<Unit, String>\n    Result.Ok(Unit)\n";
+    assert_no_errors(src);
 }
 
 #[test]
@@ -360,6 +377,116 @@ fn valid_call_to_exposed_module_member() {
         "expected no type errors, got:\n  {}",
         errs.join("\n  ")
     );
+}
+
+#[test]
+fn valid_unqualified_imported_sum_constructor_call() {
+    let root = temp_module_root("imported_sum_ctor");
+    let domain_dir = root.join("Domain");
+    std::fs::create_dir_all(&domain_dir).expect("create Domain dir failed");
+    std::fs::write(
+        domain_dir.join("Types.av"),
+        r#"module Types
+    exposes [TaskEvent]
+    intent =
+        "Shared events."
+
+type TaskEvent
+    TaskStarted(String)
+"#,
+    )
+    .expect("write Types.av failed");
+
+    let src = r#"module App
+    depends [Domain.Types]
+    intent =
+        "Constructs an imported sum directly."
+
+fn make() -> TaskEvent
+    TaskEvent.TaskStarted("now")
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.is_empty(),
+        "expected no type errors, got:\n  {}",
+        errs.join("\n  ")
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn imported_sum_pattern_payload_bindings_use_exported_constructor_types() {
+    let root = temp_module_root("imported_sum_pattern");
+    let domain_dir = root.join("Domain");
+    std::fs::create_dir_all(&domain_dir).expect("create Domain dir failed");
+    std::fs::write(
+        domain_dir.join("Types.av"),
+        r#"module Types
+    exposes [TaskEvent]
+    intent =
+        "Shared events."
+
+type TaskEvent
+    TaskStarted(String)
+"#,
+    )
+    .expect("write Types.av failed");
+
+    let src = r#"module App
+    depends [Domain.Types]
+    intent =
+        "Matches imported payloads."
+
+fn startedAt(event: TaskEvent) -> String
+    match event
+        TaskEvent.TaskStarted(at) -> at
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.is_empty(),
+        "expected no type errors, got:\n  {}",
+        errs.join("\n  ")
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn fully_qualified_imported_constructor_patterns_are_exhaustive() {
+    let root = temp_module_root("imported_sum_qualified_pattern");
+    let domain_dir = root.join("Domain");
+    std::fs::create_dir_all(&domain_dir).expect("create Domain dir failed");
+    std::fs::write(
+        domain_dir.join("Types.av"),
+        r#"module Types
+    exposes [TaskEvent]
+    intent =
+        "Shared events."
+
+type TaskEvent
+    TaskStarted(String)
+"#,
+    )
+    .expect("write Types.av failed");
+
+    let src = r#"module App
+    depends [Domain.Types]
+    intent =
+        "Uses a fully qualified constructor pattern."
+
+fn startedAt(event: TaskEvent) -> String
+    match event
+        Domain.Types.TaskEvent.TaskStarted(at) -> at
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.is_empty(),
+        "expected no type errors, got:\n  {}",
+        errs.join("\n  ")
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 // ---------------------------------------------------------------------------

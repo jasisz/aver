@@ -296,6 +296,8 @@ aver context file.av
 aver compile file.av -o out/
 ```
 
+`aver verify` runs only the example cases from `verify` blocks and fails on mismatches or example errors. `aver check` handles static contract diagnostics such as missing `verify` blocks and coverage-style warnings. Both `check` and `verify` accept `--deps` to walk transitive `depends [...]` modules.
+
 For replay, formatting, REPL, and the full command surface, use `aver --help` and the docs below.
 
 ---

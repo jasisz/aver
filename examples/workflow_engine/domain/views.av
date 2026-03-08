@@ -1,0 +1,182 @@
+module Views
+    intent =
+        "Pure derived views and summaries over replayed task state."
+        "Deadlines, stalled work, and review-needed markers stay derived here instead of"
+        "being hidden as imperative mutations."
+    exposes [statusText, priorityText, hasTag, lastComment, missingClosingComment, deriveView, deriveSummary]
+    depends [Domain.Types, Domain.Time]
+
+fn statusText(status: TaskStatus) -> String
+    ? "Readable task status label."
+    match status
+        TaskStatus.Todo -> "todo"
+        TaskStatus.InProgress -> "in_progress"
+        TaskStatus.Blocked -> "blocked"
+        TaskStatus.Done -> "done"
+        TaskStatus.Archived -> "archived"
+
+verify statusText
+    statusText(Domain.Types.TaskStatus.Blocked) => "blocked"
+    statusText(Domain.Types.TaskStatus.Done) => "done"
+
+fn priorityText(priority: Priority) -> String
+    ? "Readable priority label."
+    match priority
+        Priority.Low -> "low"
+        Priority.Normal -> "normal"
+        Priority.High -> "high"
+        Priority.Urgent -> "urgent"
+
+verify priorityText
+    priorityText(Domain.Types.Priority.High) => "high"
+    priorityText(Domain.Types.Priority.Urgent) => "urgent"
+
+fn hasTag(task: Task, tag: String) -> Bool
+    ? "Membership helper used by rules and summaries."
+    List.contains(task.tags, tag)
+
+verify hasTag
+    hasTag(Task.update(sampleTask(), tags = ["waiting"]), "waiting") => true
+    hasTag(sampleTask(), "waiting") => false
+
+fn lastComment(comments: List<Comment>) -> Option<Comment>
+    ? "Returns the most recent comment in insertion order."
+    match comments
+        [] -> Option.None
+        [comment, ..rest] -> lastCommentFrom(comment, rest)
+
+fn lastCommentFrom(current: Comment, rest: List<Comment>) -> Option<Comment>
+    ? "Walks to the last comment in the list."
+    match rest
+        [] -> Option.Some(current)
+        [next, ..tail] -> lastCommentFrom(next, tail)
+
+verify lastCommentFrom
+    lastCommentFrom(Comment(id = "c1", body = "a", author = "alice", createdAt = "2026-03-08T12:00:00Z"), []) => Option.Some(Comment(id = "c1", body = "a", author = "alice", createdAt = "2026-03-08T12:00:00Z"))
+    lastCommentFrom(Comment(id = "c1", body = "a", author = "alice", createdAt = "2026-03-08T12:00:00Z"), [Comment(id = "c2", body = "b", author = "bob", createdAt = "2026-03-09T12:00:00Z")]) => Option.Some(Comment(id = "c2", body = "b", author = "bob", createdAt = "2026-03-09T12:00:00Z"))
+
+verify lastComment
+    lastComment([]) => Option.None
+    lastComment([Comment(id = "c1", body = "a", author = "alice", createdAt = "2026-03-08T12:00:00Z"), Comment(id = "c2", body = "b", author = "bob", createdAt = "2026-03-09T12:00:00Z")]) => Option.Some(Comment(id = "c2", body = "b", author = "bob", createdAt = "2026-03-09T12:00:00Z"))
+
+fn isClosed(status: TaskStatus) -> Bool
+    ? "Done and archived tasks no longer participate in deadline alerts."
+    match status
+        TaskStatus.Done -> true
+        TaskStatus.Archived -> true
+        _ -> false
+
+verify isClosed
+    isClosed(Domain.Types.TaskStatus.Done) => true
+    isClosed(Domain.Types.TaskStatus.Archived) => true
+    isClosed(Domain.Types.TaskStatus.Blocked) => false
+
+fn commentAfter(comments: List<Comment>, pivot: String) -> Bool
+    ? "True when any comment was added at or after the pivot timestamp."
+    match comments
+        [] -> false
+        [comment, ..rest] -> match comment.createdAt >= pivot
+            true -> true
+            false -> commentAfter(rest, pivot)
+
+verify commentAfter
+    commentAfter([Comment(id = "c1", body = "a", author = "alice", createdAt = "2026-03-09T12:00:00Z")], "2026-03-09T11:00:00Z") => true
+    commentAfter([Comment(id = "c1", body = "a", author = "alice", createdAt = "2026-03-09T10:00:00Z")], "2026-03-09T11:00:00Z") => false
+
+fn missingClosingComment(task: Task) -> Bool
+    ? "A completed task should usually have at least one comment at or after completion."
+    match task.status
+        TaskStatus.Done -> match commentAfter(task.comments, task.statusChangedAt)
+            true -> false
+            false -> true
+        _ -> false
+
+verify missingClosingComment
+    missingClosingComment(Task.update(sampleTask(), status = Domain.Types.TaskStatus.Done, statusChangedAt = "2026-03-09T12:00:00Z")) => true
+    missingClosingComment(Task.update(sampleTask(), status = Domain.Types.TaskStatus.Done, statusChangedAt = "2026-03-09T12:00:00Z", comments = [Comment(id = "c1", body = "closed", author = "alice", createdAt = "2026-03-09T12:30:00Z")])) => false
+
+fn deriveView(task: Task, now: String) -> Result<TaskView, String>
+    ? "Builds derived flags without mutating stored priority or tags."
+    overdue = deriveOverdue(task, now)?
+    deadlineSoon = deriveDeadlineSoon(task, now)?
+    stalled = deriveStalled(task, now)?
+    needsReview = hasTag(task, "needs_review")
+    derivedUrgent = deriveUrgent(task.priority, overdue, deadlineSoon)
+    Result.Ok(TaskView(taskId = task.id, projectId = task.projectId, title = task.title, status = task.status, priority = task.priority, tags = task.tags, deadline = task.deadline, overdue = overdue, deadlineSoon = deadlineSoon, derivedUrgent = derivedUrgent, stalled = stalled, missingClosingComment = missingClosingComment(task), needsReview = needsReview))
+
+verify deriveView
+    deriveView(Task.update(sampleTask(), deadline = Option.Some("2026-03-08T18:00:00Z")), "2026-03-08T12:00:00Z") => Result.Ok(TaskView(taskId = "t1", projectId = "p1", title = "Original title", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.Some("2026-03-08T18:00:00Z"), overdue = false, deadlineSoon = true, derivedUrgent = true, stalled = false, missingClosingComment = false, needsReview = false))
+    deriveView(Task.update(sampleTask(), status = Domain.Types.TaskStatus.Blocked, statusChangedAt = "2026-03-01T11:59:59Z"), "2026-03-05T12:00:00Z") => Result.Ok(TaskView(taskId = "t1", projectId = "p1", title = "Original title", status = Domain.Types.TaskStatus.Blocked, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, overdue = false, deadlineSoon = false, derivedUrgent = false, stalled = true, missingClosingComment = false, needsReview = false))
+
+fn deriveOverdue(task: Task, now: String) -> Result<Bool, String>
+    ? "Non-closed tasks are overdue when the deadline is already in the past."
+    match task.deadline
+        Option.None -> Result.Ok(false)
+        Option.Some(deadline) -> match isClosed(task.status)
+            true -> Result.Ok(false)
+            false -> Domain.Time.isPast(deadline, now)
+
+verify deriveOverdue
+    deriveOverdue(Task.update(sampleTask(), deadline = Option.Some("2026-03-07T12:00:00Z")), "2026-03-08T12:00:00Z") => Result.Ok(true)
+    deriveOverdue(Task.update(sampleTask(), status = Domain.Types.TaskStatus.Done, deadline = Option.Some("2026-03-07T12:00:00Z")), "2026-03-08T12:00:00Z") => Result.Ok(false)
+
+fn deriveDeadlineSoon(task: Task, now: String) -> Result<Bool, String>
+    ? "Non-closed tasks project as urgent when the deadline is within 24 hours."
+    match task.deadline
+        Option.None -> Result.Ok(false)
+        Option.Some(deadline) -> match isClosed(task.status)
+            true -> Result.Ok(false)
+            false -> Domain.Time.withinNextHours(now, deadline, 24)
+
+verify deriveDeadlineSoon
+    deriveDeadlineSoon(Task.update(sampleTask(), deadline = Option.Some("2026-03-08T18:00:00Z")), "2026-03-08T12:00:00Z") => Result.Ok(true)
+    deriveDeadlineSoon(Task.update(sampleTask(), deadline = Option.Some("2026-03-10T18:00:00Z")), "2026-03-08T12:00:00Z") => Result.Ok(false)
+
+fn deriveStalled(task: Task, now: String) -> Result<Bool, String>
+    ? "Blocked tasks become stalled after more than three days."
+    match task.status
+        TaskStatus.Blocked -> Domain.Time.olderThanDays(task.statusChangedAt, now, 3)
+        _ -> Result.Ok(false)
+
+verify deriveStalled
+    deriveStalled(Task.update(sampleTask(), status = Domain.Types.TaskStatus.Blocked, statusChangedAt = "2026-03-01T11:59:59Z"), "2026-03-05T12:00:00Z") => Result.Ok(true)
+    deriveStalled(Task.update(sampleTask(), status = Domain.Types.TaskStatus.Blocked, statusChangedAt = "2026-03-02T12:00:00Z"), "2026-03-05T12:00:00Z") => Result.Ok(false)
+
+fn deriveUrgent(priority: Priority, overdue: Bool, deadlineSoon: Bool) -> Bool
+    ? "Stored urgent priority and derived deadline pressure both count as urgent."
+    match priority
+        Priority.Urgent -> true
+        _ -> match overdue
+            true -> true
+            false -> deadlineSoon
+
+verify deriveUrgent
+    deriveUrgent(Domain.Types.Priority.Urgent, false, false) => true
+    deriveUrgent(Domain.Types.Priority.Normal, true, false) => true
+    deriveUrgent(Domain.Types.Priority.Normal, false, true) => true
+    deriveUrgent(Domain.Types.Priority.Normal, false, false) => false
+
+fn deriveSummary(task: Task, now: String) -> Result<TaskSummary, String>
+    ? "Compact list view over a task."
+    view = deriveView(task, now)?
+    Result.Ok(TaskSummary(taskId = task.id, title = task.title, projectId = task.projectId, status = task.status, priority = task.priority, derivedUrgent = view.derivedUrgent, overdue = view.overdue, stalled = view.stalled, tagSummary = String.join(task.tags, ","), deadlineText = deadlineText(task.deadline)))
+
+verify deriveSummary
+    deriveSummary(Task.update(sampleTask(), tags = ["ops", "waiting"], deadline = Option.Some("2026-03-08T18:00:00Z")), "2026-03-08T12:00:00Z") => Result.Ok(TaskSummary(taskId = "t1", title = "Original title", projectId = "p1", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, derivedUrgent = true, overdue = false, stalled = false, tagSummary = "ops,waiting", deadlineText = "2026-03-08T18:00:00Z"))
+
+fn deadlineText(deadline: Option<String>) -> String
+    ? "List-friendly deadline string."
+    match deadline
+        Option.None -> "-"
+        Option.Some(value) -> value
+
+verify deadlineText
+    deadlineText(Option.None) => "-"
+    deadlineText(Option.Some("2026-03-08T18:00:00Z")) => "2026-03-08T18:00:00Z"
+
+fn sampleTask() -> Task
+    ? "Reusable projection fixture."
+    Task(id = "t1", projectId = "p1", title = "Original title", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z")
+
+verify sampleTask
+    sampleTask() => Task(id = "t1", projectId = "p1", title = "Original title", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z")

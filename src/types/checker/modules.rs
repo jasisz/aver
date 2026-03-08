@@ -378,17 +378,19 @@ impl TypeChecker {
                                     .map(|f| parse_type_str_strict(f).unwrap_or(Type::Unknown))
                                     .collect();
                                 let key = format!("{}.{}.{}", name, type_name, variant.name);
+                                let alias_key = format!("{}.{}", type_name, variant.name);
                                 if params.is_empty() {
-                                    value_entries.insert(0, (key, Type::Named(type_name.clone())));
+                                    let value_ty = Type::Named(type_name.clone());
+                                    value_entries.push((key, value_ty.clone()));
+                                    value_entries.push((alias_key, value_ty));
                                 } else {
-                                    fn_entries.push((
-                                        key,
-                                        FnSig {
-                                            params,
-                                            ret: Type::Named(type_name.clone()),
-                                            effects: vec![],
-                                        },
-                                    ));
+                                    let sig = FnSig {
+                                        params,
+                                        ret: Type::Named(type_name.clone()),
+                                        effects: vec![],
+                                    };
+                                    fn_entries.push((key, sig.clone()));
+                                    fn_entries.push((alias_key, sig));
                                 }
                             }
                         }

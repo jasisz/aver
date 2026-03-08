@@ -47,6 +47,7 @@ fn emit_literal_pattern(lit: &Literal, _string_context: bool) -> String {
             format!("{:?}", s)
         }
         Literal::Bool(b) => if *b { "true" } else { "false" }.to_string(),
+        Literal::Unit => "()".to_string(),
     }
 }
 

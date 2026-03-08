@@ -78,6 +78,7 @@ impl TypeChecker {
                 crate::ast::Literal::Float(_) => Type::Float,
                 crate::ast::Literal::Str(_) => Type::Str,
                 crate::ast::Literal::Bool(_) => Type::Bool,
+                crate::ast::Literal::Unit => Type::Unit,
             },
 
             Expr::InterpolatedStr(parts) => {

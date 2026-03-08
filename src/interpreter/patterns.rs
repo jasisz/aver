@@ -1,6 +1,13 @@
 use super::*;
 
 impl Interpreter {
+    fn ctor_type_and_variant(ctor_name: &str) -> Option<(&str, &str)> {
+        let mut parts = ctor_name.rsplit('.');
+        let variant = parts.next()?;
+        let type_name = parts.next()?;
+        Some((type_name, variant))
+    }
+
     pub(super) fn eval_match(
         &mut self,
         subject: Value,
@@ -53,6 +60,7 @@ impl Interpreter {
                     (Literal::Float(f), Value::Float(v)) => f == v,
                     (Literal::Str(s), Value::Str(v)) => s == v,
                     (Literal::Bool(b), Value::Bool(v)) => b == v,
+                    (Literal::Unit, Value::Unit) => true,
                     _ => false,
                 };
                 if matches { Some(HashMap::new()) } else { None }
@@ -143,13 +151,11 @@ impl Interpreter {
                             ..
                         },
                     ) => {
-                        let matches = if ctor.contains('.') {
-                            let mut parts = ctor.splitn(2, '.');
-                            parts.next().is_some_and(|t| t == type_name)
-                                && parts.next().is_some_and(|v| v == variant)
-                        } else {
-                            false
-                        };
+                        let matches = Self::ctor_type_and_variant(ctor).is_some_and(
+                            |(ctor_type, ctor_variant)| {
+                                ctor_type == type_name && ctor_variant == variant
+                            },
+                        );
                         if !matches {
                             return None;
                         }

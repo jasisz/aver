@@ -1,0 +1,218 @@
+module Tasks
+    intent =
+        "Pure task command logic that produces explicit events."
+        "Command handlers stay thin because this module converts validated user intent"
+        "into domain events without touching persistence or notifications."
+    exposes [nextSeq, createTask, renameTask, startTask, blockTask, completeTask, reopenTask, changePriority, addTag, removeTag, addComment, setDeadline, clearDeadline, archiveTask]
+    depends [Domain.Types, Domain.Validation]
+
+decision CommandsProduceEventsNotMutatedTasks
+    date = "2026-03-08"
+    author = "Codex"
+    reason =
+        "A task workflow engine should make state transitions reviewable at the event level."
+        "Returning events instead of directly mutated tasks keeps replay and audit aligned."
+    chosen = "CommandFunctionsEmitEvents"
+    rejected = ["MutateTaskRecordsDirectly", "HideStateChangeInsideStore"]
+    impacts = [createTask, renameTask, completeTask, reopenTask]
+
+fn nextSeq(events: List<TaskEventRecord>) -> Int
+    ? "Event sequence is one-based and local to a task stream."
+    List.len(events) + 1
+
+verify nextSeq
+    nextSeq([]) => 1
+    nextSeq([TaskEventRecord(taskId = "t1", projectId = "p1", seq = 1, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z"))]) => 2
+
+fn eventRecord(taskId: String, projectId: String, seq: Int, event: TaskEvent) -> TaskEventRecord
+    ? "Small constructor to keep event-producing functions readable."
+    TaskEventRecord(taskId = taskId, projectId = projectId, seq = seq, event = event)
+
+verify eventRecord
+    eventRecord("t1", "p1", 2, Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z")) => TaskEventRecord(taskId = "t1", projectId = "p1", seq = 2, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z"))
+
+fn createTask(taskId: String, projectId: String, title: String, priority: Priority, tags: List<String>, deadline: Option<String>, now: String) -> Result<TaskEventRecord, String>
+    ? "Creates the first event in a task stream."
+    _ = Domain.Validation.validateTaskCreate(taskId, title, tags, deadline)?
+    Result.Ok(eventRecord(taskId, projectId, 1, Domain.Types.TaskEvent.TaskCreated(String.trim(title), priority, tags, deadline, now)))
+
+verify createTask
+    createTask("t1", "p1", "Write audit rules", Domain.Types.Priority.High, ["ops"], Option.Some("2026-03-09T12:00:00Z"), "2026-03-08T12:00:00Z") => Result.Ok(TaskEventRecord(taskId = "t1", projectId = "p1", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Write audit rules", Domain.Types.Priority.High, ["ops"], Option.Some("2026-03-09T12:00:00Z"), "2026-03-08T12:00:00Z")))
+    createTask("bad id", "p1", "Write audit rules", Domain.Types.Priority.High, ["ops"], Option.None, "2026-03-08T12:00:00Z") => Result.Err("Task ID must use letters, numbers, dash, or underscore")
+
+fn renameTask(task: Task, seq: Int, title: String, now: String) -> Result<TaskEventRecord, String>
+    ? "Renames a task unless it has already been archived."
+    _ = Domain.Validation.validateTaskRename(title)?
+    match task.status
+        TaskStatus.Archived -> Result.Err("Task '{task.id}' is archived")
+        _ -> Result.Ok(eventRecord(task.id, task.projectId, seq, Domain.Types.TaskEvent.TaskRenamed(String.trim(title), now)))
+
+verify renameTask
+    renameTask(sampleTask(), 2, "Updated title", "2026-03-09T12:00:00Z") => Result.Ok(TaskEventRecord(taskId = "t1", projectId = "p1", seq = 2, event = Domain.Types.TaskEvent.TaskRenamed("Updated title", "2026-03-09T12:00:00Z")))
+    renameTask(Task.update(sampleTask(), status = Domain.Types.TaskStatus.Archived), 2, "Updated title", "2026-03-09T12:00:00Z") => Result.Err("Task 't1' is archived")
+
+fn startTask(task: Task, seq: Int, now: String) -> Result<TaskEventRecord, String>
+    ? "Moves a task into in-progress work."
+    match task.status
+        TaskStatus.Todo -> Result.Ok(eventRecord(task.id, task.projectId, seq, Domain.Types.TaskEvent.TaskStarted(now)))
+        TaskStatus.Blocked -> Result.Ok(eventRecord(task.id, task.projectId, seq, Domain.Types.TaskEvent.TaskStarted(now)))
+        TaskStatus.InProgress -> Result.Err("Task '{task.id}' is already in progress")
+        TaskStatus.Done -> Result.Err("Task '{task.id}' must be reopened from done")
+        TaskStatus.Archived -> Result.Err("Task '{task.id}' is archived")
+
+verify startTask
+    startTask(sampleTask(), 2, "2026-03-09T12:00:00Z") => Result.Ok(TaskEventRecord(taskId = "t1", projectId = "p1", seq = 2, event = Domain.Types.TaskEvent.TaskStarted("2026-03-09T12:00:00Z")))
+    startTask(Task.update(sampleTask(), status = Domain.Types.TaskStatus.Done), 2, "2026-03-09T12:00:00Z") => Result.Err("Task 't1' must be reopened from done")
+
+fn blockTask(task: Task, seq: Int, reason: String, now: String) -> Result<TaskEventRecord, String>
+    ? "Marks a task blocked with an explicit reason."
+    _reasonOk = Domain.Validation.validateReason("Block", reason)?
+    _transitionOk = Domain.Validation.ensureTransition(task.status, Domain.Types.TaskStatus.Blocked, task.id)?
+    Result.Ok(eventRecord(task.id, task.projectId, seq, Domain.Types.TaskEvent.TaskBlocked(String.trim(reason), now)))
+
+verify blockTask
+    blockTask(sampleTask(), 2, "Waiting on vendor", "2026-03-09T12:00:00Z") => Result.Ok(TaskEventRecord(taskId = "t1", projectId = "p1", seq = 2, event = Domain.Types.TaskEvent.TaskBlocked("Waiting on vendor", "2026-03-09T12:00:00Z")))
+    blockTask(sampleTask(), 2, " ", "2026-03-09T12:00:00Z") => Result.Err("Block reason cannot be blank")
+
+fn completeTask(task: Task, seq: Int, now: String) -> Result<TaskEventRecord, String>
+    ? "Moves a task into done."
+    _ = Domain.Validation.ensureTransition(task.status, Domain.Types.TaskStatus.Done, task.id)?
+    Result.Ok(eventRecord(task.id, task.projectId, seq, Domain.Types.TaskEvent.TaskCompleted(now)))
+
+verify completeTask
+    completeTask(Task.update(sampleTask(), status = Domain.Types.TaskStatus.InProgress), 3, "2026-03-10T12:00:00Z") => Result.Ok(TaskEventRecord(taskId = "t1", projectId = "p1", seq = 3, event = Domain.Types.TaskEvent.TaskCompleted("2026-03-10T12:00:00Z")))
+    completeTask(Task.update(sampleTask(), status = Domain.Types.TaskStatus.Archived), 3, "2026-03-10T12:00:00Z") => Result.Err("Task 't1' cannot move from archived to done")
+
+fn reopenTask(task: Task, seq: Int, reason: String, now: String) -> Result<TaskEventRecord, String>
+    ? "Reopens a done task into active work."
+    _ = Domain.Validation.validateReason("Reopen", reason)?
+    match task.status
+        TaskStatus.Done -> Result.Ok(eventRecord(task.id, task.projectId, seq, Domain.Types.TaskEvent.TaskReopened(String.trim(reason), now)))
+        _ -> Result.Err("Task '{task.id}' can only be reopened from done")
+
+verify reopenTask
+    reopenTask(Task.update(sampleTask(), status = Domain.Types.TaskStatus.Done), 4, "Regression found", "2026-03-11T12:00:00Z") => Result.Ok(TaskEventRecord(taskId = "t1", projectId = "p1", seq = 4, event = Domain.Types.TaskEvent.TaskReopened("Regression found", "2026-03-11T12:00:00Z")))
+    reopenTask(sampleTask(), 4, "Regression found", "2026-03-11T12:00:00Z") => Result.Err("Task 't1' can only be reopened from done")
+
+fn changePriority(task: Task, seq: Int, priority: Priority, now: String) -> Result<TaskEventRecord, String>
+    ? "Updates priority unless the value is unchanged."
+    match task.status
+        TaskStatus.Archived -> Result.Err("Task '{task.id}' is archived")
+        _ -> match task.priority == priority
+            true -> Result.Err("Task '{task.id}' already has priority {priorityLabel(priority)}")
+            false -> Result.Ok(eventRecord(task.id, task.projectId, seq, Domain.Types.TaskEvent.PriorityChanged(priority, now)))
+
+verify changePriority
+    changePriority(sampleTask(), 2, Domain.Types.Priority.Urgent, "2026-03-09T12:00:00Z") => Result.Ok(TaskEventRecord(taskId = "t1", projectId = "p1", seq = 2, event = Domain.Types.TaskEvent.PriorityChanged(Domain.Types.Priority.Urgent, "2026-03-09T12:00:00Z")))
+    changePriority(sampleTask(), 2, Domain.Types.Priority.Normal, "2026-03-09T12:00:00Z") => Result.Err("Task 't1' already has priority normal")
+
+fn priorityLabel(priority: Priority) -> String
+    ? "Lower-case priority label for user-facing errors."
+    match priority
+        Priority.Low -> "low"
+        Priority.Normal -> "normal"
+        Priority.High -> "high"
+        Priority.Urgent -> "urgent"
+
+verify priorityLabel
+    priorityLabel(Domain.Types.Priority.High) => "high"
+    priorityLabel(Domain.Types.Priority.Urgent) => "urgent"
+
+fn addTag(task: Task, seq: Int, tag: String, now: String) -> Result<TaskEventRecord, String>
+    ? "Adds a tag if it is valid and not already present."
+    match task.status
+        TaskStatus.Archived -> Result.Err("Task '{task.id}' is archived")
+        _ -> match Domain.Validation.validTag(tag)
+            false -> Result.Err("Tag must use letters, numbers, dash, or underscore")
+            true -> match List.contains(task.tags, tag)
+                true -> Result.Err("Task '{task.id}' already has tag '{tag}'")
+                false -> Result.Ok(eventRecord(task.id, task.projectId, seq, Domain.Types.TaskEvent.TagAdded(tag, now)))
+
+verify addTag
+    addTag(sampleTask(), 2, "waiting", "2026-03-09T12:00:00Z") => Result.Ok(TaskEventRecord(taskId = "t1", projectId = "p1", seq = 2, event = Domain.Types.TaskEvent.TagAdded("waiting", "2026-03-09T12:00:00Z")))
+    addTag(Task.update(sampleTask(), tags = ["waiting"]), 2, "waiting", "2026-03-09T12:00:00Z") => Result.Err("Task 't1' already has tag 'waiting'")
+
+fn removeTag(task: Task, seq: Int, tag: String, now: String) -> Result<TaskEventRecord, String>
+    ? "Removes a tag only when it currently exists."
+    match task.status
+        TaskStatus.Archived -> Result.Err("Task '{task.id}' is archived")
+        _ -> match List.contains(task.tags, tag)
+            true -> Result.Ok(eventRecord(task.id, task.projectId, seq, Domain.Types.TaskEvent.TagRemoved(tag, now)))
+            false -> Result.Err("Task '{task.id}' does not have tag '{tag}'")
+
+verify removeTag
+    removeTag(Task.update(sampleTask(), tags = ["waiting"]), 2, "waiting", "2026-03-09T12:00:00Z") => Result.Ok(TaskEventRecord(taskId = "t1", projectId = "p1", seq = 2, event = Domain.Types.TaskEvent.TagRemoved("waiting", "2026-03-09T12:00:00Z")))
+    removeTag(sampleTask(), 2, "waiting", "2026-03-09T12:00:00Z") => Result.Err("Task 't1' does not have tag 'waiting'")
+
+fn addComment(task: Task, seq: Int, author: String, body: String, now: String) -> Result<TaskEventRecord, String>
+    ? "Adds a comment with a deterministic ID derived from the task stream."
+    match task.status
+        TaskStatus.Archived -> Result.Err("Task '{task.id}' is archived")
+        _ -> appendComment(task, seq, author, body, now)
+
+verify addComment
+    addComment(sampleTask(), 3, "alice", "Waiting on review", "2026-03-09T12:00:00Z") => Result.Ok(TaskEventRecord(taskId = "t1", projectId = "p1", seq = 3, event = Domain.Types.TaskEvent.CommentAdded(Comment(id = "t1-c3", body = "Waiting on review", author = "alice", createdAt = "2026-03-09T12:00:00Z"))))
+    addComment(sampleTask(), 3, "", "Waiting on review", "2026-03-09T12:00:00Z") => Result.Err("Comment author cannot be blank")
+
+fn appendComment(task: Task, seq: Int, author: String, body: String, now: String) -> Result<TaskEventRecord, String>
+    ? "Helper that validates comment fields and builds the event."
+    _ = Domain.Validation.validateComment(author, body)?
+    comment = Comment(id = "{task.id}-c{seq}", body = String.trim(body), author = String.trim(author), createdAt = now)
+    Result.Ok(eventRecord(task.id, task.projectId, seq, Domain.Types.TaskEvent.CommentAdded(comment)))
+
+verify appendComment
+    appendComment(sampleTask(), 3, "alice", "Waiting on review", "2026-03-09T12:00:00Z") => Result.Ok(TaskEventRecord(taskId = "t1", projectId = "p1", seq = 3, event = Domain.Types.TaskEvent.CommentAdded(Comment(id = "t1-c3", body = "Waiting on review", author = "alice", createdAt = "2026-03-09T12:00:00Z"))))
+    appendComment(sampleTask(), 3, "", "Waiting on review", "2026-03-09T12:00:00Z") => Result.Err("Comment author cannot be blank")
+
+fn setDeadline(task: Task, seq: Int, deadline: String, now: String) -> Result<TaskEventRecord, String>
+    ? "Sets or replaces a task deadline."
+    match task.status
+        TaskStatus.Archived -> Result.Err("Task '{task.id}' is archived")
+        _ -> setKnownDeadline(task, seq, deadline, now)
+
+verify setDeadline
+    setDeadline(sampleTask(), 2, "2026-03-10T12:00:00Z", "2026-03-09T12:00:00Z") => Result.Ok(TaskEventRecord(taskId = "t1", projectId = "p1", seq = 2, event = Domain.Types.TaskEvent.DeadlineSet("2026-03-10T12:00:00Z", "2026-03-09T12:00:00Z")))
+    setDeadline(sampleTask(), 2, "bad", "2026-03-09T12:00:00Z") => Result.Err("Invalid deadline: Timestamp must start with YYYY-MM-DDTHH:MM:SS")
+
+fn setKnownDeadline(task: Task, seq: Int, deadline: String, now: String) -> Result<TaskEventRecord, String>
+    ? "Validates deadline shape and avoids duplicate writes."
+    checked = Domain.Validation.validateDeadline(Option.Some(deadline))?
+    match checked
+        Option.Some(value) -> match task.deadline
+            Option.Some(existing) -> match existing == value
+                true -> Result.Err("Task '{task.id}' already has deadline {value}")
+                false -> Result.Ok(eventRecord(task.id, task.projectId, seq, Domain.Types.TaskEvent.DeadlineSet(value, now)))
+            Option.None -> Result.Ok(eventRecord(task.id, task.projectId, seq, Domain.Types.TaskEvent.DeadlineSet(value, now)))
+        Option.None -> Result.Err("Deadline was required")
+
+verify setKnownDeadline
+    setKnownDeadline(sampleTask(), 2, "2026-03-10T12:00:00Z", "2026-03-09T12:00:00Z") => Result.Ok(TaskEventRecord(taskId = "t1", projectId = "p1", seq = 2, event = Domain.Types.TaskEvent.DeadlineSet("2026-03-10T12:00:00Z", "2026-03-09T12:00:00Z")))
+    setKnownDeadline(Task.update(sampleTask(), deadline = Option.Some("2026-03-10T12:00:00Z")), 2, "2026-03-10T12:00:00Z", "2026-03-09T12:00:00Z") => Result.Err("Task 't1' already has deadline 2026-03-10T12:00:00Z")
+
+fn clearDeadline(task: Task, seq: Int, now: String) -> Result<TaskEventRecord, String>
+    ? "Clears an existing deadline."
+    match task.status
+        TaskStatus.Archived -> Result.Err("Task '{task.id}' is archived")
+        _ -> match task.deadline
+            Option.Some(_) -> Result.Ok(eventRecord(task.id, task.projectId, seq, Domain.Types.TaskEvent.DeadlineCleared(now)))
+            Option.None -> Result.Err("Task '{task.id}' has no deadline to clear")
+
+verify clearDeadline
+    clearDeadline(Task.update(sampleTask(), deadline = Option.Some("2026-03-10T12:00:00Z")), 2, "2026-03-09T12:00:00Z") => Result.Ok(TaskEventRecord(taskId = "t1", projectId = "p1", seq = 2, event = Domain.Types.TaskEvent.DeadlineCleared("2026-03-09T12:00:00Z")))
+    clearDeadline(sampleTask(), 2, "2026-03-09T12:00:00Z") => Result.Err("Task 't1' has no deadline to clear")
+
+fn archiveTask(task: Task, seq: Int, now: String) -> Result<TaskEventRecord, String>
+    ? "Moves a task into its final archived state."
+    _ = Domain.Validation.ensureTransition(task.status, Domain.Types.TaskStatus.Archived, task.id)?
+    Result.Ok(eventRecord(task.id, task.projectId, seq, Domain.Types.TaskEvent.TaskArchived(now)))
+
+verify archiveTask
+    archiveTask(sampleTask(), 4, "2026-03-11T12:00:00Z") => Result.Ok(TaskEventRecord(taskId = "t1", projectId = "p1", seq = 4, event = Domain.Types.TaskEvent.TaskArchived("2026-03-11T12:00:00Z")))
+    archiveTask(Task.update(sampleTask(), status = Domain.Types.TaskStatus.Archived), 4, "2026-03-11T12:00:00Z") => Result.Err("Task 't1' cannot move from archived to archived")
+
+fn sampleTask() -> Task
+    ? "Small reusable fixture for verify cases."
+    Task(id = "t1", projectId = "p1", title = "Original title", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z")
+
+verify sampleTask
+    sampleTask() => Task(id = "t1", projectId = "p1", title = "Original title", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z")

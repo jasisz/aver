@@ -1,0 +1,298 @@
+module Time
+    intent =
+        "Pure timestamp parsing and comparison for workflow deadlines and rule windows."
+        "Uses explicit ISO parsing instead of assuming Time.now() strings can only be"
+        "compared lexicographically when duration math is needed."
+    exposes [Timestamp, parseIso, toUnixSeconds, secondsUntil, withinNextHours, olderThanDays, isPast]
+
+record Timestamp
+    year: Int
+    month: Int
+    day: Int
+    hour: Int
+    minute: Int
+    second: Int
+
+fn hasExpectedChar(s: String, index: Int, expected: String) -> Bool
+    ? "Returns true when the string contains the expected separator at the given index."
+    match String.charAt(s, index)
+        Option.Some(actual) -> actual == expected
+        Option.None -> false
+
+verify hasExpectedChar
+    hasExpectedChar("2026-03-08T12:30:00Z", 4, "-") => true
+    hasExpectedChar("2026-03-08T12:30:00Z", 10, "T") => true
+    hasExpectedChar("2026-03-08T12:30:00Z", 10, " ") => false
+
+fn hasIsoShape(s: String) -> Bool
+    ? "Checks only the structural separators required by YYYY-MM-DDTHH:MM:SS."
+    match String.len(s) >= 19
+        false -> false
+        true -> match hasExpectedChar(s, 4, "-")
+            false -> false
+            true -> match hasExpectedChar(s, 7, "-")
+                false -> false
+                true -> match hasExpectedChar(s, 10, "T")
+                    false -> false
+                    true -> match hasExpectedChar(s, 13, ":")
+                        false -> false
+                        true -> hasExpectedChar(s, 16, ":")
+
+verify hasIsoShape
+    hasIsoShape("2026-03-08T12:30:00Z") => true
+    hasIsoShape("2026-03-08 12:30:00Z") => false
+    hasIsoShape("bad") => false
+
+fn parseSlice(label: String, s: String, from: Int, to: Int) -> Result<Int, String>
+    ? "Parses a numeric ISO slice and keeps the error message tied to its field name."
+    raw = String.slice(s, from, to)
+    match Int.fromString(raw)
+        Result.Ok(value) -> Result.Ok(value)
+        Result.Err(_) -> Result.Err("Invalid {label}: " + raw)
+
+verify parseSlice
+    parseSlice("year", "2026-03-08T12:30:00Z", 0, 4) => Result.Ok(2026)
+    parseSlice("month", "2026-03-08T12:30:00Z", 5, 7) => Result.Ok(3)
+    parseSlice("year", "nope", 0, 4) => Result.Err("Invalid year: nope")
+
+fn isLeapYear(year: Int) -> Bool
+    ? "Gregorian leap year rule."
+    match Int.mod(year, 400)
+        Result.Ok(rem400) -> match rem400 == 0
+            true -> true
+            false -> match Int.mod(year, 100)
+                Result.Ok(rem100) -> match rem100 == 0
+                    true -> false
+                    false -> match Int.mod(year, 4)
+                        Result.Ok(rem4) -> rem4 == 0
+                        _ -> false
+                _ -> false
+        _ -> match Int.mod(year, 100)
+            Result.Ok(rem100) -> match rem100 == 0
+                true -> false
+                false -> match Int.mod(year, 4)
+                    Result.Ok(rem4) -> rem4 == 0
+                    _ -> false
+            _ -> false
+
+verify isLeapYear
+    isLeapYear(2024) => true
+    isLeapYear(2025) => false
+    isLeapYear(2000) => true
+    isLeapYear(1900) => false
+
+fn daysInMonth(year: Int, month: Int) -> Int
+    ? "Calendar days in the given month."
+    match month
+        1 -> 31
+        2 -> match isLeapYear(year)
+            true -> 29
+            false -> 28
+        3 -> 31
+        4 -> 30
+        5 -> 31
+        6 -> 30
+        7 -> 31
+        8 -> 31
+        9 -> 30
+        10 -> 31
+        11 -> 30
+        12 -> 31
+        _ -> 0
+
+verify daysInMonth
+    daysInMonth(2024, 2) => 29
+    daysInMonth(2025, 2) => 28
+    daysInMonth(2025, 11) => 30
+
+fn validMonth(month: Int) -> Bool
+    ? "True when month is between 1 and 12."
+    match month >= 1
+        false -> false
+        true -> month <= 12
+
+verify validMonth
+    validMonth(1) => true
+    validMonth(12) => true
+    validMonth(13) => false
+
+fn validDay(year: Int, month: Int, day: Int) -> Bool
+    ? "True when the day is within the month range."
+    maxDay = daysInMonth(year, month)
+    match day >= 1
+        false -> false
+        true -> day <= maxDay
+
+verify validDay
+    validDay(2024, 2, 29) => true
+    validDay(2025, 2, 29) => false
+    validDay(2025, 4, 31) => false
+
+fn validClockValue(value: Int, limit: Int) -> Bool
+    ? "Shared range check for hour, minute, and second values."
+    match value >= 0
+        false -> false
+        true -> value < limit
+
+verify validClockValue
+    validClockValue(0, 24) => true
+    validClockValue(23, 24) => true
+    validClockValue(24, 24) => false
+
+fn validTimestamp(ts: Timestamp) -> Bool
+    ? "Checks parsed timestamp ranges."
+    match validMonth(ts.month)
+        false -> false
+        true -> match validDay(ts.year, ts.month, ts.day)
+            false -> false
+            true -> match validClockValue(ts.hour, 24)
+                false -> false
+                true -> match validClockValue(ts.minute, 60)
+                    false -> false
+                    true -> validClockValue(ts.second, 60)
+
+verify validTimestamp
+    validTimestamp(Timestamp(year = 2026, month = 3, day = 8, hour = 12, minute = 30, second = 0)) => true
+    validTimestamp(Timestamp(year = 2026, month = 13, day = 8, hour = 12, minute = 30, second = 0)) => false
+    validTimestamp(Timestamp(year = 2026, month = 2, day = 30, hour = 12, minute = 30, second = 0)) => false
+
+fn parseIso(s: String) -> Result<Timestamp, String>
+    ? "Parses YYYY-MM-DDTHH:MM:SS and ignores any trailing fractional or zone suffix."
+    match hasIsoShape(s)
+        false -> Result.Err("Timestamp must start with YYYY-MM-DDTHH:MM:SS")
+        true -> parseIsoKnownShape(s)
+
+verify parseIso
+    parseIso("2026-03-08T12:30:00Z") => Result.Ok(Timestamp(year = 2026, month = 3, day = 8, hour = 12, minute = 30, second = 0))
+    parseIso("2024-02-29T05:00:00.000Z") => Result.Ok(Timestamp(year = 2024, month = 2, day = 29, hour = 5, minute = 0, second = 0))
+    parseIso("2025-02-29T05:00:00Z") => Result.Err("Invalid calendar timestamp: 2025-02-29T05:00:00")
+    parseIso("bad") => Result.Err("Timestamp must start with YYYY-MM-DDTHH:MM:SS")
+
+fn parseIsoKnownShape(s: String) -> Result<Timestamp, String>
+    ? "Parses a timestamp once separators have been validated."
+    year = parseSlice("year", s, 0, 4)?
+    month = parseSlice("month", s, 5, 7)?
+    day = parseSlice("day", s, 8, 10)?
+    hour = parseSlice("hour", s, 11, 13)?
+    minute = parseSlice("minute", s, 14, 16)?
+    second = parseSlice("second", s, 17, 19)?
+    ts = Timestamp(year = year, month = month, day = day, hour = hour, minute = minute, second = second)
+    match validTimestamp(ts)
+        true -> Result.Ok(ts)
+        false -> Result.Err("Invalid calendar timestamp: " + String.slice(s, 0, 19))
+
+verify parseIsoKnownShape
+    parseIsoKnownShape("2026-03-08T12:30:00Z") => Result.Ok(Timestamp(year = 2026, month = 3, day = 8, hour = 12, minute = 30, second = 0))
+    parseIsoKnownShape("2025-02-29T05:00:00Z") => Result.Err("Invalid calendar timestamp: 2025-02-29T05:00:00")
+    parseIsoKnownShape("2026-0x-08T12:30:00Z") => Result.Err("Invalid month: 0x")
+
+fn leapYearsBefore(year: Int) -> Int
+    ? "Number of leap years before January 1 of the given year."
+    prev = year - 1
+    prev / 4 - prev / 100 + prev / 400
+
+verify leapYearsBefore
+    leapYearsBefore(1) => 0
+    leapYearsBefore(2025) => 491
+    leapYearsBefore(2026) => 491
+
+fn daysBeforeYear(year: Int) -> Int
+    ? "Days before January 1 of the given year."
+    (year - 1) * 365 + leapYearsBefore(year)
+
+verify daysBeforeYear
+    daysBeforeYear(1) => 0
+    daysBeforeYear(2025) => 739251
+    daysBeforeYear(2026) => 739616
+
+fn daysBeforeMonth(year: Int, month: Int) -> Int
+    ? "Days before the first day of a month."
+    match month
+        1 -> 0
+        2 -> 31
+        3 -> match isLeapYear(year)
+            true -> 60
+            false -> 59
+        4 -> match isLeapYear(year)
+            true -> 91
+            false -> 90
+        5 -> match isLeapYear(year)
+            true -> 121
+            false -> 120
+        6 -> match isLeapYear(year)
+            true -> 152
+            false -> 151
+        7 -> match isLeapYear(year)
+            true -> 182
+            false -> 181
+        8 -> match isLeapYear(year)
+            true -> 213
+            false -> 212
+        9 -> match isLeapYear(year)
+            true -> 244
+            false -> 243
+        10 -> match isLeapYear(year)
+            true -> 274
+            false -> 273
+        11 -> match isLeapYear(year)
+            true -> 305
+            false -> 304
+        12 -> match isLeapYear(year)
+            true -> 335
+            false -> 334
+        _ -> 0
+
+verify daysBeforeMonth
+    daysBeforeMonth(2025, 1) => 0
+    daysBeforeMonth(2025, 3) => 59
+    daysBeforeMonth(2024, 3) => 60
+    daysBeforeMonth(2025, 12) => 334
+
+fn toUnixSeconds(ts: Timestamp) -> Int
+    ? "Converts a parsed timestamp to a comparable second count."
+    dayIndex = daysBeforeYear(ts.year) + daysBeforeMonth(ts.year, ts.month) + ts.day - 1
+    dayIndex * 86400 + ts.hour * 3600 + ts.minute * 60 + ts.second
+
+verify toUnixSeconds
+    toUnixSeconds(Timestamp(year = 1970, month = 1, day = 1, hour = 0, minute = 0, second = 0)) => 62135596800
+    toUnixSeconds(Timestamp(year = 1970, month = 1, day = 2, hour = 0, minute = 0, second = 0)) => 62135683200
+
+fn secondsUntil(from: String, to: String) -> Result<Int, String>
+    ? "Difference between two ISO timestamps: to - from."
+    fromTs = parseIso(from)?
+    toTs = parseIso(to)?
+    Result.Ok(toUnixSeconds(toTs) - toUnixSeconds(fromTs))
+
+verify secondsUntil
+    secondsUntil("2026-03-08T12:00:00Z", "2026-03-08T13:00:00Z") => Result.Ok(3600)
+    secondsUntil("2026-03-08T13:00:00Z", "2026-03-08T12:00:00Z") => Result.Ok(-3600)
+
+fn withinNextHours(now: String, target: String, hours: Int) -> Result<Bool, String>
+    ? "True when target is in the future and inside the requested hour window."
+    diff = secondsUntil(now, target)?
+    match diff < 0
+        true -> Result.Ok(false)
+        false -> Result.Ok(diff <= hours * 3600)
+
+verify withinNextHours
+    withinNextHours("2026-03-08T12:00:00Z", "2026-03-08T23:00:00Z", 24) => Result.Ok(true)
+    withinNextHours("2026-03-08T12:00:00Z", "2026-03-10T12:00:00Z", 24) => Result.Ok(false)
+    withinNextHours("2026-03-08T12:00:00Z", "2026-03-08T11:00:00Z", 24) => Result.Ok(false)
+
+fn olderThanDays(from: String, to: String, days: Int) -> Result<Bool, String>
+    ? "True when the elapsed time is strictly greater than N days."
+    diff = secondsUntil(from, to)?
+    Result.Ok(diff > days * 86400)
+
+verify olderThanDays
+    olderThanDays("2026-03-01T12:00:00Z", "2026-03-05T12:00:01Z", 3) => Result.Ok(true)
+    olderThanDays("2026-03-01T12:00:00Z", "2026-03-04T12:00:00Z", 3) => Result.Ok(false)
+
+fn isPast(target: String, now: String) -> Result<Bool, String>
+    ? "True when the target timestamp is before the supplied now timestamp."
+    diff = secondsUntil(now, target)?
+    Result.Ok(diff < 0)
+
+verify isPast
+    isPast("2026-03-07T12:00:00Z", "2026-03-08T12:00:00Z") => Result.Ok(true)
+    isPast("2026-03-09T12:00:00Z", "2026-03-08T12:00:00Z") => Result.Ok(false)

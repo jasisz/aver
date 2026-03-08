@@ -1,0 +1,262 @@
+module Validation
+    intent =
+        "Pure validation rules for command inputs and state transitions."
+        "Keeps task and project invariants inspectable without touching the store or clock."
+    exposes [nonBlank, validId, validTag, validateProjectCreate, validateTaskCreate, validateTaskRename, validateComment, validateReason, validateDeadline, ensureProjectActive, canTransition, ensureTransition]
+    depends [Domain.Types, Domain.Time]
+
+decision ArchivedProjectsRejectTaskChanges
+    date = "2026-03-08"
+    author = "Codex"
+    reason =
+        "Archived projects are an operational boundary, not only a display state."
+        "Once a project is archived, task mutation should stop unless a future command"
+        "makes that exception explicit."
+    chosen = "RejectTaskMutationWhenProjectArchived"
+    rejected = ["SoftWarningOnly", "ImplicitOverride"]
+    impacts = [ensureProjectActive]
+
+fn statusLabel(status: TaskStatus) -> String
+    ? "Stable lowercase labels for diagnostics."
+    match status
+        TaskStatus.Todo -> "todo"
+        TaskStatus.InProgress -> "in_progress"
+        TaskStatus.Blocked -> "blocked"
+        TaskStatus.Done -> "done"
+        TaskStatus.Archived -> "archived"
+
+verify statusLabel
+    statusLabel(Domain.Types.TaskStatus.Done) => "done"
+    statusLabel(Domain.Types.TaskStatus.Archived) => "archived"
+
+fn nonBlank(text: String) -> Bool
+    ? "True when the trimmed text still contains characters."
+    String.len(String.trim(text)) > 0
+
+verify nonBlank
+    nonBlank("hello") => true
+    nonBlank("  ") => false
+
+fn isAlphaNumeric(code: Int) -> Bool
+    ? "ASCII-only identifier helper."
+    match code >= 48
+        false -> false
+        true -> match code <= 57
+            true -> true
+            false -> match code >= 65
+                false -> false
+                true -> match code <= 90
+                    true -> true
+                    false -> match code >= 97
+                        false -> false
+                        true -> code <= 122
+
+verify isAlphaNumeric
+    isAlphaNumeric(48) => true
+    isAlphaNumeric(90) => true
+    isAlphaNumeric(95) => false
+
+fn validIdChar(ch: String) -> Bool
+    ? "Project and task IDs accept letters, numbers, dash, and underscore."
+    match ch == "-"
+        true -> true
+        false -> match ch == "_"
+            true -> true
+            false -> isAlphaNumeric(Char.toCode(ch))
+
+verify validIdChar
+    validIdChar("a") => true
+    validIdChar("9") => true
+    validIdChar("-") => true
+    validIdChar(" ") => false
+
+fn allValidIdChars(chars: List<String>) -> Bool
+    ? "Recursive identifier character walk."
+    match chars
+        [] -> true
+        [ch, ..rest] -> match validIdChar(ch)
+            true -> allValidIdChars(rest)
+            false -> false
+
+verify allValidIdChars
+    allValidIdChars(["a", "1", "-"]) => true
+    allValidIdChars(["a", " "]) => false
+
+fn validId(value: String) -> Bool
+    ? "IDs must be non-empty and use a restricted ASCII alphabet."
+    clean = String.trim(value)
+    match String.len(clean) == 0
+        true -> false
+        false -> allValidIdChars(String.chars(clean))
+
+verify validId
+    validId("task_1") => true
+    validId("project-alpha") => true
+    validId("bad id") => false
+    validId("") => false
+
+fn validTag(tag: String) -> Bool
+    ? "Tags use the same restricted shape as IDs."
+    validId(tag)
+
+verify validTag
+    validTag("waiting") => true
+    validTag("needs_review") => true
+    validTag("bad tag") => false
+
+fn tagsAreUnique(tags: List<String>) -> Bool
+    ? "True when each tag appears at most once."
+    match tags
+        [] -> true
+        [tag, ..rest] -> match List.contains(rest, tag)
+            true -> false
+            false -> tagsAreUnique(rest)
+
+verify tagsAreUnique
+    tagsAreUnique([]) => true
+    tagsAreUnique(["a", "b"]) => true
+    tagsAreUnique(["a", "b", "a"]) => false
+
+fn allTagsValid(tags: List<String>) -> Bool
+    ? "True when every tag matches the tag grammar."
+    match tags
+        [] -> true
+        [tag, ..rest] -> match validTag(tag)
+            true -> allTagsValid(rest)
+            false -> false
+
+verify allTagsValid
+    allTagsValid(["ops", "waiting"]) => true
+    allTagsValid(["ops", "bad tag"]) => false
+
+fn validateProjectCreate(id: String, name: String) -> Result<Unit, String>
+    ? "Checks fields needed to create a project."
+    match validId(id)
+        false -> Result.Err("Project ID must use letters, numbers, dash, or underscore")
+        true -> match nonBlank(name)
+            false -> Result.Err("Project name cannot be blank")
+            true -> Result.Ok(Unit)
+
+verify validateProjectCreate
+    validateProjectCreate("alpha_1", "Alpha") => Result.Ok(Unit)
+    validateProjectCreate("bad id", "Alpha") => Result.Err("Project ID must use letters, numbers, dash, or underscore")
+    validateProjectCreate("alpha", "   ") => Result.Err("Project name cannot be blank")
+
+fn validateDeadline(deadline: Option<String>) -> Result<Option<String>, String>
+    ? "Validates an optional ISO deadline."
+    match deadline
+        Option.None -> Result.Ok(Option.None)
+        Option.Some(raw) -> match Domain.Time.parseIso(raw)
+            Result.Ok(_) -> Result.Ok(Option.Some(raw))
+            Result.Err(msg) -> Result.Err("Invalid deadline: " + msg)
+
+verify validateDeadline
+    validateDeadline(Option.None) => Result.Ok(Option.None)
+    validateDeadline(Option.Some("2026-03-09T12:00:00Z")) => Result.Ok(Option.Some("2026-03-09T12:00:00Z"))
+    validateDeadline(Option.Some("bad")) => Result.Err("Invalid deadline: Timestamp must start with YYYY-MM-DDTHH:MM:SS")
+
+fn validateTaskCreate(id: String, title: String, tags: List<String>, deadline: Option<String>) -> Result<Unit, String>
+    ? "Checks fields needed to create a task."
+    match validId(id)
+        false -> Result.Err("Task ID must use letters, numbers, dash, or underscore")
+        true -> match nonBlank(title)
+            false -> Result.Err("Task title cannot be blank")
+            true -> match allTagsValid(tags)
+                false -> Result.Err("Tags must use letters, numbers, dash, or underscore")
+                true -> match tagsAreUnique(tags)
+                    false -> Result.Err("Tags must not repeat")
+                    true -> match validateDeadline(deadline)
+                        Result.Ok(_) -> Result.Ok(Unit)
+                        Result.Err(msg) -> Result.Err(msg)
+
+verify validateTaskCreate
+    validateTaskCreate("task_1", "Write notes", ["ops", "waiting"], Option.Some("2026-03-09T12:00:00Z")) => Result.Ok(Unit)
+    validateTaskCreate("bad id", "Write notes", [], Option.None) => Result.Err("Task ID must use letters, numbers, dash, or underscore")
+    validateTaskCreate("task_1", "  ", [], Option.None) => Result.Err("Task title cannot be blank")
+    validateTaskCreate("task_1", "Write notes", ["bad tag"], Option.None) => Result.Err("Tags must use letters, numbers, dash, or underscore")
+    validateTaskCreate("task_1", "Write notes", ["ops", "ops"], Option.None) => Result.Err("Tags must not repeat")
+
+fn validateTaskRename(title: String) -> Result<Unit, String>
+    ? "Renames require a non-empty title."
+    match nonBlank(title)
+        true -> Result.Ok(Unit)
+        false -> Result.Err("Task title cannot be blank")
+
+verify validateTaskRename
+    validateTaskRename("New title") => Result.Ok(Unit)
+    validateTaskRename(" ") => Result.Err("Task title cannot be blank")
+
+fn validateComment(author: String, body: String) -> Result<Unit, String>
+    ? "Comments need both author and body."
+    match nonBlank(author)
+        false -> Result.Err("Comment author cannot be blank")
+        true -> match nonBlank(body)
+            false -> Result.Err("Comment body cannot be blank")
+            true -> Result.Ok(Unit)
+
+verify validateComment
+    validateComment("alice", "Looks good") => Result.Ok(Unit)
+    validateComment("", "Looks good") => Result.Err("Comment author cannot be blank")
+    validateComment("alice", " ") => Result.Err("Comment body cannot be blank")
+
+fn validateReason(label: String, reason: String) -> Result<Unit, String>
+    ? "Shared reason validator for block and reopen commands."
+    match nonBlank(reason)
+        true -> Result.Ok(Unit)
+        false -> Result.Err(label + " reason cannot be blank")
+
+verify validateReason
+    validateReason("Reopen", "Regression found") => Result.Ok(Unit)
+    validateReason("Reopen", " ") => Result.Err("Reopen reason cannot be blank")
+
+fn ensureProjectActive(project: Project) -> Result<Unit, String>
+    ? "Rejects task mutation when the parent project is archived."
+    match project.archived
+        true -> Result.Err("Project '{project.id}' is archived and rejects task mutation")
+        false -> Result.Ok(Unit)
+
+verify ensureProjectActive
+    ensureProjectActive(Project(id = "p1", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z")) => Result.Ok(Unit)
+    ensureProjectActive(Project(id = "p1", name = "Alpha", archived = true, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z")) => Result.Err("Project 'p1' is archived and rejects task mutation")
+
+fn canTransition(from: TaskStatus, to: TaskStatus) -> Bool
+    ? "Allowed task status transitions for this workflow engine."
+    match from
+        TaskStatus.Todo -> match to
+            TaskStatus.InProgress -> true
+            TaskStatus.Blocked -> true
+            TaskStatus.Done -> true
+            TaskStatus.Archived -> true
+            _ -> false
+        TaskStatus.InProgress -> match to
+            TaskStatus.Blocked -> true
+            TaskStatus.Done -> true
+            TaskStatus.Archived -> true
+            _ -> false
+        TaskStatus.Blocked -> match to
+            TaskStatus.InProgress -> true
+            TaskStatus.Done -> true
+            TaskStatus.Archived -> true
+            _ -> false
+        TaskStatus.Done -> match to
+            TaskStatus.InProgress -> true
+            TaskStatus.Archived -> true
+            _ -> false
+        TaskStatus.Archived -> false
+
+verify canTransition
+    canTransition(Domain.Types.TaskStatus.Todo, Domain.Types.TaskStatus.InProgress) => true
+    canTransition(Domain.Types.TaskStatus.Blocked, Domain.Types.TaskStatus.InProgress) => true
+    canTransition(Domain.Types.TaskStatus.Done, Domain.Types.TaskStatus.InProgress) => true
+    canTransition(Domain.Types.TaskStatus.Done, Domain.Types.TaskStatus.Todo) => false
+    canTransition(Domain.Types.TaskStatus.Archived, Domain.Types.TaskStatus.Done) => false
+
+fn ensureTransition(from: TaskStatus, to: TaskStatus, taskId: String) -> Result<Unit, String>
+    ? "Turns the transition table into a reviewer-friendly error."
+    match canTransition(from, to)
+        true -> Result.Ok(Unit)
+        false -> Result.Err("Task '{taskId}' cannot move from {statusLabel(from)} to {statusLabel(to)}")
+
+verify ensureTransition
+    ensureTransition(Domain.Types.TaskStatus.Todo, Domain.Types.TaskStatus.InProgress, "t1") => Result.Ok(Unit)
+    ensureTransition(Domain.Types.TaskStatus.Done, Domain.Types.TaskStatus.Todo, "t1") => Result.Err("Task 't1' cannot move from done to todo")

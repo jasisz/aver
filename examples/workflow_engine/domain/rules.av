@@ -1,0 +1,135 @@
+module Rules
+    intent =
+        "Explicit workflow rule functions over replayed task state."
+        "Rules stay as plain functions rather than a hidden mini-language so reviewers"
+        "can see which business pressure caused each follow-up event or notification."
+    exposes [emptyResult, mergeResults, runRules]
+    depends [Domain.Types, Domain.Views]
+
+decision RulesStayAsFunctions
+    date = "2026-03-08"
+    author = "Codex"
+    reason =
+        "The rule count is small enough that a DSL would mostly hide branching."
+        "Explicit functions keep rule-specific edge cases near the code they affect."
+    chosen = "PlainRuleFunctions"
+    rejected = ["RuleDsl", "RulesInsideCommandHandlers"]
+    impacts = [runRules]
+
+decision DeadlinesProjectUrgencyInsteadOfMutatingPriority
+    date = "2026-03-08"
+    author = "Codex"
+    reason =
+        "Stored priority represents intent; deadline pressure is situational."
+        "Mutating priority during rule evaluation would erase who set the original priority."
+    chosen = "DerivedUrgencyAndNotifications"
+    rejected = ["RewritePriorityToUrgent", "IgnoreDeadlinePressure"]
+    impacts = [ruleDeadlineSoon, ruleOverdue]
+
+fn emptyResult(taskId: String) -> RuleResult
+    ? "Neutral accumulator for one task's rule run."
+    RuleResult(taskId = taskId, events = [], notifications = [], audits = [], notes = [])
+
+verify emptyResult
+    emptyResult("t1") => RuleResult(taskId = "t1", events = [], notifications = [], audits = [], notes = [])
+
+fn mergeResults(left: RuleResult, right: RuleResult) -> RuleResult
+    ? "Combines rule outputs in order."
+    RuleResult(taskId = left.taskId, events = List.concat(left.events, right.events), notifications = List.concat(left.notifications, right.notifications), audits = List.concat(left.audits, right.audits), notes = List.concat(left.notes, right.notes))
+
+verify mergeResults
+    mergeResults(RuleResult(taskId = "t1", events = [], notifications = [Notification(key = "n1", taskId = "t1", kind = "warn", message = "A", createdAt = "2026-03-08T12:00:00Z")], audits = [], notes = ["a"]), RuleResult(taskId = "t1", events = [], notifications = [Notification(key = "n2", taskId = "t1", kind = "warn", message = "B", createdAt = "2026-03-08T12:00:00Z")], audits = [], notes = ["b"])) => RuleResult(taskId = "t1", events = [], notifications = [Notification(key = "n1", taskId = "t1", kind = "warn", message = "A", createdAt = "2026-03-08T12:00:00Z"), Notification(key = "n2", taskId = "t1", kind = "warn", message = "B", createdAt = "2026-03-08T12:00:00Z")], audits = [], notes = ["a", "b"])
+
+fn runRules(project: Project, task: Task, latest: Option<TaskEventRecord>, now: String, nextSeq: Int) -> Result<RuleResult, String>
+    ? "Runs all explicit workflow rules for one task."
+    view = Domain.Views.deriveView(task, now)?
+    r1 = ruleDeadlineSoon(task, view, now)
+    r2 = ruleBlockedTooLong(project, task, view, now, nextSeq + List.len(r1.events))
+    r3 = ruleCompletedNeedsComment(task, view, now)
+    r4 = ruleWaitingCommentNeedsReview(project, task, latest, now, nextSeq + List.len(r1.events) + List.len(r2.events))
+    r5 = ruleReopenedAudit(task, latest, now)
+    r6 = ruleOverdue(task, view, now)
+    Result.Ok(mergeResults(mergeResults(mergeResults(mergeResults(mergeResults(r1, r2), r3), r4), r5), r6))
+
+verify runRules
+    runRules(Project(id = "p1", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z"), Task.update(sampleTask(), deadline = Option.Some("2026-03-08T18:00:00Z")), Option.None, "2026-03-08T12:00:00Z", 2) => Result.Ok(RuleResult(taskId = "t1", events = [], notifications = [Notification(key = "deadline-soon:t1:2026-03-08T18:00:00Z", taskId = "t1", kind = "deadline_soon", message = "Task 't1' is due within 24 hours", createdAt = "2026-03-08T12:00:00Z")], audits = [], notes = ["deadline projects urgency for task 't1'"]))
+
+fn ruleDeadlineSoon(task: Task, view: TaskView, now: String) -> RuleResult
+    ? "Projects urgent pressure from a near deadline without mutating stored priority."
+    match view.deadlineSoon
+        false -> emptyResult(task.id)
+        true -> match task.deadline
+            Option.Some(deadline) -> RuleResult(taskId = task.id, events = [], notifications = [Notification(key = "deadline-soon:{task.id}:{deadline}", taskId = task.id, kind = "deadline_soon", message = "Task '{task.id}' is due within 24 hours", createdAt = now)], audits = [], notes = ["deadline projects urgency for task '{task.id}'"])
+            Option.None -> emptyResult(task.id)
+
+verify ruleDeadlineSoon
+    ruleDeadlineSoon(Task.update(sampleTask(), deadline = Option.Some("2026-03-08T18:00:00Z")), TaskView(taskId = "t1", projectId = "p1", title = "Original title", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.Some("2026-03-08T18:00:00Z"), overdue = false, deadlineSoon = true, derivedUrgent = true, stalled = false, missingClosingComment = false, needsReview = false), "2026-03-08T12:00:00Z") => RuleResult(taskId = "t1", events = [], notifications = [Notification(key = "deadline-soon:t1:2026-03-08T18:00:00Z", taskId = "t1", kind = "deadline_soon", message = "Task 't1' is due within 24 hours", createdAt = "2026-03-08T12:00:00Z")], audits = [], notes = ["deadline projects urgency for task 't1'"])
+    ruleDeadlineSoon(sampleTask(), TaskView(taskId = "t1", projectId = "p1", title = "Original title", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, overdue = false, deadlineSoon = false, derivedUrgent = false, stalled = false, missingClosingComment = false, needsReview = false), "2026-03-08T12:00:00Z") => RuleResult(taskId = "t1", events = [], notifications = [], audits = [], notes = [])
+
+fn ruleBlockedTooLong(project: Project, task: Task, view: TaskView, now: String, seq: Int) -> RuleResult
+    ? "Adds a stalled tag after more than three blocked days unless the project is archived."
+    match view.stalled
+        false -> emptyResult(task.id)
+        true -> match List.contains(task.tags, "stalled")
+            true -> emptyResult(task.id)
+            false -> match project.archived
+                true -> RuleResult(taskId = task.id, events = [], notifications = [Notification(key = "stalled-warning:{task.id}:{task.statusChangedAt}", taskId = task.id, kind = "stalled_warning", message = "Task '{task.id}' is stalled but project '{project.id}' is archived", createdAt = now)], audits = [], notes = ["stalled tag suppressed because project '{project.id}' is archived"])
+                false -> RuleResult(taskId = task.id, events = [TaskEventRecord(taskId = task.id, projectId = task.projectId, seq = seq, event = Domain.Types.TaskEvent.TagAdded("stalled", now))], notifications = [Notification(key = "stalled:{task.id}:{task.statusChangedAt}", taskId = task.id, kind = "stalled", message = "Task '{task.id}' has been blocked for more than 3 days", createdAt = now)], audits = [], notes = ["added stalled tag to task '{task.id}'"])
+
+verify ruleBlockedTooLong
+    ruleBlockedTooLong(Project(id = "p1", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z"), Task.update(sampleTask(), status = Domain.Types.TaskStatus.Blocked, statusChangedAt = "2026-03-01T11:59:59Z"), TaskView(taskId = "t1", projectId = "p1", title = "Original title", status = Domain.Types.TaskStatus.Blocked, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, overdue = false, deadlineSoon = false, derivedUrgent = false, stalled = true, missingClosingComment = false, needsReview = false), "2026-03-05T12:00:00Z", 4) => RuleResult(taskId = "t1", events = [TaskEventRecord(taskId = "t1", projectId = "p1", seq = 4, event = Domain.Types.TaskEvent.TagAdded("stalled", "2026-03-05T12:00:00Z"))], notifications = [Notification(key = "stalled:t1:2026-03-01T11:59:59Z", taskId = "t1", kind = "stalled", message = "Task 't1' has been blocked for more than 3 days", createdAt = "2026-03-05T12:00:00Z")], audits = [], notes = ["added stalled tag to task 't1'"])
+
+fn ruleCompletedNeedsComment(task: Task, view: TaskView, now: String) -> RuleResult
+    ? "Warns when a completed task has no closing comment."
+    match view.missingClosingComment
+        false -> emptyResult(task.id)
+        true -> RuleResult(taskId = task.id, events = [], notifications = [Notification(key = "closing-comment:{task.id}:{task.statusChangedAt}", taskId = task.id, kind = "missing_closing_comment", message = "Task '{task.id}' was completed without a closing comment", createdAt = now)], audits = [], notes = ["completed task '{task.id}' has no closing comment"])
+
+verify ruleCompletedNeedsComment
+    ruleCompletedNeedsComment(Task.update(sampleTask(), status = Domain.Types.TaskStatus.Done, statusChangedAt = "2026-03-09T12:00:00Z"), TaskView(taskId = "t1", projectId = "p1", title = "Original title", status = Domain.Types.TaskStatus.Done, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, overdue = false, deadlineSoon = false, derivedUrgent = false, stalled = false, missingClosingComment = true, needsReview = false), "2026-03-09T12:05:00Z") => RuleResult(taskId = "t1", events = [], notifications = [Notification(key = "closing-comment:t1:2026-03-09T12:00:00Z", taskId = "t1", kind = "missing_closing_comment", message = "Task 't1' was completed without a closing comment", createdAt = "2026-03-09T12:05:00Z")], audits = [], notes = ["completed task 't1' has no closing comment"])
+
+fn ruleWaitingCommentNeedsReview(project: Project, task: Task, latest: Option<TaskEventRecord>, now: String, seq: Int) -> RuleResult
+    ? "Adds a needs_review tag when a waiting task receives a new comment."
+    match List.contains(task.tags, "waiting")
+        false -> emptyResult(task.id)
+        true -> match List.contains(task.tags, "needs_review")
+            true -> emptyResult(task.id)
+            false -> match latest
+                Option.Some(entry) -> match entry.event
+                    TaskEvent.CommentAdded(_) -> match project.archived
+                        true -> RuleResult(taskId = task.id, events = [], notifications = [Notification(key = "needs-review-warning:{task.id}:{entry.seq}", taskId = task.id, kind = "needs_review_suppressed", message = "Task '{task.id}' got a comment while waiting, but project '{project.id}' is archived", createdAt = now)], audits = [], notes = ["needs_review tag suppressed because project '{project.id}' is archived"])
+                        false -> RuleResult(taskId = task.id, events = [TaskEventRecord(taskId = task.id, projectId = task.projectId, seq = seq, event = Domain.Types.TaskEvent.TagAdded("needs_review", now))], notifications = [Notification(key = "needs-review:{task.id}:{entry.seq}", taskId = task.id, kind = "needs_review", message = "Task '{task.id}' moved from waiting to needs_review after a new comment", createdAt = now)], audits = [], notes = ["added needs_review tag to task '{task.id}'"])
+                    _ -> emptyResult(task.id)
+                Option.None -> emptyResult(task.id)
+
+verify ruleWaitingCommentNeedsReview
+    ruleWaitingCommentNeedsReview(Project(id = "p1", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z"), Task.update(sampleTask(), tags = ["waiting"]), Option.Some(TaskEventRecord(taskId = "t1", projectId = "p1", seq = 3, event = Domain.Types.TaskEvent.CommentAdded(Comment(id = "t1-c3", body = "Ping", author = "alice", createdAt = "2026-03-09T12:00:00Z")))), "2026-03-09T12:01:00Z", 4) => RuleResult(taskId = "t1", events = [TaskEventRecord(taskId = "t1", projectId = "p1", seq = 4, event = Domain.Types.TaskEvent.TagAdded("needs_review", "2026-03-09T12:01:00Z"))], notifications = [Notification(key = "needs-review:t1:3", taskId = "t1", kind = "needs_review", message = "Task 't1' moved from waiting to needs_review after a new comment", createdAt = "2026-03-09T12:01:00Z")], audits = [], notes = ["added needs_review tag to task 't1'"])
+
+fn ruleReopenedAudit(task: Task, latest: Option<TaskEventRecord>, now: String) -> RuleResult
+    ? "Reopening after done records an explicit audit entry with the reason."
+    match latest
+        Option.Some(entry) -> match entry.event
+            TaskEvent.TaskReopened(reason, reopenedAt) -> RuleResult(taskId = task.id, events = [], notifications = [], audits = [AuditEntry(key = "reopened:{task.id}:{reopenedAt}", taskId = task.id, action = "task.reopened", message = "Task '{task.id}' reopened: {reason}", createdAt = now)], notes = ["recorded reopen audit for task '{task.id}'"])
+            _ -> emptyResult(task.id)
+        Option.None -> emptyResult(task.id)
+
+verify ruleReopenedAudit
+    ruleReopenedAudit(sampleTask(), Option.Some(TaskEventRecord(taskId = "t1", projectId = "p1", seq = 4, event = Domain.Types.TaskEvent.TaskReopened("Regression found", "2026-03-11T12:00:00Z"))), "2026-03-11T12:00:01Z") => RuleResult(taskId = "t1", events = [], notifications = [], audits = [AuditEntry(key = "reopened:t1:2026-03-11T12:00:00Z", taskId = "t1", action = "task.reopened", message = "Task 't1' reopened: Regression found", createdAt = "2026-03-11T12:00:01Z")], notes = ["recorded reopen audit for task 't1'"])
+
+fn ruleOverdue(task: Task, view: TaskView, now: String) -> RuleResult
+    ? "Overdue state stays derived but still emits a notification."
+    match view.overdue
+        false -> emptyResult(task.id)
+        true -> match task.deadline
+            Option.Some(deadline) -> RuleResult(taskId = task.id, events = [], notifications = [Notification(key = "overdue:{task.id}:{deadline}", taskId = task.id, kind = "overdue", message = "Task '{task.id}' is overdue", createdAt = now)], audits = [], notes = ["task '{task.id}' is overdue"])
+            Option.None -> emptyResult(task.id)
+
+verify ruleOverdue
+    ruleOverdue(Task.update(sampleTask(), deadline = Option.Some("2026-03-07T12:00:00Z")), TaskView(taskId = "t1", projectId = "p1", title = "Original title", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.Some("2026-03-07T12:00:00Z"), overdue = true, deadlineSoon = false, derivedUrgent = true, stalled = false, missingClosingComment = false, needsReview = false), "2026-03-08T12:00:00Z") => RuleResult(taskId = "t1", events = [], notifications = [Notification(key = "overdue:t1:2026-03-07T12:00:00Z", taskId = "t1", kind = "overdue", message = "Task 't1' is overdue", createdAt = "2026-03-08T12:00:00Z")], audits = [], notes = ["task 't1' is overdue"])
+
+fn sampleTask() -> Task
+    ? "Reusable projection fixture."
+    Task(id = "t1", projectId = "p1", title = "Original title", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z")
+
+verify sampleTask
+    sampleTask() => Task(id = "t1", projectId = "p1", title = "Original title", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z")

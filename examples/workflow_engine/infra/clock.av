@@ -1,0 +1,23 @@
+module Clock
+    intent =
+        "Thin time adapter for the workflow engine."
+        "Keeping Time.now behind one module makes orchestration explicit about where"
+        "time enters the system without contaminating pure domain logic."
+    exposes [now]
+
+effects Clock = [Time.now]
+
+decision TimeEntersThroughClockModule
+    date = "2026-03-08"
+    author = "Codex"
+    reason =
+        "Deadline and stalled rules depend on the current time, but that dependency should"
+        "remain visible at the app boundary instead of leaking into pure domain modules."
+    chosen = "SingleClockAdapter"
+    rejected = ["CallTimeNowEverywhere", "ThreadNowAsUntypedStringByConvention"]
+    impacts = [now]
+
+fn now() -> String
+    ? "Returns the current timestamp as the orchestration layer sees it."
+    ! [Clock]
+    Time.now()

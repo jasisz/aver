@@ -52,6 +52,9 @@ pub(super) enum Commands {
         /// Resolve `depends [...]` from this root (default: current working directory)
         #[arg(long)]
         module_root: Option<String>,
+        /// Also run verify blocks for transitive `depends [...]` modules
+        #[arg(long)]
+        deps: bool,
     },
     /// Format Aver source files
     Format {
@@ -122,4 +125,21 @@ pub(super) enum Commands {
         #[arg(long, default_value = "auto")]
         verify_mode: ProofVerifyMode,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verify_accepts_deps_flag() {
+        let cli = Cli::parse_from(["aver", "verify", "examples/app.av", "--deps"]);
+        match cli.command {
+            Commands::Verify { file, deps, .. } => {
+                assert_eq!(file, "examples/app.av");
+                assert!(deps);
+            }
+            _ => panic!("expected verify command"),
+        }
+    }
 }

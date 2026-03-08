@@ -375,7 +375,11 @@ impl Parser {
             }
             TokenKind::Ident(s) => {
                 self.advance();
-                Ok(Expr::Ident(s))
+                if s == "Unit" {
+                    Ok(Expr::Literal(Literal::Unit))
+                } else {
+                    Ok(Expr::Ident(s))
+                }
             }
             TokenKind::LBracket => {
                 self.advance(); // consume [

@@ -781,6 +781,11 @@ fn ok_wraps_value() {
 }
 
 #[test]
+fn ok_wraps_unit_singleton() {
+    assert_eq!(eval("Result.Ok(Unit)"), Value::Ok(Box::new(Value::Unit)));
+}
+
+#[test]
 fn err_wraps_value() {
     assert_eq!(
         eval("Result.Err(\"fail\")"),
@@ -2287,7 +2292,7 @@ fn verify_error_prop_err_fails_test() {
 }
 
 #[test]
-fn verify_match_requires_all_arms_covered() {
+fn verify_match_does_not_require_all_arms_covered() {
     let src = r#"
 fn classify(n: Int) -> String
     match n
@@ -2308,11 +2313,8 @@ verify classify
     for item in &items {
         if let TopLevel::Verify(vb) = item {
             let result = aver::checker::run_verify(vb, &mut interp);
-            assert!(
-                result.failed >= 1,
-                "expected at least one failure for uncovered match arms, got {:?}",
-                result.failed
-            );
+            assert_eq!(result.passed, 1);
+            assert_eq!(result.failed, 0);
         }
     }
 }
@@ -2377,7 +2379,7 @@ verify onlyOk
 }
 
 #[test]
-fn verify_output_shape_requires_all_declared_option_shapes() {
+fn verify_does_not_require_option_none_shape_coverage() {
     let src = r#"
 fn maybe(n: Int) -> Option<Int>
     match n
@@ -2398,19 +2400,13 @@ verify maybe
         if let TopLevel::Verify(vb) = item {
             let result = aver::checker::run_verify(vb, &mut interp);
             assert_eq!(result.passed, 1);
-            assert!(result.failed >= 1);
-            assert!(
-                result
-                    .failures
-                    .iter()
-                    .any(|(_, _, actual)| actual.contains("Option.None"))
-            );
+            assert_eq!(result.failed, 0);
         }
     }
 }
 
 #[test]
-fn verify_output_shape_requires_all_declared_result_shapes() {
+fn verify_does_not_require_result_err_shape_coverage() {
     let src = r#"
 fn mayFail(n: Int) -> Result<Int, String>
     match n
@@ -2431,19 +2427,13 @@ verify mayFail
         if let TopLevel::Verify(vb) = item {
             let result = aver::checker::run_verify(vb, &mut interp);
             assert_eq!(result.passed, 1);
-            assert!(result.failed >= 1);
-            assert!(
-                result
-                    .failures
-                    .iter()
-                    .any(|(_, _, actual)| actual.contains("Result.Err"))
-            );
+            assert_eq!(result.failed, 0);
         }
     }
 }
 
 #[test]
-fn verify_output_shape_requires_all_declared_bool_shapes() {
+fn verify_does_not_require_bool_shape_coverage() {
     let src = r#"
 fn sign(n: Int) -> Bool
     match n
@@ -2464,19 +2454,13 @@ verify sign
         if let TopLevel::Verify(vb) = item {
             let result = aver::checker::run_verify(vb, &mut interp);
             assert_eq!(result.passed, 1);
-            assert!(result.failed >= 1);
-            assert!(
-                result
-                    .failures
-                    .iter()
-                    .any(|(_, _, actual)| actual.contains("false"))
-            );
+            assert_eq!(result.failed, 0);
         }
     }
 }
 
 #[test]
-fn verify_output_shape_requires_all_declared_variants_for_named_sum() {
+fn verify_does_not_require_named_sum_shape_coverage() {
     let src = r#"
 type Mode
     Fast
@@ -2506,13 +2490,7 @@ verify chooseMode
         if let TopLevel::Verify(vb) = item {
             let result = aver::checker::run_verify(vb, &mut interp);
             assert_eq!(result.passed, 1);
-            assert!(result.failed >= 1);
-            assert!(
-                result
-                    .failures
-                    .iter()
-                    .any(|(_, _, actual)| actual.contains("Safe"))
-            );
+            assert_eq!(result.failed, 0);
         }
     }
 }
@@ -2672,6 +2650,57 @@ fn main() -> Unit
             .call_value_with_effects_pub(main_fn, vec![], "main", effects)
             .expect("main call failed");
         assert_eq!(out, Value::Unit);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fully_qualified_imported_constructor_pattern_matches_at_runtime() {
+        let root = temp_module_root("qualified_ctor_pattern");
+        let domain_dir = root.join("Domain");
+        std::fs::create_dir_all(&domain_dir).expect("create Domain dir failed");
+
+        let types_src = r#"
+module Types
+    exposes [TaskEvent]
+    intent =
+        "Shared events"
+
+type TaskEvent
+    TaskStarted(String)
+"#;
+        std::fs::write(domain_dir.join("Types.av"), types_src).expect("write Types.av failed");
+
+        let app_src = r#"
+module App
+    depends [Domain.Types]
+    exposes [startedAt]
+    intent =
+        "Matches a fully-qualified imported constructor."
+
+fn startedAt() -> String
+    event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z")
+    match event
+        Domain.Types.TaskEvent.TaskStarted(at) -> at
+"#;
+        std::fs::write(root.join("App.av"), app_src).expect("write App.av failed");
+
+        let mut interp = Interpreter::new();
+        load_module_into(&mut interp, &root, "App");
+
+        let app_ns = interp.lookup("App").expect("App not found");
+        let started_at = match app_ns {
+            Value::Namespace { members, .. } => members
+                .get("startedAt")
+                .cloned()
+                .expect("App.startedAt not found"),
+            other => panic!("expected App namespace, got {:?}", other),
+        };
+
+        let out = interp
+            .call_value_pub(started_at, vec![])
+            .expect("startedAt call failed");
+        assert_eq!(out, Value::Str("2026-03-08T12:00:00Z".to_string()));
 
         let _ = std::fs::remove_dir_all(&root);
     }

@@ -4,6 +4,7 @@ pub enum Literal {
     Float(f64),
     Str(String),
     Bool(bool),
+    Unit,
 }
 
 #[derive(Debug, Clone, PartialEq)]

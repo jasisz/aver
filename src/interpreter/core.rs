@@ -495,6 +495,17 @@ impl Interpreter {
         }
     }
 
+    fn alias_exposed_type_namespaces(&mut self, module_val: &Value) {
+        let Value::Namespace { members, .. } = module_val else {
+            return;
+        };
+        for (name, member) in members {
+            if matches!(member, Value::Namespace { .. }) {
+                self.define(name.clone(), member.clone());
+            }
+        }
+    }
+
     /// O(1) slot-based variable lookup for resolved function bodies.
     pub(super) fn lookup_slot(&self, slot: u16) -> Result<Value, RuntimeError> {
         let idx = self.env.len() - 1;
@@ -518,48 +529,57 @@ impl Interpreter {
     }
 
     pub fn define_module_path(&mut self, path: &str, val: Value) -> Result<(), RuntimeError> {
+        let alias_source = val.clone();
         let parts: Vec<&str> = path.split('.').filter(|s| !s.is_empty()).collect();
         if parts.is_empty() {
             return Err(RuntimeError::Error("Empty module path".to_string()));
         }
         if parts.len() == 1 {
             self.define(parts[0].to_string(), val);
+            self.alias_exposed_type_namespaces(&alias_source);
             return Ok(());
         }
 
-        let scope = self.last_owned_scope_mut()?;
         let head = parts[0];
         let tail = &parts[1..];
 
-        if let Some(rc_existing) = scope.remove(head) {
-            let existing = Rc::try_unwrap(rc_existing).unwrap_or_else(|rc| (*rc).clone());
-            match existing {
-                Value::Namespace { name, mut members } => {
-                    Self::insert_namespace_path(&mut members, tail, val)?;
-                    scope.insert(
-                        head.to_string(),
-                        Rc::new(Value::Namespace { name, members }),
-                    );
-                    Ok(())
+        let result = {
+            let scope = self.last_owned_scope_mut()?;
+            if let Some(rc_existing) = scope.remove(head) {
+                let existing = Rc::try_unwrap(rc_existing).unwrap_or_else(|rc| (*rc).clone());
+                match existing {
+                    Value::Namespace { name, mut members } => {
+                        Self::insert_namespace_path(&mut members, tail, val)?;
+                        scope.insert(
+                            head.to_string(),
+                            Rc::new(Value::Namespace { name, members }),
+                        );
+                        Ok(())
+                    }
+                    _ => Err(RuntimeError::Error(format!(
+                        "Cannot mount module '{}': '{}' is not a namespace",
+                        parts.join("."),
+                        head
+                    ))),
                 }
-                _ => Err(RuntimeError::Error(format!(
-                    "Cannot mount module '{}': '{}' is not a namespace",
-                    parts.join("."),
-                    head
-                ))),
+            } else {
+                let mut members = HashMap::new();
+                Self::insert_namespace_path(&mut members, tail, val)?;
+                scope.insert(
+                    head.to_string(),
+                    Rc::new(Value::Namespace {
+                        name: head.to_string(),
+                        members,
+                    }),
+                );
+                Ok(())
             }
-        } else {
-            let mut members = HashMap::new();
-            Self::insert_namespace_path(&mut members, tail, val)?;
-            scope.insert(
-                head.to_string(),
-                Rc::new(Value::Namespace {
-                    name: head.to_string(),
-                    members,
-                }),
-            );
-            Ok(())
+        };
+
+        if result.is_ok() {
+            self.alias_exposed_type_namespaces(&alias_source);
         }
+        result
     }
 
     pub(super) fn insert_namespace_path(
