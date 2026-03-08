@@ -4,6 +4,7 @@
 /// matching and proof-shape logic lives in one place.
 mod arithmetic;
 mod induction;
+mod json;
 mod maps;
 mod sampled;
 mod shared;
@@ -13,6 +14,7 @@ use super::VerifyEmitMode;
 use super::expr::aver_name_to_lean;
 use crate::ast::{VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
+use json::emit_json_roundtrip_support_theorems;
 use sampled::emit_guarded_sampled_domain_law;
 
 pub struct AutoProof {
@@ -129,6 +131,15 @@ pub fn emit_verify_law_forall_auto_proof(
                 },
             )
         })
+}
+
+pub fn emit_verify_law_support_theorems(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    theorem_base: &str,
+) -> Vec<String> {
+    emit_json_roundtrip_support_theorems(vb, law, ctx, theorem_base).unwrap_or_default()
 }
 
 pub(super) fn intro_then(intro_names: &[String], steps: Vec<String>) -> Vec<String> {

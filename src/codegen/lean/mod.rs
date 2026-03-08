@@ -241,6 +241,12 @@ const LEAN_PRELUDE_TCP_CONNECTION_TYPE: &str = r#"structure Tcp_Connection where
 const LEAN_PRELUDE_STRING_HELPERS: &str = r#"def String.charAt (s : String) (i : Int) : Option String :=
   if i < 0 then none
   else (s.toList.get? i.toNat).map Char.toString
+theorem String.charAt_length_none (s : String) : String.charAt s s.length = none := by
+  have hs : ¬ ((s.length : Int) < 0) := by omega
+  unfold String.charAt
+  simp [hs]
+  change s.data.length ≤ s.length
+  exact Nat.le_refl _
 def String.slice (s : String) (start stop : Int) : String :=
   let startN := if start < 0 then 0 else start.toNat
   let stopN := if stop < 0 then 0 else stop.toNat
@@ -255,7 +261,6 @@ private def normalizeFloatString (s : String) : String :=
   if s.toList.any (fun c => c == '.') then
     String.mk (trimFloatTrailingZerosChars s.toList)
   else s
-def String.fromInt (n : Int) : String := toString n
 def String.fromFloat (f : Float) : String := normalizeFloatString (toString f)
 def String.chars (s : String) : List String := s.toList.map Char.toString
 namespace AverString
@@ -266,10 +271,192 @@ def split (s delim : String) : List String :=
     s.splitOn delim
 end AverString"#;
 
-const LEAN_PRELUDE_NUMERIC_PARSE: &str = r#"def Int.fromString (s : String) : Except String Int :=
-  match s.toInt? with
-  | some n => .ok n
-  | none => .error ("Cannot parse '" ++ s ++ "' as Int")
+const LEAN_PRELUDE_NUMERIC_PARSE: &str = r#"namespace AverDigits
+def foldDigitsAcc (acc : Nat) : List Nat -> Nat
+  | [] => acc
+  | d :: ds => foldDigitsAcc (acc * 10 + d) ds
+
+def foldDigits (digits : List Nat) : Nat :=
+  foldDigitsAcc 0 digits
+
+private theorem foldDigitsAcc_append_singleton (acc : Nat) (xs : List Nat) (d : Nat) :
+    foldDigitsAcc acc (xs ++ [d]) = foldDigitsAcc acc xs * 10 + d := by
+  induction xs generalizing acc with
+  | nil =>
+      simp [foldDigitsAcc]
+  | cons x xs ih =>
+      simp [foldDigitsAcc, ih, Nat.left_distrib, Nat.add_assoc, Nat.add_left_comm]
+
+private theorem foldDigits_append_singleton (xs : List Nat) (d : Nat) :
+    foldDigits (xs ++ [d]) = foldDigits xs * 10 + d := by
+  simpa [foldDigits] using foldDigitsAcc_append_singleton 0 xs d
+
+def natDigits : Nat -> List Nat
+  | n =>
+      if n < 10 then
+        [n]
+      else
+        natDigits (n / 10) ++ [n % 10]
+termination_by
+  n => n
+
+theorem natDigits_nonempty (n : Nat) : natDigits n ≠ [] := by
+  by_cases h : n < 10
+  · rw [natDigits.eq_1]
+    simp [h]
+  · rw [natDigits.eq_1]
+    simp [h]
+
+theorem natDigits_digits_lt_ten : ∀ n : Nat, ∀ d ∈ natDigits n, d < 10 := by
+  intro n d hd
+  by_cases h : n < 10
+  · rw [natDigits.eq_1] at hd
+    simp [h] at hd
+    rcases hd with rfl
+    exact h
+  · rw [natDigits.eq_1] at hd
+    simp [h] at hd
+    rcases hd with hd | hd
+    · exact natDigits_digits_lt_ten (n / 10) d hd
+    · subst hd
+      exact Nat.mod_lt n (by omega)
+
+theorem foldDigits_natDigits : ∀ n : Nat, foldDigits (natDigits n) = n := by
+  intro n
+  by_cases h : n < 10
+  · rw [natDigits.eq_1]
+    simp [h, foldDigits, foldDigitsAcc]
+  · rw [natDigits.eq_1]
+    simp [h]
+    rw [foldDigits_append_singleton]
+    rw [foldDigits_natDigits (n / 10)]
+    omega
+
+def digitChar : Nat -> Char
+  | 0 => '0' | 1 => '1' | 2 => '2' | 3 => '3' | 4 => '4'
+  | 5 => '5' | 6 => '6' | 7 => '7' | 8 => '8' | 9 => '9'
+  | _ => '0'
+
+def charToDigit? : Char -> Option Nat
+  | '0' => some 0 | '1' => some 1 | '2' => some 2 | '3' => some 3 | '4' => some 4
+  | '5' => some 5 | '6' => some 6 | '7' => some 7 | '8' => some 8 | '9' => some 9
+  | _ => none
+
+theorem charToDigit_digitChar : ∀ d : Nat, d < 10 -> charToDigit? (digitChar d) = some d
+  | 0, _ => by simp [digitChar, charToDigit?]
+  | 1, _ => by simp [digitChar, charToDigit?]
+  | 2, _ => by simp [digitChar, charToDigit?]
+  | 3, _ => by simp [digitChar, charToDigit?]
+  | 4, _ => by simp [digitChar, charToDigit?]
+  | 5, _ => by simp [digitChar, charToDigit?]
+  | 6, _ => by simp [digitChar, charToDigit?]
+  | 7, _ => by simp [digitChar, charToDigit?]
+  | 8, _ => by simp [digitChar, charToDigit?]
+  | 9, _ => by simp [digitChar, charToDigit?]
+  | Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ n))))))))), h => by
+      omega
+
+theorem digitChar_ne_minus : ∀ d : Nat, d < 10 -> digitChar d ≠ '-'
+  | 0, _ => by decide
+  | 1, _ => by decide
+  | 2, _ => by decide
+  | 3, _ => by decide
+  | 4, _ => by decide
+  | 5, _ => by decide
+  | 6, _ => by decide
+  | 7, _ => by decide
+  | 8, _ => by decide
+  | 9, _ => by decide
+  | Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ n))))))))), h => by
+      omega
+
+theorem digitChar_not_ws : ∀ d : Nat, d < 10 ->
+    Char.toString (digitChar d) ≠ " " ∧
+    Char.toString (digitChar d) ≠ "\t" ∧
+    Char.toString (digitChar d) ≠ "\n" ∧
+    Char.toString (digitChar d) ≠ "\r"
+  | 0, _ => by decide
+  | 1, _ => by decide
+  | 2, _ => by decide
+  | 3, _ => by decide
+  | 4, _ => by decide
+  | 5, _ => by decide
+  | 6, _ => by decide
+  | 7, _ => by decide
+  | 8, _ => by decide
+  | 9, _ => by decide
+  | Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ n))))))))), h => by
+      omega
+
+theorem mapM_charToDigit_digits : ∀ ds : List Nat,
+    (∀ d ∈ ds, d < 10) -> List.mapM charToDigit? (ds.map digitChar) = some ds := by
+  intro ds hds
+  induction ds with
+  | nil =>
+      simp
+  | cons d ds ih =>
+      have hd : d < 10 := hds d (by simp)
+      have htail : ∀ x ∈ ds, x < 10 := by
+        intro x hx
+        exact hds x (by simp [hx])
+      simp [charToDigit_digitChar d hd, ih htail]
+
+def natDigitsChars (n : Nat) : List Char :=
+  (natDigits n).map digitChar
+
+def parseNatChars (chars : List Char) : Option Nat :=
+  match chars with
+  | [] => none
+  | _ => do
+      let digits <- List.mapM charToDigit? chars
+      pure (foldDigits digits)
+
+theorem parseNatChars_nat (n : Nat) :
+    parseNatChars (natDigitsChars n) = some n := by
+  unfold parseNatChars natDigitsChars
+  cases h : (natDigits n).map digitChar with
+  | nil =>
+      exfalso
+      exact natDigits_nonempty n (List.map_eq_nil_iff.mp h)
+  | cons hd tl =>
+      have hdigits : List.mapM charToDigit? (List.map digitChar (natDigits n)) = some (natDigits n) :=
+        mapM_charToDigit_digits (natDigits n) (fun d hd => natDigits_digits_lt_ten n d hd)
+      rw [h] at hdigits
+      simp [h, hdigits, foldDigits_natDigits]
+end AverDigits
+
+def String.fromInt (n : Int) : String :=
+  match n with
+  | .ofNat m => String.mk (AverDigits.natDigitsChars m)
+  | .negSucc m => String.mk ('-' :: AverDigits.natDigitsChars (m + 1))
+
+def Int.fromString (s : String) : Except String Int :=
+  match s.toList with
+  | [] => .error ("Cannot parse '" ++ s ++ "' as Int")
+  | '-' :: rest =>
+    match AverDigits.parseNatChars rest with
+    | some n => .ok (-Int.ofNat n)
+    | none => .error ("Cannot parse '" ++ s ++ "' as Int")
+  | chars =>
+    match AverDigits.parseNatChars chars with
+    | some n => .ok (Int.ofNat n)
+    | none => .error ("Cannot parse '" ++ s ++ "' as Int")
+
+theorem Int.fromString_fromInt : ∀ n : Int, Int.fromString (String.fromInt n) = .ok n
+  | .ofNat m => by
+      cases h : AverDigits.natDigits m with
+      | nil =>
+          exfalso
+          exact AverDigits.natDigits_nonempty m h
+      | cons d ds =>
+          have hd : d < 10 := AverDigits.natDigits_digits_lt_ten m d (by simp [h])
+          have hne : AverDigits.digitChar d ≠ '-' := AverDigits.digitChar_ne_minus d hd
+          have hparse : AverDigits.parseNatChars (AverDigits.digitChar d :: List.map AverDigits.digitChar ds) = some m := by
+            simpa [AverDigits.natDigitsChars, h] using AverDigits.parseNatChars_nat m
+          simp [String.fromInt, Int.fromString, AverDigits.natDigitsChars, h, hne, hparse]
+  | .negSucc m => by
+      simp [String.fromInt, Int.fromString, AverDigits.parseNatChars_nat]
+      rfl
 
 private def charDigitsToNat (cs : List Char) : Nat :=
   cs.foldl (fun acc c => acc * 10 + (c.toNat - '0'.toNat)) 0
@@ -2036,6 +2223,17 @@ verify addOne
     }
 
     #[test]
+    fn generate_prelude_emits_int_roundtrip_theorem() {
+        let lean = generate_prelude();
+        assert!(lean.contains(
+            "theorem Int.fromString_fromInt : ∀ n : Int, Int.fromString (String.fromInt n) = .ok n"
+        ));
+        assert!(lean.contains("namespace AverDigits"));
+        assert!(lean.contains("theorem String.charAt_length_none (s : String)"));
+        assert!(lean.contains("theorem digitChar_not_ws : ∀ d : Nat, d < 10 ->"));
+    }
+
+    #[test]
     fn transpile_emits_guarded_theorems_for_verify_law_when_clause() {
         let ctx = ctx_from_source(
             r#"
@@ -3718,6 +3916,26 @@ verify inc law incSpec
             "-- universal theorem toString_law_parseRoundtrip omitted: sampled law shape is not auto-proved yet"
         ));
         assert!(!lean.contains("private theorem toString_law_parseRoundtrip_aux"));
+        assert!(lean.contains(
+            "private theorem toString_law_parseRoundtrip__skipWs_fromInt_zero : ∀ n : Int, skipWs (String.fromInt n) 0 = 0 := by"
+        ));
+        assert!(
+            lean.contains(
+                "private theorem toString_law_parseRoundtrip__scanIntTail_digit_suffix :"
+            )
+        );
+        assert!(lean.contains(
+            "private theorem toString_law_parseRoundtrip__finishInt_fromInt : ∀ n : Int,"
+        ));
+        assert!(lean.contains(
+            "private theorem toString_law_parseRoundtrip__finishNumber_fromInt : ∀ n : Int,"
+        ));
+        assert!(lean.contains(
+            "private theorem toString_law_parseRoundtrip__null_roundtrip : fromString (toString Json.jsonNull) = Except.ok Json.jsonNull := by"
+        ));
+        assert!(lean.contains(
+            "private theorem toString_law_parseRoundtrip__bool_roundtrip : ∀ b : Bool, fromString (toString (Json.jsonBool b)) = Except.ok (Json.jsonBool b) := by"
+        ));
         assert!(lean.contains(
             "theorem toString_law_parseRoundtrip : ∀ (j : Json), j = Json.jsonNull ∨ j = Json.jsonBool true"
         ));

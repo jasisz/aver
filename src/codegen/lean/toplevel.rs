@@ -2,7 +2,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::expr::{aver_name_to_lean, emit_expr, emit_stmt};
-use super::law_auto::emit_verify_law_forall_auto_proof;
+use super::law_auto::{emit_verify_law_forall_auto_proof, emit_verify_law_support_theorems};
 use super::shared::to_lower_first;
 use super::types::type_annotation_to_lean;
 use super::{RecursionPlan, VerifyEmitMode, sizeof_measure_param_indices};
@@ -1499,6 +1499,12 @@ fn emit_verify_law_block(
         lines.push(format!("-- when {}", emit_expr(when_expr, ctx)));
     }
     if !quant_params.is_empty() {
+        lines.extend(emit_verify_law_support_theorems(
+            vb,
+            law,
+            ctx,
+            &theorem_base,
+        ));
         let theorem_prop = law_theorem_prop(
             law,
             ctx,
