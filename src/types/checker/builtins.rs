@@ -90,6 +90,12 @@ impl TypeChecker {
         };
         let service_sigs: &[(&str, &[Type], Type, &[&str])] = &[
             (
+                "Args.get",
+                &[],
+                Type::List(Box::new(Type::Str)),
+                &["Args.get"],
+            ),
+            (
                 "Console.print",
                 &[Type::Unknown],
                 Type::Unit,

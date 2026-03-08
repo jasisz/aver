@@ -8,7 +8,7 @@ use crate::replay::{
     EffectRecord, JsonValue, RecordedOutcome, SessionRecording, json_to_string,
     session_recording_to_string_pretty, value_to_json, values_to_json_lossy,
 };
-use crate::services::{console, disk, env, http, http_server, tcp, time};
+use crate::services::{args, console, disk, env, http, http_server, tcp, time};
 use crate::source::{
     canonicalize_path, find_module_file, parse_source, require_module_declaration,
 };
@@ -243,6 +243,8 @@ pub struct Interpreter {
     verify_match_coverage: Option<VerifyMatchCoverageTracker>,
     /// Runtime policy from `aver.toml` — constrains Http hosts, Disk paths, etc.
     runtime_policy: Option<crate::config::ProjectConfig>,
+    /// Command-line arguments passed to the Aver program (available via `Args.get()`).
+    cli_args: Vec<String>,
 }
 
 mod api;

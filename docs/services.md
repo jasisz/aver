@@ -132,6 +132,23 @@ Source: `src/types/byte.rs` — not a type, operates on `Int`/`String`.
 
 ## Effectful namespaces
 
+### `Args` namespace — use `! [Args.get]`
+
+Source: `src/services/args.rs`
+
+| Function | Signature | Notes |
+|---|---|---|
+| `Args.get` | `() -> List<String>` | Command-line arguments passed after `--` |
+
+Usage: `aver run file.av -- arg1 arg2 arg3`
+
+```aver
+fn main() -> Unit
+    ! [Args.get, Console.print]
+    args = Args.get()
+    Console.print(args)
+```
+
 ### `Console` namespace — use `! [Console.print]`, `! [Console.error]`, etc.
 
 Source: `src/services/console.rs`

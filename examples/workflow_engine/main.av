@@ -1,11 +1,11 @@
 module Main
     intent =
-        "Workflow engine REPL entrypoint."
+        "Workflow engine argv entrypoint."
         "Keeps the top-level module thin so the CLI and application core stay in their own"
         "modules and `aver context` has a stable root to resume from."
     depends [App.Cli]
 
 fn main() -> Unit
     ? "Starts the workflow engine CLI."
-    ! [Console.print, Console.readLine, Console.warn, Time.now, Disk.makeDir, Disk.exists, Disk.readText, Disk.writeText, Disk.appendText]
+    ! [Args, Console.print, Console.warn, Time.now, Disk.makeDir, Disk.exists, Disk.readText, Disk.writeText, Disk.appendText]
     App.Cli.runCli()

@@ -107,6 +107,21 @@ fn main() -> Unit
     // ...
 ```
 
+## Command-line arguments
+
+Programs access CLI arguments via the `Args` service:
+
+```aver
+fn main() -> Unit
+    ! [Args.get, Console.print]
+    args = Args.get()
+    Console.print(args)
+```
+
+Run with: `aver run file.av -- arg1 arg2 arg3`
+
+Arguments after `--` are available as `List<String>`. Without `--`, the list is empty. `Args.get()` requires `! [Args.get]` — argument access is visible in the signature like any other effect.
+
 ## Functions
 
 ```aver

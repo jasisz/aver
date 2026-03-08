@@ -194,6 +194,7 @@ pub(super) fn cmd_run(
     module_root_override: Option<&str>,
     run_verify_blocks: bool,
     record_dir: Option<&str>,
+    program_args: Vec<String>,
 ) {
     if run_verify_blocks && record_dir.is_some() {
         eprintln!(
@@ -212,6 +213,8 @@ pub(super) fn cmd_run(
                 process::exit(1);
             }
         };
+
+    interp.set_cli_args(program_args);
 
     let recording_target = if let Some(dir) = record_dir {
         let request_id = generate_request_id();
@@ -399,7 +402,7 @@ fn run_verify_for_items(
     tco::transform_program(&mut items);
 
     // Static type check — verify should use the same soundness gate as run/check
-    let tc_result = run_type_check_full(&items, Some(&module_root));
+    let tc_result = run_type_check_full(&items, Some(module_root));
     if !tc_result.errors.is_empty() {
         return Err(format_type_errors(&tc_result.errors));
     }
@@ -420,9 +423,7 @@ fn run_verify_for_items(
         Err(e) => return Err(format!("aver.toml: {}", e)),
     }
 
-    if let Err(e) = load_dep_modules(&mut interp, &items, &module_root) {
-        return Err(e);
-    }
+    load_dep_modules(&mut interp, &items, module_root)?;
 
     // Register effect sets first (needed before FnDef expansion)
     for item in &items {
@@ -494,11 +495,7 @@ pub(super) fn cmd_verify(file: &str, module_root_override: Option<&str>, deps: b
         let (passed, failed, had_blocks) = match run_verify_for_items(items, &module_root) {
             Ok(counts) => counts,
             Err(e) => {
-                if e.contains("error[") {
-                    eprintln!("{}", e.red());
-                } else {
-                    eprintln!("{}", e.red());
-                }
+                eprintln!("{}", e.red());
                 process::exit(1);
             }
         };

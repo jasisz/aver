@@ -741,6 +741,7 @@ fn collect_used_effects(f: &FnDef, fn_sigs: &FnSigMap) -> BTreeSet<String> {
 fn collect_broad_effect_replacements(
     declared_effects: &[String],
     used_effects: &BTreeSet<String>,
+    fn_sigs: &FnSigMap,
 ) -> Vec<(String, Vec<String>)> {
     let declared_unique: BTreeSet<String> = declared_effects.iter().cloned().collect();
     let mut out = Vec::new();
@@ -749,6 +750,21 @@ fn collect_broad_effect_replacements(
             continue;
         }
         let prefix = format!("{}.", declared);
+
+        // Count how many distinct child effects exist for this namespace across all known sigs.
+        let known_children: BTreeSet<&str> = fn_sigs
+            .values()
+            .flat_map(|(_, _, effects)| effects.iter())
+            .filter(|e: &&String| e.starts_with(&prefix))
+            .map(|e| e.as_str())
+            .collect();
+
+        // Only warn when the namespace has 2+ known child effects — single-child
+        // namespaces (e.g. Args with only Args.get) gain nothing from granularity.
+        if known_children.len() < 2 {
+            continue;
+        }
+
         let matched_children: Vec<String> = used_effects
             .iter()
             .filter(|used| used.starts_with(&prefix))
@@ -958,7 +974,7 @@ pub fn check_module_intent_with_sigs_in(
                 {
                     let used_effects = collect_used_effects(f, sigs);
                     let broad_replacements =
-                        collect_broad_effect_replacements(declared_effects, &used_effects);
+                        collect_broad_effect_replacements(declared_effects, &used_effects, sigs);
                     let unused_effects: Vec<String> = declared_effects
                         .iter()
                         .filter(|declared| {

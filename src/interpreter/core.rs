@@ -10,6 +10,7 @@ impl Interpreter {
     pub fn new() -> Self {
         let mut global = HashMap::new();
 
+        args::register(&mut global);
         console::register(&mut global);
         http::register(&mut global);
         http_server::register(&mut global);
@@ -115,6 +116,7 @@ impl Interpreter {
             recording_sink: None,
             verify_match_coverage: None,
             runtime_policy: None,
+            cli_args: Vec::new(),
         }
     }
 
@@ -222,6 +224,11 @@ impl Interpreter {
     /// Set the runtime policy from an `aver.toml` configuration.
     pub fn set_runtime_policy(&mut self, config: crate::config::ProjectConfig) {
         self.runtime_policy = Some(config);
+    }
+
+    /// Set command-line arguments available via `Args.get()`.
+    pub fn set_cli_args(&mut self, args: Vec<String>) {
+        self.cli_args = args;
     }
 
     /// Check whether a builtin call is permitted by the runtime policy.

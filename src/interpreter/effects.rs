@@ -2,6 +2,10 @@ use super::*;
 
 impl Interpreter {
     pub(super) fn builtin_effects(name: &str) -> &'static [&'static str] {
+        let e = args::effects(name);
+        if !e.is_empty() {
+            return e;
+        }
         let e = console::effects(name);
         if !e.is_empty() {
             return e;

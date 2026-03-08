@@ -14,7 +14,7 @@ This is the blunt version.
 ## Where Aver Felt Awkward
 
 - Multi-statement `match` arms are restrictive enough that orchestration code grows helper functions quickly.
-- The lack of argv in the entrypoint pushed the interface toward a REPL with a small pipe-delimited grammar. That is real, but it is also a language limitation showing through.
+- ~~The lack of argv in the entrypoint pushed the interface toward a REPL with a small pipe-delimited grammar.~~ Resolved: `Args.get()` with `! [Args]` is now available (`aver run file.av -- arg1 arg2`). The CLI still uses a pipe-delimited grammar by choice, not by language limitation.
 - There is still visible duplication in small label/render helpers such as priority spelling. The language does not force that duplication, but the current module ergonomics do not strongly discourage it either.
 - Some medium modules still grow large quickly. `app/cli.av` and `infra/store.av` are honest examples of where explicitness turns into surface area.
 

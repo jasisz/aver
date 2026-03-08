@@ -32,7 +32,7 @@ That keeps the infrastructure small while still forcing replay, validation, rule
 - `domain/events.av`: pure event application and replay
 - `app/commands.av`: effectful mutation handlers
 - `app/queries.av`: replay-based read model assembly
-- `app/cli.av`: REPL parser, renderer, and dispatcher
+- `app/cli.av`: argv parser, renderer, and dispatcher
 - `infra/store.av`: flat-file storage and event serialization
 - `infra/audit.av`: audit persistence
 - `infra/notify.av`: notification persistence and delivery
@@ -53,20 +53,11 @@ That keeps the infrastructure small while still forcing replay, validation, rule
 From the repo root:
 
 ```bash
-cargo run -- run examples/workflow_engine/main.av --module-root examples/workflow_engine
-```
-
-The CLI is a small pipe-delimited REPL. Example commands:
-
-```text
-create_project | alpha | Alpha
-create_task | alpha | t1 | Plan release | high | ops,waiting | 2026-03-10T12:00:00Z
-add_comment | t1 | alice | Waiting on review
-list_tasks | alpha
-show_task | t1
-run_rules | t1
-show_audit | t1
-quit
+cargo run -- run examples/workflow_engine/main.av --module-root examples/workflow_engine -- create_project alpha Alpha
+cargo run -- run examples/workflow_engine/main.av --module-root examples/workflow_engine -- create_task alpha t1 "Plan release" high ops,waiting 2026-03-10T12:00:00Z
+cargo run -- run examples/workflow_engine/main.av --module-root examples/workflow_engine -- list_tasks alpha
+cargo run -- run examples/workflow_engine/main.av --module-root examples/workflow_engine -- show_task t1
+cargo run -- run examples/workflow_engine/main.av --module-root examples/workflow_engine -- help
 ```
 
 Data is stored under `/tmp/aver_workflow_engine`.

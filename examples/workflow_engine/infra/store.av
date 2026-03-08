@@ -295,13 +295,13 @@ fn decodeTaskCreated(rawTitle: String, rawPriority: String, rawTags: String, raw
     title = requiredPayload(rawTitle, "TaskCreated", 0)?
     priorityLabel = requiredPayload(rawPriority, "TaskCreated", 1)?
     priority = parsePriority(priorityLabel)?
-    tagsLabel = requiredPayload(rawTags, "TaskCreated", 2)?
     deadline = Infra.Codec.decodeOption(rawDeadline)
     at = requiredPayload(rawAt, "TaskCreated", 4)?
-    Result.Ok(Domain.Types.TaskEvent.TaskCreated(title, priority, parseTags(tagsLabel), deadline, at))
+    Result.Ok(Domain.Types.TaskEvent.TaskCreated(title, priority, parseTags(rawTags), deadline, at))
 
 verify decodeTaskCreated
     decodeTaskCreated("Write notes", "high", "ops,waiting", "-", "2026-03-08T12:00:00Z") => Result.Ok(Domain.Types.TaskEvent.TaskCreated("Write notes", Domain.Types.Priority.High, ["ops", "waiting"], Option.None, "2026-03-08T12:00:00Z"))
+    decodeTaskCreated("Write notes", "normal", "-", "-", "2026-03-08T12:00:00Z") => Result.Ok(Domain.Types.TaskEvent.TaskCreated("Write notes", Domain.Types.Priority.Normal, [], Option.None, "2026-03-08T12:00:00Z"))
 
 fn decodeTaskRenamed(rawTitle: String, rawAt: String) -> Result<TaskEvent, String>
     ? "Parses the TaskRenamed payload."

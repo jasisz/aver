@@ -167,6 +167,9 @@ impl Interpreter {
                 ) {
                     return r;
                 }
+                if let Some(r) = args::call(name, args, &self.cli_args) {
+                    return r;
+                }
                 if let Some(r) = console::call(name, args) {
                     return r;
                 }

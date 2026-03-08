@@ -1,26 +1,35 @@
 module Cli
     intent =
-        "Plain REPL parser, renderer, and dispatcher for the workflow engine."
-        "Now that cross-module sum types resolve correctly, the CLI can parse into the real"
-        "app command/query types instead of carrying a workaround-specific local protocol."
-    exposes [Input, parseInput, helpLines, renderCommandReport, renderQueryOutput, runCli]
+        "Plain argv parser, renderer, and dispatcher for the workflow engine."
+        "The interface stays simple and shell-friendly: one command invocation in, one rendered"
+        "result block out, with no REPL-specific protocol in the app core."
+    exposes [Input, parseArgs, helpLines, renderCommandReport, renderQueryOutput, runCli]
     depends [App.Commands, App.Queries, Domain.Types, Domain.Views, Infra.Store, Infra.Audit, Infra.Notify]
 
 type Input
     ShowHelp
-    ExitCli
     RunCommand(Command)
     RunQuery(Query)
 
-fn parseInput(line: String) -> Result<Input, String>
-    ? "Parses one REPL line into a command, query, help, or exit action."
-    parts = trimParts(String.split(line, "|"))
+fn parseArgs(args: List<String>) -> Result<Input, String>
+    ? "Parses argv-style input into a command, query, or help action."
+    parts = trimParts(args)
+    match parts
+        [] -> Result.Ok(Input.ShowHelp)
+        _ -> routeArgs(parts)
+
+verify parseArgs
+    parseArgs([]) => Result.Ok(Input.ShowHelp)
+    parseArgs(["help"]) => Result.Ok(Input.ShowHelp)
+    parseArgs(["list_tasks"]) => Result.Ok(Input.RunQuery(Query.ListTasks(Option.None)))
+    parseArgs(["create_project", "alpha", "Alpha"]) => Result.Ok(Input.RunCommand(Command.CreateProject("alpha", "Alpha")))
+
+fn routeArgs(parts: List<String>) -> Result<Input, String>
+    ? "Routes non-empty argv input by command name."
     head = firstPart(parts)?
     name = String.toLower(head)
     match name
         "help" -> Result.Ok(Input.ShowHelp)
-        "exit" -> Result.Ok(Input.ExitCli)
-        "quit" -> Result.Ok(Input.ExitCli)
         "create_project" -> parseCreateProject(parts)
         "archive_project" -> parseArchiveProject(parts)
         "create_task" -> parseCreateTask(parts)
@@ -41,12 +50,6 @@ fn parseInput(line: String) -> Result<Input, String>
         "show_audit" -> parseShowAudit(parts)
         "run_rules" -> parseRunRules(parts)
         _ -> Result.Err("Unknown command: " + head)
-
-verify parseInput
-    parseInput("help") => Result.Ok(Input.ShowHelp)
-    parseInput("quit") => Result.Ok(Input.ExitCli)
-    parseInput("list_tasks") => Result.Ok(Input.RunQuery(Query.ListTasks(Option.None)))
-    parseInput("create_project | alpha | Alpha") => Result.Ok(Input.RunCommand(Command.CreateProject("alpha", "Alpha")))
 
 fn trimParts(parts: List<String>) -> List<String>
     ? "Trims all pipe-separated fields."
@@ -291,43 +294,43 @@ verify parseRunRules
     parseRunRules(["run_rules", "t1"]) => Result.Ok(Input.RunCommand(Command.RunRules(Option.Some("t1"))))
 
 fn helpLines() -> List<String>
-    ? "User-facing help for the REPL CLI."
+    ? "User-facing help for the argv CLI."
     [
         "Workflow Engine CLI",
-        "Format: command | field | field | ...",
+        "Usage: <command> [args]",
+        "Use shell quotes for values with spaces.",
         "Use '-' for an optional empty field.",
         "",
         "Projects:",
-        "  create_project | project_id | name",
-        "  archive_project | project_id",
+        "  create_project project_id name",
+        "  archive_project project_id",
         "",
         "Tasks:",
-        "  create_task | project_id | task_id | title | priority | tags | deadline",
-        "  rename_task | task_id | title",
-        "  start_task | task_id",
-        "  block_task | task_id | reason",
-        "  complete_task | task_id",
-        "  reopen_task | task_id | reason",
-        "  change_priority | task_id | priority",
-        "  add_tag | task_id | tag",
-        "  remove_tag | task_id | tag",
-        "  add_comment | task_id | author | body",
-        "  set_deadline | task_id | deadline",
-        "  clear_deadline | task_id",
-        "  archive_task | task_id",
+        "  create_task project_id task_id title priority tags deadline",
+        "  rename_task task_id title",
+        "  start_task task_id",
+        "  block_task task_id reason",
+        "  complete_task task_id",
+        "  reopen_task task_id reason",
+        "  change_priority task_id priority",
+        "  add_tag task_id tag",
+        "  remove_tag task_id tag",
+        "  add_comment task_id author body",
+        "  set_deadline task_id deadline",
+        "  clear_deadline task_id",
+        "  archive_task task_id",
         "",
         "Queries:",
-        "  list_tasks | project_id",
-        "  show_task | task_id",
-        "  show_audit | subject_id",
-        "  run_rules | task_id",
+        "  list_tasks project_id",
+        "  show_task task_id",
+        "  show_audit subject_id",
+        "  run_rules task_id",
         "  help",
-        "  quit"
     ]
 
 verify helpLines
     List.get(helpLines(), 0) => Option.Some("Workflow Engine CLI")
-    List.contains(helpLines(), "  show_task | task_id") => true
+    List.contains(helpLines(), "  show_task task_id") => true
 
 fn renderCommandReport(report: CommandReport) -> List<String>
     ? "Renders a command result as CLI lines."
@@ -477,7 +480,7 @@ verify renderAuditTrail
     renderAuditTrail([]) => ["audits: 0"]
 
 fn initCli() -> Result<Unit, String>
-    ? "Ensures all local workflow files exist before the REPL starts."
+    ? "Ensures all local workflow files exist before command execution."
     ! [Disk.makeDir, Disk.exists, Disk.writeText, Disk.appendText]
     _store = Infra.Store.initStore()?
     _audit = Infra.Audit.initAudit()?
@@ -485,105 +488,52 @@ fn initCli() -> Result<Unit, String>
     Result.Ok(Unit)
 
 fn runCli() -> Unit
-    ? "Starts the workflow engine REPL."
-    ! [Console.print, Console.readLine, Console.warn, Time.now, Disk.makeDir, Disk.exists, Disk.readText, Disk.writeText, Disk.appendText]
+    ? "Starts the workflow engine argv CLI."
+    ! [Args, Console.print, Console.warn, Time.now, Disk.makeDir, Disk.exists, Disk.readText, Disk.writeText, Disk.appendText]
     match initCli()
         Result.Err(msg) -> Console.print("BOOT ERROR: " + msg)
-        Result.Ok(_) -> startCli()
+        Result.Ok(_) -> runArgs(Args.get())
 
-fn startCli() -> Unit
-    ? "Prints intro text and enters the main REPL loop."
-    ! [Console.print, Console.readLine, Console.warn, Time.now, Disk.readText, Disk.writeText, Disk.appendText]
-    Console.print("Workflow Engine CLI")
-    Console.print("Data directory: /tmp/aver_workflow_engine")
-    Console.print("Type `help` for commands.")
-    replLoop()
-
-fn replLoop() -> Unit
-    ? "One recursive REPL loop."
-    ! [Console.print, Console.readLine, Console.warn, Time.now, Disk.readText, Disk.writeText, Disk.appendText]
-    shouldContinue = readAndDispatch()
-    match shouldContinue
-        true -> replLoop()
-        false -> Console.print("CLI stopped.")
-
-fn readAndDispatch() -> Bool
-    ? "Reads one line and dispatches it."
-    ! [Console.print, Console.readLine, Console.warn, Time.now, Disk.readText, Disk.writeText, Disk.appendText]
-    Console.print("> ")
-    lineResult = Console.readLine()
-    match lineResult
-        Result.Err(msg) -> closeInput(msg)
-        Result.Ok(line) -> handleLine(line)
-
-fn closeInput(msg: String) -> Bool
-    ? "Stops the REPL when input closes unexpectedly."
-    ! [Console.print]
-    Console.print("Input closed: " + msg)
-    false
-
-fn handleLine(line: String) -> Bool
-    ? "Skips blank lines and dispatches parsed input."
+fn runArgs(args: List<String>) -> Unit
+    ? "Parses argv input, executes one action, and prints the result."
     ! [Console.print, Console.warn, Time.now, Disk.readText, Disk.writeText, Disk.appendText]
-    trimmed = String.trim(line)
-    match String.len(trimmed) == 0
-        true -> true
-        false -> handleParsedInput(parseInput(trimmed))
+    match executeArgs(args)
+        Result.Ok(lines) -> printLines(lines)
+        Result.Err(msg) -> printLines(errorLines(msg))
 
-fn handleParsedInput(result: Result<Input, String>) -> Bool
-    ? "Turns parse results into either local errors or dispatched actions."
-    ! [Console.print, Console.warn, Time.now, Disk.readText, Disk.writeText, Disk.appendText]
-    match result
-        Result.Err(msg) -> continueAfterError(msg)
-        Result.Ok(input) -> dispatch(input)
+fn executeArgs(args: List<String>) -> Result<List<String>, String>
+    ? "Runs one argv-style command and returns rendered output lines."
+    ! [Console.warn, Time.now, Disk.readText, Disk.writeText, Disk.appendText]
+    input = parseArgs(args)?
+    dispatch(input)
 
-fn dispatch(input: Input) -> Bool
-    ? "Effectful dispatcher from parsed CLI input to app entrypoints."
-    ! [Console.print, Console.warn, Time.now, Disk.readText, Disk.writeText, Disk.appendText]
+fn dispatch(input: Input) -> Result<List<String>, String>
+    ? "Effectful dispatcher from parsed argv input to app entrypoints."
+    ! [Console.warn, Time.now, Disk.readText, Disk.writeText, Disk.appendText]
     match input
-        Input.ShowHelp -> showHelpAndContinue()
-        Input.ExitCli -> stopCli()
-        Input.RunCommand(command) -> continueAfterCommand(App.Commands.execute(command))
-        Input.RunQuery(query) -> continueAfterQuery(App.Queries.run(query))
+        Input.ShowHelp -> Result.Ok(helpLines())
+        Input.RunCommand(command) -> renderCommand(App.Commands.execute(command))
+        Input.RunQuery(query) -> renderQuery(App.Queries.run(query))
 
-fn showHelpAndContinue() -> Bool
-    ? "Prints help text and keeps the REPL alive."
-    ! [Console.print]
-    printLines(helpLines())
-    true
-
-fn stopCli() -> Bool
-    ? "Clean REPL stop signal."
-    false
-
-verify stopCli
-    stopCli() => false
-
-fn continueAfterCommand(result: Result<CommandReport, String>) -> Bool
-    ? "Prints a command report or error and keeps the REPL alive."
-    ! [Console.print]
+fn renderCommand(result: Result<CommandReport, String>) -> Result<List<String>, String>
+    ? "Maps command execution into rendered output."
     match result
-        Result.Ok(report) -> continueAfterLines(renderCommandReport(report))
-        Result.Err(msg) -> continueAfterError(msg)
+        Result.Ok(report) -> Result.Ok(renderCommandReport(report))
+        Result.Err(msg) -> Result.Err(msg)
 
-fn continueAfterQuery(result: Result<QueryOutput, String>) -> Bool
-    ? "Prints query output or error and keeps the REPL alive."
-    ! [Console.print]
+fn renderQuery(result: Result<QueryOutput, String>) -> Result<List<String>, String>
+    ? "Maps query execution into rendered output."
     match result
-        Result.Ok(output) -> continueAfterLines(renderQueryOutput(output))
-        Result.Err(msg) -> continueAfterError(msg)
+        Result.Ok(output) -> Result.Ok(renderQueryOutput(output))
+        Result.Err(msg) -> Result.Err(msg)
 
-fn continueAfterLines(lines: List<String>) -> Bool
-    ? "Prints rendered output and keeps the REPL alive."
-    ! [Console.print]
-    printLines(lines)
-    true
+fn errorLines(msg: String) -> List<String>
+    ? "CLI error block followed by help text."
+    List.concat(["ERROR: " + msg, ""], helpLines())
 
-fn continueAfterError(msg: String) -> Bool
-    ? "Prints a recoverable CLI error and keeps the REPL alive."
-    ! [Console.print]
-    Console.print("ERROR: " + msg)
-    true
+verify errorLines
+    List.get(errorLines("bad"), 0) => Option.Some("ERROR: bad")
+    List.contains(errorLines("bad"), "Workflow Engine CLI") => true
 
 fn printLines(lines: List<String>) -> Unit
     ? "Prints a rendered block as one console write."

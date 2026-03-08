@@ -35,6 +35,9 @@ pub(super) enum Commands {
         /// Record effect calls and persist a replay session JSON into this directory
         #[arg(long)]
         record: Option<String>,
+        /// Arguments passed to the Aver program (available via Args.get()), after --
+        #[arg(last = true)]
+        program_args: Vec<String>,
     },
     /// Static analysis (intent presence, module size)
     Check {

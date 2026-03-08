@@ -1,6 +1,6 @@
 /// Built-in platform services available to Aver programs.
 ///
-/// Each service is a named namespace (`Console`, `Http`, `Disk`, `Tcp`, `HttpServer`, `Time`, `Env`) that must
+/// Each service is a named namespace (`Args`, `Console`, `Http`, `Disk`, `Tcp`, `HttpServer`, `Time`, `Env`) that must
 /// be declared as an effect in order to be called:
 ///
 /// ```aver
@@ -15,6 +15,7 @@
 /// - `call(name, args)` — handle the call, returning `None` if not owned
 ///
 /// Pure type namespaces (Int, Float, String, List) live in `src/types/` instead.
+pub mod args;
 pub mod console;
 pub mod disk;
 pub mod env;

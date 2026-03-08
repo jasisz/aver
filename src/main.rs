@@ -30,8 +30,15 @@ fn main() {
             module_root,
             verify,
             record,
+            program_args,
         } => {
-            commands::cmd_run(file, module_root.as_deref(), *verify, record.as_deref());
+            commands::cmd_run(
+                file,
+                module_root.as_deref(),
+                *verify,
+                record.as_deref(),
+                program_args.clone(),
+            );
         }
         Commands::Check {
             file,
