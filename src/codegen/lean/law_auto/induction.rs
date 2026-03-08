@@ -195,17 +195,60 @@ fn find_arm_for_variant<'a>(
     })
 }
 
+fn expr_contains_ident(expr: &Expr, ident_name: &str) -> bool {
+    match expr {
+        Expr::Ident(name) => name == ident_name,
+        Expr::FnCall(callee, args) => {
+            expr_contains_ident(callee, ident_name)
+                || args.iter().any(|arg| expr_contains_ident(arg, ident_name))
+        }
+        Expr::TailCall(call) => call
+            .1
+            .iter()
+            .any(|arg| expr_contains_ident(arg, ident_name)),
+        Expr::BinOp(_, l, r) => {
+            expr_contains_ident(l, ident_name) || expr_contains_ident(r, ident_name)
+        }
+        Expr::Match { subject, arms, .. } => {
+            expr_contains_ident(subject, ident_name)
+                || arms
+                    .iter()
+                    .any(|arm| expr_contains_ident(&arm.body, ident_name))
+        }
+        Expr::InterpolatedStr(parts) => parts.iter().any(|part| match part {
+            crate::ast::StrPart::Literal(_) => false,
+            crate::ast::StrPart::Parsed(inner) => expr_contains_ident(inner, ident_name),
+        }),
+        Expr::Constructor(_, inner) => inner
+            .as_ref()
+            .is_some_and(|inner| expr_contains_ident(inner, ident_name)),
+        Expr::ErrorProp(inner) | Expr::Attr(inner, _) => expr_contains_ident(inner, ident_name),
+        Expr::List(items) | Expr::Tuple(items) => items
+            .iter()
+            .any(|item| expr_contains_ident(item, ident_name)),
+        Expr::RecordCreate { fields, .. } => fields
+            .iter()
+            .any(|(_, value)| expr_contains_ident(value, ident_name)),
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_contains_ident(base, ident_name)
+                || updates
+                    .iter()
+                    .any(|(_, value)| expr_contains_ident(value, ident_name))
+        }
+        Expr::MapLiteral(entries) => entries
+            .iter()
+            .any(|(k, v)| expr_contains_ident(k, ident_name) || expr_contains_ident(v, ident_name)),
+        Expr::Literal(_) | Expr::Resolved(_) => false,
+    }
+}
+
 /// Search an expression for a function call that passes a specific variable as argument.
 /// Returns the function name if found. Skips calls to `skip_fn`.
 fn find_fn_call_passing_var(expr: &Expr, var_name: &str, skip_fn: &str) -> Option<String> {
     match expr {
         Expr::FnCall(callee, args) => {
             let callee_name = expr_dotted_name(callee)?;
-            if callee_name != skip_fn
-                && args
-                    .iter()
-                    .any(|a| matches!(a, Expr::Ident(n) if n == var_name))
-            {
+            if callee_name != skip_fn && args.iter().any(|a| expr_contains_ident(a, var_name)) {
                 return Some(callee_name);
             }
             // Recurse into args

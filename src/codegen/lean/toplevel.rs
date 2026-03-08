@@ -114,6 +114,14 @@ fn measure_list_fn_name(type_name: &str) -> String {
     format!("{}List", measure_fn_name(type_name))
 }
 
+fn measure_entries_fn_name(type_name: &str, key_type: &str) -> String {
+    let key_suffix: String = key_type
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect();
+    format!("{}Entries_{}", measure_fn_name(type_name), key_suffix)
+}
+
 fn split_top_level(s: &str, delim: char) -> Vec<String> {
     let mut parts = Vec::new();
     let mut depth_angle = 0usize;
@@ -199,6 +207,34 @@ fn type_measure_expr(
         ));
     }
 
+    if let Some(inner) = unwrap_generic(trimmed, "Map<") {
+        let args = split_top_level(inner, ',');
+        if args.len() == 2 {
+            let key_type = args[0].trim();
+            let value_type = args[1].trim();
+            if recursive_types.contains(value_type) {
+                return Some(format!(
+                    "{} (AverMap.entries {})",
+                    measure_entries_fn_name(value_type, key_type),
+                    value_expr
+                ));
+            }
+            let key_measure = type_measure_expr(key_type, "entry.1", recursive_types, self_type);
+            let value_measure =
+                type_measure_expr(value_type, "entry.2", recursive_types, self_type);
+            let entry_measure = match (key_measure, value_measure) {
+                (Some(k), Some(v)) => format!("({k}) + ({v}) + 1"),
+                (Some(k), None) => format!("({k}) + 1"),
+                (None, Some(v)) => format!("({v}) + 1"),
+                (None, None) => "1".to_string(),
+            };
+            return Some(format!(
+                "AverMeasure.list (fun entry => {}) (AverMap.entries {})",
+                entry_measure, value_expr
+            ));
+        }
+    }
+
     if let Some(inner) = unwrap_generic(trimmed, "Result<") {
         let args = split_top_level(inner, ',');
         if args.len() == 2 {
@@ -236,6 +272,23 @@ fn type_measure_expr(
     }
 
     None
+}
+
+fn recursive_map_key_types(type_refs: &[String], value_type: &str) -> Vec<String> {
+    let mut key_types = Vec::new();
+    for type_ref in type_refs {
+        let Some(inner) = unwrap_generic(type_ref.trim(), "Map<") else {
+            continue;
+        };
+        let args = split_top_level(inner, ',');
+        if args.len() == 2 && args[1].trim() == value_type {
+            let key_type = args[0].trim().to_string();
+            if !key_types.contains(&key_type) {
+                key_types.push(key_type);
+            }
+        }
+    }
+    key_types
 }
 
 fn emit_recursive_sum_measure(
@@ -291,6 +344,25 @@ fn emit_recursive_sum_measure(
         measure_fn_name(name),
         measure_list_fn_name(name)
     ));
+    let field_types: Vec<String> = variants
+        .iter()
+        .flat_map(|variant| variant.fields.iter().cloned())
+        .collect();
+    for key_type in recursive_map_key_types(&field_types, name) {
+        lines.push(format!(
+            "  def {} (items : List ({} × {})) : Nat :=",
+            measure_entries_fn_name(name, &key_type),
+            key_type,
+            name
+        ));
+        lines.push("    match items with".to_string());
+        lines.push("    | [] => 1".to_string());
+        lines.push(format!(
+            "    | (_, value) :: tail => {} value + {} tail + 1",
+            measure_fn_name(name),
+            measure_entries_fn_name(name, &key_type)
+        ));
+    }
     lines.push("end".to_string());
     lines.join("\n")
 }
@@ -316,7 +388,7 @@ fn emit_recursive_product_measure(
     } else {
         format!("({}) + 1", field_measures.join(" + "))
     };
-    [
+    let mut lines = vec![
         "mutual".to_string(),
         format!(
             "  def {} (value : {}) : Nat :=",
@@ -336,9 +408,25 @@ fn emit_recursive_product_measure(
             measure_fn_name(name),
             measure_list_fn_name(name)
         ),
-        "end".to_string(),
-    ]
-    .join("\n")
+    ];
+    let field_types: Vec<String> = fields.iter().map(|(_, ty)| ty.clone()).collect();
+    for key_type in recursive_map_key_types(&field_types, name) {
+        lines.push(format!(
+            "  def {} (items : List ({} × {})) : Nat :=",
+            measure_entries_fn_name(name, &key_type),
+            key_type,
+            name
+        ));
+        lines.push("    match items with".to_string());
+        lines.push("    | [] => 1".to_string());
+        lines.push(format!(
+            "    | (_, value) :: tail => {} value + {} tail + 1",
+            measure_fn_name(name),
+            measure_entries_fn_name(name, &key_type)
+        ));
+    }
+    lines.push("end".to_string());
+    lines.join("\n")
 }
 
 pub fn emit_recursive_measure(td: &TypeDef, recursive_types: &HashSet<String>) -> Option<String> {

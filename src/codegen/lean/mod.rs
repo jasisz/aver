@@ -3705,6 +3705,14 @@ verify inc law incSpec
         assert!(lean.contains("def skipWs__fuel"));
         assert!(lean.contains("def parseValue__fuel"));
         assert!(lean.contains("def toString (j : Json) : String :="));
+        assert!(
+            lean.contains(
+                "def averMeasureJsonEntries_String (items : List (String × Json)) : Nat :="
+            )
+        );
+        assert!(lean.contains(
+            "| .jsonObject x0 => (averMeasureJsonEntries_String (AverMap.entries x0)) + 1"
+        ));
         assert!(lean.contains("-- when jsonRoundtripSafe j"));
         assert!(!lean.contains(
             "-- universal theorem toString_law_parseRoundtrip omitted: sampled law shape is not auto-proved yet"
