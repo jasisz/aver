@@ -172,9 +172,27 @@ fn emit_literal(lit: &Literal) -> String {
                 format!("{}.0", s)
             }
         }
-        Literal::Str(s) => format!("{:?}", s),
+        Literal::Str(s) => format!("\"{}\"", escape_lean_string(s)),
         Literal::Bool(b) => if *b { "true" } else { "false" }.to_string(),
     }
+}
+
+fn escape_lean_string(s: &str) -> String {
+    let mut out = String::new();
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{0008}' => out.push_str("\\x08"),
+            '\u{000C}' => out.push_str("\\x0c"),
+            c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext) -> String {
@@ -282,9 +300,7 @@ fn emit_interpolated_str(parts: &[StrPart], ctx: &CodegenContext) -> String {
     for part in parts {
         match part {
             StrPart::Literal(s) => {
-                // Escape special chars for Lean s!"..." strings
-                let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
-                result.push_str(&escaped);
+                result.push_str(&escape_lean_string(s));
             }
             StrPart::Parsed(expr) => {
                 result.push('{');
@@ -407,7 +423,7 @@ pub fn aver_name_to_lean(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::aver_name_to_lean;
+    use super::{aver_name_to_lean, escape_lean_string};
 
     #[test]
     fn aver_name_to_lean_escapes_lean_reserved_words() {
@@ -416,5 +432,11 @@ mod tests {
         assert_eq!(aver_name_to_lean("by"), "by'");
         assert_eq!(aver_name_to_lean("termination_by"), "termination_by'");
         assert_eq!(aver_name_to_lean("value"), "value");
+    }
+
+    #[test]
+    fn escape_lean_string_escapes_control_chars() {
+        assert_eq!(escape_lean_string("\u{0008}\u{000C}"), "\\x08\\x0c");
+        assert_eq!(escape_lean_string("a\n\t\"\\z"), "a\\n\\t\\\"\\\\z");
     }
 }

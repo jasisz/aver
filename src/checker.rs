@@ -15,6 +15,7 @@ pub struct VerifyResult {
     pub fn_name: String,
     pub passed: usize,
     pub failed: usize,
+    pub skipped: usize,
     #[allow(dead_code)]
     pub failures: Vec<(String, String, String)>, // (expr_src, expected, actual)
 }
@@ -359,6 +360,7 @@ fn verify_given_domain_to_str(domain: &VerifyGivenDomain) -> String {
 pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult {
     let mut passed = 0;
     let mut failed = 0;
+    let mut skipped = 0;
     let mut failures = Vec::new();
     let is_law = matches!(block.kind, VerifyKind::Law(_));
     let mut shape_contract = if is_law {
@@ -387,6 +389,9 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
                     verify_given_domain_to_str(&given.domain)
                 );
             }
+            if let Some(when_expr) = &law.when {
+                println!("  {} {}", "when".dimmed(), expr_to_str(when_expr));
+            }
             println!(
                 "  {} {} == {}",
                 "law".dimmed(),
@@ -412,6 +417,48 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
         } else {
             case_str.clone()
         };
+
+        if let VerifyKind::Law(law) = &block.kind
+            && let Some(sample_guard) = law.sample_guards.get(idx)
+        {
+            match interp.eval_expr(sample_guard) {
+                Ok(Value::Bool(true)) => {}
+                Ok(Value::Bool(false)) => {
+                    skipped += 1;
+                    println!("  {} {} (when false)", "·".dimmed(), case_label.dimmed());
+                    continue;
+                }
+                Ok(other) => {
+                    failed += 1;
+                    println!("  {} {}", "✗".red(), case_label);
+                    println!("      when did not evaluate to Bool: {}", aver_repr(&other));
+                    failures.push((
+                        failure_case,
+                        "Bool".to_string(),
+                        format!("when produced {}", aver_repr(&other)),
+                    ));
+                    continue;
+                }
+                Err(RuntimeError::ErrProp(err_val)) => {
+                    failed += 1;
+                    println!("  {} {}", "✗".red(), case_label);
+                    println!("      when ? hit Result.Err({})", aver_repr(&err_val));
+                    failures.push((
+                        failure_case,
+                        String::new(),
+                        format!("when ? hit Result.Err({})", aver_repr(&err_val)),
+                    ));
+                    continue;
+                }
+                Err(e) => {
+                    failed += 1;
+                    println!("  {} {}", "✗".red(), case_label);
+                    println!("      when error: {}", e);
+                    failures.push((failure_case, String::new(), format!("WHEN ERROR: {}", e)));
+                    continue;
+                }
+            }
+        }
 
         let left_result = interp.eval_expr(left_expr);
         let right_result = interp.eval_expr(right_expr);
@@ -529,22 +576,42 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
 
     let total = passed + failed;
     if is_law && failed == 0 {
-        println!(
-            "  {} all {} generated case(s) passed",
-            "✓".green(),
-            block.cases.len()
-        );
+        if skipped == 0 {
+            println!(
+                "  {} all {} generated case(s) passed",
+                "✓".green(),
+                block.cases.len()
+            );
+        } else {
+            println!(
+                "  {} all {} active generated case(s) passed ({} skipped by when)",
+                "✓".green(),
+                passed,
+                skipped
+            );
+        }
     }
-    if failed == 0 {
+    if failed == 0 && skipped == 0 {
         println!("  {}", format!("{}/{} passed", passed, total).green());
-    } else {
+    } else if failed == 0 {
+        println!(
+            "  {}",
+            format!("{}/{} passed, {} skipped", passed, total + skipped, skipped).green()
+        );
+    } else if skipped == 0 {
         println!("  {}", format!("{}/{} passed", passed, total).red());
+    } else {
+        println!(
+            "  {}",
+            format!("{}/{} passed, {} skipped", passed, total + skipped, skipped).red()
+        );
     }
 
     VerifyResult {
         fn_name: block.fn_name.clone(),
         passed,
         failed,
+        skipped,
         failures,
     }
 }
@@ -1517,6 +1584,57 @@ verify add1 law reflexive
                 .any(|e| e.message == "Function 'add1' has no verify block"),
             "law verify should satisfy verify requirement, got errors={:?}",
             findings.errors
+        );
+    }
+
+    #[test]
+    fn verify_law_when_must_have_bool_type() {
+        let items = parse_items(
+            r#"
+fn add1(x: Int) -> Int
+    x + 1
+
+verify add1 law ordered
+    given x: Int = [1, 2]
+    when add1(x)
+    x => x
+"#,
+        );
+        let tc = crate::types::checker::run_type_check_full(&items, None);
+        assert!(
+            tc.errors
+                .iter()
+                .any(|e| e.message.contains("when condition must have type Bool")),
+            "expected Bool type error for when, got errors={:?}",
+            tc.errors
+        );
+    }
+
+    #[test]
+    fn verify_law_when_must_be_pure() {
+        let items = parse_items(
+            r#"
+fn add1(x: Int) -> Int
+    x + 1
+
+fn noisyPositive(x: Int) -> Bool
+    ! [Console.print]
+    Console.print("{x}")
+    x > 0
+
+verify add1 law ordered
+    given x: Int = [1, 2]
+    when noisyPositive(x)
+    x => x
+"#,
+        );
+        let tc = crate::types::checker::run_type_check_full(&items, None);
+        assert!(
+            tc.errors.iter().any(|e| e.message.contains(
+                "Function '<verify:add1>' calls 'noisyPositive' which has effect 'Console.print'"
+            )),
+            "expected purity error for when, got errors={:?}",
+            tc.errors
         );
     }
 

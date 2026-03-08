@@ -78,6 +78,19 @@ fn binding_string() {
 }
 
 #[test]
+fn binding_string_supports_backspace_and_formfeed_escapes() {
+    let items = parse("x = \"\\b\\f\"");
+    assert_eq!(
+        items,
+        vec![TopLevel::Stmt(Stmt::Binding(
+            "x".to_string(),
+            None,
+            Expr::Literal(Literal::Str("\u{0008}\u{000C}".to_string()))
+        ))]
+    );
+}
+
+#[test]
 fn binding_bool_true() {
     let items = parse("flag = true");
     assert_eq!(
@@ -783,6 +796,41 @@ verify add law commutative
     if let TopLevel::Verify(vb) = &items[0] {
         assert!(matches!(vb.kind, VerifyKind::Law(_)));
         assert_eq!(vb.cases.len(), 6);
+    } else {
+        panic!("expected Verify");
+    }
+}
+
+#[test]
+fn verify_law_parses_optional_when_condition() {
+    let src = r#"
+verify max law ordered
+    given a: Int = [1, 2]
+    given b: Int = [1, 2]
+    when a > b
+    max(a, b) => a
+"#;
+    let items = parse(src);
+    assert_eq!(items.len(), 1);
+    if let TopLevel::Verify(vb) = &items[0] {
+        let VerifyKind::Law(law) = &vb.kind else {
+            panic!("expected law verify");
+        };
+        assert!(matches!(law.when, Some(Expr::BinOp(BinOp::Gt, _, _))));
+        assert_eq!(vb.cases.len(), 4);
+        assert_eq!(law.sample_guards.len(), 4);
+        assert!(matches!(
+            &law.sample_guards[0],
+            Expr::BinOp(BinOp::Gt, left, right)
+                if matches!(left.as_ref(), Expr::Literal(Literal::Int(1)))
+                    && matches!(right.as_ref(), Expr::Literal(Literal::Int(1)))
+        ));
+        assert!(matches!(
+            &law.sample_guards[3],
+            Expr::BinOp(BinOp::Gt, left, right)
+                if matches!(left.as_ref(), Expr::Literal(Literal::Int(2)))
+                    && matches!(right.as_ref(), Expr::Literal(Literal::Int(2)))
+        ));
     } else {
         panic!("expected Verify");
     }

@@ -109,6 +109,93 @@ verify toString
     toString(Json.JsonList([Json.JsonInt(1), Json.JsonNull])) => "[1,null]"
     toString(Json.JsonObject({"a" => Json.JsonInt(1), "b" => Json.JsonBool(false)})) => "{{\"a\":1,\"b\":false}}"
 
+fn floatRoundtripSafe(f: Float) -> Bool
+    ? "Precondition for JSON float serializer round-tripping through decimal text."
+    Float.fromString(String.fromFloat(f)) == Result.Ok(f)
+
+verify floatRoundtripSafe
+    floatRoundtripSafe(3.5) => true
+    floatRoundtripSafe(0.1) => true
+    floatRoundtripSafe(-2500.0) => true
+
+fn jsonListRoundtripSafe(items: List<Json>) -> Bool
+    ? "True when every array element satisfies the JSON round-trip precondition."
+    match items
+        [] -> true
+        [head, ..tail] -> match jsonRoundtripSafe(head)
+            true -> jsonListRoundtripSafe(tail)
+            false -> false
+
+verify jsonListRoundtripSafe
+    jsonListRoundtripSafe([]) => true
+    jsonListRoundtripSafe([Json.JsonInt(1), Json.JsonBool(false)]) => true
+
+fn jsonEntriesRoundtripSafe(entries: List<(String, Json)>) -> Bool
+    ? "True when object values are safe and keys are distinct."
+    match entries
+        [] -> true
+        [entry, ..tail] -> match entry
+            (key, value) -> match List.contains(jsonEntryKeys(tail), key)
+                true -> false
+                false -> match jsonRoundtripSafe(value)
+                    true -> jsonEntriesRoundtripSafe(tail)
+                    false -> false
+ 
+fn jsonEntryKeys(entries: List<(String, Json)>) -> List<String>
+    ? "Extract object keys in encounter order."
+    match entries
+        [] -> []
+        [entry, ..tail] -> match entry
+            (key, _) -> List.prepend(key, jsonEntryKeys(tail))
+
+verify jsonEntryKeys
+    jsonEntryKeys([]) => []
+    jsonEntryKeys([("a", Json.JsonInt(1)), ("b", Json.JsonBool(false))]) => ["a", "b"]
+
+verify jsonEntriesRoundtripSafe
+    jsonEntriesRoundtripSafe([]) => true
+    jsonEntriesRoundtripSafe([("a", Json.JsonInt(1)), ("b", Json.JsonBool(false))]) => true
+    jsonEntriesRoundtripSafe([("a", Json.JsonInt(1)), ("a", Json.JsonBool(false))]) => false
+
+fn jsonObjectRoundtripSafe(m: Map<String, Json>) -> Bool
+    ? "True when object keys are unique and values are safe."
+    jsonEntriesRoundtripSafe(Map.entries(m))
+
+verify jsonObjectRoundtripSafe
+    jsonObjectRoundtripSafe({"a" => Json.JsonInt(1), "b" => Json.JsonBool(false)}) => true
+    jsonObjectRoundtripSafe({"a" => Json.JsonInt(1), "a" => Json.JsonBool(false)}) => false
+
+fn jsonRoundtripSafe(j: Json) -> Bool
+    ? "Precondition for fromString(toString(j)) round-tripping."
+    match j
+        Json.JsonString(_) -> true
+        Json.JsonInt(_) -> true
+        Json.JsonFloat(f) -> floatRoundtripSafe(f)
+        Json.JsonBool(_) -> true
+        Json.JsonList(items) -> jsonListRoundtripSafe(items)
+        Json.JsonObject(m) -> jsonObjectRoundtripSafe(m)
+        Json.JsonNull -> true
+
+verify jsonRoundtripSafe
+    jsonRoundtripSafe(Json.JsonNull) => true
+    jsonRoundtripSafe(Json.JsonFloat(3.5)) => true
+    jsonRoundtripSafe(Json.JsonList([Json.JsonFloat(0.1), Json.JsonBool(true)])) => true
+
+verify toString law parseRoundtrip
+    given j: Json = [
+        Json.JsonNull,
+        Json.JsonBool(true),
+        Json.JsonBool(false),
+        Json.JsonInt(42),
+        Json.JsonFloat(3.5),
+        Json.JsonString("a\"b"),
+        Json.JsonList([Json.JsonInt(1), Json.JsonNull]),
+        Json.JsonObject({"a" => Json.JsonInt(1), "b" => Json.JsonBool(false)}),
+        Json.JsonObject({"nested" => Json.JsonList([Json.JsonString("x"), Json.JsonObject({"ok" => Json.JsonBool(true)})])})
+    ]
+    when jsonRoundtripSafe(j)
+    fromString(toString(j)) => Result.Ok(j)
+
 // ── Char helpers ──────────────────────────────────────────────────
 
 fn renderJsonList(items: List<Json>) -> String

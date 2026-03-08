@@ -1,5 +1,10 @@
 use super::*;
 
+struct ExpandedLawCases {
+    cases: Vec<(Expr, Expr)>,
+    sample_guards: Vec<Expr>,
+}
+
 impl Parser {
     const VERIFY_LAW_MAX_CASES: usize = 10_000;
 
@@ -189,12 +194,17 @@ impl Parser {
         givens: &[VerifyGiven],
         idx: usize,
         bindings: &mut std::collections::HashMap<String, Expr>,
+        when: Option<&Expr>,
         left: &Expr,
         right: &Expr,
-        out: &mut Vec<(Expr, Expr)>,
+        out: &mut ExpandedLawCases,
     ) {
         if idx == givens.len() {
-            out.push((
+            if let Some(when_expr) = when {
+                out.sample_guards
+                    .push(Self::substitute_expr(when_expr, bindings));
+            }
+            out.cases.push((
                 Self::substitute_expr(left, bindings),
                 Self::substitute_expr(right, bindings),
             ));
@@ -204,7 +214,7 @@ impl Parser {
         let given = &givens[idx];
         for value in Self::domain_values(&given.domain) {
             bindings.insert(given.name.clone(), value);
-            Self::expand_law_cases_rec(givens, idx + 1, bindings, left, right, out);
+            Self::expand_law_cases_rec(givens, idx + 1, bindings, when, left, right, out);
             bindings.remove(&given.name);
         }
     }
@@ -212,9 +222,10 @@ impl Parser {
     fn expand_law_cases(
         &self,
         givens: &[VerifyGiven],
+        when: Option<&Expr>,
         left: &Expr,
         right: &Expr,
-    ) -> Result<Vec<(Expr, Expr)>, ParseError> {
+    ) -> Result<ExpandedLawCases, ParseError> {
         let mut total = 1usize;
         for given in givens {
             let len = Self::domain_len(&given.domain);
@@ -239,9 +250,12 @@ impl Parser {
             }
         }
 
-        let mut out = Vec::with_capacity(total);
+        let mut out = ExpandedLawCases {
+            cases: Vec::with_capacity(total),
+            sample_guards: Vec::with_capacity(total),
+        };
         let mut bindings = std::collections::HashMap::new();
-        Self::expand_law_cases_rec(givens, 0, &mut bindings, left, right, &mut out);
+        Self::expand_law_cases_rec(givens, 0, &mut bindings, when, left, right, &mut out);
         Ok(out)
     }
 
@@ -350,6 +364,15 @@ impl Parser {
                     ));
                 }
 
+                let when = if self.current_ident_is("when") {
+                    self.advance(); // when
+                    let when_expr = self.parse_expr()?;
+                    self.skip_newlines();
+                    Some(when_expr)
+                } else {
+                    None
+                };
+
                 let left = self.parse_expr()?;
                 self.expect_exact(&TokenKind::FatArrow)?;
                 let right = self.parse_expr()?;
@@ -362,13 +385,19 @@ impl Parser {
                     ));
                 }
 
-                cases = self.expand_law_cases(&givens, &left, &right)?;
-                kind = VerifyKind::Law(VerifyLaw {
+                let ExpandedLawCases {
+                    cases: expanded_cases,
+                    sample_guards,
+                } = self.expand_law_cases(&givens, when.as_ref(), &left, &right)?;
+                cases = expanded_cases;
+                kind = VerifyKind::Law(Box::new(VerifyLaw {
                     name: law_name,
                     givens,
+                    when,
                     lhs: left,
                     rhs: right,
-                });
+                    sample_guards,
+                }));
             } else {
                 while !self.is_dedent() && !self.is_eof() {
                     if self.is_newline() {

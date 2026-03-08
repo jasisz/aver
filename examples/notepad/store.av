@@ -93,6 +93,50 @@ verify deserializeLine
     deserializeLine("1\tHello\tWorld") => Result.Ok(Note(id = 1, title = "Hello", body = "World"))
     deserializeLine("bad") => Result.Err("Cannot parse 'bad' as Int")
 
+fn lineSafeChars(chars: List<String>) -> Bool
+    ? "True when a line fragment contains no tab or newline separators."
+    match chars
+        [] -> true
+        [c, ..rest] -> match c
+            "\t" -> false
+            "\n" -> false
+            _ -> lineSafeChars(rest)
+
+verify lineSafeChars
+    lineSafeChars([]) => true
+    lineSafeChars(["A", "B"]) => true
+    lineSafeChars(["A", "\t"]) => false
+
+fn lineSafeText(s: String) -> Bool
+    ? "Store serializer precondition for one text field."
+    lineSafeChars(String.chars(s))
+
+verify lineSafeText
+    lineSafeText("Hello") => true
+    lineSafeText("bad\ttitle") => false
+    lineSafeText("bad\nbody") => false
+
+fn noteRoundtripSafe(note: Note) -> Bool
+    ? "Round-trip precondition for one note line."
+    match lineSafeText(note.title)
+        true -> lineSafeText(note.body)
+        false -> false
+
+verify noteRoundtripSafe
+    noteRoundtripSafe(Note(id = 1, title = "Hello", body = "World")) => true
+    noteRoundtripSafe(Note(id = 2, title = "bad\ttitle", body = "ok")) => false
+
+verify serializeLine law lineRoundtrip
+    given note: Note = [
+        Note(id = 1, title = "Hello", body = "World"),
+        Note(id = 42, title = "Test", body = "note body"),
+        Note(id = 7, title = "Alpha", body = "beta gamma"),
+        Note(id = 8, title = "bad\ttitle", body = "ok"),
+        Note(id = 9, title = "ok", body = "bad\nbody")
+    ]
+    when noteRoundtripSafe(note)
+    deserializeLine(serializeLine(note)) => Result.Ok(note)
+
 fn foldNote(acc: Result<List<Note>, String>, line: String) -> Result<List<Note>, String>
     ? "Fold step: parses a line and appends the resulting note."
     match acc
@@ -184,6 +228,29 @@ fn serializeLines(notes: List<Note>) -> List<String>
 verify serializeLines
     serializeLines([]) => []
     serializeLines([Note(id = 1, title = "A", body = "a"), Note(id = 2, title = "B", body = "b")]) => ["1\tA\ta", "2\tB\tb"]
+
+fn notesRoundtripSafe(notes: List<Note>) -> Bool
+    ? "Round-trip precondition for serialized note files."
+    match notes
+        [] -> true
+        [note, ..rest] -> match noteRoundtripSafe(note)
+            true -> notesRoundtripSafe(rest)
+            false -> false
+
+verify notesRoundtripSafe
+    notesRoundtripSafe([]) => true
+    notesRoundtripSafe([Note(id = 1, title = "A", body = "a")]) => true
+    notesRoundtripSafe([Note(id = 1, title = "bad\ttitle", body = "a")]) => false
+
+verify serializeLines law notesRoundtrip
+    given notes: List<Note> = [
+        [],
+        [Note(id = 1, title = "A", body = "a")],
+        [Note(id = 1, title = "A", body = "a"), Note(id = 2, title = "B", body = "b")],
+        [Note(id = 1, title = "bad\ttitle", body = "a")]
+    ]
+    when notesRoundtripSafe(notes)
+    parseNotes("{String.join(serializeLines(notes), "\n")}\n") => Result.Ok(notes)
 
 fn addNote(title: String, body: String) -> Result<Note, String>
     ? "Creates a new note with the next available ID and persists it."

@@ -4,6 +4,9 @@ All notable changes to Aver are documented here.
 
 ## Unreleased
 
+### Added
+- round-trip law coverage for naturally invertible examples, including `json`, `grok_s_language`, and `notepad/store`
+
 ## 0.4.0
 
 ### Added

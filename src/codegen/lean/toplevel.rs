@@ -1371,6 +1371,7 @@ fn emit_verify_law_block(
     };
     let lhs_template = emit_expr(&law.lhs, ctx);
     let rhs_template = emit_expr(&law.rhs, ctx);
+    let when_template = law.when.as_ref().map(|expr| emit_expr(expr, ctx));
     let quant_params = law
         .givens
         .iter()
@@ -1406,13 +1407,33 @@ fn emit_verify_law_block(
             law_given_domain_to_lean(&given.domain, ctx)
         ));
     }
+    if let Some(when_expr) = &law.when {
+        lines.push(format!("-- when {}", emit_expr(when_expr, ctx)));
+    }
     if !quant_params.is_empty() {
-        if let Some(auto_proof) = emit_verify_law_forall_auto_proof(vb, law, ctx, verify_mode) {
+        let theorem_prop = law_theorem_prop(
+            law,
+            ctx,
+            &lhs_template,
+            &rhs_template,
+            when_template.as_deref(),
+        );
+        if let Some(auto_proof) = emit_verify_law_forall_auto_proof(
+            vb,
+            law,
+            ctx,
+            verify_mode,
+            &theorem_base,
+            &quant_params,
+            &theorem_prop,
+        ) {
             lines.extend(auto_proof.support_lines);
-            lines.push(format!(
-                "theorem {} : ∀ {}, {} = {} := by",
-                theorem_base, quant_params, lhs_template, rhs_template
-            ));
+            if !auto_proof.replaces_theorem {
+                lines.push(format!(
+                    "theorem {} : ∀ {}, {} := by",
+                    theorem_base, quant_params, theorem_prop
+                ));
+            }
             lines.extend(auto_proof.proof_lines);
         } else if verify_mode == VerifyEmitMode::NativeDecide {
             lines.push(format!(
@@ -1421,8 +1442,8 @@ fn emit_verify_law_block(
             ));
         } else {
             lines.push(format!(
-                "theorem {} : ∀ {}, {} = {} := by",
-                theorem_base, quant_params, lhs_template, rhs_template
+                "theorem {} : ∀ {}, {} := by",
+                theorem_base, quant_params, theorem_prop
             ));
             lines.push(
                 "  -- verify law is sampled; universal proof must be provided manually".to_string(),
@@ -1436,7 +1457,21 @@ fn emit_verify_law_block(
         let domain_prop = vb
             .cases
             .iter()
-            .map(|(left, right)| format!("({} = {})", emit_expr(left, ctx), emit_expr(right, ctx)))
+            .enumerate()
+            .map(|(idx, (left, right))| {
+                let left_str = emit_expr(left, ctx);
+                let right_str = emit_expr(right, ctx);
+                if let Some(guard) = law.sample_guards.get(idx) {
+                    format!(
+                        "({} = true -> {} = {})",
+                        emit_expr(guard, ctx),
+                        left_str,
+                        right_str
+                    )
+                } else {
+                    format!("({} = {})", left_str, right_str)
+                }
+            })
             .collect::<Vec<_>>()
             .join(" ∧ ");
         match verify_mode {
@@ -1466,29 +1501,62 @@ fn emit_verify_law_block(
         let theorem_name = format!("{}_sample_{}", theorem_base, case_index_start + idx + 1);
         let left_str = emit_expr(left, ctx);
         let right_str = emit_expr(right, ctx);
+        let sample_prop = if let Some(guard) = law.sample_guards.get(idx) {
+            format!(
+                "{} = true -> {} = {}",
+                emit_expr(guard, ctx),
+                left_str,
+                right_str
+            )
+        } else {
+            format!("{} = {}", left_str, right_str)
+        };
         match verify_mode {
             VerifyEmitMode::NativeDecide => {
                 lines.push(format!(
-                    "theorem {} : {} = {} := by native_decide",
-                    theorem_name, left_str, right_str
+                    "theorem {} : {} := by native_decide",
+                    theorem_name, sample_prop
                 ));
             }
             VerifyEmitMode::Sorry => {
                 lines.push(format!(
-                    "theorem {} : {} = {} := by sorry",
-                    theorem_name, left_str, right_str
+                    "theorem {} : {} := by sorry",
+                    theorem_name, sample_prop
                 ));
             }
             VerifyEmitMode::TheoremSkeleton => {
-                lines.push(format!(
-                    "theorem {} : {} = {} := by",
-                    theorem_name, left_str, right_str
-                ));
+                lines.push(format!("theorem {} : {} := by", theorem_name, sample_prop));
                 lines.push("  sorry".to_string());
             }
         }
     }
     (lines.join("\n"), case_index_start + vb.cases.len())
+}
+
+fn law_theorem_prop(
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    lhs_template: &str,
+    rhs_template: &str,
+    when_template: Option<&str>,
+) -> String {
+    let mut premises = Vec::new();
+    if law.when.is_some() {
+        premises.extend(
+            law.givens
+                .iter()
+                .map(|given| law_given_domain_prop(given, ctx)),
+        );
+    }
+    if let Some(when_expr) = when_template {
+        premises.push(format!("{when_expr} = true"));
+    }
+    let conclusion = format!("{lhs_template} = {rhs_template}");
+    if premises.is_empty() {
+        conclusion
+    } else {
+        format!("{} -> {}", premises.join(" -> "), conclusion)
+    }
 }
 
 fn law_given_domain_to_lean(domain: &VerifyGivenDomain, ctx: &CodegenContext) -> String {
@@ -1502,6 +1570,29 @@ fn law_given_domain_to_lean(domain: &VerifyGivenDomain, ctx: &CodegenContext) ->
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+    }
+}
+
+fn law_given_domain_prop(given: &VerifyGiven, ctx: &CodegenContext) -> String {
+    let given_name = aver_name_to_lean(&given.name);
+    let values = law_given_domain_values(&given.domain);
+    match values.as_slice() {
+        [] => "False".to_string(),
+        [value] => format!("{given_name} = {}", emit_expr(value, ctx)),
+        _ => values
+            .iter()
+            .map(|value| format!("{given_name} = {}", emit_expr(value, ctx)))
+            .collect::<Vec<_>>()
+            .join(" ∨ "),
+    }
+}
+
+pub(super) fn law_given_domain_values(domain: &VerifyGivenDomain) -> Vec<Expr> {
+    match domain {
+        VerifyGivenDomain::IntRange { start, end } => (*start..=*end)
+            .map(|n| Expr::Literal(Literal::Int(n)))
+            .collect(),
+        VerifyGivenDomain::Explicit(values) => values.clone(),
     }
 }
 

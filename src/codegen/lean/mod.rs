@@ -1861,7 +1861,7 @@ mod tests {
                     ),
                 ),
             ],
-            kind: VerifyKind::Law(VerifyLaw {
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "commutative".to_string(),
                 givens: vec![
                     VerifyGiven {
@@ -1878,6 +1878,7 @@ mod tests {
                         ]),
                     },
                 ],
+                when: None,
                 lhs: Expr::FnCall(
                     Box::new(Expr::Ident("add".to_string())),
                     vec![Expr::Ident("a".to_string()), Expr::Ident("b".to_string())],
@@ -1886,7 +1887,8 @@ mod tests {
                     Box::new(Expr::Ident("add".to_string())),
                     vec![Expr::Ident("b".to_string()), Expr::Ident("a".to_string())],
                 ),
-            }),
+                sample_guards: vec![],
+            })),
         }));
         ctx
     }
@@ -2034,6 +2036,42 @@ verify addOne
     }
 
     #[test]
+    fn transpile_emits_guarded_theorems_for_verify_law_when_clause() {
+        let ctx = ctx_from_source(
+            r#"
+module GuardedLaw
+    intent =
+        "verify law with precondition"
+
+fn pickGreater(a: Int, b: Int) -> Int
+    match a > b
+        true -> a
+        false -> b
+
+verify pickGreater law ordered
+    given a: Int = [1, 2]
+    given b: Int = [1, 2]
+    when a > b
+    pickGreater(a, b) => a
+"#,
+            "guarded_law",
+        );
+        let out = transpile_with_verify_mode(&ctx, VerifyEmitMode::TheoremSkeleton);
+        let lean = generated_lean_file(&out);
+
+        assert!(lean.contains("-- when (a > b)"));
+        assert!(lean.contains(
+            "theorem pickGreater_law_ordered : ∀ (a : Int) (b : Int), a = 1 ∨ a = 2 -> b = 1 ∨ b = 2 -> (a > b) = true -> pickGreater a b = a := by"
+        ));
+        assert!(lean.contains(
+            "theorem pickGreater_law_ordered_sample_1 : (1 > 1) = true -> pickGreater 1 1 = 1 := by"
+        ));
+        assert!(lean.contains(
+            "theorem pickGreater_law_ordered_sample_4 : (2 > 2) = true -> pickGreater 2 2 = 2 := by"
+        ));
+    }
+
+    #[test]
     fn transpile_uses_spec_theorem_names_for_declared_spec_laws() {
         let ctx = ctx_from_source(
             r#"
@@ -2141,16 +2179,18 @@ verify inc law incSpec
                 Expr::Literal(Literal::Int(1)),
                 Expr::Literal(Literal::Int(1)),
             )],
-            kind: VerifyKind::Law(VerifyLaw {
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "reflexive".to_string(),
                 givens: vec![VerifyGiven {
                     name: "x".to_string(),
                     type_name: "Int".to_string(),
                     domain: VerifyGivenDomain::IntRange { start: 1, end: 2 },
                 }],
+                when: None,
                 lhs: Expr::Ident("x".to_string()),
                 rhs: Expr::Ident("x".to_string()),
-            }),
+                sample_guards: vec![],
+            })),
         }));
         let out = transpile(&ctx);
         let lean = out
@@ -2179,7 +2219,7 @@ verify inc law incSpec
                 ),
                 Expr::Literal(Literal::Int(1)),
             )],
-            kind: VerifyKind::Law(VerifyLaw {
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "identityZero".to_string(),
                 givens: vec![VerifyGiven {
                     name: "a".to_string(),
@@ -2189,12 +2229,14 @@ verify inc law incSpec
                         Expr::Literal(Literal::Int(1)),
                     ]),
                 }],
+                when: None,
                 lhs: Expr::FnCall(
                     Box::new(Expr::Ident("add".to_string())),
                     vec![Expr::Ident("a".to_string()), Expr::Literal(Literal::Int(0))],
                 ),
                 rhs: Expr::Ident("a".to_string()),
-            }),
+                sample_guards: vec![],
+            })),
         }));
         let out = transpile(&ctx);
         let lean = out
@@ -2241,7 +2283,7 @@ verify inc law incSpec
                     ],
                 ),
             )],
-            kind: VerifyKind::Law(VerifyLaw {
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "associative".to_string(),
                 givens: vec![
                     VerifyGiven {
@@ -2260,6 +2302,7 @@ verify inc law incSpec
                         domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(3))]),
                     },
                 ],
+                when: None,
                 lhs: Expr::FnCall(
                     Box::new(Expr::Ident("add".to_string())),
                     vec![
@@ -2280,7 +2323,8 @@ verify inc law incSpec
                         ),
                     ],
                 ),
-            }),
+                sample_guards: vec![],
+            })),
         }));
         let out = transpile(&ctx);
         let lean = out
@@ -2331,19 +2375,21 @@ verify inc law incSpec
                 ),
                 Expr::Literal(Literal::Int(2)),
             )],
-            kind: VerifyKind::Law(VerifyLaw {
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "rightIdentity".to_string(),
                 givens: vec![VerifyGiven {
                     name: "a".to_string(),
                     type_name: "Int".to_string(),
                     domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(2))]),
                 }],
+                when: None,
                 lhs: Expr::FnCall(
                     Box::new(Expr::Ident("sub".to_string())),
                     vec![Expr::Ident("a".to_string()), Expr::Literal(Literal::Int(0))],
                 ),
                 rhs: Expr::Ident("a".to_string()),
-            }),
+                sample_guards: vec![],
+            })),
         }));
         ctx.items.push(TopLevel::Verify(VerifyBlock {
             fn_name: "sub".to_string(),
@@ -2368,7 +2414,7 @@ verify inc law incSpec
                     )),
                 ),
             )],
-            kind: VerifyKind::Law(VerifyLaw {
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "antiCommutative".to_string(),
                 givens: vec![
                     VerifyGiven {
@@ -2382,6 +2428,7 @@ verify inc law incSpec
                         domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(1))]),
                     },
                 ],
+                when: None,
                 lhs: Expr::FnCall(
                     Box::new(Expr::Ident("sub".to_string())),
                     vec![Expr::Ident("a".to_string()), Expr::Ident("b".to_string())],
@@ -2394,7 +2441,8 @@ verify inc law incSpec
                         vec![Expr::Ident("b".to_string()), Expr::Ident("a".to_string())],
                     )),
                 ),
-            }),
+                sample_guards: vec![],
+            })),
         }));
 
         let out = transpile(&ctx);
@@ -2465,13 +2513,14 @@ verify inc law incSpec
                     ],
                 ),
             )],
-            kind: VerifyKind::Law(VerifyLaw {
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "identityViaAdd".to_string(),
                 givens: vec![VerifyGiven {
                     name: "n".to_string(),
                     type_name: "Int".to_string(),
                     domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(2))]),
                 }],
+                when: None,
                 lhs: Expr::FnCall(
                     Box::new(Expr::Ident("addOne".to_string())),
                     vec![Expr::Ident("n".to_string())],
@@ -2480,7 +2529,8 @@ verify inc law incSpec
                     Box::new(Expr::Ident("add".to_string())),
                     vec![Expr::Ident("n".to_string()), Expr::Literal(Literal::Int(1))],
                 ),
-            }),
+                sample_guards: vec![],
+            })),
         }));
         let out = transpile(&ctx);
         let lean = out
@@ -2551,7 +2601,7 @@ verify inc law incSpec
                 ),
                 Expr::Literal(Literal::Bool(true)),
             )],
-            kind: VerifyKind::Law(VerifyLaw {
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "setHasKey".to_string(),
                 givens: vec![
                     VerifyGiven {
@@ -2578,6 +2628,7 @@ verify inc law incSpec
                         domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(1))]),
                     },
                 ],
+                when: None,
                 lhs: map_has(
                     map_set(
                         Expr::Ident("m".to_string()),
@@ -2587,7 +2638,8 @@ verify inc law incSpec
                     Expr::Ident("k".to_string()),
                 ),
                 rhs: Expr::Literal(Literal::Bool(true)),
-            }),
+                sample_guards: vec![],
+            })),
         }));
 
         ctx.items.push(TopLevel::Verify(VerifyBlock {
@@ -2604,7 +2656,7 @@ verify inc law incSpec
                 ),
                 some(Expr::Ident("v".to_string())),
             )],
-            kind: VerifyKind::Law(VerifyLaw {
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "setGetKey".to_string(),
                 givens: vec![
                     VerifyGiven {
@@ -2631,6 +2683,7 @@ verify inc law incSpec
                         domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(1))]),
                     },
                 ],
+                when: None,
                 lhs: map_get(
                     map_set(
                         Expr::Ident("m".to_string()),
@@ -2640,7 +2693,8 @@ verify inc law incSpec
                     Expr::Ident("k".to_string()),
                 ),
                 rhs: some(Expr::Ident("v".to_string())),
-            }),
+                sample_guards: vec![],
+            })),
         }));
 
         let out = transpile(&ctx);
@@ -2790,7 +2844,7 @@ verify inc law incSpec
                 ),
                 Expr::Literal(Literal::Bool(true)),
             )],
-            kind: VerifyKind::Law(VerifyLaw {
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "keyPresent".to_string(),
                 givens: vec![
                     VerifyGiven {
@@ -2812,6 +2866,7 @@ verify inc law incSpec
                         ))]),
                     },
                 ],
+                when: None,
                 lhs: map_has(
                     Expr::FnCall(
                         Box::new(Expr::Ident("incCount".to_string())),
@@ -2823,7 +2878,8 @@ verify inc law incSpec
                     Expr::Ident("word".to_string()),
                 ),
                 rhs: Expr::Literal(Literal::Bool(true)),
-            }),
+                sample_guards: vec![],
+            })),
         }));
 
         ctx.items.push(TopLevel::Verify(VerifyBlock {
@@ -2851,7 +2907,7 @@ verify inc law incSpec
                     )],
                 )),
             )],
-            kind: VerifyKind::Law(VerifyLaw {
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "existingKeyIncrements".to_string(),
                 givens: vec![VerifyGiven {
                     name: "counts".to_string(),
@@ -2864,6 +2920,7 @@ verify inc law incSpec
                         vec![],
                     )]),
                 }],
+                when: None,
                 lhs: map_get(
                     Expr::FnCall(
                         Box::new(Expr::Ident("incCount".to_string())),
@@ -2884,7 +2941,8 @@ verify inc law incSpec
                         Expr::Literal(Literal::Int(0)),
                     )],
                 )),
-            }),
+                sample_guards: vec![],
+            })),
         }));
 
         let out = transpile(&ctx);
@@ -2944,7 +3002,7 @@ verify inc law incSpec
                     ],
                 ),
             )],
-            kind: VerifyKind::Law(VerifyLaw {
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "commutative".to_string(),
                 givens: vec![
                     VerifyGiven {
@@ -2958,6 +3016,7 @@ verify inc law incSpec
                         domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(-1))]),
                     },
                 ],
+                when: None,
                 lhs: Expr::FnCall(
                     Box::new(Expr::Ident("add".to_string())),
                     vec![Expr::Ident("a".to_string()), Expr::Ident("b".to_string())],
@@ -2966,7 +3025,8 @@ verify inc law incSpec
                     Box::new(Expr::Ident("add".to_string())),
                     vec![Expr::Ident("b".to_string()), Expr::Ident("a".to_string())],
                 ),
-            }),
+                sample_guards: vec![],
+            })),
         }));
 
         let out = transpile(&ctx);
@@ -3011,16 +3071,18 @@ verify inc law incSpec
                 Expr::Literal(Literal::Int(2)),
                 Expr::Literal(Literal::Int(2)),
             )],
-            kind: VerifyKind::Law(VerifyLaw {
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "identity".to_string(),
                 givens: vec![VerifyGiven {
                     name: "x".to_string(),
                     type_name: "Int".to_string(),
                     domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(2))]),
                 }],
+                when: None,
                 lhs: Expr::Ident("x".to_string()),
                 rhs: Expr::Ident("x".to_string()),
-            }),
+                sample_guards: vec![],
+            })),
         }));
         let out = transpile_with_verify_mode(&ctx, VerifyEmitMode::TheoremSkeleton);
         let lean = out
@@ -3643,6 +3705,15 @@ verify inc law incSpec
         assert!(lean.contains("def skipWs__fuel"));
         assert!(lean.contains("def parseValue__fuel"));
         assert!(lean.contains("def toString (j : Json) : String :="));
+        assert!(lean.contains("-- when jsonRoundtripSafe j"));
+        assert!(!lean.contains(
+            "-- universal theorem toString_law_parseRoundtrip omitted: sampled law shape is not auto-proved yet"
+        ));
+        assert!(!lean.contains("private theorem toString_law_parseRoundtrip_aux"));
+        assert!(lean.contains(
+            "theorem toString_law_parseRoundtrip : ∀ (j : Json), j = Json.jsonNull ∨ j = Json.jsonBool true"
+        ));
+        assert!(lean.contains("theorem toString_law_parseRoundtrip_sample_1 :"));
         assert!(lean.contains(
             "example : fromString \"null\" = Except.ok Json.jsonNull := by native_decide"
         ));
@@ -3850,6 +3921,15 @@ fn connPort(conn: Tcp.Connection) -> Int
         assert!(lean.contains("def parseListItems__fuel"));
         assert!(!lean.contains("partial def eval"));
         assert!(!lean.contains("termination_by (sizeOf e,"));
+        assert!(lean.contains("-- when validSymbolNames e"));
+        assert!(!lean.contains(
+            "-- universal theorem toString_law_parseRoundtrip omitted: sampled law shape is not auto-proved yet"
+        ));
+        assert!(!lean.contains("private theorem toString_law_parseRoundtrip_aux"));
+        assert!(lean.contains(
+            "theorem toString_law_parseRoundtrip : ∀ (e : Sexpr), e = Sexpr.atomNum 42 ∨ e = Sexpr.atomSym \"hello\""
+        ));
+        assert!(lean.contains("theorem toString_law_parseRoundtrip_sample_1 :"));
     }
 
     #[test]
@@ -3909,5 +3989,15 @@ fn connPort(conn: Tcp.Connection) -> Int
         assert!(lean.contains("def deserializeLine (line : String) : Except String Note :=\n  do"));
         assert!(lean.contains("Except String (List Note)"));
         assert!(!lean.contains("partial def deserializeLine"));
+        assert!(lean.contains("-- when noteRoundtripSafe note"));
+        assert!(lean.contains("-- when notesRoundtripSafe notes"));
+        assert!(lean.contains(
+            "theorem serializeLine_law_lineRoundtrip : ∀ (note : Note), note = { id' := 1, title := \"Hello\", body := \"World\" : Note }"
+        ));
+        assert!(lean.contains(
+            "theorem serializeLines_law_notesRoundtrip : ∀ (notes : List Note), notes = [] ∨ notes = [{ id' := 1, title := \"A\", body := \"a\" : Note }]"
+        ));
+        assert!(lean.contains("theorem serializeLine_law_lineRoundtrip_sample_1 :"));
+        assert!(lean.contains("theorem serializeLines_law_notesRoundtrip_sample_1 :"));
     }
 }

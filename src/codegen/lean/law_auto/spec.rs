@@ -298,6 +298,7 @@ fn emit_fibonacci_spec_equivalence_law(
     Some(AutoProof {
         support_lines,
         proof_lines,
+        replaces_theorem: false,
     })
 }
 
@@ -341,6 +342,7 @@ pub(super) fn emit_spec_function_equivalence_law(
                 intro_names,
                 vec![format!("simpa [{}]", simp_defs.join(", "))],
             ),
+            replaces_theorem: false,
         })
     };
 

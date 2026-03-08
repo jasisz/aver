@@ -183,15 +183,19 @@ pub struct VerifyGiven {
 pub struct VerifyLaw {
     pub name: String,
     pub givens: Vec<VerifyGiven>,
+    /// Optional precondition for the law template, written as `when <bool-expr>`.
+    pub when: Option<Expr>,
     /// Template assertion from source before given-domain expansion.
     pub lhs: Expr,
     pub rhs: Expr,
+    /// Per-sample substituted guards for `when`, aligned with `VerifyBlock.cases`.
+    pub sample_guards: Vec<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum VerifyKind {
     Cases,
-    Law(VerifyLaw),
+    Law(Box<VerifyLaw>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

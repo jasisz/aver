@@ -427,6 +427,8 @@ impl Lexer {
                 Some('\\') => {
                     self.advance();
                     match self.advance() {
+                        Some('b') => current.push('\u{0008}'),
+                        Some('f') => current.push('\u{000C}'),
                         Some('n') => current.push('\n'),
                         Some('t') => current.push('\t'),
                         Some('r') => current.push('\r'),

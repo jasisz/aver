@@ -1,6 +1,30 @@
 use super::*;
 
 impl TypeChecker {
+    fn with_verify_law_givens<T>(
+        &mut self,
+        givens: &[crate::ast::VerifyGiven],
+        f: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let prev_locals = self.locals.clone();
+        for given in givens {
+            match parse_type_str_strict(&given.type_name) {
+                Ok(ty) => {
+                    self.locals.insert(given.name.clone(), ty);
+                }
+                Err(unknown) => {
+                    self.error(format!(
+                        "Unknown type '{}' in verify law given '{}'",
+                        unknown, given.name
+                    ));
+                }
+            }
+        }
+        let out = f(self);
+        self.locals = prev_locals;
+        out
+    }
+
     fn verify_case_calls_target(left: &Expr, fn_name: &str) -> bool {
         match left {
             Expr::FnCall(callee, args) => {
@@ -157,6 +181,7 @@ impl TypeChecker {
         ));
         for item in items {
             if let TopLevel::Verify(vb) = item {
+                self.current_fn_line = Some(vb.line);
                 if vb.cases.is_empty() {
                     self.error(format!(
                         "Verify block '{}' must contain at least one case",
@@ -165,6 +190,37 @@ impl TypeChecker {
                     continue;
                 }
                 let caller = format!("<verify:{}>", vb.fn_name);
+                if let crate::ast::VerifyKind::Law(law) = &vb.kind {
+                    self.with_verify_law_givens(&law.givens, |checker| {
+                        if let Some(when_expr) = &law.when {
+                            let when_ty = checker.infer_type(when_expr);
+                            if !Self::constraint_compatible(&when_ty, &Type::Bool) {
+                                checker.error_at_line(
+                                    vb.line,
+                                    format!(
+                                        "Verify law '{}.{}' when condition must have type Bool, got {}",
+                                        vb.fn_name,
+                                        law.name,
+                                        when_ty.display()
+                                    ),
+                                );
+                            }
+                            checker.check_effects_in_expr(when_expr, &caller, &no_effects);
+                        }
+                    });
+                    if law.when.is_some() && law.sample_guards.len() != vb.cases.len() {
+                        self.error_at_line(
+                            vb.line,
+                            format!(
+                                "Verify law '{}.{}' internal guard expansion mismatch: {} guards for {} cases",
+                                vb.fn_name,
+                                law.name,
+                                law.sample_guards.len(),
+                                vb.cases.len()
+                            ),
+                        );
+                    }
+                }
                 for (idx, (left, right)) in vb.cases.iter().enumerate() {
                     if matches!(vb.kind, crate::ast::VerifyKind::Cases)
                         && !Self::verify_case_calls_target(left, &vb.fn_name)
@@ -183,9 +239,27 @@ impl TypeChecker {
                     self.check_effects_in_expr(left, &caller, &no_effects);
                     let _ = self.infer_type(right);
                     self.check_effects_in_expr(right, &caller, &no_effects);
+                    if let crate::ast::VerifyKind::Law(law) = &vb.kind
+                        && let Some(sample_guard) = law.sample_guards.get(idx)
+                    {
+                        let guard_ty = self.infer_type(sample_guard);
+                        if !Self::constraint_compatible(&guard_ty, &Type::Bool) {
+                            self.error_at_line(
+                                vb.line,
+                                format!(
+                                    "Verify law '{}.{}' when-expanded case #{} must have type Bool, got {}",
+                                    vb.fn_name,
+                                    law.name,
+                                    idx + 1,
+                                    guard_ty.display()
+                                ),
+                            );
+                        }
+                    }
                 }
             }
         }
+        self.current_fn_line = None;
         self.current_fn_ret = prev_ret;
     }
 

@@ -143,8 +143,10 @@ mod tests {
                 type_name: "Int".to_string(),
                 domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(1))]),
             }],
+            when: None,
             lhs,
             rhs,
+            sample_guards: vec![],
         }
     }
 

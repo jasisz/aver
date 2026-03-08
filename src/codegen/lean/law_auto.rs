@@ -3,7 +3,9 @@
 /// This module is intentionally isolated from `toplevel.rs` so all heuristic
 /// matching and proof-shape logic lives in one place.
 mod arithmetic;
+mod induction;
 mod maps;
+mod sampled;
 mod shared;
 mod spec;
 
@@ -11,10 +13,14 @@ use super::VerifyEmitMode;
 use super::expr::aver_name_to_lean;
 use crate::ast::{VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
+use sampled::emit_guarded_sampled_domain_law;
 
 pub struct AutoProof {
     pub support_lines: Vec<String>,
     pub proof_lines: Vec<String>,
+    /// When true, the main theorem statement is already included in `support_lines`
+    /// and should not be emitted separately by the caller.
+    pub replaces_theorem: bool,
 }
 
 pub fn emit_verify_law_forall_auto_proof(
@@ -22,6 +28,9 @@ pub fn emit_verify_law_forall_auto_proof(
     law: &VerifyLaw,
     ctx: &CodegenContext,
     verify_mode: VerifyEmitMode,
+    theorem_base: &str,
+    quant_params: &str,
+    theorem_prop: &str,
 ) -> Option<AutoProof> {
     if verify_mode != VerifyEmitMode::NativeDecide {
         return None;
@@ -33,10 +42,33 @@ pub fn emit_verify_law_forall_auto_proof(
         .map(|g| aver_name_to_lean(&g.name))
         .collect();
 
+    if let Some(proof_lines) = emit_guarded_sampled_domain_law(law) {
+        return Some(AutoProof {
+            support_lines: Vec::new(),
+            proof_lines,
+            replaces_theorem: false,
+        });
+    }
+
+    // Strategy 1: Structural induction on recursive sum types.
+    // Guarded laws already compile to sampled-domain theorems above.
+    if let Some(proof) = induction::emit_structural_induction_law(
+        vb,
+        law,
+        ctx,
+        &intro_names,
+        theorem_base,
+        quant_params,
+        theorem_prop,
+    ) {
+        return Some(proof);
+    }
+
     if law.lhs == law.rhs {
         return Some(AutoProof {
             support_lines: Vec::new(),
             proof_lines: intro_then(&intro_names, vec!["rfl".to_string()]),
+            replaces_theorem: false,
         });
     }
 
@@ -44,12 +76,14 @@ pub fn emit_verify_law_forall_auto_proof(
         .map(|proof_lines| AutoProof {
             support_lines: Vec::new(),
             proof_lines,
+            replaces_theorem: false,
         })
         .or_else(|| {
             arithmetic::emit_unary_wrapper_equivalence_law(vb, law, ctx, &intro_names).map(
                 |proof_lines| AutoProof {
                     support_lines: Vec::new(),
                     proof_lines,
+                    replaces_theorem: false,
                 },
             )
         })
@@ -58,12 +92,14 @@ pub fn emit_verify_law_forall_auto_proof(
             maps::emit_direct_map_set_law(law, ctx, &intro_names).map(|proof_lines| AutoProof {
                 support_lines: Vec::new(),
                 proof_lines,
+                replaces_theorem: false,
             })
         })
         .or_else(|| {
             maps::emit_map_update_law(vb, law, ctx, &intro_names).map(|proof_lines| AutoProof {
                 support_lines: Vec::new(),
                 proof_lines,
+                replaces_theorem: false,
             })
         })
         .or_else(|| {
@@ -71,6 +107,7 @@ pub fn emit_verify_law_forall_auto_proof(
                 |proof_lines| AutoProof {
                     support_lines: Vec::new(),
                     proof_lines,
+                    replaces_theorem: false,
                 },
             )
         })
@@ -79,6 +116,7 @@ pub fn emit_verify_law_forall_auto_proof(
                 AutoProof {
                     support_lines: Vec::new(),
                     proof_lines,
+                    replaces_theorem: false,
                 }
             })
         })
@@ -87,6 +125,7 @@ pub fn emit_verify_law_forall_auto_proof(
                 |proof_lines| AutoProof {
                     support_lines: Vec::new(),
                     proof_lines,
+                    replaces_theorem: false,
                 },
             )
         })

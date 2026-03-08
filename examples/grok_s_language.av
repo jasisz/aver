@@ -57,6 +57,85 @@ verify toString
     toString(Sexpr.Quoted(Sexpr.AtomSym("pizza"))) => "'pizza"
     toString(Sexpr.List([Sexpr.AtomSym("add"), Sexpr.AtomNum(1), Sexpr.AtomNum(2)])) => "(add 1 2)"
 
+fn isAtomDelimiter(c: String) -> Bool
+    ? "True when character cannot appear inside an atom symbol."
+    match c
+        " " -> true
+        "\t" -> true
+        "\n" -> true
+        "(" -> true
+        ")" -> true
+        "'" -> true
+        _ -> false
+
+verify isAtomDelimiter
+    isAtomDelimiter(" ") => true
+    isAtomDelimiter(")") => true
+    isAtomDelimiter("x") => false
+
+fn validSymbolChars(chars: List<String>) -> Bool
+    ? "True when all symbol chars are atom-safe."
+    match chars
+        [] -> true
+        [head, ..tail] -> match isAtomDelimiter(head)
+            true -> false
+            false -> validSymbolChars(tail)
+
+verify validSymbolChars
+    validSymbolChars([]) => true
+    validSymbolChars(["h", "i"]) => true
+    validSymbolChars(["h", " "]) => false
+
+fn validSymbol(sym: String) -> Bool
+    ? "Atoms must be non-empty and contain no delimiters."
+    match String.len(sym) == 0
+        true -> false
+        false -> validSymbolChars(String.chars(sym))
+
+verify validSymbol
+    validSymbol("hello") => true
+    validSymbol("hello world") => false
+    validSymbol("") => false
+
+fn validSymbolList(items: List<Sexpr>) -> Bool
+    ? "True when every expression in list form has valid atom symbols."
+    match items
+        [] -> true
+        [head, ..tail] -> match validSymbolNames(head)
+            true -> validSymbolList(tail)
+            false -> false
+
+verify validSymbolList
+    validSymbolList([]) => true
+    validSymbolList([Sexpr.AtomSym("ok"), Sexpr.AtomNum(1)]) => true
+    validSymbolList([Sexpr.AtomSym("bad sym")]) => false
+
+fn validSymbolNames(e: Sexpr) -> Bool
+    ? "Precondition for parse(toString(e)) round-tripping."
+    match e
+        Sexpr.AtomSym(sym) -> validSymbol(sym)
+        Sexpr.AtomNum(_) -> true
+        Sexpr.Quoted(inner) -> validSymbolNames(inner)
+        Sexpr.List(items) -> validSymbolList(items)
+
+verify validSymbolNames
+    validSymbolNames(Sexpr.AtomSym("hello")) => true
+    validSymbolNames(Sexpr.AtomSym("hello world")) => false
+    validSymbolNames(Sexpr.List([Sexpr.AtomSym("add"), Sexpr.AtomNum(1)])) => true
+
+verify toString law parseRoundtrip
+    given e: Sexpr = [
+        Sexpr.AtomNum(42),
+        Sexpr.AtomSym("hello"),
+        Sexpr.AtomSym("hello world"),
+        Sexpr.Quoted(Sexpr.AtomSym("pizza")),
+        Sexpr.List([Sexpr.AtomSym("add"), Sexpr.AtomNum(1), Sexpr.AtomNum(2)]),
+        Sexpr.List([Sexpr.AtomSym("bad sym"), Sexpr.AtomNum(2)]),
+        Sexpr.List([Sexpr.AtomSym("quote"), Sexpr.Quoted(Sexpr.List([Sexpr.AtomSym("x"), Sexpr.AtomNum(3)]))])
+    ]
+    when validSymbolNames(e)
+    parse(toString(e)) => Result.Ok(e)
+
 fn eval(e: Sexpr) -> Result<Int, String>
     ? "Evaluate minimal arithmetic language: add/sub/mul/div."
     match e
