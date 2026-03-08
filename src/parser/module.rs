@@ -14,6 +14,7 @@ impl Parser {
 
         let mut depends = Vec::new();
         let mut exposes = Vec::new();
+        let mut exposes_line = None;
         let mut intent = String::new();
 
         if self.is_indent() {
@@ -26,6 +27,7 @@ impl Parser {
                         intent = self.parse_module_intent()?;
                     }
                     TokenKind::Exposes => {
+                        exposes_line = Some(self.current().line);
                         exposes = self.parse_exposes()?;
                     }
                     TokenKind::Depends => {
@@ -46,6 +48,7 @@ impl Parser {
             line,
             depends,
             exposes,
+            exposes_line,
             intent,
         })
     }

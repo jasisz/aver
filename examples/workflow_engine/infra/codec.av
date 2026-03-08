@@ -3,7 +3,7 @@ module Codec
         "Shared flat-file codec helpers for the workflow engine infra modules."
         "The storage format is intentionally plain text, so escaping, optional fields,"
         "and line splitting stay explicit instead of being hidden in a serializer."
-    exposes [escapeField, unescapeField, serializeBool, parseBool, fieldAt, optionalFieldAt, encodeOption, decodeOption, splitNonEmptyLines]
+    exposes [escapeField, serializeBool, parseBool, fieldAt, optionalFieldAt, encodeOption, decodeOption, splitNonEmptyLines]
 
 fn escapeField(text: String) -> String
     ? "Escapes percent, pipe, and newline for one flat-file field."

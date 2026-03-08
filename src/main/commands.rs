@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -5,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use colored::Colorize;
 
-use aver::ast::TopLevel;
+use aver::ast::{Expr, Pattern, Stmt, TopLevel, TypeDef, VerifyKind};
 use aver::checker::{
     CheckFinding, check_module_intent_with_sigs_in, collect_verify_coverage_warnings_in,
     index_decisions, merge_verify_blocks, run_verify,
@@ -20,6 +21,7 @@ use aver::resolver;
 use aver::source::{find_module_file, require_module_declaration};
 use aver::tco;
 use aver::types::checker::run_type_check_full;
+use aver::types::{Type, parse_type_str};
 
 use crate::shared::{
     compile_program_for_exec, compute_memo_fns, format_type_errors, load_dep_modules, parse_file,
@@ -161,6 +163,541 @@ fn collect_check_units(
     }
 
     Ok(out)
+}
+
+fn canonical_path_key(path: &str) -> String {
+    std::fs::canonicalize(path)
+        .unwrap_or_else(|_| PathBuf::from(path))
+        .to_string_lossy()
+        .to_string()
+}
+
+#[derive(Debug, Clone)]
+struct ExposedModuleInfo {
+    canonical_path: String,
+    file: String,
+    module_name: String,
+    exposes_line: usize,
+    exposed_names: Vec<String>,
+    exposed_name_set: HashSet<String>,
+    exposed_type_names: HashSet<String>,
+    is_entry: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ImportTarget {
+    dep_path_parts: Vec<String>,
+    info: ExposedModuleInfo,
+}
+
+fn local_type_names(items: &[TopLevel]) -> HashSet<String> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            TopLevel::TypeDef(TypeDef::Sum { name, .. })
+            | TopLevel::TypeDef(TypeDef::Product { name, .. }) => Some(name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn mark_used_export(
+    export_name: &str,
+    target_path: &str,
+    used_by_target: &mut HashMap<String, HashSet<String>>,
+) {
+    used_by_target
+        .entry(target_path.to_string())
+        .or_default()
+        .insert(export_name.to_string());
+}
+
+fn mark_path_use(
+    parts: &[String],
+    dep_targets: &[ImportTarget],
+    unique_type_owner: &HashMap<String, String>,
+    used_by_target: &mut HashMap<String, HashSet<String>>,
+) {
+    for target in dep_targets {
+        if parts.len() <= target.dep_path_parts.len() {
+            continue;
+        }
+        if parts.starts_with(&target.dep_path_parts) {
+            let export_name = &parts[target.dep_path_parts.len()];
+            if target.info.exposed_name_set.contains(export_name) {
+                mark_used_export(export_name, &target.info.canonical_path, used_by_target);
+            }
+        }
+    }
+
+    if let Some(owner) = unique_type_owner.get(&parts[0]) {
+        mark_used_export(&parts[0], owner, used_by_target);
+    }
+}
+
+fn expr_path_parts(expr: &Expr) -> Option<Vec<String>> {
+    match expr {
+        Expr::Attr(inner, field) => {
+            let mut parts = match inner.as_ref() {
+                Expr::Ident(name) => vec![name.clone()],
+                _ => expr_path_parts(inner)?,
+            };
+            parts.push(field.clone());
+            Some(parts)
+        }
+        Expr::Ident(_) => None,
+        Expr::Constructor(name, _) => Some(name.split('.').map(|part| part.to_string()).collect()),
+        _ => None,
+    }
+}
+
+fn mark_type_uses(
+    ty: &Type,
+    dep_targets: &[ImportTarget],
+    unique_type_owner: &HashMap<String, String>,
+    used_by_target: &mut HashMap<String, HashSet<String>>,
+) {
+    match ty {
+        Type::Named(name) => {
+            let parts = name
+                .split('.')
+                .map(|part| part.to_string())
+                .collect::<Vec<_>>();
+            mark_path_use(&parts, dep_targets, unique_type_owner, used_by_target);
+        }
+        Type::Result(ok, err) => {
+            mark_type_uses(ok, dep_targets, unique_type_owner, used_by_target);
+            mark_type_uses(err, dep_targets, unique_type_owner, used_by_target);
+        }
+        Type::Option(inner) | Type::List(inner) => {
+            mark_type_uses(inner, dep_targets, unique_type_owner, used_by_target);
+        }
+        Type::Tuple(items) => {
+            for item in items {
+                mark_type_uses(item, dep_targets, unique_type_owner, used_by_target);
+            }
+        }
+        Type::Map(key, value) => {
+            mark_type_uses(key, dep_targets, unique_type_owner, used_by_target);
+            mark_type_uses(value, dep_targets, unique_type_owner, used_by_target);
+        }
+        Type::Fn(params, ret, _) => {
+            for param in params {
+                mark_type_uses(param, dep_targets, unique_type_owner, used_by_target);
+            }
+            mark_type_uses(ret, dep_targets, unique_type_owner, used_by_target);
+        }
+        Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit | Type::Unknown => {}
+    }
+}
+
+fn mark_type_annotation(
+    type_str: &str,
+    dep_targets: &[ImportTarget],
+    unique_type_owner: &HashMap<String, String>,
+    used_by_target: &mut HashMap<String, HashSet<String>>,
+) {
+    let ty = parse_type_str(type_str);
+    mark_type_uses(&ty, dep_targets, unique_type_owner, used_by_target);
+}
+
+fn walk_pattern_for_exposes(
+    pattern: &Pattern,
+    dep_targets: &[ImportTarget],
+    unique_type_owner: &HashMap<String, String>,
+    used_by_target: &mut HashMap<String, HashSet<String>>,
+) {
+    match pattern {
+        Pattern::Constructor(path, _) => {
+            let parts = path
+                .split('.')
+                .map(|part| part.to_string())
+                .collect::<Vec<_>>();
+            mark_path_use(&parts, dep_targets, unique_type_owner, used_by_target);
+        }
+        Pattern::Tuple(items) => {
+            for item in items {
+                walk_pattern_for_exposes(item, dep_targets, unique_type_owner, used_by_target);
+            }
+        }
+        Pattern::Wildcard
+        | Pattern::Literal(_)
+        | Pattern::Ident(_)
+        | Pattern::EmptyList
+        | Pattern::Cons(_, _) => {}
+    }
+}
+
+fn walk_expr_for_exposes(
+    expr: &Expr,
+    dep_targets: &[ImportTarget],
+    unique_type_owner: &HashMap<String, String>,
+    used_by_target: &mut HashMap<String, HashSet<String>>,
+) {
+    if let Some(parts) = expr_path_parts(expr) {
+        mark_path_use(&parts, dep_targets, unique_type_owner, used_by_target);
+    }
+
+    match expr {
+        Expr::Attr(inner, _) => {
+            walk_expr_for_exposes(inner, dep_targets, unique_type_owner, used_by_target);
+        }
+        Expr::FnCall(callee, args) => {
+            walk_expr_for_exposes(callee, dep_targets, unique_type_owner, used_by_target);
+            for arg in args {
+                walk_expr_for_exposes(arg, dep_targets, unique_type_owner, used_by_target);
+            }
+        }
+        Expr::BinOp(_, left, right) => {
+            walk_expr_for_exposes(left, dep_targets, unique_type_owner, used_by_target);
+            walk_expr_for_exposes(right, dep_targets, unique_type_owner, used_by_target);
+        }
+        Expr::Match { subject, arms, .. } => {
+            walk_expr_for_exposes(subject, dep_targets, unique_type_owner, used_by_target);
+            for arm in arms {
+                walk_pattern_for_exposes(
+                    &arm.pattern,
+                    dep_targets,
+                    unique_type_owner,
+                    used_by_target,
+                );
+                walk_expr_for_exposes(&arm.body, dep_targets, unique_type_owner, used_by_target);
+            }
+        }
+        Expr::Constructor(_, Some(inner)) | Expr::ErrorProp(inner) => {
+            walk_expr_for_exposes(inner, dep_targets, unique_type_owner, used_by_target);
+        }
+        Expr::InterpolatedStr(parts) => {
+            for part in parts {
+                if let aver::ast::StrPart::Parsed(inner) = part {
+                    walk_expr_for_exposes(inner, dep_targets, unique_type_owner, used_by_target);
+                }
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) => {
+            for item in items {
+                walk_expr_for_exposes(item, dep_targets, unique_type_owner, used_by_target);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (key, value) in entries {
+                walk_expr_for_exposes(key, dep_targets, unique_type_owner, used_by_target);
+                walk_expr_for_exposes(value, dep_targets, unique_type_owner, used_by_target);
+            }
+        }
+        Expr::RecordCreate { type_name, fields } => {
+            let parts = type_name
+                .split('.')
+                .map(|part| part.to_string())
+                .collect::<Vec<_>>();
+            mark_path_use(&parts, dep_targets, unique_type_owner, used_by_target);
+            for (_, value) in fields {
+                walk_expr_for_exposes(value, dep_targets, unique_type_owner, used_by_target);
+            }
+        }
+        Expr::RecordUpdate {
+            type_name,
+            base,
+            updates,
+        } => {
+            let parts = type_name
+                .split('.')
+                .map(|part| part.to_string())
+                .collect::<Vec<_>>();
+            mark_path_use(&parts, dep_targets, unique_type_owner, used_by_target);
+            walk_expr_for_exposes(base, dep_targets, unique_type_owner, used_by_target);
+            for (_, value) in updates {
+                walk_expr_for_exposes(value, dep_targets, unique_type_owner, used_by_target);
+            }
+        }
+        Expr::TailCall(inner) => {
+            for arg in &inner.1 {
+                walk_expr_for_exposes(arg, dep_targets, unique_type_owner, used_by_target);
+            }
+        }
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, None) | Expr::Resolved(_) => {}
+    }
+}
+
+fn walk_stmt_for_exposes(
+    stmt: &Stmt,
+    dep_targets: &[ImportTarget],
+    unique_type_owner: &HashMap<String, String>,
+    used_by_target: &mut HashMap<String, HashSet<String>>,
+) {
+    match stmt {
+        Stmt::Binding(_, Some(type_name), expr) => {
+            mark_type_annotation(type_name, dep_targets, unique_type_owner, used_by_target);
+            walk_expr_for_exposes(expr, dep_targets, unique_type_owner, used_by_target);
+        }
+        Stmt::Binding(_, None, expr) | Stmt::Expr(expr) => {
+            walk_expr_for_exposes(expr, dep_targets, unique_type_owner, used_by_target);
+        }
+    }
+}
+
+fn collect_used_exposes_for_importer(
+    items: &[TopLevel],
+    dep_targets: &[ImportTarget],
+) -> HashMap<String, HashSet<String>> {
+    let local_types = local_type_names(items);
+    let mut type_providers: HashMap<String, Vec<String>> = HashMap::new();
+    for target in dep_targets {
+        for type_name in &target.info.exposed_type_names {
+            type_providers
+                .entry(type_name.clone())
+                .or_default()
+                .push(target.info.canonical_path.clone());
+        }
+    }
+
+    let unique_type_owner = type_providers
+        .into_iter()
+        .filter_map(|(type_name, owners)| {
+            if owners.len() == 1 && !local_types.contains(&type_name) {
+                Some((type_name, owners[0].clone()))
+            } else {
+                None
+            }
+        })
+        .collect::<HashMap<_, _>>();
+
+    let mut used_by_target = HashMap::new();
+
+    for item in items {
+        match item {
+            TopLevel::Module(_) | TopLevel::Decision(_) | TopLevel::EffectSet { .. } => {}
+            TopLevel::FnDef(fd) => {
+                for (_, type_name) in &fd.params {
+                    mark_type_annotation(
+                        type_name,
+                        dep_targets,
+                        &unique_type_owner,
+                        &mut used_by_target,
+                    );
+                }
+                mark_type_annotation(
+                    &fd.return_type,
+                    dep_targets,
+                    &unique_type_owner,
+                    &mut used_by_target,
+                );
+                for stmt in fd.body.stmts() {
+                    walk_stmt_for_exposes(
+                        stmt,
+                        dep_targets,
+                        &unique_type_owner,
+                        &mut used_by_target,
+                    );
+                }
+            }
+            TopLevel::Verify(vb) => {
+                for (lhs, rhs) in &vb.cases {
+                    walk_expr_for_exposes(
+                        lhs,
+                        dep_targets,
+                        &unique_type_owner,
+                        &mut used_by_target,
+                    );
+                    walk_expr_for_exposes(
+                        rhs,
+                        dep_targets,
+                        &unique_type_owner,
+                        &mut used_by_target,
+                    );
+                }
+                if let VerifyKind::Law(law) = &vb.kind {
+                    for given in &law.givens {
+                        mark_type_annotation(
+                            &given.type_name,
+                            dep_targets,
+                            &unique_type_owner,
+                            &mut used_by_target,
+                        );
+                    }
+                    if let Some(when) = &law.when {
+                        walk_expr_for_exposes(
+                            when,
+                            dep_targets,
+                            &unique_type_owner,
+                            &mut used_by_target,
+                        );
+                    }
+                    walk_expr_for_exposes(
+                        &law.lhs,
+                        dep_targets,
+                        &unique_type_owner,
+                        &mut used_by_target,
+                    );
+                    walk_expr_for_exposes(
+                        &law.rhs,
+                        dep_targets,
+                        &unique_type_owner,
+                        &mut used_by_target,
+                    );
+                    for guard in &law.sample_guards {
+                        walk_expr_for_exposes(
+                            guard,
+                            dep_targets,
+                            &unique_type_owner,
+                            &mut used_by_target,
+                        );
+                    }
+                }
+            }
+            TopLevel::Stmt(stmt) => {
+                walk_stmt_for_exposes(stmt, dep_targets, &unique_type_owner, &mut used_by_target);
+            }
+            TopLevel::TypeDef(TypeDef::Sum { variants, .. }) => {
+                for variant in variants {
+                    for field_type in &variant.fields {
+                        mark_type_annotation(
+                            field_type,
+                            dep_targets,
+                            &unique_type_owner,
+                            &mut used_by_target,
+                        );
+                    }
+                }
+            }
+            TopLevel::TypeDef(TypeDef::Product { fields, .. }) => {
+                for (_, field_type) in fields {
+                    mark_type_annotation(
+                        field_type,
+                        dep_targets,
+                        &unique_type_owner,
+                        &mut used_by_target,
+                    );
+                }
+            }
+        }
+    }
+
+    used_by_target
+}
+
+fn collect_unused_exposes_findings(
+    units: &[(String, String, Vec<TopLevel>)],
+    entry_file: &str,
+    module_root: &str,
+) -> Vec<CheckFinding> {
+    let entry_canonical = canonical_path_key(entry_file);
+    let mut module_info_by_path = HashMap::new();
+
+    for (path, _source, items) in units {
+        let canonical = canonical_path_key(path);
+        let Some(module) = items.iter().find_map(|item| {
+            if let TopLevel::Module(module) = item {
+                Some(module)
+            } else {
+                None
+            }
+        }) else {
+            continue;
+        };
+
+        if module.exposes.is_empty() {
+            continue;
+        }
+
+        let exposed_name_set = module.exposes.iter().cloned().collect::<HashSet<_>>();
+        let exposed_type_names = items
+            .iter()
+            .filter_map(|item| match item {
+                TopLevel::TypeDef(TypeDef::Sum { name, .. })
+                | TopLevel::TypeDef(TypeDef::Product { name, .. })
+                    if exposed_name_set.contains(name) =>
+                {
+                    Some(name.clone())
+                }
+                _ => None,
+            })
+            .collect::<HashSet<_>>();
+
+        module_info_by_path.insert(
+            canonical.clone(),
+            ExposedModuleInfo {
+                canonical_path: canonical,
+                file: path.clone(),
+                module_name: module.name.clone(),
+                exposes_line: module.exposes_line.unwrap_or(module.line),
+                exposed_names: module.exposes.clone(),
+                exposed_name_set,
+                exposed_type_names,
+                is_entry: canonical_path_key(path) == entry_canonical,
+            },
+        );
+    }
+
+    let mut used_by_target: HashMap<String, HashSet<String>> = HashMap::new();
+
+    for (_path, _source, items) in units {
+        let Some(module) = items.iter().find_map(|item| {
+            if let TopLevel::Module(module) = item {
+                Some(module)
+            } else {
+                None
+            }
+        }) else {
+            continue;
+        };
+
+        let dep_targets = module
+            .depends
+            .iter()
+            .filter_map(|dep| {
+                let dep_path = find_module_file(dep, module_root)?;
+                let dep_key = canonical_path_key(&dep_path.to_string_lossy());
+                let info = module_info_by_path.get(&dep_key)?.clone();
+                Some(ImportTarget {
+                    dep_path_parts: dep.split('.').map(|part| part.to_string()).collect(),
+                    info,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        if dep_targets.is_empty() {
+            continue;
+        }
+
+        let importer_usage = collect_used_exposes_for_importer(items, &dep_targets);
+        for (target_path, names) in importer_usage {
+            used_by_target.entry(target_path).or_default().extend(names);
+        }
+    }
+
+    let mut findings = Vec::new();
+    let mut modules = module_info_by_path.into_values().collect::<Vec<_>>();
+    modules.sort_by(|left, right| left.file.cmp(&right.file));
+
+    for info in modules {
+        if info.is_entry {
+            continue;
+        }
+
+        let used = used_by_target
+            .get(&info.canonical_path)
+            .cloned()
+            .unwrap_or_default();
+        let unused = info
+            .exposed_names
+            .iter()
+            .filter(|name| !used.contains(name.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if unused.is_empty() {
+            continue;
+        }
+
+        findings.push(CheckFinding {
+            line: info.exposes_line,
+            module: Some(info.module_name),
+            file: Some(info.file),
+            message: format!("Unused exposes: {}", unused.join(", ")),
+        });
+    }
+
+    findings
 }
 
 fn finding_location(f: &CheckFinding, entry_module: Option<&str>) -> String {
@@ -319,6 +856,17 @@ pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>, deps: bo
     };
 
     let entry_module = units.first().and_then(|(_, _, items)| module_name(items));
+    let mut unused_exposes_by_file: HashMap<String, Vec<CheckFinding>> = HashMap::new();
+    if deps {
+        for finding in collect_unused_exposes_findings(&units, file, &module_root) {
+            if let Some(path) = &finding.file {
+                unused_exposes_by_file
+                    .entry(canonical_path_key(path))
+                    .or_default()
+                    .push(finding);
+            }
+        }
+    }
     let mut has_any_error = false;
 
     for (idx, (path, source, items)) in units.iter().enumerate() {
@@ -351,9 +899,14 @@ pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>, deps: bo
         let findings =
             check_module_intent_with_sigs_in(items, Some(&tc_result.fn_sigs), Some(path));
         let coverage_warnings = collect_verify_coverage_warnings_in(items, Some(path));
+        let unused_exposes_warnings = unused_exposes_by_file
+            .get(&canonical_path_key(path))
+            .cloned()
+            .unwrap_or_default();
         if findings.errors.is_empty()
             && findings.warnings.is_empty()
             && coverage_warnings.is_empty()
+            && unused_exposes_warnings.is_empty()
         {
             println!("  {} All intent/desc/verify present", "✓".green());
         } else {
@@ -366,6 +919,10 @@ pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>, deps: bo
                 println!("  {}", format!("warning[{}]: {}", loc, w.message).yellow());
             }
             for w in &coverage_warnings {
+                let loc = finding_location(w, entry_module.as_deref());
+                println!("  {}", format!("warning[{}]: {}", loc, w.message).yellow());
+            }
+            for w in &unused_exposes_warnings {
                 let loc = finding_location(w, entry_module.as_deref());
                 println!("  {}", format!("warning[{}]: {}", loc, w.message).yellow());
             }

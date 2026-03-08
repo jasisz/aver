@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use clap::{Parser as ClapParser, Subcommand, ValueEnum};
 
 #[derive(ClapParser)]
@@ -19,6 +21,50 @@ pub(super) enum ProofVerifyMode {
     /// Emit named theorem stubs `theorem ... := by sorry`
     #[value(name = "theorem-skeleton")]
     TheoremSkeleton,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ContextDepth {
+    Auto,
+    Unlimited,
+    Limited(usize),
+}
+
+impl FromStr for ContextDepth {
+    type Err = String;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let value = input.trim().to_ascii_lowercase();
+        match value.as_str() {
+            "auto" => Ok(Self::Auto),
+            "unlimited" => Ok(Self::Unlimited),
+            _ => value
+                .parse::<usize>()
+                .map(Self::Limited)
+                .map_err(|_| "expected auto, unlimited, or a non-negative integer".to_string()),
+        }
+    }
+}
+
+pub(super) fn parse_context_budget(input: &str) -> Result<usize, String> {
+    let value = input.trim().to_ascii_lowercase();
+    let (number, multiplier) = if let Some(raw) = value.strip_suffix("kb") {
+        (raw.trim(), 1024usize)
+    } else if let Some(raw) = value.strip_suffix("mb") {
+        (raw.trim(), 1024usize * 1024)
+    } else if let Some(raw) = value.strip_suffix('b') {
+        (raw.trim(), 1usize)
+    } else {
+        (value.as_str(), 1usize)
+    };
+
+    let amount = number
+        .parse::<usize>()
+        .map_err(|_| "expected a byte size like 8192, 10kb, or 1mb".to_string())?;
+
+    amount
+        .checked_mul(multiplier)
+        .ok_or_else(|| "budget is too large".to_string())
 }
 
 #[derive(Subcommand)]
@@ -98,6 +144,12 @@ pub(super) enum Commands {
         /// Output only decision blocks
         #[arg(long)]
         decisions_only: bool,
+        /// Dependency depth: auto (default), unlimited, or a non-negative integer
+        #[arg(long, default_value = "auto")]
+        depth: ContextDepth,
+        /// Byte budget for --depth auto, e.g. 10kb or 1mb (default: 10kb)
+        #[arg(long, default_value = "10kb", value_parser = parse_context_budget)]
+        budget: usize,
     },
     /// Compile an Aver file to a Rust/Cargo project
     Compile {
@@ -143,6 +195,49 @@ mod tests {
                 assert!(deps);
             }
             _ => panic!("expected verify command"),
+        }
+    }
+
+    #[test]
+    fn context_defaults_to_auto_depth_and_10kb_budget() {
+        let cli = Cli::parse_from(["aver", "context", "examples/app.av"]);
+        match cli.command {
+            Commands::Context { depth, budget, .. } => {
+                assert_eq!(depth, ContextDepth::Auto);
+                assert_eq!(budget, 10 * 1024);
+            }
+            _ => panic!("expected context command"),
+        }
+    }
+
+    #[test]
+    fn context_accepts_unlimited_and_labeled_budget() {
+        let cli = Cli::parse_from([
+            "aver",
+            "context",
+            "examples/app.av",
+            "--depth",
+            "unlimited",
+            "--budget",
+            "12kb",
+        ]);
+        match cli.command {
+            Commands::Context { depth, budget, .. } => {
+                assert_eq!(depth, ContextDepth::Unlimited);
+                assert_eq!(budget, 12 * 1024);
+            }
+            _ => panic!("expected context command"),
+        }
+    }
+
+    #[test]
+    fn context_accepts_numeric_depth() {
+        let cli = Cli::parse_from(["aver", "context", "examples/app.av", "--depth", "2"]);
+        match cli.command {
+            Commands::Context { depth, .. } => {
+                assert_eq!(depth, ContextDepth::Limited(2));
+            }
+            _ => panic!("expected context command"),
         }
     }
 }

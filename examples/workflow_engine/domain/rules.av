@@ -3,7 +3,7 @@ module Rules
         "Explicit workflow rule functions over replayed task state."
         "Rules stay as plain functions rather than a hidden mini-language so reviewers"
         "can see which business pressure caused each follow-up event or notification."
-    exposes [emptyResult, mergeResults, runRules]
+    exposes [runRules]
     depends [Domain.Types, Domain.Views]
 
 decision RulesStayAsFunctions
@@ -47,9 +47,8 @@ fn runRules(project: Project, task: Task, latest: Option<TaskEventRecord>, now: 
     r2 = ruleBlockedTooLong(project, task, view, now, nextSeq + List.len(r1.events))
     r3 = ruleCompletedNeedsComment(task, view, now)
     r4 = ruleWaitingCommentNeedsReview(project, task, latest, now, nextSeq + List.len(r1.events) + List.len(r2.events))
-    r5 = ruleReopenedAudit(task, latest, now)
-    r6 = ruleOverdue(task, view, now)
-    Result.Ok(mergeResults(mergeResults(mergeResults(mergeResults(mergeResults(r1, r2), r3), r4), r5), r6))
+    r5 = ruleOverdue(task, view, now)
+    Result.Ok(mergeResults(mergeResults(mergeResults(mergeResults(r1, r2), r3), r4), r5))
 
 verify runRules
     runRules(Project(id = "p1", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z"), Task.update(sampleTask(), deadline = Option.Some("2026-03-08T18:00:00Z")), Option.None, "2026-03-08T12:00:00Z", 2) => Result.Ok(RuleResult(taskId = "t1", events = [], notifications = [Notification(key = "deadline-soon:t1:2026-03-08T18:00:00Z", taskId = "t1", kind = "deadline_soon", message = "Task 't1' is due within 24 hours", createdAt = "2026-03-08T12:00:00Z")], audits = [], notes = ["deadline projects urgency for task 't1'"]))
@@ -104,17 +103,6 @@ fn ruleWaitingCommentNeedsReview(project: Project, task: Task, latest: Option<Ta
 
 verify ruleWaitingCommentNeedsReview
     ruleWaitingCommentNeedsReview(Project(id = "p1", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z"), Task.update(sampleTask(), tags = ["waiting"]), Option.Some(TaskEventRecord(taskId = "t1", projectId = "p1", seq = 3, event = Domain.Types.TaskEvent.CommentAdded(Comment(id = "t1-c3", body = "Ping", author = "alice", createdAt = "2026-03-09T12:00:00Z")))), "2026-03-09T12:01:00Z", 4) => RuleResult(taskId = "t1", events = [TaskEventRecord(taskId = "t1", projectId = "p1", seq = 4, event = Domain.Types.TaskEvent.TagAdded("needs_review", "2026-03-09T12:01:00Z"))], notifications = [Notification(key = "needs-review:t1:3", taskId = "t1", kind = "needs_review", message = "Task 't1' moved from waiting to needs_review after a new comment", createdAt = "2026-03-09T12:01:00Z")], audits = [], notes = ["added needs_review tag to task 't1'"])
-
-fn ruleReopenedAudit(task: Task, latest: Option<TaskEventRecord>, now: String) -> RuleResult
-    ? "Reopening after done records an explicit audit entry with the reason."
-    match latest
-        Option.Some(entry) -> match entry.event
-            TaskEvent.TaskReopened(reason, reopenedAt) -> RuleResult(taskId = task.id, events = [], notifications = [], audits = [AuditEntry(key = "reopened:{task.id}:{reopenedAt}", taskId = task.id, action = "task.reopened", message = "Task '{task.id}' reopened: {reason}", createdAt = now)], notes = ["recorded reopen audit for task '{task.id}'"])
-            _ -> emptyResult(task.id)
-        Option.None -> emptyResult(task.id)
-
-verify ruleReopenedAudit
-    ruleReopenedAudit(sampleTask(), Option.Some(TaskEventRecord(taskId = "t1", projectId = "p1", seq = 4, event = Domain.Types.TaskEvent.TaskReopened("Regression found", "2026-03-11T12:00:00Z"))), "2026-03-11T12:00:01Z") => RuleResult(taskId = "t1", events = [], notifications = [], audits = [AuditEntry(key = "reopened:t1:2026-03-11T12:00:00Z", taskId = "t1", action = "task.reopened", message = "Task 't1' reopened: Regression found", createdAt = "2026-03-11T12:00:01Z")], notes = ["recorded reopen audit for task 't1'"])
 
 fn ruleOverdue(task: Task, view: TaskView, now: String) -> RuleResult
     ? "Overdue state stays derived but still emits a notification."

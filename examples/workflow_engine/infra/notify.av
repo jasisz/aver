@@ -3,7 +3,7 @@ module Notify
         "Notification delivery and persistence for workflow rules."
         "Notifications are stored so queries can inspect them later, but they are also"
         "emitted immediately to the console to make the CLI feel alive."
-    exposes [initNotify, loadNotifications, emitNotification, emitNotifications, forTask]
+    exposes [initNotify, loadNotifications, emitNotifications, forTask]
     depends [Domain.Types, Infra.Codec, Infra.Store]
 
 effects NotifyInit = [Disk.makeDir, Disk.exists, Disk.writeText, Disk.appendText]

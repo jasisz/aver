@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use aver_rt::AverList;
 use crate::value::{RuntimeError, Value};
+use aver_rt::AverList;
 
 /// Args service — command-line arguments.
 ///
@@ -26,7 +26,11 @@ pub fn effects(name: &str) -> &'static [&'static str] {
     }
 }
 
-pub fn call(name: &str, args: &[Value], cli_args: &[String]) -> Option<Result<Value, RuntimeError>> {
+pub fn call(
+    name: &str,
+    args: &[Value],
+    cli_args: &[String],
+) -> Option<Result<Value, RuntimeError>> {
     match name {
         "Args.get" => Some(get_args(args, cli_args)),
         _ => None,

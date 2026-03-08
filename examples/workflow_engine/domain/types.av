@@ -3,7 +3,7 @@ module Types
         "Shared domain types for the workflow engine."
         "Keeps records and enums in one place so command, rule, and store modules"
         "can speak about the same application core without repeating shapes."
-    exposes [TaskStatus, Priority, Project, Comment, TaskEvent, TaskEventRecord, Task, TaskView, TaskSummary, Notification, AuditEntry, RuleResult, WorkflowSnapshot]
+    exposes [TaskStatus, Priority, Project, Comment, TaskEvent, TaskEventRecord, Task, TaskView, TaskSummary, Notification, AuditEntry, RuleResult]
 
 type TaskStatus
     Todo

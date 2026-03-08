@@ -5,7 +5,23 @@ All notable changes to Aver are documented here.
 ## Unreleased
 
 ### Added
+- `Args.get()` as an explicit runtime service for CLI arguments (`List<String>`)
 - round-trip law coverage for naturally invertible examples, including `json`, `grok_s_language`, and `notepad/store`
+- `aver context --budget` with `kb` / `mb` suffixes for prompt-sized exports
+- `aver context` selection metadata in JSON and in the `--output` summary, including included depth and next-depth size
+
+### Changed
+- `aver verify` now checks only declared `left => right` examples; coverage-style diagnostics moved to `aver check`
+- `aver check` now reports coverage hints as warnings and no longer exits non-zero because of warnings alone
+- `aver context` now defaults to `--depth auto --budget 10kb` instead of walking dependencies without a budget
+- `aver context --json` stays human/LLM-oriented: compact signatures, short verify strings, omitted empty sections, and skipped long verify cases
+
+### Fixed
+- `aver verify --deps` now verifies transitive dependencies
+- exposed sum types and constructors now resolve correctly across module boundaries
+- fully-qualified constructor patterns now work consistently in parsing, typechecking, exhaustiveness, and runtime matching
+- `Result<Unit, String>` now accepts `Unit` cleanly and renders `Unit` consistently
+- `unused exposes` diagnostics now resolve real symbol usage from AST and point at the module's `exposes` line
 
 ## 0.4.0
 

@@ -3,7 +3,7 @@ module Cli
         "Plain argv parser, renderer, and dispatcher for the workflow engine."
         "The interface stays simple and shell-friendly: one command invocation in, one rendered"
         "result block out, with no REPL-specific protocol in the app core."
-    exposes [Input, parseArgs, helpLines, renderCommandReport, renderQueryOutput, runCli]
+    exposes [runCli]
     depends [App.Commands, App.Queries, Domain.Types, Domain.Views, Infra.Store, Infra.Audit, Infra.Notify]
 
 type Input
@@ -50,6 +50,11 @@ fn routeArgs(parts: List<String>) -> Result<Input, String>
         "show_audit" -> parseShowAudit(parts)
         "run_rules" -> parseRunRules(parts)
         _ -> Result.Err("Unknown command: " + head)
+
+verify routeArgs
+    routeArgs(["help"]) => Result.Ok(Input.ShowHelp)
+    routeArgs(["show_task", "t1"]) => Result.Ok(Input.RunQuery(Query.ShowTask("t1")))
+    routeArgs(["unknown"]) => Result.Err("Unknown command: unknown")
 
 fn trimParts(parts: List<String>) -> List<String>
     ? "Trims all pipe-separated fields."
@@ -521,11 +526,19 @@ fn renderCommand(result: Result<CommandReport, String>) -> Result<List<String>, 
         Result.Ok(report) -> Result.Ok(renderCommandReport(report))
         Result.Err(msg) -> Result.Err(msg)
 
+verify renderCommand
+    renderCommand(Result.Ok(CommandReport(summary = "Created project 'alpha'", subjectId = "project:alpha", events = [], notifications = [], audits = []))) => Result.Ok(["Created project 'alpha'", "subject: project:alpha", "events=0 notifications=0 audits=0", "notifications: 0", "audits: 0"])
+    renderCommand(Result.Err("boom")) => Result.Err("boom")
+
 fn renderQuery(result: Result<QueryOutput, String>) -> Result<List<String>, String>
     ? "Maps query execution into rendered output."
     match result
         Result.Ok(output) -> Result.Ok(renderQueryOutput(output))
         Result.Err(msg) -> Result.Err(msg)
+
+verify renderQuery
+    renderQuery(Result.Ok(QueryOutput.AuditTrail([]))) => Result.Ok(["audits: 0"])
+    renderQuery(Result.Err("boom")) => Result.Err("boom")
 
 fn errorLines(msg: String) -> List<String>
     ? "CLI error block followed by help text."

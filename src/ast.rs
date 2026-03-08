@@ -162,6 +162,7 @@ pub struct Module {
     pub line: usize,
     pub depends: Vec<String>,
     pub exposes: Vec<String>,
+    pub exposes_line: Option<usize>,
     pub intent: String,
 }
 

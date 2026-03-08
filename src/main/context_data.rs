@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use aver::ast::{DecisionBlock, FnDef, TopLevel, TypeDef, VerifyBlock};
 use aver::call_graph::{find_recursive_fns, recursive_callsite_counts, recursive_scc_ids};
@@ -11,10 +11,12 @@ use aver::verify_law::canonical_spec_ref;
 
 use crate::shared::{compute_memo_fns, is_memo_safe_type};
 
+#[derive(Clone)]
 pub(super) struct FileContext {
     pub(super) source_file: String,
     pub(super) module_name: Option<String>,
     pub(super) intent: Option<String>,
+    pub(super) depends: Vec<String>,
     pub(super) exposes: Vec<String>,
     pub(super) api_effects: Vec<String>,
     pub(super) module_effects: Vec<String>,
@@ -164,6 +166,7 @@ pub(super) fn collect_contexts(
     file: &str,
     module_root: &str,
     visited: &mut HashSet<String>,
+    max_depth: Option<usize>,
 ) -> Vec<FileContext> {
     let canonical = std::fs::canonicalize(file)
         .unwrap_or_else(|_| PathBuf::from(file))
@@ -195,10 +198,17 @@ pub(super) fn collect_contexts(
         return vec![];
     }
 
+    // Strip module_root prefix so paths are relative to the project root
+    let relative_file = Path::new(file)
+        .strip_prefix(module_root)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| file.to_string());
+
     let mut ctx = FileContext {
-        source_file: file.to_string(),
+        source_file: relative_file,
         module_name: None,
         intent: None,
+        depends: vec![],
         exposes: vec![],
         api_effects: vec![],
         module_effects: vec![],
@@ -227,6 +237,7 @@ pub(super) fn collect_contexts(
                 } else {
                     Some(m.intent.clone())
                 };
+                ctx.depends = m.depends.clone();
                 ctx.exposes = m.exposes.clone();
                 dep_names = m.depends.clone();
             }
@@ -295,12 +306,20 @@ pub(super) fn collect_contexts(
 
     let mut result = vec![ctx];
 
-    // Recurse into dependencies
-    for dep_name in dep_names {
-        if let Some(dep_path) = find_module_file(&dep_name, module_root) {
-            let dep_file = dep_path.to_string_lossy().to_string();
-            let mut sub = collect_contexts(&dep_file, module_root, visited);
-            result.append(&mut sub);
+    // Recurse into dependencies (respecting depth limit)
+    let should_recurse = match max_depth {
+        None => true,
+        Some(0) => false,
+        Some(_) => true,
+    };
+    if should_recurse {
+        let next_depth = max_depth.map(|d| d.saturating_sub(1));
+        for dep_name in dep_names {
+            if let Some(dep_path) = find_module_file(&dep_name, module_root) {
+                let dep_file = dep_path.to_string_lossy().to_string();
+                let mut sub = collect_contexts(&dep_file, module_root, visited, next_depth);
+                result.append(&mut sub);
+            }
         }
     }
 

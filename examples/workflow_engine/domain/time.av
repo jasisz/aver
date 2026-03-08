@@ -3,7 +3,7 @@ module Time
         "Pure timestamp parsing and comparison for workflow deadlines and rule windows."
         "Uses explicit ISO parsing instead of assuming Time.now() strings can only be"
         "compared lexicographically when duration math is needed."
-    exposes [Timestamp, parseIso, toUnixSeconds, secondsUntil, withinNextHours, olderThanDays, isPast]
+    exposes [parseIso, withinNextHours, olderThanDays, isPast]
 
 record Timestamp
     year: Int

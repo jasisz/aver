@@ -221,6 +221,26 @@ aver context examples/calculator.av
 
 Aver walks the dependency graph and emits a compact context summary: module intent, public signatures, effect declarations, verify samples, and decisions. The goal is not to dump the whole source tree; it is to export the contract-level view that another human or LLM needs first.
 
+By default, `aver context` uses `--depth auto --budget 10kb`: it tries depth `0`, `1`, `2`, ... and keeps the deepest result that still fits the byte budget. `--depth N` and `--depth unlimited` bypass that budget. Long verify examples are skipped rather than bloating the artifact.
+
+If you want a larger export for a medium project, raise the budget explicitly:
+
+```bash
+aver context examples/workflow_engine/main.av \
+  --module-root examples/workflow_engine \
+  --json \
+  --budget 24kb \
+  --output examples/workflow_engine/CONTEXT.json
+```
+
+When `--output` is used, Aver also prints a short selection summary to stdout, for example:
+
+```text
+mode auto, included depth 2, used 22622b, budget 24kb, truncated, next depth 3 would use 40739b
+```
+
+The same selection metadata is embedded in JSON output so you can see whether the export stopped because of the budget.
+
 Example shape:
 
 ```markdown
@@ -297,6 +317,8 @@ aver compile file.av -o out/
 ```
 
 `aver verify` runs only the example cases from `verify` blocks and fails on mismatches or example errors. `aver check` handles static contract diagnostics such as missing `verify` blocks and coverage-style warnings. Both `check` and `verify` accept `--deps` to walk transitive `depends [...]` modules.
+
+`aver context` defaults to `--depth auto --budget 10kb`. Use `--budget 24kb`, `--depth 2`, or `--depth unlimited` when you want a deeper export.
 
 For replay, formatting, REPL, and the full command surface, use `aver --help` and the docs below.
 

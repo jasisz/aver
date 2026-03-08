@@ -3,7 +3,7 @@ module Views
         "Pure derived views and summaries over replayed task state."
         "Deadlines, stalled work, and review-needed markers stay derived here instead of"
         "being hidden as imperative mutations."
-    exposes [statusText, priorityText, hasTag, lastComment, missingClosingComment, deriveView, deriveSummary]
+    exposes [statusText, priorityText, deriveView, deriveSummary]
     depends [Domain.Types, Domain.Time]
 
 fn statusText(status: TaskStatus) -> String

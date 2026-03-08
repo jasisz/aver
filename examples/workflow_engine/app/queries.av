@@ -3,7 +3,7 @@ module Queries
         "Effectful read-model assembly for the workflow engine CLI."
         "Queries load persisted state, replay tasks, and derive views without mixing"
         "those concerns into the parser or the pure domain modules."
-    exposes [Query, QueryOutput, TaskDetails, run, listTasks, showTask, showAudit]
+    exposes [Query, QueryOutput, TaskDetails, run]
     depends [Domain.Types, Domain.Projects, Domain.Views, Infra.Store, Infra.Audit, Infra.Notify, Infra.Clock]
 
 effects StoreFx = [Disk.readText]

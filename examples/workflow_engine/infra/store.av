@@ -3,7 +3,7 @@ module Store
         "Flat-file storage for projects and append-only task events."
         "Projects stay as direct state in one file, while task mutation is persisted as"
         "an event log so replay remains the source of truth for task projections."
-    exposes [dataDir, initStore, loadProjects, saveProjects, loadTaskEvents, appendTaskEvent, appendTaskEvents, serializeTaskEvent, latestEvent, eventsForTask, findTask, replayTask, replayAll]
+    exposes [dataDir, initStore, loadProjects, saveProjects, loadTaskEvents, appendTaskEvent, appendTaskEvents, serializeTaskEvent, latestEvent, eventsForTask, replayTask, replayAll]
     depends [Domain.Types, Domain.Events, Infra.Codec]
 
 decision AppendOnlyTaskEventsWithFlatProjectState

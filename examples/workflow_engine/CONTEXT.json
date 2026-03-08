@@ -1,0 +1,358 @@
+{
+  "schema_version": 5,
+  "entry": "main.av",
+  "selection": {
+    "depth_mode": "auto",
+    "budget_bytes": 24576,
+    "included_depth": 2,
+    "next_depth": 3,
+    "next_used_bytes": 40739,
+    "truncated": true,
+    "used_bytes": 22622
+  },
+  "modules": [
+    {
+      "source_file": "main.av",
+      "module": "Main",
+      "intent": "Workflow engine argv entrypoint. Keeps the top-level module thin so the CLI and application core stay in their own modules and `aver context` has a stable root to resume from.",
+      "depends": ["App.Cli"],
+      "api_effects": [],
+      "module_effects": ["Args", "Console.print", "Console.warn", "Disk.appendText", "Disk.exists", "Disk.makeDir", "Disk.readText", "Disk.writeText", "Time.now"],
+      "main_effects": ["Args", "Console.print", "Console.warn", "Disk.appendText", "Disk.exists", "Disk.makeDir", "Disk.readText", "Disk.writeText", "Time.now"]
+    },
+    {
+      "source_file": "app/cli.av",
+      "module": "Cli",
+      "intent": "Plain argv parser, renderer, and dispatcher for the workflow engine. The interface stays simple and shell-friendly: one command invocation in, one rendered result block out, with no REPL-specific protocol in the app core.",
+      "depends": ["App.Commands", "App.Queries", "Domain.Types", "Domain.Views", "Infra.Store", "Infra.Audit", "Infra.Notify"],
+      "effects": ["Args", "Console.print", "Console.warn", "Disk.appendText", "Disk.exists", "Disk.makeDir", "Disk.readText", "Disk.writeText", "Time.now"],
+      "types": [
+        {"name": "Input", "variants": ["ShowHelp", {"name": "RunCommand", "fields": ["Command"]}, {"name": "RunQuery", "fields": ["Query"]}]}
+      ],
+      "functions": [
+        {
+          "sig": "runCli() -> Unit",
+          "effects": ["Args", "Console.print", "Console.warn", "Time.now", "Disk.makeDir", "Disk.exists", "Disk.readText", "Disk.writeText", "Disk.appendText"],
+          "desc": "Starts the workflow engine argv CLI."
+        }
+      ]
+    },
+    {
+      "source_file": "app/commands.av",
+      "module": "Commands",
+      "intent": "Effectful command handlers for workflow mutations. Each command loads persisted state, calls pure domain functions, runs one explicit rule pass, then persists audit and notification side effects.",
+      "depends": ["Domain.Types", "Domain.Projects", "Domain.Tasks", "Domain.Events", "Domain.Rules", "Domain.Validation", "Infra.Store", "Infra.Clock", "Infra.Notify", "Infra.Audit"],
+      "api_effects": ["Audit", "Clock", "Notify", "Store"],
+      "module_effects": ["Audit", "Clock", "Notify", "Store", "StoreAppend", "StoreRead", "StoreWrite"],
+      "effect_sets": [
+        {"name": "Store", "effects": ["Disk.readText", "Disk.writeText", "Disk.appendText"]},
+        {"name": "StoreRead", "effects": ["Disk.readText"]},
+        {"name": "StoreWrite", "effects": ["Disk.writeText"]},
+        {"name": "StoreAppend", "effects": ["Disk.appendText"]},
+        {"name": "Clock", "effects": ["Time.now"]},
+        {"name": "Notify", "effects": ["Console.warn", "Disk.readText", "Disk.appendText"]},
+        {"name": "Audit", "effects": ["Disk.readText", "Disk.appendText"]}
+      ],
+      "types": [
+        {"name": "Command", "variants": [{"name": "CreateProject", "fields": ["String", "String"]}, {"name": "ArchiveProject", "fields": ["String"]}, {"name": "CreateTask", "fields": ["String", "String", "String", "Priority", "List<String>", "Option<String>"]}, {"name": "RenameTask", "fields": ["String", "String"]}, {"name": "StartTask", "fields": ["String"]}, {"name": "BlockTask", "fields": ["String", "String"]}, {"name": "CompleteTask", "fields": ["String"]}, {"name": "ReopenTask", "fields": ["String", "String"]}, {"name": "ChangePriority", "fields": ["String", "Priority"]}, {"name": "AddTag", "fields": ["String", "String"]}, {"name": "RemoveTag", "fields": ["String", "String"]}, {"name": "AddComment", "fields": ["String", "String", "String"]}, {"name": "SetDeadline", "fields": ["String", "String"]}, {"name": "ClearDeadline", "fields": ["String"]}, {"name": "ArchiveTask", "fields": ["String"]}, {"name": "RunRules", "fields": ["Option<String>"]}]}
+      ],
+      "records": [
+        {"name": "CommandReport", "fields": [{"name": "summary", "type": "String"}, {"name": "subjectId", "type": "String"}, {"name": "events", "type": "List<TaskEventRecord>"}, {"name": "notifications", "type": "List<Notification>"}, {"name": "audits", "type": "List<AuditEntry>"}]},
+        {"name": "TaskContext", "fields": [{"name": "project", "type": "Project"}, {"name": "task", "type": "Task"}, {"name": "allEvents", "type": "List<TaskEventRecord>"}, {"name": "taskEvents", "type": "List<TaskEventRecord>"}, {"name": "latest", "type": "Option<TaskEventRecord>"}]}
+      ],
+      "functions": [
+        {
+          "sig": "execute(command: Command) -> Result<CommandReport, String>",
+          "effects": ["Store", "Clock", "Notify", "Audit"],
+          "desc": "Executes one workflow command."
+        }
+      ]
+    },
+    {
+      "source_file": "app/queries.av",
+      "module": "Queries",
+      "intent": "Effectful read-model assembly for the workflow engine CLI. Queries load persisted state, replay tasks, and derive views without mixing those concerns into the parser or the pure domain modules.",
+      "depends": ["Domain.Types", "Domain.Projects", "Domain.Views", "Infra.Store", "Infra.Audit", "Infra.Notify", "Infra.Clock"],
+      "effects": ["AuditFx", "ClockFx", "NotifyFx", "StoreFx"],
+      "effect_sets": [
+        {"name": "StoreFx", "effects": ["Disk.readText"]},
+        {"name": "ClockFx", "effects": ["Time.now"]},
+        {"name": "AuditFx", "effects": ["Disk.readText"]},
+        {"name": "NotifyFx", "effects": ["Disk.readText"]}
+      ],
+      "types": [
+        {"name": "Query", "variants": [{"name": "ListTasks", "fields": ["Option<String>"]}, {"name": "ShowTask", "fields": ["String"]}, {"name": "ShowAudit", "fields": ["Option<String>"]}]},
+        {"name": "QueryOutput", "variants": [{"name": "TaskList", "fields": ["List<TaskSummary>"]}, {"name": "TaskDetail", "fields": ["TaskDetails"]}, {"name": "AuditTrail", "fields": ["List<AuditEntry>"]}]}
+      ],
+      "records": [
+        {"name": "TaskDetails", "fields": [{"name": "project", "type": "Project"}, {"name": "task", "type": "Task"}, {"name": "view", "type": "TaskView"}, {"name": "history", "type": "List<TaskEventRecord>"}, {"name": "audits", "type": "List<AuditEntry>"}, {"name": "notifications", "type": "List<Notification>"}]}
+      ],
+      "functions": [
+        {
+          "sig": "run(query: Query) -> Result<QueryOutput, String>",
+          "effects": ["StoreFx", "ClockFx", "AuditFx", "NotifyFx"],
+          "desc": "Executes one read-only query over persisted workflow state."
+        }
+      ]
+    },
+    {
+      "source_file": "domain/types.av",
+      "module": "Types",
+      "intent": "Shared domain types for the workflow engine. Keeps records and enums in one place so command, rule, and store modules can speak about the same application core without repeating shapes.",
+      "types": [
+        {"name": "TaskStatus", "variants": ["Todo", "InProgress", "Blocked", "Done", "Archived"]},
+        {"name": "Priority", "variants": ["Low", "Normal", "High", "Urgent"]},
+        {"name": "TaskEvent", "variants": [{"name": "TaskCreated", "fields": ["String", "Priority", "List<String>", "Option<String>", "String"]}, {"name": "TaskRenamed", "fields": ["String", "String"]}, {"name": "TaskStarted", "fields": ["String"]}, {"name": "TaskBlocked", "fields": ["String", "String"]}, {"name": "TaskCompleted", "fields": ["String"]}, {"name": "TaskReopened", "fields": ["String", "String"]}, {"name": "PriorityChanged", "fields": ["Priority", "String"]}, {"name": "TagAdded", "fields": ["String", "String"]}, {"name": "TagRemoved", "fields": ["String", "String"]}, {"name": "CommentAdded", "fields": ["Comment"]}, {"name": "DeadlineSet", "fields": ["String", "String"]}, {"name": "DeadlineCleared", "fields": ["String"]}, {"name": "TaskArchived", "fields": ["String"]}]}
+      ],
+      "records": [
+        {"name": "Project", "fields": [{"name": "id", "type": "String"}, {"name": "name", "type": "String"}, {"name": "archived", "type": "Bool"}, {"name": "createdAt", "type": "String"}, {"name": "updatedAt", "type": "String"}]},
+        {"name": "Comment", "fields": [{"name": "id", "type": "String"}, {"name": "body", "type": "String"}, {"name": "author", "type": "String"}, {"name": "createdAt", "type": "String"}]},
+        {"name": "TaskEventRecord", "fields": [{"name": "taskId", "type": "String"}, {"name": "projectId", "type": "String"}, {"name": "seq", "type": "Int"}, {"name": "event", "type": "TaskEvent"}]},
+        {"name": "Task", "fields": [{"name": "id", "type": "String"}, {"name": "projectId", "type": "String"}, {"name": "title", "type": "String"}, {"name": "status", "type": "TaskStatus"}, {"name": "priority", "type": "Priority"}, {"name": "tags", "type": "List<String>"}, {"name": "deadline", "type": "Option<String>"}, {"name": "comments", "type": "List<Comment>"}, {"name": "createdAt", "type": "String"}, {"name": "updatedAt", "type": "String"}, {"name": "statusChangedAt", "type": "String"}]},
+        {"name": "TaskView", "fields": [{"name": "taskId", "type": "String"}, {"name": "projectId", "type": "String"}, {"name": "title", "type": "String"}, {"name": "status", "type": "TaskStatus"}, {"name": "priority", "type": "Priority"}, {"name": "tags", "type": "List<String>"}, {"name": "deadline", "type": "Option<String>"}, {"name": "overdue", "type": "Bool"}, {"name": "deadlineSoon", "type": "Bool"}, {"name": "derivedUrgent", "type": "Bool"}, {"name": "stalled", "type": "Bool"}, {"name": "missingClosingComment", "type": "Bool"}, {"name": "needsReview", "type": "Bool"}]},
+        {"name": "TaskSummary", "fields": [{"name": "taskId", "type": "String"}, {"name": "title", "type": "String"}, {"name": "projectId", "type": "String"}, {"name": "status", "type": "TaskStatus"}, {"name": "priority", "type": "Priority"}, {"name": "derivedUrgent", "type": "Bool"}, {"name": "overdue", "type": "Bool"}, {"name": "stalled", "type": "Bool"}, {"name": "tagSummary", "type": "String"}, {"name": "deadlineText", "type": "String"}]},
+        {"name": "Notification", "fields": [{"name": "key", "type": "String"}, {"name": "taskId", "type": "String"}, {"name": "kind", "type": "String"}, {"name": "message", "type": "String"}, {"name": "createdAt", "type": "String"}]},
+        {"name": "AuditEntry", "fields": [{"name": "key", "type": "String"}, {"name": "taskId", "type": "String"}, {"name": "action", "type": "String"}, {"name": "message", "type": "String"}, {"name": "createdAt", "type": "String"}]},
+        {"name": "RuleResult", "fields": [{"name": "taskId", "type": "String"}, {"name": "events", "type": "List<TaskEventRecord>"}, {"name": "notifications", "type": "List<Notification>"}, {"name": "audits", "type": "List<AuditEntry>"}, {"name": "notes", "type": "List<String>"}]},
+        {"name": "WorkflowSnapshot", "fields": [{"name": "projects", "type": "List<Project>"}, {"name": "taskEvents", "type": "List<TaskEventRecord>"}, {"name": "audits", "type": "List<AuditEntry>"}, {"name": "notifications", "type": "List<Notification>"}]}
+      ]
+    },
+    {
+      "source_file": "domain/views.av",
+      "module": "Views",
+      "intent": "Pure derived views and summaries over replayed task state. Deadlines, stalled work, and review-needed markers stay derived here instead of being hidden as imperative mutations.",
+      "depends": ["Domain.Types", "Domain.Time"],
+      "functions": [
+        {
+          "sig": "statusText(status: TaskStatus) -> String",
+          "desc": "Readable task status label.",
+          "verify_count": 2,
+          "verify": ["statusText(Domain.Types.TaskStatus.Blocked) → \"blocked\"", "statusText(Domain.Types.TaskStatus.Done) → \"done\""]
+        },
+        {
+          "sig": "priorityText(priority: Priority) -> String",
+          "desc": "Readable priority label.",
+          "verify_count": 2,
+          "verify": ["priorityText(Domain.Types.Priority.High) → \"high\"", "priorityText(Domain.Types.Priority.Urgent) → \"urgent\""]
+        },
+        {
+          "sig": "deriveView(task: Task, now: String) -> Result<TaskView, String>",
+          "desc": "Builds derived flags without mutating stored priority or tags.",
+          "verify_count": 2
+        },
+        {
+          "sig": "deriveSummary(task: Task, now: String) -> Result<TaskSummary, String>",
+          "desc": "Compact list view over a task.",
+          "verify_count": 1
+        }
+      ]
+    },
+    {
+      "source_file": "infra/store.av",
+      "module": "Store",
+      "intent": "Flat-file storage for projects and append-only task events. Projects stay as direct state in one file, while task mutation is persisted as an event log so replay remains the source of truth for task projections.",
+      "depends": ["Domain.Types", "Domain.Events", "Infra.Codec"],
+      "api_effects": ["StoreAppend", "StoreRead", "StoreSetup", "StoreWrite"],
+      "module_effects": ["StoreAppend", "StoreEnsureFile", "StoreRead", "StoreSetup", "StoreWrite"],
+      "effect_sets": [
+        {"name": "StoreSetup", "effects": ["Disk.makeDir", "Disk.exists", "Disk.writeText", "Disk.appendText"]},
+        {"name": "StoreEnsureFile", "effects": ["Disk.exists", "Disk.writeText", "Disk.appendText"]},
+        {"name": "StoreRead", "effects": ["Disk.readText"]},
+        {"name": "StoreWrite", "effects": ["Disk.writeText"]},
+        {"name": "StoreAppend", "effects": ["Disk.appendText"]}
+      ],
+      "functions": [
+        {
+          "sig": "dataDir() -> String",
+          "desc": "Base directory for workflow engine files.",
+          "verify_count": 1,
+          "verify": ["dataDir() → \"/tmp/aver_workflow_engine\""]
+        },
+        {
+          "sig": "initStore() -> Result<Unit, String>",
+          "effects": ["StoreSetup"],
+          "desc": "Ensures the storage directory and core files exist."
+        },
+        {
+          "sig": "loadProjects() -> Result<List<Project>, String>",
+          "effects": ["StoreRead"],
+          "desc": "Reads all projects from disk."
+        },
+        {
+          "sig": "saveProjects(projects: List<Project>) -> Result<Unit, String>",
+          "effects": ["StoreWrite"],
+          "desc": "Rewrites project state as one whole file."
+        },
+        {
+          "sig": "serializeTaskEvent(entry: TaskEventRecord) -> String",
+          "desc": "Encodes one task event line with five payload slots.",
+          "verify_count": 2
+        },
+        {
+          "sig": "loadTaskEvents() -> Result<List<TaskEventRecord>, String>",
+          "effects": ["StoreRead"],
+          "desc": "Reads the append-only task event log."
+        },
+        {
+          "sig": "appendTaskEvent(entry: TaskEventRecord) -> Result<Unit, String>",
+          "effects": ["StoreAppend"],
+          "desc": "Appends one serialized task event."
+        },
+        {
+          "sig": "appendTaskEvents(entries: List<TaskEventRecord>) -> Result<Unit, String>",
+          "effects": ["StoreAppend"],
+          "desc": "Appends many serialized task events in one write."
+        },
+        {
+          "sig": "latestEvent(events: List<TaskEventRecord>) -> Option<TaskEventRecord>",
+          "desc": "Storage re-exports the domain helper for callers already depending on Store.",
+          "verify_count": 2,
+          "verify": ["latestEvent([]) → Option.None"]
+        },
+        {
+          "sig": "eventsForTask(events: List<TaskEventRecord>, taskId: String) -> List<TaskEventRecord>",
+          "desc": "Storage re-exports task-stream filtering from the domain.",
+          "verify_count": 1
+        },
+        {
+          "sig": "replayTask(events: List<TaskEventRecord>) -> Result<Task, String>",
+          "desc": "Storage re-exports typed task replay from the domain.",
+          "verify_count": 2,
+          "verify": ["replayTask([]) → Result.Err(\"No events for task\")"]
+        },
+        {
+          "sig": "replayAll(events: List<TaskEventRecord>) -> Result<List<Task>, String>",
+          "desc": "Storage re-exports typed full-log replay from the domain.",
+          "verify_count": 1
+        }
+      ]
+    },
+    {
+      "source_file": "infra/audit.av",
+      "module": "Audit",
+      "intent": "Audit trail persistence for workflow actions and rule follow-ups. Audit entries stay outside the task event log because some audit records explain why a decision happened rather than representing state reconstruction inputs.",
+      "depends": ["Domain.Types", "Infra.Codec", "Infra.Store"],
+      "api_effects": ["AuditInit", "AuditRead", "AuditWrite"],
+      "module_effects": ["AuditEnsureFile", "AuditInit", "AuditRead", "AuditWrite"],
+      "effect_sets": [
+        {"name": "AuditInit", "effects": ["Disk.makeDir", "Disk.exists", "Disk.writeText", "Disk.appendText"]},
+        {"name": "AuditEnsureFile", "effects": ["Disk.exists", "Disk.writeText", "Disk.appendText"]},
+        {"name": "AuditRead", "effects": ["Disk.readText"]},
+        {"name": "AuditWrite", "effects": ["Disk.appendText"]}
+      ],
+      "functions": [
+        {
+          "sig": "initAudit() -> Result<Unit, String>",
+          "effects": ["AuditInit"],
+          "desc": "Ensures the audit file exists."
+        },
+        {
+          "sig": "loadEntries() -> Result<List<AuditEntry>, String>",
+          "effects": ["AuditRead"],
+          "desc": "Reads all persisted audit entries."
+        },
+        {
+          "sig": "forSubject(entries: List<AuditEntry>, subjectId: Option<String>) -> List<AuditEntry>",
+          "analysis": {"tco": true},
+          "desc": "Optional subject filter for audit queries.",
+          "verify_count": 2
+        },
+        {
+          "sig": "recordEntry(entry: AuditEntry) -> Result<Unit, String>",
+          "effects": ["AuditRead", "AuditWrite"],
+          "desc": "Persists one audit entry if its key is new."
+        },
+        {
+          "sig": "recordEntries(entries: List<AuditEntry>) -> Result<Unit, String>",
+          "effects": ["AuditRead", "AuditWrite"],
+          "desc": "Appends only new audit entries, preserving the existing log."
+        }
+      ]
+    },
+    {
+      "source_file": "infra/notify.av",
+      "module": "Notify",
+      "intent": "Notification delivery and persistence for workflow rules. Notifications are stored so queries can inspect them later, but they are also emitted immediately to the console to make the CLI feel alive.",
+      "depends": ["Domain.Types", "Infra.Codec", "Infra.Store"],
+      "api_effects": ["NotifyConsole", "NotifyInit", "NotifyRead", "NotifyWrite"],
+      "module_effects": ["NotifyConsole", "NotifyEnsureFile", "NotifyInit", "NotifyRead", "NotifyWrite"],
+      "effect_sets": [
+        {"name": "NotifyInit", "effects": ["Disk.makeDir", "Disk.exists", "Disk.writeText", "Disk.appendText"]},
+        {"name": "NotifyEnsureFile", "effects": ["Disk.exists", "Disk.writeText", "Disk.appendText"]},
+        {"name": "NotifyRead", "effects": ["Disk.readText"]},
+        {"name": "NotifyWrite", "effects": ["Disk.appendText"]},
+        {"name": "NotifyConsole", "effects": ["Console.warn"]}
+      ],
+      "functions": [
+        {
+          "sig": "initNotify() -> Result<Unit, String>",
+          "effects": ["NotifyInit"],
+          "desc": "Ensures the notification file exists."
+        },
+        {
+          "sig": "loadNotifications() -> Result<List<Notification>, String>",
+          "effects": ["NotifyRead"],
+          "desc": "Reads all persisted notifications."
+        },
+        {
+          "sig": "forTask(entries: List<Notification>, taskId: String) -> List<Notification>",
+          "analysis": {"tco": true},
+          "desc": "Filters notifications down to one task.",
+          "verify_count": 1
+        },
+        {
+          "sig": "emitNotifications(entries: List<Notification>) -> Result<Unit, String>",
+          "effects": ["NotifyRead", "NotifyWrite", "NotifyConsole"],
+          "desc": "Persists and prints only new notifications."
+        }
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "name": "OneRulePassPerCommand",
+      "date": "2026-03-08",
+      "chosen": "SingleExplicitRulePass",
+      "rejected": ["LoopUntilNoRulesFire", "HideRulesInsideStoreWrites"],
+      "reason": "Workflow rules should stay reviewable, not turn into an implicit fixpoint engine. A single pass after each user mutation keeps command flow explicit even if it leaves some second-order derivations for a later manual `run_rules` call.",
+      "impacts": ["execute", "persistTaskMutation", "persistRuleOnly"],
+      "author": "Codex"
+    },
+    {
+      "name": "QueriesReplayInsteadOfReadingMutableTaskTables",
+      "date": "2026-03-08",
+      "chosen": "ReplayForReadModel",
+      "rejected": ["DedicatedMutableTaskProjectionFile", "AdHocTaskCacheOnly"],
+      "reason": "The whole point of the workflow engine is to see whether replay stays readable. If queries bypass replay with a separate mutable task table, that test becomes fake.",
+      "impacts": ["run"],
+      "author": "Codex"
+    },
+    {
+      "name": "AppendOnlyTaskEventsWithFlatProjectState",
+      "date": "2026-03-08",
+      "chosen": "TaskEventsPlusProjectState",
+      "rejected": ["EverythingAsMutableState", "EverythingEventSourced", "InMemoryOnly"],
+      "reason": "Task lifecycle is where reviewable history matters, so an append-only event log pays for itself. Projects are much shallower, and storing them as current state avoids a second event system. This keeps the storage model simple while still exercising replay in a realistic place.",
+      "impacts": ["loadProjects", "saveProjects", "loadTaskEvents", "appendTaskEvents"],
+      "author": "Codex"
+    },
+    {
+      "name": "AuditsStayAdjacentToEventsNotInsideThem",
+      "date": "2026-03-08",
+      "chosen": "SeparateAuditLog",
+      "rejected": ["EncodeAllAuditNarrativeAsTaskEvents", "NoAuditTrail"],
+      "reason": "Reopen reasons and command traces are valuable to reviewers, but they should not change replay semantics for task state.",
+      "impacts": ["recordEntries", "loadEntries"],
+      "author": "Codex"
+    },
+    {
+      "name": "NotificationsDeduplicateByKey",
+      "date": "2026-03-08",
+      "chosen": "PersistAndSkipKnownKeys",
+      "rejected": ["AlwaysEmitAgain", "NoNotificationHistory"],
+      "reason": "Deadline and overdue rules can be re-run manually, so delivery needs a stable idempotency key or the CLI will drown in repeated warnings.",
+      "impacts": ["emitNotifications", "loadNotifications"],
+      "author": "Codex"
+    }
+  ]
+}

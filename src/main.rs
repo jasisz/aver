@@ -74,6 +74,8 @@ fn main() {
             output,
             json,
             decisions_only,
+            depth,
+            budget,
         } => {
             context_cmd::cmd_context(
                 file,
@@ -81,6 +83,8 @@ fn main() {
                 output.as_deref(),
                 *json,
                 *decisions_only,
+                *depth,
+                *budget,
             );
         }
         Commands::Compile {

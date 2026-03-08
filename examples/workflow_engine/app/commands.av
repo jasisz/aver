@@ -3,7 +3,7 @@ module Commands
         "Effectful command handlers for workflow mutations."
         "Each command loads persisted state, calls pure domain functions, runs one explicit"
         "rule pass, then persists audit and notification side effects."
-    exposes [Command, CommandReport, execute, runCreateProject, runArchiveProject, runCreateTask, runRenameTask, runStartTask, runBlockTask, runCompleteTask, runReopenTask, runChangePriority, runAddTag, runRemoveTag, runAddComment, runSetDeadline, runClearDeadline, runArchiveTask, runRules]
+    exposes [Command, CommandReport, execute]
     depends [Domain.Types, Domain.Projects, Domain.Tasks, Domain.Events, Domain.Rules, Domain.Validation, Infra.Store, Infra.Clock, Infra.Notify, Infra.Audit]
 
 effects Store = [Disk.readText, Disk.writeText, Disk.appendText]

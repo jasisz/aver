@@ -2,7 +2,7 @@ module Validation
     intent =
         "Pure validation rules for command inputs and state transitions."
         "Keeps task and project invariants inspectable without touching the store or clock."
-    exposes [nonBlank, validId, validTag, validateProjectCreate, validateTaskCreate, validateTaskRename, validateComment, validateReason, validateDeadline, ensureProjectActive, canTransition, ensureTransition]
+    exposes [validTag, validateProjectCreate, validateTaskCreate, validateTaskRename, validateComment, validateReason, validateDeadline, ensureProjectActive, ensureTransition]
     depends [Domain.Types, Domain.Time]
 
 decision ArchivedProjectsRejectTaskChanges

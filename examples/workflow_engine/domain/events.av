@@ -3,7 +3,7 @@ module Events
         "Pure event application and replay logic for workflow tasks."
         "With typed sum payload matching now working across the toolchain, replay can live"
         "in the domain again instead of reconstructing state from serialized event fields."
-    exposes [eventName, recordedAt, latestEvent, eventsForTask, findTask, replayTask, replayAll, applyEvent]
+    exposes [eventName, recordedAt, latestEvent, eventsForTask, findTask, replayTask, replayAll]
     depends [Domain.Types, Domain.Validation]
 
 decision ReplayReturnsToDomain
