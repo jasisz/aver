@@ -237,7 +237,7 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &Emit
                 if is_user_type(type_name, ctx) {
                     let arg_ctxs =
                         compute_args_used_after(args, &ectx.used_after, &ectx.local_types);
-                    let boxed_positions = constructor_boxed_positions(&bare, ctx);
+                    let boxed_positions = constructor_boxed_positions(bare, ctx);
                     let arg_strs: Vec<String> = args
                         .iter()
                         .enumerate()

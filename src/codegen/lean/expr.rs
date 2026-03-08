@@ -39,7 +39,7 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
                         return format!("{}.{}", type_name, to_lower_first(variant));
                     }
                 }
-                return aver_name_to_lean(&bare);
+                return aver_name_to_lean(bare);
             }
             let obj_str = emit_expr(obj, ctx);
             format!("{}.{}", obj_str, aver_name_to_lean(field))
@@ -223,9 +223,9 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext) -> String {
             }
             let arg_strs: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
             if arg_strs.is_empty() {
-                return aver_name_to_lean(&bare);
+                return aver_name_to_lean(bare);
             }
-            return format!("{} {}", aver_name_to_lean(&bare), arg_strs.join(" "));
+            return format!("{} {}", aver_name_to_lean(bare), arg_strs.join(" "));
         }
 
         // User-defined type constructor: Shape.Circle(r)

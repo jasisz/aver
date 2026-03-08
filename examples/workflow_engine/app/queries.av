@@ -4,7 +4,7 @@ module Queries
         "Queries load persisted state, replay tasks, and derive views without mixing"
         "those concerns into the parser or the pure domain modules."
     exposes [Query, QueryOutput, TaskDetails, run]
-    depends [Domain.Types, Domain.Projects, Domain.Views, Infra.Store, Infra.Audit, Infra.Notify, Infra.Clock]
+    depends [Domain.Types, Domain.Projects, Domain.Views, Domain.Events, Infra.Store, Infra.Audit, Infra.Notify, Infra.Clock]
 
 effects StoreFx = [Disk.readText]
 effects ClockFx = [Time.now]
@@ -57,7 +57,7 @@ fn listTasks(projectId: Option<String>) -> Result<List<TaskSummary>, String>
     ? "Lists replayed task summaries, optionally filtered by project."
     ! [StoreFx, ClockFx]
     events = Infra.Store.loadTaskEvents()?
-    tasks = Infra.Store.replayAll(events)?
+    tasks = Domain.Events.replayAll(events)?
     now = Infra.Clock.now()
     summariesFrom(filterTasksByProject(tasks, projectId), now)
 
@@ -68,8 +68,8 @@ fn showTask(taskId: String) -> Result<TaskDetails, String>
     events = Infra.Store.loadTaskEvents()?
     audits = Infra.Audit.loadEntries()?
     notifications = Infra.Notify.loadNotifications()?
-    history = Infra.Store.eventsForTask(events, taskId)
-    task = Infra.Store.replayTask(history)?
+    history = Domain.Events.eventsForTask(events, taskId)
+    task = Domain.Events.replayTask(history)?
     project = requireProject(projects, task.projectId)?
     now = Infra.Clock.now()
     view = Domain.Views.deriveView(task, now)?

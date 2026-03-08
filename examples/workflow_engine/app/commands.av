@@ -1,8 +1,8 @@
 module Commands
     intent =
         "Effectful command handlers for workflow mutations."
-        "Each command loads persisted state, calls pure domain functions, runs one explicit"
-        "rule pass, then persists audit and notification side effects."
+        "The app layer is intentionally small: it decides a plan from persisted state,"
+        "derives follow-up rule effects as data, then commits and dispatches that plan."
     exposes [Command, CommandReport, execute]
     depends [Domain.Types, Domain.Projects, Domain.Tasks, Domain.Events, Domain.Rules, Domain.Validation, Infra.Store, Infra.Clock, Infra.Notify, Infra.Audit]
 
@@ -23,7 +23,7 @@ decision OneRulePassPerCommand
         "some second-order derivations for a later manual `run_rules` call."
     chosen = "SingleExplicitRulePass"
     rejected = ["LoopUntilNoRulesFire", "HideRulesInsideStoreWrites"]
-    impacts = [execute, persistTaskMutation, persistRuleOnly]
+    impacts = [execute, decide, deriveTaskMutationPlan, commit, dispatch]
 
 type Command
     CreateProject(String, String)
@@ -53,58 +53,91 @@ record CommandReport
 record TaskContext
     project: Project
     task: Task
-    allEvents: List<TaskEventRecord>
     taskEvents: List<TaskEventRecord>
     latest: Option<TaskEventRecord>
+    nextSeq: Int
+
+record ProjectPlan
+    summary: String
+    subjectId: String
+    projects: List<Project>
+    audits: List<AuditEntry>
+
+record EventPlan
+    summary: String
+    subjectId: String
+    events: List<TaskEventRecord>
+    notifications: List<Notification>
+    audits: List<AuditEntry>
+
+type CommandPlan
+    SaveProjects(ProjectPlan)
+    AppendEvents(EventPlan)
 
 fn execute(command: Command) -> Result<CommandReport, String>
-    ? "Executes one workflow command."
+    ? "Executes one workflow command through decide, commit, and dispatch."
     ! [Store, Clock, Notify, Audit]
-    match command
-        Command.CreateProject(projectId, name) -> runCreateProject(projectId, name)
-        Command.ArchiveProject(projectId) -> runArchiveProject(projectId)
-        Command.CreateTask(projectId, taskId, title, priority, tags, deadline) -> runCreateTask(projectId, taskId, title, priority, tags, deadline)
-        Command.RenameTask(taskId, title) -> runRenameTask(taskId, title)
-        Command.StartTask(taskId) -> runStartTask(taskId)
-        Command.BlockTask(taskId, reason) -> runBlockTask(taskId, reason)
-        Command.CompleteTask(taskId) -> runCompleteTask(taskId)
-        Command.ReopenTask(taskId, reason) -> runReopenTask(taskId, reason)
-        Command.ChangePriority(taskId, priority) -> runChangePriority(taskId, priority)
-        Command.AddTag(taskId, tag) -> runAddTag(taskId, tag)
-        Command.RemoveTag(taskId, tag) -> runRemoveTag(taskId, tag)
-        Command.AddComment(taskId, author, body) -> runAddComment(taskId, author, body)
-        Command.SetDeadline(taskId, deadline) -> runSetDeadline(taskId, deadline)
-        Command.ClearDeadline(taskId) -> runClearDeadline(taskId)
-        Command.ArchiveTask(taskId) -> runArchiveTask(taskId)
-        Command.RunRules(scope) -> runRulesCommand(scope)
+    plan = decide(command)?
+    report = commit(plan)?
+    _sent = dispatch(report)?
+    Result.Ok(report)
 
-fn runCreateProject(projectId: String, name: String) -> Result<CommandReport, String>
-    ? "Creates a project and records a project-scoped audit entry."
-    ! [StoreRead, StoreWrite, Clock, Audit]
+fn decide(command: Command) -> Result<CommandPlan, String>
+    ? "Loads only the read-side context needed to turn a command into a write plan."
+    ! [StoreRead, Clock]
+    match command
+        Command.CreateProject(projectId, name) -> planCreateProject(projectId, name)
+        Command.ArchiveProject(projectId) -> planArchiveProject(projectId)
+        Command.CreateTask(projectId, taskId, title, priority, tags, deadline) -> planCreateTask(projectId, taskId, title, priority, tags, deadline)
+        Command.RenameTask(taskId, title) -> planRenameTask(taskId, title)
+        Command.StartTask(taskId) -> planStartTask(taskId)
+        Command.BlockTask(taskId, reason) -> planBlockTask(taskId, reason)
+        Command.CompleteTask(taskId) -> planCompleteTask(taskId)
+        Command.ReopenTask(taskId, reason) -> planReopenTask(taskId, reason)
+        Command.ChangePriority(taskId, priority) -> planChangePriority(taskId, priority)
+        Command.AddTag(taskId, tag) -> planAddTag(taskId, tag)
+        Command.RemoveTag(taskId, tag) -> planRemoveTag(taskId, tag)
+        Command.AddComment(taskId, author, body) -> planAddComment(taskId, author, body)
+        Command.SetDeadline(taskId, deadline) -> planSetDeadline(taskId, deadline)
+        Command.ClearDeadline(taskId) -> planClearDeadline(taskId)
+        Command.ArchiveTask(taskId) -> planArchiveTask(taskId)
+        Command.RunRules(scope) -> planRunRules(scope)
+
+fn commit(plan: CommandPlan) -> Result<CommandReport, String>
+    ? "Persists the chosen plan without performing side-effect dispatch."
+    ! [StoreWrite, StoreAppend, Audit]
+    match plan
+        CommandPlan.SaveProjects(projectPlan) -> commitProjectPlan(projectPlan)
+        CommandPlan.AppendEvents(eventPlan) -> commitEventPlan(eventPlan)
+
+fn dispatch(report: CommandReport) -> Result<Unit, String>
+    ? "Sends already-decided side effects after commit succeeds."
+    ! [Notify]
+    Infra.Notify.emitNotifications(report.notifications)
+
+fn planCreateProject(projectId: String, name: String) -> Result<CommandPlan, String>
+    ? "Decides a project creation as a state-write plan plus audit."
+    ! [StoreRead, Clock]
     now = Infra.Clock.now()
     projects = Infra.Store.loadProjects()?
     _missing = ensureProjectMissing(projects, projectId)?
     project = Domain.Projects.createProject(projectId, name, now)?
-    _saved = Infra.Store.saveProjects(Domain.Projects.putProject(projects, project))?
     audit = projectAudit(projectId, "project.created", "Created project '{projectId}'", now)
-    _recorded = Infra.Audit.recordEntry(audit)?
-    Result.Ok(report("Created project '{projectId}'", projectSubject(projectId), [], [], [audit]))
+    Result.Ok(CommandPlan.SaveProjects(ProjectPlan(summary = "Created project '{projectId}'", subjectId = projectSubject(projectId), projects = Domain.Projects.putProject(projects, project), audits = [audit])))
 
-fn runArchiveProject(projectId: String) -> Result<CommandReport, String>
-    ? "Archives a project and records a project-scoped audit entry."
-    ! [StoreRead, StoreWrite, Clock, Audit]
+fn planArchiveProject(projectId: String) -> Result<CommandPlan, String>
+    ? "Decides a project archival as a state-write plan plus audit."
+    ! [StoreRead, Clock]
     now = Infra.Clock.now()
     projects = Infra.Store.loadProjects()?
     current = requireProject(projects, projectId)?
     archived = Domain.Projects.archiveProject(current, now)?
-    _saved = Infra.Store.saveProjects(Domain.Projects.putProject(projects, archived))?
     audit = projectAudit(projectId, "project.archived", "Archived project '{projectId}'", now)
-    _recorded = Infra.Audit.recordEntry(audit)?
-    Result.Ok(report("Archived project '{projectId}'", projectSubject(projectId), [], [], [audit]))
+    Result.Ok(CommandPlan.SaveProjects(ProjectPlan(summary = "Archived project '{projectId}'", subjectId = projectSubject(projectId), projects = Domain.Projects.putProject(projects, archived), audits = [audit])))
 
-fn runCreateTask(projectId: String, taskId: String, title: String, priority: Priority, tags: List<String>, deadline: Option<String>) -> Result<CommandReport, String>
-    ? "Creates a new task inside an active project."
-    ! [StoreRead, StoreAppend, Clock, Notify, Audit]
+fn planCreateTask(projectId: String, taskId: String, title: String, priority: Priority, tags: List<String>, deadline: Option<String>) -> Result<CommandPlan, String>
+    ? "Decides the first user event for a new task, then derives rule follow-ups."
+    ! [StoreRead, Clock]
     now = Infra.Clock.now()
     projects = Infra.Store.loadProjects()?
     events = Infra.Store.loadTaskEvents()?
@@ -112,193 +145,294 @@ fn runCreateTask(projectId: String, taskId: String, title: String, priority: Pri
     _active = Domain.Validation.ensureProjectActive(project)?
     _absent = ensureTaskMissing(events, taskId)?
     event = Domain.Tasks.createTask(taskId, projectId, title, priority, tags, deadline, now)?
-    persistTaskMutation(project, events, [], event, now, "Created task '{taskId}'")
+    plan = deriveTaskMutationPlan("Created task '{taskId}'", project, [], event, now)?
+    Result.Ok(CommandPlan.AppendEvents(plan))
 
-fn runRenameTask(taskId: String, title: String) -> Result<CommandReport, String>
-    ? "Renames a task in an active project."
-    ! [StoreRead, StoreAppend, Clock, Notify, Audit]
-    context = loadTaskContext(taskId)?
+fn planRenameTask(taskId: String, title: String) -> Result<CommandPlan, String>
+    ? "Decides a rename event and derives follow-up rule effects."
+    ! [StoreRead, Clock]
+    context = loadActiveTaskContext(taskId)?
     now = Infra.Clock.now()
-    _active = Domain.Validation.ensureProjectActive(context.project)?
-    event = Domain.Tasks.renameTask(context.task, Domain.Tasks.nextSeq(context.taskEvents), title, now)?
-    persistTaskMutation(context.project, context.allEvents, context.taskEvents, event, now, "Renamed task '{taskId}'")
+    event = Domain.Tasks.renameTask(context.task, context.nextSeq, title, now)?
+    plan = deriveTaskMutationPlan("Renamed task '{taskId}'", context.project, context.taskEvents, event, now)?
+    Result.Ok(CommandPlan.AppendEvents(plan))
 
-fn runStartTask(taskId: String) -> Result<CommandReport, String>
-    ? "Moves a task into active work."
-    ! [StoreRead, StoreAppend, Clock, Notify, Audit]
-    context = loadTaskContext(taskId)?
+fn planStartTask(taskId: String) -> Result<CommandPlan, String>
+    ? "Decides a start event and derives follow-up rule effects."
+    ! [StoreRead, Clock]
+    context = loadActiveTaskContext(taskId)?
     now = Infra.Clock.now()
-    _active = Domain.Validation.ensureProjectActive(context.project)?
-    event = Domain.Tasks.startTask(context.task, Domain.Tasks.nextSeq(context.taskEvents), now)?
-    persistTaskMutation(context.project, context.allEvents, context.taskEvents, event, now, "Started task '{taskId}'")
+    event = Domain.Tasks.startTask(context.task, context.nextSeq, now)?
+    plan = deriveTaskMutationPlan("Started task '{taskId}'", context.project, context.taskEvents, event, now)?
+    Result.Ok(CommandPlan.AppendEvents(plan))
 
-fn runBlockTask(taskId: String, reason: String) -> Result<CommandReport, String>
-    ? "Marks a task blocked with an explicit reason."
-    ! [StoreRead, StoreAppend, Clock, Notify, Audit]
-    context = loadTaskContext(taskId)?
+fn planBlockTask(taskId: String, reason: String) -> Result<CommandPlan, String>
+    ? "Decides a block event and derives follow-up rule effects."
+    ! [StoreRead, Clock]
+    context = loadActiveTaskContext(taskId)?
     now = Infra.Clock.now()
-    _active = Domain.Validation.ensureProjectActive(context.project)?
-    event = Domain.Tasks.blockTask(context.task, Domain.Tasks.nextSeq(context.taskEvents), reason, now)?
-    persistTaskMutation(context.project, context.allEvents, context.taskEvents, event, now, "Blocked task '{taskId}'")
+    event = Domain.Tasks.blockTask(context.task, context.nextSeq, reason, now)?
+    plan = deriveTaskMutationPlan("Blocked task '{taskId}'", context.project, context.taskEvents, event, now)?
+    Result.Ok(CommandPlan.AppendEvents(plan))
 
-fn runCompleteTask(taskId: String) -> Result<CommandReport, String>
-    ? "Completes a task and triggers post-completion rules."
-    ! [StoreRead, StoreAppend, Clock, Notify, Audit]
-    context = loadTaskContext(taskId)?
+fn planCompleteTask(taskId: String) -> Result<CommandPlan, String>
+    ? "Decides a completion event and derives follow-up rule effects."
+    ! [StoreRead, Clock]
+    context = loadActiveTaskContext(taskId)?
     now = Infra.Clock.now()
-    _active = Domain.Validation.ensureProjectActive(context.project)?
-    event = Domain.Tasks.completeTask(context.task, Domain.Tasks.nextSeq(context.taskEvents), now)?
-    persistTaskMutation(context.project, context.allEvents, context.taskEvents, event, now, "Completed task '{taskId}'")
+    event = Domain.Tasks.completeTask(context.task, context.nextSeq, now)?
+    plan = deriveTaskMutationPlan("Completed task '{taskId}'", context.project, context.taskEvents, event, now)?
+    Result.Ok(CommandPlan.AppendEvents(plan))
 
-fn runReopenTask(taskId: String, reason: String) -> Result<CommandReport, String>
-    ? "Reopens a previously completed task."
-    ! [StoreRead, StoreAppend, Clock, Notify, Audit]
-    context = loadTaskContext(taskId)?
+fn planReopenTask(taskId: String, reason: String) -> Result<CommandPlan, String>
+    ? "Decides a reopen event and derives follow-up rule effects."
+    ! [StoreRead, Clock]
+    context = loadActiveTaskContext(taskId)?
     now = Infra.Clock.now()
-    _active = Domain.Validation.ensureProjectActive(context.project)?
-    event = Domain.Tasks.reopenTask(context.task, Domain.Tasks.nextSeq(context.taskEvents), reason, now)?
-    persistTaskMutation(context.project, context.allEvents, context.taskEvents, event, now, "Reopened task '{taskId}'")
+    event = Domain.Tasks.reopenTask(context.task, context.nextSeq, reason, now)?
+    plan = deriveTaskMutationPlan("Reopened task '{taskId}'", context.project, context.taskEvents, event, now)?
+    Result.Ok(CommandPlan.AppendEvents(plan))
 
-fn runChangePriority(taskId: String, priority: Priority) -> Result<CommandReport, String>
-    ? "Changes task priority."
-    ! [StoreRead, StoreAppend, Clock, Notify, Audit]
-    context = loadTaskContext(taskId)?
+fn planChangePriority(taskId: String, priority: Priority) -> Result<CommandPlan, String>
+    ? "Decides a priority change event and derives follow-up rule effects."
+    ! [StoreRead, Clock]
+    context = loadActiveTaskContext(taskId)?
     now = Infra.Clock.now()
-    _active = Domain.Validation.ensureProjectActive(context.project)?
-    event = Domain.Tasks.changePriority(context.task, Domain.Tasks.nextSeq(context.taskEvents), priority, now)?
-    persistTaskMutation(context.project, context.allEvents, context.taskEvents, event, now, "Changed priority for task '{taskId}'")
+    event = Domain.Tasks.changePriority(context.task, context.nextSeq, priority, now)?
+    plan = deriveTaskMutationPlan("Changed priority for task '{taskId}'", context.project, context.taskEvents, event, now)?
+    Result.Ok(CommandPlan.AppendEvents(plan))
 
-fn runAddTag(taskId: String, tag: String) -> Result<CommandReport, String>
-    ? "Adds a task tag."
-    ! [StoreRead, StoreAppend, Clock, Notify, Audit]
-    context = loadTaskContext(taskId)?
+fn planAddTag(taskId: String, tag: String) -> Result<CommandPlan, String>
+    ? "Decides a tag-add event and derives follow-up rule effects."
+    ! [StoreRead, Clock]
+    context = loadActiveTaskContext(taskId)?
     now = Infra.Clock.now()
-    _active = Domain.Validation.ensureProjectActive(context.project)?
-    event = Domain.Tasks.addTag(context.task, Domain.Tasks.nextSeq(context.taskEvents), tag, now)?
-    persistTaskMutation(context.project, context.allEvents, context.taskEvents, event, now, "Added tag '{tag}' to task '{taskId}'")
+    event = Domain.Tasks.addTag(context.task, context.nextSeq, tag, now)?
+    plan = deriveTaskMutationPlan("Added tag '{tag}' to task '{taskId}'", context.project, context.taskEvents, event, now)?
+    Result.Ok(CommandPlan.AppendEvents(plan))
 
-fn runRemoveTag(taskId: String, tag: String) -> Result<CommandReport, String>
-    ? "Removes a task tag."
-    ! [StoreRead, StoreAppend, Clock, Notify, Audit]
-    context = loadTaskContext(taskId)?
+fn planRemoveTag(taskId: String, tag: String) -> Result<CommandPlan, String>
+    ? "Decides a tag-remove event and derives follow-up rule effects."
+    ! [StoreRead, Clock]
+    context = loadActiveTaskContext(taskId)?
     now = Infra.Clock.now()
-    _active = Domain.Validation.ensureProjectActive(context.project)?
-    event = Domain.Tasks.removeTag(context.task, Domain.Tasks.nextSeq(context.taskEvents), tag, now)?
-    persistTaskMutation(context.project, context.allEvents, context.taskEvents, event, now, "Removed tag '{tag}' from task '{taskId}'")
+    event = Domain.Tasks.removeTag(context.task, context.nextSeq, tag, now)?
+    plan = deriveTaskMutationPlan("Removed tag '{tag}' from task '{taskId}'", context.project, context.taskEvents, event, now)?
+    Result.Ok(CommandPlan.AppendEvents(plan))
 
-fn runAddComment(taskId: String, author: String, body: String) -> Result<CommandReport, String>
-    ? "Adds a task comment."
-    ! [StoreRead, StoreAppend, Clock, Notify, Audit]
-    context = loadTaskContext(taskId)?
+fn planAddComment(taskId: String, author: String, body: String) -> Result<CommandPlan, String>
+    ? "Decides a comment event and derives follow-up rule effects."
+    ! [StoreRead, Clock]
+    context = loadActiveTaskContext(taskId)?
     now = Infra.Clock.now()
-    _active = Domain.Validation.ensureProjectActive(context.project)?
-    event = Domain.Tasks.addComment(context.task, Domain.Tasks.nextSeq(context.taskEvents), author, body, now)?
-    persistTaskMutation(context.project, context.allEvents, context.taskEvents, event, now, "Added comment to task '{taskId}'")
+    event = Domain.Tasks.addComment(context.task, context.nextSeq, author, body, now)?
+    plan = deriveTaskMutationPlan("Added comment to task '{taskId}'", context.project, context.taskEvents, event, now)?
+    Result.Ok(CommandPlan.AppendEvents(plan))
 
-fn runSetDeadline(taskId: String, deadline: String) -> Result<CommandReport, String>
-    ? "Sets or replaces a deadline."
-    ! [StoreRead, StoreAppend, Clock, Notify, Audit]
-    context = loadTaskContext(taskId)?
+fn planSetDeadline(taskId: String, deadline: String) -> Result<CommandPlan, String>
+    ? "Decides a deadline change event and derives follow-up rule effects."
+    ! [StoreRead, Clock]
+    context = loadActiveTaskContext(taskId)?
     now = Infra.Clock.now()
-    _active = Domain.Validation.ensureProjectActive(context.project)?
-    event = Domain.Tasks.setDeadline(context.task, Domain.Tasks.nextSeq(context.taskEvents), deadline, now)?
-    persistTaskMutation(context.project, context.allEvents, context.taskEvents, event, now, "Set deadline for task '{taskId}'")
+    event = Domain.Tasks.setDeadline(context.task, context.nextSeq, deadline, now)?
+    plan = deriveTaskMutationPlan("Set deadline for task '{taskId}'", context.project, context.taskEvents, event, now)?
+    Result.Ok(CommandPlan.AppendEvents(plan))
 
-fn runClearDeadline(taskId: String) -> Result<CommandReport, String>
-    ? "Clears a deadline."
-    ! [StoreRead, StoreAppend, Clock, Notify, Audit]
-    context = loadTaskContext(taskId)?
+fn planClearDeadline(taskId: String) -> Result<CommandPlan, String>
+    ? "Decides a deadline clear event and derives follow-up rule effects."
+    ! [StoreRead, Clock]
+    context = loadActiveTaskContext(taskId)?
     now = Infra.Clock.now()
-    _active = Domain.Validation.ensureProjectActive(context.project)?
-    event = Domain.Tasks.clearDeadline(context.task, Domain.Tasks.nextSeq(context.taskEvents), now)?
-    persistTaskMutation(context.project, context.allEvents, context.taskEvents, event, now, "Cleared deadline for task '{taskId}'")
+    event = Domain.Tasks.clearDeadline(context.task, context.nextSeq, now)?
+    plan = deriveTaskMutationPlan("Cleared deadline for task '{taskId}'", context.project, context.taskEvents, event, now)?
+    Result.Ok(CommandPlan.AppendEvents(plan))
 
-fn runArchiveTask(taskId: String) -> Result<CommandReport, String>
-    ? "Archives a task."
-    ! [StoreRead, StoreAppend, Clock, Notify, Audit]
-    context = loadTaskContext(taskId)?
+fn planArchiveTask(taskId: String) -> Result<CommandPlan, String>
+    ? "Decides an archive event and derives follow-up rule effects."
+    ! [StoreRead, Clock]
+    context = loadActiveTaskContext(taskId)?
     now = Infra.Clock.now()
-    _active = Domain.Validation.ensureProjectActive(context.project)?
-    event = Domain.Tasks.archiveTask(context.task, Domain.Tasks.nextSeq(context.taskEvents), now)?
-    persistTaskMutation(context.project, context.allEvents, context.taskEvents, event, now, "Archived task '{taskId}'")
+    event = Domain.Tasks.archiveTask(context.task, context.nextSeq, now)?
+    plan = deriveTaskMutationPlan("Archived task '{taskId}'", context.project, context.taskEvents, event, now)?
+    Result.Ok(CommandPlan.AppendEvents(plan))
 
-fn runRulesCommand(scope: Option<String>) -> Result<CommandReport, String>
-    ? "Runs explicit workflow rules either for one task or for all current tasks."
-    ! [StoreRead, StoreAppend, Clock, Notify, Audit]
+fn planRunRules(scope: Option<String>) -> Result<CommandPlan, String>
+    ? "Decides explicit rule execution either for one task or all current tasks."
+    ! [StoreRead, Clock]
     match scope
-        Option.Some(taskId) -> runRulesForTask(taskId)
-        Option.None -> runRulesForAll()
+        Option.Some(taskId) -> planRulesForTask(taskId)
+        Option.None -> planRulesForAll()
 
-fn runRules(scope: Option<String>) -> Result<CommandReport, String>
-    ? "Public entrypoint for explicit workflow rule execution."
-    ! [StoreRead, StoreAppend, Clock, Notify, Audit]
-    runRulesCommand(scope)
-
-fn runRulesForTask(taskId: String) -> Result<CommandReport, String>
-    ? "Runs workflow rules for one task without a user mutation."
-    ! [StoreRead, StoreAppend, Clock, Notify, Audit]
+fn planRulesForTask(taskId: String) -> Result<CommandPlan, String>
+    ? "Builds a rule-only event plan for one task."
+    ! [StoreRead, Clock]
     context = loadTaskContext(taskId)?
     now = Infra.Clock.now()
-    ruleResult = Domain.Rules.runRules(context.project, context.task, context.latest, now, Domain.Tasks.nextSeq(context.taskEvents))?
-    persistRuleOnly("Ran rules for task '{taskId}'", taskId, ruleResult)
+    ruleResult = Domain.Rules.runRules(context.project, context.task, context.latest, now, context.nextSeq)?
+    Result.Ok(CommandPlan.AppendEvents(rulePlan("Ran rules for task '{taskId}'", taskId, ruleResult)))
 
-fn runRulesForAll() -> Result<CommandReport, String>
-    ? "Runs workflow rules for all replayed tasks."
-    ! [StoreRead, StoreAppend, Clock, Notify, Audit]
+fn planRulesForAll() -> Result<CommandPlan, String>
+    ? "Builds one combined rule-only plan for all replayed tasks."
+    ! [StoreRead, Clock]
     projects = Infra.Store.loadProjects()?
     events = Infra.Store.loadTaskEvents()?
-    tasks = Infra.Store.replayAll(events)?
+    tasks = Domain.Events.replayAll(events)?
     now = Infra.Clock.now()
-    runRulesAcrossTasks(tasks, projects, events, now, report("Ran rules for all tasks", "all", [], [], []))
+    plan = deriveRulesForAllPlan(tasks, projects, events, now, emptyEventPlan("Ran rules for all tasks", "all"))?
+    Result.Ok(CommandPlan.AppendEvents(plan))
 
-fn runRulesAcrossTasks(tasks: List<Task>, projects: List<Project>, events: List<TaskEventRecord>, now: String, acc: CommandReport) -> Result<CommandReport, String>
-    ? "Effectful fold for manual rule execution across all tasks."
-    ! [StoreRead, StoreAppend, Notify, Audit]
+fn deriveTaskMutationPlan(summary: String, project: Project, taskEvents: List<TaskEventRecord>, event: TaskEventRecord, now: String) -> Result<EventPlan, String>
+    ? "Combines one user event with derived rule effects calculated on the replayed post-user-event state, before commit."
+    updatedTaskEvents = List.append(taskEvents, event)
+    task = Domain.Events.replayTask(updatedTaskEvents)?
+    ruleResult = Domain.Rules.runRules(project, task, Option.Some(event), now, Domain.Tasks.nextSeq(updatedTaskEvents))?
+    Result.Ok(EventPlan(summary = summary, subjectId = event.taskId, events = List.prepend(event, ruleResult.events), notifications = ruleResult.notifications, audits = List.prepend(taskAuditForEvent(event), ruleResult.audits)))
+
+verify deriveTaskMutationPlan
+    deriveTaskMutationPlan(
+        "Added comment to task 't1'",
+        sampleProject(),
+        [
+            TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Plan release", Domain.Types.Priority.Normal, ["waiting"], Option.None, "2026-03-08T12:00:00Z")),
+            TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T13:00:00Z"))
+        ],
+        TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 3, event = Domain.Types.TaskEvent.CommentAdded(Comment(id = "t1-c3", body = "Ping", author = "alice", createdAt = "2026-03-09T12:00:00Z"))),
+        "2026-03-09T12:00:00Z"
+    ) => Result.Ok(
+        EventPlan(
+            summary = "Added comment to task 't1'",
+            subjectId = "t1",
+            events = [
+                TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 3, event = Domain.Types.TaskEvent.CommentAdded(Comment(id = "t1-c3", body = "Ping", author = "alice", createdAt = "2026-03-09T12:00:00Z"))),
+                TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 4, event = Domain.Types.TaskEvent.TagAdded("needs_review", "2026-03-09T12:00:00Z"))
+            ],
+            notifications = [
+                Notification(key = "needs-review:t1:3", taskId = "t1", kind = "needs_review", message = "Task 't1' moved from waiting to needs_review after a new comment", createdAt = "2026-03-09T12:00:00Z")
+            ],
+            audits = [
+                AuditEntry(key = "task:t1:3:CommentAdded", taskId = "t1", action = "task.comment_added", message = "Task 't1' received a comment from alice", createdAt = "2026-03-09T12:00:00Z")
+            ]
+        )
+    )
+
+fn deriveRulesForAllPlan(tasks: List<Task>, projects: List<Project>, events: List<TaskEventRecord>, now: String, acc: EventPlan) -> Result<EventPlan, String>
+    ? "Pure fold that turns manual `run_rules` over all tasks into one combined event plan."
     match tasks
         [] -> Result.Ok(acc)
-        [task, ..rest] -> runRulesAcrossStep(task, rest, projects, events, now, acc)
+        [task, ..rest] -> deriveRulesForAllStep(task, rest, projects, events, now, acc)
 
-fn runRulesAcrossStep(task: Task, rest: List<Task>, projects: List<Project>, events: List<TaskEventRecord>, now: String, acc: CommandReport) -> Result<CommandReport, String>
-    ? "Runs rules for one task and merges its report into the accumulator."
-    ! [StoreRead, StoreAppend, Notify, Audit]
+verify deriveRulesForAllPlan
+    deriveRulesForAllPlan(
+        [Task(id = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.Blocked, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-01T12:00:00Z", updatedAt = "2026-03-01T12:00:00Z", statusChangedAt = "2026-03-01T12:00:00Z")],
+        [sampleProject()],
+        [
+            TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Plan release", Domain.Types.Priority.Normal, [], Option.None, "2026-03-01T12:00:00Z")),
+            TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.TaskBlocked("Waiting on vendor", "2026-03-01T12:00:00Z"))
+        ],
+        "2026-03-05T12:00:00Z",
+        emptyEventPlan("Ran rules for all tasks", "all")
+    ) => Result.Ok(
+        EventPlan(
+            summary = "Ran rules for all tasks",
+            subjectId = "all",
+            events = [
+                TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 3, event = Domain.Types.TaskEvent.TagAdded("stalled", "2026-03-05T12:00:00Z"))
+            ],
+            notifications = [
+                Notification(key = "stalled:t1:2026-03-01T12:00:00Z", taskId = "t1", kind = "stalled", message = "Task 't1' has been blocked for more than 3 days", createdAt = "2026-03-05T12:00:00Z")
+            ],
+            audits = []
+        )
+    )
+
+fn deriveRulesForAllStep(task: Task, rest: List<Task>, projects: List<Project>, events: List<TaskEventRecord>, now: String, acc: EventPlan) -> Result<EventPlan, String>
+    ? "Evaluates one task's rules and merges the result into the accumulated plan."
     project = requireProject(projects, task.projectId)?
-    taskEvents = Infra.Store.eventsForTask(events, task.id)
-    latest = Infra.Store.latestEvent(taskEvents)
+    taskEvents = Domain.Events.eventsForTask(events, task.id)
+    latest = Domain.Events.latestEvent(taskEvents)
     ruleResult = Domain.Rules.runRules(project, task, latest, now, Domain.Tasks.nextSeq(taskEvents))?
-    reportOne = persistRuleOnly("Ran rules for task '{task.id}'", task.id, ruleResult)?
-    runRulesAcrossTasks(rest, projects, events, now, mergeReports(acc, reportOne))
+    combined = mergeEventPlans(acc, rulePlan("Ran rules for task '{task.id}'", task.id, ruleResult))
+    deriveRulesForAllPlan(rest, projects, events, now, combined)
+
+verify deriveRulesForAllStep
+    deriveRulesForAllStep(
+        Task(id = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.Blocked, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-01T12:00:00Z", updatedAt = "2026-03-01T12:00:00Z", statusChangedAt = "2026-03-01T12:00:00Z"),
+        [],
+        [sampleProject()],
+        [
+            TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Plan release", Domain.Types.Priority.Normal, [], Option.None, "2026-03-01T12:00:00Z")),
+            TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.TaskBlocked("Waiting on vendor", "2026-03-01T12:00:00Z"))
+        ],
+        "2026-03-05T12:00:00Z",
+        emptyEventPlan("Ran rules for all tasks", "all")
+    ) => Result.Ok(
+        EventPlan(
+            summary = "Ran rules for all tasks",
+            subjectId = "all",
+            events = [
+                TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 3, event = Domain.Types.TaskEvent.TagAdded("stalled", "2026-03-05T12:00:00Z"))
+            ],
+            notifications = [
+                Notification(key = "stalled:t1:2026-03-01T12:00:00Z", taskId = "t1", kind = "stalled", message = "Task 't1' has been blocked for more than 3 days", createdAt = "2026-03-05T12:00:00Z")
+            ],
+            audits = []
+        )
+    )
+
+fn emptyEventPlan(summary: String, subjectId: String) -> EventPlan
+    ? "Neutral accumulator for combined event plans."
+    EventPlan(summary = summary, subjectId = subjectId, events = [], notifications = [], audits = [])
+
+verify emptyEventPlan
+    emptyEventPlan("all", "all") => EventPlan(summary = "all", subjectId = "all", events = [], notifications = [], audits = [])
+
+fn rulePlan(summary: String, subjectId: String, ruleResult: RuleResult) -> EventPlan
+    ? "Turns pure rule output into the same write-plan shape as user mutations."
+    EventPlan(summary = summary, subjectId = subjectId, events = ruleResult.events, notifications = ruleResult.notifications, audits = ruleResult.audits)
+
+verify rulePlan
+    rulePlan("Ran rules for task 't1'", "t1", RuleResult(taskId = "t1", events = [], notifications = [Notification(key = "n1", taskId = "t1", kind = "deadline_soon", message = "x", createdAt = "2026-03-08T12:00:00Z")], audits = [], notes = ["x"])) => EventPlan(summary = "Ran rules for task 't1'", subjectId = "t1", events = [], notifications = [Notification(key = "n1", taskId = "t1", kind = "deadline_soon", message = "x", createdAt = "2026-03-08T12:00:00Z")], audits = [])
+
+fn mergeEventPlans(left: EventPlan, right: EventPlan) -> EventPlan
+    ? "Combines task-local plans while keeping the outer summary and subject."
+    EventPlan(summary = left.summary, subjectId = left.subjectId, events = List.concat(left.events, right.events), notifications = List.concat(left.notifications, right.notifications), audits = List.concat(left.audits, right.audits))
+
+verify mergeEventPlans
+    mergeEventPlans(
+        EventPlan(summary = "all", subjectId = "all", events = [TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z"))], notifications = [], audits = []),
+        EventPlan(summary = "one", subjectId = "t2", events = [TaskEventRecord(taskId = "t2", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T13:00:00Z"))], notifications = [], audits = [])
+    ) => EventPlan(summary = "all", subjectId = "all", events = [TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z")), TaskEventRecord(taskId = "t2", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T13:00:00Z"))], notifications = [], audits = [])
+
+fn commitProjectPlan(plan: ProjectPlan) -> Result<CommandReport, String>
+    ? "Persists project state and project-scoped audits."
+    ! [StoreWrite, Audit]
+    _saved = Infra.Store.saveProjects(plan.projects)?
+    _audited = Infra.Audit.recordEntries(plan.audits)?
+    Result.Ok(report(plan.summary, plan.subjectId, [], [], plan.audits))
+
+fn commitEventPlan(plan: EventPlan) -> Result<CommandReport, String>
+    ? "Persists event log writes and audits, leaving notifications for dispatch."
+    ! [StoreAppend, Audit]
+    _saved = Infra.Store.appendTaskEvents(plan.events)?
+    _audited = Infra.Audit.recordEntries(plan.audits)?
+    Result.Ok(report(plan.summary, plan.subjectId, plan.events, plan.notifications, plan.audits))
 
 fn loadTaskContext(taskId: String) -> Result<TaskContext, String>
-    ? "Loads the project, flat event log, and replayed task projection for a command."
+    ? "Loads replay context for one task without applying project-active policy."
     ! [StoreRead]
     projects = Infra.Store.loadProjects()?
     events = Infra.Store.loadTaskEvents()?
-    taskEvents = Infra.Store.eventsForTask(events, taskId)
-    task = Infra.Store.replayTask(taskEvents)?
+    taskEvents = Domain.Events.eventsForTask(events, taskId)
+    task = Domain.Events.replayTask(taskEvents)?
     project = requireProject(projects, task.projectId)?
-    Result.Ok(TaskContext(project = project, task = task, allEvents = events, taskEvents = taskEvents, latest = Infra.Store.latestEvent(taskEvents)))
+    Result.Ok(TaskContext(project = project, task = task, taskEvents = taskEvents, latest = Domain.Events.latestEvent(taskEvents), nextSeq = Domain.Tasks.nextSeq(taskEvents)))
 
-fn persistTaskMutation(project: Project, allEvents: List<TaskEventRecord>, taskEvents: List<TaskEventRecord>, event: TaskEventRecord, now: String, summary: String) -> Result<CommandReport, String>
-    ? "Persists one user event, runs one rule pass, then records audits and notifications."
-    ! [StoreAppend, Notify, Audit]
-    _userSaved = Infra.Store.appendTaskEvent(event)?
-    updatedTaskEvents = List.append(taskEvents, event)
-    task = Infra.Store.replayTask(updatedTaskEvents)?
-    ruleResult = Domain.Rules.runRules(project, task, Option.Some(event), now, Domain.Tasks.nextSeq(updatedTaskEvents))?
-    _ruleSaved = Infra.Store.appendTaskEvents(ruleResult.events)?
-    audit = taskAuditForEvent(event)
-    audits = List.prepend(audit, ruleResult.audits)
-    _audited = Infra.Audit.recordEntries(audits)?
-    _notified = Infra.Notify.emitNotifications(ruleResult.notifications)?
-    Result.Ok(report(summary, event.taskId, List.prepend(event, ruleResult.events), ruleResult.notifications, audits))
-
-fn persistRuleOnly(summary: String, subjectId: String, ruleResult: RuleResult) -> Result<CommandReport, String>
-    ? "Persists rule-generated events, audits, and notifications without a user event."
-    ! [StoreAppend, Notify, Audit]
-    _saved = Infra.Store.appendTaskEvents(ruleResult.events)?
-    _audited = Infra.Audit.recordEntries(ruleResult.audits)?
-    _notified = Infra.Notify.emitNotifications(ruleResult.notifications)?
-    Result.Ok(report(summary, subjectId, ruleResult.events, ruleResult.notifications, ruleResult.audits))
+fn loadActiveTaskContext(taskId: String) -> Result<TaskContext, String>
+    ? "Loads replay context and enforces that mutations only target active projects."
+    ! [StoreRead]
+    context = loadTaskContext(taskId)?
+    _active = Domain.Validation.ensureProjectActive(context.project)?
+    Result.Ok(context)
 
 fn requireProject(projects: List<Project>, projectId: String) -> Result<Project, String>
     ? "Finds one project or returns a reviewer-friendly error."
@@ -322,7 +456,7 @@ verify ensureProjectMissing
 
 fn ensureTaskMissing(events: List<TaskEventRecord>, taskId: String) -> Result<Bool, String>
     ? "Rejects duplicate task creation."
-    match List.len(Infra.Store.eventsForTask(events, taskId)) == 0
+    match List.len(Domain.Events.eventsForTask(events, taskId)) == 0
         true -> Result.Ok(true)
         false -> Result.Err("Task '{taskId}' already exists")
 
@@ -343,13 +477,6 @@ fn report(summary: String, subjectId: String, events: List<TaskEventRecord>, not
 
 verify report
     report("ok", "t1", [], [], []) => CommandReport(summary = "ok", subjectId = "t1", events = [], notifications = [], audits = [])
-
-fn mergeReports(left: CommandReport, right: CommandReport) -> CommandReport
-    ? "Combines reports from `run_rules | all` in execution order."
-    CommandReport(summary = left.summary, subjectId = left.subjectId, events = List.concat(left.events, right.events), notifications = List.concat(left.notifications, right.notifications), audits = List.concat(left.audits, right.audits))
-
-verify mergeReports
-    mergeReports(report("all", "all", [], [Notification(key = "n1", taskId = "t1", kind = "overdue", message = "x", createdAt = "2026-03-08T12:00:00Z")], []), report("one", "t1", [], [Notification(key = "n2", taskId = "t2", kind = "deadline_soon", message = "y", createdAt = "2026-03-08T12:01:00Z")], [])) => CommandReport(summary = "all", subjectId = "all", events = [], notifications = [Notification(key = "n1", taskId = "t1", kind = "overdue", message = "x", createdAt = "2026-03-08T12:00:00Z"), Notification(key = "n2", taskId = "t2", kind = "deadline_soon", message = "y", createdAt = "2026-03-08T12:01:00Z")], audits = [])
 
 fn projectAudit(projectId: String, action: String, message: String, createdAt: String) -> AuditEntry
     ? "Project-scoped audit entry helper."
@@ -483,3 +610,10 @@ fn priorityText(priority: Priority) -> String
 verify priorityText
     priorityText(Domain.Types.Priority.High) => "high"
     priorityText(Domain.Types.Priority.Urgent) => "urgent"
+
+fn sampleProject() -> Project
+    ? "Reusable active project fixture for planner verifies."
+    Project(id = "alpha", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z")
+
+verify sampleProject
+    sampleProject() => Project(id = "alpha", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z")

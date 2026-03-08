@@ -4,7 +4,7 @@ module Cli
         "The interface stays simple and shell-friendly: one command invocation in, one rendered"
         "result block out, with no REPL-specific protocol in the app core."
     exposes [runCli]
-    depends [App.Commands, App.Queries, Domain.Types, Domain.Views, Infra.Store, Infra.Audit, Infra.Notify]
+    depends [App.Commands, App.Queries, Domain.Types, Domain.Events, Domain.Views, Infra.Store, Infra.Audit, Infra.Notify]
 
 type Input
     ShowHelp
@@ -431,19 +431,11 @@ verify renderHistoryItems
     renderHistoryItems([sampleHistoryEvent()]) => [renderHistoryItem(sampleHistoryEvent())]
 
 fn renderHistoryItem(event: TaskEventRecord) -> String
-    ? "One history line based on the serialized event kind."
-    "{Int.toString(event.seq)} {eventKind(event)}"
+    ? "One history line rendered from the typed domain event."
+    "{Int.toString(event.seq)} {Domain.Events.eventName(event.event)}"
 
 verify renderHistoryItem
     renderHistoryItem(sampleHistoryEvent()) => "2 TaskCompleted"
-
-fn eventKind(event: TaskEventRecord) -> String
-    ? "Reads the serialized event kind for rendering."
-    kind = List.get(String.split(Infra.Store.serializeTaskEvent(event), "|"), 3)
-    Option.withDefault(kind, "Unknown")
-
-verify eventKind
-    eventKind(sampleHistoryEvent()) => "TaskCompleted"
 
 fn renderNotifications(entries: List<Notification>) -> List<String>
     ? "Renders notification lines."

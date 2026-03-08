@@ -285,7 +285,7 @@ fn emit_module_tree_files(node: &ModuleTreeNode, rel_dir: &str, files: &mut Vec<
         parts.push(content.trim_end().to_string());
     }
 
-    for (child_name, _child) in &node.children {
+    for child_name in node.children.keys() {
         parts.push(format!("pub mod {};", child_name));
     }
 
@@ -372,7 +372,9 @@ fn type_contains_named(ty: &Type, wanted: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{emit_module_tree_files, insert_module_content, render_generated_module, ModuleTreeNode};
+    use super::{
+        ModuleTreeNode, emit_module_tree_files, insert_module_content, render_generated_module,
+    };
 
     #[test]
     fn generated_module_imports_direct_depends() {

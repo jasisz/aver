@@ -3,7 +3,7 @@ module Audit
         "Audit trail persistence for workflow actions and rule follow-ups."
         "Audit entries stay outside the task event log because some audit records explain"
         "why a decision happened rather than representing state reconstruction inputs."
-    exposes [initAudit, loadEntries, recordEntry, recordEntries, forSubject]
+    exposes [initAudit, loadEntries, recordEntries, forSubject]
     depends [Domain.Types, Infra.Codec, Infra.Store]
 
 effects AuditInit = [Disk.makeDir, Disk.exists, Disk.writeText, Disk.appendText]
@@ -144,11 +144,6 @@ verify newEntriesInto
 
 verify newEntries
     newEntries([], [AuditEntry(key = "k1", taskId = "t1", action = "task.completed", message = "x", createdAt = "2026-03-08T12:00:00Z"), AuditEntry(key = "k1", taskId = "t1", action = "task.completed", message = "x", createdAt = "2026-03-08T12:00:00Z")]) => [AuditEntry(key = "k1", taskId = "t1", action = "task.completed", message = "x", createdAt = "2026-03-08T12:00:00Z")]
-
-fn recordEntry(entry: AuditEntry) -> Result<Unit, String>
-    ? "Persists one audit entry if its key is new."
-    ! [AuditRead, AuditWrite]
-    recordEntries([entry])
 
 fn recordEntries(entries: List<AuditEntry>) -> Result<Unit, String>
     ? "Appends only new audit entries, preserving the existing log."

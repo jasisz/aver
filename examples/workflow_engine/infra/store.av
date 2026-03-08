@@ -1,10 +1,10 @@
 module Store
     intent =
-        "Flat-file storage for projects and append-only task events."
-        "Projects stay as direct state in one file, while task mutation is persisted as"
-        "an event log so replay remains the source of truth for task projections."
-    exposes [dataDir, initStore, loadProjects, saveProjects, loadTaskEvents, appendTaskEvent, appendTaskEvents, serializeTaskEvent, latestEvent, eventsForTask, replayTask, replayAll]
-    depends [Domain.Types, Domain.Events, Infra.Codec]
+        "Flat-file persistence for projects and append-only task events."
+        "This module owns file formats and append/write primitives; replay stays in the"
+        "domain so the app core reads like event sourcing instead of storage magic."
+    exposes [dataDir, initStore, loadProjects, saveProjects, loadTaskEvents, appendTaskEvents]
+    depends [Domain.Types, Infra.Codec]
 
 decision AppendOnlyTaskEventsWithFlatProjectState
     date = "2026-03-08"
@@ -422,11 +422,6 @@ fn loadTaskEvents() -> Result<List<TaskEventRecord>, String>
     content = Disk.readText(eventsPath())?
     parseTaskEvents(content)
 
-fn appendTaskEvent(entry: TaskEventRecord) -> Result<Unit, String>
-    ? "Appends one serialized task event."
-    ! [StoreAppend]
-    Disk.appendText(eventsPath(), "{serializeTaskEvent(entry)}\n")
-
 fn appendTaskEvents(entries: List<TaskEventRecord>) -> Result<Unit, String>
     ? "Appends many serialized task events in one write."
     ! [StoreAppend]
@@ -441,41 +436,3 @@ fn serializeTaskEventLines(entries: List<TaskEventRecord>) -> List<String>
 verify serializeTaskEventLines
     serializeTaskEventLines([]) => []
     serializeTaskEventLines([TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z"))]) => ["t1|alpha|1|TaskStarted|2026-03-08T12:00:00Z|-|-|-|-"]
-
-fn latestEvent(events: List<TaskEventRecord>) -> Option<TaskEventRecord>
-    ? "Storage re-exports the domain helper for callers already depending on Store."
-    Domain.Events.latestEvent(events)
-
-verify latestEvent
-    latestEvent([]) => Option.None
-    latestEvent([TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z")), TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.TaskCompleted("2026-03-09T12:00:00Z"))]) => Option.Some(TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.TaskCompleted("2026-03-09T12:00:00Z")))
-
-fn eventsForTask(events: List<TaskEventRecord>, taskId: String) -> List<TaskEventRecord>
-    ? "Storage re-exports task-stream filtering from the domain."
-    Domain.Events.eventsForTask(events, taskId)
-
-verify eventsForTask
-    eventsForTask([TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z")), TaskEventRecord(taskId = "t2", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z"))], "t1") => [TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z"))]
-
-fn findTask(tasks: List<Task>, taskId: String) -> Option<Task>
-    ? "Storage re-exports task lookup from the domain."
-    Domain.Events.findTask(tasks, taskId)
-
-verify findTask
-    findTask([Task(id = "t1", projectId = "alpha", title = "Original title", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z")], "t1") => Option.Some(Task(id = "t1", projectId = "alpha", title = "Original title", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z"))
-    findTask([], "t1") => Option.None
-
-fn replayTask(events: List<TaskEventRecord>) -> Result<Task, String>
-    ? "Storage re-exports typed task replay from the domain."
-    Domain.Events.replayTask(events)
-
-verify replayTask
-    replayTask([TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Plan release", Domain.Types.Priority.High, ["ops"], Option.None, "2026-03-08T12:00:00Z")), TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.TaskStarted("2026-03-09T12:00:00Z"))]) => Result.Ok(Task(id = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.InProgress, priority = Domain.Types.Priority.High, tags = ["ops"], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-09T12:00:00Z", statusChangedAt = "2026-03-09T12:00:00Z"))
-    replayTask([]) => Result.Err("No events for task")
-
-fn replayAll(events: List<TaskEventRecord>) -> Result<List<Task>, String>
-    ? "Storage re-exports typed full-log replay from the domain."
-    Domain.Events.replayAll(events)
-
-verify replayAll
-    replayAll([TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Plan release", Domain.Types.Priority.High, [], Option.None, "2026-03-08T12:00:00Z")), TaskEventRecord(taskId = "t2", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Write docs", Domain.Types.Priority.Normal, ["docs"], Option.None, "2026-03-08T13:00:00Z"))]) => Result.Ok([Task(id = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.High, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z"), Task(id = "t2", projectId = "alpha", title = "Write docs", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = ["docs"], deadline = Option.None, comments = [], createdAt = "2026-03-08T13:00:00Z", updatedAt = "2026-03-08T13:00:00Z", statusChangedAt = "2026-03-08T13:00:00Z")])
