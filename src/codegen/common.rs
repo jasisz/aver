@@ -11,9 +11,12 @@ pub(crate) fn is_user_type(name: &str, ctx: &CodegenContext) -> bool {
         || ctx.modules.iter().any(|m| m.type_defs.iter().any(check_td))
 }
 
-/// Resolve a module-qualified dotted name to local inlined symbol name.
-/// Example: `Examples.Fibonacci.fib` -> `fib`.
-pub(crate) fn resolve_module_call(dotted_name: &str, ctx: &CodegenContext) -> Option<String> {
+/// Resolve a module-qualified dotted name to `(module_prefix, local_suffix)`.
+/// Example: `Examples.Fibonacci.fib` -> `("Examples.Fibonacci", "fib")`.
+pub(crate) fn resolve_module_call<'a>(
+    dotted_name: &'a str,
+    ctx: &'a CodegenContext,
+) -> Option<(&'a str, &'a str)> {
     let mut best: Option<&str> = None;
     for prefix in &ctx.module_prefixes {
         let dotted_prefix = format!("{}.", prefix);
@@ -21,7 +24,92 @@ pub(crate) fn resolve_module_call(dotted_name: &str, ctx: &CodegenContext) -> Op
             best = Some(prefix.as_str());
         }
     }
-    best.map(|prefix| dotted_name[prefix.len() + 1..].to_string())
+    best.map(|prefix| (prefix, &dotted_name[prefix.len() + 1..]))
+}
+
+pub(crate) fn module_prefix_to_rust_segments(prefix: &str) -> Vec<String> {
+    prefix.split('.').map(module_segment_to_rust).collect()
+}
+
+pub(crate) fn module_prefix_to_rust_path(prefix: &str) -> String {
+    format!(
+        "crate::aver_generated::{}",
+        module_prefix_to_rust_segments(prefix).join("::")
+    )
+}
+
+fn module_segment_to_rust(segment: &str) -> String {
+    let chars = segment.chars().collect::<Vec<_>>();
+    let mut out = String::new();
+
+    for (idx, ch) in chars.iter().enumerate() {
+        if ch.is_ascii_alphanumeric() {
+            if ch.is_ascii_uppercase() {
+                let prev_is_lower_or_digit = idx > 0
+                    && (chars[idx - 1].is_ascii_lowercase() || chars[idx - 1].is_ascii_digit());
+                let next_is_lower = chars
+                    .get(idx + 1)
+                    .is_some_and(|next| next.is_ascii_lowercase());
+                if idx > 0 && (prev_is_lower_or_digit || next_is_lower) && !out.ends_with('_') {
+                    out.push('_');
+                }
+                out.push(ch.to_ascii_lowercase());
+            } else {
+                out.push(ch.to_ascii_lowercase());
+            }
+        } else if !out.ends_with('_') {
+            out.push('_');
+        }
+    }
+
+    let trimmed = out.trim_matches('_');
+    let mut normalized = if trimmed.is_empty() {
+        "module".to_string()
+    } else {
+        trimmed.to_string()
+    };
+
+    if matches!(
+        normalized.as_str(),
+        "as" | "break"
+            | "const"
+            | "continue"
+            | "crate"
+            | "else"
+            | "enum"
+            | "extern"
+            | "false"
+            | "fn"
+            | "for"
+            | "if"
+            | "impl"
+            | "in"
+            | "let"
+            | "loop"
+            | "match"
+            | "mod"
+            | "move"
+            | "mut"
+            | "pub"
+            | "ref"
+            | "return"
+            | "self"
+            | "Self"
+            | "static"
+            | "struct"
+            | "super"
+            | "trait"
+            | "true"
+            | "type"
+            | "unsafe"
+            | "use"
+            | "where"
+            | "while"
+    ) {
+        normalized.push_str("_mod");
+    }
+
+    normalized
 }
 
 /// Convert an attribute chain into dotted name.

@@ -15,6 +15,8 @@ use crate::types::checker::TypeCheckResult;
 pub struct ModuleInfo {
     /// Qualified module path, e.g. "Examples.Fibonacci".
     pub prefix: String,
+    /// Direct `depends [...]` entries from the source module.
+    pub depends: Vec<String>,
     /// Type definitions from the module.
     pub type_defs: Vec<TypeDef>,
     /// Function definitions from the module (excluding `main`).

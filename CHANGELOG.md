@@ -9,6 +9,7 @@ All notable changes to Aver are documented here.
 - round-trip law coverage for naturally invertible examples, including `json`, `grok_s_language`, and `notepad/store`
 - `aver context --budget` with `kb` / `mb` suffixes for prompt-sized exports
 - `aver context` selection metadata in JSON and in the `--output` summary, including included depth and next-depth size
+- modular Rust code generation that emits `src/aver_generated/...` instead of flattening all Aver code into one giant `main.rs`
 
 ### Changed
 - `aver verify` now checks only declared `left => right` examples; coverage-style diagnostics moved to `aver check`
@@ -22,6 +23,8 @@ All notable changes to Aver are documented here.
 - fully-qualified constructor patterns now work consistently in parsing, typechecking, exhaustiveness, and runtime matching
 - `Result<Unit, String>` now accepts `Unit` cleanly and renders `Unit` consistently
 - `unused exposes` diagnostics now resolve real symbol usage from AST and point at the module's `exposes` line
+- Rust codegen now resolves module-qualified Aver calls/types without flattening sibling modules into one ambiguous Rust namespace
+- Rust codegen now routes `Args.get()` through `aver-rt`
 
 ## 0.4.0
 

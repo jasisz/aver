@@ -1,6 +1,6 @@
 /// Rust backend for the Aver transpiler.
 ///
-/// Transforms Aver AST → valid Rust source code.
+/// Transforms Aver AST -> valid Rust source code.
 mod builtins;
 mod expr;
 mod liveness;
@@ -12,36 +12,27 @@ mod syntax;
 mod toplevel;
 mod types;
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
-use crate::ast::TopLevel;
+use crate::ast::{FnDef, TopLevel, TypeDef};
+use crate::codegen::common::module_prefix_to_rust_segments;
 use crate::codegen::{CodegenContext, ProjectOutput};
 use crate::types::Type;
 
+#[derive(Default)]
+struct ModuleTreeNode {
+    content: Option<String>,
+    children: BTreeMap<String, ModuleTreeNode>,
+}
+
 /// Transpile an Aver program to a Rust project.
 pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
-    let mut sections = vec![
-        "#![allow(unused_variables, unused_mut, dead_code, unused_imports, unused_parens, non_snake_case, non_camel_case_types, unreachable_patterns)]".to_string(),
-        "use std::collections::HashMap;".to_string(),
-        String::new(),
-        runtime::generate_runtime(),
-        String::new(),
-    ];
-
-    // Policy module (from aver.toml, if present)
-    if let Some(ref config) = ctx.policy {
-        sections.push(policy::generate_policy_runtime(config));
-        sections.push(String::new());
-    }
-
-    // Collect info about which services are used at runtime
     let used_services = detect_used_services(ctx);
     let needs_http_types = needs_named_type(ctx, "Header")
         || needs_named_type(ctx, "HttpResponse")
         || needs_named_type(ctx, "HttpRequest");
     let needs_tcp_types = needs_named_type(ctx, "Tcp.Connection");
 
-    // Service runtimes and service type definitions (separately gated).
     let has_tcp_runtime = used_services.contains("Tcp");
     let has_http_runtime = used_services.contains("Http");
     let has_http_server_runtime = used_services.contains("HttpServer");
@@ -50,61 +41,6 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
     let has_http_types = has_http_runtime || has_http_server_runtime || needs_http_types;
     let has_http_server_types = has_http_server_runtime || needs_named_type(ctx, "HttpRequest");
 
-    if has_tcp_types {
-        sections.push(runtime::generate_tcp_types());
-        sections.push(String::new());
-    }
-
-    if has_http_types {
-        sections.push(runtime::generate_http_types());
-        sections.push(String::new());
-    }
-
-    if has_http_server_types {
-        sections.push(runtime::generate_http_server_types());
-        sections.push(String::new());
-    }
-
-    // Module type definitions (inlined from depends)
-    for module in &ctx.modules {
-        for td in &module.type_defs {
-            if is_shared_runtime_type(td) {
-                continue;
-            }
-            sections.push(toplevel::emit_type_def(td));
-            sections.push(String::new());
-        }
-    }
-
-    // Module function definitions (inlined from depends)
-    for module in &ctx.modules {
-        for fd in &module.fn_defs {
-            let is_memo = ctx.memo_fns.contains(&fd.name);
-            sections.push(toplevel::emit_fn_def(fd, is_memo, ctx));
-            sections.push(String::new());
-        }
-    }
-
-    // Type definitions (structs and enums)
-    for td in &ctx.type_defs {
-        if is_shared_runtime_type(td) {
-            continue;
-        }
-        sections.push(toplevel::emit_type_def(td));
-        sections.push(String::new());
-    }
-
-    // Function definitions (excluding main)
-    for fd in &ctx.fn_defs {
-        if fd.name == "main" {
-            continue;
-        }
-        let is_memo = ctx.memo_fns.contains(&fd.name);
-        sections.push(toplevel::emit_fn_def(fd, is_memo, ctx));
-        sections.push(String::new());
-    }
-
-    // Main function
     let main_fn = ctx.fn_defs.iter().find(|fd| fd.name == "main");
     let top_level_stmts: Vec<_> = ctx
         .items
@@ -117,11 +53,6 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
             }
         })
         .collect();
-
-    sections.push(toplevel::emit_main(main_fn, &top_level_stmts, ctx));
-    sections.push(String::new());
-
-    // Verify blocks → #[cfg(test)]
     let verify_blocks: Vec<_> = ctx
         .items
         .iter()
@@ -134,24 +65,252 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
         })
         .collect();
 
-    if !verify_blocks.is_empty() {
-        sections.push(toplevel::emit_verify_blocks(&verify_blocks, ctx));
+    let mut files = vec![
+        (
+            "Cargo.toml".to_string(),
+            project::generate_cargo_toml(
+                &ctx.project_name,
+                &used_services,
+                ctx.policy.is_some(),
+                &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("aver-rt"),
+            ),
+        ),
+        (
+            "src/main.rs".to_string(),
+            render_root_main(main_fn, ctx.policy.is_some(), !verify_blocks.is_empty()),
+        ),
+        (
+            "src/runtime_support.rs".to_string(),
+            render_runtime_support(has_tcp_types, has_http_types, has_http_server_types),
+        ),
+    ];
+
+    if let Some(config) = &ctx.policy {
+        files.push((
+            "src/policy_support.rs".to_string(),
+            format!("{}\n", policy::generate_policy_runtime(config)),
+        ));
     }
 
-    let main_rs = sections.join("\n");
-    let cargo_toml = project::generate_cargo_toml(
-        &ctx.project_name,
-        &used_services,
-        ctx.policy.is_some(),
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("aver-rt"),
+    if !verify_blocks.is_empty() {
+        files.push((
+            "src/verify.rs".to_string(),
+            render_verify_module(&verify_blocks, ctx),
+        ));
+    }
+
+    let mut module_tree = ModuleTreeNode::default();
+    insert_module_content(
+        &mut module_tree,
+        &[String::from("entry")],
+        render_generated_module(
+            root_module_depends(&ctx.items),
+            entry_module_sections(ctx, main_fn, &top_level_stmts),
+        ),
     );
 
-    ProjectOutput {
-        files: vec![
-            ("Cargo.toml".to_string(), cargo_toml),
-            ("src/main.rs".to_string(), main_rs),
-        ],
+    for module in &ctx.modules {
+        let path = module_prefix_to_rust_segments(&module.prefix);
+        insert_module_content(
+            &mut module_tree,
+            &path,
+            render_generated_module(module.depends.clone(), module_sections(module, ctx)),
+        );
     }
+
+    emit_module_tree_files(&module_tree, "src/aver_generated", &mut files);
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+
+    ProjectOutput { files }
+}
+
+fn render_root_main(main_fn: Option<&FnDef>, has_policy: bool, has_verify: bool) -> String {
+    let mut sections = vec![
+        "#![allow(unused_variables, unused_mut, dead_code, unused_imports, unused_parens, non_snake_case, non_camel_case_types, unreachable_patterns)]".to_string(),
+        "pub use std::collections::HashMap;".to_string(),
+        String::new(),
+        "mod runtime_support;".to_string(),
+        "pub use runtime_support::*;".to_string(),
+    ];
+
+    if has_policy {
+        sections.push(String::new());
+        sections.push("mod policy_support;".to_string());
+        sections.push("pub use policy_support::*;".to_string());
+    }
+
+    sections.push(String::new());
+    sections.push("pub mod aver_generated;".to_string());
+
+    if has_verify {
+        sections.push(String::new());
+        sections.push("#[cfg(test)]".to_string());
+        sections.push("mod verify;".to_string());
+    }
+
+    sections.push(String::new());
+    let returns_result = main_fn.is_some_and(|fd| fd.return_type.starts_with("Result<"));
+    if returns_result {
+        let ret_type = types::type_annotation_to_rust(&main_fn.unwrap().return_type);
+        sections.push(format!("fn main() -> {} {{", ret_type));
+        sections.push("    aver_generated::entry::main()".to_string());
+    } else {
+        sections.push("fn main() {".to_string());
+        if main_fn.is_some() {
+            sections.push("    aver_generated::entry::main()".to_string());
+        }
+    }
+    sections.push("}".to_string());
+    sections.push(String::new());
+
+    sections.join("\n")
+}
+
+fn render_runtime_support(
+    has_tcp_types: bool,
+    has_http_types: bool,
+    has_http_server_types: bool,
+) -> String {
+    let mut sections = vec![runtime::generate_runtime()];
+    if has_tcp_types {
+        sections.push(runtime::generate_tcp_types());
+    }
+    if has_http_types {
+        sections.push(runtime::generate_http_types());
+    }
+    if has_http_server_types {
+        sections.push(runtime::generate_http_server_types());
+    }
+    format!("{}\n", sections.join("\n\n"))
+}
+
+fn render_verify_module(
+    verify_blocks: &[&crate::ast::VerifyBlock],
+    ctx: &CodegenContext,
+) -> String {
+    [
+        "#[allow(unused_imports)]".to_string(),
+        "use crate::*;".to_string(),
+        "#[allow(unused_imports)]".to_string(),
+        "use crate::aver_generated::entry::*;".to_string(),
+        String::new(),
+        toplevel::emit_verify_blocks(verify_blocks, ctx),
+        String::new(),
+    ]
+    .join("\n")
+}
+
+fn render_generated_module(depends: Vec<String>, sections: Vec<String>) -> String {
+    if sections.is_empty() {
+        String::new()
+    } else {
+        let mut lines = vec![
+            "#[allow(unused_imports)]".to_string(),
+            "use crate::*;".to_string(),
+        ];
+        for dep in depends {
+            let path = module_prefix_to_rust_segments(&dep).join("::");
+            lines.push("#[allow(unused_imports)]".to_string());
+            lines.push(format!("use crate::aver_generated::{}::*;", path));
+        }
+        lines.push(String::new());
+        lines.push(sections.join("\n\n"));
+        lines.push(String::new());
+        lines.join("\n")
+    }
+}
+
+fn entry_module_sections(
+    ctx: &CodegenContext,
+    main_fn: Option<&FnDef>,
+    top_level_stmts: &[&crate::ast::Stmt],
+) -> Vec<String> {
+    let mut sections = Vec::new();
+
+    for td in &ctx.type_defs {
+        if is_shared_runtime_type(td) {
+            continue;
+        }
+        sections.push(toplevel::emit_public_type_def(td));
+    }
+
+    for fd in &ctx.fn_defs {
+        if fd.name == "main" {
+            continue;
+        }
+        let is_memo = ctx.memo_fns.contains(&fd.name);
+        sections.push(toplevel::emit_public_fn_def(fd, is_memo, ctx));
+    }
+
+    if main_fn.is_some() || !top_level_stmts.is_empty() {
+        sections.push(toplevel::emit_public_main(main_fn, top_level_stmts, ctx));
+    }
+
+    sections
+}
+
+fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) -> Vec<String> {
+    let mut sections = Vec::new();
+
+    for td in &module.type_defs {
+        if is_shared_runtime_type(td) {
+            continue;
+        }
+        sections.push(toplevel::emit_public_type_def(td));
+    }
+
+    for fd in &module.fn_defs {
+        let is_memo = ctx.memo_fns.contains(&fd.name);
+        sections.push(toplevel::emit_public_fn_def(fd, is_memo, ctx));
+    }
+
+    sections
+}
+
+fn insert_module_content(node: &mut ModuleTreeNode, segments: &[String], content: String) {
+    let child = node.children.entry(segments[0].clone()).or_default();
+    if segments.len() == 1 {
+        child.content = Some(content);
+    } else {
+        insert_module_content(child, &segments[1..], content);
+    }
+}
+
+fn emit_module_tree_files(node: &ModuleTreeNode, rel_dir: &str, files: &mut Vec<(String, String)>) {
+    let mut parts = Vec::new();
+
+    if let Some(content) = &node.content
+        && !content.trim().is_empty()
+    {
+        parts.push(content.trim_end().to_string());
+    }
+
+    for (child_name, _child) in &node.children {
+        parts.push(format!("pub mod {};", child_name));
+    }
+
+    let mut mod_rs = parts.join("\n\n");
+    if !mod_rs.is_empty() {
+        mod_rs.push('\n');
+    }
+    files.push((format!("{}/mod.rs", rel_dir), mod_rs));
+
+    for (child_name, child) in &node.children {
+        emit_module_tree_files(child, &format!("{}/{}", rel_dir, child_name), files);
+    }
+}
+
+fn root_module_depends(items: &[TopLevel]) -> Vec<String> {
+    items
+        .iter()
+        .find_map(|item| {
+            if let TopLevel::Module(module) = item {
+                Some(module.depends.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
 }
 
 /// Detect which effectful services are used in the program (including modules).
@@ -180,10 +339,10 @@ fn detect_used_services(ctx: &CodegenContext) -> HashSet<String> {
     services
 }
 
-fn is_shared_runtime_type(td: &crate::ast::TypeDef) -> bool {
+fn is_shared_runtime_type(td: &TypeDef) -> bool {
     matches!(
         td,
-        crate::ast::TypeDef::Product { name, .. }
+        TypeDef::Product { name, .. }
             if matches!(name.as_str(), "Header" | "HttpResponse" | "HttpRequest")
     )
 }
@@ -208,5 +367,44 @@ fn type_contains_named(ty: &Type, wanted: &str) -> bool {
                 || type_contains_named(ret, wanted)
         }
         Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit | Type::Unknown => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{emit_module_tree_files, insert_module_content, render_generated_module, ModuleTreeNode};
+
+    #[test]
+    fn generated_module_imports_direct_depends() {
+        let rendered = render_generated_module(
+            vec!["Domain.Types".to_string(), "App.Commands".to_string()],
+            vec!["pub fn demo() {}".to_string()],
+        );
+
+        assert!(rendered.contains("use crate::aver_generated::domain::types::*;"));
+        assert!(rendered.contains("use crate::aver_generated::app::commands::*;"));
+        assert!(rendered.contains("pub fn demo() {}"));
+    }
+
+    #[test]
+    fn module_tree_files_do_not_reexport_children() {
+        let mut tree = ModuleTreeNode::default();
+        insert_module_content(
+            &mut tree,
+            &["app".to_string(), "cli".to_string()],
+            "pub fn run() {}".to_string(),
+        );
+
+        let mut files = Vec::new();
+        emit_module_tree_files(&tree, "src/aver_generated", &mut files);
+
+        let root_mod = files
+            .iter()
+            .find(|(path, _)| path == "src/aver_generated/mod.rs")
+            .map(|(_, content)| content)
+            .expect("root mod.rs should exist");
+
+        assert!(root_mod.contains("pub mod app;"));
+        assert!(!root_mod.contains("pub use app::*;"));
     }
 }

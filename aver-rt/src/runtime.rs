@@ -142,6 +142,10 @@ pub fn env_set(key: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub fn cli_args() -> AverList<String> {
+    AverList::from_vec(std::env::args().skip(1).collect())
+}
+
 fn validate_env_key(key: &str) -> Result<(), String> {
     if key.is_empty() {
         return Err("Env.set: key must not be empty".to_string());

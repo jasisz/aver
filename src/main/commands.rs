@@ -1311,6 +1311,17 @@ fn load_module_recursive(
 
     tco::transform_program(&mut items);
 
+    let depends = items
+        .iter()
+        .find_map(|i| {
+            if let TopLevel::Module(m) = i {
+                Some(m.depends.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
     // Recursively load transitive dependencies
     if let Some(mod_block) = items.iter().find_map(|i| {
         if let TopLevel::Module(m) = i {
@@ -1352,6 +1363,7 @@ fn load_module_recursive(
 
     result.push(ModuleInfo {
         prefix: name.to_string(),
+        depends,
         type_defs,
         fn_defs,
     });

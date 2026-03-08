@@ -136,6 +136,13 @@ fn emit_builtin_call_inner(
             let b = emit_expr(&args[1], ctx, ectx);
             Some(format!("({} % {})", a, b))
         }
+        "Int.mod" => {
+            let a = emit_expr(&args[0], ctx, ectx);
+            let b = emit_expr(&args[1], ctx, ectx);
+            Some(format!(
+                "if ({b}) == 0i64 {{ Err(\"Int.mod: divisor must not be zero\".to_string()) }} else {{ Ok(({a}).rem_euclid({b})) }}"
+            ))
+        }
 
         // ---- Float ----
         "Float.abs" => {
@@ -186,6 +193,10 @@ fn emit_builtin_call_inner(
             Some(format!("{}.to_string()", arg))
         }
         "String.fromFloat" => {
+            let arg = emit_expr(&args[0], ctx, ectx);
+            Some(format!("{}.to_string()", arg))
+        }
+        "String.fromBool" => {
             let arg = emit_expr(&args[0], ctx, ectx);
             Some(format!("{}.to_string()", arg))
         }
@@ -285,18 +296,18 @@ fn emit_builtin_call_inner(
             Some(format!("{}.get({} as usize).cloned()", list, idx))
         }
         "List.append" => {
-            let list = emit_expr(&args[0], ctx, &arg_ctxs[0]);
-            let item = emit_expr(&args[1], ctx, &arg_ctxs[1]);
+            let list = clone_arg(&args[0], ctx, &arg_ctxs[0]);
+            let item = clone_arg(&args[1], ctx, &arg_ctxs[1]);
             Some(format!("aver_rt::AverList::append(&{}, {})", list, item))
         }
         "List.prepend" => {
-            let item = emit_expr(&args[0], ctx, &arg_ctxs[0]);
-            let list = emit_expr(&args[1], ctx, &arg_ctxs[1]);
+            let item = clone_arg(&args[0], ctx, &arg_ctxs[0]);
+            let list = clone_arg(&args[1], ctx, &arg_ctxs[1]);
             Some(format!("aver_rt::AverList::prepend({}, &{})", item, list))
         }
         "List.concat" => {
-            let left = emit_expr(&args[0], ctx, &arg_ctxs[0]);
-            let right = emit_expr(&args[1], ctx, &arg_ctxs[1]);
+            let left = clone_arg(&args[0], ctx, &arg_ctxs[0]);
+            let right = clone_arg(&args[1], ctx, &arg_ctxs[1]);
             Some(format!("aver_rt::AverList::concat(&{}, &{})", left, right))
         }
         "List.reverse" => {
@@ -559,6 +570,7 @@ fn emit_builtin_call_inner(
                 key, value
             ))
         }
+        "Args.get" => Some("aver_rt::cli_args()".to_string()),
 
         // ---- Time ----
         "Time.now" => Some("aver_rt::time_now()".to_string()),

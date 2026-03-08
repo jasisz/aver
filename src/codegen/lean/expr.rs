@@ -30,7 +30,7 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
             }
             // Check module-qualified reference
             if let Some(full_dotted) = expr_to_dotted_name(expr)
-                && let Some(bare) = resolve_module_call(&full_dotted, ctx)
+                && let Some((_, bare)) = resolve_module_call(&full_dotted, ctx)
             {
                 if let Some(dot_pos) = bare.find('.') {
                     let type_name = &bare[..dot_pos];
@@ -206,7 +206,7 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext) -> String {
         }
 
         // Module-qualified call
-        if let Some(bare) = resolve_module_call(name, ctx) {
+        if let Some((_, bare)) = resolve_module_call(name, ctx) {
             if let Some(dot_pos) = bare.find('.') {
                 let type_name = &bare[..dot_pos];
                 let variant_name = &bare[dot_pos + 1..];

@@ -51,7 +51,7 @@ pub fn generate_policy_runtime(config: &ProjectConfig) -> String {
         .replace("__ENV_ITEMS__", &env_items)
 }
 
-const POLICY_TEMPLATE: &str = r#"mod aver_policy {
+const POLICY_TEMPLATE: &str = r#"pub mod aver_policy {
     const HTTP_POLICIES: &[(&str, &[&str])] = &[__HTTP_ITEMS__];
     const DISK_POLICIES: &[(&str, &[&str])] = &[__DISK_ITEMS__];
     const ENV_POLICIES: &[(&str, &[&str])] = &[__ENV_ITEMS__];

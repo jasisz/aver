@@ -3,7 +3,9 @@ use super::liveness::{EmitCtx, collect_vars, compute_args_used_after};
 use super::pattern::emit_pattern;
 use crate::ast::*;
 use crate::codegen::CodegenContext;
-use crate::codegen::common::{expr_to_dotted_name, is_user_type, resolve_module_call};
+use crate::codegen::common::{
+    expr_to_dotted_name, is_user_type, module_prefix_to_rust_path, resolve_module_call,
+};
 use crate::types::Type;
 /// Aver expressions → Rust expression strings.
 use std::collections::HashSet;
@@ -33,20 +35,26 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
             }
             // Check if this is a module-qualified reference: Examples.Fibonacci.fib
             if let Some(full_dotted) = expr_to_dotted_name(expr)
-                && let Some(bare) = resolve_module_call(&full_dotted, ctx)
+                && let Some((prefix, bare)) = resolve_module_call(&full_dotted, ctx)
             {
+                let module_path = module_prefix_to_rust_path(prefix);
                 // Could be a simple function name or a type.variant
                 if let Some(dot_pos) = bare.find('.') {
                     let type_name = &bare[..dot_pos];
                     let variant = &bare[dot_pos + 1..];
                     if is_user_type(type_name, ctx) {
-                        return format!("{}::{}", type_name, variant);
+                        return format!("{}::{}::{}", module_path, type_name, variant);
                     }
                 }
-                return aver_name_to_rust(&bare);
+                return format!("{}::{}", module_path, aver_name_to_rust(bare));
             }
             let obj_str = emit_expr(obj, ctx, ectx);
-            format!("{}.{}", obj_str, aver_name_to_rust(field))
+            let field_access = format!("{}.{}", obj_str, aver_name_to_rust(field));
+            if matches!(obj.as_ref(), Expr::Ident(name) if is_builtin_namespace(name)) {
+                field_access
+            } else {
+                format!("{}.clone()", field_access)
+            }
         }
         Expr::FnCall(fn_expr, args) => emit_fn_call(fn_expr, args, ctx, ectx),
         Expr::BinOp(op, left, right) => {
@@ -155,13 +163,17 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
                 type_name
             };
             let base_str = emit_expr(base, ctx, ectx);
+            let update_exprs: Vec<Expr> = updates.iter().map(|(_, e)| e.clone()).collect();
+            let update_ctxs =
+                compute_args_used_after(&update_exprs, &ectx.used_after, &ectx.local_types);
             let parts: Vec<String> = updates
                 .iter()
-                .map(|(name, expr)| {
+                .zip(update_ctxs.iter())
+                .map(|((name, expr), uctx)| {
                     format!(
                         "{}: {}",
                         aver_name_to_rust(name),
-                        emit_expr(expr, ctx, ectx)
+                        clone_arg(expr, ctx, uctx)
                     )
                 })
                 .collect();
@@ -216,7 +228,8 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &Emit
         }
 
         // Check module-qualified call: Examples.Fibonacci.fib → fib
-        if let Some(bare) = resolve_module_call(name, ctx) {
+        if let Some((prefix, bare)) = resolve_module_call(name, ctx) {
+            let module_path = module_prefix_to_rust_path(prefix);
             // Could be a simple function or a type constructor (e.g. Shape.Circle)
             if let Some(dot_pos) = bare.find('.') {
                 let type_name = &bare[..dot_pos];
@@ -238,7 +251,13 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &Emit
                             }
                         })
                         .collect();
-                    return format!("{}::{}({})", type_name, variant_name, arg_strs.join(", "));
+                    return format!(
+                        "{}::{}::{}({})",
+                        module_path,
+                        type_name,
+                        variant_name,
+                        arg_strs.join(", ")
+                    );
                 }
             }
             let arg_ctxs = compute_args_used_after(args, &ectx.used_after, &ectx.local_types);
@@ -247,7 +266,12 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &Emit
                 .zip(arg_ctxs.iter())
                 .map(|(a, ac)| clone_arg(a, ctx, ac))
                 .collect();
-            return format!("{}({})", aver_name_to_rust(&bare), arg_strs.join(", "));
+            return format!(
+                "{}::{}({})",
+                module_path,
+                aver_name_to_rust(bare),
+                arg_strs.join(", ")
+            );
         }
 
         // Check if this is a user-defined type constructor: Shape.Circle(r)
@@ -422,7 +446,7 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
         arms_vars.extend(arm_vars);
     }
     let subj_ectx = ectx.with_used_after(&arms_vars);
-    let subj = emit_expr(subject, ctx, &subj_ectx);
+    let subj = clone_arg(subject, ctx, &subj_ectx);
 
     // Determine if subject needs special treatment
     let needs_as_str = subject_might_be_string(subject, ctx);
@@ -608,6 +632,14 @@ fn emit_pattern_rebindings(pattern: &Pattern, ctx: &CodegenContext) -> String {
         let _ = tail;
     }
     if let Pattern::Constructor(name, bindings) = pattern {
+        if matches!(name.as_str(), "Result.Ok" | "Result.Err" | "Option.Some") {
+            for b in bindings {
+                if b != "_" {
+                    let b = aver_name_to_rust(b);
+                    lines.push(format!("let {} = {}.clone();", b, b));
+                }
+            }
+        }
         for b in constructor_boxed_bindings(name, bindings, ctx) {
             let b = aver_name_to_rust(&b);
             lines.push(format!("let {} = (*{}).clone();", b, b));

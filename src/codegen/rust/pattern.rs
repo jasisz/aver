@@ -85,7 +85,13 @@ fn emit_constructor_pattern(name: &str, bindings: &[String]) -> String {
     } else {
         let parts: Vec<String> = bindings
             .iter()
-            .map(|b| super::expr::aver_name_to_rust(b))
+            .map(|b| {
+                if b == "_" {
+                    "_".to_string()
+                } else {
+                    format!("ref {}", super::expr::aver_name_to_rust(b))
+                }
+            })
             .collect();
         format!("{}({})", rust_ctor, parts.join(", "))
     }

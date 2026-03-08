@@ -29,15 +29,32 @@ out/
   Cargo.toml
   src/
     main.rs
+    runtime_support.rs
+    aver_generated/
+      mod.rs
+      entry/
+        mod.rs
+      ...
 ```
 
-The generated `main.rs` includes:
+The generated project includes:
+- `src/main.rs` with the runtime prelude and final entrypoint
+- `src/runtime_support.rs` for the shared `aver-rt` bridge and shared runtime types
+- `src/aver_generated/.../mod.rs` files that preserve the Aver module graph as Rust modules
+- `src/verify.rs` when the entry module has `verify` blocks
+
+The generated Rust keeps:
+- user-defined types as Rust `struct`s and `enum`s inside their originating modules
+- direct `depends [...]` modules as explicit Rust imports inside generated module files
+- module-qualified Aver calls such as `Domain.Tasks.replayTask(...)` as qualified Rust paths
+- `fn main()` in `src/main.rs` delegating to `aver_generated::entry::main()`
+- `#[cfg(test)]` verify blocks as Rust tests for the entry module
+
+`src/main.rs` includes:
 - runtime bridge (`aver_rt` module re-exporting the shared `aver-rt` crate)
 - shared runtime type imports for built-in service records when needed
-- user-defined types as Rust `struct`s and `enum`s
-- all functions, including inlined module dependencies
-- `fn main()` entry point
-- `#[cfg(test)]` verify blocks as Rust tests
+- the root `aver_generated` module tree
+- the final `fn main()` entry point
 
 ## Runtime dependency
 
@@ -94,20 +111,21 @@ aver compile examples/calculator.av -o /tmp/calc
 cd /tmp/calc && cargo test
 ```
 
-## Module inlining
+## Module lowering
 
 When a program has `depends [Examples.Fibonacci]`, the transpiler:
 1. loads the dependent `.av` file recursively, with circular import detection
-2. inlines all exported types and functions into the same `main.rs`
-3. prefixes names to avoid collisions: `Examples.Fibonacci.fib` → `examples_fibonacci_fib`
+2. lowers each Aver module into a Rust module under `src/aver_generated/...`
+3. imports direct `depends [...]` modules explicitly in the generated Rust
+4. keeps qualified calls module-qualified: `Examples.Fibonacci.fib` becomes `crate::aver_generated::examples::fibonacci::fib`
 
-No Rust `mod` blocks are generated. Everything lives at the top level.
+This avoids the old giant single-file output and keeps medium projects reviewable in generated Rust.
 
 ## Service runtime architecture
 
-Generated `main.rs` re-exports `aver-rt` and, when needed, imports shared service record types. The actual service implementations live in `aver-rt`:
+Generated Rust uses `aver-rt` as the shared runtime. The actual service implementations live there:
 
 - `Tcp`: shared `aver-rt::tcp` runtime with persistent connection map
 - `Http`: shared `aver-rt::http` client, enabled by the `http` feature
 - `HttpServer`: shared `aver-rt::http_server` loop and request/response types
-- `Console`, `Time`, `Disk`, `Env`: shared helpers from `aver-rt`
+- `Console`, `Time`, `Disk`, `Env`, `Args`: shared helpers from `aver-rt`

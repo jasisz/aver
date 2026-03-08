@@ -7,18 +7,32 @@ use crate::codegen::CodegenContext;
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
+fn visibility_prefix(public: bool) -> &'static str {
+    if public { "pub " } else { "" }
+}
+
 /// Emit a Rust struct or enum from an Aver TypeDef.
+#[allow(dead_code)]
 pub fn emit_type_def(td: &TypeDef) -> String {
+    emit_type_def_with_visibility(td, false)
+}
+
+pub fn emit_public_type_def(td: &TypeDef) -> String {
+    emit_type_def_with_visibility(td, true)
+}
+
+fn emit_type_def_with_visibility(td: &TypeDef, public: bool) -> String {
     match td {
-        TypeDef::Sum { name, variants, .. } => emit_sum_type(name, variants),
-        TypeDef::Product { name, fields, .. } => emit_product_type(name, fields),
+        TypeDef::Sum { name, variants, .. } => emit_sum_type(name, variants, public),
+        TypeDef::Product { name, fields, .. } => emit_product_type(name, fields, public),
     }
 }
 
-fn emit_sum_type(name: &str, variants: &[TypeVariant]) -> String {
+fn emit_sum_type(name: &str, variants: &[TypeVariant], public: bool) -> String {
     let mut out = String::new();
+    let visibility = visibility_prefix(public);
     writeln!(out, "#[derive(Clone, Debug, PartialEq)]").unwrap();
-    writeln!(out, "enum {} {{", name).unwrap();
+    writeln!(out, "{}enum {} {{", visibility, name).unwrap();
     for v in variants {
         if v.fields.is_empty() {
             writeln!(out, "    {},", v.name).unwrap();
@@ -83,14 +97,16 @@ fn emit_sum_type(name: &str, variants: &[TypeVariant]) -> String {
     out.trim_end().to_string()
 }
 
-fn emit_product_type(name: &str, fields: &[(String, String)]) -> String {
+fn emit_product_type(name: &str, fields: &[(String, String)], public: bool) -> String {
     let mut out = String::new();
+    let visibility = visibility_prefix(public);
     writeln!(out, "#[derive(Clone, Debug, PartialEq)]").unwrap();
-    writeln!(out, "struct {} {{", name).unwrap();
+    writeln!(out, "{}struct {} {{", visibility, name).unwrap();
     for (field_name, field_type) in fields {
         writeln!(
             out,
-            "    {}: {},",
+            "    {}{}: {},",
+            visibility,
             aver_name_to_rust(field_name),
             type_annotation_to_rust(field_type)
         )
@@ -150,7 +166,21 @@ fn build_fn_ectx(fd: &FnDef, ctx: &CodegenContext) -> EmitCtx {
 }
 
 /// Emit a Rust function from an Aver FnDef.
+#[allow(dead_code)]
 pub fn emit_fn_def(fd: &FnDef, is_memo: bool, ctx: &CodegenContext) -> String {
+    emit_fn_def_with_visibility(fd, is_memo, ctx, false)
+}
+
+pub fn emit_public_fn_def(fd: &FnDef, is_memo: bool, ctx: &CodegenContext) -> String {
+    emit_fn_def_with_visibility(fd, is_memo, ctx, true)
+}
+
+fn emit_fn_def_with_visibility(
+    fd: &FnDef,
+    is_memo: bool,
+    ctx: &CodegenContext,
+    public: bool,
+) -> String {
     let mut lines = Vec::new();
 
     // Doc comment from description
@@ -170,15 +200,21 @@ pub fn emit_fn_def(fd: &FnDef, is_memo: bool, ctx: &CodegenContext) -> String {
     };
 
     let fn_name = aver_name_to_rust(&fd.name);
+    let visibility = visibility_prefix(public);
 
     let ectx = build_fn_ectx(fd, ctx);
 
     if is_memo {
-        lines.push(emit_memo_fn(fd, &fn_name, &params, &ret_type, ctx, &ectx));
+        lines.push(emit_memo_fn(
+            fd, &fn_name, &params, &ret_type, ctx, &ectx, visibility,
+        ));
     } else if has_tco {
-        lines.push(emit_tco_fn(fd, &fn_name, &ret_type, ctx, &ectx));
+        lines.push(emit_tco_fn(fd, &fn_name, &ret_type, ctx, &ectx, visibility));
     } else {
-        lines.push(format!("fn {}({}) -> {} {{", fn_name, params, ret_type));
+        lines.push(format!(
+            "{}fn {}({}) -> {} {{",
+            visibility, fn_name, params, ret_type
+        ));
         lines.push(emit_fn_body(&fd.body, ctx, &ectx));
         lines.push("}".to_string());
     }
@@ -279,10 +315,14 @@ fn emit_tco_fn(
     ret_type: &str,
     ctx: &CodegenContext,
     ectx: &EmitCtx,
+    visibility: &str,
 ) -> String {
     let params = emit_fn_params(&fd.params, true);
     let mut lines = Vec::new();
-    lines.push(format!("fn {}({}) -> {} {{", fn_name, params, ret_type));
+    lines.push(format!(
+        "{}fn {}({}) -> {} {{",
+        visibility, fn_name, params, ret_type
+    ));
     lines.push("    loop {".to_string());
 
     // Emit body with TailCall → { reassign; continue }
@@ -390,7 +430,7 @@ fn emit_tco_expr(
                 arms_vars.extend(arm_vars);
             }
             let subj_ectx = ectx.with_used_after(&arms_vars);
-            let subj = emit_expr(subject, ctx, &subj_ectx);
+            let subj = clone_arg(subject, ctx, &subj_ectx);
             let needs_as_str = super::expr::has_string_literal_patterns(arms);
             if super::expr::has_list_patterns(arms) {
                 return super::expr::emit_list_match(subj, arms, ctx, |arm| {
@@ -417,6 +457,14 @@ fn emit_tco_expr(
                     let _ = tail;
                 }
                 if let Pattern::Constructor(name, bindings) = &arm.pattern {
+                    if matches!(name.as_str(), "Result.Ok" | "Result.Err" | "Option.Some") {
+                        for b in bindings {
+                            if b != "_" {
+                                let b = aver_name_to_rust(b);
+                                rebinding_lines.push(format!("let {} = {}.clone();", b, b));
+                            }
+                        }
+                    }
                     for b in super::expr::constructor_boxed_bindings(name, bindings, ctx) {
                         let b = aver_name_to_rust(&b);
                         rebinding_lines.push(format!("let {} = (*{}).clone();", b, b));
@@ -448,6 +496,7 @@ fn emit_memo_fn(
     ret_type: &str,
     ctx: &CodegenContext,
     ectx: &EmitCtx,
+    visibility: &str,
 ) -> String {
     let cache_name = fn_name.to_uppercase() + "_CACHE";
 
@@ -488,7 +537,12 @@ fn emit_memo_fn(
     .unwrap();
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
-    writeln!(out, "fn {}({}) -> {} {{", fn_name, params, ret_type).unwrap();
+    writeln!(
+        out,
+        "{}fn {}({}) -> {} {{",
+        visibility, fn_name, params, ret_type
+    )
+    .unwrap();
     writeln!(out, "    {}.with(|cache| {{", cache_name).unwrap();
     writeln!(
         out,
@@ -539,18 +593,37 @@ fn emit_memo_inner_body(body: &FnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> 
 }
 
 /// Emit the main function, incorporating top-level statements.
+#[allow(dead_code)]
 pub fn emit_main(main_fn: Option<&FnDef>, top_stmts: &[&Stmt], ctx: &CodegenContext) -> String {
+    emit_main_with_visibility(main_fn, top_stmts, ctx, false)
+}
+
+pub fn emit_public_main(
+    main_fn: Option<&FnDef>,
+    top_stmts: &[&Stmt],
+    ctx: &CodegenContext,
+) -> String {
+    emit_main_with_visibility(main_fn, top_stmts, ctx, true)
+}
+
+fn emit_main_with_visibility(
+    main_fn: Option<&FnDef>,
+    top_stmts: &[&Stmt],
+    ctx: &CodegenContext,
+    public: bool,
+) -> String {
     let mut out = String::new();
     let ectx = EmitCtx::empty();
+    let visibility = visibility_prefix(public);
 
     // Check if main returns a Result (needed for ? operator support)
     let returns_result = main_fn.is_some_and(|fd| fd.return_type.starts_with("Result<"));
 
     if returns_result {
         let ret_type = type_annotation_to_rust(&main_fn.unwrap().return_type);
-        writeln!(out, "fn main() -> {} {{", ret_type).unwrap();
+        writeln!(out, "{}fn main() -> {} {{", visibility, ret_type).unwrap();
     } else {
-        writeln!(out, "fn main() {{").unwrap();
+        writeln!(out, "{}fn main() {{", visibility).unwrap();
     }
 
     // Top-level statements first
