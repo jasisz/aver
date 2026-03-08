@@ -2,13 +2,10 @@
   "schema_version": 5,
   "entry": "main.av",
   "selection": {
-    "depth_mode": "auto",
-    "budget_bytes": 24576,
+    "depth_mode": "limited",
     "included_depth": 2,
-    "next_depth": 3,
-    "next_used_bytes": 40739,
-    "truncated": true,
-    "used_bytes": 22622
+    "truncated": false,
+    "used_bytes": 24904
   },
   "modules": [
     {
@@ -24,7 +21,7 @@
       "source_file": "app/cli.av",
       "module": "Cli",
       "intent": "Plain argv parser, renderer, and dispatcher for the workflow engine. The interface stays simple and shell-friendly: one command invocation in, one rendered result block out, with no REPL-specific protocol in the app core.",
-      "depends": ["App.Commands", "App.Queries", "Domain.Types", "Domain.Views", "Infra.Store", "Infra.Audit", "Infra.Notify"],
+      "depends": ["App.Commands", "App.Queries", "Domain.Types", "Domain.Events", "Domain.Views", "Infra.Store", "Infra.Audit", "Infra.Notify"],
       "effects": ["Args", "Console.print", "Console.warn", "Disk.appendText", "Disk.exists", "Disk.makeDir", "Disk.readText", "Disk.writeText", "Time.now"],
       "types": [
         {"name": "Input", "variants": ["ShowHelp", {"name": "RunCommand", "fields": ["Command"]}, {"name": "RunQuery", "fields": ["Query"]}]}
@@ -40,7 +37,7 @@
     {
       "source_file": "app/commands.av",
       "module": "Commands",
-      "intent": "Effectful command handlers for workflow mutations. Each command loads persisted state, calls pure domain functions, runs one explicit rule pass, then persists audit and notification side effects.",
+      "intent": "Effectful command handlers for workflow mutations. The app layer is intentionally small: it decides a plan from persisted state, derives follow-up rule effects as data, then commits and dispatches that plan.",
       "depends": ["Domain.Types", "Domain.Projects", "Domain.Tasks", "Domain.Events", "Domain.Rules", "Domain.Validation", "Infra.Store", "Infra.Clock", "Infra.Notify", "Infra.Audit"],
       "api_effects": ["Audit", "Clock", "Notify", "Store"],
       "module_effects": ["Audit", "Clock", "Notify", "Store", "StoreAppend", "StoreRead", "StoreWrite"],
@@ -54,17 +51,20 @@
         {"name": "Audit", "effects": ["Disk.readText", "Disk.appendText"]}
       ],
       "types": [
-        {"name": "Command", "variants": [{"name": "CreateProject", "fields": ["String", "String"]}, {"name": "ArchiveProject", "fields": ["String"]}, {"name": "CreateTask", "fields": ["String", "String", "String", "Priority", "List<String>", "Option<String>"]}, {"name": "RenameTask", "fields": ["String", "String"]}, {"name": "StartTask", "fields": ["String"]}, {"name": "BlockTask", "fields": ["String", "String"]}, {"name": "CompleteTask", "fields": ["String"]}, {"name": "ReopenTask", "fields": ["String", "String"]}, {"name": "ChangePriority", "fields": ["String", "Priority"]}, {"name": "AddTag", "fields": ["String", "String"]}, {"name": "RemoveTag", "fields": ["String", "String"]}, {"name": "AddComment", "fields": ["String", "String", "String"]}, {"name": "SetDeadline", "fields": ["String", "String"]}, {"name": "ClearDeadline", "fields": ["String"]}, {"name": "ArchiveTask", "fields": ["String"]}, {"name": "RunRules", "fields": ["Option<String>"]}]}
+        {"name": "Command", "variants": [{"name": "CreateProject", "fields": ["String", "String"]}, {"name": "ArchiveProject", "fields": ["String"]}, {"name": "CreateTask", "fields": ["String", "String", "String", "Priority", "List<String>", "Option<String>"]}, {"name": "RenameTask", "fields": ["String", "String"]}, {"name": "StartTask", "fields": ["String"]}, {"name": "BlockTask", "fields": ["String", "String"]}, {"name": "CompleteTask", "fields": ["String"]}, {"name": "ReopenTask", "fields": ["String", "String"]}, {"name": "ChangePriority", "fields": ["String", "Priority"]}, {"name": "AddTag", "fields": ["String", "String"]}, {"name": "RemoveTag", "fields": ["String", "String"]}, {"name": "AddComment", "fields": ["String", "String", "String"]}, {"name": "SetDeadline", "fields": ["String", "String"]}, {"name": "ClearDeadline", "fields": ["String"]}, {"name": "ArchiveTask", "fields": ["String"]}, {"name": "RunRules", "fields": ["Option<String>"]}]},
+        {"name": "CommandPlan", "variants": [{"name": "SaveProjects", "fields": ["ProjectPlan"]}, {"name": "AppendEvents", "fields": ["EventPlan"]}]}
       ],
       "records": [
         {"name": "CommandReport", "fields": [{"name": "summary", "type": "String"}, {"name": "subjectId", "type": "String"}, {"name": "events", "type": "List<TaskEventRecord>"}, {"name": "notifications", "type": "List<Notification>"}, {"name": "audits", "type": "List<AuditEntry>"}]},
-        {"name": "TaskContext", "fields": [{"name": "project", "type": "Project"}, {"name": "task", "type": "Task"}, {"name": "allEvents", "type": "List<TaskEventRecord>"}, {"name": "taskEvents", "type": "List<TaskEventRecord>"}, {"name": "latest", "type": "Option<TaskEventRecord>"}]}
+        {"name": "TaskContext", "fields": [{"name": "project", "type": "Project"}, {"name": "task", "type": "Task"}, {"name": "taskEvents", "type": "List<TaskEventRecord>"}, {"name": "latest", "type": "Option<TaskEventRecord>"}, {"name": "nextSeq", "type": "Int"}]},
+        {"name": "ProjectPlan", "fields": [{"name": "summary", "type": "String"}, {"name": "subjectId", "type": "String"}, {"name": "projects", "type": "List<Project>"}, {"name": "audits", "type": "List<AuditEntry>"}]},
+        {"name": "EventPlan", "fields": [{"name": "summary", "type": "String"}, {"name": "subjectId", "type": "String"}, {"name": "events", "type": "List<TaskEventRecord>"}, {"name": "notifications", "type": "List<Notification>"}, {"name": "audits", "type": "List<AuditEntry>"}]}
       ],
       "functions": [
         {
           "sig": "execute(command: Command) -> Result<CommandReport, String>",
           "effects": ["Store", "Clock", "Notify", "Audit"],
-          "desc": "Executes one workflow command."
+          "desc": "Executes one workflow command through decide, commit, and dispatch."
         }
       ]
     },
@@ -72,7 +72,7 @@
       "source_file": "app/queries.av",
       "module": "Queries",
       "intent": "Effectful read-model assembly for the workflow engine CLI. Queries load persisted state, replay tasks, and derive views without mixing those concerns into the parser or the pure domain modules.",
-      "depends": ["Domain.Types", "Domain.Projects", "Domain.Views", "Infra.Store", "Infra.Audit", "Infra.Notify", "Infra.Clock"],
+      "depends": ["Domain.Types", "Domain.Projects", "Domain.Views", "Domain.Events", "Infra.Store", "Infra.Audit", "Infra.Notify", "Infra.Clock"],
       "effects": ["AuditFx", "ClockFx", "NotifyFx", "StoreFx"],
       "effect_sets": [
         {"name": "StoreFx", "effects": ["Disk.readText"]},
@@ -118,6 +118,57 @@
       ]
     },
     {
+      "source_file": "domain/events.av",
+      "module": "Events",
+      "intent": "Pure event application and replay logic for workflow tasks. With typed sum payload matching now working across the toolchain, replay can live in the domain again instead of reconstructing state from serialized event fields.",
+      "depends": ["Domain.Types", "Domain.Validation"],
+      "functions": [
+        {
+          "sig": "eventName(event: TaskEvent) -> String",
+          "desc": "Stable event kind label for rendering and audit helpers.",
+          "verify_count": 2,
+          "verify": ["eventName(Domain.Types.TaskEvent.TaskCreated(\"Plan release\", Domain.Types.Priority.High, [\"ops\"], Option.None, \"2026-03-08T12:00:00Z\")) → \"TaskCreated\"", "eventName(Domain.Types.TaskEvent.TaskReopened(\"Regression found\", \"2026-03-10T12:00:00Z\")) → \"TaskReopened\""]
+        },
+        {
+          "sig": "recordedAt(event: TaskEvent) -> String",
+          "desc": "Extracts the effective timestamp from each event.",
+          "verify_count": 2,
+          "verify": ["recordedAt(Domain.Types.TaskEvent.TaskCompleted(\"2026-03-09T12:00:00Z\")) → \"2026-03-09T12:00:00Z\""]
+        },
+        {
+          "sig": "latestEvent(events: List<TaskEventRecord>) -> Option<TaskEventRecord>",
+          "desc": "Reads the last event in a task stream or flat log.",
+          "verify_count": 2,
+          "verify": ["latestEvent([]) → Option.None", "latestEvent([sampleCreatedEvent(), sampleCompletedEvent()]) → Option.Some(sampleCompletedEvent())"]
+        },
+        {
+          "sig": "eventsForTask(events: List<TaskEventRecord>, taskId: String) -> List<TaskEventRecord>",
+          "analysis": {"tco": true},
+          "desc": "Filters a flat event log down to one task.",
+          "verify_count": 2,
+          "verify": ["eventsForTask([sampleCreatedEvent()], \"t2\") → []"]
+        },
+        {
+          "sig": "findTask(tasks: List<Task>, taskId: String) -> Option<Task>",
+          "analysis": {"tco": true},
+          "desc": "Linear lookup for replayed tasks.",
+          "verify_count": 2,
+          "verify": ["findTask([sampleTask()], \"t1\") → Option.Some(sampleTask())", "findTask([], \"t1\") → Option.None"]
+        },
+        {
+          "sig": "replayTask(events: List<TaskEventRecord>) -> Result<Task, String>",
+          "desc": "Replays one task stream into its current projection.",
+          "verify_count": 2,
+          "verify": ["replayTask([]) → Result.Err(\"No events for task\")"]
+        },
+        {
+          "sig": "replayAll(events: List<TaskEventRecord>) -> Result<List<Task>, String>",
+          "desc": "Replays the flat task event log into current task projections.",
+          "verify_count": 1
+        }
+      ]
+    },
+    {
       "source_file": "domain/views.av",
       "module": "Views",
       "intent": "Pure derived views and summaries over replayed task state. Deadlines, stalled work, and review-needed markers stay derived here instead of being hidden as imperative mutations.",
@@ -150,8 +201,8 @@
     {
       "source_file": "infra/store.av",
       "module": "Store",
-      "intent": "Flat-file storage for projects and append-only task events. Projects stay as direct state in one file, while task mutation is persisted as an event log so replay remains the source of truth for task projections.",
-      "depends": ["Domain.Types", "Domain.Events", "Infra.Codec"],
+      "intent": "Flat-file persistence for projects and append-only task events. This module owns file formats and append/write primitives; replay stays in the domain so the app core reads like event sourcing instead of storage magic.",
+      "depends": ["Domain.Types", "Infra.Codec"],
       "api_effects": ["StoreAppend", "StoreRead", "StoreSetup", "StoreWrite"],
       "module_effects": ["StoreAppend", "StoreEnsureFile", "StoreRead", "StoreSetup", "StoreWrite"],
       "effect_sets": [
@@ -184,46 +235,14 @@
           "desc": "Rewrites project state as one whole file."
         },
         {
-          "sig": "serializeTaskEvent(entry: TaskEventRecord) -> String",
-          "desc": "Encodes one task event line with five payload slots.",
-          "verify_count": 2
-        },
-        {
           "sig": "loadTaskEvents() -> Result<List<TaskEventRecord>, String>",
           "effects": ["StoreRead"],
           "desc": "Reads the append-only task event log."
         },
         {
-          "sig": "appendTaskEvent(entry: TaskEventRecord) -> Result<Unit, String>",
-          "effects": ["StoreAppend"],
-          "desc": "Appends one serialized task event."
-        },
-        {
           "sig": "appendTaskEvents(entries: List<TaskEventRecord>) -> Result<Unit, String>",
           "effects": ["StoreAppend"],
           "desc": "Appends many serialized task events in one write."
-        },
-        {
-          "sig": "latestEvent(events: List<TaskEventRecord>) -> Option<TaskEventRecord>",
-          "desc": "Storage re-exports the domain helper for callers already depending on Store.",
-          "verify_count": 2,
-          "verify": ["latestEvent([]) → Option.None"]
-        },
-        {
-          "sig": "eventsForTask(events: List<TaskEventRecord>, taskId: String) -> List<TaskEventRecord>",
-          "desc": "Storage re-exports task-stream filtering from the domain.",
-          "verify_count": 1
-        },
-        {
-          "sig": "replayTask(events: List<TaskEventRecord>) -> Result<Task, String>",
-          "desc": "Storage re-exports typed task replay from the domain.",
-          "verify_count": 2,
-          "verify": ["replayTask([]) → Result.Err(\"No events for task\")"]
-        },
-        {
-          "sig": "replayAll(events: List<TaskEventRecord>) -> Result<List<Task>, String>",
-          "desc": "Storage re-exports typed full-log replay from the domain.",
-          "verify_count": 1
         }
       ]
     },
@@ -256,11 +275,6 @@
           "analysis": {"tco": true},
           "desc": "Optional subject filter for audit queries.",
           "verify_count": 2
-        },
-        {
-          "sig": "recordEntry(entry: AuditEntry) -> Result<Unit, String>",
-          "effects": ["AuditRead", "AuditWrite"],
-          "desc": "Persists one audit entry if its key is new."
         },
         {
           "sig": "recordEntries(entries: List<AuditEntry>) -> Result<Unit, String>",
@@ -315,7 +329,7 @@
       "chosen": "SingleExplicitRulePass",
       "rejected": ["LoopUntilNoRulesFire", "HideRulesInsideStoreWrites"],
       "reason": "Workflow rules should stay reviewable, not turn into an implicit fixpoint engine. A single pass after each user mutation keeps command flow explicit even if it leaves some second-order derivations for a later manual `run_rules` call.",
-      "impacts": ["execute", "persistTaskMutation", "persistRuleOnly"],
+      "impacts": ["execute", "decide", "deriveTaskMutationPlan", "commit", "dispatch"],
       "author": "Codex"
     },
     {
@@ -325,6 +339,15 @@
       "rejected": ["DedicatedMutableTaskProjectionFile", "AdHocTaskCacheOnly"],
       "reason": "The whole point of the workflow engine is to see whether replay stays readable. If queries bypass replay with a separate mutable task table, that test becomes fake.",
       "impacts": ["run"],
+      "author": "Codex"
+    },
+    {
+      "name": "ReplayReturnsToDomain",
+      "date": "2026-03-08",
+      "chosen": "TypedReplayInDomain",
+      "rejected": ["KeepReplayInInfraStore", "DeleteReplayHelpers"],
+      "reason": "Replay belongs with the domain semantics, not inside the storage adapter. Now that constructor payload matching is reliable enough, the natural typed version is clearer than the old serialized-payload workaround.",
+      "impacts": ["replayTask", "replayAll", "applyEvent"],
       "author": "Codex"
     },
     {
