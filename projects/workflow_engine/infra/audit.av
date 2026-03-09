@@ -66,23 +66,21 @@ fn deserializeAudit(line: String) -> Result<AuditEntry, String>
 verify deserializeAudit
     deserializeAudit("k1|t1|task.completed|Task %7C closed|2026-03-08T12:00:00Z") => Result.Ok(AuditEntry(key = "k1", taskId = "t1", action = "task.completed", message = "Task | closed", createdAt = "2026-03-08T12:00:00Z"))
 
-fn parseAuditLines(lines: List<String>, acc: Result<List<AuditEntry>, String>) -> Result<List<AuditEntry>, String>
-    ? "Recursive parser for the audit log."
+fn parseAuditLines(lines: List<String>, acc: List<AuditEntry>) -> Result<List<AuditEntry>, String>
+    ? "Tail-recursive parser for the audit log."
     match lines
-        [] -> acc
-        [line, ..rest] -> match acc
+        [] -> Result.Ok(List.reverse(acc))
+        [line, ..rest] -> match deserializeAudit(line)
             Result.Err(msg) -> Result.Err(msg)
-            Result.Ok(entries) -> match deserializeAudit(line)
-                Result.Err(msg) -> Result.Err(msg)
-                Result.Ok(entry) -> parseAuditLines(rest, Result.Ok(List.append(entries, entry)))
+            Result.Ok(entry) -> parseAuditLines(rest, List.prepend(entry, acc))
 
 verify parseAuditLines
-    parseAuditLines([], Result.Ok([])) => Result.Ok([])
-    parseAuditLines(["k1|t1|task.completed|Task closed|2026-03-08T12:00:00Z"], Result.Ok([])) => Result.Ok([AuditEntry(key = "k1", taskId = "t1", action = "task.completed", message = "Task closed", createdAt = "2026-03-08T12:00:00Z")])
+    parseAuditLines([], []) => Result.Ok([])
+    parseAuditLines(["k1|t1|task.completed|Task closed|2026-03-08T12:00:00Z"], []) => Result.Ok([AuditEntry(key = "k1", taskId = "t1", action = "task.completed", message = "Task closed", createdAt = "2026-03-08T12:00:00Z")])
 
 fn parseAudits(content: String) -> Result<List<AuditEntry>, String>
     ? "Parses the full audit log."
-    parseAuditLines(Infra.Codec.splitNonEmptyLines(content), Result.Ok([]))
+    parseAuditLines(Infra.Codec.splitNonEmptyLines(content), [])
 
 verify parseAudits
     parseAudits("") => Result.Ok([])
@@ -96,17 +94,24 @@ fn loadEntries() -> Result<List<AuditEntry>, String>
 
 fn forSubject(entries: List<AuditEntry>, subjectId: Option<String>) -> List<AuditEntry>
     ? "Optional subject filter for audit queries."
-    match entries
-        [] -> []
-        [entry, ..rest] -> match subjectId
-            Option.None -> List.prepend(entry, forSubject(rest, subjectId))
-            Option.Some(value) -> match entry.taskId == value
-                true -> List.prepend(entry, forSubject(rest, subjectId))
-                false -> forSubject(rest, subjectId)
+    match subjectId
+        Option.None -> entries
+        Option.Some(value) -> List.reverse(forSubjectInto(entries, value, []))
 
 verify forSubject
     forSubject([AuditEntry(key = "k1", taskId = "t1", action = "task.created", message = "x", createdAt = "2026-03-08T12:00:00Z"), AuditEntry(key = "k2", taskId = "t2", action = "task.completed", message = "y", createdAt = "2026-03-08T12:01:00Z")], Option.Some("t1")) => [AuditEntry(key = "k1", taskId = "t1", action = "task.created", message = "x", createdAt = "2026-03-08T12:00:00Z")]
     forSubject([AuditEntry(key = "k1", taskId = "t1", action = "task.created", message = "x", createdAt = "2026-03-08T12:00:00Z")], Option.None) => [AuditEntry(key = "k1", taskId = "t1", action = "task.created", message = "x", createdAt = "2026-03-08T12:00:00Z")]
+
+fn forSubjectInto(entries: List<AuditEntry>, subjectId: String, matching: List<AuditEntry>) -> List<AuditEntry>
+    ? "Tail-recursive audit filter that preserves original order."
+    match entries
+        [] -> matching
+        [entry, ..rest] -> match entry.taskId == subjectId
+            true -> forSubjectInto(rest, subjectId, List.prepend(entry, matching))
+            false -> forSubjectInto(rest, subjectId, matching)
+
+verify forSubjectInto
+    forSubjectInto([], "t1", [AuditEntry(key = "k1", taskId = "t1", action = "task.created", message = "x", createdAt = "2026-03-08T12:00:00Z")]) => [AuditEntry(key = "k1", taskId = "t1", action = "task.created", message = "x", createdAt = "2026-03-08T12:00:00Z")]
 
 fn containsKey(entries: List<AuditEntry>, key: String) -> Bool
     ? "True when the audit log already contains the given key."

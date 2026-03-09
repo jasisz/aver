@@ -324,6 +324,8 @@ aver compile file.av -o out/
 
 `aver verify` runs only the example cases from `verify` blocks and fails on mismatches or example errors. `aver check` handles static contract diagnostics such as missing `verify` blocks and coverage-style warnings. Both `check` and `verify` accept `--deps` to walk transitive `depends [...]` modules.
 
+For recursive code, `aver check` also warns when a recursive function still contains non-tail recursive calls after TCO. Tail-recursive code remains the preferred shape for large linear traversals; the warning is there to point out where accumulator-style rewrites may matter.
+
 `aver context` defaults to `--depth auto --budget 10kb`. Use `--budget 24kb`, `--depth 2`, or `--depth unlimited` when you want a deeper export.
 
 For replay, formatting, REPL, and the full command surface, use `aver --help` and the docs below.
@@ -355,6 +357,8 @@ Aver has three backend paths:
 - interpreter-first workflow for `run`, `check`, `verify`, `replay`, and `context`
 - Rust compilation for generating a native Cargo project with `aver compile`
 - Lean proof export for pure core logic and `verify` / `verify law` obligations with `aver proof`
+
+The interpreter and generated Rust now share more practical behavior through `aver-rt` than the name alone suggests: list teardown, deep `append -> match` paths, and string helpers such as `String.slice` are intentionally centralized there so one runtime fix can improve both execution paths.
 
 Typical Rust flow:
 

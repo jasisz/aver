@@ -102,13 +102,20 @@ verify splitNonEmptyLines
     splitNonEmptyLines("a\nb\n") => ["a", "b"]
 
 fn keepNonEmpty(lines: List<String>) -> List<String>
-    ? "Helper for recursive empty-line filtering."
-    match lines
-        [] -> []
-        [line, ..rest] -> match String.len(line) == 0
-            true -> keepNonEmpty(rest)
-            false -> List.prepend(line, keepNonEmpty(rest))
+    ? "Drops empty lines with an accumulator so large files do not build stack frames per line."
+    List.reverse(keepNonEmptyInto(lines, []))
 
 verify keepNonEmpty
     keepNonEmpty([]) => []
     keepNonEmpty(["", "a", "", "b"]) => ["a", "b"]
+
+fn keepNonEmptyInto(lines: List<String>, kept: List<String>) -> List<String>
+    ? "Tail-recursive helper for empty-line filtering."
+    match lines
+        [] -> kept
+        [line, ..rest] -> match String.len(line) == 0
+            true -> keepNonEmptyInto(rest, kept)
+            false -> keepNonEmptyInto(rest, List.prepend(line, kept))
+
+verify keepNonEmptyInto
+    keepNonEmptyInto([], ["b", "a"]) => ["b", "a"]

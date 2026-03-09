@@ -161,10 +161,7 @@ fn slice(args: &[Value]) -> Result<Value, RuntimeError> {
             "String.slice: third argument must be an Int".to_string(),
         ));
     };
-    let from = *from as usize;
-    let to = *to as usize;
-    let result: String = s.chars().skip(from).take(to.saturating_sub(from)).collect();
-    Ok(Value::Str(result))
+    Ok(Value::Str(aver_rt::string_slice(s, *from, *to)))
 }
 
 fn trim(args: &[Value]) -> Result<Value, RuntimeError> {

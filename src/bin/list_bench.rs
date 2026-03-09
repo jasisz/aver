@@ -26,10 +26,16 @@ fn buildAppend(n: Int, acc: List<Int>) -> List<Int>
 fn finishPrepend(n: Int) -> List<Int>
     List.reverse(buildPrepend(n, []))
 
+fn finishAppend(n: Int) -> List<Int>
+    buildAppend(n, [])
+
 fn sumList(xs: List<Int>, acc: Int) -> Int
     match xs
         [] -> acc
         [h, ..t] -> sumList(t, acc + h)
+
+fn sumAppendBuilt(n: Int) -> Int
+    sumList(finishAppend(n), 0)
 
 fn concatLists(a: List<Int>, b: List<Int>) -> List<Int>
     List.concat(a, b)
@@ -43,6 +49,7 @@ enum Workload {
     PrependBuild,
     AppendBuild,
     PrependThenReverse,
+    SumAppendBuilt,
     SumMatch,
     ConcatBuiltin,
     ReverseBuiltin,
@@ -54,6 +61,7 @@ impl Workload {
             Workload::PrependBuild,
             Workload::AppendBuild,
             Workload::PrependThenReverse,
+            Workload::SumAppendBuilt,
             Workload::SumMatch,
             Workload::ConcatBuiltin,
             Workload::ReverseBuiltin,
@@ -65,6 +73,7 @@ impl Workload {
             Workload::PrependBuild => "prepend_build",
             Workload::AppendBuild => "append_build",
             Workload::PrependThenReverse => "prepend_reverse",
+            Workload::SumAppendBuilt => "sum_append_built",
             Workload::SumMatch => "sum_match",
             Workload::ConcatBuiltin => "concat_builtin",
             Workload::ReverseBuiltin => "reverse_builtin",
@@ -76,6 +85,7 @@ impl Workload {
             Workload::PrependBuild => "buildPrepend",
             Workload::AppendBuild => "buildAppend",
             Workload::PrependThenReverse => "finishPrepend",
+            Workload::SumAppendBuilt => "sumAppendBuilt",
             Workload::SumMatch => "sumList",
             Workload::ConcatBuiltin => "concatLists",
             Workload::ReverseBuiltin => "reverseList",
@@ -95,6 +105,7 @@ impl Workload {
             Workload::PrependBuild => vec![size_int, empty],
             Workload::AppendBuild => vec![Value::Int(size as i64), list_from_vec(vec![])],
             Workload::PrependThenReverse => vec![size_int],
+            Workload::SumAppendBuilt => vec![size_int],
             Workload::SumMatch => vec![ints, Value::Int(0)],
             Workload::ConcatBuiltin => vec![half.clone(), half],
             Workload::ReverseBuiltin => vec![ints],

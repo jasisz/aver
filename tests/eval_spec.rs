@@ -427,6 +427,18 @@ fn string_slice() {
 }
 
 #[test]
+fn string_slice_clamps_negative_indices() {
+    assert_eq!(
+        eval("String.slice(\"hello\", -2, 2)"),
+        Value::Str("he".to_string())
+    );
+    assert_eq!(
+        eval("String.slice(\"hello\", 1, -1)"),
+        Value::Str(String::new())
+    );
+}
+
+#[test]
 fn string_trim() {
     assert_eq!(
         eval("String.trim(\"  hi  \")"),
@@ -3020,6 +3032,20 @@ fn mySum(n: Int) -> Int
     assert_eq!(
         call_fn_with_tco(src, "mySum", vec![Value::Int(10)]),
         Value::Int(55)
+    );
+}
+
+#[test]
+fn non_tail_linear_recursion_large_n_no_longer_overflows() {
+    let src = r#"
+fn mySum(n: Int) -> Int
+    match n
+        0 -> 0
+        _ -> n + mySum(n - 1)
+"#;
+    assert_eq!(
+        call_fn_with_tco(src, "mySum", vec![Value::Int(100_000)]),
+        Value::Int(5000050000i64)
     );
 }
 

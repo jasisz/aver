@@ -80,16 +80,23 @@ verify latestEventFrom
     latestEventFrom(sampleCreatedEvent(), [sampleCompletedEvent()]) => Option.Some(sampleCompletedEvent())
 
 fn eventsForTask(events: List<TaskEventRecord>, taskId: String) -> List<TaskEventRecord>
-    ? "Filters a flat event log down to one task."
-    match events
-        [] -> []
-        [event, ..rest] -> match event.taskId == taskId
-            true -> List.prepend(event, eventsForTask(rest, taskId))
-            false -> eventsForTask(rest, taskId)
+    ? "Filters a flat event log down to one task without growing the runtime stack with the log size."
+    List.reverse(eventsForTaskInto(events, taskId, []))
 
 verify eventsForTask
     eventsForTask([sampleCreatedEvent(), TaskEventRecord(taskId = "t2", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Write docs", Domain.Types.Priority.Normal, [], Option.None, "2026-03-08T12:30:00Z"))], "t1") => [sampleCreatedEvent()]
     eventsForTask([sampleCreatedEvent()], "t2") => []
+
+fn eventsForTaskInto(events: List<TaskEventRecord>, taskId: String, matching: List<TaskEventRecord>) -> List<TaskEventRecord>
+    ? "Tail-recursive event filter that preserves event order."
+    match events
+        [] -> matching
+        [event, ..rest] -> match event.taskId == taskId
+            true -> eventsForTaskInto(rest, taskId, List.prepend(event, matching))
+            false -> eventsForTaskInto(rest, taskId, matching)
+
+verify eventsForTaskInto
+    eventsForTaskInto([], "t1", [sampleCreatedEvent()]) => [sampleCreatedEvent()]
 
 fn findTask(tasks: List<Task>, taskId: String) -> Option<Task>
     ? "Linear lookup for replayed tasks."

@@ -98,39 +98,6 @@ impl Interpreter {
         Ok(last)
     }
 
-    /// Execute a block body inside a resolved (Slots-based) function.
-    /// Val/Var/Assign use slot indices when available.
-    pub(super) fn exec_body_resolved(
-        &mut self,
-        stmts: &[Stmt],
-        local_slots: &HashMap<String, u16>,
-    ) -> Result<Value, RuntimeError> {
-        let mut last = Value::Unit;
-        for stmt in stmts {
-            last = self.exec_stmt_resolved(stmt, local_slots)?;
-        }
-        Ok(last)
-    }
-
-    pub(super) fn exec_stmt_resolved(
-        &mut self,
-        stmt: &Stmt,
-        local_slots: &HashMap<String, u16>,
-    ) -> Result<Value, RuntimeError> {
-        match stmt {
-            Stmt::Binding(name, _, expr) => {
-                let val = self.eval_expr(expr)?;
-                if let Some(&slot) = local_slots.get(name) {
-                    self.define_slot(slot, val);
-                } else {
-                    self.define(name.clone(), val);
-                }
-                Ok(Value::Unit)
-            }
-            Stmt::Expr(expr) => self.eval_expr(expr),
-        }
-    }
-
     pub fn run_file(&mut self, source: &str) -> Result<Value, RuntimeError> {
         let mut items = parse_source(source).map_err(RuntimeError::Error)?;
         crate::resolver::resolve_program(&mut items);

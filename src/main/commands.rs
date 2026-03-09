@@ -19,6 +19,7 @@ use aver::interpreter::{Interpreter, RecordingConfig, Value, aver_repr};
 use aver::replay::{JsonValue, RecordedOutcome, value_to_json};
 use aver::resolver;
 use aver::source::{find_module_file, require_module_declaration};
+use aver::tail_check::collect_non_tail_recursion_warnings;
 use aver::tco;
 use aver::types::checker::run_type_check_full;
 use aver::types::{Type, parse_type_str};
@@ -917,9 +918,12 @@ fn run_check_for_file(file: &str, module_root: &str, deps: bool) -> Result<bool,
         let shown_path = display_check_path(path, module_root);
         println!("Check: {}", shown_path.cyan());
         let line_count = source.lines().count();
+        let mut transformed = items.clone();
+        tco::transform_program(&mut transformed);
+        let non_tail_warnings = collect_non_tail_recursion_warnings(&transformed);
 
         // --- Type errors (hard errors) ---
-        let tc_result = run_type_check_full(items, Some(&module_root));
+        let tc_result = run_type_check_full(items, Some(module_root));
         let has_errors = !tc_result.errors.is_empty();
         for te in &tc_result.errors {
             println!("  {}", format!("error[{}]: {}", te.line, te.message).red());
@@ -966,6 +970,26 @@ fn run_check_for_file(file: &str, module_root: &str, deps: bool) -> Result<bool,
             for w in &unused_exposes_warnings {
                 let loc = finding_location(w, entry_module.as_deref());
                 println!("  {}", format!("warning[{}]: {}", loc, w.message).yellow());
+            }
+            for warning in &non_tail_warnings {
+                println!(
+                    "  {}",
+                    format!("warning[{}:1]: {}", warning.line, warning.message).yellow()
+                );
+            }
+        }
+
+        if findings.errors.is_empty()
+            && findings.warnings.is_empty()
+            && coverage_warnings.is_empty()
+            && unused_exposes_warnings.is_empty()
+            && !non_tail_warnings.is_empty()
+        {
+            for warning in &non_tail_warnings {
+                println!(
+                    "  {}",
+                    format!("warning[{}:1]: {}", warning.line, warning.message).yellow()
+                );
             }
         }
 
@@ -1232,59 +1256,6 @@ pub(super) fn cmd_verify(path: &str, module_root_override: Option<&str>, deps: b
 
     if !failed_files.is_empty() || total_failed > 0 {
         process::exit(1);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::resolve_av_inputs;
-    use std::fs;
-    use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn temp_case_dir(tag: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        std::env::temp_dir().join(format!("aver_commands_{tag}_{nanos}"))
-    }
-
-    #[test]
-    fn resolve_av_inputs_collects_and_sorts_directories() {
-        let dir = temp_case_dir("collect");
-        let nested = dir.join("nested");
-        fs::create_dir_all(&nested).expect("create nested dir");
-        fs::write(dir.join("b.av"), "module B\n").expect("write b.av");
-        fs::write(dir.join("ignore.txt"), "nope").expect("write ignore.txt");
-        fs::write(nested.join("a.av"), "module A\n").expect("write a.av");
-
-        let inputs = resolve_av_inputs(dir.to_str().expect("utf8 path")).expect("collect inputs");
-        assert_eq!(
-            inputs,
-            vec![
-                dir.join("b.av").to_string_lossy().to_string(),
-                nested.join("a.av").to_string_lossy().to_string(),
-            ]
-        );
-
-        fs::remove_dir_all(&dir).expect("cleanup temp dir");
-    }
-
-    #[test]
-    fn resolve_av_inputs_rejects_non_av_files() {
-        let dir = temp_case_dir("reject");
-        fs::create_dir_all(&dir).expect("create dir");
-        let file = dir.join("note.txt");
-        fs::write(&file, "nope").expect("write file");
-
-        let err = resolve_av_inputs(file.to_str().expect("utf8 path")).expect_err("expected error");
-        assert!(
-            err.contains("is not an .av file"),
-            "unexpected error: {err}"
-        );
-
-        fs::remove_dir_all(&dir).expect("cleanup temp dir");
     }
 }
 
@@ -1563,4 +1534,57 @@ fn load_module_recursive(
         type_defs,
         fn_defs,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_av_inputs;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_case_dir(tag: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!("aver_commands_{tag}_{nanos}"))
+    }
+
+    #[test]
+    fn resolve_av_inputs_collects_and_sorts_directories() {
+        let dir = temp_case_dir("collect");
+        let nested = dir.join("nested");
+        fs::create_dir_all(&nested).expect("create nested dir");
+        fs::write(dir.join("b.av"), "module B\n").expect("write b.av");
+        fs::write(dir.join("ignore.txt"), "nope").expect("write ignore.txt");
+        fs::write(nested.join("a.av"), "module A\n").expect("write a.av");
+
+        let inputs = resolve_av_inputs(dir.to_str().expect("utf8 path")).expect("collect inputs");
+        assert_eq!(
+            inputs,
+            vec![
+                dir.join("b.av").to_string_lossy().to_string(),
+                nested.join("a.av").to_string_lossy().to_string(),
+            ]
+        );
+
+        fs::remove_dir_all(&dir).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn resolve_av_inputs_rejects_non_av_files() {
+        let dir = temp_case_dir("reject");
+        fs::create_dir_all(&dir).expect("create dir");
+        let file = dir.join("note.txt");
+        fs::write(&file, "nope").expect("write file");
+
+        let err = resolve_av_inputs(file.to_str().expect("utf8 path")).expect_err("expected error");
+        assert!(
+            err.contains("is not an .av file"),
+            "unexpected error: {err}"
+        );
+
+        fs::remove_dir_all(&dir).expect("cleanup temp dir");
+    }
 }

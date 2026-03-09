@@ -11,6 +11,7 @@ pub mod replay;
 pub mod resolver;
 pub mod services;
 pub mod source;
+pub mod tail_check;
 pub mod tco;
 pub mod types;
 pub mod value;

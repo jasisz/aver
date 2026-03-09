@@ -131,23 +131,21 @@ verify deserializeProject
     deserializeProject("alpha|Alpha %7C team|false|2026-03-08T12:00:00Z|2026-03-08T12:00:00Z") => Result.Ok(Project(id = "alpha", name = "Alpha | team", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z"))
     deserializeProject("alpha|Alpha|x|2026-03-08T12:00:00Z|2026-03-08T12:00:00Z") => Result.Err("Invalid bool: x")
 
-fn parseProjectLines(lines: List<String>, acc: Result<List<Project>, String>) -> Result<List<Project>, String>
-    ? "Recursive parser for the project file."
+fn parseProjectLines(lines: List<String>, acc: List<Project>) -> Result<List<Project>, String>
+    ? "Tail-recursive parser for the project file."
     match lines
-        [] -> acc
-        [line, ..rest] -> match acc
+        [] -> Result.Ok(List.reverse(acc))
+        [line, ..rest] -> match deserializeProject(line)
             Result.Err(msg) -> Result.Err(msg)
-            Result.Ok(projects) -> match deserializeProject(line)
-                Result.Err(msg) -> Result.Err(msg)
-                Result.Ok(project) -> parseProjectLines(rest, Result.Ok(List.append(projects, project)))
+            Result.Ok(project) -> parseProjectLines(rest, List.prepend(project, acc))
 
 verify parseProjectLines
-    parseProjectLines([], Result.Ok([])) => Result.Ok([])
-    parseProjectLines(["alpha|Alpha|false|2026-03-08T12:00:00Z|2026-03-08T12:00:00Z"], Result.Ok([])) => Result.Ok([Project(id = "alpha", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z")])
+    parseProjectLines([], []) => Result.Ok([])
+    parseProjectLines(["alpha|Alpha|false|2026-03-08T12:00:00Z|2026-03-08T12:00:00Z"], []) => Result.Ok([Project(id = "alpha", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z")])
 
 fn parseProjects(content: String) -> Result<List<Project>, String>
     ? "Parses the full project file."
-    parseProjectLines(Infra.Codec.splitNonEmptyLines(content), Result.Ok([]))
+    parseProjectLines(Infra.Codec.splitNonEmptyLines(content), [])
 
 verify parseProjects
     parseProjects("") => Result.Ok([])
@@ -173,37 +171,6 @@ fn serializeProjectLines(projects: List<Project>) -> List<String>
 verify serializeProjectLines
     serializeProjectLines([]) => []
     serializeProjectLines([Project(id = "alpha", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z")]) => ["alpha|Alpha|false|2026-03-08T12:00:00Z|2026-03-08T12:00:00Z"]
-
-fn requiredPayload(raw: String, label: String, index: Int) -> Result<String, String>
-    ? "Reads one required event payload slot."
-    match Infra.Codec.decodeOption(raw)
-        Option.Some(value) -> Result.Ok(value)
-        Option.None -> Result.Err("Corrupt {label}: missing payload {Int.toString(index)}")
-
-verify requiredPayload
-    requiredPayload("hello", "event", 0) => Result.Ok("hello")
-    requiredPayload("-", "event", 1) => Result.Err("Corrupt event: missing payload 1")
-
-fn eventKind(event: TaskEvent) -> String
-    ? "Stable on-disk event label."
-    match event
-        TaskEvent.TaskCreated(_, _, _, _, _) -> "TaskCreated"
-        TaskEvent.TaskRenamed(_, _) -> "TaskRenamed"
-        TaskEvent.TaskStarted(_) -> "TaskStarted"
-        TaskEvent.TaskBlocked(_, _) -> "TaskBlocked"
-        TaskEvent.TaskCompleted(_) -> "TaskCompleted"
-        TaskEvent.TaskReopened(_, _) -> "TaskReopened"
-        TaskEvent.PriorityChanged(_, _) -> "PriorityChanged"
-        TaskEvent.TagAdded(_, _) -> "TagAdded"
-        TaskEvent.TagRemoved(_, _) -> "TagRemoved"
-        TaskEvent.CommentAdded(_) -> "CommentAdded"
-        TaskEvent.DeadlineSet(_, _) -> "DeadlineSet"
-        TaskEvent.DeadlineCleared(_) -> "DeadlineCleared"
-        TaskEvent.TaskArchived(_) -> "TaskArchived"
-
-verify eventKind
-    eventKind(Domain.Types.TaskEvent.TaskCompleted("2026-03-10T12:00:00Z")) => "TaskCompleted"
-    eventKind(Domain.Types.TaskEvent.CommentAdded(Comment(id = "c1", body = "hi", author = "alice", createdAt = "2026-03-10T12:00:00Z"))) => "CommentAdded"
 
 fn serializeTaskEvent(entry: TaskEventRecord) -> String
     ? "Encodes one task event line with five payload slots."
@@ -388,23 +355,21 @@ fn decodeTaskArchived(rawAt: String) -> Result<TaskEvent, String>
 verify decodeTaskArchived
     decodeTaskArchived("2026-03-08T12:00:00Z") => Result.Ok(Domain.Types.TaskEvent.TaskArchived("2026-03-08T12:00:00Z"))
 
-fn parseEventLines(lines: List<String>, acc: Result<List<TaskEventRecord>, String>) -> Result<List<TaskEventRecord>, String>
-    ? "Recursive parser for the task event log."
+fn parseEventLines(lines: List<String>, acc: List<TaskEventRecord>) -> Result<List<TaskEventRecord>, String>
+    ? "Tail-recursive parser for the task event log."
     match lines
-        [] -> acc
-        [line, ..rest] -> match acc
+        [] -> Result.Ok(List.reverse(acc))
+        [line, ..rest] -> match deserializeTaskEvent(line)
             Result.Err(msg) -> Result.Err(msg)
-            Result.Ok(events) -> match deserializeTaskEvent(line)
-                Result.Err(msg) -> Result.Err(msg)
-                Result.Ok(event) -> parseEventLines(rest, Result.Ok(List.append(events, event)))
+            Result.Ok(event) -> parseEventLines(rest, List.prepend(event, acc))
 
 verify parseEventLines
-    parseEventLines([], Result.Ok([])) => Result.Ok([])
-    parseEventLines(["t1|alpha|1|TaskStarted|2026-03-08T12:00:00Z|-|-|-|-"], Result.Ok([])) => Result.Ok([TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z"))])
+    parseEventLines([], []) => Result.Ok([])
+    parseEventLines(["t1|alpha|1|TaskStarted|2026-03-08T12:00:00Z|-|-|-|-"], []) => Result.Ok([TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z"))])
 
 fn parseTaskEvents(content: String) -> Result<List<TaskEventRecord>, String>
     ? "Parses the whole task event log."
-    parseEventLines(Infra.Codec.splitNonEmptyLines(content), Result.Ok([]))
+    parseEventLines(Infra.Codec.splitNonEmptyLines(content), [])
 
 verify parseTaskEvents
     parseTaskEvents("") => Result.Ok([])
@@ -430,3 +395,34 @@ fn serializeTaskEventLines(entries: List<TaskEventRecord>) -> List<String>
 verify serializeTaskEventLines
     serializeTaskEventLines([]) => []
     serializeTaskEventLines([TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskStarted("2026-03-08T12:00:00Z"))]) => ["t1|alpha|1|TaskStarted|2026-03-08T12:00:00Z|-|-|-|-"]
+
+fn requiredPayload(raw: String, label: String, index: Int) -> Result<String, String>
+    ? "Reads one required event payload slot."
+    match Infra.Codec.decodeOption(raw)
+        Option.Some(value) -> Result.Ok(value)
+        Option.None -> Result.Err("Corrupt {label}: missing payload {Int.toString(index)}")
+
+verify requiredPayload
+    requiredPayload("hello", "event", 0) => Result.Ok("hello")
+    requiredPayload("-", "event", 1) => Result.Err("Corrupt event: missing payload 1")
+
+fn eventKind(event: TaskEvent) -> String
+    ? "Stable on-disk event label."
+    match event
+        TaskEvent.TaskCreated(_, _, _, _, _) -> "TaskCreated"
+        TaskEvent.TaskRenamed(_, _) -> "TaskRenamed"
+        TaskEvent.TaskStarted(_) -> "TaskStarted"
+        TaskEvent.TaskBlocked(_, _) -> "TaskBlocked"
+        TaskEvent.TaskCompleted(_) -> "TaskCompleted"
+        TaskEvent.TaskReopened(_, _) -> "TaskReopened"
+        TaskEvent.PriorityChanged(_, _) -> "PriorityChanged"
+        TaskEvent.TagAdded(_, _) -> "TagAdded"
+        TaskEvent.TagRemoved(_, _) -> "TagRemoved"
+        TaskEvent.CommentAdded(_) -> "CommentAdded"
+        TaskEvent.DeadlineSet(_, _) -> "DeadlineSet"
+        TaskEvent.DeadlineCleared(_) -> "DeadlineCleared"
+        TaskEvent.TaskArchived(_) -> "TaskArchived"
+
+verify eventKind
+    eventKind(Domain.Types.TaskEvent.TaskCompleted("2026-03-10T12:00:00Z")) => "TaskCompleted"
+    eventKind(Domain.Types.TaskEvent.CommentAdded(Comment(id = "c1", body = "hi", author = "alice", createdAt = "2026-03-10T12:00:00Z"))) => "CommentAdded"

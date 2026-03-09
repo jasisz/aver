@@ -66,23 +66,21 @@ fn deserializeNotification(line: String) -> Result<Notification, String>
 verify deserializeNotification
     deserializeNotification("n1|t1|overdue|Task %7C overdue|2026-03-08T12:00:00Z") => Result.Ok(Notification(key = "n1", taskId = "t1", kind = "overdue", message = "Task | overdue", createdAt = "2026-03-08T12:00:00Z"))
 
-fn parseNotificationLines(lines: List<String>, acc: Result<List<Notification>, String>) -> Result<List<Notification>, String>
-    ? "Recursive parser for the notification log."
+fn parseNotificationLines(lines: List<String>, acc: List<Notification>) -> Result<List<Notification>, String>
+    ? "Tail-recursive parser for the notification log."
     match lines
-        [] -> acc
-        [line, ..rest] -> match acc
+        [] -> Result.Ok(List.reverse(acc))
+        [line, ..rest] -> match deserializeNotification(line)
             Result.Err(msg) -> Result.Err(msg)
-            Result.Ok(entries) -> match deserializeNotification(line)
-                Result.Err(msg) -> Result.Err(msg)
-                Result.Ok(entry) -> parseNotificationLines(rest, Result.Ok(List.append(entries, entry)))
+            Result.Ok(entry) -> parseNotificationLines(rest, List.prepend(entry, acc))
 
 verify parseNotificationLines
-    parseNotificationLines([], Result.Ok([])) => Result.Ok([])
-    parseNotificationLines(["n1|t1|overdue|Task overdue|2026-03-08T12:00:00Z"], Result.Ok([])) => Result.Ok([Notification(key = "n1", taskId = "t1", kind = "overdue", message = "Task overdue", createdAt = "2026-03-08T12:00:00Z")])
+    parseNotificationLines([], []) => Result.Ok([])
+    parseNotificationLines(["n1|t1|overdue|Task overdue|2026-03-08T12:00:00Z"], []) => Result.Ok([Notification(key = "n1", taskId = "t1", kind = "overdue", message = "Task overdue", createdAt = "2026-03-08T12:00:00Z")])
 
 fn parseNotifications(content: String) -> Result<List<Notification>, String>
     ? "Parses the whole notification file."
-    parseNotificationLines(Infra.Codec.splitNonEmptyLines(content), Result.Ok([]))
+    parseNotificationLines(Infra.Codec.splitNonEmptyLines(content), [])
 
 verify parseNotifications
     parseNotifications("") => Result.Ok([])
@@ -96,14 +94,21 @@ fn loadNotifications() -> Result<List<Notification>, String>
 
 fn forTask(entries: List<Notification>, taskId: String) -> List<Notification>
     ? "Filters notifications down to one task."
-    match entries
-        [] -> []
-        [entry, ..rest] -> match entry.taskId == taskId
-            true -> List.prepend(entry, forTask(rest, taskId))
-            false -> forTask(rest, taskId)
+    List.reverse(forTaskInto(entries, taskId, []))
 
 verify forTask
     forTask([Notification(key = "n1", taskId = "t1", kind = "overdue", message = "x", createdAt = "2026-03-08T12:00:00Z"), Notification(key = "n2", taskId = "t2", kind = "deadline_soon", message = "y", createdAt = "2026-03-08T12:01:00Z")], "t1") => [Notification(key = "n1", taskId = "t1", kind = "overdue", message = "x", createdAt = "2026-03-08T12:00:00Z")]
+
+fn forTaskInto(entries: List<Notification>, taskId: String, matching: List<Notification>) -> List<Notification>
+    ? "Tail-recursive notification filter that preserves original order."
+    match entries
+        [] -> matching
+        [entry, ..rest] -> match entry.taskId == taskId
+            true -> forTaskInto(rest, taskId, List.prepend(entry, matching))
+            false -> forTaskInto(rest, taskId, matching)
+
+verify forTaskInto
+    forTaskInto([], "t1", [Notification(key = "n1", taskId = "t1", kind = "overdue", message = "x", createdAt = "2026-03-08T12:00:00Z")]) => [Notification(key = "n1", taskId = "t1", kind = "overdue", message = "x", createdAt = "2026-03-08T12:00:00Z")]
 
 fn containsKey(entries: List<Notification>, key: String) -> Bool
     ? "True when the notification log already contains the given key."

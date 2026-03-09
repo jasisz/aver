@@ -8,45 +8,6 @@ impl Interpreter {
         Some((type_name, variant))
     }
 
-    pub(super) fn eval_match(
-        &mut self,
-        subject: Value,
-        arms: &[MatchArm],
-        line: usize,
-    ) -> Result<Value, RuntimeError> {
-        for (arm_idx, arm) in arms.iter().enumerate() {
-            if let Some(bindings) = self.match_pattern(&arm.pattern, &subject) {
-                self.note_verify_match_arm(line, arms.len(), arm_idx);
-                // If we're in a resolved function and all bindings have slots,
-                // write directly into the Slots frame (no extra scope push).
-                if let Some(local_slots) = self.active_local_slots.clone() {
-                    let all_slotted = bindings.keys().all(|name| local_slots.contains_key(name));
-                    if all_slotted {
-                        for (name, val) in bindings {
-                            if let Some(&slot) = local_slots.get(&name) {
-                                self.define_slot(slot, val);
-                            }
-                        }
-                        return self.eval_expr(&arm.body);
-                    }
-                }
-                // Fallback: HashMap-based scope for unresolved functions / REPL
-                let rc_scope = bindings
-                    .into_iter()
-                    .map(|(k, v)| (k, Rc::new(v)))
-                    .collect::<HashMap<_, _>>();
-                self.push_env(EnvFrame::Owned(rc_scope));
-                let result = self.eval_expr(&arm.body);
-                self.pop_env();
-                return result;
-            }
-        }
-        Err(RuntimeError::Error(format!(
-            "No match found for value {}",
-            aver_repr(&subject)
-        )))
-    }
-
     pub(super) fn match_pattern(
         &self,
         pattern: &Pattern,

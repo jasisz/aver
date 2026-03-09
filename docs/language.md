@@ -236,7 +236,9 @@ Pure recursive functions with memo-safe arguments (scalars, records/variants of 
 
 ## Tail-call optimization
 
-Self and mutual tail recursion is optimized automatically. A transform pass after parsing rewrites tail-position calls into a trampoline — no stack growth for recursive functions. Tail position = last expression in function body, or each arm body in a `match` at tail position.
+Self and mutual tail recursion is optimized automatically. A transform pass after parsing rewrites tail-position calls into a trampoline — no stack growth for recursive functions in tail position. Tail position = last expression in function body, or each arm body in a `match` at tail position.
+
+This is intentionally narrower than “all recursion”. Non-tail recursion can still be expensive on large inputs, so `aver check` warns when a recursive function still has non-tail recursive callsites after TCO. In practice, long linear traversals are best written in accumulator style when scale matters.
 
 ## Modules
 

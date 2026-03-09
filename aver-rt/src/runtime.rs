@@ -49,14 +49,41 @@ pub fn time_sleep(ms: i64) {
 }
 
 pub fn string_slice(s: &str, from: i64, to: i64) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    let len = chars.len() as i64;
     let start = from.max(0) as usize;
-    let end = to.min(len) as usize;
-    if start >= end || start >= chars.len() {
+    let end = to.max(0) as usize;
+    if start >= end {
         return String::new();
     }
-    chars[start..end].iter().collect()
+
+    let mut start_byte = None;
+    let mut end_byte = None;
+    let mut char_index = 0usize;
+
+    for (byte_index, _) in s.char_indices() {
+        if char_index == start {
+            start_byte = Some(byte_index);
+        }
+        if char_index == end {
+            end_byte = Some(byte_index);
+            break;
+        }
+        char_index += 1;
+    }
+
+    if start_byte.is_none() && char_index == start {
+        start_byte = Some(s.len());
+    }
+    if end_byte.is_none() && char_index == end {
+        end_byte = Some(s.len());
+    }
+
+    let start_byte = start_byte.unwrap_or(s.len());
+    let end_byte = end_byte.unwrap_or(s.len());
+    if start_byte >= end_byte {
+        return String::new();
+    }
+
+    s[start_byte..end_byte].to_string()
 }
 
 pub fn read_text(path: &str) -> Result<String, String> {

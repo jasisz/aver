@@ -9,9 +9,14 @@ It is used by:
 The crate exists so Aver semantics live in one place instead of being duplicated
 between the interpreter and generated Rust output.
 
+That shared-runtime role is practical, not just architectural. Improvements to
+`AverList`, `String.slice`, or service helpers here affect both generated Rust
+programs and the interpreter-facing adapters that rely on the same semantics.
+
 ## What it contains
 
-- `AverList<T>`: persistent list used by Aver list operations
+- `AverList<T>`: persistent list used by Aver list operations, including deep-list
+  paths such as teardown, `tail`, and `list_uncons`
 - `AverDisplay`: Aver-specific display formatting used by `Console.print` and string interpolation
 - shared runtime helpers for console, time, disk, env, and string operations
 - shared service types:

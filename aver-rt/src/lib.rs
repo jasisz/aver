@@ -42,6 +42,65 @@ enum AverListInner<T> {
     },
 }
 
+fn empty_list_inner<T>() -> Rc<AverListInner<T>> {
+    Rc::new(AverListInner::Flat {
+        items: Rc::new(Vec::new()),
+        start: 0,
+    })
+}
+
+fn empty_list<T>(inner: &Rc<AverListInner<T>>) -> AverList<T> {
+    AverList {
+        inner: Rc::clone(inner),
+    }
+}
+
+fn take_list_inner<T>(
+    list: &mut AverList<T>,
+    empty_inner: &Rc<AverListInner<T>>,
+) -> Rc<AverListInner<T>> {
+    let original = std::mem::replace(list, empty_list(empty_inner));
+    original.inner
+}
+
+fn detach_unique_children<T>(
+    inner: &mut AverListInner<T>,
+    empty_inner: &Rc<AverListInner<T>>,
+    pending: &mut Vec<Rc<AverListInner<T>>>,
+) {
+    match inner {
+        AverListInner::Flat { .. } => {}
+        AverListInner::Prepend { tail, .. } => {
+            pending.push(take_list_inner(tail, empty_inner));
+        }
+        AverListInner::Concat { left, right, .. } => {
+            pending.push(take_list_inner(left, empty_inner));
+            pending.push(take_list_inner(right, empty_inner));
+        }
+    }
+}
+
+impl<T> Drop for AverListInner<T> {
+    fn drop(&mut self) {
+        if matches!(self, AverListInner::Flat { .. }) {
+            return;
+        }
+
+        let empty_inner = empty_list_inner();
+        let mut pending = Vec::new();
+
+        // Detach unique children eagerly so deep list teardown does not recurse
+        // through nested `Rc<AverListInner<_>>` chains on the Rust call stack.
+        detach_unique_children(self, &empty_inner, &mut pending);
+
+        while let Some(child) = pending.pop() {
+            if let Ok(mut child_inner) = Rc::try_unwrap(child) {
+                detach_unique_children(&mut child_inner, &empty_inner, &mut pending);
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 enum ListCursor<'a, T> {
     Node(&'a AverList<T>),
@@ -62,6 +121,60 @@ impl<T> Clone for AverList<T> {
 }
 
 impl<T> AverList<T> {
+    fn concat_node(left: &Self, right: &Self) -> Self {
+        Self {
+            inner: Rc::new(AverListInner::Concat {
+                left: left.clone(),
+                right: right.clone(),
+                len: left.len() + right.len(),
+            }),
+        }
+    }
+
+    fn rebuild_from_rights(mut base: Self, mut rights: Vec<Self>) -> Self {
+        while let Some(right) = rights.pop() {
+            base = Self::concat_node(&base, &right);
+        }
+        base
+    }
+
+    fn flat_tail(items: &Rc<Vec<T>>, start: usize) -> Option<Self> {
+        if start >= items.len() {
+            return None;
+        }
+        if start + 1 >= items.len() {
+            return Some(Self::empty());
+        }
+        Some(Self {
+            inner: Rc::new(AverListInner::Flat {
+                items: Rc::clone(items),
+                start: start + 1,
+            }),
+        })
+    }
+
+    fn uncons(&self) -> Option<(&T, Self)> {
+        let mut rights = Vec::new();
+        let mut current = self;
+
+        loop {
+            match current.inner.as_ref() {
+                AverListInner::Flat { items, start } => {
+                    let head = items.get(*start)?;
+                    let tail = Self::flat_tail(items, *start)?;
+                    return Some((head, Self::rebuild_from_rights(tail, rights)));
+                }
+                AverListInner::Prepend { head, tail, .. } => {
+                    return Some((head, Self::rebuild_from_rights(tail.clone(), rights)));
+                }
+                AverListInner::Concat { left, right, .. } => {
+                    rights.push(right.clone());
+                    current = left;
+                }
+            }
+        }
+    }
+
     pub fn empty() -> Self {
         Self::from_vec(vec![])
     }
@@ -110,30 +223,9 @@ impl<T> AverList<T> {
 
     pub fn tail(&self) -> Option<Self> {
         match self.inner.as_ref() {
-            AverListInner::Flat { items, start } => {
-                if *start >= items.len() {
-                    None
-                } else {
-                    Some(Self {
-                        inner: Rc::new(AverListInner::Flat {
-                            items: Rc::clone(items),
-                            start: start + 1,
-                        }),
-                    })
-                }
-            }
+            AverListInner::Flat { items, start } => Self::flat_tail(items, *start),
             AverListInner::Prepend { tail, .. } => Some(tail.clone()),
-            AverListInner::Concat { left, right, .. } => {
-                let left_len = left.len();
-                if left_len == 0 {
-                    right.tail()
-                } else if left_len == 1 {
-                    Some(right.clone())
-                } else {
-                    let left_tail = left.tail().expect("non-empty left side must have a tail");
-                    Some(Self::concat(&left_tail, right))
-                }
-            }
+            AverListInner::Concat { .. } => self.uncons().map(|(_, tail)| tail),
         }
     }
 
@@ -157,13 +249,7 @@ impl<T> AverList<T> {
         if right.is_empty() {
             return left.clone();
         }
-        Self {
-            inner: Rc::new(AverListInner::Concat {
-                left: left.clone(),
-                right: right.clone(),
-                len: left.len() + right.len(),
-            }),
-        }
+        Self::concat_node(left, right)
     }
 
     pub fn append(list: &Self, item: T) -> Self {
@@ -287,9 +373,7 @@ impl<T: Hash> Hash for AverList<T> {
 }
 
 pub fn list_uncons<T>(list: &AverList<T>) -> Option<(&T, AverList<T>)> {
-    let head = list.first()?;
-    let tail = list.tail().expect("non-empty list must have a tail");
-    Some((head, tail))
+    list.uncons()
 }
 
 pub fn string_join<S: AsRef<str>>(parts: &AverList<S>, sep: &str) -> String {
@@ -326,6 +410,42 @@ mod tests {
     }
 
     #[test]
+    fn dropping_deep_prepend_chain_does_not_overflow() {
+        let mut list = AverList::empty();
+        for value in 0..200_000 {
+            list = AverList::prepend(value, &list);
+        }
+
+        assert_eq!(list.len(), 200_000);
+        drop(list);
+    }
+
+    #[test]
+    fn tail_of_deep_append_chain_does_not_overflow() {
+        let mut list = AverList::empty();
+        for value in 0..200_000 {
+            list = AverList::append(&list, value);
+        }
+
+        let tail = list.tail().expect("non-empty list must have a tail");
+        assert_eq!(tail.len(), 199_999);
+        assert_eq!(tail.first(), Some(&1));
+    }
+
+    #[test]
+    fn list_uncons_of_deep_append_chain_does_not_overflow() {
+        let mut list = AverList::empty();
+        for value in 0..200_000 {
+            list = AverList::append(&list, value);
+        }
+
+        let (head, tail) = super::list_uncons(&list).expect("non-empty list must uncons");
+        assert_eq!(*head, 0);
+        assert_eq!(tail.len(), 199_999);
+        assert_eq!(tail.first(), Some(&1));
+    }
+
+    #[test]
     fn aver_display_quotes_strings_inside_lists() {
         let parts = AverList::from_vec(vec!["a".to_string(), "b".to_string()]);
         assert_eq!(aver_display(&parts), "[\"a\", \"b\"]");
@@ -334,6 +454,12 @@ mod tests {
     #[test]
     fn string_slice_uses_code_point_indices() {
         assert_eq!(string_slice("zażółć", 1, 4), "ażó");
+    }
+
+    #[test]
+    fn string_slice_clamps_negative_indices() {
+        assert_eq!(string_slice("hello", -2, 2), "he");
+        assert_eq!(string_slice("hello", 1, -1), "");
     }
 
     #[test]

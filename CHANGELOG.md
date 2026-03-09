@@ -12,6 +12,8 @@ All notable changes to Aver are documented here.
 - modular Rust code generation that emits `src/aver_generated/...` instead of flattening all Aver code into one giant `main.rs`
 - directory inputs for `aver check` and `aver verify`, so one command can walk a whole example or project tree
 - `projects/workflow_engine` as a serious medium-sized Aver application core, covering projects, tasks, workflow rules, audit trail, notifications, and CLI/query flows
+- `aver check` warnings for recursive functions that still contain non-tail recursive callsites after TCO, with accumulator-style guidance
+- iterative interpreter expression evaluation backed by a heap continuation stack instead of the Rust call stack
 
 ### Changed
 - **Breaking:** effect aliases (`effects X = [...]`) were removed; declare concrete method effects directly in `! [...]`
@@ -30,6 +32,8 @@ All notable changes to Aver are documented here.
 - `unused exposes` diagnostics now resolve real symbol usage from AST and point at the module's `exposes` line
 - Rust codegen now resolves module-qualified Aver calls/types without flattening sibling modules into one ambiguous Rust namespace
 - Rust codegen now routes `Args.get()` through `aver-rt`
+- deep `AverList` teardown and `append -> match` / `tail` paths in `aver-rt`, removing shared stack-overflow cliffs for both the interpreter and generated Rust
+- `String.slice` semantics are now shared between the interpreter and `aver-rt`, including negative-index clamping
 
 ## 0.4.0
 
