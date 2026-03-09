@@ -100,25 +100,25 @@ mod tests {
 
     #[test]
     fn runtime_dependency_defaults_to_registry_pin() {
-        let dep = runtime_dependency_line("=0.1.0", false, None);
-        assert_eq!(dep, "aver-rt = { version = \"=0.1.0\" }");
+        let dep = runtime_dependency_line("=0.2.0", false, None);
+        assert_eq!(dep, "aver-rt = { version = \"=0.2.0\" }");
     }
 
     #[test]
     fn runtime_dependency_enables_http_feature_when_needed() {
-        let dep = runtime_dependency_line("=0.1.0", true, None);
+        let dep = runtime_dependency_line("=0.2.0", true, None);
         assert_eq!(
             dep,
-            "aver-rt = { version = \"=0.1.0\", features = [\"http\"] }"
+            "aver-rt = { version = \"=0.2.0\", features = [\"http\"] }"
         );
     }
 
     #[test]
     fn runtime_dependency_can_use_local_override_path() {
-        let dep = runtime_dependency_line("=0.1.0", true, Some("/tmp/aver-rt"));
+        let dep = runtime_dependency_line("=0.2.0", true, Some("/tmp/aver-rt"));
         assert_eq!(
             dep,
-            "aver-rt = { path = \"/tmp/aver-rt\", version = \"=0.1.0\", features = [\"http\"] }"
+            "aver-rt = { path = \"/tmp/aver-rt\", version = \"=0.2.0\", features = [\"http\"] }"
         );
     }
 }

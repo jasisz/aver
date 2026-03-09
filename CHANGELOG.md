@@ -4,6 +4,8 @@ All notable changes to Aver are documented here.
 
 ## Unreleased
 
+## 0.5.0
+
 ### Added
 - `Args.get()` as an explicit runtime service for CLI arguments (`List<String>`)
 - round-trip law coverage for naturally invertible examples, including `json`, `grok_s_language`, and `notepad/store`
