@@ -6,9 +6,9 @@
     "budget_bytes": 24576,
     "included_depth": 2,
     "next_depth": 3,
-    "next_used_bytes": 27727,
+    "next_used_bytes": 27668,
     "truncated": true,
-    "used_bytes": 15720
+    "used_bytes": 15646
   },
   "modules": [
     {
@@ -175,7 +175,6 @@
         },
         {
           "sig": "forSubject(entries: List<AuditEntry>, subjectId: Option<String>) -> List<AuditEntry>",
-          "analysis": {"tco": true},
           "desc": "Optional subject filter for audit queries.",
           "verify_count": 2
         },
@@ -205,7 +204,6 @@
         },
         {
           "sig": "forTask(entries: List<Notification>, taskId: String) -> List<Notification>",
-          "analysis": {"tco": true},
           "desc": "Filters notifications down to one task.",
           "verify_count": 1
         },

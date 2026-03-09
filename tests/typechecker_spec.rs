@@ -349,7 +349,7 @@ fn valid_app_dot_av() {
     let src = std::fs::read_to_string("examples/modules/app_dot.av")
         .expect("examples/modules/app_dot.av not found");
     let items = parse(&src);
-    let errs = run_type_check_with_base(&items, Some("."))
+    let errs = run_type_check_with_base(&items, Some("examples"))
         .into_iter()
         .map(|e| e.message)
         .collect::<Vec<_>>();
@@ -365,7 +365,7 @@ fn valid_app_av() {
     let src = std::fs::read_to_string("examples/modules/app.av")
         .expect("examples/modules/app.av not found");
     let items = parse(&src);
-    let errs = run_type_check_with_base(&items, Some("."))
+    let errs = run_type_check_with_base(&items, Some("examples"))
         .into_iter()
         .map(|e| e.message)
         .collect::<Vec<_>>();
@@ -381,7 +381,7 @@ fn valid_services_weather_av() {
     let src = std::fs::read_to_string("examples/services/weather.av")
         .expect("examples/services/weather.av not found");
     let items = parse(&src);
-    let errs = run_type_check_with_base(&items, Some("."))
+    let errs = run_type_check_with_base(&items, Some("examples"))
         .into_iter()
         .map(|e| e.message)
         .collect::<Vec<_>>();
@@ -394,7 +394,7 @@ fn valid_services_weather_av() {
 
 #[test]
 fn valid_call_to_exposed_module_member() {
-    let src = "module App\n    depends [models.User]\n    intent =\n        \"Uses exported function\"\nfn main() -> Unit\n    x = models.User.nameById(1)\n";
+    let src = "module App\n    depends [Modules.Models.User]\n    intent =\n        \"Uses exported function\"\nfn main() -> Unit\n    x = Modules.Models.User.nameById(1)\n";
     let errs = errors_with_base(src, "examples");
     assert!(
         errs.is_empty(),
@@ -736,11 +736,11 @@ fn error_undeclared_effect_from_function_typed_callback() {
 
 #[test]
 fn error_call_to_unexposed_module_member() {
-    let src = "module App\n    depends [models.User]\n    intent =\n        \"Tries to use hidden member\"\nfn main() -> Unit\n    x = models.User.hidden()\n";
+    let src = "module App\n    depends [Modules.Models.User]\n    intent =\n        \"Tries to use hidden member\"\nfn main() -> Unit\n    x = Modules.Models.User.hidden()\n";
     let errs = errors_with_base(src, "examples");
     assert!(
-        errs.iter().any(|e| e.contains("models.User.hidden")),
-        "expected exposes error mentioning models.User.hidden, got:\n  {}",
+        errs.iter().any(|e| e.contains("Modules.Models.User.hidden")),
+        "expected exposes error mentioning Modules.Models.User.hidden, got:\n  {}",
         if errs.is_empty() {
             "<no errors>".to_string()
         } else {

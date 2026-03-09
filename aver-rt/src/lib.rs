@@ -133,7 +133,7 @@ impl<T> AverList<T> {
 
     fn rebuild_from_rights(mut base: Self, mut rights: Vec<Self>) -> Self {
         while let Some(right) = rights.pop() {
-            base = Self::concat_node(&base, &right);
+            base = Self::concat(&base, &right);
         }
         base
     }
@@ -168,6 +168,10 @@ impl<T> AverList<T> {
                     return Some((head, Self::rebuild_from_rights(tail.clone(), rights)));
                 }
                 AverListInner::Concat { left, right, .. } => {
+                    if left.is_empty() {
+                        current = right;
+                        continue;
+                    }
                     rights.push(right.clone());
                     current = left;
                 }
@@ -443,6 +447,23 @@ mod tests {
         assert_eq!(*head, 0);
         assert_eq!(tail.len(), 199_999);
         assert_eq!(tail.first(), Some(&1));
+    }
+
+    #[test]
+    fn repeated_tail_over_append_chain_preserves_all_items() {
+        let mut list = AverList::empty();
+        for value in 0..6 {
+            list = AverList::append(&list, value);
+        }
+
+        let mut rest = list;
+        let mut seen = Vec::new();
+        while let Some((head, tail)) = super::list_uncons(&rest) {
+            seen.push(*head);
+            rest = tail;
+        }
+
+        assert_eq!(seen, vec![0, 1, 2, 3, 4, 5]);
     }
 
     #[test]
