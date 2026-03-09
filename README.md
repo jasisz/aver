@@ -68,18 +68,18 @@ aver compile  hello.av -o out/
 ```bash
 git clone https://github.com/jasisz/aver
 cd aver
-cargo build --release
+cargo install --path . --force
 
-cargo run -- run      examples/core/calculator.av
-cargo run -- verify   examples/core/calculator.av
-cargo run -- check    examples/core/calculator.av
-cargo run -- context  examples/core/calculator.av
-cargo run -- compile  examples/core/calculator.av -o out/
+aver run      examples/core/calculator.av
+aver verify   examples/core/calculator.av
+aver check    examples/core/calculator.av
+aver context  examples/core/calculator.av
+aver compile  examples/core/calculator.av -o out/
 (cd out && cargo run)
-cargo run -- proof    examples/formal/law_auto.av -o proof/
+aver proof    examples/formal/law_auto.av -o proof/
 (cd proof && lake build)
-cargo run -- run      examples/services/console_demo.av --record recordings/
-cargo run -- replay   recordings/ --test --diff
+aver run      examples/services/console_demo.av --record recordings/
+aver replay   recordings/ --test --diff
 ```
 
 Requires: Rust stable toolchain.
@@ -226,6 +226,8 @@ aver context examples/core/calculator.av
 Aver walks the dependency graph and emits a compact context summary: module intent, public signatures, effect declarations, verify samples, and decisions. The goal is not to dump the whole source tree; it is to export the contract-level view that another human or LLM needs first.
 
 By default, `aver context` uses `--depth auto --budget 10kb`: it tries depth `0`, `1`, `2`, ... and keeps the deepest result that still fits the byte budget. `--depth N` and `--depth unlimited` bypass that budget. Long verify examples are skipped rather than bloating the artifact.
+
+This makes token budget a navigation primitive. Another human or model can start with a small architecture map, then zoom into the modules that matter instead of reading the whole tree up front.
 
 If you want a larger export for a medium project, raise the budget explicitly:
 

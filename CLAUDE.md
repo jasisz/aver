@@ -11,6 +11,17 @@ Aver is a programming language designed for AI-assisted development. Its interpr
 - Intent over implementation: signatures tell the full story
 - Decisions are first-class citizens of the codebase
 
+## AI discovery workflow
+
+When entering this repo, do not start by reading raw source files exhaustively.
+
+Prefer progressive discovery:
+- start with `aver context <entry> --budget 10kb`
+- use the exported architecture map to choose the next module
+- raise the budget or target a specific module only when the first map is too shallow
+
+`aver context --budget` is meant to act as a navigation primitive for AI: start high, then zoom in.
+
 ## Current status
 
 ### Language features
@@ -138,19 +149,18 @@ src/
 ## How to run
 
 ```bash
-cargo build
-cargo run -- run examples/hello.av
-cargo run -- run examples/calculator.av
-cargo run -- run examples/lists.av
-cargo run -- run examples/services/console_demo.av --record recordings/
-cargo run -- replay recordings/ --test --diff
-cargo run -- verify examples/calculator.av
-cargo run -- verify examples/lists.av
-cargo run -- check examples/hello.av
-cargo run -- check examples/calculator.av
-cargo run -- context decisions/architecture.av --decisions-only
-cargo run -- context decisions/architecture.av --decisions-only -o docs/decisions.md
-cargo run -- context examples/calculator.av
+aver run examples/hello.av
+aver run examples/calculator.av
+aver run examples/lists.av
+aver run examples/services/console_demo.av --record recordings/
+aver replay recordings/ --test --diff
+aver verify examples/calculator.av
+aver verify examples/lists.av
+aver check examples/hello.av
+aver check examples/calculator.av
+aver context decisions/architecture.av --decisions-only
+aver context decisions/architecture.av --decisions-only -o docs/decisions.md
+aver context examples/calculator.av
 ```
 
 ## Spec test suite

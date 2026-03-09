@@ -11,6 +11,7 @@ All notable changes to Aver are documented here.
 - `aver context` selection metadata in JSON and in the `--output` summary, including included depth and next-depth size
 - modular Rust code generation that emits `src/aver_generated/...` instead of flattening all Aver code into one giant `main.rs`
 - directory inputs for `aver check` and `aver verify`, so one command can walk a whole example or project tree
+- `projects/workflow_engine` as a serious medium-sized Aver application core, covering projects, tasks, workflow rules, audit trail, notifications, and CLI/query flows
 
 ### Changed
 - **Breaking:** effect aliases (`effects X = [...]`) were removed; declare concrete method effects directly in `! [...]`
