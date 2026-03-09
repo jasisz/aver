@@ -1,0 +1,175 @@
+module Notify
+    intent =
+        "Notification delivery and persistence for workflow rules."
+        "Notifications are stored so queries can inspect them later, but they are also"
+        "emitted immediately to the console to make the CLI feel alive."
+    exposes [initNotify, loadNotifications, emitNotifications, forTask]
+    depends [Domain.Types, Infra.Codec, Infra.Store]
+
+decision NotificationsDeduplicateByKey
+    date = "2026-03-08"
+    author = "Codex"
+    reason =
+        "Deadline and overdue rules can be re-run manually, so delivery needs a stable"
+        "idempotency key or the CLI will drown in repeated warnings."
+    chosen = "PersistAndSkipKnownKeys"
+    rejected = ["AlwaysEmitAgain", "NoNotificationHistory"]
+    impacts = [emitNotifications, loadNotifications]
+
+fn notificationsPath() -> String
+    ? "Path for persisted notifications."
+    "{Infra.Store.dataDir()}/notifications.txt"
+
+verify notificationsPath
+    notificationsPath() => "/tmp/aver_workflow_engine/notifications.txt"
+
+fn initFileIfMissing(path: String) -> Result<Unit, String>
+    ? "Creates an empty notification file only when needed."
+    ! [Disk.appendText, Disk.exists, Disk.writeText]
+    match Disk.exists(path)
+        true -> Disk.appendText(path, "")
+        false -> Disk.writeText(path, "")
+
+fn initNotify() -> Result<Unit, String>
+    ? "Ensures the notification file exists."
+    ! [Disk.appendText, Disk.exists, Disk.makeDir, Disk.writeText]
+    _ = Disk.makeDir(Infra.Store.dataDir())?
+    initFileIfMissing(notificationsPath())
+
+fn renderLines(lines: List<String>) -> String
+    ? "Turns serialized notification lines into file text."
+    match List.len(lines) == 0
+        true -> ""
+        false -> "{String.join(lines, "\n")}\n"
+
+verify renderLines
+    renderLines([]) => ""
+    renderLines(["a", "b"]) => "a\nb\n"
+
+fn serializeNotification(entry: Notification) -> String
+    ? "Encodes one notification as a flat-file line."
+    String.join([entry.key, entry.taskId, entry.kind, Infra.Codec.escapeField(entry.message), entry.createdAt], "|")
+
+verify serializeNotification
+    serializeNotification(Notification(key = "n1", taskId = "t1", kind = "overdue", message = "Task | overdue", createdAt = "2026-03-08T12:00:00Z")) => "n1|t1|overdue|Task %7C overdue|2026-03-08T12:00:00Z"
+
+fn deserializeNotification(line: String) -> Result<Notification, String>
+    ? "Decodes one notification line."
+    parts = String.split(line, "|")
+    key = Infra.Codec.fieldAt(parts, 0, "notification")?
+    taskId = Infra.Codec.fieldAt(parts, 1, "notification")?
+    kind = Infra.Codec.fieldAt(parts, 2, "notification")?
+    message = Infra.Codec.fieldAt(parts, 3, "notification")?
+    createdAt = Infra.Codec.fieldAt(parts, 4, "notification")?
+    Result.Ok(Notification(key = key, taskId = taskId, kind = kind, message = message, createdAt = createdAt))
+
+verify deserializeNotification
+    deserializeNotification("n1|t1|overdue|Task %7C overdue|2026-03-08T12:00:00Z") => Result.Ok(Notification(key = "n1", taskId = "t1", kind = "overdue", message = "Task | overdue", createdAt = "2026-03-08T12:00:00Z"))
+
+fn parseNotificationLines(lines: List<String>, acc: Result<List<Notification>, String>) -> Result<List<Notification>, String>
+    ? "Recursive parser for the notification log."
+    match lines
+        [] -> acc
+        [line, ..rest] -> match acc
+            Result.Err(msg) -> Result.Err(msg)
+            Result.Ok(entries) -> match deserializeNotification(line)
+                Result.Err(msg) -> Result.Err(msg)
+                Result.Ok(entry) -> parseNotificationLines(rest, Result.Ok(List.append(entries, entry)))
+
+verify parseNotificationLines
+    parseNotificationLines([], Result.Ok([])) => Result.Ok([])
+    parseNotificationLines(["n1|t1|overdue|Task overdue|2026-03-08T12:00:00Z"], Result.Ok([])) => Result.Ok([Notification(key = "n1", taskId = "t1", kind = "overdue", message = "Task overdue", createdAt = "2026-03-08T12:00:00Z")])
+
+fn parseNotifications(content: String) -> Result<List<Notification>, String>
+    ? "Parses the whole notification file."
+    parseNotificationLines(Infra.Codec.splitNonEmptyLines(content), Result.Ok([]))
+
+verify parseNotifications
+    parseNotifications("") => Result.Ok([])
+    parseNotifications("n1|t1|overdue|Task overdue|2026-03-08T12:00:00Z\n") => Result.Ok([Notification(key = "n1", taskId = "t1", kind = "overdue", message = "Task overdue", createdAt = "2026-03-08T12:00:00Z")])
+
+fn loadNotifications() -> Result<List<Notification>, String>
+    ? "Reads all persisted notifications."
+    ! [Disk.readText]
+    content = Disk.readText(notificationsPath())?
+    parseNotifications(content)
+
+fn forTask(entries: List<Notification>, taskId: String) -> List<Notification>
+    ? "Filters notifications down to one task."
+    match entries
+        [] -> []
+        [entry, ..rest] -> match entry.taskId == taskId
+            true -> List.prepend(entry, forTask(rest, taskId))
+            false -> forTask(rest, taskId)
+
+verify forTask
+    forTask([Notification(key = "n1", taskId = "t1", kind = "overdue", message = "x", createdAt = "2026-03-08T12:00:00Z"), Notification(key = "n2", taskId = "t2", kind = "deadline_soon", message = "y", createdAt = "2026-03-08T12:01:00Z")], "t1") => [Notification(key = "n1", taskId = "t1", kind = "overdue", message = "x", createdAt = "2026-03-08T12:00:00Z")]
+
+fn containsKey(entries: List<Notification>, key: String) -> Bool
+    ? "True when the notification log already contains the given key."
+    match entries
+        [] -> false
+        [entry, ..rest] -> match entry.key == key
+            true -> true
+            false -> containsKey(rest, key)
+
+verify containsKey
+    containsKey([Notification(key = "n1", taskId = "t1", kind = "overdue", message = "x", createdAt = "2026-03-08T12:00:00Z")], "n1") => true
+    containsKey([], "n1") => false
+
+fn newNotifications(existing: List<Notification>, candidates: List<Notification>) -> List<Notification>
+    ? "Keeps only notifications that have not already been persisted or repeated in this batch."
+    newNotificationsInto(existing, candidates, [])
+
+verify newNotifications
+    newNotifications([], [Notification(key = "n1", taskId = "t1", kind = "overdue", message = "x", createdAt = "2026-03-08T12:00:00Z"), Notification(key = "n1", taskId = "t1", kind = "overdue", message = "x", createdAt = "2026-03-08T12:00:00Z")]) => [Notification(key = "n1", taskId = "t1", kind = "overdue", message = "x", createdAt = "2026-03-08T12:00:00Z")]
+
+fn newNotificationsInto(existing: List<Notification>, candidates: List<Notification>, fresh: List<Notification>) -> List<Notification>
+    ? "Tail-recursive helper for notification deduplication."
+    match candidates
+        [] -> fresh
+        [entry, ..rest] -> match containsKey(existing, entry.key)
+            true -> newNotificationsInto(existing, rest, fresh)
+            false -> match containsKey(fresh, entry.key)
+                true -> newNotificationsInto(existing, rest, fresh)
+                false -> newNotificationsInto(existing, rest, List.append(fresh, entry))
+
+verify newNotificationsInto
+    newNotificationsInto([Notification(key = "n1", taskId = "t1", kind = "overdue", message = "x", createdAt = "2026-03-08T12:00:00Z")], [Notification(key = "n1", taskId = "t1", kind = "overdue", message = "x", createdAt = "2026-03-08T12:00:00Z"), Notification(key = "n2", taskId = "t2", kind = "deadline_soon", message = "y", createdAt = "2026-03-08T12:01:00Z")], []) => [Notification(key = "n2", taskId = "t2", kind = "deadline_soon", message = "y", createdAt = "2026-03-08T12:01:00Z")]
+
+fn emitNotification(entry: Notification) -> Result<Unit, String>
+    ? "Delivers one notification if it is new."
+    ! [Console.warn, Disk.appendText, Disk.readText]
+    emitNotifications([entry])
+
+fn emitNotifications(entries: List<Notification>) -> Result<Unit, String>
+    ? "Persists and prints only new notifications."
+    ! [Console.warn, Disk.appendText, Disk.readText]
+    existing = loadNotifications()?
+    fresh = newNotifications(existing, entries)
+    written = Disk.appendText(notificationsPath(), renderLines(serializeNotificationLines(fresh)))?
+    _printedCount = printNotifications(fresh)
+    Result.Ok(written)
+
+fn printNotifications(entries: List<Notification>) -> Int
+    ? "Console emission for freshly accepted notifications, returning the count."
+    ! [Console.warn]
+    match entries
+        [] -> 0
+        [entry, ..rest] -> printNotificationAndRest(entry, rest)
+
+fn printNotificationAndRest(entry: Notification, rest: List<Notification>) -> Int
+    ? "Helper that keeps recursive notification printing within expression-oriented syntax."
+    ! [Console.warn]
+    _warned = Console.warn("[{entry.kind}] {entry.taskId}: {entry.message}")
+    1 + printNotifications(rest)
+
+fn serializeNotificationLines(entries: List<Notification>) -> List<String>
+    ? "Serializes notifications for batch append."
+    match entries
+        [] -> []
+        [entry, ..rest] -> List.prepend(serializeNotification(entry), serializeNotificationLines(rest))
+
+verify serializeNotificationLines
+    serializeNotificationLines([]) => []
+    serializeNotificationLines([Notification(key = "n1", taskId = "t1", kind = "overdue", message = "x", createdAt = "2026-03-08T12:00:00Z")]) => ["n1|t1|overdue|x|2026-03-08T12:00:00Z"]

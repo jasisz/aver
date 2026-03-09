@@ -274,7 +274,7 @@ pub enum TopLevel {
     Decision(DecisionBlock),
     Stmt(Stmt),
     TypeDef(TypeDef),
-    /// `effects AppIO = [Console, Disk]` — named effect set (alias)
+    /// Legacy placeholder for removed `effects X = [...]` syntax.
     EffectSet {
         name: String,
         effects: Vec<String>,

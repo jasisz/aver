@@ -12,7 +12,7 @@ pub(crate) fn is_user_type(name: &str, ctx: &CodegenContext) -> bool {
 }
 
 /// Resolve a module-qualified dotted name to `(module_prefix, local_suffix)`.
-/// Example: `Examples.Fibonacci.fib` -> `("Examples.Fibonacci", "fib")`.
+/// Example: `Models.User.nameById` -> `("Models.User", "nameById")`.
 pub(crate) fn resolve_module_call<'a>(
     dotted_name: &'a str,
     ctx: &'a CodegenContext,

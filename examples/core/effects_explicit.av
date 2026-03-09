@@ -1,0 +1,19 @@
+module EffectsExplicit
+    intent =
+        "Demonstrates explicit method-level effects."
+        "Each function declares exactly the service method it calls."
+
+fn greet(name: String) -> Unit
+    ? "Prints a greeting."
+    ! [Console.print]
+    Console.print("Hello, {name}!")
+
+fn farewell(name: String) -> Unit
+    ? "Prints a farewell."
+    ! [Console.print]
+    Console.print("Goodbye, {name}!")
+
+fn main() -> Unit
+    ! [Console.print]
+    greet("Ada")
+    farewell("Ada")

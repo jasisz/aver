@@ -23,6 +23,16 @@ fn parse(src: &str) -> Vec<TopLevel> {
     parser.parse().expect("parse failed")
 }
 
+fn parse_error(src: &str) -> String {
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().expect("lex failed");
+    let mut parser = Parser::new(tokens);
+    parser
+        .parse()
+        .expect_err("expected parse failure")
+        .to_string()
+}
+
 fn errors(src: &str) -> Vec<String> {
     let items = parse(src);
     run_type_check(&items)
@@ -72,6 +82,16 @@ fn assert_error_containing(src: &str, snippet: &str) {
     );
 }
 
+fn assert_parse_error_containing(src: &str, snippet: &str) {
+    let msg = parse_error(src);
+    assert!(
+        msg.contains(snippet),
+        "expected parse error containing {:?}, got: {}",
+        snippet,
+        msg
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Valid programs — must pass with zero errors
 // ---------------------------------------------------------------------------
@@ -98,7 +118,7 @@ fn valid_float_function() {
 
 #[test]
 fn valid_unit_function() {
-    assert_no_errors("fn noop() -> Unit\n    ! [Console]\n    Console.print(\"hi\")\n");
+    assert_no_errors("fn noop() -> Unit\n    ! [Console.print]\n    Console.print(\"hi\")\n");
 }
 
 #[test]
@@ -276,7 +296,7 @@ fn valid_higher_order_function_param_call() {
 
 #[test]
 fn valid_pure_callback_for_effectful_slot() {
-    let src = "fn applyOnce(f: Fn(Int) -> Int ! [Console], x: Int) -> Int\n    ! [Console]\n    f(x)\nfn pureInc(n: Int) -> Int\n    n + 1\nfn main() -> Unit\n    ! [Console]\n    r = applyOnce(pureInc, 10)\n";
+    let src = "fn applyOnce(f: Fn(Int) -> Int ! [Console.print], x: Int) -> Int\n    ! [Console.print]\n    f(x)\nfn pureInc(n: Int) -> Int\n    n + 1\nfn main() -> Unit\n    ! [Console.print]\n    r = applyOnce(pureInc, 10)\n";
     assert_no_errors(src);
 }
 
@@ -298,33 +318,36 @@ fn invalid_int_float_no_widening() {
 
 #[test]
 fn valid_hello_av() {
-    let src = std::fs::read_to_string("examples/hello.av").expect("examples/hello.av not found");
+    let src = std::fs::read_to_string("examples/core/hello.av")
+        .expect("examples/core/hello.av not found");
     assert_no_errors(&src);
 }
 
 #[test]
 fn valid_calculator_av() {
-    let src = std::fs::read_to_string("examples/calculator.av")
-        .expect("examples/calculator.av not found");
+    let src = std::fs::read_to_string("examples/core/calculator.av")
+        .expect("examples/core/calculator.av not found");
     assert_no_errors(&src);
 }
 
 #[test]
 fn valid_shapes_av() {
-    let src = std::fs::read_to_string("examples/shapes.av").expect("examples/shapes.av not found");
+    let src = std::fs::read_to_string("examples/core/shapes.av")
+        .expect("examples/core/shapes.av not found");
     assert_no_errors(&src);
 }
 
 #[test]
 fn valid_lists_av() {
-    let src = std::fs::read_to_string("examples/lists.av").expect("examples/lists.av not found");
+    let src = std::fs::read_to_string("examples/core/lists.av")
+        .expect("examples/core/lists.av not found");
     assert_no_errors(&src);
 }
 
 #[test]
 fn valid_app_dot_av() {
-    let src =
-        std::fs::read_to_string("examples/app_dot.av").expect("examples/app_dot.av not found");
+    let src = std::fs::read_to_string("examples/modules/app_dot.av")
+        .expect("examples/modules/app_dot.av not found");
     let items = parse(&src);
     let errs = run_type_check_with_base(&items, Some("."))
         .into_iter()
@@ -339,7 +362,8 @@ fn valid_app_dot_av() {
 
 #[test]
 fn valid_app_av() {
-    let src = std::fs::read_to_string("examples/app.av").expect("examples/app.av not found");
+    let src = std::fs::read_to_string("examples/modules/app.av")
+        .expect("examples/modules/app.av not found");
     let items = parse(&src);
     let errs = run_type_check_with_base(&items, Some("."))
         .into_iter()
@@ -636,8 +660,8 @@ fn error_list_concat_mismatched_element_type() {
 
 #[test]
 fn error_effectful_callback_passed_to_pure_slot() {
-    let src = "fn applyPure(f: Fn(Int) -> Int, x: Int) -> Int\n    f(x)\nfn logInc(n: Int) -> Int\n    ! [Console]\n    Console.print(n)\n    n + 1\nfn main() -> Unit\n    ! [Console]\n    r = applyPure(logInc, 1)\n";
-    assert_error_containing(src, "Fn(Int) -> Int ! [Console]");
+    let src = "fn applyPure(f: Fn(Int) -> Int, x: Int) -> Int\n    f(x)\nfn logInc(n: Int) -> Int\n    ! [Console.print]\n    Console.print(n)\n    n + 1\nfn main() -> Unit\n    ! [Console.print]\n    r = applyPure(logInc, 1)\n";
+    assert_error_containing(src, "Fn(Int) -> Int ! [Console.print]");
 }
 
 #[test]
@@ -706,8 +730,8 @@ fn error_verify_undeclared_console_effect() {
 
 #[test]
 fn error_undeclared_effect_from_function_typed_callback() {
-    let src = "fn applyOnce(f: Fn(Int) -> Int ! [Console], x: Int) -> Int\n    f(x)\nfn pureInc(n: Int) -> Int\n    n + 1\n";
-    assert_error_containing(src, "has effect 'Console");
+    let src = "fn applyOnce(f: Fn(Int) -> Int ! [Console.print], x: Int) -> Int\n    f(x)\nfn pureInc(n: Int) -> Int\n    n + 1\n";
+    assert_error_containing(src, "has effect 'Console.print");
 }
 
 #[test]
@@ -732,7 +756,7 @@ fn error_call_to_unexposed_module_member() {
 #[test]
 fn valid_effect_propagated_correctly() {
     // caller declares the same effect as callee
-    let src = "fn log(msg: String) -> Unit\n    ! [Console]\n    Console.print(msg)\nfn caller(x: String) -> Unit\n    ! [Console]\n    log(x)\n";
+    let src = "fn log(msg: String) -> Unit\n    ! [Console.print]\n    Console.print(msg)\nfn caller(x: String) -> Unit\n    ! [Console.print]\n    log(x)\n";
     assert_no_errors(src);
 }
 
@@ -862,42 +886,38 @@ fn valid_function_using_user_type_parameter() {
 }
 
 #[test]
-fn valid_effect_set_alias_satisfies_effect() {
-    // Function declares ! [AppIO] where AppIO = [Console] — should pass
+fn effect_aliases_are_parse_errors() {
     let src = concat!(
-        "effects AppIO = [Console]\n",
+        "effects AppIO = [Console.print]\n",
         "fn greet() -> Unit\n",
         "    ! [AppIO]\n",
-        "    Console.print(\"hi\")\n",
+        "    Console.print(\"hi\")\n"
     );
-    assert_no_errors(src);
+    assert_parse_error_containing(src, "Effect aliases were removed");
 }
 
 #[test]
-fn valid_effect_set_multi_alias() {
-    // AppIO covers both Console and Disk — caller with AppIO can call both
+fn exact_effects_must_be_declared_directly() {
     let src = concat!(
-        "effects AppIO = [Console]\n",
         "fn log(msg: String) -> Unit\n",
-        "    ! [Console]\n",
+        "    ! [Console.print]\n",
         "    Console.print(msg)\n",
         "fn process() -> Unit\n",
-        "    ! [AppIO]\n",
+        "    ! [Console.print]\n",
         "    log(\"processing\")\n",
     );
     assert_no_errors(src);
 }
 
 #[test]
-fn error_effect_set_alias_insufficient() {
-    // Function declares ! [Silent] where Silent = [] — calling print should fail
+fn removed_effect_aliases_fail_before_typecheck() {
     let src = concat!(
         "effects Silent = []\n",
         "fn greet() -> Unit\n",
         "    ! [Silent]\n",
         "    Console.print(\"hi\")\n",
     );
-    assert_error_containing(src, "has effect 'Console.print'");
+    assert_parse_error_containing(src, "Effect aliases were removed");
 }
 
 // ---------------------------------------------------------------------------
@@ -926,7 +946,7 @@ fn error_network_post_without_effect() {
 fn valid_network_get_with_effect() {
     let src = concat!(
         "fn fetch(url: String) -> Result<HttpResponse, String>\n",
-        "    ! [Http]\n",
+        "    ! [Http.get]\n",
         "    Http.get(url)\n",
     );
     assert_no_errors(src);
@@ -936,7 +956,7 @@ fn valid_network_get_with_effect() {
 fn valid_network_post_with_effect() {
     let src = concat!(
         "fn send(url: String) -> Result<HttpResponse, String>\n",
-        "    ! [Http]\n",
+        "    ! [Http.post]\n",
         "    Http.post(url, \"{}\", \"application/json\", [])\n",
     );
     assert_no_errors(src);
@@ -946,7 +966,7 @@ fn valid_network_post_with_effect() {
 fn valid_network_post_with_typed_headers() {
     let src = concat!(
         "fn send(url: String) -> Result<HttpResponse, String>\n",
-        "    ! [Http]\n",
+        "    ! [Http.post]\n",
         "    headers = [Header(name = \"Authorization\", value = \"Bearer token\")]\n",
         "    Http.post(url, \"{}\", \"application/json\", headers)\n",
     );
@@ -957,7 +977,7 @@ fn valid_network_post_with_typed_headers() {
 fn error_network_post_headers_wrong_type() {
     let src = concat!(
         "fn send(url: String) -> Result<HttpResponse, String>\n",
-        "    ! [Http]\n",
+        "    ! [Http.post]\n",
         "    Http.post(url, \"{}\", \"application/json\", [\"bad\"])\n",
     );
     assert_error_containing(src, "Argument 4 of 'Http.post': expected List<Header>");
@@ -967,7 +987,7 @@ fn error_network_post_headers_wrong_type() {
 fn valid_network_all_methods_with_effect() {
     let src = concat!(
         "fn callAll(url: String) -> Result<HttpResponse, String>\n",
-        "    ! [Http]\n",
+        "    ! [Http.delete]\n",
         "    Http.delete(url)\n",
     );
     assert_no_errors(src);
@@ -999,7 +1019,7 @@ fn error_disk_write_without_effect() {
 fn valid_disk_read_with_effect() {
     let src = concat!(
         "fn loadCfg() -> Result<String, String>\n",
-        "    ! [Disk]\n",
+        "    ! [Disk.readText]\n",
         "    Disk.readText(\"config.av\")\n",
     );
     assert_no_errors(src);
@@ -1009,7 +1029,7 @@ fn valid_disk_read_with_effect() {
 fn valid_disk_all_methods_with_effect() {
     let src = concat!(
         "fn ops(p: String) -> Result<String, String>\n",
-        "    ! [Disk]\n",
+        "    ! [Disk.writeText, Disk.appendText, Disk.exists, Disk.delete, Disk.listDir, Disk.makeDir, Disk.readText]\n",
         "    Disk.writeText(p, \"x\")\n",
         "    Disk.appendText(p, \"y\")\n",
         "    Disk.exists(p)\n",
@@ -1056,7 +1076,7 @@ fn error_console_read_line_without_effect() {
 fn valid_console_all_methods_with_effect() {
     let src = concat!(
         "fn run(msg: String) -> Result<String, String>\n",
-        "    ! [Console]\n",
+        "    ! [Console.print, Console.error, Console.warn, Console.readLine]\n",
         "    Console.print(msg)\n",
         "    Console.error(msg)\n",
         "    Console.warn(msg)\n",
@@ -1091,7 +1111,7 @@ fn error_time_sleep_without_effect() {
 fn valid_time_calls_with_effect() {
     let src = concat!(
         "fn run() -> Int\n",
-        "    ! [Time]\n",
+        "    ! [Time.sleep, Time.unixMs]\n",
         "    Time.sleep(1)\n",
         "    Time.unixMs()\n",
     );
@@ -1102,7 +1122,7 @@ fn valid_time_calls_with_effect() {
 fn error_time_sleep_negative_constant() {
     let src = concat!(
         "fn wait() -> Unit\n",
-        "    ! [Time]\n",
+        "    ! [Time.sleep]\n",
         "    Time.sleep(0 - 1)\n",
     );
     assert_error_containing(
@@ -1131,7 +1151,7 @@ fn error_env_set_without_effect() {
 fn valid_env_get_and_set_with_effect() {
     let src = concat!(
         "fn run() -> Option<String>\n",
-        "    ! [Env]\n",
+        "    ! [Env.set, Env.get]\n",
         "    Env.set(\"A\", \"1\")\n",
         "    Env.get(\"A\")\n",
     );
@@ -1217,7 +1237,7 @@ fn error_user_record_unknown_field() {
 fn valid_tcp_send_with_effect() {
     let src = concat!(
         "fn talk(host: String, port: Int, msg: String) -> Result<String, String>\n",
-        "    ! [Tcp]\n",
+        "    ! [Tcp.send]\n",
         "    Tcp.send(host, port, msg)\n",
     );
     assert_no_errors(src);
@@ -1227,7 +1247,7 @@ fn valid_tcp_send_with_effect() {
 fn valid_tcp_ping_with_effect() {
     let src = concat!(
         "fn check(host: String, port: Int) -> Result<Unit, String>\n",
-        "    ! [Tcp]\n",
+        "    ! [Tcp.ping]\n",
         "    Tcp.ping(host, port)\n",
     );
     assert_no_errors(src);
@@ -1257,7 +1277,7 @@ fn valid_http_server_listen_with_context() {
         "fn handle(ctx: String, req: HttpRequest) -> HttpResponse\n",
         "    HttpResponse(status = 200, body = ctx, headers = [])\n",
         "fn main() -> Unit\n",
-        "    ! [HttpServer]\n",
+        "    ! [HttpServer.listenWith]\n",
         "    HttpServer.listenWith(8080, \"ok\", handle)\n",
     );
     assert_no_errors(src);
@@ -1269,7 +1289,7 @@ fn error_http_server_listen_with_bad_handler_signature_uses_any_in_message() {
         "fn bad(ctx: Int, req: Int) -> HttpResponse\n",
         "    HttpResponse(status = 200, body = \"ok\", headers = [])\n",
         "fn main() -> Unit\n",
-        "    ! [HttpServer]\n",
+        "    ! [HttpServer.listenWith]\n",
         "    HttpServer.listenWith(8080, \"ok\", bad)\n",
     );
     assert_error_containing(src, "expected Fn(Any, HttpRequest) -> HttpResponse");
@@ -1279,7 +1299,7 @@ fn error_http_server_listen_with_bad_handler_signature_uses_any_in_message() {
 fn valid_tcp_connect_returns_connection() {
     let src = concat!(
         "fn open(host: String, port: Int) -> Result<Tcp.Connection, String>\n",
-        "    ! [Tcp]\n",
+        "    ! [Tcp.connect]\n",
         "    Tcp.connect(host, port)\n",
     );
     assert_no_errors(src);
@@ -1289,7 +1309,7 @@ fn valid_tcp_connect_returns_connection() {
 fn valid_tcp_write_line_with_connection() {
     let src = concat!(
         "fn send(conn: Tcp.Connection, msg: String) -> Result<Unit, String>\n",
-        "    ! [Tcp]\n",
+        "    ! [Tcp.writeLine]\n",
         "    Tcp.writeLine(conn, msg)\n",
     );
     assert_no_errors(src);
@@ -1299,7 +1319,7 @@ fn valid_tcp_write_line_with_connection() {
 fn valid_tcp_read_line_with_connection() {
     let src = concat!(
         "fn recv(conn: Tcp.Connection) -> Result<String, String>\n",
-        "    ! [Tcp]\n",
+        "    ! [Tcp.readLine]\n",
         "    Tcp.readLine(conn)\n",
     );
     assert_no_errors(src);
@@ -1309,7 +1329,7 @@ fn valid_tcp_read_line_with_connection() {
 fn valid_tcp_close_with_connection() {
     let src = concat!(
         "fn done(conn: Tcp.Connection) -> Result<Unit, String>\n",
-        "    ! [Tcp]\n",
+        "    ! [Tcp.close]\n",
         "    Tcp.close(conn)\n",
     );
     assert_no_errors(src);
@@ -1328,7 +1348,7 @@ fn valid_tcp_connection_field_access() {
 fn error_tcp_write_line_with_string() {
     let src = concat!(
         "fn send(conn: String, msg: String) -> Result<Unit, String>\n",
-        "    ! [Tcp]\n",
+        "    ! [Tcp.writeLine]\n",
         "    Tcp.writeLine(conn, msg)\n",
     );
     assert_error_containing(src, "expected Tcp.Connection");
@@ -1770,14 +1790,13 @@ fn valid_granular_effect_http_get() {
 }
 
 #[test]
-fn valid_parent_effect_covers_child() {
-    // ! [Http] allows Http.get (backward compatibility)
+fn parent_effect_does_not_cover_child() {
     let src = concat!(
         "fn fetch(url: String) -> Result<HttpResponse, String>\n",
         "    ! [Http]\n",
         "    Http.get(url)\n",
     );
-    assert_no_errors(src);
+    assert_error_containing(src, "has effect 'Http.get'");
 }
 
 #[test]
@@ -1792,8 +1811,7 @@ fn error_granular_effect_blocks_other_method() {
 }
 
 #[test]
-fn valid_granular_effect_set_alias() {
-    // effects ReadOnly = [Http.get, Disk.readText]
+fn removed_effect_alias_parse_error() {
     let src = concat!(
         "effects ReadOnly = [Http.get, Disk.readText]\n",
         "fn load(url: String, path: String) -> Result<String, String>\n",
@@ -1801,27 +1819,25 @@ fn valid_granular_effect_set_alias() {
         "    Http.get(url)\n",
         "    Disk.readText(path)\n",
     );
-    assert_no_errors(src);
+    assert_parse_error_containing(src, "Effect aliases were removed");
 }
 
 #[test]
-fn error_granular_effect_set_alias_blocks_write() {
-    // effects ReadOnly = [Http.get, Disk.readText] blocks Disk.writeText
+fn removed_effect_alias_blocks_nothing_because_it_is_parse_error() {
     let src = concat!(
         "effects ReadOnly = [Http.get, Disk.readText]\n",
         "fn save(path: String) -> Result<Unit, String>\n",
         "    ! [ReadOnly]\n",
         "    Disk.writeText(path, \"data\")\n",
     );
-    assert_error_containing(src, "has effect 'Disk.writeText'");
+    assert_parse_error_containing(src, "Effect aliases were removed");
 }
 
 #[test]
-fn valid_mix_parent_and_granular_effects() {
-    // ! [Http, Disk.readText] allows Http.post + Disk.readText but not Disk.writeText
+fn valid_mix_explicit_effects() {
     let src = concat!(
         "fn mixed(url: String, path: String) -> Result<String, String>\n",
-        "    ! [Http, Disk.readText]\n",
+        "    ! [Http.post, Disk.readText]\n",
         "    Http.post(url, \"{}\", \"application/json\", [])\n",
         "    Disk.readText(path)\n",
     );
@@ -1829,11 +1845,10 @@ fn valid_mix_parent_and_granular_effects() {
 }
 
 #[test]
-fn error_mix_parent_and_granular_blocks_uncovered() {
-    // ! [Http, Disk.readText] does NOT cover Disk.writeText
+fn error_mix_explicit_effects_blocks_uncovered() {
     let src = concat!(
         "fn mixed(url: String, path: String) -> Result<Unit, String>\n",
-        "    ! [Http, Disk.readText]\n",
+        "    ! [Http.post, Disk.readText]\n",
         "    Disk.writeText(path, \"data\")\n",
     );
     assert_error_containing(src, "has effect 'Disk.writeText'");
@@ -1863,8 +1878,7 @@ fn error_granular_console_blocks_other_method() {
 }
 
 #[test]
-fn error_cyclic_effect_alias() {
-    // Cyclic aliases should be reported as errors
+fn error_effect_alias_syntax_is_removed_even_for_cycles() {
     let src = concat!(
         "effects A = [B]\n",
         "effects B = [A]\n",
@@ -1872,5 +1886,5 @@ fn error_cyclic_effect_alias() {
         "    ! [A]\n",
         "    Console.print(\"hi\")\n",
     );
-    assert_error_containing(src, "Cyclic effect alias");
+    assert_parse_error_containing(src, "Effect aliases were removed");
 }

@@ -95,17 +95,18 @@ m = {"key" => value, "other" => 42}
 
 `=>` is required inside map literals; `:` stays type-only.
 
-## Effect aliases
+## Effects
 
-Named effect sets reduce repetition:
+Effects are exact method names:
 
 ```aver
-effects AppIO = [Console.print, Disk.readText]
-
 fn main() -> Unit
-    ! [AppIO]
-    // ...
+    ! [Console.print, Disk.readText]
+    Console.print("starting")
+    _ = Disk.readText("data.txt")
 ```
+
+Broad namespace declarations such as `! [Http]` do not cover `Http.get`, and `effects X = [...]` aliases are no longer supported.
 
 ## Command-line arguments
 
@@ -135,6 +136,11 @@ fn fetchUser(id: String) -> Result<HttpResponse, String>
 ```
 
 - `? "..."` — optional prose description (part of the signature)
+- deeper-indented string lines continue the same description:
+  ```aver
+  ? "Starts the CLI."
+    "Dispatches one argv command."
+  ```
 - `aver check` warns when non-`main` functions omit the description
 - `! [Effect]` — optional effect declaration (statically and runtime enforced)
 - method-level effects are supported: `Http.get`, `Disk.readText`, `Console.print`
@@ -194,6 +200,18 @@ All user-defined functions are top-level. At call time, a function sees globals 
 Top-level functions are still first-class values, so higher-order builtins such as `HttpServer.listenWith(port, context, handle)` work without introducing lambda syntax or hidden captures.
 There is no lambda syntax. List processing is typically written with recursion and pattern matching rather than callback-based helpers.
 
+This means `Fn(...) -> ...` is a real type, but in practice it is mostly used for named callbacks and service handlers, not for closure-heavy functional style.
+
+```aver
+fn applyTwice(f: Fn(Int) -> Int, x: Int) -> Int
+    f(f(x))
+
+fn inc(n: Int) -> Int
+    n + 1
+```
+
+Most application code in Aver stays first-order and explicit. Use function parameters when they make an API cleaner, not as a default abstraction tool.
+
 ## Common patterns
 
 ```aver
@@ -228,12 +246,14 @@ Each module file must start with `module <Name>` and contain exactly one module 
 ```aver
 module Payments
     intent = "Processes transactions."
-    depends [Examples.Fibonacci]
+    depends [Data.Fibonacci]
     exposes [charge]
 ```
 
-`depends [Examples.Fibonacci]` → `examples/fibonacci.av`, call as `Examples.Fibonacci.fn(...)`.
-`depends [Examples.Models.User]` → `examples/models/user.av`, call as `Examples.Models.User.fn(...)`.
+With `--module-root examples`:
+
+- `depends [Data.Fibonacci]` → `examples/data/fibonacci.av`, call as `Data.Fibonacci.fn(...)`
+- `depends [Modules.Models.User]` → `examples/modules/models/user.av`, call as `Modules.Models.User.fn(...)`
 
 ## Static type checking
 

@@ -1,0 +1,114 @@
+module Cli
+    intent =
+        "Thin argv adapter for the workflow engine showcase."
+        "CLI parsing and rendering live in separate modules so the reader can understand the"
+        "core flow without treating the shell adapter as application logic."
+    exposes [runCli]
+    depends [App.Parse, App.Render, App.Commands, App.Queries, Infra.Store, Infra.Audit, Infra.Notify]
+
+fn helpLines() -> List<String>
+    ? "User-facing help for the argv CLI."
+    [
+        "Workflow Engine CLI",
+        "Usage: <command> [args]",
+        "Use shell quotes for values with spaces.",
+        "Use '-' for an optional empty field.",
+        "",
+        "Projects:",
+        "  create_project project_id name",
+        "  archive_project project_id",
+        "",
+        "Tasks:",
+        "  create_task project_id task_id title priority [tags] [deadline]",
+        "  rename_task task_id title",
+        "  start_task task_id",
+        "  block_task task_id reason",
+        "  complete_task task_id",
+        "  reopen_task task_id reason",
+        "  change_priority task_id priority",
+        "  add_tag task_id tag",
+        "  remove_tag task_id tag",
+        "  add_comment task_id author body",
+        "  set_deadline task_id deadline",
+        "  clear_deadline task_id",
+        "  archive_task task_id",
+        "",
+        "Queries:",
+        "  list_tasks [project_id]",
+        "  show_task task_id",
+        "  show_audit [subject_id]",
+        "",
+        "Maintenance:",
+        "  run_rules [task_id]",
+        "  help",
+    ]
+
+verify helpLines
+    List.get(helpLines(), 0) => Option.Some("Workflow Engine CLI")
+    List.contains(helpLines(), "  show_task task_id") => true
+
+fn initCli() -> Result<Unit, String>
+    ? "Ensures all local workflow files exist before command execution."
+    ! [Disk.appendText, Disk.exists, Disk.makeDir, Disk.writeText]
+    _store = Infra.Store.initStore()?
+    _audit = Infra.Audit.initAudit()?
+    _notify = Infra.Notify.initNotify()?
+    Result.Ok(Unit)
+
+fn runCli() -> Unit
+    ? "Starts the workflow engine argv CLI."
+    ! [
+        Args.get,
+        Console.print, Console.warn,
+        Disk.appendText, Disk.exists, Disk.makeDir, Disk.readText, Disk.writeText,
+        Time.now,
+    ]
+    match initCli()
+        Result.Err(msg) -> Console.print("BOOT ERROR: " + msg)
+        Result.Ok(_) -> runArgs(Args.get())
+
+fn runArgs(args: List<String>) -> Unit
+    ? "Parses argv input, executes one action, and prints the result."
+    ! [
+        Console.print, Console.warn,
+        Disk.appendText, Disk.readText, Disk.writeText,
+        Time.now,
+    ]
+    match executeArgs(args)
+        Result.Ok(lines) -> printLines(lines)
+        Result.Err(msg) -> printLines(errorLines(msg))
+
+fn executeArgs(args: List<String>) -> Result<List<String>, String>
+    ? "Runs one argv-style command and returns rendered output lines."
+    ! [
+        Console.warn,
+        Disk.appendText, Disk.readText, Disk.writeText,
+        Time.now,
+    ]
+    input = App.Parse.parseArgs(args)?
+    executeInput(input)
+
+fn executeInput(input: Input) -> Result<List<String>, String>
+    ? "Thin adapter from parsed CLI input to app entrypoints."
+    ! [
+        Console.warn,
+        Disk.appendText, Disk.readText, Disk.writeText,
+        Time.now,
+    ]
+    match input
+        Input.ShowHelp -> Result.Ok(helpLines())
+        Input.RunCommand(command) -> App.Render.renderCommand(App.Commands.execute(command))
+        Input.RunQuery(query) -> App.Render.renderQuery(App.Queries.run(query))
+
+fn errorLines(msg: String) -> List<String>
+    ? "CLI error block followed by help text."
+    List.concat(["ERROR: " + msg, ""], helpLines())
+
+verify errorLines
+    List.get(errorLines("bad"), 0) => Option.Some("ERROR: bad")
+    List.contains(errorLines("bad"), "Workflow Engine CLI") => true
+
+fn printLines(lines: List<String>) -> Unit
+    ? "Prints a rendered block as one console write."
+    ! [Console.print]
+    Console.print(String.join(lines, "\n"))

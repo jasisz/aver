@@ -28,7 +28,7 @@ fn askName() -> String
 
 fn main() -> Unit
     ? "Full console demo: greet, warn, error, then ask for input."
-    ! [Console.print, Console.error, Console.warn, Console.readLine]
+    ! [Console.error, Console.print, Console.readLine, Console.warn]
     greet("world")
     remindUser("This is just a demo — no real I/O side effects here.")
     reportProblem("Something went wrong (not really).")

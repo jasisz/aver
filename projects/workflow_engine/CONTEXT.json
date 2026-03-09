@@ -1,0 +1,267 @@
+{
+  "schema_version": 5,
+  "entry": "main.av",
+  "selection": {
+    "depth_mode": "auto",
+    "budget_bytes": 24576,
+    "included_depth": 2,
+    "next_depth": 3,
+    "next_used_bytes": 27727,
+    "truncated": true,
+    "used_bytes": 15720
+  },
+  "modules": [
+    {
+      "source_file": "main.av",
+      "module": "Main",
+      "intent": "Workflow engine argv entrypoint. Keeps the top-level module thin so the CLI and application core stay in their own modules and `aver context` has a stable root to resume from.",
+      "depends": ["App.Cli"],
+      "api_effects": [],
+      "module_effects": ["Args.get", "Console.print", "Console.warn", "Disk.appendText", "Disk.exists", "Disk.makeDir", "Disk.readText", "Disk.writeText", "Time.now"],
+      "main_effects": ["Args.get", "Console.print", "Console.warn", "Disk.appendText", "Disk.exists", "Disk.makeDir", "Disk.readText", "Disk.writeText", "Time.now"]
+    },
+    {
+      "source_file": "app/cli.av",
+      "module": "Cli",
+      "intent": "Thin argv adapter for the workflow engine showcase. CLI parsing and rendering live in separate modules so the reader can understand the core flow without treating the shell adapter as application logic.",
+      "depends": ["App.Parse", "App.Render", "App.Commands", "App.Queries", "Infra.Store", "Infra.Audit", "Infra.Notify"],
+      "effects": ["Args.get", "Console.print", "Console.warn", "Disk.appendText", "Disk.exists", "Disk.makeDir", "Disk.readText", "Disk.writeText", "Time.now"],
+      "functions": [
+        {
+          "sig": "runCli() -> Unit",
+          "effects": ["Args.get", "Console.print", "Console.warn", "Disk.appendText", "Disk.exists", "Disk.makeDir", "Disk.readText", "Disk.writeText", "Time.now"],
+          "desc": "Starts the workflow engine argv CLI."
+        }
+      ]
+    },
+    {
+      "source_file": "app/parse.av",
+      "module": "Parse",
+      "intent": "Plain argv parsing for the workflow engine CLI. The parser stays shell-friendly and returns small typed inputs so the CLI adapter does not need to know any command semantics.",
+      "depends": ["App.Commands", "App.Queries", "Domain.Types"],
+      "types": [
+        {"name": "Input", "variants": ["ShowHelp", {"name": "RunCommand", "fields": ["Command"]}, {"name": "RunQuery", "fields": ["Query"]}]}
+      ],
+      "functions": [
+        {
+          "sig": "parseArgs(args: List<String>) -> Result<Input, String>",
+          "desc": "Parses argv-style input into a command, query, or help action.",
+          "verify_count": 4,
+          "verify": ["parseArgs([]) → Result.Ok(Input.ShowHelp)", "parseArgs([\"help\"]) → Result.Ok(Input.ShowHelp)", "parseArgs([\"list_tasks\"]) → Result.Ok(Input.RunQuery(Query.ListTasks(Option.None)))"]
+        }
+      ]
+    },
+    {
+      "source_file": "app/render.av",
+      "module": "Render",
+      "intent": "Shell-friendly rendering for workflow engine command and query results. Formatting stays dumb and explicit so the interesting orchestration remains in the app and domain layers, not in presentation glue.",
+      "depends": ["App.Commands", "App.Queries", "Domain.Types", "Domain.Events", "Domain.Views"],
+      "functions": [
+        {
+          "sig": "renderCommand(result: Result<CommandReport, String>) -> Result<List<String>, String>",
+          "desc": "Maps command execution into rendered output.",
+          "verify_count": 2,
+          "verify": ["renderCommand(Result.Err(\"boom\")) → Result.Err(\"boom\")"]
+        },
+        {
+          "sig": "renderQuery(result: Result<QueryOutput, String>) -> Result<List<String>, String>",
+          "desc": "Maps query execution into rendered output.",
+          "verify_count": 2,
+          "verify": ["renderQuery(Result.Ok(QueryOutput.AuditTrail([]))) → Result.Ok([\"audits: 0\"])", "renderQuery(Result.Err(\"boom\")) → Result.Err(\"boom\")"]
+        }
+      ]
+    },
+    {
+      "source_file": "app/commands.av",
+      "module": "Commands",
+      "intent": "Effectful command handlers for workflow mutations. The app layer is intentionally small: it decides a plan from persisted state, derives follow-up rule effects as data, then commits and dispatches that plan.",
+      "depends": ["Domain.Types", "Domain.Projects", "Domain.Tasks", "Domain.Events", "Domain.Rules", "Domain.Validation", "Infra.Store", "Infra.Clock", "Infra.Notify", "Infra.Audit"],
+      "effects": ["Console.warn", "Disk.appendText", "Disk.readText", "Disk.writeText", "Time.now"],
+      "types": [
+        {"name": "Command", "variants": [{"name": "CreateProject", "fields": ["String", "String"]}, {"name": "ArchiveProject", "fields": ["String"]}, {"name": "CreateTask", "fields": ["String", "String", "String", "Priority", "List<String>", "Option<String>"]}, {"name": "RenameTask", "fields": ["String", "String"]}, {"name": "StartTask", "fields": ["String"]}, {"name": "BlockTask", "fields": ["String", "String"]}, {"name": "CompleteTask", "fields": ["String"]}, {"name": "ReopenTask", "fields": ["String", "String"]}, {"name": "ChangePriority", "fields": ["String", "Priority"]}, {"name": "AddTag", "fields": ["String", "String"]}, {"name": "RemoveTag", "fields": ["String", "String"]}, {"name": "AddComment", "fields": ["String", "String", "String"]}, {"name": "SetDeadline", "fields": ["String", "String"]}, {"name": "ClearDeadline", "fields": ["String"]}, {"name": "ArchiveTask", "fields": ["String"]}, {"name": "RunRules", "fields": ["Option<String>"]}]},
+        {"name": "CommandPlan", "variants": [{"name": "SaveProjects", "fields": ["ProjectPlan"]}, {"name": "AppendEvents", "fields": ["EventPlan"]}]}
+      ],
+      "records": [
+        {"name": "CommandReport", "fields": [{"name": "summary", "type": "String"}, {"name": "subjectId", "type": "String"}, {"name": "events", "type": "List<TaskEventRecord>"}, {"name": "notifications", "type": "List<Notification>"}, {"name": "audits", "type": "List<AuditEntry>"}]},
+        {"name": "TaskContext", "fields": [{"name": "project", "type": "Project"}, {"name": "task", "type": "Task"}, {"name": "persistedEvents", "type": "List<TaskEventRecord>"}, {"name": "latestPersistedEvent", "type": "Option<TaskEventRecord>"}, {"name": "nextSeq", "type": "Int"}]},
+        {"name": "ProjectPlan", "fields": [{"name": "summary", "type": "String"}, {"name": "subjectId", "type": "String"}, {"name": "projects", "type": "List<Project>"}, {"name": "audits", "type": "List<AuditEntry>"}]},
+        {"name": "EventPlan", "fields": [{"name": "summary", "type": "String"}, {"name": "subjectId", "type": "String"}, {"name": "events", "type": "List<TaskEventRecord>"}, {"name": "notifications", "type": "List<Notification>"}, {"name": "audits", "type": "List<AuditEntry>"}]}
+      ],
+      "functions": [
+        {
+          "sig": "execute(command: Command) -> Result<CommandReport, String>",
+          "effects": ["Console.warn", "Disk.appendText", "Disk.readText", "Disk.writeText", "Time.now"],
+          "desc": "Executes one workflow command through decide, commit, and dispatch."
+        }
+      ]
+    },
+    {
+      "source_file": "app/queries.av",
+      "module": "Queries",
+      "intent": "Effectful read-model assembly for the workflow engine CLI. Queries load persisted state, replay tasks, and derive views without mixing those concerns into the parser or the pure domain modules.",
+      "depends": ["Domain.Types", "Domain.Projects", "Domain.Views", "Domain.Events", "Infra.Store", "Infra.Audit", "Infra.Notify", "Infra.Clock"],
+      "effects": ["Disk.readText", "Time.now"],
+      "types": [
+        {"name": "Query", "variants": [{"name": "ListTasks", "fields": ["Option<String>"]}, {"name": "ShowTask", "fields": ["String"]}, {"name": "ShowAudit", "fields": ["Option<String>"]}]},
+        {"name": "QueryOutput", "variants": [{"name": "TaskList", "fields": ["List<TaskSummary>"]}, {"name": "TaskDetail", "fields": ["TaskDetails"]}, {"name": "AuditTrail", "fields": ["List<AuditEntry>"]}]}
+      ],
+      "records": [
+        {"name": "TaskDetails", "fields": [{"name": "project", "type": "Project"}, {"name": "task", "type": "Task"}, {"name": "view", "type": "TaskView"}, {"name": "history", "type": "List<TaskEventRecord>"}, {"name": "audits", "type": "List<AuditEntry>"}, {"name": "notifications", "type": "List<Notification>"}]}
+      ],
+      "functions": [
+        {
+          "sig": "run(query: Query) -> Result<QueryOutput, String>",
+          "effects": ["Disk.readText", "Time.now"],
+          "desc": "Executes one read-only query over persisted workflow state."
+        }
+      ]
+    },
+    {
+      "source_file": "infra/store.av",
+      "module": "Store",
+      "intent": "Flat-file persistence for projects and append-only task events. This module owns file formats and append/write primitives; replay stays in the domain so the app core reads like event sourcing instead of storage magic.",
+      "depends": ["Domain.Types", "Infra.Codec"],
+      "effects": ["Disk.appendText", "Disk.exists", "Disk.makeDir", "Disk.readText", "Disk.writeText"],
+      "functions": [
+        {
+          "sig": "dataDir() -> String",
+          "desc": "Base directory for workflow engine files.",
+          "verify_count": 1,
+          "verify": ["dataDir() → \"/tmp/aver_workflow_engine\""]
+        },
+        {
+          "sig": "initStore() -> Result<Unit, String>",
+          "effects": ["Disk.appendText", "Disk.exists", "Disk.makeDir", "Disk.writeText"],
+          "desc": "Ensures the storage directory and core files exist."
+        },
+        {
+          "sig": "loadProjects() -> Result<List<Project>, String>",
+          "effects": ["Disk.readText"],
+          "desc": "Reads all projects from disk."
+        },
+        {
+          "sig": "saveProjects(projects: List<Project>) -> Result<Unit, String>",
+          "effects": ["Disk.writeText"],
+          "desc": "Rewrites project state as one whole file."
+        },
+        {
+          "sig": "loadTaskEvents() -> Result<List<TaskEventRecord>, String>",
+          "effects": ["Disk.readText"],
+          "desc": "Reads the append-only task event log."
+        },
+        {
+          "sig": "appendTaskEvents(entries: List<TaskEventRecord>) -> Result<Unit, String>",
+          "effects": ["Disk.appendText"],
+          "desc": "Appends many serialized task events in one write."
+        }
+      ]
+    },
+    {
+      "source_file": "infra/audit.av",
+      "module": "Audit",
+      "intent": "Audit trail persistence for workflow actions and rule follow-ups. Audit entries stay outside the task event log because some audit records explain why a decision happened rather than representing state reconstruction inputs.",
+      "depends": ["Domain.Types", "Infra.Codec", "Infra.Store"],
+      "effects": ["Disk.appendText", "Disk.exists", "Disk.makeDir", "Disk.readText", "Disk.writeText"],
+      "functions": [
+        {
+          "sig": "initAudit() -> Result<Unit, String>",
+          "effects": ["Disk.appendText", "Disk.exists", "Disk.makeDir", "Disk.writeText"],
+          "desc": "Ensures the audit file exists."
+        },
+        {
+          "sig": "loadEntries() -> Result<List<AuditEntry>, String>",
+          "effects": ["Disk.readText"],
+          "desc": "Reads all persisted audit entries."
+        },
+        {
+          "sig": "forSubject(entries: List<AuditEntry>, subjectId: Option<String>) -> List<AuditEntry>",
+          "analysis": {"tco": true},
+          "desc": "Optional subject filter for audit queries.",
+          "verify_count": 2
+        },
+        {
+          "sig": "recordEntries(entries: List<AuditEntry>) -> Result<Unit, String>",
+          "effects": ["Disk.appendText", "Disk.readText"],
+          "desc": "Appends only new audit entries, preserving the existing log."
+        }
+      ]
+    },
+    {
+      "source_file": "infra/notify.av",
+      "module": "Notify",
+      "intent": "Notification delivery and persistence for workflow rules. Notifications are stored so queries can inspect them later, but they are also emitted immediately to the console to make the CLI feel alive.",
+      "depends": ["Domain.Types", "Infra.Codec", "Infra.Store"],
+      "effects": ["Console.warn", "Disk.appendText", "Disk.exists", "Disk.makeDir", "Disk.readText", "Disk.writeText"],
+      "functions": [
+        {
+          "sig": "initNotify() -> Result<Unit, String>",
+          "effects": ["Disk.appendText", "Disk.exists", "Disk.makeDir", "Disk.writeText"],
+          "desc": "Ensures the notification file exists."
+        },
+        {
+          "sig": "loadNotifications() -> Result<List<Notification>, String>",
+          "effects": ["Disk.readText"],
+          "desc": "Reads all persisted notifications."
+        },
+        {
+          "sig": "forTask(entries: List<Notification>, taskId: String) -> List<Notification>",
+          "analysis": {"tco": true},
+          "desc": "Filters notifications down to one task.",
+          "verify_count": 1
+        },
+        {
+          "sig": "emitNotifications(entries: List<Notification>) -> Result<Unit, String>",
+          "effects": ["Console.warn", "Disk.appendText", "Disk.readText"],
+          "desc": "Persists and prints only new notifications."
+        }
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "name": "OneRulePassPerCommand",
+      "date": "2026-03-08",
+      "chosen": "SingleExplicitRulePass",
+      "rejected": ["LoopUntilNoRulesFire", "HideRulesInsideStoreWrites"],
+      "reason": "Workflow rules should stay reviewable, not turn into an implicit fixpoint engine. A single pass after each user mutation keeps command flow explicit even if it leaves some second-order derivations for a later manual `run_rules` call.",
+      "impacts": ["execute", "decide", "planTaskCommand", "deriveRuleEffectsAfterPrimaryEvent", "commit", "dispatch"],
+      "author": "Codex"
+    },
+    {
+      "name": "QueriesReplayInsteadOfReadingMutableTaskTables",
+      "date": "2026-03-08",
+      "chosen": "ReplayForReadModel",
+      "rejected": ["DedicatedMutableTaskProjectionFile", "AdHocTaskCacheOnly"],
+      "reason": "The whole point of the workflow engine is to see whether replay stays readable. If queries bypass replay with a separate mutable task table, that test becomes fake.",
+      "impacts": ["run"],
+      "author": "Codex"
+    },
+    {
+      "name": "AppendOnlyTaskEventsWithFlatProjectState",
+      "date": "2026-03-08",
+      "chosen": "TaskEventsPlusProjectState",
+      "rejected": ["EverythingAsMutableState", "EverythingEventSourced", "InMemoryOnly"],
+      "reason": "Task lifecycle is where reviewable history matters, so an append-only event log pays for itself. Projects are much shallower, and storing them as current state avoids a second event system. This keeps the storage model simple while still exercising replay in a realistic place.",
+      "impacts": ["loadProjects", "saveProjects", "loadTaskEvents", "appendTaskEvents"],
+      "author": "Codex"
+    },
+    {
+      "name": "AuditsStayAdjacentToEventsNotInsideThem",
+      "date": "2026-03-08",
+      "chosen": "SeparateAuditLog",
+      "rejected": ["EncodeAllAuditNarrativeAsTaskEvents", "NoAuditTrail"],
+      "reason": "Reopen reasons and command traces are valuable to reviewers, but they should not change replay semantics for task state.",
+      "impacts": ["recordEntries", "loadEntries"],
+      "author": "Codex"
+    },
+    {
+      "name": "NotificationsDeduplicateByKey",
+      "date": "2026-03-08",
+      "chosen": "PersistAndSkipKnownKeys",
+      "rejected": ["AlwaysEmitAgain", "NoNotificationHistory"],
+      "reason": "Deadline and overdue rules can be re-run manually, so delivery needs a stable idempotency key or the CLI will drown in repeated warnings.",
+      "impacts": ["emitNotifications", "loadNotifications"],
+      "author": "Codex"
+    }
+  ]
+}

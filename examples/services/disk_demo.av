@@ -16,7 +16,6 @@ decision DiskAsCapability
         "accidental tree deletion requires a conscious choice of the right method."
     chosen = "BuiltinService"
     rejected = ["ImplicitIO", "SeparateFileModule"]
-
     impacts = [loadConfig, saveConfig, appendLog, listWorkdir, scaffold]
 
 fn loadConfig(path: String) -> Result<String, String>
@@ -45,7 +44,10 @@ fn scaffold(dir: String) -> Result<Unit, String>
     Disk.makeDir(dir)
 
 fn main() -> Unit
-    ! [Disk.makeDir, Disk.writeText, Disk.readText, Disk.appendText, Disk.exists, Disk.listDir, Disk.delete, Disk.deleteDir, Console.print]
+    ! [
+        Console.print,
+        Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText,
+    ]
     tmp = "/tmp/aver_disk_demo"
 
     // Create a directory

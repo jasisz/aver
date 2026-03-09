@@ -58,34 +58,55 @@ impl TypeChecker {
             )
         };
         let header_list = || Type::List(Box::new(Type::Named("Header".to_string())));
+        let server_handler_effects = || {
+            vec![
+                "Args.get".to_string(),
+                "Console.print".to_string(),
+                "Console.error".to_string(),
+                "Console.warn".to_string(),
+                "Console.readLine".to_string(),
+                "Http.get".to_string(),
+                "Http.head".to_string(),
+                "Http.delete".to_string(),
+                "Http.post".to_string(),
+                "Http.put".to_string(),
+                "Http.patch".to_string(),
+                "Disk.readText".to_string(),
+                "Disk.writeText".to_string(),
+                "Disk.appendText".to_string(),
+                "Disk.exists".to_string(),
+                "Disk.delete".to_string(),
+                "Disk.deleteDir".to_string(),
+                "Disk.listDir".to_string(),
+                "Disk.makeDir".to_string(),
+                "Env.get".to_string(),
+                "Env.set".to_string(),
+                "Env.remove".to_string(),
+                "Tcp.connect".to_string(),
+                "Tcp.send".to_string(),
+                "Tcp.ping".to_string(),
+                "Tcp.writeLine".to_string(),
+                "Tcp.readLine".to_string(),
+                "Tcp.close".to_string(),
+                "HttpServer.listen".to_string(),
+                "HttpServer.listenWith".to_string(),
+                "Time.now".to_string(),
+                "Time.unixMs".to_string(),
+                "Time.sleep".to_string(),
+            ]
+        };
         let http_handler = || {
             Type::Fn(
                 vec![Type::Named("HttpRequest".to_string())],
                 Box::new(Type::Named("HttpResponse".to_string())),
-                vec![
-                    "Console".to_string(),
-                    "Http".to_string(),
-                    "Disk".to_string(),
-                    "Env".to_string(),
-                    "Tcp".to_string(),
-                    "HttpServer".to_string(),
-                    "Time".to_string(),
-                ],
+                server_handler_effects(),
             )
         };
         let http_handler_with_context = || {
             Type::Fn(
                 vec![Type::Unknown, Type::Named("HttpRequest".to_string())],
                 Box::new(Type::Named("HttpResponse".to_string())),
-                vec![
-                    "Console".to_string(),
-                    "Http".to_string(),
-                    "Disk".to_string(),
-                    "Env".to_string(),
-                    "Tcp".to_string(),
-                    "HttpServer".to_string(),
-                    "Time".to_string(),
-                ],
+                server_handler_effects(),
             )
         };
         let service_sigs: &[(&str, &[Type], Type, &[&str])] = &[

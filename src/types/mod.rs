@@ -552,7 +552,7 @@ mod tests {
             Box::new(Type::Int),
             vec!["Http".to_string()],
         );
-        assert!(child.compatible(&parent));
+        assert!(!child.compatible(&parent));
         assert!(!parent.compatible(&child));
     }
 

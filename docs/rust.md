@@ -10,13 +10,13 @@ Use it when you want:
 ## Quick start
 
 ```bash
-aver compile examples/hello.av -o /tmp/hello-rs
+aver compile examples/core/hello.av -o /tmp/hello-rs
 cd /tmp/hello-rs && cargo build && cargo run
 ```
 
 Output:
 ```
-Compiled examples/hello.av → /tmp/hello-rs/ [Rust]
+Compiled examples/core/hello.av → /tmp/hello-rs/ [Rust]
   cd /tmp/hello-rs && cargo build && cargo run
 ```
 
@@ -70,7 +70,7 @@ The generated Rust keeps:
 For local runtime development from the Aver repository, set `AVER_RUNTIME_PATH` before running `aver compile` to force a path dependency instead of the crates.io release:
 
 ```bash
-AVER_RUNTIME_PATH="$(pwd)/aver-rt" aver compile examples/hello.av -o /tmp/hello-rs
+AVER_RUNTIME_PATH="$(pwd)/aver-rt" aver compile examples/core/hello.av -o /tmp/hello-rs
 ```
 
 ## Supported features
@@ -100,24 +100,24 @@ Everything the interpreter supports is transpilable:
 | `Env` service | OK |
 | `Time` service | OK |
 | `verify` blocks → `#[cfg(test)]` | OK |
-| Effect aliases (`effects X = [...]`) | OK (expanded at compile time) |
+| Exact method-level effects (`Http.get`, `Disk.readText`, etc.) | OK |
 
 ## Running verify blocks
 
 Verify blocks are emitted as `#[test]` functions:
 
 ```bash
-aver compile examples/calculator.av -o /tmp/calc
+aver compile examples/core/calculator.av -o /tmp/calc
 cd /tmp/calc && cargo test
 ```
 
 ## Module lowering
 
-When a program has `depends [Examples.Fibonacci]`, the transpiler:
+When a program has `depends [Data.Fibonacci]`, the transpiler:
 1. loads the dependent `.av` file recursively, with circular import detection
 2. lowers each Aver module into a Rust module under `src/aver_generated/...`
 3. imports direct `depends [...]` modules explicitly in the generated Rust
-4. keeps qualified calls module-qualified: `Examples.Fibonacci.fib` becomes `crate::aver_generated::examples::fibonacci::fib`
+4. keeps qualified calls module-qualified: `Data.Fibonacci.fib` becomes `crate::aver_generated::data::fibonacci::fib`
 
 This avoids the old giant single-file output and keeps medium projects reviewable in generated Rust.
 

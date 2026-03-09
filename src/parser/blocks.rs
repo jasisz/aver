@@ -561,6 +561,36 @@ impl Parser {
         Ok(parts.join(" "))
     }
 
+    pub(super) fn parse_inline_string_with_continuations(&mut self) -> Result<String, ParseError> {
+        if let TokenKind::Str(first) = self.current().kind.clone() {
+            let mut parts = vec![first];
+            self.advance();
+            let checkpoint = self.pos;
+            self.skip_newlines();
+            if self.is_indent() {
+                let tail = self.parse_multiline_text()?;
+                if !tail.is_empty() {
+                    parts.push(tail);
+                }
+            } else {
+                self.pos = checkpoint;
+            }
+
+            return Ok(parts.join(" "));
+        }
+
+        Err(self.error("Expected string literal".to_string()))
+    }
+
+    pub(super) fn parse_inline_or_block_text(&mut self) -> Result<String, ParseError> {
+        if matches!(self.current().kind, TokenKind::Str(_)) {
+            return self.parse_inline_string_with_continuations();
+        }
+
+        self.skip_newlines();
+        self.parse_multiline_text()
+    }
+
     fn parse_decision_ref(&mut self, field_name: &str) -> Result<DecisionImpact, ParseError> {
         match self.current().kind.clone() {
             TokenKind::Ident(s) => {

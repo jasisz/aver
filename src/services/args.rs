@@ -6,7 +6,7 @@ use aver_rt::AverList;
 /// Args service — command-line arguments.
 ///
 /// Methods:
-///   Args.get() → List<String>   ! [Args]
+///   Args.get() → List<String>   ! [Args.get]
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
     members.insert("get".to_string(), Value::Builtin("Args.get".to_string()));

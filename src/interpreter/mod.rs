@@ -225,8 +225,6 @@ pub struct Interpreter {
     /// canonicalize `RecordCreate` runtime values).
     record_schemas: HashMap<String, Vec<String>>,
     call_stack: Vec<CallFrame>,
-    /// Named effect aliases: `effects AppIO = [Console, Disk]`
-    effect_aliases: HashMap<String, Vec<String>>,
     /// Active slot mapping for resolved function bodies.
     /// Set when entering a resolved fn, cleared on exit.
     active_local_slots: Option<HashMap<String, u16>>,

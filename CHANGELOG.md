@@ -10,12 +10,16 @@ All notable changes to Aver are documented here.
 - `aver context --budget` with `kb` / `mb` suffixes for prompt-sized exports
 - `aver context` selection metadata in JSON and in the `--output` summary, including included depth and next-depth size
 - modular Rust code generation that emits `src/aver_generated/...` instead of flattening all Aver code into one giant `main.rs`
+- directory inputs for `aver check` and `aver verify`, so one command can walk a whole example or project tree
 
 ### Changed
+- **Breaking:** effect aliases (`effects X = [...]`) were removed; declare concrete method effects directly in `! [...]`
+- **Breaking:** broad namespace declarations such as `! [Http]` no longer satisfy child effects like `Http.get`
 - `aver verify` now checks only declared `left => right` examples; coverage-style diagnostics moved to `aver check`
 - `aver check` now reports coverage hints as warnings and no longer exits non-zero because of warnings alone
 - `aver context` now defaults to `--depth auto --budget 10kb` instead of walking dependencies without a budget
 - `aver context --json` stays human/LLM-oriented: compact signatures, short verify strings, omitted empty sections, and skipped long verify cases
+- examples were reorganized into `core/`, `data/`, `formal/`, `modules/`, `services/`, and `apps/` under a shared `--module-root examples`, while standalone showcase apps now live under `projects/`
 
 ### Fixed
 - `aver verify --deps` now verifies transitive dependencies

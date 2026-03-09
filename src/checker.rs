@@ -738,45 +738,6 @@ fn collect_used_effects(f: &FnDef, fn_sigs: &FnSigMap) -> BTreeSet<String> {
     used
 }
 
-fn collect_broad_effect_replacements(
-    declared_effects: &[String],
-    used_effects: &BTreeSet<String>,
-    fn_sigs: &FnSigMap,
-) -> Vec<(String, Vec<String>)> {
-    let declared_unique: BTreeSet<String> = declared_effects.iter().cloned().collect();
-    let mut out = Vec::new();
-    for declared in declared_unique {
-        if declared.contains('.') {
-            continue;
-        }
-        let prefix = format!("{}.", declared);
-
-        // Count how many distinct child effects exist for this namespace across all known sigs.
-        let known_children: BTreeSet<&str> = fn_sigs
-            .values()
-            .flat_map(|(_, _, effects)| effects.iter())
-            .filter(|e: &&String| e.starts_with(&prefix))
-            .map(|e| e.as_str())
-            .collect();
-
-        // Only warn when the namespace has 2+ known child effects — single-child
-        // namespaces (e.g. Args with only Args.get) gain nothing from granularity.
-        if known_children.len() < 2 {
-            continue;
-        }
-
-        let matched_children: Vec<String> = used_effects
-            .iter()
-            .filter(|used| used.starts_with(&prefix))
-            .cloned()
-            .collect();
-        if !matched_children.is_empty() {
-            out.push((declared, matched_children));
-        }
-    }
-    out
-}
-
 fn collect_declared_symbols(items: &[TopLevel]) -> std::collections::HashSet<String> {
     let mut out = std::collections::HashSet::new();
     for item in items {
@@ -796,9 +757,7 @@ fn collect_declared_symbols(items: &[TopLevel]) -> std::collections::HashSet<Str
             TopLevel::Decision(d) => {
                 out.insert(d.name.clone());
             }
-            TopLevel::EffectSet { name, .. } => {
-                out.insert(name.clone());
-            }
+            TopLevel::EffectSet { .. } => {}
             TopLevel::Verify(_) | TopLevel::Stmt(_) => {}
         }
     }
@@ -973,13 +932,9 @@ pub fn check_module_intent_with_sigs_in(
                     && !declared_effects.is_empty()
                 {
                     let used_effects = collect_used_effects(f, sigs);
-                    let broad_replacements =
-                        collect_broad_effect_replacements(declared_effects, &used_effects, sigs);
                     let unused_effects: Vec<String> = declared_effects
                         .iter()
                         .filter(|declared| {
-                            // A declared effect is "used" if it satisfies any used effect
-                            // e.g. declared "Console" satisfies used "Console.print"
                             !used_effects
                                 .iter()
                                 .any(|used| crate::effects::effect_satisfies(declared, used))
@@ -1003,19 +958,6 @@ pub fn check_module_intent_with_sigs_in(
                                 used
                             ),
                         });
-                    }
-                    for (parent, children) in broad_replacements {
-                        warnings.push(CheckFinding {
-                                    line: f.line,
-                                    module: module_name.clone(),
-                                    file: source_file.map(|s| s.to_string()),
-                                    message: format!(
-                                        "Function '{}' declares broad effect '{}'. Prefer granular sub-effects: {}",
-                                        f.name,
-                                        parent,
-                                        children.join(", ")
-                                    ),
-                                });
                     }
                 }
                 if fn_needs_verify(f)
@@ -1237,7 +1179,7 @@ fn log(x: Int) -> Unit
         let items = parse_items(
             r#"
 fn log(x: Int) -> Unit
-    ! [Console, Http]
+    ! [Console.print, Http.get]
     Console.print(x)
 "#,
         );
@@ -1291,32 +1233,6 @@ fn log(x: Int) -> Unit
                 .iter()
                 .any(|w| w.message.contains("declares broad effect")),
             "did not expect broad-effect warning, got errors={:?}, warnings={:?}",
-            findings.errors,
-            findings.warnings
-        );
-    }
-
-    #[test]
-    fn warns_on_broad_effects_when_sub_effects_are_used() {
-        let items = parse_items(
-            r#"
-fn fetch(url: String) -> Result<HttpResponse, String>
-    ! [Http]
-    Http.get(url)
-"#,
-        );
-        let tc = crate::types::checker::run_type_check_full(&items, None);
-        assert!(
-            tc.errors.is_empty(),
-            "unexpected type errors: {:?}",
-            tc.errors
-        );
-        let findings = check_module_intent_with_sigs(&items, Some(&tc.fn_sigs));
-        assert!(
-            findings.warnings.iter().any(|w| {
-                w.message.contains("declares broad effect 'Http'") && w.message.contains("Http.get")
-            }),
-            "expected broad-effect warning, got errors={:?}, warnings={:?}",
             findings.errors,
             findings.warnings
         );
@@ -1984,14 +1900,12 @@ decision D
     }
 
     #[test]
-    fn decision_effect_alias_impact_is_allowed() {
+    fn decision_removed_effect_alias_impact_is_error() {
         let items = parse_items(
             r#"
 module M
     intent =
         "x"
-
-effects AppIO = [Console, Disk]
 
 fn existing() -> Int
     1
@@ -2010,10 +1924,10 @@ decision D
         );
         let findings = check_module_intent(&items);
         assert!(
-            !findings.errors.iter().any(|e| e
+            findings.errors.iter().any(|e| e
                 .message
                 .contains("references unknown impact symbol 'AppIO'")),
-            "did not expect AppIO impact error, got errors={:?}, warnings={:?}",
+            "expected AppIO impact error, got errors={:?}, warnings={:?}",
             findings.errors,
             findings.warnings
         );

@@ -1,0 +1,40 @@
+module App
+    intent =
+        "A simple note-taking HTTP API."
+        "Demonstrates a multi-module Aver application with Disk as a database"
+        "and HttpServer for the REST interface."
+    exposes [main]
+    depends [Apps.Notepad.Store, Apps.Notepad.Routes]
+
+decision DiskAsDatabase
+    date = "2026-03-01"
+    reason =
+        "Disk service provides atomic read/write which is sufficient for a demo."
+        "No external dependencies required. Data survives restarts."
+        "Real production apps would use a proper database service."
+    chosen = "DiskStorage"
+    rejected = ["InMemory", "ExternalDatabase"]
+    impacts = [main]
+
+fn main() -> Result<Unit, String>
+    ? "Initializes the store and starts the HTTP server on port 3000."
+    ! [
+        Console.print,
+        Disk.appendText, Disk.exists, Disk.makeDir, Disk.writeText,
+        HttpServer.listen,
+    ]
+    _ = Apps.Notepad.Store.initStore()?
+    Console.print("Notepad API running on http://localhost:3000")
+    Console.print("")
+    Console.print("Endpoints:")
+    Console.print("  GET    /notes       list all notes")
+    Console.print("  GET    /notes/:id   get a note by ID")
+    Console.print("  POST   /notes       create a note (body: title on first line, rest is body)")
+    Console.print("  DELETE /notes/:id   delete a note")
+    Console.print("")
+    Console.print("Example:")
+    Console.print("  curl http://localhost:3000/notes")
+    Console.print("  curl -X POST -d 'Buy milk' http://localhost:3000/notes")
+    Console.print("  curl http://localhost:3000/notes/1")
+    Console.print("  curl -X DELETE http://localhost:3000/notes/1")
+    Result.Ok(HttpServer.listen(3000, Apps.Notepad.Routes.handleRequest))

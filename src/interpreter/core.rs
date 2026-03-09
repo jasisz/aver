@@ -104,7 +104,6 @@ impl Interpreter {
             module_cache: HashMap::new(),
             record_schemas,
             call_stack: Vec::new(),
-            effect_aliases: HashMap::new(),
             active_local_slots: None,
             memo_fns: HashSet::new(),
             memo_cache: HashMap::new(),
@@ -217,10 +216,6 @@ impl Interpreter {
     }
 
     /// Register a named effect set alias.
-    pub fn register_effect_set(&mut self, name: String, effects: Vec<String>) {
-        self.effect_aliases.insert(name, effects);
-    }
-
     /// Set the runtime policy from an `aver.toml` configuration.
     pub fn set_runtime_policy(&mut self, config: crate::config::ProjectConfig) {
         self.runtime_policy = Some(config);
@@ -425,11 +420,6 @@ impl Interpreter {
             }
             Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => {}
         }
-    }
-
-    /// Expand effect names: aliases → concrete effect names (recursive, cycle-safe).
-    pub(super) fn expand_effects(&self, effects: &[String]) -> Vec<String> {
-        crate::effects::expand_effects(effects, &self.effect_aliases)
     }
 
     // -------------------------------------------------------------------------
@@ -732,11 +722,6 @@ impl Interpreter {
                 }
             }
 
-            for item in &items {
-                if let TopLevel::EffectSet { name, effects, .. } = item {
-                    sub.register_effect_set(name.clone(), effects.clone());
-                }
-            }
             for item in &items {
                 if let TopLevel::TypeDef(td) = item {
                     sub.register_type_def(td);

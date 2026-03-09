@@ -10,7 +10,7 @@
 ///   listDir    — list entry names in a directory
 ///   makeDir    — create a directory and all missing parents (mkdir -p)
 ///
-/// All methods require `! [Disk]`.
+/// Each method requires its own exact effect (`Disk.readText`, `Disk.writeText`, etc.).
 use std::collections::HashMap;
 
 use crate::value::{RuntimeError, Value, list_from_vec};

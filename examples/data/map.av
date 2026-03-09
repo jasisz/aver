@@ -1,0 +1,86 @@
+module MapExample
+    intent =
+        "Demonstrates typed Map usage in Aver."
+        "Shows map literals, Map.get, Map.entries, recursive counting, and proof-oriented map laws."
+
+fn emptyCounts() -> Map<String, Int>
+    ? "Creates an empty word-count map."
+    Map.empty()
+
+fn incCount(counts: Map<String, Int>, word: String) -> Map<String, Int>
+    ? "Increments the counter for one word."
+    current = Map.get(counts, word)
+    match current
+        Option.Some(n) -> Map.set(counts, word, n + 1)
+        Option.None    -> Map.set(counts, word, 1)
+
+verify incCount
+    incCount(Map.empty(), "a") => {"a" => 1}
+    incCount({"a" => 1}, "a") => {"a" => 2}
+
+verify incCount law keyPresent
+    given counts: Map<String, Int> = [Map.empty(), {"a" => 1}, {"x" => 2, "y" => 4}]
+    given word: String = ["a", "z", "new"]
+    Map.has(incCount(counts, word), word) => true
+
+verify incCount law trackedCountStepsByOne
+    given counts: Map<String, Int> = [Map.empty(), {"a" => 1}, {"a" => 5, "x" => 2}]
+    given word: String = ["a", "new"]
+    Option.withDefault(Map.get(incCount(counts, word), word), 0) => Option.withDefault(Map.get(counts, word), 0) + 1
+
+fn countWords(words: List<String>) -> Map<String, Int>
+    ? "Counts occurrences of each word."
+    match words
+        [] -> emptyCounts()
+        [word, ..rest] -> incCount(countWords(rest), word)
+
+verify countWords
+    countWords([])                => Map.empty()
+    countWords(["a", "b", "a"])  => {"a" => 2, "b" => 1}
+
+verify countWords law presenceMatchesContains
+    given words: List<String> = [[], ["a"], ["a", "b", "a"], ["b", "b", "c"]]
+    given word: String = ["a", "b", "c", "missing"]
+    Map.has(countWords(words), word) => containsWord(words, word)
+
+verify countWords law trackedWordCount
+    given words: List<String> = [[], ["a"], ["a", "b", "a"], ["b", "b", "c"]]
+    given word: String = ["a", "b", "c", "missing"]
+    Option.withDefault(Map.get(countWords(words), word), 0) => countWord(words, word)
+
+fn countWord(words: List<String>, target: String) -> Int
+    ? "Counts one tracked word by direct list recursion."
+    match words
+        [] -> 0
+        [word, ..rest] -> match word == target
+            true -> countWord(rest, target) + 1
+            false -> countWord(rest, target)
+
+verify countWord
+    countWord([], "a") => 0
+    countWord(["a", "b", "a"], "a") => 2
+    countWord(["a", "b", "a"], "b") => 1
+    countWord(["a", "b", "a"], "x") => 0
+
+fn containsWord(words: List<String>, word: String) -> Bool
+    ? "Checks whether a word appears in a list."
+    List.contains(words, word)
+
+verify containsWord
+    containsWord(["a", "b"], "a") => true
+    containsWord(["a", "b"], "x") => false
+
+fn main() -> Unit
+    ! [Console.print]
+    words = ["alice", "bob", "alice", "eve"]
+    counts = countWords(words)
+    Console.print("Counts:")
+    Console.print(counts)
+    Console.print("alice count:")
+    Console.print(Map.get(counts, "alice"))
+    Console.print("Keys:")
+    Console.print(Map.keys(counts))
+    Console.print("Entries:")
+    Console.print(Map.entries(counts))
+    Console.print("Contains 'eve':")
+    Console.print(containsWord(words, "eve"))

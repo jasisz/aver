@@ -39,6 +39,12 @@ fn greet(name: String) -> String
     ? "Greets a user."
     "Hello, {name}"
 
+fn runCli() -> Unit
+    ? "Starts the CLI."
+      "Prints one rendered response."
+    ! [Args.get, Console.print]
+    Console.print("todo")
+
 verify greet
     greet("Aver") => "Hello, Aver"
 
@@ -64,13 +70,13 @@ git clone https://github.com/jasisz/aver
 cd aver
 cargo build --release
 
-cargo run -- run      examples/calculator.av
-cargo run -- verify   examples/calculator.av
-cargo run -- check    examples/calculator.av
-cargo run -- context  examples/calculator.av
-cargo run -- compile  examples/calculator.av -o out/
+cargo run -- run      examples/core/calculator.av
+cargo run -- verify   examples/core/calculator.av
+cargo run -- check    examples/core/calculator.av
+cargo run -- context  examples/core/calculator.av
+cargo run -- compile  examples/core/calculator.av -o out/
 (cd out && cargo run)
-cargo run -- proof    examples/law_auto.av -o proof/
+cargo run -- proof    examples/formal/law_auto.av -o proof/
 (cd proof && lake build)
 cargo run -- run      examples/services/console_demo.av --record recordings/
 cargo run -- replay   recordings/ --test --diff
@@ -164,12 +170,10 @@ fn fetchExchangeRate(currency: String) -> Result<HttpResponse, String>
 
 Effects such as `Http.get`, `Disk.readText`, and `Console.print` are part of the signature. Missing declarations are type errors. The runtime enforces the same boundary as a backstop.
 
-Effects are hierarchical:
+Effects are exact:
 
 - `! [Http.get]` allows only `Http.get`
-- `! [Http]` allows all `Http.*` methods
-
-`aver check` also enforces minimal effects: prefer method-level declarations over broad namespace-level ones when possible.
+- `! [Http]` does not cover `Http.get`
 
 Runtime policy can narrow the allowed destinations further via `aver.toml`:
 
@@ -216,7 +220,7 @@ aver context decisions/architecture.av --decisions-only
 ### Context export
 
 ```bash
-aver context examples/calculator.av
+aver context examples/core/calculator.av
 ```
 
 Aver walks the dependency graph and emits a compact context summary: module intent, public signatures, effect declarations, verify samples, and decisions. The goal is not to dump the whole source tree; it is to export the contract-level view that another human or LLM needs first.
@@ -226,11 +230,11 @@ By default, `aver context` uses `--depth auto --budget 10kb`: it tries depth `0`
 If you want a larger export for a medium project, raise the budget explicitly:
 
 ```bash
-aver context examples/workflow_engine/main.av \
-  --module-root examples/workflow_engine \
+aver context projects/workflow_engine/main.av \
+  --module-root projects/workflow_engine \
   --json \
   --budget 24kb \
-  --output examples/workflow_engine/CONTEXT.json
+  --output projects/workflow_engine/CONTEXT.json
 ```
 
 When `--output` is used, Aver also prints a short selection summary to stdout, for example:
@@ -332,7 +336,7 @@ Aver is intentionally small. The core model is:
 - `match` instead of `if`/`else`
 - `Result` and `Option` instead of exceptions and `null`
 - top-level functions only, with no closures
-- explicit effects and named effect aliases
+- explicit method-level effects
 - module-based structure via `module`, `depends`, and `exposes`
 - automatic memoization and tail-call optimization for eligible code
 
@@ -353,7 +357,7 @@ Aver has three backend paths:
 Typical Rust flow:
 
 ```bash
-aver compile examples/calculator.av -o out/
+aver compile examples/core/calculator.av -o out/
 cd out
 cargo run
 ```
@@ -361,7 +365,7 @@ cargo run
 Typical Lean flow:
 
 ```bash
-aver proof examples/law_auto.av --verify-mode auto -o out/
+aver proof examples/formal/law_auto.av --verify-mode auto -o out/
 cd out
 lake build
 ```
@@ -376,25 +380,53 @@ For backend-specific details, see:
 
 ## Examples
 
-Curated examples:
+Shared examples under `examples/` resolve from `--module-root examples`.
+They are grouped by role:
+- `core/` for language and syntax tours
+- `data/` for pure data structures and parsers
+- `formal/` for Lean-oriented proof examples
+- `modules/` for import and module-root examples
+- `services/` for effectful adapter demos
+- `apps/` for small multi-file applications under the shared examples root
+Standalone multi-file showcase projects live under `projects/` and use their own local module roots.
+
+Repository layout rule:
+- files under `examples/` share one root: `--module-root examples`
+- each folder under `projects/` is its own root, for example `--module-root projects/workflow_engine`
+
+Typical commands:
+
+```bash
+aver check examples/modules/app.av --module-root examples --deps
+aver check projects/workflow_engine/main.av --module-root projects/workflow_engine --deps
+```
+
+Curated shared examples:
 
 | File | Demonstrates |
 |------|-------------|
-| `hello.av` | Functions, string interpolation, verify |
-| `calculator.av` | Result types, match, decision blocks |
-| `shapes.av` | Sum types, qualified constructors (`Shape.Circle`), match on variants |
-| `fibonacci.av` | Tail recursion, records, decision blocks |
-| `law_auto.av` | Lean proof export, `verify law`, auto-proved universal theorems |
-| `spec_laws.av` | Implementation-vs-spec laws (`verify foo law fooSpec`) and Lean spec theorems |
-| `mission_control.av` | Command parser, pure state machine, effectful shell |
-| `app.av` | Module imports via `depends [Examples.Fibonacci]` |
+| `core/hello.av` | Functions, string interpolation, verify |
+| `core/calculator.av` | Result types, match, decision blocks |
+| `core/shapes.av` | Sum types, qualified constructors (`Shape.Circle`), match on variants |
+| `data/fibonacci.av` | Tail recursion, records, decision blocks |
+| `formal/law_auto.av` | Lean proof export, `verify law`, auto-proved universal theorems |
+| `formal/spec_laws.av` | Implementation-vs-spec laws (`verify foo law fooSpec`) and Lean spec theorems |
+| `apps/mission_control.av` | Command parser, pure state machine, effectful shell |
+| `modules/app.av` | Module imports via `depends [Data.Fibonacci]` |
 | `services/console_demo.av` | Console service and replay-friendly effectful flow |
 | `services/http_demo.av` | HTTP service with sub-effects: `Http.get`, `Http.post` |
 | `services/weather.av` | End-to-end service: `HttpServer` + `Http` + `Tcp` |
-| `decisions/architecture.av` | The interpreter documents itself in Aver |
-| `test_errors.av` | Intentional `aver check` failures: type errors + verify/decision/effect diagnostics |
+| `apps/notepad/app.av` | Multi-file HTTP app under the shared `examples` module root |
+| `core/test_errors.av` | Intentional `aver check` failures: type errors + verify/decision/effect diagnostics |
 
-See `examples/` for the full set.
+Standalone projects:
+
+| File | Demonstrates |
+|------|-------------|
+| `projects/workflow_engine/main.av` | Explicit app/domain/infra flow, event replay, derived events, verify-driven orchestration |
+
+See `examples/` and `projects/` for the full set.
+For repository self-documentation via decision exports, see `decisions/architecture.av`.
 
 ---
 

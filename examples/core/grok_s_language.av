@@ -1,0 +1,418 @@
+module Sexpr
+    intent =
+        "Ultra-minimal parser s-expression."
+        "Atoms are symbols or numbers; lists use parentheses; quote is prefix '."
+        "No strings, no dots, no comments, no macros. Pure and deterministic."
+    exposes [Sexpr, parse, toString, eval]
+
+type Sexpr
+    AtomSym(String)
+    AtomNum(Int)
+    List(List<Sexpr>)
+    Quoted(Sexpr)
+
+type ParseResult
+    Ok(Sexpr, Int)
+    Err(String, Int)
+
+// Public API
+
+fn parse(s: String) -> Result<Sexpr, String>
+    ? "Parse whole input into a single Sexpr and reject trailing content."
+    match parseSexpr(s, skipWs(s, 0))
+        ParseResult.Err(msg, p) -> Result.Err(msg + " at " + String.fromInt(p))
+        ParseResult.Ok(val, p) -> ensureEnd(s, val, skipWs(s, p))
+
+verify parse
+    parse("42") => Result.Ok(Sexpr.AtomNum(42))
+    parse("hello") => Result.Ok(Sexpr.AtomSym("hello"))
+    parse("'world") => Result.Ok(Sexpr.Quoted(Sexpr.AtomSym("world")))
+    parse("'123") => Result.Ok(Sexpr.Quoted(Sexpr.AtomNum(123)))
+    parse("(add 1 2)") => Result.Ok(Sexpr.List([Sexpr.AtomSym("add"), Sexpr.AtomNum(1), Sexpr.AtomNum(2)]))
+    parse("  ( quote 'pizza )  ") => Result.Ok(Sexpr.List([Sexpr.AtomSym("quote"), Sexpr.Quoted(Sexpr.AtomSym("pizza"))]))
+    parse("(1 2") => Result.Err("Unterminated list at 4")
+    parse("hello there") => Result.Err("Trailing content after expression")
+
+fn ensureEnd(s: String, val: Sexpr, pos: Int) -> Result<Sexpr, String>
+    ? "Return Ok only when parser consumed full input."
+    match pos == String.len(s)
+        true -> Result.Ok(val)
+        false -> Result.Err("Trailing content after expression")
+
+verify ensureEnd
+    ensureEnd("abc", Sexpr.AtomSym("x"), 3) => Result.Ok(Sexpr.AtomSym("x"))
+    ensureEnd("abc", Sexpr.AtomSym("x"), 2) => Result.Err("Trailing content after expression")
+
+fn toString(e: Sexpr) -> String
+    ? "Render s-expression in compact form."
+    match e
+        Sexpr.AtomSym(sym) -> sym
+        Sexpr.AtomNum(num) -> String.fromInt(num)
+        Sexpr.Quoted(inner) -> "'" + toString(inner)
+        Sexpr.List(items) -> "(" + renderItems(items) + ")"
+
+verify toString
+    toString(Sexpr.AtomNum(42)) => "42"
+    toString(Sexpr.AtomSym("hello")) => "hello"
+    toString(Sexpr.Quoted(Sexpr.AtomSym("pizza"))) => "'pizza"
+    toString(Sexpr.List([Sexpr.AtomSym("add"), Sexpr.AtomNum(1), Sexpr.AtomNum(2)])) => "(add 1 2)"
+
+verify toString law parseRoundtrip
+    given e: Sexpr = [
+        Sexpr.AtomNum(42),
+        Sexpr.AtomSym("hello"),
+        Sexpr.AtomSym("hello world"),
+        Sexpr.Quoted(Sexpr.AtomSym("pizza")),
+        Sexpr.List([Sexpr.AtomSym("add"), Sexpr.AtomNum(1), Sexpr.AtomNum(2)]),
+        Sexpr.List([Sexpr.AtomSym("bad sym"), Sexpr.AtomNum(2)]),
+        Sexpr.List([Sexpr.AtomSym("quote"), Sexpr.Quoted(Sexpr.List([Sexpr.AtomSym("x"), Sexpr.AtomNum(3)]))])
+    ]
+    when validSymbolNames(e)
+    parse(toString(e)) => Result.Ok(e)
+
+fn isAtomDelimiter(c: String) -> Bool
+    ? "True when character cannot appear inside an atom symbol."
+    match c
+        " " -> true
+        "\t" -> true
+        "\n" -> true
+        "(" -> true
+        ")" -> true
+        "'" -> true
+        _ -> false
+
+verify isAtomDelimiter
+    isAtomDelimiter(" ") => true
+    isAtomDelimiter(")") => true
+    isAtomDelimiter("x") => false
+
+fn validSymbolChars(chars: List<String>) -> Bool
+    ? "True when all symbol chars are atom-safe."
+    match chars
+        [] -> true
+        [head, ..tail] -> match isAtomDelimiter(head)
+            true -> false
+            false -> validSymbolChars(tail)
+
+verify validSymbolChars
+    validSymbolChars([]) => true
+    validSymbolChars(["h", "i"]) => true
+    validSymbolChars(["h", " "]) => false
+
+fn validSymbol(sym: String) -> Bool
+    ? "Atoms must be non-empty and contain no delimiters."
+    match String.len(sym) == 0
+        true -> false
+        false -> validSymbolChars(String.chars(sym))
+
+verify validSymbol
+    validSymbol("hello") => true
+    validSymbol("hello world") => false
+    validSymbol("") => false
+
+fn validSymbolList(items: List<Sexpr>) -> Bool
+    ? "True when every expression in list form has valid atom symbols."
+    match items
+        [] -> true
+        [head, ..tail] -> match validSymbolNames(head)
+            true -> validSymbolList(tail)
+            false -> false
+
+verify validSymbolList
+    validSymbolList([]) => true
+    validSymbolList([Sexpr.AtomSym("ok"), Sexpr.AtomNum(1)]) => true
+    validSymbolList([Sexpr.AtomSym("bad sym")]) => false
+
+fn validSymbolNames(e: Sexpr) -> Bool
+    ? "Precondition for parse(toString(e)) round-tripping."
+    match e
+        Sexpr.AtomSym(sym) -> validSymbol(sym)
+        Sexpr.AtomNum(_) -> true
+        Sexpr.Quoted(inner) -> validSymbolNames(inner)
+        Sexpr.List(items) -> validSymbolList(items)
+
+verify validSymbolNames
+    validSymbolNames(Sexpr.AtomSym("hello")) => true
+    validSymbolNames(Sexpr.AtomSym("hello world")) => false
+    validSymbolNames(Sexpr.List([Sexpr.AtomSym("add"), Sexpr.AtomNum(1)])) => true
+
+fn eval(e: Sexpr) -> Result<Int, String>
+    ? "Evaluate minimal arithmetic language: add/sub/mul/div."
+    match e
+        Sexpr.AtomNum(n) -> Result.Ok(n)
+        Sexpr.AtomSym(sym) -> Result.Err("Cannot eval symbol: " + sym)
+        Sexpr.Quoted(inner) -> Result.Err("Cannot eval quoted form: " + toString(inner))
+        Sexpr.List(items) -> evalList(items)
+
+verify eval
+    eval(Sexpr.AtomNum(7)) => Result.Ok(7)
+    eval(Sexpr.AtomSym("x")) => Result.Err("Cannot eval symbol: x")
+    eval(Sexpr.Quoted(Sexpr.AtomSym("x"))) => Result.Err("Cannot eval quoted form: x")
+    eval(Sexpr.List([Sexpr.AtomSym("add"), Sexpr.AtomNum(1), Sexpr.AtomNum(2)])) => Result.Ok(3)
+    eval(Sexpr.List([Sexpr.AtomSym("sub"), Sexpr.AtomNum(10), Sexpr.AtomNum(3)])) => Result.Ok(7)
+    eval(Sexpr.List([Sexpr.AtomSym("mul"), Sexpr.AtomNum(3), Sexpr.List([Sexpr.AtomSym("add"), Sexpr.AtomNum(5), Sexpr.AtomNum(7)])])) => Result.Ok(36)
+    eval(Sexpr.List([Sexpr.AtomSym("div"), Sexpr.AtomNum(9), Sexpr.AtomNum(0)])) => Result.Err("Division by zero")
+    eval(Sexpr.List([Sexpr.AtomSym("pow"), Sexpr.AtomNum(2), Sexpr.AtomNum(8)])) => Result.Err("Unknown operator: pow")
+
+fn evalList(items: List<Sexpr>) -> Result<Int, String>
+    ? "Evaluate list as function call expression."
+    match items
+        [] -> Result.Err("Cannot eval empty list")
+        [head, ..args] -> evalCall(head, args)
+
+verify evalList
+    evalList([]) => Result.Err("Cannot eval empty list")
+    evalList([Sexpr.AtomSym("add"), Sexpr.AtomNum(1), Sexpr.AtomNum(2)]) => Result.Ok(3)
+
+fn evalCall(head: Sexpr, args: List<Sexpr>) -> Result<Int, String>
+    ? "Dispatch call by symbolic head operator."
+    match head
+        Sexpr.AtomSym(op) -> evalOp(op, args)
+        _ -> Result.Err("List head must be a symbol")
+
+verify evalCall
+    evalCall(Sexpr.AtomSym("add"), [Sexpr.AtomNum(1), Sexpr.AtomNum(2)]) => Result.Ok(3)
+    evalCall(Sexpr.AtomNum(1), [Sexpr.AtomNum(2)]) => Result.Err("List head must be a symbol")
+
+fn evalOp(op: String, args: List<Sexpr>) -> Result<Int, String>
+    ? "Validate arity and evaluate binary operator call."
+    match args
+        [] -> Result.Err("Operator '" + op + "' expects exactly 2 arguments")
+        [leftExpr, ..rest] -> evalOpWithLeft(op, leftExpr, rest)
+
+verify evalOp
+    evalOp("add", []) => Result.Err("Operator 'add' expects exactly 2 arguments")
+    evalOp("add", [Sexpr.AtomNum(1), Sexpr.AtomNum(2)]) => Result.Ok(3)
+
+fn evalOpWithLeft(op: String, leftExpr: Sexpr, rest: List<Sexpr>) -> Result<Int, String>
+    ? "Extract second argument or return arity error."
+    match rest
+        [] -> Result.Err("Operator '" + op + "' expects exactly 2 arguments")
+        [rightExpr, ..tail] -> evalOpWithPair(op, leftExpr, rightExpr, tail)
+
+verify evalOpWithLeft
+    evalOpWithLeft("add", Sexpr.AtomNum(1), []) => Result.Err("Operator 'add' expects exactly 2 arguments")
+    evalOpWithLeft("add", Sexpr.AtomNum(1), [Sexpr.AtomNum(2)]) => Result.Ok(3)
+
+fn evalOpWithPair(op: String, leftExpr: Sexpr, rightExpr: Sexpr, tail: List<Sexpr>) -> Result<Int, String>
+    ? "Reject extra args, evaluate operands, then apply operation."
+    match tail
+        [] -> applyEvalOp(op, eval(leftExpr), eval(rightExpr))
+        [_, .._] -> Result.Err("Operator '" + op + "' expects exactly 2 arguments")
+
+verify evalOpWithPair
+    evalOpWithPair("add", Sexpr.AtomNum(1), Sexpr.AtomNum(2), []) => Result.Ok(3)
+    evalOpWithPair("add", Sexpr.AtomNum(1), Sexpr.AtomNum(2), [Sexpr.AtomNum(3)]) => Result.Err("Operator 'add' expects exactly 2 arguments")
+
+fn applyEvalOp(op: String, leftRes: Result<Int, String>, rightRes: Result<Int, String>) -> Result<Int, String>
+    ? "Propagate operand errors and apply binary integer operator."
+    left = leftRes?
+    right = rightRes?
+    match op
+        "add" -> Result.Ok(left + right)
+        "sub" -> Result.Ok(left - right)
+        "mul" -> Result.Ok(left * right)
+        "div" -> evalDiv(left, right)
+        _ -> Result.Err("Unknown operator: " + op)
+
+verify applyEvalOp
+    applyEvalOp("add", Result.Ok(1), Result.Ok(2)) => Result.Ok(3)
+    applyEvalOp("sub", Result.Ok(5), Result.Ok(2)) => Result.Ok(3)
+    applyEvalOp("mul", Result.Ok(4), Result.Ok(3)) => Result.Ok(12)
+    applyEvalOp("div", Result.Ok(8), Result.Ok(2)) => Result.Ok(4)
+    applyEvalOp("pow", Result.Ok(2), Result.Ok(3)) => Result.Err("Unknown operator: pow")
+
+fn evalDiv(left: Int, right: Int) -> Result<Int, String>
+    ? "Safe integer division with explicit zero check."
+    match right == 0
+        true -> Result.Err("Division by zero")
+        false -> Result.Ok(left / right)
+
+verify evalDiv
+    evalDiv(10, 0) => Result.Err("Division by zero")
+    evalDiv(10, 2) => Result.Ok(5)
+
+fn renderItems(items: List<Sexpr>) -> String
+    ? "Render list elements joined by single spaces."
+    match items
+        [] -> ""
+        [head, ..tail] -> renderItemsTail(toString(head), tail)
+
+verify renderItems
+    renderItems([]) => ""
+    renderItems([Sexpr.AtomSym("add"), Sexpr.AtomNum(1), Sexpr.AtomNum(2)]) => "add 1 2"
+
+fn renderItemsTail(acc: String, rest: List<Sexpr>) -> String
+    ? "Render remaining list items with spaces."
+    match rest
+        [] -> acc
+        [head, ..tail] -> renderItemsTail(acc + " " + toString(head), tail)
+
+verify renderItemsTail
+    renderItemsTail("add", []) => "add"
+    renderItemsTail("add", [Sexpr.AtomNum(1), Sexpr.AtomNum(2)]) => "add 1 2"
+
+fn skipWs(s: String, pos: Int) -> Int
+    ? "Skip spaces, tabs and newlines."
+    match String.charAt(s, pos)
+        Option.None -> pos
+        Option.Some(c) -> match c
+            " " -> skipWs(s, pos + 1)
+            "\t" -> skipWs(s, pos + 1)
+            "\n" -> skipWs(s, pos + 1)
+            _ -> pos
+
+verify skipWs
+    skipWs("", 0) => 0
+    skipWs("  abc", 0) => 2
+    skipWs("\tabc", 0) => 1
+    skipWs("\nabc", 0) => 1
+    skipWs("abc", 0) => 0
+
+fn parseSexpr(s: String, pos: Int) -> ParseResult
+    ? "Dispatch parser by next character."
+    match String.charAt(s, pos)
+        Option.None -> ParseResult.Err("Unexpected end", pos)
+        Option.Some(c) -> match c
+            "'" -> parseQuoted(s, pos + 1)
+            "(" -> parseList(s, skipWs(s, pos + 1))
+            ")" -> ParseResult.Err("Unexpected ')'", pos)
+            _ -> parseAtom(s, pos)
+
+verify parseSexpr
+    parseSexpr("", 0) => ParseResult.Err("Unexpected end", 0)
+    parseSexpr("'x", 0) => ParseResult.Ok(Sexpr.Quoted(Sexpr.AtomSym("x")), 2)
+    parseSexpr("(1)", 0) => ParseResult.Ok(Sexpr.List([Sexpr.AtomNum(1)]), 3)
+    parseSexpr(")", 0) => ParseResult.Err("Unexpected ')'", 0)
+    parseSexpr("foo", 0) => ParseResult.Ok(Sexpr.AtomSym("foo"), 3)
+
+fn parseQuoted(s: String, pos: Int) -> ParseResult
+    ? "Parse quoted atom or list."
+    match parseSexpr(s, skipWs(s, pos))
+        ParseResult.Ok(inner, p) -> ParseResult.Ok(Sexpr.Quoted(inner), p)
+        ParseResult.Err(msg, p) -> ParseResult.Err(msg, p)
+
+verify parseQuoted
+    parseQuoted("abc", 0) => ParseResult.Ok(Sexpr.Quoted(Sexpr.AtomSym("abc")), 3)
+    parseQuoted(")", 0) => ParseResult.Err("Unexpected ')'", 0)
+
+fn parseAtom(s: String, start: Int) -> ParseResult
+    ? "Parse atom as Int when possible, otherwise Symbol."
+    end = scanAtomEnd(s, start)
+    slice = String.slice(s, start, end)
+    match String.len(slice) == 0
+        true -> ParseResult.Err("Expected atom", start)
+        false -> parseAtomSlice(slice, end)
+
+verify parseAtom
+    parseAtom(")", 0) => ParseResult.Err("Expected atom", 0)
+    parseAtom("123 ", 0) => ParseResult.Ok(Sexpr.AtomNum(123), 3)
+
+fn parseAtomSlice(slice: String, end: Int) -> ParseResult
+    ? "Classify atom slice as number or symbol."
+    match Int.fromString(slice)
+        Result.Ok(n) -> ParseResult.Ok(Sexpr.AtomNum(n), end)
+        Result.Err(_) -> ParseResult.Ok(Sexpr.AtomSym(slice), end)
+
+verify parseAtomSlice
+    parseAtomSlice("42", 2) => ParseResult.Ok(Sexpr.AtomNum(42), 2)
+    parseAtomSlice("foo", 3) => ParseResult.Ok(Sexpr.AtomSym("foo"), 3)
+
+fn scanAtomEnd(s: String, pos: Int) -> Int
+    ? "Scan until delimiter: whitespace, opening or closing paren, or quote."
+    match String.charAt(s, pos)
+        Option.None -> pos
+        Option.Some(c) -> match c
+            " " -> pos
+            "\t" -> pos
+            "\n" -> pos
+            "(" -> pos
+            ")" -> pos
+            "'" -> pos
+            _ -> scanAtomEnd(s, pos + 1)
+
+verify scanAtomEnd
+    scanAtomEnd("", 0) => 0
+    scanAtomEnd(" abc", 0) => 0
+    scanAtomEnd("\tabc", 0) => 0
+    scanAtomEnd("\nabc", 0) => 0
+    scanAtomEnd("(abc", 0) => 0
+    scanAtomEnd(")abc", 0) => 0
+    scanAtomEnd("'abc", 0) => 0
+    scanAtomEnd("abc", 0) => 3
+
+fn parseList(s: String, pos: Int) -> ParseResult
+    ? "Parse list body after opening '('."
+    match String.charAt(s, pos)
+        Option.None -> ParseResult.Err("Unterminated list", pos)
+        Option.Some(c) -> match c
+            ")" -> ParseResult.Ok(Sexpr.List([]), pos + 1)
+            _ -> parseListItems(s, pos, [])
+
+verify parseList
+    parseList("", 0) => ParseResult.Err("Unterminated list", 0)
+    parseList(")", 0) => ParseResult.Ok(Sexpr.List([]), 1)
+    parseList("1)", 0) => ParseResult.Ok(Sexpr.List([Sexpr.AtomNum(1)]), 2)
+
+fn parseListItems(s: String, pos: Int, acc: List<Sexpr>) -> ParseResult
+    ? "Parse list items until closing ')'."
+    ws = skipWs(s, pos)
+    match String.charAt(s, ws)
+        Option.None -> ParseResult.Err("Unterminated list", ws)
+        Option.Some(c) -> match c
+            ")" -> ParseResult.Ok(Sexpr.List(List.reverse(acc)), ws + 1)
+            _ -> parseListItemsValue(s, ws, acc)
+
+verify parseListItems
+    parseListItems("", 0, []) => ParseResult.Err("Unterminated list", 0)
+    parseListItems(")", 0, []) => ParseResult.Ok(Sexpr.List([]), 1)
+    parseListItems("1)", 0, []) => ParseResult.Ok(Sexpr.List([Sexpr.AtomNum(1)]), 2)
+
+fn parseListItemsValue(s: String, pos: Int, acc: List<Sexpr>) -> ParseResult
+    ? "Parse one list item and continue with remaining input."
+    match parseSexpr(s, pos)
+        ParseResult.Err(msg, p) -> ParseResult.Err(msg, p)
+        ParseResult.Ok(val, p) -> parseListItems(s, p, List.prepend(val, acc))
+
+verify parseListItemsValue
+    parseListItemsValue(")", 0, []) => ParseResult.Err("Unexpected ')'", 0)
+    parseListItemsValue("1)", 0, []) => ParseResult.Ok(Sexpr.List([Sexpr.AtomNum(1)]), 2)
+
+fn printSexpr(e: Sexpr) -> Unit
+    ? "Print one parsed expression."
+    ! [Console.print]
+    Console.print(toString(e))
+
+fn printEval(e: Sexpr) -> Unit
+    ? "Evaluate and print one expression."
+    ! [Console.print]
+    match eval(e)
+        Result.Ok(n) -> Console.print("=> " + String.fromInt(n))
+        Result.Err(msg) -> printErr(msg)
+
+fn printErr(msg: String) -> Unit
+    ? "Print parser error."
+    ! [Console.print]
+    Console.print("ERROR: " + msg)
+
+fn replLoop() -> Unit
+    ? "Read-eval-print loop."
+    ! [Console.print, Console.readLine]
+    Console.print("> ")
+    lineResult = Console.readLine()
+    match lineResult
+        Result.Err(msg) -> printErr(msg)
+        Result.Ok(line) -> match line
+            "" -> replLoop()
+            _ -> match parse(line)
+                Result.Ok(expr) -> printEval(expr)
+                Result.Err(msg) -> printErr(msg)
+    replLoop()
+
+fn main() -> Unit
+    ? "Start interactive s-expression REPL."
+    ! [Console.print, Console.readLine]
+    Console.print("Mini s-expr REPL. Type expressions or hit Ctrl+C to exit.")
+    Console.print("Examples: 42    hello    'world    (add 1 2)    (quote 'pizza)")
+    Console.print("")
+    replLoop()

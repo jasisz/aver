@@ -1,0 +1,249 @@
+module Lambda
+    intent =
+        "Lambda calculus interpreter demonstrating recursive sum types,"
+        "nested pattern matching, and Church encodings as verify cases."
+
+decision NaiveSubstitution
+    date = "2026-03-04"
+    reason =
+        "Naive substitution without alpha-renaming is sufficient for Church encodings."
+        "Variable capture is possible but does not occur with careful variable naming."
+    chosen = "NaiveSubstitution"
+    rejected = ["DeBruijnIndices"]
+    impacts = [subst]
+
+type Term
+    Var(String)
+    Lam(String, Term)
+    App(Term, Term)
+
+fn termToString(t: Term) -> String
+    ? "Converts a lambda term to a human-readable string."
+    match t
+        Term.Var(x) -> x
+        Term.Lam(x, body) -> "(λ{x}.{termToString(body)})"
+        Term.App(f, arg) -> "({termToString(f)} {termToString(arg)})"
+
+verify termToString
+    termToString(Term.Var("x")) => "x"
+    termToString(Term.Lam("x", Term.Var("x"))) => "(λx.x)"
+    termToString(Term.App(Term.Var("f"), Term.Var("x"))) => "(f x)"
+
+fn subst(x: String, s: Term, t: Term) -> Term
+    ? "Substitutes s for free occurrences of x in t. Respects shadowing."
+    match t
+        Term.Var(y) -> match y == x
+            true -> s
+            false -> t
+        Term.Lam(y, body) -> match y == x
+            true -> t
+            false -> Term.Lam(y, subst(x, s, body))
+        Term.App(f, arg) -> Term.App(subst(x, s, f), subst(x, s, arg))
+
+verify subst
+    subst("x", Term.Var("y"), Term.Var("x")) => Term.Var("y")
+    subst("x", Term.Var("y"), Term.Var("z")) => Term.Var("z")
+    subst("x", Term.Var("y"), Term.Lam("x", Term.Var("x"))) => Term.Lam("x", Term.Var("x"))
+    subst("x", Term.Var("y"), Term.Lam("z", Term.Var("x"))) => Term.Lam("z", Term.Var("y"))
+    subst("x", Term.Var("y"), Term.App(Term.Var("x"), Term.Var("z"))) => Term.App(Term.Var("y"), Term.Var("z"))
+
+fn stepApp(f: Term, arg: Term) -> Option<Term>
+    ? "Reduction step for application: tries beta, then reduces function, then argument."
+    match f
+        Term.Lam(x, body) -> Option.Some(subst(x, arg, body))
+        _ -> match step(f)
+            Option.Some(f2) -> Option.Some(Term.App(f2, arg))
+            Option.None -> match step(arg)
+                Option.Some(arg2) -> Option.Some(Term.App(f, arg2))
+                Option.None -> Option.None
+
+verify stepApp
+    stepApp(Term.Lam("x", Term.Var("x")), Term.Var("a")) => Option.Some(Term.Var("a"))
+    stepApp(Term.Var("f"), Term.Var("a")) => Option.None
+    stepApp(Term.App(Term.Lam("x", Term.Var("x")), Term.Var("b")), Term.Var("a")) => Option.Some(Term.App(Term.Var("b"), Term.Var("a")))
+    stepApp(Term.Var("f"), Term.App(Term.Lam("x", Term.Var("x")), Term.Var("a"))) => Option.Some(Term.App(Term.Var("f"), Term.Var("a")))
+
+fn step(t: Term) -> Option<Term>
+    ? "Single normal-order beta-reduction step. Returns None when in normal form."
+    match t
+        Term.Var(_) -> Option.None
+        Term.Lam(x, body) -> match step(body)
+            Option.Some(body2) -> Option.Some(Term.Lam(x, body2))
+            Option.None -> Option.None
+        Term.App(f, arg) -> stepApp(f, arg)
+
+verify step
+    step(Term.Var("x")) => Option.None
+    step(Term.App(Term.Lam("x", Term.Var("x")), Term.Var("a"))) => Option.Some(Term.Var("a"))
+    step(Term.Lam("x", Term.App(Term.Lam("y", Term.Var("y")), Term.Var("z")))) => Option.Some(Term.Lam("x", Term.Var("z")))
+    step(Term.Lam("x", Term.Var("x"))) => Option.None
+
+fn eval(t: Term) -> Term
+    ? "Reduces a lambda term to normal form by iterating single steps."
+    match step(t)
+        Option.Some(next) -> eval(next)
+        Option.None -> t
+
+verify eval
+    eval(Term.App(Term.Lam("x", Term.Var("x")), Term.Var("a"))) => Term.Var("a")
+    termToString(eval(Term.App(Term.Lam("x", Term.App(Term.Var("x"), Term.Var("x"))), Term.Var("a")))) => "(a a)"
+
+// --- Church numerals ---
+
+fn applyN(n: Int) -> Term
+    ? "Builds the term f^n(x) using variables named f and x."
+    match n
+        0 -> Term.Var("x")
+        _ -> Term.App(Term.Var("f"), applyN(n - 1))
+
+verify applyN
+    applyN(0) => Term.Var("x")
+    applyN(2) => Term.App(Term.Var("f"), Term.App(Term.Var("f"), Term.Var("x")))
+
+fn church(n: Int) -> Term
+    ? "Church numeral: λf.λx. f^n(x)"
+    Term.Lam("f", Term.Lam("x", applyN(n)))
+
+verify church
+    termToString(church(0)) => "(λf.(λx.x))"
+    termToString(church(2)) => "(λf.(λx.(f (f x))))"
+
+fn countS(t: Term) -> Int
+    ? "Counts S-nesting depth in S(S(...Z...)) after unchurch decoding."
+    match t
+        Term.Var(_) -> 0
+        Term.Lam(_, _) -> 0
+        Term.App(f, arg) -> match f
+            Term.Var(name) -> match name == "S"
+                true -> 1 + countS(arg)
+                false -> 0
+            _ -> 0
+
+verify countS
+    countS(Term.Var("Z")) => 0
+    countS(Term.Lam("x", Term.Var("x"))) => 0
+    countS(Term.App(Term.Var("S"), Term.Var("Z"))) => 1
+    countS(Term.App(Term.Var("S"), Term.App(Term.Var("S"), Term.Var("Z")))) => 2
+    countS(Term.App(Term.Var("T"), Term.Var("Z"))) => 0
+    countS(Term.App(Term.Lam("x", Term.Var("x")), Term.Var("Z"))) => 0
+
+fn unchurch(t: Term) -> Int
+    ? "Decodes a Church numeral by applying to S and Z, reducing, then counting."
+    countS(eval(Term.App(Term.App(t, Term.Var("S")), Term.Var("Z"))))
+
+verify unchurch
+    unchurch(church(0)) => 0
+    unchurch(church(1)) => 1
+    unchurch(church(3)) => 3
+
+// --- Church arithmetic ---
+
+fn churchSucc() -> Term
+    ? "SUCC = λn.λf.λx. f (n f x)"
+    Term.Lam("n", Term.Lam("f", Term.Lam("x", Term.App(Term.Var("f"), Term.App(Term.App(Term.Var("n"), Term.Var("f")), Term.Var("x"))))))
+
+verify churchSucc
+    termToString(churchSucc()) => "(λn.(λf.(λx.(f ((n f) x)))))"
+
+fn churchPlus() -> Term
+    ? "PLUS = λm.λn.λf.λx. m f (n f x)"
+    Term.Lam("m", Term.Lam("n", Term.Lam("f", Term.Lam("x", Term.App(Term.App(Term.Var("m"), Term.Var("f")), Term.App(Term.App(Term.Var("n"), Term.Var("f")), Term.Var("x")))))))
+
+verify churchPlus
+    termToString(churchPlus()) => "(λm.(λn.(λf.(λx.((m f) ((n f) x))))))"
+
+fn churchMult() -> Term
+    ? "MULT = λm.λn.λf. m (n f)"
+    Term.Lam("m", Term.Lam("n", Term.Lam("f", Term.App(Term.Var("m"), Term.App(Term.Var("n"), Term.Var("f"))))))
+
+verify churchMult
+    termToString(churchMult()) => "(λm.(λn.(λf.(m (n f)))))"
+
+fn testSucc(n: Int) -> Int
+    ? "Applies Church successor and decodes the result."
+    unchurch(eval(Term.App(churchSucc(), church(n))))
+
+verify testSucc
+    testSucc(0) => 1
+    testSucc(2) => 3
+
+fn testPlus(a: Int, b: Int) -> Int
+    ? "Applies Church addition and decodes the result."
+    unchurch(eval(Term.App(Term.App(churchPlus(), church(a)), church(b))))
+
+verify testPlus
+    testPlus(2, 3) => 5
+
+fn testMult(a: Int, b: Int) -> Int
+    ? "Applies Church multiplication and decodes the result."
+    unchurch(eval(Term.App(Term.App(churchMult(), church(a)), church(b))))
+
+verify testMult
+    testMult(2, 3) => 6
+
+// --- Church booleans ---
+
+fn churchTrue() -> Term
+    ? "TRUE = λa.λb. a"
+    Term.Lam("a", Term.Lam("b", Term.Var("a")))
+
+verify churchTrue
+    termToString(churchTrue()) => "(λa.(λb.a))"
+
+fn churchFalse() -> Term
+    ? "FALSE = λa.λb. b"
+    Term.Lam("a", Term.Lam("b", Term.Var("b")))
+
+verify churchFalse
+    termToString(churchFalse()) => "(λa.(λb.b))"
+
+fn unchurchBool(t: Term) -> String
+    ? "Decodes a Church boolean by applying to T and F, reducing, and extracting."
+    result = eval(Term.App(Term.App(t, Term.Var("T")), Term.Var("F")))
+    match result
+        Term.Var(name) -> name
+        _ -> "?"
+
+verify unchurchBool
+    unchurchBool(churchTrue()) => "T"
+    unchurchBool(churchFalse()) => "F"
+    unchurchBool(Term.Var("x")) => "?"
+
+fn churchAnd() -> Term
+    ? "AND = λp.λq. p q p"
+    Term.Lam("p", Term.Lam("q", Term.App(Term.App(Term.Var("p"), Term.Var("q")), Term.Var("p"))))
+
+verify churchAnd
+    termToString(churchAnd()) => "(λp.(λq.((p q) p)))"
+
+fn churchNot() -> Term
+    ? "NOT = λp. p FALSE TRUE"
+    Term.Lam("p", Term.App(Term.App(Term.Var("p"), churchFalse()), churchTrue()))
+
+verify churchNot
+    termToString(churchNot()) => "(λp.((p (λa.(λb.b))) (λa.(λb.a))))"
+
+fn testAnd(a: Term, b: Term) -> String
+    ? "Applies Church AND and decodes the result."
+    unchurchBool(eval(Term.App(Term.App(churchAnd(), a), b)))
+
+verify testAnd
+    testAnd(churchTrue(), churchTrue()) => "T"
+    testAnd(churchTrue(), churchFalse()) => "F"
+
+fn testNot(t: Term) -> String
+    ? "Applies Church NOT and decodes the result."
+    unchurchBool(eval(Term.App(churchNot(), t)))
+
+verify testNot
+    testNot(churchTrue()) => "F"
+    testNot(churchFalse()) => "T"
+
+fn main()
+    ! [Console.print]
+    id = Term.Lam("x", Term.Var("x"))
+    result = eval(Term.App(id, Term.Var("hello")))
+    Console.print("(λx.x) hello = {termToString(result)}")
+    Console.print("Church 2 + 3 = {testPlus(2, 3)}")
+    Console.print("Church 2 × 3 = {testMult(2, 3)}")
+    Console.print("NOT TRUE = {testNot(churchTrue())}")

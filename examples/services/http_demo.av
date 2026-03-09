@@ -17,7 +17,6 @@ decision HttpAsCapability
         "only transport failures (timeout, DNS, refused) are Err."
     chosen = "BuiltinService"
     rejected = ["NetworkDotAv", "ImplicitIO"]
-
     impacts = [fetch, checkStatus, post]
 
 fn fetch(url: String) -> Result<HttpResponse, String>
@@ -40,7 +39,7 @@ fn post(url: String, payload: String, token: String) -> Result<HttpResponse, Str
     Http.post(url, payload, "application/json", [auth])
 
 fn main() -> Unit
-    ! [Http.get, Http.post, Console.print]
+    ! [Console.print, Http.get, Http.post]
     url = "https://httpbin.org/get"
 
     r1 = fetch(url)

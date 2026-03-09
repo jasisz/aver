@@ -5,7 +5,7 @@
 ///
 /// ```aver
 /// fn fetch(url: String) -> Result<HttpResponse, String>
-///     ! [Http]
+///     ! [Http.get]
 ///     Http.get(url)
 /// ```
 ///

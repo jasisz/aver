@@ -1,0 +1,467 @@
+module RedBlackTree
+    intent =
+        "Purely functional red-black tree with insert/delete, invariants, and pretty-print demo."
+    exposes [Tree, insert, delete, member, toSorted, blackDepth]
+
+decision BlackDepthConvention
+  date = "2026-03-04"
+  reason =
+    "blackDepth(Empty) = 1 treats the empty tree as a black sentinel leaf."
+    "This matches Okasaki's convention and simplifies invariant checks."
+  chosen = "SentinelCountsAsBlack"
+  rejected = ["SentinelIsZero"]
+  impacts = [blackDepth]
+
+decision KahrsDelete
+  date = "2026-03-04"
+  reason =
+    "Kahrs (2001) delete avoids DoubleBlack constructors by using fuse"
+    "to merge subtrees and balDeleteLeft/Right for rebalancing."
+    "Existing Tree type and insert functions remain untouched."
+  chosen = "KahrsFuse"
+  rejected = ["DoubleBlackVariant", "MinReplacementDelete"]
+  impacts = [delete, del, fuse, balDeleteLeft, balDeleteRight]
+
+type Tree
+  Empty
+  Red(Tree, Int, Tree)
+  Black(Tree, Int, Tree)
+
+fn search(x: Int, left: Tree, value: Int, right: Tree) -> Bool
+  ? "Binary search within a non-empty node"
+  match x == value
+    true -> true
+    false -> match x < value
+      true -> member(x, left)
+      false -> member(x, right)
+
+verify search law rootMatch
+  given x: Int = [1]
+  given left: Tree = [Tree.Empty]
+  given value: Int = [1]
+  given right: Tree = [Tree.Empty]
+  search(x, left, value, right) => true
+
+fn member(x: Int, t: Tree) -> Bool
+  ? "Check if a value exists in the tree"
+  match t
+    Tree.Empty -> false
+    Tree.Red(left, value, right) -> search(x, left, value, right)
+    Tree.Black(left, value, right) -> search(x, left, value, right)
+
+verify member
+  member(3, fromList([3, 1, 5, 2, 4])) => true
+  member(1, fromList([3, 1, 5, 2, 4])) => true
+  member(5, fromList([3, 1, 5, 2, 4])) => true
+  member(6, fromList([3, 1, 5, 2, 4])) => false
+  member(0, fromList([3, 1, 5, 2, 4])) => false
+
+fn checkRight(left: Tree, value: Int, right: Tree) -> Tree
+  ? "Check right subtree for red-red violations and rebalance"
+  match right
+    Tree.Red(rl, rv, rr) -> match rl
+      Tree.Red(b, y, c) -> Tree.Red(Tree.Black(left, value, b), y, Tree.Black(c, rv, rr))
+      _ -> match rr
+        Tree.Red(c, z, d) -> Tree.Red(Tree.Black(left, value, rl), rv, Tree.Black(c, z, d))
+        _ -> Tree.Black(left, value, right)
+    _ -> Tree.Black(left, value, right)
+
+verify checkRight law emptyRight
+  given left: Tree = [Tree.Empty]
+  given value: Int = [1]
+  given right: Tree = [Tree.Empty]
+  checkRight(left, value, right) => Tree.Black(Tree.Empty, 1, Tree.Empty)
+
+fn balanceBlack(left: Tree, value: Int, right: Tree) -> Tree
+  ? "Rebalance a black node — handles all four rotation cases"
+  match left
+    Tree.Red(ll, lv, lr) -> match ll
+      Tree.Red(a, x, b) -> Tree.Red(Tree.Black(a, x, b), lv, Tree.Black(lr, value, right))
+      _ -> match lr
+        Tree.Red(b, y, c) -> Tree.Red(Tree.Black(ll, lv, b), y, Tree.Black(c, value, right))
+        _ -> checkRight(left, value, right)
+    _ -> checkRight(left, value, right)
+
+verify balanceBlack law emptyChildren
+  given left: Tree = [Tree.Empty]
+  given value: Int = [1]
+  given right: Tree = [Tree.Empty]
+  balanceBlack(left, value, right) => Tree.Black(Tree.Empty, 1, Tree.Empty)
+
+fn ins(x: Int, t: Tree) -> Tree
+  ? "Insert helper — preserves invariants except possibly at root"
+  match t
+    Tree.Empty -> Tree.Red(Tree.Empty, x, Tree.Empty)
+    Tree.Red(left, value, right) -> match x == value
+      true -> t
+      false -> match x < value
+        true -> Tree.Red(ins(x, left), value, right)
+        false -> Tree.Red(left, value, ins(x, right))
+    Tree.Black(left, value, right) -> match x == value
+      true -> t
+      false -> match x < value
+        true -> balanceBlack(ins(x, left), value, right)
+        false -> balanceBlack(left, value, ins(x, right))
+
+verify ins law insertIntoEmpty
+  given x: Int = [1]
+  given t: Tree = [Tree.Empty]
+  ins(x, t) => Tree.Red(Tree.Empty, 1, Tree.Empty)
+
+fn makeBlack(t: Tree) -> Tree
+  ? "Force the root to black"
+  match t
+    Tree.Red(left, value, right) -> Tree.Black(left, value, right)
+    _ -> t
+
+verify makeBlack law redRoot
+  given t: Tree = [Tree.Red(Tree.Empty, 1, Tree.Empty)]
+  makeBlack(t) => Tree.Black(Tree.Empty, 1, Tree.Empty)
+
+fn insert(x: Int, t: Tree) -> Tree
+  ? "Insert a value into the red-black tree"
+  makeBlack(ins(x, t))
+
+verify insert law rootBlackened
+  given x: Int = [1]
+  given t: Tree = [Tree.Empty]
+  insert(x, t) => Tree.Black(Tree.Empty, 1, Tree.Empty)
+
+fn redden(t: Tree) -> Tree
+  ? "Recolor a black node to red (for delete rebalancing)"
+  match t
+    Tree.Black(left, value, right) -> Tree.Red(left, value, right)
+    _ -> t
+
+verify redden law blackToRed
+  given t: Tree = [Tree.Black(Tree.Empty, 1, Tree.Empty)]
+  redden(t) => Tree.Red(Tree.Empty, 1, Tree.Empty)
+
+fn balDeleteLeft(left: Tree, value: Int, right: Tree) -> Tree
+  ? "Rebalance after left subtree lost a black level"
+  match left
+    Tree.Red(a, x, b) -> Tree.Red(Tree.Black(a, x, b), value, right)
+    _ -> match right
+      Tree.Black(a, z, b) -> balanceBlack(left, value, Tree.Red(a, z, b))
+      Tree.Red(rl, rv, rr) -> match rl
+        Tree.Black(a, z, b) -> Tree.Red(Tree.Black(left, value, a), z, balanceBlack(b, rv, redden(rr)))
+        _ -> Tree.Black(left, value, right)
+      _ -> Tree.Black(left, value, right)
+
+verify balDeleteLeft law leftRedShortPath
+  given left: Tree = [Tree.Red(Tree.Empty, 1, Tree.Empty)]
+  given value: Int = [2]
+  given right: Tree = [Tree.Empty]
+  balDeleteLeft(left, value, right) => Tree.Red(Tree.Black(Tree.Empty, 1, Tree.Empty), 2, Tree.Empty)
+
+fn balDeleteRight(left: Tree, value: Int, right: Tree) -> Tree
+  ? "Rebalance after right subtree lost a black level"
+  match right
+    Tree.Red(b, z, c) -> Tree.Red(left, value, Tree.Black(b, z, c))
+    _ -> match left
+      Tree.Black(a, z, b) -> balanceBlack(Tree.Red(a, z, b), value, right)
+      Tree.Red(ll, lv, lr) -> match lr
+        Tree.Black(b, z, c) -> Tree.Red(balanceBlack(redden(ll), lv, b), z, Tree.Black(c, value, right))
+        _ -> Tree.Black(left, value, right)
+      _ -> Tree.Black(left, value, right)
+
+verify balDeleteRight law rightRedShortPath
+  given left: Tree = [Tree.Empty]
+  given value: Int = [2]
+  given right: Tree = [Tree.Red(Tree.Empty, 1, Tree.Empty)]
+  balDeleteRight(left, value, right) => Tree.Red(Tree.Empty, 2, Tree.Black(Tree.Empty, 1, Tree.Empty))
+
+fn fuseRedRed(l1: Tree, v1: Int, r1: Tree, l2: Tree, v2: Int, r2: Tree) -> Tree
+  ? "Fuse two red subtrees after root removal"
+  s = fuse(r1, l2)
+  match s
+    Tree.Red(sl, sv, sr) -> Tree.Red(Tree.Red(l1, v1, sl), sv, Tree.Red(sr, v2, r2))
+    _ -> Tree.Red(l1, v1, Tree.Red(s, v2, r2))
+
+verify fuseRedRed law minimalCase
+  given l1: Tree = [Tree.Empty]
+  given v1: Int = [1]
+  given r1: Tree = [Tree.Empty]
+  given l2: Tree = [Tree.Empty]
+  given v2: Int = [2]
+  given r2: Tree = [Tree.Empty]
+  fuseRedRed(l1, v1, r1, l2, v2, r2) => Tree.Red(Tree.Empty, 1, Tree.Red(Tree.Empty, 2, Tree.Empty))
+
+fn fuseBlackBlack(l1: Tree, v1: Int, r1: Tree, l2: Tree, v2: Int, r2: Tree) -> Tree
+  ? "Fuse two black subtrees after root removal"
+  s = fuse(r1, l2)
+  match s
+    Tree.Red(sl, sv, sr) -> Tree.Red(Tree.Black(l1, v1, sl), sv, Tree.Black(sr, v2, r2))
+    _ -> balDeleteLeft(Tree.Black(l1, v1, s), v2, r2)
+
+verify fuseBlackBlack law minimalCase
+  given l1: Tree = [Tree.Empty]
+  given v1: Int = [1]
+  given r1: Tree = [Tree.Empty]
+  given l2: Tree = [Tree.Empty]
+  given v2: Int = [2]
+  given r2: Tree = [Tree.Empty]
+  fuseBlackBlack(l1, v1, r1, l2, v2, r2) => Tree.Black(Tree.Black(Tree.Empty, 1, Tree.Empty), 2, Tree.Empty)
+
+fn fuse(left: Tree, right: Tree) -> Tree
+  ? "Merge two subtrees after removing their common root"
+  match left
+    Tree.Empty -> right
+    Tree.Red(l1, v1, r1) -> match right
+      Tree.Empty -> left
+      Tree.Red(l2, v2, r2) -> fuseRedRed(l1, v1, r1, l2, v2, r2)
+      Tree.Black(_, _, _) -> Tree.Red(l1, v1, fuse(r1, right))
+    Tree.Black(l1, v1, r1) -> match right
+      Tree.Empty -> left
+      Tree.Red(l2, v2, r2) -> Tree.Red(fuse(left, l2), v2, r2)
+      Tree.Black(l2, v2, r2) -> fuseBlackBlack(l1, v1, r1, l2, v2, r2)
+
+verify fuse law emptyLeft
+  given left: Tree = [Tree.Empty]
+  given right: Tree = [Tree.Black(Tree.Empty, 2, Tree.Empty)]
+  fuse(left, right) => Tree.Black(Tree.Empty, 2, Tree.Empty)
+
+fn delL(x: Int, left: Tree, value: Int, right: Tree) -> Tree
+  ? "Delete from left subtree with rebalancing if needed"
+  match left
+    Tree.Black(_, _, _) -> balDeleteLeft(del(x, left), value, right)
+    _ -> Tree.Red(del(x, left), value, right)
+
+verify delL law blackLeftBranch
+  given x: Int = [1]
+  given left: Tree = [Tree.Black(Tree.Empty, 1, Tree.Empty)]
+  given value: Int = [2]
+  given right: Tree = [Tree.Empty]
+  delL(x, left, value, right) => Tree.Black(Tree.Empty, 2, Tree.Empty)
+
+fn delR(x: Int, left: Tree, value: Int, right: Tree) -> Tree
+  ? "Delete from right subtree with rebalancing if needed"
+  match right
+    Tree.Black(_, _, _) -> balDeleteRight(left, value, del(x, right))
+    _ -> Tree.Red(left, value, del(x, right))
+
+verify delR law blackRightBranch
+  given x: Int = [1]
+  given left: Tree = [Tree.Empty]
+  given value: Int = [2]
+  given right: Tree = [Tree.Black(Tree.Empty, 1, Tree.Empty)]
+  delR(x, left, value, right) => Tree.Black(Tree.Empty, 2, Tree.Empty)
+
+fn del(x: Int, t: Tree) -> Tree
+  ? "Delete helper — may temporarily violate root color"
+  match t
+    Tree.Empty -> Tree.Empty
+    Tree.Red(left, value, right) -> match x == value
+      true -> fuse(left, right)
+      false -> match x < value
+        true -> delL(x, left, value, right)
+        false -> delR(x, left, value, right)
+    Tree.Black(left, value, right) -> match x == value
+      true -> fuse(left, right)
+      false -> match x < value
+        true -> delL(x, left, value, right)
+        false -> delR(x, left, value, right)
+
+verify del law deleteRootLeaf
+  given x: Int = [1]
+  given t: Tree = [Tree.Black(Tree.Empty, 1, Tree.Empty)]
+  del(x, t) => Tree.Empty
+
+fn delete(x: Int, t: Tree) -> Tree
+  ? "Delete a value from the red-black tree"
+  makeBlack(del(x, t))
+
+verify delete
+  toSorted(delete(3, fromList([3, 1, 5, 2, 4]))) => [1, 2, 4, 5]
+  toSorted(delete(1, fromList([3, 1, 5, 2, 4]))) => [2, 3, 4, 5]
+  toSorted(delete(5, fromList([3, 1, 5, 2, 4]))) => [1, 2, 3, 4]
+  toSorted(delete(6, fromList([3, 1, 5, 2, 4]))) => [1, 2, 3, 4, 5]
+  size(delete(3, fromList([3, 1, 5, 2, 4]))) => 4
+  delete(1, fromList([1])) => Tree.Empty
+
+fn size(t: Tree) -> Int
+  ? "Count the number of elements"
+  match t
+    Tree.Empty -> 0
+    Tree.Red(left, _, right) -> 1 + size(left) + size(right)
+    Tree.Black(left, _, right) -> 1 + size(left) + size(right)
+
+verify size law equalsSortedLen
+  given t: Tree = [
+    Tree.Empty,
+    Tree.Red(Tree.Empty, 2, Tree.Empty),
+    Tree.Black(Tree.Empty, 3, Tree.Empty),
+    fromList([3, 1, 5, 2, 4]),
+    fromList([1, 1, 1])
+  ]
+  size(t) => List.len(toSorted(t))
+
+fn blackDepth(t: Tree) -> Int
+  ? "Black depth — uniform on all paths in a valid RBT"
+  match t
+    Tree.Empty -> 1
+    Tree.Red(left, _, _) -> blackDepth(left)
+    Tree.Black(left, _, _) -> 1 + blackDepth(left)
+
+verify blackDepth
+  blackDepth(Tree.Empty) => 1
+  blackDepth(Tree.Black(Tree.Empty, 1, Tree.Empty)) => 2
+  blackDepth(Tree.Red(Tree.Empty, 1, Tree.Empty)) => 1
+
+fn fromList(items: List<Int>) -> Tree
+  ? "Build a tree from a list of integers"
+  fromListAcc(items, Tree.Empty)
+
+verify fromList law emptyInput
+  given items: List<Int> = [[]]
+  fromList(items) => Tree.Empty
+
+fn fromListAcc(items: List<Int>, acc: Tree) -> Tree
+  ? "Builds a tree by inserting items from left to right."
+  match items
+    [] -> acc
+    [item, ..rest] -> fromListAcc(rest, insert(item, acc))
+
+verify fromListAcc
+  fromListAcc([], Tree.Empty) => Tree.Empty
+  fromListAcc([2], Tree.Empty) => Tree.Black(Tree.Empty, 2, Tree.Empty)
+
+fn concatLists(a: List<Int>, b: List<Int>) -> List<Int>
+  ? "Concatenate two lists while preserving order"
+  List.concat(a, b)
+
+verify concatLists law keepsOrder
+  given a: List<Int> = [[1, 2]]
+  given b: List<Int> = [[3, 4]]
+  concatLists(a, b) => [1, 2, 3, 4]
+
+fn collectInOrder(left: Tree, value: Int, right: Tree) -> List<Int>
+  ? "Collect elements from a node in sorted order"
+  concatLists(List.concat(toSorted(left), [value]), toSorted(right))
+
+verify collectInOrder law singletonNode
+  given left: Tree = [Tree.Empty]
+  given value: Int = [2]
+  given right: Tree = [Tree.Empty]
+  collectInOrder(left, value, right) => [2]
+
+fn toSorted(t: Tree) -> List<Int>
+  ? "In-order traversal — returns elements in ascending order"
+  match t
+    Tree.Empty -> []
+    Tree.Red(left, value, right) -> collectInOrder(left, value, right)
+    Tree.Black(left, value, right) -> collectInOrder(left, value, right)
+
+verify toSorted law sizePreserved
+  given t: Tree = [
+    Tree.Empty,
+    Tree.Red(Tree.Empty, 2, Tree.Empty),
+    Tree.Black(Tree.Empty, 3, Tree.Empty),
+    fromList([5, 3, 7, 1]),
+    fromList([3, 1, 5, 2, 4])
+  ]
+  List.len(toSorted(t)) => size(t)
+
+fn checkBothSubtrees(left: Tree, right: Tree) -> Bool
+  ? "Short-circuit AND: check left subtree first, then right"
+  match hasNoRedRed(left)
+    true -> hasNoRedRed(right)
+    false -> false
+
+verify checkBothSubtrees law emptyOk
+  given left: Tree = [Tree.Empty]
+  given right: Tree = [Tree.Empty]
+  checkBothSubtrees(left, right) => true
+
+fn hasNoRedRed(t: Tree) -> Bool
+  ? "Check that no red node has a red child"
+  match t
+    Tree.Empty -> true
+    Tree.Black(left, _, right) -> checkBothSubtrees(left, right)
+    Tree.Red(left, _, right) -> match left
+      Tree.Red(_, _, _) -> false
+      _ -> match right
+        Tree.Red(_, _, _) -> false
+        _ -> checkBothSubtrees(left, right)
+
+verify hasNoRedRed
+  hasNoRedRed(Tree.Empty) => true
+  hasNoRedRed(fromList([10, 5, 15, 3, 7, 12, 18])) => true
+  hasNoRedRed(insert(1, fromList([10, 5, 15, 3, 7, 12, 18]))) => true
+  hasNoRedRed(insert(20, fromList([10, 5, 15, 3, 7, 12, 18]))) => true
+  hasNoRedRed(fromList([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])) => true
+  hasNoRedRed(Tree.Red(Tree.Red(Tree.Empty, 1, Tree.Empty), 2, Tree.Empty)) => false
+  hasNoRedRed(Tree.Red(Tree.Empty, 1, Tree.Red(Tree.Empty, 2, Tree.Empty))) => false
+
+fn insertPreservesBlackDepth(xs: List<Int>, x: Int) -> Bool
+  ? "Check that inserting x preserves black depth"
+  blackDepth(fromList(xs)) == blackDepth(insert(x, fromList(xs)))
+
+verify insertPreservesBlackDepth
+  insertPreservesBlackDepth([10, 20, 30], 5) => true
+  insertPreservesBlackDepth([10, 20, 30], 15) => true
+  insertPreservesBlackDepth([10, 20, 30], 25) => true
+  insertPreservesBlackDepth([1, 2, 3, 4, 5, 6, 7], 8) => true
+
+fn deletePreservesBlackDepth(xs: List<Int>, x: Int) -> Bool
+  ? "Check that deleting x preserves black depth"
+  blackDepth(fromList(xs)) == blackDepth(delete(x, fromList(xs)))
+
+verify deletePreservesBlackDepth
+  deletePreservesBlackDepth([10, 5, 15, 3, 7, 12, 18], 5) => true
+  deletePreservesBlackDepth([10, 5, 15, 3, 7, 12, 18], 15) => true
+  deletePreservesBlackDepth([10, 5, 15, 3, 7, 12, 18], 10) => true
+  deletePreservesBlackDepth([1, 2, 3, 4, 5, 6, 7], 4) => true
+
+fn deletePreservesInvariants(xs: List<Int>, x: Int) -> Bool
+  ? "Check that deleting x from a tree built from xs preserves no-red-red"
+  hasNoRedRed(delete(x, fromList(xs)))
+
+verify deletePreservesInvariants
+  deletePreservesInvariants([1, 2, 3, 4, 5, 6, 7], 3) => true
+  deletePreservesInvariants([1, 2, 3, 4, 5, 6, 7], 1) => true
+  deletePreservesInvariants([1, 2, 3, 4, 5, 6, 7], 7) => true
+  deletePreservesInvariants([1, 2, 3, 4, 5, 6, 7], 4) => true
+
+fn printNode(linePrefix: String, childPrefix: String, label: String, v: Int, l: Tree, r: Tree) -> Unit
+  ? "Print one labeled tree node and recurse into both children."
+  ! [Console.print]
+  Console.print("{linePrefix}{label}:{v}")
+  printTree(l, "{childPrefix}├─ ", "{childPrefix}│  ")
+  printTree(r, "{childPrefix}└─ ", "{childPrefix}   ")
+
+fn printTree(t: Tree, linePrefix: String, childPrefix: String) -> Unit
+  ? "Print a tree node with box-drawing prefixes"
+  ! [Console.print]
+  match t
+    Tree.Empty -> Console.print("{linePrefix}·")
+    Tree.Red(l, v, r) -> printNode(linePrefix, childPrefix, "R", v, l, r)
+    Tree.Black(l, v, r) -> printNode(linePrefix, childPrefix, "B", v, l, r)
+
+fn prettyPrint(t: Tree) -> Unit
+  ? "Pretty-print the tree structure with box-drawing lines"
+  ! [Console.print]
+  match t
+    Tree.Empty -> Console.print("·")
+    Tree.Red(l, v, r) -> printNode("", "", "R", v, l, r)
+    Tree.Black(l, v, r) -> printNode("", "", "B", v, l, r)
+
+fn main()
+  ! [Console.print]
+  t = fromList([5, 3, 7, 1, 4, 6, 8, 2])
+  Console.print("Red-Black Tree")
+  Console.print("Size: {size(t)}")
+  Console.print("Black depth: {blackDepth(t)}")
+  Console.print("Sorted: {toSorted(t)}")
+  Console.print("Contains 4: {member(4, t)}")
+  Console.print("Contains 9: {member(9, t)}")
+  Console.print("")
+  prettyPrint(t)
+  Console.print("")
+  t2 = delete(3, t)
+  Console.print("After deleting 3:")
+  Console.print("Size: {size(t2)}")
+  Console.print("Sorted: {toSorted(t2)}")
+  Console.print("Contains 3: {member(3, t2)}")
+  Console.print("")
+  prettyPrint(t2)

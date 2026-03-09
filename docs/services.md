@@ -182,10 +182,14 @@ Source: `src/services/http_server.rs`
 
 | Function | Signature |
 |---|---|
-| `HttpServer.listen` | `(Int, Fn(HttpRequest) -> HttpResponse ! [Console, Http, Disk, Env, Tcp, HttpServer, Time]) -> Unit` |
-| `HttpServer.listenWith` | `(Int, T, Fn(T, HttpRequest) -> HttpResponse ! [Console, Http, Disk, Env, Tcp, HttpServer, Time]) -> Unit` |
+| `HttpServer.listen` | `(Int, Fn(HttpRequest) -> HttpResponse ! [...method-level effects...]) -> Unit` |
+| `HttpServer.listenWith` | `(Int, T, Fn(T, HttpRequest) -> HttpResponse ! [...method-level effects...]) -> Unit` |
 
 `HttpServer.listen` and `HttpServer.listenWith` accept top-level function values. `listenWith` is the preferred form when a handler needs configuration, connections, or other app state, because the context stays explicit instead of being hidden in closure capture.
+
+This is the main intended use of function values in Aver: named handlers and callbacks with explicit types and explicit effects. Most user code still stays first-order.
+
+The handler itself still uses exact method-level effects such as `Http.get`, `Tcp.readLine`, or `Console.print`. The server call does not widen those into namespace-level grants.
 
 `HttpRequest` record: `{ method: String, path: String, body: String, headers: List<Header> }`.
 `HttpResponse` record: `{ status: Int, body: String, headers: List<Header> }`.

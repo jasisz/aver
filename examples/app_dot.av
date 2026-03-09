@@ -1,8 +1,0 @@
-module App
-    depends [Examples.Models.User]
-    intent =
-        "Demonstrates dot-path module imports."
-
-fn main() -> Unit
-    ! [Console.print]
-    Console.print(Examples.Models.User.nameById(1))

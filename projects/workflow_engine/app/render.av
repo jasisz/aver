@@ -1,0 +1,222 @@
+module Render
+    intent =
+        "Shell-friendly rendering for workflow engine command and query results."
+        "Formatting stays dumb and explicit so the interesting orchestration remains in the"
+        "app and domain layers, not in presentation glue."
+    exposes [renderCommand, renderQuery]
+    depends [App.Commands, App.Queries, Domain.Types, Domain.Events, Domain.Views]
+
+fn renderCommandReport(report: CommandReport) -> List<String>
+    ? "Renders a command result as CLI lines."
+    List.concat([report.summary, "subject: {report.subjectId}", "events={Int.toString(List.len(report.events))} notifications={Int.toString(List.len(report.notifications))} audits={Int.toString(List.len(report.audits))}"], renderCommandDetails(report))
+
+verify renderCommandReport
+    renderCommandReport(CommandReport(summary = "Created project 'alpha'", subjectId = "project:alpha", events = [], notifications = [], audits = [])) => ["Created project 'alpha'", "subject: project:alpha", "events=0 notifications=0 audits=0", "notifications: 0", "audits: 0"]
+
+fn renderCommandDetails(report: CommandReport) -> List<String>
+    ? "Details for notifications and audits after a command."
+    List.concat(renderNotifications(report.notifications), renderAudits(report.audits))
+
+verify renderCommandDetails
+    renderCommandDetails(CommandReport(summary = "x", subjectId = "t1", events = [], notifications = [sampleNotification()], audits = [sampleAudit()])) => ["notifications: 1", "[deadline_soon] Task 't1' is due within 24 hours", "audits: 1", "2026-03-08T12:00:00Z task.created Task 't1' created"]
+
+fn renderQueryOutput(output: QueryOutput) -> List<String>
+    ? "Renders query results for the CLI."
+    match output
+        QueryOutput.TaskList(items) -> renderTaskList(items)
+        QueryOutput.TaskDetail(details) -> renderTaskDetails(details)
+        QueryOutput.AuditTrail(entries) -> renderAuditTrail(entries)
+
+verify renderQueryOutput
+    renderQueryOutput(QueryOutput.AuditTrail([])) => ["audits: 0"]
+
+fn renderTaskList(items: List<TaskSummary>) -> List<String>
+    ? "Renders list_tasks output."
+    match items
+        [] -> ["tasks: 0"]
+        _ -> List.prepend("tasks: {Int.toString(List.len(items))}", renderTaskSummaries(items))
+
+verify renderTaskList
+    renderTaskList([]) => ["tasks: 0"]
+    renderTaskList([sampleTaskSummary()]) => ["tasks: 1", renderTaskSummary(sampleTaskSummary())]
+
+fn renderTaskSummaries(items: List<TaskSummary>) -> List<String>
+    ? "Renders each task summary line."
+    match items
+        [] -> []
+        [item, ..rest] -> List.prepend(renderTaskSummary(item), renderTaskSummaries(rest))
+
+verify renderTaskSummaries
+    renderTaskSummaries([sampleTaskSummary()]) => [renderTaskSummary(sampleTaskSummary())]
+
+fn renderTaskSummary(item: TaskSummary) -> String
+    ? "One-line task list entry."
+    "{item.taskId} [{Domain.Views.statusText(item.status)}] priority={Domain.Views.priorityText(item.priority)} urgent={String.fromBool(item.derivedUrgent)} overdue={String.fromBool(item.overdue)} stalled={String.fromBool(item.stalled)} deadline={item.deadlineText} tags={item.tagSummary} title={item.title}"
+
+verify renderTaskSummary
+    renderTaskSummary(sampleTaskSummary()) => "t1 [todo] priority=high urgent=true overdue=false stalled=false deadline=2026-03-08T18:00:00Z tags=ops title=Write notes"
+
+fn renderTaskDetails(details: TaskDetails) -> List<String>
+    ? "Renders show_task output."
+    List.concat([
+        "task: {details.task.id}",
+        "project: {details.project.id} archived={String.fromBool(details.project.archived)}",
+        "title: {details.task.title}",
+        "status: {Domain.Views.statusText(details.task.status)}",
+        "priority: {Domain.Views.priorityText(details.task.priority)}",
+        "deadline: {deadlineText(details.task.deadline)}",
+        "tags: {String.join(details.task.tags, ",")}",
+        "derived urgent={String.fromBool(details.view.derivedUrgent)} overdue={String.fromBool(details.view.overdue)} stalled={String.fromBool(details.view.stalled)} needs_review={String.fromBool(details.view.needsReview)}"
+    ], List.concat(renderHistory(details.history), List.concat(renderNotifications(details.notifications), renderAudits(details.audits))))
+
+verify renderTaskDetails
+    List.get(renderTaskDetails(sampleTaskDetails()), 0) => Option.Some("task: t1")
+    List.contains(renderTaskDetails(sampleTaskDetails()), "derived urgent=true overdue=false stalled=false needs_review=false") => true
+
+fn deadlineText(deadline: Option<String>) -> String
+    ? "Display helper for optional deadlines."
+    match deadline
+        Option.None -> "-"
+        Option.Some(value) -> value
+
+verify deadlineText
+    deadlineText(Option.None) => "-"
+    deadlineText(Option.Some("2026-03-08T18:00:00Z")) => "2026-03-08T18:00:00Z"
+
+fn renderHistory(events: List<TaskEventRecord>) -> List<String>
+    ? "Renders task history lines."
+    List.prepend("history: {Int.toString(List.len(events))}", renderHistoryItems(events))
+
+verify renderHistory
+    renderHistory([sampleHistoryEvent()]) => ["history: 1", renderHistoryItem(sampleHistoryEvent())]
+
+fn renderHistoryItems(events: List<TaskEventRecord>) -> List<String>
+    ? "Renders each task event."
+    match events
+        [] -> []
+        [event, ..rest] -> List.prepend(renderHistoryItem(event), renderHistoryItems(rest))
+
+verify renderHistoryItems
+    renderHistoryItems([sampleHistoryEvent()]) => [renderHistoryItem(sampleHistoryEvent())]
+
+fn renderHistoryItem(event: TaskEventRecord) -> String
+    ? "One history line rendered from the typed domain event."
+    "{Int.toString(event.seq)} {Domain.Events.eventName(event.event)}"
+
+verify renderHistoryItem
+    renderHistoryItem(sampleHistoryEvent()) => "2 TaskCompleted"
+
+fn renderNotifications(entries: List<Notification>) -> List<String>
+    ? "Renders notification lines."
+    List.prepend("notifications: {Int.toString(List.len(entries))}", renderNotificationItems(entries))
+
+verify renderNotifications
+    renderNotifications([sampleNotification()]) => ["notifications: 1", "[deadline_soon] Task 't1' is due within 24 hours"]
+
+fn renderNotificationItems(entries: List<Notification>) -> List<String>
+    ? "Renders each notification."
+    match entries
+        [] -> []
+        [entry, ..rest] -> List.prepend("[{entry.kind}] {entry.message}", renderNotificationItems(rest))
+
+verify renderNotificationItems
+    renderNotificationItems([sampleNotification()]) => ["[deadline_soon] Task 't1' is due within 24 hours"]
+
+fn renderAudits(entries: List<AuditEntry>) -> List<String>
+    ? "Renders audit lines."
+    List.prepend("audits: {Int.toString(List.len(entries))}", renderAuditItems(entries))
+
+verify renderAudits
+    renderAudits([sampleAudit()]) => ["audits: 1", "2026-03-08T12:00:00Z task.created Task 't1' created"]
+
+fn renderAuditItems(entries: List<AuditEntry>) -> List<String>
+    ? "Renders each audit entry."
+    match entries
+        [] -> []
+        [entry, ..rest] -> List.prepend("{entry.createdAt} {entry.action} {entry.message}", renderAuditItems(rest))
+
+verify renderAuditItems
+    renderAuditItems([sampleAudit()]) => ["2026-03-08T12:00:00Z task.created Task 't1' created"]
+
+fn renderAuditTrail(entries: List<AuditEntry>) -> List<String>
+    ? "Renders show_audit output."
+    renderAudits(entries)
+
+verify renderAuditTrail
+    renderAuditTrail([]) => ["audits: 0"]
+
+fn renderCommand(result: Result<CommandReport, String>) -> Result<List<String>, String>
+    ? "Maps command execution into rendered output."
+    match result
+        Result.Ok(report) -> Result.Ok(renderCommandReport(report))
+        Result.Err(msg) -> Result.Err(msg)
+
+verify renderCommand
+    renderCommand(Result.Ok(CommandReport(summary = "Created project 'alpha'", subjectId = "project:alpha", events = [], notifications = [], audits = []))) => Result.Ok(["Created project 'alpha'", "subject: project:alpha", "events=0 notifications=0 audits=0", "notifications: 0", "audits: 0"])
+    renderCommand(Result.Err("boom")) => Result.Err("boom")
+
+fn renderQuery(result: Result<QueryOutput, String>) -> Result<List<String>, String>
+    ? "Maps query execution into rendered output."
+    match result
+        Result.Ok(output) -> Result.Ok(renderQueryOutput(output))
+        Result.Err(msg) -> Result.Err(msg)
+
+verify renderQuery
+    renderQuery(Result.Ok(QueryOutput.AuditTrail([]))) => Result.Ok(["audits: 0"])
+    renderQuery(Result.Err("boom")) => Result.Err("boom")
+
+fn sampleProject() -> Project
+    ? "Reusable CLI projection fixture."
+    Project(id = "alpha", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z")
+
+verify sampleProject
+    sampleProject() => Project(id = "alpha", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z")
+
+fn sampleTask() -> Task
+    ? "Reusable CLI task fixture."
+    Task(id = "t1", projectId = "alpha", title = "Write notes", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.High, tags = ["ops"], deadline = Option.Some("2026-03-08T18:00:00Z"), comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z")
+
+verify sampleTask
+    sampleTask() => Task(id = "t1", projectId = "alpha", title = "Write notes", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.High, tags = ["ops"], deadline = Option.Some("2026-03-08T18:00:00Z"), comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z")
+
+fn sampleTaskSummary() -> TaskSummary
+    ? "Reusable task list fixture."
+    TaskSummary(taskId = "t1", title = "Write notes", projectId = "alpha", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.High, derivedUrgent = true, overdue = false, stalled = false, tagSummary = "ops", deadlineText = "2026-03-08T18:00:00Z")
+
+verify sampleTaskSummary
+    sampleTaskSummary() => TaskSummary(taskId = "t1", title = "Write notes", projectId = "alpha", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.High, derivedUrgent = true, overdue = false, stalled = false, tagSummary = "ops", deadlineText = "2026-03-08T18:00:00Z")
+
+fn sampleView() -> TaskView
+    ? "Reusable derived view fixture."
+    TaskView(taskId = "t1", projectId = "alpha", title = "Write notes", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.High, tags = ["ops"], deadline = Option.Some("2026-03-08T18:00:00Z"), overdue = false, deadlineSoon = true, derivedUrgent = true, stalled = false, missingClosingComment = false, needsReview = false)
+
+verify sampleView
+    sampleView() => TaskView(taskId = "t1", projectId = "alpha", title = "Write notes", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.High, tags = ["ops"], deadline = Option.Some("2026-03-08T18:00:00Z"), overdue = false, deadlineSoon = true, derivedUrgent = true, stalled = false, missingClosingComment = false, needsReview = false)
+
+fn sampleHistoryEvent() -> TaskEventRecord
+    ? "Reusable task history fixture."
+    TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.TaskCompleted("2026-03-09T12:00:00Z"))
+
+verify sampleHistoryEvent
+    sampleHistoryEvent() => TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.TaskCompleted("2026-03-09T12:00:00Z"))
+
+fn sampleNotification() -> Notification
+    ? "Reusable notification fixture."
+    Notification(key = "deadline-soon:t1:2026-03-08T18:00:00Z", taskId = "t1", kind = "deadline_soon", message = "Task 't1' is due within 24 hours", createdAt = "2026-03-08T12:00:00Z")
+
+verify sampleNotification
+    sampleNotification() => Notification(key = "deadline-soon:t1:2026-03-08T18:00:00Z", taskId = "t1", kind = "deadline_soon", message = "Task 't1' is due within 24 hours", createdAt = "2026-03-08T12:00:00Z")
+
+fn sampleAudit() -> AuditEntry
+    ? "Reusable audit fixture."
+    AuditEntry(key = "task:t1:1:TaskCreated", taskId = "t1", action = "task.created", message = "Task 't1' created", createdAt = "2026-03-08T12:00:00Z")
+
+verify sampleAudit
+    sampleAudit() => AuditEntry(key = "task:t1:1:TaskCreated", taskId = "t1", action = "task.created", message = "Task 't1' created", createdAt = "2026-03-08T12:00:00Z")
+
+fn sampleTaskDetails() -> TaskDetails
+    ? "Reusable detailed task fixture."
+    TaskDetails(project = sampleProject(), task = sampleTask(), view = sampleView(), history = [sampleHistoryEvent()], audits = [sampleAudit()], notifications = [sampleNotification()])
+
+verify sampleTaskDetails
+    sampleTaskDetails() => TaskDetails(project = sampleProject(), task = sampleTask(), view = sampleView(), history = [sampleHistoryEvent()], audits = [sampleAudit()], notifications = [sampleNotification()])

@@ -1,0 +1,299 @@
+module Parse
+    intent =
+        "Plain argv parsing for the workflow engine CLI."
+        "The parser stays shell-friendly and returns small typed inputs so the CLI adapter"
+        "does not need to know any command semantics."
+    exposes [Input, parseArgs]
+    depends [App.Commands, App.Queries, Domain.Types]
+
+type Input
+    ShowHelp
+    RunCommand(Command)
+    RunQuery(Query)
+
+fn parseArgs(args: List<String>) -> Result<Input, String>
+    ? "Parses argv-style input into a command, query, or help action."
+    parts = trimParts(args)
+    match parts
+        [] -> Result.Ok(Input.ShowHelp)
+        _ -> routeArgs(parts)
+
+verify parseArgs
+    parseArgs([]) => Result.Ok(Input.ShowHelp)
+    parseArgs(["help"]) => Result.Ok(Input.ShowHelp)
+    parseArgs(["list_tasks"]) => Result.Ok(Input.RunQuery(Query.ListTasks(Option.None)))
+    parseArgs(["create_project", "alpha", "Alpha"]) => Result.Ok(Input.RunCommand(Command.CreateProject("alpha", "Alpha")))
+
+fn routeArgs(parts: List<String>) -> Result<Input, String>
+    ? "Routes non-empty argv input by command name."
+    head = firstPart(parts)?
+    name = String.toLower(head)
+    match name
+        "help" -> Result.Ok(Input.ShowHelp)
+        "create_project" -> parseCreateProject(parts)
+        "archive_project" -> parseArchiveProject(parts)
+        "create_task" -> parseCreateTask(parts)
+        "rename_task" -> parseRenameTask(parts)
+        "start_task" -> parseStartTask(parts)
+        "block_task" -> parseBlockTask(parts)
+        "complete_task" -> parseCompleteTask(parts)
+        "reopen_task" -> parseReopenTask(parts)
+        "change_priority" -> parseChangePriority(parts)
+        "add_tag" -> parseAddTag(parts)
+        "remove_tag" -> parseRemoveTag(parts)
+        "add_comment" -> parseAddComment(parts)
+        "set_deadline" -> parseSetDeadline(parts)
+        "clear_deadline" -> parseClearDeadline(parts)
+        "archive_task" -> parseArchiveTask(parts)
+        "list_tasks" -> parseListTasks(parts)
+        "show_task" -> parseShowTask(parts)
+        "show_audit" -> parseShowAudit(parts)
+        "run_rules" -> parseRunRules(parts)
+        _ -> Result.Err("Unknown command: " + head)
+
+verify routeArgs
+    routeArgs(["help"]) => Result.Ok(Input.ShowHelp)
+    routeArgs(["show_task", "t1"]) => Result.Ok(Input.RunQuery(Query.ShowTask("t1")))
+    routeArgs(["unknown"]) => Result.Err("Unknown command: unknown")
+
+fn trimParts(parts: List<String>) -> List<String>
+    ? "Trims all pipe-separated fields."
+    match parts
+        [] -> []
+        [part, ..rest] -> List.prepend(String.trim(part), trimParts(rest))
+
+verify trimParts
+    trimParts([" a ", " b "]) => ["a", "b"]
+
+fn firstPart(parts: List<String>) -> Result<String, String>
+    ? "Reads the first command field."
+    Option.toResult(List.get(parts, 0), "Command line was empty")
+
+verify firstPart
+    firstPart(["help"]) => Result.Ok("help")
+    firstPart([]) => Result.Err("Command line was empty")
+
+fn field(parts: List<String>, index: Int, label: String) -> Result<String, String>
+    ? "Reads one required field."
+    Option.toResult(List.get(parts, index), "Missing field: " + label)
+
+verify field
+    field(["a", "b"], 1, "x") => Result.Ok("b")
+    field(["a"], 1, "x") => Result.Err("Missing field: x")
+
+fn optionalField(parts: List<String>, index: Int) -> Option<String>
+    ? "Reads an optional field and treats blank or '-' as missing."
+    match List.get(parts, index)
+        Option.Some(value) -> match blankOrDash(value)
+            true -> Option.None
+            false -> Option.Some(value)
+        Option.None -> Option.None
+
+verify optionalField
+    optionalField(["run_rules", "t1"], 1) => Option.Some("t1")
+    optionalField(["run_rules", "-"], 1) => Option.None
+    optionalField(["run_rules"], 1) => Option.None
+
+fn blankOrDash(value: String) -> Bool
+    ? "True when a field means 'missing'."
+    match String.len(String.trim(value)) == 0
+        true -> true
+        false -> value == "-"
+
+verify blankOrDash
+    blankOrDash("") => true
+    blankOrDash("-") => true
+    blankOrDash("alpha") => false
+
+fn parsePriority(value: String) -> Result<Priority, String>
+    ? "CLI parser for priority names."
+    match String.toLower(value)
+        "low" -> Result.Ok(Domain.Types.Priority.Low)
+        "normal" -> Result.Ok(Domain.Types.Priority.Normal)
+        "high" -> Result.Ok(Domain.Types.Priority.High)
+        "urgent" -> Result.Ok(Domain.Types.Priority.Urgent)
+        _ -> Result.Err("Priority must be one of: low, normal, high, urgent")
+
+verify parsePriority
+    parsePriority("high") => Result.Ok(Domain.Types.Priority.High)
+    parsePriority("urgent") => Result.Ok(Domain.Types.Priority.Urgent)
+    parsePriority("x") => Result.Err("Priority must be one of: low, normal, high, urgent")
+
+fn parseTags(value: String) -> List<String>
+    ? "CLI parser for comma-separated tags."
+    match blankOrDash(value)
+        true -> []
+        false -> trimParts(String.split(value, ","))
+
+verify parseTags
+    parseTags("-") => []
+    parseTags("ops, waiting") => ["ops", "waiting"]
+
+fn parseCreateProject(parts: List<String>) -> Result<Input, String>
+    ? "Parses create_project."
+    projectId = field(parts, 1, "project_id")?
+    name = field(parts, 2, "name")?
+    Result.Ok(Input.RunCommand(Command.CreateProject(projectId, name)))
+
+verify parseCreateProject
+    parseCreateProject(["create_project", "alpha", "Alpha"]) => Result.Ok(Input.RunCommand(Command.CreateProject("alpha", "Alpha")))
+
+fn parseArchiveProject(parts: List<String>) -> Result<Input, String>
+    ? "Parses archive_project."
+    projectId = field(parts, 1, "project_id")?
+    Result.Ok(Input.RunCommand(Command.ArchiveProject(projectId)))
+
+verify parseArchiveProject
+    parseArchiveProject(["archive_project", "alpha"]) => Result.Ok(Input.RunCommand(Command.ArchiveProject("alpha")))
+
+fn parseCreateTask(parts: List<String>) -> Result<Input, String>
+    ? "Parses create_task."
+    projectId = field(parts, 1, "project_id")?
+    taskId = field(parts, 2, "task_id")?
+    title = field(parts, 3, "title")?
+    priorityRaw = field(parts, 4, "priority")?
+    tagsRaw = Option.withDefault(List.get(parts, 5), "-")
+    deadline = optionalField(parts, 6)
+    priority = parsePriority(priorityRaw)?
+    Result.Ok(Input.RunCommand(Command.CreateTask(projectId, taskId, title, priority, parseTags(tagsRaw), deadline)))
+
+verify parseCreateTask
+    parseCreateTask(["create_task", "alpha", "t1", "Plan release", "high", "ops,waiting", "2026-03-10T12:00:00Z"]) => Result.Ok(Input.RunCommand(Command.CreateTask("alpha", "t1", "Plan release", Domain.Types.Priority.High, ["ops", "waiting"], Option.Some("2026-03-10T12:00:00Z"))))
+
+fn parseRenameTask(parts: List<String>) -> Result<Input, String>
+    ? "Parses rename_task."
+    taskId = field(parts, 1, "task_id")?
+    title = field(parts, 2, "title")?
+    Result.Ok(Input.RunCommand(Command.RenameTask(taskId, title)))
+
+verify parseRenameTask
+    parseRenameTask(["rename_task", "t1", "New title"]) => Result.Ok(Input.RunCommand(Command.RenameTask("t1", "New title")))
+
+fn parseStartTask(parts: List<String>) -> Result<Input, String>
+    ? "Parses start_task."
+    taskId = field(parts, 1, "task_id")?
+    Result.Ok(Input.RunCommand(Command.StartTask(taskId)))
+
+verify parseStartTask
+    parseStartTask(["start_task", "t1"]) => Result.Ok(Input.RunCommand(Command.StartTask("t1")))
+
+fn parseBlockTask(parts: List<String>) -> Result<Input, String>
+    ? "Parses block_task."
+    taskId = field(parts, 1, "task_id")?
+    reason = field(parts, 2, "reason")?
+    Result.Ok(Input.RunCommand(Command.BlockTask(taskId, reason)))
+
+verify parseBlockTask
+    parseBlockTask(["block_task", "t1", "Waiting on vendor"]) => Result.Ok(Input.RunCommand(Command.BlockTask("t1", "Waiting on vendor")))
+
+fn parseCompleteTask(parts: List<String>) -> Result<Input, String>
+    ? "Parses complete_task."
+    taskId = field(parts, 1, "task_id")?
+    Result.Ok(Input.RunCommand(Command.CompleteTask(taskId)))
+
+verify parseCompleteTask
+    parseCompleteTask(["complete_task", "t1"]) => Result.Ok(Input.RunCommand(Command.CompleteTask("t1")))
+
+fn parseReopenTask(parts: List<String>) -> Result<Input, String>
+    ? "Parses reopen_task."
+    taskId = field(parts, 1, "task_id")?
+    reason = field(parts, 2, "reason")?
+    Result.Ok(Input.RunCommand(Command.ReopenTask(taskId, reason)))
+
+verify parseReopenTask
+    parseReopenTask(["reopen_task", "t1", "Regression found"]) => Result.Ok(Input.RunCommand(Command.ReopenTask("t1", "Regression found")))
+
+fn parseChangePriority(parts: List<String>) -> Result<Input, String>
+    ? "Parses change_priority."
+    taskId = field(parts, 1, "task_id")?
+    priorityRaw = field(parts, 2, "priority")?
+    priority = parsePriority(priorityRaw)?
+    Result.Ok(Input.RunCommand(Command.ChangePriority(taskId, priority)))
+
+verify parseChangePriority
+    parseChangePriority(["change_priority", "t1", "urgent"]) => Result.Ok(Input.RunCommand(Command.ChangePriority("t1", Domain.Types.Priority.Urgent)))
+
+fn parseAddTag(parts: List<String>) -> Result<Input, String>
+    ? "Parses add_tag."
+    taskId = field(parts, 1, "task_id")?
+    tag = field(parts, 2, "tag")?
+    Result.Ok(Input.RunCommand(Command.AddTag(taskId, tag)))
+
+verify parseAddTag
+    parseAddTag(["add_tag", "t1", "ops"]) => Result.Ok(Input.RunCommand(Command.AddTag("t1", "ops")))
+
+fn parseRemoveTag(parts: List<String>) -> Result<Input, String>
+    ? "Parses remove_tag."
+    taskId = field(parts, 1, "task_id")?
+    tag = field(parts, 2, "tag")?
+    Result.Ok(Input.RunCommand(Command.RemoveTag(taskId, tag)))
+
+verify parseRemoveTag
+    parseRemoveTag(["remove_tag", "t1", "ops"]) => Result.Ok(Input.RunCommand(Command.RemoveTag("t1", "ops")))
+
+fn parseAddComment(parts: List<String>) -> Result<Input, String>
+    ? "Parses add_comment."
+    taskId = field(parts, 1, "task_id")?
+    author = field(parts, 2, "author")?
+    body = field(parts, 3, "body")?
+    Result.Ok(Input.RunCommand(Command.AddComment(taskId, author, body)))
+
+verify parseAddComment
+    parseAddComment(["add_comment", "t1", "alice", "Need review"]) => Result.Ok(Input.RunCommand(Command.AddComment("t1", "alice", "Need review")))
+
+fn parseSetDeadline(parts: List<String>) -> Result<Input, String>
+    ? "Parses set_deadline."
+    taskId = field(parts, 1, "task_id")?
+    deadline = field(parts, 2, "deadline")?
+    Result.Ok(Input.RunCommand(Command.SetDeadline(taskId, deadline)))
+
+verify parseSetDeadline
+    parseSetDeadline(["set_deadline", "t1", "2026-03-10T12:00:00Z"]) => Result.Ok(Input.RunCommand(Command.SetDeadline("t1", "2026-03-10T12:00:00Z")))
+
+fn parseClearDeadline(parts: List<String>) -> Result<Input, String>
+    ? "Parses clear_deadline."
+    taskId = field(parts, 1, "task_id")?
+    Result.Ok(Input.RunCommand(Command.ClearDeadline(taskId)))
+
+verify parseClearDeadline
+    parseClearDeadline(["clear_deadline", "t1"]) => Result.Ok(Input.RunCommand(Command.ClearDeadline("t1")))
+
+fn parseArchiveTask(parts: List<String>) -> Result<Input, String>
+    ? "Parses archive_task."
+    taskId = field(parts, 1, "task_id")?
+    Result.Ok(Input.RunCommand(Command.ArchiveTask(taskId)))
+
+verify parseArchiveTask
+    parseArchiveTask(["archive_task", "t1"]) => Result.Ok(Input.RunCommand(Command.ArchiveTask("t1")))
+
+fn parseListTasks(parts: List<String>) -> Result<Input, String>
+    ? "Parses list_tasks."
+    Result.Ok(Input.RunQuery(Query.ListTasks(optionalField(parts, 1))))
+
+verify parseListTasks
+    parseListTasks(["list_tasks"]) => Result.Ok(Input.RunQuery(Query.ListTasks(Option.None)))
+    parseListTasks(["list_tasks", "alpha"]) => Result.Ok(Input.RunQuery(Query.ListTasks(Option.Some("alpha"))))
+
+fn parseShowTask(parts: List<String>) -> Result<Input, String>
+    ? "Parses show_task."
+    taskId = field(parts, 1, "task_id")?
+    Result.Ok(Input.RunQuery(Query.ShowTask(taskId)))
+
+verify parseShowTask
+    parseShowTask(["show_task", "t1"]) => Result.Ok(Input.RunQuery(Query.ShowTask("t1")))
+
+fn parseShowAudit(parts: List<String>) -> Result<Input, String>
+    ? "Parses show_audit."
+    Result.Ok(Input.RunQuery(Query.ShowAudit(optionalField(parts, 1))))
+
+verify parseShowAudit
+    parseShowAudit(["show_audit"]) => Result.Ok(Input.RunQuery(Query.ShowAudit(Option.None)))
+    parseShowAudit(["show_audit", "t1"]) => Result.Ok(Input.RunQuery(Query.ShowAudit(Option.Some("t1"))))
+
+fn parseRunRules(parts: List<String>) -> Result<Input, String>
+    ? "Parses run_rules."
+    Result.Ok(Input.RunCommand(Command.RunRules(optionalField(parts, 1))))
+
+verify parseRunRules
+    parseRunRules(["run_rules"]) => Result.Ok(Input.RunCommand(Command.RunRules(Option.None)))
+    parseRunRules(["run_rules", "t1"]) => Result.Ok(Input.RunCommand(Command.RunRules(Option.Some("t1"))))

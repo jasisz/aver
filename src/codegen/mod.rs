@@ -13,7 +13,7 @@ use crate::types::checker::TypeCheckResult;
 
 /// Information about a dependent module loaded for codegen.
 pub struct ModuleInfo {
-    /// Qualified module path, e.g. "Examples.Fibonacci".
+    /// Qualified module path, e.g. "Models.User".
     pub prefix: String,
     /// Direct `depends [...]` entries from the source module.
     pub depends: Vec<String>,
@@ -41,7 +41,7 @@ pub struct CodegenContext {
     pub project_name: String,
     /// Dependent modules loaded for inlining.
     pub modules: Vec<ModuleInfo>,
-    /// Set of module prefixes for qualified name resolution (e.g. "Examples.Fibonacci").
+    /// Set of module prefixes for qualified name resolution (e.g. "Models.User").
     pub module_prefixes: HashSet<String>,
     /// Runtime policy from `aver.toml` (baked into generated code).
     pub policy: Option<crate::config::ProjectConfig>,

@@ -56,6 +56,55 @@ fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
+fn is_av_file(path: &Path) -> bool {
+    path.extension().and_then(|ext| ext.to_str()) == Some("av")
+}
+
+fn collect_av_input_files(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    if !path.exists() {
+        return Err(format!("Path '{}' does not exist", path.display()));
+    }
+
+    if path.is_file() {
+        if is_av_file(path) {
+            out.push(path.to_path_buf());
+            return Ok(());
+        }
+        return Err(format!("'{}' is not an .av file", path.display()));
+    }
+
+    let entries = fs::read_dir(path)
+        .map_err(|e| format!("Cannot read directory '{}': {}", path.display(), e))?;
+    for entry in entries {
+        let entry = entry
+            .map_err(|e| format!("Cannot read directory entry in '{}': {}", path.display(), e))?;
+        let child = entry.path();
+        if child.is_dir() {
+            collect_av_input_files(&child, out)?;
+        } else if is_av_file(&child) {
+            out.push(child);
+        }
+    }
+
+    Ok(())
+}
+
+fn resolve_av_inputs(path: &str) -> Result<Vec<String>, String> {
+    let root = Path::new(path);
+    let mut files = Vec::new();
+    collect_av_input_files(root, &mut files)?;
+    files.sort();
+
+    if files.is_empty() {
+        return Err(format!("No .av files found under '{}'", root.display()));
+    }
+
+    Ok(files
+        .into_iter()
+        .map(|path| path_to_string(&path))
+        .collect())
+}
+
 fn relativize_to(base: &Path, path: &Path) -> Option<String> {
     let rel = path.strip_prefix(base).ok()?;
     if rel.as_os_str().is_empty() {
@@ -845,20 +894,12 @@ pub(super) fn cmd_run(
     }
 }
 
-pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>, deps: bool) {
-    let module_root = resolve_module_root(module_root_override);
-    let units = match collect_check_units(file, &module_root, deps) {
-        Ok(units) => units,
-        Err(e) => {
-            eprintln!("{}", e.red());
-            process::exit(1);
-        }
-    };
-
+fn run_check_for_file(file: &str, module_root: &str, deps: bool) -> Result<bool, String> {
+    let units = collect_check_units(file, module_root, deps)?;
     let entry_module = units.first().and_then(|(_, _, items)| module_name(items));
     let mut unused_exposes_by_file: HashMap<String, Vec<CheckFinding>> = HashMap::new();
     if deps {
-        for finding in collect_unused_exposes_findings(&units, file, &module_root) {
+        for finding in collect_unused_exposes_findings(&units, file, module_root) {
             if let Some(path) = &finding.file {
                 unused_exposes_by_file
                     .entry(canonical_path_key(path))
@@ -873,7 +914,7 @@ pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>, deps: bo
         if idx > 0 {
             println!();
         }
-        let shown_path = display_check_path(path, &module_root);
+        let shown_path = display_check_path(path, module_root);
         println!("Check: {}", shown_path.cyan());
         let line_count = source.lines().count();
 
@@ -946,7 +987,70 @@ pub(super) fn cmd_check(file: &str, module_root_override: Option<&str>, deps: bo
         }
     }
 
-    if has_any_error {
+    Ok(has_any_error)
+}
+
+pub(super) fn cmd_check(path: &str, module_root_override: Option<&str>, deps: bool) {
+    let module_root = resolve_module_root(module_root_override);
+    let inputs = match resolve_av_inputs(path) {
+        Ok(inputs) => inputs,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+
+    let batch = Path::new(path).is_dir();
+    let mut failed_files = Vec::new();
+
+    for (idx, file) in inputs.iter().enumerate() {
+        if batch && idx > 0 {
+            println!();
+        }
+
+        if batch {
+            println!("Input: {}", display_check_path(file, &module_root).cyan());
+        }
+
+        match run_check_for_file(file, &module_root, deps) {
+            Ok(has_errors) => {
+                if has_errors {
+                    failed_files.push(file.clone());
+                }
+            }
+            Err(e) => {
+                eprintln!("{}", e.red());
+                failed_files.push(file.clone());
+            }
+        }
+    }
+
+    if batch {
+        println!();
+        let passed = inputs.len().saturating_sub(failed_files.len());
+        if failed_files.is_empty() {
+            println!(
+                "{}",
+                format!("Checked {} file(s): {} passed", inputs.len(), passed).green()
+            );
+        } else {
+            println!(
+                "{}",
+                format!(
+                    "Checked {} file(s): {} passed, {} failed",
+                    inputs.len(),
+                    passed,
+                    failed_files.len()
+                )
+                .red()
+            );
+            for file in &failed_files {
+                println!("  {}", display_check_path(file, &module_root));
+            }
+        }
+    }
+
+    if !failed_files.is_empty() {
         process::exit(1);
     }
 }
@@ -981,13 +1085,6 @@ fn run_verify_for_items(
     }
 
     load_dep_modules(&mut interp, &items, module_root)?;
-
-    // Register effect sets first (needed before FnDef expansion)
-    for item in &items {
-        if let TopLevel::EffectSet { name, effects, .. } = item {
-            interp.register_effect_set(name.clone(), effects.clone());
-        }
-    }
 
     // Register type definitions (constructors)
     for item in &items {
@@ -1024,38 +1121,29 @@ fn run_verify_for_items(
     Ok((total_passed, total_failed, true))
 }
 
-pub(super) fn cmd_verify(file: &str, module_root_override: Option<&str>, deps: bool) {
-    let module_root = resolve_module_root(module_root_override);
-    let units = match collect_check_units(file, &module_root, deps) {
-        Ok(units) => units,
-        Err(e) => {
-            eprintln!("{}", e.red());
-            process::exit(1);
-        }
-    };
-
+fn run_verify_for_file(
+    file: &str,
+    module_root: &str,
+    deps: bool,
+    show_file_headers: bool,
+) -> Result<(usize, usize, bool), String> {
+    let units = collect_check_units(file, module_root, deps)?;
     let mut total_passed = 0;
     let mut total_failed = 0;
     let mut saw_verify_blocks = false;
 
     for (idx, (path, _source, items)) in units.into_iter().enumerate() {
-        if deps {
-            if idx > 0 {
+        if show_file_headers {
+            if idx > 0 || deps {
                 println!();
             }
             println!(
                 "{}",
-                format!("Verify file: {}", display_check_path(&path, &module_root)).cyan()
+                format!("Verify file: {}", display_check_path(&path, module_root)).cyan()
             );
         }
 
-        let (passed, failed, had_blocks) = match run_verify_for_items(items, &module_root) {
-            Ok(counts) => counts,
-            Err(e) => {
-                eprintln!("{}", e.red());
-                process::exit(1);
-            }
-        };
+        let (passed, failed, had_blocks) = run_verify_for_items(items, module_root)?;
 
         if had_blocks {
             saw_verify_blocks = true;
@@ -1064,21 +1152,73 @@ pub(super) fn cmd_verify(file: &str, module_root_override: Option<&str>, deps: b
         }
     }
 
+    Ok((total_passed, total_failed, saw_verify_blocks))
+}
+
+pub(super) fn cmd_verify(path: &str, module_root_override: Option<&str>, deps: bool) {
+    let module_root = resolve_module_root(module_root_override);
+    let inputs = match resolve_av_inputs(path) {
+        Ok(inputs) => inputs,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+
+    let batch = Path::new(path).is_dir();
+    let mut total_passed = 0;
+    let mut total_failed = 0;
+    let mut saw_verify_blocks = false;
+    let mut failed_files = Vec::new();
+
+    for file in &inputs {
+        let (passed, failed, had_blocks) =
+            match run_verify_for_file(file, &module_root, deps, batch || deps) {
+                Ok(counts) => counts,
+                Err(e) => {
+                    eprintln!("{}", e.red());
+                    failed_files.push(file.clone());
+                    continue;
+                }
+            };
+
+        if had_blocks {
+            saw_verify_blocks = true;
+            total_passed += passed;
+            total_failed += failed;
+        }
+        if failed > 0 {
+            failed_files.push(file.clone());
+        }
+    }
+
+    if !failed_files.is_empty() && batch {
+        println!();
+        println!(
+            "{}",
+            format!(
+                "Verify run completed with {} failed file(s).",
+                failed_files.len()
+            )
+            .red()
+        );
+        for file in &failed_files {
+            println!("  {}", display_check_path(file, &module_root));
+        }
+    }
+
+    let total = total_passed + total_failed;
     if !saw_verify_blocks {
         let scope = if deps {
-            format!("{} or its transitive dependencies", file)
+            format!("{} or its transitive dependencies", path)
         } else {
-            file.to_string()
+            path.to_string()
         };
         println!(
             "{}",
             format!("No verify blocks found in {}.", scope).yellow()
         );
-        return;
-    }
-
-    let total = total_passed + total_failed;
-    if total_failed == 0 {
+    } else if total_failed == 0 {
         println!(
             "{}",
             format!("Total: {}/{} passed", total_passed, total).green()
@@ -1088,7 +1228,63 @@ pub(super) fn cmd_verify(file: &str, module_root_override: Option<&str>, deps: b
             "{}",
             format!("Total: {}/{} passed", total_passed, total).red()
         );
+    }
+
+    if !failed_files.is_empty() || total_failed > 0 {
         process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_av_inputs;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_case_dir(tag: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!("aver_commands_{tag}_{nanos}"))
+    }
+
+    #[test]
+    fn resolve_av_inputs_collects_and_sorts_directories() {
+        let dir = temp_case_dir("collect");
+        let nested = dir.join("nested");
+        fs::create_dir_all(&nested).expect("create nested dir");
+        fs::write(dir.join("b.av"), "module B\n").expect("write b.av");
+        fs::write(dir.join("ignore.txt"), "nope").expect("write ignore.txt");
+        fs::write(nested.join("a.av"), "module A\n").expect("write a.av");
+
+        let inputs = resolve_av_inputs(dir.to_str().expect("utf8 path")).expect("collect inputs");
+        assert_eq!(
+            inputs,
+            vec![
+                dir.join("b.av").to_string_lossy().to_string(),
+                nested.join("a.av").to_string_lossy().to_string(),
+            ]
+        );
+
+        fs::remove_dir_all(&dir).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn resolve_av_inputs_rejects_non_av_files() {
+        let dir = temp_case_dir("reject");
+        fs::create_dir_all(&dir).expect("create dir");
+        let file = dir.join("note.txt");
+        fs::write(&file, "nope").expect("write file");
+
+        let err = resolve_av_inputs(file.to_str().expect("utf8 path")).expect_err("expected error");
+        assert!(
+            err.contains("is not an .av file"),
+            "unexpected error: {err}"
+        );
+
+        fs::remove_dir_all(&dir).expect("cleanup temp dir");
     }
 }
 

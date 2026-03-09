@@ -1,0 +1,158 @@
+module Queries
+    intent =
+        "Effectful read-model assembly for the workflow engine CLI."
+        "Queries load persisted state, replay tasks, and derive views without mixing"
+        "those concerns into the parser or the pure domain modules."
+    exposes [Query, QueryOutput, TaskDetails, run]
+    depends [Domain.Types, Domain.Projects, Domain.Views, Domain.Events, Infra.Store, Infra.Audit, Infra.Notify, Infra.Clock]
+
+decision QueriesReplayInsteadOfReadingMutableTaskTables
+    date = "2026-03-08"
+    author = "Codex"
+    reason =
+        "The whole point of the workflow engine is to see whether replay stays readable."
+        "If queries bypass replay with a separate mutable task table, that test becomes fake."
+    chosen = "ReplayForReadModel"
+    rejected = ["DedicatedMutableTaskProjectionFile", "AdHocTaskCacheOnly"]
+    impacts = [run]
+
+type Query
+    ListTasks(Option<String>)
+    ShowTask(String)
+    ShowAudit(Option<String>)
+
+record TaskDetails
+    project: Project
+    task: Task
+    view: TaskView
+    history: List<TaskEventRecord>
+    audits: List<AuditEntry>
+    notifications: List<Notification>
+
+type QueryOutput
+    TaskList(List<TaskSummary>)
+    TaskDetail(TaskDetails)
+    AuditTrail(List<AuditEntry>)
+
+fn run(query: Query) -> Result<QueryOutput, String>
+    ? "Executes one read-only query over persisted workflow state."
+    ! [Disk.readText, Time.now]
+    match query
+        Query.ListTasks(projectId) -> match listTasks(projectId)
+            Result.Ok(items) -> Result.Ok(QueryOutput.TaskList(items))
+            Result.Err(msg) -> Result.Err(msg)
+        Query.ShowTask(taskId) -> match showTask(taskId)
+            Result.Ok(details) -> Result.Ok(QueryOutput.TaskDetail(details))
+            Result.Err(msg) -> Result.Err(msg)
+        Query.ShowAudit(subjectId) -> match showAudit(subjectId)
+            Result.Ok(entries) -> Result.Ok(QueryOutput.AuditTrail(entries))
+            Result.Err(msg) -> Result.Err(msg)
+
+fn listTasks(projectId: Option<String>) -> Result<List<TaskSummary>, String>
+    ? "Lists replayed task summaries, optionally filtered by project."
+    ! [Disk.readText, Time.now]
+    events = Infra.Store.loadTaskEvents()?
+    tasks = Domain.Events.replayAll(events)?
+    now = Infra.Clock.now()
+    summariesFrom(filterTasksByProject(tasks, projectId), now)
+
+fn showTask(taskId: String) -> Result<TaskDetails, String>
+    ? "Shows one task with its derived view, history, audit, and notifications."
+    ! [Disk.readText, Time.now]
+    projects = Infra.Store.loadProjects()?
+    events = Infra.Store.loadTaskEvents()?
+    audits = Infra.Audit.loadEntries()?
+    notifications = Infra.Notify.loadNotifications()?
+    now = Infra.Clock.now()
+    taskDetailsFrom(projects, events, audits, notifications, taskId, now)
+
+fn taskDetailsFrom(projects: List<Project>, events: List<TaskEventRecord>, audits: List<AuditEntry>, notifications: List<Notification>, taskId: String, now: String) -> Result<TaskDetails, String>
+    ? "Canonical read-model join: replay history, derive the view, then attach persisted side outputs."
+    history = Domain.Events.eventsForTask(events, taskId)
+    task = Domain.Events.replayTask(history)?
+    project = requireProject(projects, task.projectId)?
+    view = Domain.Views.deriveView(task, now)?
+    Result.Ok(TaskDetails(project = project, task = task, view = view, history = history, audits = Infra.Audit.forSubject(audits, Option.Some(taskId)), notifications = Infra.Notify.forTask(notifications, taskId)))
+
+verify taskDetailsFrom
+    taskDetailsFrom(
+        [Project(id = "alpha", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z")],
+        [
+            TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Plan release", Domain.Types.Priority.Normal, ["waiting"], Option.None, "2026-03-08T12:00:00Z")),
+            TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.CommentAdded(Comment(id = "t1-c2", body = "Ping", author = "alice", createdAt = "2026-03-09T12:00:00Z"))),
+            TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 3, event = Domain.Types.TaskEvent.TagAdded("needs_review", "2026-03-09T12:00:00Z"))
+        ],
+        [AuditEntry(key = "task:t1:2:CommentAdded", taskId = "t1", action = "task.comment_added", message = "Task 't1' received a comment from alice", createdAt = "2026-03-09T12:00:00Z")],
+        [Notification(key = "needs-review:t1:2", taskId = "t1", kind = "needs_review", message = "Task 't1' moved from waiting to needs_review after a new comment", createdAt = "2026-03-09T12:00:00Z")],
+        "t1",
+        "2026-03-09T12:00:00Z"
+    ) => Result.Ok(
+        TaskDetails(
+            project = Project(id = "alpha", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z"),
+            task = Task(id = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = ["waiting", "needs_review"], deadline = Option.None, comments = [Comment(id = "t1-c2", body = "Ping", author = "alice", createdAt = "2026-03-09T12:00:00Z")], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-09T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z"),
+            view = TaskView(taskId = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = ["waiting", "needs_review"], deadline = Option.None, overdue = false, deadlineSoon = false, derivedUrgent = false, stalled = false, missingClosingComment = false, needsReview = true),
+            history = [
+                TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Plan release", Domain.Types.Priority.Normal, ["waiting"], Option.None, "2026-03-08T12:00:00Z")),
+                TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.CommentAdded(Comment(id = "t1-c2", body = "Ping", author = "alice", createdAt = "2026-03-09T12:00:00Z"))),
+                TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 3, event = Domain.Types.TaskEvent.TagAdded("needs_review", "2026-03-09T12:00:00Z"))
+            ],
+            audits = [AuditEntry(key = "task:t1:2:CommentAdded", taskId = "t1", action = "task.comment_added", message = "Task 't1' received a comment from alice", createdAt = "2026-03-09T12:00:00Z")],
+            notifications = [Notification(key = "needs-review:t1:2", taskId = "t1", kind = "needs_review", message = "Task 't1' moved from waiting to needs_review after a new comment", createdAt = "2026-03-09T12:00:00Z")]
+        )
+    )
+
+fn showAudit(subjectId: Option<String>) -> Result<List<AuditEntry>, String>
+    ? "Shows the audit trail, optionally filtered by task or synthetic project subject."
+    ! [Disk.readText]
+    audits = Infra.Audit.loadEntries()?
+    Result.Ok(Infra.Audit.forSubject(audits, subjectId))
+
+fn requireProject(projects: List<Project>, projectId: String) -> Result<Project, String>
+    ? "Finds one project or returns a reviewer-friendly error."
+    match Domain.Projects.findProject(projects, projectId)
+        Option.Some(project) -> Result.Ok(project)
+        Option.None -> Result.Err("Project '{projectId}' was not found")
+
+verify requireProject
+    requireProject([Project(id = "alpha", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z")], "alpha") => Result.Ok(Project(id = "alpha", name = "Alpha", archived = false, createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z"))
+    requireProject([], "alpha") => Result.Err("Project 'alpha' was not found")
+
+fn filterTasksByProject(tasks: List<Task>, projectId: Option<String>) -> List<Task>
+    ? "Optional project filter for list queries."
+    match tasks
+        [] -> []
+        [task, ..rest] -> match projectId
+            Option.None -> List.prepend(task, filterTasksByProject(rest, projectId))
+            Option.Some(value) -> match task.projectId == value
+                true -> List.prepend(task, filterTasksByProject(rest, projectId))
+                false -> filterTasksByProject(rest, projectId)
+
+verify filterTasksByProject
+    filterTasksByProject([sampleTask(), Task.update(sampleTask(), id = "t2", projectId = "beta")], Option.Some("alpha")) => [sampleTask()]
+    filterTasksByProject([sampleTask()], Option.None) => [sampleTask()]
+
+fn summariesFrom(tasks: List<Task>, now: String) -> Result<List<TaskSummary>, String>
+    ? "Builds list-friendly summaries from replayed tasks."
+    match tasks
+        [] -> Result.Ok([])
+        [task, ..rest] -> appendSummary(task, rest, now)
+
+verify summariesFrom
+    summariesFrom([], "2026-03-08T12:00:00Z") => Result.Ok([])
+    summariesFrom([Task.update(sampleTask(), deadline = Option.Some("2026-03-08T18:00:00Z"))], "2026-03-08T12:00:00Z") => Result.Ok([TaskSummary(taskId = "t1", title = "Original title", projectId = "alpha", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, derivedUrgent = true, overdue = false, stalled = false, tagSummary = "", deadlineText = "2026-03-08T18:00:00Z")])
+
+fn appendSummary(task: Task, rest: List<Task>, now: String) -> Result<List<TaskSummary>, String>
+    ? "Helper that keeps recursive summary building readable."
+    summary = Domain.Views.deriveSummary(task, now)?
+    tail = summariesFrom(rest, now)?
+    Result.Ok(List.prepend(summary, tail))
+
+verify appendSummary
+    appendSummary(sampleTask(), [], "2026-03-08T12:00:00Z") => Result.Ok([TaskSummary(taskId = "t1", title = "Original title", projectId = "alpha", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, derivedUrgent = false, overdue = false, stalled = false, tagSummary = "", deadlineText = "-")])
+
+fn sampleTask() -> Task
+    ? "Reusable fixture for query verification."
+    Task(id = "t1", projectId = "alpha", title = "Original title", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z")
+
+verify sampleTask
+    sampleTask() => Task(id = "t1", projectId = "alpha", title = "Original title", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z")

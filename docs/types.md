@@ -25,7 +25,7 @@
 | `VerifyBlock` | `src/ast.rs` | Function name + list of `(left_expr, right_expr)` equality cases |
 | `DecisionBlock` | `src/ast.rs` | Name + source line, date, reason, chosen ref, rejected refs, impacts refs, optional author |
 | `DecisionImpact` | `src/ast.rs` | Reusable decision reference: `Symbol(String)` (validated identifier) or `Semantic(String)` (free-form text) |
-| `TopLevel` | `src/ast.rs` | Top-level item: `Module`, `FnDef`, `Verify`, `Decision`, `Stmt`, `TypeDef`, `EffectSet` |
+| `TopLevel` | `src/ast.rs` | Top-level item: `Module`, `FnDef`, `Verify`, `Decision`, `Stmt`, `TypeDef` (plus legacy `EffectSet` placeholder for removed syntax) |
 | `TypeDef` | `src/ast.rs` | `Sum { name, variants: Vec<TypeVariant> }` or `Product { name, fields: Vec<(String, String)> }` |
 
 ## Runtime types

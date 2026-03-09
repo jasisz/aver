@@ -191,7 +191,7 @@ fn runtime_gate_blocks_top_level_print() {
 
 #[test]
 fn runtime_gate_allows_effectful_entrypoint_with_grant() {
-    let src = "fn log(n: Int) -> Unit\n    ! [Console]\n    Console.print(n)\n";
+    let src = "fn log(n: Int) -> Unit\n    ! [Console.print]\n    Console.print(n)\n";
     let items = parse(src);
     let mut interp = Interpreter::new();
     for item in &items {
@@ -1464,7 +1464,7 @@ mod http_tests {
             return;
         };
         let src = format!(
-            "fn fetch() -> Result<HttpResponse, String>\n    ! [Http]\n    Http.get(\"{}\")\n",
+            "fn fetch() -> Result<HttpResponse, String>\n    ! [Http.get]\n    Http.get(\"{}\")\n",
             url
         );
         let val = run_http_fn(&src, "fetch");
@@ -1493,7 +1493,7 @@ mod http_tests {
             return;
         };
         let src = format!(
-            "fn fetch() -> Result<HttpResponse, String>\n    ! [Http]\n    Http.get(\"{}\")\n",
+            "fn fetch() -> Result<HttpResponse, String>\n    ! [Http.get]\n    Http.get(\"{}\")\n",
             url
         );
         let val = run_http_fn(&src, "fetch");
@@ -1512,7 +1512,7 @@ mod http_tests {
     #[test]
     fn http_get_transport_error_returns_err() {
         // Port 1 is almost certainly not listening
-        let src = "fn fetch() -> Result<HttpResponse, String>\n    ! [Http]\n    Http.get(\"http://127.0.0.1:1/\")\n";
+        let src = "fn fetch() -> Result<HttpResponse, String>\n    ! [Http.get]\n    Http.get(\"http://127.0.0.1:1/\")\n";
         let items = parse(src);
         let mut interp = Interpreter::new();
         for item in &items {
@@ -1539,7 +1539,7 @@ mod http_tests {
             return;
         };
         let src = format!(
-            "fn send() -> Result<HttpResponse, String>\n    ! [Http]\n    Http.post(\"{}\", \"data\", \"text/plain\", [])\n",
+            "fn send() -> Result<HttpResponse, String>\n    ! [Http.post]\n    Http.post(\"{}\", \"data\", \"text/plain\", [])\n",
             url
         );
         let val = run_http_fn(&src, "send");
@@ -1558,7 +1558,7 @@ mod http_tests {
     #[test]
     fn http_post_bad_headers_returns_runtime_error() {
         // Pass a non-list for headers — validation fails before any HTTP call
-        let src = "fn send() -> Result<HttpResponse, String>\n    ! [Http]\n    Http.post(\"http://127.0.0.1:1/\", \"\", \"text/plain\", \"bad\")\n";
+        let src = "fn send() -> Result<HttpResponse, String>\n    ! [Http.post]\n    Http.post(\"http://127.0.0.1:1/\", \"\", \"text/plain\", \"bad\")\n";
         let items = parse(src);
         let mut interp = Interpreter::new();
         for item in &items {
@@ -1606,14 +1606,14 @@ mod disk_tests {
         let path = tmp_path("write_read.txt");
         let path_str = path.to_string_lossy();
         let src = format!(
-            "fn run() -> Result<Unit, String>\n    ! [Disk]\n    Disk.writeText(\"{}\", \"hello\")\n",
+            "fn run() -> Result<Unit, String>\n    ! [Disk.writeText]\n    Disk.writeText(\"{}\", \"hello\")\n",
             path_str.replace('\\', "\\\\")
         );
         let val = run_disk_fn(&src, "run");
         assert_eq!(val, Value::Ok(Box::new(Value::Unit)));
 
         let src2 = format!(
-            "fn run() -> Result<String, String>\n    ! [Disk]\n    Disk.readText(\"{}\")\n",
+            "fn run() -> Result<String, String>\n    ! [Disk.readText]\n    Disk.readText(\"{}\")\n",
             path_str.replace('\\', "\\\\")
         );
         let val2 = run_disk_fn(&src2, "run");
@@ -1632,7 +1632,7 @@ mod disk_tests {
             f.write_all(b"hello").unwrap();
         }
         let src = format!(
-            "fn run() -> Result<Unit, String>\n    ! [Disk]\n    Disk.appendText(\"{}\", \" world\")\n",
+            "fn run() -> Result<Unit, String>\n    ! [Disk.appendText]\n    Disk.appendText(\"{}\", \" world\")\n",
             path_str
         );
         let val = run_disk_fn(&src, "run");
@@ -1649,7 +1649,7 @@ mod disk_tests {
         std::fs::write(&path, "x").unwrap();
 
         let src = format!(
-            "fn run() -> Bool\n    ! [Disk]\n    Disk.exists(\"{}\")\n",
+            "fn run() -> Bool\n    ! [Disk.exists]\n    Disk.exists(\"{}\")\n",
             path_str
         );
         let val = run_disk_fn(&src, "run");
@@ -1659,7 +1659,7 @@ mod disk_tests {
         let missing_path = tmp_path("does_not_exist_xyz.txt");
         let missing_str = missing_path.to_string_lossy().replace('\\', "\\\\");
         let src2 = format!(
-            "fn run() -> Bool\n    ! [Disk]\n    Disk.exists(\"{}\")\n",
+            "fn run() -> Bool\n    ! [Disk.exists]\n    Disk.exists(\"{}\")\n",
             missing_str
         );
         let val2 = run_disk_fn(&src2, "run");
@@ -1673,7 +1673,7 @@ mod disk_tests {
         std::fs::write(&path, "bye").unwrap();
 
         let src = format!(
-            "fn run() -> Result<Unit, String>\n    ! [Disk]\n    Disk.delete(\"{}\")\n",
+            "fn run() -> Result<Unit, String>\n    ! [Disk.delete]\n    Disk.delete(\"{}\")\n",
             path_str
         );
         let val = run_disk_fn(&src, "run");
@@ -1689,7 +1689,7 @@ mod disk_tests {
         let dir_str = dir.to_string_lossy().replace('\\', "\\\\");
 
         let src = format!(
-            "fn run() -> Result<Unit, String>\n    ! [Disk]\n    Disk.delete(\"{}\")\n",
+            "fn run() -> Result<Unit, String>\n    ! [Disk.delete]\n    Disk.delete(\"{}\")\n",
             dir_str
         );
         let val = run_disk_fn(&src, "run");
@@ -1710,7 +1710,7 @@ mod disk_tests {
         let dir_str = dir.to_string_lossy().replace('\\', "\\\\");
 
         let src = format!(
-            "fn run() -> Result<Unit, String>\n    ! [Disk]\n    Disk.deleteDir(\"{}\")\n",
+            "fn run() -> Result<Unit, String>\n    ! [Disk.deleteDir]\n    Disk.deleteDir(\"{}\")\n",
             dir_str
         );
         let val = run_disk_fn(&src, "run");
@@ -1725,7 +1725,7 @@ mod disk_tests {
         let path_str = path.to_string_lossy().replace('\\', "\\\\");
 
         let src = format!(
-            "fn run() -> Result<Unit, String>\n    ! [Disk]\n    Disk.deleteDir(\"{}\")\n",
+            "fn run() -> Result<Unit, String>\n    ! [Disk.deleteDir]\n    Disk.deleteDir(\"{}\")\n",
             path_str
         );
         let val = run_disk_fn(&src, "run");
@@ -1741,7 +1741,7 @@ mod disk_tests {
         let path = tmp_path("no_such_file_xyz.txt");
         let path_str = path.to_string_lossy().replace('\\', "\\\\");
         let src = format!(
-            "fn run() -> Result<Unit, String>\n    ! [Disk]\n    Disk.delete(\"{}\")\n",
+            "fn run() -> Result<Unit, String>\n    ! [Disk.delete]\n    Disk.delete(\"{}\")\n",
             path_str
         );
         let val = run_disk_fn(&src, "run");
@@ -1755,7 +1755,7 @@ mod disk_tests {
         let _ = std::fs::remove_dir_all(&dir);
 
         let src = format!(
-            "fn run() -> Result<Unit, String>\n    ! [Disk]\n    Disk.makeDir(\"{}\")\n",
+            "fn run() -> Result<Unit, String>\n    ! [Disk.makeDir]\n    Disk.makeDir(\"{}\")\n",
             dir_str
         );
         let val = run_disk_fn(&src, "run");
@@ -1765,7 +1765,7 @@ mod disk_tests {
         // Write a file inside to list it
         std::fs::write(dir.join("a.txt"), "").unwrap();
         let src2 = format!(
-            "fn run() -> Result<List<String>, String>\n    ! [Disk]\n    Disk.listDir(\"{}\")\n",
+            "fn run() -> Result<List<String>, String>\n    ! [Disk.listDir]\n    Disk.listDir(\"{}\")\n",
             dir_str
         );
         let val2 = run_disk_fn(&src2, "run");
@@ -1785,7 +1785,7 @@ mod disk_tests {
 
     #[test]
     fn disk_read_missing_file_returns_err() {
-        let src = "fn run() -> Result<String, String>\n    ! [Disk]\n    Disk.readText(\"/no/such/file.txt\")\n";
+        let src = "fn run() -> Result<String, String>\n    ! [Disk.readText]\n    Disk.readText(\"/no/such/file.txt\")\n";
         let val = run_disk_fn(src, "run");
         assert!(matches!(val, Value::Err(_)));
     }
@@ -1837,7 +1837,7 @@ mod console_tests {
     fn console_error_returns_unit() {
         let src = concat!(
             "fn run() -> Unit\n",
-            "    ! [Console]\n",
+            "    ! [Console.error]\n",
             "    Console.error(\"oops\")\n",
         );
         let val = run_console_fn(src, "run");
@@ -1848,7 +1848,7 @@ mod console_tests {
     fn console_warn_returns_unit() {
         let src = concat!(
             "fn run() -> Unit\n",
-            "    ! [Console]\n",
+            "    ! [Console.warn]\n",
             "    Console.warn(\"careful\")\n",
         );
         let val = run_console_fn(src, "run");
@@ -1861,7 +1861,7 @@ mod console_tests {
         // Console.print returns Unit, so we use its result as the argument.
         let src = concat!(
             "fn run() -> Unit\n",
-            "    ! [Console]\n",
+            "    ! [Console.error, Console.print]\n",
             "    Console.error(Console.print(\"setup\"))\n",
         );
         let val = run_console_fn(src, "run");
@@ -1872,7 +1872,7 @@ mod console_tests {
     fn console_warn_unit_value_is_silent() {
         let src = concat!(
             "fn run() -> Unit\n",
-            "    ! [Console]\n",
+            "    ! [Console.warn, Console.print]\n",
             "    Console.warn(Console.print(\"setup\"))\n",
         );
         let val = run_console_fn(src, "run");
@@ -1922,7 +1922,11 @@ mod time_tests {
 
     #[test]
     fn time_now_returns_string() {
-        let src = concat!("fn now() -> String\n", "    ! [Time]\n", "    Time.now()\n",);
+        let src = concat!(
+            "fn now() -> String\n",
+            "    ! [Time.now]\n",
+            "    Time.now()\n",
+        );
         let val = run_time_fn(src, "now");
         match val {
             Value::Str(s) => {
@@ -1941,7 +1945,7 @@ mod time_tests {
     fn time_unix_ms_returns_int() {
         let src = concat!(
             "fn nowMs() -> Int\n",
-            "    ! [Time]\n",
+            "    ! [Time.unixMs]\n",
             "    Time.unixMs()\n",
         );
         let val = run_time_fn(src, "nowMs");
@@ -1955,7 +1959,7 @@ mod time_tests {
     fn time_sleep_negative_returns_runtime_error() {
         let src = concat!(
             "fn wait() -> Unit\n",
-            "    ! [Time]\n",
+            "    ! [Time.sleep]\n",
             "    Time.sleep(0 - 1)\n",
         );
         let items = parse(src);
@@ -2045,7 +2049,7 @@ mod env_tests {
         let src = format!(
             concat!(
                 "fn run() -> Option<String>\n",
-                "    ! [Env]\n",
+                "    ! [Env.set, Env.get]\n",
                 "    Env.set(\"{k}\", \"ok\")\n",
                 "    Env.get(\"{k}\")\n"
             ),
@@ -2138,7 +2142,7 @@ mod tcp_tests {
         // Port 1 is almost certainly not listening.
         let src = concat!(
             "fn check() -> Result<Unit, String>\n",
-            "    ! [Tcp]\n",
+            "    ! [Tcp.ping]\n",
             "    Tcp.ping(\"127.0.0.1\", 1)\n",
         );
         let val = run_tcp_fn(src, "check");
@@ -2149,7 +2153,7 @@ mod tcp_tests {
     fn tcp_send_unreachable_returns_err() {
         let src = concat!(
             "fn talk() -> Result<String, String>\n",
-            "    ! [Tcp]\n",
+            "    ! [Tcp.send]\n",
             "    Tcp.send(\"127.0.0.1\", 1, \"hello\")\n",
         );
         let val = run_tcp_fn(src, "talk");
@@ -2169,7 +2173,7 @@ mod tcp_tests {
         });
 
         let src = format!(
-            "fn check() -> Result<Unit, String>\n    ! [Tcp]\n    Tcp.ping(\"127.0.0.1\", {})\n",
+            "fn check() -> Result<Unit, String>\n    ! [Tcp.ping]\n    Tcp.ping(\"127.0.0.1\", {})\n",
             port
         );
         let val = run_tcp_fn(&src, "check");
@@ -2189,7 +2193,7 @@ mod tcp_tests {
         });
 
         let src = format!(
-            "fn open() -> Result<Tcp.Connection, String>\n    ! [Tcp]\n    Tcp.connect(\"127.0.0.1\", {})\n",
+            "fn open() -> Result<Tcp.Connection, String>\n    ! [Tcp.connect]\n    Tcp.connect(\"127.0.0.1\", {})\n",
             port
         );
         let val = run_tcp_fn(&src, "open");
@@ -2236,7 +2240,7 @@ mod tcp_tests {
         });
 
         let src = format!(
-            "fn talk() -> Result<String, String>\n    ! [Tcp]\n    Tcp.send(\"127.0.0.1\", {}, \"echo me\")\n",
+            "fn talk() -> Result<String, String>\n    ! [Tcp.send]\n    Tcp.send(\"127.0.0.1\", {}, \"echo me\")\n",
             port
         );
         let val = run_tcp_fn(&src, "talk");
@@ -2618,25 +2622,23 @@ fn probe() -> Int
     }
 
     #[test]
-    fn imported_effect_alias_is_expanded_in_runtime_gate() {
-        let root = temp_module_root("effect_alias");
+    fn imported_exact_effect_passes_runtime_gate() {
+        let root = temp_module_root("effect_exact");
         let lib_src = r#"
 module Lib
     exposes [hi]
     intent =
         "Library"
 
-effects IO = [Console]
-
 fn hi() -> Unit
-    ! [IO]
+    ! [Console.print]
     Console.print("hello")
 "#;
         std::fs::write(root.join("Lib.av"), lib_src).expect("write Lib.av failed");
 
         let app_src = r#"
 fn main() -> Unit
-    ! [Console]
+    ! [Console.print]
     Lib.hi()
 "#;
 
@@ -3051,7 +3053,7 @@ mod replay_tests {
     fn record_mode_logs_console_effect() {
         let src = r#"
 fn ping() -> Unit
-    ! [Console]
+    ! [Console.print]
     Console.print("hello")
 "#;
         let mut interp = Interpreter::new();
@@ -3074,7 +3076,7 @@ fn ping() -> Unit
     fn replay_mode_substitutes_recorded_result() {
         let src = r#"
 fn check() -> Bool
-    ! [Disk]
+    ! [Disk.exists]
     Disk.exists("/definitely/not/existing/path")
 "#;
         let mut interp = Interpreter::new();
@@ -3100,7 +3102,7 @@ fn check() -> Bool
     fn replay_mode_detects_effect_order_mismatch() {
         let src = r#"
 fn check() -> Bool
-    ! [Disk]
+    ! [Disk.exists]
     Disk.exists("/tmp/x")
 "#;
         let mut interp = Interpreter::new();

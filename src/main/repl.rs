@@ -216,10 +216,7 @@ pub(super) fn cmd_repl() {
                     };
                     println!("{}", format!("defined type: {}", name).cyan());
                 }
-                TopLevel::EffectSet { name, effects, .. } => {
-                    interp.register_effect_set(name.clone(), effects.clone());
-                    println!("{}", format!("defined effects: {}", name).cyan());
-                }
+                TopLevel::EffectSet { .. } => unreachable!("effect aliases are parsed as errors"),
                 TopLevel::Stmt(s) => match interp.exec_stmt(s) {
                     Ok(val) => match s {
                         Stmt::Binding(name, _, _) => {

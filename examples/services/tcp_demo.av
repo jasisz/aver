@@ -12,7 +12,6 @@ decision TcpVsHttp
         "the Aver side — one function call = one connection open/close."
     chosen = "SeparateServices"
     rejected = ["SingleNetworkService", "OpenSocketHandle"]
-
     impacts = [ping, send, main]
 
 fn ping(host: String, port: Int) -> Result<Unit, String>
@@ -27,14 +26,14 @@ fn send(host: String, port: Int, message: String) -> Result<String, String>
 
 fn checkPort(host: String, port: Int) -> Unit
     ? "Print whether the port is reachable."
-    ! [Tcp.ping, Console.print]
+    ! [Console.print, Tcp.ping]
     result = ping(host, port)
     match result
         Result.Ok(_)  -> Console.print("{host}:{port} is reachable")
         Result.Err(e) -> Console.print("{host}:{port} is unreachable — {e}")
 
 fn main() -> Unit
-    ! [Tcp.ping, Tcp.send, Console.print]
+    ! [Console.print, Tcp.ping, Tcp.send]
 
     // Check a few well-known ports
     checkPort("127.0.0.1", 80)

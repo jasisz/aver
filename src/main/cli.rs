@@ -87,6 +87,7 @@ pub(super) enum Commands {
     },
     /// Static analysis (intent presence, module size)
     Check {
+        /// Aver file or directory
         file: String,
         /// Resolve `depends [...]` from this root (default: current working directory)
         #[arg(long)]
@@ -97,6 +98,7 @@ pub(super) enum Commands {
     },
     /// Run all verify blocks
     Verify {
+        /// Aver file or directory
         file: String,
         /// Resolve `depends [...]` from this root (default: current working directory)
         #[arg(long)]
@@ -188,10 +190,10 @@ mod tests {
 
     #[test]
     fn verify_accepts_deps_flag() {
-        let cli = Cli::parse_from(["aver", "verify", "examples/app.av", "--deps"]);
+        let cli = Cli::parse_from(["aver", "verify", "examples/modules/app.av", "--deps"]);
         match cli.command {
             Commands::Verify { file, deps, .. } => {
-                assert_eq!(file, "examples/app.av");
+                assert_eq!(file, "examples/modules/app.av");
                 assert!(deps);
             }
             _ => panic!("expected verify command"),
@@ -200,7 +202,7 @@ mod tests {
 
     #[test]
     fn context_defaults_to_auto_depth_and_10kb_budget() {
-        let cli = Cli::parse_from(["aver", "context", "examples/app.av"]);
+        let cli = Cli::parse_from(["aver", "context", "examples/modules/app.av"]);
         match cli.command {
             Commands::Context { depth, budget, .. } => {
                 assert_eq!(depth, ContextDepth::Auto);
@@ -215,7 +217,7 @@ mod tests {
         let cli = Cli::parse_from([
             "aver",
             "context",
-            "examples/app.av",
+            "examples/modules/app.av",
             "--depth",
             "unlimited",
             "--budget",
@@ -232,7 +234,7 @@ mod tests {
 
     #[test]
     fn context_accepts_numeric_depth() {
-        let cli = Cli::parse_from(["aver", "context", "examples/app.av", "--depth", "2"]);
+        let cli = Cli::parse_from(["aver", "context", "examples/modules/app.av", "--depth", "2"]);
         match cli.command {
             Commands::Context { depth, .. } => {
                 assert_eq!(depth, ContextDepth::Limited(2));

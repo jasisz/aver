@@ -1,0 +1,16 @@
+module Main
+    intent =
+        "Workflow engine argv entrypoint."
+        "Keeps the top-level module thin so the CLI and application core stay in their own"
+        "modules and `aver context` has a stable root to resume from."
+    depends [App.Cli]
+
+fn main() -> Unit
+    ? "Starts the workflow engine CLI."
+    ! [
+        Args.get,
+        Console.print, Console.warn,
+        Disk.appendText, Disk.exists, Disk.makeDir, Disk.readText, Disk.writeText,
+        Time.now,
+    ]
+    App.Cli.runCli()

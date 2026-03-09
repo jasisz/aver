@@ -6,6 +6,7 @@ use std::process;
 use aver::ast::TopLevel;
 use aver::lexer::Lexer;
 use aver::parser::Parser;
+use aver::types::{Type, parse_type_str_strict};
 use colored::Colorize;
 
 pub(super) fn cmd_format(path: &str, check: bool) {
@@ -138,6 +139,274 @@ fn normalize_leading_indent(line: &str) -> String {
         }
     }
     out.push_str(rest);
+    out
+}
+
+fn effect_namespace(effect: &str) -> &str {
+    match effect.split_once('.') {
+        Some((namespace, _)) => namespace,
+        None => effect,
+    }
+}
+
+fn sorted_effects(effects: &[String]) -> Vec<String> {
+    let mut sorted = effects.to_vec();
+    sorted.sort();
+    sorted
+}
+
+fn format_block_effect_declaration(indent: &str, effects: &[String]) -> Vec<String> {
+    let effects = sorted_effects(effects);
+    if effects.len() <= 4 {
+        return vec![format!("{}! [{}]", indent, effects.join(", "))];
+    }
+
+    let mut out = vec![format!("{}! [", indent)];
+    let mut start = 0usize;
+    while start < effects.len() {
+        let namespace = effect_namespace(&effects[start]);
+        let mut end = start + 1;
+        while end < effects.len() && effect_namespace(&effects[end]) == namespace {
+            end += 1;
+        }
+        out.push(format!("{}    {},", indent, effects[start..end].join(", ")));
+        start = end;
+    }
+    out.push(format!("{}]", indent));
+    out
+}
+
+fn split_top_level(src: &str, delimiter: char) -> Option<Vec<String>> {
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut angle_depth = 0usize;
+    let mut prev = None;
+
+    for (idx, ch) in src.char_indices() {
+        match ch {
+            '(' => paren_depth += 1,
+            ')' => paren_depth = paren_depth.checked_sub(1)?,
+            '[' => bracket_depth += 1,
+            ']' => bracket_depth = bracket_depth.checked_sub(1)?,
+            '<' => angle_depth += 1,
+            '>' if prev != Some('-') && angle_depth > 0 => angle_depth -= 1,
+            _ => {}
+        }
+
+        if ch == delimiter && paren_depth == 0 && bracket_depth == 0 && angle_depth == 0 {
+            parts.push(src[start..idx].to_string());
+            start = idx + ch.len_utf8();
+        }
+        prev = Some(ch);
+    }
+
+    if paren_depth != 0 || bracket_depth != 0 || angle_depth != 0 {
+        return None;
+    }
+
+    parts.push(src[start..].to_string());
+    Some(parts)
+}
+
+fn find_matching_paren(src: &str, open_idx: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (idx, ch) in src.char_indices().skip_while(|(idx, _)| *idx < open_idx) {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(idx);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn format_type_for_source(ty: &Type) -> String {
+    match ty {
+        Type::Int => "Int".to_string(),
+        Type::Float => "Float".to_string(),
+        Type::Str => "String".to_string(),
+        Type::Bool => "Bool".to_string(),
+        Type::Unit => "Unit".to_string(),
+        Type::Result(ok, err) => format!(
+            "Result<{}, {}>",
+            format_type_for_source(ok),
+            format_type_for_source(err)
+        ),
+        Type::Option(inner) => format!("Option<{}>", format_type_for_source(inner)),
+        Type::List(inner) => format!("List<{}>", format_type_for_source(inner)),
+        Type::Tuple(items) => format!(
+            "({})",
+            items
+                .iter()
+                .map(format_type_for_source)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Type::Map(key, value) => format!(
+            "Map<{}, {}>",
+            format_type_for_source(key),
+            format_type_for_source(value)
+        ),
+        Type::Fn(params, ret, effects) => {
+            let params = params
+                .iter()
+                .map(format_type_for_source)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let ret = format_type_for_source(ret);
+            let effects = sorted_effects(effects);
+            if effects.is_empty() {
+                format!("Fn({params}) -> {ret}")
+            } else {
+                format!("Fn({params}) -> {ret} ! [{}]", effects.join(", "))
+            }
+        }
+        Type::Unknown => "Unknown".to_string(),
+        Type::Named(name) => name.clone(),
+    }
+}
+
+fn normalize_type_annotation(type_src: &str) -> String {
+    let trimmed = type_src.trim();
+    match parse_type_str_strict(trimmed) {
+        Ok(ty) => format_type_for_source(&ty),
+        Err(_) => trimmed.to_string(),
+    }
+}
+
+fn normalize_function_header_effects_line(line: &str) -> String {
+    let indent_len = line.chars().take_while(|c| *c == ' ').count();
+    let indent = " ".repeat(indent_len);
+    let trimmed = line.trim();
+    if !trimmed.starts_with("fn ") {
+        return line.to_string();
+    }
+
+    let open_idx = match trimmed.find('(') {
+        Some(idx) => idx,
+        None => return line.to_string(),
+    };
+    let close_idx = match find_matching_paren(trimmed, open_idx) {
+        Some(idx) => idx,
+        None => return line.to_string(),
+    };
+
+    let params_src = &trimmed[open_idx + 1..close_idx];
+    let params = match split_top_level(params_src, ',') {
+        Some(parts) => parts,
+        None => return line.to_string(),
+    };
+    let formatted_params = params
+        .into_iter()
+        .filter(|part| !part.trim().is_empty())
+        .map(|param| {
+            let (name, ty) = match param.split_once(':') {
+                Some(parts) => parts,
+                None => return param.trim().to_string(),
+            };
+            format!("{}: {}", name.trim(), normalize_type_annotation(ty))
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let mut formatted = format!(
+        "{}{}{})",
+        indent,
+        &trimmed[..open_idx + 1],
+        formatted_params
+    );
+    let remainder = trimmed[close_idx + 1..].trim();
+    if let Some(return_type) = remainder.strip_prefix("->") {
+        formatted.push_str(" -> ");
+        formatted.push_str(&normalize_type_annotation(return_type));
+    } else if !remainder.is_empty() {
+        formatted.push(' ');
+        formatted.push_str(remainder);
+    }
+
+    formatted
+}
+
+fn normalize_function_header_effects(lines: Vec<String>) -> Vec<String> {
+    lines
+        .into_iter()
+        .map(|line| normalize_function_header_effects_line(&line))
+        .collect()
+}
+
+fn normalize_effect_declaration_blocks(lines: Vec<String>) -> Vec<String> {
+    let mut out = Vec::with_capacity(lines.len());
+    let mut i = 0usize;
+
+    while i < lines.len() {
+        let line = &lines[i];
+        let trimmed = line.trim();
+        if !trimmed.starts_with("! [") {
+            out.push(line.clone());
+            i += 1;
+            continue;
+        }
+
+        let indent_len = line.chars().take_while(|c| *c == ' ').count();
+        let indent = " ".repeat(indent_len);
+        let mut inner = String::new();
+        let mut consumed = 0usize;
+        let mut found_close = false;
+
+        while i + consumed < lines.len() {
+            let current = &lines[i + consumed];
+            let current_trimmed = current.trim();
+            let segment = if consumed == 0 {
+                current_trimmed.trim_start_matches("! [")
+            } else {
+                current_trimmed
+            };
+
+            if let Some(before_close) = segment.strip_suffix(']') {
+                if !inner.is_empty() && !before_close.trim().is_empty() {
+                    inner.push(' ');
+                }
+                inner.push_str(before_close.trim());
+                found_close = true;
+                consumed += 1;
+                break;
+            }
+
+            if !inner.is_empty() && !segment.trim().is_empty() {
+                inner.push(' ');
+            }
+            inner.push_str(segment.trim());
+            consumed += 1;
+        }
+
+        if !found_close {
+            out.push(line.clone());
+            i += 1;
+            continue;
+        }
+
+        let effects: Vec<String> = if inner.trim().is_empty() {
+            vec![]
+        } else {
+            inner
+                .split(',')
+                .map(str::trim)
+                .filter(|part| !part.is_empty())
+                .map(ToString::to_string)
+                .collect()
+        };
+
+        out.extend(format_block_effect_declaration(&indent, &effects));
+        i += consumed;
+    }
+
     out
 }
 
@@ -339,8 +608,74 @@ fn normalize_source_lines(source: &str) -> Vec<String> {
         lines.push(line);
     }
 
-    let lines = normalize_inline_module_intent(lines);
+    let lines = normalize_effect_declaration_blocks(lines);
+    let lines = normalize_function_header_effects(lines);
+    let lines = normalize_module_intent_blocks(lines);
     normalize_inline_decision_fields(lines)
+}
+
+fn normalize_module_intent_blocks(lines: Vec<String>) -> Vec<String> {
+    let mut out = Vec::with_capacity(lines.len());
+    let mut in_module_header = false;
+    let mut i = 0usize;
+
+    while i < lines.len() {
+        let line = &lines[i];
+        let trimmed = line.trim();
+        let indent = line.chars().take_while(|c| *c == ' ').count();
+
+        if indent == 0 && trimmed.starts_with("module ") {
+            in_module_header = true;
+            out.push(line.clone());
+            i += 1;
+            continue;
+        }
+
+        if in_module_header && indent == 0 && !trimmed.is_empty() && !trimmed.starts_with("//") {
+            in_module_header = false;
+        }
+
+        if in_module_header && indent > 0 {
+            let head = &line[indent..];
+            if let Some(rhs) = head.strip_prefix("intent =") {
+                let rhs_trimmed = rhs.trim_start();
+                if rhs_trimmed.starts_with('"') {
+                    let mut parts = vec![rhs_trimmed.to_string()];
+                    let mut consumed = 1usize;
+
+                    while i + consumed < lines.len() {
+                        let next = &lines[i + consumed];
+                        let next_indent = next.chars().take_while(|c| *c == ' ').count();
+                        let next_trimmed = next.trim();
+
+                        if next_indent <= indent || next_trimmed.is_empty() {
+                            break;
+                        }
+                        if !next_trimmed.starts_with('"') {
+                            break;
+                        }
+
+                        parts.push(next_trimmed.to_string());
+                        consumed += 1;
+                    }
+
+                    if parts.len() > 1 {
+                        out.push(format!("{}intent =", " ".repeat(indent)));
+                        for part in parts {
+                            out.push(format!("{}{}", " ".repeat(indent + 4), part));
+                        }
+                        i += consumed;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        out.push(line.clone());
+        i += 1;
+    }
+
+    out
 }
 
 fn normalize_internal_blank_runs(text: &str) -> String {
@@ -364,42 +699,6 @@ fn normalize_internal_blank_runs(text: &str) -> String {
         out.pop();
     }
     out.join("\n")
-}
-
-fn normalize_inline_module_intent(lines: Vec<String>) -> Vec<String> {
-    let mut out = Vec::with_capacity(lines.len());
-    let mut in_module_header = false;
-
-    for line in lines {
-        let trimmed = line.trim();
-        let indent = line.chars().take_while(|c| *c == ' ').count();
-
-        if indent == 0 && trimmed.starts_with("module ") {
-            in_module_header = true;
-            out.push(line);
-            continue;
-        }
-
-        if in_module_header && indent == 0 && !trimmed.is_empty() && !trimmed.starts_with("//") {
-            in_module_header = false;
-        }
-
-        if in_module_header && indent > 0 {
-            let head = &line[indent..];
-            if let Some(rhs) = head.strip_prefix("intent =") {
-                let rhs_trimmed = rhs.trim_start();
-                if rhs_trimmed.starts_with('"') {
-                    out.push(format!("{}intent =", " ".repeat(indent)));
-                    out.push(format!("{}{}", " ".repeat(indent + 4), rhs_trimmed));
-                    continue;
-                }
-            }
-        }
-
-        out.push(line);
-    }
-
-    out
 }
 
 const DECISION_FIELDS: [&str; 6] = ["date", "author", "reason", "chosen", "rejected", "impacts"];
@@ -629,7 +928,7 @@ verify missing
     }
 
     #[test]
-    fn expands_inline_module_intent_to_block() {
+    fn keeps_inline_module_intent_inline() {
         let src = r#"module Demo
     intent = "Inline intent."
     exposes [x]
@@ -640,8 +939,31 @@ fn x() -> Int
         assert_eq!(
             got,
             r#"module Demo
+    intent = "Inline intent."
+    exposes [x]
+
+fn x() -> Int
+    1
+"#
+        );
+    }
+
+    #[test]
+    fn expands_multiline_module_intent_to_block() {
+        let src = r#"module Demo
+    intent = "First line."
+        "Second line."
+    exposes [x]
+fn x() -> Int
+    1
+"#;
+        let got = format_source(src);
+        assert_eq!(
+            got,
+            r#"module Demo
     intent =
-        "Inline intent."
+        "First line."
+        "Second line."
     exposes [x]
 
 fn x() -> Int
@@ -665,8 +987,7 @@ decision D
         assert_eq!(
             got,
             r#"module Demo
-    intent =
-        "x"
+    intent = "x"
     exposes [main]
 
 decision D
@@ -674,6 +995,87 @@ decision D
     chosen = "A"
     rejected = ["B"]
     impacts = [main]
+"#
+        );
+    }
+
+    #[test]
+    fn keeps_inline_function_description_inline() {
+        let src = r#"fn add(a: Int, b: Int) -> Int
+    ? "Adds two numbers."
+    a + b
+"#;
+        let got = format_source(src);
+        assert_eq!(
+            got,
+            r#"fn add(a: Int, b: Int) -> Int
+    ? "Adds two numbers."
+    a + b
+"#
+        );
+    }
+
+    #[test]
+    fn keeps_short_effect_lists_inline() {
+        let src = r#"fn apply(f: Fn(Int) -> Int ! [Console.warn, Console.print], x: Int) -> Int
+    ! [Http.post, Console.print, Http.get, Console.warn]
+    f(x)
+"#;
+        let got = format_source(src);
+        assert_eq!(
+            got,
+            r#"fn apply(f: Fn(Int) -> Int ! [Console.print, Console.warn], x: Int) -> Int
+    ! [Console.print, Console.warn, Http.get, Http.post]
+    f(x)
+"#
+        );
+    }
+
+    #[test]
+    fn expands_long_effect_lists_to_multiline_alphabetical_groups() {
+        let src = r#"fn main() -> Unit
+    ! [Args.get, Console.print, Console.warn, Time.now, Disk.makeDir, Disk.exists, Disk.readText, Disk.writeText, Disk.appendText]
+    Unit
+"#;
+        let got = format_source(src);
+        assert_eq!(
+            got,
+            r#"fn main() -> Unit
+    ! [
+        Args.get,
+        Console.print, Console.warn,
+        Disk.appendText, Disk.exists, Disk.makeDir, Disk.readText, Disk.writeText,
+        Time.now,
+    ]
+    Unit
+"#
+        );
+    }
+
+    #[test]
+    fn sorts_function_type_effects_inline() {
+        let src = r#"fn useHandler(handler: Fn(Int) -> Result<String, String> ! [Time.now, Args.get, Console.warn, Console.print, Disk.readText], value: Int) -> Unit
+    handler(value)
+"#;
+        let got = format_source(src);
+        assert_eq!(
+            got,
+            r#"fn useHandler(handler: Fn(Int) -> Result<String, String> ! [Args.get, Console.print, Console.warn, Disk.readText, Time.now], value: Int) -> Unit
+    handler(value)
+"#
+        );
+    }
+
+    #[test]
+    fn keeps_long_function_type_effects_inline() {
+        let src = r#"fn apply(handler: Fn(Int) -> Int ! [Time.now, Args.get, Console.warn, Console.print, Disk.readText], value: Int) -> Int
+    handler(value)
+"#;
+        let got = format_source(src);
+        assert_eq!(
+            got,
+            r#"fn apply(handler: Fn(Int) -> Int ! [Args.get, Console.print, Console.warn, Disk.readText, Time.now], value: Int) -> Int
+    handler(value)
 "#
         );
     }

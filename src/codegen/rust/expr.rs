@@ -33,7 +33,7 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
                     return format!("{}::{}", type_name, field);
                 }
             }
-            // Check if this is a module-qualified reference: Examples.Fibonacci.fib
+            // Check if this is a module-qualified reference: Fibonacci.fib
             if let Some(full_dotted) = expr_to_dotted_name(expr)
                 && let Some((prefix, bare)) = resolve_module_call(&full_dotted, ctx)
             {
@@ -227,7 +227,7 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &Emit
             return rust_code;
         }
 
-        // Check module-qualified call: Examples.Fibonacci.fib → fib
+        // Check module-qualified call: Fibonacci.fib → fib
         if let Some((prefix, bare)) = resolve_module_call(name, ctx) {
             let module_path = module_prefix_to_rust_path(prefix);
             // Could be a simple function or a type constructor (e.g. Shape.Circle)

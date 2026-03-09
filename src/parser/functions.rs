@@ -37,13 +37,13 @@ impl Parser {
             self.advance(); // consume INDENT
             self.skip_newlines();
 
-            // Optional description: ? "..."
+            // Optional description: ? "..." with optional continuation lines.
             if self.check_exact(&TokenKind::Question) {
                 self.advance();
-                if let TokenKind::Str(s) = self.current().kind.clone() {
-                    desc = Some(s);
-                    self.advance();
-                }
+                let text = self
+                    .parse_inline_string_with_continuations()
+                    .map_err(|_| self.error("Expected string after '?'".to_string()))?;
+                desc = Some(text);
                 self.skip_newlines();
             }
 
@@ -51,25 +51,9 @@ impl Parser {
             if self.check_exact(&TokenKind::Bang) {
                 self.advance();
                 if self.check_exact(&TokenKind::LBracket) {
-                    self.advance();
-                    while !self.check_exact(&TokenKind::RBracket) && !self.is_eof() {
-                        match self.current().kind.clone() {
-                            TokenKind::Ident(_) => {
-                                let name = self.parse_qualified_ident()?;
-                                effects.push(name);
-                            }
-                            TokenKind::Comma => {
-                                self.advance();
-                            }
-                            _ => {
-                                return Err(self.error(format!(
-                                    "Expected effect name in ! [...], found {}",
-                                    self.current().kind
-                                )));
-                            }
-                        }
-                    }
-                    self.expect_exact(&TokenKind::RBracket)?;
+                    effects = self.parse_effect_ident_list()?;
+                } else {
+                    return Err(self.error("Expected '[' after '!'".to_string()));
                 }
                 self.skip_newlines();
             }

@@ -229,11 +229,56 @@ fn fn_with_desc() {
 }
 
 #[test]
+fn fn_with_multiline_desc() {
+    let src = "fn add(a: Int, b: Int) -> Int\n    ? \"Adds two numbers.\"\n      \"Returns their sum.\"\n    a + b\n";
+    let items = parse(src);
+    if let TopLevel::FnDef(fd) = &items[0] {
+        assert_eq!(
+            fd.desc,
+            Some("Adds two numbers. Returns their sum.".to_string())
+        );
+    } else {
+        panic!("expected FnDef");
+    }
+}
+
+#[test]
+fn fn_desc_requires_inline_first_string() {
+    let src = "fn add(a: Int, b: Int) -> Int\n    ?\n        \"Adds two numbers.\"\n    a + b\n";
+    let msg = parse_error(src);
+    assert!(
+        msg.contains("Expected string after '?'"),
+        "expected helpful error, got: {msg}"
+    );
+}
+
+#[test]
 fn fn_with_effects() {
     let src = "fn log(msg: String) -> Unit\n    ! [Io]\n    print(msg)\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         assert_eq!(fd.effects, vec!["Io".to_string()]);
+    } else {
+        panic!("expected FnDef");
+    }
+}
+
+#[test]
+fn fn_with_multiline_effects() {
+    let src = "fn log(msg: String) -> Unit\n    ! [\n        Args.get,\n        Console.print, Console.warn,\n        Time.now,\n        Disk.readText, Disk.writeText,\n    ]\n    print(msg)\n";
+    let items = parse(src);
+    if let TopLevel::FnDef(fd) = &items[0] {
+        assert_eq!(
+            fd.effects,
+            vec![
+                "Args.get".to_string(),
+                "Console.print".to_string(),
+                "Console.warn".to_string(),
+                "Time.now".to_string(),
+                "Disk.readText".to_string(),
+                "Disk.writeText".to_string(),
+            ]
+        );
     } else {
         panic!("expected FnDef");
     }
@@ -720,6 +765,34 @@ fn module_with_intent() {
 }
 
 #[test]
+fn module_with_inline_intent() {
+    let src = "module Calc\n    intent = \"A calculator module.\"\n";
+    let items = parse(src);
+    assert_eq!(items.len(), 1);
+    if let TopLevel::Module(m) = &items[0] {
+        assert_eq!(m.name, "Calc");
+        assert_eq!(m.intent, "A calculator module.");
+    } else {
+        panic!("expected Module");
+    }
+}
+
+#[test]
+fn module_with_inline_multiline_intent() {
+    let src = "module Calc\n    intent = \"A calculator module.\"\n        \"Keeps arithmetic helpers together.\"\n";
+    let items = parse(src);
+    assert_eq!(items.len(), 1);
+    if let TopLevel::Module(m) = &items[0] {
+        assert_eq!(
+            m.intent,
+            "A calculator module. Keeps arithmetic helpers together."
+        );
+    } else {
+        panic!("expected Module");
+    }
+}
+
+#[test]
 fn module_with_depends() {
     // depends uses no colon: `depends [Core]`
     let src = "module App\n    depends [Core]\n    intent =\n        \"App module.\"\n";
@@ -1176,25 +1249,23 @@ fn parse_singleton_variant_with_parens_is_parse_error() {
 }
 
 #[test]
-fn effect_set_single() {
-    let items = parse("effects AppIO = [Console]");
-    if let TopLevel::EffectSet { name, effects, .. } = &items[0] {
-        assert_eq!(name, "AppIO");
-        assert_eq!(effects, &["Console"]);
-    } else {
-        panic!("expected EffectSet, got {:?}", items[0]);
-    }
+fn effect_set_single_is_parse_error() {
+    let msg = parse_error("effects AppIO = [Console.print]");
+    assert!(
+        msg.contains("Effect aliases were removed"),
+        "unexpected parse error: {}",
+        msg
+    );
 }
 
 #[test]
-fn effect_set_multiple() {
-    let items = parse("effects AppIO = [Console, Disk, Http]");
-    if let TopLevel::EffectSet { name, effects, .. } = &items[0] {
-        assert_eq!(name, "AppIO");
-        assert_eq!(effects, &["Console", "Disk", "Http"]);
-    } else {
-        panic!("expected EffectSet");
-    }
+fn effect_set_multiple_is_parse_error() {
+    let msg = parse_error("effects AppIO = [Console.print, Disk.readText, Http.get]");
+    assert!(
+        msg.contains("Effect aliases were removed"),
+        "unexpected parse error: {}",
+        msg
+    );
 }
 
 // ---------------------------------------------------------------------------

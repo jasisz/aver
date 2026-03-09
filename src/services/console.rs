@@ -6,7 +6,7 @@
 ///   Console.warn(msg)     — print to stderr prefixed with "[warn] "
 ///   Console.readLine()    — read one line from stdin; Ok(line) or Err("EOF")
 ///
-/// All methods require `! [Console]`.
+/// Each method requires its own exact effect (`Console.print`, `Console.error`, etc.).
 use std::collections::HashMap;
 
 use crate::value::{RuntimeError, Value, aver_display};

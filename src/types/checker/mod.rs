@@ -113,8 +113,6 @@ struct TypeChecker {
     /// Variant names for sum types: "Shape" → ["Circle", "Rect", "Point"].
     /// Pre-populated for Result and Option; extended by user-defined sum types.
     type_variants: HashMap<String, Vec<String>>,
-    /// Named effect aliases: `effects AppIO = [Console, Disk]`
-    effect_aliases: HashMap<String, Vec<String>>,
     /// Top-level bindings visible from function bodies.
     globals: HashMap<String, Type>,
     /// Local bindings in the current function/scope.
@@ -144,7 +142,6 @@ impl TypeChecker {
             value_members: HashMap::new(),
             record_field_types: HashMap::new(),
             type_variants,
-            effect_aliases: HashMap::new(),
             globals: HashMap::new(),
             locals: HashMap::new(),
             errors: Vec::new(),
@@ -155,21 +152,11 @@ impl TypeChecker {
         tc
     }
 
-    /// Expand a list of effect names, resolving aliases recursively with cycle detection.
-    fn expand_effects(&self, effects: &[String]) -> Vec<String> {
-        crate::effects::expand_effects(effects, &self.effect_aliases)
-    }
-
-    /// Check whether `required_effect` is satisfied by `caller_effects` (with alias expansion).
+    /// Check whether `required_effect` is satisfied by `caller_effects`.
     fn caller_has_effect(&self, caller_effects: &[String], required_effect: &str) -> bool {
-        let expanded_caller = self.expand_effects(caller_effects);
-        // Also expand the required effect (in case it's itself an alias)
-        let expanded_required = self.expand_effects(&[required_effect.to_string()]);
-        expanded_required.iter().all(|req| {
-            expanded_caller
-                .iter()
-                .any(|declared| crate::effects::effect_satisfies(declared, req))
-        })
+        caller_effects
+            .iter()
+            .any(|declared| crate::effects::effect_satisfies(declared, required_effect))
     }
 
     fn error(&mut self, msg: impl Into<String>) {

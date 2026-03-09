@@ -13,7 +13,7 @@ This is not a second execution runtime for effectful programs.
 ## Quick start
 
 ```bash
-aver proof examples/law_auto.av --verify-mode auto -o /tmp/law-auto-lean
+aver proof examples/formal/law_auto.av --verify-mode auto -o /tmp/law-auto-lean
 cd /tmp/law-auto-lean && lake build
 ```
 
@@ -121,30 +121,30 @@ The current proof export supports:
 
 These examples currently go through Lean export and `lake build` end to end:
 
-- `examples/spec_laws.av`
-- `examples/law_auto.av`
-- `examples/map.av`
-- `examples/date.av`
-- `examples/fibonacci.av`
-- `examples/grok_s_language.av`
-- `examples/lambda.av`
-- `examples/rle.av`
-- `examples/json.av`
-- `examples/mission_control.av`
-- `examples/notepad/store.av`
-- `examples/temperature.av`
-- `examples/trust_check.av`
-- `examples/user_record.av`
-- `examples/lists.av`
-- `examples/calculator.av`
-- `examples/shapes.av`
-- `examples/effect_sets.av`
+- `examples/formal/spec_laws.av`
+- `examples/formal/law_auto.av`
+- `examples/data/map.av`
+- `examples/data/date.av`
+- `examples/data/fibonacci.av`
+- `examples/core/grok_s_language.av`
+- `examples/core/lambda.av`
+- `examples/data/rle.av`
+- `examples/data/json.av`
+- `examples/apps/mission_control.av`
+- `examples/apps/notepad/store.av`
+- `examples/core/temperature.av`
+- `examples/formal/trust_check.av`
+- `examples/core/user_record.av`
+- `examples/core/lists.av`
+- `examples/core/calculator.av`
+- `examples/core/shapes.av`
+- `examples/core/effects_explicit.av`
 
 These examples currently build with plain Lean export:
 
-- `examples/hello.av`
-- `examples/shapes.av`
-- `examples/calculator.av`
+- `examples/core/hello.av`
+- `examples/core/shapes.av`
+- `examples/core/calculator.av`
 
 ## Hard-fail guarantees
 

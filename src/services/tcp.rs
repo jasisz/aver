@@ -10,7 +10,7 @@
 ///   `Tcp.readLine(conn)`                → Result<String, String>  (reads until \n, strips \r\n)
 ///   `Tcp.close(conn)`                   → Result<Unit, String>
 ///
-/// All methods require `! [Tcp]`.
+/// Each method requires its own exact effect (`Tcp.send`, `Tcp.ping`, etc.).
 use std::collections::HashMap;
 
 use aver_rt::TcpConnection;

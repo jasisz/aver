@@ -9,9 +9,7 @@ impl Interpreter {
                 TopLevel::Verify(_) => {}
                 TopLevel::Decision(_) => {}
                 TopLevel::TypeDef(td) => self.register_type_def(td),
-                TopLevel::EffectSet { name, effects, .. } => {
-                    self.register_effect_set(name.clone(), effects.clone());
-                }
+                TopLevel::EffectSet { .. } => {}
                 TopLevel::Stmt(s) => {
                     self.exec_stmt(s)?;
                 }
@@ -71,7 +69,7 @@ impl Interpreter {
             name: fd.name.clone(),
             params: fd.params.clone(),
             return_type: fd.return_type.clone(),
-            effects: self.expand_effects(&fd.effects),
+            effects: fd.effects.clone(),
             body: Rc::clone(&fd.body),
             resolution: fd.resolution.clone(),
             memo_eligible: self.memo_fns.contains(&fd.name),

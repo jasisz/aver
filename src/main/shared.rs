@@ -154,13 +154,6 @@ pub(super) fn compile_program_for_exec(
 
     load_dep_modules(&mut interp, &items, &module_root)?;
 
-    // Register effect sets first (needed before FnDef expansion)
-    for item in &items {
-        if let TopLevel::EffectSet { name, effects, .. } = item {
-            interp.register_effect_set(name.clone(), effects.clone());
-        }
-    }
-
     // Register type definitions (constructors)
     for item in &items {
         if let TopLevel::TypeDef(td) = item {

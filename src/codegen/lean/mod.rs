@@ -3870,7 +3870,10 @@ verify inc law incSpec
 
     #[test]
     fn law_auto_example_exports_real_proof_artifacts() {
-        let ctx = ctx_from_source(include_str!("../../../examples/law_auto.av"), "law_auto");
+        let ctx = ctx_from_source(
+            include_str!("../../../examples/formal/law_auto.av"),
+            "law_auto",
+        );
         let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
 
@@ -3884,7 +3887,7 @@ verify inc law incSpec
 
     #[test]
     fn json_example_has_no_proof_mode_fallbacks() {
-        let ctx = ctx_from_source(include_str!("../../../examples/json.av"), "json");
+        let ctx = ctx_from_source(include_str!("../../../examples/data/json.av"), "json");
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -3895,7 +3898,7 @@ verify inc law incSpec
 
     #[test]
     fn json_example_uses_total_defs_in_proof_mode() {
-        let ctx = ctx_from_source(include_str!("../../../examples/json.av"), "json");
+        let ctx = ctx_from_source(include_str!("../../../examples/data/json.av"), "json");
         let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
 
@@ -3980,7 +3983,10 @@ fn connPort(conn: Tcp.Connection) -> Int
 
     #[test]
     fn law_auto_example_has_no_sorry_in_proof_mode() {
-        let ctx = ctx_from_source(include_str!("../../../examples/law_auto.av"), "law_auto");
+        let ctx = ctx_from_source(
+            include_str!("../../../examples/formal/law_auto.av"),
+            "law_auto",
+        );
         let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
         assert!(
@@ -3992,7 +3998,7 @@ fn connPort(conn: Tcp.Connection) -> Int
 
     #[test]
     fn map_example_has_no_sorry_in_proof_mode() {
-        let ctx = ctx_from_source(include_str!("../../../examples/map.av"), "map");
+        let ctx = ctx_from_source(include_str!("../../../examples/data/map.av"), "map");
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -4016,7 +4022,10 @@ fn connPort(conn: Tcp.Connection) -> Int
 
     #[test]
     fn spec_laws_example_has_no_sorry_in_proof_mode() {
-        let ctx = ctx_from_source(include_str!("../../../examples/spec_laws.av"), "spec_laws");
+        let ctx = ctx_from_source(
+            include_str!("../../../examples/formal/spec_laws.av"),
+            "spec_laws",
+        );
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -4037,7 +4046,7 @@ fn connPort(conn: Tcp.Connection) -> Int
 
     #[test]
     fn rle_example_omits_unproven_universal_laws_in_proof_mode() {
-        let ctx = ctx_from_source(include_str!("../../../examples/rle.av"), "rle");
+        let ctx = ctx_from_source(include_str!("../../../examples/data/rle.av"), "rle");
         let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
 
@@ -4062,7 +4071,10 @@ fn connPort(conn: Tcp.Connection) -> Int
 
     #[test]
     fn fibonacci_example_uses_fuelized_int_countdown_in_proof_mode() {
-        let ctx = ctx_from_source(include_str!("../../../examples/fibonacci.av"), "fibonacci");
+        let ctx = ctx_from_source(
+            include_str!("../../../examples/data/fibonacci.av"),
+            "fibonacci",
+        );
         let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
 
@@ -4074,7 +4086,10 @@ fn connPort(conn: Tcp.Connection) -> Int
 
     #[test]
     fn fibonacci_example_auto_proves_canonical_spec_law() {
-        let ctx = ctx_from_source(include_str!("../../../examples/fibonacci.av"), "fibonacci");
+        let ctx = ctx_from_source(
+            include_str!("../../../examples/data/fibonacci.av"),
+            "fibonacci",
+        );
         let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
 
@@ -4090,7 +4105,7 @@ fn connPort(conn: Tcp.Connection) -> Int
 
     #[test]
     fn date_example_stays_inside_proof_subset() {
-        let ctx = ctx_from_source(include_str!("../../../examples/date.av"), "date");
+        let ctx = ctx_from_source(include_str!("../../../examples/data/date.av"), "date");
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -4107,7 +4122,7 @@ fn connPort(conn: Tcp.Connection) -> Int
     #[test]
     fn temperature_example_stays_inside_proof_subset() {
         let ctx = ctx_from_source(
-            include_str!("../../../examples/temperature.av"),
+            include_str!("../../../examples/core/temperature.av"),
             "temperature",
         );
         let issues = proof_mode_issues(&ctx);
@@ -4130,7 +4145,7 @@ fn connPort(conn: Tcp.Connection) -> Int
     #[test]
     fn grok_s_language_example_uses_total_ranked_sizeof_mutual_recursion() {
         let ctx = ctx_from_source(
-            include_str!("../../../examples/grok_s_language.av"),
+            include_str!("../../../examples/core/grok_s_language.av"),
             "grok_s_language",
         );
         let issues = proof_mode_issues(&ctx);
@@ -4160,7 +4175,7 @@ fn connPort(conn: Tcp.Connection) -> Int
 
     #[test]
     fn lambda_example_keeps_only_eval_outside_proof_subset() {
-        let ctx = ctx_from_source(include_str!("../../../examples/lambda.av"), "lambda");
+        let ctx = ctx_from_source(include_str!("../../../examples/core/lambda.av"), "lambda");
         let issues = proof_mode_issues(&ctx);
         assert_eq!(
             issues,
@@ -4181,7 +4196,7 @@ fn connPort(conn: Tcp.Connection) -> Int
     #[test]
     fn mission_control_example_stays_inside_proof_subset() {
         let ctx = ctx_from_source(
-            include_str!("../../../examples/mission_control.av"),
+            include_str!("../../../examples/apps/mission_control.av"),
             "mission_control",
         );
         let issues = proof_mode_issues(&ctx);
@@ -4200,7 +4215,7 @@ fn connPort(conn: Tcp.Connection) -> Int
     #[test]
     fn notepad_store_example_stays_inside_proof_subset() {
         let ctx = ctx_from_source(
-            include_str!("../../../examples/notepad/store.av"),
+            include_str!("../../../examples/apps/notepad/store.av"),
             "notepad_store",
         );
         let issues = proof_mode_issues(&ctx);

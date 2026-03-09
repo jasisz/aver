@@ -1,0 +1,106 @@
+module LawAuto
+    intent =
+        "Demonstrates Lean proof export for pure Aver code."
+        "Shows auto-proven universal laws, symmetric variants, and sampled-only fallback laws."
+
+fn id(x: Int) -> Int
+    ? "Identity helper used for reflexive law demo."
+    x
+
+verify id law reflexive
+    given x: Int = -2..2
+    x => x
+
+fn add(a: Int, b: Int) -> Int
+    ? "Integer addition wrapper for law proofs."
+    a + b
+
+verify add law commutative
+    given a: Int = -2..2
+    given b: Int = -2..2
+    add(a, b) => add(b, a)
+
+verify add law commutativeSwapSides
+    given a: Int = -2..2
+    given b: Int = -2..2
+    add(b, a) => add(a, b)
+
+verify add law associative
+    given a: Int = -1..1
+    given b: Int = -1..1
+    given c: Int = -1..1
+    add(add(a, b), c) => add(a, add(b, c))
+
+verify add law identityZero
+    given a: Int = -3..3
+    add(a, 0) => a
+
+verify add law identityZeroLeft
+    given a: Int = -3..3
+    add(0, a) => a
+
+fn mul(a: Int, b: Int) -> Int
+    ? "Integer multiplication wrapper for law proofs."
+    a * b
+
+verify mul law commutative
+    given a: Int = -2..2
+    given b: Int = -2..2
+    mul(a, b) => mul(b, a)
+
+verify mul law associative
+    given a: Int = -1..1
+    given b: Int = -1..1
+    given c: Int = -1..1
+    mul(mul(a, b), c) => mul(a, mul(b, c))
+
+verify mul law identityOne
+    given a: Int = -3..3
+    mul(a, 1) => a
+
+verify mul law identityOneLeft
+    given a: Int = -3..3
+    mul(1, a) => a
+
+fn sub(a: Int, b: Int) -> Int
+    ? "Integer subtraction wrapper (sampled law fallback in Lean auto mode)."
+    a - b
+
+verify sub law rightIdentity
+    given a: Int = -3..3
+    sub(a, 0) => a
+
+verify sub law antiCommutative
+    given a: Int = -2..2
+    given b: Int = -2..2
+    sub(a, b) => 0 - sub(b, a)
+
+fn incCount(counts: Map<String, Int>, word: String) -> Map<String, Int>
+    ? "Increment one word count in a map."
+    current = Map.get(counts, word)
+    match current
+        Option.Some(n) -> Map.set(counts, word, n + 1)
+        Option.None -> Map.set(counts, word, 1)
+
+verify incCount law keyPresent
+    given counts: Map<String, Int> = [Map.empty(), {"a" => 1}, {"x" => 2, "y" => 4}]
+    given word: String = ["a", "z", "new"]
+    Map.has(incCount(counts, word), word) => true
+
+verify incCount law existingKeyIncrements
+    given counts: Map<String, Int> = [{"a" => 1}, {"a" => 5, "x" => 2}]
+    Map.get(incCount(counts, "a"), "a") => Option.Some(addOne(Option.withDefault(Map.get(counts, "a"), 0)))
+
+fn addOne(n: Int) -> Int
+    ? "Small helper for map-based law expectations."
+    n + 1
+
+verify addOne law identityViaAdd
+    given n: Int = -3..3
+    addOne(n) => add(n, 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("LawAuto: run `aver verify examples/formal/law_auto.av`")
+    Console.print("LawAuto: proof with `aver proof examples/formal/law_auto.av --verify-mode auto`")
+    Console.print("LawAuto: inspect generated theorems for auto and sampled fallback laws")

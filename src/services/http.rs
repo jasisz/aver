@@ -4,7 +4,7 @@
 ///   GET / HEAD / DELETE  — `Http.get(url)`, `Http.head(url)`, `Http.delete(url)`
 ///   POST / PUT / PATCH   — `Http.post(url, body, contentType, headers)`, etc.
 ///
-/// All methods require `! [Http]`. Responses are wrapped in `Ok(HttpResponse)`
+/// Each method requires its own exact effect (`Http.get`, `Http.post`, etc.). Responses are wrapped in `Ok(HttpResponse)`
 /// for any completed HTTP exchange (including 4xx/5xx). Transport failures return
 /// `Err(String)`. Response bodies are capped at 10 MB.
 use std::collections::HashMap;

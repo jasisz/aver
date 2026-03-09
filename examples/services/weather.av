@@ -5,7 +5,7 @@ module Weather
         "and serves JSON responses over HTTP."
         "Demonstrates HttpServer, Http, Tcp, and Console working together."
     exposes [main]
-    depends [Examples.Redis]
+    depends [Services.Redis]
 
 decision CacheFirstArchitecture
     date = "2026-02-26"
@@ -16,7 +16,6 @@ decision CacheFirstArchitecture
         "Cache miss triggers fetch and store; cache hit returns immediately."
     chosen = "CacheFirst"
     rejected = ["AlwaysFetch", "LocalInMemoryCache"]
-
     impacts = [handleWeather, cacheKey]
 
 decision SimpleJsonTemplates
@@ -28,7 +27,6 @@ decision SimpleJsonTemplates
         "Structured JSON support can be layered later via a Json module."
     chosen = "StringInterpolationJson"
     rejected = ["JsonBuilder", "RawConcatenation"]
-
     impacts = [jsonOk, jsonErr]
 
 decision HttpServerContextParameter
@@ -41,7 +39,6 @@ decision HttpServerContextParameter
         "A context record parameter keeps dependencies visible, typed, and queryable."
     chosen = "ExplicitContextRecord"
     rejected = ["ClosureCapture", "MutableModuleState", "GlobalRegistry"]
-
     impacts = [HttpServer, "HandlerSignature", "AIContext"]
 
 record WeatherConfig
@@ -64,14 +61,14 @@ fn jsonOk(city: String, weather: String) -> String
 verify jsonOk
     jsonOk("Warsaw", "\"sunny\"") => "{{\"city\": \"Warsaw\", \"weather\": \"sunny\", \"source\": \"cache_or_api\"}}"
 
+fn jsonErr(msg: String) -> String
+    ? "Builds an error JSON response body."
+    "{{\"error\": \"{msg}\"}}"
+
 verify jsonErr
     jsonErr("not found") => "{{\"error\": \"not found\"}}"
 
 // URL and key builders (pure)
-
-fn jsonErr(msg: String) -> String
-    ? "Builds an error JSON response body."
-    "{{\"error\": \"{msg}\"}}"
 
 fn weatherUrl(config: WeatherConfig, city: String) -> String
     ? "Builds external weather API URL for a given city."
@@ -80,15 +77,15 @@ fn weatherUrl(config: WeatherConfig, city: String) -> String
 verify weatherUrl
     weatherUrl(WeatherConfig(apiHost = "api.weather.com", apiKey = "abc", redisHost = "h", redisPort = 6379, serverPort = 8080), "Warsaw") => "https://api.weather.com/v1/current?city=Warsaw&key=abc"
 
+fn cacheKey(city: String) -> String
+    ? "Builds Redis cache key for a city's weather data."
+    "weather:{city}"
+
 verify cacheKey
     cacheKey("Warsaw") => "weather:Warsaw"
     cacheKey("London") => "weather:London"
 
 // Path parsing (pure)
-
-fn cacheKey(city: String) -> String
-    ? "Builds Redis cache key for a city's weather data."
-    "weather:{city}"
 
 fn extractCity(path: String) -> Result<String, String>
     ? "Extracts city name from request path. Expects /weather/<city>."
@@ -120,12 +117,12 @@ verify extractCityFromParts
 fn cacheGet(conn: Tcp.Connection, city: String) -> Result<String, String>
     ? "Attempts to read cached weather for city from Redis."
     ! [Tcp.readLine, Tcp.writeLine]
-    Examples.Redis.get(conn, cacheKey(city))
+    Services.Redis.get(conn, cacheKey(city))
 
 fn cacheSet(conn: Tcp.Connection, city: String, data: String) -> Result<String, String>
     ? "Stores weather data in Redis cache."
     ! [Tcp.readLine, Tcp.writeLine]
-    Examples.Redis.set(conn, cacheKey(city), data)
+    Services.Redis.set(conn, cacheKey(city), data)
 
 // Weather fetching (effectful)
 
@@ -141,7 +138,7 @@ fn fetchWeather(config: WeatherConfig, city: String) -> Result<String, String>
 
 fn fetchAndCache(config: WeatherConfig, conn: Tcp.Connection, city: String) -> Result<String, String>
     ? "Fetches from API and stores result in Redis before returning it."
-    ! [Tcp.readLine, Tcp.writeLine, Http.get]
+    ! [Http.get, Tcp.readLine, Tcp.writeLine]
     fresh = fetchWeather(config, city)?
     _ = cacheSet(conn, city, fresh)
     Result.Ok(fresh)
@@ -150,7 +147,7 @@ fn fetchAndCache(config: WeatherConfig, conn: Tcp.Connection, city: String) -> R
 
 fn getWeather(config: WeatherConfig, conn: Tcp.Connection, city: String) -> Result<String, String>
     ? "Returns weather for city. Tries Redis cache first, falls back to API fetch and caches result."
-    ! [Tcp.readLine, Tcp.writeLine, Http.get]
+    ! [Http.get, Tcp.readLine, Tcp.writeLine]
     match cacheGet(conn, city)
         Result.Ok(cached) -> Result.Ok(cached)
         Result.Err(_)     -> fetchAndCache(config, conn, city)
@@ -159,7 +156,7 @@ fn getWeather(config: WeatherConfig, conn: Tcp.Connection, city: String) -> Resu
 
 fn handleWeather(context: WeatherContext, req: HttpRequest) -> HttpResponse
     ? "Routes incoming HTTP request. GET /weather/<city> returns weather JSON."
-    ! [Tcp.readLine, Tcp.writeLine, Http.get]
+    ! [Http.get, Tcp.readLine, Tcp.writeLine]
     match req.method == "GET"
         false -> HttpResponse(status = 405, body = jsonErr("Method not allowed"), headers = [])
         true  -> match extractCity(req.path)
@@ -170,15 +167,15 @@ fn handleWeather(context: WeatherContext, req: HttpRequest) -> HttpResponse
 
 fn startServer(context: WeatherContext) -> Result<Unit, String>
     ? "Prints startup info and starts blocking HttpServer loop with explicit context."
-    ! [HttpServer.listenWith, Console.print]
+    ! [Console.print, HttpServer.listenWith]
     Console.print("Weather service starting on port {context.config.serverPort}")
     Result.Ok(HttpServer.listenWith(context.config.serverPort, context, handleWeather))
 
 // Entry point
 
 fn main() -> Result<Unit, String>
-    ! [HttpServer.listenWith, Tcp.connect, Console.print]
+    ! [Console.print, HttpServer.listenWith, Tcp.connect]
     config = WeatherConfig(apiHost = "api.weather.com", apiKey = "demo-key", redisHost = "127.0.0.1", redisPort = 6379, serverPort = 8080)
 
-    conn = Examples.Redis.connect(RedisConfig(host = config.redisHost, port = config.redisPort))?
+    conn = Services.Redis.connect(RedisConfig(host = config.redisHost, port = config.redisPort))?
     startServer(WeatherContext(config = config, conn = conn))

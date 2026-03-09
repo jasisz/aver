@@ -56,33 +56,11 @@ impl Parser {
     pub(super) fn parse_module_intent(&mut self) -> Result<String, ParseError> {
         self.expect_exact(&TokenKind::Intent)?;
         self.expect_exact(&TokenKind::Assign)?;
-        self.skip_newlines();
-
-        let mut parts = Vec::new();
-
-        if self.is_indent() {
-            self.advance();
-            self.skip_newlines();
-
-            while !self.is_dedent() && !self.is_eof() {
-                match &self.current().kind {
-                    TokenKind::Str(s) => {
-                        parts.push(s.clone());
-                        self.advance();
-                    }
-                    TokenKind::Newline => {
-                        self.advance();
-                    }
-                    _ => break,
-                }
-            }
-
-            if self.is_dedent() {
-                self.advance();
-            }
+        let text = self.parse_inline_or_block_text()?;
+        if text.is_empty() {
+            return Err(self.error("Expected string or indented text after 'intent ='".to_string()));
         }
-
-        Ok(parts.join(" "))
+        Ok(text)
     }
 
     pub(super) fn parse_exposes(&mut self) -> Result<Vec<String>, ParseError> {

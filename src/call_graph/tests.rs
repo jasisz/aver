@@ -120,7 +120,7 @@ fn b(n: Int) -> Int
 fn ordered_components_respect_module_qualified_dependencies() {
     let src = r#"
 fn jsonErr() -> String
-    Examples.Json.toString(Json.JsonNull)
+    Json.toString(Json.JsonNull)
 
 fn toString(_j: Int) -> String
     "ok"
@@ -133,7 +133,7 @@ fn toString(_j: Int) -> String
             _ => None,
         })
         .collect();
-    let module_prefixes = HashSet::from(["Examples.Json".to_string()]);
+    let module_prefixes = HashSet::from(["Json".to_string()]);
 
     let order = ordered_fn_components(&fns, &module_prefixes);
     let flattened: Vec<_> = order
