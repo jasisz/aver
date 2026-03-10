@@ -374,7 +374,34 @@ fn type_contains_named(ty: &Type, wanted: &str) -> bool {
 mod tests {
     use super::{
         ModuleTreeNode, emit_module_tree_files, insert_module_content, render_generated_module,
+        transpile,
     };
+    use crate::codegen::build_context;
+    use crate::source::parse_source;
+    use crate::tco;
+    use crate::types::checker::run_type_check_full;
+    use std::collections::HashSet;
+
+    fn ctx_from_source(source: &str, project_name: &str) -> crate::codegen::CodegenContext {
+        let mut items = parse_source(source).expect("source should parse");
+        tco::transform_program(&mut items);
+        let tc = run_type_check_full(&items, None);
+        assert!(
+            tc.errors.is_empty(),
+            "source should typecheck without errors: {:?}",
+            tc.errors
+        );
+        build_context(items, &tc, HashSet::new(), project_name.to_string(), vec![])
+    }
+
+    fn generated_rust_entry_file(out: &crate::codegen::ProjectOutput) -> &str {
+        out.files
+            .iter()
+            .find_map(|(name, content)| {
+                (name == "src/aver_generated/entry/mod.rs").then_some(content.as_str())
+            })
+            .expect("expected generated Rust entry module")
+    }
 
     #[test]
     fn generated_module_imports_direct_depends() {
@@ -408,5 +435,25 @@ mod tests {
 
         assert!(root_mod.contains("pub mod app;"));
         assert!(!root_mod.contains("pub use app::*;"));
+    }
+
+    #[test]
+    fn list_cons_match_uses_cloned_uncons_fast_path() {
+        let ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn headPlusTailLen(xs: List<Int>) -> Int
+    match xs
+        [] -> 0
+        [h, ..t] -> h + List.len(t)
+"#,
+            "demo",
+        );
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("aver_rt::list_uncons_cloned(&"));
     }
 }

@@ -344,10 +344,6 @@ pub fn list_from_vec(items: Vec<Value>) -> Value {
     Value::List(AverList::from_vec(items))
 }
 
-pub(crate) fn list_empty() -> Value {
-    Value::List(AverList::empty())
-}
-
 pub fn list_to_vec(value: &Value) -> Option<Vec<Value>> {
     list_view(value).map(AverList::to_vec)
 }
@@ -364,8 +360,10 @@ pub fn list_head(value: &Value) -> Option<Value> {
     list_view(value).and_then(|items| items.first().cloned())
 }
 
-pub fn list_tail_view(value: &Value) -> Option<Value> {
-    list_view(value).and_then(AverList::tail).map(Value::List)
+pub(crate) fn list_uncons_value(value: &Value) -> Option<(Value, Value)> {
+    list_view(value)
+        .and_then(aver_rt::list_uncons_cloned)
+        .map(|(head, tail)| (head, Value::List(tail)))
 }
 
 pub(crate) fn list_append(list: &Value, item: Value) -> Option<Value> {

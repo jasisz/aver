@@ -39,22 +39,13 @@ impl Interpreter {
                 }
             }
             Pattern::Cons(head, tail) => {
-                let items = list_view(value)?;
-                if items.is_empty() {
-                    return None;
-                }
+                let (head_value, tail_value) = crate::value::list_uncons_value(value)?;
                 let mut map = HashMap::new();
                 if head != "_" {
-                    map.insert(
-                        head.clone(),
-                        items.first().expect("non-empty list checked above").clone(),
-                    );
+                    map.insert(head.clone(), head_value);
                 }
                 if tail != "_" {
-                    map.insert(
-                        tail.clone(),
-                        list_tail_view(value).unwrap_or_else(list_empty),
-                    );
+                    map.insert(tail.clone(), tail_value);
                 }
                 Some(map)
             }

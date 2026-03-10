@@ -287,8 +287,14 @@ fn emit_builtin_call_inner(
 
         // ---- List ----
         "List.len" => {
-            let arg = emit_expr(&args[0], ctx, ectx);
-            Some(format!("({}.len() as i64)", arg))
+            if let Expr::List(items) = &args[0]
+                && items.is_empty()
+            {
+                Some("0i64".to_string())
+            } else {
+                let arg = emit_expr(&args[0], ctx, ectx);
+                Some(format!("({}.len() as i64)", arg))
+            }
         }
         "List.get" => {
             let list = emit_expr(&args[0], ctx, ectx);
@@ -581,5 +587,42 @@ fn emit_builtin_call_inner(
         }
 
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::emit_builtin_call;
+    use crate::ast::Expr;
+    use crate::codegen::CodegenContext;
+    use crate::codegen::rust::liveness::EmitCtx;
+    use std::collections::{HashMap, HashSet};
+
+    fn empty_ctx() -> CodegenContext {
+        CodegenContext {
+            items: vec![],
+            fn_sigs: HashMap::new(),
+            memo_fns: HashSet::new(),
+            memo_safe_types: HashSet::new(),
+            type_defs: vec![],
+            fn_defs: vec![],
+            project_name: "test".to_string(),
+            modules: vec![],
+            module_prefixes: HashSet::new(),
+            policy: None,
+        }
+    }
+
+    #[test]
+    fn list_len_empty_literal_emits_typed_free_zero() {
+        let emitted = emit_builtin_call(
+            "List.len",
+            &[Expr::List(vec![])],
+            &empty_ctx(),
+            &EmitCtx::empty(),
+        )
+        .expect("List.len should emit");
+
+        assert_eq!(emitted, "0i64");
     }
 }

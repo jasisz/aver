@@ -538,7 +538,7 @@ where
                 aver_name_to_rust(tail)
             };
             format!(
-                "if let Some(({}, {})) = aver_rt::list_uncons(&{}) {{ {} }} else {{ {} }}",
+                "if let Some(({}, {})) = aver_rt::list_uncons_cloned(&{}) {{ {} }} else {{ {} }}",
                 head_pat, tail_pat, subject_name, body, fallback
             )
         }
@@ -624,13 +624,6 @@ pub(super) fn constructor_boxed_bindings(
 
 fn emit_pattern_rebindings(pattern: &Pattern, ctx: &CodegenContext) -> String {
     let mut lines = Vec::new();
-    if let Pattern::Cons(head, tail) = pattern {
-        if head != "_" {
-            let h = aver_name_to_rust(head);
-            lines.push(format!("let {} = {}.clone();", h, h));
-        }
-        let _ = tail;
-    }
     if let Pattern::Constructor(name, bindings) = pattern {
         if matches!(name.as_str(), "Result.Ok" | "Result.Err" | "Option.Some") {
             for b in bindings {

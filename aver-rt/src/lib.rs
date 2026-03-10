@@ -179,6 +179,27 @@ impl<T> AverList<T> {
         }
     }
 
+    pub fn uncons_cloned(&self) -> Option<(T, Self)>
+    where
+        T: Clone,
+    {
+        match self.inner.as_ref() {
+            AverListInner::Flat { items, start } => {
+                let head = items.get(*start)?.clone();
+                let tail = Self::flat_tail(items, *start).unwrap_or_else(Self::empty);
+                Some((head, tail))
+            }
+            AverListInner::Prepend { head, tail, .. } => Some((head.clone(), tail.clone())),
+            AverListInner::Concat { .. } => {
+                let mut iter = self.iter();
+                let head = iter.next()?.clone();
+                let mut tail = Vec::with_capacity(self.len().saturating_sub(1));
+                tail.extend(iter.cloned());
+                Some((head, Self::from_vec(tail)))
+            }
+        }
+    }
+
     pub fn empty() -> Self {
         Self::from_vec(vec![])
     }
@@ -380,6 +401,10 @@ pub fn list_uncons<T>(list: &AverList<T>) -> Option<(&T, AverList<T>)> {
     list.uncons()
 }
 
+pub fn list_uncons_cloned<T: Clone>(list: &AverList<T>) -> Option<(T, AverList<T>)> {
+    list.uncons_cloned()
+}
+
 pub fn string_join<S: AsRef<str>>(parts: &AverList<S>, sep: &str) -> String {
     let mut iter = parts.iter();
     let Some(first) = iter.next() else {
@@ -447,6 +472,18 @@ mod tests {
         assert_eq!(*head, 0);
         assert_eq!(tail.len(), 199_999);
         assert_eq!(tail.first(), Some(&1));
+    }
+
+    #[test]
+    fn cloned_uncons_flattens_append_chain_tail() {
+        let mut list = AverList::empty();
+        for value in 0..5 {
+            list = AverList::append(&list, value);
+        }
+
+        let (head, tail) = super::list_uncons_cloned(&list).expect("non-empty list must uncons");
+        assert_eq!(head, 0);
+        assert_eq!(tail.as_slice(), Some(&[1, 2, 3, 4][..]));
     }
 
     #[test]
