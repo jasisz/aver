@@ -3,7 +3,7 @@
   "displayName": "Aver Language",
   "description": "Syntax highlighting and LSP support for the Aver programming language",
   "version": "0.4.0",
-  "publisher": "aver",
+  "publisher": "Aver",
   "license": "MIT",
   "repository": {
     "type": "git",

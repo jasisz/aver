@@ -92,7 +92,7 @@ For editor integration:
 cargo install aver-lsp
 ```
 
-Then install the VS Code extension `aver.aver-lang`, or configure your editor to start the `aver-lsp` binary directly. See [editors/README.md](editors/README.md) for VS Code, Sublime Text, and manual LSP setup notes.
+Then install the VS Code extension `Aver.aver-lang`, or configure your editor to start the `aver-lsp` binary directly. See [editors/README.md](editors/README.md) for VS Code, Sublime Text, and manual LSP setup notes.
 
 ---
 

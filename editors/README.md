@@ -33,8 +33,8 @@ cargo install aver-lsp
 
 Then install the VS Code extension:
 
-- Visual Studio Code Marketplace: `aver.aver-lang`
-- Open VSX: `aver.aver-lang`
+- Visual Studio Code Marketplace: `Aver.aver-lang`
+- Open VSX: `Aver.aver-lang`
 
 Development install from this repository:
 
