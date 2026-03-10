@@ -34,10 +34,10 @@ pub fn signature_help(
     // Try user-defined functions
     let items = completion::parse_items(source);
     for item in &items {
-        if let aver::ast::TopLevel::FnDef(fd) = item {
-            if fd.name == fn_name {
-                return build_sig_from_fndef(&fn_name, fd, active_param);
-            }
+        if let aver::ast::TopLevel::FnDef(fd) = item
+            && fd.name == fn_name
+        {
+            return build_sig_from_fndef(&fn_name, fd, active_param);
         }
     }
 

@@ -1,16 +1,22 @@
 [package]
 name = "aver-lsp"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 description = "LSP server for the Aver programming language"
 license = "MIT"
+repository = "https://github.com/jasisz/aver"
+homepage = "https://github.com/jasisz/aver"
+documentation = "https://docs.rs/aver-lsp"
+readme = "README.md"
+keywords = ["language-server", "lsp", "aver", "programming-language"]
+categories = ["development-tools", "compilers"]
 
 [[bin]]
 name = "aver-lsp"
 path = "src/main.rs"
 
 [dependencies]
-aver = { path = "..", package = "aver-lang" }
+aver = { path = "..", version = "=0.5.1", package = "aver-lang" }
 tower-lsp-server = "0.23"
 tokio = { version = "1", features = ["full"] }
 serde_json = "1"

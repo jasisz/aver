@@ -14,29 +14,51 @@ Aver ships with:
 | Syntax highlighting | TextMate grammar for keywords, types, effects, string interpolation, and `?` descriptions |
 | Diagnostics | Lex, parse, type, and project-policy diagnostics shown inline |
 | Completion | Built-in namespaces, user-defined types, user functions, and cross-module members |
-| Hover | Function source previews, type definitions, variable types, and namespace member signatures |
+| Hover | Function contracts, verify summaries, decision context, type definitions, and namespace member signatures |
 | Go-to-definition | Cross-file navigation for functions, types, and bindings |
 | Signature help | Parameter hints inside function calls |
+| Code lens | `verify` / `decision` summaries above code, clickable to jump to related blocks |
+| Formatting | Uses Aver's native formatter through `Format Document` |
 
 All features work cross-module. `depends [...]` is resolved from the workspace root, matching `aver run`.
 
 ### Install
 
-Commands below assume you are in the repository root.
+Recommended:
 
 ```bash
-# Install the Aver CLI
-cargo install aver-lang
+# Install the language server
+cargo install aver-lsp
+```
 
-# Build the LSP server
+Then install the VS Code extension:
+
+- Visual Studio Code Marketplace: `aver.aver-lang`
+- Open VSX: `aver.aver-lang`
+
+Development install from this repository:
+
+```bash
+# Run from the repository root
 cargo build -p aver-lsp --release
 ln -sf $(pwd)/target/release/aver-lsp /usr/local/bin/aver-lsp
-
-# Install the VS Code extension from the repo
 ln -snf $(pwd)/editors/vscode ~/.vscode/extensions/aver-lang
 ```
 
 Open a `.av` file and the extension will activate automatically.
+
+To use the new clickable summaries, keep VS Code code lenses enabled:
+
+```json
+"editor.codeLens": true
+```
+
+Then:
+
+- hover functions and decisions to see verify/decision context
+- use the **Outline** panel to browse module, decisions, functions, and nested `verify`
+- click code lenses like `verify: 2 cases, 1 law` or `decisions: 3` to jump to the related block
+- run **Format Document** to apply Aver formatting
 
 To point VS Code at a different LSP binary, set `aver.lsp.path` in editor settings.
 

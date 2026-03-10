@@ -1,5 +1,7 @@
 use tower_lsp_server::ls_types::{CompletionItem, CompletionItemKind};
 
+use aver::ast::TopLevel;
+
 use crate::modules;
 
 /// Namespace member info: (name, signature_label, detail).
@@ -163,40 +165,28 @@ pub fn namespace_completions(namespace: &str) -> Vec<CompletionItem> {
                 detail: "fn(List<a>, Int) -> Option<a>",
             },
             Member {
-                name: "push",
+                name: "append",
                 detail: "fn(List<a>, a) -> List<a>",
             },
             Member {
-                name: "head",
-                detail: "fn(List<a>) -> Option<a>",
+                name: "prepend",
+                detail: "fn(a, List<a>) -> List<a>",
             },
             Member {
-                name: "tail",
-                detail: "fn(List<a>) -> Option<List<a>>",
+                name: "concat",
+                detail: "fn(List<a>, List<a>) -> List<a>",
             },
             Member {
-                name: "map",
-                detail: "fn(List<a>, Fn(a) -> b) -> List<b>",
-            },
-            Member {
-                name: "filter",
-                detail: "fn(List<a>, Fn(a) -> Bool) -> List<a>",
-            },
-            Member {
-                name: "fold",
-                detail: "fn(List<a>, b, Fn(b, a) -> b) -> b",
-            },
-            Member {
-                name: "find",
-                detail: "fn(List<a>, Fn(a) -> Bool) -> Option<a>",
-            },
-            Member {
-                name: "any",
-                detail: "fn(List<a>, Fn(a) -> Bool) -> Bool",
+                name: "reverse",
+                detail: "fn(List<a>) -> List<a>",
             },
             Member {
                 name: "contains",
                 detail: "fn(List<a>, a) -> Bool",
+            },
+            Member {
+                name: "zip",
+                detail: "fn(List<a>, List<b>) -> List<(a, b)>",
             },
         ],
         "Map" => &[
@@ -296,115 +286,143 @@ pub fn namespace_completions(namespace: &str) -> Vec<CompletionItem> {
         "Console" => &[
             Member {
                 name: "print",
-                detail: "fn(a) -> Unit ! [Console]",
+                detail: "fn(a) -> Unit ! [Console.print]",
             },
             Member {
                 name: "error",
-                detail: "fn(a) -> Unit ! [Console]",
+                detail: "fn(a) -> Unit ! [Console.error]",
             },
             Member {
                 name: "warn",
-                detail: "fn(a) -> Unit ! [Console]",
+                detail: "fn(a) -> Unit ! [Console.warn]",
             },
             Member {
                 name: "readLine",
-                detail: "fn() -> Result<String, String> ! [Console]",
+                detail: "fn() -> Result<String, String> ! [Console.readLine]",
             },
         ],
+        "Args" => &[Member {
+            name: "get",
+            detail: "fn() -> List<String> ! [Args.get]",
+        }],
         "Http" => &[
             Member {
                 name: "get",
-                detail: "fn(String) -> Result<HttpResponse, String> ! [Http]",
+                detail: "fn(String) -> Result<HttpResponse, String> ! [Http.get]",
             },
             Member {
                 name: "head",
-                detail: "fn(String) -> Result<HttpResponse, String> ! [Http]",
+                detail: "fn(String) -> Result<HttpResponse, String> ! [Http.head]",
             },
             Member {
                 name: "delete",
-                detail: "fn(String) -> Result<HttpResponse, String> ! [Http]",
+                detail: "fn(String) -> Result<HttpResponse, String> ! [Http.delete]",
             },
             Member {
                 name: "post",
-                detail: "fn(String, String, String, List<Header>) -> Result<HttpResponse, String> ! [Http]",
+                detail: "fn(String, String, String, List<Header>) -> Result<HttpResponse, String> ! [Http.post]",
             },
             Member {
                 name: "put",
-                detail: "fn(String, String, String, List<Header>) -> Result<HttpResponse, String> ! [Http]",
+                detail: "fn(String, String, String, List<Header>) -> Result<HttpResponse, String> ! [Http.put]",
             },
             Member {
                 name: "patch",
-                detail: "fn(String, String, String, List<Header>) -> Result<HttpResponse, String> ! [Http]",
+                detail: "fn(String, String, String, List<Header>) -> Result<HttpResponse, String> ! [Http.patch]",
             },
         ],
         "HttpServer" => &[
             Member {
                 name: "listen",
-                detail: "fn(Int, Fn(HttpRequest) -> HttpResponse) -> Unit ! [HttpServer]",
+                detail: "fn(Int, Fn(HttpRequest) -> HttpResponse ! [...]) -> Unit ! [HttpServer.listen]",
             },
             Member {
                 name: "listenWith",
-                detail: "fn(Int, context, Fn(context, HttpRequest) -> HttpResponse) -> Unit ! [HttpServer]",
+                detail: "fn(Int, context, Fn(context, HttpRequest) -> HttpResponse ! [...]) -> Unit ! [HttpServer.listenWith]",
             },
         ],
         "Disk" => &[
             Member {
                 name: "readText",
-                detail: "fn(String) -> Result<String, String> ! [Disk]",
+                detail: "fn(String) -> Result<String, String> ! [Disk.readText]",
             },
             Member {
                 name: "writeText",
-                detail: "fn(String, String) -> Result<Unit, String> ! [Disk]",
+                detail: "fn(String, String) -> Result<Unit, String> ! [Disk.writeText]",
             },
             Member {
                 name: "appendText",
-                detail: "fn(String, String) -> Result<Unit, String> ! [Disk]",
+                detail: "fn(String, String) -> Result<Unit, String> ! [Disk.appendText]",
             },
             Member {
                 name: "exists",
-                detail: "fn(String) -> Bool ! [Disk]",
+                detail: "fn(String) -> Bool ! [Disk.exists]",
             },
             Member {
                 name: "delete",
-                detail: "fn(String) -> Result<Unit, String> ! [Disk]",
+                detail: "fn(String) -> Result<Unit, String> ! [Disk.delete]",
             },
             Member {
                 name: "deleteDir",
-                detail: "fn(String) -> Result<Unit, String> ! [Disk]",
+                detail: "fn(String) -> Result<Unit, String> ! [Disk.deleteDir]",
             },
             Member {
                 name: "listDir",
-                detail: "fn(String) -> Result<List<String>, String> ! [Disk]",
+                detail: "fn(String) -> Result<List<String>, String> ! [Disk.listDir]",
             },
             Member {
                 name: "makeDir",
-                detail: "fn(String) -> Result<Unit, String> ! [Disk]",
+                detail: "fn(String) -> Result<Unit, String> ! [Disk.makeDir]",
             },
         ],
         "Tcp" => &[
             Member {
                 name: "send",
-                detail: "fn(String, Int, String) -> Result<String, String> ! [Tcp]",
+                detail: "fn(String, Int, String) -> Result<String, String> ! [Tcp.send]",
             },
             Member {
                 name: "ping",
-                detail: "fn(String, Int) -> Result<Unit, String> ! [Tcp]",
+                detail: "fn(String, Int) -> Result<Unit, String> ! [Tcp.ping]",
             },
             Member {
                 name: "connect",
-                detail: "fn(String, Int) -> Result<Tcp.Connection, String> ! [Tcp]",
+                detail: "fn(String, Int) -> Result<Tcp.Connection, String> ! [Tcp.connect]",
             },
             Member {
                 name: "writeLine",
-                detail: "fn(Tcp.Connection, String) -> Result<Unit, String> ! [Tcp]",
+                detail: "fn(Tcp.Connection, String) -> Result<Unit, String> ! [Tcp.writeLine]",
             },
             Member {
                 name: "readLine",
-                detail: "fn(Tcp.Connection) -> Result<String, String> ! [Tcp]",
+                detail: "fn(Tcp.Connection) -> Result<String, String> ! [Tcp.readLine]",
             },
             Member {
                 name: "close",
-                detail: "fn(Tcp.Connection) -> Result<Unit, String> ! [Tcp]",
+                detail: "fn(Tcp.Connection) -> Result<Unit, String> ! [Tcp.close]",
+            },
+        ],
+        "Time" => &[
+            Member {
+                name: "now",
+                detail: "fn() -> String ! [Time.now]",
+            },
+            Member {
+                name: "unixMs",
+                detail: "fn() -> Int ! [Time.unixMs]",
+            },
+            Member {
+                name: "sleep",
+                detail: "fn(Int) -> Unit ! [Time.sleep]",
+            },
+        ],
+        "Env" => &[
+            Member {
+                name: "get",
+                detail: "fn(String) -> Option<String> ! [Env.get]",
+            },
+            Member {
+                name: "set",
+                detail: "fn(String, String) -> Unit ! [Env.set]",
             },
         ],
         _ => return Vec::new(),
@@ -425,6 +443,81 @@ pub fn namespace_completions(namespace: &str) -> Vec<CompletionItem> {
         .collect()
 }
 
+pub fn effect_completions() -> Vec<CompletionItem> {
+    let effects = [
+        ("Args.get", "() -> List<String>"),
+        ("Console.error", "(a) -> Unit"),
+        ("Console.print", "(a) -> Unit"),
+        ("Console.readLine", "() -> Result<String, String>"),
+        ("Console.warn", "(a) -> Unit"),
+        (
+            "Disk.appendText",
+            "(String, String) -> Result<Unit, String>",
+        ),
+        ("Disk.delete", "(String) -> Result<Unit, String>"),
+        ("Disk.deleteDir", "(String) -> Result<Unit, String>"),
+        ("Disk.exists", "(String) -> Bool"),
+        ("Disk.listDir", "(String) -> Result<List<String>, String>"),
+        ("Disk.makeDir", "(String) -> Result<Unit, String>"),
+        ("Disk.readText", "(String) -> Result<String, String>"),
+        ("Disk.writeText", "(String, String) -> Result<Unit, String>"),
+        ("Env.get", "(String) -> Option<String>"),
+        ("Env.set", "(String, String) -> Unit"),
+        ("Http.delete", "(String) -> Result<HttpResponse, String>"),
+        ("Http.get", "(String) -> Result<HttpResponse, String>"),
+        ("Http.head", "(String) -> Result<HttpResponse, String>"),
+        (
+            "Http.patch",
+            "(String, String, String, List<Header>) -> Result<HttpResponse, String>",
+        ),
+        (
+            "Http.post",
+            "(String, String, String, List<Header>) -> Result<HttpResponse, String>",
+        ),
+        (
+            "Http.put",
+            "(String, String, String, List<Header>) -> Result<HttpResponse, String>",
+        ),
+        (
+            "HttpServer.listen",
+            "(Int, Fn(HttpRequest) -> HttpResponse ! [...]) -> Unit",
+        ),
+        (
+            "HttpServer.listenWith",
+            "(Int, context, Fn(context, HttpRequest) -> HttpResponse ! [...]) -> Unit",
+        ),
+        ("Tcp.close", "(Tcp.Connection) -> Result<Unit, String>"),
+        (
+            "Tcp.connect",
+            "(String, Int) -> Result<Tcp.Connection, String>",
+        ),
+        ("Tcp.ping", "(String, Int) -> Result<Unit, String>"),
+        ("Tcp.readLine", "(Tcp.Connection) -> Result<String, String>"),
+        (
+            "Tcp.send",
+            "(String, Int, String) -> Result<String, String>",
+        ),
+        (
+            "Tcp.writeLine",
+            "(Tcp.Connection, String) -> Result<Unit, String>",
+        ),
+        ("Time.now", "() -> String"),
+        ("Time.sleep", "(Int) -> Unit"),
+        ("Time.unixMs", "() -> Int"),
+    ];
+
+    effects
+        .iter()
+        .map(|(label, sig)| CompletionItem {
+            label: (*label).to_string(),
+            kind: Some(CompletionItemKind::EVENT),
+            detail: Some(format!("effect {}", sig)),
+            sort_text: Some((*label).to_string()),
+            ..Default::default()
+        })
+        .collect()
+}
+
 /// All known namespace names for top-level completion.
 pub fn all_namespaces() -> Vec<CompletionItem> {
     let namespaces = [
@@ -437,11 +530,14 @@ pub fn all_namespaces() -> Vec<CompletionItem> {
         ("Byte", "Byte operations"),
         ("Result", "Result type constructors"),
         ("Option", "Option type constructors"),
+        ("Args", "Command-line arguments"),
         ("Console", "Console I/O"),
         ("Http", "HTTP client"),
         ("HttpServer", "HTTP server"),
         ("Disk", "File system operations"),
         ("Tcp", "TCP networking"),
+        ("Time", "Clock and sleeping"),
+        ("Env", "Environment variables"),
     ];
 
     namespaces
@@ -463,15 +559,27 @@ pub fn parse_items(source: &str) -> Vec<aver::ast::TopLevel> {
         Err(_) => return Vec::new(),
     };
     let mut parser = aver::parser::Parser::new(tokens);
-    match parser.parse() {
-        Ok(i) => i,
-        Err(_) => Vec::new(),
-    }
+    parser.parse().unwrap_or_default()
+}
+
+fn local_exposed_names(items: &[TopLevel]) -> Option<std::collections::HashSet<&str>> {
+    items.iter().find_map(|item| {
+        if let TopLevel::Module(m) = item {
+            if m.exposes.is_empty() {
+                None
+            } else {
+                Some(m.exposes.iter().map(|s| s.as_str()).collect())
+            }
+        } else {
+            None
+        }
+    })
 }
 
 /// Build completion items from user-defined function names found in AST.
 pub fn user_fn_completions(source: &str) -> Vec<CompletionItem> {
     let items = parse_items(source);
+    let exposed = local_exposed_names(&items);
 
     let mut completions = Vec::new();
     for item in &items {
@@ -492,12 +600,24 @@ pub fn user_fn_completions(source: &str) -> Vec<CompletionItem> {
             } else {
                 &fd.return_type
             };
-            let detail = format!("fn({}) -> {}", params.join(", "), ret);
+            let is_internal = exposed
+                .as_ref()
+                .is_some_and(|set| !set.contains(fd.name.as_str()));
+            let detail = if is_internal {
+                format!("internal fn({}) -> {}", params.join(", "), ret)
+            } else {
+                format!("fn({}) -> {}", params.join(", "), ret)
+            };
 
             completions.push(CompletionItem {
                 label: fd.name.clone(),
                 kind: Some(CompletionItemKind::FUNCTION),
                 detail: Some(detail),
+                sort_text: Some(format!(
+                    "{}_{}",
+                    if is_internal { "1" } else { "0" },
+                    fd.name
+                )),
                 documentation: fd
                     .desc
                     .as_ref()
@@ -652,4 +772,91 @@ pub fn depends_module_completions(source: &str, base_dir: &str) -> Vec<Completio
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{all_namespaces, effect_completions, namespace_completions, user_fn_completions};
+
+    #[test]
+    fn list_completions_match_current_api() {
+        let labels: Vec<String> = namespace_completions("List")
+            .into_iter()
+            .map(|item| item.label)
+            .collect();
+
+        assert!(labels.contains(&"append".to_string()));
+        assert!(labels.contains(&"prepend".to_string()));
+        assert!(labels.contains(&"concat".to_string()));
+        assert!(labels.contains(&"reverse".to_string()));
+        assert!(labels.contains(&"zip".to_string()));
+        assert!(!labels.contains(&"filter".to_string()));
+        assert!(!labels.contains(&"map".to_string()));
+        assert!(!labels.contains(&"push".to_string()));
+    }
+
+    #[test]
+    fn effectful_namespace_completions_use_granular_effects() {
+        let console = namespace_completions("Console");
+        let print = console
+            .iter()
+            .find(|item| item.label == "print")
+            .and_then(|item| item.detail.as_deref())
+            .unwrap_or("");
+        let args = namespace_completions("Args");
+        let get = args
+            .iter()
+            .find(|item| item.label == "get")
+            .and_then(|item| item.detail.as_deref())
+            .unwrap_or("");
+
+        assert!(print.contains("Console.print"));
+        assert!(get.contains("Args.get"));
+    }
+
+    #[test]
+    fn all_namespaces_include_new_runtime_services() {
+        let labels: Vec<String> = all_namespaces()
+            .into_iter()
+            .map(|item| item.label)
+            .collect();
+        assert!(labels.contains(&"Args".to_string()));
+        assert!(labels.contains(&"Time".to_string()));
+        assert!(labels.contains(&"Env".to_string()));
+    }
+
+    #[test]
+    fn effect_completions_offer_concrete_effect_names() {
+        let labels: Vec<String> = effect_completions()
+            .into_iter()
+            .map(|item| item.label)
+            .collect();
+        assert!(labels.contains(&"Args.get".to_string()));
+        assert!(labels.contains(&"Console.print".to_string()));
+        assert!(labels.contains(&"Time.now".to_string()));
+        assert!(labels.contains(&"Disk.readText".to_string()));
+        assert!(!labels.contains(&"Console".to_string()));
+    }
+
+    #[test]
+    fn user_functions_prioritize_exposed_api_over_helpers() {
+        let source = r#"module Demo
+    exposes [publicFn]
+
+fn publicFn() -> Int
+    1
+
+fn helperFn() -> Int
+    2
+"#;
+
+        let items = user_fn_completions(source);
+        let public = items.iter().find(|item| item.label == "publicFn").unwrap();
+        let helper = items.iter().find(|item| item.label == "helperFn").unwrap();
+
+        assert_eq!(public.sort_text.as_deref(), Some("0_publicFn"));
+        assert_eq!(helper.sort_text.as_deref(), Some("1_helperFn"));
+        assert_eq!(public.detail.as_deref(), Some("fn() -> Int"));
+        assert_eq!(helper.detail.as_deref(), Some("internal fn() -> Int"));
+    }
 }

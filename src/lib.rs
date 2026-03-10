@@ -1,9 +1,14 @@
+extern crate self as aver;
+
 pub mod ast;
 pub mod call_graph;
 pub mod checker;
 pub mod codegen;
 pub mod config;
 pub mod effects;
+#[allow(dead_code)]
+#[path = "main/format_cmd.rs"]
+pub mod format;
 pub mod interpreter;
 pub mod lexer;
 pub mod parser;

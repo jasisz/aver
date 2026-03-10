@@ -4,6 +4,16 @@ All notable changes to Aver are documented here.
 
 ## Unreleased
 
+## 0.5.1
+
+### Added
+- native LSP document formatting via the shared Aver formatter
+- richer `aver-lsp` editor UX: effect-aware completion, verify/decision code lenses, contract-first hover, and document symbols with nested `verify`
+- publishable `aver-lsp` crate metadata and docs for installing the language server separately from `aver-lang`
+
+### Changed
+- editor install docs now target `cargo install aver-lsp` plus editor extension installation, with local source-build setup kept as a development path
+
 ## 0.5.0
 
 ### Added

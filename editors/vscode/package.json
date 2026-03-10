@@ -2,8 +2,17 @@
   "name": "aver-lang",
   "displayName": "Aver Language",
   "description": "Syntax highlighting and LSP support for the Aver programming language",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "aver",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jasisz/aver.git"
+  },
+  "homepage": "https://github.com/jasisz/aver/tree/main/editors/vscode",
+  "bugs": {
+    "url": "https://github.com/jasisz/aver/issues"
+  },
   "engines": {
     "vscode": "^1.75.0"
   },
@@ -33,6 +42,12 @@
         "language": "aver",
         "scopeName": "source.aver",
         "path": "./syntaxes/aver.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "aver.openLocation",
+        "title": "Aver: Open Lens Target"
       }
     ],
     "configuration": {

@@ -1,0 +1,87 @@
+module Quicksort
+    intent =
+        "Quicksort in direct recursive style."
+        "Partition around the pivot into smaller-or-equal and greater lists."
+        "No loops, no mutation, just pattern matching and list recursion."
+
+fn sort(xs: List<Int>) -> List<Int>
+    ? "Sorts integers with recursive quicksort."
+    match xs
+        [] -> []
+        [pivot, ..rest] -> sortWithPivot(pivot, rest)
+
+verify sort
+    sort([]) => []
+    sort([1]) => [1]
+    sort([3, 1, 2]) => [1, 2, 3]
+    sort([5, 1, 5, 2, 3]) => [1, 2, 3, 5, 5]
+    sort([9, 4, 7, 1, 3, 8, 2]) => [1, 2, 3, 4, 7, 8, 9]
+
+verify sort law resultOrdered
+    given xs: List<Int> = [[], [1], [2, 1], [3, 1, 2], [5, 1, 5, 2, 3], [9, 4, 7, 1, 3, 8, 2]]
+    isOrdered(sort(xs)) => true
+
+verify sort law lengthPreserved
+    given xs: List<Int> = [[], [1], [2, 1], [3, 1, 2], [5, 1, 5, 2, 3], [9, 4, 7, 1, 3, 8, 2]]
+    List.len(sort(xs)) => List.len(xs)
+
+fn sortWithPivot(pivot: Int, rest: List<Int>) -> List<Int>
+    ? "Sorts both partitions around one pivot and joins them back together."
+    smaller = sort(smallerOrEqual(rest, pivot))
+    greater = sort(greaterThan(rest, pivot))
+    List.concat(List.append(smaller, pivot), greater)
+
+verify sortWithPivot
+    sortWithPivot(3, []) => [3]
+    sortWithPivot(3, [1, 4, 2]) => [1, 2, 3, 4]
+
+fn smallerOrEqual(xs: List<Int>, pivot: Int) -> List<Int>
+    ? "Keeps items less than or equal to the pivot."
+    match xs
+        [] -> []
+        [x, ..rest] -> match x <= pivot
+            true -> List.prepend(x, smallerOrEqual(rest, pivot))
+            false -> smallerOrEqual(rest, pivot)
+
+verify smallerOrEqual
+    smallerOrEqual([], 3) => []
+    smallerOrEqual([3, 1, 4, 2], 2) => [1, 2]
+    smallerOrEqual([3, 1, 4, 2], 4) => [3, 1, 4, 2]
+
+fn greaterThan(xs: List<Int>, pivot: Int) -> List<Int>
+    ? "Keeps items greater than the pivot."
+    match xs
+        [] -> []
+        [x, ..rest] -> match x > pivot
+            true -> List.prepend(x, greaterThan(rest, pivot))
+            false -> greaterThan(rest, pivot)
+
+verify greaterThan
+    greaterThan([], 3) => []
+    greaterThan([3, 1, 4, 2], 2) => [3, 4]
+    greaterThan([3, 1, 4, 2], 4) => []
+
+fn isOrdered(xs: List<Int>) -> Bool
+    ? "Checks ascending order."
+    match xs
+        [] -> true
+        [first, ..rest] -> isOrderedFrom(first, rest)
+
+verify isOrdered
+    isOrdered([]) => true
+    isOrdered([1]) => true
+    isOrdered([1, 2, 2, 5]) => true
+    isOrdered([2, 1]) => false
+
+fn isOrderedFrom(previous: Int, xs: List<Int>) -> Bool
+    ? "Checks that every next item stays >= previous."
+    match xs
+        [] -> true
+        [x, ..rest] -> match previous <= x
+            true -> isOrderedFrom(x, rest)
+            false -> false
+
+verify isOrderedFrom
+    isOrderedFrom(1, []) => true
+    isOrderedFrom(1, [1, 2, 3]) => true
+    isOrderedFrom(2, [1, 3]) => false

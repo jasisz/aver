@@ -3,9 +3,11 @@ mod completion;
 mod definition;
 mod diagnostics;
 mod hover;
+mod lenses;
 mod modules;
 mod position;
 mod signature;
+mod symbols;
 
 use backend::AverBackend;
 use tower_lsp_server::{LspService, Server};

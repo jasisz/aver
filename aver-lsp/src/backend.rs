@@ -9,9 +9,11 @@ use crate::completion;
 use crate::definition;
 use crate::diagnostics;
 use crate::hover as hover_mod;
+use crate::lenses;
 use crate::modules;
 use crate::position::utf16_col_to_byte_idx;
 use crate::signature;
+use crate::symbols;
 
 pub struct AverBackend {
     client: Client,
@@ -73,6 +75,11 @@ impl LanguageServer for AverBackend {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
                 )),
+                document_symbol_provider: Some(OneOf::Left(true)),
+                document_formatting_provider: Some(OneOf::Left(true)),
+                code_lens_provider: Some(CodeLensOptions {
+                    resolve_provider: Some(false),
+                }),
                 completion_provider: Some(CompletionOptions {
                     trigger_characters: Some(vec![".".to_string()]),
                     ..Default::default()
@@ -183,6 +190,12 @@ impl LanguageServer for AverBackend {
             }
         }
 
+        if inside_effect_list(&source, position.line as usize, position.character) {
+            return Ok(Some(CompletionResponse::Array(
+                completion::effect_completions(),
+            )));
+        }
+
         // Default: offer namespaces + user functions + module names
         let mut items = completion::all_namespaces();
         items.extend(completion::user_fn_completions(&source));
@@ -195,7 +208,7 @@ impl LanguageServer for AverBackend {
         // Add keywords
         let keywords = [
             "fn", "match", "module", "depends", "exposes", "intent", "verify", "decision", "type",
-            "record", "true", "false",
+            "record", "law", "given", "when", "true", "false",
         ];
         for kw in &keywords {
             items.push(CompletionItem {
@@ -206,6 +219,44 @@ impl LanguageServer for AverBackend {
         }
 
         Ok(Some(CompletionResponse::Array(items)))
+    }
+
+    async fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+    ) -> Result<Option<DocumentSymbolResponse>> {
+        let uri = params.text_document.uri;
+        let source = {
+            let docs = self.documents.lock().unwrap();
+            docs.get(&uri.to_string()).cloned().unwrap_or_default()
+        };
+
+        Ok(symbols::document_symbols(&source))
+    }
+
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let uri = params.text_document.uri;
+        let source = {
+            let docs = self.documents.lock().unwrap();
+            docs.get(&uri.to_string()).cloned().unwrap_or_default()
+        };
+
+        Ok(format_document_edits(&source))
+    }
+
+    async fn code_lens(&self, params: CodeLensParams) -> Result<Option<Vec<CodeLens>>> {
+        let uri = params.text_document.uri;
+        let source = {
+            let docs = self.documents.lock().unwrap();
+            docs.get(&uri.to_string()).cloned().unwrap_or_default()
+        };
+        let base_dir = self.get_base_dir(&uri);
+
+        Ok(Some(lenses::code_lenses(
+            &source,
+            base_dir.as_deref(),
+            &uri.to_string(),
+        )))
     }
 
     async fn goto_definition(
@@ -280,5 +331,114 @@ impl LanguageServer for AverBackend {
             &source,
             base_dir.as_deref(),
         ))
+    }
+}
+
+fn format_document_edits(source: &str) -> Option<Vec<TextEdit>> {
+    let formatted = aver::format::try_format_source(source).ok()?;
+    if formatted == source {
+        return None;
+    }
+
+    Some(vec![TextEdit {
+        range: full_document_range(source),
+        new_text: formatted,
+    }])
+}
+
+fn full_document_range(source: &str) -> Range {
+    let lines: Vec<&str> = source.split('\n').collect();
+    let end_line = lines.len().saturating_sub(1) as u32;
+    let end_character = lines
+        .last()
+        .map(|line| line.encode_utf16().count() as u32)
+        .unwrap_or(0);
+
+    Range {
+        start: Position {
+            line: 0,
+            character: 0,
+        },
+        end: Position {
+            line: end_line,
+            character: end_character,
+        },
+    }
+}
+
+fn inside_effect_list(source: &str, line: usize, character: u32) -> bool {
+    let mut prefix = String::new();
+    for (idx, current_line) in source.lines().enumerate() {
+        if idx < line {
+            prefix.push_str(current_line);
+            prefix.push('\n');
+            continue;
+        }
+        if idx == line {
+            let byte_col = utf16_col_to_byte_idx(current_line, character);
+            prefix.push_str(&current_line[..byte_col]);
+        }
+        break;
+    }
+
+    let bytes = prefix.as_bytes();
+    let mut stack: Vec<bool> = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'!' {
+            let mut j = i + 1;
+            while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if j < bytes.len() && bytes[j] == b'[' {
+                stack.push(true);
+                i = j + 1;
+                continue;
+            }
+        }
+
+        match bytes[i] {
+            b'[' => stack.push(false),
+            b']' => {
+                let _ = stack.pop();
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    stack.last().copied().unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_document_edits, full_document_range, inside_effect_list};
+
+    #[test]
+    fn detects_effect_list_context_across_lines() {
+        let src = "fn log() -> Unit\n    ! [\n        Console.print,\n        Time.now\n";
+        assert!(inside_effect_list(src, 2, 15));
+    }
+
+    #[test]
+    fn ignores_normal_list_literals() {
+        let src = "fn demo() -> List<Int>\n    xs = [1, 2, 3]\n    xs\n";
+        assert!(!inside_effect_list(src, 1, 10));
+    }
+
+    #[test]
+    fn formatting_returns_full_document_edit() {
+        let src = "module Demo\r\nfn x() -> Int\r\n    1\t \r\n";
+        let edits = format_document_edits(src).expect("expected formatting edits");
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].new_text, "module Demo\n\nfn x() -> Int\n    1\n");
+    }
+
+    #[test]
+    fn full_document_range_handles_trailing_newline() {
+        let range = full_document_range("a\n");
+        assert_eq!(range.start.line, 0);
+        assert_eq!(range.end.line, 1);
+        assert_eq!(range.end.character, 0);
     }
 }

@@ -1,4 +1,14 @@
-import { workspace, ExtensionContext } from "vscode";
+import {
+  commands,
+  ExtensionContext,
+  Position,
+  Range,
+  Selection,
+  TextEditorRevealType,
+  Uri,
+  window,
+  workspace,
+} from "vscode";
 import {
   LanguageClient,
   LanguageClientOptions,
@@ -25,6 +35,27 @@ export function activate(context: ExtensionContext) {
     "Aver Language Server",
     serverOptions,
     clientOptions
+  );
+
+  context.subscriptions.push(
+    commands.registerCommand(
+      "aver.openLocation",
+      async (uriString: string, line: number) => {
+        if (!uriString) {
+          return;
+        }
+
+        const targetUri = Uri.parse(uriString);
+        const document = await workspace.openTextDocument(targetUri);
+        const editor = await window.showTextDocument(document);
+        const position = new Position(Math.max(0, line ?? 0), 0);
+        editor.selection = new Selection(position, position);
+        editor.revealRange(
+          new Range(position, position),
+          TextEditorRevealType.InCenter
+        );
+      }
+    )
   );
 
   client.start();

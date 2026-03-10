@@ -9,6 +9,7 @@ use aver::parser::Parser;
 use aver::types::{Type, parse_type_str_strict};
 use colored::Colorize;
 
+#[allow(dead_code)]
 pub(super) fn cmd_format(path: &str, check: bool) {
     let root = Path::new(path);
     let mut files = Vec::new();
@@ -83,6 +84,7 @@ pub(super) fn cmd_format(path: &str, check: bool) {
     }
 }
 
+#[allow(dead_code)]
 fn collect_av_files(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     if !path.exists() {
         return Err(format!("Path '{}' does not exist", path.display()));
@@ -111,6 +113,7 @@ fn collect_av_files(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn is_av_file(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()) == Some("av")
 }
@@ -795,7 +798,7 @@ fn normalize_inline_decision_fields(lines: Vec<String>) -> Vec<String> {
     out
 }
 
-fn try_format_source(source: &str) -> Result<String, String> {
+pub fn try_format_source(source: &str) -> Result<String, String> {
     let lines = normalize_source_lines(source);
     let normalized = lines.join("\n");
     let ast_info = parse_ast_info_checked(&normalized)?;
@@ -823,7 +826,7 @@ fn try_format_source(source: &str) -> Result<String, String> {
 }
 
 #[cfg(test)]
-pub(super) fn format_source(source: &str) -> String {
+pub fn format_source(source: &str) -> String {
     match try_format_source(source) {
         Ok(formatted) => formatted,
         Err(err) => panic!("format_source received invalid Aver source: {err}"),

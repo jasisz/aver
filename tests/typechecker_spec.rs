@@ -739,7 +739,8 @@ fn error_call_to_unexposed_module_member() {
     let src = "module App\n    depends [Modules.Models.User]\n    intent =\n        \"Tries to use hidden member\"\nfn main() -> Unit\n    x = Modules.Models.User.hidden()\n";
     let errs = errors_with_base(src, "examples");
     assert!(
-        errs.iter().any(|e| e.contains("Modules.Models.User.hidden")),
+        errs.iter()
+            .any(|e| e.contains("Modules.Models.User.hidden")),
         "expected exposes error mentioning Modules.Models.User.hidden, got:\n  {}",
         if errs.is_empty() {
             "<no errors>".to_string()

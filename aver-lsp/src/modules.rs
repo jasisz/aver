@@ -79,15 +79,15 @@ pub fn resolve_dependencies(source: &str, base_dir: &str) -> Vec<ResolvedModule>
 
     let mut modules = Vec::new();
     for dep_name in &depends {
-        if let Some(path) = find_module_file(dep_name, base_dir) {
-            if let Some((mod_source, mod_items)) = read_module_cached(&path) {
-                modules.push(ResolvedModule {
-                    name: dep_name.clone(),
-                    path,
-                    source: mod_source,
-                    items: mod_items,
-                });
-            }
+        if let Some(path) = find_module_file(dep_name, base_dir)
+            && let Some((mod_source, mod_items)) = read_module_cached(&path)
+        {
+            modules.push(ResolvedModule {
+                name: dep_name.clone(),
+                path,
+                source: mod_source,
+                items: mod_items,
+            });
         }
     }
     modules
@@ -104,9 +104,8 @@ pub fn path_to_uri(path: &std::path::Path) -> Option<Uri> {
     Uri::from_file_path(path)
 }
 
-/// Get exported FnDefs from a module (respecting `exposes`).
-pub fn exported_fns(module: &ResolvedModule) -> Vec<&FnDef> {
-    let exposed: Option<std::collections::HashSet<&str>> = module.items.iter().find_map(|item| {
+fn exposed_names(items: &[TopLevel]) -> Option<std::collections::HashSet<&str>> {
+    items.iter().find_map(|item| {
         if let TopLevel::Module(m) = item {
             if m.exposes.is_empty() {
                 None
@@ -116,7 +115,12 @@ pub fn exported_fns(module: &ResolvedModule) -> Vec<&FnDef> {
         } else {
             None
         }
-    });
+    })
+}
+
+/// Get exported FnDefs from a module (respecting `exposes`).
+pub fn exported_fns(module: &ResolvedModule) -> Vec<&FnDef> {
+    let exposed = exposed_names(&module.items);
 
     module
         .items
@@ -137,15 +141,70 @@ pub fn exported_fns(module: &ResolvedModule) -> Vec<&FnDef> {
 
 /// Get exported TypeDefs from a module.
 pub fn exported_types(module: &ResolvedModule) -> Vec<&TypeDef> {
+    let exposed = exposed_names(&module.items);
+
     module
         .items
         .iter()
         .filter_map(|item| {
             if let TopLevel::TypeDef(td) = item {
-                Some(td)
+                let include = match (&exposed, td) {
+                    (Some(set), TypeDef::Sum { name, .. }) => set.contains(name.as_str()),
+                    (Some(set), TypeDef::Product { name, .. }) => set.contains(name.as_str()),
+                    (None, _) => true,
+                };
+                if include { Some(td) } else { None }
             } else {
                 None
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::{ResolvedModule, exported_fns, exported_types};
+    use crate::completion;
+
+    #[test]
+    fn exported_symbols_respect_module_exposes() {
+        let source = r#"module Demo
+    exposes [publicFn, PublicType]
+
+fn publicFn() -> Int
+    1
+
+fn helperFn() -> Int
+    2
+
+type PublicType
+    Ready
+
+type HiddenType
+    Secret
+"#;
+        let module = ResolvedModule {
+            name: "Demo".to_string(),
+            path: PathBuf::from("Demo.av"),
+            source: source.to_string(),
+            items: completion::parse_items(source),
+        };
+
+        let fn_names: Vec<&str> = exported_fns(&module)
+            .iter()
+            .map(|fd| fd.name.as_str())
+            .collect();
+        let type_names: Vec<&str> = exported_types(&module)
+            .iter()
+            .map(|td| match td {
+                aver::ast::TypeDef::Sum { name, .. } => name.as_str(),
+                aver::ast::TypeDef::Product { name, .. } => name.as_str(),
+            })
+            .collect();
+
+        assert_eq!(fn_names, vec!["publicFn"]);
+        assert_eq!(type_names, vec!["PublicType"]);
+    }
 }

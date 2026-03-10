@@ -80,17 +80,33 @@ pub fn goto_definition(
 
     // Check user-defined functions
     for item in &items {
-        if let TopLevel::FnDef(fd) = item {
-            if fd.name == word {
-                let line = fd.line.saturating_sub(1) as u32;
-                return Some(GotoDefinitionResponse::Scalar(Location {
-                    uri: uri.clone(),
-                    range: Range {
-                        start: Position { line, character: 0 },
-                        end: Position { line, character: 0 },
-                    },
-                }));
-            }
+        if let TopLevel::FnDef(fd) = item
+            && fd.name == word
+        {
+            let line = fd.line.saturating_sub(1) as u32;
+            return Some(GotoDefinitionResponse::Scalar(Location {
+                uri: uri.clone(),
+                range: Range {
+                    start: Position { line, character: 0 },
+                    end: Position { line, character: 0 },
+                },
+            }));
+        }
+    }
+
+    // Check decisions
+    for item in &items {
+        if let TopLevel::Decision(decision) = item
+            && decision.name == word
+        {
+            let line = decision.line.saturating_sub(1) as u32;
+            return Some(GotoDefinitionResponse::Scalar(Location {
+                uri: uri.clone(),
+                range: Range {
+                    start: Position { line, character: 0 },
+                    end: Position { line, character: 0 },
+                },
+            }));
         }
     }
 
@@ -116,24 +132,23 @@ pub fn goto_definition(
 
     // Check bindings at top level
     for item in &items {
-        if let TopLevel::Stmt(aver::ast::Stmt::Binding(name, _, _)) = item {
-            if name == word {
-                if let Some(line) = find_binding_line(source, name) {
-                    return Some(GotoDefinitionResponse::Scalar(Location {
-                        uri: uri.clone(),
-                        range: Range {
-                            start: Position {
-                                line: line as u32,
-                                character: 0,
-                            },
-                            end: Position {
-                                line: line as u32,
-                                character: 0,
-                            },
-                        },
-                    }));
-                }
-            }
+        if let TopLevel::Stmt(aver::ast::Stmt::Binding(name, _, _)) = item
+            && name == word
+            && let Some(line) = find_binding_line(source, name)
+        {
+            return Some(GotoDefinitionResponse::Scalar(Location {
+                uri: uri.clone(),
+                range: Range {
+                    start: Position {
+                        line: line as u32,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: line as u32,
+                        character: 0,
+                    },
+                },
+            }));
         }
     }
 
@@ -195,8 +210,8 @@ fn find_type_member_def(
 fn find_binding_line(source: &str, name: &str) -> Option<usize> {
     for (i, line) in source.lines().enumerate() {
         let trimmed = line.trim();
-        if trimmed.starts_with(name) {
-            let rest = trimmed[name.len()..].trim_start();
+        if let Some(stripped) = trimmed.strip_prefix(name) {
+            let rest = stripped.trim_start();
             if rest.starts_with('=') || rest.starts_with(':') {
                 return Some(i);
             }

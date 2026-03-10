@@ -84,6 +84,16 @@ aver replay   recordings/ --test --diff
 
 Requires: Rust stable toolchain.
 
+### Editor support
+
+For editor integration:
+
+```bash
+cargo install aver-lsp
+```
+
+Then install the VS Code extension `aver.aver-lang`, or configure your editor to start the `aver-lsp` binary directly. See [editors/README.md](editors/README.md) for VS Code, Sublime Text, and manual LSP setup notes.
+
 ---
 
 ## Small example
