@@ -3,7 +3,7 @@ use super::*;
 impl Interpreter {
     pub fn callable_declared_effects(fn_val: &Value) -> Vec<String> {
         match fn_val {
-            Value::Fn { effects, .. } => effects.clone(),
+            Value::Fn(function) => function.effects.as_ref().clone(),
             _ => vec![],
         }
     }
@@ -25,8 +25,8 @@ impl Interpreter {
         allowed_effects: Vec<String>,
     ) -> Result<Value, RuntimeError> {
         self.call_stack.push(CallFrame {
-            name: entry_name.to_string(),
-            effects: allowed_effects,
+            name: Rc::new(entry_name.to_string()),
+            effects: Rc::new(allowed_effects),
         });
         let result = self.call_value(fn_val, args);
         self.call_stack.pop();

@@ -88,7 +88,10 @@ impl Interpreter {
         args: &[Value],
     ) -> Result<Value, RuntimeError> {
         // Runtime policy check for Http/Disk/Env calls
-        if name.starts_with("Http.") || name.starts_with("Disk.") || name.starts_with("Env.") {
+        if matches!(
+            Self::builtin_namespace(name),
+            Some("Http" | "Disk" | "Env")
+        ) {
             self.check_runtime_policy(name, args)?;
         }
         match name {
@@ -127,7 +130,7 @@ impl Interpreter {
                 Ok(Value::Variant {
                     type_name,
                     variant,
-                    fields: args.to_vec(),
+                    fields: args.to_vec().into(),
                 })
             }
 
@@ -151,74 +154,128 @@ impl Interpreter {
 
             _ => {
                 let skip_server = matches!(self.execution_mode, ExecutionMode::Record);
-                if let Some(r) = http_server::call_with_runtime(
-                    name,
-                    args,
-                    |handler, callback_args, callback_entry| {
-                        let callback_effects = Self::callable_declared_effects(&handler);
-                        self.call_value_with_effects_pub(
-                            handler,
-                            callback_args,
-                            &callback_entry,
-                            callback_effects,
-                        )
-                    },
-                    skip_server,
-                ) {
-                    return r;
+                match Self::builtin_namespace(name) {
+                    Some("HttpServer") => http_server::call_with_runtime(
+                        name,
+                        args,
+                        |handler, callback_args, callback_entry| {
+                            let callback_effects = Self::callable_declared_effects(&handler);
+                            self.call_value_with_effects_pub(
+                                handler,
+                                callback_args,
+                                &callback_entry,
+                                callback_effects,
+                            )
+                        },
+                        skip_server,
+                    )
+                    .unwrap_or_else(|| {
+                        Err(RuntimeError::Error(format!(
+                            "Unknown builtin function: '{}'",
+                            name
+                        )))
+                    }),
+                    Some("Args") => args::call(name, args, &self.cli_args).unwrap_or_else(|| {
+                        Err(RuntimeError::Error(format!(
+                            "Unknown builtin function: '{}'",
+                            name
+                        )))
+                    }),
+                    Some("Console") => console::call(name, args).unwrap_or_else(|| {
+                        Err(RuntimeError::Error(format!(
+                            "Unknown builtin function: '{}'",
+                            name
+                        )))
+                    }),
+                    Some("Http") => http::call(name, args).unwrap_or_else(|| {
+                        Err(RuntimeError::Error(format!(
+                            "Unknown builtin function: '{}'",
+                            name
+                        )))
+                    }),
+                    Some("Disk") => disk::call(name, args).unwrap_or_else(|| {
+                        Err(RuntimeError::Error(format!(
+                            "Unknown builtin function: '{}'",
+                            name
+                        )))
+                    }),
+                    Some("Env") => env::call(name, args).unwrap_or_else(|| {
+                        Err(RuntimeError::Error(format!(
+                            "Unknown builtin function: '{}'",
+                            name
+                        )))
+                    }),
+                    Some("Tcp") => tcp::call(name, args).unwrap_or_else(|| {
+                        Err(RuntimeError::Error(format!(
+                            "Unknown builtin function: '{}'",
+                            name
+                        )))
+                    }),
+                    Some("Time") => time::call(name, args).unwrap_or_else(|| {
+                        Err(RuntimeError::Error(format!(
+                            "Unknown builtin function: '{}'",
+                            name
+                        )))
+                    }),
+                    Some("Int") => int::call(name, args).unwrap_or_else(|| {
+                        Err(RuntimeError::Error(format!(
+                            "Unknown builtin function: '{}'",
+                            name
+                        )))
+                    }),
+                    Some("Float") => float::call(name, args).unwrap_or_else(|| {
+                        Err(RuntimeError::Error(format!(
+                            "Unknown builtin function: '{}'",
+                            name
+                        )))
+                    }),
+                    Some("String") => string::call(name, args).unwrap_or_else(|| {
+                        Err(RuntimeError::Error(format!(
+                            "Unknown builtin function: '{}'",
+                            name
+                        )))
+                    }),
+                    Some("List") => list::call(name, args).unwrap_or_else(|| {
+                        Err(RuntimeError::Error(format!(
+                            "Unknown builtin function: '{}'",
+                            name
+                        )))
+                    }),
+                    Some("Map") => map::call(name, args).unwrap_or_else(|| {
+                        Err(RuntimeError::Error(format!(
+                            "Unknown builtin function: '{}'",
+                            name
+                        )))
+                    }),
+                    Some("Char") => char::call(name, args).unwrap_or_else(|| {
+                        Err(RuntimeError::Error(format!(
+                            "Unknown builtin function: '{}'",
+                            name
+                        )))
+                    }),
+                    Some("Byte") => byte::call(name, args).unwrap_or_else(|| {
+                        Err(RuntimeError::Error(format!(
+                            "Unknown builtin function: '{}'",
+                            name
+                        )))
+                    }),
+                    Some("Result") => result::call(name, args).unwrap_or_else(|| {
+                        Err(RuntimeError::Error(format!(
+                            "Unknown builtin function: '{}'",
+                            name
+                        )))
+                    }),
+                    Some("Option") => option::call(name, args).unwrap_or_else(|| {
+                        Err(RuntimeError::Error(format!(
+                            "Unknown builtin function: '{}'",
+                            name
+                        )))
+                    }),
+                    _ => Err(RuntimeError::Error(format!(
+                        "Unknown builtin function: '{}'",
+                        name
+                    ))),
                 }
-                if let Some(r) = args::call(name, args, &self.cli_args) {
-                    return r;
-                }
-                if let Some(r) = console::call(name, args) {
-                    return r;
-                }
-                if let Some(r) = http::call(name, args) {
-                    return r;
-                }
-                if let Some(r) = disk::call(name, args) {
-                    return r;
-                }
-                if let Some(r) = env::call(name, args) {
-                    return r;
-                }
-                if let Some(r) = tcp::call(name, args) {
-                    return r;
-                }
-                if let Some(r) = time::call(name, args) {
-                    return r;
-                }
-                if let Some(r) = int::call(name, args) {
-                    return r;
-                }
-                if let Some(r) = float::call(name, args) {
-                    return r;
-                }
-                if let Some(r) = string::call(name, args) {
-                    return r;
-                }
-                if let Some(r) = list::call(name, args) {
-                    return r;
-                }
-                if let Some(r) = map::call(name, args) {
-                    return r;
-                }
-                if let Some(r) = char::call(name, args) {
-                    return r;
-                }
-                if let Some(r) = byte::call(name, args) {
-                    return r;
-                }
-                if let Some(r) = result::call(name, args) {
-                    return r;
-                }
-                if let Some(r) = option::call(name, args) {
-                    return r;
-                }
-                Err(RuntimeError::Error(format!(
-                    "Unknown builtin function: '{}'",
-                    name
-                )))
             }
         }
     }

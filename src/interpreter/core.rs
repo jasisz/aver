@@ -67,11 +67,6 @@ impl Interpreter {
             );
         }
 
-        let rc_global = global
-            .into_iter()
-            .map(|(k, v)| (k, Rc::new(v)))
-            .collect::<HashMap<_, _>>();
-
         let mut record_schemas = HashMap::new();
         record_schemas.insert(
             "HttpResponse".to_string(),
@@ -100,7 +95,7 @@ impl Interpreter {
         );
 
         Interpreter {
-            env: vec![EnvFrame::Owned(rc_global)],
+            env: vec![EnvFrame::Owned(global)],
             module_cache: HashMap::new(),
             record_schemas,
             call_stack: Vec::new(),
@@ -268,13 +263,13 @@ impl Interpreter {
             self.verify_match_coverage = None;
             return;
         };
-        let Value::Fn { body, .. } = fn_val else {
+        let Value::Fn(function) = fn_val else {
             self.verify_match_coverage = None;
             return;
         };
 
         let mut expected = std::collections::BTreeMap::new();
-        Self::collect_match_sites_from_fn_body(body.as_ref(), &mut expected);
+        Self::collect_match_sites_from_fn_body(function.body.as_ref(), &mut expected);
         if expected.is_empty() {
             self.verify_match_coverage = None;
             return;
@@ -320,7 +315,7 @@ impl Interpreter {
         let Some(frame) = self.call_stack.last() else {
             return;
         };
-        if frame.name != tracker.target_fn {
+        if frame.name.as_str() != tracker.target_fn {
             return;
         }
         let key = (line, arm_count);
@@ -437,7 +432,7 @@ impl Interpreter {
 
     pub(super) fn last_owned_scope_mut(
         &mut self,
-    ) -> Result<&mut HashMap<String, Rc<Value>>, RuntimeError> {
+    ) -> Result<&mut HashMap<String, Value>, RuntimeError> {
         let frame = self
             .env
             .last_mut()
@@ -450,7 +445,7 @@ impl Interpreter {
         }
     }
 
-    pub(super) fn lookup_rc(&self, name: &str) -> Result<&Rc<Value>, RuntimeError> {
+    pub(super) fn lookup_ref(&self, name: &str) -> Result<&Value, RuntimeError> {
         for frame in self.env.iter().rev() {
             let found = match frame {
                 EnvFrame::Owned(scope) => scope.get(name),
@@ -468,7 +463,7 @@ impl Interpreter {
         )))
     }
 
-    pub(super) fn global_scope_clone(&self) -> Result<HashMap<String, Rc<Value>>, RuntimeError> {
+    pub(super) fn global_scope_clone(&self) -> Result<HashMap<String, Value>, RuntimeError> {
         let frame = self
             .env
             .first()
@@ -483,12 +478,12 @@ impl Interpreter {
     }
 
     pub fn lookup(&self, name: &str) -> Result<Value, RuntimeError> {
-        self.lookup_rc(name).map(|rc| (**rc).clone())
+        self.lookup_ref(name).cloned()
     }
 
     pub fn define(&mut self, name: String, val: Value) {
         if let Ok(scope) = self.last_owned_scope_mut() {
-            scope.insert(name, Rc::new(val));
+            scope.insert(name, val);
         }
     }
 
@@ -507,7 +502,7 @@ impl Interpreter {
     pub(super) fn lookup_slot(&self, slot: u16) -> Result<Value, RuntimeError> {
         let idx = self.env.len() - 1;
         match &self.env[idx] {
-            EnvFrame::Slots(v) => Ok(v[slot as usize].as_ref().clone()),
+            EnvFrame::Slots(v) => Ok(v[slot as usize].clone()),
             _ => {
                 // Fallback — shouldn't happen if resolver is correct
                 Err(RuntimeError::Error(
@@ -521,7 +516,7 @@ impl Interpreter {
     pub(super) fn define_slot(&mut self, slot: u16, val: Value) {
         let idx = self.env.len() - 1;
         if let EnvFrame::Slots(v) = &mut self.env[idx] {
-            v[slot as usize] = Rc::new(val);
+            v[slot as usize] = val;
         }
     }
 
@@ -542,15 +537,11 @@ impl Interpreter {
 
         let result = {
             let scope = self.last_owned_scope_mut()?;
-            if let Some(rc_existing) = scope.remove(head) {
-                let existing = Rc::try_unwrap(rc_existing).unwrap_or_else(|rc| (*rc).clone());
+            if let Some(existing) = scope.remove(head) {
                 match existing {
                     Value::Namespace { name, mut members } => {
                         Self::insert_namespace_path(&mut members, tail, val)?;
-                        scope.insert(
-                            head.to_string(),
-                            Rc::new(Value::Namespace { name, members }),
-                        );
+                        scope.insert(head.to_string(), Value::Namespace { name, members });
                         Ok(())
                     }
                     _ => Err(RuntimeError::Error(format!(
@@ -564,10 +555,10 @@ impl Interpreter {
                 Self::insert_namespace_path(&mut members, tail, val)?;
                 scope.insert(
                     head.to_string(),
-                    Rc::new(Value::Namespace {
+                    Value::Namespace {
                         name: head.to_string(),
                         members,
-                    }),
+                    },
                 );
                 Ok(())
             }
@@ -750,8 +741,8 @@ impl Interpreter {
                                     name, fd.name
                                 ))
                             })?;
-                            if let Value::Fn { home_globals, .. } = &mut val {
-                                *home_globals = Some(Rc::clone(&module_globals));
+                            if let Value::Fn(function) = &mut val {
+                                Rc::make_mut(function).home_globals = Some(Rc::clone(&module_globals));
                             }
                             members.insert(fd.name.clone(), val);
                         }

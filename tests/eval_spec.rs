@@ -1209,7 +1209,7 @@ fn sum_type_no_arg_variant_is_variant_value() {
         Value::Variant {
             type_name: "Shape".to_string(),
             variant: "Point".to_string(),
-            fields: vec![],
+            fields: vec![].into(),
         }
     );
 }
@@ -1224,7 +1224,7 @@ fn sum_type_constructor_creates_variant() {
         Value::Variant {
             type_name: "Shape".to_string(),
             variant: "Circle".to_string(),
-            fields: vec![Value::Float(3.25)],
+            fields: vec![Value::Float(3.25)].into(),
         }
     );
 }
@@ -1239,7 +1239,7 @@ fn sum_type_multi_field_constructor() {
         Value::Variant {
             type_name: "Shape".to_string(),
             variant: "Rect".to_string(),
-            fields: vec![Value::Float(3.0), Value::Float(4.0)],
+            fields: vec![Value::Float(3.0), Value::Float(4.0)].into(),
         }
     );
 }
@@ -1271,7 +1271,7 @@ fn sum_type_match_single_field_variant() {
     let circle = Value::Variant {
         type_name: "Shape".to_string(),
         variant: "Circle".to_string(),
-        fields: vec![Value::Float(5.0)],
+        fields: vec![Value::Float(5.0)].into(),
     };
     let fn_val = interp.lookup("area").unwrap();
     let result = interp.call_value_pub(fn_val, vec![circle]).unwrap();
@@ -1305,7 +1305,7 @@ fn sum_type_match_no_arg_variant() {
     let point = Value::Variant {
         type_name: "Shape".to_string(),
         variant: "Point".to_string(),
-        fields: vec![],
+        fields: vec![].into(),
     };
     let fn_val = interp.lookup("area").unwrap();
     let result = interp.call_value_pub(fn_val, vec![point]).unwrap();
@@ -1328,7 +1328,8 @@ fn record_creation_stores_fields() {
             fields: vec![
                 ("name".to_string(), Value::Str("Alice".to_string())),
                 ("age".to_string(), Value::Int(30)),
-            ],
+            ]
+            .into(),
         }
     );
 }
@@ -1345,7 +1346,8 @@ fn record_creation_canonicalizes_field_order() {
             fields: vec![
                 ("name".to_string(), Value::Str("Alice".to_string())),
                 ("age".to_string(), Value::Int(30)),
-            ],
+            ]
+            .into(),
         }
     );
 }
@@ -1386,7 +1388,8 @@ fn record_match_binding_preserves_field_access() {
         fields: vec![
             ("name".to_string(), Value::Str("Bob".to_string())),
             ("age".to_string(), Value::Int(25)),
-        ],
+        ]
+        .into(),
     };
     let fn_val = interp.lookup("get_name").unwrap();
     let result = interp.call_value_pub(fn_val, vec![user]).unwrap();
@@ -1398,17 +1401,17 @@ fn sum_type_variant_equality() {
     let c1 = Value::Variant {
         type_name: "Shape".to_string(),
         variant: "Circle".to_string(),
-        fields: vec![Value::Float(3.0)],
+        fields: vec![Value::Float(3.0)].into(),
     };
     let c2 = Value::Variant {
         type_name: "Shape".to_string(),
         variant: "Circle".to_string(),
-        fields: vec![Value::Float(3.0)],
+        fields: vec![Value::Float(3.0)].into(),
     };
     let c3 = Value::Variant {
         type_name: "Shape".to_string(),
         variant: "Circle".to_string(),
-        fields: vec![Value::Float(5.0)],
+        fields: vec![Value::Float(5.0)].into(),
     };
     let interp = Interpreter::new();
     assert!(interp.aver_eq(&c1, &c2));
@@ -3168,7 +3171,8 @@ fn check() -> Bool
                                 fields: vec![
                                     ("age".to_string(), Value::Int(35)),
                                     ("name".to_string(), Value::Str("Ada".to_string())),
-                                ],
+                                ]
+                                .into(),
                             },
                             list_from_vec(vec![
                                 Value::Some(Box::new(Value::Int(1))),
@@ -3176,10 +3180,12 @@ fn check() -> Bool
                                 Value::Ok(Box::new(Value::Str("ok".to_string()))),
                                 Value::Err(Box::new(Value::Str("boom".to_string()))),
                             ]),
-                        ],
+                        ]
+                        .into(),
                     },
                 ),
-            ],
+            ]
+            .into(),
         };
 
         let json = value_to_json(&value).expect("value_to_json failed");
@@ -3195,7 +3201,8 @@ fn check() -> Bool
                 fields: vec![
                     ("x".to_string(), Value::Float(1.5)),
                     ("y".to_string(), Value::Float(-2.25)),
-                ],
+                ]
+                .into(),
             },
             Value::Variant {
                 type_name: "MaybePoint".to_string(),
@@ -3205,8 +3212,10 @@ fn check() -> Bool
                     fields: vec![
                         ("x".to_string(), Value::Int(1)),
                         ("y".to_string(), Value::Int(2)),
-                    ],
-                }],
+                    ]
+                    .into(),
+                }]
+                .into(),
             },
             Value::Ok(Box::new(list_from_vec(vec![
                 Value::Bool(true),
@@ -3383,7 +3392,7 @@ updated = User.update(u, age = 31)
         Value::Record { type_name, fields } => {
             assert_eq!(type_name, "User");
             assert_eq!(
-                fields,
+                fields.as_ref(),
                 &[
                     ("name".to_string(), Value::Str("Alice".to_string())),
                     ("age".to_string(), Value::Int(31)),
@@ -3410,7 +3419,7 @@ updated = User.update(u, name = "Bob", age = 31)
         Value::Record { type_name, fields } => {
             assert_eq!(type_name, "User");
             assert_eq!(
-                fields,
+                fields.as_ref(),
                 &[
                     ("name".to_string(), Value::Str("Bob".to_string())),
                     ("age".to_string(), Value::Int(31)),

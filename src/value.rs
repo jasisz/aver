@@ -62,6 +62,23 @@ pub enum RuntimeError {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
+pub struct FunctionValue {
+    pub name: Rc<String>,
+    pub params: Rc<Vec<(String, String)>>,
+    pub return_type: Rc<String>,
+    pub effects: Rc<Vec<String>>,
+    pub body: Rc<FnBody>,
+    /// Compile-time resolution metadata (slot layout for locals).
+    pub resolution: Option<crate::ast::FnResolution>,
+    /// True only for functions selected by `compute_memo_fns` in the
+    /// interpreter that defined them.
+    pub memo_eligible: bool,
+    /// Optional function-specific global scope (used by imported module
+    /// functions so they resolve names in their home module).
+    pub home_globals: Option<Rc<HashMap<String, Value>>>,
+}
+
+#[derive(Debug, Clone)]
 pub enum Value {
     Int(i64),
     Float(f64),
@@ -75,32 +92,18 @@ pub enum Value {
     List(AverList<Value>),
     Tuple(Vec<Value>),
     Map(HashMap<Value, Value>),
-    Fn {
-        name: String,
-        params: Vec<(String, String)>,
-        return_type: String,
-        effects: Vec<String>,
-        body: Rc<FnBody>,
-        /// Compile-time resolution metadata (slot layout for locals).
-        resolution: Option<crate::ast::FnResolution>,
-        /// True only for functions selected by `compute_memo_fns` in the
-        /// interpreter that defined them.
-        memo_eligible: bool,
-        /// Optional function-specific global scope (used by imported module
-        /// functions so they resolve names in their home module).
-        home_globals: Option<Rc<HashMap<String, Rc<Value>>>>,
-    },
+    Fn(Rc<FunctionValue>),
     Builtin(String),
     /// User-defined sum type variant, e.g. `Shape.Circle(3.14)`
     Variant {
         type_name: String,
         variant: String,
-        fields: Vec<Value>,
+        fields: Rc<[Value]>,
     },
     /// User-defined product type (record), e.g. `User(name = "Alice", age = 30)`
     Record {
         type_name: String,
-        fields: Vec<(String, Value)>,
+        fields: Rc<[(String, Value)]>,
     },
     /// Type namespace: `Shape` — provides `Shape.Circle`, `Shape.Rect`, etc.
     Namespace {
@@ -135,24 +138,13 @@ impl PartialEq for Value {
             (Value::None, Value::None) => true,
             (Value::Tuple(a), Value::Tuple(b)) => a == b,
             (Value::Map(a), Value::Map(b)) => a == b,
-            (
-                Value::Fn {
-                    name: n1,
-                    params: p1,
-                    return_type: r1,
-                    effects: e1,
-                    body: b1,
-                    ..
-                },
-                Value::Fn {
-                    name: n2,
-                    params: p2,
-                    return_type: r2,
-                    effects: e2,
-                    body: b2,
-                    ..
-                },
-            ) => n1 == n2 && p1 == p2 && r1 == r2 && e1 == e2 && b1 == b2,
+            (Value::Fn(a), Value::Fn(b)) => {
+                a.name == b.name
+                    && a.params == b.params
+                    && a.return_type == b.return_type
+                    && a.effects == b.effects
+                    && a.body == b.body
+            }
             (Value::Builtin(a), Value::Builtin(b)) => a == b,
             (
                 Value::Variant {
@@ -257,20 +249,13 @@ impl std::hash::Hash for Value {
                 16u8.hash(state);
                 items.hash(state);
             }
-            Value::Fn {
-                name,
-                params,
-                return_type,
-                effects,
-                body,
-                ..
-            } => {
+            Value::Fn(function) => {
                 11u8.hash(state);
-                name.hash(state);
-                params.hash(state);
-                return_type.hash(state);
-                effects.hash(state);
-                format!("{:?}", body).hash(state);
+                function.name.hash(state);
+                function.params.hash(state);
+                function.return_type.hash(state);
+                function.effects.hash(state);
+                format!("{:?}", function.body).hash(state);
             }
             Value::Builtin(name) => {
                 12u8.hash(state);
@@ -314,10 +299,10 @@ impl std::hash::Hash for Value {
 
 #[derive(Debug, Clone)]
 pub enum EnvFrame {
-    Owned(HashMap<String, Rc<Value>>),
-    Shared(Rc<HashMap<String, Rc<Value>>>),
+    Owned(HashMap<String, Value>),
+    Shared(Rc<HashMap<String, Value>>),
     /// Slot-indexed frame for resolved function bodies — O(1) lookup.
-    Slots(Vec<Rc<Value>>),
+    Slots(Vec<Value>),
 }
 
 /// Scope stack: innermost scope last.
@@ -358,12 +343,6 @@ pub(crate) fn list_get(value: &Value, index: usize) -> Option<Value> {
 
 pub fn list_head(value: &Value) -> Option<Value> {
     list_view(value).and_then(|items| items.first().cloned())
-}
-
-pub(crate) fn list_uncons_value(value: &Value) -> Option<(Value, Value)> {
-    list_view(value)
-        .and_then(aver_rt::list_uncons_cloned)
-        .map(|(head, tail)| (head, Value::List(tail)))
 }
 
 pub(crate) fn list_append(list: &Value, item: Value) -> Option<Value> {
@@ -422,7 +401,7 @@ pub fn aver_repr(val: &Value) -> String {
                 .collect::<Vec<_>>();
             format!("{{{}}}", parts.join(", "))
         }
-        Value::Fn { name, .. } => format!("<fn {}>", name),
+        Value::Fn(function) => format!("<fn {}>", function.name),
         Value::Builtin(name) => format!("<builtin {}>", name),
         Value::Variant {
             variant, fields, ..

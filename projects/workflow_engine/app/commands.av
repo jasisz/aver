@@ -259,9 +259,9 @@ fn planRulesForAll() -> Result<CommandPlan, String>
     ! [Disk.readText, Time.now]
     projects = Infra.Store.loadProjects()?
     events = Infra.Store.loadTaskEvents()?
-    tasks = Domain.Events.replayAll(events)?
+    states = Domain.Events.replayAllStates(events)?
     now = Infra.Clock.now()
-    plan = deriveRulesForAllPlan(tasks, projects, events, now, emptyEventPlan("Ran rules for all tasks", "all"))?
+    plan = deriveRulesForAllPlan(states, projects, now, emptyEventPlan("Ran rules for all tasks", "all"))?
     Result.Ok(CommandPlan.AppendEvents(plan))
 
 fn planTaskCommand(summary: String, project: Project, persistedEvents: List<TaskEventRecord>, primaryEvent: TaskEventRecord, now: String) -> Result<CommandPlan, String>
@@ -349,20 +349,16 @@ verify primaryEventPlan
         ]
     )
 
-fn deriveRulesForAllPlan(tasks: List<Task>, projects: List<Project>, events: List<TaskEventRecord>, now: String, acc: EventPlan) -> Result<EventPlan, String>
+fn deriveRulesForAllPlan(states: List<TaskReplayState>, projects: List<Project>, now: String, acc: EventPlan) -> Result<EventPlan, String>
     ? "Pure fold that turns manual `run_rules` over all tasks into one combined event plan."
-    match tasks
+    match states
         [] -> Result.Ok(acc)
-        [task, ..rest] -> deriveRulesForAllStep(task, rest, projects, events, now, acc)
+        [state, ..rest] -> deriveRulesForAllStep(state, rest, projects, now, acc)
 
 verify deriveRulesForAllPlan
     deriveRulesForAllPlan(
-        [Task(id = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.Blocked, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-01T12:00:00Z", updatedAt = "2026-03-01T12:00:00Z", statusChangedAt = "2026-03-01T12:00:00Z")],
+        [TaskReplayState(task = Task(id = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.Blocked, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-01T12:00:00Z", updatedAt = "2026-03-01T12:00:00Z", statusChangedAt = "2026-03-01T12:00:00Z"), latestEvent = TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.TaskBlocked("Waiting on vendor", "2026-03-01T12:00:00Z")), nextSeq = 3)],
         [sampleProject()],
-        [
-            TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Plan release", Domain.Types.Priority.Normal, [], Option.None, "2026-03-01T12:00:00Z")),
-            TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.TaskBlocked("Waiting on vendor", "2026-03-01T12:00:00Z"))
-        ],
         "2026-03-05T12:00:00Z",
         emptyEventPlan("Ran rules for all tasks", "all")
     ) => Result.Ok(
@@ -379,24 +375,18 @@ verify deriveRulesForAllPlan
         )
     )
 
-fn deriveRulesForAllStep(task: Task, rest: List<Task>, projects: List<Project>, events: List<TaskEventRecord>, now: String, acc: EventPlan) -> Result<EventPlan, String>
+fn deriveRulesForAllStep(state: TaskReplayState, rest: List<TaskReplayState>, projects: List<Project>, now: String, acc: EventPlan) -> Result<EventPlan, String>
     ? "Evaluates one task's rules and merges the result into the accumulated plan."
-    project = requireProject(projects, task.projectId)?
-    taskEvents = Domain.Events.eventsForTask(events, task.id)
-    latestPersistedEvent = Domain.Events.latestEvent(taskEvents)
-    ruleResult = Domain.Rules.runRules(project, task, latestPersistedEvent, now, Domain.Tasks.nextSeq(taskEvents))?
-    combined = mergeEventPlans(acc, ruleOnlyPlan("Ran rules for task '{task.id}'", task.id, ruleResult))
-    deriveRulesForAllPlan(rest, projects, events, now, combined)
+    project = requireProject(projects, state.task.projectId)?
+    ruleResult = Domain.Rules.runRules(project, state.task, Option.Some(state.latestEvent), now, state.nextSeq)?
+    combined = mergeEventPlans(acc, ruleOnlyPlan("Ran rules for task '{state.task.id}'", state.task.id, ruleResult))
+    deriveRulesForAllPlan(rest, projects, now, combined)
 
 verify deriveRulesForAllStep
     deriveRulesForAllStep(
-        Task(id = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.Blocked, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-01T12:00:00Z", updatedAt = "2026-03-01T12:00:00Z", statusChangedAt = "2026-03-01T12:00:00Z"),
+        TaskReplayState(task = Task(id = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.Blocked, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-01T12:00:00Z", updatedAt = "2026-03-01T12:00:00Z", statusChangedAt = "2026-03-01T12:00:00Z"), latestEvent = TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.TaskBlocked("Waiting on vendor", "2026-03-01T12:00:00Z")), nextSeq = 3),
         [],
         [sampleProject()],
-        [
-            TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Plan release", Domain.Types.Priority.Normal, [], Option.None, "2026-03-01T12:00:00Z")),
-            TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 2, event = Domain.Types.TaskEvent.TaskBlocked("Waiting on vendor", "2026-03-01T12:00:00Z"))
-        ],
         "2026-03-05T12:00:00Z",
         emptyEventPlan("Ran rules for all tasks", "all")
     ) => Result.Ok(
@@ -490,9 +480,9 @@ verify ensureProjectMissing
 
 fn ensureTaskMissing(events: List<TaskEventRecord>, taskId: String) -> Result<Bool, String>
     ? "Rejects duplicate task creation."
-    match List.len(Domain.Events.eventsForTask(events, taskId)) == 0
-        true -> Result.Ok(true)
-        false -> Result.Err("Task '{taskId}' already exists")
+    match Domain.Events.hasTaskEvents(events, taskId)
+        true -> Result.Err("Task '{taskId}' already exists")
+        false -> Result.Ok(true)
 
 verify ensureTaskMissing
     ensureTaskMissing([], "t1") => Result.Ok(true)

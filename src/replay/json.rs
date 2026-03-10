@@ -129,7 +129,7 @@ pub fn value_to_json(value: &Value) -> Result<JsonValue, String> {
         }
         Value::Record { type_name, fields } => {
             let mut fields_obj = BTreeMap::new();
-            for (name, field_value) in fields {
+            for (name, field_value) in fields.iter() {
                 fields_obj.insert(name.clone(), value_to_json(field_value)?);
             }
             let mut payload = BTreeMap::new();
@@ -143,7 +143,7 @@ pub fn value_to_json(value: &Value) -> Result<JsonValue, String> {
             fields,
         } => {
             let mut field_vals = Vec::with_capacity(fields.len());
-            for field in fields {
+            for field in fields.iter() {
                 field_vals.push(value_to_json(field)?);
             }
             let mut payload = BTreeMap::new();
@@ -152,7 +152,7 @@ pub fn value_to_json(value: &Value) -> Result<JsonValue, String> {
             payload.insert("fields".to_string(), JsonValue::Array(field_vals));
             Ok(wrap_marker("$variant", JsonValue::Object(payload)))
         }
-        Value::Fn { .. } | Value::Builtin(_) | Value::Namespace { .. } => Err(format!(
+        Value::Fn(_) | Value::Builtin(_) | Value::Namespace { .. } => Err(format!(
             "cannot serialize non-replay-safe value: {}",
             aver_repr(value)
         )),
@@ -261,7 +261,10 @@ fn decode_record(payload: &JsonValue) -> Result<Value, String> {
     for (key, field_val) in fields_obj {
         fields.push((key.clone(), json_to_value(field_val)?));
     }
-    Ok(Value::Record { type_name, fields })
+    Ok(Value::Record {
+        type_name,
+        fields: fields.into(),
+    })
 }
 
 fn decode_variant(payload: &JsonValue) -> Result<Value, String> {
@@ -278,7 +281,7 @@ fn decode_variant(payload: &JsonValue) -> Result<Value, String> {
     Ok(Value::Variant {
         type_name,
         variant,
-        fields,
+        fields: fields.into(),
     })
 }
 

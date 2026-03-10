@@ -134,13 +134,13 @@ impl FnBody {
 
 /// Compile-time resolution metadata for a function body.
 /// Produced by `resolver::resolve_fn` — maps local variable names to slot indices
-/// so the interpreter can use `Vec<Rc<Value>>` instead of `HashMap` lookups.
+/// so the interpreter can use `Vec<Value>` instead of `HashMap` lookups.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnResolution {
     /// Total number of local slots needed (params + bindings in body).
     pub local_count: u16,
     /// Map from local variable name → slot index in the local `Slots` frame.
-    pub local_slots: std::collections::HashMap<String, u16>,
+    pub local_slots: std::rc::Rc<std::collections::HashMap<String, u16>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

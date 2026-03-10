@@ -225,11 +225,36 @@ impl<T> AverList<T> {
     }
 
     pub fn get(&self, index: usize) -> Option<&T> {
-        self.iter().nth(index)
+        let mut current = self;
+        let mut remaining = index;
+
+        loop {
+            match current.inner.as_ref() {
+                AverListInner::Flat { items, start } => {
+                    return items.get(start.saturating_add(remaining));
+                }
+                AverListInner::Prepend { head, tail, .. } => {
+                    if remaining == 0 {
+                        return Some(head);
+                    }
+                    remaining -= 1;
+                    current = tail;
+                }
+                AverListInner::Concat { left, right, .. } => {
+                    let left_len = left.len();
+                    if remaining < left_len {
+                        current = left;
+                    } else {
+                        remaining -= left_len;
+                        current = right;
+                    }
+                }
+            }
+        }
     }
 
     pub fn first(&self) -> Option<&T> {
-        self.iter().next()
+        self.get(0)
     }
 
     pub fn as_slice(&self) -> Option<&[T]> {
@@ -484,6 +509,27 @@ mod tests {
         let (head, tail) = super::list_uncons_cloned(&list).expect("non-empty list must uncons");
         assert_eq!(head, 0);
         assert_eq!(tail.as_slice(), Some(&[1, 2, 3, 4][..]));
+    }
+
+    #[test]
+    fn get_reads_flat_list_in_place() {
+        let list = AverList::from_vec(vec![10, 20, 30]);
+
+        assert_eq!(list.get(0), Some(&10));
+        assert_eq!(list.get(2), Some(&30));
+        assert_eq!(list.get(3), None);
+    }
+
+    #[test]
+    fn get_walks_concat_and_prepend_without_flattening() {
+        let base = AverList::from_vec(vec![2, 3]);
+        let prepended = AverList::prepend(1, &base);
+        let joined = AverList::concat(&prepended, &AverList::from_vec(vec![4, 5]));
+
+        assert_eq!(joined.get(0), Some(&1));
+        assert_eq!(joined.get(2), Some(&3));
+        assert_eq!(joined.get(4), Some(&5));
+        assert_eq!(joined.get(5), None);
     }
 
     #[test]

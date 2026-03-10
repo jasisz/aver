@@ -42,7 +42,7 @@ fn hash_value(val: &Value, hasher: &mut impl std::hash::Hasher) {
         Value::Record { type_name, fields } => {
             5u8.hash(hasher);
             type_name.hash(hasher);
-            for (k, v) in fields {
+            for (k, v) in fields.iter() {
                 k.hash(hasher);
                 hash_value(v, hasher);
             }
@@ -55,7 +55,7 @@ fn hash_value(val: &Value, hasher: &mut impl std::hash::Hasher) {
             6u8.hash(hasher);
             type_name.hash(hasher);
             variant.hash(hasher);
-            for v in fields {
+            for v in fields.iter() {
                 hash_value(v, hasher);
             }
         }

@@ -44,7 +44,7 @@ fn resolve_fn(fd: &mut FnDef) {
 
     fd.resolution = Some(FnResolution {
         local_count: next_slot,
-        local_slots,
+        local_slots: Rc::new(local_slots),
     });
 }
 

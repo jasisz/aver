@@ -1,78 +1,37 @@
 use super::*;
 
 impl Interpreter {
+    pub(super) fn builtin_namespace(name: &str) -> Option<&str> {
+        name.split_once('.').map(|(namespace, _)| namespace)
+    }
+
     pub(super) fn builtin_effects(name: &str) -> &'static [&'static str] {
-        let e = args::effects(name);
-        if !e.is_empty() {
-            return e;
+        match Self::builtin_namespace(name) {
+            Some("Args") => args::effects(name),
+            Some("Console") => console::effects(name),
+            Some("Http") => http::effects(name),
+            Some("HttpServer") => http_server::effects(name),
+            Some("Disk") => disk::effects(name),
+            Some("Env") => env::effects(name),
+            Some("Tcp") => tcp::effects(name),
+            Some("Time") => time::effects(name),
+            Some("Int") => int::effects(name),
+            Some("Float") => float::effects(name),
+            Some("String") => string::effects(name),
+            Some("List") => list::effects(name),
+            Some("Map") => map::effects(name),
+            Some("Char") => char::effects(name),
+            Some("Byte") => byte::effects(name),
+            Some("Result") => result::effects(name),
+            Some("Option") => option::effects(name),
+            _ => &[],
         }
-        let e = console::effects(name);
-        if !e.is_empty() {
-            return e;
-        }
-        let e = http::effects(name);
-        if !e.is_empty() {
-            return e;
-        }
-        let e = http_server::effects(name);
-        if !e.is_empty() {
-            return e;
-        }
-        let e = disk::effects(name);
-        if !e.is_empty() {
-            return e;
-        }
-        let e = env::effects(name);
-        if !e.is_empty() {
-            return e;
-        }
-        let e = tcp::effects(name);
-        if !e.is_empty() {
-            return e;
-        }
-        let e = time::effects(name);
-        if !e.is_empty() {
-            return e;
-        }
-        let e = int::effects(name);
-        if !e.is_empty() {
-            return e;
-        }
-        let e = float::effects(name);
-        if !e.is_empty() {
-            return e;
-        }
-        let e = string::effects(name);
-        if !e.is_empty() {
-            return e;
-        }
-        let e = list::effects(name);
-        if !e.is_empty() {
-            return e;
-        }
-        let e = map::effects(name);
-        if !e.is_empty() {
-            return e;
-        }
-        let e = char::effects(name);
-        if !e.is_empty() {
-            return e;
-        }
-        let e = byte::effects(name);
-        if !e.is_empty() {
-            return e;
-        }
-        let e = result::effects(name);
-        if !e.is_empty() {
-            return e;
-        }
-        option::effects(name)
     }
 
     pub(super) fn current_allowed_effects(&self) -> &[String] {
         self.call_stack
             .last()
-            .map(|frame| frame.effects.as_slice())
+            .map(|frame| frame.effects.as_ref().as_slice())
             .unwrap_or(&[])
     }
 
@@ -82,7 +41,7 @@ impl Interpreter {
         } else {
             self.call_stack
                 .iter()
-                .map(|frame| frame.name.clone())
+                .map(|frame| frame.name.as_ref().clone())
                 .collect()
         };
         chain.push(callee_name.to_string());

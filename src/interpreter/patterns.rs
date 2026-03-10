@@ -12,9 +12,9 @@ impl Interpreter {
         &self,
         pattern: &Pattern,
         value: &Value,
-    ) -> Option<HashMap<String, Value>> {
+    ) -> Option<Vec<(String, Value)>> {
         match pattern {
-            Pattern::Wildcard => Some(HashMap::new()),
+            Pattern::Wildcard => Some(Vec::new()),
             Pattern::Literal(lit) => {
                 let matches = match (lit, value) {
                     (Literal::Int(i), Value::Int(v)) => i == v,
@@ -24,30 +24,31 @@ impl Interpreter {
                     (Literal::Unit, Value::Unit) => true,
                     _ => false,
                 };
-                if matches { Some(HashMap::new()) } else { None }
+                if matches { Some(Vec::new()) } else { None }
             }
-            Pattern::Ident(name) => {
-                let mut bindings = HashMap::new();
-                bindings.insert(name.clone(), value.clone());
-                Some(bindings)
-            }
+            Pattern::Ident(name) => Some(vec![(name.clone(), value.clone())]),
             Pattern::EmptyList => {
                 if list_len(value) == Some(0) {
-                    Some(HashMap::new())
+                    Some(Vec::new())
                 } else {
                     None
                 }
             }
             Pattern::Cons(head, tail) => {
-                let (head_value, tail_value) = crate::value::list_uncons_value(value)?;
-                let mut map = HashMap::new();
+                let (head_value, tail_value) = {
+                    let items = list_view(value)?;
+                    let (head_value, tail_items) = aver_rt::list_uncons_cloned(items)?;
+                    (head_value, Value::List(tail_items))
+                };
+
+                let mut bindings = Vec::with_capacity(2);
                 if head != "_" {
-                    map.insert(head.clone(), head_value);
+                    bindings.push((head.clone(), head_value));
                 }
                 if tail != "_" {
-                    map.insert(tail.clone(), tail_value);
+                    bindings.push((tail.clone(), tail_value));
                 }
-                Some(map)
+                Some(bindings)
             }
             Pattern::Tuple(patterns) => {
                 let Value::Tuple(values) = value else {
@@ -56,7 +57,7 @@ impl Interpreter {
                 if patterns.len() != values.len() {
                     return None;
                 }
-                let mut all = HashMap::new();
+                let mut all = Vec::new();
                 for (p, v) in patterns.iter().zip(values.iter()) {
                     let sub = self.match_pattern(p, v)?;
                     all.extend(sub);
@@ -65,33 +66,33 @@ impl Interpreter {
             }
             Pattern::Constructor(ctor_name, bindings) => {
                 match (ctor_name.as_str(), value) {
-                    ("Option.None", Value::None) => Some(HashMap::new()),
+                    ("Option.None", Value::None) => Some(Vec::new()),
                     ("Result.Ok", Value::Ok(inner)) => {
-                        let mut map = HashMap::new();
+                        let mut result = Vec::with_capacity(1);
                         if let Some(name) = bindings.first()
                             && name != "_"
                         {
-                            map.insert(name.clone(), *inner.clone());
+                            result.push((name.clone(), *inner.clone()));
                         }
-                        Some(map)
+                        Some(result)
                     }
                     ("Result.Err", Value::Err(inner)) => {
-                        let mut map = HashMap::new();
+                        let mut result = Vec::with_capacity(1);
                         if let Some(name) = bindings.first()
                             && name != "_"
                         {
-                            map.insert(name.clone(), *inner.clone());
+                            result.push((name.clone(), *inner.clone()));
                         }
-                        Some(map)
+                        Some(result)
                     }
                     ("Option.Some", Value::Some(inner)) => {
-                        let mut map = HashMap::new();
+                        let mut result = Vec::with_capacity(1);
                         if let Some(name) = bindings.first()
                             && name != "_"
                         {
-                            map.insert(name.clone(), *inner.clone());
+                            result.push((name.clone(), *inner.clone()));
                         }
-                        Some(map)
+                        Some(result)
                     }
                     // User-defined variant: match by fully-qualified constructor name.
                     (
@@ -114,13 +115,13 @@ impl Interpreter {
                         if !bindings.is_empty() && bindings.len() != fields.len() {
                             return None;
                         }
-                        let mut map = HashMap::new();
+                        let mut result = Vec::with_capacity(bindings.len());
                         for (name, val) in bindings.iter().zip(fields.iter()) {
                             if name != "_" {
-                                map.insert(name.clone(), val.clone());
+                                result.push((name.clone(), val.clone()));
                             }
                         }
-                        Some(map)
+                        Some(result)
                     }
                     _ => None,
                 }

@@ -19,8 +19,8 @@ use crate::value::{list_from_vec, list_len, list_view};
 
 #[derive(Debug, Clone)]
 struct CallFrame {
-    name: String,
-    effects: Vec<String>,
+    name: Rc<String>,
+    effects: Rc<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,7 +227,7 @@ pub struct Interpreter {
     call_stack: Vec<CallFrame>,
     /// Active slot mapping for resolved function bodies.
     /// Set when entering a resolved fn, cleared on exit.
-    active_local_slots: Option<HashMap<String, u16>>,
+    active_local_slots: Option<Rc<HashMap<String, u16>>>,
     /// Names of pure recursive functions eligible for auto-memoization.
     memo_fns: HashSet<String>,
     /// Per-function memo cache with collision-safe entries and LRU eviction.

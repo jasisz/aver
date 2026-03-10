@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
-use std::rc::Rc;
 
 use colored::Colorize;
 
@@ -73,7 +72,7 @@ pub(super) fn repl_env(interp: &Interpreter) {
     ];
     let mut found = false;
     for frame in &interp.env {
-        let scope: Option<&HashMap<String, Rc<Value>>> = match frame {
+        let scope: Option<&HashMap<String, Value>> = match frame {
             EnvFrame::Owned(scope) => Some(scope),
             EnvFrame::Shared(scope) => Some(scope.as_ref()),
             EnvFrame::Slots(_) => None,
@@ -86,7 +85,7 @@ pub(super) fn repl_env(interp: &Interpreter) {
             if name.starts_with("__") {
                 continue;
             }
-            println!("  {} = {}", name, aver_repr(val.as_ref()));
+            println!("  {} = {}", name, aver_repr(val));
             found = true;
         }
     }

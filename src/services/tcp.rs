@@ -161,7 +161,8 @@ fn tcp_connection_to_value(conn: TcpConnection) -> Value {
             ("id".to_string(), Value::Str(conn.id)),
             ("host".to_string(), Value::Str(conn.host)),
             ("port".to_string(), Value::Int(conn.port)),
-        ],
+        ]
+        .into(),
     }
 }
 
@@ -171,7 +172,7 @@ fn tcp_connection_arg(val: &Value, method: &str) -> Result<TcpConnection, Runtim
             let mut id = None;
             let mut host = None;
             let mut port = None;
-            for (name, value) in fields {
+            for (name, value) in fields.iter() {
                 match (name.as_str(), value) {
                     ("id", Value::Str(s)) => id = Some(s.clone()),
                     ("host", Value::Str(s)) => host = Some(s.clone()),

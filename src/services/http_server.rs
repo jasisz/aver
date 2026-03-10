@@ -157,7 +157,8 @@ fn http_request_to_value(req: HttpRequest) -> Value {
             fields: vec![
                 ("name".to_string(), Value::Str(header.name)),
                 ("value".to_string(), Value::Str(header.value)),
-            ],
+            ]
+            .into(),
         })
         .collect::<Vec<_>>();
 
@@ -168,7 +169,8 @@ fn http_request_to_value(req: HttpRequest) -> Value {
             ("path".to_string(), Value::Str(req.path)),
             ("body".to_string(), Value::Str(req.body)),
             ("headers".to_string(), list_from_vec(headers)),
-        ],
+        ]
+        .into(),
     }
 }
 
@@ -193,11 +195,11 @@ fn http_response_from_value(val: Value) -> Result<HttpResponse, RuntimeError> {
     let mut body = None;
     let mut headers = AverList::empty();
 
-    for (name, value) in fields {
+    for (name, value) in fields.iter() {
         match name.as_str() {
             "status" => {
                 if let Value::Int(n) = value {
-                    status = Some(n);
+                    status = Some(*n);
                 } else {
                     return Err(RuntimeError::Error(
                         "HttpResponse.status must be Int".to_string(),
@@ -206,7 +208,7 @@ fn http_response_from_value(val: Value) -> Result<HttpResponse, RuntimeError> {
             }
             "body" => {
                 if let Value::Str(s) = value {
-                    body = Some(s);
+                    body = Some(s.clone());
                 } else {
                     return Err(RuntimeError::Error(
                         "HttpResponse.body must be String".to_string(),
@@ -214,7 +216,7 @@ fn http_response_from_value(val: Value) -> Result<HttpResponse, RuntimeError> {
                 }
             }
             "headers" => {
-                headers = parse_http_response_headers(value)?;
+                headers = parse_http_response_headers(value.clone())?;
             }
             _ => {}
         }
@@ -247,7 +249,7 @@ fn parse_http_response_headers(val: Value) -> Result<AverList<Header>, RuntimeEr
 
         let mut name = None;
         let mut value = None;
-        for (field_name, field_val) in fields {
+        for (field_name, field_val) in fields.iter() {
             match (field_name.as_str(), field_val) {
                 ("name", Value::Str(s)) => name = Some(s.clone()),
                 ("value", Value::Str(s)) => value = Some(s.clone()),

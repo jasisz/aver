@@ -327,8 +327,8 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
     match &block.kind {
         VerifyKind::Cases => println!("Verify: {}", block.fn_name.cyan()),
         VerifyKind::Law(law) => {
-            if let Ok(Value::Fn { effects, .. }) = interp.lookup(&law.name)
-                && effects.is_empty()
+            if let Ok(Value::Fn(function)) = interp.lookup(&law.name)
+                && function.effects.is_empty()
                 && crate::verify_law::canonical_spec_shape(&block.fn_name, law, &law.name)
             {
                 println!("Verify: {} spec {}", block.fn_name.cyan(), law.name.cyan());

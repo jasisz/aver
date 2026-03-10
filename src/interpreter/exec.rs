@@ -35,7 +35,7 @@ impl Interpreter {
                             Value::Variant {
                                 type_name: type_name.clone(),
                                 variant: variant.name.clone(),
-                                fields: vec![],
+                                fields: vec![].into(),
                             },
                         );
                     } else {
@@ -65,16 +65,16 @@ impl Interpreter {
     }
 
     pub fn exec_fn_def(&mut self, fd: &FnDef) -> Result<(), RuntimeError> {
-        let val = Value::Fn {
-            name: fd.name.clone(),
-            params: fd.params.clone(),
-            return_type: fd.return_type.clone(),
-            effects: fd.effects.clone(),
+        let val = Value::Fn(Rc::new(crate::value::FunctionValue {
+            name: Rc::new(fd.name.clone()),
+            params: Rc::new(fd.params.clone()),
+            return_type: Rc::new(fd.return_type.clone()),
+            effects: Rc::new(fd.effects.clone()),
             body: Rc::clone(&fd.body),
             resolution: fd.resolution.clone(),
             memo_eligible: self.memo_fns.contains(&fd.name),
             home_globals: None,
-        };
+        }));
         self.define(fd.name.clone(), val);
         Ok(())
     }

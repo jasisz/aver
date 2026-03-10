@@ -154,7 +154,8 @@ fn http_response_to_value(resp: HttpResponse) -> Value {
             fields: vec![
                 ("name".to_string(), Value::Str(header.name)),
                 ("value".to_string(), Value::Str(header.value)),
-            ],
+            ]
+            .into(),
         })
         .collect();
 
@@ -164,6 +165,7 @@ fn http_response_to_value(resp: HttpResponse) -> Value {
             ("status".to_string(), Value::Int(resp.status)),
             ("body".to_string(), Value::Str(resp.body)),
             ("headers".to_string(), list_from_vec(headers)),
-        ],
+        ]
+        .into(),
     }
 }

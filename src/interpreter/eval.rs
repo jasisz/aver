@@ -1,5 +1,10 @@
 use super::*;
 
+type SharedExprs = Rc<[Expr]>;
+type SharedStrParts = Rc<[StrPart]>;
+type SharedMapEntries = Rc<[(Expr, Expr)]>;
+type SharedRecordFields = Rc<[(String, Expr)]>;
+
 #[derive(Debug)]
 enum EvalState {
     Expr(Expr),
@@ -16,7 +21,7 @@ enum EvalState {
 enum EvalCont {
     Attr(String),
     Call {
-        args: Vec<Expr>,
+        args: SharedExprs,
         idx: usize,
         fn_val: Option<Value>,
         arg_vals: Vec<Value>,
@@ -36,46 +41,46 @@ enum EvalCont {
     Constructor(String),
     ErrorProp,
     InterpolatedStr {
-        parts: Vec<StrPart>,
+        parts: SharedStrParts,
         idx: usize,
         result: String,
     },
     List {
-        items: Vec<Expr>,
+        items: SharedExprs,
         idx: usize,
         values: Vec<Value>,
     },
     Tuple {
-        items: Vec<Expr>,
+        items: SharedExprs,
         idx: usize,
         values: Vec<Value>,
     },
     MapKey {
-        entries: Vec<(Expr, Expr)>,
+        entries: SharedMapEntries,
         idx: usize,
         map: HashMap<Value, Value>,
     },
     MapValue {
-        entries: Vec<(Expr, Expr)>,
+        entries: SharedMapEntries,
         idx: usize,
         map: HashMap<Value, Value>,
         key: Value,
     },
     RecordCreate {
         type_name: String,
-        fields: Vec<(String, Expr)>,
+        fields: SharedRecordFields,
         idx: usize,
         seen: HashSet<String>,
         values: Vec<(String, Value)>,
     },
     RecordUpdateBase {
         type_name: String,
-        updates: Vec<(String, Expr)>,
+        updates: SharedRecordFields,
     },
     RecordUpdateField(RecordUpdateProgress),
     TailCallArgs {
         target: String,
-        args: Vec<Expr>,
+        args: SharedExprs,
         idx: usize,
         values: Vec<Value>,
     },
@@ -96,16 +101,13 @@ enum EvalCont {
 
 #[derive(Debug, Clone)]
 struct ActiveFunction {
-    name: String,
-    params: Vec<(String, String)>,
-    body: Rc<FnBody>,
-    resolution: Option<FnResolution>,
+    function: Rc<crate::value::FunctionValue>,
 }
 
 #[derive(Debug, Clone)]
 struct FunctionFrame {
     active: ActiveFunction,
-    prev_local_slots: Option<HashMap<String, u16>>,
+    prev_local_slots: Option<Rc<HashMap<String, u16>>>,
     saved_frames: Vec<EnvFrame>,
     prev_global: Option<EnvFrame>,
     memo_key: Option<(u64, Vec<Value>)>,
@@ -116,7 +118,7 @@ struct RecordUpdateProgress {
     type_name: String,
     base_type: String,
     base_fields: Vec<(String, Value)>,
-    updates: Vec<(String, Expr)>,
+    updates: SharedRecordFields,
     idx: usize,
     update_vals: Vec<(String, Value)>,
 }
@@ -130,9 +132,8 @@ enum CallDispatch {
 }
 
 impl Interpreter {
-    fn empty_slots(local_count: u16) -> Vec<Rc<Value>> {
-        let unit = Rc::new(Value::Unit);
-        vec![unit; local_count as usize]
+    fn empty_slots(local_count: u16) -> Vec<Value> {
+        vec![Value::Unit; local_count as usize]
     }
 
     pub fn eval_expr(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
@@ -172,11 +173,11 @@ impl Interpreter {
             Expr::Ident(name) => EvalState::Apply(self.lookup(&name)),
             Expr::Attr(obj, field) => {
                 if let Expr::Ident(name) = obj.as_ref() {
-                    let rc = match self.lookup_rc(name) {
-                        Ok(rc) => rc,
+                    let value = match self.lookup_ref(name) {
+                        Ok(value) => value,
                         Err(err) => return EvalState::Apply(Err(err)),
                     };
-                    let result = match rc.as_ref() {
+                    let result = match value {
                         Value::Namespace { name, members } => {
                             members.get(field.as_str()).cloned().ok_or_else(|| {
                                 RuntimeError::Error(format!("Unknown member '{}.{}'", name, field))
@@ -202,7 +203,7 @@ impl Interpreter {
             }
             Expr::FnCall(fn_expr, args) => {
                 conts.push(EvalCont::Call {
-                    args,
+                    args: args.into(),
                     idx: 0,
                     fn_val: None,
                     arg_vals: Vec::new(),
@@ -243,28 +244,40 @@ impl Interpreter {
                 EvalState::Expr(*inner)
             }
             Expr::InterpolatedStr(parts) => {
-                self.resume_interpolated_str(parts, 0, String::new(), conts)
+                self.resume_interpolated_str(parts.into(), 0, String::new(), conts)
             }
-            Expr::List(items) => self.resume_list(items, 0, Vec::new(), conts),
+            Expr::List(items) => self.resume_list(items.into(), 0, Vec::new(), conts),
             Expr::Tuple(items) => {
                 let cap = items.len();
-                self.resume_tuple(items, 0, Vec::with_capacity(cap), conts)
+                self.resume_tuple(items.into(), 0, Vec::with_capacity(cap), conts)
             }
-            Expr::MapLiteral(entries) => self.resume_map(entries, 0, HashMap::new(), conts),
+            Expr::MapLiteral(entries) => {
+                self.resume_map(entries.into(), 0, HashMap::new(), conts)
+            }
             Expr::RecordCreate { type_name, fields } => {
-                self.resume_record_create(type_name, fields, 0, HashSet::new(), Vec::new(), conts)
+                self.resume_record_create(
+                    type_name,
+                    fields.into(),
+                    0,
+                    HashSet::new(),
+                    Vec::new(),
+                    conts,
+                )
             }
             Expr::RecordUpdate {
                 type_name,
                 base,
                 updates,
             } => {
-                conts.push(EvalCont::RecordUpdateBase { type_name, updates });
+                conts.push(EvalCont::RecordUpdateBase {
+                    type_name,
+                    updates: updates.into(),
+                });
                 EvalState::Expr(*base)
             }
             Expr::TailCall(boxed) => {
                 let (target, args) = *boxed;
-                self.resume_tail_call(target, args, 0, Vec::new(), conts)
+                self.resume_tail_call(target, args.into(), 0, Vec::new(), conts)
             }
         }
     }
@@ -282,23 +295,23 @@ impl Interpreter {
             return EvalState::Apply(Ok(last));
         }
 
-        match stmts[idx].clone() {
+        match &stmts[idx] {
             Stmt::Binding(name, _, expr) => {
                 conts.push(EvalCont::BodyBinding {
-                    name,
+                    name: name.clone(),
                     next_idx: idx + 1,
-                    body,
+                    body: Rc::clone(&body),
                     local_slots,
                 });
-                EvalState::Expr(expr)
+                EvalState::Expr(expr.clone())
             }
             Stmt::Expr(expr) => {
                 conts.push(EvalCont::BodyExpr {
                     next_idx: idx + 1,
-                    body,
+                    body: Rc::clone(&body),
                     local_slots,
                 });
-                EvalState::Expr(expr)
+                EvalState::Expr(expr.clone())
             }
         }
     }
@@ -313,9 +326,9 @@ impl Interpreter {
             EvalCont::Attr(field) => match result {
                 Ok(obj_val) => EvalState::Apply(match obj_val {
                     Value::Record { fields, .. } => fields
-                        .into_iter()
+                        .iter()
                         .find(|(k, _)| k == &field)
-                        .map(|(_, value)| Ok(value))
+                        .map(|(_, value)| Ok(value.clone()))
                         .unwrap_or_else(|| {
                             Err(RuntimeError::Error(format!("Unknown field '{}'", field)))
                         }),
@@ -348,7 +361,7 @@ impl Interpreter {
                             );
                         }
                         conts.push(EvalCont::Call {
-                            args: args.clone(),
+                            args: Rc::clone(&args),
                             idx,
                             fn_val,
                             arg_vals,
@@ -360,7 +373,7 @@ impl Interpreter {
                     idx += 1;
                     if idx < args.len() {
                         conts.push(EvalCont::Call {
-                            args: args.clone(),
+                            args: Rc::clone(&args),
                             idx,
                             fn_val,
                             arg_vals,
@@ -457,7 +470,7 @@ impl Interpreter {
                         )));
                     }
                     conts.push(EvalCont::MapValue {
-                        entries: entries.clone(),
+                        entries: Rc::clone(&entries),
                         idx,
                         map,
                         key,
@@ -514,7 +527,7 @@ impl Interpreter {
                             RecordUpdateProgress {
                                 type_name,
                                 base_type,
-                                base_fields: fields,
+                                base_fields: fields.iter().cloned().collect(),
                                 updates,
                                 idx: 0,
                                 update_vals: Vec::new(),
@@ -607,7 +620,9 @@ impl Interpreter {
             if let Some(bindings) = self.match_pattern(&arm.pattern, &subject) {
                 self.note_verify_match_arm(line, arm_count, arm_idx);
                 if let Some(local_slots) = self.active_local_slots.clone() {
-                    let all_slotted = bindings.keys().all(|name| local_slots.contains_key(name));
+                    let all_slotted = bindings
+                        .iter()
+                        .all(|(name, _)| local_slots.contains_key(name));
                     if all_slotted {
                         for (name, value) in bindings {
                             if let Some(&slot) = local_slots.get(&name) {
@@ -618,9 +633,12 @@ impl Interpreter {
                     }
                 }
 
+                if bindings.is_empty() {
+                    return EvalState::Expr(*arm.body);
+                }
+
                 let rc_scope = bindings
                     .into_iter()
-                    .map(|(k, v)| (k, Rc::new(v)))
                     .collect::<HashMap<_, _>>();
                 self.push_env(EnvFrame::Owned(rc_scope));
                 conts.push(EvalCont::MatchScope);
@@ -655,36 +673,33 @@ impl Interpreter {
         fn_val: Value,
         args: Vec<Value>,
     ) -> Result<CallDispatch, RuntimeError> {
-        match &fn_val {
+        match fn_val {
             Value::Builtin(name) => {
-                self.ensure_effects_allowed(name, Self::builtin_effects(name).iter().copied())?;
-                Ok(CallDispatch::Immediate(self.call_builtin(name, &args)))
+                self.ensure_effects_allowed(
+                    &name,
+                    Self::builtin_effects(&name).iter().copied(),
+                )?;
+                Ok(CallDispatch::Immediate(self.call_builtin(&name, &args)))
             }
-            Value::Fn {
-                name,
-                params,
-                effects,
-                body,
-                resolution,
-                memo_eligible,
-                home_globals,
-                ..
-            } => {
-                if args.len() != params.len() {
+            Value::Fn(function) => {
+                if args.len() != function.params.len() {
                     return Err(RuntimeError::Error(format!(
                         "Function '{}' expects {} arguments, got {}",
-                        name,
-                        params.len(),
+                        function.name,
+                        function.params.len(),
                         args.len()
                     )));
                 }
-                self.ensure_effects_allowed(name, effects.iter().map(String::as_str))?;
+                self.ensure_effects_allowed(
+                    function.name.as_str(),
+                    function.effects.iter().map(String::as_str),
+                )?;
 
-                let memo_key = if *memo_eligible {
+                let memo_key = if function.memo_eligible {
                     let key = hash_memo_args(&args);
                     if let Some(cached) = self
                         .memo_cache
-                        .entry(name.clone())
+                        .entry(function.name.as_ref().clone())
                         .or_default()
                         .get(key, &args)
                     {
@@ -696,13 +711,13 @@ impl Interpreter {
                 };
 
                 self.call_stack.push(CallFrame {
-                    name: name.clone(),
-                    effects: effects.clone(),
+                    name: Rc::clone(&function.name),
+                    effects: Rc::clone(&function.effects),
                 });
 
                 let prev_local_slots = self.active_local_slots.take();
-                let saved_frames: Vec<EnvFrame> = self.env.drain(1..).collect();
-                let prev_global = if let Some(home) = home_globals {
+                let saved_frames = self.env.split_off(1);
+                let prev_global = if let Some(home) = function.home_globals.as_ref() {
                     let global = self
                         .env
                         .first_mut()
@@ -712,12 +727,7 @@ impl Interpreter {
                     None
                 };
 
-                let active = ActiveFunction {
-                    name: name.clone(),
-                    params: params.clone(),
-                    body: Rc::clone(body),
-                    resolution: resolution.clone(),
-                };
+                let active = ActiveFunction { function };
                 let frame = FunctionFrame {
                     active,
                     prev_local_slots,
@@ -739,30 +749,30 @@ impl Interpreter {
     }
 
     fn enter_function_body(&mut self, active: &ActiveFunction, args: Vec<Value>) -> EvalState {
-        if let Some(resolution) = &active.resolution {
-            let local_slots = Rc::new(resolution.local_slots.clone());
+        if let Some(resolution) = &active.function.resolution {
+            let local_slots = Rc::clone(&resolution.local_slots);
             let mut slots = Self::empty_slots(resolution.local_count);
-            for ((param_name, _), arg_val) in active.params.iter().zip(args.into_iter()) {
+            for ((param_name, _), arg_val) in active.function.params.iter().zip(args.into_iter()) {
                 if let Some(&slot) = resolution.local_slots.get(param_name) {
-                    slots[slot as usize] = Rc::new(arg_val);
+                    slots[slot as usize] = arg_val;
                 }
             }
-            self.active_local_slots = Some(resolution.local_slots.clone());
+            self.active_local_slots = Some(Rc::clone(&local_slots));
             self.push_env(EnvFrame::Slots(slots));
             EvalState::Body {
-                body: Rc::clone(&active.body),
+                body: Rc::clone(&active.function.body),
                 idx: 0,
                 local_slots: Some(local_slots),
                 last: Value::Unit,
             }
         } else {
             let mut params_scope = HashMap::new();
-            for ((param_name, _), arg_val) in active.params.iter().zip(args.into_iter()) {
-                params_scope.insert(param_name.clone(), Rc::new(arg_val));
+            for ((param_name, _), arg_val) in active.function.params.iter().zip(args.into_iter()) {
+                params_scope.insert(param_name.clone(), arg_val);
             }
             self.push_env(EnvFrame::Owned(params_scope));
             EvalState::Body {
-                body: Rc::clone(&active.body),
+                body: Rc::clone(&active.function.body),
                 idx: 0,
                 local_slots: None,
                 last: Value::Unit,
@@ -781,37 +791,29 @@ impl Interpreter {
         match result {
             Err(RuntimeError::TailCall(boxed)) => {
                 let (target, args) = *boxed;
-                let next_active = if target == frame.active.name {
+                let next_active = if target == frame.active.function.name.as_str() {
                     frame.active.clone()
                 } else {
-                    match self.lookup(&target) {
-                        Ok(Value::Fn {
-                            name,
-                            params,
-                            effects,
-                            body,
-                            resolution,
-                            home_globals: _,
-                            ..
-                        }) => {
-                            if let Some(call_frame) = self.call_stack.last_mut() {
-                                call_frame.name = name.clone();
-                                call_frame.effects = effects.clone();
-                            }
-                            ActiveFunction {
-                                name,
-                                params,
-                                body,
-                                resolution,
-                            }
-                        }
-                        Ok(other) => {
+                    let next_function = match self.lookup_ref(&target) {
+                        Ok(value) => match value {
+                            Value::Fn(function) => Rc::clone(function),
+                            other => {
                             return EvalState::Apply(Err(RuntimeError::Error(format!(
                                 "TCO target '{}' is not a function: {:?}",
                                 target, other
                             ))));
-                        }
+                            }
+                        },
                         Err(err) => return EvalState::Apply(Err(err)),
+                    };
+
+                    if let Some(call_frame) = self.call_stack.last_mut() {
+                        call_frame.name = Rc::clone(&next_function.name);
+                        call_frame.effects = Rc::clone(&next_function.effects);
+                    }
+
+                    ActiveFunction {
+                        function: next_function,
                     }
                 };
 
@@ -828,7 +830,7 @@ impl Interpreter {
                     *global = prev;
                 }
                 self.env.truncate(1);
-                self.env.extend(frame.saved_frames);
+                self.env.append(&mut frame.saved_frames);
                 self.call_stack.pop();
 
                 let final_result = match other {
@@ -838,7 +840,10 @@ impl Interpreter {
                 };
 
                 if let (Some((key, memo_args)), Ok(value)) = (frame.memo_key, &final_result) {
-                    let cache = self.memo_cache.entry(frame.active.name).or_default();
+                    let cache = self
+                        .memo_cache
+                        .entry(frame.active.function.name.as_ref().clone())
+                        .or_default();
                     cache.insert(key, memo_args, value.clone(), MEMO_CACHE_CAP_PER_FN);
                 }
 
@@ -849,7 +854,7 @@ impl Interpreter {
 
     fn resume_interpolated_str(
         &mut self,
-        parts: Vec<StrPart>,
+        parts: SharedStrParts,
         mut idx: usize,
         mut result: String,
         conts: &mut Vec<EvalCont>,
@@ -862,7 +867,7 @@ impl Interpreter {
                 }
                 StrPart::Parsed(expr) => {
                     conts.push(EvalCont::InterpolatedStr {
-                        parts,
+                        parts: Rc::clone(&parts),
                         idx: idx + 1,
                         result,
                     });
@@ -875,7 +880,7 @@ impl Interpreter {
 
     fn resume_list(
         &mut self,
-        items: Vec<Expr>,
+        items: SharedExprs,
         idx: usize,
         values: Vec<Value>,
         conts: &mut Vec<EvalCont>,
@@ -885,7 +890,7 @@ impl Interpreter {
         }
 
         conts.push(EvalCont::List {
-            items: items.clone(),
+            items: Rc::clone(&items),
             idx: idx + 1,
             values,
         });
@@ -894,7 +899,7 @@ impl Interpreter {
 
     fn resume_tuple(
         &mut self,
-        items: Vec<Expr>,
+        items: SharedExprs,
         idx: usize,
         values: Vec<Value>,
         conts: &mut Vec<EvalCont>,
@@ -904,7 +909,7 @@ impl Interpreter {
         }
 
         conts.push(EvalCont::Tuple {
-            items: items.clone(),
+            items: Rc::clone(&items),
             idx: idx + 1,
             values,
         });
@@ -913,7 +918,7 @@ impl Interpreter {
 
     fn resume_map(
         &mut self,
-        entries: Vec<(Expr, Expr)>,
+        entries: SharedMapEntries,
         idx: usize,
         map: HashMap<Value, Value>,
         conts: &mut Vec<EvalCont>,
@@ -923,7 +928,7 @@ impl Interpreter {
         }
 
         conts.push(EvalCont::MapKey {
-            entries: entries.clone(),
+            entries: Rc::clone(&entries),
             idx,
             map,
         });
@@ -933,7 +938,7 @@ impl Interpreter {
     fn resume_record_create(
         &mut self,
         type_name: String,
-        fields: Vec<(String, Expr)>,
+        fields: SharedRecordFields,
         idx: usize,
         seen: HashSet<String>,
         values: Vec<(String, Value)>,
@@ -945,7 +950,7 @@ impl Interpreter {
 
         conts.push(EvalCont::RecordCreate {
             type_name,
-            fields: fields.clone(),
+            fields: Rc::clone(&fields),
             idx,
             seen,
             values,
@@ -975,7 +980,7 @@ impl Interpreter {
     fn resume_tail_call(
         &mut self,
         target: String,
-        args: Vec<Expr>,
+        args: SharedExprs,
         idx: usize,
         values: Vec<Value>,
         conts: &mut Vec<EvalCont>,
@@ -986,7 +991,7 @@ impl Interpreter {
 
         conts.push(EvalCont::TailCallArgs {
             target,
-            args: args.clone(),
+            args: Rc::clone(&args),
             idx,
             values,
         });
@@ -1031,13 +1036,13 @@ impl Interpreter {
 
             return Ok(Value::Record {
                 type_name: type_name.to_string(),
-                fields: ordered,
+                fields: ordered.into(),
             });
         }
 
         Ok(Value::Record {
             type_name: type_name.to_string(),
-            fields: field_vals,
+            fields: field_vals.into(),
         })
     }
 
@@ -1082,7 +1087,7 @@ impl Interpreter {
 
         Ok(Value::Record {
             type_name: type_name.to_string(),
-            fields: base_fields,
+            fields: base_fields.into(),
         })
     }
 

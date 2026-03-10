@@ -3,7 +3,7 @@ module Events
         "Pure event application and replay logic for workflow tasks."
         "With typed sum payload matching now working across the toolchain, replay can live"
         "in the domain again instead of reconstructing state from serialized event fields."
-    exposes [eventName, recordedAt, latestEvent, eventsForTask, findTask, replayTask, replayAll]
+    exposes [eventName, recordedAt, latestEvent, eventsForTask, hasTaskEvents, findTask, replayTask, replayAll, replayAllStates]
     depends [Domain.Types, Domain.Validation]
 
 decision ReplayReturnsToDomain
@@ -98,6 +98,18 @@ fn eventsForTaskInto(events: List<TaskEventRecord>, taskId: String, matching: Li
 verify eventsForTaskInto
     eventsForTaskInto([], "t1", [sampleCreatedEvent()]) => [sampleCreatedEvent()]
 
+fn hasTaskEvents(events: List<TaskEventRecord>, taskId: String) -> Bool
+    ? "True when the flat event log contains at least one event for the given task."
+    match events
+        [] -> false
+        [event, ..rest] -> match event.taskId == taskId
+            true -> true
+            false -> hasTaskEvents(rest, taskId)
+
+verify hasTaskEvents
+    hasTaskEvents([sampleCreatedEvent()], "t1") => true
+    hasTaskEvents([sampleCreatedEvent()], "t2") => false
+
 fn findTask(tasks: List<Task>, taskId: String) -> Option<Task>
     ? "Linear lookup for replayed tasks."
     match tasks
@@ -138,28 +150,74 @@ verify replayTaskStep
 
 fn replayAll(events: List<TaskEventRecord>) -> Result<List<Task>, String>
     ? "Replays the flat task event log into current task projections."
-    replayAllInto(events, [])
+    states = replayAllStates(events)?
+    Result.Ok(tasksFromReplayStates(states))
 
 verify replayAll
     replayAll([sampleCreatedEvent(), TaskEventRecord(taskId = "t2", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Write docs", Domain.Types.Priority.Normal, ["docs"], Option.None, "2026-03-08T13:00:00Z"))]) => Result.Ok([Task(id = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.High, tags = ["ops"], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z"), Task(id = "t2", projectId = "alpha", title = "Write docs", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.Normal, tags = ["docs"], deadline = Option.None, comments = [], createdAt = "2026-03-08T13:00:00Z", updatedAt = "2026-03-08T13:00:00Z", statusChangedAt = "2026-03-08T13:00:00Z")])
 
-fn replayAllInto(events: List<TaskEventRecord>, tasks: List<Task>) -> Result<List<Task>, String>
+fn replayAllStates(events: List<TaskEventRecord>) -> Result<List<TaskReplayState>, String>
+    ? "Replays the flat task event log into current task projections plus per-task metadata."
+    states = replayAllInto(events, [])?
+    Result.Ok(states)
+
+verify replayAllStates
+    replayAllStates([sampleCreatedEvent(), sampleCompletedEvent()]) => Result.Ok([TaskReplayState(task = Task(id = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.Done, priority = Domain.Types.Priority.High, tags = ["ops"], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-09T12:00:00Z", statusChangedAt = "2026-03-09T12:00:00Z"), latestEvent = sampleCompletedEvent(), nextSeq = 3)])
+
+fn replayAllInto(events: List<TaskEventRecord>, states: List<TaskReplayState>) -> Result<List<TaskReplayState>, String>
     ? "Tail-recursive replay for the flat event log."
     match events
-        [] -> Result.Ok(tasks)
-        [event, ..rest] -> replayAllStep(tasks, event, rest)
+        [] -> Result.Ok(states)
+        [event, ..rest] -> replayAllStep(states, event, rest)
 
 verify replayAllInto
-    replayAllInto([], [sampleTask()]) => Result.Ok([sampleTask()])
+    replayAllInto([], [TaskReplayState(task = sampleTask(), latestEvent = sampleCreatedEvent(), nextSeq = 2)]) => Result.Ok([TaskReplayState(task = sampleTask(), latestEvent = sampleCreatedEvent(), nextSeq = 2)])
 
-fn replayAllStep(tasks: List<Task>, event: TaskEventRecord, rest: List<TaskEventRecord>) -> Result<List<Task>, String>
+fn replayAllStep(states: List<TaskReplayState>, event: TaskEventRecord, rest: List<TaskEventRecord>) -> Result<List<TaskReplayState>, String>
     ? "Applies one replay step to the full task list."
-    current = findTask(tasks, event.taskId)
-    next = applyEvent(current, event)?
-    replayAllInto(rest, putTask(tasks, next))
+    nextStates = updateReplayStates(states, event)?
+    replayAllInto(rest, nextStates)
 
 verify replayAllStep
-    replayAllStep([], sampleCreatedEvent(), []) => Result.Ok([Task(id = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.High, tags = ["ops"], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z")])
+    replayAllStep([], sampleCreatedEvent(), []) => Result.Ok([TaskReplayState(task = Task(id = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.High, tags = ["ops"], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z"), latestEvent = sampleCreatedEvent(), nextSeq = 2)])
+
+fn updateReplayStates(states: List<TaskReplayState>, event: TaskEventRecord) -> Result<List<TaskReplayState>, String>
+    ? "Updates one task state with a single traversal over the replay accumulator."
+    match states
+        [] -> newReplayState(event)
+        [state, ..rest] -> match state.task.id == event.taskId
+            true -> updatedReplayState(state, rest, event)
+            false -> match updateReplayStates(rest, event)
+                Result.Err(msg) -> Result.Err(msg)
+                Result.Ok(updatedRest) -> Result.Ok(List.prepend(state, updatedRest))
+
+verify updateReplayStates
+    updateReplayStates([TaskReplayState(task = sampleTask(), latestEvent = sampleCreatedEvent(), nextSeq = 2)], sampleCompletedEvent()) => Result.Ok([TaskReplayState(task = Task(id = "t1", projectId = "alpha", title = "Original title", status = Domain.Types.TaskStatus.Done, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-09T12:00:00Z", statusChangedAt = "2026-03-09T12:00:00Z"), latestEvent = sampleCompletedEvent(), nextSeq = 3)])
+
+fn newReplayState(event: TaskEventRecord) -> Result<List<TaskReplayState>, String>
+    ? "Starts replay state for a task that has not appeared in the accumulator yet."
+    task = applyFirstEvent(event)?
+    Result.Ok([TaskReplayState(task = task, latestEvent = event, nextSeq = 2)])
+
+verify newReplayState
+    newReplayState(sampleCreatedEvent()) => Result.Ok([TaskReplayState(task = Task(id = "t1", projectId = "alpha", title = "Plan release", status = Domain.Types.TaskStatus.Todo, priority = Domain.Types.Priority.High, tags = ["ops"], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-08T12:00:00Z", statusChangedAt = "2026-03-08T12:00:00Z"), latestEvent = sampleCreatedEvent(), nextSeq = 2)])
+
+fn updatedReplayState(state: TaskReplayState, rest: List<TaskReplayState>, event: TaskEventRecord) -> Result<List<TaskReplayState>, String>
+    ? "Applies one event to an existing replay state and preserves task ordering."
+    nextTask = applyExistingEvent(state.task, event)?
+    Result.Ok(List.prepend(TaskReplayState(task = nextTask, latestEvent = event, nextSeq = state.nextSeq + 1), rest))
+
+verify updatedReplayState
+    updatedReplayState(TaskReplayState(task = sampleTask(), latestEvent = sampleCreatedEvent(), nextSeq = 2), [], sampleCompletedEvent()) => Result.Ok([TaskReplayState(task = Task(id = "t1", projectId = "alpha", title = "Original title", status = Domain.Types.TaskStatus.Done, priority = Domain.Types.Priority.Normal, tags = [], deadline = Option.None, comments = [], createdAt = "2026-03-08T12:00:00Z", updatedAt = "2026-03-09T12:00:00Z", statusChangedAt = "2026-03-09T12:00:00Z"), latestEvent = sampleCompletedEvent(), nextSeq = 3)])
+
+fn tasksFromReplayStates(states: List<TaskReplayState>) -> List<Task>
+    ? "Drops replay metadata when callers only need current task projections."
+    match states
+        [] -> []
+        [state, ..rest] -> List.prepend(state.task, tasksFromReplayStates(rest))
+
+verify tasksFromReplayStates
+    tasksFromReplayStates([TaskReplayState(task = sampleTask(), latestEvent = sampleCreatedEvent(), nextSeq = 2)]) => [sampleTask()]
 
 fn putTask(tasks: List<Task>, task: Task) -> List<Task>
     ? "Replaces a task by ID or appends it when absent."
