@@ -231,7 +231,7 @@ fn entry_module_sections(
         if is_shared_runtime_type(td) {
             continue;
         }
-        sections.push(toplevel::emit_public_type_def(td));
+        sections.push(toplevel::emit_public_type_def(td, ctx));
     }
 
     for fd in &ctx.fn_defs {
@@ -256,7 +256,7 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
         if is_shared_runtime_type(td) {
             continue;
         }
-        sections.push(toplevel::emit_public_type_def(td));
+        sections.push(toplevel::emit_public_type_def(td, ctx));
     }
 
     for fd in &module.fn_defs {

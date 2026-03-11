@@ -1,10 +1,12 @@
 use super::expr::{aver_name_to_rust, clone_arg, emit_expr, emit_stmt};
-use super::liveness::{EmitCtx, collect_vars, compute_args_used_after, compute_block_used_after};
+use super::liveness::{
+    EmitCtx, collect_vars, compute_args_used_after, compute_block_used_after, is_copy_type,
+};
 use super::types::type_annotation_to_rust;
 use crate::ast::*;
 use crate::codegen::CodegenContext;
 /// Top-level Aver items → Rust items (structs, enums, functions, tests).
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 fn visibility_prefix(public: bool) -> &'static str {
@@ -13,25 +15,118 @@ fn visibility_prefix(public: bool) -> &'static str {
 
 /// Emit a Rust struct or enum from an Aver TypeDef.
 #[allow(dead_code)]
-pub fn emit_type_def(td: &TypeDef) -> String {
-    emit_type_def_with_visibility(td, false)
+pub fn emit_type_def(td: &TypeDef, ctx: &CodegenContext) -> String {
+    emit_type_def_with_visibility(td, false, ctx)
 }
 
-pub fn emit_public_type_def(td: &TypeDef) -> String {
-    emit_type_def_with_visibility(td, true)
+pub fn emit_public_type_def(td: &TypeDef, ctx: &CodegenContext) -> String {
+    emit_type_def_with_visibility(td, true, ctx)
 }
 
-fn emit_type_def_with_visibility(td: &TypeDef, public: bool) -> String {
+fn emit_type_def_with_visibility(td: &TypeDef, public: bool, ctx: &CodegenContext) -> String {
     match td {
-        TypeDef::Sum { name, variants, .. } => emit_sum_type(name, variants, public),
-        TypeDef::Product { name, fields, .. } => emit_product_type(name, fields, public),
+        TypeDef::Sum { name, variants, .. } => emit_sum_type(name, variants, public, ctx),
+        TypeDef::Product { name, fields, .. } => emit_product_type(name, fields, public, ctx),
     }
 }
 
-fn emit_sum_type(name: &str, variants: &[TypeVariant], public: bool) -> String {
+fn type_def_name(td: &TypeDef) -> &str {
+    match td {
+        TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name,
+    }
+}
+
+fn find_type_def<'a>(name: &str, ctx: &'a CodegenContext) -> Option<&'a TypeDef> {
+    ctx.type_defs
+        .iter()
+        .find(|td| type_def_name(td) == name)
+        .or_else(|| {
+            ctx.modules
+                .iter()
+                .flat_map(|module| module.type_defs.iter())
+                .find(|td| type_def_name(td) == name)
+        })
+}
+
+fn rust_hash_eq_safe_type(ty: &crate::types::Type, ctx: &CodegenContext, visiting: &mut HashSet<String>) -> bool {
+    use crate::types::Type;
+
+    match ty {
+        Type::Int | Type::Bool | Type::Unit | Type::Str => true,
+        Type::Float => false,
+        Type::Result(ok, err) => {
+            rust_hash_eq_safe_type(ok, ctx, visiting) && rust_hash_eq_safe_type(err, ctx, visiting)
+        }
+        Type::Option(inner) => rust_hash_eq_safe_type(inner, ctx, visiting),
+        Type::List(_) => false,
+        Type::Tuple(items) => items
+            .iter()
+            .all(|item| rust_hash_eq_safe_type(item, ctx, visiting)),
+        Type::Map(_, _) | Type::Fn(_, _, _) | Type::Unknown => false,
+        Type::Named(name) => rust_hash_eq_safe_named(name, ctx, visiting),
+    }
+}
+
+fn rust_hash_eq_safe_named(name: &str, ctx: &CodegenContext, visiting: &mut HashSet<String>) -> bool {
+    if !visiting.insert(name.to_string()) {
+        return true;
+    }
+
+    let safe = find_type_def(name, ctx).is_some_and(|td| match td {
+        TypeDef::Sum { variants, .. } => variants.iter().all(|variant| {
+            variant.fields.iter().all(|field_ty| {
+                let parsed = crate::types::parse_type_str(field_ty);
+                rust_hash_eq_safe_type(&parsed, ctx, visiting)
+            })
+        }),
+        TypeDef::Product { fields, .. } => fields.iter().all(|(_, field_ty)| {
+            let parsed = crate::types::parse_type_str(field_ty);
+            rust_hash_eq_safe_type(&parsed, ctx, visiting)
+        }),
+    });
+
+    visiting.remove(name);
+    safe
+}
+
+fn type_can_derive_hash_eq(td: &TypeDef, ctx: &CodegenContext) -> bool {
+    let mut visiting = HashSet::new();
+    rust_hash_eq_safe_named(type_def_name(td), ctx, &mut visiting)
+}
+
+fn fn_supports_rust_memo(fd: &FnDef, ctx: &CodegenContext) -> bool {
+    ctx.fn_sigs.get(&fd.name).is_some_and(|(params, _, _)| {
+        params.iter().all(|param| {
+            let mut visiting = HashSet::new();
+            rust_hash_eq_safe_type(param, ctx, &mut visiting)
+        })
+    })
+}
+
+fn memo_key_component_expr(name: &str, ty: &crate::types::Type) -> String {
+    if is_copy_type(ty) {
+        name.to_string()
+    } else {
+        format!("{}.clone()", name)
+    }
+}
+
+fn emit_sum_type(name: &str, variants: &[TypeVariant], public: bool, ctx: &CodegenContext) -> String {
     let mut out = String::new();
     let visibility = visibility_prefix(public);
-    writeln!(out, "#[derive(Clone, Debug, PartialEq)]").unwrap();
+    let derives = if type_can_derive_hash_eq(
+        &TypeDef::Sum {
+            name: name.to_string(),
+            variants: variants.to_vec(),
+            line: 0,
+        },
+        ctx,
+    ) {
+        "#[derive(Clone, Debug, PartialEq, Eq, Hash)]"
+    } else {
+        "#[derive(Clone, Debug, PartialEq)]"
+    };
+    writeln!(out, "{}", derives).unwrap();
     writeln!(out, "{}enum {} {{", visibility, name).unwrap();
     for v in variants {
         if v.fields.is_empty() {
@@ -97,10 +192,27 @@ fn emit_sum_type(name: &str, variants: &[TypeVariant], public: bool) -> String {
     out.trim_end().to_string()
 }
 
-fn emit_product_type(name: &str, fields: &[(String, String)], public: bool) -> String {
+fn emit_product_type(
+    name: &str,
+    fields: &[(String, String)],
+    public: bool,
+    ctx: &CodegenContext,
+) -> String {
     let mut out = String::new();
     let visibility = visibility_prefix(public);
-    writeln!(out, "#[derive(Clone, Debug, PartialEq)]").unwrap();
+    let derives = if type_can_derive_hash_eq(
+        &TypeDef::Product {
+            name: name.to_string(),
+            fields: fields.to_vec(),
+            line: 0,
+        },
+        ctx,
+    ) {
+        "#[derive(Clone, Debug, PartialEq, Eq, Hash)]"
+    } else {
+        "#[derive(Clone, Debug, PartialEq)]"
+    };
+    writeln!(out, "{}", derives).unwrap();
     writeln!(out, "{}struct {} {{", visibility, name).unwrap();
     for (field_name, field_type) in fields {
         writeln!(
@@ -203,8 +315,9 @@ fn emit_fn_def_with_visibility(
     let visibility = visibility_prefix(public);
 
     let ectx = build_fn_ectx(fd, ctx);
+    let use_memo = is_memo && fn_supports_rust_memo(fd, ctx);
 
-    if is_memo {
+    if use_memo {
         lines.push(emit_memo_fn(
             fd, &fn_name, &params, &ret_type, ctx, &ectx, visibility,
         ));
@@ -326,7 +439,7 @@ fn emit_tco_fn(
     lines.push("    loop {".to_string());
 
     // Emit body with TailCall → { reassign; continue }
-    let body_code = emit_tco_body(&fd.body, &fd.params, ctx, ectx);
+    let body_code = emit_tco_body(&fd.body, &fd.name, &fd.params, ctx, ectx);
     lines.push(body_code);
 
     lines.push("    }".to_string());
@@ -336,6 +449,7 @@ fn emit_tco_fn(
 
 fn emit_tco_body(
     body: &FnBody,
+    self_name: &str,
     params: &[(String, String)],
     ctx: &CodegenContext,
     ectx: &EmitCtx,
@@ -358,7 +472,7 @@ fn emit_tco_body(
                 if is_last {
                     lines.push(format!(
                         "        return {};",
-                        emit_tco_expr(expr, params, ctx, sctx)
+                        emit_tco_expr(expr, self_name, params, ctx, sctx)
                     ));
                 } else {
                     lines.push(format!("        {};", emit_expr(expr, ctx, sctx)));
@@ -371,6 +485,7 @@ fn emit_tco_body(
 
 fn emit_tco_expr(
     expr: &Expr,
+    self_name: &str,
     params: &[(String, String)],
     ctx: &CodegenContext,
     ectx: &EmitCtx,
@@ -378,17 +493,8 @@ fn emit_tco_expr(
     match expr {
         Expr::TailCall(boxed) => {
             let (target, args) = boxed.as_ref();
-
-            // Mutual TCO (args count != params count) — emit as regular call
-            if args.len() != params.len() {
-                let func = aver_name_to_rust(target);
-                let arg_ctxs = compute_args_used_after(args, &ectx.used_after, &ectx.local_types);
-                let cloned: Vec<String> = args
-                    .iter()
-                    .zip(arg_ctxs.iter())
-                    .map(|(a, ac)| clone_arg(a, ctx, ac))
-                    .collect();
-                return format!("return {}({})", func, cloned.join(", "));
+            if target != self_name || args.len() != params.len() {
+                return emit_expr(expr, ctx, ectx);
             }
 
             // Self TCO — create temp vars, then reassign
@@ -434,7 +540,7 @@ fn emit_tco_expr(
             let needs_as_str = super::expr::has_string_literal_patterns(arms);
             if super::expr::has_list_patterns(arms) {
                 return super::expr::emit_list_match(subj, arms, ctx, |arm| {
-                    emit_tco_expr(&arm.body, params, ctx, ectx)
+                    emit_tco_expr(&arm.body, self_name, params, ctx, ectx)
                 });
             }
 
@@ -447,7 +553,7 @@ fn emit_tco_expr(
             let mut arm_strs = Vec::new();
             for arm in arms {
                 let pat = super::pattern::emit_pattern(&arm.pattern, needs_as_str, ctx);
-                let body = emit_tco_expr(&arm.body, params, ctx, ectx);
+                let body = emit_tco_expr(&arm.body, self_name, params, ctx, ectx);
                 let mut rebinding_lines: Vec<String> = Vec::new();
                 if let Pattern::Cons(head, tail) = &arm.pattern {
                     if head != "_" {
@@ -506,6 +612,11 @@ fn emit_memo_fn(
         .iter()
         .map(|(_, ty)| type_annotation_to_rust(ty))
         .collect();
+    let param_key_types: Vec<crate::types::Type> = fd
+        .params
+        .iter()
+        .map(|(_, ty)| crate::types::parse_type_str(ty))
+        .collect();
 
     let key_type = if param_types.len() == 1 {
         param_types[0].clone()
@@ -520,9 +631,14 @@ fn emit_memo_fn(
         .collect();
 
     let key_expr = if param_names.len() == 1 {
-        param_names[0].clone()
+        memo_key_component_expr(&param_names[0], &param_key_types[0])
     } else {
-        format!("({},)", param_names.join(", "))
+        let parts: Vec<String> = param_names
+            .iter()
+            .zip(param_key_types.iter())
+            .map(|(name, ty)| memo_key_component_expr(name, ty))
+            .collect();
+        format!("({},)", parts.join(", "))
     };
 
     let params = emit_fn_params(&fd.params, false);
@@ -546,8 +662,13 @@ fn emit_memo_fn(
     writeln!(out, "    {}.with(|cache| {{", cache_name).unwrap();
     writeln!(
         out,
-        "        if let Some(r) = cache.borrow().get(&{}).cloned() {{ return r; }}",
+        "        let __memo_key = {};",
         key_expr
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "        if let Some(r) = cache.borrow().get(&__memo_key).cloned() {{ return r; }}"
     )
     .unwrap();
 
@@ -560,8 +681,7 @@ fn emit_memo_fn(
     .unwrap();
     writeln!(
         out,
-        "        cache.borrow_mut().insert({}, __result.clone());",
-        key_expr
+        "        cache.borrow_mut().insert(__memo_key, __result.clone());"
     )
     .unwrap();
     writeln!(out, "        __result").unwrap();
@@ -705,8 +825,9 @@ pub fn emit_verify_blocks(verify_blocks: &[&VerifyBlock], ctx: &CodegenContext) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{BinOp, Expr, FnBody, FnDef};
+    use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, TypeDef, TypeVariant};
     use crate::codegen::CodegenContext;
+    use crate::types::Type;
     use std::collections::{HashMap, HashSet};
     use std::rc::Rc;
 
@@ -774,7 +895,7 @@ mod tests {
             ],
         )));
 
-        let code = emit_tco_expr(&expr, &fd.params, &ctx, &ectx);
+        let code = emit_tco_expr(&expr, &fd.name, &fd.params, &ctx, &ectx);
         assert!(code.contains("let __tmp0 = xs.clone();"));
         assert!(code.contains("let __tmp1 = (remaining - 1i64);"));
         assert!(code.contains("let __tmp2 = (sink + &sumList(xs, 0i64));"));
@@ -817,9 +938,122 @@ mod tests {
             ],
         )));
 
-        let code = emit_tco_expr(&expr, &fd.params, &ctx, &ectx);
+        let code = emit_tco_expr(&expr, &fd.name, &fd.params, &ctx, &ectx);
         assert!(code.contains("let __tmp0 = a.clone();"));
         assert!(code.contains("let __tmp1 = b.clone();"));
         assert!(code.contains("let __tmp3 = (sink + &(appendLists(a, b).len() as i64));"));
+    }
+
+    #[test]
+    fn self_tco_does_not_rewrite_same_arity_mutual_tailcall() {
+        let ctx = empty_ctx();
+        let fd = list_param_fn("validSymbolNames", vec![("e", "Sexpr")]);
+        let ectx = build_fn_ectx(&fd, &ctx);
+        let expr = Expr::TailCall(Box::new((
+            "validSymbolList".to_string(),
+            vec![Expr::Ident("e".to_string())],
+        )));
+
+        let code = emit_tco_expr(&expr, &fd.name, &fd.params, &ctx, &ectx);
+        assert_eq!(code, "validSymbolList(e)");
+        assert!(!code.contains("continue"));
+    }
+
+    #[test]
+    fn recursive_sum_type_used_by_memo_can_derive_eq_hash() {
+        let td = TypeDef::Sum {
+            name: "Tree".to_string(),
+            variants: vec![
+                TypeVariant {
+                    name: "Empty".to_string(),
+                    fields: vec![],
+                },
+                TypeVariant {
+                    name: "Node".to_string(),
+                    fields: vec!["Tree".to_string(), "Int".to_string(), "Tree".to_string()],
+                },
+            ],
+            line: 1,
+        };
+        let mut ctx = empty_ctx();
+        ctx.type_defs.push(td.clone());
+
+        let emitted = emit_public_type_def(&td, &ctx);
+        assert!(emitted.contains("#[derive(Clone, Debug, PartialEq, Eq, Hash)]"));
+    }
+
+    #[test]
+    fn float_param_fn_does_not_use_rust_memo_cache() {
+        let fd = FnDef {
+            name: "f".to_string(),
+            line: 1,
+            params: vec![("x".to_string(), "Float".to_string())],
+            return_type: "Float".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(Expr::Ident("x".to_string()))),
+            resolution: None,
+        };
+        let mut ctx = empty_ctx();
+        ctx.fn_sigs.insert(
+            "f".to_string(),
+            (vec![Type::Float], Type::Float, vec![]),
+        );
+
+        let emitted = emit_public_fn_def(&fd, true, &ctx);
+        assert!(!emitted.contains("thread_local!"));
+    }
+
+    #[test]
+    fn memoized_named_param_clones_cache_key_before_body() {
+        let td = TypeDef::Sum {
+            name: "Tree".to_string(),
+            variants: vec![
+                TypeVariant {
+                    name: "Empty".to_string(),
+                    fields: vec![],
+                },
+                TypeVariant {
+                    name: "Node".to_string(),
+                    fields: vec!["Tree".to_string(), "Int".to_string(), "Tree".to_string()],
+                },
+            ],
+            line: 1,
+        };
+        let fd = FnDef {
+            name: "member".to_string(),
+            line: 1,
+            params: vec![("t".to_string(), "Tree".to_string())],
+            return_type: "Bool".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(Expr::Match {
+                subject: Box::new(Expr::Ident("t".to_string())),
+                arms: vec![
+                    MatchArm {
+                        pattern: Pattern::Constructor("Tree.Empty".to_string(), vec![]),
+                        body: Box::new(Expr::Literal(Literal::Bool(false))),
+                    },
+                    MatchArm {
+                        pattern: Pattern::Wildcard,
+                        body: Box::new(Expr::Literal(Literal::Bool(true))),
+                    },
+                ],
+                line: 1,
+            })),
+            resolution: None,
+        };
+
+        let mut ctx = empty_ctx();
+        ctx.type_defs.push(td);
+        ctx.fn_sigs.insert(
+            "member".to_string(),
+            (vec![Type::Named("Tree".to_string())], Type::Bool, vec![]),
+        );
+
+        let emitted = emit_public_fn_def(&fd, true, &ctx);
+        assert!(emitted.contains("let __memo_key = t.clone();"));
+        assert!(emitted.contains("get(&__memo_key)"));
+        assert!(emitted.contains("insert(__memo_key, __result.clone())"));
     }
 }
