@@ -81,14 +81,7 @@ enum EvalCont {
         map: HashMap<Value, Value>,
         key: Value,
     },
-    RecordCreate {
-        lowered: Rc<LoweredFunctionBody>,
-        type_name: String,
-        fields: SharedRecordFields,
-        idx: usize,
-        seen: HashSet<String>,
-        values: Vec<(String, Value)>,
-    },
+    RecordCreate(RecordCreateProgress),
     RecordUpdateBase {
         lowered: Rc<LoweredFunctionBody>,
         type_name: String,
@@ -129,6 +122,16 @@ struct FunctionFrame {
     saved_frames: Vec<EnvFrame>,
     prev_global: Option<EnvFrame>,
     memo_key: Option<(u64, Vec<Value>)>,
+}
+
+#[derive(Debug, Clone)]
+struct RecordCreateProgress {
+    lowered: Rc<LoweredFunctionBody>,
+    type_name: String,
+    fields: SharedRecordFields,
+    idx: usize,
+    seen: HashSet<String>,
+    values: Vec<(String, Value)>,
 }
 
 #[derive(Debug, Clone)]
@@ -310,12 +313,14 @@ impl Interpreter {
                 self.resume_map(lowered, entries, 0, HashMap::new(), conts)
             }
             LoweredExpr::RecordCreate { type_name, fields } => self.resume_record_create(
-                lowered,
-                type_name,
-                fields,
-                0,
-                HashSet::new(),
-                Vec::new(),
+                RecordCreateProgress {
+                    lowered,
+                    type_name,
+                    fields,
+                    idx: 0,
+                    seen: HashSet::new(),
+                    values: Vec::new(),
+                },
                 conts,
             ),
             LoweredExpr::RecordUpdate {
@@ -576,32 +581,18 @@ impl Interpreter {
                 }
                 Err(err) => EvalState::Apply(Err(err)),
             },
-            EvalCont::RecordCreate {
-                lowered,
-                type_name,
-                fields,
-                idx,
-                mut seen,
-                mut values,
-            } => match result {
+            EvalCont::RecordCreate(mut progress) => match result {
                 Ok(value) => {
-                    let field_name = fields[idx].0.clone();
-                    if !seen.insert(field_name.clone()) {
+                    let field_name = progress.fields[progress.idx].0.clone();
+                    if !progress.seen.insert(field_name.clone()) {
                         return EvalState::Apply(Err(RuntimeError::Error(format!(
                             "Record '{}' field '{}' provided more than once",
-                            type_name, field_name
+                            progress.type_name, field_name
                         ))));
                     }
-                    values.push((field_name, value));
-                    self.resume_record_create(
-                        lowered,
-                        type_name,
-                        fields,
-                        idx + 1,
-                        seen,
-                        values,
-                        conts,
-                    )
+                    progress.values.push((field_name, value));
+                    progress.idx += 1;
+                    self.resume_record_create(progress, conts)
                 }
                 Err(err) => EvalState::Apply(Err(err)),
             },
@@ -1059,29 +1050,21 @@ impl Interpreter {
 
     fn resume_record_create(
         &mut self,
-        lowered: Rc<LoweredFunctionBody>,
-        type_name: String,
-        fields: SharedRecordFields,
-        idx: usize,
-        seen: HashSet<String>,
-        values: Vec<(String, Value)>,
+        progress: RecordCreateProgress,
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
-        if idx >= fields.len() {
-            return EvalState::Apply(self.build_record_create_value(&type_name, values));
+        if progress.idx >= progress.fields.len() {
+            return EvalState::Apply(
+                self.build_record_create_value(&progress.type_name, progress.values),
+            );
         }
 
-        conts.push(EvalCont::RecordCreate {
-            lowered: Rc::clone(&lowered),
-            type_name,
-            fields: Rc::clone(&fields),
-            idx,
-            seen,
-            values,
-        });
+        let lowered = Rc::clone(&progress.lowered);
+        let expr = progress.fields[progress.idx].1;
+        conts.push(EvalCont::RecordCreate(progress));
         EvalState::Expr {
             lowered,
-            expr: fields[idx].1,
+            expr,
         }
     }
 
