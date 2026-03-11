@@ -251,6 +251,7 @@ mod core;
 mod effects;
 mod eval;
 mod exec;
+pub(crate) mod lowered;
 mod ops;
 mod patterns;
 

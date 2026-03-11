@@ -71,6 +71,7 @@ impl Interpreter {
             return_type: Rc::new(fd.return_type.clone()),
             effects: Rc::new(fd.effects.clone()),
             body: Rc::clone(&fd.body),
+            lowered_body: super::lowered::lower_fn_body(fd.body.as_ref()),
             resolution: fd.resolution.clone(),
             memo_eligible: self.memo_fns.contains(&fd.name),
             home_globals: None,

@@ -1,15 +1,22 @@
+use super::lowered::{
+    self, ExprId, LoweredExpr, LoweredFunctionBody, LoweredMatchArm, LoweredStmt, LoweredStrPart,
+};
 use super::*;
 
-type SharedExprs = Rc<[Expr]>;
-type SharedStrParts = Rc<[StrPart]>;
-type SharedMapEntries = Rc<[(Expr, Expr)]>;
-type SharedRecordFields = Rc<[(String, Expr)]>;
+type SharedExprs = Rc<[ExprId]>;
+type SharedStrParts = Rc<[LoweredStrPart]>;
+type SharedMapEntries = Rc<[(ExprId, ExprId)]>;
+type SharedRecordFields = Rc<[(String, ExprId)]>;
+type SharedMatchArms = Rc<[LoweredMatchArm]>;
 
 #[derive(Debug)]
 enum EvalState {
-    Expr(Expr),
+    Expr {
+        lowered: Rc<LoweredFunctionBody>,
+        expr: ExprId,
+    },
     Body {
-        body: Rc<FnBody>,
+        lowered: Rc<LoweredFunctionBody>,
         idx: usize,
         local_slots: Option<Rc<HashMap<String, u16>>>,
         last: Value,
@@ -21,52 +28,61 @@ enum EvalState {
 enum EvalCont {
     Attr(String),
     Call {
+        lowered: Rc<LoweredFunctionBody>,
         args: SharedExprs,
         idx: usize,
         fn_val: Option<Value>,
         arg_vals: Vec<Value>,
     },
     BinOpLeft {
+        lowered: Rc<LoweredFunctionBody>,
         op: BinOp,
-        right: Expr,
+        right: ExprId,
     },
     BinOpRight {
         op: BinOp,
         left: Value,
     },
     Match {
-        arms: Vec<MatchArm>,
+        lowered: Rc<LoweredFunctionBody>,
+        arms: SharedMatchArms,
         line: usize,
     },
     Constructor(String),
     ErrorProp,
     InterpolatedStr {
+        lowered: Rc<LoweredFunctionBody>,
         parts: SharedStrParts,
         idx: usize,
         result: String,
     },
     List {
+        lowered: Rc<LoweredFunctionBody>,
         items: SharedExprs,
         idx: usize,
         values: Vec<Value>,
     },
     Tuple {
+        lowered: Rc<LoweredFunctionBody>,
         items: SharedExprs,
         idx: usize,
         values: Vec<Value>,
     },
     MapKey {
+        lowered: Rc<LoweredFunctionBody>,
         entries: SharedMapEntries,
         idx: usize,
         map: HashMap<Value, Value>,
     },
     MapValue {
+        lowered: Rc<LoweredFunctionBody>,
         entries: SharedMapEntries,
         idx: usize,
         map: HashMap<Value, Value>,
         key: Value,
     },
     RecordCreate {
+        lowered: Rc<LoweredFunctionBody>,
         type_name: String,
         fields: SharedRecordFields,
         idx: usize,
@@ -74,11 +90,13 @@ enum EvalCont {
         values: Vec<(String, Value)>,
     },
     RecordUpdateBase {
+        lowered: Rc<LoweredFunctionBody>,
         type_name: String,
         updates: SharedRecordFields,
     },
     RecordUpdateField(RecordUpdateProgress),
     TailCallArgs {
+        lowered: Rc<LoweredFunctionBody>,
         target: String,
         args: SharedExprs,
         idx: usize,
@@ -87,12 +105,12 @@ enum EvalCont {
     BodyBinding {
         name: String,
         next_idx: usize,
-        body: Rc<FnBody>,
+        lowered: Rc<LoweredFunctionBody>,
         local_slots: Option<Rc<HashMap<String, u16>>>,
     },
     BodyExpr {
         next_idx: usize,
-        body: Rc<FnBody>,
+        lowered: Rc<LoweredFunctionBody>,
         local_slots: Option<Rc<HashMap<String, u16>>>,
     },
     MatchScope,
@@ -115,6 +133,7 @@ struct FunctionFrame {
 
 #[derive(Debug, Clone)]
 struct RecordUpdateProgress {
+    lowered: Rc<LoweredFunctionBody>,
     type_name: String,
     base_type: String,
     base_fields: Vec<(String, Value)>,
@@ -137,7 +156,14 @@ impl Interpreter {
     }
 
     pub fn eval_expr(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
-        self.eval_loop(EvalState::Expr(expr.clone()), Vec::new())
+        let (lowered, root) = lowered::lower_expr_root(expr);
+        self.eval_loop(
+            EvalState::Expr {
+                lowered,
+                expr: root,
+            },
+            Vec::new(),
+        )
     }
 
     fn eval_loop(
@@ -149,13 +175,13 @@ impl Interpreter {
 
         loop {
             state = match state {
-                EvalState::Expr(expr) => self.step_expr(expr, &mut conts),
+                EvalState::Expr { lowered, expr } => self.step_expr(lowered, expr, &mut conts),
                 EvalState::Body {
-                    body,
+                    lowered,
                     idx,
                     local_slots,
                     last,
-                } => self.step_body(body, idx, local_slots, last, &mut conts),
+                } => self.step_body(lowered, idx, local_slots, last, &mut conts),
                 EvalState::Apply(result) => {
                     let Some(cont) = conts.pop() else {
                         return result;
@@ -166,13 +192,18 @@ impl Interpreter {
         }
     }
 
-    fn step_expr(&mut self, expr: Expr, conts: &mut Vec<EvalCont>) -> EvalState {
-        match expr {
-            Expr::Literal(lit) => EvalState::Apply(Ok(self.eval_literal(&lit))),
-            Expr::Resolved(slot) => EvalState::Apply(self.lookup_slot(slot)),
-            Expr::Ident(name) => EvalState::Apply(self.lookup(&name)),
-            Expr::Attr(obj, field) => {
-                if let Expr::Ident(name) = obj.as_ref() {
+    fn step_expr(
+        &mut self,
+        lowered: Rc<LoweredFunctionBody>,
+        expr_id: ExprId,
+        conts: &mut Vec<EvalCont>,
+    ) -> EvalState {
+        match lowered.expr(expr_id).clone() {
+            LoweredExpr::Literal(lit) => EvalState::Apply(Ok(self.eval_literal(&lit))),
+            LoweredExpr::Resolved(slot) => EvalState::Apply(self.lookup_slot(slot)),
+            LoweredExpr::Ident(name) => EvalState::Apply(self.lookup(&name)),
+            LoweredExpr::Attr { obj, field } => {
+                if let LoweredExpr::Ident(name) = lowered.expr(obj) {
                     let value = match self.lookup_ref(name) {
                         Ok(value) => value,
                         Err(err) => return EvalState::Apply(Err(err)),
@@ -199,33 +230,54 @@ impl Interpreter {
                 }
 
                 conts.push(EvalCont::Attr(field));
-                EvalState::Expr(*obj)
+                EvalState::Expr { lowered, expr: obj }
             }
-            Expr::FnCall(fn_expr, args) => {
+            LoweredExpr::FnCall { fn_expr, args } => {
                 conts.push(EvalCont::Call {
-                    args: args.into(),
+                    lowered: Rc::clone(&lowered),
+                    args,
                     idx: 0,
                     fn_val: None,
                     arg_vals: Vec::new(),
                 });
-                EvalState::Expr(*fn_expr)
+                EvalState::Expr {
+                    lowered,
+                    expr: fn_expr,
+                }
             }
-            Expr::BinOp(op, left, right) => {
-                conts.push(EvalCont::BinOpLeft { op, right: *right });
-                EvalState::Expr(*left)
+            LoweredExpr::BinOp { op, left, right } => {
+                conts.push(EvalCont::BinOpLeft {
+                    lowered: Rc::clone(&lowered),
+                    op,
+                    right,
+                });
+                EvalState::Expr {
+                    lowered,
+                    expr: left,
+                }
             }
-            Expr::Match {
+            LoweredExpr::Match {
                 subject,
                 arms,
                 line,
             } => {
-                conts.push(EvalCont::Match { arms, line });
-                EvalState::Expr(*subject)
+                conts.push(EvalCont::Match {
+                    lowered: Rc::clone(&lowered),
+                    arms,
+                    line,
+                });
+                EvalState::Expr {
+                    lowered,
+                    expr: subject,
+                }
             }
-            Expr::Constructor(name, arg) => match arg {
+            LoweredExpr::Constructor { name, arg } => match arg {
                 Some(inner) => {
                     conts.push(EvalCont::Constructor(name));
-                    EvalState::Expr(*inner)
+                    EvalState::Expr {
+                        lowered,
+                        expr: inner,
+                    }
                 }
                 None => EvalState::Apply(match name.as_str() {
                     "None" => Ok(Value::None),
@@ -239,79 +291,83 @@ impl Interpreter {
                     ))),
                 }),
             },
-            Expr::ErrorProp(inner) => {
+            LoweredExpr::ErrorProp { inner } => {
                 conts.push(EvalCont::ErrorProp);
-                EvalState::Expr(*inner)
+                EvalState::Expr {
+                    lowered,
+                    expr: inner,
+                }
             }
-            Expr::InterpolatedStr(parts) => {
-                self.resume_interpolated_str(parts.into(), 0, String::new(), conts)
+            LoweredExpr::InterpolatedStr(parts) => {
+                self.resume_interpolated_str(lowered, parts, 0, String::new(), conts)
             }
-            Expr::List(items) => self.resume_list(items.into(), 0, Vec::new(), conts),
-            Expr::Tuple(items) => {
+            LoweredExpr::List(items) => self.resume_list(lowered, items, 0, Vec::new(), conts),
+            LoweredExpr::Tuple(items) => {
                 let cap = items.len();
-                self.resume_tuple(items.into(), 0, Vec::with_capacity(cap), conts)
+                self.resume_tuple(lowered, items, 0, Vec::with_capacity(cap), conts)
             }
-            Expr::MapLiteral(entries) => {
-                self.resume_map(entries.into(), 0, HashMap::new(), conts)
+            LoweredExpr::MapLiteral(entries) => {
+                self.resume_map(lowered, entries, 0, HashMap::new(), conts)
             }
-            Expr::RecordCreate { type_name, fields } => {
-                self.resume_record_create(
-                    type_name,
-                    fields.into(),
-                    0,
-                    HashSet::new(),
-                    Vec::new(),
-                    conts,
-                )
-            }
-            Expr::RecordUpdate {
+            LoweredExpr::RecordCreate { type_name, fields } => self.resume_record_create(
+                lowered,
+                type_name,
+                fields,
+                0,
+                HashSet::new(),
+                Vec::new(),
+                conts,
+            ),
+            LoweredExpr::RecordUpdate {
                 type_name,
                 base,
                 updates,
             } => {
                 conts.push(EvalCont::RecordUpdateBase {
+                    lowered: Rc::clone(&lowered),
                     type_name,
-                    updates: updates.into(),
+                    updates,
                 });
-                EvalState::Expr(*base)
+                EvalState::Expr {
+                    lowered,
+                    expr: base,
+                }
             }
-            Expr::TailCall(boxed) => {
-                let (target, args) = *boxed;
-                self.resume_tail_call(target, args.into(), 0, Vec::new(), conts)
+            LoweredExpr::TailCall { target, args } => {
+                self.resume_tail_call(lowered, target, args, 0, Vec::new(), conts)
             }
         }
     }
 
     fn step_body(
         &mut self,
-        body: Rc<FnBody>,
+        lowered: Rc<LoweredFunctionBody>,
         idx: usize,
         local_slots: Option<Rc<HashMap<String, u16>>>,
         last: Value,
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
-        let stmts = body.stmts();
-        if idx >= stmts.len() {
+        let Some(stmt) = lowered.stmt(idx).cloned() else {
             return EvalState::Apply(Ok(last));
-        }
+        };
 
-        match &stmts[idx] {
-            Stmt::Binding(name, _, expr) => {
+        match stmt {
+            LoweredStmt::Binding(name, expr) => {
                 conts.push(EvalCont::BodyBinding {
                     name: name.clone(),
                     next_idx: idx + 1,
-                    body: Rc::clone(&body),
+                    lowered: Rc::clone(&lowered),
                     local_slots,
                 });
-                EvalState::Expr(expr.clone())
+                EvalState::Expr { lowered, expr }
             }
-            Stmt::Expr(expr) => {
+            LoweredStmt::Expr(expr) => {
                 conts.push(EvalCont::BodyExpr {
                     next_idx: idx + 1,
-                    body: Rc::clone(&body),
+                    lowered: Rc::clone(&lowered),
                     local_slots,
                 });
-                EvalState::Expr(expr.clone())
+                EvalState::Expr { lowered, expr }
             }
         }
     }
@@ -345,6 +401,7 @@ impl Interpreter {
                 Err(err) => EvalState::Apply(Err(err)),
             },
             EvalCont::Call {
+                lowered,
                 args,
                 mut idx,
                 mut fn_val,
@@ -361,24 +418,32 @@ impl Interpreter {
                             );
                         }
                         conts.push(EvalCont::Call {
+                            lowered: Rc::clone(&lowered),
                             args: Rc::clone(&args),
                             idx,
                             fn_val,
                             arg_vals,
                         });
-                        return EvalState::Expr(args[idx].clone());
+                        return EvalState::Expr {
+                            lowered,
+                            expr: args[idx],
+                        };
                     }
 
                     arg_vals.push(value);
                     idx += 1;
                     if idx < args.len() {
                         conts.push(EvalCont::Call {
+                            lowered: Rc::clone(&lowered),
                             args: Rc::clone(&args),
                             idx,
                             fn_val,
                             arg_vals,
                         });
-                        EvalState::Expr(args[idx].clone())
+                        EvalState::Expr {
+                            lowered,
+                            expr: args[idx],
+                        }
                     } else {
                         self.dispatch_call(
                             fn_val.expect("function value present when args are done"),
@@ -389,10 +454,13 @@ impl Interpreter {
                 }
                 Err(err) => EvalState::Apply(Err(err)),
             },
-            EvalCont::BinOpLeft { op, right } => match result {
+            EvalCont::BinOpLeft { lowered, op, right } => match result {
                 Ok(left) => {
                     conts.push(EvalCont::BinOpRight { op, left });
-                    EvalState::Expr(right)
+                    EvalState::Expr {
+                        lowered,
+                        expr: right,
+                    }
                 }
                 Err(err) => EvalState::Apply(Err(err)),
             },
@@ -400,8 +468,12 @@ impl Interpreter {
                 Ok(right) => EvalState::Apply(self.eval_binop(&op, left, right)),
                 Err(err) => EvalState::Apply(Err(err)),
             },
-            EvalCont::Match { arms, line } => match result {
-                Ok(subject) => self.dispatch_match(subject, arms, line, conts),
+            EvalCont::Match {
+                lowered,
+                arms,
+                line,
+            } => match result {
+                Ok(subject) => self.dispatch_match(lowered, subject, arms, line, conts),
                 Err(err) => EvalState::Apply(Err(err)),
             },
             EvalCont::Constructor(name) => match result {
@@ -430,39 +502,47 @@ impl Interpreter {
                 Err(err) => EvalState::Apply(Err(err)),
             },
             EvalCont::InterpolatedStr {
+                lowered,
                 parts,
                 idx,
                 result: mut text,
             } => match result {
                 Ok(value) => {
                     text.push_str(&aver_repr(&value));
-                    self.resume_interpolated_str(parts, idx, text, conts)
+                    self.resume_interpolated_str(lowered, parts, idx, text, conts)
                 }
                 Err(err) => EvalState::Apply(Err(err)),
             },
             EvalCont::List {
+                lowered,
                 items,
                 idx,
                 mut values,
             } => match result {
                 Ok(value) => {
                     values.push(value);
-                    self.resume_list(items, idx, values, conts)
+                    self.resume_list(lowered, items, idx, values, conts)
                 }
                 Err(err) => EvalState::Apply(Err(err)),
             },
             EvalCont::Tuple {
+                lowered,
                 items,
                 idx,
                 mut values,
             } => match result {
                 Ok(value) => {
                     values.push(value);
-                    self.resume_tuple(items, idx, values, conts)
+                    self.resume_tuple(lowered, items, idx, values, conts)
                 }
                 Err(err) => EvalState::Apply(Err(err)),
             },
-            EvalCont::MapKey { entries, idx, map } => match result {
+            EvalCont::MapKey {
+                lowered,
+                entries,
+                idx,
+                map,
+            } => match result {
                 Ok(key) => {
                     if !Self::is_hashable_map_key(&key) {
                         return EvalState::Apply(Err(RuntimeError::Error(
@@ -470,16 +550,21 @@ impl Interpreter {
                         )));
                     }
                     conts.push(EvalCont::MapValue {
+                        lowered: Rc::clone(&lowered),
                         entries: Rc::clone(&entries),
                         idx,
                         map,
                         key,
                     });
-                    EvalState::Expr(entries[idx].1.clone())
+                    EvalState::Expr {
+                        lowered,
+                        expr: entries[idx].1,
+                    }
                 }
                 Err(err) => EvalState::Apply(Err(err)),
             },
             EvalCont::MapValue {
+                lowered,
                 entries,
                 idx,
                 mut map,
@@ -487,11 +572,12 @@ impl Interpreter {
             } => match result {
                 Ok(value) => {
                     map.insert(key, value);
-                    self.resume_map(entries, idx + 1, map, conts)
+                    self.resume_map(lowered, entries, idx + 1, map, conts)
                 }
                 Err(err) => EvalState::Apply(Err(err)),
             },
             EvalCont::RecordCreate {
+                lowered,
                 type_name,
                 fields,
                 idx,
@@ -507,11 +593,23 @@ impl Interpreter {
                         ))));
                     }
                     values.push((field_name, value));
-                    self.resume_record_create(type_name, fields, idx + 1, seen, values, conts)
+                    self.resume_record_create(
+                        lowered,
+                        type_name,
+                        fields,
+                        idx + 1,
+                        seen,
+                        values,
+                        conts,
+                    )
                 }
                 Err(err) => EvalState::Apply(Err(err)),
             },
-            EvalCont::RecordUpdateBase { type_name, updates } => match result {
+            EvalCont::RecordUpdateBase {
+                lowered,
+                type_name,
+                updates,
+            } => match result {
                 Ok(base_val) => match base_val {
                     Value::Record {
                         type_name: base_type,
@@ -525,6 +623,7 @@ impl Interpreter {
                         }
                         self.resume_record_update(
                             RecordUpdateProgress {
+                                lowered,
                                 type_name,
                                 base_type,
                                 base_fields: fields.iter().cloned().collect(),
@@ -553,6 +652,7 @@ impl Interpreter {
                 Err(err) => EvalState::Apply(Err(err)),
             },
             EvalCont::TailCallArgs {
+                lowered,
                 target,
                 args,
                 idx,
@@ -560,14 +660,14 @@ impl Interpreter {
             } => match result {
                 Ok(value) => {
                     values.push(value);
-                    self.resume_tail_call(target, args, idx + 1, values, conts)
+                    self.resume_tail_call(lowered, target, args, idx + 1, values, conts)
                 }
                 Err(err) => EvalState::Apply(Err(err)),
             },
             EvalCont::BodyBinding {
                 name,
                 next_idx,
-                body,
+                lowered,
                 local_slots,
             } => match result {
                 Ok(value) => {
@@ -579,7 +679,7 @@ impl Interpreter {
                         self.define(name, value);
                     }
                     EvalState::Body {
-                        body,
+                        lowered,
                         idx: next_idx,
                         local_slots,
                         last: Value::Unit,
@@ -589,11 +689,11 @@ impl Interpreter {
             },
             EvalCont::BodyExpr {
                 next_idx,
-                body,
+                lowered,
                 local_slots,
             } => match result {
                 Ok(value) => EvalState::Body {
-                    body,
+                    lowered,
                     idx: next_idx,
                     local_slots,
                     last: value,
@@ -610,13 +710,14 @@ impl Interpreter {
 
     fn dispatch_match(
         &mut self,
+        lowered: Rc<LoweredFunctionBody>,
         subject: Value,
-        arms: Vec<MatchArm>,
+        arms: SharedMatchArms,
         line: usize,
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
         let arm_count = arms.len();
-        for (arm_idx, arm) in arms.into_iter().enumerate() {
+        for (arm_idx, arm) in arms.iter().enumerate() {
             if let Some(bindings) = self.match_pattern(&arm.pattern, &subject) {
                 self.note_verify_match_arm(line, arm_count, arm_idx);
                 if let Some(local_slots) = self.active_local_slots.clone() {
@@ -629,20 +730,27 @@ impl Interpreter {
                                 self.define_slot(slot, value);
                             }
                         }
-                        return EvalState::Expr(*arm.body);
+                        return EvalState::Expr {
+                            lowered,
+                            expr: arm.body,
+                        };
                     }
                 }
 
                 if bindings.is_empty() {
-                    return EvalState::Expr(*arm.body);
+                    return EvalState::Expr {
+                        lowered,
+                        expr: arm.body,
+                    };
                 }
 
-                let rc_scope = bindings
-                    .into_iter()
-                    .collect::<HashMap<_, _>>();
+                let rc_scope = bindings.into_iter().collect::<HashMap<_, _>>();
                 self.push_env(EnvFrame::Owned(rc_scope));
                 conts.push(EvalCont::MatchScope);
-                return EvalState::Expr(*arm.body);
+                return EvalState::Expr {
+                    lowered,
+                    expr: arm.body,
+                };
             }
         }
 
@@ -675,10 +783,7 @@ impl Interpreter {
     ) -> Result<CallDispatch, RuntimeError> {
         match fn_val {
             Value::Builtin(name) => {
-                self.ensure_effects_allowed(
-                    &name,
-                    Self::builtin_effects(&name).iter().copied(),
-                )?;
+                self.ensure_effects_allowed(&name, Self::builtin_effects(&name).iter().copied())?;
                 Ok(CallDispatch::Immediate(self.call_builtin(&name, &args)))
             }
             Value::Fn(function) => {
@@ -760,7 +865,7 @@ impl Interpreter {
             self.active_local_slots = Some(Rc::clone(&local_slots));
             self.push_env(EnvFrame::Slots(slots));
             EvalState::Body {
-                body: Rc::clone(&active.function.body),
+                lowered: Rc::clone(&active.function.lowered_body),
                 idx: 0,
                 local_slots: Some(local_slots),
                 last: Value::Unit,
@@ -772,7 +877,7 @@ impl Interpreter {
             }
             self.push_env(EnvFrame::Owned(params_scope));
             EvalState::Body {
-                body: Rc::clone(&active.function.body),
+                lowered: Rc::clone(&active.function.lowered_body),
                 idx: 0,
                 local_slots: None,
                 last: Value::Unit,
@@ -798,10 +903,10 @@ impl Interpreter {
                         Ok(value) => match value {
                             Value::Fn(function) => Rc::clone(function),
                             other => {
-                            return EvalState::Apply(Err(RuntimeError::Error(format!(
-                                "TCO target '{}' is not a function: {:?}",
-                                target, other
-                            ))));
+                                return EvalState::Apply(Err(RuntimeError::Error(format!(
+                                    "TCO target '{}' is not a function: {:?}",
+                                    target, other
+                                ))));
                             }
                         },
                         Err(err) => return EvalState::Apply(Err(err)),
@@ -854,6 +959,7 @@ impl Interpreter {
 
     fn resume_interpolated_str(
         &mut self,
+        lowered: Rc<LoweredFunctionBody>,
         parts: SharedStrParts,
         mut idx: usize,
         mut result: String,
@@ -861,17 +967,18 @@ impl Interpreter {
     ) -> EvalState {
         while idx < parts.len() {
             match parts[idx].clone() {
-                StrPart::Literal(text) => {
+                LoweredStrPart::Literal(text) => {
                     result.push_str(&text);
                     idx += 1;
                 }
-                StrPart::Parsed(expr) => {
+                LoweredStrPart::Parsed(expr) => {
                     conts.push(EvalCont::InterpolatedStr {
+                        lowered: Rc::clone(&lowered),
                         parts: Rc::clone(&parts),
                         idx: idx + 1,
                         result,
                     });
-                    return EvalState::Expr(*expr);
+                    return EvalState::Expr { lowered, expr };
                 }
             }
         }
@@ -880,6 +987,7 @@ impl Interpreter {
 
     fn resume_list(
         &mut self,
+        lowered: Rc<LoweredFunctionBody>,
         items: SharedExprs,
         idx: usize,
         values: Vec<Value>,
@@ -890,15 +998,20 @@ impl Interpreter {
         }
 
         conts.push(EvalCont::List {
+            lowered: Rc::clone(&lowered),
             items: Rc::clone(&items),
             idx: idx + 1,
             values,
         });
-        EvalState::Expr(items[idx].clone())
+        EvalState::Expr {
+            lowered,
+            expr: items[idx],
+        }
     }
 
     fn resume_tuple(
         &mut self,
+        lowered: Rc<LoweredFunctionBody>,
         items: SharedExprs,
         idx: usize,
         values: Vec<Value>,
@@ -909,15 +1022,20 @@ impl Interpreter {
         }
 
         conts.push(EvalCont::Tuple {
+            lowered: Rc::clone(&lowered),
             items: Rc::clone(&items),
             idx: idx + 1,
             values,
         });
-        EvalState::Expr(items[idx].clone())
+        EvalState::Expr {
+            lowered,
+            expr: items[idx],
+        }
     }
 
     fn resume_map(
         &mut self,
+        lowered: Rc<LoweredFunctionBody>,
         entries: SharedMapEntries,
         idx: usize,
         map: HashMap<Value, Value>,
@@ -928,15 +1046,20 @@ impl Interpreter {
         }
 
         conts.push(EvalCont::MapKey {
+            lowered: Rc::clone(&lowered),
             entries: Rc::clone(&entries),
             idx,
             map,
         });
-        EvalState::Expr(entries[idx].0.clone())
+        EvalState::Expr {
+            lowered,
+            expr: entries[idx].0,
+        }
     }
 
     fn resume_record_create(
         &mut self,
+        lowered: Rc<LoweredFunctionBody>,
         type_name: String,
         fields: SharedRecordFields,
         idx: usize,
@@ -949,13 +1072,17 @@ impl Interpreter {
         }
 
         conts.push(EvalCont::RecordCreate {
+            lowered: Rc::clone(&lowered),
             type_name,
             fields: Rc::clone(&fields),
             idx,
             seen,
             values,
         });
-        EvalState::Expr(fields[idx].1.clone())
+        EvalState::Expr {
+            lowered,
+            expr: fields[idx].1,
+        }
     }
 
     fn resume_record_update(
@@ -972,13 +1099,18 @@ impl Interpreter {
             ));
         }
 
-        let next_expr = progress.updates[progress.idx].1.clone();
+        let next_expr = progress.updates[progress.idx].1;
+        let lowered = Rc::clone(&progress.lowered);
         conts.push(EvalCont::RecordUpdateField(progress));
-        EvalState::Expr(next_expr)
+        EvalState::Expr {
+            lowered,
+            expr: next_expr,
+        }
     }
 
     fn resume_tail_call(
         &mut self,
+        lowered: Rc<LoweredFunctionBody>,
         target: String,
         args: SharedExprs,
         idx: usize,
@@ -990,12 +1122,16 @@ impl Interpreter {
         }
 
         conts.push(EvalCont::TailCallArgs {
+            lowered: Rc::clone(&lowered),
             target,
             args: Rc::clone(&args),
             idx,
             values,
         });
-        EvalState::Expr(args[idx].clone())
+        EvalState::Expr {
+            lowered,
+            expr: args[idx],
+        }
     }
 
     fn build_record_create_value(

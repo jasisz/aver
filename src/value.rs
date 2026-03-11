@@ -68,6 +68,7 @@ pub struct FunctionValue {
     pub return_type: Rc<String>,
     pub effects: Rc<Vec<String>>,
     pub body: Rc<FnBody>,
+    pub(crate) lowered_body: Rc<crate::interpreter::lowered::LoweredFunctionBody>,
     /// Compile-time resolution metadata (slot layout for locals).
     pub resolution: Option<crate::ast::FnResolution>,
     /// True only for functions selected by `compute_memo_fns` in the
