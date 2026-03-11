@@ -4,11 +4,19 @@ All notable changes to Aver are documented here.
 
 ## Unreleased
 
+## 0.5.2
+
 ### Added
 - `workflow_codegen_bench` for repeatable end-to-end comparisons between `aver run` and generated Rust on `projects/workflow_engine`
 
 ### Changed
 - interpreter function bodies now lower to shared `ExprId`-based runtime nodes, so the evaluation hot path no longer carries cloned AST fragments through continuations
+- `aver check` now tells users with non-tail-recursive functions to either rewrite them into tail recursion or make them a spec, and canonical spec functions no longer emit that warning
+- generated Rust now pins `aver-rt = "=0.2.1"` so current codegen matches the shared runtime features it emits
+
+### Fixed
+- Rust codegen regressions around nested builtin-argument liveness, same-arity mutual tail calls, and memoized recursive named types, restoring generated builds for examples such as `grok_s_language`, `red_black_tree`, and `mysql`
+
 
 ## 0.5.1
 

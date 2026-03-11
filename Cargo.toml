@@ -3,7 +3,7 @@ members = [".", "aver-lsp", "aver-rt"]
 
 [package]
 name = "aver-lang"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 default-run = "aver"
 description = "Interpreter and transpiler for Aver, a statically-typed language designed for AI-assisted development"
@@ -23,7 +23,7 @@ name = "aver"
 path = "src/main.rs"
 
 [dependencies]
-aver-rt = { path = "aver-rt", version = "=0.2.0", features = ["http"] }
+aver-rt = { path = "aver-rt", version = "=0.2.1", features = ["http"] }
 clap = { version = "4", features = ["derive"] }
 colored = "2"
 thiserror = "1"

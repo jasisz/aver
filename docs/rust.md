@@ -62,8 +62,8 @@ The generated Rust keeps:
 
 | Aver service | Rust crate |
 |-------------|------------|
-| no `Http` effects | `aver-rt = { version = "=0.2.0" }` |
-| `Http` effects present | `aver-rt = { version = "=0.2.0", features = ["http"] }` |
+| no `Http` effects | `aver-rt = { version = "=0.2.1" }` |
+| `Http` effects present | `aver-rt = { version = "=0.2.1", features = ["http"] }` |
 
 `ureq` is pulled transitively by `aver-rt/http`; generated projects do not declare it directly.
 

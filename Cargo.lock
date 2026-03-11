@@ -60,7 +60,7 @@ dependencies = [
 
 [[package]]
 name = "aver-lang"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "aver-rt",
  "clap",
@@ -82,7 +82,7 @@ dependencies = [
 
 [[package]]
 name = "aver-rt"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "ureq",
 ]
