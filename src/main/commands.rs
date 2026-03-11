@@ -19,7 +19,7 @@ use aver::interpreter::{Interpreter, RecordingConfig, Value, aver_repr};
 use aver::replay::{JsonValue, RecordedOutcome, value_to_json};
 use aver::resolver;
 use aver::source::{find_module_file, require_module_declaration};
-use aver::tail_check::collect_non_tail_recursion_warnings;
+use aver::tail_check::collect_non_tail_recursion_warnings_with_sigs;
 use aver::tco;
 use aver::types::checker::run_type_check_full;
 use aver::types::{Type, parse_type_str};
@@ -920,10 +920,11 @@ fn run_check_for_file(file: &str, module_root: &str, deps: bool) -> Result<bool,
         let line_count = source.lines().count();
         let mut transformed = items.clone();
         tco::transform_program(&mut transformed);
-        let non_tail_warnings = collect_non_tail_recursion_warnings(&transformed);
 
         // --- Type errors (hard errors) ---
         let tc_result = run_type_check_full(items, Some(module_root));
+        let non_tail_warnings =
+            collect_non_tail_recursion_warnings_with_sigs(&transformed, &tc_result.fn_sigs);
         let has_errors = !tc_result.errors.is_empty();
         for te in &tc_result.errors {
             println!("  {}", format!("error[{}]: {}", te.line, te.message).red());

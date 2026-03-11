@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::{Expr, FnBody, Stmt, StrPart, TopLevel};
 use crate::call_graph;
+use crate::verify_law::canonical_spec_ref;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NonTailRecursionWarning {
@@ -12,18 +13,36 @@ pub struct NonTailRecursionWarning {
 }
 
 pub fn collect_non_tail_recursion_warnings(items: &[TopLevel]) -> Vec<NonTailRecursionWarning> {
+    collect_non_tail_recursion_warnings_in(items, None)
+}
+
+pub fn collect_non_tail_recursion_warnings_with_sigs(
+    items: &[TopLevel],
+    fn_sigs: &crate::verify_law::FnSigMap,
+) -> Vec<NonTailRecursionWarning> {
+    collect_non_tail_recursion_warnings_in(items, Some(fn_sigs))
+}
+
+fn collect_non_tail_recursion_warnings_in(
+    items: &[TopLevel],
+    fn_sigs: Option<&crate::verify_law::FnSigMap>,
+) -> Vec<NonTailRecursionWarning> {
     let mut fn_to_scc: HashMap<String, HashSet<String>> = HashMap::new();
     for scc in call_graph::find_tco_groups(items) {
         for name in &scc {
             fn_to_scc.insert(name.clone(), scc.clone());
         }
     }
+    let spec_fns = collect_canonical_spec_functions(items, fn_sigs);
 
     let mut warnings = Vec::new();
     for item in items {
         let TopLevel::FnDef(fd) = item else {
             continue;
         };
+        if spec_fns.contains(&fd.name) {
+            continue;
+        }
         let Some(scc_members) = fn_to_scc.get(&fd.name) else {
             continue;
         };
@@ -36,12 +55,32 @@ pub fn collect_non_tail_recursion_warnings(items: &[TopLevel]) -> Vec<NonTailRec
             line: fd.line,
             recursive_calls,
             message: format!(
-                "non-tail recursion in '{}' — {} recursive callsite(s) remain after tail-call optimization; consider accumulator pattern",
+                "non-tail recursion in '{}' — {} recursive callsite(s) remain after tail-call optimization; rewrite it to tail recursion or make it a spec",
                 fd.name, recursive_calls
             ),
         });
     }
     warnings
+}
+
+fn collect_canonical_spec_functions(
+    items: &[TopLevel],
+    fn_sigs: Option<&crate::verify_law::FnSigMap>,
+) -> HashSet<String> {
+    let Some(fn_sigs) = fn_sigs else {
+        return HashSet::new();
+    };
+
+    items.iter()
+        .filter_map(|item| match item {
+            TopLevel::Verify(v) => match &v.kind {
+                crate::ast::VerifyKind::Law(law) => canonical_spec_ref(&v.fn_name, law, fn_sigs)
+                    .map(|spec_ref| spec_ref.spec_fn_name),
+                crate::ast::VerifyKind::Cases => None,
+            },
+            _ => None,
+        })
+        .collect()
 }
 
 fn count_non_tail_recursive_calls_body(body: &FnBody, recursive: &HashSet<String>) -> usize {
@@ -148,6 +187,7 @@ fn dotted_name(expr: &Expr) -> Option<String> {
 mod tests {
     use crate::ast::TopLevel;
     use crate::{parser::Parser, tco};
+    use crate::types::checker::run_type_check_full;
 
     use super::*;
 
@@ -174,6 +214,10 @@ fn fib(n: Int) -> Int
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].fn_name, "fib");
         assert_eq!(warnings[0].recursive_calls, 2);
+        assert_eq!(
+            warnings[0].message,
+            "non-tail recursion in 'fib' — 2 recursive callsite(s) remain after tail-call optimization; rewrite it to tail recursion or make it a spec"
+        );
     }
 
     #[test]
@@ -209,5 +253,29 @@ fn isOdd(n: Int) -> Bool
 
         let warnings = collect_non_tail_recursion_warnings(&items);
         assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn skips_canonical_spec_functions() {
+        let src = r#"
+fn fib(n: Int) -> Int
+    fibSpec(n)
+
+fn fibSpec(n: Int) -> Int
+    match n
+        0 -> 0
+        1 -> 1
+        _ -> fibSpec(n - 1) + fibSpec(n - 2)
+
+verify fib law fibSpec
+    given n: Int = [0, 1, 2, 3]
+    fib(n) => fibSpec(n)
+"#;
+        let mut items = parse(src);
+        tco::transform_program(&mut items);
+        let tc = run_type_check_full(&items, None);
+
+        let warnings = collect_non_tail_recursion_warnings_with_sigs(&items, &tc.fn_sigs);
+        assert!(warnings.is_empty(), "expected spec function warning to be suppressed, got {warnings:?}");
     }
 }
