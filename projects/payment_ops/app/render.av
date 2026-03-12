@@ -1,0 +1,254 @@
+module Render
+    intent =
+        "Shell-friendly rendering for payment_ops."
+        "Formatting stays simple so the interesting parts of the example remain replay,"
+        "reconciliation, and explicit review cases rather than presentation logic."
+    exposes [renderCommand, renderQuery]
+    depends [App.Commands, App.Queries, Domain.Types, Domain.Ledger, Domain.Views, Domain.Cases]
+
+fn renderCommand(result: Result<CommandReport, String>) -> Result<List<String>, String>
+    ? "Maps command execution into rendered output."
+    match result
+        Result.Ok(report) -> Result.Ok(renderCommandReport(report))
+        Result.Err(msg) -> Result.Err(msg)
+
+verify renderCommand
+    renderCommand(Result.Ok(sampleReport())) => Result.Ok(renderCommandReport(sampleReport()))
+    renderCommand(Result.Err("boom")) => Result.Err("boom")
+
+fn renderQuery(result: Result<QueryOutput, String>) -> Result<List<String>, String>
+    ? "Maps query execution into rendered output."
+    match result
+        Result.Ok(output) -> Result.Ok(renderQueryOutput(output))
+        Result.Err(msg) -> Result.Err(msg)
+
+verify renderQuery
+    renderQuery(Result.Ok(QueryOutput.CaseList([]))) => Result.Ok(["cases: 0"])
+    renderQuery(Result.Err("boom")) => Result.Err("boom")
+
+fn renderCommandReport(report: CommandReport) -> List<String>
+    ? "Renders one command report."
+    List.concat([
+        report.summary,
+        "subject: {report.subjectId}",
+        "events={Int.toString(List.len(report.addedEvents))} settlements={Int.toString(List.len(report.addedSettlements))} cases={Int.toString(List.len(report.addedCases))} audits={Int.toString(List.len(report.audits))}"
+    ], List.concat(renderCases(report.addedCases), renderAudits(report.audits)))
+
+verify renderCommandReport
+    List.get(renderCommandReport(sampleReport()), 0) => Option.Some("Imported 1 settlement rows for stripe")
+
+fn renderQueryOutput(output: QueryOutput) -> List<String>
+    ? "Renders one query result."
+    match output
+        QueryOutput.PaymentDetail(details) -> renderPaymentDetail(details)
+        QueryOutput.CaseList(cases) -> renderCases(cases)
+        QueryOutput.ProviderSummary(summary) -> renderProviderSummary(summary)
+        QueryOutput.AuditTrail(entries) -> renderAudits(entries)
+
+verify renderQueryOutput
+    renderQueryOutput(QueryOutput.CaseList([])) => ["cases: 0"]
+    renderQueryOutput(QueryOutput.PaymentDetail(sampleDetail())) => renderPaymentDetail(sampleDetail())
+    renderQueryOutput(QueryOutput.ProviderSummary(sampleSummary())) => renderProviderSummary(sampleSummary())
+    renderQueryOutput(QueryOutput.AuditTrail([sampleAudit()])) => renderAudits([sampleAudit()])
+
+fn renderPaymentDetail(details: PaymentDetail) -> List<String>
+    ? "Renders show_payment output."
+    List.concat([
+        "payment: {details.state.paymentId}",
+        "provider: {details.state.provider}",
+        "status: {Domain.Views.statusText(details.state)}",
+        "amounts: authorized={Int.toString(details.state.authorizedAmount)} captured={Int.toString(details.state.capturedAmount)} refunded={Int.toString(details.state.refundedAmount)} currency={details.state.currency}",
+        "latest: {details.state.latestAt}",
+        "anomalies: {Domain.Views.anomalySummary(details.state)}"
+    ], List.concat(renderEventHistory(details.events), List.concat(renderSettlements(details.settlements), renderCases(details.openCases))))
+
+verify renderPaymentDetail
+    List.contains(renderPaymentDetail(sampleDetail()), "status: review") => true
+
+fn renderEventHistory(events: List<PaymentEventRecord>) -> List<String>
+    ? "Renders payment event history."
+    List.prepend("events: {Int.toString(List.len(events))}", renderEventItems(events))
+
+verify renderEventHistory
+    renderEventHistory([sampleEvent()]) => ["events: 1", renderEventItem(sampleEvent())]
+
+fn renderEventItems(events: List<PaymentEventRecord>) -> List<String>
+    ? "Renders event lines."
+    List.reverse(renderEventItemsInto(events, []))
+
+verify renderEventItems
+    renderEventItems([sampleEvent()]) => [renderEventItem(sampleEvent())]
+
+fn renderEventItemsInto(events: List<PaymentEventRecord>, acc: List<String>) -> List<String>
+    ? "Tail-recursive event renderer."
+    match events
+        [] -> acc
+        [entry, ..rest] -> renderEventItemsInto(rest, List.prepend(renderEventItem(entry), acc))
+
+verify renderEventItemsInto
+    renderEventItemsInto([], ["x"]) => ["x"]
+
+fn renderEventItem(entry: PaymentEventRecord) -> String
+    ? "One event history line."
+    "{Int.toString(entry.seq)} {Domain.Ledger.eventName(entry.event)} source={entry.sourceId} at={Domain.Ledger.eventAt(entry.event)}"
+
+verify renderEventItem
+    renderEventItem(sampleEvent()) => "1 Captured source=evt-1 at=2026-03-10T09:05:00Z"
+
+fn renderSettlements(rows: List<SettlementRow>) -> List<String>
+    ? "Renders settlement rows for one payment."
+    List.prepend("settlements: {Int.toString(List.len(rows))}", renderSettlementItems(rows))
+
+verify renderSettlements
+    renderSettlements([sampleSettlement()]) => ["settlements: 1", renderSettlementItem(sampleSettlement())]
+
+fn renderSettlementItems(rows: List<SettlementRow>) -> List<String>
+    ? "Renders each settlement row."
+    List.reverse(renderSettlementItemsInto(rows, []))
+
+verify renderSettlementItems
+    renderSettlementItems([sampleSettlement()]) => [renderSettlementItem(sampleSettlement())]
+
+fn renderSettlementItemsInto(rows: List<SettlementRow>, acc: List<String>) -> List<String>
+    ? "Tail-recursive settlement renderer."
+    match rows
+        [] -> acc
+        [row, ..rest] -> renderSettlementItemsInto(rest, List.prepend(renderSettlementItem(row), acc))
+
+verify renderSettlementItemsInto
+    renderSettlementItemsInto([], ["x"]) => ["x"]
+
+fn renderSettlementItem(row: SettlementRow) -> String
+    ? "One settlement line."
+    "{row.rowId} {settlementKindText(row.kind)} amount={Int.toString(row.amount)} currency={row.currency} settled_on={row.settledOn}"
+
+verify renderSettlementItem
+    renderSettlementItem(sampleSettlement()) => "row-1 capture amount=1000 currency=USD settled_on=2026-03-10"
+
+fn renderCases(cases: List<ReviewCase>) -> List<String>
+    ? "Renders cases or command-created case lists."
+    List.prepend("cases: {Int.toString(List.len(cases))}", renderCaseItems(cases))
+
+verify renderCases
+    renderCases([]) => ["cases: 0"]
+    renderCases([sampleCase()]) => ["cases: 1", renderCaseItem(sampleCase())]
+
+fn renderCaseItems(cases: List<ReviewCase>) -> List<String>
+    ? "Renders each case line."
+    List.reverse(renderCaseItemsInto(cases, []))
+
+verify renderCaseItems
+    renderCaseItems([sampleCase()]) => [renderCaseItem(sampleCase())]
+
+fn renderCaseItemsInto(cases: List<ReviewCase>, acc: List<String>) -> List<String>
+    ? "Tail-recursive case renderer."
+    match cases
+        [] -> acc
+        [item, ..rest] -> renderCaseItemsInto(rest, List.prepend(renderCaseItem(item), acc))
+
+verify renderCaseItemsInto
+    renderCaseItemsInto([], ["x"]) => ["x"]
+
+fn renderCaseItem(item: ReviewCase) -> String
+    ? "One case list line."
+    "{item.id} [{Domain.Cases.statusText(item.status)}] {item.kind} payment={item.paymentId} {item.detail}"
+
+verify renderCaseItem
+    renderCaseItem(sampleCase()) => "case-1 [open] settlement_capture_mismatch payment=pay-1 Realtime captured 1000 but settlement shows 900"
+
+fn renderProviderSummary(summary: ProviderSummary) -> List<String>
+    ? "Renders provider-level aggregate output."
+    [
+        "provider: {summary.provider}",
+        "payments: {Int.toString(summary.payments)}",
+        "events: {Int.toString(summary.events)}",
+        "settlements: {Int.toString(summary.settlements)}",
+        "open cases: {Int.toString(summary.openCases)}",
+        "captured amount: {Int.toString(summary.capturedAmount)}",
+        "refunded amount: {Int.toString(summary.refundedAmount)}",
+    ]
+
+verify renderProviderSummary
+    renderProviderSummary(sampleSummary()) => ["provider: stripe", "payments: 1", "events: 1", "settlements: 1", "open cases: 1", "captured amount: 1000", "refunded amount: 0"]
+
+fn renderAudits(entries: List<AuditEntry>) -> List<String>
+    ? "Renders audit lines."
+    List.prepend("audits: {Int.toString(List.len(entries))}", renderAuditItems(entries))
+
+verify renderAudits
+    renderAudits([sampleAudit()]) => ["audits: 1", "2026-03-10T12:00:00Z case.opened opened"]
+
+fn renderAuditItems(entries: List<AuditEntry>) -> List<String>
+    ? "Renders each audit entry."
+    List.reverse(renderAuditItemsInto(entries, []))
+
+verify renderAuditItems
+    renderAuditItems([sampleAudit()]) => ["2026-03-10T12:00:00Z case.opened opened"]
+
+fn renderAuditItemsInto(entries: List<AuditEntry>, acc: List<String>) -> List<String>
+    ? "Tail-recursive audit renderer."
+    match entries
+        [] -> acc
+        [entry, ..rest] -> renderAuditItemsInto(rest, List.prepend("{entry.createdAt} {entry.action} {entry.message}", acc))
+
+verify renderAuditItemsInto
+    renderAuditItemsInto([], ["x"]) => ["x"]
+
+fn settlementKindText(kind: SettlementKind) -> String
+    ? "Display helper for settlement kinds."
+    match kind
+        SettlementKind.Capture -> "capture"
+        SettlementKind.Refund -> "refund"
+
+verify settlementKindText
+    settlementKindText(SettlementKind.Capture) => "capture"
+    settlementKindText(SettlementKind.Refund) => "refund"
+
+fn sampleReport() -> CommandReport
+    ? "Reusable render fixture."
+    CommandReport(summary = "Imported 1 settlement rows for stripe", subjectId = "provider:stripe", addedEvents = [], addedSettlements = [sampleSettlement()], addedCases = [sampleCase()], audits = [sampleAudit()])
+
+verify sampleReport
+    sampleReport() => CommandReport(summary = "Imported 1 settlement rows for stripe", subjectId = "provider:stripe", addedEvents = [], addedSettlements = [sampleSettlement()], addedCases = [sampleCase()], audits = [sampleAudit()])
+
+fn sampleEvent() -> PaymentEventRecord
+    ? "Reusable render fixture."
+    PaymentEventRecord(provider = "stripe", sourceId = "evt-1", paymentId = "pay-1", seq = 1, event = PaymentEvent.Captured(1000, "USD", "2026-03-10T09:05:00Z"))
+
+verify sampleEvent
+    sampleEvent() => PaymentEventRecord(provider = "stripe", sourceId = "evt-1", paymentId = "pay-1", seq = 1, event = PaymentEvent.Captured(1000, "USD", "2026-03-10T09:05:00Z"))
+
+fn sampleSettlement() -> SettlementRow
+    ? "Reusable render fixture."
+    SettlementRow(provider = "stripe", rowId = "row-1", paymentId = "pay-1", kind = SettlementKind.Capture, amount = 1000, currency = "USD", settledOn = "2026-03-10")
+
+verify sampleSettlement
+    sampleSettlement() => SettlementRow(provider = "stripe", rowId = "row-1", paymentId = "pay-1", kind = SettlementKind.Capture, amount = 1000, currency = "USD", settledOn = "2026-03-10")
+
+fn sampleCase() -> ReviewCase
+    ? "Reusable render fixture."
+    ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "settlement_capture_mismatch", detail = "Realtime captured 1000 but settlement shows 900", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)
+
+verify sampleCase
+    sampleCase() => ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "settlement_capture_mismatch", detail = "Realtime captured 1000 but settlement shows 900", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)
+
+fn sampleAudit() -> AuditEntry
+    ? "Reusable render fixture."
+    AuditEntry(key = "audit-1", subjectId = "payment:pay-1", action = "case.opened", message = "opened", createdAt = "2026-03-10T12:00:00Z")
+
+verify sampleAudit
+    sampleAudit() => AuditEntry(key = "audit-1", subjectId = "payment:pay-1", action = "case.opened", message = "opened", createdAt = "2026-03-10T12:00:00Z")
+
+fn sampleDetail() -> PaymentDetail
+    ? "Reusable render fixture."
+    PaymentDetail(state = PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 0, capturedAmount = 1000, refundedAmount = 0, latestAt = "2026-03-10T09:05:00Z", anomalyKeys = ["capture-without-authorize:evt-1"], anomalyNotes = ["Capture arrived before any authorization for payment 'pay-1'"]), events = [sampleEvent()], settlements = [sampleSettlement()], openCases = [sampleCase()])
+
+verify sampleDetail
+    sampleDetail() => PaymentDetail(state = PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 0, capturedAmount = 1000, refundedAmount = 0, latestAt = "2026-03-10T09:05:00Z", anomalyKeys = ["capture-without-authorize:evt-1"], anomalyNotes = ["Capture arrived before any authorization for payment 'pay-1'"]), events = [sampleEvent()], settlements = [sampleSettlement()], openCases = [sampleCase()])
+
+fn sampleSummary() -> ProviderSummary
+    ? "Reusable render fixture."
+    ProviderSummary(provider = "stripe", payments = 1, events = 1, settlements = 1, openCases = 1, capturedAmount = 1000, refundedAmount = 0)
+
+verify sampleSummary
+    sampleSummary() => ProviderSummary(provider = "stripe", payments = 1, events = 1, settlements = 1, openCases = 1, capturedAmount = 1000, refundedAmount = 0)

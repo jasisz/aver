@@ -415,6 +415,7 @@ Typical commands:
 ```bash
 aver check examples/modules/app.av --module-root examples --deps
 aver check projects/workflow_engine/main.av --module-root projects/workflow_engine --deps
+aver check projects/payment_ops/main.av --module-root projects/payment_ops --deps
 ```
 
 Curated shared examples:
@@ -440,6 +441,7 @@ Standalone projects:
 | File | Demonstrates |
 |------|-------------|
 | `projects/workflow_engine/main.av` | Explicit app/domain/infra flow, event replay, derived events, verify-driven orchestration |
+| `projects/payment_ops/main.av` | Dirty payment backoffice flow: provider normalization, replay, settlement reconcile, manual-review cases, audit trail |
 
 See `examples/` and `projects/` for the full set.
 For repository self-documentation via decision exports, see `decisions/architecture.av`.

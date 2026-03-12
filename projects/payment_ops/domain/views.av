@@ -1,0 +1,205 @@
+module Views
+    intent =
+        "Read-model helpers for payment summaries and status text."
+        "This module keeps CLI rendering simple by giving it small derived values"
+        "instead of making the shell layer reinterpret the ledger."
+    exposes [statusText, anomalySummary, providerSummary]
+    depends [Domain.Types, Domain.Cases]
+
+fn statusText(state: PaymentState) -> String
+    ? "User-facing payment status derived from totals and anomalies."
+    match List.len(state.anomalyNotes) > 0
+        true -> "review"
+        false -> match state.refundedAmount > 0
+            true -> match state.capturedAmount == state.refundedAmount
+                true -> "refunded"
+                false -> "partially_refunded"
+            false -> match state.capturedAmount > 0
+                true -> "captured"
+                false -> match state.authorizedAmount > 0
+                    true -> "authorized"
+                    false -> "empty"
+
+verify statusText
+    statusText(PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 1000, capturedAmount = 1000, refundedAmount = 0, latestAt = "2026-03-10T09:05:00Z", anomalyKeys = [], anomalyNotes = [])) => "captured"
+    statusText(PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 0, capturedAmount = 0, refundedAmount = 100, latestAt = "2026-03-10T10:00:00Z", anomalyKeys = ["x"], anomalyNotes = ["bad"])) => "review"
+
+fn anomalySummary(state: PaymentState) -> String
+    ? "Short text summary for CLI details."
+    match state.anomalyNotes
+        [] -> "-"
+        _ -> String.join(state.anomalyNotes, " | ")
+
+verify anomalySummary
+    anomalySummary(PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 1000, capturedAmount = 1000, refundedAmount = 0, latestAt = "2026-03-10T09:05:00Z", anomalyKeys = [], anomalyNotes = [])) => "-"
+    anomalySummary(PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 0, capturedAmount = 0, refundedAmount = 100, latestAt = "2026-03-10T10:00:00Z", anomalyKeys = ["x"], anomalyNotes = ["bad"])) => "bad"
+
+fn providerSummary(provider: String, events: List<PaymentEventRecord>, states: List<PaymentState>, rows: List<SettlementRow>, cases: List<ReviewCase>) -> ProviderSummary
+    ? "Aggregates one provider for CLI reporting."
+    ProviderSummary(provider = provider, payments = countProviderPayments(states, rows, provider), events = countProviderEvents(events, provider), settlements = countProviderRows(rows, provider), openCases = countOpenCases(cases, provider), capturedAmount = capturedTotal(states, provider), refundedAmount = refundedTotal(states, provider))
+
+verify providerSummary
+    providerSummary("stripe", [sampleEvent()], [sampleState()], [sampleCaptureRow()], [sampleCase()]) => ProviderSummary(provider = "stripe", payments = 1, events = 1, settlements = 1, openCases = 1, capturedAmount = 1000, refundedAmount = 0)
+
+fn countProviderPayments(states: List<PaymentState>, rows: List<SettlementRow>, provider: String) -> Int
+    ? "Counts unique payments seen either in replay or in settlement imports."
+    List.len(paymentIds(rows, provider, paymentIdsFromStates(states, provider, [])))
+
+verify countProviderPayments
+    countProviderPayments([sampleState()], [sampleCaptureRow()], "stripe") => 1
+    countProviderPayments([sampleState()], [SettlementRow(provider = "stripe", rowId = "row-x", paymentId = "pay-9", kind = SettlementKind.Capture, amount = 400, currency = "USD", settledOn = "2026-03-10")], "stripe") => 2
+
+fn countProviderEvents(events: List<PaymentEventRecord>, provider: String) -> Int
+    ? "Counts canonical event rows for the provider summary."
+    countProviderEventsFrom(events, provider, 0)
+
+verify countProviderEvents
+    countProviderEvents([sampleEvent()], "stripe") => 1
+
+fn countProviderEventsFrom(events: List<PaymentEventRecord>, provider: String, acc: Int) -> Int
+    ? "Tail-recursive provider event counting."
+    match events
+        [] -> acc
+        [entry, ..rest] -> match entry.provider == provider
+            true -> countProviderEventsFrom(rest, provider, acc + 1)
+            false -> countProviderEventsFrom(rest, provider, acc)
+
+verify countProviderEventsFrom
+    countProviderEventsFrom([], "stripe", 3) => 3
+
+fn countProviderRows(rows: List<SettlementRow>, provider: String) -> Int
+    ? "Counts imported settlement rows for a provider."
+    countProviderRowsFrom(rows, provider, 0)
+
+verify countProviderRows
+    countProviderRows([sampleCaptureRow()], "stripe") => 1
+    countProviderRows([sampleCaptureRow()], "adyen") => 0
+
+fn countProviderRowsFrom(rows: List<SettlementRow>, provider: String, acc: Int) -> Int
+    ? "Tail-recursive provider settlement counting."
+    match rows
+        [] -> acc
+        [row, ..rest] -> match row.provider == provider
+            true -> countProviderRowsFrom(rest, provider, acc + 1)
+            false -> countProviderRowsFrom(rest, provider, acc)
+
+verify countProviderRowsFrom
+    countProviderRowsFrom([], "stripe", 2) => 2
+
+fn countOpenCases(cases: List<ReviewCase>, provider: String) -> Int
+    ? "Counts open cases for a provider."
+    countOpenCasesFrom(cases, provider, 0)
+
+verify countOpenCases
+    countOpenCases([sampleCase()], "stripe") => 1
+    countOpenCases([sampleCase()], "adyen") => 0
+
+fn countOpenCasesFrom(cases: List<ReviewCase>, provider: String, acc: Int) -> Int
+    ? "Tail-recursive open-case counting."
+    match cases
+        [] -> acc
+        [item, ..rest] -> match item.provider == provider
+            true -> match item.status
+                CaseStatus.Open -> countOpenCasesFrom(rest, provider, acc + 1)
+                CaseStatus.Resolved -> countOpenCasesFrom(rest, provider, acc)
+            false -> countOpenCasesFrom(rest, provider, acc)
+
+verify countOpenCasesFrom
+    countOpenCasesFrom([], "stripe", 1) => 1
+
+fn capturedTotal(states: List<PaymentState>, provider: String) -> Int
+    ? "Total captured amount for a provider."
+    capturedTotalFrom(states, provider, 0)
+
+verify capturedTotal
+    capturedTotal([sampleState()], "stripe") => 1000
+    capturedTotal([sampleState()], "adyen") => 0
+
+fn capturedTotalFrom(states: List<PaymentState>, provider: String, acc: Int) -> Int
+    ? "Tail-recursive provider capture total."
+    match states
+        [] -> acc
+        [state, ..rest] -> match state.provider == provider
+            true -> capturedTotalFrom(rest, provider, acc + state.capturedAmount)
+            false -> capturedTotalFrom(rest, provider, acc)
+
+verify capturedTotalFrom
+    capturedTotalFrom([], "stripe", 7) => 7
+
+fn refundedTotal(states: List<PaymentState>, provider: String) -> Int
+    ? "Total refunded amount for a provider."
+    refundedTotalFrom(states, provider, 0)
+
+verify refundedTotal
+    refundedTotal([sampleState()], "stripe") => 0
+
+fn refundedTotalFrom(states: List<PaymentState>, provider: String, acc: Int) -> Int
+    ? "Tail-recursive provider refund total."
+    match states
+        [] -> acc
+        [state, ..rest] -> match state.provider == provider
+            true -> refundedTotalFrom(rest, provider, acc + state.refundedAmount)
+            false -> refundedTotalFrom(rest, provider, acc)
+
+verify refundedTotalFrom
+    refundedTotalFrom([], "stripe", 4) => 4
+
+fn paymentIdsFromStates(states: List<PaymentState>, provider: String, acc: List<String>) -> List<String>
+    ? "Collects unique payment IDs from replayed states."
+    match states
+        [] -> acc
+        [state, ..rest] -> match state.provider == provider
+            true -> paymentIdsFromStates(rest, provider, appendUnique(acc, state.paymentId))
+            false -> paymentIdsFromStates(rest, provider, acc)
+
+verify paymentIdsFromStates
+    paymentIdsFromStates([sampleState()], "stripe", []) => ["pay-1"]
+
+fn paymentIds(rows: List<SettlementRow>, provider: String, acc: List<String>) -> List<String>
+    ? "Collects unique payment IDs from settlement rows."
+    match rows
+        [] -> acc
+        [row, ..rest] -> match row.provider == provider
+            true -> paymentIds(rest, provider, appendUnique(acc, row.paymentId))
+            false -> paymentIds(rest, provider, acc)
+
+verify paymentIds
+    paymentIds([sampleCaptureRow()], "stripe", []) => ["pay-1"]
+
+fn appendUnique(values: List<String>, value: String) -> List<String>
+    ? "Appends only when a payment ID is new."
+    match List.contains(values, value)
+        true -> values
+        false -> List.append(values, value)
+
+verify appendUnique
+    appendUnique(["a"], "a") => ["a"]
+    appendUnique(["a"], "b") => ["a", "b"]
+
+fn sampleState() -> PaymentState
+    ? "Reusable summary fixture."
+    PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 1000, capturedAmount = 1000, refundedAmount = 0, latestAt = "2026-03-10T09:05:00Z", anomalyKeys = [], anomalyNotes = [])
+
+verify sampleState
+    sampleState() => PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 1000, capturedAmount = 1000, refundedAmount = 0, latestAt = "2026-03-10T09:05:00Z", anomalyKeys = [], anomalyNotes = [])
+
+fn sampleCaptureRow() -> SettlementRow
+    ? "Reusable summary fixture."
+    SettlementRow(provider = "stripe", rowId = "row-1", paymentId = "pay-1", kind = SettlementKind.Capture, amount = 1000, currency = "USD", settledOn = "2026-03-10")
+
+verify sampleCaptureRow
+    sampleCaptureRow() => SettlementRow(provider = "stripe", rowId = "row-1", paymentId = "pay-1", kind = SettlementKind.Capture, amount = 1000, currency = "USD", settledOn = "2026-03-10")
+
+fn sampleCase() -> ReviewCase
+    ? "Reusable summary fixture."
+    ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)
+
+verify sampleCase
+    sampleCase() => ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)
+
+fn sampleEvent() -> PaymentEventRecord
+    ? "Reusable summary fixture."
+    PaymentEventRecord(provider = "stripe", sourceId = "evt-1", paymentId = "pay-1", seq = 1, event = PaymentEvent.Captured(1000, "USD", "2026-03-10T09:05:00Z"))
+
+verify sampleEvent
+    sampleEvent() => PaymentEventRecord(provider = "stripe", sourceId = "evt-1", paymentId = "pay-1", seq = 1, event = PaymentEvent.Captured(1000, "USD", "2026-03-10T09:05:00Z"))

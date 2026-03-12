@@ -1,0 +1,304 @@
+module Ledger
+    intent =
+        "Pure replay and dedupe helpers for the payment ledger."
+        "Backoffice review gets easier when webhook ingestion becomes append-only events"
+        "and every current state is rebuilt from those events in plain code."
+    exposes [eventName, eventAt, hasSourceId, nextSeq, eventsForPayment, replayPayment, replayAll]
+    depends [Domain.Types]
+
+decision ReplayEverythingFromCanonicalEvents
+    date = "2026-03-12"
+    author = "Codex"
+    reason =
+        "Dirty payment integrations are easiest to audit when the stored history stays immutable."
+        "Replaying canonical events keeps dedupe and reconciliation readable instead of hiding rules in writes."
+    chosen = "AppendOnlyReplay"
+    rejected = ["MutablePaymentRows", "AdHocStatusOverrides"]
+    impacts = [hasSourceId, nextSeq, replayPayment, replayAll]
+
+fn eventName(event: PaymentEvent) -> String
+    ? "Stable display name for one canonical event."
+    match event
+        PaymentEvent.Authorized(_, _, _) -> "Authorized"
+        PaymentEvent.Captured(_, _, _) -> "Captured"
+        PaymentEvent.Refunded(_, _, _) -> "Refunded"
+
+verify eventName
+    eventName(PaymentEvent.Authorized(100, "USD", "2026-03-10T09:00:00Z")) => "Authorized"
+    eventName(PaymentEvent.Captured(100, "USD", "2026-03-10T10:00:00Z")) => "Captured"
+    eventName(PaymentEvent.Refunded(50, "USD", "2026-03-10T10:00:00Z")) => "Refunded"
+
+fn eventAt(event: PaymentEvent) -> String
+    ? "Timestamp carried by a canonical event."
+    match event
+        PaymentEvent.Authorized(_, _, at) -> at
+        PaymentEvent.Captured(_, _, at) -> at
+        PaymentEvent.Refunded(_, _, at) -> at
+
+verify eventAt
+    eventAt(PaymentEvent.Authorized(100, "USD", "2026-03-10T09:00:00Z")) => "2026-03-10T09:00:00Z"
+    eventAt(PaymentEvent.Captured(100, "USD", "2026-03-10T10:00:00Z")) => "2026-03-10T10:00:00Z"
+    eventAt(PaymentEvent.Refunded(50, "USD", "2026-03-10T11:00:00Z")) => "2026-03-10T11:00:00Z"
+
+fn eventCurrency(event: PaymentEvent) -> String
+    ? "Currency carried by a canonical event."
+    match event
+        PaymentEvent.Authorized(_, currency, _) -> currency
+        PaymentEvent.Captured(_, currency, _) -> currency
+        PaymentEvent.Refunded(_, currency, _) -> currency
+
+verify eventCurrency
+    eventCurrency(PaymentEvent.Authorized(50, "USD", "2026-03-10T09:00:00Z")) => "USD"
+    eventCurrency(PaymentEvent.Captured(50, "GBP", "2026-03-10T10:00:00Z")) => "GBP"
+    eventCurrency(PaymentEvent.Refunded(50, "EUR", "2026-03-10T10:00:00Z")) => "EUR"
+
+fn eventAmount(event: PaymentEvent) -> Int
+    ? "Amount carried by a canonical event."
+    match event
+        PaymentEvent.Authorized(amount, _, _) -> amount
+        PaymentEvent.Captured(amount, _, _) -> amount
+        PaymentEvent.Refunded(amount, _, _) -> amount
+
+verify eventAmount
+    eventAmount(PaymentEvent.Authorized(900, "USD", "2026-03-10T09:00:00Z")) => 900
+    eventAmount(PaymentEvent.Captured(1200, "USD", "2026-03-10T10:00:00Z")) => 1200
+    eventAmount(PaymentEvent.Refunded(200, "USD", "2026-03-10T11:00:00Z")) => 200
+
+fn hasSourceId(events: List<PaymentEventRecord>, provider: String, sourceId: String) -> Bool
+    ? "True when a webhook source ID was already persisted for a provider."
+    match events
+        [] -> false
+        [entry, ..rest] -> match entry.provider == provider
+            true -> match entry.sourceId == sourceId
+                true -> true
+                false -> hasSourceId(rest, provider, sourceId)
+            false -> hasSourceId(rest, provider, sourceId)
+
+verify hasSourceId
+    hasSourceId([sampleAuthorized(), sampleCaptured()], "stripe", "evt-1") => true
+    hasSourceId([sampleAuthorized()], "stripe", "missing") => false
+
+fn nextSeq(events: List<PaymentEventRecord>, provider: String, paymentId: String) -> Int
+    ? "Next event sequence number for one payment stream."
+    nextSeqFrom(events, provider, paymentId, 1)
+
+verify nextSeq
+    nextSeq([], "stripe", "pay-1") => 1
+    nextSeq([sampleAuthorized(), sampleCaptured()], "stripe", "pay-1") => 3
+    nextSeq([sampleAuthorized(), sampleCaptured()], "stripe", "pay-2") => 1
+
+fn nextSeqFrom(events: List<PaymentEventRecord>, provider: String, paymentId: String, current: Int) -> Int
+    ? "Tail-recursive sequence scan."
+    match events
+        [] -> current
+        [entry, ..rest] -> match samePayment(entry, provider, paymentId)
+            true -> nextSeqFrom(rest, provider, paymentId, entry.seq + 1)
+            false -> nextSeqFrom(rest, provider, paymentId, current)
+
+verify nextSeqFrom
+    nextSeqFrom([], "stripe", "pay-1", 4) => 4
+    nextSeqFrom([sampleAuthorized()], "stripe", "pay-1", 1) => 2
+
+fn eventsForPayment(events: List<PaymentEventRecord>, paymentId: String) -> List<PaymentEventRecord>
+    ? "Filters the append-only log down to one payment stream."
+    List.reverse(eventsForPaymentInto(events, paymentId, []))
+
+verify eventsForPayment
+    eventsForPayment([sampleAuthorized(), sampleCaptured(), sampleOtherPayment()], "pay-1") => [sampleAuthorized(), sampleCaptured()]
+
+fn eventsForPaymentInto(events: List<PaymentEventRecord>, paymentId: String, kept: List<PaymentEventRecord>) -> List<PaymentEventRecord>
+    ? "Tail-recursive payment filter."
+    match events
+        [] -> kept
+        [entry, ..rest] -> match entry.paymentId == paymentId
+            true -> eventsForPaymentInto(rest, paymentId, List.prepend(entry, kept))
+            false -> eventsForPaymentInto(rest, paymentId, kept)
+
+verify eventsForPaymentInto
+    eventsForPaymentInto([], "pay-1", [sampleAuthorized()]) => [sampleAuthorized()]
+
+fn replayPayment(events: List<PaymentEventRecord>) -> Result<PaymentState, String>
+    ? "Rebuilds one payment state from its event stream."
+    match events
+        [] -> Result.Err("Cannot replay empty payment event list")
+        [first, ..rest] -> Result.Ok(replayPaymentFrom(rest, applyEvent(emptyState(first), first)))
+
+verify replayPayment
+    replayPayment([sampleAuthorized(), sampleCaptured()]) => Result.Ok(PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 1000, capturedAmount = 1000, refundedAmount = 0, latestAt = "2026-03-10T09:05:00Z", anomalyKeys = [], anomalyNotes = []))
+    replayPayment([sampleRefundBeforeCapture()]) => Result.Ok(PaymentState(paymentId = "pay-2", provider = "stripe", currency = "USD", authorizedAmount = 0, capturedAmount = 0, refundedAmount = 400, latestAt = "2026-03-10T11:00:00Z", anomalyKeys = ["refund-before-capture:evt-9", "refund-exceeds-capture:evt-9"], anomalyNotes = ["Refund arrived before any capture for payment 'pay-2'", "Refunded amount exceeds captured amount for payment 'pay-2'"]))
+    replayPayment([]) => Result.Err("Cannot replay empty payment event list")
+
+fn replayPaymentFrom(events: List<PaymentEventRecord>, state: PaymentState) -> PaymentState
+    ? "Tail-recursive fold over one payment stream."
+    match events
+        [] -> state
+        [entry, ..rest] -> replayPaymentFrom(rest, applyEvent(state, entry))
+
+verify replayPaymentFrom
+    replayPaymentFrom([], emptyState(sampleAuthorized())) => emptyState(sampleAuthorized())
+
+fn replayAll(events: List<PaymentEventRecord>) -> List<PaymentState>
+    ? "Replays the whole event log into one state per payment."
+    List.reverse(replayAllInto(events, []))
+
+verify replayAll
+    replayAll([sampleAuthorized(), sampleCaptured(), sampleOtherPayment()]) => [PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 1000, capturedAmount = 1000, refundedAmount = 0, latestAt = "2026-03-10T09:05:00Z", anomalyKeys = [], anomalyNotes = []), PaymentState(paymentId = "pay-2", provider = "stripe", currency = "EUR", authorizedAmount = 700, capturedAmount = 0, refundedAmount = 0, latestAt = "2026-03-10T12:00:00Z", anomalyKeys = [], anomalyNotes = [])]
+
+fn replayAllInto(events: List<PaymentEventRecord>, states: List<PaymentState>) -> List<PaymentState>
+    ? "Incrementally updates one payment state list while scanning the log."
+    match events
+        [] -> states
+        [entry, ..rest] -> replayAllInto(rest, upsertState(states, entry))
+
+verify replayAllInto
+    replayAllInto([], [emptyState(sampleAuthorized())]) => [emptyState(sampleAuthorized())]
+
+fn upsertState(states: List<PaymentState>, entry: PaymentEventRecord) -> List<PaymentState>
+    ? "Applies one event to the matching state or creates a new one."
+    match findState(states, entry.provider, entry.paymentId)
+        Option.None -> List.prepend(applyEvent(emptyState(entry), entry), states)
+        Option.Some(state) -> replaceState(states, applyEvent(state, entry))
+
+verify upsertState
+    upsertState([], sampleAuthorized()) => [applyEvent(emptyState(sampleAuthorized()), sampleAuthorized())]
+
+fn findState(states: List<PaymentState>, provider: String, paymentId: String) -> Option<PaymentState>
+    ? "Looks up one payment state inside the replay accumulator."
+    match states
+        [] -> Option.None
+        [state, ..rest] -> match state.provider == provider
+            true -> match state.paymentId == paymentId
+                true -> Option.Some(state)
+                false -> findState(rest, provider, paymentId)
+            false -> findState(rest, provider, paymentId)
+
+verify findState
+    findState([emptyState(sampleAuthorized())], "stripe", "pay-1") => Option.Some(emptyState(sampleAuthorized()))
+    findState([], "stripe", "pay-1") => Option.None
+
+fn replaceState(states: List<PaymentState>, updated: PaymentState) -> List<PaymentState>
+    ? "Replaces one payment state in the replay accumulator."
+    replaceStateInto(states, updated, [])
+
+verify replaceState
+    replaceState([emptyState(sampleAuthorized())], applyEvent(emptyState(sampleAuthorized()), sampleAuthorized())) => [applyEvent(emptyState(sampleAuthorized()), sampleAuthorized())]
+
+fn replaceStateInto(states: List<PaymentState>, updated: PaymentState, acc: List<PaymentState>) -> List<PaymentState>
+    ? "Tail-recursive helper for replay state replacement."
+    match states
+        [] -> List.reverse(acc)
+        [state, ..rest] -> match state.provider == updated.provider
+            true -> match state.paymentId == updated.paymentId
+                true -> List.concat(List.reverse(List.prepend(updated, acc)), rest)
+                false -> replaceStateInto(rest, updated, List.prepend(state, acc))
+            false -> replaceStateInto(rest, updated, List.prepend(state, acc))
+
+verify replaceStateInto
+    replaceStateInto([], emptyState(sampleAuthorized()), [emptyState(sampleAuthorized())]) => [emptyState(sampleAuthorized())]
+
+fn emptyState(entry: PaymentEventRecord) -> PaymentState
+    ? "Zero-value state seeded from the first event identifiers."
+    PaymentState(paymentId = entry.paymentId, provider = entry.provider, currency = eventCurrency(entry.event), authorizedAmount = 0, capturedAmount = 0, refundedAmount = 0, latestAt = eventAt(entry.event), anomalyKeys = [], anomalyNotes = [])
+
+verify emptyState
+    emptyState(sampleAuthorized()) => PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 0, capturedAmount = 0, refundedAmount = 0, latestAt = "2026-03-10T09:00:00Z", anomalyKeys = [], anomalyNotes = [])
+
+fn applyEvent(state: PaymentState, entry: PaymentEventRecord) -> PaymentState
+    ? "Applies one canonical event and records suspicious transitions as anomalies."
+    match entry.event
+        PaymentEvent.Authorized(amount, currency, at) -> applyAuthorized(state, entry.sourceId, amount, currency, at)
+        PaymentEvent.Captured(amount, currency, at) -> applyCaptured(state, entry.sourceId, amount, currency, at)
+        PaymentEvent.Refunded(amount, currency, at) -> applyRefunded(state, entry.sourceId, amount, currency, at)
+
+verify applyEvent
+    applyEvent(emptyState(sampleAuthorized()), sampleAuthorized()) => PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 1000, capturedAmount = 0, refundedAmount = 0, latestAt = "2026-03-10T09:00:00Z", anomalyKeys = [], anomalyNotes = [])
+
+fn applyAuthorized(state: PaymentState, sourceId: String, amount: Int, currency: String, at: String) -> PaymentState
+    ? "Authorization stores the highest authorized amount seen so far."
+    next = PaymentState.update(state, currency = currency, authorizedAmount = Int.max(state.authorizedAmount, amount), latestAt = at)
+    withCurrencyCheck(next, sourceId, currency)
+
+verify applyAuthorized
+    applyAuthorized(emptyState(sampleAuthorized()), "evt-1", 1000, "USD", "2026-03-10T09:00:00Z") => PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 1000, capturedAmount = 0, refundedAmount = 0, latestAt = "2026-03-10T09:00:00Z", anomalyKeys = [], anomalyNotes = [])
+
+fn applyCaptured(state: PaymentState, sourceId: String, amount: Int, currency: String, at: String) -> PaymentState
+    ? "Capture increases the captured total and flags suspicious order or totals."
+    base = withCurrencyCheck(PaymentState.update(state, currency = currency, capturedAmount = state.capturedAmount + amount, latestAt = at), sourceId, currency)
+    missingAuth = match state.authorizedAmount == 0
+        true -> addAnomaly(base, "capture-without-authorize:{sourceId}", "Capture arrived before any authorization for payment '{state.paymentId}'")
+        false -> base
+    match missingAuth.authorizedAmount > 0
+        true -> match missingAuth.capturedAmount > missingAuth.authorizedAmount
+            true -> addAnomaly(missingAuth, "captured-exceeds-authorized:{sourceId}", "Captured amount exceeds authorized amount for payment '{state.paymentId}'")
+            false -> missingAuth
+        false -> missingAuth
+
+verify applyCaptured
+    applyCaptured(emptyState(sampleAuthorized()), "evt-2", 1000, "USD", "2026-03-10T09:05:00Z") => PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 0, capturedAmount = 1000, refundedAmount = 0, latestAt = "2026-03-10T09:05:00Z", anomalyKeys = ["capture-without-authorize:evt-2"], anomalyNotes = ["Capture arrived before any authorization for payment 'pay-1'"])
+
+fn applyRefunded(state: PaymentState, sourceId: String, amount: Int, currency: String, at: String) -> PaymentState
+    ? "Refund increases the refunded total and flags order or total mismatches."
+    base = withCurrencyCheck(PaymentState.update(state, currency = currency, refundedAmount = state.refundedAmount + amount, latestAt = at), sourceId, currency)
+    missingCapture = match state.capturedAmount == 0
+        true -> addAnomaly(base, "refund-before-capture:{sourceId}", "Refund arrived before any capture for payment '{state.paymentId}'")
+        false -> base
+    match missingCapture.refundedAmount > missingCapture.capturedAmount
+        true -> addAnomaly(missingCapture, "refund-exceeds-capture:{sourceId}", "Refunded amount exceeds captured amount for payment '{state.paymentId}'")
+        false -> missingCapture
+
+verify applyRefunded
+    applyRefunded(emptyState(sampleAuthorized()), "evt-3", 200, "USD", "2026-03-10T10:00:00Z") => PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 0, capturedAmount = 0, refundedAmount = 200, latestAt = "2026-03-10T10:00:00Z", anomalyKeys = ["refund-before-capture:evt-3", "refund-exceeds-capture:evt-3"], anomalyNotes = ["Refund arrived before any capture for payment 'pay-1'", "Refunded amount exceeds captured amount for payment 'pay-1'"])
+
+fn withCurrencyCheck(state: PaymentState, sourceId: String, currency: String) -> PaymentState
+    ? "Flags a currency switch after the first event."
+    match state.currency == currency
+        true -> state
+        false -> addAnomaly(state, "currency-mismatch:{sourceId}", "Currency changed inside one payment stream '{state.paymentId}'")
+
+verify withCurrencyCheck
+    withCurrencyCheck(PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 0, capturedAmount = 0, refundedAmount = 0, latestAt = "2026-03-10T09:00:00Z", anomalyKeys = [], anomalyNotes = []), "evt-9", "USD") => PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 0, capturedAmount = 0, refundedAmount = 0, latestAt = "2026-03-10T09:00:00Z", anomalyKeys = [], anomalyNotes = [])
+
+fn addAnomaly(state: PaymentState, key: String, note: String) -> PaymentState
+    ? "Appends a new anomaly marker in replay order."
+    PaymentState.update(state, anomalyKeys = List.append(state.anomalyKeys, key), anomalyNotes = List.append(state.anomalyNotes, note))
+
+verify addAnomaly
+    addAnomaly(emptyState(sampleAuthorized()), "k", "n") => PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 0, capturedAmount = 0, refundedAmount = 0, latestAt = "2026-03-10T09:00:00Z", anomalyKeys = ["k"], anomalyNotes = ["n"])
+
+fn samePayment(entry: PaymentEventRecord, provider: String, paymentId: String) -> Bool
+    ? "Exact stream identity check."
+    match entry.provider == provider
+        true -> entry.paymentId == paymentId
+        false -> false
+
+verify samePayment
+    samePayment(sampleAuthorized(), "stripe", "pay-1") => true
+    samePayment(sampleAuthorized(), "stripe", "other") => false
+
+fn sampleAuthorized() -> PaymentEventRecord
+    ? "Reusable replay fixture."
+    PaymentEventRecord(provider = "stripe", sourceId = "evt-1", paymentId = "pay-1", seq = 1, event = PaymentEvent.Authorized(1000, "USD", "2026-03-10T09:00:00Z"))
+
+verify sampleAuthorized
+    sampleAuthorized() => PaymentEventRecord(provider = "stripe", sourceId = "evt-1", paymentId = "pay-1", seq = 1, event = PaymentEvent.Authorized(1000, "USD", "2026-03-10T09:00:00Z"))
+
+fn sampleCaptured() -> PaymentEventRecord
+    ? "Reusable replay fixture."
+    PaymentEventRecord(provider = "stripe", sourceId = "evt-2", paymentId = "pay-1", seq = 2, event = PaymentEvent.Captured(1000, "USD", "2026-03-10T09:05:00Z"))
+
+verify sampleCaptured
+    sampleCaptured() => PaymentEventRecord(provider = "stripe", sourceId = "evt-2", paymentId = "pay-1", seq = 2, event = PaymentEvent.Captured(1000, "USD", "2026-03-10T09:05:00Z"))
+
+fn sampleRefundBeforeCapture() -> PaymentEventRecord
+    ? "Reusable anomaly fixture."
+    PaymentEventRecord(provider = "stripe", sourceId = "evt-9", paymentId = "pay-2", seq = 1, event = PaymentEvent.Refunded(400, "USD", "2026-03-10T11:00:00Z"))
+
+verify sampleRefundBeforeCapture
+    sampleRefundBeforeCapture() => PaymentEventRecord(provider = "stripe", sourceId = "evt-9", paymentId = "pay-2", seq = 1, event = PaymentEvent.Refunded(400, "USD", "2026-03-10T11:00:00Z"))
+
+fn sampleOtherPayment() -> PaymentEventRecord
+    ? "Reusable multi-payment fixture."
+    PaymentEventRecord(provider = "stripe", sourceId = "evt-7", paymentId = "pay-2", seq = 1, event = PaymentEvent.Authorized(700, "EUR", "2026-03-10T12:00:00Z"))
+
+verify sampleOtherPayment
+    sampleOtherPayment() => PaymentEventRecord(provider = "stripe", sourceId = "evt-7", paymentId = "pay-2", seq = 1, event = PaymentEvent.Authorized(700, "EUR", "2026-03-10T12:00:00Z"))

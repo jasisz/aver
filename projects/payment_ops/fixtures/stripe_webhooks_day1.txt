@@ -1,0 +1,7 @@
+evt-100|pay-1|payment_intent.amount_capturable_updated|1000|USD|2026-03-10T09:00:00Z
+evt-101|pay-1|charge.captured|1000|USD|2026-03-10T09:05:00Z
+evt-101|pay-1|charge.captured|1000|USD|2026-03-10T09:05:00Z
+evt-200|pay-2|charge.refunded|500|USD|2026-03-10T10:00:00Z
+evt-201|pay-2|charge.captured|500|USD|2026-03-10T10:10:00Z
+evt-300|pay-3|payment_intent.amount_capturable_updated|700|USD|2026-03-10T11:00:00Z
+evt-400|pay-4|charge.captured|2000|USD|2026-03-10T12:00:00Z

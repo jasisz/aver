@@ -1,0 +1,2 @@
+row-a|pay-a|Settled|1200|EUR|2026-03-10
+row-b|pay-b|Refunded|300|EUR|2026-03-10

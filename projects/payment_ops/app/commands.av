@@ -1,0 +1,267 @@
+module Commands
+    intent =
+        "Effectful command handlers for payment_ops."
+        "The app layer loads persisted facts, delegates the dirty reasoning to pure domain"
+        "functions, then commits new facts and manual-review work explicitly."
+    exposes [Command, CommandReport, execute]
+    depends [App.Shared, Domain.Types, Domain.Normalize, Domain.Ledger, Domain.Cases, Domain.Reconcile, Infra.Store, Infra.Audit, Infra.Imports]
+
+type Command
+    IngestWebhooks(String, String)
+    ImportSettlement(String, String)
+    Reconcile(String)
+    ResolveCase(String, String)
+
+record CommandReport
+    summary: String
+    subjectId: String
+    addedEvents: List<PaymentEventRecord>
+    addedSettlements: List<SettlementRow>
+    addedCases: List<ReviewCase>
+    audits: List<AuditEntry>
+
+record WebhookImportResult
+    events: List<PaymentEventRecord>
+    audits: List<AuditEntry>
+
+record SettlementImportResult
+    rows: List<SettlementRow>
+    audits: List<AuditEntry>
+
+fn execute(command: Command) -> Result<CommandReport, String>
+    ? "Executes one payment_ops command."
+    ! [
+        Disk.appendText, Disk.readText, Disk.writeText,
+        Time.now,
+    ]
+    match command
+        Command.IngestWebhooks(provider, path) -> runIngestWebhooks(provider, path)
+        Command.ImportSettlement(provider, path) -> runImportSettlement(provider, path)
+        Command.Reconcile(provider) -> runReconcile(provider)
+        Command.ResolveCase(caseId, resolution) -> runResolveCase(caseId, resolution)
+
+fn runIngestWebhooks(provider: String, path: String) -> Result<CommandReport, String>
+    ? "Loads one webhook import file, deduplicates rows, and appends canonical events."
+    ! [
+        Disk.appendText, Disk.readText, Disk.writeText,
+        Time.now,
+    ]
+    canonicalProvider = App.Shared.normalizeProviderInput(provider)?
+    rawContent = Disk.readText(path)?
+    raws = Infra.Imports.parseWebhookFile(rawContent)?
+    existingEvents = Infra.Store.loadEvents()?
+    existingCases = Infra.Store.loadCases()?
+    now = Time.now()
+    imported = ingestWebhookRows(canonicalProvider, raws, existingEvents, WebhookImportResult(events = [], audits = []), now)?
+    allStates = Domain.Ledger.replayAll(List.concat(existingEvents, imported.events))
+    newCases = Domain.Cases.materializeNewCases(existingCases, Domain.Cases.draftsFromStates(allStates), now)
+    _events = Infra.Store.appendEvents(imported.events)?
+    _cases = Infra.Store.saveCases(List.concat(existingCases, newCases))?
+    audits = List.concat(imported.audits, openedCaseAudits(newCases))
+    _audit = Infra.Audit.recordEntries(audits)?
+    Result.Ok(CommandReport(summary = "Ingested {Int.toString(List.len(imported.events))} webhook events for {canonicalProvider}", subjectId = "provider:{canonicalProvider}", addedEvents = imported.events, addedSettlements = [], addedCases = newCases, audits = audits))
+
+fn runImportSettlement(provider: String, path: String) -> Result<CommandReport, String>
+    ? "Loads one settlement import file and appends deduplicated settlement rows."
+    ! [
+        Disk.appendText, Disk.readText,
+        Time.now,
+    ]
+    canonicalProvider = App.Shared.normalizeProviderInput(provider)?
+    rawContent = Disk.readText(path)?
+    raws = Infra.Imports.parseSettlementFile(rawContent)?
+    existingRows = Infra.Store.loadSettlements()?
+    now = Time.now()
+    imported = ingestSettlementRows(canonicalProvider, raws, existingRows, SettlementImportResult(rows = [], audits = []), now)?
+    _rows = Infra.Store.appendSettlements(imported.rows)?
+    _audit = Infra.Audit.recordEntries(imported.audits)?
+    Result.Ok(CommandReport(summary = "Imported {Int.toString(List.len(imported.rows))} settlement rows for {canonicalProvider}", subjectId = "provider:{canonicalProvider}", addedEvents = [], addedSettlements = imported.rows, addedCases = [], audits = imported.audits))
+
+fn runReconcile(provider: String) -> Result<CommandReport, String>
+    ? "Compares replayed realtime state with imported settlements and opens review cases."
+    ! [
+        Disk.appendText, Disk.readText, Disk.writeText,
+        Time.now,
+    ]
+    canonicalProvider = App.Shared.normalizeProviderInput(provider)?
+    events = Infra.Store.loadEvents()?
+    settlements = Infra.Store.loadSettlements()?
+    existingCases = Infra.Store.loadCases()?
+    states = providerStates(Domain.Ledger.replayAll(events), canonicalProvider)
+    rows = Domain.Reconcile.settlementsForProvider(settlements, canonicalProvider)
+    now = Time.now()
+    newCases = Domain.Cases.materializeNewCases(existingCases, Domain.Reconcile.reconcileProvider(canonicalProvider, states, rows), now)
+    _cases = Infra.Store.saveCases(List.concat(existingCases, newCases))?
+    audits = openedCaseAudits(newCases)
+    _audit = Infra.Audit.recordEntries(audits)?
+    Result.Ok(CommandReport(summary = "Reconciliation opened {Int.toString(List.len(newCases))} cases for {canonicalProvider}", subjectId = "provider:{canonicalProvider}", addedEvents = [], addedSettlements = [], addedCases = newCases, audits = audits))
+
+fn runResolveCase(caseId: String, resolution: String) -> Result<CommandReport, String>
+    ? "Marks one manual-review case as resolved."
+    ! [
+        Disk.readText, Disk.writeText, Disk.appendText,
+        Time.now,
+    ]
+    existingCases = Infra.Store.loadCases()?
+    now = Time.now()
+    updatedCases = Domain.Cases.resolveCase(existingCases, caseId, resolution, now)?
+    resolvedCase = Option.toResult(Domain.Cases.findCaseById(updatedCases, caseId), "Unknown case: " + caseId)?
+    audit = Domain.Cases.auditForResolvedCase(resolvedCase)
+    _save = Infra.Store.saveCases(updatedCases)?
+    _audit = Infra.Audit.recordEntries([audit])?
+    Result.Ok(CommandReport(summary = "Resolved case '{caseId}'", subjectId = "case:{caseId}", addedEvents = [], addedSettlements = [], addedCases = [], audits = [audit]))
+
+fn ingestWebhookRows(provider: String, raws: List<RawWebhook>, knownEvents: List<PaymentEventRecord>, acc: WebhookImportResult, auditedAt: String) -> Result<WebhookImportResult, String>
+    ? "Normalizes webhook rows and skips duplicates by provider source ID."
+    match raws
+        [] -> Result.Ok(reverseWebhookImport(acc))
+        [raw, ..rest] -> match Domain.Ledger.hasSourceId(knownEvents, provider, raw.sourceId)
+            true -> ingestWebhookRows(provider, rest, knownEvents, WebhookImportResult(events = acc.events, audits = List.prepend(duplicateWebhookAudit(provider, raw, auditedAt), acc.audits)), auditedAt)
+            false -> ingestNewWebhook(provider, raw, rest, knownEvents, acc, auditedAt)
+
+verify ingestWebhookRows
+    ingestWebhookRows("stripe", [RawWebhook(sourceId = "evt-1", paymentId = "pay-1", kind = "charge.captured", amount = 1000, currency = "USD", occurredAt = "2026-03-10T09:05:00Z")], [], WebhookImportResult(events = [], audits = []), "2026-03-10T12:00:00Z") => Result.Ok(WebhookImportResult(events = [PaymentEventRecord(provider = "stripe", sourceId = "evt-1", paymentId = "pay-1", seq = 1, event = PaymentEvent.Captured(1000, "USD", "2026-03-10T09:05:00Z"))], audits = []))
+    ingestWebhookRows("stripe", [RawWebhook(sourceId = "evt-2", paymentId = "pay-1", kind = "weird", amount = 1000, currency = "USD", occurredAt = "2026-03-10T09:05:00Z")], [], WebhookImportResult(events = [], audits = []), "2026-03-10T12:00:00Z") => Result.Err("Unsupported stripe webhook kind: weird")
+
+fn ingestSettlementRows(provider: String, raws: List<RawSettlement>, knownRows: List<SettlementRow>, acc: SettlementImportResult, auditedAt: String) -> Result<SettlementImportResult, String>
+    ? "Normalizes settlement rows and skips duplicate provider row IDs."
+    match raws
+        [] -> Result.Ok(reverseSettlementImport(acc))
+        [raw, ..rest] -> match hasSettlementRow(knownRows, provider, raw.rowId)
+            true -> ingestSettlementRows(provider, rest, knownRows, SettlementImportResult(rows = acc.rows, audits = List.prepend(duplicateSettlementAudit(provider, raw, auditedAt), acc.audits)), auditedAt)
+            false -> ingestNewSettlement(provider, raw, rest, knownRows, acc, auditedAt)
+
+verify ingestSettlementRows
+    ingestSettlementRows("stripe", [RawSettlement(rowId = "row-1", paymentId = "pay-1", kind = "charge", amount = 1000, currency = "USD", settledOn = "2026-03-10")], [], SettlementImportResult(rows = [], audits = []), "2026-03-10T12:00:00Z") => Result.Ok(SettlementImportResult(rows = [SettlementRow(provider = "stripe", rowId = "row-1", paymentId = "pay-1", kind = SettlementKind.Capture, amount = 1000, currency = "USD", settledOn = "2026-03-10")], audits = []))
+    ingestSettlementRows("stripe", [RawSettlement(rowId = "row-2", paymentId = "pay-1", kind = "unknown", amount = 1000, currency = "USD", settledOn = "2026-03-10")], [], SettlementImportResult(rows = [], audits = []), "2026-03-10T12:00:00Z") => Result.Err("Unsupported stripe settlement kind: unknown")
+
+fn reverseWebhookImport(result: WebhookImportResult) -> WebhookImportResult
+    ? "Restores ingestion order after accumulator prepends."
+    WebhookImportResult(events = List.reverse(result.events), audits = List.reverse(result.audits))
+
+verify reverseWebhookImport
+    reverseWebhookImport(WebhookImportResult(events = [sampleEvent()], audits = [sampleAudit()])) => WebhookImportResult(events = [sampleEvent()], audits = [sampleAudit()])
+
+fn reverseSettlementImport(result: SettlementImportResult) -> SettlementImportResult
+    ? "Restores import order after accumulator prepends."
+    SettlementImportResult(rows = List.reverse(result.rows), audits = List.reverse(result.audits))
+
+verify reverseSettlementImport
+    reverseSettlementImport(SettlementImportResult(rows = [sampleSettlement()], audits = [sampleAudit()])) => SettlementImportResult(rows = [sampleSettlement()], audits = [sampleAudit()])
+
+fn ingestNewWebhook(provider: String, raw: RawWebhook, rest: List<RawWebhook>, knownEvents: List<PaymentEventRecord>, acc: WebhookImportResult, auditedAt: String) -> Result<WebhookImportResult, String>
+    ? "Normalizes one fresh webhook row and continues the import."
+    seq = Domain.Ledger.nextSeq(knownEvents, provider, raw.paymentId)
+    event = Domain.Normalize.normalizeWebhook(provider, seq, raw)?
+    ingestWebhookRows(provider, rest, List.append(knownEvents, event), WebhookImportResult(events = List.prepend(event, acc.events), audits = acc.audits), auditedAt)
+
+verify ingestNewWebhook
+    ingestNewWebhook("stripe", RawWebhook(sourceId = "evt-1", paymentId = "pay-1", kind = "charge.captured", amount = 1000, currency = "USD", occurredAt = "2026-03-10T09:05:00Z"), [], [], WebhookImportResult(events = [], audits = []), "2026-03-10T12:00:00Z") => Result.Ok(WebhookImportResult(events = [PaymentEventRecord(provider = "stripe", sourceId = "evt-1", paymentId = "pay-1", seq = 1, event = PaymentEvent.Captured(1000, "USD", "2026-03-10T09:05:00Z"))], audits = []))
+    ingestNewWebhook("stripe", RawWebhook(sourceId = "evt-1", paymentId = "pay-1", kind = "weird", amount = 1000, currency = "USD", occurredAt = "2026-03-10T09:05:00Z"), [], [], WebhookImportResult(events = [], audits = []), "2026-03-10T12:00:00Z") => Result.Err("Unsupported stripe webhook kind: weird")
+
+fn ingestNewSettlement(provider: String, raw: RawSettlement, rest: List<RawSettlement>, knownRows: List<SettlementRow>, acc: SettlementImportResult, auditedAt: String) -> Result<SettlementImportResult, String>
+    ? "Normalizes one fresh settlement row and continues the import."
+    row = Domain.Normalize.normalizeSettlement(provider, raw)?
+    ingestSettlementRows(provider, rest, List.append(knownRows, row), SettlementImportResult(rows = List.prepend(row, acc.rows), audits = acc.audits), auditedAt)
+
+verify ingestNewSettlement
+    ingestNewSettlement("stripe", RawSettlement(rowId = "row-1", paymentId = "pay-1", kind = "charge", amount = 1000, currency = "USD", settledOn = "2026-03-10"), [], [], SettlementImportResult(rows = [], audits = []), "2026-03-10T12:00:00Z") => Result.Ok(SettlementImportResult(rows = [SettlementRow(provider = "stripe", rowId = "row-1", paymentId = "pay-1", kind = SettlementKind.Capture, amount = 1000, currency = "USD", settledOn = "2026-03-10")], audits = []))
+    ingestNewSettlement("stripe", RawSettlement(rowId = "row-1", paymentId = "pay-1", kind = "unknown", amount = 1000, currency = "USD", settledOn = "2026-03-10"), [], [], SettlementImportResult(rows = [], audits = []), "2026-03-10T12:00:00Z") => Result.Err("Unsupported stripe settlement kind: unknown")
+
+fn hasSettlementRow(rows: List<SettlementRow>, provider: String, rowId: String) -> Bool
+    ? "True when a provider settlement row ID was already imported."
+    match rows
+        [] -> false
+        [row, ..rest] -> match row.provider == provider
+            true -> match row.rowId == rowId
+                true -> true
+                false -> hasSettlementRow(rest, provider, rowId)
+            false -> hasSettlementRow(rest, provider, rowId)
+
+verify hasSettlementRow
+    hasSettlementRow([sampleSettlement()], "stripe", "row-1") => true
+    hasSettlementRow([], "stripe", "row-1") => false
+
+fn openedCaseAudits(cases: List<ReviewCase>) -> List<AuditEntry>
+    ? "Maps new cases into stable audit entries."
+    List.reverse(openedCaseAuditsInto(cases, []))
+
+verify openedCaseAudits
+    openedCaseAudits([sampleCase()]) => [Domain.Cases.auditForOpenedCase(sampleCase())]
+
+fn openedCaseAuditsInto(cases: List<ReviewCase>, acc: List<AuditEntry>) -> List<AuditEntry>
+    ? "Tail-recursive audit materialization for opened cases."
+    match cases
+        [] -> acc
+        [item, ..rest] -> openedCaseAuditsInto(rest, List.prepend(Domain.Cases.auditForOpenedCase(item), acc))
+
+verify openedCaseAuditsInto
+    openedCaseAuditsInto([], [sampleAudit()]) => [sampleAudit()]
+
+fn providerStates(states: List<PaymentState>, provider: String) -> List<PaymentState>
+    ? "Filters replayed payment states by provider."
+    List.reverse(providerStatesInto(states, provider, []))
+
+verify providerStates
+    providerStates([sampleState()], "stripe") => [sampleState()]
+    providerStates([sampleState()], "adyen") => []
+
+fn providerStatesInto(states: List<PaymentState>, provider: String, acc: List<PaymentState>) -> List<PaymentState>
+    ? "Tail-recursive provider filter for replayed states."
+    match states
+        [] -> acc
+        [state, ..rest] -> match state.provider == provider
+            true -> providerStatesInto(rest, provider, List.prepend(state, acc))
+            false -> providerStatesInto(rest, provider, acc)
+
+verify providerStatesInto
+    providerStatesInto([], "stripe", [sampleState()]) => [sampleState()]
+
+fn duplicateWebhookAudit(provider: String, raw: RawWebhook, createdAt: String) -> AuditEntry
+    ? "Stable audit entry for skipped duplicate webhook rows."
+    AuditEntry(key = "dup-webhook:{provider}:{raw.sourceId}", subjectId = "payment:{raw.paymentId}", action = "webhook.duplicate_skipped", message = "Skipped duplicate webhook '{raw.sourceId}'", createdAt = createdAt)
+
+verify duplicateWebhookAudit
+    duplicateWebhookAudit("stripe", RawWebhook(sourceId = "evt-1", paymentId = "pay-1", kind = "charge.captured", amount = 1000, currency = "USD", occurredAt = "2026-03-10T09:05:00Z"), "2026-03-10T12:00:00Z") => AuditEntry(key = "dup-webhook:stripe:evt-1", subjectId = "payment:pay-1", action = "webhook.duplicate_skipped", message = "Skipped duplicate webhook 'evt-1'", createdAt = "2026-03-10T12:00:00Z")
+
+fn duplicateSettlementAudit(provider: String, raw: RawSettlement, createdAt: String) -> AuditEntry
+    ? "Stable audit entry for skipped duplicate settlement rows."
+    AuditEntry(key = "dup-settlement:{provider}:{raw.rowId}", subjectId = "payment:{raw.paymentId}", action = "settlement.duplicate_skipped", message = "Skipped duplicate settlement row '{raw.rowId}'", createdAt = createdAt)
+
+verify duplicateSettlementAudit
+    duplicateSettlementAudit("stripe", RawSettlement(rowId = "row-1", paymentId = "pay-1", kind = "charge", amount = 1000, currency = "USD", settledOn = "2026-03-10"), "2026-03-10T12:00:00Z") => AuditEntry(key = "dup-settlement:stripe:row-1", subjectId = "payment:pay-1", action = "settlement.duplicate_skipped", message = "Skipped duplicate settlement row 'row-1'", createdAt = "2026-03-10T12:00:00Z")
+
+fn sampleEvent() -> PaymentEventRecord
+    ? "Reusable app-layer fixture."
+    PaymentEventRecord(provider = "stripe", sourceId = "evt-1", paymentId = "pay-1", seq = 1, event = PaymentEvent.Captured(1000, "USD", "2026-03-10T09:05:00Z"))
+
+verify sampleEvent
+    sampleEvent() => PaymentEventRecord(provider = "stripe", sourceId = "evt-1", paymentId = "pay-1", seq = 1, event = PaymentEvent.Captured(1000, "USD", "2026-03-10T09:05:00Z"))
+
+fn sampleSettlement() -> SettlementRow
+    ? "Reusable app-layer fixture."
+    SettlementRow(provider = "stripe", rowId = "row-1", paymentId = "pay-1", kind = SettlementKind.Capture, amount = 1000, currency = "USD", settledOn = "2026-03-10")
+
+verify sampleSettlement
+    sampleSettlement() => SettlementRow(provider = "stripe", rowId = "row-1", paymentId = "pay-1", kind = SettlementKind.Capture, amount = 1000, currency = "USD", settledOn = "2026-03-10")
+
+fn sampleAudit() -> AuditEntry
+    ? "Reusable app-layer fixture."
+    AuditEntry(key = "audit-1", subjectId = "payment:pay-1", action = "case.opened", message = "opened", createdAt = "2026-03-10T12:00:00Z")
+
+verify sampleAudit
+    sampleAudit() => AuditEntry(key = "audit-1", subjectId = "payment:pay-1", action = "case.opened", message = "opened", createdAt = "2026-03-10T12:00:00Z")
+
+fn sampleCase() -> ReviewCase
+    ? "Reusable app-layer fixture."
+    ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "refund_before_capture", detail = "Refund arrived first", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)
+
+verify sampleCase
+    sampleCase() => ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "refund_before_capture", detail = "Refund arrived first", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)
+
+fn sampleState() -> PaymentState
+    ? "Reusable app-layer fixture."
+    PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 1000, capturedAmount = 1000, refundedAmount = 0, latestAt = "2026-03-10T09:05:00Z", anomalyKeys = [], anomalyNotes = [])
+
+verify sampleState
+    sampleState() => PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 1000, capturedAmount = 1000, refundedAmount = 0, latestAt = "2026-03-10T09:05:00Z", anomalyKeys = [], anomalyNotes = [])

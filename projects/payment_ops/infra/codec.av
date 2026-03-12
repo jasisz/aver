@@ -1,0 +1,104 @@
+module Codec
+    intent =
+        "Shared plain-text codec helpers for payment_ops persistence and imports."
+        "The project uses explicit text files on purpose, so escaping and line handling"
+        "stay visible in code instead of disappearing into a serializer."
+    exposes [escapeField, fieldAt, optionalFieldAt, encodeOption, decodeOption, splitNonEmptyLines, renderLines]
+
+fn escapeField(text: String) -> String
+    ? "Escapes percent, pipe, and newline for one file field."
+    p = String.replace(text, "%", "%25")
+    bar = String.replace(p, "|", "%7C")
+    String.replace(bar, "\n", "%0A")
+
+verify escapeField
+    escapeField("a|b") => "a%7Cb"
+    escapeField("line\nbreak") => "line%0Abreak"
+
+fn unescapeField(text: String) -> String
+    ? "Reverses flat-file escaping in the opposite order."
+    nl = String.replace(text, "%0A", "\n")
+    bar = String.replace(nl, "%7C", "|")
+    String.replace(bar, "%25", "%")
+
+verify unescapeField
+    unescapeField("a%7Cb") => "a|b"
+    unescapeField("line%0Abreak") => "line\nbreak"
+
+verify unescapeField law escapedRoundtrip
+    given text: String = ["plain", "a|b", "50% done", "line\nbreak", "mix|50%\nnow"]
+    unescapeField(escapeField(text)) => text
+
+fn fieldAt(parts: List<String>, index: Int, label: String) -> Result<String, String>
+    ? "Reads and unescapes one required field."
+    raw = Option.toResult(List.get(parts, index), "Corrupt {label}: missing field {Int.toString(index)}")?
+    Result.Ok(unescapeField(raw))
+
+verify fieldAt
+    fieldAt(["a", "b"], 1, "line") => Result.Ok("b")
+    fieldAt([], 0, "line") => Result.Err("Corrupt line: missing field 0")
+
+fn optionalFieldAt(parts: List<String>, index: Int) -> String
+    ? "Returns one optional raw field or '-' when it is missing."
+    match List.get(parts, index)
+        Option.Some(raw) -> raw
+        Option.None -> "-"
+
+verify optionalFieldAt
+    optionalFieldAt(["a"], 1) => "-"
+
+fn encodeOption(value: Option<String>) -> String
+    ? "Stores optional text as '-' or an escaped field."
+    match value
+        Option.None -> "-"
+        Option.Some(text) -> escapeField(text)
+
+verify encodeOption
+    encodeOption(Option.None) => "-"
+    encodeOption(Option.Some("a|b")) => "a%7Cb"
+
+fn decodeOption(raw: String) -> Option<String>
+    ? "Reads optional text stored by encodeOption."
+    match raw
+        "-" -> Option.None
+        _ -> Option.Some(unescapeField(raw))
+
+verify decodeOption
+    decodeOption("-") => Option.None
+    decodeOption("a%7Cb") => Option.Some("a|b")
+
+fn splitNonEmptyLines(content: String) -> List<String>
+    ? "Splits text into lines and drops empty ones."
+    keepNonEmpty(String.split(content, "\n"))
+
+verify splitNonEmptyLines
+    splitNonEmptyLines("") => []
+    splitNonEmptyLines("a\nb\n") => ["a", "b"]
+
+fn keepNonEmpty(lines: List<String>) -> List<String>
+    ? "Drops empty lines with an accumulator."
+    List.reverse(keepNonEmptyInto(lines, []))
+
+verify keepNonEmpty
+    keepNonEmpty(["", "a", "", "b"]) => ["a", "b"]
+
+fn keepNonEmptyInto(lines: List<String>, kept: List<String>) -> List<String>
+    ? "Tail-recursive helper for empty-line filtering."
+    match lines
+        [] -> kept
+        [line, ..rest] -> match String.len(line) == 0
+            true -> keepNonEmptyInto(rest, kept)
+            false -> keepNonEmptyInto(rest, List.prepend(line, kept))
+
+verify keepNonEmptyInto
+    keepNonEmptyInto([], ["b", "a"]) => ["b", "a"]
+
+fn renderLines(lines: List<String>) -> String
+    ? "Turns serialized lines into a whole-file string."
+    match List.len(lines) == 0
+        true -> ""
+        false -> "{String.join(lines, "\n")}\n"
+
+verify renderLines
+    renderLines([]) => ""
+    renderLines(["a", "b"]) => "a\nb\n"

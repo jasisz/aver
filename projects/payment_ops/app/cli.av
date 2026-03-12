@@ -1,0 +1,98 @@
+module Cli
+    intent =
+        "Thin argv adapter for payment_ops."
+        "CLI parsing and rendering stay separate so the reader can focus on replay,"
+        "reconciliation, and case flow instead of shell plumbing."
+    exposes [runCli]
+    depends [App.Parse, App.Render, App.Commands, App.Queries, Infra.Store, Infra.Audit]
+
+fn helpLines() -> List<String>
+    ? "User-facing help for the argv CLI."
+    [
+        "Payment Ops CLI",
+        "Usage: <command> [args]",
+        "Use shell quotes for values with spaces.",
+        "Use '-' for an optional empty field.",
+        "",
+        "Imports:",
+        "  ingest_webhooks provider path",
+        "  import_settlement provider path",
+        "  reconcile provider",
+        "",
+        "Queries:",
+        "  show_payment payment_id",
+        "  list_cases [open|resolved|all]",
+        "  provider_summary provider",
+        "  show_audit [subject_id]",
+        "",
+        "Manual review:",
+        "  resolve_case case_id resolution",
+        "  help",
+    ]
+
+verify helpLines
+    List.get(helpLines(), 0) => Option.Some("Payment Ops CLI")
+    List.contains(helpLines(), "  reconcile provider") => true
+
+fn initCli() -> Result<Unit, String>
+    ? "Ensures all local payment_ops files exist before command execution."
+    ! [Disk.appendText, Disk.exists, Disk.makeDir, Disk.writeText]
+    _store = Infra.Store.initStore()?
+    _audit = Infra.Audit.initAudit()?
+    Result.Ok(Unit)
+
+fn runCli() -> Unit
+    ? "Starts the payment_ops argv CLI."
+    ! [
+        Args.get,
+        Console.print,
+        Disk.appendText, Disk.exists, Disk.makeDir, Disk.readText, Disk.writeText,
+        Time.now,
+    ]
+    match initCli()
+        Result.Err(msg) -> Console.print("BOOT ERROR: " + msg)
+        Result.Ok(_) -> runArgs(Args.get())
+
+fn runArgs(args: List<String>) -> Unit
+    ? "Parses argv input, executes one action, and prints the result."
+    ! [
+        Console.print,
+        Disk.appendText, Disk.readText, Disk.writeText,
+        Time.now,
+    ]
+    match executeArgs(args)
+        Result.Ok(lines) -> printLines(lines)
+        Result.Err(msg) -> printLines(errorLines(msg))
+
+fn executeArgs(args: List<String>) -> Result<List<String>, String>
+    ? "Runs one argv-style command and returns rendered output lines."
+    ! [
+        Disk.appendText, Disk.readText, Disk.writeText,
+        Time.now,
+    ]
+    input = App.Parse.parseArgs(args)?
+    executeInput(input)
+
+fn executeInput(input: Input) -> Result<List<String>, String>
+    ? "Thin adapter from parsed CLI input to app entrypoints."
+    ! [
+        Disk.appendText, Disk.readText, Disk.writeText,
+        Time.now,
+    ]
+    match input
+        Input.ShowHelp -> Result.Ok(helpLines())
+        Input.RunCommand(command) -> App.Render.renderCommand(App.Commands.execute(command))
+        Input.RunQuery(query) -> App.Render.renderQuery(App.Queries.run(query))
+
+fn errorLines(msg: String) -> List<String>
+    ? "CLI error block followed by help text."
+    List.concat(["ERROR: " + msg, ""], helpLines())
+
+verify errorLines
+    List.get(errorLines("bad"), 0) => Option.Some("ERROR: bad")
+    List.contains(errorLines("bad"), "Payment Ops CLI") => true
+
+fn printLines(lines: List<String>) -> Unit
+    ? "Prints a rendered block as one console write."
+    ! [Console.print]
+    Console.print(String.join(lines, "\n"))

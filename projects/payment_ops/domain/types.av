@@ -1,0 +1,103 @@
+module Types
+    intent =
+        "Shared domain types for the payment operations showcase."
+        "This project models dirty payment ingestion, settlement import, reconciliation,"
+        "and manual-review cases without hiding the state machine in infrastructure."
+    exposes [RawWebhook, RawSettlement, PaymentEvent, PaymentEventRecord, SettlementKind, SettlementRow, PaymentState, CaseStatus, CaseDraft, ReviewCase, AuditEntry, PaymentDetail, ProviderSummary]
+
+record RawWebhook
+    sourceId: String
+    paymentId: String
+    kind: String
+    amount: Int
+    currency: String
+    occurredAt: String
+
+record RawSettlement
+    rowId: String
+    paymentId: String
+    kind: String
+    amount: Int
+    currency: String
+    settledOn: String
+
+type PaymentEvent
+    Authorized(Int, String, String)
+    Captured(Int, String, String)
+    Refunded(Int, String, String)
+
+record PaymentEventRecord
+    provider: String
+    sourceId: String
+    paymentId: String
+    seq: Int
+    event: PaymentEvent
+
+type SettlementKind
+    Capture
+    Refund
+
+record SettlementRow
+    provider: String
+    rowId: String
+    paymentId: String
+    kind: SettlementKind
+    amount: Int
+    currency: String
+    settledOn: String
+
+record PaymentState
+    paymentId: String
+    provider: String
+    currency: String
+    authorizedAmount: Int
+    capturedAmount: Int
+    refundedAmount: Int
+    latestAt: String
+    anomalyKeys: List<String>
+    anomalyNotes: List<String>
+
+type CaseStatus
+    Open
+    Resolved
+
+record CaseDraft
+    key: String
+    provider: String
+    paymentId: String
+    kind: String
+    detail: String
+
+record ReviewCase
+    id: String
+    key: String
+    provider: String
+    paymentId: String
+    kind: String
+    detail: String
+    status: CaseStatus
+    createdAt: String
+    resolvedAt: Option<String>
+    resolution: Option<String>
+
+record AuditEntry
+    key: String
+    subjectId: String
+    action: String
+    message: String
+    createdAt: String
+
+record PaymentDetail
+    state: PaymentState
+    events: List<PaymentEventRecord>
+    settlements: List<SettlementRow>
+    openCases: List<ReviewCase>
+
+record ProviderSummary
+    provider: String
+    payments: Int
+    events: Int
+    settlements: Int
+    openCases: Int
+    capturedAmount: Int
+    refundedAmount: Int

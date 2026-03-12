@@ -1,0 +1,161 @@
+module Audit
+    intent =
+        "Append-only audit trail persistence for payment_ops."
+        "Audits explain what the operator-facing system decided, including duplicate skips,"
+        "case openings, and manual resolutions."
+    exposes [initAudit, loadEntries, forSubject, recordEntries]
+    depends [Domain.Types, Infra.Codec, Infra.Store]
+
+fn auditPath() -> String
+    ? "Path for the append-only audit log."
+    "{Infra.Store.dataDir()}/audits.txt"
+
+verify auditPath
+    auditPath() => "/tmp/aver_payment_ops/audits.txt"
+
+fn initAudit() -> Result<Unit, String>
+    ? "Ensures the audit file exists."
+    ! [Disk.appendText, Disk.exists, Disk.writeText]
+    match Disk.exists(auditPath())
+        true -> Disk.appendText(auditPath(), "")
+        false -> Disk.writeText(auditPath(), "")
+
+fn loadEntries() -> Result<List<AuditEntry>, String>
+    ? "Reads all persisted audit entries."
+    ! [Disk.readText]
+    content = Disk.readText(auditPath())?
+    parseAuditEntries(content)
+
+fn forSubject(entries: List<AuditEntry>, subjectId: Option<String>) -> List<AuditEntry>
+    ? "Optional subject filter for audit queries."
+    match subjectId
+        Option.None -> entries
+        Option.Some(id) -> filterSubject(entries, id)
+
+verify forSubject
+    forSubject([sampleAudit()], Option.None) => [sampleAudit()]
+    forSubject([sampleAudit()], Option.Some("payment:pay-1")) => [sampleAudit()]
+    forSubject([sampleAudit()], Option.Some("payment:missing")) => []
+
+fn recordEntries(entries: List<AuditEntry>) -> Result<Unit, String>
+    ? "Appends only new audit entries, preserving a stable history."
+    ! [Disk.appendText, Disk.readText]
+    existing = loadEntries()?
+    fresh = newEntries(existing, entries)
+    match List.len(fresh) == 0
+        true -> Disk.appendText(auditPath(), "")
+        false -> Disk.appendText(auditPath(), Infra.Codec.renderLines(serializeEntries(fresh)))
+
+fn serializeEntry(entry: AuditEntry) -> String
+    ? "Encodes one audit record line."
+    String.join([entry.key, Infra.Codec.escapeField(entry.subjectId), entry.action, Infra.Codec.escapeField(entry.message), entry.createdAt], "|")
+
+verify serializeEntry
+    serializeEntry(sampleAudit()) => "audit-1|payment:pay-1|case.opened|opened|2026-03-10T12:00:00Z"
+
+fn deserializeEntry(line: String) -> Result<AuditEntry, String>
+    ? "Decodes one serialized audit line."
+    parts = String.split(line, "|")
+    key = Infra.Codec.fieldAt(parts, 0, "audit")?
+    subjectId = Infra.Codec.fieldAt(parts, 1, "audit")?
+    action = Infra.Codec.fieldAt(parts, 2, "audit")?
+    message = Infra.Codec.fieldAt(parts, 3, "audit")?
+    createdAt = Infra.Codec.fieldAt(parts, 4, "audit")?
+    Result.Ok(AuditEntry(key = key, subjectId = subjectId, action = action, message = message, createdAt = createdAt))
+
+verify deserializeEntry
+    deserializeEntry("audit-1|payment:pay-1|case.opened|opened|2026-03-10T12:00:00Z") => Result.Ok(sampleAudit())
+    deserializeEntry("audit-1|payment:pay-1|case.opened") => Result.Err("Corrupt audit: missing field 3")
+
+fn parseAuditEntries(content: String) -> Result<List<AuditEntry>, String>
+    ? "Parses the whole audit file."
+    parseAuditLines(Infra.Codec.splitNonEmptyLines(content), [])
+
+verify parseAuditEntries
+    parseAuditEntries("") => Result.Ok([])
+    parseAuditEntries("audit-1|payment:pay-1|case.opened|opened|2026-03-10T12:00:00Z\n") => Result.Ok([sampleAudit()])
+    parseAuditEntries("audit-1|payment:pay-1|case.opened\n") => Result.Err("Corrupt audit: missing field 3")
+
+fn parseAuditLines(lines: List<String>, acc: List<AuditEntry>) -> Result<List<AuditEntry>, String>
+    ? "Tail-recursive audit file parser."
+    match lines
+        [] -> Result.Ok(List.reverse(acc))
+        [line, ..rest] -> match deserializeEntry(line)
+            Result.Err(msg) -> Result.Err(msg)
+            Result.Ok(entry) -> parseAuditLines(rest, List.prepend(entry, acc))
+
+verify parseAuditLines
+    parseAuditLines([], []) => Result.Ok([])
+    parseAuditLines(["audit-1|payment:pay-1|case.opened"], []) => Result.Err("Corrupt audit: missing field 3")
+
+fn newEntries(existing: List<AuditEntry>, candidates: List<AuditEntry>) -> List<AuditEntry>
+    ? "Drops audit entries whose keys are already persisted."
+    List.reverse(newEntriesInto(existing, candidates, []))
+
+verify newEntries
+    newEntries([], [sampleAudit()]) => [sampleAudit()]
+    newEntries([sampleAudit()], [sampleAudit()]) => []
+
+fn newEntriesInto(existing: List<AuditEntry>, candidates: List<AuditEntry>, acc: List<AuditEntry>) -> List<AuditEntry>
+    ? "Tail-recursive audit dedupe."
+    match candidates
+        [] -> acc
+        [entry, ..rest] -> match hasAuditKey(existing, entry.key)
+            true -> newEntriesInto(existing, rest, acc)
+            false -> newEntriesInto(List.prepend(entry, existing), rest, List.prepend(entry, acc))
+
+verify newEntriesInto
+    newEntriesInto([], [], [sampleAudit()]) => [sampleAudit()]
+
+fn hasAuditKey(entries: List<AuditEntry>, key: String) -> Bool
+    ? "Stable audit dedupe by key."
+    match entries
+        [] -> false
+        [entry, ..rest] -> match entry.key == key
+            true -> true
+            false -> hasAuditKey(rest, key)
+
+verify hasAuditKey
+    hasAuditKey([sampleAudit()], "audit-1") => true
+    hasAuditKey([], "audit-1") => false
+
+fn serializeEntries(entries: List<AuditEntry>) -> List<String>
+    ? "Serializes many audit lines."
+    List.reverse(serializeEntriesInto(entries, []))
+
+verify serializeEntries
+    serializeEntries([sampleAudit()]) => ["audit-1|payment:pay-1|case.opened|opened|2026-03-10T12:00:00Z"]
+
+fn serializeEntriesInto(entries: List<AuditEntry>, acc: List<String>) -> List<String>
+    ? "Tail-recursive audit line serialization."
+    match entries
+        [] -> acc
+        [entry, ..rest] -> serializeEntriesInto(rest, List.prepend(serializeEntry(entry), acc))
+
+verify serializeEntriesInto
+    serializeEntriesInto([], ["x"]) => ["x"]
+
+fn filterSubject(entries: List<AuditEntry>, subjectId: String) -> List<AuditEntry>
+    ? "Keeps only one audit subject."
+    List.reverse(filterSubjectInto(entries, subjectId, []))
+
+verify filterSubject
+    filterSubject([sampleAudit()], "payment:pay-1") => [sampleAudit()]
+
+fn filterSubjectInto(entries: List<AuditEntry>, subjectId: String, acc: List<AuditEntry>) -> List<AuditEntry>
+    ? "Tail-recursive subject filter for audit entries."
+    match entries
+        [] -> acc
+        [entry, ..rest] -> match entry.subjectId == subjectId
+            true -> filterSubjectInto(rest, subjectId, List.prepend(entry, acc))
+            false -> filterSubjectInto(rest, subjectId, acc)
+
+verify filterSubjectInto
+    filterSubjectInto([], "payment:pay-1", [sampleAudit()]) => [sampleAudit()]
+
+fn sampleAudit() -> AuditEntry
+    ? "Reusable audit fixture."
+    AuditEntry(key = "audit-1", subjectId = "payment:pay-1", action = "case.opened", message = "opened", createdAt = "2026-03-10T12:00:00Z")
+
+verify sampleAudit
+    sampleAudit() => AuditEntry(key = "audit-1", subjectId = "payment:pay-1", action = "case.opened", message = "opened", createdAt = "2026-03-10T12:00:00Z")

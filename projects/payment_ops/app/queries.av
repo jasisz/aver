@@ -1,0 +1,178 @@
+module Queries
+    intent =
+        "Read-only query assembly for payment_ops."
+        "Queries replay the ledger and join manual-review state without burying that logic"
+        "inside storage or rendering modules."
+    exposes [Query, QueryOutput, run]
+    depends [App.Shared, Domain.Types, Domain.Ledger, Domain.Reconcile, Domain.Cases, Domain.Views, Infra.Store, Infra.Audit]
+
+type Query
+    ShowPayment(String)
+    ListCases(Option<String>)
+    ProviderSummary(String)
+    ShowAudit(Option<String>)
+
+type QueryOutput
+    PaymentDetail(PaymentDetail)
+    CaseList(List<ReviewCase>)
+    ProviderSummary(ProviderSummary)
+    AuditTrail(List<AuditEntry>)
+
+fn run(query: Query) -> Result<QueryOutput, String>
+    ? "Executes one read-only query."
+    ! [Disk.readText]
+    match query
+        Query.ShowPayment(paymentId) -> runShowPayment(paymentId)
+        Query.ListCases(status) -> runListCases(status)
+        Query.ProviderSummary(provider) -> runProviderSummary(provider)
+        Query.ShowAudit(subjectId) -> runShowAudit(subjectId)
+
+fn runShowPayment(paymentId: String) -> Result<QueryOutput, String>
+    ? "Builds a detailed payment view from replay, settlements, and cases."
+    ! [Disk.readText]
+    events = Infra.Store.loadEvents()?
+    settlements = Infra.Store.loadSettlements()?
+    cases = Infra.Store.loadCases()?
+    details = buildPaymentDetail(paymentId, events, settlements, cases)?
+    Result.Ok(QueryOutput.PaymentDetail(details))
+
+fn runListCases(status: Option<String>) -> Result<QueryOutput, String>
+    ? "Lists manual-review cases with a simple status filter."
+    ! [Disk.readText]
+    cases = Infra.Store.loadCases()?
+    filtered = Domain.Cases.filterByStatusLabel(cases, status)?
+    Result.Ok(QueryOutput.CaseList(filtered))
+
+fn runProviderSummary(provider: String) -> Result<QueryOutput, String>
+    ? "Aggregates one provider across replayed state, settlements, and open cases."
+    ! [Disk.readText]
+    canonicalProvider = App.Shared.normalizeProviderInput(provider)?
+    events = Infra.Store.loadEvents()?
+    settlements = Infra.Store.loadSettlements()?
+    cases = Infra.Store.loadCases()?
+    summary = Domain.Views.providerSummary(canonicalProvider, providerEvents(events, canonicalProvider), providerStates(Domain.Ledger.replayAll(events), canonicalProvider), Domain.Reconcile.settlementsForProvider(settlements, canonicalProvider), cases)
+    Result.Ok(QueryOutput.ProviderSummary(summary))
+
+fn runShowAudit(subjectId: Option<String>) -> Result<QueryOutput, String>
+    ? "Lists audit entries, optionally narrowed to one subject."
+    ! [Disk.readText]
+    entries = Infra.Audit.loadEntries()?
+    Result.Ok(QueryOutput.AuditTrail(Infra.Audit.forSubject(entries, subjectId)))
+
+fn buildPaymentDetail(paymentId: String, events: List<PaymentEventRecord>, settlements: List<SettlementRow>, cases: List<ReviewCase>) -> Result<PaymentDetail, String>
+    ? "Assembles one payment detail view."
+    paymentEvents = Domain.Ledger.eventsForPayment(events, paymentId)
+    paymentSettlements = Domain.Reconcile.settlementsForPayment(settlements, paymentId)
+    openCases = Domain.Cases.openCasesForPayment(cases, paymentId)
+    match Domain.Ledger.replayPayment(paymentEvents)
+        Result.Ok(state) -> Result.Ok(PaymentDetail(state = state, events = paymentEvents, settlements = paymentSettlements, openCases = openCases))
+        Result.Err(_) -> match paymentSettlements
+            [] -> Result.Err("Unknown payment: " + paymentId)
+            _ -> Result.Ok(PaymentDetail(state = settlementOnlyState(paymentId, paymentSettlements), events = [], settlements = paymentSettlements, openCases = openCases))
+
+verify buildPaymentDetail
+    buildPaymentDetail("pay-1", [sampleEvent()], [sampleSettlement()], [sampleCase()]) => Result.Ok(PaymentDetail(state = sampleState(), events = [sampleEvent()], settlements = [sampleSettlement()], openCases = [sampleCase()]))
+    buildPaymentDetail("missing", [], [], []) => Result.Err("Unknown payment: missing")
+
+fn settlementOnlyState(paymentId: String, rows: List<SettlementRow>) -> PaymentState
+    ? "Fallback state for settlement-only orphan payments."
+    row = sampleOrFirst(rows)
+    PaymentState(paymentId = paymentId, provider = row.provider, currency = row.currency, authorizedAmount = 0, capturedAmount = totalByKind(rows, SettlementKind.Capture), refundedAmount = totalByKind(rows, SettlementKind.Refund), latestAt = row.settledOn, anomalyKeys = ["settlement-without-realtime:{paymentId}"], anomalyNotes = ["Settlement exists without any realtime payment events"])
+
+verify settlementOnlyState
+    settlementOnlyState("pay-9", [SettlementRow(provider = "stripe", rowId = "row-x", paymentId = "pay-9", kind = SettlementKind.Capture, amount = 400, currency = "USD", settledOn = "2026-03-10")]) => PaymentState(paymentId = "pay-9", provider = "stripe", currency = "USD", authorizedAmount = 0, capturedAmount = 400, refundedAmount = 0, latestAt = "2026-03-10", anomalyKeys = ["settlement-without-realtime:pay-9"], anomalyNotes = ["Settlement exists without any realtime payment events"])
+
+fn sampleOrFirst(rows: List<SettlementRow>) -> SettlementRow
+    ? "Uses the first settlement row when present."
+    match rows
+        [] -> sampleSettlement()
+        [row, .._rest] -> row
+
+verify sampleOrFirst
+    sampleOrFirst([]) => sampleSettlement()
+    sampleOrFirst([sampleSettlement()]) => sampleSettlement()
+
+fn totalByKind(rows: List<SettlementRow>, kind: SettlementKind) -> Int
+    ? "Sums settlement rows by kind for fallback states."
+    totalByKindFrom(rows, kind, 0)
+
+verify totalByKind
+    totalByKind([sampleSettlement()], SettlementKind.Capture) => 1000
+    totalByKind([sampleSettlement()], SettlementKind.Refund) => 0
+
+fn totalByKindFrom(rows: List<SettlementRow>, kind: SettlementKind, acc: Int) -> Int
+    ? "Tail-recursive settlement summation for fallback state views."
+    match rows
+        [] -> acc
+        [row, ..rest] -> match row.kind == kind
+            true -> totalByKindFrom(rest, kind, acc + row.amount)
+            false -> totalByKindFrom(rest, kind, acc)
+
+verify totalByKindFrom
+    totalByKindFrom([], SettlementKind.Capture, 5) => 5
+
+fn providerStates(states: List<PaymentState>, provider: String) -> List<PaymentState>
+    ? "Filters replayed payment states by provider."
+    List.reverse(providerStatesInto(states, provider, []))
+
+verify providerStates
+    providerStates([sampleState()], "stripe") => [sampleState()]
+    providerStates([sampleState()], "adyen") => []
+
+fn providerStatesInto(states: List<PaymentState>, provider: String, acc: List<PaymentState>) -> List<PaymentState>
+    ? "Tail-recursive provider filter for query summaries."
+    match states
+        [] -> acc
+        [state, ..rest] -> match state.provider == provider
+            true -> providerStatesInto(rest, provider, List.prepend(state, acc))
+            false -> providerStatesInto(rest, provider, acc)
+
+verify providerStatesInto
+    providerStatesInto([], "stripe", [sampleState()]) => [sampleState()]
+
+fn providerEvents(events: List<PaymentEventRecord>, provider: String) -> List<PaymentEventRecord>
+    ? "Filters canonical events by provider for summary counting."
+    List.reverse(providerEventsInto(events, provider, []))
+
+verify providerEvents
+    providerEvents([sampleEvent()], "stripe") => [sampleEvent()]
+    providerEvents([sampleEvent()], "adyen") => []
+
+fn providerEventsInto(events: List<PaymentEventRecord>, provider: String, acc: List<PaymentEventRecord>) -> List<PaymentEventRecord>
+    ? "Tail-recursive provider filter for canonical events."
+    match events
+        [] -> acc
+        [entry, ..rest] -> match entry.provider == provider
+            true -> providerEventsInto(rest, provider, List.prepend(entry, acc))
+            false -> providerEventsInto(rest, provider, acc)
+
+verify providerEventsInto
+    providerEventsInto([], "stripe", [sampleEvent()]) => [sampleEvent()]
+
+fn sampleEvent() -> PaymentEventRecord
+    ? "Reusable query fixture."
+    PaymentEventRecord(provider = "stripe", sourceId = "evt-1", paymentId = "pay-1", seq = 1, event = PaymentEvent.Captured(1000, "USD", "2026-03-10T09:05:00Z"))
+
+verify sampleEvent
+    sampleEvent() => PaymentEventRecord(provider = "stripe", sourceId = "evt-1", paymentId = "pay-1", seq = 1, event = PaymentEvent.Captured(1000, "USD", "2026-03-10T09:05:00Z"))
+
+fn sampleSettlement() -> SettlementRow
+    ? "Reusable query fixture."
+    SettlementRow(provider = "stripe", rowId = "row-1", paymentId = "pay-1", kind = SettlementKind.Capture, amount = 1000, currency = "USD", settledOn = "2026-03-10")
+
+verify sampleSettlement
+    sampleSettlement() => SettlementRow(provider = "stripe", rowId = "row-1", paymentId = "pay-1", kind = SettlementKind.Capture, amount = 1000, currency = "USD", settledOn = "2026-03-10")
+
+fn sampleCase() -> ReviewCase
+    ? "Reusable query fixture."
+    ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "settlement_capture_mismatch", detail = "Realtime captured 1000 but settlement shows 900", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)
+
+verify sampleCase
+    sampleCase() => ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "settlement_capture_mismatch", detail = "Realtime captured 1000 but settlement shows 900", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)
+
+fn sampleState() -> PaymentState
+    ? "Reusable query fixture."
+    PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 0, capturedAmount = 1000, refundedAmount = 0, latestAt = "2026-03-10T09:05:00Z", anomalyKeys = ["capture-without-authorize:evt-1"], anomalyNotes = ["Capture arrived before any authorization for payment 'pay-1'"])
+
+verify sampleState
+    sampleState() => PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 0, capturedAmount = 1000, refundedAmount = 0, latestAt = "2026-03-10T09:05:00Z", anomalyKeys = ["capture-without-authorize:evt-1"], anomalyNotes = ["Capture arrived before any authorization for payment 'pay-1'"])

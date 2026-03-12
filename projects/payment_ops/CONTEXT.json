@@ -1,0 +1,533 @@
+{
+  "schema_version": 5,
+  "entry": "main.av",
+  "selection": {
+    "depth_mode": "auto",
+    "budget_bytes": 32768,
+    "included_depth": 5,
+    "truncated": false,
+    "used_bytes": 31781
+  },
+  "modules": [
+    {
+      "source_file": "main.av",
+      "module": "Main",
+      "intent": "Payment operations argv entrypoint. Keeps the top-level module thin so the CLI and application core stay in their own modules and `aver context` has a stable root to resume from.",
+      "depends": ["App.Cli"],
+      "api_effects": [],
+      "module_effects": ["Args.get", "Console.print", "Disk.appendText", "Disk.exists", "Disk.makeDir", "Disk.readText", "Disk.writeText", "Time.now"],
+      "main_effects": ["Args.get", "Console.print", "Disk.appendText", "Disk.exists", "Disk.makeDir", "Disk.readText", "Disk.writeText", "Time.now"]
+    },
+    {
+      "source_file": "app/cli.av",
+      "module": "Cli",
+      "intent": "Thin argv adapter for payment_ops. CLI parsing and rendering stay separate so the reader can focus on replay, reconciliation, and case flow instead of shell plumbing.",
+      "depends": ["App.Parse", "App.Render", "App.Commands", "App.Queries", "Infra.Store", "Infra.Audit"],
+      "effects": ["Args.get", "Console.print", "Disk.appendText", "Disk.exists", "Disk.makeDir", "Disk.readText", "Disk.writeText", "Time.now"],
+      "functions": [
+        {
+          "sig": "runCli() -> Unit",
+          "effects": ["Args.get", "Console.print", "Disk.appendText", "Disk.exists", "Disk.makeDir", "Disk.readText", "Disk.writeText", "Time.now"],
+          "desc": "Starts the payment_ops argv CLI."
+        }
+      ]
+    },
+    {
+      "source_file": "app/parse.av",
+      "module": "Parse",
+      "intent": "Plain argv parsing for the payment_ops CLI. The parser stays dumb and returns typed commands and queries so the shell adapter does not need to understand payment semantics.",
+      "depends": ["App.Commands", "App.Queries"],
+      "types": [
+        {"name": "Input", "variants": ["ShowHelp", {"name": "RunCommand", "fields": ["Command"]}, {"name": "RunQuery", "fields": ["Query"]}]}
+      ],
+      "functions": [
+        {
+          "sig": "parseArgs(args: List<String>) -> Result<Input, String>",
+          "desc": "Parses argv-style input into a command, query, or help action.",
+          "verify_count": 4,
+          "verify": ["parseArgs([]) → Result.Ok(Input.ShowHelp)", "parseArgs([\"help\"]) → Result.Ok(Input.ShowHelp)", "parseArgs([\"show_payment\", \"pay-1\"]) → Result.Ok(Input.RunQuery(Query.ShowPayment(\"pay-1\")))"]
+        }
+      ]
+    },
+    {
+      "source_file": "app/commands.av",
+      "module": "Commands",
+      "intent": "Effectful command handlers for payment_ops. The app layer loads persisted facts, delegates the dirty reasoning to pure domain functions, then commits new facts and manual-review work explicitly.",
+      "depends": ["App.Shared", "Domain.Types", "Domain.Normalize", "Domain.Ledger", "Domain.Cases", "Domain.Reconcile", "Infra.Store", "Infra.Audit", "Infra.Imports"],
+      "effects": ["Disk.appendText", "Disk.readText", "Disk.writeText", "Time.now"],
+      "types": [
+        {"name": "Command", "variants": [{"name": "IngestWebhooks", "fields": ["String", "String"]}, {"name": "ImportSettlement", "fields": ["String", "String"]}, {"name": "Reconcile", "fields": ["String"]}, {"name": "ResolveCase", "fields": ["String", "String"]}]}
+      ],
+      "records": [
+        {"name": "CommandReport", "fields": [{"name": "summary", "type": "String"}, {"name": "subjectId", "type": "String"}, {"name": "addedEvents", "type": "List<PaymentEventRecord>"}, {"name": "addedSettlements", "type": "List<SettlementRow>"}, {"name": "addedCases", "type": "List<ReviewCase>"}, {"name": "audits", "type": "List<AuditEntry>"}]},
+        {"name": "WebhookImportResult", "fields": [{"name": "events", "type": "List<PaymentEventRecord>"}, {"name": "audits", "type": "List<AuditEntry>"}]},
+        {"name": "SettlementImportResult", "fields": [{"name": "rows", "type": "List<SettlementRow>"}, {"name": "audits", "type": "List<AuditEntry>"}]}
+      ],
+      "functions": [
+        {
+          "sig": "execute(command: Command) -> Result<CommandReport, String>",
+          "effects": ["Disk.appendText", "Disk.readText", "Disk.writeText", "Time.now"],
+          "desc": "Executes one payment_ops command."
+        }
+      ]
+    },
+    {
+      "source_file": "app/shared.av",
+      "module": "Shared",
+      "intent": "Small app-layer helpers shared by commands and queries. This module keeps boundary normalization logic in one place so CLI paths do not quietly drift apart over time.",
+      "functions": [
+        {
+          "sig": "normalizeProviderInput(provider: String) -> Result<String, String>",
+          "desc": "Normalizes provider labels at the app boundary.",
+          "verify_count": 3,
+          "verify": ["normalizeProviderInput(\"stripe\") → Result.Ok(\"stripe\")", "normalizeProviderInput(\"Adyen\") → Result.Ok(\"adyen\")", "normalizeProviderInput(\"x\") → Result.Err(\"Provider must be one of: stripe, adyen\")"]
+        }
+      ]
+    },
+    {
+      "source_file": "domain/types.av",
+      "module": "Types",
+      "intent": "Shared domain types for the payment operations showcase. This project models dirty payment ingestion, settlement import, reconciliation, and manual-review cases without hiding the state machine in infrastructure.",
+      "types": [
+        {"name": "PaymentEvent", "variants": [{"name": "Authorized", "fields": ["Int", "String", "String"]}, {"name": "Captured", "fields": ["Int", "String", "String"]}, {"name": "Refunded", "fields": ["Int", "String", "String"]}]},
+        {"name": "SettlementKind", "variants": ["Capture", "Refund"]},
+        {"name": "CaseStatus", "variants": ["Open", "Resolved"]}
+      ],
+      "records": [
+        {"name": "RawWebhook", "fields": [{"name": "sourceId", "type": "String"}, {"name": "paymentId", "type": "String"}, {"name": "kind", "type": "String"}, {"name": "amount", "type": "Int"}, {"name": "currency", "type": "String"}, {"name": "occurredAt", "type": "String"}]},
+        {"name": "RawSettlement", "fields": [{"name": "rowId", "type": "String"}, {"name": "paymentId", "type": "String"}, {"name": "kind", "type": "String"}, {"name": "amount", "type": "Int"}, {"name": "currency", "type": "String"}, {"name": "settledOn", "type": "String"}]},
+        {"name": "PaymentEventRecord", "fields": [{"name": "provider", "type": "String"}, {"name": "sourceId", "type": "String"}, {"name": "paymentId", "type": "String"}, {"name": "seq", "type": "Int"}, {"name": "event", "type": "PaymentEvent"}]},
+        {"name": "SettlementRow", "fields": [{"name": "provider", "type": "String"}, {"name": "rowId", "type": "String"}, {"name": "paymentId", "type": "String"}, {"name": "kind", "type": "SettlementKind"}, {"name": "amount", "type": "Int"}, {"name": "currency", "type": "String"}, {"name": "settledOn", "type": "String"}]},
+        {"name": "PaymentState", "fields": [{"name": "paymentId", "type": "String"}, {"name": "provider", "type": "String"}, {"name": "currency", "type": "String"}, {"name": "authorizedAmount", "type": "Int"}, {"name": "capturedAmount", "type": "Int"}, {"name": "refundedAmount", "type": "Int"}, {"name": "latestAt", "type": "String"}, {"name": "anomalyKeys", "type": "List<String>"}, {"name": "anomalyNotes", "type": "List<String>"}]},
+        {"name": "CaseDraft", "fields": [{"name": "key", "type": "String"}, {"name": "provider", "type": "String"}, {"name": "paymentId", "type": "String"}, {"name": "kind", "type": "String"}, {"name": "detail", "type": "String"}]},
+        {"name": "ReviewCase", "fields": [{"name": "id", "type": "String"}, {"name": "key", "type": "String"}, {"name": "provider", "type": "String"}, {"name": "paymentId", "type": "String"}, {"name": "kind", "type": "String"}, {"name": "detail", "type": "String"}, {"name": "status", "type": "CaseStatus"}, {"name": "createdAt", "type": "String"}, {"name": "resolvedAt", "type": "Option<String>"}, {"name": "resolution", "type": "Option<String>"}]},
+        {"name": "AuditEntry", "fields": [{"name": "key", "type": "String"}, {"name": "subjectId", "type": "String"}, {"name": "action", "type": "String"}, {"name": "message", "type": "String"}, {"name": "createdAt", "type": "String"}]},
+        {"name": "PaymentDetail", "fields": [{"name": "state", "type": "PaymentState"}, {"name": "events", "type": "List<PaymentEventRecord>"}, {"name": "settlements", "type": "List<SettlementRow>"}, {"name": "openCases", "type": "List<ReviewCase>"}]},
+        {"name": "ProviderSummary", "fields": [{"name": "provider", "type": "String"}, {"name": "payments", "type": "Int"}, {"name": "events", "type": "Int"}, {"name": "settlements", "type": "Int"}, {"name": "openCases", "type": "Int"}, {"name": "capturedAmount", "type": "Int"}, {"name": "refundedAmount", "type": "Int"}]}
+      ]
+    },
+    {
+      "source_file": "domain/normalize.av",
+      "module": "Normalize",
+      "intent": "Provider-specific normalization into canonical payment events and settlement rows. The project accepts ugly external spellings, but it stores one internal event model so replay and reconciliation stay provider-agnostic.",
+      "depends": ["Domain.Types"],
+      "functions": [
+        {
+          "sig": "normalizeWebhook(provider: String, seq: Int, raw: RawWebhook) -> Result<PaymentEventRecord, String>",
+          "desc": "Maps one provider-specific webhook row into the canonical event log.",
+          "verify_count": 3
+        },
+        {
+          "sig": "normalizeSettlement(provider: String, raw: RawSettlement) -> Result<SettlementRow, String>",
+          "desc": "Maps one provider-specific settlement row into the canonical settlement model.",
+          "verify_count": 3
+        }
+      ]
+    },
+    {
+      "source_file": "domain/ledger.av",
+      "module": "Ledger",
+      "intent": "Pure replay and dedupe helpers for the payment ledger. Backoffice review gets easier when webhook ingestion becomes append-only events and every current state is rebuilt from those events in plain code.",
+      "depends": ["Domain.Types"],
+      "functions": [
+        {
+          "sig": "eventName(event: PaymentEvent) -> String",
+          "desc": "Stable display name for one canonical event.",
+          "verify_count": 3,
+          "verify": ["eventName(PaymentEvent.Authorized(100, \"USD\", \"2026-03-10T09:00:00Z\")) → \"Authorized\"", "eventName(PaymentEvent.Captured(100, \"USD\", \"2026-03-10T10:00:00Z\")) → \"Captured\"", "eventName(PaymentEvent.Refunded(50, \"USD\", \"2026-03-10T10:00:00Z\")) → \"Refunded\""]
+        },
+        {
+          "sig": "eventAt(event: PaymentEvent) -> String",
+          "desc": "Timestamp carried by a canonical event.",
+          "verify_count": 3,
+          "verify": ["eventAt(PaymentEvent.Authorized(100, \"USD\", \"2026-03-10T09:00:00Z\")) → \"2026-03-10T09:00:00Z\"", "eventAt(PaymentEvent.Captured(100, \"USD\", \"2026-03-10T10:00:00Z\")) → \"2026-03-10T10:00:00Z\"", "eventAt(PaymentEvent.Refunded(50, \"USD\", \"2026-03-10T11:00:00Z\")) → \"2026-03-10T11:00:00Z\""]
+        },
+        {
+          "sig": "hasSourceId(events: List<PaymentEventRecord>, provider: String, sourceId: String) -> Bool",
+          "analysis": {"tco": true},
+          "desc": "True when a webhook source ID was already persisted for a provider.",
+          "verify_count": 2,
+          "verify": ["hasSourceId([sampleAuthorized(), sampleCaptured()], \"stripe\", \"evt-1\") → true", "hasSourceId([sampleAuthorized()], \"stripe\", \"missing\") → false"]
+        },
+        {
+          "sig": "nextSeq(events: List<PaymentEventRecord>, provider: String, paymentId: String) -> Int",
+          "desc": "Next event sequence number for one payment stream.",
+          "verify_count": 3,
+          "verify": ["nextSeq([], \"stripe\", \"pay-1\") → 1", "nextSeq([sampleAuthorized(), sampleCaptured()], \"stripe\", \"pay-1\") → 3", "nextSeq([sampleAuthorized(), sampleCaptured()], \"stripe\", \"pay-2\") → 1"]
+        },
+        {
+          "sig": "eventsForPayment(events: List<PaymentEventRecord>, paymentId: String) -> List<PaymentEventRecord>",
+          "desc": "Filters the append-only log down to one payment stream.",
+          "verify_count": 1,
+          "verify": ["eventsForPayment([sampleAuthorized(), sampleCaptured(), sampleOtherPayment()], \"pay-1\") → [sampleAuthorized(), sampleCaptured()]"]
+        },
+        {
+          "sig": "replayPayment(events: List<PaymentEventRecord>) -> Result<PaymentState, String>",
+          "desc": "Rebuilds one payment state from its event stream.",
+          "verify_count": 3,
+          "verify": ["replayPayment([]) → Result.Err(\"Cannot replay empty payment event list\")"]
+        },
+        {
+          "sig": "replayAll(events: List<PaymentEventRecord>) -> List<PaymentState>",
+          "desc": "Replays the whole event log into one state per payment.",
+          "verify_count": 1
+        }
+      ]
+    },
+    {
+      "source_file": "domain/cases.av",
+      "module": "Cases",
+      "intent": "Manual-review case generation and lifecycle management. Dirty payment operations need stable case keys so re-running ingest or reconciliation does not keep opening the same human task forever.",
+      "depends": ["Domain.Types"],
+      "functions": [
+        {
+          "sig": "makeCaseDraft(provider: String, paymentId: String, kind: String, detail: String, key: String) -> CaseDraft",
+          "desc": "Convenience constructor for reconcile and replay anomalies.",
+          "verify_count": 1
+        },
+        {
+          "sig": "draftsFromStates(states: List<PaymentState>) -> List<CaseDraft>",
+          "desc": "Flattens replay anomalies from every payment state.",
+          "verify_count": 1
+        },
+        {
+          "sig": "statusText(status: CaseStatus) -> String",
+          "desc": "Stable on-disk and CLI spelling for case status.",
+          "verify_count": 2,
+          "verify": ["statusText(CaseStatus.Open) → \"open\"", "statusText(CaseStatus.Resolved) → \"resolved\""]
+        },
+        {
+          "sig": "parseStatus(raw: String) -> Result<CaseStatus, String>",
+          "desc": "Parses one stored case status.",
+          "verify_count": 3,
+          "verify": ["parseStatus(\"open\") → Result.Ok(CaseStatus.Open)", "parseStatus(\"resolved\") → Result.Ok(CaseStatus.Resolved)", "parseStatus(\"x\") → Result.Err(\"Case status must be one of: open, resolved\")"]
+        },
+        {
+          "sig": "materializeNewCases(existing: List<ReviewCase>, drafts: List<CaseDraft>, createdAt: String) -> List<ReviewCase>",
+          "desc": "Assigns deterministic case IDs and skips already-known case keys.",
+          "verify_count": 2
+        },
+        {
+          "sig": "resolveCase(cases: List<ReviewCase>, caseId: String, resolution: String, resolvedAt: String) -> Result<List<ReviewCase>, String>",
+          "desc": "Marks one case as resolved.",
+          "verify_count": 2,
+          "verify": ["resolveCase([], \"case-1\", \"x\", \"2026-03-10T13:00:00Z\") → Result.Err(\"Unknown case: case-1\")"]
+        },
+        {
+          "sig": "filterByStatusLabel(cases: List<ReviewCase>, status: Option<String>) -> Result<List<ReviewCase>, String>",
+          "desc": "Supports list_cases open|resolved|all with open as the default.",
+          "verify_count": 3,
+          "verify": ["filterByStatusLabel([], Option.None) → Result.Ok([])", "filterByStatusLabel([], Option.Some(\"weird\")) → Result.Err(\"Case filter must be one of: open, resolved, all\")"]
+        },
+        {
+          "sig": "openCasesForPayment(cases: List<ReviewCase>, paymentId: String) -> List<ReviewCase>",
+          "desc": "Keeps only open cases for one payment.",
+          "verify_count": 1
+        },
+        {
+          "sig": "findCaseById(cases: List<ReviewCase>, caseId: String) -> Option<ReviewCase>",
+          "analysis": {"tco": true},
+          "desc": "Convenience lookup after mutation.",
+          "verify_count": 2,
+          "verify": ["findCaseById([], \"case-1\") → Option.None"]
+        },
+        {
+          "sig": "auditForOpenedCase(item: ReviewCase) -> AuditEntry",
+          "desc": "Stable audit entry for new manual-review work.",
+          "verify_count": 1
+        },
+        {
+          "sig": "auditForResolvedCase(item: ReviewCase) -> AuditEntry",
+          "desc": "Stable audit entry for manual resolution.",
+          "verify_count": 1
+        }
+      ]
+    },
+    {
+      "source_file": "domain/reconcile.av",
+      "module": "Reconcile",
+      "intent": "Settlement-vs-realtime comparison for the payment operations showcase. The goal is not perfect accounting; it is to make mismatch rules visible as normal functions instead of hiding them behind batch jobs and SQL views.",
+      "depends": ["Domain.Types", "Domain.Cases"],
+      "types": [
+        {"name": "AmountComparison", "variants": ["BothMissing", {"name": "SettledOnly", "fields": ["Int"]}, {"name": "RealtimeOnly", "fields": ["Int"]}, "Exact", {"name": "Mismatch", "fields": ["Int", "Int"]}]}
+      ],
+      "functions": [
+        {
+          "sig": "settlementsForProvider(rows: List<SettlementRow>, provider: String) -> List<SettlementRow>",
+          "desc": "Filters imported settlement rows by provider.",
+          "verify_count": 2,
+          "verify": ["settlementsForProvider([sampleCaptureRow(), sampleRefundRow()], \"stripe\") → [sampleCaptureRow(), sampleRefundRow()]", "settlementsForProvider([sampleCaptureRow()], \"adyen\") → []"]
+        },
+        {
+          "sig": "settlementsForPayment(rows: List<SettlementRow>, paymentId: String) -> List<SettlementRow>",
+          "desc": "Filters imported settlement rows by payment ID.",
+          "verify_count": 2,
+          "verify": ["settlementsForPayment([sampleCaptureRow(), sampleRefundRow()], \"pay-1\") → [sampleCaptureRow(), sampleRefundRow()]", "settlementsForPayment([sampleCaptureRow()], \"missing\") → []"]
+        },
+        {
+          "sig": "reconcileProvider(provider: String, states: List<PaymentState>, rows: List<SettlementRow>) -> List<CaseDraft>",
+          "desc": "Compares replayed payments with imported settlements for one provider.",
+          "verify_count": 2,
+          "verify": ["reconcileProvider(\"stripe\", [sampleState()], [sampleCaptureRow()]) → []"]
+        }
+      ]
+    },
+    {
+      "source_file": "infra/store.av",
+      "module": "Store",
+      "intent": "Plain-text persistence for canonical payment events, settlements, and review cases. The storage layer only serializes and reads records; replay and reconciliation stay in the domain so the application flow remains inspectable.",
+      "depends": ["Domain.Types", "Domain.Cases", "Infra.Codec"],
+      "effects": ["Disk.appendText", "Disk.exists", "Disk.makeDir", "Disk.readText", "Disk.writeText"],
+      "functions": [
+        {
+          "sig": "dataDir() -> String",
+          "desc": "Base directory for payment_ops files.",
+          "verify_count": 1,
+          "verify": ["dataDir() → \"/tmp/aver_payment_ops\""]
+        },
+        {
+          "sig": "initStore() -> Result<Unit, String>",
+          "effects": ["Disk.appendText", "Disk.exists", "Disk.makeDir", "Disk.writeText"],
+          "desc": "Ensures the payment_ops storage directory and files exist."
+        },
+        {
+          "sig": "loadEvents() -> Result<List<PaymentEventRecord>, String>",
+          "effects": ["Disk.readText"],
+          "desc": "Reads all canonical payment events from disk."
+        },
+        {
+          "sig": "appendEvents(entries: List<PaymentEventRecord>) -> Result<Unit, String>",
+          "effects": ["Disk.appendText"],
+          "desc": "Appends many canonical payment events in one write."
+        },
+        {
+          "sig": "loadSettlements() -> Result<List<SettlementRow>, String>",
+          "effects": ["Disk.readText"],
+          "desc": "Reads all imported settlement rows from disk."
+        },
+        {
+          "sig": "appendSettlements(rows: List<SettlementRow>) -> Result<Unit, String>",
+          "effects": ["Disk.appendText"],
+          "desc": "Appends many imported settlement rows in one write."
+        },
+        {
+          "sig": "loadCases() -> Result<List<ReviewCase>, String>",
+          "effects": ["Disk.readText"],
+          "desc": "Reads the current manual-review queue."
+        },
+        {
+          "sig": "saveCases(cases: List<ReviewCase>) -> Result<Unit, String>",
+          "effects": ["Disk.writeText"],
+          "desc": "Rewrites current manual-review case state."
+        }
+      ]
+    },
+    {
+      "source_file": "infra/codec.av",
+      "module": "Codec",
+      "intent": "Shared plain-text codec helpers for payment_ops persistence and imports. The project uses explicit text files on purpose, so escaping and line handling stay visible in code instead of disappearing into a serializer.",
+      "functions": [
+        {
+          "sig": "escapeField(text: String) -> String",
+          "desc": "Escapes percent, pipe, and newline for one file field.",
+          "verify_count": 2,
+          "verify": ["escapeField(\"a|b\") → \"a%7Cb\"", "escapeField(\"line\nbreak\") → \"line%0Abreak\""]
+        },
+        {
+          "sig": "fieldAt(parts: List<String>, index: Int, label: String) -> Result<String, String>",
+          "desc": "Reads and unescapes one required field.",
+          "verify_count": 2,
+          "verify": ["fieldAt([\"a\", \"b\"], 1, \"line\") → Result.Ok(\"b\")", "fieldAt([], 0, \"line\") → Result.Err(\"Corrupt line: missing field 0\")"]
+        },
+        {
+          "sig": "optionalFieldAt(parts: List<String>, index: Int) -> String",
+          "desc": "Returns one optional raw field or '-' when it is missing.",
+          "verify_count": 1,
+          "verify": ["optionalFieldAt([\"a\"], 1) → \"-\""]
+        },
+        {
+          "sig": "encodeOption(value: Option<String>) -> String",
+          "desc": "Stores optional text as '-' or an escaped field.",
+          "verify_count": 2,
+          "verify": ["encodeOption(Option.None) → \"-\"", "encodeOption(Option.Some(\"a|b\")) → \"a%7Cb\""]
+        },
+        {
+          "sig": "decodeOption(raw: String) -> Option<String>",
+          "desc": "Reads optional text stored by encodeOption.",
+          "verify_count": 2,
+          "verify": ["decodeOption(\"-\") → Option.None", "decodeOption(\"a%7Cb\") → Option.Some(\"a|b\")"]
+        },
+        {
+          "sig": "splitNonEmptyLines(content: String) -> List<String>",
+          "desc": "Splits text into lines and drops empty ones.",
+          "verify_count": 2,
+          "verify": ["splitNonEmptyLines(\"\") → []", "splitNonEmptyLines(\"a\nb\n\") → [\"a\", \"b\"]"]
+        },
+        {
+          "sig": "renderLines(lines: List<String>) -> String",
+          "desc": "Turns serialized lines into a whole-file string.",
+          "verify_count": 2,
+          "verify": ["renderLines([]) → \"\"", "renderLines([\"a\", \"b\"]) → \"a\nb\n\""]
+        }
+      ]
+    },
+    {
+      "source_file": "infra/audit.av",
+      "module": "Audit",
+      "intent": "Append-only audit trail persistence for payment_ops. Audits explain what the operator-facing system decided, including duplicate skips, case openings, and manual resolutions.",
+      "depends": ["Domain.Types", "Infra.Codec", "Infra.Store"],
+      "effects": ["Disk.appendText", "Disk.exists", "Disk.readText", "Disk.writeText"],
+      "functions": [
+        {
+          "sig": "initAudit() -> Result<Unit, String>",
+          "effects": ["Disk.appendText", "Disk.exists", "Disk.writeText"],
+          "desc": "Ensures the audit file exists."
+        },
+        {
+          "sig": "loadEntries() -> Result<List<AuditEntry>, String>",
+          "effects": ["Disk.readText"],
+          "desc": "Reads all persisted audit entries."
+        },
+        {
+          "sig": "forSubject(entries: List<AuditEntry>, subjectId: Option<String>) -> List<AuditEntry>",
+          "desc": "Optional subject filter for audit queries.",
+          "verify_count": 3,
+          "verify": ["forSubject([sampleAudit()], Option.None) → [sampleAudit()]", "forSubject([sampleAudit()], Option.Some(\"payment:pay-1\")) → [sampleAudit()]", "forSubject([sampleAudit()], Option.Some(\"payment:missing\")) → []"]
+        },
+        {
+          "sig": "recordEntries(entries: List<AuditEntry>) -> Result<Unit, String>",
+          "effects": ["Disk.appendText", "Disk.readText"],
+          "desc": "Appends only new audit entries, preserving a stable history."
+        }
+      ]
+    },
+    {
+      "source_file": "infra/imports.av",
+      "module": "Imports",
+      "intent": "Parsers for external webhook and settlement import files. The formats stay intentionally plain so the interesting work remains normalization, dedupe, replay, and reconciliation rather than data wrangling ceremony.",
+      "depends": ["Domain.Types", "Infra.Codec"],
+      "functions": [
+        {
+          "sig": "parseWebhookFile(content: String) -> Result<List<RawWebhook>, String>",
+          "desc": "Parses pipe-delimited webhook imports: sourceId|paymentId|kind|amount|currency|occurredAt.",
+          "verify_count": 3,
+          "verify": ["parseWebhookFile(\"\") → Result.Ok([])", "parseWebhookFile(\"evt-1|pay-1|charge.captured|oops|USD|2026-03-10T09:05:00Z\n\") → Result.Err(\"Cannot parse 'oops' as Int\")"]
+        },
+        {
+          "sig": "parseSettlementFile(content: String) -> Result<List<RawSettlement>, String>",
+          "desc": "Parses pipe-delimited settlement imports: rowId|paymentId|kind|amount|currency|settledOn.",
+          "verify_count": 3,
+          "verify": ["parseSettlementFile(\"\") → Result.Ok([])", "parseSettlementFile(\"row-1|pay-1|charge|oops|USD|2026-03-10\n\") → Result.Err(\"Cannot parse 'oops' as Int\")"]
+        }
+      ]
+    },
+    {
+      "source_file": "app/queries.av",
+      "module": "Queries",
+      "intent": "Read-only query assembly for payment_ops. Queries replay the ledger and join manual-review state without burying that logic inside storage or rendering modules.",
+      "depends": ["App.Shared", "Domain.Types", "Domain.Ledger", "Domain.Reconcile", "Domain.Cases", "Domain.Views", "Infra.Store", "Infra.Audit"],
+      "effects": ["Disk.readText"],
+      "types": [
+        {"name": "Query", "variants": [{"name": "ShowPayment", "fields": ["String"]}, {"name": "ListCases", "fields": ["Option<String>"]}, {"name": "ProviderSummary", "fields": ["String"]}, {"name": "ShowAudit", "fields": ["Option<String>"]}]},
+        {"name": "QueryOutput", "variants": [{"name": "PaymentDetail", "fields": ["PaymentDetail"]}, {"name": "CaseList", "fields": ["List<ReviewCase>"]}, {"name": "ProviderSummary", "fields": ["ProviderSummary"]}, {"name": "AuditTrail", "fields": ["List<AuditEntry>"]}]}
+      ],
+      "functions": [
+        {
+          "sig": "run(query: Query) -> Result<QueryOutput, String>",
+          "effects": ["Disk.readText"],
+          "desc": "Executes one read-only query."
+        }
+      ]
+    },
+    {
+      "source_file": "domain/views.av",
+      "module": "Views",
+      "intent": "Read-model helpers for payment summaries and status text. This module keeps CLI rendering simple by giving it small derived values instead of making the shell layer reinterpret the ledger.",
+      "depends": ["Domain.Types", "Domain.Cases"],
+      "functions": [
+        {
+          "sig": "statusText(state: PaymentState) -> String",
+          "desc": "User-facing payment status derived from totals and anomalies.",
+          "verify_count": 2
+        },
+        {
+          "sig": "anomalySummary(state: PaymentState) -> String",
+          "desc": "Short text summary for CLI details.",
+          "verify_count": 2
+        },
+        {
+          "sig": "providerSummary(provider: String, events: List<PaymentEventRecord>, states: List<PaymentState>, rows: List<SettlementRow>, cases: List<ReviewCase>) -> ProviderSummary",
+          "desc": "Aggregates one provider for CLI reporting.",
+          "verify_count": 1
+        }
+      ]
+    },
+    {
+      "source_file": "app/render.av",
+      "module": "Render",
+      "intent": "Shell-friendly rendering for payment_ops. Formatting stays simple so the interesting parts of the example remain replay, reconciliation, and explicit review cases rather than presentation logic.",
+      "depends": ["App.Commands", "App.Queries", "Domain.Types", "Domain.Ledger", "Domain.Views", "Domain.Cases"],
+      "functions": [
+        {
+          "sig": "renderCommand(result: Result<CommandReport, String>) -> Result<List<String>, String>",
+          "desc": "Maps command execution into rendered output.",
+          "verify_count": 2,
+          "verify": ["renderCommand(Result.Ok(sampleReport())) → Result.Ok(renderCommandReport(sampleReport()))", "renderCommand(Result.Err(\"boom\")) → Result.Err(\"boom\")"]
+        },
+        {
+          "sig": "renderQuery(result: Result<QueryOutput, String>) -> Result<List<String>, String>",
+          "desc": "Maps query execution into rendered output.",
+          "verify_count": 2,
+          "verify": ["renderQuery(Result.Ok(QueryOutput.CaseList([]))) → Result.Ok([\"cases: 0\"])", "renderQuery(Result.Err(\"boom\")) → Result.Err(\"boom\")"]
+        }
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "name": "CanonicalLedgerOverProviderStatuses",
+      "date": "2026-03-12",
+      "chosen": "CanonicalEvents",
+      "rejected": ["ProviderSpecificReplayEverywhere", "StringlyTypedStatuses"],
+      "reason": "Dirty backoffice work starts with incompatible provider payloads. Normalizing early keeps replay, reconciliation, and case logic typed and reviewable.",
+      "impacts": ["normalizeWebhook", "normalizeSettlement"],
+      "author": "Codex"
+    },
+    {
+      "name": "ReplayEverythingFromCanonicalEvents",
+      "date": "2026-03-12",
+      "chosen": "AppendOnlyReplay",
+      "rejected": ["MutablePaymentRows", "AdHocStatusOverrides"],
+      "reason": "Dirty payment integrations are easiest to audit when the stored history stays immutable. Replaying canonical events keeps dedupe and reconciliation readable instead of hiding rules in writes.",
+      "impacts": ["hasSourceId", "nextSeq", "replayPayment", "replayAll"],
+      "author": "Codex"
+    },
+    {
+      "name": "ManualReviewInsteadOfSilentFixup",
+      "date": "2026-03-12",
+      "chosen": "OpenCases",
+      "rejected": ["SilentRepair", "LogOnlyWarnings"],
+      "reason": "Backoffice systems should not silently fix suspicious payment histories. Opening explicit manual-review cases keeps the risk visible and auditable.",
+      "impacts": ["draftsFromState", "materializeNewCases", "resolveCase"],
+      "author": "Codex"
+    },
+    {
+      "name": "SettlementIsEvidenceNotTruth",
+      "date": "2026-03-12",
+      "chosen": "CompareAndEscalate",
+      "rejected": ["SettlementWinsAlways", "RealtimeWinsAlways"],
+      "reason": "Settlement files are operationally important, but they are not always clean or complete. Treating them as evidence instead of unquestioned truth leaves room for explicit review cases.",
+      "impacts": ["reconcileProvider"],
+      "author": "Codex"
+    },
+    {
+      "name": "AppendOnlyEventsAndSettlements",
+      "date": "2026-03-12",
+      "chosen": "AppendOnlyFactsMutableCases",
+      "rejected": ["MutableEverything", "EventSourceCasesToo"],
+      "reason": "Webhook and settlement ingestion should preserve raw ordering and dedupe boundaries. Review cases mutate over time, so they stay in a rewriteable current-state file.",
+      "impacts": ["loadEvents", "appendEvents", "loadSettlements", "appendSettlements", "loadCases", "saveCases"],
+      "author": "Codex"
+    }
+  ]
+}

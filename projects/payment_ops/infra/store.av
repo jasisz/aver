@@ -1,0 +1,320 @@
+module Store
+    intent =
+        "Plain-text persistence for canonical payment events, settlements, and review cases."
+        "The storage layer only serializes and reads records; replay and reconciliation stay"
+        "in the domain so the application flow remains inspectable."
+    exposes [dataDir, initStore, loadEvents, appendEvents, loadSettlements, appendSettlements, loadCases, saveCases]
+    depends [Domain.Types, Domain.Cases, Infra.Codec]
+
+decision AppendOnlyEventsAndSettlements
+    date = "2026-03-12"
+    author = "Codex"
+    reason =
+        "Webhook and settlement ingestion should preserve raw ordering and dedupe boundaries."
+        "Review cases mutate over time, so they stay in a rewriteable current-state file."
+    chosen = "AppendOnlyFactsMutableCases"
+    rejected = ["MutableEverything", "EventSourceCasesToo"]
+    impacts = [loadEvents, appendEvents, loadSettlements, appendSettlements, loadCases, saveCases]
+
+fn dataDir() -> String
+    ? "Base directory for payment_ops files."
+    "/tmp/aver_payment_ops"
+
+verify dataDir
+    dataDir() => "/tmp/aver_payment_ops"
+
+fn eventsPath() -> String
+    ? "Path for append-only canonical payment events."
+    "{dataDir()}/payment_events.txt"
+
+verify eventsPath
+    eventsPath() => "/tmp/aver_payment_ops/payment_events.txt"
+
+fn settlementsPath() -> String
+    ? "Path for append-only settlement rows."
+    "{dataDir()}/settlements.txt"
+
+verify settlementsPath
+    settlementsPath() => "/tmp/aver_payment_ops/settlements.txt"
+
+fn casesPath() -> String
+    ? "Path for current manual-review cases."
+    "{dataDir()}/cases.txt"
+
+verify casesPath
+    casesPath() => "/tmp/aver_payment_ops/cases.txt"
+
+fn initStore() -> Result<Unit, String>
+    ? "Ensures the payment_ops storage directory and files exist."
+    ! [Disk.appendText, Disk.exists, Disk.makeDir, Disk.writeText]
+    _dir = Disk.makeDir(dataDir())?
+    _events = initFileIfMissing(eventsPath())?
+    _settlements = initFileIfMissing(settlementsPath())?
+    initFileIfMissing(casesPath())
+
+fn initFileIfMissing(path: String) -> Result<Unit, String>
+    ? "Creates an empty file only when it does not already exist."
+    ! [Disk.appendText, Disk.exists, Disk.writeText]
+    match Disk.exists(path)
+        true -> Disk.appendText(path, "")
+        false -> Disk.writeText(path, "")
+
+fn loadEvents() -> Result<List<PaymentEventRecord>, String>
+    ? "Reads all canonical payment events from disk."
+    ! [Disk.readText]
+    content = Disk.readText(eventsPath())?
+    parseEvents(content)
+
+fn appendEvents(entries: List<PaymentEventRecord>) -> Result<Unit, String>
+    ? "Appends many canonical payment events in one write."
+    ! [Disk.appendText]
+    match List.len(entries) == 0
+        true -> Disk.appendText(eventsPath(), "")
+        false -> Disk.appendText(eventsPath(), Infra.Codec.renderLines(serializeEventLines(entries)))
+
+fn loadSettlements() -> Result<List<SettlementRow>, String>
+    ? "Reads all imported settlement rows from disk."
+    ! [Disk.readText]
+    content = Disk.readText(settlementsPath())?
+    parseSettlements(content)
+
+fn appendSettlements(rows: List<SettlementRow>) -> Result<Unit, String>
+    ? "Appends many imported settlement rows in one write."
+    ! [Disk.appendText]
+    match List.len(rows) == 0
+        true -> Disk.appendText(settlementsPath(), "")
+        false -> Disk.appendText(settlementsPath(), Infra.Codec.renderLines(serializeSettlementLines(rows)))
+
+fn loadCases() -> Result<List<ReviewCase>, String>
+    ? "Reads the current manual-review queue."
+    ! [Disk.readText]
+    content = Disk.readText(casesPath())?
+    parseCases(content)
+
+fn saveCases(cases: List<ReviewCase>) -> Result<Unit, String>
+    ? "Rewrites current manual-review case state."
+    ! [Disk.writeText]
+    Disk.writeText(casesPath(), Infra.Codec.renderLines(serializeCaseLines(cases)))
+
+fn serializeEvent(entry: PaymentEventRecord) -> String
+    ? "Encodes one canonical payment event line."
+    match entry.event
+        PaymentEvent.Authorized(amount, currency, at) -> String.join([entry.provider, entry.sourceId, entry.paymentId, Int.toString(entry.seq), "Authorized", Int.toString(amount), currency, at], "|")
+        PaymentEvent.Captured(amount, currency, at) -> String.join([entry.provider, entry.sourceId, entry.paymentId, Int.toString(entry.seq), "Captured", Int.toString(amount), currency, at], "|")
+        PaymentEvent.Refunded(amount, currency, at) -> String.join([entry.provider, entry.sourceId, entry.paymentId, Int.toString(entry.seq), "Refunded", Int.toString(amount), currency, at], "|")
+
+verify serializeEvent
+    serializeEvent(PaymentEventRecord(provider = "stripe", sourceId = "evt-1", paymentId = "pay-1", seq = 1, event = PaymentEvent.Authorized(1000, "USD", "2026-03-10T09:00:00Z"))) => "stripe|evt-1|pay-1|1|Authorized|1000|USD|2026-03-10T09:00:00Z"
+
+fn deserializeEvent(line: String) -> Result<PaymentEventRecord, String>
+    ? "Decodes one canonical payment event line."
+    parts = String.split(line, "|")
+    provider = Infra.Codec.fieldAt(parts, 0, "event")?
+    sourceId = Infra.Codec.fieldAt(parts, 1, "event")?
+    paymentId = Infra.Codec.fieldAt(parts, 2, "event")?
+    seqRaw = Infra.Codec.fieldAt(parts, 3, "event")?
+    seq = Int.fromString(seqRaw)?
+    kind = Infra.Codec.fieldAt(parts, 4, "event")?
+    amountRaw = Infra.Codec.fieldAt(parts, 5, "event")?
+    amount = Int.fromString(amountRaw)?
+    currency = Infra.Codec.fieldAt(parts, 6, "event")?
+    at = Infra.Codec.fieldAt(parts, 7, "event")?
+    event = decodeEventKind(kind, amount, currency, at)?
+    Result.Ok(PaymentEventRecord(provider = provider, sourceId = sourceId, paymentId = paymentId, seq = seq, event = event))
+
+verify deserializeEvent
+    deserializeEvent("stripe|evt-1|pay-1|1|Authorized|1000|USD|2026-03-10T09:00:00Z") => Result.Ok(PaymentEventRecord(provider = "stripe", sourceId = "evt-1", paymentId = "pay-1", seq = 1, event = PaymentEvent.Authorized(1000, "USD", "2026-03-10T09:00:00Z")))
+    deserializeEvent("stripe|evt-1|pay-1|1|Boom|1000|USD|2026-03-10T09:00:00Z") => Result.Err("Unknown payment event kind: Boom")
+
+fn decodeEventKind(kind: String, amount: Int, currency: String, at: String) -> Result<PaymentEvent, String>
+    ? "Parses one stored event kind."
+    match kind
+        "Authorized" -> Result.Ok(PaymentEvent.Authorized(amount, currency, at))
+        "Captured" -> Result.Ok(PaymentEvent.Captured(amount, currency, at))
+        "Refunded" -> Result.Ok(PaymentEvent.Refunded(amount, currency, at))
+        _ -> Result.Err("Unknown payment event kind: " + kind)
+
+verify decodeEventKind
+    decodeEventKind("Captured", 1000, "USD", "2026-03-10T09:05:00Z") => Result.Ok(PaymentEvent.Captured(1000, "USD", "2026-03-10T09:05:00Z"))
+    decodeEventKind("x", 1, "USD", "2026-03-10T09:05:00Z") => Result.Err("Unknown payment event kind: x")
+
+fn serializeSettlement(row: SettlementRow) -> String
+    ? "Encodes one settlement line."
+    String.join([row.provider, row.rowId, row.paymentId, settlementKindText(row.kind), Int.toString(row.amount), row.currency, row.settledOn], "|")
+
+verify serializeSettlement
+    serializeSettlement(SettlementRow(provider = "stripe", rowId = "row-1", paymentId = "pay-1", kind = SettlementKind.Capture, amount = 1000, currency = "USD", settledOn = "2026-03-10")) => "stripe|row-1|pay-1|capture|1000|USD|2026-03-10"
+
+fn deserializeSettlement(line: String) -> Result<SettlementRow, String>
+    ? "Decodes one settlement line."
+    parts = String.split(line, "|")
+    provider = Infra.Codec.fieldAt(parts, 0, "settlement")?
+    rowId = Infra.Codec.fieldAt(parts, 1, "settlement")?
+    paymentId = Infra.Codec.fieldAt(parts, 2, "settlement")?
+    kindRaw = Infra.Codec.fieldAt(parts, 3, "settlement")?
+    kind = parseSettlementKind(kindRaw)?
+    amountRaw = Infra.Codec.fieldAt(parts, 4, "settlement")?
+    amount = Int.fromString(amountRaw)?
+    currency = Infra.Codec.fieldAt(parts, 5, "settlement")?
+    settledOn = Infra.Codec.fieldAt(parts, 6, "settlement")?
+    Result.Ok(SettlementRow(provider = provider, rowId = rowId, paymentId = paymentId, kind = kind, amount = amount, currency = currency, settledOn = settledOn))
+
+verify deserializeSettlement
+    deserializeSettlement("stripe|row-1|pay-1|capture|1000|USD|2026-03-10") => Result.Ok(SettlementRow(provider = "stripe", rowId = "row-1", paymentId = "pay-1", kind = SettlementKind.Capture, amount = 1000, currency = "USD", settledOn = "2026-03-10"))
+    deserializeSettlement("stripe|row-1|pay-1|boom|1000|USD|2026-03-10") => Result.Err("Unknown settlement kind: boom")
+
+fn serializeCase(item: ReviewCase) -> String
+    ? "Encodes one current-state case line."
+    String.join([item.id, Infra.Codec.escapeField(item.key), item.provider, item.paymentId, item.kind, Infra.Codec.escapeField(item.detail), Domain.Cases.statusText(item.status), item.createdAt, Infra.Codec.encodeOption(item.resolvedAt), Infra.Codec.encodeOption(item.resolution)], "|")
+
+verify serializeCase
+    serializeCase(ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "detail", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)) => "case-1|k|stripe|pay-1|x|detail|open|2026-03-10T12:00:00Z|-|-"
+
+fn deserializeCase(line: String) -> Result<ReviewCase, String>
+    ? "Decodes one current-state case line."
+    parts = String.split(line, "|")
+    id = Infra.Codec.fieldAt(parts, 0, "case")?
+    key = Infra.Codec.fieldAt(parts, 1, "case")?
+    provider = Infra.Codec.fieldAt(parts, 2, "case")?
+    paymentId = Infra.Codec.fieldAt(parts, 3, "case")?
+    kind = Infra.Codec.fieldAt(parts, 4, "case")?
+    detail = Infra.Codec.fieldAt(parts, 5, "case")?
+    statusRaw = Infra.Codec.fieldAt(parts, 6, "case")?
+    status = Domain.Cases.parseStatus(statusRaw)?
+    createdAt = Infra.Codec.fieldAt(parts, 7, "case")?
+    resolvedAt = Infra.Codec.decodeOption(Infra.Codec.optionalFieldAt(parts, 8))
+    resolution = Infra.Codec.decodeOption(Infra.Codec.optionalFieldAt(parts, 9))
+    Result.Ok(ReviewCase(id = id, key = key, provider = provider, paymentId = paymentId, kind = kind, detail = detail, status = status, createdAt = createdAt, resolvedAt = resolvedAt, resolution = resolution))
+
+verify deserializeCase
+    deserializeCase("case-1|k|stripe|pay-1|x|detail|open|2026-03-10T12:00:00Z|-|-") => Result.Ok(ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "detail", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None))
+    deserializeCase("case-1|k|stripe|pay-1|x|detail|boom|2026-03-10T12:00:00Z|-|-") => Result.Err("Case status must be one of: open, resolved")
+
+fn settlementKindText(kind: SettlementKind) -> String
+    ? "Stable file spelling for settlement kinds."
+    match kind
+        SettlementKind.Capture -> "capture"
+        SettlementKind.Refund -> "refund"
+
+verify settlementKindText
+    settlementKindText(SettlementKind.Capture) => "capture"
+    settlementKindText(SettlementKind.Refund) => "refund"
+
+fn parseSettlementKind(raw: String) -> Result<SettlementKind, String>
+    ? "Parses one stored settlement kind."
+    match raw
+        "capture" -> Result.Ok(SettlementKind.Capture)
+        "refund" -> Result.Ok(SettlementKind.Refund)
+        _ -> Result.Err("Unknown settlement kind: " + raw)
+
+verify parseSettlementKind
+    parseSettlementKind("capture") => Result.Ok(SettlementKind.Capture)
+    parseSettlementKind("x") => Result.Err("Unknown settlement kind: x")
+
+fn parseEvents(content: String) -> Result<List<PaymentEventRecord>, String>
+    ? "Parses the full event log."
+    parseEventLines(Infra.Codec.splitNonEmptyLines(content), [])
+
+verify parseEvents
+    parseEvents("") => Result.Ok([])
+    parseEvents("stripe|evt-1|pay-1|1|Boom|1000|USD|2026-03-10T09:00:00Z\n") => Result.Err("Unknown payment event kind: Boom")
+
+fn parseEventLines(lines: List<String>, acc: List<PaymentEventRecord>) -> Result<List<PaymentEventRecord>, String>
+    ? "Tail-recursive event log parser."
+    match lines
+        [] -> Result.Ok(List.reverse(acc))
+        [line, ..rest] -> match deserializeEvent(line)
+            Result.Err(msg) -> Result.Err(msg)
+            Result.Ok(entry) -> parseEventLines(rest, List.prepend(entry, acc))
+
+verify parseEventLines
+    parseEventLines([], []) => Result.Ok([])
+    parseEventLines(["stripe|evt-1|pay-1|1|Boom|1000|USD|2026-03-10T09:00:00Z"], []) => Result.Err("Unknown payment event kind: Boom")
+
+fn parseSettlements(content: String) -> Result<List<SettlementRow>, String>
+    ? "Parses the full settlement file."
+    parseSettlementLines(Infra.Codec.splitNonEmptyLines(content), [])
+
+verify parseSettlements
+    parseSettlements("") => Result.Ok([])
+    parseSettlements("stripe|row-1|pay-1|boom|1000|USD|2026-03-10\n") => Result.Err("Unknown settlement kind: boom")
+
+fn parseSettlementLines(lines: List<String>, acc: List<SettlementRow>) -> Result<List<SettlementRow>, String>
+    ? "Tail-recursive settlement parser."
+    match lines
+        [] -> Result.Ok(List.reverse(acc))
+        [line, ..rest] -> match deserializeSettlement(line)
+            Result.Err(msg) -> Result.Err(msg)
+            Result.Ok(row) -> parseSettlementLines(rest, List.prepend(row, acc))
+
+verify parseSettlementLines
+    parseSettlementLines([], []) => Result.Ok([])
+    parseSettlementLines(["stripe|row-1|pay-1|boom|1000|USD|2026-03-10"], []) => Result.Err("Unknown settlement kind: boom")
+
+fn parseCases(content: String) -> Result<List<ReviewCase>, String>
+    ? "Parses the current case file."
+    parseCaseLines(Infra.Codec.splitNonEmptyLines(content), [])
+
+verify parseCases
+    parseCases("") => Result.Ok([])
+    parseCases("case-1|k|stripe|pay-1|x|detail|boom|2026-03-10T12:00:00Z|-|-\n") => Result.Err("Case status must be one of: open, resolved")
+
+fn parseCaseLines(lines: List<String>, acc: List<ReviewCase>) -> Result<List<ReviewCase>, String>
+    ? "Tail-recursive case parser."
+    match lines
+        [] -> Result.Ok(List.reverse(acc))
+        [line, ..rest] -> match deserializeCase(line)
+            Result.Err(msg) -> Result.Err(msg)
+            Result.Ok(item) -> parseCaseLines(rest, List.prepend(item, acc))
+
+verify parseCaseLines
+    parseCaseLines([], []) => Result.Ok([])
+    parseCaseLines(["case-1|k|stripe|pay-1|x|detail|boom|2026-03-10T12:00:00Z|-|-"], []) => Result.Err("Case status must be one of: open, resolved")
+
+fn serializeEventLines(entries: List<PaymentEventRecord>) -> List<String>
+    ? "Serializes many event log lines."
+    List.reverse(serializeEventLinesInto(entries, []))
+
+verify serializeEventLines
+    serializeEventLines([PaymentEventRecord(provider = "stripe", sourceId = "evt-1", paymentId = "pay-1", seq = 1, event = PaymentEvent.Authorized(1000, "USD", "2026-03-10T09:00:00Z"))]) => ["stripe|evt-1|pay-1|1|Authorized|1000|USD|2026-03-10T09:00:00Z"]
+
+fn serializeEventLinesInto(entries: List<PaymentEventRecord>, acc: List<String>) -> List<String>
+    ? "Tail-recursive event line serialization."
+    match entries
+        [] -> acc
+        [entry, ..rest] -> serializeEventLinesInto(rest, List.prepend(serializeEvent(entry), acc))
+
+verify serializeEventLinesInto
+    serializeEventLinesInto([], ["x"]) => ["x"]
+
+fn serializeSettlementLines(rows: List<SettlementRow>) -> List<String>
+    ? "Serializes many settlement lines."
+    List.reverse(serializeSettlementLinesInto(rows, []))
+
+verify serializeSettlementLines
+    serializeSettlementLines([SettlementRow(provider = "stripe", rowId = "row-1", paymentId = "pay-1", kind = SettlementKind.Capture, amount = 1000, currency = "USD", settledOn = "2026-03-10")]) => ["stripe|row-1|pay-1|capture|1000|USD|2026-03-10"]
+
+fn serializeSettlementLinesInto(rows: List<SettlementRow>, acc: List<String>) -> List<String>
+    ? "Tail-recursive settlement line serialization."
+    match rows
+        [] -> acc
+        [row, ..rest] -> serializeSettlementLinesInto(rest, List.prepend(serializeSettlement(row), acc))
+
+verify serializeSettlementLinesInto
+    serializeSettlementLinesInto([], ["x"]) => ["x"]
+
+fn serializeCaseLines(cases: List<ReviewCase>) -> List<String>
+    ? "Serializes many case lines."
+    List.reverse(serializeCaseLinesInto(cases, []))
+
+verify serializeCaseLines
+    serializeCaseLines([ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "detail", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)]) => ["case-1|k|stripe|pay-1|x|detail|open|2026-03-10T12:00:00Z|-|-"]
+
+fn serializeCaseLinesInto(cases: List<ReviewCase>, acc: List<String>) -> List<String>
+    ? "Tail-recursive case line serialization."
+    match cases
+        [] -> acc
+        [item, ..rest] -> serializeCaseLinesInto(rest, List.prepend(serializeCase(item), acc))
+
+verify serializeCaseLinesInto
+    serializeCaseLinesInto([], ["x"]) => ["x"]

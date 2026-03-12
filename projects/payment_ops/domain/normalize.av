@@ -1,0 +1,122 @@
+module Normalize
+    intent =
+        "Provider-specific normalization into canonical payment events and settlement rows."
+        "The project accepts ugly external spellings, but it stores one internal event model"
+        "so replay and reconciliation stay provider-agnostic."
+    exposes [normalizeWebhook, normalizeSettlement]
+    depends [Domain.Types]
+
+decision CanonicalLedgerOverProviderStatuses
+    date = "2026-03-12"
+    author = "Codex"
+    reason =
+        "Dirty backoffice work starts with incompatible provider payloads."
+        "Normalizing early keeps replay, reconciliation, and case logic typed and reviewable."
+    chosen = "CanonicalEvents"
+    rejected = ["ProviderSpecificReplayEverywhere", "StringlyTypedStatuses"]
+    impacts = [normalizeWebhook, normalizeSettlement]
+
+fn normalizeWebhook(provider: String, seq: Int, raw: RawWebhook) -> Result<PaymentEventRecord, String>
+    ? "Maps one provider-specific webhook row into the canonical event log."
+    normalizedProvider = normalizeProvider(provider)?
+    event = normalizeWebhookEvent(normalizedProvider, raw)?
+    Result.Ok(PaymentEventRecord(provider = normalizedProvider, sourceId = raw.sourceId, paymentId = raw.paymentId, seq = seq, event = event))
+
+verify normalizeWebhook
+    normalizeWebhook("stripe", 1, RawWebhook(sourceId = "evt-1", paymentId = "pay-1", kind = "charge.captured", amount = 1200, currency = "USD", occurredAt = "2026-03-10T10:00:00Z")) => Result.Ok(PaymentEventRecord(provider = "stripe", sourceId = "evt-1", paymentId = "pay-1", seq = 1, event = PaymentEvent.Captured(1200, "USD", "2026-03-10T10:00:00Z")))
+    normalizeWebhook("adyen", 2, RawWebhook(sourceId = "psp-2", paymentId = "pay-2", kind = "REFUND", amount = 500, currency = "EUR", occurredAt = "2026-03-10T11:00:00Z")) => Result.Ok(PaymentEventRecord(provider = "adyen", sourceId = "psp-2", paymentId = "pay-2", seq = 2, event = PaymentEvent.Refunded(500, "EUR", "2026-03-10T11:00:00Z")))
+    normalizeWebhook("unknown", 1, RawWebhook(sourceId = "evt-9", paymentId = "pay-9", kind = "charge.captured", amount = 100, currency = "USD", occurredAt = "2026-03-10T10:00:00Z")) => Result.Err("Provider must be one of: stripe, adyen")
+
+fn normalizeSettlement(provider: String, raw: RawSettlement) -> Result<SettlementRow, String>
+    ? "Maps one provider-specific settlement row into the canonical settlement model."
+    normalizedProvider = normalizeProvider(provider)?
+    kind = normalizeSettlementKind(normalizedProvider, raw.kind)?
+    Result.Ok(SettlementRow(provider = normalizedProvider, rowId = raw.rowId, paymentId = raw.paymentId, kind = kind, amount = raw.amount, currency = raw.currency, settledOn = raw.settledOn))
+
+verify normalizeSettlement
+    normalizeSettlement("stripe", RawSettlement(rowId = "row-1", paymentId = "pay-1", kind = "charge", amount = 1200, currency = "USD", settledOn = "2026-03-10")) => Result.Ok(SettlementRow(provider = "stripe", rowId = "row-1", paymentId = "pay-1", kind = SettlementKind.Capture, amount = 1200, currency = "USD", settledOn = "2026-03-10"))
+    normalizeSettlement("adyen", RawSettlement(rowId = "row-2", paymentId = "pay-2", kind = "Refunded", amount = 500, currency = "EUR", settledOn = "2026-03-10")) => Result.Ok(SettlementRow(provider = "adyen", rowId = "row-2", paymentId = "pay-2", kind = SettlementKind.Refund, amount = 500, currency = "EUR", settledOn = "2026-03-10"))
+    normalizeSettlement("unknown", RawSettlement(rowId = "row-9", paymentId = "pay-9", kind = "charge", amount = 100, currency = "USD", settledOn = "2026-03-10")) => Result.Err("Provider must be one of: stripe, adyen")
+
+fn normalizeProvider(provider: String) -> Result<String, String>
+    ? "Accepts the small supported provider set with case-insensitive input."
+    normalized = String.toLower(String.trim(provider))
+    match normalized
+        "stripe" -> Result.Ok("stripe")
+        "adyen" -> Result.Ok("adyen")
+        _ -> Result.Err("Provider must be one of: stripe, adyen")
+
+verify normalizeProvider
+    normalizeProvider("stripe") => Result.Ok("stripe")
+    normalizeProvider("Adyen") => Result.Ok("adyen")
+    normalizeProvider("unknown") => Result.Err("Provider must be one of: stripe, adyen")
+
+fn normalizeWebhookEvent(provider: String, raw: RawWebhook) -> Result<PaymentEvent, String>
+    ? "Dispatches webhook normalization after provider canonicalization."
+    match provider
+        "stripe" -> normalizeStripeWebhook(raw)
+        "adyen" -> normalizeAdyenWebhook(raw)
+        _ -> Result.Err("Unsupported provider: " + provider)
+
+verify normalizeWebhookEvent
+    normalizeWebhookEvent("stripe", RawWebhook(sourceId = "evt-1", paymentId = "pay-1", kind = "payment_intent.amount_capturable_updated", amount = 1000, currency = "USD", occurredAt = "2026-03-10T09:00:00Z")) => Result.Ok(PaymentEvent.Authorized(1000, "USD", "2026-03-10T09:00:00Z"))
+    normalizeWebhookEvent("adyen", RawWebhook(sourceId = "psp-1", paymentId = "pay-1", kind = "CAPTURE", amount = 1000, currency = "USD", occurredAt = "2026-03-10T09:05:00Z")) => Result.Ok(PaymentEvent.Captured(1000, "USD", "2026-03-10T09:05:00Z"))
+    normalizeWebhookEvent("worldpay", RawWebhook(sourceId = "evt-1", paymentId = "pay-1", kind = "CAPTURE", amount = 1000, currency = "USD", occurredAt = "2026-03-10T09:05:00Z")) => Result.Err("Unsupported provider: worldpay")
+
+fn normalizeStripeWebhook(raw: RawWebhook) -> Result<PaymentEvent, String>
+    ? "Stripe uses verbose event names."
+    match raw.kind
+        "payment_intent.amount_capturable_updated" -> Result.Ok(PaymentEvent.Authorized(raw.amount, raw.currency, raw.occurredAt))
+        "charge.captured" -> Result.Ok(PaymentEvent.Captured(raw.amount, raw.currency, raw.occurredAt))
+        "charge.refunded" -> Result.Ok(PaymentEvent.Refunded(raw.amount, raw.currency, raw.occurredAt))
+        _ -> Result.Err("Unsupported stripe webhook kind: " + raw.kind)
+
+verify normalizeStripeWebhook
+    normalizeStripeWebhook(RawWebhook(sourceId = "evt-1", paymentId = "pay-1", kind = "charge.refunded", amount = 300, currency = "USD", occurredAt = "2026-03-10T10:30:00Z")) => Result.Ok(PaymentEvent.Refunded(300, "USD", "2026-03-10T10:30:00Z"))
+    normalizeStripeWebhook(RawWebhook(sourceId = "evt-1", paymentId = "pay-1", kind = "weird", amount = 300, currency = "USD", occurredAt = "2026-03-10T10:30:00Z")) => Result.Err("Unsupported stripe webhook kind: weird")
+
+fn normalizeAdyenWebhook(raw: RawWebhook) -> Result<PaymentEvent, String>
+    ? "Adyen uses short uppercase webhook names."
+    match raw.kind
+        "AUTHORISATION" -> Result.Ok(PaymentEvent.Authorized(raw.amount, raw.currency, raw.occurredAt))
+        "CAPTURE" -> Result.Ok(PaymentEvent.Captured(raw.amount, raw.currency, raw.occurredAt))
+        "REFUND" -> Result.Ok(PaymentEvent.Refunded(raw.amount, raw.currency, raw.occurredAt))
+        _ -> Result.Err("Unsupported adyen webhook kind: " + raw.kind)
+
+verify normalizeAdyenWebhook
+    normalizeAdyenWebhook(RawWebhook(sourceId = "psp-1", paymentId = "pay-1", kind = "AUTHORISATION", amount = 900, currency = "EUR", occurredAt = "2026-03-10T08:00:00Z")) => Result.Ok(PaymentEvent.Authorized(900, "EUR", "2026-03-10T08:00:00Z"))
+    normalizeAdyenWebhook(RawWebhook(sourceId = "psp-1", paymentId = "pay-1", kind = "BOOM", amount = 900, currency = "EUR", occurredAt = "2026-03-10T08:00:00Z")) => Result.Err("Unsupported adyen webhook kind: BOOM")
+
+fn normalizeSettlementKind(provider: String, kind: String) -> Result<SettlementKind, String>
+    ? "Maps provider-specific settlement labels into capture or refund."
+    match provider
+        "stripe" -> normalizeStripeSettlement(kind)
+        "adyen" -> normalizeAdyenSettlement(kind)
+        _ -> Result.Err("Unsupported provider: " + provider)
+
+verify normalizeSettlementKind
+    normalizeSettlementKind("stripe", "charge") => Result.Ok(SettlementKind.Capture)
+    normalizeSettlementKind("adyen", "Refunded") => Result.Ok(SettlementKind.Refund)
+    normalizeSettlementKind("worldpay", "charge") => Result.Err("Unsupported provider: worldpay")
+
+fn normalizeStripeSettlement(kind: String) -> Result<SettlementKind, String>
+    ? "Stripe settlement exports use short lowercase labels."
+    match kind
+        "charge" -> Result.Ok(SettlementKind.Capture)
+        "refund" -> Result.Ok(SettlementKind.Refund)
+        _ -> Result.Err("Unsupported stripe settlement kind: " + kind)
+
+verify normalizeStripeSettlement
+    normalizeStripeSettlement("charge") => Result.Ok(SettlementKind.Capture)
+    normalizeStripeSettlement("other") => Result.Err("Unsupported stripe settlement kind: other")
+
+fn normalizeAdyenSettlement(kind: String) -> Result<SettlementKind, String>
+    ? "Adyen settlement exports use title-cased labels."
+    match kind
+        "Settled" -> Result.Ok(SettlementKind.Capture)
+        "Refunded" -> Result.Ok(SettlementKind.Refund)
+        _ -> Result.Err("Unsupported adyen settlement kind: " + kind)
+
+verify normalizeAdyenSettlement
+    normalizeAdyenSettlement("Settled") => Result.Ok(SettlementKind.Capture)
+    normalizeAdyenSettlement("other") => Result.Err("Unsupported adyen settlement kind: other")

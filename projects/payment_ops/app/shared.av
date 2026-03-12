@@ -1,0 +1,19 @@
+module Shared
+    intent =
+        "Small app-layer helpers shared by commands and queries."
+        "This module keeps boundary normalization logic in one place so CLI paths do not"
+        "quietly drift apart over time."
+    exposes [normalizeProviderInput]
+
+fn normalizeProviderInput(provider: String) -> Result<String, String>
+    ? "Normalizes provider labels at the app boundary."
+    normalized = String.toLower(String.trim(provider))
+    match normalized
+        "stripe" -> Result.Ok("stripe")
+        "adyen" -> Result.Ok("adyen")
+        _ -> Result.Err("Provider must be one of: stripe, adyen")
+
+verify normalizeProviderInput
+    normalizeProviderInput("stripe") => Result.Ok("stripe")
+    normalizeProviderInput("Adyen") => Result.Ok("adyen")
+    normalizeProviderInput("x") => Result.Err("Provider must be one of: stripe, adyen")

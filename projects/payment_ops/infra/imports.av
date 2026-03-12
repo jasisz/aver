@@ -1,0 +1,81 @@
+module Imports
+    intent =
+        "Parsers for external webhook and settlement import files."
+        "The formats stay intentionally plain so the interesting work remains normalization,"
+        "dedupe, replay, and reconciliation rather than data wrangling ceremony."
+    exposes [parseWebhookFile, parseSettlementFile]
+    depends [Domain.Types, Infra.Codec]
+
+fn parseWebhookFile(content: String) -> Result<List<RawWebhook>, String>
+    ? "Parses pipe-delimited webhook imports: sourceId|paymentId|kind|amount|currency|occurredAt."
+    parseWebhookLines(Infra.Codec.splitNonEmptyLines(content), [])
+
+verify parseWebhookFile
+    parseWebhookFile("") => Result.Ok([])
+    parseWebhookFile("evt-1|pay-1|charge.captured|1000|USD|2026-03-10T09:05:00Z\n") => Result.Ok([RawWebhook(sourceId = "evt-1", paymentId = "pay-1", kind = "charge.captured", amount = 1000, currency = "USD", occurredAt = "2026-03-10T09:05:00Z")])
+    parseWebhookFile("evt-1|pay-1|charge.captured|oops|USD|2026-03-10T09:05:00Z\n") => Result.Err("Cannot parse 'oops' as Int")
+
+fn parseSettlementFile(content: String) -> Result<List<RawSettlement>, String>
+    ? "Parses pipe-delimited settlement imports: rowId|paymentId|kind|amount|currency|settledOn."
+    parseSettlementLines(Infra.Codec.splitNonEmptyLines(content), [])
+
+verify parseSettlementFile
+    parseSettlementFile("") => Result.Ok([])
+    parseSettlementFile("row-1|pay-1|charge|1000|USD|2026-03-10\n") => Result.Ok([RawSettlement(rowId = "row-1", paymentId = "pay-1", kind = "charge", amount = 1000, currency = "USD", settledOn = "2026-03-10")])
+    parseSettlementFile("row-1|pay-1|charge|oops|USD|2026-03-10\n") => Result.Err("Cannot parse 'oops' as Int")
+
+fn parseWebhookLines(lines: List<String>, acc: List<RawWebhook>) -> Result<List<RawWebhook>, String>
+    ? "Tail-recursive webhook file parser."
+    match lines
+        [] -> Result.Ok(List.reverse(acc))
+        [line, ..rest] -> match parseWebhookLine(line)
+            Result.Err(msg) -> Result.Err(msg)
+            Result.Ok(raw) -> parseWebhookLines(rest, List.prepend(raw, acc))
+
+verify parseWebhookLines
+    parseWebhookLines([], []) => Result.Ok([])
+    parseWebhookLines(["evt-1|pay-1|charge.captured|oops|USD|2026-03-10T09:05:00Z"], []) => Result.Err("Cannot parse 'oops' as Int")
+
+fn parseSettlementLines(lines: List<String>, acc: List<RawSettlement>) -> Result<List<RawSettlement>, String>
+    ? "Tail-recursive settlement file parser."
+    match lines
+        [] -> Result.Ok(List.reverse(acc))
+        [line, ..rest] -> match parseSettlementLine(line)
+            Result.Err(msg) -> Result.Err(msg)
+            Result.Ok(raw) -> parseSettlementLines(rest, List.prepend(raw, acc))
+
+verify parseSettlementLines
+    parseSettlementLines([], []) => Result.Ok([])
+    parseSettlementLines(["row-1|pay-1|charge|oops|USD|2026-03-10"], []) => Result.Err("Cannot parse 'oops' as Int")
+
+fn parseWebhookLine(line: String) -> Result<RawWebhook, String>
+    ? "Parses one webhook import line."
+    parts = String.split(line, "|")
+    sourceId = Infra.Codec.fieldAt(parts, 0, "webhook")?
+    paymentId = Infra.Codec.fieldAt(parts, 1, "webhook")?
+    kind = Infra.Codec.fieldAt(parts, 2, "webhook")?
+    amountRaw = Infra.Codec.fieldAt(parts, 3, "webhook")?
+    amount = Int.fromString(amountRaw)?
+    currency = Infra.Codec.fieldAt(parts, 4, "webhook")?
+    occurredAt = Infra.Codec.fieldAt(parts, 5, "webhook")?
+    Result.Ok(RawWebhook(sourceId = sourceId, paymentId = paymentId, kind = kind, amount = amount, currency = currency, occurredAt = occurredAt))
+
+verify parseWebhookLine
+    parseWebhookLine("evt-1|pay-1|charge.captured|1000|USD|2026-03-10T09:05:00Z") => Result.Ok(RawWebhook(sourceId = "evt-1", paymentId = "pay-1", kind = "charge.captured", amount = 1000, currency = "USD", occurredAt = "2026-03-10T09:05:00Z"))
+    parseWebhookLine("evt-1|pay-1|charge.captured|oops|USD|2026-03-10T09:05:00Z") => Result.Err("Cannot parse 'oops' as Int")
+
+fn parseSettlementLine(line: String) -> Result<RawSettlement, String>
+    ? "Parses one settlement import line."
+    parts = String.split(line, "|")
+    rowId = Infra.Codec.fieldAt(parts, 0, "settlement import")?
+    paymentId = Infra.Codec.fieldAt(parts, 1, "settlement import")?
+    kind = Infra.Codec.fieldAt(parts, 2, "settlement import")?
+    amountRaw = Infra.Codec.fieldAt(parts, 3, "settlement import")?
+    amount = Int.fromString(amountRaw)?
+    currency = Infra.Codec.fieldAt(parts, 4, "settlement import")?
+    settledOn = Infra.Codec.fieldAt(parts, 5, "settlement import")?
+    Result.Ok(RawSettlement(rowId = rowId, paymentId = paymentId, kind = kind, amount = amount, currency = currency, settledOn = settledOn))
+
+verify parseSettlementLine
+    parseSettlementLine("row-1|pay-1|charge|1000|USD|2026-03-10") => Result.Ok(RawSettlement(rowId = "row-1", paymentId = "pay-1", kind = "charge", amount = 1000, currency = "USD", settledOn = "2026-03-10"))
+    parseSettlementLine("row-1|pay-1|charge|oops|USD|2026-03-10") => Result.Err("Cannot parse 'oops' as Int")

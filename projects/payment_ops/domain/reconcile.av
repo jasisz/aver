@@ -1,0 +1,272 @@
+module Reconcile
+    intent =
+        "Settlement-vs-realtime comparison for the payment operations showcase."
+        "The goal is not perfect accounting; it is to make mismatch rules visible as normal"
+        "functions instead of hiding them behind batch jobs and SQL views."
+    exposes [settlementsForProvider, settlementsForPayment, reconcileProvider]
+    depends [Domain.Types, Domain.Cases]
+
+decision SettlementIsEvidenceNotTruth
+    date = "2026-03-12"
+    author = "Codex"
+    reason =
+        "Settlement files are operationally important, but they are not always clean or complete."
+        "Treating them as evidence instead of unquestioned truth leaves room for explicit review cases."
+    chosen = "CompareAndEscalate"
+    rejected = ["SettlementWinsAlways", "RealtimeWinsAlways"]
+    impacts = [reconcileProvider]
+
+type AmountComparison
+    BothMissing
+    SettledOnly(Int)
+    RealtimeOnly(Int)
+    Exact
+    Mismatch(Int, Int)
+
+fn settlementsForProvider(rows: List<SettlementRow>, provider: String) -> List<SettlementRow>
+    ? "Filters imported settlement rows by provider."
+    List.reverse(settlementsForProviderInto(rows, provider, []))
+
+verify settlementsForProvider
+    settlementsForProvider([sampleCaptureRow(), sampleRefundRow()], "stripe") => [sampleCaptureRow(), sampleRefundRow()]
+    settlementsForProvider([sampleCaptureRow()], "adyen") => []
+
+fn settlementsForProviderInto(rows: List<SettlementRow>, provider: String, acc: List<SettlementRow>) -> List<SettlementRow>
+    ? "Tail-recursive provider filter for settlement rows."
+    match rows
+        [] -> acc
+        [row, ..rest] -> match row.provider == provider
+            true -> settlementsForProviderInto(rest, provider, List.prepend(row, acc))
+            false -> settlementsForProviderInto(rest, provider, acc)
+
+verify settlementsForProviderInto
+    settlementsForProviderInto([], "stripe", [sampleCaptureRow()]) => [sampleCaptureRow()]
+
+fn settlementsForPayment(rows: List<SettlementRow>, paymentId: String) -> List<SettlementRow>
+    ? "Filters imported settlement rows by payment ID."
+    List.reverse(settlementsForPaymentInto(rows, paymentId, []))
+
+verify settlementsForPayment
+    settlementsForPayment([sampleCaptureRow(), sampleRefundRow()], "pay-1") => [sampleCaptureRow(), sampleRefundRow()]
+    settlementsForPayment([sampleCaptureRow()], "missing") => []
+
+fn settlementsForPaymentInto(rows: List<SettlementRow>, paymentId: String, acc: List<SettlementRow>) -> List<SettlementRow>
+    ? "Tail-recursive payment filter for settlement rows."
+    match rows
+        [] -> acc
+        [row, ..rest] -> match row.paymentId == paymentId
+            true -> settlementsForPaymentInto(rest, paymentId, List.prepend(row, acc))
+            false -> settlementsForPaymentInto(rest, paymentId, acc)
+
+verify settlementsForPaymentInto
+    settlementsForPaymentInto([], "pay-1", [sampleCaptureRow()]) => [sampleCaptureRow()]
+
+fn reconcileProvider(provider: String, states: List<PaymentState>, rows: List<SettlementRow>) -> List<CaseDraft>
+    ? "Compares replayed payments with imported settlements for one provider."
+    paymentIds = paymentIdsFrom(states, rows, [])
+    List.reverse(reconcileIds(provider, paymentIds, states, rows, []))
+
+verify reconcileProvider
+    reconcileProvider("stripe", [sampleState()], [sampleCaptureRow()]) => []
+    reconcileProvider("stripe", [sampleState()], [SettlementRow(provider = "stripe", rowId = "row-1", paymentId = "pay-1", kind = SettlementKind.Capture, amount = 900, currency = "USD", settledOn = "2026-03-10")]) => [CaseDraft(key = "reconcile:capture-mismatch:stripe:pay-1:1000:900", provider = "stripe", paymentId = "pay-1", kind = "settlement_capture_mismatch", detail = "Realtime captured 1000 but settlement shows 900")]
+
+fn reconcileIds(provider: String, paymentIds: List<String>, states: List<PaymentState>, rows: List<SettlementRow>, acc: List<CaseDraft>) -> List<CaseDraft>
+    ? "Tail-recursive reconciliation by payment ID."
+    match paymentIds
+        [] -> acc
+        [paymentId, ..rest] -> reconcileIds(provider, rest, states, rows, prependAll(comparePayment(provider, paymentId, findState(states, provider, paymentId), settlementsForPayment(rows, paymentId)), acc))
+
+verify reconcileIds
+    reconcileIds("stripe", [], [], [], []) => []
+
+fn comparePayment(provider: String, paymentId: String, state: Option<PaymentState>, rows: List<SettlementRow>) -> List<CaseDraft>
+    ? "Produces zero or more settlement-vs-realtime cases for one payment."
+    captureSettled = totalByKind(rows, SettlementKind.Capture)
+    refundSettled = totalByKind(rows, SettlementKind.Refund)
+    settlementCurrency = firstCurrency(rows)
+    match state
+        Option.None -> match List.len(rows) == 0
+            true -> []
+            false -> [Domain.Cases.makeCaseDraft(provider, paymentId, "settlement_without_realtime", "Settlement exists without any realtime payment events", "reconcile:settlement-without-realtime:{provider}:{paymentId}")]
+        Option.Some(payment) -> List.concat(compareCapture(provider, payment, captureSettled), List.concat(compareRefund(provider, payment, refundSettled), compareCurrency(provider, payment, settlementCurrency)))
+
+verify comparePayment
+    comparePayment("stripe", "pay-9", Option.None, [SettlementRow(provider = "stripe", rowId = "row-x", paymentId = "pay-9", kind = SettlementKind.Capture, amount = 400, currency = "USD", settledOn = "2026-03-10")]) => [CaseDraft(key = "reconcile:settlement-without-realtime:stripe:pay-9", provider = "stripe", paymentId = "pay-9", kind = "settlement_without_realtime", detail = "Settlement exists without any realtime payment events")]
+    comparePayment("stripe", "pay-1", Option.Some(sampleState()), []) => [CaseDraft(key = "reconcile:missing-settlement:stripe:pay-1:1000", provider = "stripe", paymentId = "pay-1", kind = "realtime_missing_settlement", detail = "Realtime captured 1000 but no settlement row was imported")]
+
+fn compareCapture(provider: String, state: PaymentState, settled: Int) -> List<CaseDraft>
+    ? "Realtime-vs-settlement rules for captures."
+    match compareAmounts(state.capturedAmount, settled)
+        AmountComparison.BothMissing -> []
+        AmountComparison.Exact -> []
+        AmountComparison.SettledOnly(settledAmount) -> [Domain.Cases.makeCaseDraft(provider, state.paymentId, "settlement_without_capture", "Settlement shows capture {Int.toString(settledAmount)} but realtime captured nothing", "reconcile:settlement-without-capture:{provider}:{state.paymentId}:{Int.toString(settledAmount)}")]
+        AmountComparison.RealtimeOnly(realtimeAmount) -> [Domain.Cases.makeCaseDraft(provider, state.paymentId, "realtime_missing_settlement", "Realtime captured {Int.toString(realtimeAmount)} but no settlement row was imported", "reconcile:missing-settlement:{provider}:{state.paymentId}:{Int.toString(realtimeAmount)}")]
+        AmountComparison.Mismatch(realtimeAmount, settledAmount) -> [Domain.Cases.makeCaseDraft(provider, state.paymentId, "settlement_capture_mismatch", "Realtime captured {Int.toString(realtimeAmount)} but settlement shows {Int.toString(settledAmount)}", "reconcile:capture-mismatch:{provider}:{state.paymentId}:{Int.toString(realtimeAmount)}:{Int.toString(settledAmount)}")]
+
+verify compareCapture
+    compareCapture("stripe", sampleState(), 1000) => []
+    compareCapture("stripe", sampleState(), 900) => [Domain.Cases.makeCaseDraft("stripe", "pay-1", "settlement_capture_mismatch", "Realtime captured 1000 but settlement shows 900", "reconcile:capture-mismatch:stripe:pay-1:1000:900")]
+
+fn compareRefund(provider: String, state: PaymentState, settled: Int) -> List<CaseDraft>
+    ? "Realtime-vs-settlement rules for refunds."
+    match compareAmounts(state.refundedAmount, settled)
+        AmountComparison.BothMissing -> []
+        AmountComparison.Exact -> []
+        AmountComparison.SettledOnly(settledAmount) -> [Domain.Cases.makeCaseDraft(provider, state.paymentId, "settlement_without_refund", "Settlement shows refund {Int.toString(settledAmount)} but realtime refunded nothing", "reconcile:settlement-without-refund:{provider}:{state.paymentId}:{Int.toString(settledAmount)}")]
+        AmountComparison.RealtimeOnly(realtimeAmount) -> [Domain.Cases.makeCaseDraft(provider, state.paymentId, "refund_missing_settlement", "Realtime refunded {Int.toString(realtimeAmount)} but no settlement refund row was imported", "reconcile:refund-missing-settlement:{provider}:{state.paymentId}:{Int.toString(realtimeAmount)}")]
+        AmountComparison.Mismatch(realtimeAmount, settledAmount) -> [Domain.Cases.makeCaseDraft(provider, state.paymentId, "settlement_refund_mismatch", "Realtime refunded {Int.toString(realtimeAmount)} but settlement shows {Int.toString(settledAmount)}", "reconcile:refund-mismatch:{provider}:{state.paymentId}:{Int.toString(realtimeAmount)}:{Int.toString(settledAmount)}")]
+
+verify compareRefund
+    compareRefund("stripe", sampleState(), 0) => []
+    compareRefund("stripe", PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 1000, capturedAmount = 1000, refundedAmount = 200, latestAt = "2026-03-10T10:00:00Z", anomalyKeys = [], anomalyNotes = []), 100) => [Domain.Cases.makeCaseDraft("stripe", "pay-1", "settlement_refund_mismatch", "Realtime refunded 200 but settlement shows 100", "reconcile:refund-mismatch:stripe:pay-1:200:100")]
+
+fn compareAmounts(realtime: Int, settled: Int) -> AmountComparison
+    ? "Classifies realtime-vs-settlement amount relationships once for capture and refund rules."
+    realtimeMissing = amountMissing(realtime)
+    settledMissing = amountMissing(settled)
+    match realtimeMissing
+        true -> match settledMissing
+            true -> AmountComparison.BothMissing
+            false -> AmountComparison.SettledOnly(settled)
+        false -> match settledMissing
+            true -> AmountComparison.RealtimeOnly(realtime)
+            false -> match realtime == settled
+                true -> AmountComparison.Exact
+                false -> AmountComparison.Mismatch(realtime, settled)
+
+verify compareAmounts
+    compareAmounts(0, 0) => AmountComparison.BothMissing
+    compareAmounts(0, 100) => AmountComparison.SettledOnly(100)
+    compareAmounts(100, 0) => AmountComparison.RealtimeOnly(100)
+    compareAmounts(100, 100) => AmountComparison.Exact
+    compareAmounts(100, 90) => AmountComparison.Mismatch(100, 90)
+
+fn amountMissing(amount: Int) -> Bool
+    ? "Treats zero as missing evidence for settlement-vs-realtime comparison."
+    amount == 0
+
+verify amountMissing
+    amountMissing(0) => true
+    amountMissing(1) => false
+
+fn compareCurrency(provider: String, state: PaymentState, settlementCurrency: Option<String>) -> List<CaseDraft>
+    ? "Flags currency mismatches between replay and settlement."
+    match settlementCurrency
+        Option.None -> []
+        Option.Some(currency) -> match currency == state.currency
+            true -> []
+            false -> [Domain.Cases.makeCaseDraft(provider, state.paymentId, "settlement_currency_mismatch", "Realtime currency is {state.currency} but settlement currency is {currency}", "reconcile:currency-mismatch:{provider}:{state.paymentId}:{state.currency}:{currency}")]
+
+verify compareCurrency
+    compareCurrency("stripe", sampleState(), Option.None) => []
+    compareCurrency("stripe", sampleState(), Option.Some("USD")) => []
+    compareCurrency("stripe", sampleState(), Option.Some("EUR")) => [Domain.Cases.makeCaseDraft("stripe", "pay-1", "settlement_currency_mismatch", "Realtime currency is USD but settlement currency is EUR", "reconcile:currency-mismatch:stripe:pay-1:USD:EUR")]
+
+fn paymentIdsFrom(states: List<PaymentState>, rows: List<SettlementRow>, acc: List<String>) -> List<String>
+    ? "Builds a unique union of payment IDs from replayed state and settlements."
+    withStates = paymentIdsFromStates(states, acc)
+    paymentIdsFromRows(rows, withStates)
+
+verify paymentIdsFrom
+    paymentIdsFrom([sampleState()], [sampleCaptureRow()], []) => ["pay-1"]
+
+fn paymentIdsFromStates(states: List<PaymentState>, acc: List<String>) -> List<String>
+    ? "Adds payment IDs from replayed states."
+    match states
+        [] -> acc
+        [state, ..rest] -> paymentIdsFromStates(rest, appendUnique(acc, state.paymentId))
+
+verify paymentIdsFromStates
+    paymentIdsFromStates([sampleState()], []) => ["pay-1"]
+
+fn paymentIdsFromRows(rows: List<SettlementRow>, acc: List<String>) -> List<String>
+    ? "Adds payment IDs from settlement rows."
+    match rows
+        [] -> acc
+        [row, ..rest] -> paymentIdsFromRows(rest, appendUnique(acc, row.paymentId))
+
+verify paymentIdsFromRows
+    paymentIdsFromRows([sampleCaptureRow()], []) => ["pay-1"]
+
+fn appendUnique(values: List<String>, value: String) -> List<String>
+    ? "Appends only when a value is not already present."
+    match List.contains(values, value)
+        true -> values
+        false -> List.append(values, value)
+
+verify appendUnique
+    appendUnique(["a"], "a") => ["a"]
+    appendUnique(["a"], "b") => ["a", "b"]
+
+fn totalByKind(rows: List<SettlementRow>, kind: SettlementKind) -> Int
+    ? "Sums settlement amounts by capture or refund."
+    totalByKindFrom(rows, kind, 0)
+
+verify totalByKind
+    totalByKind([sampleCaptureRow(), sampleRefundRow()], SettlementKind.Capture) => 1000
+    totalByKind([sampleCaptureRow(), sampleRefundRow()], SettlementKind.Refund) => 200
+
+fn totalByKindFrom(rows: List<SettlementRow>, kind: SettlementKind, acc: Int) -> Int
+    ? "Tail-recursive settlement amount summation."
+    match rows
+        [] -> acc
+        [row, ..rest] -> match row.kind == kind
+            true -> totalByKindFrom(rest, kind, acc + row.amount)
+            false -> totalByKindFrom(rest, kind, acc)
+
+verify totalByKindFrom
+    totalByKindFrom([], SettlementKind.Capture, 5) => 5
+
+fn firstCurrency(rows: List<SettlementRow>) -> Option<String>
+    ? "Uses the first imported settlement currency as the comparison target."
+    match rows
+        [] -> Option.None
+        [row, .._rest] -> Option.Some(row.currency)
+
+verify firstCurrency
+    firstCurrency([sampleCaptureRow()]) => Option.Some("USD")
+    firstCurrency([]) => Option.None
+
+fn findState(states: List<PaymentState>, provider: String, paymentId: String) -> Option<PaymentState>
+    ? "Looks up one replayed state for reconciliation."
+    match states
+        [] -> Option.None
+        [state, ..rest] -> match state.provider == provider
+            true -> match state.paymentId == paymentId
+                true -> Option.Some(state)
+                false -> findState(rest, provider, paymentId)
+            false -> findState(rest, provider, paymentId)
+
+verify findState
+    findState([sampleState()], "stripe", "pay-1") => Option.Some(sampleState())
+    findState([], "stripe", "pay-1") => Option.None
+
+fn prependAll(items: List<CaseDraft>, acc: List<CaseDraft>) -> List<CaseDraft>
+    ? "Prepends all drafts to an accumulator."
+    match items
+        [] -> acc
+        [item, ..rest] -> prependAll(rest, List.prepend(item, acc))
+
+verify prependAll
+    prependAll([Domain.Cases.makeCaseDraft("stripe", "pay-1", "x", "d", "k")], []) => [Domain.Cases.makeCaseDraft("stripe", "pay-1", "x", "d", "k")]
+
+fn sampleState() -> PaymentState
+    ? "Reusable reconciliation fixture."
+    PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 1000, capturedAmount = 1000, refundedAmount = 0, latestAt = "2026-03-10T09:05:00Z", anomalyKeys = [], anomalyNotes = [])
+
+verify sampleState
+    sampleState() => PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 1000, capturedAmount = 1000, refundedAmount = 0, latestAt = "2026-03-10T09:05:00Z", anomalyKeys = [], anomalyNotes = [])
+
+fn sampleCaptureRow() -> SettlementRow
+    ? "Reusable capture settlement fixture."
+    SettlementRow(provider = "stripe", rowId = "row-1", paymentId = "pay-1", kind = SettlementKind.Capture, amount = 1000, currency = "USD", settledOn = "2026-03-10")
+
+verify sampleCaptureRow
+    sampleCaptureRow() => SettlementRow(provider = "stripe", rowId = "row-1", paymentId = "pay-1", kind = SettlementKind.Capture, amount = 1000, currency = "USD", settledOn = "2026-03-10")
+
+fn sampleRefundRow() -> SettlementRow
+    ? "Reusable refund settlement fixture."
+    SettlementRow(provider = "stripe", rowId = "row-2", paymentId = "pay-1", kind = SettlementKind.Refund, amount = 200, currency = "USD", settledOn = "2026-03-10")
+
+verify sampleRefundRow
+    sampleRefundRow() => SettlementRow(provider = "stripe", rowId = "row-2", paymentId = "pay-1", kind = SettlementKind.Refund, amount = 200, currency = "USD", settledOn = "2026-03-10")

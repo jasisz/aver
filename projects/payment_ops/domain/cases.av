@@ -1,0 +1,299 @@
+module Cases
+    intent =
+        "Manual-review case generation and lifecycle management."
+        "Dirty payment operations need stable case keys so re-running ingest or reconciliation"
+        "does not keep opening the same human task forever."
+    exposes [makeCaseDraft, draftsFromStates, statusText, parseStatus, materializeNewCases, resolveCase, filterByStatusLabel, openCasesForPayment, findCaseById, auditForOpenedCase, auditForResolvedCase]
+    depends [Domain.Types]
+
+decision ManualReviewInsteadOfSilentFixup
+    date = "2026-03-12"
+    author = "Codex"
+    reason =
+        "Backoffice systems should not silently fix suspicious payment histories."
+        "Opening explicit manual-review cases keeps the risk visible and auditable."
+    chosen = "OpenCases"
+    rejected = ["SilentRepair", "LogOnlyWarnings"]
+    impacts = [draftsFromState, materializeNewCases, resolveCase]
+
+fn makeCaseDraft(provider: String, paymentId: String, kind: String, detail: String, key: String) -> CaseDraft
+    ? "Convenience constructor for reconcile and replay anomalies."
+    CaseDraft(key = key, provider = provider, paymentId = paymentId, kind = kind, detail = detail)
+
+verify makeCaseDraft
+    makeCaseDraft("stripe", "pay-1", "refund_before_capture", "Refund arrived first", "k") => CaseDraft(key = "k", provider = "stripe", paymentId = "pay-1", kind = "refund_before_capture", detail = "Refund arrived first")
+
+fn draftsFromState(state: PaymentState) -> List<CaseDraft>
+    ? "Turns replay anomalies into manual-review drafts."
+    draftsFromPairs(state, state.anomalyKeys, state.anomalyNotes)
+
+verify draftsFromState
+    draftsFromState(PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 0, capturedAmount = 0, refundedAmount = 100, latestAt = "2026-03-10T10:00:00Z", anomalyKeys = ["refund-before-capture:evt-1"], anomalyNotes = ["Refund arrived before any capture for payment 'pay-1'"])) => [CaseDraft(key = "refund-before-capture:evt-1", provider = "stripe", paymentId = "pay-1", kind = "refund_before_capture", detail = "Refund arrived before any capture for payment 'pay-1'")]
+
+fn draftsFromStates(states: List<PaymentState>) -> List<CaseDraft>
+    ? "Flattens replay anomalies from every payment state."
+    List.reverse(draftsFromStatesInto(states, []))
+
+verify draftsFromStates
+    draftsFromStates([PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 0, capturedAmount = 0, refundedAmount = 100, latestAt = "2026-03-10T10:00:00Z", anomalyKeys = ["refund-before-capture:evt-1"], anomalyNotes = ["Refund arrived before any capture for payment 'pay-1'"])]) => [CaseDraft(key = "refund-before-capture:evt-1", provider = "stripe", paymentId = "pay-1", kind = "refund_before_capture", detail = "Refund arrived before any capture for payment 'pay-1'")]
+
+fn draftsFromStatesInto(states: List<PaymentState>, acc: List<CaseDraft>) -> List<CaseDraft>
+    ? "Tail-recursive case flattening."
+    match states
+        [] -> acc
+        [state, ..rest] -> draftsFromStatesInto(rest, prependAll(draftsFromState(state), acc))
+
+verify draftsFromStatesInto
+    draftsFromStatesInto([], []) => []
+
+fn draftsFromPairs(state: PaymentState, keys: List<String>, notes: List<String>) -> List<CaseDraft>
+    ? "Zips anomaly keys and notes into review cases."
+    List.reverse(draftsFromPairsInto(state, keys, notes, []))
+
+verify draftsFromPairs
+    draftsFromPairs(PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 0, capturedAmount = 0, refundedAmount = 100, latestAt = "2026-03-10T10:00:00Z", anomalyKeys = [], anomalyNotes = []), ["capture-without-authorize:evt-1"], ["Capture arrived before any authorization for payment 'pay-1'"]) => [CaseDraft(key = "capture-without-authorize:evt-1", provider = "stripe", paymentId = "pay-1", kind = "capture_without_authorize", detail = "Capture arrived before any authorization for payment 'pay-1'")]
+
+fn draftsFromPairsInto(state: PaymentState, keys: List<String>, notes: List<String>, acc: List<CaseDraft>) -> List<CaseDraft>
+    ? "Tail-recursive anomaly zip for review drafts."
+    match keys
+        [] -> acc
+        [key, ..restKeys] -> draftsFromPairsInto(state, restKeys, tail(notes), List.prepend(draftFromPair(state, key, Option.withDefault(List.get(notes, 0), "Suspicious payment history")), acc))
+
+verify draftsFromPairsInto
+    draftsFromPairsInto(PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 0, capturedAmount = 0, refundedAmount = 100, latestAt = "2026-03-10T10:00:00Z", anomalyKeys = [], anomalyNotes = []), [], [], [makeCaseDraft("stripe", "pay-1", "x", "d", "k")]) => [makeCaseDraft("stripe", "pay-1", "x", "d", "k")]
+
+fn draftFromPair(state: PaymentState, key: String, note: String) -> CaseDraft
+    ? "Builds one case draft from a replay anomaly."
+    makeCaseDraft(state.provider, state.paymentId, kindFromKey(key), note, key)
+
+verify draftFromPair
+    draftFromPair(PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 0, capturedAmount = 0, refundedAmount = 100, latestAt = "2026-03-10T10:00:00Z", anomalyKeys = [], anomalyNotes = []), "capture-without-authorize:evt-1", "Capture arrived before any authorization for payment 'pay-1'") => CaseDraft(key = "capture-without-authorize:evt-1", provider = "stripe", paymentId = "pay-1", kind = "capture_without_authorize", detail = "Capture arrived before any authorization for payment 'pay-1'")
+
+fn kindFromKey(key: String) -> String
+    ? "Normalizes anomaly key prefixes into user-facing case kinds."
+    match String.startsWith(key, "refund-before-capture:")
+        true -> "refund_before_capture"
+        false -> match String.startsWith(key, "capture-without-authorize:")
+            true -> "capture_without_authorize"
+            false -> match String.startsWith(key, "captured-exceeds-authorized:")
+                true -> "captured_exceeds_authorized"
+                false -> match String.startsWith(key, "refund-exceeds-capture:")
+                    true -> "refund_exceeds_capture"
+                    false -> match String.startsWith(key, "currency-mismatch:")
+                        true -> "currency_mismatch"
+                        false -> "payment_integrity"
+
+verify kindFromKey
+    kindFromKey("refund-before-capture:evt-1") => "refund_before_capture"
+    kindFromKey("x") => "payment_integrity"
+
+fn tail(items: List<String>) -> List<String>
+    ? "Drops the first list item."
+    match items
+        [] -> []
+        [_head, ..rest] -> rest
+
+verify tail
+    tail(["a", "b"]) => ["b"]
+    tail([]) => []
+
+fn prependAll(items: List<CaseDraft>, acc: List<CaseDraft>) -> List<CaseDraft>
+    ? "Prepends a whole list onto an accumulator."
+    match items
+        [] -> acc
+        [item, ..rest] -> prependAll(rest, List.prepend(item, acc))
+
+verify prependAll
+    prependAll([makeCaseDraft("stripe", "pay-1", "x", "d", "k")], []) => [makeCaseDraft("stripe", "pay-1", "x", "d", "k")]
+
+fn statusText(status: CaseStatus) -> String
+    ? "Stable on-disk and CLI spelling for case status."
+    match status
+        CaseStatus.Open -> "open"
+        CaseStatus.Resolved -> "resolved"
+
+verify statusText
+    statusText(CaseStatus.Open) => "open"
+    statusText(CaseStatus.Resolved) => "resolved"
+
+fn parseStatus(raw: String) -> Result<CaseStatus, String>
+    ? "Parses one stored case status."
+    match String.toLower(raw)
+        "open" -> Result.Ok(CaseStatus.Open)
+        "resolved" -> Result.Ok(CaseStatus.Resolved)
+        _ -> Result.Err("Case status must be one of: open, resolved")
+
+verify parseStatus
+    parseStatus("open") => Result.Ok(CaseStatus.Open)
+    parseStatus("resolved") => Result.Ok(CaseStatus.Resolved)
+    parseStatus("x") => Result.Err("Case status must be one of: open, resolved")
+
+fn materializeNewCases(existing: List<ReviewCase>, drafts: List<CaseDraft>, createdAt: String) -> List<ReviewCase>
+    ? "Assigns deterministic case IDs and skips already-known case keys."
+    List.reverse(materializeInto(existing, drafts, createdAt, List.len(existing) + 1, []))
+
+verify materializeNewCases
+    materializeNewCases([], [makeCaseDraft("stripe", "pay-1", "refund_before_capture", "Refund arrived first", "k")], "2026-03-10T12:00:00Z") => [ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "refund_before_capture", detail = "Refund arrived first", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)]
+    materializeNewCases([ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "refund_before_capture", detail = "Refund arrived first", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)], [makeCaseDraft("stripe", "pay-1", "refund_before_capture", "Refund arrived first", "k")], "2026-03-10T12:30:00Z") => []
+
+fn materializeInto(existing: List<ReviewCase>, drafts: List<CaseDraft>, createdAt: String, nextId: Int, acc: List<ReviewCase>) -> List<ReviewCase>
+    ? "Tail-recursive case materialization with dedupe."
+    match drafts
+        [] -> acc
+        [draft, ..rest] -> match caseKeyExists(existing, draft.key)
+            true -> materializeInto(existing, rest, createdAt, nextId, acc)
+            false -> match caseKeyExists(acc, draft.key)
+                true -> materializeInto(existing, rest, createdAt, nextId, acc)
+                false -> materializeInto(existing, rest, createdAt, nextId + 1, List.prepend(ReviewCase(id = "case-{Int.toString(nextId)}", key = draft.key, provider = draft.provider, paymentId = draft.paymentId, kind = draft.kind, detail = draft.detail, status = CaseStatus.Open, createdAt = createdAt, resolvedAt = Option.None, resolution = Option.None), acc))
+
+verify materializeInto
+    materializeInto([], [], "2026-03-10T12:00:00Z", 2, []) => []
+
+fn caseKeyExists(cases: List<ReviewCase>, key: String) -> Bool
+    ? "True when any persisted case already owns the same stable key."
+    match cases
+        [] -> false
+        [item, ..rest] -> match item.key == key
+            true -> true
+            false -> caseKeyExists(rest, key)
+
+verify caseKeyExists
+    caseKeyExists([ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)], "k") => true
+    caseKeyExists([], "k") => false
+
+fn resolveCase(cases: List<ReviewCase>, caseId: String, resolution: String, resolvedAt: String) -> Result<List<ReviewCase>, String>
+    ? "Marks one case as resolved."
+    match hasCaseId(cases, caseId)
+        false -> Result.Err("Unknown case: " + caseId)
+        true -> Result.Ok(resolveCaseInList(cases, caseId, resolution, resolvedAt))
+
+verify resolveCase
+    resolveCase([ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)], "case-1", "duplicate webhook", "2026-03-10T13:00:00Z") => Result.Ok([ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Resolved, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.Some("2026-03-10T13:00:00Z"), resolution = Option.Some("duplicate webhook"))])
+    resolveCase([], "case-1", "x", "2026-03-10T13:00:00Z") => Result.Err("Unknown case: case-1")
+
+fn hasCaseId(cases: List<ReviewCase>, caseId: String) -> Bool
+    ? "Exact lookup by case ID."
+    match cases
+        [] -> false
+        [item, ..rest] -> match item.id == caseId
+            true -> true
+            false -> hasCaseId(rest, caseId)
+
+verify hasCaseId
+    hasCaseId([ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)], "case-1") => true
+    hasCaseId([], "case-1") => false
+
+fn resolveCaseInList(cases: List<ReviewCase>, caseId: String, resolution: String, resolvedAt: String) -> List<ReviewCase>
+    ? "Rewrites the case list with one resolved item."
+    resolveCaseInto(cases, caseId, resolution, resolvedAt, [])
+
+verify resolveCaseInList
+    resolveCaseInList([], "case-1", "x", "2026-03-10T13:00:00Z") => []
+
+fn resolveCaseInto(cases: List<ReviewCase>, caseId: String, resolution: String, resolvedAt: String, acc: List<ReviewCase>) -> List<ReviewCase>
+    ? "Tail-recursive list rewrite for case resolution."
+    match cases
+        [] -> List.reverse(acc)
+        [item, ..rest] -> match item.id == caseId
+            true -> List.concat(List.reverse(List.prepend(ReviewCase(id = item.id, key = item.key, provider = item.provider, paymentId = item.paymentId, kind = item.kind, detail = item.detail, status = CaseStatus.Resolved, createdAt = item.createdAt, resolvedAt = Option.Some(resolvedAt), resolution = Option.Some(resolution)), acc)), rest)
+            false -> resolveCaseInto(rest, caseId, resolution, resolvedAt, List.prepend(item, acc))
+
+verify resolveCaseInto
+    resolveCaseInto([], "case-1", "x", "2026-03-10T13:00:00Z", [ReviewCase(id = "case-9", key = "k-9", provider = "stripe", paymentId = "pay-9", kind = "x", detail = "d", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)]) => [ReviewCase(id = "case-9", key = "k-9", provider = "stripe", paymentId = "pay-9", kind = "x", detail = "d", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)]
+
+fn filterByStatusLabel(cases: List<ReviewCase>, status: Option<String>) -> Result<List<ReviewCase>, String>
+    ? "Supports list_cases open|resolved|all with open as the default."
+    match status
+        Option.None -> Result.Ok(filterOpen(cases))
+        Option.Some(label) -> match String.toLower(label)
+            "open" -> Result.Ok(filterOpen(cases))
+            "resolved" -> Result.Ok(filterResolved(cases))
+            "all" -> Result.Ok(cases)
+            _ -> Result.Err("Case filter must be one of: open, resolved, all")
+
+verify filterByStatusLabel
+    filterByStatusLabel([], Option.None) => Result.Ok([])
+    filterByStatusLabel([ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)], Option.Some("open")) => Result.Ok([ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)])
+    filterByStatusLabel([], Option.Some("weird")) => Result.Err("Case filter must be one of: open, resolved, all")
+
+fn filterOpen(cases: List<ReviewCase>) -> List<ReviewCase>
+    ? "Keeps only open cases."
+    List.reverse(filterOpenInto(cases, []))
+
+verify filterOpen
+    filterOpen([ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)]) => [ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)]
+
+fn filterOpenInto(cases: List<ReviewCase>, acc: List<ReviewCase>) -> List<ReviewCase>
+    ? "Tail-recursive open-case filter."
+    match cases
+        [] -> acc
+        [item, ..rest] -> match item.status
+            CaseStatus.Open -> filterOpenInto(rest, List.prepend(item, acc))
+            CaseStatus.Resolved -> filterOpenInto(rest, acc)
+
+verify filterOpenInto
+    filterOpenInto([], [ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)]) => [ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)]
+
+fn filterResolved(cases: List<ReviewCase>) -> List<ReviewCase>
+    ? "Keeps only resolved cases."
+    List.reverse(filterResolvedInto(cases, []))
+
+verify filterResolved
+    filterResolved([ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Resolved, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.Some("2026-03-10T13:00:00Z"), resolution = Option.Some("done"))]) => [ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Resolved, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.Some("2026-03-10T13:00:00Z"), resolution = Option.Some("done"))]
+
+fn filterResolvedInto(cases: List<ReviewCase>, acc: List<ReviewCase>) -> List<ReviewCase>
+    ? "Tail-recursive resolved-case filter."
+    match cases
+        [] -> acc
+        [item, ..rest] -> match item.status
+            CaseStatus.Open -> filterResolvedInto(rest, acc)
+            CaseStatus.Resolved -> filterResolvedInto(rest, List.prepend(item, acc))
+
+verify filterResolvedInto
+    filterResolvedInto([], [ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Resolved, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.Some("2026-03-10T13:00:00Z"), resolution = Option.Some("done"))]) => [ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Resolved, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.Some("2026-03-10T13:00:00Z"), resolution = Option.Some("done"))]
+
+fn openCasesForPayment(cases: List<ReviewCase>, paymentId: String) -> List<ReviewCase>
+    ? "Keeps only open cases for one payment."
+    List.reverse(openCasesForPaymentInto(cases, paymentId, []))
+
+verify openCasesForPayment
+    openCasesForPayment([ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)], "pay-1") => [ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)]
+
+fn openCasesForPaymentInto(cases: List<ReviewCase>, paymentId: String, acc: List<ReviewCase>) -> List<ReviewCase>
+    ? "Tail-recursive payment-scoped open-case filter."
+    match cases
+        [] -> acc
+        [item, ..rest] -> match item.paymentId == paymentId
+            true -> match item.status
+                CaseStatus.Open -> openCasesForPaymentInto(rest, paymentId, List.prepend(item, acc))
+                CaseStatus.Resolved -> openCasesForPaymentInto(rest, paymentId, acc)
+            false -> openCasesForPaymentInto(rest, paymentId, acc)
+
+verify openCasesForPaymentInto
+    openCasesForPaymentInto([], "pay-1", [ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)]) => [ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)]
+
+fn findCaseById(cases: List<ReviewCase>, caseId: String) -> Option<ReviewCase>
+    ? "Convenience lookup after mutation."
+    match cases
+        [] -> Option.None
+        [item, ..rest] -> match item.id == caseId
+            true -> Option.Some(item)
+            false -> findCaseById(rest, caseId)
+
+verify findCaseById
+    findCaseById([ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)], "case-1") => Option.Some(ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None))
+    findCaseById([], "case-1") => Option.None
+
+fn auditForOpenedCase(item: ReviewCase) -> AuditEntry
+    ? "Stable audit entry for new manual-review work."
+    AuditEntry(key = "case-opened:{item.key}", subjectId = "payment:{item.paymentId}", action = "case.opened", message = "[{item.kind}] {item.detail}", createdAt = item.createdAt)
+
+verify auditForOpenedCase
+    auditForOpenedCase(ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Open, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.None, resolution = Option.None)) => AuditEntry(key = "case-opened:k", subjectId = "payment:pay-1", action = "case.opened", message = "[x] d", createdAt = "2026-03-10T12:00:00Z")
+
+fn auditForResolvedCase(item: ReviewCase) -> AuditEntry
+    ? "Stable audit entry for manual resolution."
+    AuditEntry(key = "case-resolved:{item.key}", subjectId = "payment:{item.paymentId}", action = "case.resolved", message = Option.withDefault(item.resolution, "resolved"), createdAt = Option.withDefault(item.resolvedAt, item.createdAt))
+
+verify auditForResolvedCase
+    auditForResolvedCase(ReviewCase(id = "case-1", key = "k", provider = "stripe", paymentId = "pay-1", kind = "x", detail = "d", status = CaseStatus.Resolved, createdAt = "2026-03-10T12:00:00Z", resolvedAt = Option.Some("2026-03-10T13:00:00Z"), resolution = Option.Some("duplicate"))) => AuditEntry(key = "case-resolved:k", subjectId = "payment:pay-1", action = "case.resolved", message = "duplicate", createdAt = "2026-03-10T13:00:00Z")

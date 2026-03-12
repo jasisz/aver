@@ -1,0 +1,180 @@
+module Parse
+    intent =
+        "Plain argv parsing for the payment_ops CLI."
+        "The parser stays dumb and returns typed commands and queries so the shell adapter"
+        "does not need to understand payment semantics."
+    exposes [Input, parseArgs]
+    depends [App.Commands, App.Queries]
+
+type Input
+    ShowHelp
+    RunCommand(Command)
+    RunQuery(Query)
+
+fn parseArgs(args: List<String>) -> Result<Input, String>
+    ? "Parses argv-style input into a command, query, or help action."
+    parts = trimParts(args)
+    match parts
+        [] -> Result.Ok(Input.ShowHelp)
+        _ -> routeArgs(parts)
+
+verify parseArgs
+    parseArgs([]) => Result.Ok(Input.ShowHelp)
+    parseArgs(["help"]) => Result.Ok(Input.ShowHelp)
+    parseArgs(["show_payment", "pay-1"]) => Result.Ok(Input.RunQuery(Query.ShowPayment("pay-1")))
+    parseArgs(["reconcile"]) => Result.Err("Missing field: provider")
+
+fn routeArgs(parts: List<String>) -> Result<Input, String>
+    ? "Routes non-empty argv input by command name."
+    head = firstPart(parts)?
+    name = String.toLower(head)
+    match name
+        "help" -> Result.Ok(Input.ShowHelp)
+        "ingest_webhooks" -> parseIngestWebhooks(parts)
+        "import_settlement" -> parseImportSettlement(parts)
+        "reconcile" -> parseReconcile(parts)
+        "resolve_case" -> parseResolveCase(parts)
+        "show_payment" -> parseShowPayment(parts)
+        "list_cases" -> parseListCases(parts)
+        "provider_summary" -> parseProviderSummary(parts)
+        "show_audit" -> parseShowAudit(parts)
+        _ -> Result.Err("Unknown command: " + head)
+
+verify routeArgs
+    routeArgs(["help"]) => Result.Ok(Input.ShowHelp)
+    routeArgs(["provider_summary", "stripe"]) => Result.Ok(Input.RunQuery(Query.ProviderSummary("stripe")))
+    routeArgs(["unknown"]) => Result.Err("Unknown command: unknown")
+
+fn trimParts(parts: List<String>) -> List<String>
+    ? "Trims all argv fields."
+    List.reverse(trimPartsInto(parts, []))
+
+verify trimParts
+    trimParts([" a ", " b "]) => ["a", "b"]
+
+fn trimPartsInto(parts: List<String>, acc: List<String>) -> List<String>
+    ? "Tail-recursive argv trimming helper."
+    match parts
+        [] -> acc
+        [part, ..rest] -> trimPartsInto(rest, List.prepend(String.trim(part), acc))
+
+verify trimPartsInto
+    trimPartsInto([], ["b", "a"]) => ["b", "a"]
+
+fn firstPart(parts: List<String>) -> Result<String, String>
+    ? "Reads the first command field."
+    Option.toResult(List.get(parts, 0), "Command line was empty")
+
+verify firstPart
+    firstPart(["help"]) => Result.Ok("help")
+    firstPart([]) => Result.Err("Command line was empty")
+
+fn field(parts: List<String>, index: Int, label: String) -> Result<String, String>
+    ? "Reads one required field."
+    Option.toResult(List.get(parts, index), "Missing field: " + label)
+
+verify field
+    field(["a", "b"], 1, "x") => Result.Ok("b")
+    field(["a"], 1, "x") => Result.Err("Missing field: x")
+
+fn optionalField(parts: List<String>, index: Int) -> Option<String>
+    ? "Reads an optional field and treats blank or '-' as missing."
+    match List.get(parts, index)
+        Option.Some(value) -> match blankOrDash(value)
+            true -> Option.None
+            false -> Option.Some(value)
+        Option.None -> Option.None
+
+verify optionalField
+    optionalField(["list_cases", "resolved"], 1) => Option.Some("resolved")
+    optionalField(["list_cases", "-"], 1) => Option.None
+
+fn blankOrDash(value: String) -> Bool
+    ? "True when a field means 'missing'."
+    match String.len(String.trim(value)) == 0
+        true -> true
+        false -> value == "-"
+
+verify blankOrDash
+    blankOrDash("") => true
+    blankOrDash("-") => true
+    blankOrDash("x") => false
+
+fn parseIngestWebhooks(parts: List<String>) -> Result<Input, String>
+    ? "Parses ingest_webhooks provider path."
+    provider = field(parts, 1, "provider")?
+    path = field(parts, 2, "path")?
+    Result.Ok(Input.RunCommand(Command.IngestWebhooks(provider, path)))
+
+verify parseIngestWebhooks
+    parseIngestWebhooks(["ingest_webhooks", "stripe", "fixtures.txt"]) => Result.Ok(Input.RunCommand(Command.IngestWebhooks("stripe", "fixtures.txt")))
+    parseIngestWebhooks(["ingest_webhooks", "stripe"]) => Result.Err("Missing field: path")
+
+fn parseImportSettlement(parts: List<String>) -> Result<Input, String>
+    ? "Parses import_settlement provider path."
+    provider = field(parts, 1, "provider")?
+    path = field(parts, 2, "path")?
+    Result.Ok(Input.RunCommand(Command.ImportSettlement(provider, path)))
+
+verify parseImportSettlement
+    parseImportSettlement(["import_settlement", "stripe", "file.txt"]) => Result.Ok(Input.RunCommand(Command.ImportSettlement("stripe", "file.txt")))
+    parseImportSettlement(["import_settlement"]) => Result.Err("Missing field: provider")
+
+fn parseReconcile(parts: List<String>) -> Result<Input, String>
+    ? "Parses reconcile provider."
+    provider = field(parts, 1, "provider")?
+    Result.Ok(Input.RunCommand(Command.Reconcile(provider)))
+
+verify parseReconcile
+    parseReconcile(["reconcile", "stripe"]) => Result.Ok(Input.RunCommand(Command.Reconcile("stripe")))
+    parseReconcile(["reconcile"]) => Result.Err("Missing field: provider")
+
+fn parseResolveCase(parts: List<String>) -> Result<Input, String>
+    ? "Parses resolve_case case_id resolution."
+    caseId = field(parts, 1, "case_id")?
+    resolution = field(parts, 2, "resolution")?
+    Result.Ok(Input.RunCommand(Command.ResolveCase(caseId, resolution)))
+
+verify parseResolveCase
+    parseResolveCase(["resolve_case", "case-1", "duplicate webhook"]) => Result.Ok(Input.RunCommand(Command.ResolveCase("case-1", "duplicate webhook")))
+    parseResolveCase(["resolve_case", "case-1"]) => Result.Err("Missing field: resolution")
+
+fn parseShowPayment(parts: List<String>) -> Result<Input, String>
+    ? "Parses show_payment payment_id."
+    paymentId = field(parts, 1, "payment_id")?
+    Result.Ok(Input.RunQuery(Query.ShowPayment(paymentId)))
+
+verify parseShowPayment
+    parseShowPayment(["show_payment", "pay-1"]) => Result.Ok(Input.RunQuery(Query.ShowPayment("pay-1")))
+    parseShowPayment(["show_payment"]) => Result.Err("Missing field: payment_id")
+
+fn parseListCases(parts: List<String>) -> Result<Input, String>
+    ? "Parses list_cases [status]."
+    match List.len(parts) > 2
+        true -> Result.Err("list_cases accepts at most one optional status")
+        false -> Result.Ok(Input.RunQuery(Query.ListCases(optionalField(parts, 1))))
+
+verify parseListCases
+    parseListCases(["list_cases"]) => Result.Ok(Input.RunQuery(Query.ListCases(Option.None)))
+    parseListCases(["list_cases", "resolved"]) => Result.Ok(Input.RunQuery(Query.ListCases(Option.Some("resolved"))))
+    parseListCases(["list_cases", "open", "extra"]) => Result.Err("list_cases accepts at most one optional status")
+
+fn parseProviderSummary(parts: List<String>) -> Result<Input, String>
+    ? "Parses provider_summary provider."
+    provider = field(parts, 1, "provider")?
+    Result.Ok(Input.RunQuery(Query.ProviderSummary(provider)))
+
+verify parseProviderSummary
+    parseProviderSummary(["provider_summary", "stripe"]) => Result.Ok(Input.RunQuery(Query.ProviderSummary("stripe")))
+    parseProviderSummary(["provider_summary"]) => Result.Err("Missing field: provider")
+
+fn parseShowAudit(parts: List<String>) -> Result<Input, String>
+    ? "Parses show_audit [subject_id]."
+    match List.len(parts) > 2
+        true -> Result.Err("show_audit accepts at most one optional subject_id")
+        false -> Result.Ok(Input.RunQuery(Query.ShowAudit(optionalField(parts, 1))))
+
+verify parseShowAudit
+    parseShowAudit(["show_audit"]) => Result.Ok(Input.RunQuery(Query.ShowAudit(Option.None)))
+    parseShowAudit(["show_audit", "payment:pay-1"]) => Result.Ok(Input.RunQuery(Query.ShowAudit(Option.Some("payment:pay-1"))))
+    parseShowAudit(["show_audit", "payment:pay-1", "extra"]) => Result.Err("show_audit accepts at most one optional subject_id")
