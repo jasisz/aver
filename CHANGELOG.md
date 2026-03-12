@@ -4,6 +4,14 @@ All notable changes to Aver are documented here.
 
 ## Unreleased
 
+## 0.5.3
+
+### Added
+- `projects/payment_ops` as a medium-size dirty-backoffice showcase covering provider normalization, replay, settlement reconciliation, manual-review cases, and audit trail
+
+### Fixed
+- Rust codegen ownership for list / tuple / map literals and record updates, so valid Aver programs no longer emit generated Rust that fails with move errors in these patterns
+
 ## 0.5.2
 
 ### Added
