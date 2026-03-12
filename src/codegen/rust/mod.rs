@@ -456,4 +456,50 @@ fn headPlusTailLen(xs: List<Int>) -> Int
 
         assert!(entry.contains("aver_rt::list_uncons_cloned(&"));
     }
+
+    #[test]
+    fn list_literal_clones_ident_when_used_afterward() {
+        let ctx = ctx_from_source(
+            r#"
+module Demo
+
+record Audit
+    message: String
+
+fn useTwice(audit: Audit) -> List<Audit>
+    first = [audit]
+    [audit]
+"#,
+            "demo",
+        );
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("let first = aver_rt::AverList::from_vec(vec![audit.clone()]);"));
+        assert!(entry.contains("aver_rt::AverList::from_vec(vec![audit])"));
+    }
+
+    #[test]
+    fn record_update_clones_base_when_value_is_used_afterward() {
+        let ctx = ctx_from_source(
+            r#"
+module Demo
+
+record PaymentState
+    paymentId: String
+    currency: String
+
+fn touch(state: PaymentState) -> String
+    updated = PaymentState.update(state, currency = "EUR")
+    state.paymentId
+"#,
+            "demo",
+        );
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("..state.clone()"));
+    }
 }

@@ -104,24 +104,43 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
             if elements.is_empty() {
                 "aver_rt::AverList::empty()".to_string()
             } else {
-                let parts: Vec<String> = elements.iter().map(|e| emit_expr(e, ctx, ectx)).collect();
+                let elem_ctxs =
+                    compute_args_used_after(elements, &ectx.used_after, &ectx.local_types);
+                let parts: Vec<String> = elements
+                    .iter()
+                    .zip(elem_ctxs.iter())
+                    .map(|(e, elem_ctx)| clone_arg(e, ctx, elem_ctx))
+                    .collect();
                 format!("aver_rt::AverList::from_vec(vec![{}])", parts.join(", "))
             }
         }
         Expr::Tuple(items) => {
-            let parts: Vec<String> = items.iter().map(|e| emit_expr(e, ctx, ectx)).collect();
+            let item_ctxs = compute_args_used_after(items, &ectx.used_after, &ectx.local_types);
+            let parts: Vec<String> = items
+                .iter()
+                .zip(item_ctxs.iter())
+                .map(|(e, item_ctx)| clone_arg(e, ctx, item_ctx))
+                .collect();
             format!("({})", parts.join(", "))
         }
         Expr::MapLiteral(entries) => {
             if entries.is_empty() {
                 "HashMap::new()".to_string()
             } else {
+                let flat_exprs: Vec<Expr> = entries
+                    .iter()
+                    .flat_map(|(k, v)| [k.clone(), v.clone()])
+                    .collect();
+                let flat_ctxs =
+                    compute_args_used_after(&flat_exprs, &ectx.used_after, &ectx.local_types);
                 let mut parts = Vec::new();
-                for (k, v) in entries {
+                for (idx, (k, v)) in entries.iter().enumerate() {
+                    let key_ctx = &flat_ctxs[idx * 2];
+                    let value_ctx = &flat_ctxs[idx * 2 + 1];
                     parts.push(format!(
                         "({}, {})",
-                        emit_expr(k, ctx, ectx),
-                        emit_expr(v, ctx, ectx)
+                        clone_arg(k, ctx, key_ctx),
+                        clone_arg(v, ctx, value_ctx)
                     ));
                 }
                 format!(
@@ -162,7 +181,7 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
             } else {
                 type_name
             };
-            let base_str = emit_expr(base, ctx, ectx);
+            let base_str = clone_arg(base, ctx, ectx);
             let update_exprs: Vec<Expr> = updates.iter().map(|(_, e)| e.clone()).collect();
             let update_ctxs =
                 compute_args_used_after(&update_exprs, &ectx.used_after, &ectx.local_types);
