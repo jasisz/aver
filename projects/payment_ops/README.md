@@ -72,15 +72,15 @@ The best first tour is:
 From the repo root:
 
 ```bash
-cargo run -- run projects/payment_ops/main.av --module-root projects/payment_ops -- ingest_webhooks stripe projects/payment_ops/fixtures/stripe_webhooks_day1.txt
+aver run projects/payment_ops/main.av --module-root projects/payment_ops -- ingest_webhooks stripe projects/payment_ops/fixtures/stripe_webhooks_day1.txt
 
-cargo run -- run projects/payment_ops/main.av --module-root projects/payment_ops -- import_settlement stripe projects/payment_ops/fixtures/stripe_settlement_day1.txt
+aver run projects/payment_ops/main.av --module-root projects/payment_ops -- import_settlement stripe projects/payment_ops/fixtures/stripe_settlement_day1.txt
 
-cargo run -- run projects/payment_ops/main.av --module-root projects/payment_ops -- reconcile stripe
+aver run projects/payment_ops/main.av --module-root projects/payment_ops -- reconcile stripe
 
-cargo run -- run projects/payment_ops/main.av --module-root projects/payment_ops -- show_payment pay-2
+aver run projects/payment_ops/main.av --module-root projects/payment_ops -- show_payment pay-2
 
-cargo run -- run projects/payment_ops/main.av --module-root projects/payment_ops -- list_cases open
+aver run projects/payment_ops/main.av --module-root projects/payment_ops -- list_cases open
 ```
 
 Data is stored under `/tmp/aver_payment_ops`.
@@ -143,9 +143,9 @@ This project is a good fit for Aver's record/replay workflow because the CLI is 
 After running the canonical flow above, you can record a read-only query like this:
 
 ```bash
-cargo run -- run projects/payment_ops/main.av --module-root projects/payment_ops --record recordings/payment_ops -- show_payment pay-2
+aver run projects/payment_ops/main.av --module-root projects/payment_ops --record recordings/payment_ops -- show_payment pay-2
 
-cargo run -- replay recordings/payment_ops --test --diff
+aver replay recordings/payment_ops --test --diff
 ```
 
 `verify` explains the pure core. Replay guards the effectful shell.
@@ -155,12 +155,12 @@ cargo run -- replay recordings/payment_ops --test --diff
 From the repo root:
 
 ```bash
-cargo run -- check projects/payment_ops/main.av --module-root projects/payment_ops --deps
+aver check projects/payment_ops/main.av --module-root projects/payment_ops --deps
 
-cargo run -- verify projects/payment_ops/domain/normalize.av --module-root projects/payment_ops
-cargo run -- verify projects/payment_ops/domain/ledger.av --module-root projects/payment_ops
-cargo run -- verify projects/payment_ops/domain/reconcile.av --module-root projects/payment_ops
-cargo run -- verify projects/payment_ops/domain/cases.av --module-root projects/payment_ops
+aver verify projects/payment_ops/domain/normalize.av --module-root projects/payment_ops
+aver verify projects/payment_ops/domain/ledger.av --module-root projects/payment_ops
+aver verify projects/payment_ops/domain/reconcile.av --module-root projects/payment_ops
+aver verify projects/payment_ops/domain/cases.av --module-root projects/payment_ops
 ```
 
 ## What This Example Is Not

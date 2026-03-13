@@ -14,6 +14,12 @@ documentation = "https://docs.rs/aver-lang"
 readme = "README.md"
 keywords = ["language", "interpreter", "transpiler", "programming-language"]
 categories = ["compilers"]
+include = [
+    "/src/**",
+    "!/src/bin/**",
+    "/README.md",
+    "/LICENSE",
+]
 
 [lib]
 name = "aver"
