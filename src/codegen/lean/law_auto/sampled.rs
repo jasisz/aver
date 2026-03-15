@@ -106,6 +106,7 @@ fn emit_domain_cases(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_disjunction_cases(
     lines: &mut Vec<String>,
     hyp_names: &[String],

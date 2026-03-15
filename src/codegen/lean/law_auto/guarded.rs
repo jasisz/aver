@@ -158,11 +158,8 @@ fn expand_pure_fn_names(
             }
         }
         for child in direct {
-            if out.insert(child.clone()) {
-                frontier.push((child, remaining - 1));
-            } else {
-                frontier.push((child, remaining - 1));
-            }
+            out.insert(child.clone());
+            frontier.push((child, remaining - 1));
         }
     }
 }
