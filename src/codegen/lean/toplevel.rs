@@ -3,6 +3,9 @@ use std::collections::{HashMap, HashSet};
 
 use super::expr::{aver_name_to_lean, emit_expr, emit_stmt};
 use super::law_auto::{emit_verify_law_forall_auto_proof, emit_verify_law_support_theorems};
+use super::recurrence::{
+    detect_second_order_int_linear_recurrence, recurrence_nat_helper_name, render_affine_pair_expr,
+};
 use super::shared::to_lower_first;
 use super::types::type_annotation_to_lean;
 use super::{RecursionPlan, VerifyEmitMode, sizeof_measure_param_indices};
@@ -576,115 +579,36 @@ fn emit_int_countdown_wrapper(fd: &FnDef, helper_name: &str, param_index: usize)
     ]
 }
 
-fn fib_nat_helper_name(fn_name: &str) -> String {
-    format!("{}__nat", aver_name_to_lean(fn_name))
-}
-
-fn matches_bool_match_arm(arm: &MatchArm, value: bool) -> bool {
-    matches!(&arm.pattern, Pattern::Literal(crate::ast::Literal::Bool(v)) if *v == value)
-}
-
-fn matches_int_match_arm(arm: &MatchArm, value: i64) -> bool {
-    matches!(&arm.pattern, Pattern::Literal(crate::ast::Literal::Int(v)) if *v == value)
-}
-
-fn matches_self_sub_call(expr: &Expr, fn_name: &str, param_name: &str, amount: i64) -> bool {
-    let Expr::FnCall(callee, args) = expr else {
-        return false;
-    };
-    if !matches!(callee.as_ref(), Expr::Ident(name) if name == fn_name) || args.len() != 1 {
-        return false;
-    }
-    matches!(
-        &args[0],
-        Expr::BinOp(
-            BinOp::Sub,
-            left,
-            right
-        ) if matches!(left.as_ref(), Expr::Ident(name) if name == param_name)
-            && matches!(right.as_ref(), Expr::Literal(crate::ast::Literal::Int(v)) if *v == amount)
-    )
-}
-
-fn detects_fibonacci_spec(fd: &FnDef) -> bool {
-    let [(param_name, param_type)] = fd.params.as_slice() else {
-        return false;
-    };
-    if param_type != "Int" {
-        return false;
-    }
-    let Some(expr) = fd.body.tail_expr() else {
-        return false;
-    };
-    let Expr::Match { subject, arms, .. } = expr else {
-        return false;
-    };
-    let Expr::BinOp(BinOp::Lt, left, right) = subject.as_ref() else {
-        return false;
-    };
-    if !matches!(left.as_ref(), Expr::Ident(name) if name == param_name)
-        || !matches!(right.as_ref(), Expr::Literal(crate::ast::Literal::Int(0)))
-        || arms.len() != 2
-        || !matches_bool_match_arm(&arms[0], true)
-        || !matches_bool_match_arm(&arms[1], false)
-        || !matches!(
-            arms[0].body.as_ref(),
-            Expr::Literal(crate::ast::Literal::Int(0))
-        )
-    {
-        return false;
-    }
-    let Expr::Match {
-        subject: inner_subject,
-        arms: inner_arms,
-        ..
-    } = arms[1].body.as_ref()
-    else {
-        return false;
-    };
-    if !matches!(inner_subject.as_ref(), Expr::Ident(name) if name == param_name)
-        || inner_arms.len() != 3
-        || !matches_int_match_arm(&inner_arms[0], 0)
-        || !matches!(
-            inner_arms[0].body.as_ref(),
-            Expr::Literal(crate::ast::Literal::Int(0))
-        )
-        || !matches_int_match_arm(&inner_arms[1], 1)
-        || !matches!(
-            inner_arms[1].body.as_ref(),
-            Expr::Literal(crate::ast::Literal::Int(1))
-        )
-        || !matches!(inner_arms[2].pattern, Pattern::Wildcard)
-    {
-        return false;
-    }
-    matches!(
-        inner_arms[2].body.as_ref(),
-        Expr::BinOp(BinOp::Add, left, right)
-            if matches_self_sub_call(left, &fd.name, param_name, 1)
-                && matches_self_sub_call(right, &fd.name, param_name, 2)
-    )
-}
-
-fn emit_nat_fibonacci_spec_fn(fd: &FnDef) -> String {
+fn emit_nat_linear_recurrence_fn(
+    fd: &FnDef,
+    shape: &super::recurrence::SecondOrderIntLinearRecurrenceShape,
+    ctx: &CodegenContext,
+) -> String {
     let fn_name = aver_name_to_lean(&fd.name);
-    let helper_name = fib_nat_helper_name(&fd.name);
-    let (param_name, _) = &fd.params[0];
-    let lean_param = aver_name_to_lean(param_name);
+    let nat_helper_name = recurrence_nat_helper_name(&fd.name);
+    let lean_param = aver_name_to_lean(&shape.param_name);
     let ret_type = ret_type_or_unit(fd);
+    let nat_step = render_affine_pair_expr(
+        shape.recurrence,
+        &format!("{nat_helper_name} n"),
+        &format!("{nat_helper_name} (n + 1)"),
+    );
 
     [
         emit_doc_comment(&fd.desc),
         vec![
-            format!("private def {} : Nat -> {} ", helper_name, ret_type),
-            "  | 0 => 0".to_string(),
-            "  | 1 => 1".to_string(),
-            format!("  | n + 2 => {} (n + 1) + {} n", helper_name, helper_name),
+            format!("private def {} : Nat -> {}", nat_helper_name, ret_type),
+            format!("  | 0 => {}", emit_expr(&shape.base0, ctx)),
+            format!("  | 1 => {}", emit_expr(&shape.base1, ctx)),
+            format!("  | n + 2 => {}", nat_step),
             String::new(),
             format!("def {} ({} : Int) : {} :=", fn_name, lean_param, ret_type),
             format!(
-                "  if {} < 0 then 0 else {} {}.toNat",
-                lean_param, helper_name, lean_param
+                "  if {} < 0 then {} else {} {}.toNat",
+                lean_param,
+                emit_expr(&shape.negative_branch, ctx),
+                nat_helper_name,
+                lean_param
             ),
         ],
     ]
@@ -1215,10 +1139,13 @@ pub fn emit_fn_def_proof(
         return None;
     }
 
+    if matches!(recursion_plan, Some(RecursionPlan::LinearRecurrence2))
+        && let Some(shape) = detect_second_order_int_linear_recurrence(fd)
+    {
+        return Some(emit_nat_linear_recurrence_fn(fd, &shape, ctx));
+    }
+
     if let Some(RecursionPlan::IntCountdown { param_index }) = recursion_plan {
-        if detects_fibonacci_spec(fd) {
-            return Some(emit_nat_fibonacci_spec_fn(fd));
-        }
         return Some(emit_fuelized_int_countdown_fn(fd, ctx, param_index));
     }
 
@@ -1247,6 +1174,7 @@ pub fn emit_fn_def_proof(
 
     if let Some(plan) = recursion_plan {
         match plan {
+            RecursionPlan::LinearRecurrence2 => {}
             RecursionPlan::IntCountdown { .. } => {}
             RecursionPlan::MutualIntCountdown => {
                 let Some((param_name, _)) = fd.params.first() else {

@@ -50,9 +50,14 @@ out/
 When Aver can auto-prove the universal law shape, it also emits:
 - `theorem <fn>_law_<name> : ∀ ..., lhs = rhs := by ...`
 
+`when` clauses translate to extra theorem premises in Lean. Generic auto-proof
+strategies still run on those guarded laws; only unmatched guarded shapes fall
+back to sampled-domain case splits.
+
 When `law <ident>` names an existing pure function and the law body compares `foo(args)` against `fooSpec(args)`, Aver treats that as a canonical spec reference:
-- `verify fib law fibSpec` emits `theorem fib_eq_fibSpec : ∀ ..., fib ... = fibSpec ... := by ...`
+- the generated theorem/comment uses the canonical `<fn>_eq_<spec>` naming
 - `aver context` also records `fibSpec` as a spec for `fib`
+- in `--verify-mode auto`, Aver emits the universal theorem only when the law shape is supported by a generic auto-proof strategy; otherwise it omits that theorem and leaves a comment instead
 
 Example:
 
@@ -93,7 +98,9 @@ Conservative auto-proofs currently cover:
 - commutative law on simple `Int` binary wrappers (`a + b`, `a * b`)
 - associative law on same wrapper shape (`f(f(a,b),c) = f(a,f(b,c))`)
 - identity law on same wrapper shape (`f(a,0)=a`, `f(0,a)=a`, `f(a,1)=a`, `f(1,a)=a`)
-- direct implementation-vs-spec laws of the form `foo(args) = fooSpec(args)`
+- canonical implementation-vs-spec laws when the backend can discharge them structurally
+- canonical implementation-vs-spec laws for second-order linear `Int` recurrences with a pair-state tail-recursive worker
+- canonical implementation-vs-spec laws over linear `Int` arithmetic, proved via `change ...` and `omega`
 
 ## Proof mode
 
@@ -111,6 +118,7 @@ That combination means:
 
 The current proof export supports:
 - single-function `Int` countdown on an `Int` parameter (`n -> n - 1`)
+- single-function second-order linear `Int` recurrences with `n < 0` guard and `0/1` bases, emitted via a private `Nat` helper
 - single-function structural recursion on first `List<_>` parameter
 - single-function `String + pos` recursion on `(String, Int)` signatures
 - mutual recursion SCC with first-parameter `Int` countdown

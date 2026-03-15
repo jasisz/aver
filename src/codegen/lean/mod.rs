@@ -7,6 +7,7 @@ mod builtins;
 mod expr;
 mod law_auto;
 mod pattern;
+mod recurrence;
 mod shared;
 mod toplevel;
 mod types;
@@ -37,6 +38,10 @@ pub enum VerifyEmitMode {
 pub enum RecursionPlan {
     /// Single-function recursion where an `Int` parameter decreases by 1.
     IntCountdown { param_index: usize },
+    /// Single-function recurrence with `n < 0` guard, `0/1` bases, and a linear
+    /// second-order recurrence over previous results, emitted through a private
+    /// Nat helper.
+    LinearRecurrence2,
     /// Single-function structural recursion on first `List<_>` parameter.
     ListStructural,
     /// Single-function structural recursion on a recursive user-defined type parameter.
@@ -1493,7 +1498,9 @@ fn proof_mode_recursion_analysis(
         }
 
         let fd = component[0];
-        if let Some(param_index) = single_int_countdown_param_index(fd) {
+        if recurrence::detect_second_order_int_linear_recurrence(fd).is_some() {
+            plans.insert(fd.name.clone(), RecursionPlan::LinearRecurrence2);
+        } else if let Some(param_index) = single_int_countdown_param_index(fd) {
             plans.insert(fd.name.clone(), RecursionPlan::IntCountdown { param_index });
         } else if supports_single_sizeof_structural(fd, ctx) {
             plans.insert(fd.name.clone(), RecursionPlan::SizeOfStructural);
@@ -1503,7 +1510,7 @@ fn proof_mode_recursion_analysis(
             plans.insert(fd.name.clone(), RecursionPlan::StringPosAdvance);
         } else {
             issues.push(format!(
-                "recursive function '{}' is outside proof subset (currently supported: Int countdown, structural recursion on List/recursive ADTs, String+position, mutual Int countdown, mutual String+position, and ranked sizeOf recursion)",
+                "recursive function '{}' is outside proof subset (currently supported: Int countdown, second-order linear Int recurrences, structural recursion on List/recursive ADTs, String+position, mutual Int countdown, mutual String+position, and ranked sizeOf recursion)",
                 fd.name
             ));
         }
@@ -1903,8 +1910,8 @@ fn capitalize_first(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        VerifyEmitMode, generate_prelude, proof_mode_issues, transpile, transpile_for_proof_mode,
-        transpile_with_verify_mode,
+        VerifyEmitMode, generate_prelude, proof_mode_issues, recurrence, transpile,
+        transpile_for_proof_mode, transpile_with_verify_mode,
     };
     use crate::ast::{
         BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Stmt, TopLevel, TypeDef,
@@ -2336,7 +2343,7 @@ verify foo law fooSpec
     }
 
     #[test]
-    fn transpile_omits_universal_theorem_for_nontrivial_canonical_spec_law_in_auto_mode() {
+    fn transpile_auto_proves_linear_int_canonical_spec_law_in_auto_mode() {
         let ctx = ctx_from_source(
             r#"
 module SpecGap
@@ -2359,12 +2366,85 @@ verify inc law incSpec
         let lean = generated_lean_file(&out);
 
         assert!(lean.contains("-- verify law inc.spec incSpec (3 cases)"));
-        assert!(lean.contains(
+        assert!(lean.contains("theorem inc_eq_incSpec : ∀ (x : Int), inc x = incSpec x := by"));
+        assert!(lean.contains("change (x + 1) = ((x + 2) - 1)"));
+        assert!(lean.contains("omega"));
+        assert!(!lean.contains(
             "-- universal theorem inc_eq_incSpec omitted: sampled law shape is not auto-proved yet"
         ));
-        assert!(!lean.contains("theorem inc_eq_incSpec :"));
         assert!(lean.contains("theorem inc_eq_incSpec_checked_domain :"));
-        assert!(lean.contains("theorem inc_eq_incSpec_sample_1 :"));
+    }
+
+    #[test]
+    fn transpile_auto_proves_guarded_canonical_spec_law_in_auto_mode() {
+        let ctx = ctx_from_source(
+            r#"
+module GuardedSpecGap
+    intent =
+        "guarded canonical spec law"
+
+fn clampNonNegative(x: Int) -> Int
+    match x < 0
+        true -> 0
+        false -> x
+
+fn clampNonNegativeSpec(x: Int) -> Int
+    match x < 0
+        true -> 0
+        false -> x
+
+verify clampNonNegative law clampNonNegativeSpec
+    given x: Int = [-2, -1, 0, 1, 2]
+    when x >= 0
+    clampNonNegative(x) => clampNonNegativeSpec(x)
+"#,
+            "guarded_spec_gap",
+        );
+        let out = transpile(&ctx);
+        let lean = generated_lean_file(&out);
+
+        assert!(lean.contains("-- when (x >= 0)"));
+        assert!(lean.contains(
+            "theorem clampNonNegative_eq_clampNonNegativeSpec : ∀ (x : Int), x = (-2) ∨ x = (-1) ∨ x = 0 ∨ x = 1 ∨ x = 2 -> (x >= 0) = true -> clampNonNegative x = clampNonNegativeSpec x := by"
+        ));
+        assert!(lean.contains("intro x h_x h_when"));
+        assert!(lean.contains("simpa [clampNonNegative, clampNonNegativeSpec]"));
+        assert!(!lean.contains(
+            "-- universal theorem clampNonNegative_eq_clampNonNegativeSpec omitted: sampled law shape is not auto-proved yet"
+        ));
+        assert!(!lean.contains("cases h_x"));
+    }
+
+    #[test]
+    fn transpile_still_omits_nonlinear_canonical_spec_law_in_auto_mode() {
+        let ctx = ctx_from_source(
+            r#"
+module SpecGapNonlinear
+    intent =
+        "nonlinear canonical spec law"
+
+fn square(x: Int) -> Int
+    x * x
+
+fn squareSpec(x: Int) -> Int
+    x * x + 0
+
+verify square law squareSpec
+    given x: Int = [0, 1, 2]
+    square(x) => squareSpec(x)
+"#,
+            "spec_gap_nonlinear",
+        );
+        let out = transpile(&ctx);
+        let lean = generated_lean_file(&out);
+
+        assert!(lean.contains("-- verify law square.spec squareSpec (3 cases)"));
+        assert!(lean.contains(
+            "-- universal theorem square_eq_squareSpec omitted: sampled law shape is not auto-proved yet"
+        ));
+        assert!(!lean.contains("theorem square_eq_squareSpec :"));
+        assert!(lean.contains("theorem square_eq_squareSpec_checked_domain :"));
+        assert!(lean.contains("theorem square_eq_squareSpec_sample_1 :"));
     }
 
     #[test]
@@ -3919,29 +3999,23 @@ verify inc law incSpec
             "-- universal theorem toString_law_parseRoundtrip omitted: sampled law shape is not auto-proved yet"
         ));
         assert!(!lean.contains("private theorem toString_law_parseRoundtrip_aux"));
-        assert!(lean.contains(
-            "private theorem toString_law_parseRoundtrip__skipWs_fromInt_zero : ∀ n : Int, skipWs (String.fromInt n) 0 = 0 := by"
-        ));
+        assert!(!lean.contains("private theorem toString_law_parseRoundtrip__skipWs_fromInt_zero"));
         assert!(
-            lean.contains(
-                "private theorem toString_law_parseRoundtrip__scanIntTail_digit_suffix :"
-            )
+            !lean.contains("private theorem toString_law_parseRoundtrip__scanIntTail_digit_suffix")
         );
+        assert!(!lean.contains("private theorem toString_law_parseRoundtrip__finishInt_fromInt"));
+        assert!(
+            !lean.contains("private theorem toString_law_parseRoundtrip__finishNumber_fromInt")
+        );
+        assert!(!lean.contains("private theorem toString_law_parseRoundtrip__null_roundtrip"));
+        assert!(!lean.contains("private theorem toString_law_parseRoundtrip__bool_roundtrip"));
         assert!(lean.contains(
-            "private theorem toString_law_parseRoundtrip__finishInt_fromInt : ∀ n : Int,"
+            "theorem toString_law_parseRoundtrip : ∀ (j : Json), jsonRoundtripSafe j = true -> fromString (toString j) = Except.ok j := by"
         ));
-        assert!(lean.contains(
-            "private theorem toString_law_parseRoundtrip__finishNumber_fromInt : ∀ n : Int,"
-        ));
-        assert!(lean.contains(
-            "private theorem toString_law_parseRoundtrip__null_roundtrip : fromString (toString Json.jsonNull) = Except.ok Json.jsonNull := by"
-        ));
-        assert!(lean.contains(
-            "private theorem toString_law_parseRoundtrip__bool_roundtrip : ∀ b : Bool, fromString (toString (Json.jsonBool b)) = Except.ok (Json.jsonBool b) := by"
-        ));
-        assert!(lean.contains(
-            "theorem toString_law_parseRoundtrip : ∀ (j : Json), j = Json.jsonNull ∨ j = Json.jsonBool true"
-        ));
+        assert!(lean.contains("intro j h_when"));
+        assert!(lean.contains("cases j <;> simp ["));
+        assert!(lean.contains("at h_when ⊢"));
+        assert!(!lean.contains("rcases h_j with h_j_case | h_j_rest"));
         assert!(lean.contains("theorem toString_law_parseRoundtrip_sample_1 :"));
         assert!(lean.contains(
             "example : fromString \"null\" = Except.ok Json.jsonNull := by native_decide"
@@ -4085,7 +4159,36 @@ fn connPort(conn: Tcp.Connection) -> Int
     }
 
     #[test]
-    fn fibonacci_example_auto_proves_canonical_spec_law() {
+    fn fibonacci_example_stays_inside_proof_subset() {
+        let ctx = ctx_from_source(
+            include_str!("../../../examples/data/fibonacci.av"),
+            "fibonacci",
+        );
+        let issues = proof_mode_issues(&ctx);
+        assert!(
+            issues.is_empty(),
+            "expected fibonacci example to stay inside proof subset, got: {:?}",
+            issues
+        );
+    }
+
+    #[test]
+    fn fibonacci_example_matches_general_linear_recurrence_shapes() {
+        let ctx = ctx_from_source(
+            include_str!("../../../examples/data/fibonacci.av"),
+            "fibonacci",
+        );
+        let fib = ctx.fn_defs.iter().find(|fd| fd.name == "fib").unwrap();
+        let fib_tr = ctx.fn_defs.iter().find(|fd| fd.name == "fibTR").unwrap();
+        let fib_spec = ctx.fn_defs.iter().find(|fd| fd.name == "fibSpec").unwrap();
+
+        assert!(recurrence::detect_tailrec_int_linear_pair_wrapper(fib).is_some());
+        assert!(recurrence::detect_tailrec_int_linear_pair_worker(fib_tr).is_some());
+        assert!(recurrence::detect_second_order_int_linear_recurrence(fib_spec).is_some());
+    }
+
+    #[test]
+    fn fibonacci_example_auto_proves_general_linear_recurrence_spec_law() {
         let ctx = ctx_from_source(
             include_str!("../../../examples/data/fibonacci.av"),
             "fibonacci",
@@ -4094,12 +4197,62 @@ fn connPort(conn: Tcp.Connection) -> Int
         let lean = generated_lean_file(&out);
 
         assert!(lean.contains("private def fibSpec__nat : Nat -> Int"));
-        assert!(lean.contains("private theorem fib_eq_fibSpec__helper_step_nat"));
-        assert!(lean.contains("private theorem fib_eq_fibSpec__helper_state"));
-        assert!(lean.contains("private theorem fib_eq_fibSpec__advance_eq_spec_pair"));
+        assert!(!lean.contains("partial def fibSpec"));
+        assert!(lean.contains("private theorem fib_eq_fibSpec__worker_nat_shift"));
+        assert!(lean.contains("private theorem fib_eq_fibSpec__helper_nat"));
+        assert!(lean.contains("private theorem fib_eq_fibSpec__helper_seed"));
         assert!(lean.contains("theorem fib_eq_fibSpec : ∀ (n : Int), fib n = fibSpec n := by"));
         assert!(!lean.contains(
             "-- universal theorem fib_eq_fibSpec omitted: sampled law shape is not auto-proved yet"
+        ));
+    }
+
+    #[test]
+    fn pell_like_example_auto_proves_same_general_shape() {
+        let ctx = ctx_from_source(
+            r#"
+module Pell
+    intent =
+        "linear recurrence probe"
+
+fn pellTR(n: Int, a: Int, b: Int) -> Int
+    match n
+        0 -> a
+        _ -> pellTR(n - 1, b, a + 2 * b)
+
+fn pell(n: Int) -> Int
+    match n < 0
+        true -> 0
+        false -> pellTR(n, 0, 1)
+
+fn pellSpec(n: Int) -> Int
+    match n < 0
+        true -> 0
+        false -> match n
+            0 -> 0
+            1 -> 1
+            _ -> pellSpec(n - 2) + 2 * pellSpec(n - 1)
+
+verify pell law pellSpec
+    given n: Int = [0, 1, 2, 3]
+    pell(n) => pellSpec(n)
+"#,
+            "pell",
+        );
+        let issues = proof_mode_issues(&ctx);
+        assert!(
+            issues.is_empty(),
+            "expected pell example to stay inside proof subset, got: {:?}",
+            issues
+        );
+
+        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let lean = generated_lean_file(&out);
+        assert!(lean.contains("private def pellSpec__nat : Nat -> Int"));
+        assert!(lean.contains("private theorem pell_eq_pellSpec__worker_nat_shift"));
+        assert!(lean.contains("theorem pell_eq_pellSpec : ∀ (n : Int), pell n = pellSpec n := by"));
+        assert!(!lean.contains(
+            "-- universal theorem pell_eq_pellSpec omitted: sampled law shape is not auto-proved yet"
         ));
     }
 
@@ -4168,8 +4321,12 @@ fn connPort(conn: Tcp.Connection) -> Int
         ));
         assert!(!lean.contains("private theorem toString_law_parseRoundtrip_aux"));
         assert!(lean.contains(
-            "theorem toString_law_parseRoundtrip : ∀ (e : Sexpr), e = Sexpr.atomNum 42 ∨ e = Sexpr.atomSym \"hello\""
+            "theorem toString_law_parseRoundtrip : ∀ (e : Sexpr), validSymbolNames e = true -> parse (toString e) = Except.ok e := by"
         ));
+        assert!(lean.contains("intro e h_when"));
+        assert!(lean.contains("cases e <;> simp ["));
+        assert!(lean.contains("at h_when ⊢"));
+        assert!(!lean.contains("rcases h_e with h_e_case | h_e_rest"));
         assert!(lean.contains("theorem toString_law_parseRoundtrip_sample_1 :"));
     }
 
@@ -4179,7 +4336,7 @@ fn connPort(conn: Tcp.Connection) -> Int
         let issues = proof_mode_issues(&ctx);
         assert_eq!(
             issues,
-            vec!["recursive function 'eval' is outside proof subset (currently supported: Int countdown, structural recursion on List/recursive ADTs, String+position, mutual Int countdown, mutual String+position, and ranked sizeOf recursion)".to_string()]
+            vec!["recursive function 'eval' is outside proof subset (currently supported: Int countdown, second-order linear Int recurrences, structural recursion on List/recursive ADTs, String+position, mutual Int countdown, mutual String+position, and ranked sizeOf recursion)".to_string()]
         );
 
         let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
@@ -4233,7 +4390,7 @@ fn connPort(conn: Tcp.Connection) -> Int
         assert!(lean.contains("-- when noteRoundtripSafe note"));
         assert!(lean.contains("-- when notesRoundtripSafe notes"));
         assert!(lean.contains(
-            "theorem serializeLine_law_lineRoundtrip : ∀ (note : Note), note = { id' := 1, title := \"Hello\", body := \"World\" : Note }"
+            "theorem serializeLine_law_lineRoundtrip : ∀ (note : Note), noteRoundtripSafe note = true ->"
         ));
         assert!(lean.contains(
             "theorem serializeLines_law_notesRoundtrip : ∀ (notes : List Note), notes = [] ∨ notes = [{ id' := 1, title := \"A\", body := \"a\" : Note }]"

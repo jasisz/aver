@@ -742,7 +742,8 @@ impl Interpreter {
                                 ))
                             })?;
                             if let Value::Fn(function) = &mut val {
-                                Rc::make_mut(function).home_globals = Some(Rc::clone(&module_globals));
+                                Rc::make_mut(function).home_globals =
+                                    Some(Rc::clone(&module_globals));
                             }
                             members.insert(fd.name.clone(), val);
                         }

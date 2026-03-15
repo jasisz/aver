@@ -16,11 +16,51 @@ pub(super) fn law_simp_defs(
     vb: &VerifyBlock,
     law: &VerifyLaw,
 ) -> BTreeSet<String> {
+    law_simp_source_names(ctx, vb, law)
+        .into_iter()
+        .map(|name| aver_name_to_lean(&name))
+        .collect()
+}
+
+fn law_simp_source_names(
+    ctx: &CodegenContext,
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
-    names.insert(aver_name_to_lean(&vb.fn_name));
+    names.insert(vb.fn_name.clone());
     collect_user_fn_simp_names(&law.lhs, ctx, &vb.fn_name, &mut names);
     collect_user_fn_simp_names(&law.rhs, ctx, &vb.fn_name, &mut names);
+    if let Some(when_expr) = &law.when {
+        collect_user_fn_simp_names(when_expr, ctx, &vb.fn_name, &mut names);
+    }
+    expand_pure_fn_simp_names(ctx, &vb.fn_name, &mut names);
     names
+}
+
+fn expand_pure_fn_simp_names(ctx: &CodegenContext, skip_fn: &str, out: &mut BTreeSet<String>) {
+    loop {
+        let before = out.len();
+        let current = out.iter().cloned().collect::<Vec<_>>();
+        for name in current {
+            let Some(fd) = find_fn_def(ctx, &name) else {
+                continue;
+            };
+            if !fd.effects.is_empty() || fd.name == "main" {
+                continue;
+            }
+            for stmt in fd.body.stmts() {
+                match stmt {
+                    Stmt::Expr(expr) | Stmt::Binding(_, _, expr) => {
+                        collect_user_fn_simp_names(expr, ctx, skip_fn, out);
+                    }
+                }
+            }
+        }
+        if out.len() == before {
+            return;
+        }
+    }
 }
 
 fn collect_user_fn_simp_names(
@@ -37,7 +77,7 @@ fn collect_user_fn_simp_names(
                 && fd.name != "main"
                 && fd.name != skip_fn
             {
-                out.insert(aver_name_to_lean(&fd.name));
+                out.insert(fd.name.clone());
             }
             collect_user_fn_simp_names(callee, ctx, skip_fn, out);
             for arg in args {
@@ -91,6 +131,13 @@ fn collect_user_fn_simp_names(
             }
         }
         Expr::TailCall(call) => {
+            if let Some(fd) = find_fn_def_by_call_name(ctx, &call.0)
+                && fd.effects.is_empty()
+                && fd.name != "main"
+                && fd.name != skip_fn
+            {
+                out.insert(fd.name.clone());
+            }
             for arg in &call.1 {
                 collect_user_fn_simp_names(arg, ctx, skip_fn, out);
             }

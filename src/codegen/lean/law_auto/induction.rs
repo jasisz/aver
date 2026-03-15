@@ -5,7 +5,7 @@
 ///   - Leaf variants: `simp [fn_defs...]`
 ///   - Direct-recursive variants: `simp_all [fn_defs...]`
 ///   - Indirect-recursive variants (List<T>): strong induction on Nat measure
-///     when a companion helper is detected (otherwise `sorry`)
+///     when a companion helper is detected (otherwise fail closed)
 use std::collections::BTreeSet;
 
 use super::super::expr::aver_name_to_lean;
@@ -440,6 +440,10 @@ pub(super) fn emit_structural_induction_law(
     quant_params: &str,
     theorem_prop: &str,
 ) -> Option<AutoProof> {
+    if law.when.is_some() {
+        return None;
+    }
+
     let inputs = InductionInputs {
         vb,
         law,
@@ -452,24 +456,24 @@ pub(super) fn emit_structural_induction_law(
     let (target_idx, _target_name, type_name) = find_induction_target(law, ctx)?;
     let (_, variants) = find_sum_type(ctx, type_name)?;
 
-    // Check if there are indirect-recursive variants and try strong induction
-    if has_indirect_variants(variants, type_name)
-        && let Some(proof) = emit_strong_induction_law(&inputs, target_idx, type_name, variants)
-    {
-        return Some(proof);
+    if has_indirect_variants(variants, type_name) {
+        return emit_strong_induction_law(&inputs, target_idx, type_name, variants);
     }
 
-    // Fallback: simple structural induction (sorry for indirect variants)
     emit_simple_induction(&inputs, target_idx, type_name, variants)
 }
 
-/// Simple structural induction — the original strategy. Uses `sorry` for indirect variants.
+/// Simple structural induction for purely direct-recursive variants.
 fn emit_simple_induction(
     inputs: &InductionInputs<'_>,
     target_idx: usize,
     type_name: &str,
     variants: &[TypeVariant],
 ) -> Option<AutoProof> {
+    if has_indirect_variants(variants, type_name) {
+        return None;
+    }
+
     let simp_defs: BTreeSet<String> = law_simp_defs(inputs.ctx, inputs.vb, inputs.law);
     let simp_list = simp_defs.into_iter().collect::<Vec<_>>().join(", ");
 
@@ -529,17 +533,7 @@ fn emit_simple_induction(
                     simp_list,
                 ));
             }
-            VariantKind::IndirectRec => {
-                if field_binders.is_empty() {
-                    proof_lines.push(format!("  | {} => sorry", lean_variant));
-                } else {
-                    proof_lines.push(format!(
-                        "  | {} {} => sorry",
-                        lean_variant,
-                        field_binders.join(" "),
-                    ));
-                }
-            }
+            VariantKind::IndirectRec => return None,
         }
     }
 
@@ -625,17 +619,15 @@ fn emit_strong_induction_law(
     support_lines.push("  induction n with".to_string());
 
     // | zero => intro params h_bound [premises]; cases target <;> simp_all [defs]
-    {
-        let mut zero_intro = inputs.intro_names.to_vec();
-        zero_intro.push("h_bound".to_string());
-        zero_intro.extend(premise_names.iter().cloned());
-        support_lines.push(format!(
-            "  | zero => intro {}; cases {} <;> simp_all [{}]",
-            zero_intro.join(" "),
-            target_lean,
-            simp_list
-        ));
-    }
+    let mut zero_intro = inputs.intro_names.to_vec();
+    zero_intro.push("h_bound".to_string());
+    zero_intro.extend(premise_names.iter().cloned());
+    support_lines.push(format!(
+        "  | zero => intro {}; cases {} <;> simp_all [{}]",
+        zero_intro.join(" "),
+        target_lean,
+        simp_list
+    ));
 
     // | succ n ih =>
     support_lines.push("  | succ n ih =>".to_string());
@@ -693,11 +685,7 @@ fn emit_strong_induction_law(
                         simp_list,
                     ));
                 } else {
-                    support_lines.push(format!(
-                        "    | {} {} => sorry",
-                        lean_variant,
-                        field_binders.join(" "),
-                    ));
+                    return None;
                 }
             }
         }

@@ -71,7 +71,8 @@ fn collect_canonical_spec_functions(
         return HashSet::new();
     };
 
-    items.iter()
+    items
+        .iter()
         .filter_map(|item| match item {
             TopLevel::Verify(v) => match &v.kind {
                 crate::ast::VerifyKind::Law(law) => canonical_spec_ref(&v.fn_name, law, fn_sigs)
@@ -186,8 +187,8 @@ fn dotted_name(expr: &Expr) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use crate::ast::TopLevel;
-    use crate::{parser::Parser, tco};
     use crate::types::checker::run_type_check_full;
+    use crate::{parser::Parser, tco};
 
     use super::*;
 
@@ -276,6 +277,9 @@ verify fib law fibSpec
         let tc = run_type_check_full(&items, None);
 
         let warnings = collect_non_tail_recursion_warnings_with_sigs(&items, &tc.fn_sigs);
-        assert!(warnings.is_empty(), "expected spec function warning to be suppressed, got {warnings:?}");
+        assert!(
+            warnings.is_empty(),
+            "expected spec function warning to be suppressed, got {warnings:?}"
+        );
     }
 }

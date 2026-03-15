@@ -88,10 +88,7 @@ impl Interpreter {
         args: &[Value],
     ) -> Result<Value, RuntimeError> {
         // Runtime policy check for Http/Disk/Env calls
-        if matches!(
-            Self::builtin_namespace(name),
-            Some("Http" | "Disk" | "Env")
-        ) {
+        if matches!(Self::builtin_namespace(name), Some("Http" | "Disk" | "Env")) {
             self.check_runtime_policy(name, args)?;
         }
         match name {

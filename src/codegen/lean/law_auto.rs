@@ -3,8 +3,8 @@
 /// This module is intentionally isolated from `toplevel.rs` so all heuristic
 /// matching and proof-shape logic lives in one place.
 mod arithmetic;
+mod guarded;
 mod induction;
-mod json;
 mod maps;
 mod sampled;
 mod shared;
@@ -14,8 +14,7 @@ use super::VerifyEmitMode;
 use super::expr::aver_name_to_lean;
 use crate::ast::{VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
-use json::emit_json_roundtrip_support_theorems;
-use sampled::emit_guarded_sampled_domain_law;
+use sampled::emit_guarded_domain_law;
 
 pub struct AutoProof {
     pub support_lines: Vec<String>,
@@ -43,17 +42,15 @@ pub fn emit_verify_law_forall_auto_proof(
         .iter()
         .map(|g| aver_name_to_lean(&g.name))
         .collect();
+    let proof_intro_names = extend_intro_names_with_premises(law, &intro_names);
 
-    if let Some(proof_lines) = emit_guarded_sampled_domain_law(law) {
-        return Some(AutoProof {
-            support_lines: Vec::new(),
-            proof_lines,
-            replaces_theorem: false,
-        });
+    if let Some(proof) =
+        guarded::emit_guarded_universal_law(vb, law, ctx, &intro_names, theorem_base, quant_params)
+    {
+        return Some(proof);
     }
 
     // Strategy 1: Structural induction on recursive sum types.
-    // Guarded laws already compile to sampled-domain theorems above.
     if let Some(proof) = induction::emit_structural_induction_law(
         vb,
         law,
@@ -69,19 +66,19 @@ pub fn emit_verify_law_forall_auto_proof(
     if law.lhs == law.rhs {
         return Some(AutoProof {
             support_lines: Vec::new(),
-            proof_lines: intro_then(&intro_names, vec!["rfl".to_string()]),
+            proof_lines: intro_then(&proof_intro_names, vec!["rfl".to_string()]),
             replaces_theorem: false,
         });
     }
 
-    arithmetic::emit_binary_wrapper_law(vb, law, ctx, &intro_names)
+    arithmetic::emit_binary_wrapper_law(vb, law, ctx, &proof_intro_names)
         .map(|proof_lines| AutoProof {
             support_lines: Vec::new(),
             proof_lines,
             replaces_theorem: false,
         })
         .or_else(|| {
-            arithmetic::emit_unary_wrapper_equivalence_law(vb, law, ctx, &intro_names).map(
+            arithmetic::emit_unary_wrapper_equivalence_law(vb, law, ctx, &proof_intro_names).map(
                 |proof_lines| AutoProof {
                     support_lines: Vec::new(),
                     proof_lines,
@@ -89,32 +86,9 @@ pub fn emit_verify_law_forall_auto_proof(
                 },
             )
         })
-        .or_else(|| spec::emit_spec_function_equivalence_law(vb, law, ctx, &intro_names))
+        .or_else(|| spec::emit_spec_function_equivalence_law(vb, law, ctx, &proof_intro_names))
         .or_else(|| {
-            maps::emit_direct_map_set_law(law, ctx, &intro_names).map(|proof_lines| AutoProof {
-                support_lines: Vec::new(),
-                proof_lines,
-                replaces_theorem: false,
-            })
-        })
-        .or_else(|| {
-            maps::emit_map_update_law(vb, law, ctx, &intro_names).map(|proof_lines| AutoProof {
-                support_lines: Vec::new(),
-                proof_lines,
-                replaces_theorem: false,
-            })
-        })
-        .or_else(|| {
-            maps::emit_map_increment_tracked_count_law(vb, law, ctx, &intro_names).map(
-                |proof_lines| AutoProof {
-                    support_lines: Vec::new(),
-                    proof_lines,
-                    replaces_theorem: false,
-                },
-            )
-        })
-        .or_else(|| {
-            maps::emit_recursive_map_presence_law(vb, law, ctx, &intro_names).map(|proof_lines| {
+            maps::emit_direct_map_set_law(law, ctx, &proof_intro_names).map(|proof_lines| {
                 AutoProof {
                     support_lines: Vec::new(),
                     proof_lines,
@@ -123,7 +97,16 @@ pub fn emit_verify_law_forall_auto_proof(
             })
         })
         .or_else(|| {
-            maps::emit_recursive_map_tracked_count_law(vb, law, ctx, &intro_names).map(
+            maps::emit_map_update_law(vb, law, ctx, &proof_intro_names).map(|proof_lines| {
+                AutoProof {
+                    support_lines: Vec::new(),
+                    proof_lines,
+                    replaces_theorem: false,
+                }
+            })
+        })
+        .or_else(|| {
+            maps::emit_map_increment_tracked_count_law(vb, law, ctx, &proof_intro_names).map(
                 |proof_lines| AutoProof {
                     support_lines: Vec::new(),
                     proof_lines,
@@ -131,15 +114,40 @@ pub fn emit_verify_law_forall_auto_proof(
                 },
             )
         })
+        .or_else(|| {
+            maps::emit_recursive_map_presence_law(vb, law, ctx, &proof_intro_names).map(
+                |proof_lines| AutoProof {
+                    support_lines: Vec::new(),
+                    proof_lines,
+                    replaces_theorem: false,
+                },
+            )
+        })
+        .or_else(|| {
+            maps::emit_recursive_map_tracked_count_law(vb, law, ctx, &proof_intro_names).map(
+                |proof_lines| AutoProof {
+                    support_lines: Vec::new(),
+                    proof_lines,
+                    replaces_theorem: false,
+                },
+            )
+        })
+        .or_else(|| {
+            emit_guarded_domain_law(law).map(|proof_lines| AutoProof {
+                support_lines: Vec::new(),
+                proof_lines,
+                replaces_theorem: false,
+            })
+        })
 }
 
 pub fn emit_verify_law_support_theorems(
-    vb: &VerifyBlock,
-    law: &VerifyLaw,
-    ctx: &CodegenContext,
-    theorem_base: &str,
+    _vb: &VerifyBlock,
+    _law: &VerifyLaw,
+    _ctx: &CodegenContext,
+    _theorem_base: &str,
 ) -> Vec<String> {
-    emit_json_roundtrip_support_theorems(vb, law, ctx, theorem_base).unwrap_or_default()
+    Vec::new()
 }
 
 pub(super) fn intro_then(intro_names: &[String], steps: Vec<String>) -> Vec<String> {
@@ -149,6 +157,15 @@ pub(super) fn intro_then(intro_names: &[String], steps: Vec<String>) -> Vec<Stri
     }
     lines.extend(steps);
     indent_lines(lines, 2)
+}
+
+fn extend_intro_names_with_premises(law: &VerifyLaw, intro_names: &[String]) -> Vec<String> {
+    let mut names = intro_names.to_vec();
+    if law.when.is_some() {
+        names.extend(intro_names.iter().map(|name| format!("h_{name}")));
+        names.push("h_when".to_string());
+    }
+    names
 }
 
 pub(super) fn indent_lines(lines: Vec<String>, spaces: usize) -> Vec<String> {

@@ -100,14 +100,19 @@ verify validSymbolChars
     validSymbolChars(["h", " "]) => false
 
 fn validSymbol(sym: String) -> Bool
-    ? "Atoms must be non-empty and contain no delimiters."
+    ? "Atoms must be non-empty, contain no delimiters, and not parse as Int."
     match String.len(sym) == 0
         true -> false
-        false -> validSymbolChars(String.chars(sym))
+        false -> match validSymbolChars(String.chars(sym))
+            false -> false
+            true -> match Int.fromString(sym)
+                Result.Ok(_) -> false
+                Result.Err(_) -> true
 
 verify validSymbol
     validSymbol("hello") => true
     validSymbol("hello world") => false
+    validSymbol("42") => false
     validSymbol("") => false
 
 fn validSymbolList(items: List<Sexpr>) -> Bool

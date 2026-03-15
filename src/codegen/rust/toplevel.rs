@@ -48,7 +48,11 @@ fn find_type_def<'a>(name: &str, ctx: &'a CodegenContext) -> Option<&'a TypeDef>
         })
 }
 
-fn rust_hash_eq_safe_type(ty: &crate::types::Type, ctx: &CodegenContext, visiting: &mut HashSet<String>) -> bool {
+fn rust_hash_eq_safe_type(
+    ty: &crate::types::Type,
+    ctx: &CodegenContext,
+    visiting: &mut HashSet<String>,
+) -> bool {
     use crate::types::Type;
 
     match ty {
@@ -67,7 +71,11 @@ fn rust_hash_eq_safe_type(ty: &crate::types::Type, ctx: &CodegenContext, visitin
     }
 }
 
-fn rust_hash_eq_safe_named(name: &str, ctx: &CodegenContext, visiting: &mut HashSet<String>) -> bool {
+fn rust_hash_eq_safe_named(
+    name: &str,
+    ctx: &CodegenContext,
+    visiting: &mut HashSet<String>,
+) -> bool {
     if !visiting.insert(name.to_string()) {
         return true;
     }
@@ -111,7 +119,12 @@ fn memo_key_component_expr(name: &str, ty: &crate::types::Type) -> String {
     }
 }
 
-fn emit_sum_type(name: &str, variants: &[TypeVariant], public: bool, ctx: &CodegenContext) -> String {
+fn emit_sum_type(
+    name: &str,
+    variants: &[TypeVariant],
+    public: bool,
+    ctx: &CodegenContext,
+) -> String {
     let mut out = String::new();
     let visibility = visibility_prefix(public);
     let derives = if type_can_derive_hash_eq(
@@ -660,12 +673,7 @@ fn emit_memo_fn(
     )
     .unwrap();
     writeln!(out, "    {}.with(|cache| {{", cache_name).unwrap();
-    writeln!(
-        out,
-        "        let __memo_key = {};",
-        key_expr
-    )
-    .unwrap();
+    writeln!(out, "        let __memo_key = {};", key_expr).unwrap();
     writeln!(
         out,
         "        if let Some(r) = cache.borrow().get(&__memo_key).cloned() {{ return r; }}"
@@ -825,7 +833,9 @@ pub fn emit_verify_blocks(verify_blocks: &[&VerifyBlock], ctx: &CodegenContext) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, TypeDef, TypeVariant};
+    use crate::ast::{
+        BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, TypeDef, TypeVariant,
+    };
     use crate::codegen::CodegenContext;
     use crate::types::Type;
     use std::collections::{HashMap, HashSet};
@@ -995,10 +1005,8 @@ mod tests {
             resolution: None,
         };
         let mut ctx = empty_ctx();
-        ctx.fn_sigs.insert(
-            "f".to_string(),
-            (vec![Type::Float], Type::Float, vec![]),
-        );
+        ctx.fn_sigs
+            .insert("f".to_string(), (vec![Type::Float], Type::Float, vec![]));
 
         let emitted = emit_public_fn_def(&fd, true, &ctx);
         assert!(!emitted.contains("thread_local!"));

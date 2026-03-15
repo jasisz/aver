@@ -1062,10 +1062,7 @@ impl Interpreter {
         let lowered = Rc::clone(&progress.lowered);
         let expr = progress.fields[progress.idx].1;
         conts.push(EvalCont::RecordCreate(progress));
-        EvalState::Expr {
-            lowered,
-            expr,
-        }
+        EvalState::Expr { lowered, expr }
     }
 
     fn resume_record_update(

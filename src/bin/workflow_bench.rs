@@ -259,23 +259,23 @@ fn benchmark_query(
     Ok(started.elapsed())
 }
 
-fn run_workload(workload: Workload, seed: usize, iters: usize) -> Result<(Duration, Duration), String> {
+fn run_workload(
+    workload: Workload,
+    seed: usize,
+    iters: usize,
+) -> Result<(Duration, Duration), String> {
     let mut interp = build_interpreter()?;
     let seed_elapsed = seed_tasks(&mut interp, seed)?;
 
     let measured = match workload {
         Workload::SeedTasks => seed_elapsed,
-        Workload::ListTasks => {
-            benchmark_query(&mut interp, vec!["list_tasks".to_string()], iters)?
-        }
+        Workload::ListTasks => benchmark_query(&mut interp, vec!["list_tasks".to_string()], iters)?,
         Workload::ShowTask => benchmark_query(
             &mut interp,
             vec!["show_task".to_string(), format!("t{}", seed)],
             iters,
         )?,
-        Workload::RunRules => {
-            benchmark_query(&mut interp, vec!["run_rules".to_string()], iters)?
-        }
+        Workload::RunRules => benchmark_query(&mut interp, vec!["run_rules".to_string()], iters)?,
     };
 
     Ok((seed_elapsed, measured))
