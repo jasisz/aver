@@ -1,6 +1,6 @@
 # Aver
 
-Aver is a statically typed language designed for AI to write in and humans to review, with a fast interpreter for iteration, a Rust backend for deployment, and Lean proof export for pure core logic.
+Aver is a statically typed language designed for AI to write in and humans to review, with a fast interpreter for iteration, a Rust backend for deployment, Lean proof export for pure core logic, and Dafny verification for automated law checking via Z3.
 
 It is built around one idea: the risky part of AI-written code is usually not syntax, it is missing intent. Aver makes that intent explicit and machine-readable:
 
@@ -10,7 +10,7 @@ It is built around one idea: the risky part of AI-written code is usually not sy
 - effectful behavior can be recorded and replayed deterministically
 - `aver context` exports the contract-level view of a module graph for humans or LLMs
 - `aver compile` turns an Aver module graph into a Rust/Cargo project
-- `aver proof` exports the pure subset of an Aver module graph to a Lean 4 proof project
+- `aver proof` exports the pure subset of an Aver module graph to a Lean 4 proof project (default) or Dafny verification file (`--backend dafny`)
 
 This is not a language optimized for humans to type by hand all day. It is optimized for AI to generate code that humans can inspect, constrain, test, and ship.
 
@@ -362,13 +362,14 @@ For namespaces, effectful services, and the standard library, see [docs/services
 
 ## Execution and proof backends
 
-Aver has three backend paths:
+Aver has four backend paths:
 
 - interpreter-first workflow for `run`, `check`, `verify`, `replay`, and `context`
 - Rust compilation for generating a native Cargo project with `aver compile`
 - Lean proof export for pure core logic and `verify` / `verify law` obligations with `aver proof`
   Supported law shapes become real universal theorems; the rest stay as
   executable samples or checked-domain theorems instead of fake proofs.
+- Dafny verification for automated `verify law` checking via Z3 with `aver proof --backend dafny`
 
 The interpreter and generated Rust now share more practical behavior through `aver-rt` than the name alone suggests: list teardown, deep `append -> match` paths, and string helpers such as `String.slice` are intentionally centralized there so one runtime fix can improve both execution paths.
 
@@ -388,14 +389,23 @@ cd out
 lake build
 ```
 
-Rust is the deployment backend. Lean is the proof-export backend for the pure subset of Aver.
-In `--verify-mode auto`, Lean export is intentionally conservative: supported
-law shapes get universal theorems, and unmatched shapes fall back to sample or
-explicit-domain artifacts.
+Typical Dafny flow:
+
+```bash
+aver proof examples/data/fibonacci.av --backend dafny -o out/
+cd out
+dafny verify fibonacci.dfy
+```
+
+Rust is the deployment backend. Lean and Dafny are complementary proof backends:
+
+- **Lean** handles `verify` cases via `native_decide` (100% success on concrete examples) and supported `verify law` shapes via hand-crafted tactic strategies
+- **Dafny** emits only `verify law` blocks as lemmas and lets Z3 attempt automated proofs — no tactic authoring needed, but limited on concrete computation
 
 For backend-specific details, see:
 - [docs/rust.md](docs/rust.md) for Cargo generation and deployment flow
 - [docs/lean.md](docs/lean.md) for proof export, formal-verification path, and current Lean examples
+- [docs/dafny.md](docs/dafny.md) for Dafny verification and Z3-powered law checking
 
 ---
 
@@ -467,4 +477,5 @@ For repository self-documentation via decision exports, see `decisions/architect
 | [docs/transpilation.md](docs/transpilation.md) | Overview of `aver compile` and `aver proof` |
 | [docs/rust.md](docs/rust.md) | Rust backend: deployment-oriented Cargo generation |
 | [docs/lean.md](docs/lean.md) | Lean backend: proof export and formal-verification path |
+| [docs/dafny.md](docs/dafny.md) | Dafny backend: Z3-powered automated law verification |
 | [docs/decisions.md](docs/decisions.md) | Decision export generated via `aver context --decisions-only` |

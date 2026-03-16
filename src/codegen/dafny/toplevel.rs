@@ -1,0 +1,560 @@
+/// Aver top-level items → Dafny declarations.
+use crate::ast::*;
+use crate::codegen::CodegenContext;
+
+use super::expr::{aver_name_to_dafny, emit_expr};
+
+/// Emit a Dafny type annotation from an Aver type string.
+pub fn emit_type(type_str: &str) -> String {
+    let t = type_str.trim();
+    match t {
+        "Int" => "int".to_string(),
+        "Float" => "real".to_string(),
+        "Bool" => "bool".to_string(),
+        "String" => "string".to_string(),
+        "Unit" => "()".to_string(),
+        _ if t.starts_with("List<") && t.ends_with('>') => {
+            let inner = &t[5..t.len() - 1];
+            format!("seq<{}>", emit_type(inner))
+        }
+        _ if t.starts_with("Map<") && t.ends_with('>') => {
+            let inner = &t[4..t.len() - 1];
+            if let Some(comma) = find_top_level_comma(inner) {
+                let k = inner[..comma].trim();
+                let v = inner[comma + 1..].trim();
+                format!("map<{}, {}>", emit_type(k), emit_type(v))
+            } else {
+                format!("map<{}>", emit_type(inner))
+            }
+        }
+        _ if t.starts_with("Result<") && t.ends_with('>') => {
+            let inner = &t[7..t.len() - 1];
+            if let Some(comma) = find_top_level_comma(inner) {
+                let ok = inner[..comma].trim();
+                let err = inner[comma + 1..].trim();
+                format!("Result<{}, {}>", emit_type(ok), emit_type(err))
+            } else {
+                format!("Result<{}>", emit_type(inner))
+            }
+        }
+        _ if t.starts_with("Option<") && t.ends_with('>') => {
+            let inner = &t[7..t.len() - 1];
+            format!("Option<{}>", emit_type(inner))
+        }
+        _ if t.starts_with('(') && t.ends_with(')') => {
+            let inner = &t[1..t.len() - 1];
+            let parts: Vec<String> = split_top_level(inner)
+                .iter()
+                .map(|p| emit_type(p.trim()))
+                .collect();
+            format!("({})", parts.join(", "))
+        }
+        _ => t.to_string(),
+    }
+}
+
+/// Split a string by top-level commas (not inside <> or ()).
+fn split_top_level(s: &str) -> Vec<&str> {
+    let mut result = Vec::new();
+    let mut depth = 0;
+    let mut start = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '<' | '(' => depth += 1,
+            '>' | ')' => depth -= 1,
+            ',' if depth == 0 => {
+                result.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    result.push(&s[start..]);
+    result
+}
+
+/// Find first comma at depth 0 (not inside <>).
+fn find_top_level_comma(s: &str) -> Option<usize> {
+    let mut depth = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '<' => depth += 1,
+            '>' => depth -= 1,
+            ',' if depth == 0 => return Some(i),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Emit a Dafny datatype/record from a TypeDef.
+pub fn emit_type_def(td: &TypeDef) -> Option<String> {
+    match td {
+        TypeDef::Sum { name, variants, .. } => {
+            let variant_strs: Vec<String> = variants
+                .iter()
+                .map(|v| {
+                    if v.fields.is_empty() {
+                        v.name.clone()
+                    } else {
+                        // Use variant-prefixed field names to avoid Dafny
+                        // shared destructor conflicts across variants.
+                        let prefix = {
+                            let mut chars = v.name.chars();
+                            match chars.next() {
+                                None => String::new(),
+                                Some(c) => c.to_lowercase().to_string() + chars.as_str(),
+                            }
+                        };
+                        let fields: Vec<String> = v
+                            .fields
+                            .iter()
+                            .enumerate()
+                            .map(|(i, f)| format!("{}_{}: {}", prefix, i, emit_type(f)))
+                            .collect();
+                        format!("{}({})", v.name, fields.join(", "))
+                    }
+                })
+                .collect();
+            Some(format!(
+                "datatype {} = {}\n",
+                name,
+                variant_strs.join(" | ")
+            ))
+        }
+        TypeDef::Product { name, fields, .. } => {
+            let field_strs: Vec<String> = fields
+                .iter()
+                .map(|(fname, ftype)| {
+                    format!("{}: {}", aver_name_to_dafny(fname), emit_type(ftype))
+                })
+                .collect();
+            Some(format!(
+                "datatype {} = {}({})\n",
+                name,
+                name,
+                field_strs.join(", ")
+            ))
+        }
+    }
+}
+
+/// Emit a Dafny function from a FnDef.
+pub fn emit_fn_def(fd: &FnDef, ctx: &CodegenContext) -> String {
+    let name = aver_name_to_dafny(&fd.name);
+
+    let params: Vec<String> = fd
+        .params
+        .iter()
+        .map(|(pname, ptype)| format!("{}: {}", aver_name_to_dafny(pname), emit_type(ptype)))
+        .collect();
+
+    let ret_type = emit_type(&fd.return_type);
+
+    let body = emit_fn_body(&fd.body, ctx);
+
+    let needs_decreases = body_has_recursive_call(&fd.body, &fd.name);
+
+    let mut lines = Vec::new();
+
+    if let Some(desc) = &fd.desc {
+        lines.push(format!("// {}", desc));
+    }
+
+    lines.push(format!(
+        "function {}({}): {}",
+        name,
+        params.join(", "),
+        ret_type
+    ));
+
+    if needs_decreases && let Some(info) = infer_decreases(fd) {
+        for req in &info.requires {
+            lines.push(format!("  requires {}", req));
+        }
+        lines.push(format!("  decreases {}", info.expr));
+    }
+
+    lines.push("{".to_string());
+    lines.push(format!("  {}", body));
+    lines.push("}\n".to_string());
+
+    lines.join("\n")
+}
+
+/// Emit the body of a function.
+fn emit_fn_body(body: &FnBody, ctx: &CodegenContext) -> String {
+    match body {
+        FnBody::Block(stmts) => emit_block_as_expr(stmts, ctx),
+    }
+}
+
+/// Convert a block of statements into a Dafny expression.
+fn emit_block_as_expr(stmts: &[Stmt], ctx: &CodegenContext) -> String {
+    if stmts.is_empty() {
+        return "()".to_string();
+    }
+
+    // If single expression, return it directly
+    if stmts.len() == 1
+        && let Stmt::Expr(expr) = &stmts[0]
+    {
+        return emit_expr(expr, ctx);
+    }
+
+    // For blocks with bindings, collect them and emit the last expression
+    let mut parts = Vec::new();
+    let mut final_expr = None;
+
+    for (i, stmt) in stmts.iter().enumerate() {
+        match stmt {
+            Stmt::Binding(name, _type_ann, expr) => {
+                let val = emit_expr(expr, ctx);
+                parts.push((aver_name_to_dafny(name), val));
+            }
+            Stmt::Expr(expr) => {
+                if i == stmts.len() - 1 {
+                    final_expr = Some(emit_expr(expr, ctx));
+                }
+            }
+        }
+    }
+
+    if let Some(final_e) = final_expr {
+        if parts.is_empty() {
+            final_e
+        } else {
+            // Nest var bindings: var x := e1; var y := e2; body
+            let mut result = final_e;
+            for (name, val) in parts.into_iter().rev() {
+                result = format!("var {} := {}; {}", name, val, result);
+            }
+            result
+        }
+    } else {
+        // Last statement was a binding — return unit
+        "()".to_string()
+    }
+}
+
+/// Check if a function body contains a recursive call to itself.
+fn body_has_recursive_call(body: &FnBody, fn_name: &str) -> bool {
+    match body {
+        FnBody::Block(stmts) => stmts.iter().any(|s| match s {
+            Stmt::Binding(_, _, expr) => expr_has_call(expr, fn_name),
+            Stmt::Expr(expr) => expr_has_call(expr, fn_name),
+        }),
+    }
+}
+
+fn expr_has_call(expr: &Expr, fn_name: &str) -> bool {
+    match expr {
+        Expr::FnCall(fn_expr, args) => {
+            if let Expr::Ident(name) = fn_expr.as_ref()
+                && name == fn_name
+            {
+                return true;
+            }
+            expr_has_call(fn_expr, fn_name) || args.iter().any(|a| expr_has_call(a, fn_name))
+        }
+        Expr::TailCall(inner) => {
+            let (name, args) = inner.as_ref();
+            name == fn_name || args.iter().any(|a| expr_has_call(a, fn_name))
+        }
+        Expr::BinOp(_, l, r) => expr_has_call(l, fn_name) || expr_has_call(r, fn_name),
+        Expr::Match { subject, arms, .. } => {
+            expr_has_call(subject, fn_name)
+                || arms.iter().any(|arm| expr_has_call(&arm.body, fn_name))
+        }
+        Expr::List(elems) => elems.iter().any(|e| expr_has_call(e, fn_name)),
+        Expr::Tuple(elems) => elems.iter().any(|e| expr_has_call(e, fn_name)),
+        Expr::MapLiteral(entries) => entries
+            .iter()
+            .any(|(k, v)| expr_has_call(k, fn_name) || expr_has_call(v, fn_name)),
+        Expr::Constructor(_, arg) => arg.as_ref().is_some_and(|a| expr_has_call(a, fn_name)),
+        Expr::Attr(obj, _) => expr_has_call(obj, fn_name),
+        Expr::ErrorProp(inner) => expr_has_call(inner, fn_name),
+        Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
+            StrPart::Parsed(e) => expr_has_call(e, fn_name),
+            _ => false,
+        }),
+        Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| expr_has_call(e, fn_name)),
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_has_call(base, fn_name) || updates.iter().any(|(_, e)| expr_has_call(e, fn_name))
+        }
+        _ => false,
+    }
+}
+
+/// Decreases info: the expression and any required preconditions.
+struct DecreasesInfo {
+    expr: String,
+    /// `requires` clauses needed to ensure the decreases expression is bounded.
+    requires: Vec<String>,
+}
+
+/// Try to infer a `decreases` clause from the function signature.
+fn infer_decreases(fd: &FnDef) -> Option<DecreasesInfo> {
+    for (pname, ptype) in &fd.params {
+        if ptype == "Int" {
+            let dname = aver_name_to_dafny(pname);
+            // Aver Int can be negative; the function body typically guards
+            // with `match n < 0 → ...` or `match n: 0 → base, _ → recurse(n-1)`.
+            // We emit decreases on the non-negative part; Dafny needs to see
+            // that the recursive call only happens when n > 0.
+            return Some(DecreasesInfo {
+                expr: format!("if {} >= 0 then {} else 0", dname, dname),
+                requires: vec![],
+            });
+        }
+    }
+    for (pname, ptype) in &fd.params {
+        if ptype.starts_with("List<") {
+            return Some(DecreasesInfo {
+                expr: format!("|{}|", aver_name_to_dafny(pname)),
+                requires: vec![],
+            });
+        }
+    }
+    for (pname, ptype) in &fd.params {
+        if ptype == "String" {
+            return Some(DecreasesInfo {
+                expr: format!("|{}|", aver_name_to_dafny(pname)),
+                requires: vec![],
+            });
+        }
+    }
+    None
+}
+
+/// Collect all function names called in an expression (top-level only).
+fn collect_called_fns(expr: &Expr, out: &mut std::collections::BTreeSet<String>) {
+    match expr {
+        Expr::FnCall(f, args) => {
+            if let Some(name) = crate::codegen::common::expr_to_dotted_name(f) {
+                // Skip builtins — only user functions need fuel
+                if !name.contains('.') {
+                    out.insert(name);
+                }
+            }
+            collect_called_fns(f, out);
+            for a in args {
+                collect_called_fns(a, out);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            collect_called_fns(l, out);
+            collect_called_fns(r, out);
+        }
+        Expr::Match { subject, arms, .. } => {
+            collect_called_fns(subject, out);
+            for arm in arms {
+                collect_called_fns(&arm.body, out);
+            }
+        }
+        Expr::ErrorProp(inner) => collect_called_fns(inner, out),
+        Expr::Constructor(_, Some(arg)) => collect_called_fns(arg, out),
+        Expr::RecordCreate { fields, .. } => {
+            for (_, e) in fields {
+                collect_called_fns(e, out);
+            }
+        }
+        Expr::List(elems) => {
+            for e in elems {
+                collect_called_fns(e, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Get the top-level function name from a law expression like `fib(n)`.
+fn law_top_level_fn(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::FnCall(fn_expr, _) => crate::codegen::common::expr_to_dotted_name(fn_expr),
+        _ => None,
+    }
+}
+
+/// Check if a function is directly recursive (calls itself in its own body).
+fn is_directly_recursive(fn_name: &str, ctx: &CodegenContext) -> bool {
+    ctx.fn_defs
+        .iter()
+        .any(|fd| fd.name == fn_name && body_has_recursive_call(&fd.body, &fd.name))
+}
+
+fn count_recursive_calls(expr: &Expr, fn_name: &str) -> usize {
+    match expr {
+        Expr::FnCall(fn_expr, args) => {
+            let self_call = if let Expr::Ident(name) = fn_expr.as_ref() {
+                if name == fn_name { 1 } else { 0 }
+            } else {
+                0
+            };
+            self_call
+                + count_recursive_calls(fn_expr, fn_name)
+                + args
+                    .iter()
+                    .map(|a| count_recursive_calls(a, fn_name))
+                    .sum::<usize>()
+        }
+        Expr::TailCall(inner) => {
+            let (name, args) = inner.as_ref();
+            let self_call = if name == fn_name { 1 } else { 0 };
+            self_call
+                + args
+                    .iter()
+                    .map(|a| count_recursive_calls(a, fn_name))
+                    .sum::<usize>()
+        }
+        Expr::BinOp(_, l, r) => {
+            count_recursive_calls(l, fn_name) + count_recursive_calls(r, fn_name)
+        }
+        Expr::Match { subject, arms, .. } => {
+            // Count max across arms (not sum — we want per-branch count)
+            let subj = count_recursive_calls(subject, fn_name);
+            let arm_max = arms
+                .iter()
+                .map(|arm| count_recursive_calls(&arm.body, fn_name))
+                .max()
+                .unwrap_or(0);
+            subj + arm_max
+        }
+        _ => 0,
+    }
+}
+
+fn count_recursive_calls_in_body(body: &FnBody, fn_name: &str) -> usize {
+    match body {
+        FnBody::Block(stmts) => stmts
+            .iter()
+            .map(|s| match s {
+                Stmt::Binding(_, _, expr) => count_recursive_calls(expr, fn_name),
+                Stmt::Expr(expr) => count_recursive_calls(expr, fn_name),
+            })
+            .sum(),
+    }
+}
+
+fn collect_called_fns_in_body(body: &FnBody, out: &mut std::collections::BTreeSet<String>) {
+    match body {
+        FnBody::Block(stmts) => {
+            for stmt in stmts {
+                match stmt {
+                    Stmt::Binding(_, _, expr) => collect_called_fns(expr, out),
+                    Stmt::Expr(expr) => collect_called_fns(expr, out),
+                }
+            }
+        }
+    }
+}
+
+/// Emit a verify law as a Dafny lemma.
+pub fn emit_verify_law(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> String {
+    let fn_name = aver_name_to_dafny(&vb.fn_name);
+    let law_name = aver_name_to_dafny(&law.name);
+
+    let params: Vec<String> = law
+        .givens
+        .iter()
+        .map(|g| {
+            format!(
+                "{}: {}",
+                aver_name_to_dafny(&g.name),
+                emit_type(&g.type_name)
+            )
+        })
+        .collect();
+
+    let lhs = emit_expr(&law.lhs, ctx);
+    let rhs = emit_expr(&law.rhs, ctx);
+
+    let mut lines = Vec::new();
+    // Collect all functions used in the law for fuel annotations
+    let mut law_fns = std::collections::BTreeSet::new();
+    collect_called_fns(&law.lhs, &mut law_fns);
+    collect_called_fns(&law.rhs, &mut law_fns);
+    // Add transitive callees
+    let mut transitive_fns = std::collections::BTreeSet::new();
+    for f in &law_fns {
+        if let Some(fd) = ctx.fn_defs.iter().find(|fd| &fd.name == f) {
+            collect_called_fns_in_body(&fd.body, &mut transitive_fns);
+        }
+    }
+    law_fns.extend(transitive_fns);
+
+    let fuel_attrs: String = law_fns
+        .iter()
+        .map(|f| format!("{{:fuel {}, 5}}", aver_name_to_dafny(f)))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    lines.push(format!("// Law: {}.{}", fn_name, law_name));
+    if fuel_attrs.is_empty() {
+        lines.push(format!(
+            "lemma {}_{}({})",
+            fn_name,
+            law_name,
+            params.join(", ")
+        ));
+    } else {
+        lines.push(format!(
+            "lemma {} {}_{}({})",
+            fuel_attrs,
+            fn_name,
+            law_name,
+            params.join(", ")
+        ));
+    }
+
+    if let Some(when_expr) = &law.when {
+        let when_str = emit_expr(when_expr, ctx);
+        lines.push(format!("  requires {}", when_str));
+    }
+
+    lines.push(format!("  ensures {} == {}", lhs, rhs));
+    lines.push("{".to_string());
+
+    // Generate inductive proof body for Int-parameterized laws
+    if law.givens.len() == 1 && law.givens[0].type_name == "Int" {
+        let param = aver_name_to_dafny(&law.givens[0].name);
+        let lemma_name = format!("{}_{}", fn_name, law_name);
+
+        // Check if both sides of the law use directly-recursive functions on `param`.
+        // If so, generate inductive hints. Otherwise, let Z3 try alone.
+        let lhs_fn = law_top_level_fn(&law.lhs);
+        let rhs_fn = law_top_level_fn(&law.rhs);
+
+        let lhs_recursive = lhs_fn
+            .as_ref()
+            .is_some_and(|f| is_directly_recursive(f, ctx));
+        let rhs_recursive = rhs_fn
+            .as_ref()
+            .is_some_and(|f| is_directly_recursive(f, ctx));
+
+        if lhs_recursive || rhs_recursive {
+            // Find max recursion depth across both sides
+            let has_double = [&lhs_fn, &rhs_fn].iter().any(|opt| {
+                opt.as_ref().is_some_and(|f| {
+                    ctx.fn_defs.iter().any(|fd| {
+                        fd.name == *f && count_recursive_calls_in_body(&fd.body, &fd.name) >= 2
+                    })
+                })
+            });
+
+            lines.push(format!("  if {} < 0 {{", param));
+            lines.push(format!("  }} else if {} == 0 {{", param));
+            lines.push(format!("  }} else if {} == 1 {{", param));
+            lines.push("  } else {".to_string());
+            lines.push(format!("    {}({} - 1);", lemma_name, param));
+            if has_double {
+                lines.push(format!("    {}({} - 2);", lemma_name, param));
+            }
+            lines.push("  }".to_string());
+        }
+    }
+
+    lines.push("}\n".to_string());
+
+    lines.join("\n")
+}

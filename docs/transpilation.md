@@ -4,8 +4,9 @@ There are two code-generation commands:
 
 - [Rust backend](rust.md): deployment-oriented Cargo project generation via `aver compile`
 - [Lean backend](lean.md): proof export for the pure subset of Aver via `aver proof`
+- [Dafny backend](dafny.md): Z3-powered automated law verification via `aver proof --backend dafny`
 
-They solve different problems and now have different CLI entrypoints.
+They solve different problems and share the same `CodegenContext` infrastructure.
 
 ## `aver compile`
 
@@ -27,7 +28,8 @@ Options:
   -o, --output <OUTPUT>            Output directory for the generated project
       --name <NAME>                Project name (default: derived from file name)
       --module-root <MODULE_ROOT>  Resolve `depends [...]` from this root (default: current working directory)
-      --verify-mode <VERIFY_MODE>  Verify emission mode: auto | sorry | theorem-skeleton
+      --backend <BACKEND>          Proof backend: lean (default) or dafny
+      --verify-mode <VERIFY_MODE>  Lean only: auto | sorry | theorem-skeleton
 ```
 
 ## Quick routing
@@ -39,10 +41,27 @@ Use Rust when you want:
 
 Use Lean when you want:
 - proof artifacts for pure Aver code
-- `verify` as executable Lean checks
+- `verify` as executable Lean checks (`native_decide`)
 - `verify law` as candidate universal theorems for supported shapes, with
   sampled or checked-domain fallback for the rest
 - a path from Aver code to formal verification
+
+Use Dafny when you want:
+- automated `verify law` checking without writing proof tactics
+- Z3/SMT solver attempting universal proofs for you
+- a quick smoke test of whether your laws are provable
+
+## Lean vs Dafny
+
+| | Lean | Dafny |
+|---|---|---|
+| Verify cases | `native_decide` — always works | Not emitted (Z3 can't compute) |
+| Verify laws | Hand-crafted tactic strategies | Z3 attempts automatically |
+| Proof quality | Kernel-verified (gold standard) | SMT-checked (no counterexample found) |
+| Effort | High (strategy per pattern) | Zero (just emit and run) |
+| External deps | Lean 4 + Lake | Dafny + .NET + Z3 |
+
+Both backends complement each other. Lean is the formal proof target; Dafny is the automated verification target.
 
 ## Adding a new backend
 

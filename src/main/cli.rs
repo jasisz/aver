@@ -9,6 +9,18 @@ pub(super) struct Cli {
     pub(super) command: Commands,
 }
 
+/// Proof backend target.
+#[derive(Clone, Debug, Default, ValueEnum)]
+pub(super) enum ProofBackend {
+    /// Generate Lean 4 proof project (default).
+    #[default]
+    #[value(name = "lean")]
+    Lean,
+    /// Generate Dafny verification file (Z3-powered).
+    #[value(name = "dafny")]
+    Dafny,
+}
+
 /// Proof verify emission mode.
 #[derive(Clone, Debug, ValueEnum)]
 pub(super) enum ProofVerifyMode {
@@ -166,7 +178,7 @@ pub(super) enum Commands {
         #[arg(long)]
         module_root: Option<String>,
     },
-    /// Export pure Aver code to a Lean 4 proof project
+    /// Export pure Aver code to a proof/verification project
     Proof {
         file: String,
         /// Output directory for the generated project
@@ -178,6 +190,9 @@ pub(super) enum Commands {
         /// Resolve `depends [...]` from this root (default: current working directory)
         #[arg(long)]
         module_root: Option<String>,
+        /// Proof backend: lean (default) or dafny
+        #[arg(long, default_value = "lean")]
+        backend: ProofBackend,
         /// How to emit `verify` cases and law theorems in generated Lean
         #[arg(long, default_value = "auto")]
         verify_mode: ProofVerifyMode,

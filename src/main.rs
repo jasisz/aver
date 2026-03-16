@@ -100,6 +100,7 @@ fn main() {
             output,
             name,
             module_root,
+            backend,
             verify_mode,
         } => {
             commands::cmd_proof(
@@ -107,6 +108,7 @@ fn main() {
                 output,
                 name.as_deref(),
                 module_root.as_deref(),
+                backend,
                 verify_mode,
             );
         }

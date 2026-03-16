@@ -1392,11 +1392,28 @@ pub(super) fn cmd_proof(
     output_dir: &str,
     project_name: Option<&str>,
     module_root_override: Option<&str>,
+    backend: &super::cli::ProofBackend,
     verify_mode: &super::cli::ProofVerifyMode,
 ) {
     let (ctx, _module_root) = build_codegen_context(file, project_name, module_root_override);
 
-    let proof_issues = lean_codegen::proof_mode_findings(&ctx);
+    match backend {
+        super::cli::ProofBackend::Lean => {
+            cmd_proof_lean(file, output_dir, &ctx, verify_mode);
+        }
+        super::cli::ProofBackend::Dafny => {
+            cmd_proof_dafny(file, output_dir, &ctx);
+        }
+    }
+}
+
+fn cmd_proof_lean(
+    file: &str,
+    output_dir: &str,
+    ctx: &codegen::CodegenContext,
+    verify_mode: &super::cli::ProofVerifyMode,
+) {
+    let proof_issues = lean_codegen::proof_mode_findings(ctx);
     for issue in proof_issues {
         eprintln!(
             "{}",
@@ -1436,9 +1453,17 @@ pub(super) fn cmd_proof(
         }
     };
 
-    let output = lean_codegen::transpile_for_proof_mode(&ctx, verify_mode);
+    let output = lean_codegen::transpile_for_proof_mode(ctx, verify_mode);
     let build_hint = format!("cd {} && lake build", output_dir);
     write_codegen_output(file, output_dir, "Lean 4", &build_hint, &output);
+}
+
+fn cmd_proof_dafny(file: &str, output_dir: &str, ctx: &codegen::CodegenContext) {
+    use aver::codegen::dafny as dafny_codegen;
+
+    let output = dafny_codegen::transpile(ctx);
+    let build_hint = format!("cd {} && dafny verify {}.dfy", output_dir, ctx.project_name);
+    write_codegen_output(file, output_dir, "Dafny", &build_hint, &output);
 }
 
 /// Load dependent modules for codegen (recursive, with circular import detection).
