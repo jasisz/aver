@@ -588,6 +588,16 @@ fn emit_builtin_call_inner(
             Some(format!("aver_rt::time_sleep({})", ms))
         }
 
+        "Random.int" => {
+            let min = emit_arg(0);
+            let max = emit_arg(1);
+            Some(format!(
+                "aver_rt::random::random_int({}, {}).unwrap()",
+                min, max
+            ))
+        }
+        "Random.float" => Some("aver_rt::random::random_float()".to_string()),
+
         _ => None,
     }
 }

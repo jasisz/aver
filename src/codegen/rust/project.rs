@@ -41,23 +41,25 @@ fn runtime_override_path() -> Option<String> {
 
 fn runtime_dependency_line(
     runtime_version: &str,
-    needs_http: bool,
+    features: &[&str],
     local_path: Option<&str>,
 ) -> String {
-    match (needs_http, local_path) {
-        (true, Some(path)) => format!(
-            "aver-rt = {{ path = {:?}, version = {:?}, features = [\"http\"] }}",
-            path, runtime_version
+    let features_str = if features.is_empty() {
+        String::new()
+    } else {
+        let quoted: Vec<String> = features.iter().map(|f| format!("\"{}\"", f)).collect();
+        format!(", features = [{}]", quoted.join(", "))
+    };
+
+    match local_path {
+        Some(path) => format!(
+            "aver-rt = {{ path = {:?}, version = {:?}{} }}",
+            path, runtime_version, features_str
         ),
-        (false, Some(path)) => format!(
-            "aver-rt = {{ path = {:?}, version = {:?} }}",
-            path, runtime_version
+        None => format!(
+            "aver-rt = {{ version = {:?}{} }}",
+            runtime_version, features_str
         ),
-        (true, None) => format!(
-            "aver-rt = {{ version = {:?}, features = [\"http\"] }}",
-            runtime_version
-        ),
-        (false, None) => format!("aver-rt = {{ version = {:?} }}", runtime_version),
     }
 }
 
@@ -74,12 +76,22 @@ pub fn generate_cargo_toml(
     lines.push("edition = \"2021\"".to_string());
     lines.push(String::new());
 
+    // Collect aver-rt feature flags based on which services the program uses.
+    let mut rt_features: Vec<&str> = Vec::new();
+    if services.contains("Http") {
+        rt_features.push("http");
+    }
+    if services.contains("Random") {
+        rt_features.push("random");
+    }
+    rt_features.sort();
+
     let mut deps = Vec::new();
     let runtime_version = runtime_version(runtime_path);
     let runtime_path = runtime_override_path();
     deps.push(runtime_dependency_line(
         &runtime_version,
-        services.contains("Http"),
+        &rt_features,
         runtime_path.as_deref(),
     ));
     if has_policy {
@@ -100,13 +112,13 @@ mod tests {
 
     #[test]
     fn runtime_dependency_defaults_to_registry_pin() {
-        let dep = runtime_dependency_line("=0.2.1", false, None);
+        let dep = runtime_dependency_line("=0.2.1", &[], None);
         assert_eq!(dep, "aver-rt = { version = \"=0.2.1\" }");
     }
 
     #[test]
     fn runtime_dependency_enables_http_feature_when_needed() {
-        let dep = runtime_dependency_line("=0.2.1", true, None);
+        let dep = runtime_dependency_line("=0.2.1", &["http"], None);
         assert_eq!(
             dep,
             "aver-rt = { version = \"=0.2.1\", features = [\"http\"] }"
@@ -114,8 +126,17 @@ mod tests {
     }
 
     #[test]
+    fn runtime_dependency_enables_multiple_features() {
+        let dep = runtime_dependency_line("=0.2.1", &["http", "random"], None);
+        assert_eq!(
+            dep,
+            "aver-rt = { version = \"=0.2.1\", features = [\"http\", \"random\"] }"
+        );
+    }
+
+    #[test]
     fn runtime_dependency_can_use_local_override_path() {
-        let dep = runtime_dependency_line("=0.2.1", true, Some("/tmp/aver-rt"));
+        let dep = runtime_dependency_line("=0.2.1", &["http"], Some("/tmp/aver-rt"));
         assert_eq!(
             dep,
             "aver-rt = { path = \"/tmp/aver-rt\", version = \"=0.2.1\", features = [\"http\"] }"
