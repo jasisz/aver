@@ -10,8 +10,8 @@
 /// paths until a genuinely generic indirect-recursion engine exists.
 use std::collections::BTreeSet;
 
-use super::AutoProof;
 use super::super::shared::to_lower_first;
+use super::AutoProof;
 use super::shared::law_simp_defs;
 use crate::ast::{TypeDef, TypeVariant, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
@@ -66,9 +66,9 @@ fn find_sum_type<'a>(
 }
 
 fn is_recursive_sum(type_name: &str, variants: &[TypeVariant]) -> bool {
-    variants.iter().any(|variant| {
-        variants_fields_contain_type(&variant.fields, type_name)
-    })
+    variants
+        .iter()
+        .any(|variant| variants_fields_contain_type(&variant.fields, type_name))
 }
 
 fn variants_fields_contain_type(fields: &[String], type_name: &str) -> bool {
@@ -96,9 +96,12 @@ fn find_induction_target<'a>(
 }
 
 fn has_indirect_variants(variants: &[TypeVariant], type_name: &str) -> bool {
-    variants
-        .iter()
-        .any(|variant| matches!(classify_variant(variant, type_name), VariantKind::IndirectRec))
+    variants.iter().any(|variant| {
+        matches!(
+            classify_variant(variant, type_name),
+            VariantKind::IndirectRec
+        )
+    })
 }
 
 fn premise_intro_names(law: &VerifyLaw, intro_names: &[String]) -> Vec<String> {

@@ -2,13 +2,13 @@ use super::super::expr::{aver_name_to_lean, emit_expr};
 use crate::ast::{BinOp, Expr, Pattern, Stmt, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 
+use super::intro_then;
 use super::shared::{
     atom, defaulted_map_get, defaulted_map_get_after_fn_call, find_fn_def, is_map_get_call,
     is_map_set_call, law_simp_defs, map_get_after_fn_call, map_get_set_parts,
-    map_has_after_fn_call, map_has_set_parts,
-    matches_bool_true, matches_ident, matches_int_lit, option_some_arg,
+    map_has_after_fn_call, map_has_set_parts, matches_bool_true, matches_ident, matches_int_lit,
+    option_some_arg,
 };
-use super::intro_then;
 
 pub(super) fn emit_direct_map_set_law(
     law: &VerifyLaw,

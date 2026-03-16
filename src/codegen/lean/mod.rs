@@ -3203,9 +3203,11 @@ verify mirror law involutive
         let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
 
-        assert!(lean.contains(
-            "theorem mirror_law_involutive : ∀ (t : Tree), mirror (mirror t) = t := by"
-        ));
+        assert!(
+            lean.contains(
+                "theorem mirror_law_involutive : ∀ (t : Tree), mirror (mirror t) = t := by"
+            )
+        );
         assert!(lean.contains("  induction t with"));
         assert!(lean.contains("  | leaf f0 => simp [mirror]"));
         assert!(lean.contains("  | node f0 f1 ih0 ih1 => simp_all [mirror]"));
@@ -4281,13 +4283,19 @@ verify mirror law involutive
         assert!(lean.contains("-- when jsonRoundtripSafe j"));
         assert!(!lean.contains("-- hint: verify law '"));
         assert!(!lean.contains("private theorem toString_law_parseRoundtrip_aux"));
-        assert!(lean.contains(
-            "theorem toString_law_parseRoundtrip : ∀ (j : Json), j = Json.jsonNull ∨"
-        ));
-        assert!(lean.contains("jsonRoundtripSafe j = true -> fromString (toString j) = Except.ok j := by"));
-        assert!(lean.contains(
-            "theorem finishFloat_law_fromCanonicalFloat : ∀ (f : Float), f = 3.5 ∨"
-        ));
+        assert!(
+            lean.contains(
+                "theorem toString_law_parseRoundtrip : ∀ (j : Json), j = Json.jsonNull ∨"
+            )
+        );
+        assert!(
+            lean.contains(
+                "jsonRoundtripSafe j = true -> fromString (toString j) = Except.ok j := by"
+            )
+        );
+        assert!(
+            lean.contains("theorem finishFloat_law_fromCanonicalFloat : ∀ (f : Float), f = 3.5 ∨")
+        );
         assert!(lean.contains("theorem finishInt_law_fromCanonicalInt_checked_domain :"));
         assert!(lean.contains(
             "theorem toString_law_parseValueRoundtrip : ∀ (j : Json), j = Json.jsonNull ∨"
@@ -4664,7 +4672,9 @@ verify weird law weirdSpec
         assert!(lean.contains(
             "theorem toString_law_parseRoundtrip : ∀ (e : Sexpr), e = Sexpr.atomNum 42 ∨"
         ));
-        assert!(lean.contains("validSymbolNames e = true -> parse (toString e) = Except.ok e := by"));
+        assert!(
+            lean.contains("validSymbolNames e = true -> parse (toString e) = Except.ok e := by")
+        );
         assert!(lean.contains("theorem toString_law_parseSexprRoundtrip :"));
         assert!(lean.contains("theorem toString_law_parseRoundtrip_sample_1 :"));
     }
