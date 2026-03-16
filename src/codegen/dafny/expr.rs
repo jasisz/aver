@@ -227,190 +227,109 @@ fn emit_literal(lit: &Literal) -> String {
 }
 
 fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext) -> String {
-    let dotted = expr_to_dotted_name(fn_expr);
-    let name = dotted.as_deref();
+    use crate::codegen::builtins::recognize_builtin;
 
-    match name {
-        Some("Result.Ok") => {
-            let arg = args.first().map(|a| emit_expr(a, ctx)).unwrap_or_default();
-            format!("Result.Ok({})", arg)
-        }
-        Some("Result.Err") => {
-            let arg = args.first().map(|a| emit_expr(a, ctx)).unwrap_or_default();
-            format!("Result.Err({})", arg)
-        }
-        Some("Option.Some") => {
-            let arg = args.first().map(|a| emit_expr(a, ctx)).unwrap_or_default();
-            format!("Option.Some({})", arg)
-        }
-        Some("List.len") => {
-            let arg = emit_expr(&args[0], ctx);
-            format!("|{}|", arg)
-        }
-        Some("List.get") => {
-            let list = emit_expr(&args[0], ctx);
-            let idx = emit_expr(&args[1], ctx);
-            format!("ListGet({}, {})", list, idx)
-        }
-        Some("List.head") => {
-            let list = emit_expr(&args[0], ctx);
-            format!("ListHead({})", list)
-        }
-        Some("List.tail") => {
-            let list = emit_expr(&args[0], ctx);
-            format!("ListTail({})", list)
-        }
-        Some("List.prepend") => {
-            let elem = emit_expr(&args[0], ctx);
-            let list = emit_expr(&args[1], ctx);
-            format!("[{}] + {}", elem, list)
-        }
-        Some("List.push") => {
-            let list = emit_expr(&args[0], ctx);
-            let elem = emit_expr(&args[1], ctx);
-            format!("{} + [{}]", list, elem)
-        }
-        Some("List.reverse") => {
-            let list = emit_expr(&args[0], ctx);
-            format!("ListReverse({})", list)
-        }
-        Some("List.contains") => {
-            let list = emit_expr(&args[0], ctx);
-            let elem = emit_expr(&args[1], ctx);
-            format!("({} in {})", elem, list)
-        }
-        Some("List.concat") => {
-            let a = emit_expr(&args[0], ctx);
-            let b = emit_expr(&args[1], ctx);
-            format!("({} + {})", a, b)
-        }
-        Some("List.append") => {
-            // List.append(list, elem) → list + [elem]
-            let list = emit_expr(&args[0], ctx);
-            let elem = emit_expr(&args[1], ctx);
-            format!("({} + [{}])", list, elem)
-        }
-        Some("List.find") => {
-            let list = emit_expr(&args[0], ctx);
-            let pred = emit_expr(&args[1], ctx);
-            format!("ListFind({}, {})", list, pred)
-        }
-        Some("List.any") => {
-            let list = emit_expr(&args[0], ctx);
-            let pred = emit_expr(&args[1], ctx);
-            format!("ListAny({}, {})", list, pred)
-        }
-        Some("Int.toFloat") => {
-            let arg = emit_expr(&args[0], ctx);
-            format!("({} as real)", arg)
-        }
-        Some("Int.toString") | Some("String.fromInt") => {
-            let arg = emit_expr(&args[0], ctx);
-            format!("IntToString({})", arg)
-        }
-        Some("Int.fromString") => {
-            let arg = emit_expr(&args[0], ctx);
-            format!("IntFromString({})", arg)
-        }
-        Some("Float.fromString") => {
-            let arg = emit_expr(&args[0], ctx);
-            format!("FloatFromString({})", arg)
-        }
-        Some("String.fromFloat") => {
-            let arg = emit_expr(&args[0], ctx);
-            format!("FloatToString({})", arg)
-        }
-        Some("String.len") => {
-            let arg = emit_expr(&args[0], ctx);
-            format!("|{}|", arg)
-        }
-        Some("String.concat") => {
-            let a = emit_expr(&args[0], ctx);
-            let b = emit_expr(&args[1], ctx);
-            format!("({} + {})", a, b)
-        }
-        Some("String.charAt") => {
-            let s = emit_expr(&args[0], ctx);
-            let i = emit_expr(&args[1], ctx);
-            format!("StringCharAt({}, {})", s, i)
-        }
-        Some("String.chars") => {
-            let s = emit_expr(&args[0], ctx);
-            format!("StringChars({})", s)
-        }
-        Some("String.slice") => {
-            let s = emit_expr(&args[0], ctx);
-            let start = emit_expr(&args[1], ctx);
-            let end = emit_expr(&args[2], ctx);
-            format!("{}[{}..{}]", s, start, end)
-        }
-        Some("String.join") => {
-            // Aver: String.join(list, sep)
-            let parts = emit_expr(&args[0], ctx);
-            let sep = emit_expr(&args[1], ctx);
-            format!("StringJoin({}, {})", sep, parts)
-        }
-        Some("Char.toCode") => {
-            let c = emit_expr(&args[0], ctx);
-            format!("CharToCode({})", c)
-        }
-        Some("Char.fromCode") => {
-            let n = emit_expr(&args[0], ctx);
-            format!("CharFromCode({})", n)
-        }
-        Some("Byte.toHex") => {
-            let arg = emit_expr(&args[0], ctx);
-            format!("ByteToHex({})", arg)
-        }
-        Some("Byte.fromHex") => {
-            let arg = emit_expr(&args[0], ctx);
-            format!("ByteFromHex({})", arg)
-        }
-        Some("Map.entries") => {
-            let m = emit_expr(&args[0], ctx);
-            format!("MapEntries({})", m)
-        }
-        Some("Map.fromList") => {
-            let entries = emit_expr(&args[0], ctx);
-            format!("MapFromList({})", entries)
-        }
-        Some("Map.empty") => "map[]".to_string(),
-        Some("Map.get") => {
-            let m = emit_expr(&args[0], ctx);
-            let k = emit_expr(&args[1], ctx);
-            format!("MapGet({}, {})", m, k)
-        }
-        Some("Map.set") => {
-            let m = emit_expr(&args[0], ctx);
-            let k = emit_expr(&args[1], ctx);
-            let v = emit_expr(&args[2], ctx);
-            format!("{}[{} := {}]", m, k, v)
-        }
-        Some("Map.has") => {
-            let m = emit_expr(&args[0], ctx);
-            let k = emit_expr(&args[1], ctx);
-            format!("({} in {})", k, m)
-        }
-        Some("Result.withDefault") => {
-            let r = emit_expr(&args[0], ctx);
-            let def = emit_expr(&args[1], ctx);
-            format!("ResultWithDefault({}, {})", r, def)
-        }
-        Some("Option.withDefault") => {
-            let o = emit_expr(&args[0], ctx);
-            let def = emit_expr(&args[1], ctx);
-            format!("OptionWithDefault({}, {})", o, def)
-        }
-        Some("Option.toResult") => {
-            let o = emit_expr(&args[0], ctx);
-            let err = emit_expr(&args[1], ctx);
-            format!("OptionToResult({}, {})", o, err)
-        }
-        _ => {
-            let fn_name = emit_expr(fn_expr, ctx);
-            let arg_strs: Vec<String> = args.iter().map(|a| emit_expr(a, ctx)).collect();
-            format!("{}({})", fn_name, arg_strs.join(", "))
-        }
+    let dotted = expr_to_dotted_name(fn_expr);
+
+    if let Some(builtin) = dotted.as_deref().and_then(recognize_builtin) {
+        let a: Vec<String> = args.iter().map(|e| emit_expr(e, ctx)).collect();
+        return emit_dafny_builtin(builtin, &a);
+    }
+
+    // Not a recognized builtin — generic function call
+    let fn_name = emit_expr(fn_expr, ctx);
+    let arg_strs: Vec<String> = args.iter().map(|e| emit_expr(e, ctx)).collect();
+    format!("{}({})", fn_name, arg_strs.join(", "))
+}
+
+fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> String {
+    use crate::codegen::builtins::Builtin::*;
+    match b {
+        // Constructors
+        ResultOk => format!("Result.Ok({})", a.first().map(|s| s.as_str()).unwrap_or("")),
+        ResultErr => format!(
+            "Result.Err({})",
+            a.first().map(|s| s.as_str()).unwrap_or("")
+        ),
+        OptionSome => format!(
+            "Option.Some({})",
+            a.first().map(|s| s.as_str()).unwrap_or("")
+        ),
+
+        // Combinators
+        ResultWithDefault => format!("ResultWithDefault({}, {})", a[0], a[1]),
+        OptionWithDefault => format!("OptionWithDefault({}, {})", a[0], a[1]),
+        OptionToResult => format!("OptionToResult({}, {})", a[0], a[1]),
+
+        // Int
+        IntAbs => format!("(if {} >= 0 then {} else -{})", a[0], a[0], a[0]),
+        IntToFloat => format!("({} as real)", a[0]),
+        IntToString | StringFromInt => format!("IntToString({})", a[0]),
+        IntFromString | IntParse => format!("IntFromString({})", a[0]),
+        IntMin => format!("(if {} <= {} then {} else {})", a[0], a[1], a[0], a[1]),
+        IntMax => format!("(if {} >= {} then {} else {})", a[0], a[1], a[0], a[1]),
+        IntRem | IntMod => format!("({} % {})", a[0], a[1]),
+
+        // Float
+        FloatAbs => format!("(if {} >= 0.0 then {} else -{})", a[0], a[0], a[0]),
+        FloatSqrt => format!("FloatSqrt({})", a[0]),
+        FloatPow => format!("FloatPow({}, {})", a[0], a[1]),
+        FloatRound | FloatFloor | FloatCeil | FloatToInt => format!("FloatToInt({})", a[0]),
+        FloatToString | StringFromFloat => format!("FloatToString({})", a[0]),
+        FloatFromString | FloatParse => format!("FloatFromString({})", a[0]),
+
+        // String
+        StringLen => format!("|{}|", a[0]),
+        StringConcat => format!("({} + {})", a[0], a[1]),
+        StringCharAt => format!("StringCharAt({}, {})", a[0], a[1]),
+        StringChars => format!("StringChars({})", a[0]),
+        StringSlice => format!("{}[{}..{}]", a[0], a[1], a[2]),
+        StringContains => format!("StringContains({}, {})", a[0], a[1]),
+        StringStartsWith => format!("StringStartsWith({}, {})", a[0], a[1]),
+        StringEndsWith => format!("StringEndsWith({}, {})", a[0], a[1]),
+        StringTrim => format!("StringTrim({})", a[0]),
+        StringSplit => format!("StringSplit({}, {})", a[0], a[1]),
+        StringJoin => format!("StringJoin({}, {})", a[1], a[0]), // Aver: join(list, sep)
+        StringReplace => format!("StringReplace({}, {}, {})", a[0], a[1], a[2]),
+        StringRepeat => format!("StringRepeat({}, {})", a[0], a[1]),
+        StringIndexOf => format!("StringIndexOf({}, {})", a[0], a[1]),
+        StringToUpper => format!("StringToUpper({})", a[0]),
+        StringToLower => format!("StringToLower({})", a[0]),
+        StringFromBool => format!("StringFromBool({})", a[0]),
+        StringByteLength => format!("StringByteLength({})", a[0]),
+
+        // Char/Byte
+        CharToCode => format!("CharToCode({})", a[0]),
+        CharFromCode => format!("CharFromCode({})", a[0]),
+        ByteToHex => format!("ByteToHex({})", a[0]),
+        ByteFromHex => format!("ByteFromHex({})", a[0]),
+
+        // List
+        ListLen => format!("|{}|", a[0]),
+        ListGet => format!("ListGet({}, {})", a[0], a[1]),
+        ListHead => format!("ListHead({})", a[0]),
+        ListTail => format!("ListTail({})", a[0]),
+        ListPrepend => format!("[{}] + {}", a[0], a[1]),
+        ListPush => format!("{} + [{}]", a[0], a[1]),
+        ListAppend => format!("({} + [{}])", a[0], a[1]),
+        ListConcat => format!("({} + {})", a[0], a[1]),
+        ListReverse => format!("ListReverse({})", a[0]),
+        ListContains => format!("({} in {})", a[1], a[0]),
+        ListFind => format!("ListFind({}, {})", a[0], a[1]),
+        ListAny => format!("ListAny({}, {})", a[0], a[1]),
+        ListZip => format!("ListZip({}, {})", a[0], a[1]),
+
+        // Map
+        MapEmpty => "map[]".to_string(),
+        MapGet => format!("MapGet({}, {})", a[0], a[1]),
+        MapSet => format!("{}[{} := {}]", a[0], a[1], a[2]),
+        MapHas => format!("({} in {})", a[1], a[0]),
+        MapRemove => format!("MapRemove({}, {})", a[0], a[1]),
+        MapKeys => format!("MapKeys({})", a[0]),
+        MapValues => format!("MapValues({})", a[0]),
+        MapEntries => format!("MapEntries({})", a[0]),
+        MapLen => format!("MapLen({})", a[0]),
+        MapFromList => format!("MapFromList({})", a[0]),
     }
 }
 

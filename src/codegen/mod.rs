@@ -2,6 +2,7 @@
 ///
 /// The codegen module transforms a type-checked Aver AST into source code
 /// for a target language. Current backends: Rust deployment and Lean proof export.
+pub(crate) mod builtins;
 pub(crate) mod common;
 pub mod dafny;
 pub mod lean;
