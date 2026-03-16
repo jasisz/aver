@@ -23,6 +23,7 @@ fn neighbors(room: Int) -> List<Int>
 // ── Helpers ────────────────────────────────────────────────────
 
 fn containsInt(xs: List<Int>, n: Int) -> Bool
+    ? "True when n appears in xs."
     match xs
         [] -> false
         [x, ..rest] -> match x == n
@@ -30,6 +31,7 @@ fn containsInt(xs: List<Int>, n: Int) -> Bool
             false -> containsInt(rest, n)
 
 fn isAdjacent(from: Int, to: Int) -> Bool
+    ? "True when two rooms are directly connected."
     containsInt(neighbors(from), to)
 
 fn roomList(rooms: List<Int>) -> String
@@ -40,18 +42,27 @@ fn roomList(rooms: List<Int>) -> String
             [] -> Int.toString(r)
             _ -> "{Int.toString(r)}, {roomList(rest)}"
 
+// ── Modular arithmetic (safe wrapper) ────────────────────────
+
+fn mod(a: Int, m: Int) -> Int
+    ? "Non-negative remainder. Assumes m > 0."
+    match Int.mod(a, m)
+        Result.Ok(r) -> r
+        Result.Err(_) -> 0
+
 // ── Random ─────────────────────────────────────────────────────
 
 fn nextRand(seed: Int) -> Int
     ? "Linear congruential generator step."
-    Int.mod((seed * 1103515245 + 12345) / 65536, 32768)
+    mod((seed * 1103515245 + 12345) / 65536, 32768)
 
 fn randRoom(seed: Int) -> Int
-    Int.mod(seed, 20) + 1
+    ? "Map a seed value to a room number 1-20."
+    mod(seed, 20) + 1
 
 fn randNeighbor(room: Int, seed: Int) -> Int
     ? "Pick one of three neighbors pseudo-randomly."
-    match List.get(neighbors(room), Int.mod(seed, 3))
+    match List.get(neighbors(room), mod(seed, 3))
         Option.Some(r) -> r
         Option.None -> room
 
@@ -106,6 +117,7 @@ fn checkBats(game: Game) -> Outcome
             false -> Outcome.Continue(game)
 
 fn teleport(game: Game) -> Outcome
+    ? "Super bats drop you in a random room."
     s = nextRand(game.seed)
     checkRoom(Game.update(game, player = randRoom(s), seed = s))
 
@@ -124,6 +136,7 @@ fn shootArrow(game: Game, room: Int) -> Result<Outcome, String>
             false -> arrowMissed(game)
 
 fn arrowMissed(game: Game) -> Result<Outcome, String>
+    ? "Handle a missed arrow shot — check remaining arrows."
     match game.arrows == 1
         true -> Result.Ok(Outcome.Lose("Out of arrows. The Wumpus finds you."))
         false -> wumpusStirs(game)
@@ -140,14 +153,17 @@ fn wumpusStirs(game: Game) -> Result<Outcome, String>
 // ── Warnings (pure) ───────────────────────────────────────────
 
 fn wumpusNearby(game: Game) -> Bool
+    ? "True when the Wumpus is in an adjacent room."
     containsInt(neighbors(game.player), game.wumpus)
 
 fn pitNearby(game: Game) -> Bool
+    ? "True when a bottomless pit is in an adjacent room."
     match containsInt(neighbors(game.player), game.pit1)
         true -> true
         false -> containsInt(neighbors(game.player), game.pit2)
 
 fn batsNearby(game: Game) -> Bool
+    ? "True when super bats are in an adjacent room."
     match containsInt(neighbors(game.player), game.bat1)
         true -> true
         false -> containsInt(neighbors(game.player), game.bat2)
@@ -168,6 +184,7 @@ fn warningText(game: Game) -> String
 // ── I/O layer ──────────────────────────────────────────────────
 
 fn showRoom(game: Game) -> Unit
+    ? "Display current room, tunnels, and hazard warnings."
     ! [Console.print]
     Console.print("")
     Console.print("You are in room {Int.toString(game.player)}.")
@@ -186,12 +203,14 @@ fn gameLoop(game: Game) -> Result<String, String>
     dispatchInput(game, String.trim(action), String.trim(roomStr))
 
 fn dispatchInput(game: Game, action: String, roomStr: String) -> Result<String, String>
+    ? "Parse room number from input string."
     ! [Console.print, Console.readLine]
     match Int.fromString(roomStr)
         Result.Err(_) -> retry(game, "Enter a room number.")
         Result.Ok(room) -> dispatchAction(game, action, room)
 
 fn dispatchAction(game: Game, action: String, room: Int) -> Result<String, String>
+    ? "Route m/s action to move or shoot."
     ! [Console.print, Console.readLine]
     match action
         "m" -> handleResult(game, movePlayer(game, room))
@@ -199,12 +218,14 @@ fn dispatchAction(game: Game, action: String, room: Int) -> Result<String, Strin
         _ -> retry(game, "Type 'm' or 's'.")
 
 fn handleResult(game: Game, result: Result<Outcome, String>) -> Result<String, String>
+    ? "Unwrap action result: retry on error, resolve on outcome."
     ! [Console.print, Console.readLine]
     match result
         Result.Err(msg) -> retry(game, msg)
         Result.Ok(outcome) -> resolveOutcome(outcome)
 
 fn resolveOutcome(outcome: Outcome) -> Result<String, String>
+    ? "Win/Lose ends the game, Continue loops."
     ! [Console.print, Console.readLine]
     match outcome
         Outcome.Win(msg) -> Result.Ok(msg)
@@ -212,11 +233,12 @@ fn resolveOutcome(outcome: Outcome) -> Result<String, String>
         Outcome.Continue(game) -> gameLoop(game)
 
 fn retry(game: Game, msg: String) -> Result<String, String>
+    ? "Print an error message and re-enter the game loop."
     ! [Console.print, Console.readLine]
     Console.print(msg)
     gameLoop(game)
 
-// ── Entry point ────────────────────────────────────────────────
+// ── Entry point ──────────────────────────────────────────────────
 
 fn main() -> Unit
     ? "Starts Hunt the Wumpus."
@@ -234,6 +256,8 @@ fn main() -> Unit
 verify neighbors
     neighbors(1) => [2, 5, 8]
     neighbors(20) => [13, 16, 19]
+
+verify isAdjacent
     isAdjacent(1, 2) => true
     isAdjacent(1, 3) => false
 
@@ -245,6 +269,63 @@ verify containsInt
 verify roomList
     roomList([1, 2, 3]) => "1, 2, 3"
     roomList([7]) => "7"
+
+verify caveMap
+    List.len(caveMap()) => 20
+
+verify randRoom
+    randRoom(0) => 1
+    randRoom(19) => 20
+    randRoom(20) => 1
+
+verify randNeighbor
+    randNeighbor(1, 0) => 2
+    randNeighbor(1, 1) => 5
+    randNeighbor(1, 2) => 8
+
+verify mod
+    mod(10, 3) => 1
+    mod(20, 7) => 6
+    mod(0, 5) => 0
+
+verify nextRand
+    nextRand(42) => 19081
+    nextRand(0) => 0
+
+verify newGame
+    newGame(42).arrows => 5
+
+verify wumpusNearby
+    wumpusNearby(Game(player = 1, wumpus = 2, pit1 = 10, pit2 = 11, bat1 = 12, bat2 = 13, arrows = 5, seed = 0)) => true
+    wumpusNearby(Game(player = 1, wumpus = 3, pit1 = 10, pit2 = 11, bat1 = 12, bat2 = 13, arrows = 5, seed = 0)) => false
+
+verify pitNearby
+    pitNearby(Game(player = 1, wumpus = 10, pit1 = 5, pit2 = 11, bat1 = 12, bat2 = 13, arrows = 5, seed = 0)) => true
+    pitNearby(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5, seed = 0)) => false
+
+verify batsNearby
+    batsNearby(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 2, bat2 = 13, arrows = 5, seed = 0)) => true
+    batsNearby(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5, seed = 0)) => false
+
+verify checkBats
+    checkBats(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5, seed = 0)) => Outcome.Continue(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5, seed = 0))
+
+verify teleport
+    teleport(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5, seed = 42)) => Outcome.Continue(Game(player = 2, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5, seed = 19081))
+
+verify arrowMissed
+    arrowMissed(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 1, seed = 0)) => Result.Ok(Outcome.Lose("Out of arrows. The Wumpus finds you."))
+
+verify wumpusStirs
+    wumpusStirs(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 3, seed = 42)) => Result.Ok(Outcome.Continue(Game(player = 1, wumpus = 9, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 2, seed = 19081)))
+
+verify shootArrow
+    shootArrow(Game(player = 1, wumpus = 2, pit1 = 10, pit2 = 11, bat1 = 12, bat2 = 13, arrows = 5, seed = 0), 2) => Result.Ok(Outcome.Win("Your arrow strikes the Wumpus! You win!"))
+    shootArrow(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 1, seed = 0), 5) => Result.Ok(Outcome.Lose("Out of arrows. The Wumpus finds you."))
+    shootArrow(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5, seed = 0), 3) => Result.Err("You can't shoot there!")
+
+verify warningText
+    warningText(Game(player = 1, wumpus = 3, pit1 = 10, pit2 = 11, bat1 = 12, bat2 = 13, arrows = 5, seed = 0)) => ""
 
 verify checkRoom
     checkRoom(Game(player = 5, wumpus = 5, pit1 = 1, pit2 = 2, bat1 = 3, bat2 = 4, arrows = 5, seed = 0)) => Outcome.Lose("The Wumpus devours you!")
