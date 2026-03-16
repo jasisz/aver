@@ -109,21 +109,6 @@ verify toString
     toString(Json.JsonList([Json.JsonInt(1), Json.JsonNull])) => "[1,null]"
     toString(Json.JsonObject({"a" => Json.JsonInt(1), "b" => Json.JsonBool(false)})) => "{{\"a\":1,\"b\":false}}"
 
-verify toString law parseRoundtrip
-    given j: Json = [
-        Json.JsonNull,
-        Json.JsonBool(true),
-        Json.JsonBool(false),
-        Json.JsonInt(42),
-        Json.JsonFloat(3.5),
-        Json.JsonString("a\"b"),
-        Json.JsonList([Json.JsonInt(1), Json.JsonNull]),
-        Json.JsonObject({"a" => Json.JsonInt(1), "b" => Json.JsonBool(false)}),
-        Json.JsonObject({"nested" => Json.JsonList([Json.JsonString("x"), Json.JsonObject({"ok" => Json.JsonBool(true)})])})
-    ]
-    when jsonRoundtripSafe(j)
-    fromString(toString(j)) => Result.Ok(j)
-
 // ── Char helpers ──────────────────────────────────────────────────
 
 fn floatRoundtripSafe(f: Float) -> Bool
@@ -147,6 +132,16 @@ verify jsonListRoundtripSafe
     jsonListRoundtripSafe([]) => true
     jsonListRoundtripSafe([Json.JsonInt(1), Json.JsonBool(false)]) => true
 
+fn nonEmptyJsonListRoundtripSafe(items: List<Json>) -> Bool
+    ? "True when the array is non-empty and every element satisfies the JSON round-trip precondition."
+    match items
+        [] -> false
+        _ -> jsonListRoundtripSafe(items)
+
+verify nonEmptyJsonListRoundtripSafe
+    nonEmptyJsonListRoundtripSafe([]) => false
+    nonEmptyJsonListRoundtripSafe([Json.JsonInt(1), Json.JsonBool(false)]) => true
+
 fn jsonEntriesRoundtripSafe(entries: List<(String, Json)>) -> Bool
     ? "True when object values are safe and keys are distinct."
     match entries
@@ -162,6 +157,16 @@ verify jsonEntriesRoundtripSafe
     jsonEntriesRoundtripSafe([]) => true
     jsonEntriesRoundtripSafe([("a", Json.JsonInt(1)), ("b", Json.JsonBool(false))]) => true
     jsonEntriesRoundtripSafe([("a", Json.JsonInt(1)), ("a", Json.JsonBool(false))]) => false
+
+fn nonEmptyJsonEntriesRoundtripSafe(entries: List<(String, Json)>) -> Bool
+    ? "True when the object entry list is non-empty, distinct, and every value is round-trip safe."
+    match entries
+        [] -> false
+        _ -> jsonEntriesRoundtripSafe(entries)
+
+verify nonEmptyJsonEntriesRoundtripSafe
+    nonEmptyJsonEntriesRoundtripSafe([]) => false
+    nonEmptyJsonEntriesRoundtripSafe([("a", Json.JsonInt(1)), ("b", Json.JsonBool(false))]) => true
 
 fn jsonEntryKeys(entries: List<(String, Json)>) -> List<String>
     ? "Extract object keys in encounter order."
@@ -224,10 +229,6 @@ fn renderJsonEntries(entries: List<(String, Json)>) -> String
         [] -> ""
         [entry, ..tail] -> renderJsonEntriesTail(entryToString(entry), tail)
 
-verify renderJsonEntries
-    renderJsonEntries([]) => ""
-    renderJsonEntries([("a", Json.JsonInt(1)), ("b", Json.JsonBool(false))]) => "\"a\":1,\"b\":false"
-
 fn renderJsonEntriesTail(acc: String, rest: List<(String, Json)>) -> String
     ? "JSON helper: renderJsonEntriesTail."
     match rest
@@ -245,6 +246,40 @@ fn entryToString(entry: (String, Json)) -> String
 
 verify entryToString
     entryToString(("a\"b", Json.JsonInt(1))) => "\"a\\\"b\":1"
+
+fn jsonEntryKey(entry: (String, Json)) -> String
+    ? "JSON helper: jsonEntryKey."
+    match entry
+        (key, _) -> key
+
+verify jsonEntryKey
+    jsonEntryKey(("a", Json.JsonInt(1))) => "a"
+
+fn jsonEntryValue(entry: (String, Json)) -> Json
+    ? "JSON helper: jsonEntryValue."
+    match entry
+        (_, value) -> value
+
+verify jsonEntryValue
+    jsonEntryValue(("a", Json.JsonInt(1))) => Json.JsonInt(1)
+
+fn singletonJsonEntries(entry: (String, Json)) -> List<(String, Json)>
+    ? "JSON helper: singletonJsonEntries."
+    List.prepend(entry, [])
+
+verify singletonJsonEntries
+    singletonJsonEntries(("a", Json.JsonInt(1))) => [("a", Json.JsonInt(1))]
+
+fn prependJsonEntry(entry: (String, Json), tail: List<(String, Json)>) -> List<(String, Json)>
+    ? "JSON helper: prependJsonEntry."
+    List.prepend(entry, tail)
+
+fn jsonEntryRoundtripSafe(entry: (String, Json)) -> Bool
+    ? "JSON helper: jsonEntryRoundtripSafe."
+    jsonRoundtripSafe(jsonEntryValue(entry))
+
+verify jsonEntryRoundtripSafe
+    jsonEntryRoundtripSafe(("a", Json.JsonInt(1))) => true
 
 fn escapeJsonString(s: String) -> String
     ? "JSON helper: escapeJsonString."
@@ -461,6 +496,10 @@ fn finishString(s: String, nextPos: Int, segmentStart: Int, chunks: List<String>
 verify finishString
     finishString("abc\"", 4, 0, []) => ParseResult.Ok(Json.JsonString("abc"), 4)
 
+verify finishString law plainSegmentRoundtrip
+    given s: String = ["", "abc", "😀"]
+    finishString(s + "\"", String.len(s) + 1, 0, []) => ParseResult.Ok(Json.JsonString(s), String.len(s) + 1)
+
 fn validateChar(s: String, pos: Int, segmentStart: Int, chunks: List<String>, c: String) -> ParseResult
     ? "JSON helper: validateChar."
     match Char.toCode(c) < 32
@@ -470,6 +509,10 @@ fn validateChar(s: String, pos: Int, segmentStart: Int, chunks: List<String>, c:
 verify validateChar
     validateChar("\t", 0, 0, [], "\t") => ParseResult.Err("Unescaped control character", 0)
     validateChar("a\"", 0, 0, [], "a") => ParseResult.Ok(Json.JsonString("a"), 2)
+
+verify validateChar law printableCharRoundtrip
+    given c: String = ["a", "😀"]
+    validateChar(c + "\"", 0, 0, [], c) => ParseResult.Ok(Json.JsonString(c), String.len(c) + 1)
 
 fn parseEscape(s: String, pos: Int, slashPos: Int, segmentStart: Int, chunks: List<String>) -> ParseResult
     ? "JSON helper: parseEscape."
@@ -501,6 +544,22 @@ verify parseEscape
     parseEscape("\\f\"", 1, 0, 0, []) => ParseResult.Ok(Json.JsonString("\f"), 3)
     parseEscape("\\u0041\"", 1, 0, 0, []) => ParseResult.Ok(Json.JsonString("A"), 7)
     parseEscape("\\x\"", 1, 0, 0, []) => ParseResult.Err("Unknown escape: \\x", 1)
+
+verify parseEscape law escapedChunkRoundtrip
+    given dummy: Int = [0]
+    parseEscape("\\\"\"", 1, 0, 0, []) => ParseResult.Ok(Json.JsonString("\""), 3)
+
+verify parseEscape law slashEscapeRoundtrip
+    given dummy: Int = [0]
+    parseEscape("\\\\\"", 1, 0, 0, []) => ParseResult.Ok(Json.JsonString("\\"), 3)
+
+verify parseEscape law newlineEscapeRoundtrip
+    given dummy: Int = [0]
+    parseEscape("\\n\"", 1, 0, 0, []) => ParseResult.Ok(Json.JsonString("\n"), 3)
+
+verify parseEscape law unicodeEscapeRoundtrip
+    given dummy: Int = [0]
+    parseEscape("\\u0041\"", 1, 0, 0, []) => ParseResult.Ok(Json.JsonString("A"), 7)
 
 fn parseUnicode(s: String, pos: Int, escapePos: Int, chunks: List<String>) -> ParseResult
     ? "Parse \\uXXXX, including surrogate pairs."
@@ -665,6 +724,11 @@ verify startSignDigit
     startSignDigit("-8", 1, 0, "8") => ParseResult.Ok(Json.JsonInt(-8), 2)
     startSignDigit("-x", 1, 0, "x") => ParseResult.Err("Expected digit after '-'", 1)
 
+verify startSignDigit law negativeDigitRoundtrip
+    given n: Int = [-1, -42]
+    when n < 0
+    startSignDigit(toString(Json.JsonInt(n)), 1, 0, String.slice(toString(Json.JsonInt(n)), 1, 2)) => ParseResult.Ok(Json.JsonInt(n), String.len(toString(Json.JsonInt(n))))
+
 fn scanIntTail(s: String, pos: Int, start: Int, leadingZero: Bool) -> ParseResult
     ? "JSON helper: scanIntTail."
     match String.charAt(s, pos)
@@ -694,6 +758,10 @@ verify afterIntChar
     afterIntChar("1e2", 1, 0, "e") => ParseResult.Ok(Json.JsonFloat(100.0), 3)
     afterIntChar("1E2", 1, 0, "E") => ParseResult.Ok(Json.JsonFloat(100.0), 3)
     afterIntChar("1]", 1, 0, "]") => ParseResult.Ok(Json.JsonInt(1), 1)
+
+verify afterIntChar law terminatedIntRoundtrip
+    given n: Int = [1, 42]
+    afterIntChar(toString(Json.JsonInt(n)) + "]", String.len(toString(Json.JsonInt(n))), 0, "]") => ParseResult.Ok(Json.JsonInt(n), String.len(toString(Json.JsonInt(n))))
 
 fn scanFracFirst(s: String, pos: Int, start: Int) -> ParseResult
     ? "JSON helper: scanFracFirst."
@@ -792,6 +860,15 @@ verify finishNumber
     finishNumber("42", 0, 2, false) => ParseResult.Ok(Json.JsonInt(42), 2)
     finishNumber("4.2", 0, 3, true) => ParseResult.Ok(Json.JsonFloat(4.2), 3)
 
+verify finishNumber law fromCanonicalIntSlice
+    given n: Int = [-7, 42]
+    finishNumber(toString(Json.JsonInt(n)), 0, String.len(toString(Json.JsonInt(n))), false) => ParseResult.Ok(Json.JsonInt(n), String.len(toString(Json.JsonInt(n))))
+
+verify finishNumber law fromCanonicalFloatSlice
+    given f: Float = [3.5, -2.5]
+    when floatRoundtripSafe(f)
+    finishNumber(toString(Json.JsonFloat(f)), 0, String.len(toString(Json.JsonFloat(f))), true) => ParseResult.Ok(Json.JsonFloat(f), String.len(toString(Json.JsonFloat(f))))
+
 fn finishInt(num: String, pos: Int) -> ParseResult
     ? "JSON helper: finishInt."
     match Int.fromString(num)
@@ -802,6 +879,10 @@ verify finishInt
     finishInt("42", 2) => ParseResult.Ok(Json.JsonInt(42), 2)
     finishInt("x", 1) => ParseResult.Err("Invalid number: x", 1)
 
+verify finishInt law fromCanonicalInt
+    given n: Int = [-7, 0, 42]
+    finishInt(String.fromInt(n), String.len(String.fromInt(n))) => ParseResult.Ok(Json.JsonInt(n), String.len(String.fromInt(n)))
+
 fn finishFloat(num: String, pos: Int) -> ParseResult
     ? "JSON helper: finishFloat."
     match Float.fromString(num)
@@ -811,6 +892,11 @@ fn finishFloat(num: String, pos: Int) -> ParseResult
 verify finishFloat
     finishFloat("4.2", 3) => ParseResult.Ok(Json.JsonFloat(4.2), 3)
     finishFloat("x", 1) => ParseResult.Err("Invalid number: x", 1)
+
+verify finishFloat law fromCanonicalFloat
+    given f: Float = [3.5, 0.1, -2.5]
+    when floatRoundtripSafe(f)
+    finishFloat(String.fromFloat(f), String.len(String.fromFloat(f))) => ParseResult.Ok(Json.JsonFloat(f), String.len(String.fromFloat(f)))
 
 fn parseArray(s: String, pos: Int) -> ParseResult
     ? "JSON helper: parseArray."
@@ -937,6 +1023,167 @@ verify parseObjNext
     parseObjNext("}}", 0, {"a" => Json.JsonInt(1)}) => ParseResult.Ok(Json.JsonObject({"a" => Json.JsonInt(1)}), 1)
     parseObjNext(",\"b\":2}}", 0, {"a" => Json.JsonInt(1)}) => ParseResult.Ok(Json.JsonObject({"a" => Json.JsonInt(1), "b" => Json.JsonInt(2)}), 7)
     parseObjNext("x", 0, emptyJsonMap()) => ParseResult.Err("Expected ',' or '}'", 0)
+
+// ── Roundtrip law layers ──────────────────────────────────────────
+
+verify parseLiteral law boolRoundtrip
+    given b: Bool = [true, false]
+    parseLiteral(toString(Json.JsonBool(b)), 0, toString(Json.JsonBool(b)), Json.JsonBool(b)) => ParseResult.Ok(Json.JsonBool(b), String.len(toString(Json.JsonBool(b))))
+
+verify parseNumber law fromIntRoundtrip
+    given n: Int = [-7, 0, 42, 2500]
+    parseNumber(toString(Json.JsonInt(n)), 0) => ParseResult.Ok(Json.JsonInt(n), String.len(toString(Json.JsonInt(n))))
+
+verify parseNumber law fromFloatRoundtrip
+    given f: Float = [3.5, 0.1, -2.5]
+    when floatRoundtripSafe(f)
+    parseNumber(toString(Json.JsonFloat(f)), 0) => ParseResult.Ok(Json.JsonFloat(f), String.len(toString(Json.JsonFloat(f))))
+
+verify dispatchNumberOrErr law fromIntRoundtrip
+    given n: Int = [0, 7, 42, 2500]
+    when n >= 0
+    dispatchNumberOrErr(toString(Json.JsonInt(n)), 0, String.slice(toString(Json.JsonInt(n)), 0, 1)) => ParseResult.Ok(Json.JsonInt(n), String.len(toString(Json.JsonInt(n))))
+
+verify parseNumberSign law fromNegativeIntRoundtrip
+    given n: Int = [-1, -7, -42]
+    when n < 0
+    parseNumberSign(toString(Json.JsonInt(n)), 1, 0) => ParseResult.Ok(Json.JsonInt(n), String.len(toString(Json.JsonInt(n))))
+
+verify startNumberDigits law fromPositiveIntRoundtrip
+    given n: Int = [1, 7, 42, 2500]
+    when n > 0
+    startNumberDigits(toString(Json.JsonInt(n)), 0, String.slice(toString(Json.JsonInt(n)), 0, 1)) => ParseResult.Ok(Json.JsonInt(n), String.len(toString(Json.JsonInt(n))))
+
+verify scanIntTail law fromCanonicalIntTail
+    given n: Int = [0, 7, 42, 2500]
+    when n >= 0
+    scanIntTail(toString(Json.JsonInt(n)), 1, 0, n == 0) => ParseResult.Ok(Json.JsonInt(n), String.len(toString(Json.JsonInt(n))))
+
+verify escapeJsonString law parseStringRoundtrip
+    given s: String = ["", "hi", "a\"b", "line\nx", "\t", "\r", "\\", "😀"]
+    parseString("\"" + escapeJsonString(s) + "\"", 1) => ParseResult.Ok(Json.JsonString(s), String.len(escapeJsonString(s)) + 2)
+
+verify parseStringChunk law escapedStringRoundtrip
+    given s: String = ["", "hi", "a\"b", "line\nx", "\t", "\r", "\\", "😀"]
+    parseStringChunk("\"" + escapeJsonString(s) + "\"", 1, 1, []) => ParseResult.Ok(Json.JsonString(s), String.len(escapeJsonString(s)) + 2)
+
+verify renderJsonListTail law parseArrayNextRoundtrip
+    given head: Json = [
+        Json.JsonInt(1),
+        Json.JsonBool(false),
+        Json.JsonString("hi"),
+        Json.JsonList([Json.JsonInt(1)])
+    ]
+    given tail: List<Json> = [
+        [],
+        [Json.JsonNull],
+        [Json.JsonBool(false), Json.JsonInt(2)],
+        [Json.JsonObject({"ok" => Json.JsonBool(true)})]
+    ]
+    when jsonListRoundtripSafe(List.prepend(head, tail))
+    parseArrayNext(renderJsonListTail(toString(head), tail) + "]", String.len(toString(head)), [head]) => ParseResult.Ok(Json.JsonList(List.prepend(head, tail)), String.len(renderJsonListTail(toString(head), tail)) + 1)
+
+verify parseArrayElems law renderJsonListElemsRoundtrip
+    given items: List<Json> = [
+        [Json.JsonInt(1)],
+        [Json.JsonString("hi"), Json.JsonBool(false)],
+        [Json.JsonList([Json.JsonInt(1)]), Json.JsonObject({"ok" => Json.JsonBool(true)})]
+    ]
+    when nonEmptyJsonListRoundtripSafe(items)
+    parseArrayElems(renderJsonList(items) + "]", 0, []) => ParseResult.Ok(Json.JsonList(items), String.len(renderJsonList(items)) + 1)
+
+verify renderJsonList law parseArrayRoundtrip
+    given items: List<Json> = [
+        [],
+        [Json.JsonInt(1)],
+        [Json.JsonString("hi"), Json.JsonBool(false)],
+        [Json.JsonList([Json.JsonInt(1)]), Json.JsonObject({"ok" => Json.JsonBool(true)})]
+    ]
+    when jsonListRoundtripSafe(items)
+    parseArray(renderJsonList(items) + "]", 0) => ParseResult.Ok(Json.JsonList(items), String.len(renderJsonList(items)) + 1)
+
+verify entryToString law parseObjKeyRoundtrip
+    given entry: (String, Json) = [
+        ("a", Json.JsonInt(1)),
+        ("quote\"", Json.JsonBool(false)),
+        ("newline", Json.JsonString("a\"b")),
+        ("emoji😀", Json.JsonList([Json.JsonString("x")]))
+    ]
+    when jsonEntryRoundtripSafe(entry)
+    parseObjKey(entryToString(entry) + "}}", 1, emptyJsonMap()) => ParseResult.Ok(Json.JsonObject(Map.fromList(singletonJsonEntries(entry))), String.len(entryToString(entry)) + 1)
+
+verify parseObjKeyValue law valueRoundtrip
+    given entry: (String, Json) = [
+        ("a", Json.JsonInt(1)),
+        ("quote\"", Json.JsonBool(false)),
+        ("newline", Json.JsonString("a\"b")),
+        ("emoji😀", Json.JsonList([Json.JsonString("x")]))
+    ]
+    when jsonEntryRoundtripSafe(entry)
+    parseObjKeyValue(":" + toString(jsonEntryValue(entry)) + "}}", 0, emptyJsonMap(), Json.JsonString(jsonEntryKey(entry))) => ParseResult.Ok(Json.JsonObject(Map.fromList(singletonJsonEntries(entry))), String.len(toString(jsonEntryValue(entry))) + 2)
+
+verify renderJsonEntriesTail law parseObjNextRoundtrip
+    given entry: (String, Json) = [
+        ("a", Json.JsonInt(1)),
+        ("nested", Json.JsonBool(false)),
+        ("quote\"", Json.JsonString("a\"b"))
+    ]
+    given tail: List<(String, Json)> = [
+        [],
+        [("b", Json.JsonInt(2))],
+        [("nested", Json.JsonList([Json.JsonString("x")]))]
+    ]
+    when jsonEntriesRoundtripSafe(prependJsonEntry(entry, tail))
+    parseObjNext(renderJsonEntriesTail(entryToString(entry), tail) + "}}", String.len(entryToString(entry)), Map.fromList(singletonJsonEntries(entry))) => ParseResult.Ok(Json.JsonObject(Map.fromList(prependJsonEntry(entry, tail))), String.len(renderJsonEntriesTail(entryToString(entry), tail)) + 1)
+
+verify parseObjFields law renderJsonEntriesFieldsRoundtrip
+    given entries: List<(String, Json)> = [
+        [("a", Json.JsonInt(1))],
+        [("a", Json.JsonBool(false)), ("nested", Json.JsonList([Json.JsonString("x")]))],
+        [("quote\"", Json.JsonString("a\"b")), ("newline", Json.JsonString("line\nx"))]
+    ]
+    when nonEmptyJsonEntriesRoundtripSafe(entries)
+    parseObjFields(renderJsonEntries(entries) + "}}", 0, emptyJsonMap()) => ParseResult.Ok(Json.JsonObject(Map.fromList(entries)), String.len(renderJsonEntries(entries)) + 1)
+
+verify renderJsonEntries law parseObjectRoundtrip
+    given entries: List<(String, Json)> = [
+        [],
+        [("a", Json.JsonInt(1))],
+        [("a", Json.JsonBool(false)), ("nested", Json.JsonList([Json.JsonString("x")]))],
+        [("quote\"", Json.JsonString("a\"b")), ("newline", Json.JsonString("line\nx"))]
+    ]
+    when jsonEntriesRoundtripSafe(entries)
+    parseObject(renderJsonEntries(entries) + "}}", 0) => ParseResult.Ok(Json.JsonObject(Map.fromList(entries)), String.len(renderJsonEntries(entries)) + 1)
+
+verify toString law parseValueRoundtrip
+    given j: Json = [
+        Json.JsonNull,
+        Json.JsonBool(true),
+        Json.JsonBool(false),
+        Json.JsonInt(42),
+        Json.JsonFloat(3.5),
+        Json.JsonString("a\"b"),
+        Json.JsonList([Json.JsonInt(1), Json.JsonNull]),
+        Json.JsonObject({"a" => Json.JsonInt(1), "b" => Json.JsonBool(false)}),
+        Json.JsonObject({"nested" => Json.JsonList([Json.JsonString("x"), Json.JsonObject({"ok" => Json.JsonBool(true)})])})
+    ]
+    when jsonRoundtripSafe(j)
+    parseValue(toString(j), 0) => ParseResult.Ok(j, String.len(toString(j)))
+
+verify toString law parseRoundtrip
+    given j: Json = [
+        Json.JsonNull,
+        Json.JsonBool(true),
+        Json.JsonBool(false),
+        Json.JsonInt(42),
+        Json.JsonFloat(3.5),
+        Json.JsonString("a\"b"),
+        Json.JsonList([Json.JsonInt(1), Json.JsonNull]),
+        Json.JsonObject({"a" => Json.JsonInt(1), "b" => Json.JsonBool(false)}),
+        Json.JsonObject({"nested" => Json.JsonList([Json.JsonString("x"), Json.JsonObject({"ok" => Json.JsonBool(true)})])})
+    ]
+    when jsonRoundtripSafe(j)
+    fromString(toString(j)) => Result.Ok(j)
 
 fn getField(j: Json, key: String) -> Option<Json>
     ? "JSON helper: getField."

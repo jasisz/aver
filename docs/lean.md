@@ -5,7 +5,8 @@ Lean is the proof-export backend for Aver.
 Use it when you want:
 - Lean 4 artifacts for pure Aver code
 - executable proof obligations from colocated `verify`
-- universal theorems for supported `verify law` shapes
+- universal theorems for supported `verify law` shapes, with explicit
+  sampled/domain fallback for the rest
 - a path from Aver code to formal verification
 
 This is not a second execution runtime for effectful programs.
@@ -51,8 +52,10 @@ When Aver can auto-prove the universal law shape, it also emits:
 - `theorem <fn>_law_<name> : ∀ ..., lhs = rhs := by ...`
 
 `when` clauses translate to extra theorem premises in Lean. Generic auto-proof
-strategies still run on those guarded laws; only unmatched guarded shapes fall
-back to sampled-domain case splits.
+strategies still run on those guarded laws, but unmatched shapes fall back to
+domain-guarded theorems over the explicit `given` cases. Parser/render
+roundtrip laws such as `parse(render(x)) = x` currently live in that fallback
+bucket unless some other generic shape discharges them first.
 
 When `law <ident>` names an existing pure function and the law body compares `foo(args)` against `fooSpec(args)`, Aver treats that as a canonical spec reference:
 - the generated theorem/comment uses the canonical `<fn>_eq_<spec>` naming
@@ -98,9 +101,16 @@ Conservative auto-proofs currently cover:
 - commutative law on simple `Int` binary wrappers (`a + b`, `a * b`)
 - associative law on same wrapper shape (`f(f(a,b),c) = f(a,f(b,c))`)
 - identity law on same wrapper shape (`f(a,0)=a`, `f(0,a)=a`, `f(a,1)=a`, `f(1,a)=a`)
+- direct structural induction on recursive sum types whose recursive fields are bare self-references, not container-wrapped occurrences
 - canonical implementation-vs-spec laws when the backend can discharge them structurally
+- canonical implementation-vs-spec laws that become definitionally equal after conservative `simp`-style identity cleanup (for example `x * x` vs `x * x + 0`)
 - canonical implementation-vs-spec laws for second-order linear `Int` recurrences with a pair-state tail-recursive worker
 - canonical implementation-vs-spec laws over linear `Int` arithmetic, proved via `change ...` and `omega`
+
+The generated Lean prelude also includes one-character separator lemmas such as
+`AverString.split` over `String.join(_, sep) ++ sep` for separator-free parts.
+Those helper lemmas support exported code, but they are not themselves a claim
+that delimiter-based parser/render laws are universally auto-proved.
 
 ## Proof mode
 
@@ -113,13 +123,15 @@ aver proof my_module.av --verify-mode auto -o out/
 That combination means:
 - regular `verify` cases become executable Lean checks via `native_decide`
 - supported `verify law` shapes get real universal proofs
+- unsupported `verify law` shapes stay as sample theorems and checked-domain
+  theorems, with the universal theorem omitted
 - recursive pure code inside the supported proof subset is emitted as total Lean defs
 - unsupported recursive pure functions are called out explicitly and emitted with `partial` fallback
 
 The current proof export supports:
 - single-function `Int` countdown on an `Int` parameter (`n -> n - 1`)
-- single-function second-order linear `Int` recurrences with `n < 0` guard and `0/1` bases, emitted via a private `Nat` helper
-- single-function structural recursion on first `List<_>` parameter
+- single-function second-order affine `Int` recurrences with `n < 0` guard, `0/1` case split, and a matching pair-state tail worker, emitted via a private `Nat` helper
+- single-function structural recursion on any `List<_>` parameter
 - single-function `String + pos` recursion on `(String, Int)` signatures
 - mutual recursion SCC with first-parameter `Int` countdown
 - mutual recursion SCC with ranked `String + pos` progress
@@ -127,32 +139,18 @@ The current proof export supports:
 
 ## Current end-to-end examples
 
-These examples currently go through Lean export and `lake build` end to end:
+These examples are currently smoke-tested end to end with
+`aver proof --verify-mode auto` plus `lake build`:
 
-- `examples/formal/spec_laws.av`
 - `examples/formal/law_auto.av`
-- `examples/data/map.av`
-- `examples/data/date.av`
 - `examples/data/fibonacci.av`
-- `examples/core/grok_s_language.av`
-- `examples/core/lambda.av`
+- `examples/data/quicksort.av`
 - `examples/data/rle.av`
 - `examples/data/json.av`
-- `examples/apps/mission_control.av`
-- `examples/apps/notepad/store.av`
-- `examples/core/temperature.av`
-- `examples/formal/trust_check.av`
-- `examples/core/user_record.av`
-- `examples/core/lists.av`
-- `examples/core/calculator.av`
-- `examples/core/shapes.av`
-- `examples/core/effects_explicit.av`
+- `examples/core/grok_s_language.av`
 
-These examples currently build with plain Lean export:
-
-- `examples/core/hello.av`
-- `examples/core/shapes.av`
-- `examples/core/calculator.av`
+Other modules have unit coverage for proof-subset classification and generated
+Lean snippets, but are not currently listed here as end-to-end smoke cases.
 
 ## Hard-fail guarantees
 

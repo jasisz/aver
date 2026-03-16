@@ -3,7 +3,6 @@
 /// This module is intentionally isolated from `toplevel.rs` so all heuristic
 /// matching and proof-shape logic lives in one place.
 mod arithmetic;
-mod guarded;
 mod induction;
 mod maps;
 mod sampled;
@@ -14,6 +13,7 @@ use super::VerifyEmitMode;
 use super::expr::aver_name_to_lean;
 use crate::ast::{VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
+use crate::verify_law::{collect_missing_helper_law_hints, missing_helper_law_message};
 use sampled::emit_guarded_domain_law;
 
 pub struct AutoProof {
@@ -43,12 +43,6 @@ pub fn emit_verify_law_forall_auto_proof(
         .map(|g| aver_name_to_lean(&g.name))
         .collect();
     let proof_intro_names = extend_intro_names_with_premises(law, &intro_names);
-
-    if let Some(proof) =
-        guarded::emit_guarded_universal_law(vb, law, ctx, &intro_names, theorem_base, quant_params)
-    {
-        return Some(proof);
-    }
 
     // Strategy 1: Structural induction on recursive sum types.
     if let Some(proof) = induction::emit_structural_induction_law(
@@ -115,24 +109,6 @@ pub fn emit_verify_law_forall_auto_proof(
             )
         })
         .or_else(|| {
-            maps::emit_recursive_map_presence_law(vb, law, ctx, &proof_intro_names).map(
-                |proof_lines| AutoProof {
-                    support_lines: Vec::new(),
-                    proof_lines,
-                    replaces_theorem: false,
-                },
-            )
-        })
-        .or_else(|| {
-            maps::emit_recursive_map_tracked_count_law(vb, law, ctx, &proof_intro_names).map(
-                |proof_lines| AutoProof {
-                    support_lines: Vec::new(),
-                    proof_lines,
-                    replaces_theorem: false,
-                },
-            )
-        })
-        .or_else(|| {
             emit_guarded_domain_law(law).map(|proof_lines| AutoProof {
                 support_lines: Vec::new(),
                 proof_lines,
@@ -142,12 +118,21 @@ pub fn emit_verify_law_forall_auto_proof(
 }
 
 pub fn emit_verify_law_support_theorems(
-    _vb: &VerifyBlock,
+    vb: &VerifyBlock,
     _law: &VerifyLaw,
-    _ctx: &CodegenContext,
+    ctx: &CodegenContext,
     _theorem_base: &str,
 ) -> Vec<String> {
-    Vec::new()
+    collect_missing_helper_law_hints(&ctx.items, &ctx.fn_sigs)
+        .into_iter()
+        .find(|hint| hint.line == vb.line && hint.fn_name == vb.fn_name)
+        .map(|hint| {
+            vec![
+                format!("-- hint: {}", missing_helper_law_message(&hint)),
+                "-- hint: the main theorem can stay generic, but it still needs those helper laws as intermediate theorems".to_string(),
+            ]
+        })
+        .unwrap_or_default()
 }
 
 pub(super) fn intro_then(intro_names: &[String], steps: Vec<String>) -> Vec<String> {

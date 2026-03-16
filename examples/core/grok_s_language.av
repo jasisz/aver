@@ -57,6 +57,19 @@ verify toString
     toString(Sexpr.Quoted(Sexpr.AtomSym("pizza"))) => "'pizza"
     toString(Sexpr.List([Sexpr.AtomSym("add"), Sexpr.AtomNum(1), Sexpr.AtomNum(2)])) => "(add 1 2)"
 
+verify toString law parseSexprRoundtrip
+    given e: Sexpr = [
+        Sexpr.AtomNum(42),
+        Sexpr.AtomSym("hello"),
+        Sexpr.AtomSym("hello world"),
+        Sexpr.Quoted(Sexpr.AtomSym("pizza")),
+        Sexpr.List([Sexpr.AtomSym("add"), Sexpr.AtomNum(1), Sexpr.AtomNum(2)]),
+        Sexpr.List([Sexpr.AtomSym("bad sym"), Sexpr.AtomNum(2)]),
+        Sexpr.List([Sexpr.AtomSym("quote"), Sexpr.Quoted(Sexpr.List([Sexpr.AtomSym("x"), Sexpr.AtomNum(3)]))])
+    ]
+    when validSymbolNames(e)
+    parseSexpr(toString(e), 0) => ParseResult.Ok(e, String.len(toString(e)))
+
 verify toString law parseRoundtrip
     given e: Sexpr = [
         Sexpr.AtomNum(42),

@@ -367,6 +367,8 @@ Aver has three backend paths:
 - interpreter-first workflow for `run`, `check`, `verify`, `replay`, and `context`
 - Rust compilation for generating a native Cargo project with `aver compile`
 - Lean proof export for pure core logic and `verify` / `verify law` obligations with `aver proof`
+  Supported law shapes become real universal theorems; the rest stay as
+  executable samples or checked-domain theorems instead of fake proofs.
 
 The interpreter and generated Rust now share more practical behavior through `aver-rt` than the name alone suggests: list teardown, deep `append -> match` paths, and string helpers such as `String.slice` are intentionally centralized there so one runtime fix can improve both execution paths.
 
@@ -387,6 +389,9 @@ lake build
 ```
 
 Rust is the deployment backend. Lean is the proof-export backend for the pure subset of Aver.
+In `--verify-mode auto`, Lean export is intentionally conservative: supported
+law shapes get universal theorems, and unmatched shapes fall back to sample or
+explicit-domain artifacts.
 
 For backend-specific details, see:
 - [docs/rust.md](docs/rust.md) for Cargo generation and deployment flow
@@ -426,8 +431,8 @@ Curated shared examples:
 | `core/calculator.av` | Result types, match, decision blocks |
 | `core/shapes.av` | Sum types, qualified constructors (`Shape.Circle`), match on variants |
 | `data/fibonacci.av` | Tail recursion, records, decision blocks |
-| `formal/law_auto.av` | Lean proof export, `verify law`, auto-proved universal theorems |
-| `formal/spec_laws.av` | Implementation-vs-spec laws (`verify foo law fooSpec`) and Lean spec theorems |
+| `formal/law_auto.av` | Lean proof export, `verify law`, conservative universal auto-proofs plus sampled/domain fallback |
+| `formal/spec_laws.av` | Implementation-vs-spec laws (`verify foo law fooSpec`) and Lean spec theorems for supported shapes |
 | `apps/mission_control.av` | Command parser, pure state machine, effectful shell |
 | `modules/app.av` | Module imports via `depends [Data.Fibonacci]` |
 | `services/console_demo.av` | Console service and replay-friendly effectful flow |

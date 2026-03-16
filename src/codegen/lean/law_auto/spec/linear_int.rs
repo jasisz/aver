@@ -1,118 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{BinOp, Expr, MatchArm, StrPart, VerifyBlock, VerifyLaw};
+use crate::ast::{BinOp, Expr, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 use crate::verify_law::canonical_spec_ref;
 
 use super::super::super::expr::emit_expr;
-use super::super::shared::{body_terminal_expr, callee_matches_name, find_fn_def};
+use super::super::shared::{body_terminal_expr, callee_matches_name, find_fn_def, substitute_expr};
 use super::super::{AutoProof, intro_then};
-
-fn substitute_expr(expr: &Expr, bindings: &HashMap<&str, &Expr>) -> Expr {
-    match expr {
-        Expr::Literal(lit) => Expr::Literal(lit.clone()),
-        Expr::Ident(name) => bindings
-            .get(name.as_str())
-            .map_or_else(|| Expr::Ident(name.clone()), |bound| (*bound).clone()),
-        Expr::Attr(base, field) => {
-            Expr::Attr(Box::new(substitute_expr(base, bindings)), field.clone())
-        }
-        Expr::FnCall(callee, args) => Expr::FnCall(
-            Box::new(substitute_expr(callee, bindings)),
-            args.iter()
-                .map(|arg| substitute_expr(arg, bindings))
-                .collect(),
-        ),
-        Expr::BinOp(op, left, right) => Expr::BinOp(
-            op.clone(),
-            Box::new(substitute_expr(left, bindings)),
-            Box::new(substitute_expr(right, bindings)),
-        ),
-        Expr::Match {
-            subject,
-            arms,
-            line,
-        } => Expr::Match {
-            subject: Box::new(substitute_expr(subject, bindings)),
-            arms: arms
-                .iter()
-                .map(|arm| MatchArm {
-                    pattern: arm.pattern.clone(),
-                    body: Box::new(substitute_expr(&arm.body, bindings)),
-                })
-                .collect(),
-            line: *line,
-        },
-        Expr::Constructor(name, inner) => Expr::Constructor(
-            name.clone(),
-            inner
-                .as_ref()
-                .map(|expr| Box::new(substitute_expr(expr, bindings))),
-        ),
-        Expr::ErrorProp(inner) => Expr::ErrorProp(Box::new(substitute_expr(inner, bindings))),
-        Expr::InterpolatedStr(parts) => Expr::InterpolatedStr(
-            parts
-                .iter()
-                .map(|part| match part {
-                    StrPart::Literal(s) => StrPart::Literal(s.clone()),
-                    StrPart::Parsed(expr) => {
-                        StrPart::Parsed(Box::new(substitute_expr(expr, bindings)))
-                    }
-                })
-                .collect(),
-        ),
-        Expr::List(items) => Expr::List(
-            items
-                .iter()
-                .map(|item| substitute_expr(item, bindings))
-                .collect(),
-        ),
-        Expr::Tuple(items) => Expr::Tuple(
-            items
-                .iter()
-                .map(|item| substitute_expr(item, bindings))
-                .collect(),
-        ),
-        Expr::MapLiteral(entries) => Expr::MapLiteral(
-            entries
-                .iter()
-                .map(|(key, value)| {
-                    (
-                        substitute_expr(key, bindings),
-                        substitute_expr(value, bindings),
-                    )
-                })
-                .collect(),
-        ),
-        Expr::RecordCreate { type_name, fields } => Expr::RecordCreate {
-            type_name: type_name.clone(),
-            fields: fields
-                .iter()
-                .map(|(name, value)| (name.clone(), substitute_expr(value, bindings)))
-                .collect(),
-        },
-        Expr::RecordUpdate {
-            type_name,
-            base,
-            updates,
-        } => Expr::RecordUpdate {
-            type_name: type_name.clone(),
-            base: Box::new(substitute_expr(base, bindings)),
-            updates: updates
-                .iter()
-                .map(|(name, value)| (name.clone(), substitute_expr(value, bindings)))
-                .collect(),
-        },
-        Expr::TailCall(call) => Expr::TailCall(Box::new((
-            call.0.clone(),
-            call.1
-                .iter()
-                .map(|arg| substitute_expr(arg, bindings))
-                .collect(),
-        ))),
-        Expr::Resolved(slot) => Expr::Resolved(*slot),
-    }
-}
 
 fn is_linear_int_expr(expr: &Expr, allowed_idents: &HashSet<&str>) -> bool {
     match expr {

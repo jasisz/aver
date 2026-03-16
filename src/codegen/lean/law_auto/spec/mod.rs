@@ -1,5 +1,6 @@
 mod linear_int;
 mod linear_recurrence2;
+mod simp_normalized;
 
 use crate::ast::{Expr, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
@@ -51,11 +52,16 @@ pub(super) fn emit_spec_function_equivalence_law(
         return try_side(&law.lhs, &law.rhs).or_else(|| try_side(&law.rhs, &law.lhs));
     }
 
-    linear_recurrence2::emit_second_order_linear_recurrence_spec_equivalence_law(
-        vb,
-        law,
-        ctx,
-        intro_names,
-    )
-    .or_else(|| linear_int::emit_linear_int_omega_spec_equivalence_law(vb, law, ctx, intro_names))
+    simp_normalized::emit_simp_normalized_spec_equivalence_law(vb, law, ctx, intro_names)
+        .or_else(|| {
+            linear_recurrence2::emit_second_order_linear_recurrence_spec_equivalence_law(
+                vb,
+                law,
+                ctx,
+                intro_names,
+            )
+        })
+        .or_else(|| {
+            linear_int::emit_linear_int_omega_spec_equivalence_law(vb, law, ctx, intro_names)
+        })
 }

@@ -9,7 +9,7 @@ use colored::Colorize;
 use aver::ast::{Expr, Pattern, Stmt, TopLevel, TypeDef, VerifyKind};
 use aver::checker::{
     CheckFinding, check_module_intent_with_sigs_in, collect_verify_coverage_warnings_in,
-    index_decisions, merge_verify_blocks, run_verify,
+    collect_verify_law_dependency_warnings_in, index_decisions, merge_verify_blocks, run_verify,
 };
 use aver::codegen;
 use aver::codegen::ModuleInfo;
@@ -23,6 +23,10 @@ use aver::tail_check::collect_non_tail_recursion_warnings_with_sigs;
 use aver::tco;
 use aver::types::checker::run_type_check_full;
 use aver::types::{Type, parse_type_str};
+use aver::verify_law::{
+    collect_contextual_helper_law_hints, collect_missing_helper_law_hints,
+    contextual_helper_law_message, missing_helper_law_message,
+};
 
 use crate::shared::{
     compile_program_for_exec, compute_memo_fns, format_type_errors, load_dep_modules, parse_file,
@@ -945,6 +949,8 @@ fn run_check_for_file(file: &str, module_root: &str, deps: bool) -> Result<bool,
         let findings =
             check_module_intent_with_sigs_in(items, Some(&tc_result.fn_sigs), Some(path));
         let coverage_warnings = collect_verify_coverage_warnings_in(items, Some(path));
+        let law_dependency_warnings =
+            collect_verify_law_dependency_warnings_in(items, &tc_result.fn_sigs, Some(path));
         let unused_exposes_warnings = unused_exposes_by_file
             .get(&canonical_path_key(path))
             .cloned()
@@ -952,6 +958,7 @@ fn run_check_for_file(file: &str, module_root: &str, deps: bool) -> Result<bool,
         if findings.errors.is_empty()
             && findings.warnings.is_empty()
             && coverage_warnings.is_empty()
+            && law_dependency_warnings.is_empty()
             && unused_exposes_warnings.is_empty()
         {
             println!("  {} All intent/desc/verify present", "✓".green());
@@ -965,6 +972,10 @@ fn run_check_for_file(file: &str, module_root: &str, deps: bool) -> Result<bool,
                 println!("  {}", format!("warning[{}]: {}", loc, w.message).yellow());
             }
             for w in &coverage_warnings {
+                let loc = finding_location(w, entry_module.as_deref());
+                println!("  {}", format!("warning[{}]: {}", loc, w.message).yellow());
+            }
+            for w in &law_dependency_warnings {
                 let loc = finding_location(w, entry_module.as_deref());
                 println!("  {}", format!("warning[{}]: {}", loc, w.message).yellow());
             }
@@ -983,6 +994,7 @@ fn run_check_for_file(file: &str, module_root: &str, deps: bool) -> Result<bool,
         if findings.errors.is_empty()
             && findings.warnings.is_empty()
             && coverage_warnings.is_empty()
+            && law_dependency_warnings.is_empty()
             && unused_exposes_warnings.is_empty()
             && !non_tail_warnings.is_empty()
         {
@@ -1384,16 +1396,36 @@ pub(super) fn cmd_proof(
 ) {
     let (ctx, _module_root) = build_codegen_context(file, project_name, module_root_override);
 
-    let proof_issues = lean_codegen::proof_mode_issues(&ctx);
-    if !proof_issues.is_empty() {
+    let proof_issues = lean_codegen::proof_mode_findings(&ctx);
+    for issue in proof_issues {
         eprintln!(
             "{}",
-            "Proof-mode warnings (unsupported recursive shapes will fall back to partial defs):"
-                .yellow()
+            format!("warning[{}:1]: {}", issue.line, issue.message).yellow()
         );
-        for issue in proof_issues {
-            eprintln!("  - {}", issue);
-        }
+    }
+    let missing_helper_hints = collect_missing_helper_law_hints(&ctx.items, &ctx.fn_sigs);
+    for hint in missing_helper_hints {
+        eprintln!(
+            "{}",
+            format!(
+                "warning[{}:1]: {}",
+                hint.line,
+                missing_helper_law_message(&hint)
+            )
+            .yellow()
+        );
+    }
+    let contextual_helper_hints = collect_contextual_helper_law_hints(&ctx.items, &ctx.fn_sigs);
+    for hint in contextual_helper_hints {
+        eprintln!(
+            "{}",
+            format!(
+                "warning[{}:1]: {}",
+                hint.line,
+                contextual_helper_law_message(&hint)
+            )
+            .yellow()
+        );
     }
 
     let verify_mode = match verify_mode {

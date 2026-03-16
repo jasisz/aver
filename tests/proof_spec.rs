@@ -70,6 +70,16 @@ fn proof_export_builds_fibonacci_when_lake_is_available() {
 }
 
 #[test]
+fn proof_export_builds_rle_when_lake_is_available() {
+    assert_proof_builds("examples/data/rle.av", "aver-proof-rle");
+}
+
+#[test]
+fn proof_export_builds_quicksort_when_lake_is_available() {
+    assert_proof_builds("examples/data/quicksort.av", "aver-proof-quicksort");
+}
+
+#[test]
 fn proof_export_builds_json_when_lake_is_available() {
     assert_proof_builds("examples/data/json.av", "aver-proof-json");
 }

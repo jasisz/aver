@@ -211,10 +211,10 @@ pub fn emit_builtin_call(name: &str, args: &[Expr], ctx: &CodegenContext) -> Opt
         }
 
         // ---- List ----
-        "List.len" => {
-            let arg = super::expr::emit_expr(&args[0], ctx);
-            Some(format!("{}.length", paren_if_complex(&arg)))
-        }
+        "List.len" => Some(format!(
+            "{}.length",
+            emit_list_length_subject(&args[0], ctx)
+        )),
         "List.append" => {
             let list = super::expr::emit_expr(&args[0], ctx);
             let item = super::expr::emit_expr(&args[1], ctx);
@@ -331,6 +331,16 @@ pub fn emit_builtin_call(name: &str, args: &[Expr], ctx: &CodegenContext) -> Opt
     }
 }
 
+fn emit_list_length_subject(arg: &Expr, ctx: &CodegenContext) -> String {
+    match arg {
+        // `[].length` leaves Lean with an unconstrained element type in theorem
+        // headers. `List.length` ignores the element type, so `Unit` is a safe
+        // monomorphic placeholder here.
+        Expr::List(items) if items.is_empty() => "(([] : List Unit))".to_string(),
+        _ => paren_if_complex(&super::expr::emit_expr(arg, ctx)),
+    }
+}
+
 /// Wrap in parens if the string looks like a compound expression.
 fn paren_if_complex(s: &str) -> String {
     if s.contains(' ') && !s.starts_with('(') && !s.starts_with('"') {
@@ -378,5 +388,14 @@ mod tests {
             .expect("Option.withDefault should be emitted");
 
         assert_eq!(emitted, "((Char.fromCode 8).getD \"\")");
+    }
+
+    #[test]
+    fn list_len_annotates_empty_list_in_theorem_friendly_form() {
+        let ctx = empty_ctx();
+        let emitted = emit_builtin_call("List.len", &[Expr::List(vec![])], &ctx)
+            .expect("List.len should be emitted");
+
+        assert_eq!(emitted, "(([] : List Unit)).length");
     }
 }

@@ -11,6 +11,115 @@ pub(super) fn body_terminal_expr(body: &FnBody) -> Option<&Expr> {
     }
 }
 
+pub(super) fn substitute_expr(
+    expr: &Expr,
+    bindings: &std::collections::HashMap<&str, &Expr>,
+) -> Expr {
+    match expr {
+        Expr::Literal(lit) => Expr::Literal(lit.clone()),
+        Expr::Ident(name) => bindings
+            .get(name.as_str())
+            .map_or_else(|| Expr::Ident(name.clone()), |bound| (*bound).clone()),
+        Expr::Attr(base, field) => {
+            Expr::Attr(Box::new(substitute_expr(base, bindings)), field.clone())
+        }
+        Expr::FnCall(callee, args) => Expr::FnCall(
+            Box::new(substitute_expr(callee, bindings)),
+            args.iter()
+                .map(|arg| substitute_expr(arg, bindings))
+                .collect(),
+        ),
+        Expr::BinOp(op, left, right) => Expr::BinOp(
+            op.clone(),
+            Box::new(substitute_expr(left, bindings)),
+            Box::new(substitute_expr(right, bindings)),
+        ),
+        Expr::Match {
+            subject,
+            arms,
+            line,
+        } => Expr::Match {
+            subject: Box::new(substitute_expr(subject, bindings)),
+            arms: arms
+                .iter()
+                .map(|arm| crate::ast::MatchArm {
+                    pattern: arm.pattern.clone(),
+                    body: Box::new(substitute_expr(&arm.body, bindings)),
+                })
+                .collect(),
+            line: *line,
+        },
+        Expr::Constructor(name, inner) => Expr::Constructor(
+            name.clone(),
+            inner
+                .as_ref()
+                .map(|expr| Box::new(substitute_expr(expr, bindings))),
+        ),
+        Expr::ErrorProp(inner) => Expr::ErrorProp(Box::new(substitute_expr(inner, bindings))),
+        Expr::InterpolatedStr(parts) => Expr::InterpolatedStr(
+            parts
+                .iter()
+                .map(|part| match part {
+                    crate::ast::StrPart::Literal(s) => crate::ast::StrPart::Literal(s.clone()),
+                    crate::ast::StrPart::Parsed(expr) => {
+                        crate::ast::StrPart::Parsed(Box::new(substitute_expr(expr, bindings)))
+                    }
+                })
+                .collect(),
+        ),
+        Expr::List(items) => Expr::List(
+            items
+                .iter()
+                .map(|item| substitute_expr(item, bindings))
+                .collect(),
+        ),
+        Expr::Tuple(items) => Expr::Tuple(
+            items
+                .iter()
+                .map(|item| substitute_expr(item, bindings))
+                .collect(),
+        ),
+        Expr::MapLiteral(entries) => Expr::MapLiteral(
+            entries
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        substitute_expr(key, bindings),
+                        substitute_expr(value, bindings),
+                    )
+                })
+                .collect(),
+        ),
+        Expr::RecordCreate { type_name, fields } => Expr::RecordCreate {
+            type_name: type_name.clone(),
+            fields: fields
+                .iter()
+                .map(|(name, value)| (name.clone(), substitute_expr(value, bindings)))
+                .collect(),
+        },
+        Expr::RecordUpdate {
+            type_name,
+            base,
+            updates,
+        } => Expr::RecordUpdate {
+            type_name: type_name.clone(),
+            base: Box::new(substitute_expr(base, bindings)),
+            updates: updates
+                .iter()
+                .map(|(name, value)| (name.clone(), substitute_expr(value, bindings)))
+                .collect(),
+        },
+        Expr::TailCall(call) => Expr::TailCall(Box::new((
+            call.0.clone(),
+            call.1
+                .iter()
+                .map(|arg| substitute_expr(arg, bindings))
+                .collect(),
+        ))),
+        Expr::Resolved(slot) => Expr::Resolved(*slot),
+    }
+}
+
 pub(super) fn law_simp_defs(
     ctx: &CodegenContext,
     vb: &VerifyBlock,
@@ -376,23 +485,6 @@ pub(super) fn map_get_after_fn_call<'a>(
     Some((&fn_args[0], &fn_args[1]))
 }
 
-pub(super) fn map_has_after_agg_call<'a>(
-    expr: &'a Expr,
-    fn_name: &str,
-) -> Option<(&'a Expr, &'a Expr)> {
-    let has_args = call_named_args(expr, "Map.has")?;
-    if has_args.len() != 2 {
-        return None;
-    }
-    let Expr::FnCall(callee, fn_args) = &has_args[0] else {
-        return None;
-    };
-    if fn_args.len() != 1 || !callee_matches_name(callee, fn_name) {
-        return None;
-    }
-    Some((&fn_args[0], &has_args[1]))
-}
-
 pub(super) fn option_with_default_args(expr: &Expr) -> Option<(&Expr, &Expr)> {
     let args = call_named_args(expr, "Option.withDefault")?;
     (args.len() == 2).then_some((&args[0], &args[1]))
@@ -414,94 +506,6 @@ pub(super) fn defaulted_map_get_after_fn_call<'a>(
     let (inner, default) = option_with_default_args(expr)?;
     let (map_arg, key_arg) = map_get_after_fn_call(inner, fn_name)?;
     Some((map_arg, key_arg, default))
-}
-
-pub(super) fn defaulted_map_get_after_agg_call<'a>(
-    expr: &'a Expr,
-    fn_name: &str,
-) -> Option<(&'a Expr, &'a Expr, &'a Expr)> {
-    let (inner, default) = option_with_default_args(expr)?;
-    let get_args = call_named_args(inner, "Map.get")?;
-    if get_args.len() != 2 {
-        return None;
-    }
-    let Expr::FnCall(callee, fn_args) = &get_args[0] else {
-        return None;
-    };
-    if fn_args.len() != 1 || !callee_matches_name(callee, fn_name) {
-        return None;
-    }
-    Some((&fn_args[0], &get_args[1], default))
-}
-
-pub(super) fn ident_name(expr: &Expr) -> Option<&str> {
-    match expr {
-        Expr::Ident(name) => Some(name.as_str()),
-        _ => None,
-    }
-}
-
-pub(super) fn matches_list_contains_call(expr: &Expr, list_name: &str, item_name: &str) -> bool {
-    let Some(args) = call_named_args(expr, "List.contains") else {
-        return false;
-    };
-    args.len() == 2 && matches_ident(&args[0], list_name) && matches_ident(&args[1], item_name)
-}
-
-pub(super) fn matches_recursive_self_call(expr: &Expr, fn_name: &str, arg_name: &str) -> bool {
-    match expr {
-        Expr::FnCall(callee, args) => {
-            args.len() == 1
-                && callee_matches_name(callee, fn_name)
-                && matches_ident(&args[0], arg_name)
-        }
-        Expr::TailCall(call) => {
-            call.0 == fn_name && call.1.len() == 1 && matches_ident(&call.1[0], arg_name)
-        }
-        _ => false,
-    }
-}
-
-pub(super) fn matches_equality_pair(expr: &Expr, left_name: &str, right_name: &str) -> bool {
-    match expr {
-        Expr::BinOp(BinOp::Eq, left, right) => {
-            (matches_ident(left, left_name) && matches_ident(right, right_name))
-                || (matches_ident(left, right_name) && matches_ident(right, left_name))
-        }
-        _ => false,
-    }
-}
-
-pub(super) fn matches_recursive_counter_step(
-    expr: &Expr,
-    fn_name: &str,
-    tail_name: &str,
-    tracked_name: &str,
-    add_one: bool,
-) -> bool {
-    if add_one {
-        let Expr::BinOp(BinOp::Add, left, right) = expr else {
-            return false;
-        };
-        matches_recursive_counter_step(left, fn_name, tail_name, tracked_name, false)
-            && matches_int_lit(right, 1)
-    } else {
-        match expr {
-            Expr::FnCall(callee, args) => {
-                args.len() == 2
-                    && callee_matches_name(callee, fn_name)
-                    && matches_ident(&args[0], tail_name)
-                    && matches_ident(&args[1], tracked_name)
-            }
-            Expr::TailCall(call) => {
-                call.0 == fn_name
-                    && call.1.len() == 2
-                    && matches_ident(&call.1[0], tail_name)
-                    && matches_ident(&call.1[1], tracked_name)
-            }
-            _ => false,
-        }
-    }
 }
 
 pub(super) fn is_map_get_call(expr: &Expr, map_param: &str, key_param: &str) -> bool {

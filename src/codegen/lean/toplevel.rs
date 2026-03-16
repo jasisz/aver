@@ -1185,8 +1185,8 @@ pub fn emit_fn_def_proof(
                 lines.push("decreasing_by".to_string());
                 lines.push("  omega".to_string());
             }
-            RecursionPlan::ListStructural => {
-                let Some((param_name, _)) = fd.params.first() else {
+            RecursionPlan::ListStructural { param_index } => {
+                let Some((param_name, _)) = fd.params.get(param_index) else {
                     return Some(lines.join("\n"));
                 };
                 let lean_param = aver_name_to_lean(param_name);

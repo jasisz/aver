@@ -40,7 +40,8 @@ Use Rust when you want:
 Use Lean when you want:
 - proof artifacts for pure Aver code
 - `verify` as executable Lean checks
-- `verify law` as candidate universal theorems
+- `verify law` as candidate universal theorems for supported shapes, with
+  sampled or checked-domain fallback for the rest
 - a path from Aver code to formal verification
 
 ## Adding a new backend
