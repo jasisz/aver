@@ -112,34 +112,34 @@ mod tests {
 
     #[test]
     fn runtime_dependency_defaults_to_registry_pin() {
-        let dep = runtime_dependency_line("=0.2.1", &[], None);
-        assert_eq!(dep, "aver-rt = { version = \"=0.2.1\" }");
+        let dep = runtime_dependency_line("=0.2.2", &[], None);
+        assert_eq!(dep, "aver-rt = { version = \"=0.2.2\" }");
     }
 
     #[test]
     fn runtime_dependency_enables_http_feature_when_needed() {
-        let dep = runtime_dependency_line("=0.2.1", &["http"], None);
+        let dep = runtime_dependency_line("=0.2.2", &["http"], None);
         assert_eq!(
             dep,
-            "aver-rt = { version = \"=0.2.1\", features = [\"http\"] }"
+            "aver-rt = { version = \"=0.2.2\", features = [\"http\"] }"
         );
     }
 
     #[test]
     fn runtime_dependency_enables_multiple_features() {
-        let dep = runtime_dependency_line("=0.2.1", &["http", "random"], None);
+        let dep = runtime_dependency_line("=0.2.2", &["http", "random"], None);
         assert_eq!(
             dep,
-            "aver-rt = { version = \"=0.2.1\", features = [\"http\", \"random\"] }"
+            "aver-rt = { version = \"=0.2.2\", features = [\"http\", \"random\"] }"
         );
     }
 
     #[test]
     fn runtime_dependency_can_use_local_override_path() {
-        let dep = runtime_dependency_line("=0.2.1", &["http"], Some("/tmp/aver-rt"));
+        let dep = runtime_dependency_line("=0.2.2", &["http"], Some("/tmp/aver-rt"));
         assert_eq!(
             dep,
-            "aver-rt = { path = \"/tmp/aver-rt\", version = \"=0.2.1\", features = [\"http\"] }"
+            "aver-rt = { path = \"/tmp/aver-rt\", version = \"=0.2.2\", features = [\"http\"] }"
         );
     }
 }
