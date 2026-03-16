@@ -14,6 +14,9 @@ fn caveMap() -> List<List<Int>>
      [10,12,19],[3,11,13],[12,14,20],[4,13,15],[6,14,16],
      [15,17,20],[7,16,18],[9,17,19],[11,18,20],[13,16,19]]
 
+verify caveMap
+    List.len(caveMap()) => 20
+
 fn neighbors(room: Int) -> List<Int>
     ? "Three adjacent rooms for a given room (1-20)."
     match List.get(caveMap(), room - 1)
@@ -21,6 +24,10 @@ fn neighbors(room: Int) -> List<Int>
         Option.None -> []
 
 // ── Helpers ────────────────────────────────────────────────────
+
+verify neighbors
+    neighbors(1) => [2, 5, 8]
+    neighbors(20) => [13, 16, 19]
 
 fn containsInt(xs: List<Int>, n: Int) -> Bool
     ? "True when n appears in xs."
@@ -30,9 +37,18 @@ fn containsInt(xs: List<Int>, n: Int) -> Bool
             true -> true
             false -> containsInt(rest, n)
 
+verify containsInt
+    containsInt([1, 2, 3], 2) => true
+    containsInt([1, 2, 3], 4) => false
+    containsInt([], 1) => false
+
 fn isAdjacent(from: Int, to: Int) -> Bool
     ? "True when two rooms are directly connected."
     containsInt(neighbors(from), to)
+
+verify isAdjacent
+    isAdjacent(1, 2) => true
+    isAdjacent(1, 3) => false
 
 fn roomList(rooms: List<Int>) -> String
     ? "Comma-separated room numbers."
@@ -43,6 +59,10 @@ fn roomList(rooms: List<Int>) -> String
             _ -> "{Int.toString(r)}, {roomList(rest)}"
 
 // ── Random helpers (effectful) ──────────────────────────────────
+
+verify roomList
+    roomList([1, 2, 3]) => "1, 2, 3"
+    roomList([7]) => "7"
 
 fn randRoom() -> Int
     ? "Pick a random room number 1-20."
@@ -92,6 +112,11 @@ fn checkRoom(game: Game) -> Outcome
                 true -> Outcome.Lose("You fall into a bottomless pit!")
                 false -> checkBats(game)
 
+verify checkRoom
+    checkRoom(Game(player = 5, wumpus = 5, pit1 = 1, pit2 = 2, bat1 = 3, bat2 = 4, arrows = 5)) => Outcome.Lose("The Wumpus devours you!")
+    checkRoom(Game(player = 1, wumpus = 5, pit1 = 1, pit2 = 2, bat1 = 3, bat2 = 4, arrows = 5)) => Outcome.Lose("You fall into a bottomless pit!")
+    checkRoom(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5)) => Outcome.Continue(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5))
+
 fn checkBats(game: Game) -> Outcome
     ? "Super bats teleport you to a random room."
     match game.player == game.bat1
@@ -100,11 +125,19 @@ fn checkBats(game: Game) -> Outcome
             true -> Outcome.Lose("Super bats carry you away!")
             false -> Outcome.Continue(game)
 
+verify checkBats
+    checkBats(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5)) => Outcome.Continue(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5))
+    checkBats(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 3, bat2 = 14, arrows = 5)) => Outcome.Lose("Super bats carry you away!")
+
 fn movePlayer(game: Game, room: Int) -> Result<Outcome, String>
     ? "Move to an adjacent room and check hazards."
     match isAdjacent(game.player, room)
         true -> Result.Ok(checkRoom(Game.update(game, player = room)))
         false -> Result.Err("That room is not adjacent!")
+
+verify movePlayer
+    movePlayer(Game(player = 1, wumpus = 10, pit1 = 15, pit2 = 16, bat1 = 18, bat2 = 19, arrows = 5), 2) => Result.Ok(Outcome.Continue(Game(player = 2, wumpus = 10, pit1 = 15, pit2 = 16, bat1 = 18, bat2 = 19, arrows = 5)))
+    movePlayer(Game(player = 1, wumpus = 10, pit1 = 15, pit2 = 16, bat1 = 18, bat2 = 19, arrows = 5), 3) => Result.Err("That room is not adjacent!")
 
 fn shootArrow(game: Game, room: Int) -> Result<Outcome, String>
     ? "Shoot an arrow into an adjacent room."
@@ -114,6 +147,11 @@ fn shootArrow(game: Game, room: Int) -> Result<Outcome, String>
             true -> Result.Ok(Outcome.Win("Your arrow strikes the Wumpus! You win!"))
             false -> arrowMissed(game)
 
+verify shootArrow
+    shootArrow(Game(player = 1, wumpus = 2, pit1 = 10, pit2 = 11, bat1 = 12, bat2 = 13, arrows = 5), 2) => Result.Ok(Outcome.Win("Your arrow strikes the Wumpus! You win!"))
+    shootArrow(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 1), 5) => Result.Ok(Outcome.Lose("Out of arrows. The Wumpus finds you."))
+    shootArrow(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5), 3) => Result.Err("You can't shoot there!")
+
 fn arrowMissed(game: Game) -> Result<Outcome, String>
     ? "Handle a missed arrow shot — check remaining arrows."
     match game.arrows == 1
@@ -122,9 +160,17 @@ fn arrowMissed(game: Game) -> Result<Outcome, String>
 
 // ── Warnings (pure) ───────────────────────────────────────────
 
+verify arrowMissed
+    arrowMissed(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 1)) => Result.Ok(Outcome.Lose("Out of arrows. The Wumpus finds you."))
+    arrowMissed(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 3)) => Result.Ok(Outcome.Continue(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 2)))
+
 fn wumpusNearby(game: Game) -> Bool
     ? "True when the Wumpus is in an adjacent room."
     containsInt(neighbors(game.player), game.wumpus)
+
+verify wumpusNearby
+    wumpusNearby(Game(player = 1, wumpus = 2, pit1 = 10, pit2 = 11, bat1 = 12, bat2 = 13, arrows = 5)) => true
+    wumpusNearby(Game(player = 1, wumpus = 3, pit1 = 10, pit2 = 11, bat1 = 12, bat2 = 13, arrows = 5)) => false
 
 fn pitNearby(game: Game) -> Bool
     ? "True when a bottomless pit is in an adjacent room."
@@ -132,11 +178,19 @@ fn pitNearby(game: Game) -> Bool
         true -> true
         false -> containsInt(neighbors(game.player), game.pit2)
 
+verify pitNearby
+    pitNearby(Game(player = 1, wumpus = 10, pit1 = 5, pit2 = 11, bat1 = 12, bat2 = 13, arrows = 5)) => true
+    pitNearby(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5)) => false
+
 fn batsNearby(game: Game) -> Bool
     ? "True when super bats are in an adjacent room."
     match containsInt(neighbors(game.player), game.bat1)
         true -> true
         false -> containsInt(neighbors(game.player), game.bat2)
+
+verify batsNearby
+    batsNearby(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 2, bat2 = 13, arrows = 5)) => true
+    batsNearby(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5)) => false
 
 fn warningText(game: Game) -> String
     ? "Combined hazard warnings as a single string."
@@ -152,6 +206,10 @@ fn warningText(game: Game) -> String
     "{w}{p}{b}"
 
 // ── I/O layer ──────────────────────────────────────────────────
+
+verify warningText
+    warningText(Game(player = 1, wumpus = 3, pit1 = 10, pit2 = 11, bat1 = 12, bat2 = 13, arrows = 5)) => ""
+    warningText(Game(player = 1, wumpus = 2, pit1 = 10, pit2 = 11, bat1 = 12, bat2 = 13, arrows = 5)) => "You smell something terrible nearby.\n"
 
 fn showRoom(game: Game) -> Unit
     ? "Display current room, tunnels, and hazard warnings."
@@ -222,61 +280,3 @@ fn main() -> Unit
         Result.Err(msg) -> Console.print("Error: {msg}")
 
 // ── Tests ──────────────────────────────────────────────────────
-
-verify neighbors
-    neighbors(1) => [2, 5, 8]
-    neighbors(20) => [13, 16, 19]
-
-verify isAdjacent
-    isAdjacent(1, 2) => true
-    isAdjacent(1, 3) => false
-
-verify containsInt
-    containsInt([1, 2, 3], 2) => true
-    containsInt([1, 2, 3], 4) => false
-    containsInt([], 1) => false
-
-verify roomList
-    roomList([1, 2, 3]) => "1, 2, 3"
-    roomList([7]) => "7"
-
-verify caveMap
-    List.len(caveMap()) => 20
-
-verify checkRoom
-    checkRoom(Game(player = 5, wumpus = 5, pit1 = 1, pit2 = 2, bat1 = 3, bat2 = 4, arrows = 5)) => Outcome.Lose("The Wumpus devours you!")
-    checkRoom(Game(player = 1, wumpus = 5, pit1 = 1, pit2 = 2, bat1 = 3, bat2 = 4, arrows = 5)) => Outcome.Lose("You fall into a bottomless pit!")
-    checkRoom(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5)) => Outcome.Continue(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5))
-
-verify checkBats
-    checkBats(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5)) => Outcome.Continue(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5))
-    checkBats(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 3, bat2 = 14, arrows = 5)) => Outcome.Lose("Super bats carry you away!")
-
-verify movePlayer
-    movePlayer(Game(player = 1, wumpus = 10, pit1 = 15, pit2 = 16, bat1 = 18, bat2 = 19, arrows = 5), 2) => Result.Ok(Outcome.Continue(Game(player = 2, wumpus = 10, pit1 = 15, pit2 = 16, bat1 = 18, bat2 = 19, arrows = 5)))
-    movePlayer(Game(player = 1, wumpus = 10, pit1 = 15, pit2 = 16, bat1 = 18, bat2 = 19, arrows = 5), 3) => Result.Err("That room is not adjacent!")
-
-verify shootArrow
-    shootArrow(Game(player = 1, wumpus = 2, pit1 = 10, pit2 = 11, bat1 = 12, bat2 = 13, arrows = 5), 2) => Result.Ok(Outcome.Win("Your arrow strikes the Wumpus! You win!"))
-    shootArrow(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 1), 5) => Result.Ok(Outcome.Lose("Out of arrows. The Wumpus finds you."))
-    shootArrow(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5), 3) => Result.Err("You can't shoot there!")
-
-verify arrowMissed
-    arrowMissed(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 1)) => Result.Ok(Outcome.Lose("Out of arrows. The Wumpus finds you."))
-    arrowMissed(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 3)) => Result.Ok(Outcome.Continue(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 2)))
-
-verify wumpusNearby
-    wumpusNearby(Game(player = 1, wumpus = 2, pit1 = 10, pit2 = 11, bat1 = 12, bat2 = 13, arrows = 5)) => true
-    wumpusNearby(Game(player = 1, wumpus = 3, pit1 = 10, pit2 = 11, bat1 = 12, bat2 = 13, arrows = 5)) => false
-
-verify pitNearby
-    pitNearby(Game(player = 1, wumpus = 10, pit1 = 5, pit2 = 11, bat1 = 12, bat2 = 13, arrows = 5)) => true
-    pitNearby(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5)) => false
-
-verify batsNearby
-    batsNearby(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 2, bat2 = 13, arrows = 5)) => true
-    batsNearby(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5)) => false
-
-verify warningText
-    warningText(Game(player = 1, wumpus = 3, pit1 = 10, pit2 = 11, bat1 = 12, bat2 = 13, arrows = 5)) => ""
-    warningText(Game(player = 1, wumpus = 2, pit1 = 10, pit2 = 11, bat1 = 12, bat2 = 13, arrows = 5)) => "You smell something terrible nearby.\n"
