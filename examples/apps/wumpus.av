@@ -5,8 +5,6 @@ module Main
         "pure logic separated from effectful I/O, and record-based state."
     depends []
 
-// ── Cave topology: dodecahedron (20 rooms, 3 exits each) ──────
-
 fn caveMap() -> List<List<Int>>
     ? "Adjacency list. Index i holds neighbors of room i+1."
     [[2,5,8],[1,3,10],[2,4,12],[3,5,14],[1,4,6],
@@ -22,8 +20,6 @@ fn neighbors(room: Int) -> List<Int>
     match List.get(caveMap(), room - 1)
         Option.Some(ns) -> ns
         Option.None -> []
-
-// ── Helpers ────────────────────────────────────────────────────
 
 verify neighbors
     neighbors(1) => [2, 5, 8]
@@ -58,8 +54,6 @@ fn roomList(rooms: List<Int>) -> String
             [] -> Int.toString(r)
             _ -> "{Int.toString(r)}, {roomList(rest)}"
 
-// ── Random helpers (effectful) ──────────────────────────────────
-
 verify roomList
     roomList([1, 2, 3]) => "1, 2, 3"
     roomList([7]) => "7"
@@ -75,8 +69,6 @@ fn randNeighbor(room: Int) -> Int
     match List.get(neighbors(room), Random.int(0, 2))
         Option.Some(r) -> r
         Option.None -> room
-
-// ── Game state ─────────────────────────────────────────────────
 
 record Game
     player: Int
@@ -99,8 +91,6 @@ fn newGame() -> Game
          pit1 = randRoom(), pit2 = randRoom(),
          bat1 = randRoom(), bat2 = randRoom(),
          arrows = 5)
-
-// ── Pure game logic ────────────────────────────────────────────
 
 fn checkRoom(game: Game) -> Outcome
     ? "Check hazards after entering a room."
@@ -158,8 +148,6 @@ fn arrowMissed(game: Game) -> Result<Outcome, String>
         true -> Result.Ok(Outcome.Lose("Out of arrows. The Wumpus finds you."))
         false -> Result.Ok(Outcome.Continue(Game.update(game, arrows = game.arrows - 1)))
 
-// ── Warnings (pure) ───────────────────────────────────────────
-
 verify arrowMissed
     arrowMissed(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 1)) => Result.Ok(Outcome.Lose("Out of arrows. The Wumpus finds you."))
     arrowMissed(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 3)) => Result.Ok(Outcome.Continue(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 2)))
@@ -204,8 +192,6 @@ fn warningText(game: Game) -> String
         true -> "You hear flapping wings.\n"
         false -> ""
     "{w}{p}{b}"
-
-// ── I/O layer ──────────────────────────────────────────────────
 
 verify warningText
     warningText(Game(player = 1, wumpus = 3, pit1 = 10, pit2 = 11, bat1 = 12, bat2 = 13, arrows = 5)) => ""
@@ -266,8 +252,6 @@ fn retry(game: Game, msg: String) -> Result<String, String>
     Console.print(msg)
     gameLoop(game)
 
-// ── Entry point ──────────────────────────────────────────────────
-
 fn main() -> Unit
     ? "Starts Hunt the Wumpus."
     ! [Console.print, Console.readLine, Random]
@@ -278,5 +262,3 @@ fn main() -> Unit
     match gameLoop(newGame())
         Result.Ok(msg) -> Console.print(msg)
         Result.Err(msg) -> Console.print("Error: {msg}")
-
-// ── Tests ──────────────────────────────────────────────────────
