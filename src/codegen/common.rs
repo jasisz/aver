@@ -145,10 +145,13 @@ pub(crate) fn split_type_params(s: &str, delim: char) -> Vec<String> {
     parts
 }
 
-/// Escape a string literal for target languages that use C-style escapes
-/// (Lean, Dafny, Rust). Handles `\\`, `\"`, `\n`, `\r`, `\t`, `\0`,
-/// and generic control characters as `\xHH`.
-pub(crate) fn escape_string_literal(s: &str) -> String {
+/// Escape a string literal for target languages that use C-style escapes.
+/// Handles `\\`, `\"`, `\n`, `\r`, `\t`, `\0`,
+/// and generic control characters as `\xHH` (Lean/Rust) or `\uHHHH` (Dafny).
+///
+/// Use `unicode_escapes = true` for Dafny (which needs `\uHHHH`),
+/// `false` for Lean/Rust (which accept `\xHH`).
+pub(crate) fn escape_string_literal_ext(s: &str, unicode_escapes: bool) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
         match ch {
@@ -158,11 +161,28 @@ pub(crate) fn escape_string_literal(s: &str) -> String {
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
             '\0' => out.push_str("\\0"),
-            c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c if c.is_control() => {
+                if unicode_escapes {
+                    // Dafny 4+ with Unicode chars enabled: \U{HHHHHH}
+                    out.push_str(&format!("\\U{{{:06x}}}", c as u32));
+                } else {
+                    out.push_str(&format!("\\x{:02x}", c as u32));
+                }
+            }
             c => out.push(c),
         }
     }
     out
+}
+
+/// Convenience: escape with `\xHH` for control chars (Lean, Rust).
+pub(crate) fn escape_string_literal(s: &str) -> String {
+    escape_string_literal_ext(s, false)
+}
+
+/// Convenience: escape with `\u{HHHH}` for control chars (Dafny).
+pub(crate) fn escape_string_literal_unicode(s: &str) -> String {
+    escape_string_literal_ext(s, true)
 }
 
 /// Parse an Aver type annotation string into the internal `Type` enum.

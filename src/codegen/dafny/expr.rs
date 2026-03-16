@@ -219,7 +219,10 @@ fn emit_literal(lit: &Literal) -> String {
             }
         }
         Literal::Str(s) => {
-            format!("\"{}\"", crate::codegen::common::escape_string_literal(s))
+            format!(
+                "\"{}\"",
+                crate::codegen::common::escape_string_literal_unicode(s)
+            )
         }
         Literal::Bool(b) => b.to_string(),
         Literal::Unit => "()".to_string(),
@@ -555,7 +558,7 @@ fn emit_interpolated_str(parts: &[StrPart], ctx: &CodegenContext) -> String {
             StrPart::Literal(s) => {
                 pieces.push(format!(
                     "\"{}\"",
-                    crate::codegen::common::escape_string_literal(s)
+                    crate::codegen::common::escape_string_literal_unicode(s)
                 ));
             }
             StrPart::Parsed(expr) => {
