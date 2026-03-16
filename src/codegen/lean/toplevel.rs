@@ -126,39 +126,7 @@ fn measure_entries_fn_name(type_name: &str, key_type: &str) -> String {
 }
 
 fn split_top_level(s: &str, delim: char) -> Vec<String> {
-    let mut parts = Vec::new();
-    let mut depth_angle = 0usize;
-    let mut depth_paren = 0usize;
-    let mut current = String::new();
-    for ch in s.chars() {
-        match ch {
-            '<' => {
-                depth_angle += 1;
-                current.push(ch);
-            }
-            '>' => {
-                depth_angle = depth_angle.saturating_sub(1);
-                current.push(ch);
-            }
-            '(' => {
-                depth_paren += 1;
-                current.push(ch);
-            }
-            ')' => {
-                depth_paren = depth_paren.saturating_sub(1);
-                current.push(ch);
-            }
-            _ if ch == delim && depth_angle == 0 && depth_paren == 0 => {
-                parts.push(current.trim().to_string());
-                current.clear();
-            }
-            _ => current.push(ch),
-        }
-    }
-    if !current.trim().is_empty() {
-        parts.push(current.trim().to_string());
-    }
-    parts
+    crate::codegen::common::split_type_params(s, delim)
 }
 
 fn unwrap_generic<'a>(type_name: &'a str, prefix: &str) -> Option<&'a str> {

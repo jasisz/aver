@@ -3,96 +3,94 @@ use crate::ast::*;
 use crate::codegen::CodegenContext;
 use crate::codegen::common::{expr_to_dotted_name, is_user_type, resolve_module_call};
 
+/// Dafny reserved words.
+const DAFNY_RESERVED: &[&str] = &[
+    "abstract",
+    "allocated",
+    "as",
+    "assert",
+    "assume",
+    "bool",
+    "break",
+    "by",
+    "calc",
+    "case",
+    "char",
+    "class",
+    "codatatype",
+    "colemma",
+    "constructor",
+    "copredicate",
+    "datatype",
+    "decreases",
+    "default",
+    "else",
+    "ensures",
+    "exists",
+    "expect",
+    "export",
+    "extends",
+    "false",
+    "forall",
+    "fresh",
+    "function",
+    "ghost",
+    "if",
+    "import",
+    "in",
+    "include",
+    "int",
+    "invariant",
+    "is",
+    "iterator",
+    "label",
+    "lemma",
+    "map",
+    "match",
+    "method",
+    "modifies",
+    "modify",
+    "module",
+    "multiset",
+    "nat",
+    "new",
+    "newtype",
+    "null",
+    "object",
+    "old",
+    "opened",
+    "predicate",
+    "print",
+    "provides",
+    "reads",
+    "real",
+    "refines",
+    "requires",
+    "return",
+    "returns",
+    "reveal",
+    "reveals",
+    "seq",
+    "set",
+    "static",
+    "string",
+    "then",
+    "this",
+    "trait",
+    "true",
+    "twostate",
+    "type",
+    "unchanged",
+    "var",
+    "while",
+    "witness",
+    "yield",
+    "yields",
+];
+
 /// Convert an Aver identifier to a valid Dafny name.
 pub fn aver_name_to_dafny(name: &str) -> String {
-    let reserved = [
-        "abstract",
-        "allocated",
-        "as",
-        "assert",
-        "assume",
-        "bool",
-        "break",
-        "by",
-        "calc",
-        "case",
-        "char",
-        "class",
-        "codatatype",
-        "colemma",
-        "constructor",
-        "copredicate",
-        "datatype",
-        "decreases",
-        "default",
-        "else",
-        "ensures",
-        "exists",
-        "expect",
-        "export",
-        "extends",
-        "false",
-        "forall",
-        "fresh",
-        "function",
-        "ghost",
-        "if",
-        "import",
-        "in",
-        "include",
-        "int",
-        "invariant",
-        "is",
-        "iterator",
-        "label",
-        "lemma",
-        "map",
-        "match",
-        "method",
-        "modifies",
-        "modify",
-        "module",
-        "multiset",
-        "nat",
-        "new",
-        "newtype",
-        "null",
-        "object",
-        "old",
-        "opened",
-        "predicate",
-        "print",
-        "provides",
-        "reads",
-        "real",
-        "refines",
-        "requires",
-        "return",
-        "returns",
-        "reveal",
-        "reveals",
-        "seq",
-        "set",
-        "static",
-        "string",
-        "then",
-        "this",
-        "trait",
-        "true",
-        "twostate",
-        "type",
-        "unchanged",
-        "var",
-        "while",
-        "witness",
-        "yield",
-        "yields",
-    ];
-    if reserved.contains(&name) {
-        format!("{}_", name)
-    } else {
-        name.to_string()
-    }
+    crate::codegen::common::escape_reserved_word(name, DAFNY_RESERVED, "_")
 }
 
 /// Emit a Dafny expression from an Aver Expr.
@@ -221,14 +219,7 @@ fn emit_literal(lit: &Literal) -> String {
             }
         }
         Literal::Str(s) => {
-            let escaped = s
-                .replace('\\', "\\\\")
-                .replace('"', "\\\"")
-                .replace('\n', "\\n")
-                .replace('\r', "\\r")
-                .replace('\t', "\\t")
-                .replace('\0', "\\0");
-            format!("\"{}\"", escaped)
+            format!("\"{}\"", crate::codegen::common::escape_string_literal(s))
         }
         Literal::Bool(b) => b.to_string(),
         Literal::Unit => "()".to_string(),
@@ -643,13 +634,10 @@ fn emit_interpolated_str(parts: &[StrPart], ctx: &CodegenContext) -> String {
     for part in parts {
         match part {
             StrPart::Literal(s) => {
-                let escaped = s
-                    .replace('\\', "\\\\")
-                    .replace('"', "\\\"")
-                    .replace('\n', "\\n")
-                    .replace('\r', "\\r")
-                    .replace('\t', "\\t");
-                pieces.push(format!("\"{}\"", escaped));
+                pieces.push(format!(
+                    "\"{}\"",
+                    crate::codegen::common::escape_string_literal(s)
+                ));
             }
             StrPart::Parsed(expr) => {
                 pieces.push(format!("ToString({})", emit_expr(expr, ctx)));

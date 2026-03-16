@@ -1,90 +1,40 @@
 /// Aver top-level items → Dafny declarations.
 use crate::ast::*;
 use crate::codegen::CodegenContext;
+use crate::codegen::common::parse_type_annotation;
+use crate::types::Type;
 
 use super::expr::{aver_name_to_dafny, emit_expr};
 
-/// Emit a Dafny type annotation from an Aver type string.
+/// Emit a Dafny type from an Aver type annotation string.
 pub fn emit_type(type_str: &str) -> String {
-    let t = type_str.trim();
-    match t {
-        "Int" => "int".to_string(),
-        "Float" => "real".to_string(),
-        "Bool" => "bool".to_string(),
-        "String" => "string".to_string(),
-        "Unit" => "()".to_string(),
-        _ if t.starts_with("List<") && t.ends_with('>') => {
-            let inner = &t[5..t.len() - 1];
-            format!("seq<{}>", emit_type(inner))
-        }
-        _ if t.starts_with("Map<") && t.ends_with('>') => {
-            let inner = &t[4..t.len() - 1];
-            if let Some(comma) = find_top_level_comma(inner) {
-                let k = inner[..comma].trim();
-                let v = inner[comma + 1..].trim();
-                format!("map<{}, {}>", emit_type(k), emit_type(v))
-            } else {
-                format!("map<{}>", emit_type(inner))
-            }
-        }
-        _ if t.starts_with("Result<") && t.ends_with('>') => {
-            let inner = &t[7..t.len() - 1];
-            if let Some(comma) = find_top_level_comma(inner) {
-                let ok = inner[..comma].trim();
-                let err = inner[comma + 1..].trim();
-                format!("Result<{}, {}>", emit_type(ok), emit_type(err))
-            } else {
-                format!("Result<{}>", emit_type(inner))
-            }
-        }
-        _ if t.starts_with("Option<") && t.ends_with('>') => {
-            let inner = &t[7..t.len() - 1];
-            format!("Option<{}>", emit_type(inner))
-        }
-        _ if t.starts_with('(') && t.ends_with(')') => {
-            let inner = &t[1..t.len() - 1];
-            let parts: Vec<String> = split_top_level(inner)
-                .iter()
-                .map(|p| emit_type(p.trim()))
-                .collect();
+    type_to_dafny(&parse_type_annotation(type_str))
+}
+
+/// Convert an Aver `Type` to a Dafny type string.
+fn type_to_dafny(ty: &Type) -> String {
+    match ty {
+        Type::Int => "int".to_string(),
+        Type::Float => "real".to_string(),
+        Type::Str => "string".to_string(),
+        Type::Bool => "bool".to_string(),
+        Type::Unit => "()".to_string(),
+        Type::List(inner) => format!("seq<{}>", type_to_dafny(inner)),
+        Type::Map(k, v) => format!("map<{}, {}>", type_to_dafny(k), type_to_dafny(v)),
+        Type::Result(ok, err) => format!("Result<{}, {}>", type_to_dafny(ok), type_to_dafny(err)),
+        Type::Option(inner) => format!("Option<{}>", type_to_dafny(inner)),
+        Type::Tuple(items) => {
+            let parts: Vec<String> = items.iter().map(type_to_dafny).collect();
             format!("({})", parts.join(", "))
         }
-        _ => t.to_string(),
-    }
-}
-
-/// Split a string by top-level commas (not inside <> or ()).
-fn split_top_level(s: &str) -> Vec<&str> {
-    let mut result = Vec::new();
-    let mut depth = 0;
-    let mut start = 0;
-    for (i, c) in s.char_indices() {
-        match c {
-            '<' | '(' => depth += 1,
-            '>' | ')' => depth -= 1,
-            ',' if depth == 0 => {
-                result.push(&s[start..i]);
-                start = i + 1;
-            }
-            _ => {}
+        Type::Fn(params, ret, _) => {
+            let mut parts: Vec<String> = params.iter().map(type_to_dafny).collect();
+            parts.push(type_to_dafny(ret));
+            parts.join(" -> ")
         }
+        Type::Named(name) => name.clone(),
+        Type::Unknown => "/* unknown type */".to_string(),
     }
-    result.push(&s[start..]);
-    result
-}
-
-/// Find first comma at depth 0 (not inside <>).
-fn find_top_level_comma(s: &str) -> Option<usize> {
-    let mut depth = 0;
-    for (i, c) in s.char_indices() {
-        match c {
-            '<' => depth += 1,
-            '>' => depth -= 1,
-            ',' if depth == 0 => return Some(i),
-            _ => {}
-        }
-    }
-    None
 }
 
 /// Emit a Dafny datatype/record from a TypeDef.
@@ -99,13 +49,7 @@ pub fn emit_type_def(td: &TypeDef) -> Option<String> {
                     } else {
                         // Use variant-prefixed field names to avoid Dafny
                         // shared destructor conflicts across variants.
-                        let prefix = {
-                            let mut chars = v.name.chars();
-                            match chars.next() {
-                                None => String::new(),
-                                Some(c) => c.to_lowercase().to_string() + chars.as_str(),
-                            }
-                        };
+                        let prefix = crate::codegen::common::to_lower_first(&v.name);
                         let fields: Vec<String> = v
                             .fields
                             .iter()

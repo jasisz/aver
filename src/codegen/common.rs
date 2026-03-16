@@ -1,5 +1,6 @@
 use crate::ast::{Expr, TypeDef};
 use crate::codegen::CodegenContext;
+use crate::types::Type;
 
 /// Check if a name is a user-defined type (sum or product), including modules.
 pub(crate) fn is_user_type(name: &str, ctx: &CodegenContext) -> bool {
@@ -110,6 +111,87 @@ fn module_segment_to_rust(segment: &str) -> String {
     }
 
     normalized
+}
+
+/// Split a type annotation string at top-level delimiters (not inside `<>` or `()`).
+///
+/// Used by multiple backends to parse Aver type annotation strings like
+/// `"Map<String, List<Int>>"` or `"(String, Int)"`.
+pub(crate) fn split_type_params(s: &str, delim: char) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut current = String::new();
+    for ch in s.chars() {
+        match ch {
+            '<' | '(' => {
+                depth += 1;
+                current.push(ch);
+            }
+            '>' | ')' => {
+                depth = depth.saturating_sub(1);
+                current.push(ch);
+            }
+            _ if ch == delim && depth == 0 => {
+                parts.push(current.trim().to_string());
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+    let rest = current.trim().to_string();
+    if !rest.is_empty() {
+        parts.push(rest);
+    }
+    parts
+}
+
+/// Escape a string literal for target languages that use C-style escapes
+/// (Lean, Dafny, Rust). Handles `\\`, `\"`, `\n`, `\r`, `\t`, `\0`,
+/// and generic control characters as `\xHH`.
+pub(crate) fn escape_string_literal(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Parse an Aver type annotation string into the internal `Type` enum.
+///
+/// Thin wrapper around `types::parse_type_str` for use in codegen modules.
+pub(crate) fn parse_type_annotation(ann: &str) -> Type {
+    crate::types::parse_type_str(ann)
+}
+
+/// Escape an Aver identifier if it collides with a target language reserved word.
+///
+/// Returns the escaped name if it's reserved, otherwise the original.
+pub(crate) fn escape_reserved_word(name: &str, reserved: &[&str], suffix: &str) -> String {
+    if reserved.contains(&name) {
+        format!("{}{}", name, suffix)
+    } else {
+        name.to_string()
+    }
+}
+
+/// Convert first character of a string to lowercase.
+///
+/// Used when converting PascalCase type/variant names to camelCase identifiers.
+pub(crate) fn to_lower_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_lowercase().to_string() + chars.as_str(),
+    }
 }
 
 /// Convert an attribute chain into dotted name.

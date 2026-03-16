@@ -179,21 +179,7 @@ fn emit_literal(lit: &Literal) -> String {
 }
 
 fn escape_lean_string(s: &str) -> String {
-    let mut out = String::new();
-    for ch in s.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{0008}' => out.push_str("\\x08"),
-            '\u{000C}' => out.push_str("\\x0c"),
-            c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out
+    crate::codegen::common::escape_string_literal(s)
 }
 
 fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext) -> String {
@@ -375,51 +361,52 @@ pub fn emit_stmt(stmt: &Stmt, ctx: &CodegenContext) -> String {
 }
 
 /// Convert an Aver identifier to a valid Lean 4 identifier.
+/// Lean 4 reserved words.
+const LEAN_RESERVED: &[&str] = &[
+    "abbrev",
+    "axiom",
+    "by",
+    "calc",
+    "class",
+    "def",
+    "decreasing_by",
+    "deriving",
+    "do",
+    "else",
+    "end",
+    "example",
+    "from",
+    "fun",
+    "have",
+    "id",
+    "if",
+    "import",
+    "in",
+    "inductive",
+    "instance",
+    "let",
+    "macro",
+    "match",
+    "mutual",
+    "namespace",
+    "opaque",
+    "open",
+    "partial",
+    "repeat",
+    "return",
+    "section",
+    "show",
+    "structure",
+    "syntax",
+    "termination_by",
+    "then",
+    "theorem",
+    "where",
+    "with",
+];
+
 pub fn aver_name_to_lean(name: &str) -> String {
-    // Lean reserved words
-    match name {
-        "abbrev" => "abbrev'".to_string(),
-        "axiom" => "axiom'".to_string(),
-        "by" => "by'".to_string(),
-        "calc" => "calc'".to_string(),
-        "def" => "def'".to_string(),
-        "decreasing_by" => "decreasing_by'".to_string(),
-        "deriving" => "deriving'".to_string(),
-        "let" => "let'".to_string(),
-        "where" => "where'".to_string(),
-        "match" => "match'".to_string(),
-        "macro" => "macro'".to_string(),
-        "with" => "with'".to_string(),
-        "do" => "do'".to_string(),
-        "from" => "from'".to_string(),
-        "if" => "if'".to_string(),
-        "then" => "then'".to_string(),
-        "else" => "else'".to_string(),
-        "have" => "have'".to_string(),
-        "opaque" => "opaque'".to_string(),
-        "return" => "return'".to_string(),
-        "in" => "in'".to_string(),
-        "fun" => "fun'".to_string(),
-        "repeat" => "repeat'".to_string(),
-        "show" => "show'".to_string(),
-        "syntax" => "syntax'".to_string(),
-        "theorem" => "theorem'".to_string(),
-        "termination_by" => "termination_by'".to_string(),
-        "example" => "example'".to_string(),
-        "class" => "class'".to_string(),
-        "instance" => "instance'".to_string(),
-        "structure" => "structure'".to_string(),
-        "inductive" => "inductive'".to_string(),
-        "namespace" => "namespace'".to_string(),
-        "open" => "open'".to_string(),
-        "section" => "section'".to_string(),
-        "end" => "end'".to_string(),
-        "import" => "import'".to_string(),
-        "id" => "id'".to_string(),
-        "mutual" => "mutual'".to_string(),
-        "partial" => "partial'".to_string(),
-        _ => name.to_string(),
-    }
+    crate::codegen::common::escape_reserved_word(name, LEAN_RESERVED, "'")
 }
 
 #[cfg(test)]
