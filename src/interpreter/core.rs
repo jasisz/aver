@@ -16,6 +16,7 @@ impl Interpreter {
         http_server::register(&mut global);
         disk::register(&mut global);
         env::register(&mut global);
+        random::register(&mut global);
         tcp::register(&mut global);
         time::register(&mut global);
         int::register(&mut global);

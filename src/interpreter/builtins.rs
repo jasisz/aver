@@ -202,6 +202,12 @@ impl Interpreter {
                             name
                         )))
                     }),
+                    Some("Random") => random::call(name, args).unwrap_or_else(|| {
+                        Err(RuntimeError::Error(format!(
+                            "Unknown builtin function: '{}'",
+                            name
+                        )))
+                    }),
                     Some("Tcp") => tcp::call(name, args).unwrap_or_else(|| {
                         Err(RuntimeError::Error(format!(
                             "Unknown builtin function: '{}'",

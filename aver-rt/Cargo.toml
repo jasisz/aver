@@ -19,9 +19,11 @@ path = "src/lib.rs"
 [features]
 default = []
 http = ["dep:ureq"]
+random = ["dep:rand"]
 
 [package.metadata.docs.rs]
 all-features = true
 
 [dependencies]
+rand = { version = "0.9", optional = true }
 ureq = { version = "2", optional = true }

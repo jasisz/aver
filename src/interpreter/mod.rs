@@ -8,7 +8,7 @@ use crate::replay::{
     EffectRecord, JsonValue, RecordedOutcome, SessionRecording, json_to_string,
     session_recording_to_string_pretty, value_to_json, values_to_json_lossy,
 };
-use crate::services::{args, console, disk, env, http, http_server, tcp, time};
+use crate::services::{args, console, disk, env, http, http_server, random, tcp, time};
 use crate::source::{
     canonicalize_path, find_module_file, parse_source, require_module_declaration,
 };

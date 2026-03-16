@@ -4,6 +4,8 @@ mod display;
 #[cfg(feature = "http")]
 pub mod http;
 pub mod http_server;
+#[cfg(feature = "random")]
+pub mod random;
 mod runtime;
 mod service_types;
 pub mod tcp;

@@ -13,6 +13,7 @@ impl Interpreter {
             Some("HttpServer") => http_server::effects(name),
             Some("Disk") => disk::effects(name),
             Some("Env") => env::effects(name),
+            Some("Random") => random::effects(name),
             Some("Tcp") => tcp::effects(name),
             Some("Time") => time::effects(name),
             Some("Int") => int::effects(name),
