@@ -60,12 +60,12 @@ verify roomList
 
 fn randRoom() -> Int
     ? "Pick a random room number 1-20."
-    ! [Random]
+    ! [Random.int]
     Random.int(1, 20)
 
 fn randNeighbor(room: Int) -> Int
     ? "Pick one of three neighbors at random."
-    ! [Random]
+    ! [Random.int]
     match List.get(neighbors(room), Random.int(0, 2))
         Option.Some(r) -> r
         Option.None -> room
@@ -86,7 +86,7 @@ type Outcome
 
 fn newGame() -> Game
     ? "Place player and hazards at random positions."
-    ! [Random]
+    ! [Random.int]
     Game(player = randRoom(), wumpus = randRoom(),
          pit1 = randRoom(), pit2 = randRoom(),
          bat1 = randRoom(), bat2 = randRoom(),
@@ -208,7 +208,7 @@ fn showRoom(game: Game) -> Unit
 
 fn gameLoop(game: Game) -> Result<String, String>
     ? "Main game loop — one turn per recursive call."
-    ! [Console.print, Console.readLine, Random]
+    ! [Console.print, Console.readLine, Random.int]
     showRoom(game)
     Console.print("(m)ove or (s)hoot?")
     action = Console.readLine()?
@@ -218,14 +218,14 @@ fn gameLoop(game: Game) -> Result<String, String>
 
 fn dispatchInput(game: Game, action: String, roomStr: String) -> Result<String, String>
     ? "Parse room number from input string."
-    ! [Console.print, Console.readLine, Random]
+    ! [Console.print, Console.readLine, Random.int]
     match Int.fromString(roomStr)
         Result.Err(_) -> retry(game, "Enter a room number.")
         Result.Ok(room) -> dispatchAction(game, action, room)
 
 fn dispatchAction(game: Game, action: String, room: Int) -> Result<String, String>
     ? "Route m/s action to move or shoot."
-    ! [Console.print, Console.readLine, Random]
+    ! [Console.print, Console.readLine, Random.int]
     match action
         "m" -> handleResult(game, movePlayer(game, room))
         "s" -> handleResult(game, shootArrow(game, room))
@@ -233,14 +233,14 @@ fn dispatchAction(game: Game, action: String, room: Int) -> Result<String, Strin
 
 fn handleResult(game: Game, result: Result<Outcome, String>) -> Result<String, String>
     ? "Unwrap action result: retry on error, resolve on outcome."
-    ! [Console.print, Console.readLine, Random]
+    ! [Console.print, Console.readLine, Random.int]
     match result
         Result.Err(msg) -> retry(game, msg)
         Result.Ok(outcome) -> resolveOutcome(outcome)
 
 fn resolveOutcome(outcome: Outcome) -> Result<String, String>
     ? "Win/Lose ends the game, Continue loops."
-    ! [Console.print, Console.readLine, Random]
+    ! [Console.print, Console.readLine, Random.int]
     match outcome
         Outcome.Win(msg) -> Result.Ok(msg)
         Outcome.Lose(msg) -> Result.Ok(msg)
@@ -248,13 +248,13 @@ fn resolveOutcome(outcome: Outcome) -> Result<String, String>
 
 fn retry(game: Game, msg: String) -> Result<String, String>
     ? "Print an error message and re-enter the game loop."
-    ! [Console.print, Console.readLine, Random]
+    ! [Console.print, Console.readLine, Random.int]
     Console.print(msg)
     gameLoop(game)
 
 fn main() -> Unit
     ? "Starts Hunt the Wumpus."
-    ! [Console.print, Console.readLine, Random]
+    ! [Console.print, Console.readLine, Random.int]
     Console.print("=== HUNT THE WUMPUS ===")
     Console.print("A wumpus lurks in a cave of 20 rooms.")
     Console.print("Each room connects to 3 others.")
