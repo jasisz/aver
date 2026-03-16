@@ -174,10 +174,21 @@ pub(crate) fn parse_type_annotation(ann: &str) -> Type {
 
 /// Escape an Aver identifier if it collides with a target language reserved word.
 ///
-/// Returns the escaped name if it's reserved, otherwise the original.
+/// `affix` is appended as a suffix (e.g. `"_"` for Dafny, `"'"` for Lean).
+/// For prefix escaping (e.g. Rust `r#`), use [`escape_reserved_word_prefix`].
 pub(crate) fn escape_reserved_word(name: &str, reserved: &[&str], suffix: &str) -> String {
     if reserved.contains(&name) {
         format!("{}{}", name, suffix)
+    } else {
+        name.to_string()
+    }
+}
+
+/// Like [`escape_reserved_word`] but prepends a prefix instead of appending a suffix.
+/// Used for Rust's `r#keyword` raw identifier syntax.
+pub(crate) fn escape_reserved_word_prefix(name: &str, reserved: &[&str], prefix: &str) -> String {
+    if reserved.contains(&name) {
+        format!("{}{}", prefix, name)
     } else {
         name.to_string()
     }

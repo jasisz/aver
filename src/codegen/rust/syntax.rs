@@ -28,38 +28,15 @@ pub fn emit_stmt(stmt: &Stmt, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     }
 }
 
+/// Rust reserved words that need raw identifier escaping.
+const RUST_RESERVED: &[&str] = &[
+    "as", "async", "await", "box", "break", "const", "continue", "crate", "dyn", "else", "enum",
+    "extern", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub",
+    "ref", "return", "self", "static", "struct", "super", "trait", "type", "unsafe", "use",
+    "where", "while", "yield",
+];
+
 /// Convert an Aver identifier to a valid Rust identifier.
-/// Handles snake_case and reserved words.
 pub fn aver_name_to_rust(name: &str) -> String {
-    // Rust reserved words that might conflict
-    match name {
-        "type" => "r#type".to_string(),
-        "match" => "r#match".to_string(),
-        "fn" => "r#fn".to_string(),
-        "let" => "r#let".to_string(),
-        "use" => "r#use".to_string(),
-        "mod" => "r#mod".to_string(),
-        "impl" => "r#impl".to_string(),
-        "trait" => "r#trait".to_string(),
-        "struct" => "r#struct".to_string(),
-        "enum" => "r#enum".to_string(),
-        "self" => "r#self".to_string(),
-        "super" => "r#super".to_string(),
-        "crate" => "r#crate".to_string(),
-        "where" => "r#where".to_string(),
-        "async" => "r#async".to_string(),
-        "await" => "r#await".to_string(),
-        "move" => "r#move".to_string(),
-        "ref" => "r#ref".to_string(),
-        "mut" => "r#mut".to_string(),
-        "loop" => "r#loop".to_string(),
-        "break" => "r#break".to_string(),
-        "continue" => "r#continue".to_string(),
-        "return" => "r#return".to_string(),
-        "yield" => "r#yield".to_string(),
-        "pub" => "r#pub".to_string(),
-        "box" => "r#box".to_string(),
-        "in" => "r#in".to_string(),
-        _ => name.to_string(),
-    }
+    crate::codegen::common::escape_reserved_word_prefix(name, RUST_RESERVED, "r#")
 }
