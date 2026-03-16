@@ -105,16 +105,25 @@ type Outcome
     Lose(String)
     Bats(Game)
 
+fn nthRoom(rooms: List<Int>, index: Int) -> Int
+    ? "Extract room at index; crash-safe via Option.withDefault."
+    Option.withDefault(List.get(rooms, index), 1)
+
+verify nthRoom
+    nthRoom([5, 10, 15], 0) => 5
+    nthRoom([5, 10, 15], 2) => 15
+    nthRoom([], 0) => 1
+
 fn newGame() -> Game
     ? "Place player and hazards at distinct random positions."
     ! [Random.int]
     rooms = distinctRooms(6, [])
-    Game(player = Result.withDefault(List.get(rooms, 0), 1),
-         wumpus = Result.withDefault(List.get(rooms, 1), 2),
-         pit1 = Result.withDefault(List.get(rooms, 2), 3),
-         pit2 = Result.withDefault(List.get(rooms, 3), 4),
-         bat1 = Result.withDefault(List.get(rooms, 4), 5),
-         bat2 = Result.withDefault(List.get(rooms, 5), 6),
+    Game(player = nthRoom(rooms, 0),
+         wumpus = nthRoom(rooms, 1),
+         pit1 = nthRoom(rooms, 2),
+         pit2 = nthRoom(rooms, 3),
+         bat1 = nthRoom(rooms, 4),
+         bat2 = nthRoom(rooms, 5),
          arrows = 5)
 
 fn checkRoom(game: Game) -> Outcome
@@ -292,6 +301,11 @@ fn retry(game: Game, msg: String) -> Result<String, String>
     Console.print(msg)
     gameLoop(game)
 
+fn startGame(game: Game) -> Result<String, String>
+    ? "Check starting room for hazards, then enter the game loop."
+    ! [Console.print, Console.readLine, Random.int]
+    resolveOutcome(checkRoom(game))
+
 fn main() -> Unit
     ? "Starts Hunt the Wumpus."
     ! [Console.print, Console.readLine, Random.int]
@@ -299,6 +313,6 @@ fn main() -> Unit
     Console.print("A wumpus lurks in a cave of 20 rooms.")
     Console.print("Each room connects to 3 others.")
     Console.print("Hazards: 2 bottomless pits, 2 bat colonies.")
-    match gameLoop(newGame())
+    match startGame(newGame())
         Result.Ok(msg) -> Console.print(msg)
         Result.Err(msg) -> Console.print("Error: {msg}")
