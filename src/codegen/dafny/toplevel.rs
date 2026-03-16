@@ -449,6 +449,60 @@ fn collect_called_fns_in_body(body: &FnBody, out: &mut std::collections::BTreeSe
     }
 }
 
+/// Maximum number of sample assertions per law.
+/// Z3 can time out on deeply recursive computations, so we cap the
+/// samples to keep verification times reasonable.
+const MAX_LAW_SAMPLES: usize = 5;
+
+/// Emit sample assertions from a law's domain expansion as a test method.
+/// These are concrete smoke tests (e.g. `assert fib(5) == fibSpec(5)`).
+/// Capped at [`MAX_LAW_SAMPLES`] to avoid Z3 timeouts on large domains.
+pub fn emit_law_samples(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    suffix: &str,
+) -> Option<String> {
+    if vb.cases.is_empty() {
+        return None;
+    }
+
+    let fn_name = aver_name_to_dafny(&vb.fn_name);
+    let law_name = aver_name_to_dafny(&law.name);
+
+    let samples: Vec<_> = vb.cases.iter().take(MAX_LAW_SAMPLES).collect();
+    let truncated = vb.cases.len() > MAX_LAW_SAMPLES;
+
+    let mut lines = Vec::new();
+    if truncated {
+        lines.push(format!(
+            "// Sample assertions for {}.{} ({} of {} from given domain)",
+            fn_name,
+            law_name,
+            samples.len(),
+            vb.cases.len()
+        ));
+    } else {
+        lines.push(format!(
+            "// Sample assertions for {}.{} (from given domain)",
+            fn_name, law_name
+        ));
+    }
+    lines.push(format!(
+        "method test_{}_{}{}_samples() {{",
+        fn_name, law_name, suffix
+    ));
+
+    for (lhs, rhs) in &samples {
+        let l = emit_expr(lhs, ctx);
+        let r = emit_expr(rhs, ctx);
+        lines.push(format!("  assert {} == {};", l, r));
+    }
+
+    lines.push("}\n".to_string());
+    Some(lines.join("\n"))
+}
+
 /// Emit a verify law as a Dafny lemma.
 pub fn emit_verify_law(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> String {
     let fn_name = aver_name_to_dafny(&vb.fn_name);

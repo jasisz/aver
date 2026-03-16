@@ -12,6 +12,42 @@ mod toplevel;
 use crate::ast::{TopLevel, VerifyKind};
 use crate::codegen::{CodegenContext, ProjectOutput};
 
+/// Check if a function body uses the `?` (ErrorProp) operator.
+/// Such functions require early-return semantics that Dafny pure functions cannot express.
+fn body_uses_error_prop(body: &std::rc::Rc<crate::ast::FnBody>) -> bool {
+    match body.as_ref() {
+        crate::ast::FnBody::Block(stmts) => stmts.iter().any(|s| match s {
+            crate::ast::Stmt::Binding(_, _, expr) => expr_uses_error_prop(expr),
+            crate::ast::Stmt::Expr(expr) => expr_uses_error_prop(expr),
+        }),
+    }
+}
+
+fn expr_uses_error_prop(expr: &crate::ast::Expr) -> bool {
+    use crate::ast::Expr;
+    match expr {
+        Expr::ErrorProp(_) => true,
+        Expr::FnCall(f, args) => expr_uses_error_prop(f) || args.iter().any(expr_uses_error_prop),
+        Expr::BinOp(_, l, r) => expr_uses_error_prop(l) || expr_uses_error_prop(r),
+        Expr::Match { subject, arms, .. } => {
+            expr_uses_error_prop(subject) || arms.iter().any(|a| expr_uses_error_prop(&a.body))
+        }
+        Expr::Constructor(_, Some(arg)) => expr_uses_error_prop(arg),
+        Expr::List(elems) | Expr::Tuple(elems) => elems.iter().any(expr_uses_error_prop),
+        Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| expr_uses_error_prop(e)),
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_uses_error_prop(base) || updates.iter().any(|(_, e)| expr_uses_error_prop(e))
+        }
+        Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
+            crate::ast::StrPart::Parsed(e) => expr_uses_error_prop(e),
+            _ => false,
+        }),
+        Expr::Attr(obj, _) => expr_uses_error_prop(obj),
+        Expr::TailCall(inner) => inner.1.iter().any(expr_uses_error_prop),
+        _ => false,
+    }
+}
+
 /// Transpile an Aver program into a Dafny project.
 pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
     let mut sections: Vec<String> = Vec::new();
@@ -38,30 +74,49 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
         }
     }
 
-    // Emit function definitions from dependent modules (pure only)
+    // Emit function definitions from dependent modules (pure only, no ? operator)
     for module in &ctx.modules {
         for fd in &module.fn_defs {
-            if fd.effects.is_empty() {
+            if fd.effects.is_empty() && !body_uses_error_prop(&fd.body) {
                 sections.push(toplevel::emit_fn_def(fd, ctx));
             }
         }
     }
 
-    // Emit function definitions from the main module (pure only)
+    // Emit function definitions from the main module (pure only, no ? operator)
     for item in &ctx.items {
         if let TopLevel::FnDef(fd) = item
             && fd.effects.is_empty()
             && fd.name != "main"
+            && !body_uses_error_prop(&fd.body)
         {
             sections.push(toplevel::emit_fn_def(fd, ctx));
         }
     }
 
-    // Emit verify law blocks only — cases are better handled by Lean's native_decide.
+    // Emit verify law blocks: sample assertions + universal lemma.
+    let mut law_counter: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     for item in &ctx.items {
         if let TopLevel::Verify(vb) = item
             && let VerifyKind::Law(law) = &vb.kind
         {
+            let count = law_counter.entry(vb.fn_name.clone()).or_insert(0);
+            *count += 1;
+            let suffix = if *count > 1 {
+                format!("_{}", count)
+            } else {
+                String::new()
+            };
+
+            // 1. Sample assertions from the domain expansion (concrete smoke tests)
+            if !vb.cases.is_empty()
+                && let Some(code) = toplevel::emit_law_samples(vb, law, ctx, &suffix)
+            {
+                sections.push(code);
+            }
+
+            // 2. Universal lemma (when clause becomes requires)
             sections.push(toplevel::emit_verify_law(vb, law, ctx));
         }
     }

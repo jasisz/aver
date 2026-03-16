@@ -7,7 +7,12 @@ Use it when you want:
 - Z3/SMT solver attempting universal proofs for you
 - a quick validation of whether your laws hold before investing in Lean proof strategies
 
-This backend does not emit `verify` cases (concrete examples) — Lean's `native_decide` handles those better.
+For each `verify law` block, the backend emits two things:
+
+1. **Sample assertions** — concrete smoke tests from the `given` domain (e.g. `assert fib(5) == fibSpec(5)`), capped at 5 to avoid Z3 timeouts
+2. **Universal lemma** — `lemma` with `when` as `requires` and the law as `ensures`, proved by Z3
+
+The samples may time out on deeply recursive computations — that is expected. The lemma is the primary verification target.
 
 ## Quick start
 
@@ -29,8 +34,9 @@ A single `.dfy` file containing:
 
 ## What it does NOT generate
 
-- `verify` cases (concrete assertions) — Z3 can't efficiently compute deeply recursive functions on specific inputs; Lean's `native_decide` is the right tool for this
+- `verify` cases (non-law concrete assertions) — Z3 can't efficiently compute deeply recursive functions on specific inputs; Lean's `native_decide` is the right tool for this
 - Effectful functions — only pure functions are emitted
+- Functions using `?` (ErrorProp) — Dafny pure functions cannot express early-return Err propagation
 - `fn main()` — entry point is skipped
 
 ## How it maps Aver → Dafny
@@ -48,10 +54,10 @@ A single `.dfy` file containing:
 | `record Foo` | `datatype Foo = Foo(fields...)` |
 | `type Bar = A \| B(Int)` | `datatype Bar = A \| B(b_0: int)` |
 | `match x: true → a, false → b` | `if x then a else b` |
-| `match n: 0 → base, _ → f(n-1)` | `if n <= 0 then base else f(n-1)` |
+| `match n: 0 → base, _ → f(n-1)` | `if n == 0 then base else f(n-1)` |
 | `match xs: [] → a, [h,..t] → b` | `if \|xs\| == 0 then a else var h := xs[0]; var t := xs[1..]; b` |
-| `x / y` | `if y != 0 then x / y else 0` |
-| `verify f law name` | `lemma f_name(...) ensures ...` |
+| `x / y` | `x / y` (Dafny flags unproved non-zero divisor) |
+| `verify f law name` | sample `method` + universal `lemma` |
 
 ## Termination
 
@@ -60,7 +66,7 @@ Recursive functions get automatic `decreases` clauses:
 - List parameter → `decreases |xs|`
 - String parameter → `decreases |s|`
 
-`match n: 0 → base, _ → recurse(n-1)` is emitted as `if n <= 0 then base else recurse(n-1)` so Dafny sees that the recursive branch has `n > 0`, which satisfies the decreases obligation.
+Scalar `match` arms are emitted as if-then-else chains so Dafny's verifier can see branch guards. Dafny may report "decreases clause might not decrease" for functions where the recursive branch is reachable with negative inputs — this is correct, as those functions genuinely don't terminate for all inputs.
 
 ## Inductive lemma hints
 

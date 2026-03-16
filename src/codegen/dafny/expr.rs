@@ -138,21 +138,11 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
             }
             let l = emit_expr(left, ctx);
             let r = emit_expr(right, ctx);
-            // Dafny requires proof that divisor != 0; guard all divisions.
-            if matches!(op, BinOp::Div) {
-                // Detect if operands are real (float) — check for `as real` suffix
-                let is_real = r.contains("as real") || l.contains("as real");
-                let (zero, zero_result) = if is_real { ("0.0", "0.0") } else { ("0", "0") };
-                return format!(
-                    "(if {} != {} then {} / {} else {})",
-                    r, zero, l, r, zero_result
-                );
-            }
             let op_str = match op {
                 BinOp::Add => "+",
                 BinOp::Sub => "-",
                 BinOp::Mul => "*",
-                BinOp::Div => unreachable!(),
+                BinOp::Div => "/",
                 BinOp::Eq => "==",
                 BinOp::Neq => "!=",
                 BinOp::Lt => "<",
@@ -164,10 +154,13 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
         }
         Expr::Match { subject, arms, .. } => emit_match(subject, arms, ctx),
         Expr::Constructor(name, arg) => emit_constructor(name, arg, ctx),
-        Expr::ErrorProp(inner) => {
-            // ? operator — unwrap Result<T,E> → T
-            let inner_str = emit_expr(inner, ctx);
-            format!("{}.value", inner_str)
+        Expr::ErrorProp(_) => {
+            // ? operator requires early-return semantics (Err propagation).
+            // Dafny pure functions cannot express this; functions using ? are
+            // skipped at the top-level emission stage.  If we get here, emit
+            // a marker that makes the generated Dafny obviously wrong rather
+            // than silently modelling a different program.
+            "/* ERROR: ? operator not supported in Dafny pure functions */".to_string()
         }
         Expr::InterpolatedStr(parts) => emit_interpolated_str(parts, ctx),
         Expr::List(elems) => {
@@ -525,16 +518,6 @@ fn emit_if_chain_inner(subj: &str, arms: &[MatchArm], idx: usize, ctx: &CodegenC
         }
         Pattern::Literal(lit) => {
             let rest = emit_if_chain_inner(subj, arms, idx + 1, ctx);
-
-            // Special case: `match n: 0 -> base, _ -> recurse(n-1)`
-            // For Dafny termination proofs, emit `if n <= 0` instead of `if n == 0`
-            // so Dafny sees that the recursive branch has n > 0.
-            if matches!(lit, Literal::Int(0))
-                && idx + 1 < arms.len()
-                && matches!(arms[idx + 1].pattern, Pattern::Wildcard | Pattern::Ident(_))
-            {
-                return format!("(if {} <= 0 then {} else {})", subj, body, rest);
-            }
 
             let lit_str = emit_literal(lit);
             format!("(if {} == {} then {} else {})", subj, lit_str, body, rest)
