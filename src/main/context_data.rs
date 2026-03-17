@@ -57,49 +57,62 @@ where
     uniq
 }
 
-fn classify_verify_case(lhs: &str, rhs: &str) -> Vec<&'static str> {
+fn classify_verify_case(lhs: &str, rhs: &str, ret_category: Option<&str>) -> Vec<String> {
     let combined = format!("{lhs} -> {rhs}");
     let mut categories = Vec::new();
-    if rhs.contains("Result.Err(")
-        || rhs.contains("ParseResult.Err(")
-        || rhs.contains("Option.None")
-    {
-        categories.push("error");
+
+    // Type-aware classification from fn return type
+    match ret_category {
+        Some("result") => {
+            if rhs.contains("Result.Ok(") || rhs.contains("Ok(") {
+                categories.push("ok".to_string());
+            }
+            if rhs.contains("Result.Err(") || rhs.contains("Err(") {
+                categories.push("err".to_string());
+            }
+        }
+        Some("option") => {
+            if rhs.contains("Option.Some(") || rhs.contains("Some(") {
+                categories.push("some".to_string());
+            }
+            if rhs.contains("Option.None") || rhs == "None" {
+                categories.push("none".to_string());
+            }
+        }
+        Some("bool") => {
+            if rhs == "true" {
+                categories.push("true".to_string());
+            }
+            if rhs == "false" {
+                categories.push("false".to_string());
+            }
+        }
+        _ => {}
     }
+
+    // Heuristic categories (work for any return type)
     if combined.contains("[]") || combined.contains("{}") {
-        categories.push("empty");
+        categories.push("empty".to_string());
     }
-    if combined.contains("-1")
-        || combined.contains("(0 - ")
-        || combined.contains(" - ")
-        || combined.contains("negative")
-    {
-        categories.push("negative");
+    if combined.contains("-1") || combined.contains("(0 - ") {
+        categories.push("negative".to_string());
     }
-    if combined.contains("(0)")
-        || combined.contains(", 0")
-        || combined.contains(" 0)")
-        || combined.contains("=> 0")
-        || combined.ends_with(" 0")
-    {
-        categories.push("zero");
-    }
-    if rhs == "true" || rhs == "false" {
-        categories.push("bool");
+    if combined.contains("(0)") || rhs == "0" {
+        categories.push("zero".to_string());
     }
     if combined.contains("\"\"") {
-        categories.push("empty-string");
+        categories.push("empty-string".to_string());
     }
-    if rhs.contains('.') {
-        categories.push("float");
+
+    // Constructor diversity for named/sum types
+    if ret_category == Some("named") {
+        if let Some(dot_pos) = rhs.find('.') {
+            let after_dot = &rhs[dot_pos + 1..];
+            let ctor = after_dot.split('(').next().unwrap_or(after_dot);
+            categories.push(format!("ctor:{ctor}"));
+        }
     }
-    if rhs.contains("Json.")
-        || rhs.contains("Outcome.")
-        || rhs.contains("Result.")
-        || rhs.contains("Option.")
-    {
-        categories.push("constructor");
-    }
+
     categories.sort();
     categories.dedup();
     categories
@@ -133,12 +146,12 @@ fn base_verify_case_score(lhs: &str, rhs: &str) -> i32 {
     score
 }
 
-fn scored_verify_samples(cases: &[(String, String)]) -> Vec<String> {
+fn scored_verify_samples(cases: &[(String, String)], ret_category: Option<&str>) -> Vec<String> {
     #[derive(Clone)]
     struct ScoredVerifyCase {
         rendered: String,
         base_score: i32,
-        categories: Vec<&'static str>,
+        categories: Vec<String>,
         original_index: usize,
     }
 
@@ -152,14 +165,14 @@ fn scored_verify_samples(cases: &[(String, String)]) -> Vec<String> {
             Some(ScoredVerifyCase {
                 rendered: format!("{lhs_text} -> {rhs_text}"),
                 base_score: base_verify_case_score(lhs_text, rhs_text),
-                categories: classify_verify_case(lhs_text, rhs_text),
+                categories: classify_verify_case(lhs_text, rhs_text, ret_category),
                 original_index,
             })
         })
         .collect::<Vec<_>>();
 
     let mut selected = Vec::new();
-    let mut seen_categories = HashSet::new();
+    let mut seen_categories: HashSet<String> = HashSet::new();
     while selected.len() < VERIFY_SAMPLE_LIMIT && !scored.is_empty() {
         let best_idx = scored
             .iter()
@@ -168,7 +181,7 @@ fn scored_verify_samples(cases: &[(String, String)]) -> Vec<String> {
                 let novelty = case
                     .categories
                     .iter()
-                    .filter(|cat| !seen_categories.contains(**cat))
+                    .filter(|cat| !seen_categories.contains(cat.as_str()))
                     .count() as i32;
                 (
                     case.base_score + novelty * 35,
@@ -180,15 +193,31 @@ fn scored_verify_samples(cases: &[(String, String)]) -> Vec<String> {
             .expect("verify samples should be non-empty");
         let chosen = scored.swap_remove(best_idx);
         for category in &chosen.categories {
-            seen_categories.insert(*category);
+            seen_categories.insert(category.clone());
         }
         selected.push(chosen.rendered);
     }
     selected
 }
 
+fn return_type_category(
+    fn_name: &str,
+    fn_sigs: &HashMap<String, (Vec<aver::types::Type>, aver::types::Type, Vec<String>)>,
+) -> Option<&'static str> {
+    let (_, ret, _) = fn_sigs.get(fn_name)?;
+    match ret {
+        aver::types::Type::Result(_, _) => Some("result"),
+        aver::types::Type::Option(_) => Some("option"),
+        aver::types::Type::Bool => Some("bool"),
+        aver::types::Type::List(_) => Some("list"),
+        aver::types::Type::Named(_) => Some("named"),
+        _ => None,
+    }
+}
+
 fn build_verify_summaries(
     verify_blocks: &[VerifyBlock],
+    fn_sigs: &HashMap<String, (Vec<aver::types::Type>, aver::types::Type, Vec<String>)>,
 ) -> (HashMap<String, usize>, HashMap<String, Vec<String>>) {
     let mut cases_by_fn: HashMap<String, Vec<(String, String)>> = HashMap::new();
     for block in verify_blocks {
@@ -204,7 +233,10 @@ fn build_verify_summaries(
         .collect::<HashMap<_, _>>();
     let verify_samples = cases_by_fn
         .into_iter()
-        .map(|(fn_name, cases)| (fn_name, scored_verify_samples(&cases)))
+        .map(|(fn_name, cases)| {
+            let ret_cat = return_type_category(&fn_name, fn_sigs);
+            (fn_name, scored_verify_samples(&cases, ret_cat))
+        })
         .collect::<HashMap<_, _>>();
 
     (verify_counts, verify_samples)
@@ -422,10 +454,6 @@ pub(super) fn collect_contexts(
         }
     }
 
-    let (verify_counts, verify_samples) = build_verify_summaries(&ctx.verify_blocks);
-    ctx.verify_counts = verify_counts;
-    ctx.verify_samples = verify_samples;
-
     let flags = compute_context_fn_flags(&items, module_root);
     let ContextFnFlags {
         auto_memo,
@@ -457,6 +485,10 @@ pub(super) fn collect_contexts(
         specs.sort();
         specs.dedup();
     }
+
+    let (verify_counts, verify_samples) = build_verify_summaries(&ctx.verify_blocks, &fn_sigs);
+    ctx.verify_counts = verify_counts;
+    ctx.verify_samples = verify_samples;
 
     // Effect summaries are calculated from the full function set
     // before the public-function filtering done for display.
