@@ -220,13 +220,12 @@ fn verify_summary(fd: &FnDef, items: &[TopLevel]) -> Option<String> {
 fn api_role_summary(fd: &FnDef, items: &[TopLevel]) -> Option<String> {
     let exposed = items.iter().find_map(|item| {
         if let TopLevel::Module(module) = item {
-            Some(
-                module
-                    .exposes
-                    .iter()
-                    .map(|name| name.as_str())
-                    .collect::<std::collections::HashSet<_>>(),
-            )
+            let mut set: std::collections::HashSet<&str> =
+                module.exposes.iter().map(|name| name.as_str()).collect();
+            for name in &module.exposes_opaque {
+                set.insert(name.as_str());
+            }
+            Some(set)
         } else {
             None
         }

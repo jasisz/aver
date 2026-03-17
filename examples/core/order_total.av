@@ -1,0 +1,135 @@
+module OrderTotal
+    intent =
+        "Calculate order totals from a list of items, discount, and tax rate."
+        "Validation happens at construction — if you have a Discount, it is valid."
+        "Item is intentionally unconstrained: negative prices model refunds,"
+        "zero quantity models removed line items."
+    exposes [calculateTotal, Item, mkDiscount, mkTaxRate]
+
+decision BoundaryValidation
+    date = "2026-03-17"
+    reason =
+        "Defensive checks inside a pipeline catch errors too late."
+        "Wrapping validated values in distinct record types pushes"
+        "validation to the boundary. Inner functions accept only"
+        "pre-validated data — no runtime checks, no forgotten branches."
+    chosen = "NewtypeRecords"
+    rejected = ["BareFloat", "RuntimeChecksEverywhere"]
+    impacts = [calculateTotal, mkDiscount, mkTaxRate]
+
+decision ItemUnconstrained
+    date = "2026-03-17"
+    reason =
+        "Items carry raw domain data: negative price means refund or credit,"
+        "zero quantity means a removed line item. Constraining Item would"
+        "reject valid real-world inputs. Discount and TaxRate carry policy"
+        "rules, so they get boundary validation. Item does not."
+    chosen = "UnconstrainedItem"
+    rejected = ["ValidatedItem"]
+    impacts = [sumItems, calculateTotal]
+
+record Item
+    price: Float
+    quantity: Int
+
+record Discount
+    percent: Float
+
+record TaxRate
+    percent: Float
+
+fn mkDiscount(percent: Float) -> Result<Discount, String>
+    ? "Constructs a Discount only if percent is in 0–100."
+    match percent < 0.0
+        true  -> Result.Err("Discount cannot be negative")
+        false -> match percent > 100.0
+            true  -> Result.Err("Discount cannot exceed 100%")
+            false -> Result.Ok(Discount(percent = percent))
+
+verify mkDiscount
+    mkDiscount(0.0)   => Result.Ok(Discount(percent = 0.0))
+    mkDiscount(100.0) => Result.Ok(Discount(percent = 100.0))
+    mkDiscount(-0.1)  => Result.Err("Discount cannot be negative")
+    mkDiscount(100.1) => Result.Err("Discount cannot exceed 100%")
+
+fn mkTaxRate(percent: Float) -> Result<TaxRate, String>
+    ? "Constructs a TaxRate only if percent is non-negative."
+    match percent < 0.0
+        true  -> Result.Err("Tax rate cannot be negative")
+        false -> Result.Ok(TaxRate(percent = percent))
+
+verify mkTaxRate
+    mkTaxRate(0.0)   => Result.Ok(TaxRate(percent = 0.0))
+    mkTaxRate(-0.1)  => Result.Err("Tax rate cannot be negative")
+    mkTaxRate(200.0) => Result.Ok(TaxRate(percent = 200.0))
+
+fn sumItems(items: List<Item>) -> Float
+    ? "Recursively sums price * quantity for each item."
+    match items
+        [] -> 0.0
+        [head, ..tail] -> Float.fromInt(head.quantity) * head.price + sumItems(tail)
+
+verify sumItems
+    sumItems([]) => 0.0
+    sumItems([Item(price = 7.0, quantity = 4)]) => 7.0 * 4.0
+
+verify sumItems law sumSplitsOverConcat
+    given a: Item = [Item(price = 5.0, quantity = 3), Item(price = 10.0, quantity = 1)]
+    given b: Item = [Item(price = 7.0, quantity = 2), Item(price = 3.0, quantity = 4)]
+    sumItems([a, b]) => sumItems([a]) + sumItems([b])
+
+fn applyDiscount(subtotal: Float, d: Discount) -> Float
+    ? "Reduces subtotal by the discount percentage."
+    subtotal - subtotal * (d.percent / 100.0)
+
+verify applyDiscount
+    applyDiscount(100.0, Discount(percent = 0.0))   => 100.0
+    applyDiscount(100.0, Discount(percent = 100.0))  => 0.0
+
+verify applyDiscount law discountNeverIncreasesPositive
+    given subtotal: Float = [50.0, 100.0, 200.0]
+    given d: Discount = [Discount(percent = 0.0), Discount(percent = 25.0), Discount(percent = 100.0)]
+    applyDiscount(subtotal, d) <= subtotal => true
+
+fn applyTax(amount: Float, t: TaxRate) -> Float
+    ? "Adds tax on top of amount."
+    amount + amount * (t.percent / 100.0)
+
+verify applyTax
+    applyTax(100.0, TaxRate(percent = 0.0)) => 100.0
+
+verify applyTax law taxNeverDecreasesPositive
+    given amount: Float = [50.0, 100.0, 200.0]
+    given t: TaxRate = [TaxRate(percent = 0.0), TaxRate(percent = 10.0), TaxRate(percent = 50.0)]
+    applyTax(amount, t) >= amount => true
+
+verify applyTax law doubleAmountDoublesTax
+    given amount: Float = [50.0, 100.0]
+    given t: TaxRate = [TaxRate(percent = 0.0), TaxRate(percent = 10.0), TaxRate(percent = 25.0)]
+    applyTax(2.0 * amount, t) => 2.0 * applyTax(amount, t)
+
+fn calculateTotal(items: List<Item>, d: Discount, t: TaxRate) -> Float
+    ? "Sums items, applies discount, applies tax. Assumes valid Discount and TaxRate."
+    subtotal = sumItems(items)
+    afterDiscount = applyDiscount(subtotal, d)
+    applyTax(afterDiscount, t)
+
+verify calculateTotal
+    calculateTotal([], Discount(percent = 50.0), TaxRate(percent = 20.0)) => 0.0
+    calculateTotal([Item(price = 10.0, quantity = 2)], Discount(percent = 50.0), TaxRate(percent = 10.0)) => 11.0
+
+verify calculateTotal law zeroDiscountZeroTaxIsSubtotal
+    given items: List<Item> = [[Item(price = 10.0, quantity = 2)], [Item(price = 5.0, quantity = 3), Item(price = 10.0, quantity = 1)]]
+    calculateTotal(items, Discount(percent = 0.0), TaxRate(percent = 0.0)) => sumItems(items)
+
+verify calculateTotal law equalsStepByStep
+    given items: List<Item> = [[Item(price = 10.0, quantity = 2)], [Item(price = 5.0, quantity = 1)]]
+    given d: Discount = [Discount(percent = 0.0), Discount(percent = 50.0)]
+    given t: TaxRate = [TaxRate(percent = 0.0), TaxRate(percent = 10.0)]
+    calculateTotal(items, d, t) => applyTax(applyDiscount(sumItems(items), d), t)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("--- Order Total Demo ---")
+    Console.print(mkDiscount(-5.0))
+    Console.print(calculateTotal([Item(price = 10.0, quantity = 2)], Discount(percent = 50.0), TaxRate(percent = 10.0)))

@@ -6,6 +6,13 @@ impl TypeChecker {
         type_name: &str,
         fields: &[(String, Expr)],
     ) -> Type {
+        if self.opaque_types.contains(type_name) {
+            self.error(format!(
+                "Cannot construct opaque type '{}' — use its module's constructor function",
+                type_name
+            ));
+            return Type::Named(type_name.to_string());
+        }
         if type_name == "Tcp.Connection" {
             self.error(
                 "Cannot construct 'Tcp.Connection' directly. Use Tcp.connect(host, port)."
@@ -75,6 +82,13 @@ impl TypeChecker {
         base: &Expr,
         updates: &[(String, Expr)],
     ) -> Type {
+        if self.opaque_types.contains(type_name) {
+            self.error(format!(
+                "Cannot update opaque type '{}' — use its module's API",
+                type_name
+            ));
+            return Type::Named(type_name.to_string());
+        }
         let base_ty = self.infer_type(base);
         let expected_ty = Type::Named(type_name.to_string());
         if !Self::constraint_compatible(&base_ty, &expected_ty) {

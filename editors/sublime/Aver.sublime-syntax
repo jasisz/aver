@@ -90,7 +90,7 @@ contexts:
 
   keywords:
     # val/var produce parse errors but are reserved words
-    - match: '\b(val|var|type|record|module|effects|depends|exposes)\b'
+    - match: '\b(val|var|type|record|module|effects|depends|exposes|opaque)\b'
       scope: keyword.declaration.aver
     - match: '\b(match|verify|decision)\b'
       scope: keyword.control.aver

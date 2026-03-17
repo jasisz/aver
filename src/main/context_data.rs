@@ -21,6 +21,7 @@ pub(super) struct FileContext {
     pub(super) intent: Option<String>,
     pub(super) depends: Vec<String>,
     pub(super) exposes: Vec<String>,
+    pub(super) exposes_opaque: Vec<String>,
     pub(super) api_effects: Vec<String>,
     pub(super) module_effects: Vec<String>,
     pub(super) main_effects: Option<Vec<String>>,
@@ -405,6 +406,7 @@ pub(super) fn collect_contexts(
         intent: None,
         depends: vec![],
         exposes: vec![],
+        exposes_opaque: vec![],
         api_effects: vec![],
         module_effects: vec![],
         main_effects: None,
@@ -438,6 +440,7 @@ pub(super) fn collect_contexts(
                 };
                 ctx.depends = m.depends.clone();
                 ctx.exposes = m.exposes.clone();
+                ctx.exposes_opaque = m.exposes_opaque.clone();
                 dep_names = m.depends.clone();
             }
             TopLevel::FnDef(fd) => {

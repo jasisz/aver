@@ -252,6 +252,35 @@ module Payments
     exposes [charge]
 ```
 
+### Opaque types
+
+`exposes opaque` makes a type visible in signatures but blocks direct construction, field access, and pattern matching from outside the module. The type can still be passed around, returned, and stored.
+
+```aver
+module Pricing
+    exposes [mkDiscount, percent]
+    exposes opaque [Discount]
+
+record Discount
+    percent: Float
+
+fn mkDiscount(p: Float) -> Result<Discount, String>
+    ? "Only way to create a Discount from outside."
+    match p < 0.0
+        true  -> Result.Err("Discount cannot be negative")
+        false -> Result.Ok(Discount(percent = p))
+
+fn percent(d: Discount) -> Float
+    ? "Public accessor."
+    d.percent
+```
+
+From outside the module:
+- `Pricing.mkDiscount(50.0)` — works (returns `Result<Discount, String>`)
+- `Pricing.percent(d)` — works (returns `Float`)
+- `Discount(percent = 50.0)` — **compile error** (opaque: cannot construct)
+- `d.percent` — **compile error** (opaque: cannot access fields)
+
 With `--module-root examples`:
 
 - `depends [Data.Fibonacci]` → `examples/data/fibonacci.av`, call as `Data.Fibonacci.fn(...)`

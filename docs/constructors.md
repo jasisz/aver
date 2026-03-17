@@ -94,6 +94,8 @@ conn = Tcp.connect("localhost", 8080)?
 
 The parser rejects `Tcp.Connection(...)` with an actionable error message.
 
+User-defined types can also be opaque via `exposes opaque [TypeName]` in the module declaration. From outside the defining module, opaque types cannot be constructed, have fields accessed, or be pattern-matched. See [language.md](language.md#opaque-types).
+
 ## Parser decision tree
 
 ```

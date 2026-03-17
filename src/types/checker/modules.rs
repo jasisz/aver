@@ -212,6 +212,9 @@ impl TypeChecker {
             for (type_name, variants) in cached.type_variants {
                 self.type_variants.insert(type_name, variants);
             }
+            for type_name in cached.opaque_types {
+                self.opaque_types.insert(type_name);
+            }
             return Ok(());
         }
 
@@ -246,10 +249,14 @@ impl TypeChecker {
             }
 
             let exposed = Self::exposed_set(&items);
+            let opaque_set: HashSet<String> = Self::module_decl(&items)
+                .map(|m| m.exposes_opaque.iter().cloned().collect())
+                .unwrap_or_default();
             let mut fn_entries = Vec::new();
             let mut value_entries = Vec::new();
             let mut record_field_entries = Vec::new();
             let mut type_variants = Vec::new();
+            let mut opaque_types = Vec::new();
             for item in &items {
                 if let TopLevel::FnDef(fd) = item {
                     let include = match &exposed {
@@ -298,38 +305,55 @@ impl TypeChecker {
                             ..
                         } => {
                             let include = match &exposed {
-                                Some(set) => set.contains(type_name),
+                                Some(set) => {
+                                    set.contains(type_name) || opaque_set.contains(type_name)
+                                }
                                 None => !type_name.starts_with('_'),
                             };
                             if !include {
                                 continue;
                             }
+                            let is_opaque = opaque_set.contains(type_name);
 
-                            type_variants.push((
-                                type_name.clone(),
-                                variants.iter().map(|v| v.name.clone()).collect(),
-                            ));
-
-                            for variant in variants {
-                                let params: Vec<Type> = variant
-                                    .fields
-                                    .iter()
-                                    .map(|f| parse_type_str_strict(f).unwrap_or(Type::Unknown))
-                                    .collect();
-                                let key = format!("{}.{}.{}", name, type_name, variant.name);
-                                let alias_key = format!("{}.{}", type_name, variant.name);
-                                if params.is_empty() {
-                                    let value_ty = Type::Named(type_name.clone());
-                                    value_entries.push((key, value_ty.clone()));
-                                    value_entries.push((alias_key, value_ty));
-                                } else {
-                                    let sig = FnSig {
-                                        params,
+                            if is_opaque {
+                                // Opaque: register dummy sig so the type name resolves,
+                                // but do NOT register variants/constructors.
+                                fn_entries.push((
+                                    type_name.clone(),
+                                    FnSig {
+                                        params: vec![],
                                         ret: Type::Named(type_name.clone()),
                                         effects: vec![],
-                                    };
-                                    fn_entries.push((key, sig.clone()));
-                                    fn_entries.push((alias_key, sig));
+                                    },
+                                ));
+                                opaque_types.push(type_name.clone());
+                            } else {
+                                type_variants.push((
+                                    type_name.clone(),
+                                    variants.iter().map(|v| v.name.clone()).collect(),
+                                ));
+
+                                for variant in variants {
+                                    let params: Vec<Type> = variant
+                                        .fields
+                                        .iter()
+                                        .map(|f| parse_type_str_strict(f).unwrap_or(Type::Unknown))
+                                        .collect();
+                                    let key = format!("{}.{}.{}", name, type_name, variant.name);
+                                    let alias_key = format!("{}.{}", type_name, variant.name);
+                                    if params.is_empty() {
+                                        let value_ty = Type::Named(type_name.clone());
+                                        value_entries.push((key, value_ty.clone()));
+                                        value_entries.push((alias_key, value_ty));
+                                    } else {
+                                        let sig = FnSig {
+                                            params,
+                                            ret: Type::Named(type_name.clone()),
+                                            effects: vec![],
+                                        };
+                                        fn_entries.push((key, sig.clone()));
+                                        fn_entries.push((alias_key, sig));
+                                    }
                                 }
                             }
                         }
@@ -339,24 +363,41 @@ impl TypeChecker {
                             ..
                         } => {
                             let include = match &exposed {
-                                Some(set) => set.contains(type_name),
+                                Some(set) => {
+                                    set.contains(type_name) || opaque_set.contains(type_name)
+                                }
                                 None => !type_name.starts_with('_'),
                             };
                             if !include {
                                 continue;
                             }
+                            let is_opaque = opaque_set.contains(type_name);
 
-                            for (field_name, ty_str) in fields {
-                                let field_ty =
-                                    parse_type_str_strict(ty_str).unwrap_or(Type::Unknown);
-                                // Qualified key for explicit module paths.
-                                record_field_entries.push((
-                                    format!("{}.{}.{}", name, type_name, field_name),
-                                    field_ty.clone(),
+                            if is_opaque {
+                                // Opaque: register dummy sig so the type name resolves,
+                                // but do NOT register field types (blocks construction + field access).
+                                fn_entries.push((
+                                    type_name.clone(),
+                                    FnSig {
+                                        params: vec![],
+                                        ret: Type::Named(type_name.clone()),
+                                        effects: vec![],
+                                    },
                                 ));
-                                // Unqualified alias for common `Note.id` style.
-                                record_field_entries
-                                    .push((format!("{}.{}", type_name, field_name), field_ty));
+                                opaque_types.push(type_name.clone());
+                            } else {
+                                for (field_name, ty_str) in fields {
+                                    let field_ty =
+                                        parse_type_str_strict(ty_str).unwrap_or(Type::Unknown);
+                                    // Qualified key for explicit module paths.
+                                    record_field_entries.push((
+                                        format!("{}.{}.{}", name, type_name, field_name),
+                                        field_ty.clone(),
+                                    ));
+                                    // Unqualified alias for common `Note.id` style.
+                                    record_field_entries
+                                        .push((format!("{}.{}", type_name, field_name), field_ty));
+                                }
                             }
                         }
                     }
@@ -368,6 +409,7 @@ impl TypeChecker {
                 value_entries,
                 record_field_entries,
                 type_variants,
+                opaque_types,
             })
         })();
         loading.pop();
@@ -385,6 +427,9 @@ impl TypeChecker {
         for (type_name, variants) in &cached.type_variants {
             self.type_variants
                 .insert(type_name.clone(), variants.clone());
+        }
+        for type_name in &cached.opaque_types {
+            self.opaque_types.insert(type_name.clone());
         }
         self.module_sig_cache.insert(cache_key, cached);
         Ok(())

@@ -4,7 +4,10 @@ All notable changes to Aver are documented here.
 
 ## Unreleased
 
+## 0.5.5
+
 ### Added
+- **Opaque types** — `exposes opaque [TypeName]` in module declarations. Types listed as opaque are visible in signatures but cannot be constructed, field-accessed, or pattern-matched from outside the defining module. Enforced at compile time by the typechecker. See `docs/language.md` for usage.
 - `aver context --focus <symbol>` builds context around a specific function's dependency cone (callees, types, verify blocks, decisions)
 - Priority scoring for `aver context` budget allocation: elements with more verify coverage, spec references, and focus relevance are included first
 - Type-aware verify sample selection: scorer uses fn return type to pick diverse cases (Ok + Err for Result fns, true + false for Bool, per-constructor for sum types)

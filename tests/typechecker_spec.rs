@@ -1889,3 +1889,142 @@ fn error_effect_alias_syntax_is_removed_even_for_cycles() {
     );
     assert_parse_error_containing(src, "Effect aliases were removed");
 }
+
+// ---------------------------------------------------------------------------
+// Opaque types
+// ---------------------------------------------------------------------------
+
+#[test]
+fn opaque_record_blocks_construction() {
+    let root = temp_module_root("opaque_construct");
+    let pricing_dir = root.join("Pricing");
+    std::fs::create_dir_all(&pricing_dir).expect("create Pricing dir failed");
+    std::fs::write(
+        pricing_dir.join("Discount.av"),
+        r#"module Discount
+    exposes [mkDiscount]
+    exposes opaque [Discount]
+    intent = "Opaque discount."
+
+record Discount
+    percent: Float
+
+fn mkDiscount(p: Float) -> Result<Discount, String>
+    ? "Factory."
+    Result.Ok(Discount(percent = p))
+
+verify mkDiscount
+    mkDiscount(50.0) => Result.Ok(Discount(percent = 50.0))
+"#,
+    )
+    .expect("write Discount.av failed");
+
+    let src = r#"module App
+    depends [Pricing.Discount]
+    intent = "Tries to construct opaque."
+
+fn bad() -> Discount
+    Discount(percent = 50.0)
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("Cannot construct opaque type")),
+        "expected opaque construction error, got: {:?}",
+        errs
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn opaque_record_blocks_field_access() {
+    let root = temp_module_root("opaque_field");
+    let pricing_dir = root.join("Pricing");
+    std::fs::create_dir_all(&pricing_dir).expect("create Pricing dir failed");
+    std::fs::write(
+        pricing_dir.join("Discount.av"),
+        r#"module Discount
+    exposes [mkDiscount]
+    exposes opaque [Discount]
+    intent = "Opaque discount."
+
+record Discount
+    percent: Float
+
+fn mkDiscount(p: Float) -> Result<Discount, String>
+    ? "Factory."
+    Result.Ok(Discount(percent = p))
+
+verify mkDiscount
+    mkDiscount(50.0) => Result.Ok(Discount(percent = 50.0))
+"#,
+    )
+    .expect("write Discount.av failed");
+
+    let src = r#"module App
+    depends [Pricing.Discount]
+    intent = "Tries to access opaque field."
+
+fn bad(d: Discount) -> Float
+    d.percent
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("Cannot access field") && e.contains("opaque")),
+        "expected opaque field access error, got: {:?}",
+        errs
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn opaque_type_usable_in_signatures() {
+    let root = temp_module_root("opaque_sig");
+    let pricing_dir = root.join("Pricing");
+    std::fs::create_dir_all(&pricing_dir).expect("create Pricing dir failed");
+    std::fs::write(
+        pricing_dir.join("Discount.av"),
+        r#"module Discount
+    exposes [mkDiscount, percent]
+    exposes opaque [Discount]
+    intent = "Opaque discount."
+
+record Discount
+    percent: Float
+
+fn mkDiscount(p: Float) -> Result<Discount, String>
+    ? "Factory."
+    Result.Ok(Discount(percent = p))
+
+verify mkDiscount
+    mkDiscount(50.0) => Result.Ok(Discount(percent = 50.0))
+
+fn percent(d: Discount) -> Float
+    ? "Accessor."
+    d.percent
+
+verify percent
+    percent(Discount(percent = 42.0)) => 42.0
+"#,
+    )
+    .expect("write Discount.av failed");
+
+    let src = r#"module App
+    depends [Pricing.Discount]
+    intent = "Uses opaque type through API."
+
+fn apply(d: Discount) -> Float
+    Pricing.Discount.percent(d)
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.is_empty(),
+        "expected no errors for opaque type in signatures, got: {:?}",
+        errs
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}

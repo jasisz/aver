@@ -78,7 +78,7 @@
       }
     },
     "keywords": {
-      "match": "\\b(fn|match|module|depends|exposes|intent|verify|decision|type|record|effects|date|author|chosen|rejected|impacts|reason|service|needs)\\b",
+      "match": "\\b(fn|match|module|depends|exposes|opaque|intent|verify|decision|type|record|effects|date|author|chosen|rejected|impacts|reason|service|needs)\\b",
       "name": "keyword.other.aver"
     },
     "effect-annotation": {

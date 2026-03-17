@@ -100,6 +100,7 @@ struct ModuleSigCache {
     value_entries: Vec<(String, Type)>,
     record_field_entries: Vec<(String, Type)>,
     type_variants: Vec<(String, Vec<String>)>,
+    opaque_types: Vec<String>,
 }
 
 struct TypeChecker {
@@ -122,6 +123,8 @@ struct TypeChecker {
     current_fn_ret: Option<Type>,
     /// Line number of the function currently being checked; None at top level.
     current_fn_line: Option<usize>,
+    /// Type names that are opaque in this module's context (imported via `exposes opaque`).
+    opaque_types: HashSet<String>,
 }
 
 impl TypeChecker {
@@ -147,6 +150,7 @@ impl TypeChecker {
             errors: Vec::new(),
             current_fn_ret: None,
             current_fn_line: None,
+            opaque_types: HashSet::new(),
         };
         tc.register_builtins();
         tc

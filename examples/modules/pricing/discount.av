@@ -1,0 +1,29 @@
+module Discount
+    exposes [mkDiscount, percent]
+    exposes opaque [Discount]
+    intent =
+        "Opaque discount type. Construction only through mkDiscount."
+
+record Discount
+    percent: Float
+
+fn mkDiscount(p: Float) -> Result<Discount, String>
+    ? "Constructs a Discount only if percent is in 0–100."
+    match p < 0.0
+        true  -> Result.Err("Discount cannot be negative")
+        false -> match p > 100.0
+            true  -> Result.Err("Discount cannot exceed 100%")
+            false -> Result.Ok(Discount(percent = p))
+
+verify mkDiscount
+    mkDiscount(0.0)   => Result.Ok(Discount(percent = 0.0))
+    mkDiscount(100.0) => Result.Ok(Discount(percent = 100.0))
+    mkDiscount(-1.0)  => Result.Err("Discount cannot be negative")
+    mkDiscount(101.0) => Result.Err("Discount cannot exceed 100%")
+
+fn percent(d: Discount) -> Float
+    ? "Returns the discount percentage."
+    d.percent
+
+verify percent
+    percent(Discount(percent = 50.0)) => 50.0

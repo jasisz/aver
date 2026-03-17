@@ -122,6 +122,13 @@ pub(super) fn format_context_md(
             out.push_str(&format!("> {}\n\n", intent));
         }
 
+        if !ctx.exposes_opaque.is_empty() {
+            out.push_str(&format!(
+                "exposes opaque: `[{}]`\n",
+                ctx.exposes_opaque.join(", ")
+            ));
+        }
+
         // Effects: merge api/module when identical
         if effects_equal(&ctx.api_effects, &ctx.module_effects) {
             if !ctx.module_effects.is_empty() {
@@ -347,6 +354,15 @@ pub(super) fn format_context_json(
                 .collect::<Vec<_>>()
                 .join(", ");
             out.push_str(&format!("      \"depends\": [{}],\n", depends));
+        }
+        if !ctx.exposes_opaque.is_empty() {
+            let opaque = ctx
+                .exposes_opaque
+                .iter()
+                .map(|name| json_str(name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!("      \"exposes_opaque\": [{}],\n", opaque));
         }
 
         // Effects: merge when identical, omit when empty
@@ -785,6 +801,7 @@ mod tests {
             intent: Some("spec demo".to_string()),
             depends: vec!["Math.Core".to_string()],
             exposes: vec!["fib".to_string()],
+            exposes_opaque: vec![],
             api_effects: vec![],
             module_effects: vec![],
             main_effects: None,
@@ -872,6 +889,7 @@ mod tests {
             intent: None,
             depends: vec![],
             exposes: vec![],
+            exposes_opaque: vec![],
             api_effects: vec![],
             module_effects: vec![],
             main_effects: None,

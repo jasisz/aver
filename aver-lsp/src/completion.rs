@@ -565,10 +565,15 @@ pub fn parse_items(source: &str) -> Vec<aver::ast::TopLevel> {
 fn local_exposed_names(items: &[TopLevel]) -> Option<std::collections::HashSet<&str>> {
     items.iter().find_map(|item| {
         if let TopLevel::Module(m) = item {
-            if m.exposes.is_empty() {
+            if m.exposes.is_empty() && m.exposes_opaque.is_empty() {
                 None
             } else {
-                Some(m.exposes.iter().map(|s| s.as_str()).collect())
+                let mut set: std::collections::HashSet<&str> =
+                    m.exposes.iter().map(|s| s.as_str()).collect();
+                for name in &m.exposes_opaque {
+                    set.insert(name.as_str());
+                }
+                Some(set)
             }
         } else {
             None

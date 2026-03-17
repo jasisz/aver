@@ -3,7 +3,7 @@ members = [".", "aver-lsp", "aver-rt"]
 
 [package]
 name = "aver-lang"
-version = "0.5.4"
+version = "0.5.5"
 edition = "2024"
 default-run = "aver"
 description = "Interpreter and transpiler for Aver, a statically-typed language designed for AI-assisted development"

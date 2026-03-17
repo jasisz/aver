@@ -14,6 +14,7 @@ impl Parser {
 
         let mut depends = Vec::new();
         let mut exposes = Vec::new();
+        let mut exposes_opaque = Vec::new();
         let mut exposes_line = None;
         let mut intent = String::new();
 
@@ -28,7 +29,13 @@ impl Parser {
                     }
                     TokenKind::Exposes => {
                         exposes_line = Some(self.current().line);
-                        exposes = self.parse_exposes()?;
+                        self.advance(); // consume 'exposes'
+                        if matches!(self.current().kind, TokenKind::Ident(ref s) if s == "opaque") {
+                            self.advance(); // consume 'opaque'
+                            exposes_opaque = self.parse_bracket_ident_list()?;
+                        } else {
+                            exposes = self.parse_bracket_ident_list()?;
+                        }
                     }
                     TokenKind::Depends => {
                         depends = self.parse_depends()?;
@@ -48,6 +55,7 @@ impl Parser {
             line,
             depends,
             exposes,
+            exposes_opaque,
             exposes_line,
             intent,
         })
@@ -63,8 +71,7 @@ impl Parser {
         Ok(text)
     }
 
-    pub(super) fn parse_exposes(&mut self) -> Result<Vec<String>, ParseError> {
-        self.expect_exact(&TokenKind::Exposes)?;
+    pub(super) fn parse_bracket_ident_list(&mut self) -> Result<Vec<String>, ParseError> {
         self.expect_exact(&TokenKind::LBracket)?;
         let mut items = Vec::new();
 

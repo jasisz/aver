@@ -1714,6 +1714,7 @@ mod tests {
             intent: None,
             depends: vec![],
             exposes: vec![],
+            exposes_opaque: vec![],
             api_effects: vec![],
             module_effects: vec![],
             main_effects: None,

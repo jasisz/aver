@@ -1315,3 +1315,33 @@ fn record_update_multiple_fields() {
         panic!("expected FnDef");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Opaque types
+// ---------------------------------------------------------------------------
+
+#[test]
+fn module_with_exposes_opaque() {
+    let src = "module Pricing\n    exposes [mkDiscount]\n    exposes opaque [Discount]\n    intent =\n        \"Opaque demo.\"\n";
+    let items = parse(src);
+    if let TopLevel::Module(m) = &items[0] {
+        assert_eq!(m.exposes, vec!["mkDiscount".to_string()]);
+        assert_eq!(m.exposes_opaque, vec!["Discount".to_string()]);
+    } else {
+        panic!("expected Module");
+    }
+}
+
+#[test]
+fn module_exposes_opaque_multiple() {
+    let src = "module Pricing\n    exposes opaque [Discount, TaxRate]\n    intent =\n        \"Two opaque types.\"\n";
+    let items = parse(src);
+    if let TopLevel::Module(m) = &items[0] {
+        assert_eq!(
+            m.exposes_opaque,
+            vec!["Discount".to_string(), "TaxRate".to_string()]
+        );
+    } else {
+        panic!("expected Module");
+    }
+}

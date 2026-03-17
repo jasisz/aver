@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use crate::ast::{DecisionBlock, DecisionImpact, Expr, FnDef, Stmt, TopLevel, VerifyKind};
+use crate::ast::{DecisionBlock, DecisionImpact, Expr, FnDef, Stmt, TopLevel, TypeDef, VerifyKind};
 use crate::verify_law::{canonical_spec_ref, named_law_function};
 
 use super::{CheckFinding, FnSigMap, ModuleCheckFindings, dotted_name, verify_case_calls_target};
@@ -322,6 +322,45 @@ pub fn check_module_intent_with_sigs_in(
                         file: source_file.map(|s| s.to_string()),
                         message: format!("Module '{}' has no intent block", m.name),
                     });
+                }
+                // Validate exposes_opaque: each name must be a TypeDef.
+                if !m.exposes_opaque.is_empty() {
+                    let type_names: std::collections::HashSet<&str> = items
+                        .iter()
+                        .filter_map(|item| match item {
+                            TopLevel::TypeDef(TypeDef::Sum { name, .. })
+                            | TopLevel::TypeDef(TypeDef::Product { name, .. }) => {
+                                Some(name.as_str())
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    let exposed_set: std::collections::HashSet<&str> =
+                        m.exposes.iter().map(|s| s.as_str()).collect();
+                    for opaque_name in &m.exposes_opaque {
+                        if !type_names.contains(opaque_name.as_str()) {
+                            errors.push(CheckFinding {
+                                line: m.line,
+                                module: Some(m.name.clone()),
+                                file: source_file.map(|s| s.to_string()),
+                                message: format!(
+                                    "'{}' in exposes opaque is not a type defined in this module",
+                                    opaque_name
+                                ),
+                            });
+                        }
+                        if exposed_set.contains(opaque_name.as_str()) {
+                            errors.push(CheckFinding {
+                                line: m.line,
+                                module: Some(m.name.clone()),
+                                file: source_file.map(|s| s.to_string()),
+                                message: format!(
+                                    "'{}' cannot be in both exposes and exposes opaque",
+                                    opaque_name
+                                ),
+                            });
+                        }
+                    }
                 }
             }
             TopLevel::FnDef(f) => {

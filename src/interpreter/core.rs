@@ -727,6 +727,9 @@ impl Interpreter {
             let module_globals = Rc::new(sub.global_scope_clone()?);
 
             let exposed = Self::exposed_set(&items);
+            let opaque_set: HashSet<String> = Self::module_decl(&items)
+                .map(|m| m.exposes_opaque.iter().cloned().collect())
+                .unwrap_or_default();
             let mut members = HashMap::new();
             for item in &items {
                 match item {
@@ -752,6 +755,10 @@ impl Interpreter {
                     TopLevel::TypeDef(TypeDef::Sum {
                         name: type_name, ..
                     }) => {
+                        // Skip opaque sum types — do not expose constructors.
+                        if opaque_set.contains(type_name) {
+                            continue;
+                        }
                         let include = match &exposed {
                             Some(set) => set.contains(type_name),
                             None => !type_name.starts_with('_'),

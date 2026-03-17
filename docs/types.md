@@ -21,7 +21,7 @@
 | `Stmt` | `src/ast.rs` | `Binding(name, Option<type_ann>, expr)`, `Expr(expr)` |
 | `FnBody` | `src/ast.rs` | `Block(Vec<Stmt>)` for parsed source; `Expr(Expr)` remains as an internal compact form used by some compiler/codegen tests |
 | `FnDef` | `src/ast.rs` | Name, params, return type, effects, optional description, body |
-| `Module` | `src/ast.rs` | Name + source line, depends, exposes, intent string |
+| `Module` | `src/ast.rs` | Name + source line, depends, exposes, exposes_opaque, intent string |
 | `VerifyBlock` | `src/ast.rs` | Function name + list of `(left_expr, right_expr)` equality cases |
 | `DecisionBlock` | `src/ast.rs` | Name + source line, date, reason, chosen ref, rejected refs, impacts refs, optional author |
 | `DecisionImpact` | `src/ast.rs` | Reusable decision reference: `Symbol(String)` (validated identifier) or `Semantic(String)` (free-form text) |

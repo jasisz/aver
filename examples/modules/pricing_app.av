@@ -1,0 +1,20 @@
+module PricingApp
+    depends [Pricing.Discount]
+    exposes [applyDiscount]
+    intent =
+        "Tests opaque type usage from outside the defining module."
+
+fn applyDiscount(price: Float, rawDiscount: Float) -> Result<Float, String>
+    ? "Constructs discount, applies it to price."
+    match Pricing.Discount.mkDiscount(rawDiscount)
+        Result.Err(e) -> Result.Err(e)
+        Result.Ok(d) -> Result.Ok(price - price * (Pricing.Discount.percent(d) / 100.0))
+
+verify applyDiscount
+    applyDiscount(100.0, 50.0)  => Result.Ok(50.0)
+    applyDiscount(200.0, 0.0)   => Result.Ok(200.0)
+    applyDiscount(100.0, -1.0)  => Result.Err("Discount cannot be negative")
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(applyDiscount(200.0, 15.0))

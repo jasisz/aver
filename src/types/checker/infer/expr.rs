@@ -450,6 +450,13 @@ impl TypeChecker {
                 let obj_ty = self.infer_type(obj);
                 match obj_ty {
                     Type::Named(ref type_name) => {
+                        if self.opaque_types.contains(type_name) {
+                            self.error(format!(
+                                "Cannot access field '{}' of opaque type '{}'",
+                                field, type_name
+                            ));
+                            return Type::Unknown;
+                        }
                         let key = format!("{}.{}", type_name, field);
                         if let Some(field_ty) = self.record_field_types.get(&key) {
                             field_ty.clone()

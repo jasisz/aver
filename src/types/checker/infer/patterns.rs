@@ -81,7 +81,7 @@ impl TypeChecker {
     }
 
     pub(in super::super) fn collect_pattern_bindings(
-        &self,
+        &mut self,
         pattern: &Pattern,
         subject_ty: &Type,
         out: &mut Vec<(String, Type)>,
@@ -101,6 +101,20 @@ impl TypeChecker {
                 }
             }
             Pattern::Constructor(name, bindings) => {
+                // Check if this pattern matches on an opaque type's representation.
+                let type_prefix = name.split('.').next().unwrap_or(name);
+                if self.opaque_types.contains(type_prefix) {
+                    self.error(format!(
+                        "Cannot pattern match on opaque type '{}'",
+                        type_prefix
+                    ));
+                    for bind_name in bindings {
+                        if bind_name != "_" {
+                            out.push((bind_name.clone(), Type::Unknown));
+                        }
+                    }
+                    return;
+                }
                 let binding_tys =
                     self.pattern_constructor_binding_types(name, subject_ty, bindings.len());
                 for (bind_name, bind_ty) in bindings.iter().zip(binding_tys.into_iter()) {

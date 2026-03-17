@@ -650,17 +650,18 @@ fn collect_unused_exposes_findings(
             continue;
         };
 
-        if module.exposes.is_empty() {
+        if module.exposes.is_empty() && module.exposes_opaque.is_empty() {
             continue;
         }
 
         let exposed_name_set = module.exposes.iter().cloned().collect::<HashSet<_>>();
+        let opaque_name_set: HashSet<String> = module.exposes_opaque.iter().cloned().collect();
         let exposed_type_names = items
             .iter()
             .filter_map(|item| match item {
                 TopLevel::TypeDef(TypeDef::Sum { name, .. })
                 | TopLevel::TypeDef(TypeDef::Product { name, .. })
-                    if exposed_name_set.contains(name) =>
+                    if exposed_name_set.contains(name) || opaque_name_set.contains(name) =>
                 {
                     Some(name.clone())
                 }
