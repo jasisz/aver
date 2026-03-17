@@ -4,6 +4,15 @@ All notable changes to Aver are documented here.
 
 ## Unreleased
 
+### Added
+- `aver context --focus <symbol>` builds context around a specific function's dependency cone (callees, types, verify blocks, decisions)
+- Priority scoring for `aver context` budget allocation: elements with more verify coverage, spec references, and focus relevance are included first
+- Type-aware verify sample selection: scorer uses fn return type to pick diverse cases (Ok + Err for Result fns, true + false for Bool, per-constructor for sum types)
+- Granular verify coverage warnings: checker now reports missing Result Ok/Err, Option Some/None, Bool true/false, and sum type variant cases
+
+### Changed
+- `src/checker.rs` split into `src/checker/` module (coverage, verify, intent, law)
+
 ## 0.5.4
 
 ### Added

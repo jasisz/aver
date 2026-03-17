@@ -105,12 +105,12 @@ fn classify_verify_case(lhs: &str, rhs: &str, ret_category: Option<&str>) -> Vec
     }
 
     // Constructor diversity for named/sum types
-    if ret_category == Some("named") {
-        if let Some(dot_pos) = rhs.find('.') {
-            let after_dot = &rhs[dot_pos + 1..];
-            let ctor = after_dot.split('(').next().unwrap_or(after_dot);
-            categories.push(format!("ctor:{ctor}"));
-        }
+    if ret_category == Some("named")
+        && let Some(dot_pos) = rhs.find('.')
+    {
+        let after_dot = &rhs[dot_pos + 1..];
+        let ctor = after_dot.split('(').next().unwrap_or(after_dot);
+        categories.push(format!("ctor:{ctor}"));
     }
 
     categories.sort();
