@@ -1,0 +1,158 @@
+module Board
+    intent =
+        "Board representation and manipulation for Tetris."
+        "Immutable 2D grid as List<List<Int>>, with cell access,"
+        "line clearing, and row counting."
+    depends []
+
+record Point
+    x: Int
+    y: Int
+
+fn pt(x: Int, y: Int) -> Point
+    ? "Shorthand Point constructor"
+    Point(x = x, y = y)
+
+verify pt
+    pt(3, 4).x => 3
+    pt(3, 4).y => 4
+
+fn emptyRow() -> List<Int>
+    ? "A row of 10 zeros"
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+
+verify emptyRow
+    List.len(emptyRow()) => 10
+
+fn buildBoard(n: Int) -> List<List<Int>>
+    ? "Build n empty rows"
+    match n == 0
+        true -> []
+        false -> List.prepend(emptyRow(), buildBoard(n - 1))
+
+verify buildBoard
+    List.len(buildBoard(3)) => 3
+
+fn emptyBoard() -> List<List<Int>>
+    ? "Standard 20-row empty board"
+    buildBoard(20)
+
+verify emptyBoard
+    List.len(emptyBoard()) => 20
+
+fn getCell(board: List<List<Int>>, x: Int, y: Int) -> Int
+    ? "Get cell value at (x,y), 0 if out of bounds"
+    match List.get(board, y)
+        Option.Some(row) -> match List.get(row, x)
+            Option.Some(v) -> v
+            Option.None -> 0
+        Option.None -> 0
+
+verify getCell
+    getCell(emptyBoard(), 0, 0) => 0
+    getCell(emptyBoard(), 9, 19) => 0
+
+fn setCellCols(r: List<Int>, x: Int, val: Int, col: Int) -> List<Int>
+    ? "Rebuild a row replacing column x"
+    match col == 10
+        true -> []
+        false -> match List.get(r, col)
+            Option.Some(v) -> match col == x
+                true -> List.prepend(val, setCellCols(r, x, val, col + 1))
+                false -> List.prepend(v, setCellCols(r, x, val, col + 1))
+            Option.None -> []
+
+verify setCellCols
+    List.len(setCellCols(emptyRow(), 3, 5, 0)) => 10
+
+fn setCellRows(board: List<List<Int>>, x: Int, y: Int, val: Int, row: Int) -> List<List<Int>>
+    ? "Rebuild rows replacing cell at (x,y)"
+    match row == 20
+        true -> []
+        false -> match List.get(board, row)
+            Option.Some(r) -> match row == y
+                true -> List.prepend(setCellCols(r, x, val, 0), setCellRows(board, x, y, val, row + 1))
+                false -> List.prepend(r, setCellRows(board, x, y, val, row + 1))
+            Option.None -> []
+
+verify setCellRows
+    List.len(setCellRows(emptyBoard(), 3, 5, 2, 0)) => 20
+
+fn setCell(board: List<List<Int>>, x: Int, y: Int, val: Int) -> List<List<Int>>
+    ? "Return board with cell (x,y) set to val"
+    setCellRows(board, x, y, val, 0)
+
+verify setCell
+    getCell(setCell(emptyBoard(), 3, 5, 2), 3, 5) => 2
+    getCell(setCell(emptyBoard(), 3, 5, 2), 4, 5) => 0
+
+fn isFullRow(row: List<Int>, i: Int) -> Bool
+    ? "True if row has no empty cells"
+    match i == List.len(row)
+        true -> true
+        false -> match List.get(row, i)
+            Option.Some(v) -> match v == 0
+                true -> false
+                false -> isFullRow(row, i + 1)
+            Option.None -> true
+
+verify isFullRow
+    isFullRow([1, 2, 3, 1, 2, 3, 1, 2, 3, 1], 0) => true
+    isFullRow([1, 0, 3, 1, 2, 3, 1, 2, 3, 1], 0) => false
+    isFullRow(emptyRow(), 0) => false
+
+fn filterRows(board: List<List<Int>>, i: Int) -> List<List<Int>>
+    ? "Keep only non-full rows"
+    match i == List.len(board)
+        true -> []
+        false -> match List.get(board, i)
+            Option.Some(row) -> match isFullRow(row, 0)
+                true -> filterRows(board, i + 1)
+                false -> List.prepend(row, filterRows(board, i + 1))
+            Option.None -> []
+
+verify filterRows
+    List.len(filterRows(emptyBoard(), 0)) => 20
+
+fn prependEmpty(board: List<List<Int>>, n: Int) -> List<List<Int>>
+    ? "Prepend n empty rows"
+    match n == 0
+        true -> board
+        false -> prependEmpty(List.prepend(emptyRow(), board), n - 1)
+
+verify prependEmpty
+    List.len(prependEmpty([], 3)) => 3
+
+fn clearLines(board: List<List<Int>>) -> List<List<Int>>
+    ? "Remove full rows and prepend empty rows at top"
+    prependEmpty(filterRows(board, 0), 20 - List.len(filterRows(board, 0)))
+
+verify clearLines
+    List.len(clearLines(emptyBoard())) => 20
+
+fn countFullRows(board: List<List<Int>>, i: Int) -> Int
+    ? "Count full rows from index i"
+    match i == List.len(board)
+        true -> 0
+        false -> match List.get(board, i)
+            Option.Some(row) -> match isFullRow(row, 0)
+                true -> 1 + countFullRows(board, i + 1)
+                false -> countFullRows(board, i + 1)
+            Option.None -> 0
+
+verify countFullRows
+    countFullRows(emptyBoard(), 0) => 0
+
+fn countCleared(board: List<List<Int>>) -> Int
+    ? "Count full rows in board"
+    countFullRows(board, 0)
+
+verify countCleared
+    countCleared(emptyBoard()) => 0
+
+fn fullRow() -> List<Int>
+    ? "Test helper: a full row"
+    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+
+verify fullRow
+    isFullRow(fullRow(), 0) => true
