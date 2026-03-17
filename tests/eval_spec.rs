@@ -3462,6 +3462,7 @@ updated = User.update(u, age = 99)
 
 #[test]
 #[cfg(feature = "terminal")]
+#[ignore] // requires TTY — fails on CI (EAGAIN)
 fn terminal_size_returns_record_with_width_and_height() {
     let src = "fn getSize() -> Terminal.Size\n    ? \"get size\"\n    ! [Terminal.size]\n    Terminal.size()\n";
     let mut items = parse(src);
