@@ -914,7 +914,7 @@ fn collect_contexts_auto_scored(
         base_selection.included_depth = included_depth_for_state(&state, &scoring.module_depths);
     };
 
-    // Recalculate exact used bytes with final selection for accurate reporting
+    // Recalculate exact used bytes and trim if estimates were too optimistic
     used_bytes = render_size(
         &selected_contexts,
         entry_label,
@@ -922,6 +922,35 @@ fn collect_contexts_auto_scored(
         decisions_only,
         base_selection.clone(),
     );
+
+    // If real render exceeds budget, remove lowest-scored candidates until it fits
+    let mut sorted_selected: Vec<usize> = (0..candidates.len())
+        .filter(|&idx| candidate_selected(&state, &candidates[idx].key))
+        .collect();
+    sorted_selected.sort_by(|a, b| candidates[*a].score.cmp(&candidates[*b].score));
+
+    while used_bytes > budget && !sorted_selected.is_empty() {
+        let weakest = sorted_selected.remove(0);
+        // Don't remove the entry module (ctx_idx 0)
+        if matches!(&candidates[weakest].key, CandidateKey::Module { ctx_idx } if *ctx_idx == 0) {
+            continue;
+        }
+        // Rebuild state without this candidate
+        let mut new_state = SelectionState::default();
+        for &idx in &sorted_selected {
+            new_state = apply_candidate(&new_state, &scoring, &candidates[idx].key);
+        }
+        state = new_state;
+        selected_contexts = materialize_selection(&contexts, &state);
+        used_bytes = render_size(
+            &selected_contexts,
+            entry_label,
+            json,
+            decisions_only,
+            base_selection.clone(),
+        );
+        remaining_candidates.push(weakest);
+    }
 
     let next_candidate = remaining_candidates
         .iter()
