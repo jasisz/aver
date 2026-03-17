@@ -113,6 +113,22 @@ pub fn emit_builtin_call(name: &str, args: &[Expr], ctx: &CodegenContext) -> Opt
             Some(format!("Float.fromString {}", paren_if_complex(&s)))
         }
 
+        // ---- Bool ----
+        "Bool.or" => {
+            let a = super::expr::emit_expr(&args[0], ctx);
+            let b = super::expr::emit_expr(&args[1], ctx);
+            Some(format!("({} || {})", a, b))
+        }
+        "Bool.and" => {
+            let a = super::expr::emit_expr(&args[0], ctx);
+            let b = super::expr::emit_expr(&args[1], ctx);
+            Some(format!("({} && {})", a, b))
+        }
+        "Bool.not" => {
+            let a = super::expr::emit_expr(&args[0], ctx);
+            Some(format!("(!{})", a))
+        }
+
         // ---- Char ----
         "Char.toCode" => {
             let c = super::expr::emit_expr(&args[0], ctx);

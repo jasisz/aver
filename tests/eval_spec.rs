@@ -3455,3 +3455,45 @@ updated = User.update(u, age = 99)
         other => panic!("expected Record, got {:?}", other),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Terminal service runtime
+// ---------------------------------------------------------------------------
+
+#[test]
+#[cfg(feature = "terminal")]
+fn terminal_size_returns_record_with_width_and_height() {
+    let src = "fn getSize() -> Terminal.Size\n    ? \"get size\"\n    ! [Terminal.size]\n    Terminal.size()\n";
+    let mut items = parse(src);
+    aver::tco::transform_program(&mut items);
+    aver::resolver::resolve_program(&mut items);
+    let mut interp = Interpreter::new();
+    for item in &items {
+        if let TopLevel::FnDef(fd) = item {
+            interp.exec_fn_def(fd).expect("exec_fn_def failed");
+        }
+    }
+    let fn_val = interp.lookup("getSize").expect("fn not found");
+    let allowed = Interpreter::callable_declared_effects(&fn_val);
+    let size = interp
+        .call_value_with_effects_pub(fn_val, vec![], "<test>", allowed)
+        .expect("call failed");
+    match &size {
+        Value::Record {
+            type_name, fields, ..
+        } => {
+            assert_eq!(type_name, "Terminal.Size");
+            let field_names: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
+            assert!(field_names.contains(&"width"), "missing 'width' field");
+            assert!(field_names.contains(&"height"), "missing 'height' field");
+            // Both fields should be non-negative integers
+            for (name, val) in fields.iter() {
+                match val {
+                    Value::Int(n) => assert!(*n >= 0, "field '{}' should be >= 0, got {}", name, n),
+                    other => panic!("field '{}' should be Int, got {:?}", name, other),
+                }
+            }
+        }
+        other => panic!("expected Record, got {:?}", other),
+    }
+}

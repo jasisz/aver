@@ -214,7 +214,20 @@ impl Interpreter {
                             name
                         )))
                     }),
+                    #[cfg(feature = "terminal")]
+                    Some("Terminal") => terminal::call(name, args).unwrap_or_else(|| {
+                        Err(RuntimeError::Error(format!(
+                            "Unknown builtin function: '{}'",
+                            name
+                        )))
+                    }),
                     Some("Time") => time::call(name, args).unwrap_or_else(|| {
+                        Err(RuntimeError::Error(format!(
+                            "Unknown builtin function: '{}'",
+                            name
+                        )))
+                    }),
+                    Some("Bool") => bool::call(name, args).unwrap_or_else(|| {
                         Err(RuntimeError::Error(format!(
                             "Unknown builtin function: '{}'",
                             name

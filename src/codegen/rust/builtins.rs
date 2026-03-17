@@ -397,6 +397,22 @@ fn emit_builtin_call_inner(
             Some(format!("({}.len() as i64)", map))
         }
 
+        // ---- Bool ----
+        "Bool.or" => {
+            let a = emit_arg(0);
+            let b = emit_arg(1);
+            Some(format!("({} || {})", a, b))
+        }
+        "Bool.and" => {
+            let a = emit_arg(0);
+            let b = emit_arg(1);
+            Some(format!("({} && {})", a, b))
+        }
+        "Bool.not" => {
+            let a = emit_arg(0);
+            Some(format!("(!{})", a))
+        }
+
         // ---- Char ----
         "Char.toCode" => {
             let arg = emit_arg(0);
@@ -597,6 +613,39 @@ fn emit_builtin_call_inner(
             ))
         }
         "Random.float" => Some("aver_rt::random::random_float()".to_string()),
+
+        // ---- Terminal ----
+        "Terminal.enableRawMode" => {
+            Some("aver_rt::terminal_enable_raw_mode().unwrap()".to_string())
+        }
+        "Terminal.disableRawMode" => {
+            Some("aver_rt::terminal_disable_raw_mode().unwrap()".to_string())
+        }
+        "Terminal.clear" => Some("aver_rt::terminal_clear().unwrap()".to_string()),
+        "Terminal.moveTo" => {
+            let x = emit_arg(0);
+            let y = emit_arg(1);
+            Some(format!("aver_rt::terminal_move_to({}, {}).unwrap()", x, y))
+        }
+        "Terminal.print" => {
+            let s = emit_arg(0);
+            Some(format!(
+                "{{ let __s = format!(\"{{}}\", {}); aver_rt::terminal_print(&__s).unwrap() }}",
+                s
+            ))
+        }
+        "Terminal.setColor" => {
+            let c = emit_arg(0);
+            Some(format!("aver_rt::terminal_set_color(&{}).unwrap()", c))
+        }
+        "Terminal.resetColor" => Some("aver_rt::terminal_reset_color().unwrap()".to_string()),
+        "Terminal.readKey" => Some("aver_rt::terminal_read_key()".to_string()),
+        "Terminal.size" => {
+            Some("{ let (w, h) = aver_rt::terminal_size().unwrap(); (w, h) }".to_string())
+        }
+        "Terminal.hideCursor" => Some("aver_rt::terminal_hide_cursor().unwrap()".to_string()),
+        "Terminal.showCursor" => Some("aver_rt::terminal_show_cursor().unwrap()".to_string()),
+        "Terminal.flush" => Some("aver_rt::terminal_flush().unwrap()".to_string()),
 
         _ => None,
     }

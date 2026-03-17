@@ -2028,3 +2028,36 @@ fn apply(d: Discount) -> Float
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ---------------------------------------------------------------------------
+// Terminal service effect & signature checking
+// ---------------------------------------------------------------------------
+
+#[test]
+#[cfg(feature = "terminal")]
+fn error_terminal_clear_without_effect() {
+    let src = concat!("fn wipe() -> Unit\n", "    Terminal.clear()\n",);
+    assert_error_containing(src, "has effect 'Terminal.clear'");
+}
+
+#[test]
+#[cfg(feature = "terminal")]
+fn error_terminal_move_to_wrong_arg_count() {
+    let src = concat!(
+        "fn go(x: Int) -> Unit\n",
+        "    ! [Terminal.moveTo]\n",
+        "    Terminal.moveTo(x)\n",
+    );
+    assert_error_containing(src, "expects 2 argument(s)");
+}
+
+#[test]
+#[cfg(feature = "terminal")]
+fn terminal_read_key_returns_option_string() {
+    let src = concat!(
+        "fn poll() -> Option<String>\n",
+        "    ! [Terminal.readKey]\n",
+        "    Terminal.readKey()\n",
+    );
+    assert_no_errors(src);
+}

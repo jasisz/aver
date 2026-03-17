@@ -838,6 +838,10 @@ pub(super) fn cmd_run(
         None
     };
 
+    // Terminal guard — restores raw mode / cursor / colors on drop (even on panic).
+    #[cfg(feature = "terminal")]
+    let _terminal_guard = aver_rt::TerminalGuard::new();
+
     let mut runtime_failure: Option<String> = run_top_level_statements(&mut interp, &items).err();
 
     let mut main_result: Option<Result<Value, String>> = None;

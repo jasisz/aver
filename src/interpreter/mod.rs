@@ -8,11 +8,13 @@ use crate::replay::{
     EffectRecord, JsonValue, RecordedOutcome, SessionRecording, json_to_string,
     session_recording_to_string_pretty, value_to_json, values_to_json_lossy,
 };
+#[cfg(feature = "terminal")]
+use crate::services::terminal;
 use crate::services::{args, console, disk, env, http, http_server, random, tcp, time};
 use crate::source::{
     canonicalize_path, find_module_file, parse_source, require_module_declaration,
 };
-use crate::types::{byte, char, float, int, list, map, option, result, string};
+use crate::types::{bool, byte, char, float, int, list, map, option, result, string};
 // Re-export value types so existing `use aver::interpreter::Value` imports keep working.
 pub use crate::value::{Env, EnvFrame, RuntimeError, Value, aver_display, aver_repr};
 use crate::value::{list_from_vec, list_len, list_view};

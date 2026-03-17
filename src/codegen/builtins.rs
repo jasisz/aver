@@ -60,6 +60,11 @@ pub(crate) enum Builtin {
     StringFromBool,
     StringByteLength,
 
+    // --- Bool ---
+    BoolOr,
+    BoolAnd,
+    BoolNot,
+
     // --- Char ---
     CharToCode,
     CharFromCode,
@@ -156,6 +161,11 @@ pub(crate) fn recognize_builtin(name: &str) -> Option<Builtin> {
         "String.fromFloat" => Builtin::StringFromFloat,
         "String.fromBool" => Builtin::StringFromBool,
         "String.byteLength" => Builtin::StringByteLength,
+
+        // Bool
+        "Bool.or" => Builtin::BoolOr,
+        "Bool.and" => Builtin::BoolAnd,
+        "Bool.not" => Builtin::BoolNot,
 
         // Char
         "Char.toCode" => Builtin::CharToCode,

@@ -84,6 +84,9 @@ pub fn generate_cargo_toml(
     if services.contains("Random") {
         rt_features.push("random");
     }
+    if services.contains("Terminal") {
+        rt_features.push("terminal");
+    }
     rt_features.sort();
 
     let mut deps = Vec::new();

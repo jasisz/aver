@@ -4,6 +4,12 @@ All notable changes to Aver are documented here.
 
 ## Unreleased
 
+### Added
+- **Terminal service** — `Terminal.*` namespace (12 methods) for raw-mode terminal I/O via crossterm: cursor control, colored output, non-blocking key input, screen management. Behind `terminal` cargo feature (enabled by default).
+- **Terminal guard** — `aver run` installs a drop guard that restores terminal state (cursor, colors, raw mode) on exit, panic, or runtime error.
+- **Bool namespace** — `Bool.or`, `Bool.and`, `Bool.not` pure builtins for logical combinators.
+- **Snake demo** — `examples/apps/snake.av`: classic Snake game showcasing immutable state threading, TCO game loop, records, verify blocks for game logic, and Terminal service for real-time I/O. 36 verify cases. Compiles to native Rust binary, formally verified in Lean 4 and Dafny/Z3.
+
 ## 0.5.5
 
 ### Added

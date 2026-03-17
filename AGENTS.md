@@ -102,6 +102,7 @@ src/
     list.rs           — List.len/get/push/head/tail (pure)
     map.rs            — Map.* (pure)
     char.rs           — Char.toCode/fromCode (pure, not a type)
+    bool.rs           — Bool.or/and/not (pure)
     byte.rs           — Byte.toHex/fromHex (pure, not a type)
     checker/          — Static type checker. Split into submodules:
       mod.rs          — TypeChecker struct, constraint_compatible(), run_type_check_*
@@ -146,6 +147,7 @@ src/
     http_server.rs    — HttpServer.listen/listenWith via `aver_rt::http_server`
     disk.rs           — Disk.readText/writeText/appendText/exists/delete/... via shared helpers
     tcp.rs            — Tcp.send/ping + connect/writeLine/readLine/close via `aver_rt::tcp`
+    terminal.rs       — Terminal.* (raw mode, cursor, color, key input) via `aver_rt::terminal` [feature-gated]
 ```
 
 ## How to run

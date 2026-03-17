@@ -264,6 +264,96 @@ impl TypeChecker {
             self.insert_sig(name, params, ret.clone(), effects);
         }
 
+        // Terminal namespace (behind cfg feature)
+        #[cfg(feature = "terminal")]
+        {
+            let terminal_sigs: &[(&str, &[Type], Type, &[&str])] = &[
+                (
+                    "Terminal.enableRawMode",
+                    &[],
+                    Type::Unit,
+                    &["Terminal.enableRawMode"],
+                ),
+                (
+                    "Terminal.disableRawMode",
+                    &[],
+                    Type::Unit,
+                    &["Terminal.disableRawMode"],
+                ),
+                ("Terminal.clear", &[], Type::Unit, &["Terminal.clear"]),
+                (
+                    "Terminal.moveTo",
+                    &[Type::Int, Type::Int],
+                    Type::Unit,
+                    &["Terminal.moveTo"],
+                ),
+                (
+                    "Terminal.print",
+                    &[Type::Unknown],
+                    Type::Unit,
+                    &["Terminal.print"],
+                ),
+                (
+                    "Terminal.setColor",
+                    &[Type::Str],
+                    Type::Unit,
+                    &["Terminal.setColor"],
+                ),
+                (
+                    "Terminal.resetColor",
+                    &[],
+                    Type::Unit,
+                    &["Terminal.resetColor"],
+                ),
+                (
+                    "Terminal.readKey",
+                    &[],
+                    Type::Option(Box::new(Type::Str)),
+                    &["Terminal.readKey"],
+                ),
+                (
+                    "Terminal.size",
+                    &[],
+                    Type::Named("Terminal.Size".to_string()),
+                    &["Terminal.size"],
+                ),
+                (
+                    "Terminal.hideCursor",
+                    &[],
+                    Type::Unit,
+                    &["Terminal.hideCursor"],
+                ),
+                (
+                    "Terminal.showCursor",
+                    &[],
+                    Type::Unit,
+                    &["Terminal.showCursor"],
+                ),
+                ("Terminal.flush", &[], Type::Unit, &["Terminal.flush"]),
+            ];
+            for (name, params, ret, effects) in terminal_sigs {
+                self.insert_sig(name, params, ret.clone(), effects);
+            }
+
+            // Terminal.Size record field types
+            let terminal_size_fields: &[(&str, Type)] =
+                &[("width", Type::Int), ("height", Type::Int)];
+            for (field, ty) in terminal_size_fields {
+                self.record_field_types
+                    .insert(format!("Terminal.Size.{}", field), ty.clone());
+            }
+        }
+
+        // Bool namespace
+        let bool_sigs: &[(&str, &[Type], Type, &[&str])] = &[
+            ("Bool.or", &[Type::Bool, Type::Bool], Type::Bool, &[]),
+            ("Bool.and", &[Type::Bool, Type::Bool], Type::Bool, &[]),
+            ("Bool.not", &[Type::Bool], Type::Bool, &[]),
+        ];
+        for (name, params, ret, effects) in bool_sigs {
+            self.insert_sig(name, params, ret.clone(), effects);
+        }
+
         // Int namespace
         let int_result = || Type::Result(Box::new(Type::Int), Box::new(Type::Str));
         let int_sigs: &[(&str, &[Type], Type, &[&str])] = &[

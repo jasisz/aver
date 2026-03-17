@@ -20,10 +20,12 @@ path = "src/lib.rs"
 default = []
 http = ["dep:ureq"]
 random = ["dep:rand"]
+terminal = ["dep:crossterm"]
 
 [package.metadata.docs.rs]
 all-features = true
 
 [dependencies]
+crossterm = { version = "0.28", optional = true }
 rand = { version = "0.9", optional = true }
 ureq = { version = "2", optional = true }

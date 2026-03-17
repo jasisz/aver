@@ -1,6 +1,6 @@
 /// Built-in platform services available to Aver programs.
 ///
-/// Each service is a named namespace (`Args`, `Console`, `Http`, `Disk`, `Tcp`, `HttpServer`, `Time`, `Env`, `Random`) that must
+/// Each service is a named namespace (`Args`, `Console`, `Http`, `Disk`, `Tcp`, `HttpServer`, `Time`, `Env`, `Random`, `Terminal`) that must
 /// be declared as an effect in order to be called:
 ///
 /// ```aver
@@ -23,4 +23,6 @@ pub mod http;
 pub mod http_server;
 pub mod random;
 pub mod tcp;
+#[cfg(feature = "terminal")]
+pub mod terminal;
 pub mod time;

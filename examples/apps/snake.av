@@ -1,0 +1,360 @@
+module Main
+    intent =
+        "Snake game — demonstrates immutable state threading, TCO game loop,"
+        "records, pure logic with verify blocks, and Terminal service."
+    depends []
+
+decision ImmutableGameState
+    date = "2026-03-17"
+    author = "szymon"
+    reason =
+        "Immutable state is verify-friendly — pure functions can be tested"
+        "with verify blocks without mocking. TCO ensures the game loop"
+        "does not grow the stack."
+    chosen = "ImmutableStateThreading"
+    rejected = ["MutableGlobalState"]
+    impacts = [GameState, gameLoop, moveSnake, newDirection]
+
+record Point
+    x: Int
+    y: Int
+
+record GameState
+    snake: List<Point>
+    dx: Int
+    dy: Int
+    food: Point
+    score: Int
+    gameOver: Bool
+    width: Int
+    height: Int
+    tickMs: Int
+
+fn newDirection(state: GameState, key: String) -> GameState
+    ? "Change direction unless it would reverse 180 degrees"
+    match key
+        "up" -> match state.dy == 1
+            true -> state
+            false -> GameState.update(state, dx = 0, dy = 0 - 1)
+        "down" -> match state.dy == 0 - 1
+            true -> state
+            false -> GameState.update(state, dx = 0, dy = 1)
+        "left" -> match state.dx == 1
+            true -> state
+            false -> GameState.update(state, dx = 0 - 1, dy = 0)
+        "right" -> match state.dx == 0 - 1
+            true -> state
+            false -> GameState.update(state, dx = 1, dy = 0)
+        _ -> state
+
+verify newDirection
+    newDirection(gs([pt(5, 5)], 1, 0, pt(0, 0)), "left").dx => 1
+    newDirection(gs([pt(5, 5)], 1, 0, pt(0, 0)), "up").dy => 0 - 1
+    newDirection(gs([pt(5, 5)], 0, 0 - 1, pt(0, 0)), "down").dy => 0 - 1
+    newDirection(gs([pt(5, 5)], 1, 0, pt(0, 0)), "x").dx => 1
+
+fn advanceHead(state: GameState, h: Point) -> GameState
+    ? "Prepend new head, drop tail"
+    GameState.update(state, snake = List.prepend(Point(x = h.x + state.dx, y = h.y + state.dy), dropLast(state.snake)))
+
+verify advanceHead
+    advanceHead(gs([pt(5, 5), pt(4, 5)], 1, 0, pt(0, 0)), pt(5, 5)).snake => [pt(6, 5), pt(5, 5)]
+
+fn moveSnake(state: GameState) -> GameState
+    ? "Advance the snake by one cell"
+    match List.get(state.snake, 0)
+        Option.Some(h) -> advanceHead(state, h)
+        Option.None -> state
+
+verify moveSnake
+    moveSnake(gs([pt(5, 5), pt(4, 5), pt(3, 5)], 1, 0, pt(0, 0))).snake => [pt(6, 5), pt(5, 5), pt(4, 5)]
+
+fn dropLast(xs: List<Point>) -> List<Point>
+    ? "Remove the last element"
+    match List.len(xs) < 2
+        true -> []
+        false -> match List.get(xs, 0)
+            Option.Some(h) -> List.prepend(h, dropLast(tail(xs)))
+            Option.None -> []
+
+verify dropLast
+    dropLast([pt(1, 1), pt(2, 2), pt(3, 3)]) => [pt(1, 1), pt(2, 2)]
+    dropLast([pt(1, 1)]) => []
+    dropLast([]) => []
+
+fn tail(xs: List<Point>) -> List<Point>
+    ? "All elements except the first"
+    match List.len(xs) < 2
+        true -> []
+        false -> tailRec(xs, 1)
+
+verify tail
+    tail([pt(1, 1), pt(2, 2), pt(3, 3)]) => [pt(2, 2), pt(3, 3)]
+    tail([pt(1, 1)]) => []
+    tail([]) => []
+
+fn tailRec(xs: List<Point>, i: Int) -> List<Point>
+    ? "Collect elements from index i"
+    match i == List.len(xs)
+        true -> []
+        false -> match List.get(xs, i)
+            Option.Some(el) -> List.prepend(el, tailRec(xs, i + 1))
+            Option.None -> []
+
+verify tailRec
+    tailRec([pt(1, 1), pt(2, 2), pt(3, 3)], 1) => [pt(2, 2), pt(3, 3)]
+    tailRec([pt(1, 1)], 1) => []
+
+fn checkWall(head: Point, w: Int, h: Int) -> Bool
+    ? "True if head is on or past the border"
+    Bool.or(Bool.or(head.x < 1, head.x > w - 2), Bool.or(head.y < 1, head.y > h - 2))
+
+verify checkWall
+    checkWall(pt(5, 5), 40, 20) => false
+    checkWall(pt(0, 5), 40, 20) => true
+    checkWall(pt(5, 0), 40, 20) => true
+    checkWall(pt(39, 5), 40, 20) => true
+
+fn checkCollision(state: GameState) -> Bool
+    ? "True if the snake hit a wall or itself"
+    match List.get(state.snake, 0)
+        Option.Some(head) -> match checkWall(head, state.width, state.height)
+            true -> true
+            false -> bodyContains(state.snake, head, 1)
+        Option.None -> true
+
+verify checkCollision
+    checkCollision(gs([pt(5, 5)], 1, 0, pt(0, 0))) => false
+    checkCollision(gs([pt(0, 5)], 1, 0, pt(0, 0))) => true
+    checkCollision(gs([pt(5, 5), pt(6, 5), pt(5, 5)], 1, 0, pt(0, 0))) => true
+
+fn bodyContains(snake: List<Point>, target: Point, i: Int) -> Bool
+    ? "True if target exists in snake from index i"
+    match i == List.len(snake)
+        true -> false
+        false -> match List.get(snake, i)
+            Option.Some(p) -> match p.x == target.x
+                true -> match p.y == target.y
+                    true -> true
+                    false -> bodyContains(snake, target, i + 1)
+                false -> bodyContains(snake, target, i + 1)
+            Option.None -> false
+
+verify bodyContains
+    bodyContains([pt(5, 5), pt(6, 5), pt(5, 5)], pt(5, 5), 1) => true
+    bodyContains([pt(5, 5), pt(6, 5), pt(7, 5)], pt(5, 5), 1) => false
+
+fn didEatFood(state: GameState) -> Bool
+    ? "True if the snake head is on the food"
+    match List.get(state.snake, 0)
+        Option.Some(head) -> match head.x == state.food.x
+            true -> head.y == state.food.y
+            false -> false
+        Option.None -> false
+
+verify didEatFood
+    didEatFood(gs([pt(10, 10)], 1, 0, pt(10, 10))) => true
+    didEatFood(gs([pt(10, 10)], 1, 0, pt(20, 10))) => false
+
+fn growSnake(state: GameState) -> GameState
+    ? "Append food position to snake, increment score"
+    GameState.update(state, snake = List.append(state.snake, state.food), score = state.score + 1)
+
+verify growSnake
+    growSnake(gs([pt(5, 5)], 1, 0, pt(10, 10))).score => 1
+    List.len(growSnake(gs([pt(5, 5)], 1, 0, pt(10, 10))).snake) => 2
+
+fn randomFood(state: GameState) -> GameState
+    ? "Place food at a random position inside the border"
+    ! [Random.int]
+    GameState.update(state, food = Point(x = Random.int(1, state.width - 2), y = Random.int(1, state.height - 2)))
+
+fn drawAt(x: Int, y: Int, ch: String) -> Unit
+    ? "Move cursor and print a double-wide cell (terminal chars are ~2x taller than wide)"
+    ! [Terminal.moveTo, Terminal.print]
+    Terminal.moveTo(x * 2, y)
+    Terminal.print(ch)
+
+fn renderHLine(x: Int, maxX: Int, y: Int) -> Unit
+    ? "Draw a horizontal line"
+    ! [Terminal.moveTo, Terminal.print]
+    match x == maxX
+        true -> drawAt(0, 0, "")
+        false -> renderHNext(x, maxX, y)
+
+fn renderHNext(x: Int, maxX: Int, y: Int) -> Unit
+    ? "Draw one cell and recurse"
+    ! [Terminal.moveTo, Terminal.print]
+    drawAt(x, y, "██")
+    renderHLine(x + 1, maxX, y)
+
+fn renderVLine(y: Int, maxY: Int, x: Int) -> Unit
+    ? "Draw a vertical line"
+    ! [Terminal.moveTo, Terminal.print]
+    match y == maxY
+        true -> drawAt(0, 0, "")
+        false -> renderVNext(y, maxY, x)
+
+fn renderVNext(y: Int, maxY: Int, x: Int) -> Unit
+    ? "Draw one cell and recurse"
+    ! [Terminal.moveTo, Terminal.print]
+    drawAt(x, y, "██")
+    renderVLine(y + 1, maxY, x)
+
+fn renderBorder(state: GameState) -> Unit
+    ? "Draw border with solid blocks"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    Terminal.setColor("white")
+    drawAt(0, 0, "██")
+    drawAt(state.width - 1, 0, "██")
+    drawAt(0, state.height - 1, "██")
+    drawAt(state.width - 1, state.height - 1, "██")
+    renderHLine(1, state.width - 1, 0)
+    renderHLine(1, state.width - 1, state.height - 1)
+    renderVLine(1, state.height - 1, 0)
+    renderVLine(1, state.height - 1, state.width - 1)
+    Terminal.resetColor()
+
+fn renderSegment(p: Point, i: Int) -> Unit
+    ? "Draw one snake segment"
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor]
+    match i == 0
+        true -> Terminal.setColor("green")
+        false -> Terminal.setColor("cyan")
+    drawAt(p.x, p.y, "██")
+
+fn renderSnake(snake: List<Point>, i: Int) -> Unit
+    ? "Draw each segment of the snake"
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor]
+    match i == List.len(snake)
+        true -> drawAt(0, 0, "")
+        false -> match List.get(snake, i)
+            Option.Some(p) -> renderSnakeNext(snake, p, i)
+            Option.None -> drawAt(0, 0, "")
+
+fn renderSnakeNext(snake: List<Point>, p: Point, i: Int) -> Unit
+    ? "Render one segment and continue"
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor]
+    renderSegment(p, i)
+    renderSnake(snake, i + 1)
+
+fn render(state: GameState) -> Unit
+    ? "Draw one frame"
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+    ]
+    Terminal.clear()
+    renderBorder(state)
+    renderSnake(state.snake, 0)
+    Terminal.setColor("red")
+    drawAt(state.food.x, state.food.y, "██")
+    Terminal.resetColor()
+    Terminal.moveTo(0, state.height)
+    Terminal.print("Score: {Int.toString(state.score)}  |  Q / ESC to quit")
+    Terminal.flush()
+
+fn handleKey(state: GameState, k: String) -> GameState
+    ? "Handle a single key press"
+    match k == "q"
+        true -> GameState.update(state, gameOver = true)
+        false -> match k == "esc"
+            true -> GameState.update(state, gameOver = true)
+            false -> newDirection(state, k)
+
+verify handleKey
+    handleKey(gs([pt(5, 5)], 1, 0, pt(0, 0)), "q").gameOver => true
+    handleKey(gs([pt(5, 5)], 1, 0, pt(0, 0)), "esc").gameOver => true
+    handleKey(gs([pt(5, 5)], 1, 0, pt(0, 0)), "up").dy => 0 - 1
+
+fn readInput(state: GameState) -> GameState
+    ? "Poll for a key press and update direction"
+    ! [Terminal.readKey]
+    match Terminal.readKey()
+        Option.Some(k) -> handleKey(state, k)
+        Option.None -> state
+
+fn tick(state: GameState) -> Result<String, String>
+    ? "One game tick: move, check collision, check food"
+    ! [
+        Random.int,
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
+        Time.sleep,
+    ]
+    match state.gameOver
+        true -> Result.Ok("Game over! Score: {Int.toString(state.score)}")
+        false -> tickMove(moveSnake(state))
+
+fn tickMove(moved: GameState) -> Result<String, String>
+    ? "After moving: check collision, then food"
+    ! [
+        Random.int,
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
+        Time.sleep,
+    ]
+    match checkCollision(moved)
+        true -> Result.Ok("Game over! Score: {Int.toString(moved.score)}")
+        false -> match didEatFood(moved)
+            true -> gameLoop(growSnake(randomFood(moved)))
+            false -> gameLoop(moved)
+
+fn gameLoop(state: GameState) -> Result<String, String>
+    ? "Render, sleep, read input, tick — TCO recursive"
+    ! [
+        Random.int,
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
+        Time.sleep,
+    ]
+    render(state)
+    Time.sleep(state.tickMs)
+    tick(readInput(state))
+
+fn initState() -> GameState
+    ? "Starting game state"
+    GameState(snake = [Point(x = 15, y = 10), Point(x = 14, y = 10), Point(x = 13, y = 10)], dx = 1, dy = 0, food = Point(x = 25, y = 10), score = 0, gameOver = false, width = 40, height = 20, tickMs = 100)
+
+verify initState
+    initState().width => 40
+    List.len(initState().snake) => 3
+
+fn run() -> Result<String, String>
+    ? "Setup terminal, run game loop, teardown"
+    ! [
+        Random.int,
+        Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
+        Time.sleep,
+    ]
+    Terminal.enableRawMode()
+    Terminal.hideCursor()
+    result = gameLoop(initState())
+    Terminal.showCursor()
+    Terminal.disableRawMode()
+    Terminal.clear()
+    result
+
+fn main()
+    ? "Entry point"
+    ! [
+        Console.print,
+        Random.int,
+        Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
+        Time.sleep,
+    ]
+    match run()
+        Result.Ok(msg) -> Console.print(msg)
+        Result.Err(err) -> Console.print("Error: {err}")
+
+fn gs(snake: List<Point>, dx: Int, dy: Int, food: Point) -> GameState
+    ? "Test helper: game state with defaults"
+    GameState(snake = snake, dx = dx, dy = dy, food = food, score = 0, gameOver = false, width = 40, height = 20, tickMs = 100)
+
+verify gs
+    gs([pt(1, 1)], 1, 0, pt(0, 0)).width => 40
+    gs([pt(1, 1)], 1, 0, pt(0, 0)).height => 20
+
+fn pt(x: Int, y: Int) -> Point
+    ? "Test helper: shorthand Point"
+    Point(x = x, y = y)
+
+verify pt
+    pt(3, 4).x => 3
+    pt(3, 4).y => 4

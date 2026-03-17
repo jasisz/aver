@@ -9,6 +9,8 @@ pub mod random;
 mod runtime;
 mod service_types;
 pub mod tcp;
+#[cfg(feature = "terminal")]
+pub mod terminal;
 
 pub use display::{AverDisplay, aver_display};
 pub use runtime::{
@@ -17,6 +19,16 @@ pub use runtime::{
     time_now, time_sleep, time_unix_ms, write_text,
 };
 pub use service_types::{Header, HttpRequest, HttpResponse, TcpConnection};
+
+#[cfg(feature = "terminal")]
+pub use terminal::{
+    TerminalGuard, clear as terminal_clear, disable_raw_mode as terminal_disable_raw_mode,
+    enable_raw_mode as terminal_enable_raw_mode, flush as terminal_flush,
+    hide_cursor as terminal_hide_cursor, move_to as terminal_move_to,
+    print_at_cursor as terminal_print, read_key as terminal_read_key,
+    reset_color as terminal_reset_color, restore_terminal, set_color as terminal_set_color,
+    show_cursor as terminal_show_cursor, size as terminal_size,
+};
 
 use std::fmt;
 use std::hash::{Hash, Hasher};

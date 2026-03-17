@@ -301,6 +301,11 @@ fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> Str
         StringFromBool => format!("StringFromBool({})", a[0]),
         StringByteLength => format!("StringByteLength({})", a[0]),
 
+        // Bool
+        BoolOr => format!("({} || {})", a[0], a[1]),
+        BoolAnd => format!("({} && {})", a[0], a[1]),
+        BoolNot => format!("(!{})", a[0]),
+
         // Char/Byte
         CharToCode => format!("CharToCode({})", a[0]),
         CharFromCode => format!("CharFromCode({})", a[0]),

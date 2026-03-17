@@ -28,6 +28,10 @@ name = "aver"
 name = "aver"
 path = "src/main.rs"
 
+[features]
+default = ["terminal"]
+terminal = ["aver-rt/terminal"]
+
 [dependencies]
 aver-rt = { path = "aver-rt", version = "=0.2.2", features = ["http", "random"] }
 clap = { version = "4", features = ["derive"] }

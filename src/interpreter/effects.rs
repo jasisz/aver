@@ -15,7 +15,10 @@ impl Interpreter {
             Some("Env") => env::effects(name),
             Some("Random") => random::effects(name),
             Some("Tcp") => tcp::effects(name),
+            #[cfg(feature = "terminal")]
+            Some("Terminal") => terminal::effects(name),
             Some("Time") => time::effects(name),
+            Some("Bool") => bool::effects(name),
             Some("Int") => int::effects(name),
             Some("Float") => float::effects(name),
             Some("String") => string::effects(name),

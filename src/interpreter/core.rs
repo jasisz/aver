@@ -18,7 +18,10 @@ impl Interpreter {
         env::register(&mut global);
         random::register(&mut global);
         tcp::register(&mut global);
+        #[cfg(feature = "terminal")]
+        terminal::register(&mut global);
         time::register(&mut global);
+        bool::register(&mut global);
         int::register(&mut global);
         float::register(&mut global);
         string::register(&mut global);
@@ -93,6 +96,11 @@ impl Interpreter {
         record_schemas.insert(
             "Tcp.Connection".to_string(),
             vec!["id".to_string(), "host".to_string(), "port".to_string()],
+        );
+        #[cfg(feature = "terminal")]
+        record_schemas.insert(
+            "Terminal.Size".to_string(),
+            vec!["width".to_string(), "height".to_string()],
         );
 
         Interpreter {

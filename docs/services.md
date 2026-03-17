@@ -4,6 +4,16 @@ All functions live in namespaces — no flat builtins (decision: `FullNamespaceE
 
 ## Pure namespaces (no effects)
 
+### `Bool` namespace
+
+Source: `src/types/bool.rs`
+
+| Function | Signature | Notes |
+|---|---|---|
+| `Bool.or` | `(Bool, Bool) -> Bool` | Logical OR |
+| `Bool.and` | `(Bool, Bool) -> Bool` | Logical AND |
+| `Bool.not` | `Bool -> Bool` | Logical NOT |
+
 ### `List` namespace
 
 Source: `src/types/list.rs`
@@ -252,6 +262,27 @@ Source: `src/services/time.rs`
 | `Time.now` | `() -> String` | Current UTC timestamp string (`...Z`) |
 | `Time.unixMs` | `() -> Int` | Unix epoch milliseconds |
 | `Time.sleep` | `Int -> Unit` | Sleeps current thread for ms, runtime error on negative |
+
+### `Terminal` namespace — use granular effects (`! [Terminal.clear]`, `! [Terminal.readKey]`, etc.)
+
+Source: `src/services/terminal.rs` (requires `terminal` feature, enabled by default)
+
+| Function | Signature | Notes |
+|---|---|---|
+| `Terminal.enableRawMode` | `() -> Unit` | Enter raw mode (no line buffering, no echo) |
+| `Terminal.disableRawMode` | `() -> Unit` | Leave raw mode |
+| `Terminal.clear` | `() -> Unit` | Clear entire screen |
+| `Terminal.moveTo` | `(Int, Int) -> Unit` | Move cursor to column x, row y |
+| `Terminal.print` | `a -> Unit` | Print at cursor position (no newline) |
+| `Terminal.setColor` | `String -> Unit` | Set foreground: "red"/"green"/"yellow"/"blue"/"white"/"cyan"/"magenta"/"black" |
+| `Terminal.resetColor` | `() -> Unit` | Reset colors to default |
+| `Terminal.readKey` | `() -> Option<String>` | Non-blocking poll: "up"/"down"/"left"/"right"/"esc"/"q"/char or None |
+| `Terminal.size` | `() -> Terminal.Size` | Returns `Terminal.Size { width: Int, height: Int }` |
+| `Terminal.hideCursor` | `() -> Unit` | Hide cursor |
+| `Terminal.showCursor` | `() -> Unit` | Show cursor |
+| `Terminal.flush` | `() -> Unit` | Flush stdout |
+
+Terminal guard: `aver run` installs a drop guard that restores the terminal (show cursor, reset colors, disable raw mode) even on panic or runtime error.
 
 ### `Env` namespace — use granular effects (`! [Env.get]`, `! [Env.set]`)
 
