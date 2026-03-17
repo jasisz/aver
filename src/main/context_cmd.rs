@@ -124,6 +124,10 @@ struct ScoringContext {
     catalog: FocusCatalog,
     /// Decision impacts resolved to (ctx_idx, fn_name) pairs.
     decision_impact_fns: HashMap<(usize, usize), Vec<(usize, String)>>,
+    /// Type field deps: (ctx_idx, type_name) → [(ctx_idx, referenced_type_name)]
+    type_field_refs: HashMap<(usize, String), Vec<(usize, String)>>,
+    /// Direct callees: (ctx_idx, fn_name) → [(ctx_idx, callee_name)]
+    fn_direct_callees: HashMap<(usize, String), Vec<(usize, String)>>,
 }
 
 fn byte_label(bytes: usize) -> String {
@@ -397,6 +401,64 @@ fn build_scoring_context(contexts: &[FileContext], focus_symbol: Option<&str>) -
         }
     }
 
+    // Build type field references: when a record/sum type is included,
+    // its field types should also be pulled in.
+    let mut type_field_refs: HashMap<(usize, String), Vec<(usize, String)>> = HashMap::new();
+    for (ctx_idx, ctx) in contexts.iter().enumerate() {
+        for td in &ctx.type_defs {
+            let (type_name, field_type_strs) = match td {
+                TypeDef::Product { name, fields, .. } => (
+                    name.clone(),
+                    fields.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>(),
+                ),
+                TypeDef::Sum { name, variants, .. } => {
+                    let all_fields: Vec<&str> = variants
+                        .iter()
+                        .flat_map(|v| v.fields.iter().map(|f| f.as_str()))
+                        .collect();
+                    (name.clone(), all_fields)
+                }
+            };
+            let mut refs = Vec::new();
+            for field_type_str in field_type_strs {
+                let mut type_refs_buf = Vec::new();
+                collect_named_type_refs(&parse_type_str(field_type_str), &mut type_refs_buf);
+                for type_ref in type_refs_buf {
+                    if let Some(resolved) = resolve_type_ref(&type_ref, ctx_idx, &type_catalog) {
+                        refs.push(resolved);
+                    }
+                }
+            }
+            refs.sort();
+            refs.dedup();
+            if !refs.is_empty() {
+                type_field_refs.insert((ctx_idx, type_name), refs);
+            }
+        }
+    }
+
+    // Resolve direct callees to (ctx_idx, callee_name) pairs
+    let mut fn_direct_callees: HashMap<(usize, String), Vec<(usize, String)>> = HashMap::new();
+    for (ctx_idx, ctx) in contexts.iter().enumerate() {
+        for (caller, callees) in &ctx.fn_direct_calls {
+            let mut resolved = Vec::new();
+            for callee in callees {
+                // Same module first
+                if ctx.fn_defs.iter().any(|fd| fd.name == *callee) {
+                    resolved.push((ctx_idx, callee.clone()));
+                } else {
+                    let canonical = canonical_fn_name(ctx.module_name.as_deref(), callee);
+                    if let Some(&target_ctx) = catalog.canonical_to_context.get(&canonical) {
+                        resolved.push((target_ctx, callee.clone()));
+                    }
+                }
+            }
+            if !resolved.is_empty() {
+                fn_direct_callees.insert((ctx_idx, caller.clone()), resolved);
+            }
+        }
+    }
+
     // Resolve decision impacts to (ctx_idx, fn_name) pairs
     let mut decision_impact_fns: HashMap<(usize, usize), Vec<(usize, String)>> = HashMap::new();
     for (ctx_idx, ctx) in contexts.iter().enumerate() {
@@ -430,6 +492,8 @@ fn build_scoring_context(contexts: &[FileContext], focus_symbol: Option<&str>) -
         type_usage_counts,
         catalog,
         decision_impact_fns,
+        type_field_refs,
+        fn_direct_callees,
     }
 }
 
@@ -441,12 +505,70 @@ fn add_type_deps_for_function(
 ) {
     if let Some(type_refs) = scoring.fn_type_refs.get(&(ctx_idx, fn_name.to_string())) {
         for (type_ctx_idx, type_name) in type_refs {
-            state.modules.insert(*type_ctx_idx);
-            state
-                .types
-                .entry(*type_ctx_idx)
-                .or_default()
-                .insert(type_name.clone());
+            add_type_with_field_deps(state, scoring, *type_ctx_idx, type_name);
+        }
+    }
+}
+
+fn add_type_with_field_deps(
+    state: &mut SelectionState,
+    scoring: &ScoringContext,
+    ctx_idx: usize,
+    type_name: &str,
+) {
+    // Avoid infinite recursion on self-referential types
+    if state
+        .types
+        .get(&ctx_idx)
+        .is_some_and(|names| names.contains(type_name))
+    {
+        return;
+    }
+    state.modules.insert(ctx_idx);
+    state
+        .types
+        .entry(ctx_idx)
+        .or_default()
+        .insert(type_name.to_string());
+
+    // Recursively add field types (e.g. Task has TaskSummary field → include TaskSummary)
+    if let Some(field_refs) = scoring
+        .type_field_refs
+        .get(&(ctx_idx, type_name.to_string()))
+    {
+        for (field_ctx_idx, field_type_name) in field_refs.clone() {
+            add_type_with_field_deps(state, scoring, field_ctx_idx, &field_type_name);
+        }
+    }
+}
+
+fn add_callee_deps(
+    state: &mut SelectionState,
+    scoring: &ScoringContext,
+    ctx_idx: usize,
+    fn_name: &str,
+) {
+    if let Some(callees) = scoring
+        .fn_direct_callees
+        .get(&(ctx_idx, fn_name.to_string()))
+    {
+        for (callee_ctx_idx, callee_name) in callees {
+            // Only add if not already present (avoid circular deps bloating)
+            if !state
+                .functions
+                .get(callee_ctx_idx)
+                .is_some_and(|names| names.contains(callee_name))
+            {
+                state.modules.insert(*callee_ctx_idx);
+                state
+                    .functions
+                    .entry(*callee_ctx_idx)
+                    .or_default()
+                    .insert(callee_name.clone());
+                add_type_deps_for_function(state, scoring, *callee_ctx_idx, callee_name);
+                // Note: NOT recursing into callee's callees — one level deep only,
+                // to avoid pulling the entire call graph into selection.
+            }
         }
     }
 }
@@ -487,6 +609,9 @@ fn apply_candidate(
                 .or_default()
                 .insert(name.clone());
             add_type_deps_for_function(&mut next, scoring, *ctx_idx, name);
+            // Pull in direct callees so the context shows implementations
+            // behind the functions, not just their signatures.
+            add_callee_deps(&mut next, scoring, *ctx_idx, name);
         }
         CandidateKey::Type { ctx_idx, name } => {
             next.modules.insert(*ctx_idx);

@@ -5,11 +5,11 @@
     "depth_mode": "auto",
     "budget_bytes": 24576,
     "included_depth": 0,
-    "next_element_cost": 154,
-    "elements_selected": 68,
+    "next_element_cost": 386,
+    "elements_selected": 66,
     "elements_total": 131,
     "truncated": false,
-    "used_bytes": 24231
+    "used_bytes": 23989
   },
   "modules": [
     {
@@ -17,23 +17,6 @@
       "module": "Main",
       "intent": "Workflow engine argv entrypoint. Keeps the top-level module thin so the CLI and application core stay in their own modules and `aver context` has a stable root to resume from.",
       "depends": ["App.Cli"]
-    },
-    {
-      "source_file": "app/parse.av",
-      "module": "Parse",
-      "intent": "Plain argv parsing for the workflow engine CLI. The parser stays shell-friendly and returns small typed inputs so the CLI adapter does not need to know any command semantics.",
-      "depends": ["App.Commands", "App.Queries", "Domain.Types"],
-      "types": [
-        {"name": "Input", "variants": ["ShowHelp", {"name": "RunCommand", "fields": ["Command"]}, {"name": "RunQuery", "fields": ["Query"]}]}
-      ],
-      "functions": [
-        {
-          "sig": "parseArgs(args: List<String>) -> Result<Input, String>",
-          "desc": "Parses argv-style input into a command, query, or help action.",
-          "verify_count": 4,
-          "verify": ["parseArgs([]) -> Result.Ok(Input.ShowHelp)", "parseArgs([\"list_tasks\"]) -> Result.Ok(Input.RunQuery(Query.ListTasks(Option.None)))", "parseArgs([\"help\"]) -> Result.Ok(Input.ShowHelp)"]
-        }
-      ]
     },
     {
       "source_file": "app/commands.av",
@@ -60,12 +43,17 @@
       "module": "Types",
       "intent": "Shared domain types for the workflow engine. Keeps records and enums in one place so command, rule, and store modules can speak about the same application core without repeating shapes.",
       "types": [
-        {"name": "Priority", "variants": ["Low", "Normal", "High", "Urgent"]}
+        {"name": "TaskStatus", "variants": ["Todo", "InProgress", "Blocked", "Done", "Archived"]},
+        {"name": "Priority", "variants": ["Low", "Normal", "High", "Urgent"]},
+        {"name": "TaskEvent", "variants": [{"name": "TaskCreated", "fields": ["String", "Priority", "List<String>", "Option<String>", "String"]}, {"name": "TaskRenamed", "fields": ["String", "String"]}, {"name": "TaskStarted", "fields": ["String"]}, {"name": "TaskBlocked", "fields": ["String", "String"]}, {"name": "TaskCompleted", "fields": ["String"]}, {"name": "TaskReopened", "fields": ["String", "String"]}, {"name": "PriorityChanged", "fields": ["Priority", "String"]}, {"name": "TagAdded", "fields": ["String", "String"]}, {"name": "TagRemoved", "fields": ["String", "String"]}, {"name": "CommentAdded", "fields": ["Comment"]}, {"name": "DeadlineSet", "fields": ["String", "String"]}, {"name": "DeadlineCleared", "fields": ["String"]}, {"name": "TaskArchived", "fields": ["String"]}]}
       ],
       "records": [
         {"name": "Project", "fields": [{"name": "id", "type": "String"}, {"name": "name", "type": "String"}, {"name": "archived", "type": "Bool"}, {"name": "createdAt", "type": "String"}, {"name": "updatedAt", "type": "String"}]},
+        {"name": "Comment", "fields": [{"name": "id", "type": "String"}, {"name": "body", "type": "String"}, {"name": "author", "type": "String"}, {"name": "createdAt", "type": "String"}]},
         {"name": "TaskEventRecord", "fields": [{"name": "taskId", "type": "String"}, {"name": "projectId", "type": "String"}, {"name": "seq", "type": "Int"}, {"name": "event", "type": "TaskEvent"}]},
         {"name": "Task", "fields": [{"name": "id", "type": "String"}, {"name": "projectId", "type": "String"}, {"name": "title", "type": "String"}, {"name": "status", "type": "TaskStatus"}, {"name": "priority", "type": "Priority"}, {"name": "tags", "type": "List<String>"}, {"name": "deadline", "type": "Option<String>"}, {"name": "comments", "type": "List<Comment>"}, {"name": "createdAt", "type": "String"}, {"name": "updatedAt", "type": "String"}, {"name": "statusChangedAt", "type": "String"}]},
+        {"name": "TaskView", "fields": [{"name": "taskId", "type": "String"}, {"name": "projectId", "type": "String"}, {"name": "title", "type": "String"}, {"name": "status", "type": "TaskStatus"}, {"name": "priority", "type": "Priority"}, {"name": "tags", "type": "List<String>"}, {"name": "deadline", "type": "Option<String>"}, {"name": "overdue", "type": "Bool"}, {"name": "deadlineSoon", "type": "Bool"}, {"name": "derivedUrgent", "type": "Bool"}, {"name": "stalled", "type": "Bool"}, {"name": "missingClosingComment", "type": "Bool"}, {"name": "needsReview", "type": "Bool"}]},
+        {"name": "TaskSummary", "fields": [{"name": "taskId", "type": "String"}, {"name": "title", "type": "String"}, {"name": "projectId", "type": "String"}, {"name": "status", "type": "TaskStatus"}, {"name": "priority", "type": "Priority"}, {"name": "derivedUrgent", "type": "Bool"}, {"name": "overdue", "type": "Bool"}, {"name": "stalled", "type": "Bool"}, {"name": "tagSummary", "type": "String"}, {"name": "deadlineText", "type": "String"}]},
         {"name": "Notification", "fields": [{"name": "key", "type": "String"}, {"name": "taskId", "type": "String"}, {"name": "kind", "type": "String"}, {"name": "message", "type": "String"}, {"name": "createdAt", "type": "String"}]},
         {"name": "AuditEntry", "fields": [{"name": "key", "type": "String"}, {"name": "taskId", "type": "String"}, {"name": "action", "type": "String"}, {"name": "message", "type": "String"}, {"name": "createdAt", "type": "String"}]},
         {"name": "RuleResult", "fields": [{"name": "taskId", "type": "String"}, {"name": "events", "type": "List<TaskEventRecord>"}, {"name": "notifications", "type": "List<Notification>"}, {"name": "audits", "type": "List<AuditEntry>"}, {"name": "notes", "type": "List<String>"}]}
@@ -77,13 +65,6 @@
       "intent": "Pure project creation, lookup, and update helpers. Projects stay deliberately shallow: the task engine is event-sourced, but project lifecycle is simple enough to keep as direct state.",
       "depends": ["Domain.Types", "Domain.Validation"],
       "functions": [
-        {
-          "sig": "findProject(projects: List<Project>, projectId: String) -> Option<Project>",
-          "analysis": {"tco": true},
-          "desc": "Linear lookup is sufficient for this intentionally small application core.",
-          "verify_count": 2,
-          "verify": ["findProject([], \"p1\") -> Option.None"]
-        },
         {
           "sig": "putProject(projects: List<Project>, project: Project) -> List<Project>",
           "desc": "Replaces an existing project by ID or appends a new one.",
@@ -109,6 +90,12 @@
       "depends": ["Domain.Types", "Domain.Time"],
       "functions": [
         {
+          "sig": "validateDeadline(deadline: Option<String>) -> Result<Option<String>, String>",
+          "desc": "Validates an optional ISO deadline.",
+          "verify_count": 3,
+          "verify": ["validateDeadline(Option.None) -> Result.Ok(Option.None)", "validateDeadline(Option.Some(\"bad\")) -> Result.Err(\"Invalid deadline: Timestamp must start with YYYY-MM-DDTHH:MM:SS\")", "validateDeadline(Option.Some(\"2026-03-09T12:00:00Z\")) -> Result.Ok(Option.Some(\"2026-03-09T12:00:00Z\"))"]
+        },
+        {
           "sig": "validateTaskCreate(id: String, title: String, tags: List<String>, deadline: Option<String>) -> Result<Unit, String>",
           "desc": "Checks fields needed to create a task.",
           "verify_count": 5,
@@ -118,22 +105,6 @@
           "sig": "ensureProjectActive(project: Project) -> Result<Unit, String>",
           "desc": "Rejects task mutation when the parent project is archived.",
           "verify_count": 2
-        }
-      ]
-    },
-    {
-      "source_file": "domain/time.av",
-      "module": "Time",
-      "intent": "Pure timestamp parsing and comparison for workflow deadlines and rule windows. Uses explicit ISO parsing instead of assuming Time.now() strings can only be compared lexicographically when duration math is needed.",
-      "records": [
-        {"name": "Timestamp", "fields": [{"name": "year", "type": "Int"}, {"name": "month", "type": "Int"}, {"name": "day", "type": "Int"}, {"name": "hour", "type": "Int"}, {"name": "minute", "type": "Int"}, {"name": "second", "type": "Int"}]}
-      ],
-      "functions": [
-        {
-          "sig": "parseIso(s: String) -> Result<Timestamp, String>",
-          "desc": "Parses YYYY-MM-DDTHH:MM:SS and ignores any trailing fractional or zone suffix.",
-          "verify_count": 4,
-          "verify": ["parseIso(\"bad\") -> Result.Err(\"Timestamp must start with YYYY-MM-DDTHH:MM:SS\")", "parseIso(\"2025-02-29T05:00:00Z\") -> Result.Err(\"Invalid calendar timestamp: 2025-02-29T05:00:00\")", "parseIso(\"2026-03-08T12:30:00Z\") -> Result.Ok(Timestamp(year = 2026, month = 3, day = 8, hour = 12, minute = 30, second = 0))"]
         }
       ]
     },
@@ -172,20 +143,6 @@
       "intent": "Pure event application and replay logic for workflow tasks. With typed sum payload matching now working across the toolchain, replay can live in the domain again instead of reconstructing state from serialized event fields.",
       "depends": ["Domain.Types", "Domain.Validation"],
       "functions": [
-        {
-          "sig": "hasTaskEvents(events: List<TaskEventRecord>, taskId: String) -> Bool",
-          "analysis": {"tco": true},
-          "desc": "True when the flat event log contains at least one event for the given task.",
-          "verify_count": 2,
-          "verify": ["hasTaskEvents([sampleCreatedEvent()], \"t1\") -> true", "hasTaskEvents([sampleCreatedEvent()], \"t2\") -> false"]
-        },
-        {
-          "sig": "findTask(tasks: List<Task>, taskId: String) -> Option<Task>",
-          "analysis": {"tco": true},
-          "desc": "Linear lookup for replayed tasks.",
-          "verify_count": 2,
-          "verify": ["findTask([], \"t1\") -> Option.None", "findTask([sampleTask()], \"t1\") -> Option.Some(sampleTask())"]
-        },
         {
           "sig": "replayTask(events: List<TaskEventRecord>) -> Result<Task, String>",
           "desc": "Replays one task stream into its current projection.",
@@ -301,6 +258,9 @@
       "types": [
         {"name": "Query", "variants": [{"name": "ListTasks", "fields": ["Option<String>"]}, {"name": "ShowTask", "fields": ["String"]}, {"name": "ShowAudit", "fields": ["Option<String>"]}]},
         {"name": "QueryOutput", "variants": [{"name": "TaskList", "fields": ["List<TaskSummary>"]}, {"name": "TaskDetail", "fields": ["TaskDetails"]}, {"name": "AuditTrail", "fields": ["List<AuditEntry>"]}]}
+      ],
+      "records": [
+        {"name": "TaskDetails", "fields": [{"name": "project", "type": "Project"}, {"name": "task", "type": "Task"}, {"name": "view", "type": "TaskView"}, {"name": "history", "type": "List<TaskEventRecord>"}, {"name": "audits", "type": "List<AuditEntry>"}, {"name": "notifications", "type": "List<Notification>"}]}
       ],
       "functions": [
         {
