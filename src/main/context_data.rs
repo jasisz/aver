@@ -3,7 +3,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use aver::ast::{DecisionBlock, FnDef, TopLevel, TypeDef, VerifyBlock};
-use aver::call_graph::{find_recursive_fns, recursive_callsite_counts, recursive_scc_ids};
+use aver::call_graph::{
+    direct_calls, find_recursive_fns, recursive_callsite_counts, recursive_scc_ids,
+};
+use aver::checker::expr_to_str;
 use aver::source::{find_module_file, parse_source, require_module_declaration};
 use aver::tco;
 use aver::types::checker::run_type_check_full;
@@ -11,7 +14,7 @@ use aver::verify_law::canonical_spec_ref;
 
 use crate::shared::{compute_memo_fns, is_memo_safe_type};
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub(super) struct FileContext {
     pub(super) source_file: String,
     pub(super) module_name: Option<String>,
@@ -22,17 +25,24 @@ pub(super) struct FileContext {
     pub(super) module_effects: Vec<String>,
     pub(super) main_effects: Option<Vec<String>>,
     pub(super) fn_defs: Vec<FnDef>,
+    pub(super) all_fn_defs: Vec<FnDef>,
     pub(super) fn_auto_memo: HashSet<String>,
     pub(super) fn_memo_qual: HashMap<String, Vec<String>>,
     pub(super) fn_auto_tco: HashSet<String>,
     pub(super) fn_recursive_callsites: HashMap<String, usize>,
     pub(super) fn_recursive_scc_id: HashMap<String, usize>,
     pub(super) fn_specs: HashMap<String, Vec<String>>,
+    pub(super) fn_direct_calls: HashMap<String, Vec<String>>,
     pub(super) type_defs: Vec<TypeDef>,
     pub(super) effect_sets: Vec<(String, Vec<String>)>,
     pub(super) verify_blocks: Vec<VerifyBlock>,
+    pub(super) verify_counts: HashMap<String, usize>,
+    pub(super) verify_samples: HashMap<String, Vec<String>>,
     pub(super) decisions: Vec<DecisionBlock>,
 }
+
+const VERIFY_SAMPLE_LIMIT: usize = 3;
+const VERIFY_CASE_MAX_LEN: usize = 150;
 
 fn unique_sorted_effects<'a, I>(effects: I) -> Vec<String>
 where
@@ -45,6 +55,159 @@ where
         .collect::<Vec<_>>();
     uniq.sort();
     uniq
+}
+
+fn classify_verify_case(lhs: &str, rhs: &str) -> Vec<&'static str> {
+    let combined = format!("{lhs} -> {rhs}");
+    let mut categories = Vec::new();
+    if rhs.contains("Result.Err(")
+        || rhs.contains("ParseResult.Err(")
+        || rhs.contains("Option.None")
+    {
+        categories.push("error");
+    }
+    if combined.contains("[]") || combined.contains("{}") {
+        categories.push("empty");
+    }
+    if combined.contains("-1")
+        || combined.contains("(0 - ")
+        || combined.contains(" - ")
+        || combined.contains("negative")
+    {
+        categories.push("negative");
+    }
+    if combined.contains("(0)")
+        || combined.contains(", 0")
+        || combined.contains(" 0)")
+        || combined.contains("=> 0")
+        || combined.ends_with(" 0")
+    {
+        categories.push("zero");
+    }
+    if rhs == "true" || rhs == "false" {
+        categories.push("bool");
+    }
+    if combined.contains("\"\"") {
+        categories.push("empty-string");
+    }
+    if rhs.contains('.') {
+        categories.push("float");
+    }
+    if rhs.contains("Json.")
+        || rhs.contains("Outcome.")
+        || rhs.contains("Result.")
+        || rhs.contains("Option.")
+    {
+        categories.push("constructor");
+    }
+    categories.sort();
+    categories.dedup();
+    categories
+}
+
+fn base_verify_case_score(lhs: &str, rhs: &str) -> i32 {
+    let combined_len = lhs.len() + rhs.len();
+    let mut score = 400 - combined_len as i32;
+    let combined = format!("{lhs} -> {rhs}");
+    if rhs.contains("Result.Err(")
+        || rhs.contains("ParseResult.Err(")
+        || rhs.contains("Option.None")
+    {
+        score += 120;
+    }
+    if combined.contains("[]") || combined.contains("{}") {
+        score += 60;
+    }
+    if combined.contains("\"\"") {
+        score += 45;
+    }
+    if combined.contains("-1") || combined.contains("(0 - ") {
+        score += 45;
+    }
+    if combined.contains(", 0") || combined.contains("(0)") || rhs == "0" {
+        score += 30;
+    }
+    if rhs == "true" || rhs == "false" {
+        score += 20;
+    }
+    score
+}
+
+fn scored_verify_samples(cases: &[(String, String)]) -> Vec<String> {
+    #[derive(Clone)]
+    struct ScoredVerifyCase {
+        rendered: String,
+        base_score: i32,
+        categories: Vec<&'static str>,
+        original_index: usize,
+    }
+
+    let mut scored = cases
+        .iter()
+        .enumerate()
+        .filter_map(|(original_index, (lhs_text, rhs_text))| {
+            if lhs_text.len() + rhs_text.len() > VERIFY_CASE_MAX_LEN {
+                return None;
+            }
+            Some(ScoredVerifyCase {
+                rendered: format!("{lhs_text} -> {rhs_text}"),
+                base_score: base_verify_case_score(lhs_text, rhs_text),
+                categories: classify_verify_case(lhs_text, rhs_text),
+                original_index,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let mut selected = Vec::new();
+    let mut seen_categories = HashSet::new();
+    while selected.len() < VERIFY_SAMPLE_LIMIT && !scored.is_empty() {
+        let best_idx = scored
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, case)| {
+                let novelty = case
+                    .categories
+                    .iter()
+                    .filter(|cat| !seen_categories.contains(**cat))
+                    .count() as i32;
+                (
+                    case.base_score + novelty * 35,
+                    case.base_score,
+                    -(case.original_index as i32),
+                )
+            })
+            .map(|(idx, _)| idx)
+            .expect("verify samples should be non-empty");
+        let chosen = scored.swap_remove(best_idx);
+        for category in &chosen.categories {
+            seen_categories.insert(*category);
+        }
+        selected.push(chosen.rendered);
+    }
+    selected
+}
+
+fn build_verify_summaries(
+    verify_blocks: &[VerifyBlock],
+) -> (HashMap<String, usize>, HashMap<String, Vec<String>>) {
+    let mut cases_by_fn: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    for block in verify_blocks {
+        let entry = cases_by_fn.entry(block.fn_name.clone()).or_default();
+        for (lhs, rhs) in &block.cases {
+            entry.push((expr_to_str(lhs), expr_to_str(rhs)));
+        }
+    }
+
+    let verify_counts = cases_by_fn
+        .iter()
+        .map(|(fn_name, cases)| (fn_name.clone(), cases.len()))
+        .collect::<HashMap<_, _>>();
+    let verify_samples = cases_by_fn
+        .into_iter()
+        .map(|(fn_name, cases)| (fn_name, scored_verify_samples(&cases)))
+        .collect::<HashMap<_, _>>();
+
+    (verify_counts, verify_samples)
 }
 
 struct ContextFnFlags {
@@ -214,15 +377,19 @@ pub(super) fn collect_contexts(
         module_effects: vec![],
         main_effects: None,
         fn_defs: vec![],
+        all_fn_defs: vec![],
         fn_auto_memo: HashSet::new(),
         fn_memo_qual: HashMap::new(),
         fn_auto_tco: HashSet::new(),
         fn_recursive_callsites: HashMap::new(),
         fn_recursive_scc_id: HashMap::new(),
         fn_specs: HashMap::new(),
+        fn_direct_calls: HashMap::new(),
         type_defs: vec![],
         effect_sets: vec![],
         verify_blocks: vec![],
+        verify_counts: HashMap::new(),
+        verify_samples: HashMap::new(),
         decisions: vec![],
     };
 
@@ -241,7 +408,10 @@ pub(super) fn collect_contexts(
                 ctx.exposes = m.exposes.clone();
                 dep_names = m.depends.clone();
             }
-            TopLevel::FnDef(fd) => ctx.fn_defs.push(fd.clone()),
+            TopLevel::FnDef(fd) => {
+                ctx.fn_defs.push(fd.clone());
+                ctx.all_fn_defs.push(fd.clone());
+            }
             TopLevel::TypeDef(td) => ctx.type_defs.push(td.clone()),
             TopLevel::EffectSet { name, effects, .. } => {
                 ctx.effect_sets.push((name.clone(), effects.clone()))
@@ -251,6 +421,10 @@ pub(super) fn collect_contexts(
             _ => {}
         }
     }
+
+    let (verify_counts, verify_samples) = build_verify_summaries(&ctx.verify_blocks);
+    ctx.verify_counts = verify_counts;
+    ctx.verify_samples = verify_samples;
 
     let flags = compute_context_fn_flags(&items, module_root);
     let ContextFnFlags {
@@ -266,6 +440,7 @@ pub(super) fn collect_contexts(
     ctx.fn_memo_qual = memo_qual;
     ctx.fn_recursive_callsites = recursive_callsites;
     ctx.fn_recursive_scc_id = recursive_scc_id;
+    ctx.fn_direct_calls = direct_calls(&items);
     for vb in &ctx.verify_blocks {
         let aver::ast::VerifyKind::Law(law) = &vb.kind else {
             continue;

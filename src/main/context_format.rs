@@ -1,10 +1,6 @@
 use aver::ast::{DecisionBlock, DecisionImpact, FnDef, TypeDef};
-use aver::checker::expr_to_str;
 
 use crate::context_data::FileContext;
-
-const JSON_VERIFY_SAMPLE_LIMIT: usize = 3;
-const VERIFY_CASE_MAX_LEN: usize = 150;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ContextSelection {
@@ -15,6 +11,7 @@ pub(super) struct ContextSelection {
     pub next_used_bytes: Option<usize>,
     pub truncated: bool,
     pub used_bytes: usize,
+    pub focus_symbol: Option<String>,
 }
 
 fn impact_texts(impacts: &[DecisionImpact]) -> Vec<String> {
@@ -39,7 +36,7 @@ fn decision_ref_json_text(reference: &DecisionImpact) -> &str {
     reference.text()
 }
 
-const CONTEXT_SCHEMA_VERSION: u32 = 5;
+const CONTEXT_SCHEMA_VERSION: u32 = 6;
 
 fn fn_sig(fd: &FnDef) -> String {
     let params: Vec<String> = fd
@@ -85,6 +82,9 @@ pub(super) fn format_context_md(
         }
         if let Some(next_used) = selection.next_used_bytes {
             parts.push(format!("next_used: `{}`", byte_label(next_used)));
+        }
+        if let Some(focus_symbol) = &selection.focus_symbol {
+            parts.push(format!("focus: `{}`", focus_symbol));
         }
         parts.push(format!("truncated: `{}`", selection.truncated));
         parts.push(format!("used: `{}`", byte_label(selection.used_bytes)));
@@ -198,23 +198,16 @@ pub(super) fn format_context_md(
                 out.push_str(&format!("> {}\n", desc));
             }
 
-            // Verify cases (max 3, skip cases longer than VERIFY_CASE_MAX_LEN)
-            for vb in ctx.verify_blocks.iter().filter(|vb| vb.fn_name == fd.name) {
-                if vb.cases.is_empty() {
-                    continue;
-                }
-                let shown: Vec<String> = vb
-                    .cases
-                    .iter()
-                    .filter(|(lhs, rhs)| {
-                        expr_to_str(lhs).len() + expr_to_str(rhs).len() <= VERIFY_CASE_MAX_LEN
-                    })
-                    .take(JSON_VERIFY_SAMPLE_LIMIT)
-                    .map(|(lhs, rhs)| format!("`{}` → `{}`", expr_to_str(lhs), expr_to_str(rhs)))
-                    .collect();
-                if !shown.is_empty() {
-                    out.push_str(&format!("verify: {}\n", shown.join(", ")));
-                }
+            let verify_samples: Vec<String> = ctx
+                .verify_samples
+                .get(&fd.name)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|sample| format!("`{sample}`"))
+                .collect();
+            if !verify_samples.is_empty() {
+                out.push_str(&format!("verify: {}\n", verify_samples.join(", ")));
             }
 
             out.push('\n');
@@ -298,6 +291,12 @@ pub(super) fn format_context_json(
         }
         if let Some(next_used) = selection.next_used_bytes {
             out.push_str(&format!("    \"next_used_bytes\": {},\n", next_used));
+        }
+        if let Some(focus_symbol) = &selection.focus_symbol {
+            out.push_str(&format!(
+                "    \"focus_symbol\": {},\n",
+                json_str(focus_symbol)
+            ));
         }
         out.push_str(&format!(
             "    \"truncated\": {},\n",
@@ -509,29 +508,18 @@ pub(super) fn format_context_json(
                     out.push_str(&format!("          \"specs\": [{}],\n", specs_json));
                 }
 
-                let verify_total = ctx
-                    .verify_blocks
-                    .iter()
-                    .filter(|vb| vb.fn_name == fd.name)
-                    .map(|vb| vb.cases.len())
-                    .sum::<usize>();
+                let verify_total = ctx.verify_counts.get(&fd.name).copied().unwrap_or(0);
                 if verify_total > 0 {
                     out.push_str(&format!("          \"verify_count\": {},\n", verify_total));
                 }
 
-                // verify cases — compact strings, skip long cases
                 let verify_cases: Vec<String> = ctx
-                    .verify_blocks
-                    .iter()
-                    .filter(|vb| vb.fn_name == fd.name)
-                    .flat_map(|vb| vb.cases.iter())
-                    .filter(|(lhs, rhs)| {
-                        expr_to_str(lhs).len() + expr_to_str(rhs).len() <= VERIFY_CASE_MAX_LEN
-                    })
-                    .take(JSON_VERIFY_SAMPLE_LIMIT)
-                    .map(|(lhs, rhs)| {
-                        json_str(&format!("{} → {}", expr_to_str(lhs), expr_to_str(rhs)))
-                    })
+                    .verify_samples
+                    .get(&fd.name)
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|sample| json_str(&sample))
                     .collect();
 
                 if !verify_cases.is_empty() {
@@ -639,6 +627,9 @@ pub(super) fn format_decisions_md(
         if let Some(next_used) = selection.next_used_bytes {
             parts.push(format!("next_used: `{}`", byte_label(next_used)));
         }
+        if let Some(focus_symbol) = &selection.focus_symbol {
+            parts.push(format!("focus: `{}`", focus_symbol));
+        }
         parts.push(format!("truncated: `{}`", selection.truncated));
         parts.push(format!("used: `{}`", byte_label(selection.used_bytes)));
         out.push_str(&format!("selection: {}\n\n", parts.join(", ")));
@@ -702,6 +693,12 @@ pub(super) fn format_decisions_json(
         }
         if let Some(next_used) = selection.next_used_bytes {
             out.push_str(&format!("    \"next_used_bytes\": {},\n", next_used));
+        }
+        if let Some(focus_symbol) = &selection.focus_symbol {
+            out.push_str(&format!(
+                "    \"focus_symbol\": {},\n",
+                json_str(focus_symbol)
+            ));
         }
         out.push_str(&format!(
             "    \"truncated\": {},\n",
@@ -776,12 +773,23 @@ mod tests {
                 body: std::rc::Rc::new(aver::ast::FnBody::Block(vec![])),
                 resolution: None,
             }],
+            all_fn_defs: vec![FnDef {
+                name: "fib".to_string(),
+                line: 1,
+                params: vec![("n".to_string(), "Int".to_string())],
+                return_type: "Int".to_string(),
+                effects: vec![],
+                desc: Some("demo".to_string()),
+                body: std::rc::Rc::new(aver::ast::FnBody::Block(vec![])),
+                resolution: None,
+            }],
             fn_auto_memo: HashSet::new(),
             fn_memo_qual: HashMap::new(),
             fn_auto_tco: HashSet::new(),
             fn_recursive_callsites: HashMap::new(),
             fn_recursive_scc_id: HashMap::new(),
             fn_specs: HashMap::from([("fib".to_string(), vec!["fibSpec".to_string()])]),
+            fn_direct_calls: HashMap::new(),
             type_defs: vec![],
             effect_sets: vec![],
             verify_blocks: vec![aver::ast::VerifyBlock {
@@ -796,6 +804,8 @@ mod tests {
                 )],
                 kind: aver::ast::VerifyKind::Cases,
             }],
+            verify_counts: HashMap::from([("fib".to_string(), 1)]),
+            verify_samples: HashMap::from([("fib".to_string(), vec!["fib(5) → 8".to_string()])]),
             decisions: vec![],
         }
     }
@@ -809,7 +819,7 @@ mod tests {
     #[test]
     fn json_context_renders_specs_array() {
         let out = format_context_json(&[file_context_with_spec()], "examples/spec.av", None);
-        assert!(out.contains("\"schema_version\": 5"));
+        assert!(out.contains("\"schema_version\": 6"));
         assert!(out.contains("\"depends\": [\"Math.Core\"]"));
         assert!(out.contains("\"sig\": \"fib(n: Int) -> Int\""));
         assert!(out.contains("\"specs\": [\"fibSpec\"]"));
@@ -850,15 +860,28 @@ mod tests {
                 body: std::rc::Rc::new(aver::ast::FnBody::Block(vec![])),
                 resolution: None,
             }],
+            all_fn_defs: vec![FnDef {
+                name: "main".to_string(),
+                line: 1,
+                params: vec![],
+                return_type: "Unit".to_string(),
+                effects: vec![],
+                desc: None,
+                body: std::rc::Rc::new(aver::ast::FnBody::Block(vec![])),
+                resolution: None,
+            }],
             fn_auto_memo: HashSet::new(),
             fn_memo_qual: HashMap::new(),
             fn_auto_tco: HashSet::new(),
             fn_recursive_callsites: HashMap::new(),
             fn_recursive_scc_id: HashMap::new(),
             fn_specs: HashMap::new(),
+            fn_direct_calls: HashMap::new(),
             type_defs: vec![],
             effect_sets: vec![],
             verify_blocks: vec![],
+            verify_counts: HashMap::new(),
+            verify_samples: HashMap::new(),
             decisions: vec![],
         };
 
@@ -878,6 +901,7 @@ mod tests {
             next_used_bytes: Some(22424),
             truncated: true,
             used_bytes: 1779,
+            focus_symbol: Some("Json.fromString".to_string()),
         };
         let out = format_context_json(
             &[file_context_with_spec()],
@@ -890,6 +914,7 @@ mod tests {
         assert!(out.contains("\"included_depth\": 1"));
         assert!(out.contains("\"next_depth\": 2"));
         assert!(out.contains("\"next_used_bytes\": 22424"));
+        assert!(out.contains("\"focus_symbol\": \"Json.fromString\""));
         assert!(out.contains("\"truncated\": true"));
         assert!(out.contains("\"used_bytes\": 1779"));
     }

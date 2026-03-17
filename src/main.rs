@@ -74,6 +74,7 @@ fn main() {
             output,
             json,
             decisions_only,
+            focus,
             depth,
             budget,
         } => {
@@ -83,6 +84,7 @@ fn main() {
                 output.as_deref(),
                 *json,
                 *decisions_only,
+                focus.as_deref(),
                 *depth,
                 *budget,
             );

@@ -158,10 +158,13 @@ pub(super) enum Commands {
         /// Output only decision blocks
         #[arg(long)]
         decisions_only: bool,
-        /// Dependency depth: auto (default), unlimited, or a non-negative integer
+        /// Focus context around a specific function or qualified symbol
+        #[arg(long)]
+        focus: Option<String>,
+        /// Dependency depth, or call depth when --focus is set: auto (default), unlimited, or a non-negative integer
         #[arg(long, default_value = "auto")]
         depth: ContextDepth,
-        /// Byte budget for --depth auto, e.g. 10kb or 1mb (default: 10kb)
+        /// Byte budget for --depth auto / --focus auto, e.g. 10kb or 1mb (default: 10kb)
         #[arg(long, default_value = "10kb", value_parser = parse_context_budget)]
         budget: usize,
     },
@@ -253,6 +256,23 @@ mod tests {
         match cli.command {
             Commands::Context { depth, .. } => {
                 assert_eq!(depth, ContextDepth::Limited(2));
+            }
+            _ => panic!("expected context command"),
+        }
+    }
+
+    #[test]
+    fn context_accepts_focus_symbol() {
+        let cli = Cli::parse_from([
+            "aver",
+            "context",
+            "examples/modules/app.av",
+            "--focus",
+            "Json.fromString",
+        ]);
+        match cli.command {
+            Commands::Context { focus, .. } => {
+                assert_eq!(focus.as_deref(), Some("Json.fromString"));
             }
             _ => panic!("expected context command"),
         }
