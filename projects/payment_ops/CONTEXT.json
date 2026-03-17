@@ -1,12 +1,14 @@
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "entry": "main.av",
   "selection": {
     "depth_mode": "auto",
     "budget_bytes": 32768,
-    "included_depth": 5,
+    "included_depth": 0,
+    "elements_selected": 98,
+    "elements_total": 98,
     "truncated": false,
-    "used_bytes": 31781
+    "used_bytes": 31797
   },
   "modules": [
     {
@@ -45,7 +47,7 @@
           "sig": "parseArgs(args: List<String>) -> Result<Input, String>",
           "desc": "Parses argv-style input into a command, query, or help action.",
           "verify_count": 4,
-          "verify": ["parseArgs([]) → Result.Ok(Input.ShowHelp)", "parseArgs([\"help\"]) → Result.Ok(Input.ShowHelp)", "parseArgs([\"show_payment\", \"pay-1\"]) → Result.Ok(Input.RunQuery(Query.ShowPayment(\"pay-1\")))"]
+          "verify": ["parseArgs([\"reconcile\"]) -> Result.Err(\"Missing field: provider\")", "parseArgs([]) -> Result.Ok(Input.ShowHelp)", "parseArgs([\"show_payment\", \"pay-1\"]) -> Result.Ok(Input.RunQuery(Query.ShowPayment(\"pay-1\")))"]
         }
       ]
     },
@@ -80,7 +82,7 @@
           "sig": "normalizeProviderInput(provider: String) -> Result<String, String>",
           "desc": "Normalizes provider labels at the app boundary.",
           "verify_count": 3,
-          "verify": ["normalizeProviderInput(\"stripe\") → Result.Ok(\"stripe\")", "normalizeProviderInput(\"Adyen\") → Result.Ok(\"adyen\")", "normalizeProviderInput(\"x\") → Result.Err(\"Provider must be one of: stripe, adyen\")"]
+          "verify": ["normalizeProviderInput(\"x\") -> Result.Err(\"Provider must be one of: stripe, adyen\")", "normalizeProviderInput(\"Adyen\") -> Result.Ok(\"adyen\")", "normalizeProviderInput(\"stripe\") -> Result.Ok(\"stripe\")"]
         }
       ]
     },
@@ -134,38 +136,38 @@
           "sig": "eventName(event: PaymentEvent) -> String",
           "desc": "Stable display name for one canonical event.",
           "verify_count": 3,
-          "verify": ["eventName(PaymentEvent.Authorized(100, \"USD\", \"2026-03-10T09:00:00Z\")) → \"Authorized\"", "eventName(PaymentEvent.Captured(100, \"USD\", \"2026-03-10T10:00:00Z\")) → \"Captured\"", "eventName(PaymentEvent.Refunded(50, \"USD\", \"2026-03-10T10:00:00Z\")) → \"Refunded\""]
+          "verify": ["eventName(PaymentEvent.Refunded(50, \"USD\", \"2026-03-10T10:00:00Z\")) -> \"Refunded\"", "eventName(PaymentEvent.Captured(100, \"USD\", \"2026-03-10T10:00:00Z\")) -> \"Captured\"", "eventName(PaymentEvent.Authorized(100, \"USD\", \"2026-03-10T09:00:00Z\")) -> \"Authorized\""]
         },
         {
           "sig": "eventAt(event: PaymentEvent) -> String",
           "desc": "Timestamp carried by a canonical event.",
           "verify_count": 3,
-          "verify": ["eventAt(PaymentEvent.Authorized(100, \"USD\", \"2026-03-10T09:00:00Z\")) → \"2026-03-10T09:00:00Z\"", "eventAt(PaymentEvent.Captured(100, \"USD\", \"2026-03-10T10:00:00Z\")) → \"2026-03-10T10:00:00Z\"", "eventAt(PaymentEvent.Refunded(50, \"USD\", \"2026-03-10T11:00:00Z\")) → \"2026-03-10T11:00:00Z\""]
+          "verify": ["eventAt(PaymentEvent.Refunded(50, \"USD\", \"2026-03-10T11:00:00Z\")) -> \"2026-03-10T11:00:00Z\"", "eventAt(PaymentEvent.Captured(100, \"USD\", \"2026-03-10T10:00:00Z\")) -> \"2026-03-10T10:00:00Z\"", "eventAt(PaymentEvent.Authorized(100, \"USD\", \"2026-03-10T09:00:00Z\")) -> \"2026-03-10T09:00:00Z\""]
         },
         {
           "sig": "hasSourceId(events: List<PaymentEventRecord>, provider: String, sourceId: String) -> Bool",
           "analysis": {"tco": true},
           "desc": "True when a webhook source ID was already persisted for a provider.",
           "verify_count": 2,
-          "verify": ["hasSourceId([sampleAuthorized(), sampleCaptured()], \"stripe\", \"evt-1\") → true", "hasSourceId([sampleAuthorized()], \"stripe\", \"missing\") → false"]
+          "verify": ["hasSourceId([sampleAuthorized(), sampleCaptured()], \"stripe\", \"evt-1\") -> true", "hasSourceId([sampleAuthorized()], \"stripe\", \"missing\") -> false"]
         },
         {
           "sig": "nextSeq(events: List<PaymentEventRecord>, provider: String, paymentId: String) -> Int",
           "desc": "Next event sequence number for one payment stream.",
           "verify_count": 3,
-          "verify": ["nextSeq([], \"stripe\", \"pay-1\") → 1", "nextSeq([sampleAuthorized(), sampleCaptured()], \"stripe\", \"pay-1\") → 3", "nextSeq([sampleAuthorized(), sampleCaptured()], \"stripe\", \"pay-2\") → 1"]
+          "verify": ["nextSeq([], \"stripe\", \"pay-1\") -> 1", "nextSeq([sampleAuthorized(), sampleCaptured()], \"stripe\", \"pay-1\") -> 3", "nextSeq([sampleAuthorized(), sampleCaptured()], \"stripe\", \"pay-2\") -> 1"]
         },
         {
           "sig": "eventsForPayment(events: List<PaymentEventRecord>, paymentId: String) -> List<PaymentEventRecord>",
           "desc": "Filters the append-only log down to one payment stream.",
           "verify_count": 1,
-          "verify": ["eventsForPayment([sampleAuthorized(), sampleCaptured(), sampleOtherPayment()], \"pay-1\") → [sampleAuthorized(), sampleCaptured()]"]
+          "verify": ["eventsForPayment([sampleAuthorized(), sampleCaptured(), sampleOtherPayment()], \"pay-1\") -> [sampleAuthorized(), sampleCaptured()]"]
         },
         {
           "sig": "replayPayment(events: List<PaymentEventRecord>) -> Result<PaymentState, String>",
           "desc": "Rebuilds one payment state from its event stream.",
           "verify_count": 3,
-          "verify": ["replayPayment([]) → Result.Err(\"Cannot replay empty payment event list\")"]
+          "verify": ["replayPayment([]) -> Result.Err(\"Cannot replay empty payment event list\")"]
         },
         {
           "sig": "replayAll(events: List<PaymentEventRecord>) -> List<PaymentState>",
@@ -194,13 +196,13 @@
           "sig": "statusText(status: CaseStatus) -> String",
           "desc": "Stable on-disk and CLI spelling for case status.",
           "verify_count": 2,
-          "verify": ["statusText(CaseStatus.Open) → \"open\"", "statusText(CaseStatus.Resolved) → \"resolved\""]
+          "verify": ["statusText(CaseStatus.Open) -> \"open\"", "statusText(CaseStatus.Resolved) -> \"resolved\""]
         },
         {
           "sig": "parseStatus(raw: String) -> Result<CaseStatus, String>",
           "desc": "Parses one stored case status.",
           "verify_count": 3,
-          "verify": ["parseStatus(\"open\") → Result.Ok(CaseStatus.Open)", "parseStatus(\"resolved\") → Result.Ok(CaseStatus.Resolved)", "parseStatus(\"x\") → Result.Err(\"Case status must be one of: open, resolved\")"]
+          "verify": ["parseStatus(\"x\") -> Result.Err(\"Case status must be one of: open, resolved\")", "parseStatus(\"open\") -> Result.Ok(CaseStatus.Open)", "parseStatus(\"resolved\") -> Result.Ok(CaseStatus.Resolved)"]
         },
         {
           "sig": "materializeNewCases(existing: List<ReviewCase>, drafts: List<CaseDraft>, createdAt: String) -> List<ReviewCase>",
@@ -211,13 +213,13 @@
           "sig": "resolveCase(cases: List<ReviewCase>, caseId: String, resolution: String, resolvedAt: String) -> Result<List<ReviewCase>, String>",
           "desc": "Marks one case as resolved.",
           "verify_count": 2,
-          "verify": ["resolveCase([], \"case-1\", \"x\", \"2026-03-10T13:00:00Z\") → Result.Err(\"Unknown case: case-1\")"]
+          "verify": ["resolveCase([], \"case-1\", \"x\", \"2026-03-10T13:00:00Z\") -> Result.Err(\"Unknown case: case-1\")"]
         },
         {
           "sig": "filterByStatusLabel(cases: List<ReviewCase>, status: Option<String>) -> Result<List<ReviewCase>, String>",
           "desc": "Supports list_cases open|resolved|all with open as the default.",
           "verify_count": 3,
-          "verify": ["filterByStatusLabel([], Option.None) → Result.Ok([])", "filterByStatusLabel([], Option.Some(\"weird\")) → Result.Err(\"Case filter must be one of: open, resolved, all\")"]
+          "verify": ["filterByStatusLabel([], Option.Some(\"weird\")) -> Result.Err(\"Case filter must be one of: open, resolved, all\")", "filterByStatusLabel([], Option.None) -> Result.Ok([])"]
         },
         {
           "sig": "openCasesForPayment(cases: List<ReviewCase>, paymentId: String) -> List<ReviewCase>",
@@ -229,7 +231,7 @@
           "analysis": {"tco": true},
           "desc": "Convenience lookup after mutation.",
           "verify_count": 2,
-          "verify": ["findCaseById([], \"case-1\") → Option.None"]
+          "verify": ["findCaseById([], \"case-1\") -> Option.None"]
         },
         {
           "sig": "auditForOpenedCase(item: ReviewCase) -> AuditEntry",
@@ -256,19 +258,19 @@
           "sig": "settlementsForProvider(rows: List<SettlementRow>, provider: String) -> List<SettlementRow>",
           "desc": "Filters imported settlement rows by provider.",
           "verify_count": 2,
-          "verify": ["settlementsForProvider([sampleCaptureRow(), sampleRefundRow()], \"stripe\") → [sampleCaptureRow(), sampleRefundRow()]", "settlementsForProvider([sampleCaptureRow()], \"adyen\") → []"]
+          "verify": ["settlementsForProvider([sampleCaptureRow()], \"adyen\") -> []", "settlementsForProvider([sampleCaptureRow(), sampleRefundRow()], \"stripe\") -> [sampleCaptureRow(), sampleRefundRow()]"]
         },
         {
           "sig": "settlementsForPayment(rows: List<SettlementRow>, paymentId: String) -> List<SettlementRow>",
           "desc": "Filters imported settlement rows by payment ID.",
           "verify_count": 2,
-          "verify": ["settlementsForPayment([sampleCaptureRow(), sampleRefundRow()], \"pay-1\") → [sampleCaptureRow(), sampleRefundRow()]", "settlementsForPayment([sampleCaptureRow()], \"missing\") → []"]
+          "verify": ["settlementsForPayment([sampleCaptureRow()], \"missing\") -> []", "settlementsForPayment([sampleCaptureRow(), sampleRefundRow()], \"pay-1\") -> [sampleCaptureRow(), sampleRefundRow()]"]
         },
         {
           "sig": "reconcileProvider(provider: String, states: List<PaymentState>, rows: List<SettlementRow>) -> List<CaseDraft>",
           "desc": "Compares replayed payments with imported settlements for one provider.",
           "verify_count": 2,
-          "verify": ["reconcileProvider(\"stripe\", [sampleState()], [sampleCaptureRow()]) → []"]
+          "verify": ["reconcileProvider(\"stripe\", [sampleState()], [sampleCaptureRow()]) -> []"]
         }
       ]
     },
@@ -283,7 +285,7 @@
           "sig": "dataDir() -> String",
           "desc": "Base directory for payment_ops files.",
           "verify_count": 1,
-          "verify": ["dataDir() → \"/tmp/aver_payment_ops\""]
+          "verify": ["dataDir() -> \"/tmp/aver_payment_ops\""]
         },
         {
           "sig": "initStore() -> Result<Unit, String>",
@@ -331,43 +333,43 @@
           "sig": "escapeField(text: String) -> String",
           "desc": "Escapes percent, pipe, and newline for one file field.",
           "verify_count": 2,
-          "verify": ["escapeField(\"a|b\") → \"a%7Cb\"", "escapeField(\"line\nbreak\") → \"line%0Abreak\""]
+          "verify": ["escapeField(\"a|b\") -> \"a%7Cb\"", "escapeField(\"line\nbreak\") -> \"line%0Abreak\""]
         },
         {
           "sig": "fieldAt(parts: List<String>, index: Int, label: String) -> Result<String, String>",
           "desc": "Reads and unescapes one required field.",
           "verify_count": 2,
-          "verify": ["fieldAt([\"a\", \"b\"], 1, \"line\") → Result.Ok(\"b\")", "fieldAt([], 0, \"line\") → Result.Err(\"Corrupt line: missing field 0\")"]
+          "verify": ["fieldAt([], 0, \"line\") -> Result.Err(\"Corrupt line: missing field 0\")", "fieldAt([\"a\", \"b\"], 1, \"line\") -> Result.Ok(\"b\")"]
         },
         {
           "sig": "optionalFieldAt(parts: List<String>, index: Int) -> String",
           "desc": "Returns one optional raw field or '-' when it is missing.",
           "verify_count": 1,
-          "verify": ["optionalFieldAt([\"a\"], 1) → \"-\""]
+          "verify": ["optionalFieldAt([\"a\"], 1) -> \"-\""]
         },
         {
           "sig": "encodeOption(value: Option<String>) -> String",
           "desc": "Stores optional text as '-' or an escaped field.",
           "verify_count": 2,
-          "verify": ["encodeOption(Option.None) → \"-\"", "encodeOption(Option.Some(\"a|b\")) → \"a%7Cb\""]
+          "verify": ["encodeOption(Option.None) -> \"-\"", "encodeOption(Option.Some(\"a|b\")) -> \"a%7Cb\""]
         },
         {
           "sig": "decodeOption(raw: String) -> Option<String>",
           "desc": "Reads optional text stored by encodeOption.",
           "verify_count": 2,
-          "verify": ["decodeOption(\"-\") → Option.None", "decodeOption(\"a%7Cb\") → Option.Some(\"a|b\")"]
+          "verify": ["decodeOption(\"-\") -> Option.None", "decodeOption(\"a%7Cb\") -> Option.Some(\"a|b\")"]
         },
         {
           "sig": "splitNonEmptyLines(content: String) -> List<String>",
           "desc": "Splits text into lines and drops empty ones.",
           "verify_count": 2,
-          "verify": ["splitNonEmptyLines(\"\") → []", "splitNonEmptyLines(\"a\nb\n\") → [\"a\", \"b\"]"]
+          "verify": ["splitNonEmptyLines(\"\") -> []", "splitNonEmptyLines(\"a\nb\n\") -> [\"a\", \"b\"]"]
         },
         {
           "sig": "renderLines(lines: List<String>) -> String",
           "desc": "Turns serialized lines into a whole-file string.",
           "verify_count": 2,
-          "verify": ["renderLines([]) → \"\"", "renderLines([\"a\", \"b\"]) → \"a\nb\n\""]
+          "verify": ["renderLines([]) -> \"\"", "renderLines([\"a\", \"b\"]) -> \"a\nb\n\""]
         }
       ]
     },
@@ -392,7 +394,7 @@
           "sig": "forSubject(entries: List<AuditEntry>, subjectId: Option<String>) -> List<AuditEntry>",
           "desc": "Optional subject filter for audit queries.",
           "verify_count": 3,
-          "verify": ["forSubject([sampleAudit()], Option.None) → [sampleAudit()]", "forSubject([sampleAudit()], Option.Some(\"payment:pay-1\")) → [sampleAudit()]", "forSubject([sampleAudit()], Option.Some(\"payment:missing\")) → []"]
+          "verify": ["forSubject([sampleAudit()], Option.Some(\"payment:missing\")) -> []", "forSubject([sampleAudit()], Option.Some(\"payment:pay-1\")) -> [sampleAudit()]", "forSubject([sampleAudit()], Option.None) -> [sampleAudit()]"]
         },
         {
           "sig": "recordEntries(entries: List<AuditEntry>) -> Result<Unit, String>",
@@ -411,13 +413,13 @@
           "sig": "parseWebhookFile(content: String) -> Result<List<RawWebhook>, String>",
           "desc": "Parses pipe-delimited webhook imports: sourceId|paymentId|kind|amount|currency|occurredAt.",
           "verify_count": 3,
-          "verify": ["parseWebhookFile(\"\") → Result.Ok([])", "parseWebhookFile(\"evt-1|pay-1|charge.captured|oops|USD|2026-03-10T09:05:00Z\n\") → Result.Err(\"Cannot parse 'oops' as Int\")"]
+          "verify": ["parseWebhookFile(\"\") -> Result.Ok([])", "parseWebhookFile(\"evt-1|pay-1|charge.captured|oops|USD|2026-03-10T09:05:00Z\n\") -> Result.Err(\"Cannot parse 'oops' as Int\")"]
         },
         {
           "sig": "parseSettlementFile(content: String) -> Result<List<RawSettlement>, String>",
           "desc": "Parses pipe-delimited settlement imports: rowId|paymentId|kind|amount|currency|settledOn.",
           "verify_count": 3,
-          "verify": ["parseSettlementFile(\"\") → Result.Ok([])", "parseSettlementFile(\"row-1|pay-1|charge|oops|USD|2026-03-10\n\") → Result.Err(\"Cannot parse 'oops' as Int\")"]
+          "verify": ["parseSettlementFile(\"\") -> Result.Ok([])", "parseSettlementFile(\"row-1|pay-1|charge|oops|USD|2026-03-10\n\") -> Result.Err(\"Cannot parse 'oops' as Int\")"]
         }
       ]
     },
@@ -472,13 +474,13 @@
           "sig": "renderCommand(result: Result<CommandReport, String>) -> Result<List<String>, String>",
           "desc": "Maps command execution into rendered output.",
           "verify_count": 2,
-          "verify": ["renderCommand(Result.Ok(sampleReport())) → Result.Ok(renderCommandReport(sampleReport()))", "renderCommand(Result.Err(\"boom\")) → Result.Err(\"boom\")"]
+          "verify": ["renderCommand(Result.Err(\"boom\")) -> Result.Err(\"boom\")", "renderCommand(Result.Ok(sampleReport())) -> Result.Ok(renderCommandReport(sampleReport()))"]
         },
         {
           "sig": "renderQuery(result: Result<QueryOutput, String>) -> Result<List<String>, String>",
           "desc": "Maps query execution into rendered output.",
           "verify_count": 2,
-          "verify": ["renderQuery(Result.Ok(QueryOutput.CaseList([]))) → Result.Ok([\"cases: 0\"])", "renderQuery(Result.Err(\"boom\")) → Result.Err(\"boom\")"]
+          "verify": ["renderQuery(Result.Err(\"boom\")) -> Result.Err(\"boom\")", "renderQuery(Result.Ok(QueryOutput.CaseList([]))) -> Result.Ok([\"cases: 0\"])"]
         }
       ]
     }
