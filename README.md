@@ -235,9 +235,15 @@ aver context examples/core/calculator.av
 
 Aver walks the dependency graph and emits a compact context summary: module intent, public signatures, effect declarations, verify samples, and decisions. The goal is not to dump the whole source tree; it is to export the contract-level view that another human or LLM needs first.
 
-By default, `aver context` uses `--depth auto --budget 10kb`: it tries depth `0`, `1`, `2`, ... and keeps the deepest result that still fits the byte budget. `--depth N` and `--depth unlimited` bypass that budget. Long verify examples are skipped rather than bloating the artifact.
+By default, `aver context` uses `--depth auto --budget 10kb` with priority scoring: elements with more verify coverage, spec references, and decisions are included first. `--depth N` and `--depth unlimited` bypass that budget. Long verify examples are skipped rather than bloating the artifact.
 
-This makes token budget a navigation primitive. Another human or model can start with a small architecture map, then zoom into the modules that matter instead of reading the whole tree up front.
+Use `--focus <symbol>` to build context around a specific function — its callees, types, verify blocks, and decisions are prioritized within the budget:
+
+```bash
+aver context examples/data/json.av --focus fromString
+```
+
+This makes token budget a navigation primitive. Another human or model can start with a small architecture map, zoom into the modules that matter, or focus on a single function's dependency cone.
 
 If you want a larger export for a medium project, raise the budget explicitly:
 
@@ -336,7 +342,7 @@ aver compile file.av -o out/
 
 For recursive code, `aver check` also warns when a recursive function still contains non-tail recursive calls after TCO. Tail-recursive code remains the preferred shape for large linear traversals; the warning is there to point out where accumulator-style rewrites may matter.
 
-`aver context` defaults to `--depth auto --budget 10kb`. Use `--budget 24kb`, `--depth 2`, or `--depth unlimited` when you want a deeper export.
+`aver context` defaults to `--depth auto --budget 10kb` with priority scoring. Use `--focus <symbol>` to zoom into a function's dependency cone, `--budget 24kb` for a larger export, or `--depth unlimited` for the full graph.
 
 For replay, formatting, REPL, and the full command surface, use `aver --help` and the docs below.
 

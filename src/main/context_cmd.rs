@@ -1372,6 +1372,7 @@ fn summarize_selection(selection: &ContextSelection) -> String {
     parts.join(", ")
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn cmd_context(
     file: &str,
     module_root_override: Option<&str>,

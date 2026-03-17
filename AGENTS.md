@@ -17,10 +17,11 @@ When entering this repo, do not start by reading raw source files exhaustively.
 
 Prefer progressive discovery:
 - start with `aver context <entry> --budget 10kb`
+- use `--focus <fn_name>` to zoom into a specific function's dependency cone
 - use the exported architecture map to choose the next module
 - raise the budget or target a specific module only when the first map is too shallow
 
-`aver context --budget` is meant to act as a navigation primitive for AI: start high, then zoom in.
+`aver context` is a navigation primitive for AI: start high, focus on what matters, then zoom in.
 
 ## Current status
 
