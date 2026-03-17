@@ -12,6 +12,9 @@ pub(super) struct ContextSelection {
     pub truncated: bool,
     pub used_bytes: usize,
     pub focus_symbol: Option<String>,
+    /// How many elements (fns, types, decisions) were selected vs available.
+    pub elements_selected: Option<usize>,
+    pub elements_total: Option<usize>,
 }
 
 fn impact_texts(impacts: &[DecisionImpact]) -> Vec<String> {
@@ -85,6 +88,11 @@ pub(super) fn format_context_md(
         }
         if let Some(focus_symbol) = &selection.focus_symbol {
             parts.push(format!("focus: `{}`", focus_symbol));
+        }
+        if let (Some(selected), Some(total)) =
+            (selection.elements_selected, selection.elements_total)
+        {
+            parts.push(format!("selected: `{}/{}`", selected, total));
         }
         parts.push(format!("truncated: `{}`", selection.truncated));
         parts.push(format!("used: `{}`", byte_label(selection.used_bytes)));
@@ -297,6 +305,12 @@ pub(super) fn format_context_json(
                 "    \"focus_symbol\": {},\n",
                 json_str(focus_symbol)
             ));
+        }
+        if let (Some(selected), Some(total)) =
+            (selection.elements_selected, selection.elements_total)
+        {
+            out.push_str(&format!("    \"elements_selected\": {},\n", selected));
+            out.push_str(&format!("    \"elements_total\": {},\n", total));
         }
         out.push_str(&format!(
             "    \"truncated\": {},\n",
@@ -630,6 +644,11 @@ pub(super) fn format_decisions_md(
         if let Some(focus_symbol) = &selection.focus_symbol {
             parts.push(format!("focus: `{}`", focus_symbol));
         }
+        if let (Some(selected), Some(total)) =
+            (selection.elements_selected, selection.elements_total)
+        {
+            parts.push(format!("selected: `{}/{}`", selected, total));
+        }
         parts.push(format!("truncated: `{}`", selection.truncated));
         parts.push(format!("used: `{}`", byte_label(selection.used_bytes)));
         out.push_str(&format!("selection: {}\n\n", parts.join(", ")));
@@ -699,6 +718,12 @@ pub(super) fn format_decisions_json(
                 "    \"focus_symbol\": {},\n",
                 json_str(focus_symbol)
             ));
+        }
+        if let (Some(selected), Some(total)) =
+            (selection.elements_selected, selection.elements_total)
+        {
+            out.push_str(&format!("    \"elements_selected\": {},\n", selected));
+            out.push_str(&format!("    \"elements_total\": {},\n", total));
         }
         out.push_str(&format!(
             "    \"truncated\": {},\n",

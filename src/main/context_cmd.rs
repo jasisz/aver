@@ -215,6 +215,8 @@ fn selection_template(
         truncated,
         used_bytes: 0,
         focus_symbol: focus_symbol.map(str::to_string),
+        elements_selected: None,
+        elements_total: None,
     }
 }
 
@@ -931,7 +933,13 @@ fn collect_contexts_auto_scored(
     let next_used_bytes =
         next_candidate.map(|c| used_bytes + estimate_candidate_cost(c, &contexts));
 
-    let selection = selection_template(
+    let elements_selected = candidates
+        .iter()
+        .filter(|c| candidate_selected(&state, &c.key))
+        .count();
+    let elements_total = candidates.len();
+
+    let mut selection = selection_template(
         depth_mode,
         Some(budget),
         included_depth_for_state(&state, &scoring.module_depths),
@@ -940,6 +948,8 @@ fn collect_contexts_auto_scored(
         next_used_bytes,
         truncated,
     );
+    selection.elements_selected = Some(elements_selected);
+    selection.elements_total = Some(elements_total);
 
     SelectedContext {
         contexts: selected_contexts,
