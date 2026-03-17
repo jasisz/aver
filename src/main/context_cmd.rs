@@ -122,6 +122,8 @@ struct ScoringContext {
     fn_type_refs: HashMap<(usize, String), Vec<(usize, String)>>,
     type_usage_counts: HashMap<(usize, String), usize>,
     catalog: FocusCatalog,
+    /// Decision impacts resolved to (ctx_idx, fn_name) pairs.
+    decision_impact_fns: HashMap<(usize, usize), Vec<(usize, String)>>,
 }
 
 fn byte_label(bytes: usize) -> String {
@@ -395,6 +397,30 @@ fn build_scoring_context(contexts: &[FileContext], focus_symbol: Option<&str>) -
         }
     }
 
+    // Resolve decision impacts to (ctx_idx, fn_name) pairs
+    let mut decision_impact_fns: HashMap<(usize, usize), Vec<(usize, String)>> = HashMap::new();
+    for (ctx_idx, ctx) in contexts.iter().enumerate() {
+        for (dec_idx, decision) in ctx.decisions.iter().enumerate() {
+            let mut resolved = Vec::new();
+            for impact in &decision.impacts {
+                let impact_name = impact.text();
+                // Try to find this function in the same module first
+                if ctx.fn_defs.iter().any(|fd| fd.name == impact_name) {
+                    resolved.push((ctx_idx, impact_name.to_string()));
+                } else {
+                    // Try canonical resolution across modules
+                    let canonical = canonical_fn_name(ctx.module_name.as_deref(), impact_name);
+                    if let Some(&target_ctx) = catalog.canonical_to_context.get(&canonical) {
+                        resolved.push((target_ctx, impact_name.to_string()));
+                    }
+                }
+            }
+            if !resolved.is_empty() {
+                decision_impact_fns.insert((ctx_idx, dec_idx), resolved);
+            }
+        }
+    }
+
     ScoringContext {
         module_depths,
         focus_symbol: resolved_focus,
@@ -403,6 +429,7 @@ fn build_scoring_context(contexts: &[FileContext], focus_symbol: Option<&str>) -
         fn_type_refs,
         type_usage_counts,
         catalog,
+        decision_impact_fns,
     }
 }
 
@@ -420,6 +447,25 @@ fn add_type_deps_for_function(
                 .entry(*type_ctx_idx)
                 .or_default()
                 .insert(type_name.clone());
+        }
+    }
+}
+
+fn add_decision_impact_deps(
+    state: &mut SelectionState,
+    scoring: &ScoringContext,
+    ctx_idx: usize,
+    decision_index: usize,
+) {
+    if let Some(impacts) = scoring.decision_impact_fns.get(&(ctx_idx, decision_index)) {
+        for (fn_ctx_idx, fn_name) in impacts {
+            state.modules.insert(*fn_ctx_idx);
+            state
+                .functions
+                .entry(*fn_ctx_idx)
+                .or_default()
+                .insert(fn_name.clone());
+            add_type_deps_for_function(state, scoring, *fn_ctx_idx, fn_name);
         }
     }
 }
@@ -456,6 +502,9 @@ fn apply_candidate(
         CandidateKey::Decision { ctx_idx, index } => {
             next.modules.insert(*ctx_idx);
             next.decisions.entry(*ctx_idx).or_default().insert(*index);
+            // Pull in functions and types that this decision impacts,
+            // so the context has the "what" alongside the "why".
+            add_decision_impact_deps(&mut next, scoring, *ctx_idx, *index);
         }
     }
     next

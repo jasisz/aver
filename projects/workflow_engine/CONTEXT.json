@@ -5,21 +5,18 @@
     "depth_mode": "auto",
     "budget_bytes": 24576,
     "included_depth": 0,
-    "next_element_cost": 47,
-    "elements_selected": 63,
+    "next_element_cost": 154,
+    "elements_selected": 68,
     "elements_total": 131,
     "truncated": false,
-    "used_bytes": 24459
+    "used_bytes": 24231
   },
   "modules": [
     {
       "source_file": "main.av",
       "module": "Main",
       "intent": "Workflow engine argv entrypoint. Keeps the top-level module thin so the CLI and application core stay in their own modules and `aver context` has a stable root to resume from.",
-      "depends": ["App.Cli"],
-      "api_effects": [],
-      "module_effects": ["Args.get", "Console.print", "Console.warn", "Disk.appendText", "Disk.exists", "Disk.makeDir", "Disk.readText", "Disk.writeText", "Time.now"],
-      "main_effects": ["Args.get", "Console.print", "Console.warn", "Disk.appendText", "Disk.exists", "Disk.makeDir", "Disk.readText", "Disk.writeText", "Time.now"]
+      "depends": ["App.Cli"]
     },
     {
       "source_file": "app/parse.av",
@@ -43,21 +40,35 @@
       "module": "Commands",
       "intent": "Effectful command handlers for workflow mutations. The app layer is intentionally small: it decides a plan from persisted state, derives follow-up rule effects as data, then commits and dispatches that plan.",
       "depends": ["Domain.Types", "Domain.Projects", "Domain.Tasks", "Domain.Events", "Domain.Rules", "Domain.Validation", "Infra.Store", "Infra.Clock", "Infra.Notify", "Infra.Audit"],
+      "effects": ["Console.warn", "Disk.appendText", "Disk.readText", "Disk.writeText", "Time.now"],
+      "types": [
+        {"name": "Command", "variants": [{"name": "CreateProject", "fields": ["String", "String"]}, {"name": "ArchiveProject", "fields": ["String"]}, {"name": "CreateTask", "fields": ["String", "String", "String", "Priority", "List<String>", "Option<String>"]}, {"name": "RenameTask", "fields": ["String", "String"]}, {"name": "StartTask", "fields": ["String"]}, {"name": "BlockTask", "fields": ["String", "String"]}, {"name": "CompleteTask", "fields": ["String"]}, {"name": "ReopenTask", "fields": ["String", "String"]}, {"name": "ChangePriority", "fields": ["String", "Priority"]}, {"name": "AddTag", "fields": ["String", "String"]}, {"name": "RemoveTag", "fields": ["String", "String"]}, {"name": "AddComment", "fields": ["String", "String", "String"]}, {"name": "SetDeadline", "fields": ["String", "String"]}, {"name": "ClearDeadline", "fields": ["String"]}, {"name": "ArchiveTask", "fields": ["String"]}, {"name": "RunRules", "fields": ["Option<String>"]}]}
+      ],
       "records": [
         {"name": "CommandReport", "fields": [{"name": "summary", "type": "String"}, {"name": "subjectId", "type": "String"}, {"name": "events", "type": "List<TaskEventRecord>"}, {"name": "notifications", "type": "List<Notification>"}, {"name": "audits", "type": "List<AuditEntry>"}]}
+      ],
+      "functions": [
+        {
+          "sig": "execute(command: Command) -> Result<CommandReport, String>",
+          "effects": ["Console.warn", "Disk.appendText", "Disk.readText", "Disk.writeText", "Time.now"],
+          "desc": "Executes one workflow command through decide, commit, and dispatch."
+        }
       ]
     },
     {
       "source_file": "domain/types.av",
       "module": "Types",
       "intent": "Shared domain types for the workflow engine. Keeps records and enums in one place so command, rule, and store modules can speak about the same application core without repeating shapes.",
+      "types": [
+        {"name": "Priority", "variants": ["Low", "Normal", "High", "Urgent"]}
+      ],
       "records": [
         {"name": "Project", "fields": [{"name": "id", "type": "String"}, {"name": "name", "type": "String"}, {"name": "archived", "type": "Bool"}, {"name": "createdAt", "type": "String"}, {"name": "updatedAt", "type": "String"}]},
         {"name": "TaskEventRecord", "fields": [{"name": "taskId", "type": "String"}, {"name": "projectId", "type": "String"}, {"name": "seq", "type": "Int"}, {"name": "event", "type": "TaskEvent"}]},
         {"name": "Task", "fields": [{"name": "id", "type": "String"}, {"name": "projectId", "type": "String"}, {"name": "title", "type": "String"}, {"name": "status", "type": "TaskStatus"}, {"name": "priority", "type": "Priority"}, {"name": "tags", "type": "List<String>"}, {"name": "deadline", "type": "Option<String>"}, {"name": "comments", "type": "List<Comment>"}, {"name": "createdAt", "type": "String"}, {"name": "updatedAt", "type": "String"}, {"name": "statusChangedAt", "type": "String"}]},
-        {"name": "TaskView", "fields": [{"name": "taskId", "type": "String"}, {"name": "projectId", "type": "String"}, {"name": "title", "type": "String"}, {"name": "status", "type": "TaskStatus"}, {"name": "priority", "type": "Priority"}, {"name": "tags", "type": "List<String>"}, {"name": "deadline", "type": "Option<String>"}, {"name": "overdue", "type": "Bool"}, {"name": "deadlineSoon", "type": "Bool"}, {"name": "derivedUrgent", "type": "Bool"}, {"name": "stalled", "type": "Bool"}, {"name": "missingClosingComment", "type": "Bool"}, {"name": "needsReview", "type": "Bool"}]},
         {"name": "Notification", "fields": [{"name": "key", "type": "String"}, {"name": "taskId", "type": "String"}, {"name": "kind", "type": "String"}, {"name": "message", "type": "String"}, {"name": "createdAt", "type": "String"}]},
-        {"name": "AuditEntry", "fields": [{"name": "key", "type": "String"}, {"name": "taskId", "type": "String"}, {"name": "action", "type": "String"}, {"name": "message", "type": "String"}, {"name": "createdAt", "type": "String"}]}
+        {"name": "AuditEntry", "fields": [{"name": "key", "type": "String"}, {"name": "taskId", "type": "String"}, {"name": "action", "type": "String"}, {"name": "message", "type": "String"}, {"name": "createdAt", "type": "String"}]},
+        {"name": "RuleResult", "fields": [{"name": "taskId", "type": "String"}, {"name": "events", "type": "List<TaskEventRecord>"}, {"name": "notifications", "type": "List<Notification>"}, {"name": "audits", "type": "List<AuditEntry>"}, {"name": "notes", "type": "List<String>"}]}
       ]
     },
     {
@@ -77,6 +88,17 @@
           "sig": "putProject(projects: List<Project>, project: Project) -> List<Project>",
           "desc": "Replaces an existing project by ID or appends a new one.",
           "verify_count": 2
+        },
+        {
+          "sig": "createProject(id: String, name: String, now: String) -> Result<Project, String>",
+          "desc": "Creates a project after field validation.",
+          "verify_count": 2,
+          "verify": ["createProject(\"bad id\", \"Alpha\", \"2026-03-08T12:00:00Z\") -> Result.Err(\"Project ID must use letters, numbers, dash, or underscore\")"]
+        },
+        {
+          "sig": "archiveProject(project: Project, now: String) -> Result<Project, String>",
+          "desc": "Archives a project exactly once.",
+          "verify_count": 2
         }
       ]
     },
@@ -87,34 +109,15 @@
       "depends": ["Domain.Types", "Domain.Time"],
       "functions": [
         {
-          "sig": "validTag(tag: String) -> Bool",
-          "desc": "Tags use the same restricted shape as IDs.",
-          "verify_count": 3,
-          "verify": ["validTag(\"waiting\") -> true", "validTag(\"bad tag\") -> false", "validTag(\"needs_review\") -> true"]
-        },
-        {
-          "sig": "validateProjectCreate(id: String, name: String) -> Result<Unit, String>",
-          "desc": "Checks fields needed to create a project.",
-          "verify_count": 3,
-          "verify": ["validateProjectCreate(\"alpha\", \"   \") -> Result.Err(\"Project name cannot be blank\")", "validateProjectCreate(\"bad id\", \"Alpha\") -> Result.Err(\"Project ID must use letters, numbers, dash, or underscore\")", "validateProjectCreate(\"alpha_1\", \"Alpha\") -> Result.Ok(Unit)"]
-        },
-        {
-          "sig": "validateDeadline(deadline: Option<String>) -> Result<Option<String>, String>",
-          "desc": "Validates an optional ISO deadline.",
-          "verify_count": 3,
-          "verify": ["validateDeadline(Option.None) -> Result.Ok(Option.None)", "validateDeadline(Option.Some(\"bad\")) -> Result.Err(\"Invalid deadline: Timestamp must start with YYYY-MM-DDTHH:MM:SS\")", "validateDeadline(Option.Some(\"2026-03-09T12:00:00Z\")) -> Result.Ok(Option.Some(\"2026-03-09T12:00:00Z\"))"]
-        },
-        {
           "sig": "validateTaskCreate(id: String, title: String, tags: List<String>, deadline: Option<String>) -> Result<Unit, String>",
           "desc": "Checks fields needed to create a task.",
           "verify_count": 5,
           "verify": ["validateTaskCreate(\"task_1\", \"  \", [], Option.None) -> Result.Err(\"Task title cannot be blank\")", "validateTaskCreate(\"bad id\", \"Write notes\", [], Option.None) -> Result.Err(\"Task ID must use letters, numbers, dash, or underscore\")", "validateTaskCreate(\"task_1\", \"Write notes\", [\"ops\", \"ops\"], Option.None) -> Result.Err(\"Tags must not repeat\")"]
         },
         {
-          "sig": "validateComment(author: String, body: String) -> Result<Unit, String>",
-          "desc": "Comments need both author and body.",
-          "verify_count": 3,
-          "verify": ["validateComment(\"\", \"Looks good\") -> Result.Err(\"Comment author cannot be blank\")", "validateComment(\"alice\", \" \") -> Result.Err(\"Comment body cannot be blank\")", "validateComment(\"alice\", \"Looks good\") -> Result.Ok(Unit)"]
+          "sig": "ensureProjectActive(project: Project) -> Result<Unit, String>",
+          "desc": "Rejects task mutation when the parent project is archived.",
+          "verify_count": 2
         }
       ]
     },
@@ -131,12 +134,6 @@
           "desc": "Parses YYYY-MM-DDTHH:MM:SS and ignores any trailing fractional or zone suffix.",
           "verify_count": 4,
           "verify": ["parseIso(\"bad\") -> Result.Err(\"Timestamp must start with YYYY-MM-DDTHH:MM:SS\")", "parseIso(\"2025-02-29T05:00:00Z\") -> Result.Err(\"Invalid calendar timestamp: 2025-02-29T05:00:00\")", "parseIso(\"2026-03-08T12:30:00Z\") -> Result.Ok(Timestamp(year = 2026, month = 3, day = 8, hour = 12, minute = 30, second = 0))"]
-        },
-        {
-          "sig": "withinNextHours(now: String, target: String, hours: Int) -> Result<Bool, String>",
-          "desc": "True when target is in the future and inside the requested hour window.",
-          "verify_count": 3,
-          "verify": ["withinNextHours(\"2026-03-08T12:00:00Z\", \"2026-03-10T12:00:00Z\", 24) -> Result.Ok(false)", "withinNextHours(\"2026-03-08T12:00:00Z\", \"2026-03-08T23:00:00Z\", 24) -> Result.Ok(true)", "withinNextHours(\"2026-03-08T12:00:00Z\", \"2026-03-08T11:00:00Z\", 24) -> Result.Ok(false)"]
         }
       ]
     },
@@ -144,7 +141,30 @@
       "source_file": "domain/tasks.av",
       "module": "Tasks",
       "intent": "Pure task command logic that produces explicit events. Command handlers stay thin because this module converts validated user intent into domain events without touching persistence or notifications.",
-      "depends": ["Domain.Types", "Domain.Validation"]
+      "depends": ["Domain.Types", "Domain.Validation"],
+      "functions": [
+        {
+          "sig": "createTask(taskId: String, projectId: String, title: String, priority: Priority, tags: List<String>, deadline: Option<String>, now: String) -> Result<TaskEventRecord, String>",
+          "desc": "Creates the first event in a task stream.",
+          "verify_count": 2
+        },
+        {
+          "sig": "renameTask(task: Task, seq: Int, title: String, now: String) -> Result<TaskEventRecord, String>",
+          "desc": "Renames a task unless it has already been archived.",
+          "verify_count": 2
+        },
+        {
+          "sig": "completeTask(task: Task, seq: Int, now: String) -> Result<TaskEventRecord, String>",
+          "desc": "Moves a task into done.",
+          "verify_count": 2
+        },
+        {
+          "sig": "reopenTask(task: Task, seq: Int, reason: String, now: String) -> Result<TaskEventRecord, String>",
+          "desc": "Reopens a done task into active work.",
+          "verify_count": 2,
+          "verify": ["reopenTask(sampleTask(), 4, \"Regression found\", \"2026-03-11T12:00:00Z\") -> Result.Err(\"Task 't1' can only be reopened from done\")"]
+        }
+      ]
     },
     {
       "source_file": "domain/events.av",
@@ -165,6 +185,17 @@
           "desc": "Linear lookup for replayed tasks.",
           "verify_count": 2,
           "verify": ["findTask([], \"t1\") -> Option.None", "findTask([sampleTask()], \"t1\") -> Option.Some(sampleTask())"]
+        },
+        {
+          "sig": "replayTask(events: List<TaskEventRecord>) -> Result<Task, String>",
+          "desc": "Replays one task stream into its current projection.",
+          "verify_count": 2,
+          "verify": ["replayTask([]) -> Result.Err(\"No events for task\")"]
+        },
+        {
+          "sig": "replayAll(events: List<TaskEventRecord>) -> Result<List<Task>, String>",
+          "desc": "Replays the flat task event log into current task projections.",
+          "verify_count": 1
         }
       ]
     },
@@ -172,18 +203,12 @@
       "source_file": "domain/rules.av",
       "module": "Rules",
       "intent": "Explicit workflow rule functions over replayed task state. Rules stay as plain functions rather than a hidden mini-language so reviewers can see which business pressure caused each follow-up event or notification.",
-      "depends": ["Domain.Types", "Domain.Views"]
-    },
-    {
-      "source_file": "domain/views.av",
-      "module": "Views",
-      "intent": "Pure derived views and summaries over replayed task state. Deadlines, stalled work, and review-needed markers stay derived here instead of being hidden as imperative mutations.",
-      "depends": ["Domain.Types", "Domain.Time"],
+      "depends": ["Domain.Types", "Domain.Views"],
       "functions": [
         {
-          "sig": "deriveView(task: Task, now: String) -> Result<TaskView, String>",
-          "desc": "Builds derived flags without mutating stored priority or tags.",
-          "verify_count": 2
+          "sig": "runRules(project: Project, task: Task, latest: Option<TaskEventRecord>, now: String, nextSeq: Int) -> Result<RuleResult, String>",
+          "desc": "Runs all explicit workflow rules for one task.",
+          "verify_count": 1
         }
       ]
     },
@@ -192,44 +217,42 @@
       "module": "Store",
       "intent": "Flat-file persistence for projects and append-only task events. This module owns file formats and append/write primitives; replay stays in the domain so the app core reads like event sourcing instead of storage magic.",
       "depends": ["Domain.Types", "Infra.Codec"],
+      "effects": ["Disk.appendText", "Disk.readText", "Disk.writeText"],
       "functions": [
         {
-          "sig": "dataDir() -> String",
-          "desc": "Base directory for workflow engine files.",
-          "verify_count": 1,
-          "verify": ["dataDir() -> \"/tmp/aver_workflow_engine\""]
-        }
-      ]
-    },
-    {
-      "source_file": "infra/codec.av",
-      "module": "Codec",
-      "intent": "Shared flat-file codec helpers for the workflow engine infra modules. The storage format is intentionally plain text, so escaping, optional fields, and line splitting stay explicit instead of being hidden in a serializer.",
-      "functions": [
-        {
-          "sig": "escapeField(text: String) -> String",
-          "desc": "Escapes percent, pipe, and newline for one flat-file field.",
-          "verify_count": 3,
-          "verify": ["escapeField(\"a|b\") -> \"a%7Cb\"", "escapeField(\"plain\") -> \"plain\"", "escapeField(\"line\nbreak\") -> \"line%0Abreak\""]
+          "sig": "loadProjects() -> Result<List<Project>, String>",
+          "effects": ["Disk.readText"],
+          "desc": "Reads all projects from disk."
         },
         {
-          "sig": "parseBool(raw: String) -> Result<Bool, String>",
-          "desc": "Parses one stored boolean field.",
-          "verify_count": 3,
-          "verify": ["parseBool(\"x\") -> Result.Err(\"Invalid bool: x\")", "parseBool(\"true\") -> Result.Ok(true)", "parseBool(\"false\") -> Result.Ok(false)"]
+          "sig": "saveProjects(projects: List<Project>) -> Result<Unit, String>",
+          "effects": ["Disk.writeText"],
+          "desc": "Rewrites project state as one whole file."
         },
         {
-          "sig": "fieldAt(parts: List<String>, index: Int, label: String) -> Result<String, String>",
-          "desc": "Reads and unescapes one required field from a split line.",
-          "verify_count": 3,
-          "verify": ["fieldAt([], 0, \"project\") -> Result.Err(\"Corrupt project: missing field 0\")", "fieldAt([\"a%7Cb\"], 0, \"project\") -> Result.Ok(\"a|b\")", "fieldAt([\"a\", \"b\"], 1, \"project\") -> Result.Ok(\"b\")"]
+          "sig": "loadTaskEvents() -> Result<List<TaskEventRecord>, String>",
+          "effects": ["Disk.readText"],
+          "desc": "Reads the append-only task event log."
+        },
+        {
+          "sig": "appendTaskEvents(entries: List<TaskEventRecord>) -> Result<Unit, String>",
+          "effects": ["Disk.appendText"],
+          "desc": "Appends many serialized task events in one write."
         }
       ]
     },
     {
       "source_file": "infra/clock.av",
       "module": "Clock",
-      "intent": "Thin time adapter for the workflow engine. Keeping Time.now behind one module makes orchestration explicit about where time enters the system without contaminating pure domain logic."
+      "intent": "Thin time adapter for the workflow engine. Keeping Time.now behind one module makes orchestration explicit about where time enters the system without contaminating pure domain logic.",
+      "effects": ["Time.now"],
+      "functions": [
+        {
+          "sig": "now() -> String",
+          "effects": ["Time.now"],
+          "desc": "Returns the current timestamp as the orchestration layer sees it."
+        }
+      ]
     },
     {
       "source_file": "infra/notify.av",
@@ -255,12 +278,17 @@
       "module": "Audit",
       "intent": "Audit trail persistence for workflow actions and rule follow-ups. Audit entries stay outside the task event log because some audit records explain why a decision happened rather than representing state reconstruction inputs.",
       "depends": ["Domain.Types", "Infra.Codec", "Infra.Store"],
-      "effects": ["Disk.readText"],
+      "effects": ["Disk.appendText", "Disk.readText"],
       "functions": [
         {
           "sig": "loadEntries() -> Result<List<AuditEntry>, String>",
           "effects": ["Disk.readText"],
           "desc": "Reads all persisted audit entries."
+        },
+        {
+          "sig": "recordEntries(entries: List<AuditEntry>) -> Result<Unit, String>",
+          "effects": ["Disk.appendText", "Disk.readText"],
+          "desc": "Appends only new audit entries, preserving the existing log."
         }
       ]
     },
@@ -269,27 +297,16 @@
       "module": "Queries",
       "intent": "Effectful read-model assembly for the workflow engine CLI. Queries load persisted state, replay tasks, and derive views without mixing those concerns into the parser or the pure domain modules.",
       "depends": ["Domain.Types", "Domain.Projects", "Domain.Views", "Domain.Events", "Infra.Store", "Infra.Audit", "Infra.Notify", "Infra.Clock"],
+      "effects": ["Disk.readText", "Time.now"],
       "types": [
+        {"name": "Query", "variants": [{"name": "ListTasks", "fields": ["Option<String>"]}, {"name": "ShowTask", "fields": ["String"]}, {"name": "ShowAudit", "fields": ["Option<String>"]}]},
         {"name": "QueryOutput", "variants": [{"name": "TaskList", "fields": ["List<TaskSummary>"]}, {"name": "TaskDetail", "fields": ["TaskDetails"]}, {"name": "AuditTrail", "fields": ["List<AuditEntry>"]}]}
-      ]
-    },
-    {
-      "source_file": "app/render.av",
-      "module": "Render",
-      "intent": "Shell-friendly rendering for workflow engine command and query results. Formatting stays dumb and explicit so the interesting orchestration remains in the app and domain layers, not in presentation glue.",
-      "depends": ["App.Commands", "App.Queries", "Domain.Types", "Domain.Events", "Domain.Views"],
+      ],
       "functions": [
         {
-          "sig": "renderCommand(result: Result<CommandReport, String>) -> Result<List<String>, String>",
-          "desc": "Maps command execution into rendered output.",
-          "verify_count": 2,
-          "verify": ["renderCommand(Result.Err(\"boom\")) -> Result.Err(\"boom\")"]
-        },
-        {
-          "sig": "renderQuery(result: Result<QueryOutput, String>) -> Result<List<String>, String>",
-          "desc": "Maps query execution into rendered output.",
-          "verify_count": 2,
-          "verify": ["renderQuery(Result.Err(\"boom\")) -> Result.Err(\"boom\")", "renderQuery(Result.Ok(QueryOutput.AuditTrail([]))) -> Result.Ok([\"audits: 0\"])"]
+          "sig": "run(query: Query) -> Result<QueryOutput, String>",
+          "effects": ["Disk.readText", "Time.now"],
+          "desc": "Executes one read-only query over persisted workflow state."
         }
       ]
     }
