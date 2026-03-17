@@ -720,13 +720,15 @@ fn score_decision(
     scoring: &ScoringContext,
 ) -> Candidate {
     let depth = scoring.module_depths[ctx_idx];
-    let mut score = 110;
+    // Decisions are architectural context — always high priority.
+    // AI needs "why" even more than "what".
+    let mut score = 250;
     if ctx_idx == 0 {
-        score += 40;
+        score += 50;
     }
-    score += (decision.impacts.len().min(4) as i32) * 12;
+    score += (decision.impacts.len().min(4) as i32) * 15;
     if !decision.reason.is_empty() {
-        score += 15;
+        score += 20;
     }
     if let Some(focus_symbol) = &scoring.focus_symbol
         && decision_impacts_focus(decision, focus_symbol, ctx.module_name.as_deref())

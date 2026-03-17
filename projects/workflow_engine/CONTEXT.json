@@ -5,11 +5,11 @@
     "depth_mode": "auto",
     "budget_bytes": 24576,
     "included_depth": 0,
-    "next_element_cost": 212,
-    "elements_selected": 69,
+    "next_element_cost": 47,
+    "elements_selected": 63,
     "elements_total": 131,
     "truncated": false,
-    "used_bytes": 24376
+    "used_bytes": 24459
   },
   "modules": [
     {
@@ -51,11 +51,6 @@
       "source_file": "domain/types.av",
       "module": "Types",
       "intent": "Shared domain types for the workflow engine. Keeps records and enums in one place so command, rule, and store modules can speak about the same application core without repeating shapes.",
-      "types": [
-        {"name": "TaskStatus", "variants": ["Todo", "InProgress", "Blocked", "Done", "Archived"]},
-        {"name": "Priority", "variants": ["Low", "Normal", "High", "Urgent"]},
-        {"name": "TaskEvent", "variants": [{"name": "TaskCreated", "fields": ["String", "Priority", "List<String>", "Option<String>", "String"]}, {"name": "TaskRenamed", "fields": ["String", "String"]}, {"name": "TaskStarted", "fields": ["String"]}, {"name": "TaskBlocked", "fields": ["String", "String"]}, {"name": "TaskCompleted", "fields": ["String"]}, {"name": "TaskReopened", "fields": ["String", "String"]}, {"name": "PriorityChanged", "fields": ["Priority", "String"]}, {"name": "TagAdded", "fields": ["String", "String"]}, {"name": "TagRemoved", "fields": ["String", "String"]}, {"name": "CommentAdded", "fields": ["Comment"]}, {"name": "DeadlineSet", "fields": ["String", "String"]}, {"name": "DeadlineCleared", "fields": ["String"]}, {"name": "TaskArchived", "fields": ["String"]}]}
-      ],
       "records": [
         {"name": "Project", "fields": [{"name": "id", "type": "String"}, {"name": "name", "type": "String"}, {"name": "archived", "type": "Bool"}, {"name": "createdAt", "type": "String"}, {"name": "updatedAt", "type": "String"}]},
         {"name": "TaskEventRecord", "fields": [{"name": "taskId", "type": "String"}, {"name": "projectId", "type": "String"}, {"name": "seq", "type": "Int"}, {"name": "event", "type": "TaskEvent"}]},
@@ -149,32 +144,7 @@
       "source_file": "domain/tasks.av",
       "module": "Tasks",
       "intent": "Pure task command logic that produces explicit events. Command handlers stay thin because this module converts validated user intent into domain events without touching persistence or notifications.",
-      "depends": ["Domain.Types", "Domain.Validation"],
-      "functions": [
-        {
-          "sig": "addComment(task: Task, seq: Int, author: String, body: String, now: String) -> Result<TaskEventRecord, String>",
-          "desc": "Adds a comment with a deterministic ID derived from the task stream.",
-          "verify_count": 2,
-          "verify": ["addComment(sampleTask(), 3, \"\", \"Waiting on review\", \"2026-03-09T12:00:00Z\") -> Result.Err(\"Comment author cannot be blank\")"]
-        },
-        {
-          "sig": "setDeadline(task: Task, seq: Int, deadline: String, now: String) -> Result<TaskEventRecord, String>",
-          "desc": "Sets or replaces a task deadline.",
-          "verify_count": 2,
-          "verify": ["setDeadline(sampleTask(), 2, \"bad\", \"2026-03-09T12:00:00Z\") -> Result.Err(\"Invalid deadline: Timestamp must start with YYYY-MM-DDTHH:MM:SS\")"]
-        },
-        {
-          "sig": "clearDeadline(task: Task, seq: Int, now: String) -> Result<TaskEventRecord, String>",
-          "desc": "Clears an existing deadline.",
-          "verify_count": 2,
-          "verify": ["clearDeadline(sampleTask(), 2, \"2026-03-09T12:00:00Z\") -> Result.Err(\"Task 't1' has no deadline to clear\")"]
-        },
-        {
-          "sig": "archiveTask(task: Task, seq: Int, now: String) -> Result<TaskEventRecord, String>",
-          "desc": "Moves a task into its final archived state.",
-          "verify_count": 2
-        }
-      ]
+      "depends": ["Domain.Types", "Domain.Validation"]
     },
     {
       "source_file": "domain/events.av",
@@ -182,30 +152,6 @@
       "intent": "Pure event application and replay logic for workflow tasks. With typed sum payload matching now working across the toolchain, replay can live in the domain again instead of reconstructing state from serialized event fields.",
       "depends": ["Domain.Types", "Domain.Validation"],
       "functions": [
-        {
-          "sig": "eventName(event: TaskEvent) -> String",
-          "desc": "Stable event kind label for rendering and audit helpers.",
-          "verify_count": 2,
-          "verify": ["eventName(Domain.Types.TaskEvent.TaskReopened(\"Regression found\", \"2026-03-10T12:00:00Z\")) -> \"TaskReopened\"", "eventName(Domain.Types.TaskEvent.TaskCreated(\"Plan release\", Domain.Types.Priority.High, [\"ops\"], Option.None, \"2026-03-08T12:00:00Z\")) -> \"TaskCreated\""]
-        },
-        {
-          "sig": "recordedAt(event: TaskEvent) -> String",
-          "desc": "Extracts the effective timestamp from each event.",
-          "verify_count": 2,
-          "verify": ["recordedAt(Domain.Types.TaskEvent.TaskCompleted(\"2026-03-09T12:00:00Z\")) -> \"2026-03-09T12:00:00Z\""]
-        },
-        {
-          "sig": "latestEvent(events: List<TaskEventRecord>) -> Option<TaskEventRecord>",
-          "desc": "Reads the last event in a task stream or flat log.",
-          "verify_count": 2,
-          "verify": ["latestEvent([]) -> Option.None", "latestEvent([sampleCreatedEvent(), sampleCompletedEvent()]) -> Option.Some(sampleCompletedEvent())"]
-        },
-        {
-          "sig": "eventsForTask(events: List<TaskEventRecord>, taskId: String) -> List<TaskEventRecord>",
-          "desc": "Filters a flat event log down to one task without growing the runtime stack with the log size.",
-          "verify_count": 2,
-          "verify": ["eventsForTask([sampleCreatedEvent()], \"t2\") -> []"]
-        },
         {
           "sig": "hasTaskEvents(events: List<TaskEventRecord>, taskId: String) -> Bool",
           "analysis": {"tco": true},
@@ -219,14 +165,14 @@
           "desc": "Linear lookup for replayed tasks.",
           "verify_count": 2,
           "verify": ["findTask([], \"t1\") -> Option.None", "findTask([sampleTask()], \"t1\") -> Option.Some(sampleTask())"]
-        },
-        {
-          "sig": "replayTask(events: List<TaskEventRecord>) -> Result<Task, String>",
-          "desc": "Replays one task stream into its current projection.",
-          "verify_count": 2,
-          "verify": ["replayTask([]) -> Result.Err(\"No events for task\")"]
         }
       ]
+    },
+    {
+      "source_file": "domain/rules.av",
+      "module": "Rules",
+      "intent": "Explicit workflow rule functions over replayed task state. Rules stay as plain functions rather than a hidden mini-language so reviewers can see which business pressure caused each follow-up event or notification.",
+      "depends": ["Domain.Types", "Domain.Views"]
     },
     {
       "source_file": "domain/views.av",
@@ -234,18 +180,6 @@
       "intent": "Pure derived views and summaries over replayed task state. Deadlines, stalled work, and review-needed markers stay derived here instead of being hidden as imperative mutations.",
       "depends": ["Domain.Types", "Domain.Time"],
       "functions": [
-        {
-          "sig": "statusText(status: TaskStatus) -> String",
-          "desc": "Readable task status label.",
-          "verify_count": 2,
-          "verify": ["statusText(Domain.Types.TaskStatus.Done) -> \"done\"", "statusText(Domain.Types.TaskStatus.Blocked) -> \"blocked\""]
-        },
-        {
-          "sig": "priorityText(priority: Priority) -> String",
-          "desc": "Readable priority label.",
-          "verify_count": 2,
-          "verify": ["priorityText(Domain.Types.Priority.High) -> \"high\"", "priorityText(Domain.Types.Priority.Urgent) -> \"urgent\""]
-        },
         {
           "sig": "deriveView(task: Task, now: String) -> Result<TaskView, String>",
           "desc": "Builds derived flags without mutating stored priority or tags.",
@@ -279,12 +213,6 @@
           "verify": ["escapeField(\"a|b\") -> \"a%7Cb\"", "escapeField(\"plain\") -> \"plain\"", "escapeField(\"line\nbreak\") -> \"line%0Abreak\""]
         },
         {
-          "sig": "serializeBool(value: Bool) -> String",
-          "desc": "Stable file representation for booleans.",
-          "verify_count": 2,
-          "verify": ["serializeBool(true) -> \"true\"", "serializeBool(false) -> \"false\""]
-        },
-        {
           "sig": "parseBool(raw: String) -> Result<Bool, String>",
           "desc": "Parses one stored boolean field.",
           "verify_count": 3,
@@ -295,32 +223,13 @@
           "desc": "Reads and unescapes one required field from a split line.",
           "verify_count": 3,
           "verify": ["fieldAt([], 0, \"project\") -> Result.Err(\"Corrupt project: missing field 0\")", "fieldAt([\"a%7Cb\"], 0, \"project\") -> Result.Ok(\"a|b\")", "fieldAt([\"a\", \"b\"], 1, \"project\") -> Result.Ok(\"b\")"]
-        },
-        {
-          "sig": "optionalFieldAt(parts: List<String>, index: Int) -> String",
-          "desc": "Returns one optional raw field or '-' when it is missing.",
-          "verify_count": 2,
-          "verify": ["optionalFieldAt([\"a\"], 1) -> \"-\"", "optionalFieldAt([\"a\", \"b\"], 1) -> \"b\""]
-        },
-        {
-          "sig": "encodeOption(value: Option<String>) -> String",
-          "desc": "Stores optional text as '-' or an escaped field.",
-          "verify_count": 2,
-          "verify": ["encodeOption(Option.None) -> \"-\"", "encodeOption(Option.Some(\"a|b\")) -> \"a%7Cb\""]
-        },
-        {
-          "sig": "decodeOption(raw: String) -> Option<String>",
-          "desc": "Reads optional text stored by encodeOption.",
-          "verify_count": 2,
-          "verify": ["decodeOption(\"-\") -> Option.None", "decodeOption(\"a%7Cb\") -> Option.Some(\"a|b\")"]
-        },
-        {
-          "sig": "splitNonEmptyLines(content: String) -> List<String>",
-          "desc": "Splits text into lines and drops empty ones.",
-          "verify_count": 2,
-          "verify": ["splitNonEmptyLines(\"\") -> []", "splitNonEmptyLines(\"a\nb\n\") -> [\"a\", \"b\"]"]
         }
       ]
+    },
+    {
+      "source_file": "infra/clock.av",
+      "module": "Clock",
+      "intent": "Thin time adapter for the workflow engine. Keeping Time.now behind one module makes orchestration explicit about where time enters the system without contaminating pure domain logic."
     },
     {
       "source_file": "infra/notify.av",
@@ -352,11 +261,6 @@
           "sig": "loadEntries() -> Result<List<AuditEntry>, String>",
           "effects": ["Disk.readText"],
           "desc": "Reads all persisted audit entries."
-        },
-        {
-          "sig": "forSubject(entries: List<AuditEntry>, subjectId: Option<String>) -> List<AuditEntry>",
-          "desc": "Optional subject filter for audit queries.",
-          "verify_count": 2
         }
       ]
     },
@@ -388,6 +292,116 @@
           "verify": ["renderQuery(Result.Err(\"boom\")) -> Result.Err(\"boom\")", "renderQuery(Result.Ok(QueryOutput.AuditTrail([]))) -> Result.Ok([\"audits: 0\"])"]
         }
       ]
+    }
+  ],
+  "decisions": [
+    {
+      "name": "OneRulePassPerCommand",
+      "date": "2026-03-08",
+      "chosen": "SingleExplicitRulePass",
+      "rejected": ["LoopUntilNoRulesFire", "HideRulesInsideStoreWrites"],
+      "reason": "Workflow rules should stay reviewable, not turn into an implicit fixpoint engine. A single pass after each user mutation keeps command flow explicit even if it leaves some second-order derivations for a later manual `run_rules` call.",
+      "impacts": ["execute", "decide", "planTaskCommand", "deriveRuleEffectsAfterPrimaryEvent", "commit", "dispatch"],
+      "author": "Codex"
+    },
+    {
+      "name": "ProjectsStayStateBased",
+      "date": "2026-03-08",
+      "chosen": "StateRecordsForProjects",
+      "rejected": ["ProjectEventSourcing", "SingleGlobalAggregate"],
+      "reason": "Project transitions are shallow compared with task lifecycle. A separate project event log would add ceremony without revealing new pressure. Keeping projects as direct state lets the task event stream stay focused on richer behavior.",
+      "impacts": ["createProject", "archiveProject", "putProject"],
+      "author": "Codex"
+    },
+    {
+      "name": "ArchivedProjectsRejectTaskChanges",
+      "date": "2026-03-08",
+      "chosen": "RejectTaskMutationWhenProjectArchived",
+      "rejected": ["SoftWarningOnly", "ImplicitOverride"],
+      "reason": "Archived projects are an operational boundary, not only a display state. Once a project is archived, task mutation should stop unless a future command makes that exception explicit.",
+      "impacts": ["ensureProjectActive"],
+      "author": "Codex"
+    },
+    {
+      "name": "CommandsProduceEventsNotMutatedTasks",
+      "date": "2026-03-08",
+      "chosen": "CommandFunctionsEmitEvents",
+      "rejected": ["MutateTaskRecordsDirectly", "HideStateChangeInsideStore"],
+      "reason": "A task workflow engine should make state transitions reviewable at the event level. Returning events instead of directly mutated tasks keeps replay and audit aligned.",
+      "impacts": ["createTask", "renameTask", "completeTask", "reopenTask"],
+      "author": "Codex"
+    },
+    {
+      "name": "ReplayReturnsToDomain",
+      "date": "2026-03-08",
+      "chosen": "TypedReplayInDomain",
+      "rejected": ["KeepReplayInInfraStore", "DeleteReplayHelpers"],
+      "reason": "Replay belongs with the domain semantics, not inside the storage adapter. Now that constructor payload matching is reliable enough, the natural typed version is clearer than the old serialized-payload workaround.",
+      "impacts": ["replayTask", "replayAll", "applyEvent"],
+      "author": "Codex"
+    },
+    {
+      "name": "RulesStayAsFunctions",
+      "date": "2026-03-08",
+      "chosen": "PlainRuleFunctions",
+      "rejected": ["RuleDsl", "RulesInsideCommandHandlers"],
+      "reason": "The rule count is small enough that a DSL would mostly hide branching. Explicit functions keep rule-specific edge cases near the code they affect.",
+      "impacts": ["runRules"],
+      "author": "Codex"
+    },
+    {
+      "name": "DeadlinesProjectUrgencyInsteadOfMutatingPriority",
+      "date": "2026-03-08",
+      "chosen": "DerivedUrgencyAndNotifications",
+      "rejected": ["RewritePriorityToUrgent", "IgnoreDeadlinePressure"],
+      "reason": "Stored priority represents intent; deadline pressure is situational. Mutating priority during rule evaluation would erase who set the original priority.",
+      "impacts": ["ruleDeadlineSoon", "ruleOverdue"],
+      "author": "Codex"
+    },
+    {
+      "name": "AppendOnlyTaskEventsWithFlatProjectState",
+      "date": "2026-03-08",
+      "chosen": "TaskEventsPlusProjectState",
+      "rejected": ["EverythingAsMutableState", "EverythingEventSourced", "InMemoryOnly"],
+      "reason": "Task lifecycle is where reviewable history matters, so an append-only event log pays for itself. Projects are much shallower, and storing them as current state avoids a second event system. This keeps the storage model simple while still exercising replay in a realistic place.",
+      "impacts": ["loadProjects", "saveProjects", "loadTaskEvents", "appendTaskEvents"],
+      "author": "Codex"
+    },
+    {
+      "name": "TimeEntersThroughClockModule",
+      "date": "2026-03-08",
+      "chosen": "SingleClockAdapter",
+      "rejected": ["CallTimeNowEverywhere", "ThreadNowAsUntypedStringByConvention"],
+      "reason": "Deadline and stalled rules depend on the current time, but that dependency should remain visible at the app boundary instead of leaking into pure domain modules.",
+      "impacts": ["now"],
+      "author": "Codex"
+    },
+    {
+      "name": "NotificationsDeduplicateByKey",
+      "date": "2026-03-08",
+      "chosen": "PersistAndSkipKnownKeys",
+      "rejected": ["AlwaysEmitAgain", "NoNotificationHistory"],
+      "reason": "Deadline and overdue rules can be re-run manually, so delivery needs a stable idempotency key or the CLI will drown in repeated warnings.",
+      "impacts": ["emitNotifications", "loadNotifications"],
+      "author": "Codex"
+    },
+    {
+      "name": "AuditsStayAdjacentToEventsNotInsideThem",
+      "date": "2026-03-08",
+      "chosen": "SeparateAuditLog",
+      "rejected": ["EncodeAllAuditNarrativeAsTaskEvents", "NoAuditTrail"],
+      "reason": "Reopen reasons and command traces are valuable to reviewers, but they should not change replay semantics for task state.",
+      "impacts": ["recordEntries", "loadEntries"],
+      "author": "Codex"
+    },
+    {
+      "name": "QueriesReplayInsteadOfReadingMutableTaskTables",
+      "date": "2026-03-08",
+      "chosen": "ReplayForReadModel",
+      "rejected": ["DedicatedMutableTaskProjectionFile", "AdHocTaskCacheOnly"],
+      "reason": "The whole point of the workflow engine is to see whether replay stays readable. If queries bypass replay with a separate mutable task table, that test becomes fake.",
+      "impacts": ["run"],
+      "author": "Codex"
     }
   ]
 }
