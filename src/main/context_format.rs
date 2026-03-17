@@ -80,11 +80,11 @@ pub(super) fn format_context_md(
         if let Some(depth) = selection.included_depth {
             parts.push(format!("included_depth: `{}`", depth));
         }
-        if let Some(next_depth) = selection.next_depth {
-            parts.push(format!("next_depth: `{}`", next_depth));
-        }
         if let Some(next_used) = selection.next_used_bytes {
-            parts.push(format!("next_used: `{}`", byte_label(next_used)));
+            parts.push(format!(
+                "next_element_cost: `{}`",
+                byte_label(next_used.saturating_sub(selection.used_bytes))
+            ));
         }
         if let Some(focus_symbol) = &selection.focus_symbol {
             parts.push(format!("focus: `{}`", focus_symbol));
@@ -294,11 +294,11 @@ pub(super) fn format_context_json(
         if let Some(depth) = selection.included_depth {
             out.push_str(&format!("    \"included_depth\": {},\n", depth));
         }
-        if let Some(next_depth) = selection.next_depth {
-            out.push_str(&format!("    \"next_depth\": {},\n", next_depth));
-        }
         if let Some(next_used) = selection.next_used_bytes {
-            out.push_str(&format!("    \"next_used_bytes\": {},\n", next_used));
+            out.push_str(&format!(
+                "    \"next_element_cost\": {},\n",
+                next_used.saturating_sub(selection.used_bytes)
+            ));
         }
         if let Some(focus_symbol) = &selection.focus_symbol {
             out.push_str(&format!(
@@ -635,11 +635,11 @@ pub(super) fn format_decisions_md(
         if let Some(depth) = selection.included_depth {
             parts.push(format!("included_depth: `{}`", depth));
         }
-        if let Some(next_depth) = selection.next_depth {
-            parts.push(format!("next_depth: `{}`", next_depth));
-        }
         if let Some(next_used) = selection.next_used_bytes {
-            parts.push(format!("next_used: `{}`", byte_label(next_used)));
+            parts.push(format!(
+                "next_element_cost: `{}`",
+                byte_label(next_used.saturating_sub(selection.used_bytes))
+            ));
         }
         if let Some(focus_symbol) = &selection.focus_symbol {
             parts.push(format!("focus: `{}`", focus_symbol));
@@ -707,11 +707,11 @@ pub(super) fn format_decisions_json(
         if let Some(depth) = selection.included_depth {
             out.push_str(&format!("    \"included_depth\": {},\n", depth));
         }
-        if let Some(next_depth) = selection.next_depth {
-            out.push_str(&format!("    \"next_depth\": {},\n", next_depth));
-        }
         if let Some(next_used) = selection.next_used_bytes {
-            out.push_str(&format!("    \"next_used_bytes\": {},\n", next_used));
+            out.push_str(&format!(
+                "    \"next_element_cost\": {},\n",
+                next_used.saturating_sub(selection.used_bytes)
+            ));
         }
         if let Some(focus_symbol) = &selection.focus_symbol {
             out.push_str(&format!(
@@ -923,10 +923,12 @@ mod tests {
             budget_bytes: Some(10 * 1024),
             included_depth: Some(1),
             next_depth: Some(2),
-            next_used_bytes: Some(22424),
+            next_used_bytes: Some(2100),
             truncated: true,
             used_bytes: 1779,
             focus_symbol: Some("Json.fromString".to_string()),
+            elements_selected: Some(5),
+            elements_total: Some(10),
         };
         let out = format_context_json(
             &[file_context_with_spec()],
@@ -937,8 +939,9 @@ mod tests {
         assert!(out.contains("\"depth_mode\": \"auto\""));
         assert!(out.contains("\"budget_bytes\": 10240"));
         assert!(out.contains("\"included_depth\": 1"));
-        assert!(out.contains("\"next_depth\": 2"));
-        assert!(out.contains("\"next_used_bytes\": 22424"));
+        assert!(out.contains("\"next_element_cost\": 321"));
+        assert!(out.contains("\"elements_selected\": 5"));
+        assert!(out.contains("\"elements_total\": 10"));
         assert!(out.contains("\"focus_symbol\": \"Json.fromString\""));
         assert!(out.contains("\"truncated\": true"));
         assert!(out.contains("\"used_bytes\": 1779"));

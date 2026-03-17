@@ -1401,12 +1401,8 @@ fn summarize_selection(selection: &ContextSelection) -> String {
     if selection.truncated {
         parts.push("truncated".to_string());
     }
-    if let (Some(next_depth), Some(next_used)) = (selection.next_depth, selection.next_used_bytes) {
-        parts.push(format!(
-            "next depth {} would use {}",
-            next_depth,
-            byte_label(next_used)
-        ));
+    if let Some(next_used) = selection.next_used_bytes {
+        parts.push(format!("next element would use {}", byte_label(next_used)));
     }
     parts.join(", ")
 }

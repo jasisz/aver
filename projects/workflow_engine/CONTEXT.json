@@ -5,12 +5,11 @@
     "depth_mode": "auto",
     "budget_bytes": 24576,
     "included_depth": 0,
-    "next_depth": 0,
-    "next_used_bytes": 24588,
+    "next_element_cost": 212,
     "elements_selected": 69,
     "elements_total": 131,
     "truncated": false,
-    "used_bytes": 24397
+    "used_bytes": 24376
   },
   "modules": [
     {
