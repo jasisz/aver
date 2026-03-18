@@ -1142,7 +1142,10 @@ fn single_int_countdown_param_index(fd: &FnDef) -> Option<usize> {
                     .copied()
                     .is_some_and(|arg| is_int_plus_positive(arg, param_name))
             });
-            (ascent_ok && has_negative_guarded_ascent(fd, param_name)).then_some(idx)
+            (ascent_ok
+                && (has_negative_guarded_ascent(fd, param_name)
+                    || has_equality_bounded_ascent(fd, param_name)))
+            .then_some(idx)
         })
 }
 
@@ -1189,6 +1192,58 @@ fn has_negative_guarded_ascent(fd: &FnDef, param_name: &str) -> bool {
         && false_calls
             .iter()
             .all(|(name, _)| !call_matches(name, &fd.name))
+}
+
+/// Detect `match param == CONST` where true arm is base case and false arm recurses.
+/// This is the ascending-index pattern: `f(xs, i)` → `match i == len → base | _ → ... f(xs, i+1)`.
+fn has_equality_bounded_ascent(fd: &FnDef, param_name: &str) -> bool {
+    let Some(Expr::Match { subject, arms, .. }) = fd.body.tail_expr() else {
+        return false;
+    };
+    // Accept `param == CONST` (equality check against any expression)
+    let Expr::BinOp(BinOp::Eq, left, _right) = subject.as_ref() else {
+        return false;
+    };
+    if !is_ident(left, param_name) {
+        return false;
+    }
+
+    let mut true_arm = None;
+    let mut false_arm = None;
+    for arm in arms {
+        match arm.pattern {
+            Pattern::Literal(crate::ast::Literal::Bool(true)) => true_arm = Some(arm.body.as_ref()),
+            Pattern::Literal(crate::ast::Literal::Bool(false)) => {
+                false_arm = Some(arm.body.as_ref())
+            }
+            _ => return false,
+        }
+    }
+
+    let Some(true_arm) = true_arm else {
+        return false;
+    };
+    let Some(false_arm) = false_arm else {
+        return false;
+    };
+
+    // True arm (param == CONST) should be base case (no recursion).
+    // False arm should contain the recursive call.
+    let mut true_calls = Vec::new();
+    collect_calls_from_expr(true_arm, &mut true_calls);
+    let mut false_calls = Vec::new();
+    collect_calls_from_expr(false_arm, &mut false_calls);
+
+    // Base case: no self-call in true arm
+    let true_no_self = true_calls
+        .iter()
+        .all(|(name, _)| !call_matches(name, &fd.name));
+    // Recursive case: self-call in false arm
+    let false_has_self = false_calls
+        .iter()
+        .any(|(name, _)| call_matches(name, &fd.name));
+
+    true_no_self && false_has_self
 }
 
 fn supports_single_sizeof_structural(fd: &FnDef, ctx: &CodegenContext) -> bool {
