@@ -161,8 +161,7 @@ fn collect_fn_calls(expr: &crate::ast::Expr, out: &mut std::collections::BTreeSe
     match expr {
         Expr::FnCall(f, args) => {
             if let Some(name) = crate::codegen::common::expr_to_dotted_name(f)
-                && (!name.contains('.')
-                    || name.chars().next().is_some_and(|c| c.is_lowercase()))
+                && (!name.contains('.') || name.chars().next().is_some_and(|c| c.is_lowercase()))
             {
                 out.insert(name);
             }
