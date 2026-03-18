@@ -5,7 +5,7 @@ use colored::Colorize;
 
 use aver::ast::{Stmt, TopLevel, TypeDef};
 use aver::checker::run_verify;
-use aver::interpreter::{EnvFrame, Interpreter, aver_display, aver_repr};
+use aver::interpreter::{EnvFrame, Interpreter};
 use aver::nan_value::NanValue;
 use aver::source::parse_source;
 use aver::types::checker::run_type_check_with_base;
@@ -86,8 +86,7 @@ pub(super) fn repl_env(interp: &Interpreter) {
             if name.starts_with("__") {
                 continue;
             }
-            let old_val = val.to_value(&interp.arena);
-            println!("  {} = {}", name, aver_repr(&old_val));
+            println!("  {} = {}", name, val.repr(&interp.arena));
             found = true;
         }
     }
@@ -221,12 +220,12 @@ pub(super) fn cmd_repl() {
                 TopLevel::Stmt(s) => match interp.exec_stmt(s) {
                     Ok(val) => match s {
                         Stmt::Binding(name, _, _) => {
-                            if let Ok(v) = interp.lookup(name) {
-                                println!("{} = {}", name, aver_repr(&v));
-                            }
+                            let nv = NanValue::from_value(&val, &mut interp.arena);
+                            println!("{} = {}", name, nv.repr(&interp.arena));
                         }
                         Stmt::Expr(_) => {
-                            if let Some(display) = aver_display(&val) {
+                            let nv = NanValue::from_value(&val, &mut interp.arena);
+                            if let Some(display) = nv.display(&interp.arena) {
                                 println!("{}", display);
                             }
                         }
