@@ -1,0 +1,275 @@
+module Board
+    intent =
+        "Checkers board representation: 8x8 grid with cell content sum type."
+        "Pure operations for reading, writing, moving, and promoting pieces."
+    depends []
+
+record Point
+    x: Int
+    y: Int
+
+fn pt(x: Int, y: Int) -> Point
+    ? "Shorthand Point constructor"
+    Point(x = x, y = y)
+
+verify pt
+    pt(3, 4).x => 3
+    pt(3, 4).y => 4
+
+type Color
+    Black
+    White
+
+type CellContent
+    Empty
+    BlackMan
+    BlackKing
+    WhiteMan
+    WhiteKing
+
+fn opponent(c: Color) -> Color
+    ? "Return the opposite color"
+    match c
+        Color.Black -> Color.White
+        Color.White -> Color.Black
+
+verify opponent
+    opponent(Color.Black) => Color.White
+    opponent(Color.White) => Color.Black
+
+fn isBlack(cell: CellContent) -> Bool
+    ? "True if cell contains a black piece"
+    match cell
+        CellContent.BlackMan -> true
+        CellContent.BlackKing -> true
+        _ -> false
+
+verify isBlack
+    isBlack(CellContent.BlackMan) => true
+    isBlack(CellContent.BlackKing) => true
+    isBlack(CellContent.WhiteMan) => false
+    isBlack(CellContent.Empty) => false
+
+fn isWhite(cell: CellContent) -> Bool
+    ? "True if cell contains a white piece"
+    match cell
+        CellContent.WhiteMan -> true
+        CellContent.WhiteKing -> true
+        _ -> false
+
+verify isWhite
+    isWhite(CellContent.WhiteMan) => true
+    isWhite(CellContent.WhiteKing) => true
+    isWhite(CellContent.BlackMan) => false
+
+fn isKing(cell: CellContent) -> Bool
+    ? "True if cell is a king"
+    match cell
+        CellContent.BlackKing -> true
+        CellContent.WhiteKing -> true
+        _ -> false
+
+verify isKing
+    isKing(CellContent.BlackKing) => true
+    isKing(CellContent.WhiteKing) => true
+    isKing(CellContent.BlackMan) => false
+
+fn isEmpty(cell: CellContent) -> Bool
+    ? "True if cell is empty"
+    match cell
+        CellContent.Empty -> true
+        _ -> false
+
+verify isEmpty
+    isEmpty(CellContent.Empty) => true
+    isEmpty(CellContent.BlackMan) => false
+
+fn isColor(cell: CellContent, color: Color) -> Bool
+    ? "True if cell contains a piece of the given color"
+    match color
+        Color.Black -> isBlack(cell)
+        Color.White -> isWhite(cell)
+
+verify isColor
+    isColor(CellContent.BlackMan, Color.Black) => true
+    isColor(CellContent.BlackMan, Color.White) => false
+    isColor(CellContent.WhiteKing, Color.White) => true
+
+fn isOpponent(cell: CellContent, color: Color) -> Bool
+    ? "True if cell contains a piece of the opposite color"
+    isColor(cell, opponent(color))
+
+verify isOpponent
+    isOpponent(CellContent.BlackMan, Color.White) => true
+    isOpponent(CellContent.BlackMan, Color.Black) => false
+
+fn promote(cell: CellContent) -> CellContent
+    ? "Promote a man to king, leave everything else unchanged"
+    match cell
+        CellContent.BlackMan -> CellContent.BlackKing
+        CellContent.WhiteMan -> CellContent.WhiteKing
+        _ -> cell
+
+verify promote
+    promote(CellContent.BlackMan) => CellContent.BlackKing
+    promote(CellContent.WhiteMan) => CellContent.WhiteKing
+    promote(CellContent.BlackKing) => CellContent.BlackKing
+
+fn shouldPromote(cell: CellContent, y: Int) -> Bool
+    ? "True if a man reached the promotion row (black at 0, white at 7)"
+    match cell
+        CellContent.BlackMan -> y == 0
+        CellContent.WhiteMan -> y == 7
+        _ -> false
+
+verify shouldPromote
+    shouldPromote(CellContent.BlackMan, 0) => true
+    shouldPromote(CellContent.BlackMan, 3) => false
+    shouldPromote(CellContent.WhiteMan, 7) => true
+    shouldPromote(CellContent.WhiteMan, 0) => false
+    shouldPromote(CellContent.BlackKing, 0) => false
+
+fn emptyRow() -> List<CellContent>
+    ? "A row of 8 empty cells"
+    [CellContent.Empty, CellContent.Empty, CellContent.Empty, CellContent.Empty, CellContent.Empty, CellContent.Empty, CellContent.Empty, CellContent.Empty]
+
+verify emptyRow
+    List.len(emptyRow()) => 8
+
+fn buildEmptyBoard(n: Int) -> List<List<CellContent>>
+    ? "Build n empty rows"
+    match n == 0
+        true -> []
+        false -> List.prepend(emptyRow(), buildEmptyBoard(n - 1))
+
+verify buildEmptyBoard
+    List.len(buildEmptyBoard(8)) => 8
+
+fn getCell(board: List<List<CellContent>>, x: Int, y: Int) -> CellContent
+    ? "Get cell at (x,y), Empty if out of bounds"
+    match List.get(board, y)
+        Option.Some(row) -> match List.get(row, x)
+            Option.Some(cell) -> cell
+            Option.None -> CellContent.Empty
+        Option.None -> CellContent.Empty
+
+verify getCell
+    getCell(buildEmptyBoard(8), 0, 0) => CellContent.Empty
+
+fn setCellCol(row: List<CellContent>, x: Int, val: CellContent, col: Int) -> List<CellContent>
+    ? "Rebuild a row replacing column x"
+    match col == 8
+        true -> []
+        false -> match List.get(row, col)
+            Option.Some(v) -> match col == x
+                true -> List.prepend(val, setCellCol(row, x, val, col + 1))
+                false -> List.prepend(v, setCellCol(row, x, val, col + 1))
+            Option.None -> []
+
+verify setCellCol
+    List.len(setCellCol(emptyRow(), 3, CellContent.BlackMan, 0)) => 8
+
+fn setCellRow(board: List<List<CellContent>>, x: Int, y: Int, val: CellContent, row: Int) -> List<List<CellContent>>
+    ? "Rebuild rows replacing cell at (x,y)"
+    match row == 8
+        true -> []
+        false -> match List.get(board, row)
+            Option.Some(r) -> match row == y
+                true -> List.prepend(setCellCol(r, x, val, 0), setCellRow(board, x, y, val, row + 1))
+                false -> List.prepend(r, setCellRow(board, x, y, val, row + 1))
+            Option.None -> []
+
+verify setCellRow
+    List.len(setCellRow(buildEmptyBoard(8), 3, 5, CellContent.BlackMan, 0)) => 8
+
+fn setCell(board: List<List<CellContent>>, x: Int, y: Int, val: CellContent) -> List<List<CellContent>>
+    ? "Return board with cell (x,y) set to val"
+    setCellRow(board, x, y, val, 0)
+
+verify setCell
+    getCell(setCell(buildEmptyBoard(8), 3, 5, CellContent.BlackMan), 3, 5) => CellContent.BlackMan
+    getCell(setCell(buildEmptyBoard(8), 3, 5, CellContent.BlackMan), 4, 5) => CellContent.Empty
+
+fn inBounds(x: Int, y: Int) -> Bool
+    ? "True if (x,y) is within the 8x8 board"
+    Bool.and(Bool.and(x > 0 - 1, x < 8), Bool.and(y > 0 - 1, y < 8))
+
+verify inBounds
+    inBounds(0, 0) => true
+    inBounds(7, 7) => true
+    inBounds(8, 0) => false
+    inBounds(0 - 1, 0) => false
+
+fn isDarkSquare(x: Int, y: Int) -> Bool
+    ? "True if (x,y) is a dark square where pieces can be placed"
+    Result.withDefault(Int.mod(x + y, 2), 0) == 1
+
+verify isDarkSquare
+    isDarkSquare(0, 1) => true
+    isDarkSquare(1, 0) => true
+    isDarkSquare(0, 0) => false
+    isDarkSquare(1, 1) => false
+
+fn makeRow(y: Int, x: Int, cell: CellContent) -> List<CellContent>
+    ? "Build one row of the starting board"
+    match x == 8
+        true -> []
+        false -> match isDarkSquare(x, y)
+            true -> List.prepend(cell, makeRow(y, x + 1, cell))
+            false -> List.prepend(CellContent.Empty, makeRow(y, x + 1, cell))
+
+verify makeRow
+    List.len(makeRow(0, 0, CellContent.WhiteMan)) => 8
+
+fn startRow(y: Int) -> List<CellContent>
+    ? "Build a starting board row based on row number"
+    match y < 3
+        true -> makeRow(y, 0, CellContent.WhiteMan)
+        false -> match y > 4
+            true -> makeRow(y, 0, CellContent.BlackMan)
+            false -> emptyRow()
+
+verify startRow
+    List.len(startRow(0)) => 8
+
+fn buildStartRows(y: Int) -> List<List<CellContent>>
+    ? "Build starting board rows from y to 7"
+    match y == 8
+        true -> []
+        false -> List.prepend(startRow(y), buildStartRows(y + 1))
+
+verify buildStartRows
+    List.len(buildStartRows(0)) => 8
+
+fn startBoard() -> List<List<CellContent>>
+    ? "Standard 8x8 starting position: white rows 0-2, black rows 5-7"
+    buildStartRows(0)
+
+verify startBoard
+    List.len(startBoard()) => 8
+    isWhite(getCell(startBoard(), 1, 0)) => true
+    isBlack(getCell(startBoard(), 0, 5)) => true
+    isEmpty(getCell(startBoard(), 0, 3)) => true
+    isEmpty(getCell(startBoard(), 0, 0)) => true
+
+fn countColor(board: List<List<CellContent>>, color: Color, x: Int, y: Int) -> Int
+    ? "Count pieces of given color starting from (x,y)"
+    match y == 8
+        true -> 0
+        false -> match x == 8
+            true -> countColor(board, color, 0, y + 1)
+            false -> countColorCell(board, color, x, y)
+
+verify countColor
+    countColor(startBoard(), Color.White, 0, 0) => 12
+    countColor(startBoard(), Color.Black, 0, 0) => 12
+    countColor(buildEmptyBoard(8), Color.White, 0, 0) => 0
+
+fn countColorCell(board: List<List<CellContent>>, color: Color, x: Int, y: Int) -> Int
+    ? "Count cell and continue"
+    match isColor(getCell(board, x, y), color)
+        true -> 1 + countColor(board, color, x + 1, y)
+        false -> countColor(board, color, x + 1, y)
+
+verify countColorCell
+    countColorCell(buildEmptyBoard(8), Color.White, 0, 0) => 0

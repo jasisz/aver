@@ -459,6 +459,7 @@ Curated shared examples:
 | `apps/notepad/app.av` | Multi-file HTTP app under the shared `examples` module root |
 | `games/snake.av` | Terminal Snake: immutable state, TCO game loop, Terminal service |
 | `games/tetris/main.av` | Modular Tetris: sum types, 2D grid, collision, line clearing (4 modules, 66 verify cases) |
+| `games/checkers/main.av` | Checkers with alpha-beta AI: cursor UI, forced capture, decision trace (5 modules, 144 verify cases) |
 | `core/test_errors.av` | Intentional `aver check` failures: type errors + verify/decision/effect diagnostics |
 
 Standalone projects:
