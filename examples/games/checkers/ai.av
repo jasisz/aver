@@ -57,6 +57,14 @@ verify pieceValue
     pieceValue(CellContent.WhiteKing, Color.Black) => 0 - 3
     pieceValue(CellContent.Empty, Color.Black) => 0
 
+verify pieceValue law antisymmetry
+    given v: Int = 0..3
+    pieceValue(CellContent.BlackMan, Color.Black) + pieceValue(CellContent.BlackMan, Color.White) => 0
+
+verify pieceValue law kingWorthTripleMan
+    given v: Int = 0..1
+    pieceValue(CellContent.BlackKing, Color.Black) => 3 * pieceValue(CellContent.BlackMan, Color.Black)
+
 fn isCenterSquare(x: Int, y: Int) -> Bool
     ? "True if (x,y) is one of the four center squares"
     Bool.and(Bool.and(x > 2, x < 5), Bool.and(y > 2, y < 5))
@@ -80,6 +88,11 @@ verify centerBonus
     centerBonus(CellContent.BlackMan, 3, 3, Color.Black) => 1
     centerBonus(CellContent.WhiteMan, 3, 3, Color.Black) => 0 - 1
     centerBonus(CellContent.BlackMan, 0, 0, Color.Black) => 0
+
+verify centerBonus law emptyNeutral
+    given x: Int = 3..4
+    given y: Int = 3..4
+    centerBonus(CellContent.Empty, x, y, Color.Black) => 0
 
 fn evalScan(board: List<List<CellContent>>, color: Color, x: Int, y: Int) -> Int
     ? "Scan board accumulating evaluation score"
