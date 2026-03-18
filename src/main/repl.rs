@@ -6,6 +6,7 @@ use colored::Colorize;
 use aver::ast::{Stmt, TopLevel, TypeDef};
 use aver::checker::run_verify;
 use aver::interpreter::{EnvFrame, Interpreter, Value, aver_display, aver_repr};
+use aver::nan_value::NanValue;
 use aver::source::parse_source;
 use aver::types::checker::run_type_check_with_base;
 
@@ -72,7 +73,7 @@ pub(super) fn repl_env(interp: &Interpreter) {
     ];
     let mut found = false;
     for frame in &interp.env {
-        let scope: Option<&HashMap<String, Value>> = match frame {
+        let scope: Option<&HashMap<String, NanValue>> = match frame {
             EnvFrame::Owned(scope) => Some(scope),
             EnvFrame::Shared(scope) => Some(scope.as_ref()),
             EnvFrame::Slots(_) => None,
@@ -85,7 +86,8 @@ pub(super) fn repl_env(interp: &Interpreter) {
             if name.starts_with("__") {
                 continue;
             }
-            println!("  {} = {}", name, aver_repr(val));
+            let old_val = val.to_value(&interp.arena);
+            println!("  {} = {}", name, aver_repr(&old_val));
             found = true;
         }
     }

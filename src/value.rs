@@ -9,6 +9,7 @@ use std::rc::Rc;
 use thiserror::Error;
 
 use crate::ast::FnBody;
+use crate::nan_value::NanValue;
 
 mod memo;
 
@@ -26,11 +27,11 @@ pub enum RuntimeError {
     /// do early return. Never surfaces to the user (type checker prevents
     /// top-level use).
     #[error("Error propagation")]
-    ErrProp(Box<Value>),
+    ErrProp(NanValue), // NanValue is Copy (8 bytes), no Box needed
     /// Internal signal: tail-call — caught by the trampoline in call_fn_ref.
     /// Never surfaces to the user. Boxed to keep RuntimeError small.
     #[error("Tail call")]
-    TailCall(Box<(String, Vec<Value>)>),
+    TailCall(Box<(String, Vec<NanValue>)>),
     #[error("Replay mismatch at seq {seq}: expected '{expected}', got '{got}'")]
     ReplayMismatch {
         seq: u32,
@@ -76,7 +77,7 @@ pub struct FunctionValue {
     pub memo_eligible: bool,
     /// Optional function-specific global scope (used by imported module
     /// functions so they resolve names in their home module).
-    pub home_globals: Option<Rc<HashMap<String, Value>>>,
+    pub home_globals: Option<Rc<HashMap<String, NanValue>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -300,10 +301,10 @@ impl std::hash::Hash for Value {
 
 #[derive(Debug, Clone)]
 pub enum EnvFrame {
-    Owned(HashMap<String, Value>),
-    Shared(Rc<HashMap<String, Value>>),
+    Owned(HashMap<String, NanValue>),
+    Shared(Rc<HashMap<String, NanValue>>),
     /// Slot-indexed frame for resolved function bodies — O(1) lookup.
-    Slots(Vec<Value>),
+    Slots(Vec<NanValue>),
 }
 
 /// Scope stack: innermost scope last.

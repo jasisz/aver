@@ -8,29 +8,32 @@ impl Default for Interpreter {
 
 impl Interpreter {
     pub fn new() -> Self {
-        let mut global = HashMap::new();
+        // Build globals using old Value, then convert to NanValue.
+        // Services still produce old Value — converted at registration.
+        let mut old_global: HashMap<String, Value> = HashMap::new();
+        let mut arena = Arena::new();
 
-        args::register(&mut global);
-        console::register(&mut global);
-        http::register(&mut global);
-        http_server::register(&mut global);
-        disk::register(&mut global);
-        env::register(&mut global);
-        random::register(&mut global);
-        tcp::register(&mut global);
+        args::register(&mut old_global);
+        console::register(&mut old_global);
+        http::register(&mut old_global);
+        http_server::register(&mut old_global);
+        disk::register(&mut old_global);
+        env::register(&mut old_global);
+        random::register(&mut old_global);
+        tcp::register(&mut old_global);
         #[cfg(feature = "terminal")]
-        terminal::register(&mut global);
-        time::register(&mut global);
-        bool::register(&mut global);
-        int::register(&mut global);
-        float::register(&mut global);
-        string::register(&mut global);
-        list::register(&mut global);
-        map::register(&mut global);
-        char::register(&mut global);
-        byte::register(&mut global);
+        terminal::register(&mut old_global);
+        time::register(&mut old_global);
+        bool::register(&mut old_global);
+        int::register(&mut old_global);
+        float::register(&mut old_global);
+        string::register(&mut old_global);
+        list::register(&mut old_global);
+        map::register(&mut old_global);
+        char::register(&mut old_global);
+        byte::register(&mut old_global);
 
-        // Result and Option namespaces — constructors for Ok/Err/Some/None
+        // Result and Option namespaces
         {
             let mut members = HashMap::new();
             members.insert(
@@ -44,7 +47,7 @@ impl Interpreter {
             for (name, builtin_name) in result::extra_members() {
                 members.insert(name.to_string(), Value::Builtin(builtin_name));
             }
-            global.insert(
+            old_global.insert(
                 "Result".to_string(),
                 Value::Namespace {
                     name: "Result".to_string(),
@@ -62,13 +65,19 @@ impl Interpreter {
             for (name, builtin_name) in option::extra_members() {
                 members.insert(name.to_string(), Value::Builtin(builtin_name));
             }
-            global.insert(
+            old_global.insert(
                 "Option".to_string(),
                 Value::Namespace {
                     name: "Option".to_string(),
                     members,
                 },
             );
+        }
+
+        // Convert old Value globals to NanValue
+        let mut global: HashMap<String, NanValue> = HashMap::new();
+        for (name, val) in &old_global {
+            global.insert(name.clone(), NanValue::from_value(val, &mut arena));
         }
 
         let mut record_schemas = HashMap::new();
@@ -106,7 +115,7 @@ impl Interpreter {
         Interpreter {
             env: vec![EnvFrame::Owned(global)],
             env_base: 1,
-            arena: Arena::new(),
+            arena,
             module_cache: HashMap::new(),
             record_schemas,
             call_stack: Vec::new(),
@@ -443,7 +452,7 @@ impl Interpreter {
 
     pub(super) fn last_owned_scope_mut(
         &mut self,
-    ) -> Result<&mut HashMap<String, Value>, RuntimeError> {
+    ) -> Result<&mut HashMap<String, NanValue>, RuntimeError> {
         let frame = self
             .env
             .last_mut()
@@ -456,9 +465,8 @@ impl Interpreter {
         }
     }
 
-    pub(super) fn lookup_ref(&self, name: &str) -> Result<&Value, RuntimeError> {
-        // Current function's frames first (env_base..), then global (env[0]).
-        // Caller frames in env[1..env_base] are invisible — skipped entirely.
+    /// Primary lookup — returns NanValue (Copy, 8 bytes, no clone needed).
+    pub(super) fn lookup_nv(&self, name: &str) -> Result<NanValue, RuntimeError> {
         let env = &self.env;
         let mut i = env.len();
         let base = self.env_base;
@@ -467,27 +475,28 @@ impl Interpreter {
             match &env[i] {
                 EnvFrame::Owned(scope) => {
                     if let Some(v) = scope.get(name) {
-                        return Ok(v);
+                        return Ok(*v);
                     }
                 }
                 EnvFrame::Shared(scope) => {
                     if let Some(v) = scope.get(name) {
-                        return Ok(v);
+                        return Ok(*v);
                     }
                 }
                 EnvFrame::Slots(_) => {}
             }
         }
-        // Global scope
         match &env[0] {
-            EnvFrame::Owned(scope) => scope.get(name),
-            EnvFrame::Shared(scope) => scope.get(name),
+            EnvFrame::Owned(scope) => scope.get(name).copied(),
+            EnvFrame::Shared(scope) => scope.get(name).copied(),
             EnvFrame::Slots(_) => None,
         }
         .ok_or_else(|| RuntimeError::Error(format!("Undefined variable: '{}'", name)))
     }
 
-    pub(super) fn global_scope_clone(&self) -> Result<HashMap<String, Value>, RuntimeError> {
+    pub(super) fn global_scope_clone(
+        &self,
+    ) -> Result<HashMap<String, NanValue>, RuntimeError> {
         let frame = self
             .env
             .first()
@@ -501,13 +510,24 @@ impl Interpreter {
         }
     }
 
+    /// Public lookup — returns old Value for callers not yet migrated.
     pub fn lookup(&self, name: &str) -> Result<Value, RuntimeError> {
-        self.lookup_ref(name).cloned()
+        let nv = self.lookup_nv(name)?;
+        Ok(nv.to_value(&self.arena))
     }
 
+    /// Public define — accepts old Value, converts to NanValue internally.
     pub fn define(&mut self, name: String, val: Value) {
+        let nv = NanValue::from_value(&val, &mut self.arena);
         if let Ok(scope) = self.last_owned_scope_mut() {
-            scope.insert(name, val);
+            scope.insert(name, nv);
+        }
+    }
+
+    /// Define with NanValue directly.
+    pub(super) fn define_nv(&mut self, name: String, nv: NanValue) {
+        if let Ok(scope) = self.last_owned_scope_mut() {
+            scope.insert(name, nv);
         }
     }
 
@@ -522,22 +542,19 @@ impl Interpreter {
         }
     }
 
-    /// O(1) slot-based variable lookup for resolved function bodies.
-    pub(super) fn lookup_slot(&self, slot: u16) -> Result<Value, RuntimeError> {
+    /// O(1) slot-based variable lookup — returns NanValue (Copy, no clone).
+    pub(super) fn lookup_slot(&self, slot: u16) -> Result<NanValue, RuntimeError> {
         let idx = self.env.len() - 1;
         match &self.env[idx] {
-            EnvFrame::Slots(v) => Ok(v[slot as usize].clone()),
-            _ => {
-                // Fallback — shouldn't happen if resolver is correct
-                Err(RuntimeError::Error(
-                    "Resolved lookup on non-Slots frame".to_string(),
-                ))
-            }
+            EnvFrame::Slots(v) => Ok(v[slot as usize]),
+            _ => Err(RuntimeError::Error(
+                "Resolved lookup on non-Slots frame".to_string(),
+            )),
         }
     }
 
     /// Define a value in the current Slots frame at the given slot index.
-    pub(super) fn define_slot(&mut self, slot: u16, val: Value) {
+    pub(super) fn define_slot(&mut self, slot: u16, val: NanValue) {
         let idx = self.env.len() - 1;
         if let EnvFrame::Slots(v) = &mut self.env[idx] {
             v[slot as usize] = val;
@@ -561,29 +578,39 @@ impl Interpreter {
 
         let result = {
             let scope = self.last_owned_scope_mut()?;
-            if let Some(existing) = scope.remove(head) {
+            if let Some(existing_nv) = scope.remove(head) {
+                let existing = existing_nv.to_value(&self.arena);
                 match existing {
                     Value::Namespace { name, mut members } => {
                         Self::insert_namespace_path(&mut members, tail, val)?;
-                        scope.insert(head.to_string(), Value::Namespace { name, members });
+                        let ns = Value::Namespace { name, members };
+                        let nv = NanValue::from_value(&ns, &mut self.arena);
+                        // Re-borrow scope after arena mutation
+                        let scope = self.last_owned_scope_mut()?;
+                        scope.insert(head.to_string(), nv);
                         Ok(())
                     }
-                    _ => Err(RuntimeError::Error(format!(
-                        "Cannot mount module '{}': '{}' is not a namespace",
-                        parts.join("."),
-                        head
-                    ))),
+                    _ => {
+                        // Put it back
+                        let scope2 = self.last_owned_scope_mut()?;
+                        scope2.insert(head.to_string(), existing_nv);
+                        Err(RuntimeError::Error(format!(
+                            "Cannot mount module '{}': '{}' is not a namespace",
+                            parts.join("."),
+                            head
+                        )))
+                    }
                 }
             } else {
                 let mut members = HashMap::new();
                 Self::insert_namespace_path(&mut members, tail, val)?;
-                scope.insert(
-                    head.to_string(),
-                    Value::Namespace {
-                        name: head.to_string(),
-                        members,
-                    },
-                );
+                let ns = Value::Namespace {
+                    name: head.to_string(),
+                    members,
+                };
+                let nv = NanValue::from_value(&ns, &mut self.arena);
+                let scope = self.last_owned_scope_mut()?;
+                scope.insert(head.to_string(), nv);
                 Ok(())
             }
         };
@@ -747,7 +774,16 @@ impl Interpreter {
                     sub.exec_fn_def(fd)?;
                 }
             }
-            let module_globals = Rc::new(sub.global_scope_clone()?);
+            // Re-encode sub's NanValues into self's arena so that
+            // home_globals NanValue indices are valid in self.arena.
+            let sub_globals_nv = sub.global_scope_clone()?;
+            let mut reencoded_globals: HashMap<String, NanValue> = HashMap::with_capacity(sub_globals_nv.len());
+            for (k, nv) in &sub_globals_nv {
+                let old_val = nv.to_value(&sub.arena);
+                let new_nv = NanValue::from_value(&old_val, &mut self.arena);
+                reencoded_globals.insert(k.clone(), new_nv);
+            }
+            let module_globals = Rc::new(reencoded_globals);
 
             let exposed = Self::exposed_set(&items);
             let opaque_set: HashSet<String> = Self::module_decl(&items)

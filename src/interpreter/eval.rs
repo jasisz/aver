@@ -160,6 +160,10 @@ impl Interpreter {
         vec![Value::Unit; local_count as usize]
     }
 
+    fn empty_slots_nv(local_count: u16) -> Vec<NanValue> {
+        vec![NanValue::UNIT; local_count as usize]
+    }
+
     pub fn eval_expr(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
         let (lowered, root) = lowered::lower_expr_root(expr);
         self.eval_loop(
@@ -205,12 +209,14 @@ impl Interpreter {
     ) -> EvalState {
         match lowered.expr(expr_id) {
             LoweredExpr::Literal(lit) => EvalState::Apply(Ok(self.eval_literal(lit))),
-            &LoweredExpr::Resolved(slot) => EvalState::Apply(self.lookup_slot(slot)),
+            &LoweredExpr::Resolved(slot) => EvalState::Apply(
+                self.lookup_slot(slot).map(|nv| nv.to_value(&self.arena))
+            ),
             LoweredExpr::Ident(name) => EvalState::Apply(self.lookup(name)),
             LoweredExpr::Attr { obj, field } => {
                 let obj = *obj;
                 if let LoweredExpr::Ident(name) = lowered.expr(obj) {
-                    let value = match self.lookup_ref(name) {
+                    let value = match self.lookup(name) {
                         Ok(value) => value,
                         Err(err) => return EvalState::Apply(Err(err)),
                     };
@@ -522,7 +528,9 @@ impl Interpreter {
             EvalCont::ErrorProp => match result {
                 Ok(value) => EvalState::Apply(match value {
                     Value::Ok(inner) => Ok(*inner),
-                    Value::Err(err) => Err(RuntimeError::ErrProp(err)),
+                    Value::Err(err) => Err(RuntimeError::ErrProp(
+                        NanValue::from_value(&err, &mut self.arena)
+                    )),
                     _ => Err(RuntimeError::Error(
                         "Operator '?' can only be applied to Result".to_string(),
                     )),
@@ -688,7 +696,8 @@ impl Interpreter {
                     if let Some(local_slots) = local_slots.as_ref()
                         && let Some(&slot) = local_slots.get(&name)
                     {
-                        self.define_slot(slot, value);
+                        let nv = NanValue::from_value(&value, &mut self.arena);
+                        self.define_slot(slot, nv);
                     } else {
                         self.define(name, value);
                     }
@@ -748,7 +757,8 @@ impl Interpreter {
                     if all_slotted {
                         for (name, value) in bindings {
                             if let Some(&slot) = local_slots.get(&name) {
-                                self.define_slot(slot, value);
+                                let nv = NanValue::from_value(&value, &mut self.arena);
+                                self.define_slot(slot, nv);
                             }
                         }
                         return EvalState::Expr {
@@ -758,7 +768,9 @@ impl Interpreter {
                     }
                 }
 
-                let rc_scope = bindings.into_iter().collect::<HashMap<_, _>>();
+                let rc_scope: HashMap<String, NanValue> = bindings.into_iter()
+                    .map(|(name, val)| (name, NanValue::from_value(&val, &mut self.arena)))
+                    .collect();
                 self.push_env(EnvFrame::Owned(rc_scope));
                 conts.push(EvalCont::MatchScope);
                 return EvalState::Expr {
@@ -869,10 +881,10 @@ impl Interpreter {
     fn enter_function_body(&mut self, active: &ActiveFunction, args: Vec<Value>) -> EvalState {
         if let Some(resolution) = &active.function.resolution {
             let local_slots = Rc::clone(&resolution.local_slots);
-            let mut slots = Self::empty_slots(resolution.local_count);
+            let mut slots = Self::empty_slots_nv(resolution.local_count);
             for ((param_name, _), arg_val) in active.function.params.iter().zip(args.into_iter()) {
                 if let Some(&slot) = resolution.local_slots.get(param_name) {
-                    slots[slot as usize] = arg_val;
+                    slots[slot as usize] = NanValue::from_value(&arg_val, &mut self.arena);
                 }
             }
             self.active_local_slots = Some(Rc::clone(&local_slots));
@@ -884,9 +896,9 @@ impl Interpreter {
                 last: Value::Unit,
             }
         } else {
-            let mut params_scope = HashMap::new();
+            let mut params_scope: HashMap<String, NanValue> = HashMap::new();
             for ((param_name, _), arg_val) in active.function.params.iter().zip(args.into_iter()) {
-                params_scope.insert(param_name.clone(), arg_val);
+                params_scope.insert(param_name.clone(), NanValue::from_value(&arg_val, &mut self.arena));
             }
             self.push_env(EnvFrame::Owned(params_scope));
             EvalState::Body {
@@ -908,13 +920,15 @@ impl Interpreter {
 
         match result {
             Err(RuntimeError::TailCall(boxed)) => {
-                let (target, args) = *boxed;
+                let (target, nv_args) = *boxed;
+                // Convert NanValue args back to Value for enter_function_body
+                let args: Vec<Value> = nv_args.iter().map(|nv| nv.to_value(&self.arena)).collect();
                 let next_active = if target == frame.active.function.name.as_str() {
                     frame.active.clone()
                 } else {
-                    let next_function = match self.lookup_ref(&target) {
+                    let next_function = match self.lookup(&target) {
                         Ok(value) => match value {
-                            Value::Fn(function) => Rc::clone(function),
+                            Value::Fn(function) => Rc::clone(&function),
                             other => {
                                 return EvalState::Apply(Err(RuntimeError::Error(format!(
                                     "TCO target '{}' is not a function: {:?}",
@@ -952,7 +966,10 @@ impl Interpreter {
 
                 let final_result = match other {
                     Ok(value) => Ok(value),
-                    Err(RuntimeError::ErrProp(err)) => Ok(Value::Err(err)),
+                    Err(RuntimeError::ErrProp(err_nv)) => {
+                        let err_val = err_nv.to_value(&self.arena);
+                        Ok(Value::Err(Box::new(err_val)))
+                    }
                     Err(err) => Err(err),
                 };
 
@@ -1123,7 +1140,10 @@ impl Interpreter {
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
         if idx >= args.len() {
-            return EvalState::Apply(Err(RuntimeError::TailCall(Box::new((target, values)))));
+            let nv_values: Vec<NanValue> = values.iter()
+                .map(|v| NanValue::from_value(v, &mut self.arena))
+                .collect();
+            return EvalState::Apply(Err(RuntimeError::TailCall(Box::new((target, nv_values)))));
         }
 
         conts.push(EvalCont::TailCallArgs {
