@@ -21,6 +21,27 @@ impl Interpreter {
         }
     }
 
+    /// NanValue-native binop — avoids Value conversion.
+    pub(super) fn eval_binop_nv(
+        &mut self,
+        op: &BinOp,
+        left: NanValue,
+        right: NanValue,
+    ) -> Result<NanValue, RuntimeError> {
+        match op {
+            BinOp::Add => self.op_add_nv(left, right),
+            BinOp::Sub => self.op_sub_nv(left, right),
+            BinOp::Mul => self.op_mul_nv(left, right),
+            BinOp::Div => self.op_div_nv(left, right),
+            BinOp::Eq => Ok(NanValue::new_bool(left.eq_in(right, &self.arena))),
+            BinOp::Neq => Ok(NanValue::new_bool(!left.eq_in(right, &self.arena))),
+            BinOp::Lt => self.op_compare_nv(left, right, "<"),
+            BinOp::Gt => self.op_compare_nv(left, right, ">"),
+            BinOp::Lte => self.op_compare_nv(left, right, "<="),
+            BinOp::Gte => self.op_compare_nv(left, right, ">="),
+        }
+    }
+
     pub fn aver_eq(&self, a: &Value, b: &Value) -> bool {
         if let (Some(xs), Some(ys)) = (list_view(a), list_view(b)) {
             return xs.len() == ys.len()
@@ -170,5 +191,121 @@ impl Interpreter {
             }
         };
         Ok(Value::Bool(result))
+    }
+
+    // -- NanValue-native ops --------------------------------------------------
+
+    fn op_add_nv(&mut self, a: NanValue, b: NanValue) -> Result<NanValue, RuntimeError> {
+        if a.is_int() && b.is_int() {
+            let result = a.as_int(&self.arena) + b.as_int(&self.arena);
+            return Ok(NanValue::new_int(result, &mut self.arena));
+        }
+        if a.is_float() && b.is_float() {
+            return Ok(NanValue::new_float(a.as_float() + b.as_float()));
+        }
+        if a.is_string() && b.is_string() {
+            let sa = self.arena.get_string(a.arena_index()).to_string();
+            let sb = self.arena.get_string(b.arena_index());
+            let combined = format!("{}{}", sa, sb);
+            let idx = self.arena.push_string(&combined);
+            return Ok(NanValue::new_string(idx));
+        }
+        Err(RuntimeError::Error(
+            "Operator '+' does not support these types".to_string(),
+        ))
+    }
+
+    fn op_sub_nv(&mut self, a: NanValue, b: NanValue) -> Result<NanValue, RuntimeError> {
+        if a.is_int() && b.is_int() {
+            let result = a.as_int(&self.arena) - b.as_int(&self.arena);
+            return Ok(NanValue::new_int(result, &mut self.arena));
+        }
+        if a.is_float() && b.is_float() {
+            return Ok(NanValue::new_float(a.as_float() - b.as_float()));
+        }
+        // Unary minus: 0 - float
+        if a.is_int() && a.as_int(&self.arena) == 0 && b.is_float() {
+            return Ok(NanValue::new_float(-b.as_float()));
+        }
+        Err(RuntimeError::Error(
+            "Operator '-' does not support these types".to_string(),
+        ))
+    }
+
+    fn op_mul_nv(&mut self, a: NanValue, b: NanValue) -> Result<NanValue, RuntimeError> {
+        if a.is_int() && b.is_int() {
+            let result = a.as_int(&self.arena) * b.as_int(&self.arena);
+            return Ok(NanValue::new_int(result, &mut self.arena));
+        }
+        if a.is_float() && b.is_float() {
+            return Ok(NanValue::new_float(a.as_float() * b.as_float()));
+        }
+        Err(RuntimeError::Error(
+            "Operator '*' does not support these types".to_string(),
+        ))
+    }
+
+    fn op_div_nv(&mut self, a: NanValue, b: NanValue) -> Result<NanValue, RuntimeError> {
+        if a.is_int() && b.is_int() {
+            let bv = b.as_int(&self.arena);
+            if bv == 0 {
+                return Err(RuntimeError::Error("Division by zero".to_string()));
+            }
+            let result = a.as_int(&self.arena) / bv;
+            return Ok(NanValue::new_int(result, &mut self.arena));
+        }
+        if a.is_float() && b.is_float() {
+            let bv = b.as_float();
+            if bv == 0.0 {
+                return Err(RuntimeError::Error("Division by zero".to_string()));
+            }
+            return Ok(NanValue::new_float(a.as_float() / bv));
+        }
+        Err(RuntimeError::Error(
+            "Operator '/' does not support these types".to_string(),
+        ))
+    }
+
+    fn op_compare_nv(&self, a: NanValue, b: NanValue, op: &str) -> Result<NanValue, RuntimeError> {
+        if a.is_int() && b.is_int() {
+            let x = a.as_int(&self.arena);
+            let y = b.as_int(&self.arena);
+            let result = match op {
+                "<" => x < y,
+                ">" => x > y,
+                "<=" => x <= y,
+                ">=" => x >= y,
+                _ => unreachable!(),
+            };
+            return Ok(NanValue::new_bool(result));
+        }
+        if a.is_float() && b.is_float() {
+            let x = a.as_float();
+            let y = b.as_float();
+            let result = match op {
+                "<" => x < y,
+                ">" => x > y,
+                "<=" => x <= y,
+                ">=" => x >= y,
+                _ => unreachable!(),
+            };
+            return Ok(NanValue::new_bool(result));
+        }
+        if a.is_string() && b.is_string() {
+            let x = self.arena.get_string(a.arena_index());
+            let y = self.arena.get_string(b.arena_index());
+            let result = match op {
+                "<" => x < y,
+                ">" => x > y,
+                "<=" => x <= y,
+                ">=" => x >= y,
+                _ => unreachable!(),
+            };
+            return Ok(NanValue::new_bool(result));
+        }
+        Err(RuntimeError::Error(format!(
+            "Operator '{}' does not support these types",
+            op
+        )))
     }
 }

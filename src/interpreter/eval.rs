@@ -19,9 +19,9 @@ enum EvalState {
         lowered: Rc<LoweredFunctionBody>,
         idx: usize,
         local_slots: Option<Rc<HashMap<String, u16>>>,
-        last: Value,
+        last: NanValue,
     },
-    Apply(Result<Value, RuntimeError>),
+    Apply(Result<NanValue, RuntimeError>),
 }
 
 #[derive(Debug, Clone)]
@@ -31,8 +31,8 @@ enum EvalCont {
         lowered: Rc<LoweredFunctionBody>,
         args: SharedExprs,
         idx: usize,
-        fn_val: Option<Value>,
-        arg_vals: Vec<Value>,
+        fn_val: Option<NanValue>,
+        arg_vals: Vec<NanValue>,
     },
     BinOpLeft {
         lowered: Rc<LoweredFunctionBody>,
@@ -41,7 +41,7 @@ enum EvalCont {
     },
     BinOpRight {
         op: BinOp,
-        left: Value,
+        left: NanValue,
     },
     Match {
         lowered: Rc<LoweredFunctionBody>,
@@ -60,26 +60,26 @@ enum EvalCont {
         lowered: Rc<LoweredFunctionBody>,
         items: SharedExprs,
         idx: usize,
-        values: Vec<Value>,
+        values: Vec<NanValue>,
     },
     Tuple {
         lowered: Rc<LoweredFunctionBody>,
         items: SharedExprs,
         idx: usize,
-        values: Vec<Value>,
+        values: Vec<NanValue>,
     },
     MapKey {
         lowered: Rc<LoweredFunctionBody>,
         entries: SharedMapEntries,
         idx: usize,
-        map: HashMap<Value, Value>,
+        map: HashMap<u64, (NanValue, NanValue)>,
     },
     MapValue {
         lowered: Rc<LoweredFunctionBody>,
         entries: SharedMapEntries,
         idx: usize,
-        map: HashMap<Value, Value>,
-        key: Value,
+        map: HashMap<u64, (NanValue, NanValue)>,
+        key: NanValue,
     },
     RecordCreate(RecordCreateProgress),
     RecordUpdateBase {
@@ -93,7 +93,7 @@ enum EvalCont {
         target: String,
         args: SharedExprs,
         idx: usize,
-        values: Vec<Value>,
+        values: Vec<NanValue>,
     },
     BodyBinding {
         name: String,
@@ -123,7 +123,7 @@ struct FunctionFrame {
     /// frames become visible to lookup_ref again.
     saved_base: usize,
     prev_global: Option<EnvFrame>,
-    memo_key: Option<(u64, Vec<Value>)>,
+    memo_key: Option<(u64, Vec<NanValue>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -133,22 +133,23 @@ struct RecordCreateProgress {
     fields: SharedRecordFields,
     idx: usize,
     seen: HashSet<String>,
-    values: Vec<(String, Value)>,
+    values: Vec<(String, NanValue)>,
 }
 
 #[derive(Debug, Clone)]
 struct RecordUpdateProgress {
     lowered: Rc<LoweredFunctionBody>,
     type_name: String,
-    base_type: String,
-    base_fields: Vec<(String, Value)>,
+    base_type_id: u32,
+    base_fields: Vec<NanValue>,
+    base_field_names: Vec<String>,
     updates: SharedRecordFields,
     idx: usize,
-    update_vals: Vec<(String, Value)>,
+    update_vals: Vec<(String, NanValue)>,
 }
 
 enum CallDispatch {
-    Immediate(Result<Value, RuntimeError>),
+    Immediate(Result<NanValue, RuntimeError>),
     EnterFunction {
         frame: Box<FunctionFrame>,
         state: EvalState,
@@ -156,15 +157,18 @@ enum CallDispatch {
 }
 
 impl Interpreter {
-    fn empty_slots(local_count: u16) -> Vec<Value> {
-        vec![Value::Unit; local_count as usize]
-    }
-
     fn empty_slots_nv(local_count: u16) -> Vec<NanValue> {
         vec![NanValue::UNIT; local_count as usize]
     }
 
+    /// Public eval_expr — returns Value for external callers.
     pub fn eval_expr(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
+        let nv = self.eval_expr_nv(expr)?;
+        Ok(nv.to_value(&self.arena))
+    }
+
+    /// Internal eval_expr — returns NanValue natively.
+    pub(super) fn eval_expr_nv(&mut self, expr: &Expr) -> Result<NanValue, RuntimeError> {
         let (lowered, root) = lowered::lower_expr_root(expr);
         self.eval_loop(
             EvalState::Expr {
@@ -179,7 +183,7 @@ impl Interpreter {
         &mut self,
         initial: EvalState,
         mut conts: Vec<EvalCont>,
-    ) -> Result<Value, RuntimeError> {
+    ) -> Result<NanValue, RuntimeError> {
         let mut state = initial;
 
         loop {
@@ -208,36 +212,17 @@ impl Interpreter {
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
         match lowered.expr(expr_id) {
-            LoweredExpr::Literal(lit) => EvalState::Apply(Ok(self.eval_literal(lit))),
-            &LoweredExpr::Resolved(slot) => EvalState::Apply(
-                self.lookup_slot(slot).map(|nv| nv.to_value(&self.arena))
-            ),
-            LoweredExpr::Ident(name) => EvalState::Apply(self.lookup(name)),
+            LoweredExpr::Literal(lit) => EvalState::Apply(Ok(self.eval_literal_nv(lit))),
+            &LoweredExpr::Resolved(slot) => EvalState::Apply(self.lookup_slot(slot)),
+            LoweredExpr::Ident(name) => EvalState::Apply(self.lookup_nv(name)),
             LoweredExpr::Attr { obj, field } => {
                 let obj = *obj;
                 if let LoweredExpr::Ident(name) = lowered.expr(obj) {
-                    let value = match self.lookup(name) {
-                        Ok(value) => value,
+                    let nv = match self.lookup_nv(name) {
+                        Ok(nv) => nv,
                         Err(err) => return EvalState::Apply(Err(err)),
                     };
-                    let result = match value {
-                        Value::Namespace { name, members } => {
-                            members.get(field.as_str()).cloned().ok_or_else(|| {
-                                RuntimeError::Error(format!("Unknown member '{}.{}'", name, field))
-                            })
-                        }
-                        Value::Record { fields, .. } => fields
-                            .iter()
-                            .find(|(k, _)| k == field)
-                            .map(|(_, value)| Ok(value.clone()))
-                            .unwrap_or_else(|| {
-                                Err(RuntimeError::Error(format!("Unknown field '{}'", field)))
-                            }),
-                        _ => Err(RuntimeError::Error(format!(
-                            "Field access '{}' is not supported on this value",
-                            field
-                        ))),
-                    };
+                    let result = self.attr_access_nv(nv, field);
                     return EvalState::Apply(result);
                 }
 
@@ -298,7 +283,7 @@ impl Interpreter {
                     }
                 }
                 None => EvalState::Apply(match name.as_str() {
-                    "None" => Ok(Value::None),
+                    "None" => Ok(NanValue::NONE),
                     "Ok" | "Err" | "Some" => Err(RuntimeError::Error(format!(
                         "Constructor '{}' expects an argument",
                         name
@@ -377,7 +362,7 @@ impl Interpreter {
         lowered: Rc<LoweredFunctionBody>,
         idx: usize,
         local_slots: Option<Rc<HashMap<String, u16>>>,
-        last: Value,
+        last: NanValue,
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
         let Some(stmt) = lowered.stmt(idx) else {
@@ -409,29 +394,12 @@ impl Interpreter {
     fn apply_cont(
         &mut self,
         cont: EvalCont,
-        result: Result<Value, RuntimeError>,
+        result: Result<NanValue, RuntimeError>,
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
         match cont {
             EvalCont::Attr(field) => match result {
-                Ok(obj_val) => EvalState::Apply(match obj_val {
-                    Value::Record { fields, .. } => fields
-                        .iter()
-                        .find(|(k, _)| k == &field)
-                        .map(|(_, value)| Ok(value.clone()))
-                        .unwrap_or_else(|| {
-                            Err(RuntimeError::Error(format!("Unknown field '{}'", field)))
-                        }),
-                    Value::Namespace { name, members } => {
-                        members.get(&field).cloned().ok_or_else(|| {
-                            RuntimeError::Error(format!("Unknown member '{}.{}'", name, field))
-                        })
-                    }
-                    _ => Err(RuntimeError::Error(format!(
-                        "Field access '{}' is not supported on this value",
-                        field
-                    ))),
-                }),
+                Ok(nv) => EvalState::Apply(self.attr_access_nv(nv, &field)),
                 Err(err) => EvalState::Apply(Err(err)),
             },
             EvalCont::Call {
@@ -499,7 +467,7 @@ impl Interpreter {
                 Err(err) => EvalState::Apply(Err(err)),
             },
             EvalCont::BinOpRight { op, left } => match result {
-                Ok(right) => EvalState::Apply(self.eval_binop(&op, left, right)),
+                Ok(right) => EvalState::Apply(self.eval_binop_nv(&op, left, right)),
                 Err(err) => EvalState::Apply(Err(err)),
             },
             EvalCont::Match {
@@ -511,10 +479,19 @@ impl Interpreter {
                 Err(err) => EvalState::Apply(Err(err)),
             },
             EvalCont::Constructor(name) => match result {
-                Ok(value) => EvalState::Apply(match name.as_str() {
-                    "Ok" => Ok(Value::Ok(Box::new(value))),
-                    "Err" => Ok(Value::Err(Box::new(value))),
-                    "Some" => Ok(Value::Some(Box::new(value))),
+                Ok(inner) => EvalState::Apply(match name.as_str() {
+                    "Ok" => {
+                        let idx = self.arena.push_boxed(inner);
+                        Ok(NanValue::new_ok(idx))
+                    }
+                    "Err" => {
+                        let idx = self.arena.push_boxed(inner);
+                        Ok(NanValue::new_err(idx))
+                    }
+                    "Some" => {
+                        let idx = self.arena.push_boxed(inner);
+                        Ok(NanValue::new_some(idx))
+                    }
                     "None" => Err(RuntimeError::Error(
                         "Constructor 'None' does not take an argument".to_string(),
                     )),
@@ -526,14 +503,16 @@ impl Interpreter {
                 Err(err) => EvalState::Apply(Err(err)),
             },
             EvalCont::ErrorProp => match result {
-                Ok(value) => EvalState::Apply(match value {
-                    Value::Ok(inner) => Ok(*inner),
-                    Value::Err(err) => Err(RuntimeError::ErrProp(
-                        NanValue::from_value(&err, &mut self.arena)
-                    )),
-                    _ => Err(RuntimeError::Error(
+                Ok(value) => EvalState::Apply(if value.is_ok() {
+                    let inner = self.arena.get_boxed(value.wrapper_index());
+                    Ok(inner)
+                } else if value.is_err() {
+                    let inner = self.arena.get_boxed(value.wrapper_index());
+                    Err(RuntimeError::ErrProp(inner))
+                } else {
+                    Err(RuntimeError::Error(
                         "Operator '?' can only be applied to Result".to_string(),
-                    )),
+                    ))
                 }),
                 Err(err) => EvalState::Apply(Err(err)),
             },
@@ -544,7 +523,7 @@ impl Interpreter {
                 result: mut text,
             } => match result {
                 Ok(value) => {
-                    text.push_str(&aver_repr(&value));
+                    text.push_str(&value.repr(&self.arena));
                     self.resume_interpolated_str(lowered, parts, idx, text, conts)
                 }
                 Err(err) => EvalState::Apply(Err(err)),
@@ -580,7 +559,7 @@ impl Interpreter {
                 map,
             } => match result {
                 Ok(key) => {
-                    if !Self::is_hashable_map_key(&key) {
+                    if !Self::is_hashable_map_key_nv(key) {
                         return EvalState::Apply(Err(RuntimeError::Error(
                             "Map literal key must be Int, Float, String, or Bool".to_string(),
                         )));
@@ -607,7 +586,8 @@ impl Interpreter {
                 key,
             } => match result {
                 Ok(value) => {
-                    map.insert(key, value);
+                    let hash = key.map_key_hash(&self.arena);
+                    map.insert(hash, (key, value));
                     self.resume_map(lowered, entries, idx + 1, map, conts)
                 }
                 Err(err) => EvalState::Apply(Err(err)),
@@ -632,35 +612,37 @@ impl Interpreter {
                 type_name,
                 updates,
             } => match result {
-                Ok(base_val) => match base_val {
-                    Value::Record {
-                        type_name: base_type,
-                        fields,
-                    } => {
-                        if base_type != type_name {
-                            return EvalState::Apply(Err(RuntimeError::Error(format!(
-                                "{}.update: base is a {} record, expected {}",
-                                type_name, base_type, type_name
-                            ))));
-                        }
-                        self.resume_record_update(
-                            RecordUpdateProgress {
-                                lowered,
-                                type_name,
-                                base_type,
-                                base_fields: fields.iter().cloned().collect(),
-                                updates,
-                                idx: 0,
-                                update_vals: Vec::new(),
-                            },
-                            conts,
-                        )
+                Ok(base_nv) => {
+                    if !base_nv.is_record() {
+                        return EvalState::Apply(Err(RuntimeError::Error(format!(
+                            "{}.update: base must be a {} record",
+                            type_name, type_name
+                        ))));
                     }
-                    _ => EvalState::Apply(Err(RuntimeError::Error(format!(
-                        "{}.update: base must be a {} record",
-                        type_name, type_name
-                    )))),
-                },
+                    let (base_type_id, base_fields) = self.arena.get_record(base_nv.arena_index());
+                    let base_type_name = self.arena.get_type_name(base_type_id).to_string();
+                    if base_type_name != type_name {
+                        return EvalState::Apply(Err(RuntimeError::Error(format!(
+                            "{}.update: base is a {} record, expected {}",
+                            type_name, base_type_name, type_name
+                        ))));
+                    }
+                    let base_field_names: Vec<String> = self.arena.get_field_names(base_type_id).to_vec();
+                    let base_fields_vec: Vec<NanValue> = base_fields.to_vec();
+                    self.resume_record_update(
+                        RecordUpdateProgress {
+                            lowered,
+                            type_name,
+                            base_type_id,
+                            base_fields: base_fields_vec,
+                            base_field_names,
+                            updates,
+                            idx: 0,
+                            update_vals: Vec::new(),
+                        },
+                        conts,
+                    )
+                }
                 Err(err) => EvalState::Apply(Err(err)),
             },
             EvalCont::RecordUpdateField(mut progress) => match result {
@@ -696,16 +678,15 @@ impl Interpreter {
                     if let Some(local_slots) = local_slots.as_ref()
                         && let Some(&slot) = local_slots.get(&name)
                     {
-                        let nv = NanValue::from_value(&value, &mut self.arena);
-                        self.define_slot(slot, nv);
+                        self.define_slot(slot, value);
                     } else {
-                        self.define(name, value);
+                        self.define_nv(name, value);
                     }
                     EvalState::Body {
                         lowered,
                         idx: next_idx,
                         local_slots,
-                        last: Value::Unit,
+                        last: NanValue::UNIT,
                     }
                 }
                 Err(err) => EvalState::Apply(Err(err)),
@@ -731,17 +712,43 @@ impl Interpreter {
         }
     }
 
+    /// Attribute access on a NanValue.
+    fn attr_access_nv(&self, nv: NanValue, field: &str) -> Result<NanValue, RuntimeError> {
+        if nv.is_record() {
+            let (tid, fields) = self.arena.get_record(nv.arena_index());
+            let field_names = self.arena.get_field_names(tid);
+            if let Some(pos) = field_names.iter().position(|n| n == field) {
+                return Ok(fields[pos]);
+            }
+            return Err(RuntimeError::Error(format!("Unknown field '{}'", field)));
+        }
+        if nv.is_namespace() {
+            let (name, members) = self.arena.get_namespace(nv.arena_index());
+            if let Some((_, member_nv)) = members.iter().find(|(k, _)| k.as_ref() == field) {
+                return Ok(*member_nv);
+            }
+            return Err(RuntimeError::Error(format!(
+                "Unknown member '{}.{}'",
+                name, field
+            )));
+        }
+        Err(RuntimeError::Error(format!(
+            "Field access '{}' is not supported on this value",
+            field
+        )))
+    }
+
     fn dispatch_match(
         &mut self,
         lowered: Rc<LoweredFunctionBody>,
-        subject: Value,
+        subject: NanValue,
         arms: SharedMatchArms,
         line: usize,
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
         let arm_count = arms.len();
         for (arm_idx, arm) in arms.iter().enumerate() {
-            if let Some(bindings) = self.match_pattern(&arm.pattern, &subject) {
+            if let Some(bindings) = self.match_pattern_nv(&arm.pattern, subject) {
                 self.note_verify_match_arm(line, arm_count, arm_idx);
                 if bindings.is_empty() {
                     return EvalState::Expr {
@@ -755,9 +762,8 @@ impl Interpreter {
                         .iter()
                         .all(|(name, _)| local_slots.contains_key(name));
                     if all_slotted {
-                        for (name, value) in bindings {
+                        for (name, nv) in bindings {
                             if let Some(&slot) = local_slots.get(&name) {
-                                let nv = NanValue::from_value(&value, &mut self.arena);
                                 self.define_slot(slot, nv);
                             }
                         }
@@ -768,10 +774,8 @@ impl Interpreter {
                     }
                 }
 
-                let rc_scope: HashMap<String, NanValue> = bindings.into_iter()
-                    .map(|(name, val)| (name, NanValue::from_value(&val, &mut self.arena)))
-                    .collect();
-                self.push_env(EnvFrame::Owned(rc_scope));
+                let scope: HashMap<String, NanValue> = bindings.into_iter().collect();
+                self.push_env(EnvFrame::Owned(scope));
                 conts.push(EvalCont::MatchScope);
                 return EvalState::Expr {
                     lowered,
@@ -782,17 +786,17 @@ impl Interpreter {
 
         EvalState::Apply(Err(RuntimeError::Error(format!(
             "No match found for value {}",
-            aver_repr(&subject)
+            subject.repr(&self.arena)
         ))))
     }
 
     fn dispatch_call(
         &mut self,
-        fn_val: Value,
-        args: Vec<Value>,
+        fn_val: NanValue,
+        args: Vec<NanValue>,
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
-        match self.start_call(fn_val, args) {
+        match self.start_call_nv(fn_val, args) {
             Ok(CallDispatch::Immediate(result)) => EvalState::Apply(result),
             Ok(CallDispatch::EnterFunction { frame, state }) => {
                 conts.push(EvalCont::FunctionReturn(*frame));
@@ -802,92 +806,91 @@ impl Interpreter {
         }
     }
 
-    fn start_call(
+    fn start_call_nv(
         &mut self,
-        fn_val: Value,
-        args: Vec<Value>,
+        fn_val: NanValue,
+        args: Vec<NanValue>,
     ) -> Result<CallDispatch, RuntimeError> {
-        match fn_val {
-            Value::Builtin(name) => {
-                self.ensure_effects_allowed(&name, Self::builtin_effects(&name).iter().copied())?;
-                // Use NanValue-native path to avoid Value↔NanValue conversion overhead
-                let nv_args: Vec<NanValue> = args.iter().map(|v| NanValue::from_value(v, &mut self.arena)).collect();
-                let nv_result = self.call_builtin_nv(&name, &nv_args);
-                Ok(CallDispatch::Immediate(nv_result.map(|nv| nv.to_value(&self.arena))))
-            }
-            Value::Fn(function) => {
-                if args.len() != function.params.len() {
-                    return Err(RuntimeError::Error(format!(
-                        "Function '{}' expects {} arguments, got {}",
-                        function.name,
-                        function.params.len(),
-                        args.len()
-                    )));
-                }
-                self.ensure_effects_allowed(
-                    function.name.as_str(),
-                    function.effects.iter().map(String::as_str),
-                )?;
-
-                let memo_key = if function.memo_eligible {
-                    let key = hash_memo_args(&args);
-                    let fn_name: &str = function.name.as_ref();
-                    if let Some(cache) = self.memo_cache.get_mut(fn_name)
-                        && let Some(cached) = cache.get(key, &args)
-                    {
-                        return Ok(CallDispatch::Immediate(Ok(cached)));
-                    }
-                    Some((key, args.clone()))
-                } else {
-                    None
-                };
-
-                self.call_stack.push(CallFrame {
-                    name: Rc::clone(&function.name),
-                    effects: Rc::clone(&function.effects),
-                });
-
-                let prev_local_slots = self.active_local_slots.take();
-                let saved_base = self.env_base;
-                self.env_base = self.env.len();
-                let prev_global = if let Some(home) = function.home_globals.as_ref() {
-                    let global = self
-                        .env
-                        .first_mut()
-                        .ok_or_else(|| RuntimeError::Error("No global scope".to_string()))?;
-                    Some(std::mem::replace(global, EnvFrame::Shared(Rc::clone(home))))
-                } else {
-                    None
-                };
-
-                let active = ActiveFunction { function };
-                let frame = FunctionFrame {
-                    active,
-                    prev_local_slots,
-                    saved_base,
-                    prev_global,
-                    memo_key,
-                };
-                let state = self.enter_function_body(&frame.active, args);
-                Ok(CallDispatch::EnterFunction {
-                    frame: Box::new(frame),
-                    state,
-                })
-            }
-            _ => Err(RuntimeError::Error(format!(
-                "Cannot call value: {:?}",
-                fn_val
-            ))),
+        if fn_val.is_builtin() {
+            let name = self.arena.get_builtin(fn_val.arena_index()).to_string();
+            self.ensure_effects_allowed(&name, Self::builtin_effects(&name).iter().copied())?;
+            let result = self.call_builtin_nv(&name, &args);
+            return Ok(CallDispatch::Immediate(result));
         }
+        if fn_val.is_fn() {
+            let function = Rc::clone(self.arena.get_fn_rc(fn_val.arena_index()));
+            if args.len() != function.params.len() {
+                return Err(RuntimeError::Error(format!(
+                    "Function '{}' expects {} arguments, got {}",
+                    function.name,
+                    function.params.len(),
+                    args.len()
+                )));
+            }
+            self.ensure_effects_allowed(
+                function.name.as_str(),
+                function.effects.iter().map(String::as_str),
+            )?;
+
+            let memo_key = if function.memo_eligible {
+                let key = hash_memo_args_nv(&args, &self.arena);
+                let fn_name: &str = function.name.as_ref();
+                if let Some(cache) = self.memo_cache.get_mut(fn_name)
+                    && let Some(cached_val) = cache.get_nv_as_value(key, &args, &self.arena)
+                {
+                    let cached_nv = NanValue::from_value(&cached_val, &mut self.arena);
+                    return Ok(CallDispatch::Immediate(Ok(cached_nv)));
+                }
+                Some((key, args.clone()))
+            } else {
+                None
+            };
+
+            self.call_stack.push(CallFrame {
+                name: Rc::clone(&function.name),
+                effects: Rc::clone(&function.effects),
+            });
+
+            let prev_local_slots = self.active_local_slots.take();
+            let saved_base = self.env_base;
+            self.env_base = self.env.len();
+            let prev_global = if let Some(home) = function.home_globals.as_ref() {
+                let global = self
+                    .env
+                    .first_mut()
+                    .ok_or_else(|| RuntimeError::Error("No global scope".to_string()))?;
+                Some(std::mem::replace(global, EnvFrame::Shared(Rc::clone(home))))
+            } else {
+                None
+            };
+
+            let active = ActiveFunction { function };
+            let frame = FunctionFrame {
+                active,
+                prev_local_slots,
+                saved_base,
+                prev_global,
+                memo_key,
+            };
+            let state = self.enter_function_body_nv(&frame.active, args);
+            return Ok(CallDispatch::EnterFunction {
+                frame: Box::new(frame),
+                state,
+            });
+        }
+        Err(RuntimeError::Error(format!(
+            "Cannot call value: {}",
+            fn_val.repr(&self.arena)
+        )))
     }
 
-    fn enter_function_body(&mut self, active: &ActiveFunction, args: Vec<Value>) -> EvalState {
+    fn enter_function_body_nv(&mut self, active: &ActiveFunction, args: Vec<NanValue>) -> EvalState {
         if let Some(resolution) = &active.function.resolution {
             let local_slots = Rc::clone(&resolution.local_slots);
             let mut slots = Self::empty_slots_nv(resolution.local_count);
-            for ((param_name, _), arg_val) in active.function.params.iter().zip(args.into_iter()) {
+            for ((param_name, _), arg_nv) in active.function.params.iter().zip(args.into_iter()) {
                 if let Some(&slot) = resolution.local_slots.get(param_name) {
-                    slots[slot as usize] = NanValue::from_value(&arg_val, &mut self.arena);
+                    slots[slot as usize] = arg_nv;
                 }
             }
             self.active_local_slots = Some(Rc::clone(&local_slots));
@@ -896,19 +899,19 @@ impl Interpreter {
                 lowered: Rc::clone(&active.function.lowered_body),
                 idx: 0,
                 local_slots: Some(local_slots),
-                last: Value::Unit,
+                last: NanValue::UNIT,
             }
         } else {
             let mut params_scope: HashMap<String, NanValue> = HashMap::new();
-            for ((param_name, _), arg_val) in active.function.params.iter().zip(args.into_iter()) {
-                params_scope.insert(param_name.clone(), NanValue::from_value(&arg_val, &mut self.arena));
+            for ((param_name, _), arg_nv) in active.function.params.iter().zip(args.into_iter()) {
+                params_scope.insert(param_name.clone(), arg_nv);
             }
             self.push_env(EnvFrame::Owned(params_scope));
             EvalState::Body {
                 lowered: Rc::clone(&active.function.lowered_body),
                 idx: 0,
                 local_slots: None,
-                last: Value::Unit,
+                last: NanValue::UNIT,
             }
         }
     }
@@ -916,7 +919,7 @@ impl Interpreter {
     fn finish_function_call(
         &mut self,
         mut frame: FunctionFrame,
-        result: Result<Value, RuntimeError>,
+        result: Result<NanValue, RuntimeError>,
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
         self.pop_env();
@@ -924,21 +927,20 @@ impl Interpreter {
         match result {
             Err(RuntimeError::TailCall(boxed)) => {
                 let (target, nv_args) = *boxed;
-                // Convert NanValue args back to Value for enter_function_body
-                let args: Vec<Value> = nv_args.iter().map(|nv| nv.to_value(&self.arena)).collect();
                 let next_active = if target == frame.active.function.name.as_str() {
                     frame.active.clone()
                 } else {
-                    let next_function = match self.lookup(&target) {
-                        Ok(value) => match value {
-                            Value::Fn(function) => Rc::clone(&function),
-                            other => {
+                    let next_function = match self.lookup_nv(&target) {
+                        Ok(nv) => {
+                            if !nv.is_fn() {
                                 return EvalState::Apply(Err(RuntimeError::Error(format!(
-                                    "TCO target '{}' is not a function: {:?}",
-                                    target, other
+                                    "TCO target '{}' is not a function: {}",
+                                    target,
+                                    nv.repr(&self.arena)
                                 ))));
                             }
-                        },
+                            Rc::clone(self.arena.get_fn_rc(nv.arena_index()))
+                        }
                         Err(err) => return EvalState::Apply(Err(err)),
                     };
 
@@ -953,7 +955,7 @@ impl Interpreter {
                 };
 
                 frame.active = next_active;
-                let state = self.enter_function_body(&frame.active, args);
+                let state = self.enter_function_body_nv(&frame.active, nv_args);
                 conts.push(EvalCont::FunctionReturn(frame));
                 state
             }
@@ -970,13 +972,13 @@ impl Interpreter {
                 let final_result = match other {
                     Ok(value) => Ok(value),
                     Err(RuntimeError::ErrProp(err_nv)) => {
-                        let err_val = err_nv.to_value(&self.arena);
-                        Ok(Value::Err(Box::new(err_val)))
+                        let idx = self.arena.push_boxed(err_nv);
+                        Ok(NanValue::new_err(idx))
                     }
                     Err(err) => Err(err),
                 };
 
-                if let (Some((key, memo_args)), Ok(value)) = (frame.memo_key, &final_result) {
+                if let (Some((key, memo_args)), Ok(value)) = (&frame.memo_key, &final_result) {
                     let fn_name: &str = frame.active.function.name.as_ref();
                     let cache = if let Some(c) = self.memo_cache.get_mut(fn_name) {
                         c
@@ -985,7 +987,7 @@ impl Interpreter {
                             .entry(frame.active.function.name.as_ref().clone())
                             .or_default()
                     };
-                    cache.insert(key, memo_args, value.clone(), MEMO_CACHE_CAP_PER_FN);
+                    cache.insert_nv(*key, memo_args.clone(), *value, &self.arena, MEMO_CACHE_CAP_PER_FN);
                 }
 
                 EvalState::Apply(final_result)
@@ -1018,7 +1020,8 @@ impl Interpreter {
                 }
             }
         }
-        EvalState::Apply(Ok(Value::Str(result)))
+        let idx = self.arena.push_string(&result);
+        EvalState::Apply(Ok(NanValue::new_string(idx)))
     }
 
     fn resume_list(
@@ -1026,11 +1029,12 @@ impl Interpreter {
         lowered: Rc<LoweredFunctionBody>,
         items: SharedExprs,
         idx: usize,
-        values: Vec<Value>,
+        values: Vec<NanValue>,
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
         if idx >= items.len() {
-            return EvalState::Apply(Ok(list_from_vec(values)));
+            let list_idx = self.arena.push_list(values);
+            return EvalState::Apply(Ok(NanValue::new_list(list_idx)));
         }
 
         conts.push(EvalCont::List {
@@ -1050,11 +1054,12 @@ impl Interpreter {
         lowered: Rc<LoweredFunctionBody>,
         items: SharedExprs,
         idx: usize,
-        values: Vec<Value>,
+        values: Vec<NanValue>,
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
         if idx >= items.len() {
-            return EvalState::Apply(Ok(Value::Tuple(values)));
+            let tuple_idx = self.arena.push_tuple(values);
+            return EvalState::Apply(Ok(NanValue::new_tuple(tuple_idx)));
         }
 
         conts.push(EvalCont::Tuple {
@@ -1074,11 +1079,12 @@ impl Interpreter {
         lowered: Rc<LoweredFunctionBody>,
         entries: SharedMapEntries,
         idx: usize,
-        map: HashMap<Value, Value>,
+        map: HashMap<u64, (NanValue, NanValue)>,
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
         if idx >= entries.len() {
-            return EvalState::Apply(Ok(Value::Map(map)));
+            let map_idx = self.arena.push_map(map);
+            return EvalState::Apply(Ok(NanValue::new_map(map_idx)));
         }
 
         conts.push(EvalCont::MapKey {
@@ -1100,7 +1106,7 @@ impl Interpreter {
     ) -> EvalState {
         if progress.idx >= progress.fields.len() {
             return EvalState::Apply(
-                self.build_record_create_value(&progress.type_name, progress.values),
+                self.build_record_create_nv(&progress.type_name, progress.values),
             );
         }
 
@@ -1116,10 +1122,11 @@ impl Interpreter {
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
         if progress.idx >= progress.updates.len() {
-            return EvalState::Apply(self.build_record_update_value(
+            return EvalState::Apply(self.build_record_update_nv(
                 &progress.type_name,
-                progress.base_type,
+                progress.base_type_id,
                 progress.base_fields,
+                progress.base_field_names,
                 progress.update_vals,
             ));
         }
@@ -1139,14 +1146,11 @@ impl Interpreter {
         target: String,
         args: SharedExprs,
         idx: usize,
-        values: Vec<Value>,
+        values: Vec<NanValue>,
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
         if idx >= args.len() {
-            let nv_values: Vec<NanValue> = values.iter()
-                .map(|v| NanValue::from_value(v, &mut self.arena))
-                .collect();
-            return EvalState::Apply(Err(RuntimeError::TailCall(Box::new((target, nv_values)))));
+            return EvalState::Apply(Err(RuntimeError::TailCall(Box::new((target, values)))));
         }
 
         conts.push(EvalCont::TailCallArgs {
@@ -1162,12 +1166,18 @@ impl Interpreter {
         }
     }
 
-    fn build_record_create_value(
-        &self,
+    fn build_record_create_nv(
+        &mut self,
         type_name: &str,
-        field_vals: Vec<(String, Value)>,
-    ) -> Result<Value, RuntimeError> {
+        field_vals: Vec<(String, NanValue)>,
+    ) -> Result<NanValue, RuntimeError> {
         if let Some(schema) = self.record_schemas.get(type_name) {
+            // When we have a schema, register the type using schema field order
+            // (which is the declaration order from the record definition).
+            let schema_clone = schema.clone();
+            let type_id = self.arena.find_type_id(type_name).unwrap_or_else(|| {
+                self.arena.register_record_type(type_name, schema_clone.clone())
+            });
             let mut by_name = HashMap::with_capacity(field_vals.len());
             for (name, value) in field_vals {
                 if by_name.insert(name.clone(), value).is_some() {
@@ -1179,7 +1189,7 @@ impl Interpreter {
             }
 
             for provided in by_name.keys() {
-                if !schema.iter().any(|field| field == provided) {
+                if !schema_clone.iter().any(|field| field == provided) {
                     return Err(RuntimeError::Error(format!(
                         "Record '{}' has no field '{}'",
                         type_name, provided
@@ -1187,43 +1197,39 @@ impl Interpreter {
                 }
             }
 
-            let mut ordered = Vec::with_capacity(schema.len());
-            for required in schema {
+            let mut ordered = Vec::with_capacity(schema_clone.len());
+            for required in &schema_clone {
                 let value = by_name.remove(required).ok_or_else(|| {
                     RuntimeError::Error(format!(
                         "Record '{}' missing required field '{}'",
                         type_name, required
                     ))
                 })?;
-                ordered.push((required.clone(), value));
+                ordered.push(value);
             }
 
-            return Ok(Value::Record {
-                type_name: type_name.to_string(),
-                fields: ordered.into(),
-            });
+            let rec_idx = self.arena.push_record(type_id, ordered);
+            return Ok(NanValue::new_record(rec_idx));
         }
 
-        Ok(Value::Record {
-            type_name: type_name.to_string(),
-            fields: field_vals.into(),
-        })
+        // No schema — just use field order as-is
+        let type_id = self.arena.find_type_id(type_name).unwrap_or_else(|| {
+            let field_names: Vec<String> = field_vals.iter().map(|(n, _)| n.clone()).collect();
+            self.arena.register_record_type(type_name, field_names)
+        });
+        let nv_fields: Vec<NanValue> = field_vals.iter().map(|(_, v)| *v).collect();
+        let rec_idx = self.arena.push_record(type_id, nv_fields);
+        Ok(NanValue::new_record(rec_idx))
     }
 
-    fn build_record_update_value(
-        &self,
+    fn build_record_update_nv(
+        &mut self,
         type_name: &str,
-        base_type: String,
-        mut base_fields: Vec<(String, Value)>,
-        update_vals: Vec<(String, Value)>,
-    ) -> Result<Value, RuntimeError> {
-        if base_type != type_name {
-            return Err(RuntimeError::Error(format!(
-                "{}.update: base is a {} record, expected {}",
-                type_name, base_type, type_name
-            )));
-        }
-
+        base_type_id: u32,
+        mut base_fields: Vec<NanValue>,
+        base_field_names: Vec<String>,
+        update_vals: Vec<(String, NanValue)>,
+    ) -> Result<NanValue, RuntimeError> {
         if let Some(schema) = self.record_schemas.get(type_name) {
             for (field_name, _) in &update_vals {
                 if !schema.iter().any(|field| field == field_name) {
@@ -1236,11 +1242,8 @@ impl Interpreter {
         }
 
         for (update_name, update_val) in update_vals {
-            if let Some(field) = base_fields
-                .iter_mut()
-                .find(|(name, _)| name == &update_name)
-            {
-                field.1 = update_val;
+            if let Some(pos) = base_field_names.iter().position(|n| n == &update_name) {
+                base_fields[pos] = update_val;
             } else {
                 return Err(RuntimeError::Error(format!(
                     "Record '{}' has no field '{}'",
@@ -1249,19 +1252,25 @@ impl Interpreter {
             }
         }
 
-        Ok(Value::Record {
-            type_name: type_name.to_string(),
-            fields: base_fields.into(),
-        })
+        let rec_idx = self.arena.push_record(base_type_id, base_fields);
+        Ok(NanValue::new_record(rec_idx))
     }
 
-    fn is_hashable_map_key(value: &Value) -> bool {
-        matches!(
-            value,
-            Value::Int(_) | Value::Float(_) | Value::Str(_) | Value::Bool(_)
-        )
+    fn is_hashable_map_key_nv(value: NanValue) -> bool {
+        value.is_int() || value.is_float() || value.is_string() || value.is_bool()
     }
 
+    pub(super) fn eval_literal_nv(&mut self, lit: &Literal) -> NanValue {
+        match lit {
+            Literal::Int(i) => NanValue::new_int(*i, &mut self.arena),
+            Literal::Float(f) => NanValue::new_float(*f),
+            Literal::Str(s) => NanValue::new_string(self.arena.push_string(s)),
+            Literal::Bool(b) => NanValue::new_bool(*b),
+            Literal::Unit => NanValue::UNIT,
+        }
+    }
+
+    /// Old eval_literal for backward compat in exec.rs
     pub(super) fn eval_literal(&self, lit: &Literal) -> Value {
         match lit {
             Literal::Int(i) => Value::Int(*i),
@@ -1277,11 +1286,25 @@ impl Interpreter {
         fn_val: Value,
         args: Vec<Value>,
     ) -> Result<Value, RuntimeError> {
-        match self.start_call(fn_val, args)? {
-            CallDispatch::Immediate(result) => result,
+        let fn_nv = NanValue::from_value(&fn_val, &mut self.arena);
+        let nv_args: Vec<NanValue> = args.iter().map(|v| NanValue::from_value(v, &mut self.arena)).collect();
+        match self.start_call_nv(fn_nv, nv_args)? {
+            CallDispatch::Immediate(result) => result.map(|nv| nv.to_value(&self.arena)),
             CallDispatch::EnterFunction { frame, state } => {
-                self.eval_loop(state, vec![EvalCont::FunctionReturn(*frame)])
+                let nv = self.eval_loop(state, vec![EvalCont::FunctionReturn(*frame)])?;
+                Ok(nv.to_value(&self.arena))
             }
         }
     }
+}
+
+/// Hash NanValue args for memo cache — uses arena for content-based hashing.
+fn hash_memo_args_nv(args: &[NanValue], arena: &Arena) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    args.len().hash(&mut hasher);
+    for arg in args {
+        arg.hash_in(&mut hasher, arena);
+    }
+    hasher.finish()
 }

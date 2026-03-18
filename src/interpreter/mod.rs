@@ -219,6 +219,20 @@ impl FnMemoCache {
         }
         self.len = self.len.saturating_sub(1);
     }
+
+    /// NanValue-native get — converts NanValue args to Value for comparison,
+    /// returns cached Value. Arena conversion done by caller.
+    fn get_nv_as_value(&mut self, hash: u64, nv_args: &[NanValue], arena: &Arena) -> Option<Value> {
+        let args: Vec<Value> = nv_args.iter().map(|nv| nv.to_value(arena)).collect();
+        self.get(hash, &args)
+    }
+
+    /// NanValue-native insert — stores args and result as Value (bridge).
+    fn insert_nv(&mut self, hash: u64, nv_args: Vec<NanValue>, nv_result: NanValue, arena: &Arena, cap: usize) {
+        let args: Vec<Value> = nv_args.iter().map(|nv| nv.to_value(arena)).collect();
+        let result = nv_result.to_value(arena);
+        self.insert(hash, args, result, cap);
+    }
 }
 
 pub struct Interpreter {
