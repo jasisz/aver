@@ -98,7 +98,10 @@ Everything the interpreter supports is transpilable:
 | `Tcp` service (persistent connections) | OK |
 | `Disk` service | OK |
 | `Env` service | OK |
+| `Random` service | OK |
 | `Time` service | OK |
+| `Terminal` service (feature-gated) | OK |
+| `Args` service | OK |
 | `verify` blocks → `#[cfg(test)]` | OK |
 | Exact method-level effects (`Http.get`, `Disk.readText`, etc.) | OK |
 
