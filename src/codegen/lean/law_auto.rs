@@ -144,9 +144,24 @@ fn emit_simp_omega_law(
     collect_fn_calls(&law.lhs, &mut fn_names);
     collect_fn_calls(&law.rhs, &mut fn_names);
     fn_names.insert(vb.fn_name.clone());
-    // Only proceed if all referenced functions exist in ctx.
+    // Only proceed if all referenced functions exist in ctx, are non-recursive,
+    // and have only Int parameters. simp+omega works on flat match-on-Int bodies.
     if fn_names.iter().any(|n| !ctx.fn_sigs.contains_key(n)) {
         return None;
+    }
+    for item in &ctx.items {
+        if let crate::ast::TopLevel::FnDef(fd) = item
+            && fn_names.contains(&fd.name)
+        {
+            // Reject recursive functions.
+            if body_calls_any_of(&fd.body, &fn_names) {
+                return None;
+            }
+            // Reject functions with non-Int parameters.
+            if fd.params.iter().any(|(_, t)| t != "Int") {
+                return None;
+            }
+        }
     }
     let lean_names: Vec<String> = fn_names.iter().map(|n| aver_name_to_lean(n)).collect();
     let simp_list = lean_names.join(", ");
@@ -154,6 +169,21 @@ fn emit_simp_omega_law(
         intro_names,
         vec![format!("simp only [{}] <;> omega", simp_list)],
     ))
+}
+
+fn body_calls_any_of(
+    body: &crate::ast::FnBody,
+    names: &std::collections::BTreeSet<String>,
+) -> bool {
+    let mut called = std::collections::BTreeSet::new();
+    for stmt in body.stmts() {
+        match stmt {
+            crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e) => {
+                collect_fn_calls(e, &mut called);
+            }
+        }
+    }
+    called.iter().any(|c| names.contains(c))
 }
 
 fn collect_fn_calls(expr: &crate::ast::Expr, out: &mut std::collections::BTreeSet<String>) {
@@ -174,6 +204,18 @@ fn collect_fn_calls(expr: &crate::ast::Expr, out: &mut std::collections::BTreeSe
             collect_fn_calls(r, out);
         }
         Expr::Attr(obj, _) => collect_fn_calls(obj, out),
+        Expr::Match { subject, arms, .. } => {
+            collect_fn_calls(subject, out);
+            for arm in arms {
+                collect_fn_calls(&arm.body, out);
+            }
+        }
+        Expr::TailCall(boxed) => {
+            out.insert(boxed.0.clone());
+            for arg in &boxed.1 {
+                collect_fn_calls(arg, out);
+            }
+        }
         _ => {}
     }
 }
