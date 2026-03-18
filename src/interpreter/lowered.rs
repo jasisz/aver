@@ -114,7 +114,7 @@ impl LowerBuilder {
                 }
             }
             Expr::BinOp(op, left, right) => LoweredExpr::BinOp {
-                op: op.clone(),
+                op: *op,
                 left: self.lower_expr(left),
                 right: self.lower_expr(right),
             },

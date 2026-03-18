@@ -28,14 +28,14 @@ fn simplify_identity_expr(expr: &Expr) -> Expr {
                     } else if int_lit(&right) == Some(0) {
                         left
                     } else {
-                        Expr::BinOp(op.clone(), Box::new(left), Box::new(right))
+                        Expr::BinOp(*op, Box::new(left), Box::new(right))
                     }
                 }
                 BinOp::Sub => {
                     if int_lit(&right) == Some(0) {
                         left
                     } else {
-                        Expr::BinOp(op.clone(), Box::new(left), Box::new(right))
+                        Expr::BinOp(*op, Box::new(left), Box::new(right))
                     }
                 }
                 BinOp::Mul => {
@@ -46,10 +46,10 @@ fn simplify_identity_expr(expr: &Expr) -> Expr {
                     } else if int_lit(&right) == Some(1) {
                         left
                     } else {
-                        Expr::BinOp(op.clone(), Box::new(left), Box::new(right))
+                        Expr::BinOp(*op, Box::new(left), Box::new(right))
                     }
                 }
-                _ => Expr::BinOp(op.clone(), Box::new(left), Box::new(right)),
+                _ => Expr::BinOp(*op, Box::new(left), Box::new(right)),
             }
         }
         Expr::Attr(base, field) => {

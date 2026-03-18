@@ -30,7 +30,7 @@ pub(super) fn substitute_expr(
                 .collect(),
         ),
         Expr::BinOp(op, left, right) => Expr::BinOp(
-            op.clone(),
+            *op,
             Box::new(substitute_expr(left, bindings)),
             Box::new(substitute_expr(right, bindings)),
         ),

@@ -645,7 +645,7 @@ fn rewrite_recursive_calls_expr(expr: &Expr, targets: &HashSet<String>, fuel_var
             }
         }
         Expr::BinOp(op, left, right) => Expr::BinOp(
-            op.clone(),
+            *op,
             Box::new(rewrite_recursive_calls_expr(left, targets, fuel_var)),
             Box::new(rewrite_recursive_calls_expr(right, targets, fuel_var)),
         ),

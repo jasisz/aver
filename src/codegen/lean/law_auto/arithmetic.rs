@@ -221,7 +221,7 @@ fn int_binary_wrapper_op(ctx: &CodegenContext, fn_name: &str) -> Option<BinOp> {
     if !matches_ident(left, p1) || !matches_ident(right, p2) {
         return None;
     }
-    Some(op.clone())
+    Some(*op)
 }
 
 fn int_unary_wrapper(ctx: &CodegenContext, fn_name: &str) -> Option<UnaryIntWrapper> {
@@ -240,12 +240,12 @@ fn int_unary_wrapper(ctx: &CodegenContext, fn_name: &str) -> Option<UnaryIntWrap
 
     match (left.as_ref(), right.as_ref()) {
         (Expr::Ident(id), Expr::Literal(Literal::Int(n))) if id == param => Some(UnaryIntWrapper {
-            op: op.clone(),
+            op: *op,
             constant: *n,
             var_first: true,
         }),
         (Expr::Literal(Literal::Int(n)), Expr::Ident(id)) if id == param => Some(UnaryIntWrapper {
-            op: op.clone(),
+            op: *op,
             constant: *n,
             var_first: false,
         }),

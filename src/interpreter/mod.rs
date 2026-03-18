@@ -222,6 +222,10 @@ impl FnMemoCache {
 
 pub struct Interpreter {
     pub env: Env,
+    /// Base index into `env` for the current function's frames.
+    /// lookup_ref sees env[0] (global) + env[env_base..] (current fn).
+    /// Caller frames in env[1..env_base] are invisible.
+    env_base: usize,
     module_cache: HashMap<String, Value>,
     /// Record field order schemas by type name (used to validate and
     /// canonicalize `RecordCreate` runtime values).

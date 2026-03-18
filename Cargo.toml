@@ -39,3 +39,10 @@ colored = "2"
 thiserror = "1"
 toml = "0.8"
 url = "2"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "interpreter_bench"
+harness = false

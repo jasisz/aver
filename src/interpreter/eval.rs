@@ -119,7 +119,9 @@ struct ActiveFunction {
 struct FunctionFrame {
     active: ActiveFunction,
     prev_local_slots: Option<Rc<HashMap<String, u16>>>,
-    saved_frames: Vec<EnvFrame>,
+    /// The env_base of the caller — restored on return so the caller's
+    /// frames become visible to lookup_ref again.
+    saved_base: usize,
     prev_global: Option<EnvFrame>,
     memo_key: Option<(u64, Vec<Value>)>,
 }
@@ -201,11 +203,12 @@ impl Interpreter {
         expr_id: ExprId,
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
-        match lowered.expr(expr_id).clone() {
-            LoweredExpr::Literal(lit) => EvalState::Apply(Ok(self.eval_literal(&lit))),
-            LoweredExpr::Resolved(slot) => EvalState::Apply(self.lookup_slot(slot)),
-            LoweredExpr::Ident(name) => EvalState::Apply(self.lookup(&name)),
+        match lowered.expr(expr_id) {
+            LoweredExpr::Literal(lit) => EvalState::Apply(Ok(self.eval_literal(lit))),
+            &LoweredExpr::Resolved(slot) => EvalState::Apply(self.lookup_slot(slot)),
+            LoweredExpr::Ident(name) => EvalState::Apply(self.lookup(name)),
             LoweredExpr::Attr { obj, field } => {
+                let obj = *obj;
                 if let LoweredExpr::Ident(name) = lowered.expr(obj) {
                     let value = match self.lookup_ref(name) {
                         Ok(value) => value,
@@ -219,7 +222,7 @@ impl Interpreter {
                         }
                         Value::Record { fields, .. } => fields
                             .iter()
-                            .find(|(k, _)| k == &field)
+                            .find(|(k, _)| k == field)
                             .map(|(_, value)| Ok(value.clone()))
                             .unwrap_or_else(|| {
                                 Err(RuntimeError::Error(format!("Unknown field '{}'", field)))
@@ -232,23 +235,26 @@ impl Interpreter {
                     return EvalState::Apply(result);
                 }
 
+                let field = field.clone();
                 conts.push(EvalCont::Attr(field));
                 EvalState::Expr { lowered, expr: obj }
             }
             LoweredExpr::FnCall { fn_expr, args } => {
+                let fn_expr = *fn_expr;
+                let args = Rc::clone(args);
                 conts.push(EvalCont::Call {
                     lowered: Rc::clone(&lowered),
-                    args,
                     idx: 0,
                     fn_val: None,
-                    arg_vals: Vec::new(),
+                    arg_vals: Vec::with_capacity(args.len()),
+                    args,
                 });
                 EvalState::Expr {
                     lowered,
                     expr: fn_expr,
                 }
             }
-            LoweredExpr::BinOp { op, left, right } => {
+            &LoweredExpr::BinOp { op, left, right } => {
                 conts.push(EvalCont::BinOpLeft {
                     lowered: Rc::clone(&lowered),
                     op,
@@ -264,9 +270,11 @@ impl Interpreter {
                 arms,
                 line,
             } => {
+                let subject = *subject;
+                let line = *line;
                 conts.push(EvalCont::Match {
                     lowered: Rc::clone(&lowered),
-                    arms,
+                    arms: Rc::clone(arms),
                     line,
                 });
                 EvalState::Expr {
@@ -276,7 +284,8 @@ impl Interpreter {
             }
             LoweredExpr::Constructor { name, arg } => match arg {
                 Some(inner) => {
-                    conts.push(EvalCont::Constructor(name));
+                    let inner = *inner;
+                    conts.push(EvalCont::Constructor(name.clone()));
                     EvalState::Expr {
                         lowered,
                         expr: inner,
@@ -294,7 +303,7 @@ impl Interpreter {
                     ))),
                 }),
             },
-            LoweredExpr::ErrorProp { inner } => {
+            &LoweredExpr::ErrorProp { inner } => {
                 conts.push(EvalCont::ErrorProp);
                 EvalState::Expr {
                     lowered,
@@ -302,36 +311,47 @@ impl Interpreter {
                 }
             }
             LoweredExpr::InterpolatedStr(parts) => {
+                let parts = Rc::clone(parts);
                 self.resume_interpolated_str(lowered, parts, 0, String::new(), conts)
             }
-            LoweredExpr::List(items) => self.resume_list(lowered, items, 0, Vec::new(), conts),
+            LoweredExpr::List(items) => {
+                let items = Rc::clone(items);
+                self.resume_list(lowered, items, 0, Vec::new(), conts)
+            }
             LoweredExpr::Tuple(items) => {
                 let cap = items.len();
+                let items = Rc::clone(items);
                 self.resume_tuple(lowered, items, 0, Vec::with_capacity(cap), conts)
             }
             LoweredExpr::MapLiteral(entries) => {
+                let entries = Rc::clone(entries);
                 self.resume_map(lowered, entries, 0, HashMap::new(), conts)
             }
-            LoweredExpr::RecordCreate { type_name, fields } => self.resume_record_create(
-                RecordCreateProgress {
-                    lowered,
-                    type_name,
-                    fields,
-                    idx: 0,
-                    seen: HashSet::new(),
-                    values: Vec::new(),
-                },
-                conts,
-            ),
+            LoweredExpr::RecordCreate { type_name, fields } => {
+                let type_name = type_name.clone();
+                let fields = Rc::clone(fields);
+                self.resume_record_create(
+                    RecordCreateProgress {
+                        lowered,
+                        type_name,
+                        fields,
+                        idx: 0,
+                        seen: HashSet::new(),
+                        values: Vec::new(),
+                    },
+                    conts,
+                )
+            }
             LoweredExpr::RecordUpdate {
                 type_name,
                 base,
                 updates,
             } => {
+                let base = *base;
                 conts.push(EvalCont::RecordUpdateBase {
                     lowered: Rc::clone(&lowered),
-                    type_name,
-                    updates,
+                    type_name: type_name.clone(),
+                    updates: Rc::clone(updates),
                 });
                 EvalState::Expr {
                     lowered,
@@ -339,6 +359,8 @@ impl Interpreter {
                 }
             }
             LoweredExpr::TailCall { target, args } => {
+                let target = target.clone();
+                let args = Rc::clone(args);
                 self.resume_tail_call(lowered, target, args, 0, Vec::new(), conts)
             }
         }
@@ -352,12 +374,13 @@ impl Interpreter {
         last: Value,
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
-        let Some(stmt) = lowered.stmt(idx).cloned() else {
+        let Some(stmt) = lowered.stmt(idx) else {
             return EvalState::Apply(Ok(last));
         };
 
         match stmt {
             LoweredStmt::Binding(name, expr) => {
+                let expr = *expr;
                 conts.push(EvalCont::BodyBinding {
                     name: name.clone(),
                     next_idx: idx + 1,
@@ -366,7 +389,7 @@ impl Interpreter {
                 });
                 EvalState::Expr { lowered, expr }
             }
-            LoweredStmt::Expr(expr) => {
+            &LoweredStmt::Expr(expr) => {
                 conts.push(EvalCont::BodyExpr {
                     next_idx: idx + 1,
                     lowered: Rc::clone(&lowered),
@@ -711,6 +734,13 @@ impl Interpreter {
         for (arm_idx, arm) in arms.iter().enumerate() {
             if let Some(bindings) = self.match_pattern(&arm.pattern, &subject) {
                 self.note_verify_match_arm(line, arm_count, arm_idx);
+                if bindings.is_empty() {
+                    return EvalState::Expr {
+                        lowered,
+                        expr: arm.body,
+                    };
+                }
+
                 if let Some(local_slots) = self.active_local_slots.clone() {
                     let all_slotted = bindings
                         .iter()
@@ -726,13 +756,6 @@ impl Interpreter {
                             expr: arm.body,
                         };
                     }
-                }
-
-                if bindings.is_empty() {
-                    return EvalState::Expr {
-                        lowered,
-                        expr: arm.body,
-                    };
                 }
 
                 let rc_scope = bindings.into_iter().collect::<HashMap<_, _>>();
@@ -793,11 +816,9 @@ impl Interpreter {
 
                 let memo_key = if function.memo_eligible {
                     let key = hash_memo_args(&args);
-                    if let Some(cached) = self
-                        .memo_cache
-                        .entry(function.name.as_ref().clone())
-                        .or_default()
-                        .get(key, &args)
+                    let fn_name: &str = function.name.as_ref();
+                    if let Some(cache) = self.memo_cache.get_mut(fn_name)
+                        && let Some(cached) = cache.get(key, &args)
                     {
                         return Ok(CallDispatch::Immediate(Ok(cached)));
                     }
@@ -812,7 +833,8 @@ impl Interpreter {
                 });
 
                 let prev_local_slots = self.active_local_slots.take();
-                let saved_frames = self.env.split_off(1);
+                let saved_base = self.env_base;
+                self.env_base = self.env.len();
                 let prev_global = if let Some(home) = function.home_globals.as_ref() {
                     let global = self
                         .env
@@ -827,7 +849,7 @@ impl Interpreter {
                 let frame = FunctionFrame {
                     active,
                     prev_local_slots,
-                    saved_frames,
+                    saved_base,
                     prev_global,
                     memo_key,
                 };
@@ -925,8 +947,7 @@ impl Interpreter {
                 {
                     *global = prev;
                 }
-                self.env.truncate(1);
-                self.env.append(&mut frame.saved_frames);
+                self.env_base = frame.saved_base;
                 self.call_stack.pop();
 
                 let final_result = match other {
@@ -936,10 +957,14 @@ impl Interpreter {
                 };
 
                 if let (Some((key, memo_args)), Ok(value)) = (frame.memo_key, &final_result) {
-                    let cache = self
-                        .memo_cache
-                        .entry(frame.active.function.name.as_ref().clone())
-                        .or_default();
+                    let fn_name: &str = frame.active.function.name.as_ref();
+                    let cache = if let Some(c) = self.memo_cache.get_mut(fn_name) {
+                        c
+                    } else {
+                        self.memo_cache
+                            .entry(frame.active.function.name.as_ref().clone())
+                            .or_default()
+                    };
                     cache.insert(key, memo_args, value.clone(), MEMO_CACHE_CAP_PER_FN);
                 }
 

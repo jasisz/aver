@@ -97,7 +97,7 @@ impl Parser {
                     .collect(),
             ),
             Expr::BinOp(op, left, right) => Expr::BinOp(
-                op.clone(),
+                *op,
                 Box::new(Self::substitute_expr(left, bindings)),
                 Box::new(Self::substitute_expr(right, bindings)),
             ),

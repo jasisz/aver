@@ -105,6 +105,7 @@ impl Interpreter {
 
         Interpreter {
             env: vec![EnvFrame::Owned(global)],
+            env_base: 1,
             module_cache: HashMap::new(),
             record_schemas,
             call_stack: Vec::new(),
@@ -455,21 +456,34 @@ impl Interpreter {
     }
 
     pub(super) fn lookup_ref(&self, name: &str) -> Result<&Value, RuntimeError> {
-        for frame in self.env.iter().rev() {
-            let found = match frame {
-                EnvFrame::Owned(scope) => scope.get(name),
-                EnvFrame::Shared(scope) => scope.get(name),
-                // Slots frames are indexed by slot, not by name — skip in name-based lookup
-                EnvFrame::Slots(_) => None,
-            };
-            if let Some(v) = found {
-                return Ok(v);
+        // Current function's frames first (env_base..), then global (env[0]).
+        // Caller frames in env[1..env_base] are invisible — skipped entirely.
+        let env = &self.env;
+        let mut i = env.len();
+        let base = self.env_base;
+        while i > base {
+            i -= 1;
+            match &env[i] {
+                EnvFrame::Owned(scope) => {
+                    if let Some(v) = scope.get(name) {
+                        return Ok(v);
+                    }
+                }
+                EnvFrame::Shared(scope) => {
+                    if let Some(v) = scope.get(name) {
+                        return Ok(v);
+                    }
+                }
+                EnvFrame::Slots(_) => {}
             }
         }
-        Err(RuntimeError::Error(format!(
-            "Undefined variable: '{}'",
-            name
-        )))
+        // Global scope
+        match &env[0] {
+            EnvFrame::Owned(scope) => scope.get(name),
+            EnvFrame::Shared(scope) => scope.get(name),
+            EnvFrame::Slots(_) => None,
+        }
+        .ok_or_else(|| RuntimeError::Error(format!("Undefined variable: '{}'", name)))
     }
 
     pub(super) fn global_scope_clone(&self) -> Result<HashMap<String, Value>, RuntimeError> {
