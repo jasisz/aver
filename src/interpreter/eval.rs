@@ -72,13 +72,13 @@ enum EvalCont {
         lowered: Rc<LoweredFunctionBody>,
         entries: SharedMapEntries,
         idx: usize,
-        map: HashMap<u64, (NanValue, NanValue)>,
+        map: crate::nan_value::PersistentMap,
     },
     MapValue {
         lowered: Rc<LoweredFunctionBody>,
         entries: SharedMapEntries,
         idx: usize,
-        map: HashMap<u64, (NanValue, NanValue)>,
+        map: crate::nan_value::PersistentMap,
         key: NanValue,
     },
     RecordCreate(RecordCreateProgress),
@@ -316,7 +316,13 @@ impl Interpreter {
             }
             LoweredExpr::MapLiteral(entries) => {
                 let entries = Rc::clone(entries);
-                self.resume_map(lowered, entries, 0, HashMap::new(), conts)
+                self.resume_map(
+                    lowered,
+                    entries,
+                    0,
+                    crate::nan_value::PersistentMap::new(),
+                    conts,
+                )
             }
             LoweredExpr::RecordCreate { type_name, fields } => {
                 let type_name = type_name.clone();
@@ -1090,7 +1096,7 @@ impl Interpreter {
         lowered: Rc<LoweredFunctionBody>,
         entries: SharedMapEntries,
         idx: usize,
-        map: HashMap<u64, (NanValue, NanValue)>,
+        map: crate::nan_value::PersistentMap,
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
         if idx >= entries.len() {

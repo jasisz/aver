@@ -38,6 +38,7 @@ clap = { version = "4", features = ["derive"] }
 colored = "2"
 thiserror = "1"
 toml = "0.8"
+im = "15"
 url = "2"
 
 [dev-dependencies]

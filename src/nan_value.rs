@@ -34,6 +34,9 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
+/// Persistent immutable map — O(1) clone via structural sharing.
+pub type PersistentMap = im::HashMap<u64, (NanValue, NanValue)>;
+
 use crate::value::FunctionValue;
 
 // ---------------------------------------------------------------------------
@@ -435,7 +438,7 @@ pub enum ArenaEntry {
     String(Rc<str>),
     List(Vec<NanValue>),
     Tuple(Vec<NanValue>),
-    Map(HashMap<u64, (NanValue, NanValue)>),
+    Map(PersistentMap),
     Record {
         type_id: u32,
         fields: Vec<NanValue>,
@@ -500,7 +503,7 @@ impl Arena {
     pub fn push_list(&mut self, items: Vec<NanValue>) -> u32 {
         self.push(ArenaEntry::List(items))
     }
-    pub fn push_map(&mut self, map: HashMap<u64, (NanValue, NanValue)>) -> u32 {
+    pub fn push_map(&mut self, map: PersistentMap) -> u32 {
         self.push(ArenaEntry::Map(map))
     }
     pub fn push_tuple(&mut self, items: Vec<NanValue>) -> u32 {
@@ -561,7 +564,7 @@ impl Arena {
             _ => panic!("Arena: expected Tuple at {}", index),
         }
     }
-    pub fn get_map(&self, index: u32) -> &HashMap<u64, (NanValue, NanValue)> {
+    pub fn get_map(&self, index: u32) -> &PersistentMap {
         match self.get(index) {
             ArenaEntry::Map(map) => map,
             _ => panic!("Arena: expected Map at {}", index),
@@ -912,7 +915,7 @@ impl NanValue {
                 NanValue::new_list(arena.push_list(items))
             }
             Value::Map(map) => {
-                let mut nv_map = HashMap::new();
+                let mut nv_map = PersistentMap::new();
                 for (k, v) in map {
                     let nk = NanValue::from_value(k, arena);
                     let nv = NanValue::from_value(v, arena);

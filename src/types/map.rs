@@ -337,7 +337,7 @@ fn empty_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErr
             args.len()
         )));
     }
-    let map_idx = arena.push_map(HashMap::new());
+    let map_idx = arena.push_map(crate::nan_value::PersistentMap::new());
     Ok(NanValue::new_map(map_idx))
 }
 
@@ -519,7 +519,7 @@ fn from_list_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtim
         ));
     }
     let items = arena.get_list(args[0].arena_index()).to_vec();
-    let mut out: HashMap<u64, (NanValue, NanValue)> = HashMap::new();
+    let mut out = crate::nan_value::PersistentMap::new();
     for (idx, pair) in items.iter().enumerate() {
         if !pair.is_tuple() {
             return Err(RuntimeError::Error(format!(
