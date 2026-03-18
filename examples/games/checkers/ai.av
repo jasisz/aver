@@ -109,7 +109,7 @@ verify evaluateBoard
 
 fn alphaBeta(board: List<List<CellContent>>, depth: Int, alpha: Int, beta: Int, isMax: Bool, color: Color, aiColor: Color) -> Int
     ? "Alpha-beta pruning search"
-    match depth == 0
+    match depth < 1
         true -> evaluateBoard(board, aiColor)
         false -> abAtDepth(board, depth, alpha, beta, isMax, color, aiColor)
 

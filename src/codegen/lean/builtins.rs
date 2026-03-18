@@ -83,10 +83,10 @@ pub fn emit_builtin_call(name: &str, args: &[Expr], ctx: &CodegenContext) -> Opt
                 paren_if_complex(&b)
             ))
         }
-        "Int.rem" => {
+        "Int.rem" | "Int.mod" => {
             let a = super::expr::emit_expr(&args[0], ctx);
             let b = super::expr::emit_expr(&args[1], ctx);
-            Some(format!("({} % {})", a, b))
+            Some(format!("(Except.ok ({} % {}) : Except String Int)", a, b))
         }
 
         "Int.fromString" => {

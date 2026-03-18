@@ -224,7 +224,7 @@ verify filterByLen
     List.len(filterByLen([[Board.pt(0, 0), Board.pt(1, 1)], [Board.pt(0, 0), Board.pt(1, 1), Board.pt(2, 2)]], 3, 0)) => 1
 
 fn longestJumps(jumps: List<List<Point>>) -> List<List<Point>>
-    ? "Keep only jump chains with maximum captures (international draughts rule)"
+    ? "Keep only jump chains with maximum captures (forced maximum capture rule)"
     filterByLen(jumps, maxLen(jumps, 0, 0), 0)
 
 verify longestJumps
@@ -232,8 +232,9 @@ verify longestJumps
 
 fn legalMoves(board: List<List<CellContent>>, color: Color) -> List<List<Point>>
     ? "All legal turns: if jumps exist, only longest jumps (maximum capture); otherwise steps"
-    match List.len(allJumps(board, color)) > 0
-        true -> longestJumps(allJumps(board, color))
+    jumps = allJumps(board, color)
+    match List.len(jumps) > 0
+        true -> longestJumps(jumps)
         false -> allSteps(board, color)
 
 verify legalMoves

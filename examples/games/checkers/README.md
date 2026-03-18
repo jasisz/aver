@@ -1,6 +1,6 @@
 # Checkers
 
-International draughts on 8×8 board with alpha-beta AI opponent.
+Checkers on 8×8 board with backward captures, maximum capture rule, and alpha-beta AI opponent.
 
 ## Run
 

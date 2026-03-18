@@ -28,13 +28,15 @@ record GameState
     pieceMoves: List<List<Point>>
 
 fn parseDepth(args: List<String>) -> Int
-    ? "Parse depth from first CLI arg, default 6"
+    ? "Parse depth from first CLI arg, default 6, minimum 1"
     match List.get(args, 0)
-        Option.Some(s) -> Result.withDefault(Int.fromString(s), 6)
+        Option.Some(s) -> Int.max(1, Result.withDefault(Int.fromString(s), 6))
         Option.None -> 6
 
 verify parseDepth
     parseDepth([]) => 6
+    parseDepth(["0"]) => 1
+    parseDepth(["-5"]) => 1
     parseDepth(["4"]) => 4
 
 fn initState(depth: Int) -> GameState
