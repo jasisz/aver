@@ -189,8 +189,18 @@ fn decision_symbol_known(
     name: &str,
     declared_symbols: &std::collections::HashSet<String>,
     known_effect_symbols: &std::collections::HashSet<String>,
+    dep_modules: &std::collections::HashSet<String>,
 ) -> bool {
-    declared_symbols.contains(name) || known_effect_symbols.contains(name)
+    if declared_symbols.contains(name) || known_effect_symbols.contains(name) {
+        return true;
+    }
+    // Allow qualified names like "Logic.GameState" when "Logic" is a known dependency.
+    if let Some(prefix) = name.split('.').next()
+        && dep_modules.contains(prefix)
+    {
+        return true;
+    }
+    false
 }
 
 pub fn check_module_intent(items: &[TopLevel]) -> ModuleCheckFindings {
@@ -213,6 +223,20 @@ pub fn check_module_intent_with_sigs_in(
     let mut warnings = Vec::new();
     let declared_symbols = collect_declared_symbols(items);
     let known_effect_symbols = collect_known_effect_symbols(fn_sigs);
+    let dep_modules: std::collections::HashSet<String> = items
+        .iter()
+        .filter_map(|item| {
+            if let TopLevel::Module(m) = item {
+                Some(m.depends.iter().map(|d| {
+                    // "Data.Fibonacci" → last segment "Fibonacci" is the namespace name
+                    d.rsplit('.').next().unwrap_or(d).to_string()
+                }))
+            } else {
+                None
+            }
+        })
+        .flatten()
+        .collect();
     let module_name = items.iter().find_map(|item| {
         if let TopLevel::Module(m) = item {
             Some(m.name.clone())
@@ -421,7 +445,12 @@ pub fn check_module_intent_with_sigs_in(
             }
             TopLevel::Decision(d) => {
                 if let DecisionImpact::Symbol(name) = &d.chosen
-                    && !decision_symbol_known(name, &declared_symbols, &known_effect_symbols)
+                    && !decision_symbol_known(
+                        name,
+                        &declared_symbols,
+                        &known_effect_symbols,
+                        &dep_modules,
+                    )
                 {
                     errors.push(CheckFinding {
                             line: d.line,
@@ -435,7 +464,12 @@ pub fn check_module_intent_with_sigs_in(
                 }
                 for rejected in &d.rejected {
                     if let DecisionImpact::Symbol(name) = rejected
-                        && !decision_symbol_known(name, &declared_symbols, &known_effect_symbols)
+                        && !decision_symbol_known(
+                            name,
+                            &declared_symbols,
+                            &known_effect_symbols,
+                            &dep_modules,
+                        )
                     {
                         errors.push(CheckFinding {
                                 line: d.line,
@@ -450,7 +484,12 @@ pub fn check_module_intent_with_sigs_in(
                 }
                 for impact in &d.impacts {
                     if let DecisionImpact::Symbol(name) = impact
-                        && !decision_symbol_known(name, &declared_symbols, &known_effect_symbols)
+                        && !decision_symbol_known(
+                            name,
+                            &declared_symbols,
+                            &known_effect_symbols,
+                            &dep_modules,
+                        )
                     {
                         errors.push(CheckFinding {
                                 line: d.line,

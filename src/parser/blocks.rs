@@ -595,7 +595,8 @@ impl Parser {
         match self.current().kind.clone() {
             TokenKind::Ident(s) => {
                 self.advance();
-                Ok(DecisionImpact::Symbol(s))
+                let sym = self.collect_dotted_name(s);
+                Ok(DecisionImpact::Symbol(sym))
             }
             TokenKind::Str(s) => {
                 self.advance();
@@ -619,8 +620,9 @@ impl Parser {
             while !self.check_exact(&TokenKind::RBracket) && !self.is_eof() {
                 match self.current().kind.clone() {
                     TokenKind::Ident(s) => {
-                        items.push(DecisionImpact::Symbol(s));
                         self.advance();
+                        let sym = self.collect_dotted_name(s);
+                        items.push(DecisionImpact::Symbol(sym));
                     }
                     TokenKind::Str(s) => {
                         items.push(DecisionImpact::Semantic(s));
@@ -643,5 +645,21 @@ impl Parser {
         }
 
         Ok(items)
+    }
+
+    /// Consume `.Ident` suffixes after an initial identifier to build `"Foo.Bar.Baz"`.
+    fn collect_dotted_name(&mut self, prefix: String) -> String {
+        let mut name = prefix;
+        while self.check_exact(&TokenKind::Dot) {
+            self.advance();
+            if let TokenKind::Ident(s) = self.current().kind.clone() {
+                name.push('.');
+                name.push_str(&s);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        name
     }
 }

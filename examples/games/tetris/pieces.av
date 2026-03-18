@@ -1,36 +1,12 @@
 module Pieces
     intent =
         "Tetris piece definitions: offsets, rotations, colors."
-        "Seven standard tetrominoes as a sum type."
+        "Seven standard tetrominoes using PieceKind from Board."
     depends [Board]
-
-type PieceKind
-    I
-    O
-    T
-    S
-    Z
-    J
-    L
 
 record Piece
     kind: PieceKind
     rotation: Int
-
-fn kindToInt(k: PieceKind) -> Int
-    ? "Convert piece kind to integer for board cell color (1-7)"
-    match k
-        PieceKind.I -> 1
-        PieceKind.O -> 2
-        PieceKind.T -> 3
-        PieceKind.S -> 4
-        PieceKind.Z -> 5
-        PieceKind.J -> 6
-        PieceKind.L -> 7
-
-verify kindToInt
-    kindToInt(PieceKind.I) => 1
-    kindToInt(PieceKind.L) => 7
 
 fn intToKind(n: Int) -> PieceKind
     ? "Convert random int (0-6) to piece kind"
@@ -44,8 +20,8 @@ fn intToKind(n: Int) -> PieceKind
         _ -> PieceKind.L
 
 verify intToKind
-    kindToInt(intToKind(0)) => 1
-    kindToInt(intToKind(6)) => 7
+    intToKind(0) => PieceKind.I
+    intToKind(6) => PieceKind.L
 
 fn iOffsets(rot: Int) -> List<Point>
     ? "I-piece offsets"

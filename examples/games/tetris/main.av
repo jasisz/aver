@@ -8,12 +8,12 @@ decision ImmutableBoardRepresentation
     date = "2026-03-17"
     author = "szymon"
     reason =
-        "Board as List<List<Int>> enables verify blocks on pure functions like"
+        "Board as List<List<Option<PieceKind>>> enables verify blocks on pure functions like"
         "clearLines and checkCollision. Immutable state threading with TCO"
         "keeps the game loop verifiable and stack-safe."
     chosen = "ImmutableFlatGrid"
     rejected = ["MutableArray", "SparseMap"]
-    impacts = ["Logic.GameState", "Logic.placePiece", "Board.clearLines", "Logic.checkCollision"]
+    impacts = [Logic.GameState, Logic.placePiece, Board.clearLines, Logic.checkCollision]
 
 fn drawAt(x: Int, y: Int, ch: String) -> Unit
     ? "Print a double-wide cell at game coordinates"
@@ -57,41 +57,41 @@ fn renderBorder() -> Unit
     renderBorderV(1, 21, 11)
     Terminal.resetColor()
 
-fn renderCellAt(board: List<List<Int>>, x: Int, y: Int) -> Unit
+fn renderCellAt(board: List<List<Option<PieceKind>>>, x: Int, y: Int) -> Unit
     ? "Draw one board cell if non-empty"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    match Board.getCell(board, x, y) == 0
-        true -> drawAt(0, 0, "")
-        false -> renderColorCell(x, y, Board.getCell(board, x, y))
+    match Board.getCell(board, x, y)
+        Option.None -> drawAt(0, 0, "")
+        Option.Some(kind) -> renderColorCell(x, y, kind)
 
-fn renderColorCell(x: Int, y: Int, val: Int) -> Unit
+fn renderColorCell(x: Int, y: Int, kind: PieceKind) -> Unit
     ? "Draw a colored cell"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor(Pieces.pieceColor(Pieces.intToKind(val - 1)))
+    Terminal.setColor(Pieces.pieceColor(kind))
     drawAt(x + 1, y + 1, "██")
     Terminal.resetColor()
 
-fn renderRowCells(board: List<List<Int>>, x: Int, y: Int) -> Unit
+fn renderRowCells(board: List<List<Option<PieceKind>>>, x: Int, y: Int) -> Unit
     ? "Render cells in one row"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match x == 10
         true -> drawAt(0, 0, "")
         false -> renderRowCellNext(board, x, y)
 
-fn renderRowCellNext(board: List<List<Int>>, x: Int, y: Int) -> Unit
+fn renderRowCellNext(board: List<List<Option<PieceKind>>>, x: Int, y: Int) -> Unit
     ? "Render one cell and continue row"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     renderCellAt(board, x, y)
     renderRowCells(board, x + 1, y)
 
-fn renderRows(board: List<List<Int>>, y: Int) -> Unit
+fn renderRows(board: List<List<Option<PieceKind>>>, y: Int) -> Unit
     ? "Render all board rows"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match y == 20
         true -> drawAt(0, 0, "")
         false -> renderRowsNext(board, y)
 
-fn renderRowsNext(board: List<List<Int>>, y: Int) -> Unit
+fn renderRowsNext(board: List<List<Option<PieceKind>>>, y: Int) -> Unit
     ? "Render one row and continue"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     renderRowCells(board, 0, y)
@@ -175,12 +175,12 @@ fn lockAndSpawn(state: GameState) -> GameState
     ! [Random.int]
     lockBoard(state, Logic.placePiece(state.board, state.piece, state.px, state.py))
 
-fn lockBoard(state: GameState, newBoard: List<List<Int>>) -> GameState
+fn lockBoard(state: GameState, newBoard: List<List<Option<PieceKind>>>) -> GameState
     ? "Process locked board: clear, score, spawn, check game over"
     ! [Random.int]
     lockFinish(state, Board.countCleared(newBoard), Board.clearLines(newBoard))
 
-fn lockFinish(state: GameState, cleared: Int, clearedBoard: List<List<Int>>) -> GameState
+fn lockFinish(state: GameState, cleared: Int, clearedBoard: List<List<Option<PieceKind>>>) -> GameState
     ? "Update score/level, spawn, check game over"
     ! [Random.int]
     Logic.lockSpawn(spawnPiece(GameState.update(state, board = clearedBoard, score = state.score + Logic.computeScore(cleared, state.level), level = (state.lines + cleared) / 10, lines = state.lines + cleared, tickMs = Int.max(50, 500 - ((state.lines + cleared) / 10) * 50))))

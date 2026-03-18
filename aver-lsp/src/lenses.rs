@@ -4,6 +4,15 @@ use serde_json::json;
 use tower_lsp_server::ls_types::{CodeLens, Command, Position, Range};
 
 use aver::ast::{DecisionImpact, TopLevel, TypeDef, VerifyKind};
+
+/// Match `Logic.GameState` against fn name `GameState` (qualified suffix match).
+fn impact_matches_fn(impact_symbol: &str, fn_name: &str) -> bool {
+    impact_symbol == fn_name
+        || impact_symbol
+            .rsplit('.')
+            .next()
+            .is_some_and(|suffix| suffix == fn_name)
+}
 use aver::checker::{index_decisions, merge_verify_blocks};
 use aver::types::checker::run_type_check_full;
 use aver::verify_law::canonical_spec_ref;
@@ -74,7 +83,7 @@ pub fn code_lenses(source: &str, base_dir: Option<&str>, uri: &str) -> Vec<CodeL
                     .iter()
                     .filter(|decision| {
                         decision.impacts.iter().any(
-                            |impact| matches!(impact, DecisionImpact::Symbol(symbol) if symbol == &fd.name),
+                            |impact| matches!(impact, DecisionImpact::Symbol(symbol) if impact_matches_fn(symbol, &fd.name)),
                         )
                     })
                     .map(|decision| decision.name.as_str())
@@ -84,7 +93,7 @@ pub fn code_lenses(source: &str, base_dir: Option<&str>, uri: &str) -> Vec<CodeL
                         .iter()
                         .find(|decision| {
                             decision.impacts.iter().any(|impact| {
-                                matches!(impact, DecisionImpact::Symbol(symbol) if symbol == &fd.name)
+                                matches!(impact, DecisionImpact::Symbol(symbol) if impact_matches_fn(symbol, &fd.name))
                             })
                         })
                         .map(|decision| decision.line)
