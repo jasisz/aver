@@ -16,7 +16,9 @@
 ///
 /// Effects are granular per method.
 use std::collections::HashMap;
+use std::rc::Rc;
 
+use crate::nan_value::{Arena, NanValue};
 use crate::value::{RuntimeError, Value};
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -174,4 +176,32 @@ fn set_color(args: &[Value]) -> Result<Value, RuntimeError> {
     };
     aver_rt::terminal_set_color(color).map_err(RuntimeError::Error)?;
     Ok(Value::Unit)
+}
+
+// ─── NanValue-native API ─────────────────────────────────────────────────────
+
+pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
+    let methods = &[
+        "enableRawMode", "disableRawMode", "clear", "moveTo", "print",
+        "setColor", "resetColor", "readKey", "size", "hideCursor", "showCursor", "flush",
+    ];
+    let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
+    for method in methods {
+        let idx = arena.push_builtin(&format!("Terminal.{}", method));
+        members.push((Rc::from(*method), NanValue::new_builtin(idx)));
+    }
+    let ns_idx = arena.push(crate::nan_value::ArenaEntry::Namespace {
+        name: Rc::from("Terminal"),
+        members,
+    });
+    global.insert("Terminal".to_string(), NanValue::new_namespace(ns_idx));
+}
+
+/// Bridge: convert NanValue args to Value, call old implementation, convert result back.
+pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Result<NanValue, RuntimeError>> {
+    // Check ownership
+    if !name.starts_with("Terminal.") { return None; }
+    let old_args: Vec<Value> = args.iter().map(|nv| nv.to_value(arena)).collect();
+    let result = call(name, &old_args)?;
+    Some(result.map(|v| NanValue::from_value(&v, arena)))
 }

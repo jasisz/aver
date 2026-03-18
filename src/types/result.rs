@@ -7,6 +7,7 @@
 /// No effects required.
 use std::collections::HashMap;
 
+use crate::nan_value::{Arena, NanValue};
 use crate::value::{RuntimeError, Value};
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -47,5 +48,28 @@ fn with_default(args: &[Value]) -> Result<Value, RuntimeError> {
         _ => Err(RuntimeError::Error(
             "Result.withDefault: first argument must be a Result".to_string(),
         )),
+    }
+}
+
+// ─── NanValue-native API ─────────────────────────────────────────────────────
+
+pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Result<NanValue, RuntimeError>> {
+    match name {
+        "Result.withDefault" => Some(with_default_nv(args, arena)),
+        _ => None,
+    }
+}
+
+fn with_default_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!("Result.withDefault() takes 2 arguments (result, default), got {}", args.len())));
+    }
+    let v = args[0];
+    if v.is_ok() {
+        Ok(arena.get_boxed(v.wrapper_index()))
+    } else if v.is_err() {
+        Ok(args[1])
+    } else {
+        Err(RuntimeError::Error("Result.withDefault: first argument must be a Result".to_string()))
     }
 }

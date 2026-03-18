@@ -8,7 +8,9 @@
 /// - Env.get
 /// - Env.set
 use std::collections::HashMap;
+use std::rc::Rc;
 
+use crate::nan_value::{Arena, NanValue};
 use crate::value::{RuntimeError, Value};
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -84,4 +86,55 @@ fn set(args: &[Value]) -> Result<Value, RuntimeError> {
         return Err(RuntimeError::Error(e));
     }
     Ok(Value::Unit)
+}
+
+// ─── NanValue-native API ─────────────────────────────────────────────────────
+
+pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
+    let methods = &["get", "set"];
+    let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
+    for method in methods {
+        let idx = arena.push_builtin(&format!("Env.{}", method));
+        members.push((Rc::from(*method), NanValue::new_builtin(idx)));
+    }
+    let ns_idx = arena.push(crate::nan_value::ArenaEntry::Namespace {
+        name: Rc::from("Env"),
+        members,
+    });
+    global.insert("Env".to_string(), NanValue::new_namespace(ns_idx));
+}
+
+pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Result<NanValue, RuntimeError>> {
+    match name {
+        "Env.get" => Some(get_nv(args, arena)),
+        "Env.set" => Some(set_nv(args, arena)),
+        _ => None,
+    }
+}
+
+fn get_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if args.len() != 1 { return Err(RuntimeError::Error(format!("Env.get() takes 1 argument (key), got {}", args.len()))); }
+    if !args[0].is_string() { return Err(RuntimeError::Error("Env.get: key must be a String".to_string())); }
+    let key = arena.get_string(args[0].arena_index()).to_string();
+    match aver_rt::env_get(&key) {
+        Some(v) => {
+            let s_idx = arena.push_string(&v);
+            let inner = NanValue::new_string(s_idx);
+            let box_idx = arena.push_boxed(inner);
+            Ok(NanValue::new_some(box_idx))
+        }
+        None => Ok(NanValue::NONE),
+    }
+}
+
+fn set_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if args.len() != 2 { return Err(RuntimeError::Error(format!("Env.set() takes 2 arguments (key, value), got {}", args.len()))); }
+    if !args[0].is_string() { return Err(RuntimeError::Error("Env.set: key must be a String".to_string())); }
+    if !args[1].is_string() { return Err(RuntimeError::Error("Env.set: value must be a String".to_string())); }
+    let key = arena.get_string(args[0].arena_index()).to_string();
+    let value = arena.get_string(args[1].arena_index()).to_string();
+    if let Err(e) = aver_rt::env_set(&key, &value) {
+        return Err(RuntimeError::Error(e));
+    }
+    Ok(NanValue::UNIT)
 }

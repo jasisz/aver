@@ -810,7 +810,10 @@ impl Interpreter {
         match fn_val {
             Value::Builtin(name) => {
                 self.ensure_effects_allowed(&name, Self::builtin_effects(&name).iter().copied())?;
-                Ok(CallDispatch::Immediate(self.call_builtin(&name, &args)))
+                // Use NanValue-native path to avoid Value↔NanValue conversion overhead
+                let nv_args: Vec<NanValue> = args.iter().map(|v| NanValue::from_value(v, &mut self.arena)).collect();
+                let nv_result = self.call_builtin_nv(&name, &nv_args);
+                Ok(CallDispatch::Immediate(nv_result.map(|nv| nv.to_value(&self.arena))))
             }
             Value::Fn(function) => {
                 if args.len() != function.params.len() {

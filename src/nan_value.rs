@@ -172,6 +172,11 @@ impl NanValue {
         if b { Self::TRUE } else { Self::FALSE }
     }
 
+    #[inline]
+    pub fn as_bool(self) -> bool {
+        self.0 == Self::TRUE.0
+    }
+
     // -- Wrappers (Some/Ok/Err) -------------------------------------------
 
     #[inline]
@@ -299,6 +304,22 @@ impl NanValue {
     pub fn is_variant(self) -> bool {
         self.is_nan_boxed() && self.tag() == TAG_VARIANT
     }
+    #[inline]
+    pub fn is_map(self) -> bool {
+        self.is_nan_boxed() && self.tag() == TAG_MAP
+    }
+    #[inline]
+    pub fn is_tuple(self) -> bool {
+        self.is_nan_boxed() && self.tag() == TAG_TUPLE
+    }
+    #[inline]
+    pub fn is_builtin(self) -> bool {
+        self.is_nan_boxed() && self.tag() == TAG_BUILTIN
+    }
+    #[inline]
+    pub fn is_namespace(self) -> bool {
+        self.is_nan_boxed() && self.tag() == TAG_NAMESPACE
+    }
 
     pub fn type_name(self) -> &'static str {
         if self.is_float() {
@@ -335,6 +356,22 @@ impl NanValue {
     #[inline]
     pub fn bits(self) -> u64 {
         self.0
+    }
+
+    /// Content-based hash for use as map key. For inline values (int, float, bool),
+    /// uses bits(). For arena-backed strings, hashes the string content so that
+    /// two NanValues for the same string content produce the same key regardless
+    /// of arena index.
+    pub fn map_key_hash(self, arena: &Arena) -> u64 {
+        if self.is_string() {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            3u8.hash(&mut hasher); // tag discriminant to avoid collisions with ints
+            arena.get_string(self.arena_index()).hash(&mut hasher);
+            hasher.finish()
+        } else {
+            self.bits()
+        }
     }
 }
 
@@ -448,6 +485,9 @@ impl Arena {
     }
     pub fn push_list(&mut self, items: Vec<NanValue>) -> u32 {
         self.push(ArenaEntry::List(items))
+    }
+    pub fn push_map(&mut self, map: HashMap<u64, (NanValue, NanValue)>) -> u32 {
+        self.push(ArenaEntry::Map(map))
     }
     pub fn push_tuple(&mut self, items: Vec<NanValue>) -> u32 {
         self.push(ArenaEntry::Tuple(items))
@@ -835,7 +875,7 @@ impl NanValue {
                 for (k, v) in map {
                     let nk = NanValue::from_value(k, arena);
                     let nv = NanValue::from_value(v, arena);
-                    nv_map.insert(nk.bits(), (nk, nv));
+                    nv_map.insert(nk.map_key_hash(arena), (nk, nv));
                 }
                 let idx = arena.push(ArenaEntry::Map(nv_map));
                 NanValue::new_map(idx)

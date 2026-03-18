@@ -8,6 +8,7 @@
 /// No effects required.
 use std::collections::HashMap;
 
+use crate::nan_value::{Arena, NanValue};
 use crate::value::{RuntimeError, Value};
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -67,5 +68,45 @@ fn to_result(args: &[Value]) -> Result<Value, RuntimeError> {
         _ => Err(RuntimeError::Error(
             "Option.toResult: first argument must be an Option".to_string(),
         )),
+    }
+}
+
+// ─── NanValue-native API ─────────────────────────────────────────────────────
+
+pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Result<NanValue, RuntimeError>> {
+    match name {
+        "Option.withDefault" => Some(with_default_nv(args, arena)),
+        "Option.toResult" => Some(to_result_nv(args, arena)),
+        _ => None,
+    }
+}
+
+fn with_default_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!("Option.withDefault() takes 2 arguments (option, default), got {}", args.len())));
+    }
+    let v = args[0];
+    if v.is_some() {
+        Ok(arena.get_boxed(v.wrapper_index()))
+    } else if v.is_none() {
+        Ok(args[1])
+    } else {
+        Err(RuntimeError::Error("Option.withDefault: first argument must be an Option".to_string()))
+    }
+}
+
+fn to_result_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!("Option.toResult() takes 2 arguments (option, err), got {}", args.len())));
+    }
+    let v = args[0];
+    if v.is_some() {
+        // Some(inner) -> Ok(inner) — reuse the same boxed index
+        Ok(NanValue::new_ok(v.wrapper_index()))
+    } else if v.is_none() {
+        let box_idx = arena.push_boxed(args[1]);
+        Ok(NanValue::new_err(box_idx))
+    } else {
+        Err(RuntimeError::Error("Option.toResult: first argument must be an Option".to_string()))
     }
 }

@@ -8,76 +8,64 @@ impl Default for Interpreter {
 
 impl Interpreter {
     pub fn new() -> Self {
-        // Build globals using old Value, then convert to NanValue.
-        // Services still produce old Value — converted at registration.
-        let mut old_global: HashMap<String, Value> = HashMap::new();
         let mut arena = Arena::new();
-
-        args::register(&mut old_global);
-        console::register(&mut old_global);
-        http::register(&mut old_global);
-        http_server::register(&mut old_global);
-        disk::register(&mut old_global);
-        env::register(&mut old_global);
-        random::register(&mut old_global);
-        tcp::register(&mut old_global);
-        #[cfg(feature = "terminal")]
-        terminal::register(&mut old_global);
-        time::register(&mut old_global);
-        bool::register(&mut old_global);
-        int::register(&mut old_global);
-        float::register(&mut old_global);
-        string::register(&mut old_global);
-        list::register(&mut old_global);
-        map::register(&mut old_global);
-        char::register(&mut old_global);
-        byte::register(&mut old_global);
-
-        // Result and Option namespaces
-        {
-            let mut members = HashMap::new();
-            members.insert(
-                "Ok".to_string(),
-                Value::Builtin("__ctor:Result.Ok".to_string()),
-            );
-            members.insert(
-                "Err".to_string(),
-                Value::Builtin("__ctor:Result.Err".to_string()),
-            );
-            for (name, builtin_name) in result::extra_members() {
-                members.insert(name.to_string(), Value::Builtin(builtin_name));
-            }
-            old_global.insert(
-                "Result".to_string(),
-                Value::Namespace {
-                    name: "Result".to_string(),
-                    members,
-                },
-            );
-        }
-        {
-            let mut members = HashMap::new();
-            members.insert(
-                "Some".to_string(),
-                Value::Builtin("__ctor:Option.Some".to_string()),
-            );
-            members.insert("None".to_string(), Value::None);
-            for (name, builtin_name) in option::extra_members() {
-                members.insert(name.to_string(), Value::Builtin(builtin_name));
-            }
-            old_global.insert(
-                "Option".to_string(),
-                Value::Namespace {
-                    name: "Option".to_string(),
-                    members,
-                },
-            );
-        }
-
-        // Convert old Value globals to NanValue
         let mut global: HashMap<String, NanValue> = HashMap::new();
-        for (name, val) in &old_global {
-            global.insert(name.clone(), NanValue::from_value(val, &mut arena));
+
+        // Register all namespaces directly as NanValue (no Value→NanValue conversion)
+        args::register_nv(&mut global, &mut arena);
+        console::register_nv(&mut global, &mut arena);
+        http::register_nv(&mut global, &mut arena);
+        http_server::register_nv(&mut global, &mut arena);
+        disk::register_nv(&mut global, &mut arena);
+        env::register_nv(&mut global, &mut arena);
+        random::register_nv(&mut global, &mut arena);
+        tcp::register_nv(&mut global, &mut arena);
+        #[cfg(feature = "terminal")]
+        terminal::register_nv(&mut global, &mut arena);
+        time::register_nv(&mut global, &mut arena);
+        bool::register_nv(&mut global, &mut arena);
+        int::register_nv(&mut global, &mut arena);
+        float::register_nv(&mut global, &mut arena);
+        string::register_nv(&mut global, &mut arena);
+        list::register_nv(&mut global, &mut arena);
+        map::register_nv(&mut global, &mut arena);
+        char::register_nv(&mut global, &mut arena);
+        byte::register_nv(&mut global, &mut arena);
+
+        // Result namespace
+        {
+            use std::rc::Rc;
+            let mut members: Vec<(Rc<str>, NanValue)> = Vec::new();
+            let ok_idx = arena.push_builtin("__ctor:Result.Ok");
+            members.push((Rc::from("Ok"), NanValue::new_builtin(ok_idx)));
+            let err_idx = arena.push_builtin("__ctor:Result.Err");
+            members.push((Rc::from("Err"), NanValue::new_builtin(err_idx)));
+            for (name, builtin_name) in result::extra_members() {
+                let idx = arena.push_builtin(&builtin_name);
+                members.push((Rc::from(name), NanValue::new_builtin(idx)));
+            }
+            let ns_idx = arena.push(crate::nan_value::ArenaEntry::Namespace {
+                name: Rc::from("Result"),
+                members,
+            });
+            global.insert("Result".to_string(), NanValue::new_namespace(ns_idx));
+        }
+        // Option namespace
+        {
+            use std::rc::Rc;
+            let mut members: Vec<(Rc<str>, NanValue)> = Vec::new();
+            let some_idx = arena.push_builtin("__ctor:Option.Some");
+            members.push((Rc::from("Some"), NanValue::new_builtin(some_idx)));
+            members.push((Rc::from("None"), NanValue::NONE));
+            for (name, builtin_name) in option::extra_members() {
+                let idx = arena.push_builtin(&builtin_name);
+                members.push((Rc::from(name), NanValue::new_builtin(idx)));
+            }
+            let ns_idx = arena.push(crate::nan_value::ArenaEntry::Namespace {
+                name: Rc::from("Option"),
+                members,
+            });
+            global.insert("Option".to_string(), NanValue::new_namespace(ns_idx));
         }
 
         let mut record_schemas = HashMap::new();

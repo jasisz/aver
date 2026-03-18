@@ -8,7 +8,9 @@
 ///
 /// Each method requires its own exact effect (`Console.print`, `Console.error`, etc.).
 use std::collections::HashMap;
+use std::rc::Rc;
 
+use crate::nan_value::{Arena, NanValue};
 use crate::value::{RuntimeError, Value, aver_display};
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -81,5 +83,61 @@ fn read_line(args: &[Value]) -> Result<Value, RuntimeError> {
     match aver_rt::read_line() {
         Ok(line) => Ok(Value::Ok(Box::new(Value::Str(line)))),
         Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
+    }
+}
+
+// ─── NanValue-native API ─────────────────────────────────────────────────────
+
+pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
+    let methods = &["print", "error", "warn", "readLine"];
+    let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
+    for method in methods {
+        let idx = arena.push_builtin(&format!("Console.{}", method));
+        members.push((Rc::from(*method), NanValue::new_builtin(idx)));
+    }
+    let ns_idx = arena.push(crate::nan_value::ArenaEntry::Namespace {
+        name: Rc::from("Console"),
+        members,
+    });
+    global.insert("Console".to_string(), NanValue::new_namespace(ns_idx));
+}
+
+pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Result<NanValue, RuntimeError>> {
+    match name {
+        "Console.print" => Some(one_msg_nv(name, args, arena, |s| { println!("{}", s); })),
+        "Console.error" => Some(one_msg_nv(name, args, arena, |s| { eprintln!("{}", s); })),
+        "Console.warn" => Some(one_msg_nv(name, args, arena, |s| { eprintln!("[warn] {}", s); })),
+        "Console.readLine" => Some(read_line_nv(args, arena)),
+        _ => None,
+    }
+}
+
+fn one_msg_nv(name: &str, args: &[NanValue], arena: &mut Arena, emit: impl Fn(&str)) -> Result<NanValue, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::Error(format!("{}() takes 1 argument, got {}", name, args.len())));
+    }
+    if let Some(s) = args[0].display(arena) {
+        emit(&s);
+    }
+    Ok(NanValue::UNIT)
+}
+
+fn read_line_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if !args.is_empty() {
+        return Err(RuntimeError::Error(format!("Console.readLine() takes 0 arguments, got {}", args.len())));
+    }
+    match aver_rt::read_line() {
+        Ok(line) => {
+            let s_idx = arena.push_string(&line);
+            let inner = NanValue::new_string(s_idx);
+            let box_idx = arena.push_boxed(inner);
+            Ok(NanValue::new_ok(box_idx))
+        }
+        Err(e) => {
+            let s_idx = arena.push_string(&e);
+            let inner = NanValue::new_string(s_idx);
+            let box_idx = arena.push_boxed(inner);
+            Ok(NanValue::new_err(box_idx))
+        }
     }
 }

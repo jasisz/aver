@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use aver_rt::{AverList, Header, HttpRequest, HttpResponse};
 
+use crate::nan_value::{Arena, NanValue};
 use crate::value::{RuntimeError, Value, list_from_vec, list_view};
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -21,6 +23,19 @@ pub fn register(global: &mut HashMap<String, Value>) {
             members,
         },
     );
+}
+
+pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
+    let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(2);
+    let idx1 = arena.push_builtin("HttpServer.listen");
+    members.push((Rc::from("listen"), NanValue::new_builtin(idx1)));
+    let idx2 = arena.push_builtin("HttpServer.listenWith");
+    members.push((Rc::from("listenWith"), NanValue::new_builtin(idx2)));
+    let ns_idx = arena.push(crate::nan_value::ArenaEntry::Namespace {
+        name: Rc::from("HttpServer"),
+        members,
+    });
+    global.insert("HttpServer".to_string(), NanValue::new_namespace(ns_idx));
 }
 
 pub fn effects(name: &str) -> &'static [&'static str] {

@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 
+use crate::nan_value::{Arena, NanValue};
 use crate::value::{RuntimeError, Value};
 use aver_rt::AverList;
 
@@ -46,4 +48,41 @@ fn get_args(args: &[Value], cli_args: &[String]) -> Result<Value, RuntimeError> 
     }
     let list_vals: Vec<Value> = cli_args.iter().map(|s| Value::Str(s.clone())).collect();
     Ok(Value::List(AverList::from_vec(list_vals)))
+}
+
+// ─── NanValue-native API ─────────────────────────────────────────────────────
+
+pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
+    let idx = arena.push_builtin("Args.get");
+    let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(1);
+    members.push((Rc::from("get"), NanValue::new_builtin(idx)));
+    let ns_idx = arena.push(crate::nan_value::ArenaEntry::Namespace {
+        name: Rc::from("Args"),
+        members,
+    });
+    global.insert("Args".to_string(), NanValue::new_namespace(ns_idx));
+}
+
+pub fn call_nv(
+    name: &str,
+    args: &[NanValue],
+    cli_args: &[String],
+    arena: &mut Arena,
+) -> Option<Result<NanValue, RuntimeError>> {
+    match name {
+        "Args.get" => Some(get_args_nv(args, cli_args, arena)),
+        _ => None,
+    }
+}
+
+fn get_args_nv(args: &[NanValue], cli_args: &[String], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if !args.is_empty() {
+        return Err(RuntimeError::Error(format!("Args.get() takes 0 arguments, got {}", args.len())));
+    }
+    let items: Vec<NanValue> = cli_args.iter().map(|s| {
+        let idx = arena.push_string(s);
+        NanValue::new_string(idx)
+    }).collect();
+    let list_idx = arena.push_list(items);
+    Ok(NanValue::new_list(list_idx))
 }

@@ -12,9 +12,11 @@
 ///
 /// Each method requires its own exact effect (`Tcp.send`, `Tcp.ping`, etc.).
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use aver_rt::TcpConnection;
 
+use crate::nan_value::{Arena, NanValue};
 use crate::value::{RuntimeError, Value};
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -223,4 +225,30 @@ fn int_arg(val: &Value, msg: &str) -> Result<i64, RuntimeError> {
         ))),
         _ => Err(RuntimeError::Error(msg.to_string())),
     }
+}
+
+// ─── NanValue-native API ─────────────────────────────────────────────────────
+
+pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
+    let methods = &["send", "ping", "connect", "writeLine", "readLine", "close"];
+    let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
+    for method in methods {
+        let idx = arena.push_builtin(&format!("Tcp.{}", method));
+        members.push((Rc::from(*method), NanValue::new_builtin(idx)));
+    }
+    let ns_idx = arena.push(crate::nan_value::ArenaEntry::Namespace {
+        name: Rc::from("Tcp"),
+        members,
+    });
+    global.insert("Tcp".to_string(), NanValue::new_namespace(ns_idx));
+}
+
+/// Bridge: convert NanValue args to Value, call old implementation, convert result back.
+pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Result<NanValue, RuntimeError>> {
+    if !matches!(name, "Tcp.send" | "Tcp.ping" | "Tcp.connect" | "Tcp.writeLine" | "Tcp.readLine" | "Tcp.close") {
+        return None;
+    }
+    let old_args: Vec<Value> = args.iter().map(|nv| nv.to_value(arena)).collect();
+    let result = call(name, &old_args)?;
+    Some(result.map(|v| NanValue::from_value(&v, arena)))
 }

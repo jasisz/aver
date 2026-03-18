@@ -17,7 +17,9 @@
 /// No effects required.
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::rc::Rc;
 
+use crate::nan_value::{Arena, NanValue};
 use crate::value::{RuntimeError, Value, aver_repr, list_from_vec, list_view};
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -269,4 +271,173 @@ fn three_args<'a>(name: &str, args: &'a [Value]) -> Result<[&'a Value; 3], Runti
         )));
     }
     Ok([&args[0], &args[1], &args[2]])
+}
+
+// ─── NanValue-native API ─────────────────────────────────────────────────────
+
+pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
+    let methods = &["empty", "set", "get", "remove", "has", "keys", "values", "entries", "len", "fromList"];
+    let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
+    for method in methods {
+        let idx = arena.push_builtin(&format!("Map.{}", method));
+        members.push((Rc::from(*method), NanValue::new_builtin(idx)));
+    }
+    let ns_idx = arena.push(crate::nan_value::ArenaEntry::Namespace {
+        name: Rc::from("Map"),
+        members,
+    });
+    global.insert("Map".to_string(), NanValue::new_namespace(ns_idx));
+}
+
+pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Result<NanValue, RuntimeError>> {
+    match name {
+        "Map.empty" => Some(empty_nv(args, arena)),
+        "Map.set" => Some(set_nv(args, arena)),
+        "Map.get" => Some(get_nv(args, arena)),
+        "Map.remove" => Some(remove_nv(args, arena)),
+        "Map.has" => Some(has_nv(args, arena)),
+        "Map.keys" => Some(keys_nv(args, arena)),
+        "Map.values" => Some(values_nv(args, arena)),
+        "Map.entries" => Some(entries_nv(args, arena)),
+        "Map.len" => Some(len_nv(args, arena)),
+        "Map.fromList" => Some(from_list_nv(args, arena)),
+        _ => None,
+    }
+}
+
+fn is_hashable_nv(v: NanValue) -> bool {
+    v.is_int() || v.is_float() || v.is_string() || v.is_bool()
+}
+
+fn ensure_hashable_nv(name: &str, v: NanValue) -> Result<(), RuntimeError> {
+    if is_hashable_nv(v) { Ok(()) } else {
+        Err(RuntimeError::Error(format!("{}: key must be Int, Float, String, or Bool", name)))
+    }
+}
+
+fn nv_key_bits(v: NanValue, arena: &Arena) -> u64 {
+    v.map_key_hash(arena)
+}
+
+fn empty_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if !args.is_empty() {
+        return Err(RuntimeError::Error(format!("Map.empty() takes 0 arguments, got {}", args.len())));
+    }
+    let map_idx = arena.push_map(HashMap::new());
+    Ok(NanValue::new_map(map_idx))
+}
+
+fn set_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if args.len() != 3 { return Err(RuntimeError::Error(format!("Map.set() takes 3 arguments, got {}", args.len()))); }
+    if !args[0].is_map() { return Err(RuntimeError::Error("Map.set() first argument must be a Map".to_string())); }
+    ensure_hashable_nv("Map.set", args[1])?;
+    let old_map = arena.get_map(args[0].arena_index()).clone();
+    let mut new_map = old_map;
+    let key_hash = nv_key_bits(args[1], arena);
+    new_map.insert(key_hash, (args[1], args[2]));
+    let map_idx = arena.push_map(new_map);
+    Ok(NanValue::new_map(map_idx))
+}
+
+fn get_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if args.len() != 2 { return Err(RuntimeError::Error(format!("Map.get() takes 2 arguments, got {}", args.len()))); }
+    if !args[0].is_map() { return Err(RuntimeError::Error("Map.get() first argument must be a Map".to_string())); }
+    ensure_hashable_nv("Map.get", args[1])?;
+    let key_hash = nv_key_bits(args[1], arena);
+    let map = arena.get_map(args[0].arena_index());
+    match map.get(&key_hash) {
+        Some((_, v)) => {
+            let box_idx = arena.push_boxed(*v);
+            Ok(NanValue::new_some(box_idx))
+        }
+        None => Ok(NanValue::NONE),
+    }
+}
+
+fn remove_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if args.len() != 2 { return Err(RuntimeError::Error(format!("Map.remove() takes 2 arguments, got {}", args.len()))); }
+    if !args[0].is_map() { return Err(RuntimeError::Error("Map.remove() first argument must be a Map".to_string())); }
+    ensure_hashable_nv("Map.remove", args[1])?;
+    let old_map = arena.get_map(args[0].arena_index()).clone();
+    let mut new_map = old_map;
+    let key_hash = nv_key_bits(args[1], arena);
+    new_map.remove(&key_hash);
+    let map_idx = arena.push_map(new_map);
+    Ok(NanValue::new_map(map_idx))
+}
+
+fn has_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if args.len() != 2 { return Err(RuntimeError::Error(format!("Map.has() takes 2 arguments, got {}", args.len()))); }
+    if !args[0].is_map() { return Err(RuntimeError::Error("Map.has() first argument must be a Map".to_string())); }
+    ensure_hashable_nv("Map.has", args[1])?;
+    let key_hash = nv_key_bits(args[1], arena);
+    let map = arena.get_map(args[0].arena_index());
+    Ok(NanValue::new_bool(map.contains_key(&key_hash)))
+}
+
+fn keys_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if args.len() != 1 { return Err(RuntimeError::Error(format!("Map.keys() takes 1 argument, got {}", args.len()))); }
+    if !args[0].is_map() { return Err(RuntimeError::Error("Map.keys() argument must be a Map".to_string())); }
+    let map = arena.get_map(args[0].arena_index()).clone();
+    let mut keys: Vec<NanValue> = map.values().map(|(k, _)| *k).collect();
+    keys.sort_by(|a, b| a.repr(arena).cmp(&b.repr(arena)));
+    let list_idx = arena.push_list(keys);
+    Ok(NanValue::new_list(list_idx))
+}
+
+fn values_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if args.len() != 1 { return Err(RuntimeError::Error(format!("Map.values() takes 1 argument, got {}", args.len()))); }
+    if !args[0].is_map() { return Err(RuntimeError::Error("Map.values() argument must be a Map".to_string())); }
+    let map = arena.get_map(args[0].arena_index()).clone();
+    let mut entries: Vec<(NanValue, NanValue)> = map.values().cloned().collect();
+    entries.sort_by(|(a, _), (b, _)| a.repr(arena).cmp(&b.repr(arena)));
+    let vals: Vec<NanValue> = entries.into_iter().map(|(_, v)| v).collect();
+    let list_idx = arena.push_list(vals);
+    Ok(NanValue::new_list(list_idx))
+}
+
+fn entries_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if args.len() != 1 { return Err(RuntimeError::Error(format!("Map.entries() takes 1 argument, got {}", args.len()))); }
+    if !args[0].is_map() { return Err(RuntimeError::Error("Map.entries() argument must be a Map".to_string())); }
+    let map = arena.get_map(args[0].arena_index()).clone();
+    let mut entries: Vec<(NanValue, NanValue)> = map.values().cloned().collect();
+    entries.sort_by(|(a, _), (b, _)| a.repr(arena).cmp(&b.repr(arena)));
+    let pairs: Vec<NanValue> = entries.into_iter().map(|(k, v)| {
+        let tuple_idx = arena.push_tuple(vec![k, v]);
+        NanValue::new_tuple(tuple_idx)
+    }).collect();
+    let list_idx = arena.push_list(pairs);
+    Ok(NanValue::new_list(list_idx))
+}
+
+fn len_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if args.len() != 1 { return Err(RuntimeError::Error(format!("Map.len() takes 1 argument, got {}", args.len()))); }
+    if !args[0].is_map() { return Err(RuntimeError::Error("Map.len() argument must be a Map".to_string())); }
+    let map = arena.get_map(args[0].arena_index());
+    Ok(NanValue::new_int(map.len() as i64, arena))
+}
+
+fn from_list_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if args.len() != 1 { return Err(RuntimeError::Error(format!("Map.fromList() takes 1 argument, got {}", args.len()))); }
+    if !args[0].is_list() {
+        return Err(RuntimeError::Error("Map.fromList() argument must be a List of (key, value) tuples".to_string()));
+    }
+    let items = arena.get_list(args[0].arena_index()).to_vec();
+    let mut out: HashMap<u64, (NanValue, NanValue)> = HashMap::new();
+    for (idx, pair) in items.iter().enumerate() {
+        if !pair.is_tuple() {
+            return Err(RuntimeError::Error(format!("Map.fromList() item {} must be (key, value)", idx + 1)));
+        }
+        let parts = arena.get_tuple(pair.arena_index());
+        if parts.len() != 2 {
+            return Err(RuntimeError::Error(format!("Map.fromList() item {} must have 2 elements", idx + 1)));
+        }
+        let key = parts[0];
+        let value = parts[1];
+        ensure_hashable_nv("Map.fromList", key)?;
+        let key_hash = nv_key_bits(key, arena);
+        out.insert(key_hash, (key, value));
+    }
+    let map_idx = arena.push_map(out);
+    Ok(NanValue::new_map(map_idx))
 }

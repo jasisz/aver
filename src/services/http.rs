@@ -8,9 +8,11 @@
 /// for any completed HTTP exchange (including 4xx/5xx). Transport failures return
 /// `Err(String)`. Response bodies are capped at 10 MB.
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use aver_rt::{AverList, Header, HttpResponse};
 
+use crate::nan_value::{Arena, NanValue};
 use crate::value::{RuntimeError, Value, list_from_vec, list_view};
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -143,6 +145,31 @@ fn response_value(result: Result<HttpResponse, String>) -> Result<Value, Runtime
         Ok(resp) => Ok(Value::Ok(Box::new(http_response_to_value(resp)))),
         Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
     }
+}
+
+pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
+    let methods = &["get", "head", "delete", "post", "put", "patch"];
+    let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
+    for method in methods {
+        let idx = arena.push_builtin(&format!("Http.{}", method));
+        members.push((Rc::from(*method), NanValue::new_builtin(idx)));
+    }
+    let ns_idx = arena.push(crate::nan_value::ArenaEntry::Namespace {
+        name: Rc::from("Http"),
+        members,
+    });
+    global.insert("Http".to_string(), NanValue::new_namespace(ns_idx));
+}
+
+/// Bridge: convert NanValue args to Value, call old implementation, convert result back.
+pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Result<NanValue, RuntimeError>> {
+    // Check if this name is owned by us
+    if !matches!(name, "Http.get" | "Http.head" | "Http.delete" | "Http.post" | "Http.put" | "Http.patch") {
+        return None;
+    }
+    let old_args: Vec<Value> = args.iter().map(|nv| nv.to_value(arena)).collect();
+    let result = call(name, &old_args)?;
+    Some(result.map(|v| NanValue::from_value(&v, arena)))
 }
 
 fn http_response_to_value(resp: HttpResponse) -> Value {

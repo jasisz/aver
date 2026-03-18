@@ -12,7 +12,9 @@
 ///
 /// Each method requires its own exact effect (`Disk.readText`, `Disk.writeText`, etc.).
 use std::collections::HashMap;
+use std::rc::Rc;
 
+use crate::nan_value::{Arena, NanValue};
 use crate::value::{RuntimeError, Value, list_from_vec};
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -164,5 +166,136 @@ fn two_str_args(fn_name: &str, args: &[Value]) -> Result<(String, String), Runti
             fn_name,
             args.len()
         ))),
+    }
+}
+
+// ─── NanValue-native API ─────────────────────────────────────────────────────
+
+pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
+    let methods = &["readText", "writeText", "appendText", "exists", "delete", "deleteDir", "listDir", "makeDir"];
+    let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
+    for method in methods {
+        let idx = arena.push_builtin(&format!("Disk.{}", method));
+        members.push((Rc::from(*method), NanValue::new_builtin(idx)));
+    }
+    let ns_idx = arena.push(crate::nan_value::ArenaEntry::Namespace {
+        name: Rc::from("Disk"),
+        members,
+    });
+    global.insert("Disk".to_string(), NanValue::new_namespace(ns_idx));
+}
+
+pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Result<NanValue, RuntimeError>> {
+    match name {
+        "Disk.readText" => Some(read_text_nv(args, arena)),
+        "Disk.writeText" => Some(write_text_nv(args, arena)),
+        "Disk.appendText" => Some(append_text_nv(args, arena)),
+        "Disk.exists" => Some(exists_nv(args, arena)),
+        "Disk.delete" => Some(delete_nv(args, arena)),
+        "Disk.deleteDir" => Some(delete_dir_nv(args, arena)),
+        "Disk.listDir" => Some(list_dir_nv(args, arena)),
+        "Disk.makeDir" => Some(make_dir_nv(args, arena)),
+        _ => None,
+    }
+}
+
+fn nv_one_str(fn_name: &str, args: &[NanValue], arena: &Arena) -> Result<String, RuntimeError> {
+    if args.len() != 1 { return Err(RuntimeError::Error(format!("{}() takes 1 argument (path), got {}", fn_name, args.len()))); }
+    if !args[0].is_string() { return Err(RuntimeError::Error(format!("{}: path must be a String", fn_name))); }
+    Ok(arena.get_string(args[0].arena_index()).to_string())
+}
+
+fn nv_two_str(fn_name: &str, args: &[NanValue], arena: &Arena) -> Result<(String, String), RuntimeError> {
+    if args.len() != 2 { return Err(RuntimeError::Error(format!("{}() takes 2 arguments (path, content), got {}", fn_name, args.len()))); }
+    if !args[0].is_string() || !args[1].is_string() { return Err(RuntimeError::Error(format!("{}: both arguments must be Strings", fn_name))); }
+    Ok((arena.get_string(args[0].arena_index()).to_string(), arena.get_string(args[1].arena_index()).to_string()))
+}
+
+fn nv_ok_unit(arena: &mut Arena) -> NanValue {
+    let box_idx = arena.push_boxed(NanValue::UNIT);
+    NanValue::new_ok(box_idx)
+}
+
+fn nv_ok_str(s: &str, arena: &mut Arena) -> NanValue {
+    let s_idx = arena.push_string(s);
+    let inner = NanValue::new_string(s_idx);
+    let box_idx = arena.push_boxed(inner);
+    NanValue::new_ok(box_idx)
+}
+
+fn nv_err_str(s: &str, arena: &mut Arena) -> NanValue {
+    let s_idx = arena.push_string(s);
+    let inner = NanValue::new_string(s_idx);
+    let box_idx = arena.push_boxed(inner);
+    NanValue::new_err(box_idx)
+}
+
+fn read_text_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    let path = nv_one_str("Disk.readText", args, arena)?;
+    match aver_rt::read_text(&path) {
+        Ok(text) => Ok(nv_ok_str(&text, arena)),
+        Err(e) => Ok(nv_err_str(&e.to_string(), arena)),
+    }
+}
+
+fn write_text_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    let (path, content) = nv_two_str("Disk.writeText", args, arena)?;
+    match aver_rt::write_text(&path, &content) {
+        Ok(_) => Ok(nv_ok_unit(arena)),
+        Err(e) => Ok(nv_err_str(&e.to_string(), arena)),
+    }
+}
+
+fn append_text_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    let (path, content) = nv_two_str("Disk.appendText", args, arena)?;
+    match aver_rt::append_text(&path, &content) {
+        Ok(_) => Ok(nv_ok_unit(arena)),
+        Err(e) => Ok(nv_err_str(&e.to_string(), arena)),
+    }
+}
+
+fn exists_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    let path = nv_one_str("Disk.exists", args, arena)?;
+    Ok(NanValue::new_bool(aver_rt::path_exists(&path)))
+}
+
+fn delete_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    let path = nv_one_str("Disk.delete", args, arena)?;
+    match aver_rt::delete_file(&path) {
+        Ok(_) => Ok(nv_ok_unit(arena)),
+        Err(e) => Ok(nv_err_str(&e.to_string(), arena)),
+    }
+}
+
+fn delete_dir_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    let path = nv_one_str("Disk.deleteDir", args, arena)?;
+    match aver_rt::delete_dir(&path) {
+        Ok(_) => Ok(nv_ok_unit(arena)),
+        Err(e) => Ok(nv_err_str(&e.to_string(), arena)),
+    }
+}
+
+fn list_dir_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    let path = nv_one_str("Disk.listDir", args, arena)?;
+    match aver_rt::list_dir(&path) {
+        Ok(entries) => {
+            let items: Vec<NanValue> = entries.into_iter().map(|s| {
+                let idx = arena.push_string(&s);
+                NanValue::new_string(idx)
+            }).collect();
+            let list_idx = arena.push_list(items);
+            let inner = NanValue::new_list(list_idx);
+            let box_idx = arena.push_boxed(inner);
+            Ok(NanValue::new_ok(box_idx))
+        }
+        Err(e) => Ok(nv_err_str(&e.to_string(), arena)),
+    }
+}
+
+fn make_dir_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    let path = nv_one_str("Disk.makeDir", args, arena)?;
+    match aver_rt::make_dir(&path) {
+        Ok(_) => Ok(nv_ok_unit(arena)),
+        Err(e) => Ok(nv_err_str(&e.to_string(), arena)),
     }
 }
