@@ -4,16 +4,16 @@ A roguelike where you fight the programming concepts that Aver deliberately reje
 
 ## Run
 
-Compiled native Rust (recommended):
+Interpreter:
+```bash
+aver run --module-root examples/games/rogue examples/games/rogue/main.av
+```
+
+Compiled native Rust (faster, recommended for deep floors):
 ```bash
 AVER_RUNTIME_PATH=aver-rt aver compile --module-root examples/games/rogue examples/games/rogue/main.av -o /tmp/rogue-rs
 cd /tmp/rogue-rs && cargo build --release
 ./target/release/main
-```
-
-Interpreter (slow but works):
-```bash
-aver run --module-root examples/games/rogue examples/games/rogue/main.av
 ```
 
 ## Controls
@@ -46,6 +46,7 @@ aver run --module-root examples/games/rogue examples/games/rogue/main.av
 - Field of view with shadowcasting
 - BFS pathfinding for enemy AI
 - Turn-based combat with unique per-enemy mechanics
+- Alert propagation: enemies hear nearby combat and investigate
 - Floor progression with scaling enemies
 - Message log with thematic humor
 
