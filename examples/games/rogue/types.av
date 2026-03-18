@@ -49,6 +49,8 @@ record Entity
     attack: Int
     defense: Int
     name: String
+    alertPos: Option<Point>
+    alertTurns: Int
 
 type ItemKind
     PotionOfPurity
@@ -80,7 +82,7 @@ verify makePlayer
 
 fn makeIfElse(x: Int, y: Int) -> Entity
     ? "Create a Wild if/else — branches without matching"
-    Entity(pos = pt(x, y), kind = EntityKind.WildIfElse, hp = 6, maxHp = 6, attack = 3, defense = 1, name = "Wild if/else")
+    Entity(pos = pt(x, y), kind = EntityKind.WildIfElse, hp = 6, maxHp = 6, attack = 3, defense = 1, name = "Wild if/else", alertPos = Option.None, alertTurns = 0)
 
 verify makeIfElse
     makeIfElse(3, 3).hp => 6
@@ -88,14 +90,14 @@ verify makeIfElse
 
 fn makeLoop(x: Int, y: Int) -> Entity
     ? "Create a Feral Loop — it never terminates"
-    Entity(pos = pt(x, y), kind = EntityKind.FeralLoop, hp = 12, maxHp = 12, attack = 5, defense = 2, name = "Feral for-loop")
+    Entity(pos = pt(x, y), kind = EntityKind.FeralLoop, hp = 12, maxHp = 12, attack = 5, defense = 2, name = "Feral for-loop", alertPos = Option.None, alertTurns = 0)
 
 verify makeLoop
     makeLoop(3, 3).hp => 12
 
 fn makeNull(x: Int, y: Int) -> Entity
     ? "Create The Null — the billion dollar mistake"
-    Entity(pos = pt(x, y), kind = EntityKind.TheNull, hp = 20, maxHp = 20, attack = 8, defense = 3, name = "The Null")
+    Entity(pos = pt(x, y), kind = EntityKind.TheNull, hp = 20, maxHp = 20, attack = 8, defense = 3, name = "The Null", alertPos = Option.None, alertTurns = 0)
 
 verify makeNull
     makeNull(3, 3).hp => 20

@@ -247,7 +247,7 @@ fn resolveAttack(state: GameState, target: Entity, idx: Int) -> GameState
     hit = Combat.applyDamageToEntity(target, dmg)
     match Combat.isEntityDead(hit)
         true -> killEntity(state, target, idx, dmg)
-        false -> addMessage(GameState.update(state, entities = Combat.replaceEntity(state.entities, idx, hit, 0)), "You hit {target.name} for {Int.toString(dmg)}!")
+        false -> alertNearby(addMessage(GameState.update(state, entities = Combat.replaceEntity(state.entities, idx, hit, 0)), "You hit {target.name} for {Int.toString(dmg)}!"), state.player.pos, 12, 0)
 
 fn killEntity(state: GameState, target: Entity, idx: Int, dmg: Int) -> GameState
     ? "Kill entity — for-loop gets one respawn (off-by-one error)"
@@ -319,10 +319,52 @@ fn entityAI(state: GameState, i: Int) -> GameState
             Option.None -> entityAI(state, i + 1)
 
 fn processOneEntity(state: GameState, entity: Entity, i: Int) -> GameState
-    ? "Dispatch behavior — only active if entity is visible or adjacent"
+    ? "Dispatch: visible = active, alerted = investigate, else sleep"
     ! [Random.int]
     match Bool.or(Fov.containsPt(state.visible, entity.pos, 0), Types.dist(entity.pos, state.player.pos) == 1)
         true -> processActiveEntity(state, entity, i)
+        false -> processAlertedEntity(state, entity, i)
+
+fn processAlertedEntity(state: GameState, entity: Entity, i: Int) -> GameState
+    ? "Alerted entity moves toward alert source (heard combat nearby)"
+    match entity.alertPos
+        Option.Some(target) -> moveToAlert(state, entity, i, target)
+        Option.None -> decayAlert(state, entity, i)
+
+fn moveToAlert(state: GameState, entity: Entity, i: Int, target: Point) -> GameState
+    ? "Entity investigates alert position"
+    match entity.alertTurns < 1
+        true -> GameState.update(state, entities = Combat.replaceEntity(state.entities, i, Entity.update(entity, alertPos = Option.None, alertTurns = 0), 0))
+        false -> moveToAlertStep(state, entity, i, target)
+
+fn moveToAlertStep(state: GameState, entity: Entity, i: Int, target: Point) -> GameState
+    ? "Take one step toward alert and decrement turns"
+    next = Combat.stepToward(entity.pos, target)
+    moved = match Types.tileWalkable(Map.getT(state.gameMap, next.x, next.y))
+        true -> match Combat.entityAtPos(state.entities, next, 0)
+            Option.Some(blocked) -> entity
+            Option.None -> Entity.update(entity, pos = next)
+        false -> entity
+    GameState.update(state, entities = Combat.replaceEntity(state.entities, i, Entity.update(moved, alertTurns = entity.alertTurns - 1), 0))
+
+fn decayAlert(state: GameState, entity: Entity, i: Int) -> GameState
+    ? "No alert — entity stays put"
+    state
+
+fn alertNearby(state: GameState, combatPos: Point, radius: Int, i: Int) -> GameState
+    ? "Alert all entities within radius of combat (they heard the fight)"
+    match i == List.len(state.entities)
+        true -> state
+        false -> match List.get(state.entities, i)
+            Option.Some(entity) -> alertNearby(alertOneEntity(state, entity, combatPos, radius, i), combatPos, radius, i + 1)
+            Option.None -> alertNearby(state, combatPos, radius, i + 1)
+
+fn alertOneEntity(state: GameState, entity: Entity, combatPos: Point, radius: Int, i: Int) -> GameState
+    ? "Alert one entity if within radius and not already visible"
+    match Types.dist(entity.pos, combatPos) < radius
+        true -> match Bool.not(Fov.containsPt(state.visible, entity.pos, 0))
+            true -> GameState.update(state, entities = Combat.replaceEntity(state.entities, i, Entity.update(entity, alertPos = Option.Some(combatPos), alertTurns = 8), 0))
+            false -> state
         false -> state
 
 fn processActiveEntity(state: GameState, entity: Entity, i: Int) -> GameState

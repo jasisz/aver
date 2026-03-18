@@ -11,7 +11,7 @@ use std::io::{self, BufWriter, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use crossterm::{execute, QueueableCommand};
+use crossterm::{QueueableCommand, execute};
 
 thread_local! {
     static STDOUT_BUF: std::cell::RefCell<BufWriter<io::Stdout>> =

@@ -485,7 +485,8 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
     for arm in arms {
         let pat = emit_pattern(&arm.pattern, needs_as_str, ctx);
         // Each arm body is independent — use parent's used_after
-        let body = emit_expr(&arm.body, ctx, ectx);
+        // Clone the result if it's a bare ident that's still needed after the match
+        let body = maybe_clone(emit_expr(&arm.body, ctx, ectx), &arm.body, ectx);
         let rebindings = emit_pattern_rebindings(&arm.pattern, ctx);
         arm_strs.push(format!(
             "        {} => {{\n            {}{}\n        }}",
