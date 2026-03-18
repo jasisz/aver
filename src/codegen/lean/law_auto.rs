@@ -109,12 +109,74 @@ pub fn emit_verify_law_forall_auto_proof(
             )
         })
         .or_else(|| {
+            emit_simp_omega_law(vb, law, ctx, &proof_intro_names).map(|proof_lines| AutoProof {
+                support_lines: Vec::new(),
+                proof_lines,
+                replaces_theorem: false,
+            })
+        })
+        .or_else(|| {
             emit_guarded_domain_law(law).map(|proof_lines| AutoProof {
                 support_lines: Vec::new(),
                 proof_lines,
                 replaces_theorem: false,
             })
         })
+}
+
+/// Try `simp [fn_names...] ; omega` for laws on Int-domain functions.
+///
+/// Works when the function is a non-recursive match on Int args
+/// (e.g. `computeScore(0, level) => 0`). `simp` unfolds the function,
+/// `omega` closes the linear arithmetic goal.
+fn emit_simp_omega_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+) -> Option<Vec<String>> {
+    // Only attempt when all givens are Int.
+    if law.givens.is_empty() || !law.givens.iter().all(|g| g.type_name == "Int") {
+        return None;
+    }
+    // Collect all user-defined function names referenced in lhs and rhs.
+    let mut fn_names = std::collections::BTreeSet::new();
+    collect_fn_calls(&law.lhs, &mut fn_names);
+    collect_fn_calls(&law.rhs, &mut fn_names);
+    fn_names.insert(vb.fn_name.clone());
+    // Only proceed if all referenced functions exist in ctx.
+    if fn_names.iter().any(|n| !ctx.fn_sigs.contains_key(n)) {
+        return None;
+    }
+    let lean_names: Vec<String> = fn_names.iter().map(|n| aver_name_to_lean(n)).collect();
+    let simp_list = lean_names.join(", ");
+    Some(intro_then(
+        intro_names,
+        vec![format!("simp only [{}] <;> omega", simp_list)],
+    ))
+}
+
+fn collect_fn_calls(expr: &crate::ast::Expr, out: &mut std::collections::BTreeSet<String>) {
+    use crate::ast::Expr;
+    match expr {
+        Expr::FnCall(f, args) => {
+            if let Some(name) = crate::codegen::common::expr_to_dotted_name(f)
+                && (!name.contains('.')
+                    || name.chars().next().is_some_and(|c| c.is_lowercase()))
+            {
+                out.insert(name);
+            }
+            for arg in args {
+                collect_fn_calls(arg, out);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            collect_fn_calls(l, out);
+            collect_fn_calls(r, out);
+        }
+        Expr::Attr(obj, _) => collect_fn_calls(obj, out),
+        _ => {}
+    }
 }
 
 pub fn emit_verify_law_support_theorems(

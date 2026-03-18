@@ -42,7 +42,12 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
                 return aver_name_to_lean(bare);
             }
             let obj_str = emit_expr(obj, ctx);
-            format!("{}.{}", obj_str, aver_name_to_lean(field))
+            let needs_parens = !matches!(obj.as_ref(), Expr::Ident(_) | Expr::Attr(_, _));
+            if needs_parens {
+                format!("({}).{}", obj_str, aver_name_to_lean(field))
+            } else {
+                format!("{}.{}", obj_str, aver_name_to_lean(field))
+            }
         }
         Expr::FnCall(fn_expr, args) => emit_fn_call(fn_expr, args, ctx),
         Expr::BinOp(op, left, right) => {

@@ -239,13 +239,31 @@ struct DecreasesInfo {
 
 /// Try to infer a `decreases` clause from the function signature.
 fn infer_decreases(fd: &FnDef) -> Option<DecreasesInfo> {
+    // Index-based pattern: last param is Int, there is also a List/String param
+    // earlier, and the Int is not the first param → decreases |collection| - index.
+    let list_param = fd
+        .params
+        .iter()
+        .find(|(_, t)| t.starts_with("List<") || t == "String");
+    let last_int = fd.params.iter().rposition(|(_, t)| t == "Int");
+    let first_int = fd.params.iter().position(|(_, t)| t == "Int");
+    if let (Some((list_name, _)), Some(last_idx)) = (list_param, last_int)
+        && let Some(first_idx) = first_int
+        && last_idx != first_idx
+    // multiple Int params → last is likely index
+    {
+        let dlist = aver_name_to_dafny(list_name);
+        let dint = aver_name_to_dafny(&fd.params[last_idx].0);
+        return Some(DecreasesInfo {
+            expr: format!("|{}| - {}", dlist, dint),
+            requires: vec![],
+        });
+    }
+
+    // Single Int param or Int-first: countdown pattern.
     for (pname, ptype) in &fd.params {
         if ptype == "Int" {
             let dname = aver_name_to_dafny(pname);
-            // Aver Int can be negative; the function body typically guards
-            // with `match n < 0 → ...` or `match n: 0 → base, _ → recurse(n-1)`.
-            // We emit decreases on the non-negative part; Dafny needs to see
-            // that the recursive call only happens when n > 0.
             return Some(DecreasesInfo {
                 expr: format!("if {} >= 0 then {} else 0", dname, dname),
                 requires: vec![],

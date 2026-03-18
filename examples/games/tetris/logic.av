@@ -132,6 +132,18 @@ verify computeScore
     computeScore(1, 1) => 200
     computeScore(4, 1) => 1600
 
+verify computeScore law zeroLinesZeroScore
+    given level: Int = 0..5
+    computeScore(0, level) => 0
+
+verify computeScore law levelScalesLineScore
+    given level: Int = 0..3
+    computeScore(1, level + 1) => computeScore(1, level) + 100
+
+verify computeScore law tetrisDoublesSingle
+    given level: Int = 0..3
+    computeScore(4, level) => 8 * computeScore(1, level)
+
 fn lockSpawn(spawned: GameState) -> GameState
     ? "Check if spawned piece collides (game over)"
     match checkCollision(spawned.board, spawned.piece, spawned.px, spawned.py)
