@@ -104,7 +104,11 @@ pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
     global.insert("Env".to_string(), NanValue::new_namespace(ns_idx));
 }
 
-pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Result<NanValue, RuntimeError>> {
+pub fn call_nv(
+    name: &str,
+    args: &[NanValue],
+    arena: &mut Arena,
+) -> Option<Result<NanValue, RuntimeError>> {
     match name {
         "Env.get" => Some(get_nv(args, arena)),
         "Env.set" => Some(set_nv(args, arena)),
@@ -113,8 +117,17 @@ pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Resul
 }
 
 fn get_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    if args.len() != 1 { return Err(RuntimeError::Error(format!("Env.get() takes 1 argument (key), got {}", args.len()))); }
-    if !args[0].is_string() { return Err(RuntimeError::Error("Env.get: key must be a String".to_string())); }
+    if args.len() != 1 {
+        return Err(RuntimeError::Error(format!(
+            "Env.get() takes 1 argument (key), got {}",
+            args.len()
+        )));
+    }
+    if !args[0].is_string() {
+        return Err(RuntimeError::Error(
+            "Env.get: key must be a String".to_string(),
+        ));
+    }
     let key = arena.get_string(args[0].arena_index()).to_string();
     match aver_rt::env_get(&key) {
         Some(v) => {
@@ -128,9 +141,22 @@ fn get_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
 }
 
 fn set_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    if args.len() != 2 { return Err(RuntimeError::Error(format!("Env.set() takes 2 arguments (key, value), got {}", args.len()))); }
-    if !args[0].is_string() { return Err(RuntimeError::Error("Env.set: key must be a String".to_string())); }
-    if !args[1].is_string() { return Err(RuntimeError::Error("Env.set: value must be a String".to_string())); }
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!(
+            "Env.set() takes 2 arguments (key, value), got {}",
+            args.len()
+        )));
+    }
+    if !args[0].is_string() {
+        return Err(RuntimeError::Error(
+            "Env.set: key must be a String".to_string(),
+        ));
+    }
+    if !args[1].is_string() {
+        return Err(RuntimeError::Error(
+            "Env.set: value must be a String".to_string(),
+        ));
+    }
     let key = arena.get_string(args[0].arena_index()).to_string();
     let value = arena.get_string(args[1].arena_index()).to_string();
     if let Err(e) = aver_rt::env_set(&key, &value) {

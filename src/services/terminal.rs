@@ -182,8 +182,18 @@ fn set_color(args: &[Value]) -> Result<Value, RuntimeError> {
 
 pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
     let methods = &[
-        "enableRawMode", "disableRawMode", "clear", "moveTo", "print",
-        "setColor", "resetColor", "readKey", "size", "hideCursor", "showCursor", "flush",
+        "enableRawMode",
+        "disableRawMode",
+        "clear",
+        "moveTo",
+        "print",
+        "setColor",
+        "resetColor",
+        "readKey",
+        "size",
+        "hideCursor",
+        "showCursor",
+        "flush",
     ];
     let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
     for method in methods {
@@ -198,9 +208,15 @@ pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
 }
 
 /// Bridge: convert NanValue args to Value, call old implementation, convert result back.
-pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Result<NanValue, RuntimeError>> {
+pub fn call_nv(
+    name: &str,
+    args: &[NanValue],
+    arena: &mut Arena,
+) -> Option<Result<NanValue, RuntimeError>> {
     // Check ownership
-    if !name.starts_with("Terminal.") { return None; }
+    if !name.starts_with("Terminal.") {
+        return None;
+    }
     let old_args: Vec<Value> = args.iter().map(|nv| nv.to_value(arena)).collect();
     let result = call(name, &old_args)?;
     Some(result.map(|v| NanValue::from_value(&v, arena)))

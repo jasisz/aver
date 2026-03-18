@@ -191,7 +191,15 @@ fn two_args<'a>(name: &str, args: &'a [Value]) -> Result<[&'a Value; 2], Runtime
 
 pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
     let methods = &[
-        "fromString", "fromInt", "toString", "abs", "floor", "ceil", "round", "min", "max",
+        "fromString",
+        "fromInt",
+        "toString",
+        "abs",
+        "floor",
+        "ceil",
+        "round",
+        "min",
+        "max",
     ];
     let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
     for method in methods {
@@ -205,7 +213,11 @@ pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
     global.insert("Float".to_string(), NanValue::new_namespace(ns_idx));
 }
 
-pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Result<NanValue, RuntimeError>> {
+pub fn call_nv(
+    name: &str,
+    args: &[NanValue],
+    arena: &mut Arena,
+) -> Option<Result<NanValue, RuntimeError>> {
     match name {
         "Float.fromString" => Some(from_string_nv(args, arena)),
         "Float.fromInt" => Some(from_int_nv(args, arena)),
@@ -222,14 +234,22 @@ pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Resul
 
 fn nv_check1(name: &str, args: &[NanValue]) -> Result<NanValue, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::Error(format!("{}() takes 1 argument, got {}", name, args.len())));
+        return Err(RuntimeError::Error(format!(
+            "{}() takes 1 argument, got {}",
+            name,
+            args.len()
+        )));
     }
     Ok(args[0])
 }
 
 fn nv_check2(name: &str, args: &[NanValue]) -> Result<(NanValue, NanValue), RuntimeError> {
     if args.len() != 2 {
-        return Err(RuntimeError::Error(format!("{}() takes 2 arguments, got {}", name, args.len())));
+        return Err(RuntimeError::Error(format!(
+            "{}() takes 2 arguments, got {}",
+            name,
+            args.len()
+        )));
     }
     Ok((args[0], args[1]))
 }
@@ -237,7 +257,9 @@ fn nv_check2(name: &str, args: &[NanValue]) -> Result<(NanValue, NanValue), Runt
 fn from_string_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
     let v = nv_check1("Float.fromString", args)?;
     if !v.is_string() {
-        return Err(RuntimeError::Error("Float.fromString: argument must be a String".to_string()));
+        return Err(RuntimeError::Error(
+            "Float.fromString: argument must be a String".to_string(),
+        ));
     }
     let s = arena.get_string(v.arena_index());
     match s.parse::<f64>() {
@@ -259,7 +281,9 @@ fn from_string_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runt
 fn from_int_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
     let v = nv_check1("Float.fromInt", args)?;
     if !v.is_int() {
-        return Err(RuntimeError::Error("Float.fromInt: argument must be an Int".to_string()));
+        return Err(RuntimeError::Error(
+            "Float.fromInt: argument must be an Int".to_string(),
+        ));
     }
     Ok(NanValue::new_float(v.as_int(arena) as f64))
 }
@@ -267,7 +291,9 @@ fn from_int_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtime
 fn to_string_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
     let v = nv_check1("Float.toString", args)?;
     if !v.is_float() {
-        return Err(RuntimeError::Error("Float.toString: argument must be a Float".to_string()));
+        return Err(RuntimeError::Error(
+            "Float.toString: argument must be a Float".to_string(),
+        ));
     }
     let s = format!("{}", v.as_float());
     let idx = arena.push_string(&s);
@@ -277,7 +303,9 @@ fn to_string_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtim
 fn abs_nv(args: &[NanValue], _arena: &mut Arena) -> Result<NanValue, RuntimeError> {
     let v = nv_check1("Float.abs", args)?;
     if !v.is_float() {
-        return Err(RuntimeError::Error("Float.abs: argument must be a Float".to_string()));
+        return Err(RuntimeError::Error(
+            "Float.abs: argument must be a Float".to_string(),
+        ));
     }
     Ok(NanValue::new_float(v.as_float().abs()))
 }
@@ -285,7 +313,9 @@ fn abs_nv(args: &[NanValue], _arena: &mut Arena) -> Result<NanValue, RuntimeErro
 fn floor_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
     let v = nv_check1("Float.floor", args)?;
     if !v.is_float() {
-        return Err(RuntimeError::Error("Float.floor: argument must be a Float".to_string()));
+        return Err(RuntimeError::Error(
+            "Float.floor: argument must be a Float".to_string(),
+        ));
     }
     Ok(NanValue::new_int(v.as_float().floor() as i64, arena))
 }
@@ -293,7 +323,9 @@ fn floor_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErr
 fn ceil_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
     let v = nv_check1("Float.ceil", args)?;
     if !v.is_float() {
-        return Err(RuntimeError::Error("Float.ceil: argument must be a Float".to_string()));
+        return Err(RuntimeError::Error(
+            "Float.ceil: argument must be a Float".to_string(),
+        ));
     }
     Ok(NanValue::new_int(v.as_float().ceil() as i64, arena))
 }
@@ -301,7 +333,9 @@ fn ceil_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErro
 fn round_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
     let v = nv_check1("Float.round", args)?;
     if !v.is_float() {
-        return Err(RuntimeError::Error("Float.round: argument must be a Float".to_string()));
+        return Err(RuntimeError::Error(
+            "Float.round: argument must be a Float".to_string(),
+        ));
     }
     Ok(NanValue::new_int(v.as_float().round() as i64, arena))
 }
@@ -309,7 +343,9 @@ fn round_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErr
 fn min_nv(args: &[NanValue], _arena: &mut Arena) -> Result<NanValue, RuntimeError> {
     let (a, b) = nv_check2("Float.min", args)?;
     if !a.is_float() || !b.is_float() {
-        return Err(RuntimeError::Error("Float.min: both arguments must be Float".to_string()));
+        return Err(RuntimeError::Error(
+            "Float.min: both arguments must be Float".to_string(),
+        ));
     }
     Ok(NanValue::new_float(f64::min(a.as_float(), b.as_float())))
 }
@@ -317,7 +353,9 @@ fn min_nv(args: &[NanValue], _arena: &mut Arena) -> Result<NanValue, RuntimeErro
 fn max_nv(args: &[NanValue], _arena: &mut Arena) -> Result<NanValue, RuntimeError> {
     let (a, b) = nv_check2("Float.max", args)?;
     if !a.is_float() || !b.is_float() {
-        return Err(RuntimeError::Error("Float.max: both arguments must be Float".to_string()));
+        return Err(RuntimeError::Error(
+            "Float.max: both arguments must be Float".to_string(),
+        ));
     }
     Ok(NanValue::new_float(f64::max(a.as_float(), b.as_float())))
 }

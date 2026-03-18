@@ -54,8 +54,7 @@ fn get_args(args: &[Value], cli_args: &[String]) -> Result<Value, RuntimeError> 
 
 pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
     let idx = arena.push_builtin("Args.get");
-    let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(1);
-    members.push((Rc::from("get"), NanValue::new_builtin(idx)));
+    let members: Vec<(Rc<str>, NanValue)> = vec![(Rc::from("get"), NanValue::new_builtin(idx))];
     let ns_idx = arena.push(crate::nan_value::ArenaEntry::Namespace {
         name: Rc::from("Args"),
         members,
@@ -75,14 +74,24 @@ pub fn call_nv(
     }
 }
 
-fn get_args_nv(args: &[NanValue], cli_args: &[String], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+fn get_args_nv(
+    args: &[NanValue],
+    cli_args: &[String],
+    arena: &mut Arena,
+) -> Result<NanValue, RuntimeError> {
     if !args.is_empty() {
-        return Err(RuntimeError::Error(format!("Args.get() takes 0 arguments, got {}", args.len())));
+        return Err(RuntimeError::Error(format!(
+            "Args.get() takes 0 arguments, got {}",
+            args.len()
+        )));
     }
-    let items: Vec<NanValue> = cli_args.iter().map(|s| {
-        let idx = arena.push_string(s);
-        NanValue::new_string(idx)
-    }).collect();
+    let items: Vec<NanValue> = cli_args
+        .iter()
+        .map(|s| {
+            let idx = arena.push_string(s);
+            NanValue::new_string(idx)
+        })
+        .collect();
     let list_idx = arena.push_list(items);
     Ok(NanValue::new_list(list_idx))
 }

@@ -244,8 +244,15 @@ pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
 }
 
 /// Bridge: convert NanValue args to Value, call old implementation, convert result back.
-pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Result<NanValue, RuntimeError>> {
-    if !matches!(name, "Tcp.send" | "Tcp.ping" | "Tcp.connect" | "Tcp.writeLine" | "Tcp.readLine" | "Tcp.close") {
+pub fn call_nv(
+    name: &str,
+    args: &[NanValue],
+    arena: &mut Arena,
+) -> Option<Result<NanValue, RuntimeError>> {
+    if !matches!(
+        name,
+        "Tcp.send" | "Tcp.ping" | "Tcp.connect" | "Tcp.writeLine" | "Tcp.readLine" | "Tcp.close"
+    ) {
         return None;
     }
     let old_args: Vec<Value> = args.iter().map(|nv| nv.to_value(arena)).collect();

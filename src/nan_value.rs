@@ -124,7 +124,7 @@ impl NanValue {
 
     #[inline]
     pub fn new_int_inline(i: i64) -> Self {
-        debug_assert!(i >= INT_INLINE_MIN && i <= INT_INLINE_MAX);
+        debug_assert!((INT_INLINE_MIN..=INT_INLINE_MAX).contains(&i));
         let payload = (i as u64) & INT_INLINE_MASK;
         Self::encode(TAG_INT, payload)
     }
@@ -136,7 +136,7 @@ impl NanValue {
 
     #[inline]
     pub fn new_int(i: i64, arena: &mut Arena) -> Self {
-        if i >= INT_INLINE_MIN && i <= INT_INLINE_MAX {
+        if (INT_INLINE_MIN..=INT_INLINE_MAX).contains(&i) {
             Self::new_int_inline(i)
         } else {
             let idx = arena.push_i64(i);
@@ -436,11 +436,21 @@ pub enum ArenaEntry {
     List(Vec<NanValue>),
     Tuple(Vec<NanValue>),
     Map(HashMap<u64, (NanValue, NanValue)>),
-    Record { type_id: u32, fields: Vec<NanValue> },
-    Variant { type_id: u32, variant_id: u16, fields: Vec<NanValue> },
+    Record {
+        type_id: u32,
+        fields: Vec<NanValue>,
+    },
+    Variant {
+        type_id: u32,
+        variant_id: u16,
+        fields: Vec<NanValue>,
+    },
     Fn(Rc<FunctionValue>),
     Builtin(Rc<str>),
-    Namespace { name: Rc<str>, members: Vec<(Rc<str>, NanValue)> },
+    Namespace {
+        name: Rc<str>,
+        members: Vec<(Rc<str>, NanValue)>,
+    },
     Boxed(NanValue),
 }
 
@@ -481,7 +491,11 @@ impl Arena {
         self.push(ArenaEntry::Record { type_id, fields })
     }
     pub fn push_variant(&mut self, type_id: u32, variant_id: u16, fields: Vec<NanValue>) -> u32 {
-        self.push(ArenaEntry::Variant { type_id, variant_id, fields })
+        self.push(ArenaEntry::Variant {
+            type_id,
+            variant_id,
+            fields,
+        })
     }
     pub fn push_list(&mut self, items: Vec<NanValue>) -> u32 {
         self.push(ArenaEntry::List(items))
@@ -527,7 +541,11 @@ impl Arena {
     }
     pub fn get_variant(&self, index: u32) -> (u32, u16, &[NanValue]) {
         match self.get(index) {
-            ArenaEntry::Variant { type_id, variant_id, fields } => (*type_id, *variant_id, fields),
+            ArenaEntry::Variant {
+                type_id,
+                variant_id,
+                fields,
+            } => (*type_id, *variant_id, fields),
             _ => panic!("Arena: expected Variant at {}", index),
         }
     }
@@ -602,7 +620,10 @@ impl Arena {
         &self.type_variant_names[type_id as usize][variant_id as usize]
     }
     pub fn find_type_id(&self, name: &str) -> Option<u32> {
-        self.type_names.iter().position(|n| n == name).map(|i| i as u32)
+        self.type_names
+            .iter()
+            .position(|n| n == name)
+            .map(|i| i as u32)
     }
     pub fn find_variant_id(&self, type_id: u32, variant_name: &str) -> Option<u16> {
         self.type_variant_names
@@ -677,7 +698,9 @@ impl NanValue {
             TAG_RECORD => {
                 let (ta, fa) = arena.get_record(self.arena_index());
                 let (tb, fb) = arena.get_record(other.arena_index());
-                ta == tb && fa.len() == fb.len() && fa.iter().zip(fb).all(|(a, b)| a.eq_in(*b, arena))
+                ta == tb
+                    && fa.len() == fb.len()
+                    && fa.iter().zip(fb).all(|(a, b)| a.eq_in(*b, arena))
             }
             TAG_VARIANT => {
                 let (ta, va, fa) = arena.get_variant(self.arena_index());
@@ -697,7 +720,11 @@ impl NanValue {
         if self.is_float() {
             1u8.hash(state);
             let f = self.as_float();
-            let bits = if f == 0.0 { 0.0f64.to_bits() } else { f.to_bits() };
+            let bits = if f == 0.0 {
+                0.0f64.to_bits()
+            } else {
+                f.to_bits()
+            };
             bits.hash(state);
             return;
         }
@@ -785,7 +812,10 @@ impl NanValue {
                     .map(|(k, v)| (k.repr_inner(arena), v.repr_inner(arena)))
                     .collect();
                 pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
-                let parts: Vec<_> = pairs.into_iter().map(|(k, v)| format!("{}: {}", k, v)).collect();
+                let parts: Vec<_> = pairs
+                    .into_iter()
+                    .map(|(k, v)| format!("{}: {}", k, v))
+                    .collect();
                 format!("{{{}}}", parts.join(", "))
             }
             TAG_RECORD => {
@@ -827,7 +857,11 @@ impl NanValue {
     }
 
     pub fn display(self, arena: &Arena) -> Option<String> {
-        if self.is_unit() { None } else { Some(self.repr(arena)) }
+        if self.is_unit() {
+            None
+        } else {
+            Some(self.repr(arena))
+        }
     }
 }
 
@@ -863,11 +897,18 @@ impl NanValue {
                 NanValue::new_some(idx)
             }
             Value::Tuple(items) => {
-                let nv_items: Vec<_> = items.iter().map(|v| NanValue::from_value(v, arena)).collect();
+                let nv_items: Vec<_> = items
+                    .iter()
+                    .map(|v| NanValue::from_value(v, arena))
+                    .collect();
                 NanValue::new_tuple(arena.push_tuple(nv_items))
             }
             Value::List(aver_list) => {
-                let items: Vec<_> = aver_list.to_vec().iter().map(|v| NanValue::from_value(v, arena)).collect();
+                let items: Vec<_> = aver_list
+                    .to_vec()
+                    .iter()
+                    .map(|v| NanValue::from_value(v, arena))
+                    .collect();
                 NanValue::new_list(arena.push_list(items))
             }
             Value::Map(map) => {
@@ -883,29 +924,35 @@ impl NanValue {
             Value::Fn(f) => NanValue::new_fn(arena.push_fn(Rc::clone(f))),
             Value::Builtin(name) => NanValue::new_builtin(arena.push_builtin(name)),
             Value::Record { type_name, fields } => {
-                let type_id = arena
-                    .find_type_id(type_name)
-                    .unwrap_or_else(|| {
-                        let field_names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
-                        arena.register_record_type(type_name, field_names)
-                    });
-                let nv_fields: Vec<_> = fields.iter().map(|(_, v)| NanValue::from_value(v, arena)).collect();
+                let type_id = arena.find_type_id(type_name).unwrap_or_else(|| {
+                    let field_names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
+                    arena.register_record_type(type_name, field_names)
+                });
+                let nv_fields: Vec<_> = fields
+                    .iter()
+                    .map(|(_, v)| NanValue::from_value(v, arena))
+                    .collect();
                 NanValue::new_record(arena.push_record(type_id, nv_fields))
             }
-            Value::Variant { type_name, variant, fields } => {
+            Value::Variant {
+                type_name,
+                variant,
+                fields,
+            } => {
                 let type_id = arena
                     .find_type_id(type_name)
                     .unwrap_or_else(|| arena.register_sum_type(type_name, vec![variant.clone()]));
-                let variant_id = arena
-                    .find_variant_id(type_id, variant)
-                    .unwrap_or_else(|| {
-                        // Register new variant dynamically
-                        let variants = &mut arena.type_variant_names[type_id as usize];
-                        let id = variants.len() as u16;
-                        variants.push(variant.clone());
-                        id
-                    });
-                let nv_fields: Vec<_> = fields.iter().map(|v| NanValue::from_value(v, arena)).collect();
+                let variant_id = arena.find_variant_id(type_id, variant).unwrap_or_else(|| {
+                    // Register new variant dynamically
+                    let variants = &mut arena.type_variant_names[type_id as usize];
+                    let id = variants.len() as u16;
+                    variants.push(variant.clone());
+                    id
+                });
+                let nv_fields: Vec<_> = fields
+                    .iter()
+                    .map(|v| NanValue::from_value(v, arena))
+                    .collect();
                 NanValue::new_variant(arena.push_variant(type_id, variant_id, nv_fields))
             }
             Value::Namespace { name, members } => {
@@ -958,7 +1005,7 @@ impl NanValue {
             TAG_MAP => {
                 let map = arena.get_map(self.arena_index());
                 let mut hm = HashMap::new();
-                for (_, (k, v)) in map {
+                for (k, v) in map.values() {
                     hm.insert(k.to_value(arena), v.to_value(arena));
                 }
                 Value::Map(hm)
@@ -1011,6 +1058,7 @@ impl NanValue {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
+#[allow(clippy::approx_constant)]
 mod tests {
     use super::*;
 
@@ -1037,7 +1085,17 @@ mod tests {
     #[test]
     fn int_inline_roundtrip() {
         let mut arena = Arena::new();
-        for i in [0, 1, -1, 42, -42, 1_000_000, -1_000_000, INT_INLINE_MAX, INT_INLINE_MIN] {
+        for i in [
+            0,
+            1,
+            -1,
+            42,
+            -42,
+            1_000_000,
+            -1_000_000,
+            INT_INLINE_MAX,
+            INT_INLINE_MIN,
+        ] {
             let v = NanValue::new_int(i, &mut arena);
             assert!(v.is_int());
             assert_eq!(v.as_int(&arena), i);
@@ -1143,8 +1201,14 @@ mod tests {
     #[test]
     fn nested_record_in_list() {
         let mut arena = Arena::new();
-        let p1 = arena.push_record(0, vec![NanValue::new_int_inline(1), NanValue::new_int_inline(2)]);
-        let p2 = arena.push_record(0, vec![NanValue::new_int_inline(3), NanValue::new_int_inline(4)]);
+        let p1 = arena.push_record(
+            0,
+            vec![NanValue::new_int_inline(1), NanValue::new_int_inline(2)],
+        );
+        let p2 = arena.push_record(
+            0,
+            vec![NanValue::new_int_inline(3), NanValue::new_int_inline(4)],
+        );
         let list_idx = arena.push_list(vec![NanValue::new_record(p1), NanValue::new_record(p2)]);
         let list = NanValue::new_list(list_idx);
 

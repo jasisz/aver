@@ -8,7 +8,7 @@ impl Interpreter {
         Some((type_name, variant))
     }
 
-    /// Old Value-based match_pattern — kept for external callers (checker/verify.rs).
+    #[allow(dead_code)]
     pub(super) fn match_pattern(
         &self,
         pattern: &Pattern,
@@ -150,11 +150,7 @@ impl Interpreter {
                     Literal::Bool(b) => value.is_bool() && value.as_bool() == *b,
                     Literal::Unit => value.is_unit(),
                 };
-                if matches {
-                    Some(Vec::new())
-                } else {
-                    None
-                }
+                if matches { Some(Vec::new()) } else { None }
             }
             Pattern::Ident(name) => Some(vec![(name.clone(), value)]),
             Pattern::EmptyList => {

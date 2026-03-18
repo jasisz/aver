@@ -5,7 +5,7 @@ use colored::Colorize;
 
 use aver::ast::{Stmt, TopLevel, TypeDef};
 use aver::checker::run_verify;
-use aver::interpreter::{EnvFrame, Interpreter, Value, aver_display, aver_repr};
+use aver::interpreter::{EnvFrame, Interpreter, aver_display, aver_repr};
 use aver::nan_value::NanValue;
 use aver::source::parse_source;
 use aver::types::checker::run_type_check_with_base;

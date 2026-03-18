@@ -1,6 +1,7 @@
 use super::*;
 
 impl Interpreter {
+    #[allow(dead_code)]
     pub(super) fn call_builtin(
         &mut self,
         name: &str,
@@ -341,21 +342,30 @@ impl Interpreter {
         match name {
             "__ctor:Result.Ok" => {
                 if args.len() != 1 {
-                    return Err(RuntimeError::Error(format!("Result.Ok() takes 1 argument, got {}", args.len())));
+                    return Err(RuntimeError::Error(format!(
+                        "Result.Ok() takes 1 argument, got {}",
+                        args.len()
+                    )));
                 }
                 let idx = self.arena.push_boxed(args[0]);
                 Ok(NanValue::new_ok(idx))
             }
             "__ctor:Result.Err" => {
                 if args.len() != 1 {
-                    return Err(RuntimeError::Error(format!("Result.Err() takes 1 argument, got {}", args.len())));
+                    return Err(RuntimeError::Error(format!(
+                        "Result.Err() takes 1 argument, got {}",
+                        args.len()
+                    )));
                 }
                 let idx = self.arena.push_boxed(args[0]);
                 Ok(NanValue::new_err(idx))
             }
             "__ctor:Option.Some" => {
                 if args.len() != 1 {
-                    return Err(RuntimeError::Error(format!("Option.Some() takes 1 argument, got {}", args.len())));
+                    return Err(RuntimeError::Error(format!(
+                        "Option.Some() takes 1 argument, got {}",
+                        args.len()
+                    )));
                 }
                 let idx = self.arena.push_boxed(args[0]);
                 Ok(NanValue::new_some(idx))
@@ -368,43 +378,75 @@ impl Interpreter {
             }
 
             _ => {
-                let err = || -> Result<NanValue, RuntimeError> { Err(RuntimeError::Error(format!("Unknown builtin function: '{}'", name))) };
+                let err = || -> Result<NanValue, RuntimeError> {
+                    Err(RuntimeError::Error(format!(
+                        "Unknown builtin function: '{}'",
+                        name
+                    )))
+                };
                 let skip_server = matches!(self.execution_mode, ExecutionMode::Record);
                 match Self::builtin_namespace(name) {
                     Some("HttpServer") => {
                         // HttpServer needs callback support — bridge through Value
-                        let old_args: Vec<Value> = args.iter().map(|nv| nv.to_value(&self.arena)).collect();
+                        let old_args: Vec<Value> =
+                            args.iter().map(|nv| nv.to_value(&self.arena)).collect();
                         let result = http_server::call_with_runtime(
                             name,
                             &old_args,
                             |handler, callback_args, callback_entry| {
                                 let callback_effects = Self::callable_declared_effects(&handler);
-                                self.call_value_with_effects_pub(handler, callback_args, &callback_entry, callback_effects)
+                                self.call_value_with_effects_pub(
+                                    handler,
+                                    callback_args,
+                                    &callback_entry,
+                                    callback_effects,
+                                )
                             },
                             skip_server,
-                        ).unwrap_or_else(|| Err(RuntimeError::Error(format!("Unknown builtin function: '{}'", name))))?;
+                        )
+                        .unwrap_or_else(|| {
+                            Err(RuntimeError::Error(format!(
+                                "Unknown builtin function: '{}'",
+                                name
+                            )))
+                        })?;
                         Ok(NanValue::from_value(&result, &mut self.arena))
                     }
-                    Some("Args") => args::call_nv(name, args, &self.cli_args, &mut self.arena).unwrap_or_else(err),
-                    Some("Console") => console::call_nv(name, args, &mut self.arena).unwrap_or_else(err),
+                    Some("Args") => args::call_nv(name, args, &self.cli_args, &mut self.arena)
+                        .unwrap_or_else(err),
+                    Some("Console") => {
+                        console::call_nv(name, args, &mut self.arena).unwrap_or_else(err)
+                    }
                     Some("Http") => http::call_nv(name, args, &mut self.arena).unwrap_or_else(err),
                     Some("Disk") => disk::call_nv(name, args, &mut self.arena).unwrap_or_else(err),
                     Some("Env") => env::call_nv(name, args, &mut self.arena).unwrap_or_else(err),
-                    Some("Random") => random::call_nv(name, args, &mut self.arena).unwrap_or_else(err),
+                    Some("Random") => {
+                        random::call_nv(name, args, &mut self.arena).unwrap_or_else(err)
+                    }
                     Some("Tcp") => tcp::call_nv(name, args, &mut self.arena).unwrap_or_else(err),
                     #[cfg(feature = "terminal")]
-                    Some("Terminal") => terminal::call_nv(name, args, &mut self.arena).unwrap_or_else(err),
+                    Some("Terminal") => {
+                        terminal::call_nv(name, args, &mut self.arena).unwrap_or_else(err)
+                    }
                     Some("Time") => time::call_nv(name, args, &mut self.arena).unwrap_or_else(err),
                     Some("Bool") => bool::call_nv(name, args, &mut self.arena).unwrap_or_else(err),
                     Some("Int") => int::call_nv(name, args, &mut self.arena).unwrap_or_else(err),
-                    Some("Float") => float::call_nv(name, args, &mut self.arena).unwrap_or_else(err),
-                    Some("String") => string::call_nv(name, args, &mut self.arena).unwrap_or_else(err),
+                    Some("Float") => {
+                        float::call_nv(name, args, &mut self.arena).unwrap_or_else(err)
+                    }
+                    Some("String") => {
+                        string::call_nv(name, args, &mut self.arena).unwrap_or_else(err)
+                    }
                     Some("List") => list::call_nv(name, args, &mut self.arena).unwrap_or_else(err),
                     Some("Map") => map::call_nv(name, args, &mut self.arena).unwrap_or_else(err),
                     Some("Char") => char::call_nv(name, args, &mut self.arena).unwrap_or_else(err),
                     Some("Byte") => byte::call_nv(name, args, &mut self.arena).unwrap_or_else(err),
-                    Some("Result") => result::call_nv(name, args, &mut self.arena).unwrap_or_else(err),
-                    Some("Option") => option::call_nv(name, args, &mut self.arena).unwrap_or_else(err),
+                    Some("Result") => {
+                        result::call_nv(name, args, &mut self.arena).unwrap_or_else(err)
+                    }
+                    Some("Option") => {
+                        option::call_nv(name, args, &mut self.arena).unwrap_or_else(err)
+                    }
                     _ => err(),
                 }
             }

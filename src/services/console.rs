@@ -102,19 +102,38 @@ pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
     global.insert("Console".to_string(), NanValue::new_namespace(ns_idx));
 }
 
-pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Result<NanValue, RuntimeError>> {
+pub fn call_nv(
+    name: &str,
+    args: &[NanValue],
+    arena: &mut Arena,
+) -> Option<Result<NanValue, RuntimeError>> {
     match name {
-        "Console.print" => Some(one_msg_nv(name, args, arena, |s| { println!("{}", s); })),
-        "Console.error" => Some(one_msg_nv(name, args, arena, |s| { eprintln!("{}", s); })),
-        "Console.warn" => Some(one_msg_nv(name, args, arena, |s| { eprintln!("[warn] {}", s); })),
+        "Console.print" => Some(one_msg_nv(name, args, arena, |s| {
+            println!("{}", s);
+        })),
+        "Console.error" => Some(one_msg_nv(name, args, arena, |s| {
+            eprintln!("{}", s);
+        })),
+        "Console.warn" => Some(one_msg_nv(name, args, arena, |s| {
+            eprintln!("[warn] {}", s);
+        })),
         "Console.readLine" => Some(read_line_nv(args, arena)),
         _ => None,
     }
 }
 
-fn one_msg_nv(name: &str, args: &[NanValue], arena: &mut Arena, emit: impl Fn(&str)) -> Result<NanValue, RuntimeError> {
+fn one_msg_nv(
+    name: &str,
+    args: &[NanValue],
+    arena: &mut Arena,
+    emit: impl Fn(&str),
+) -> Result<NanValue, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::Error(format!("{}() takes 1 argument, got {}", name, args.len())));
+        return Err(RuntimeError::Error(format!(
+            "{}() takes 1 argument, got {}",
+            name,
+            args.len()
+        )));
     }
     if let Some(s) = args[0].display(arena) {
         emit(&s);
@@ -124,7 +143,10 @@ fn one_msg_nv(name: &str, args: &[NanValue], arena: &mut Arena, emit: impl Fn(&s
 
 fn read_line_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
     if !args.is_empty() {
-        return Err(RuntimeError::Error(format!("Console.readLine() takes 0 arguments, got {}", args.len())));
+        return Err(RuntimeError::Error(format!(
+            "Console.readLine() takes 0 arguments, got {}",
+            args.len()
+        )));
     }
     match aver_rt::read_line() {
         Ok(line) => {

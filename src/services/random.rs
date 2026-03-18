@@ -94,7 +94,11 @@ pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
     global.insert("Random".to_string(), NanValue::new_namespace(ns_idx));
 }
 
-pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Result<NanValue, RuntimeError>> {
+pub fn call_nv(
+    name: &str,
+    args: &[NanValue],
+    arena: &mut Arena,
+) -> Option<Result<NanValue, RuntimeError>> {
     match name {
         "Random.int" => Some(random_int_nv(args, arena)),
         "Random.float" => Some(random_float_nv(args, arena)),
@@ -103,9 +107,22 @@ pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Resul
 }
 
 fn random_int_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    if args.len() != 2 { return Err(RuntimeError::Error(format!("Random.int takes 2 arguments (min, max), got {}", args.len()))); }
-    if !args[0].is_int() { return Err(RuntimeError::Error("Random.int: first argument must be an Int".to_string())); }
-    if !args[1].is_int() { return Err(RuntimeError::Error("Random.int: second argument must be an Int".to_string())); }
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!(
+            "Random.int takes 2 arguments (min, max), got {}",
+            args.len()
+        )));
+    }
+    if !args[0].is_int() {
+        return Err(RuntimeError::Error(
+            "Random.int: first argument must be an Int".to_string(),
+        ));
+    }
+    if !args[1].is_int() {
+        return Err(RuntimeError::Error(
+            "Random.int: second argument must be an Int".to_string(),
+        ));
+    }
     let min = args[0].as_int(arena);
     let max = args[1].as_int(arena);
     match aver_rt::random::random_int(min, max) {
@@ -115,6 +132,11 @@ fn random_int_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runti
 }
 
 fn random_float_nv(args: &[NanValue], _arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    if !args.is_empty() { return Err(RuntimeError::Error(format!("Random.float takes 0 arguments, got {}", args.len()))); }
+    if !args.is_empty() {
+        return Err(RuntimeError::Error(format!(
+            "Random.float takes 0 arguments, got {}",
+            args.len()
+        )));
+    }
     Ok(NanValue::new_float(aver_rt::random::random_float()))
 }

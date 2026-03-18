@@ -627,7 +627,8 @@ impl Interpreter {
                             type_name, base_type_name, type_name
                         ))));
                     }
-                    let base_field_names: Vec<String> = self.arena.get_field_names(base_type_id).to_vec();
+                    let base_field_names: Vec<String> =
+                        self.arena.get_field_names(base_type_id).to_vec();
                     let base_fields_vec: Vec<NanValue> = base_fields.to_vec();
                     self.resume_record_update(
                         RecordUpdateProgress {
@@ -884,7 +885,11 @@ impl Interpreter {
         )))
     }
 
-    fn enter_function_body_nv(&mut self, active: &ActiveFunction, args: Vec<NanValue>) -> EvalState {
+    fn enter_function_body_nv(
+        &mut self,
+        active: &ActiveFunction,
+        args: Vec<NanValue>,
+    ) -> EvalState {
         if let Some(resolution) = &active.function.resolution {
             let local_slots = Rc::clone(&resolution.local_slots);
             let mut slots = Self::empty_slots_nv(resolution.local_count);
@@ -987,7 +992,13 @@ impl Interpreter {
                             .entry(frame.active.function.name.as_ref().clone())
                             .or_default()
                     };
-                    cache.insert_nv(*key, memo_args.clone(), *value, &self.arena, MEMO_CACHE_CAP_PER_FN);
+                    cache.insert_nv(
+                        *key,
+                        memo_args.clone(),
+                        *value,
+                        &self.arena,
+                        MEMO_CACHE_CAP_PER_FN,
+                    );
                 }
 
                 EvalState::Apply(final_result)
@@ -1176,7 +1187,8 @@ impl Interpreter {
             // (which is the declaration order from the record definition).
             let schema_clone = schema.clone();
             let type_id = self.arena.find_type_id(type_name).unwrap_or_else(|| {
-                self.arena.register_record_type(type_name, schema_clone.clone())
+                self.arena
+                    .register_record_type(type_name, schema_clone.clone())
             });
             let mut by_name = HashMap::with_capacity(field_vals.len());
             for (name, value) in field_vals {
@@ -1270,7 +1282,7 @@ impl Interpreter {
         }
     }
 
-    /// Old eval_literal for backward compat in exec.rs
+    #[allow(dead_code)]
     pub(super) fn eval_literal(&self, lit: &Literal) -> Value {
         match lit {
             Literal::Int(i) => Value::Int(*i),
@@ -1287,7 +1299,10 @@ impl Interpreter {
         args: Vec<Value>,
     ) -> Result<Value, RuntimeError> {
         let fn_nv = NanValue::from_value(&fn_val, &mut self.arena);
-        let nv_args: Vec<NanValue> = args.iter().map(|v| NanValue::from_value(v, &mut self.arena)).collect();
+        let nv_args: Vec<NanValue> = args
+            .iter()
+            .map(|v| NanValue::from_value(v, &mut self.arena))
+            .collect();
         match self.start_call_nv(fn_nv, nv_args)? {
             CallDispatch::Immediate(result) => result.map(|nv| nv.to_value(&self.arena)),
             CallDispatch::EnterFunction { frame, state } => {

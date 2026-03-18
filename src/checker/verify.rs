@@ -218,7 +218,10 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
                 Err(RuntimeError::ErrProp(err_val)) => {
                     failed += 1;
                     println!("  {} {}", "✗".red(), case_label);
-                    println!("      when ? hit Result.Err({})", err_val.repr(&interp.arena));
+                    println!(
+                        "      when ? hit Result.Err({})",
+                        err_val.repr(&interp.arena)
+                    );
                     failures.push((
                         failure_case,
                         String::new(),

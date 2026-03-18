@@ -172,7 +172,16 @@ fn two_str_args(fn_name: &str, args: &[Value]) -> Result<(String, String), Runti
 // ─── NanValue-native API ─────────────────────────────────────────────────────
 
 pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
-    let methods = &["readText", "writeText", "appendText", "exists", "delete", "deleteDir", "listDir", "makeDir"];
+    let methods = &[
+        "readText",
+        "writeText",
+        "appendText",
+        "exists",
+        "delete",
+        "deleteDir",
+        "listDir",
+        "makeDir",
+    ];
     let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
     for method in methods {
         let idx = arena.push_builtin(&format!("Disk.{}", method));
@@ -185,7 +194,11 @@ pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
     global.insert("Disk".to_string(), NanValue::new_namespace(ns_idx));
 }
 
-pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Result<NanValue, RuntimeError>> {
+pub fn call_nv(
+    name: &str,
+    args: &[NanValue],
+    arena: &mut Arena,
+) -> Option<Result<NanValue, RuntimeError>> {
     match name {
         "Disk.readText" => Some(read_text_nv(args, arena)),
         "Disk.writeText" => Some(write_text_nv(args, arena)),
@@ -200,15 +213,44 @@ pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Resul
 }
 
 fn nv_one_str(fn_name: &str, args: &[NanValue], arena: &Arena) -> Result<String, RuntimeError> {
-    if args.len() != 1 { return Err(RuntimeError::Error(format!("{}() takes 1 argument (path), got {}", fn_name, args.len()))); }
-    if !args[0].is_string() { return Err(RuntimeError::Error(format!("{}: path must be a String", fn_name))); }
+    if args.len() != 1 {
+        return Err(RuntimeError::Error(format!(
+            "{}() takes 1 argument (path), got {}",
+            fn_name,
+            args.len()
+        )));
+    }
+    if !args[0].is_string() {
+        return Err(RuntimeError::Error(format!(
+            "{}: path must be a String",
+            fn_name
+        )));
+    }
     Ok(arena.get_string(args[0].arena_index()).to_string())
 }
 
-fn nv_two_str(fn_name: &str, args: &[NanValue], arena: &Arena) -> Result<(String, String), RuntimeError> {
-    if args.len() != 2 { return Err(RuntimeError::Error(format!("{}() takes 2 arguments (path, content), got {}", fn_name, args.len()))); }
-    if !args[0].is_string() || !args[1].is_string() { return Err(RuntimeError::Error(format!("{}: both arguments must be Strings", fn_name))); }
-    Ok((arena.get_string(args[0].arena_index()).to_string(), arena.get_string(args[1].arena_index()).to_string()))
+fn nv_two_str(
+    fn_name: &str,
+    args: &[NanValue],
+    arena: &Arena,
+) -> Result<(String, String), RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!(
+            "{}() takes 2 arguments (path, content), got {}",
+            fn_name,
+            args.len()
+        )));
+    }
+    if !args[0].is_string() || !args[1].is_string() {
+        return Err(RuntimeError::Error(format!(
+            "{}: both arguments must be Strings",
+            fn_name
+        )));
+    }
+    Ok((
+        arena.get_string(args[0].arena_index()).to_string(),
+        arena.get_string(args[1].arena_index()).to_string(),
+    ))
 }
 
 fn nv_ok_unit(arena: &mut Arena) -> NanValue {
@@ -279,10 +321,13 @@ fn list_dir_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtime
     let path = nv_one_str("Disk.listDir", args, arena)?;
     match aver_rt::list_dir(&path) {
         Ok(entries) => {
-            let items: Vec<NanValue> = entries.into_iter().map(|s| {
-                let idx = arena.push_string(&s);
-                NanValue::new_string(idx)
-            }).collect();
+            let items: Vec<NanValue> = entries
+                .into_iter()
+                .map(|s| {
+                    let idx = arena.push_string(&s);
+                    NanValue::new_string(idx)
+                })
+                .collect();
             let list_idx = arena.push_list(items);
             let inner = NanValue::new_list(list_idx);
             let box_idx = arena.push_boxed(inner);

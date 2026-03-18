@@ -1,5 +1,4 @@
 use crate::nan_value::{Arena, NanValue};
-use crate::value::hash_memo_args;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -18,7 +17,7 @@ use crate::source::{
 use crate::types::{bool, byte, char, float, int, list, map, option, result, string};
 // Re-export value types so existing `use aver::interpreter::Value` imports keep working.
 pub use crate::value::{Env, EnvFrame, RuntimeError, Value, aver_display, aver_repr};
-use crate::value::{list_from_vec, list_len, list_view};
+use crate::value::{list_len, list_view};
 
 #[derive(Debug, Clone)]
 struct CallFrame {
@@ -228,7 +227,14 @@ impl FnMemoCache {
     }
 
     /// NanValue-native insert — stores args and result as Value (bridge).
-    fn insert_nv(&mut self, hash: u64, nv_args: Vec<NanValue>, nv_result: NanValue, arena: &Arena, cap: usize) {
+    fn insert_nv(
+        &mut self,
+        hash: u64,
+        nv_args: Vec<NanValue>,
+        nv_result: NanValue,
+        arena: &Arena,
+        cap: usize,
+    ) {
         let args: Vec<Value> = nv_args.iter().map(|nv| nv.to_value(arena)).collect();
         let result = nv_result.to_value(arena);
         self.insert(hash, args, result, cap);

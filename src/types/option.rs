@@ -73,7 +73,11 @@ fn to_result(args: &[Value]) -> Result<Value, RuntimeError> {
 
 // ─── NanValue-native API ─────────────────────────────────────────────────────
 
-pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Result<NanValue, RuntimeError>> {
+pub fn call_nv(
+    name: &str,
+    args: &[NanValue],
+    arena: &mut Arena,
+) -> Option<Result<NanValue, RuntimeError>> {
     match name {
         "Option.withDefault" => Some(with_default_nv(args, arena)),
         "Option.toResult" => Some(to_result_nv(args, arena)),
@@ -83,7 +87,10 @@ pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Resul
 
 fn with_default_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
     if args.len() != 2 {
-        return Err(RuntimeError::Error(format!("Option.withDefault() takes 2 arguments (option, default), got {}", args.len())));
+        return Err(RuntimeError::Error(format!(
+            "Option.withDefault() takes 2 arguments (option, default), got {}",
+            args.len()
+        )));
     }
     let v = args[0];
     if v.is_some() {
@@ -91,13 +98,18 @@ fn with_default_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Run
     } else if v.is_none() {
         Ok(args[1])
     } else {
-        Err(RuntimeError::Error("Option.withDefault: first argument must be an Option".to_string()))
+        Err(RuntimeError::Error(
+            "Option.withDefault: first argument must be an Option".to_string(),
+        ))
     }
 }
 
 fn to_result_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
     if args.len() != 2 {
-        return Err(RuntimeError::Error(format!("Option.toResult() takes 2 arguments (option, err), got {}", args.len())));
+        return Err(RuntimeError::Error(format!(
+            "Option.toResult() takes 2 arguments (option, err), got {}",
+            args.len()
+        )));
     }
     let v = args[0];
     if v.is_some() {
@@ -107,6 +119,8 @@ fn to_result_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtim
         let box_idx = arena.push_boxed(args[1]);
         Ok(NanValue::new_err(box_idx))
     } else {
-        Err(RuntimeError::Error("Option.toResult: first argument must be an Option".to_string()))
+        Err(RuntimeError::Error(
+            "Option.toResult: first argument must be an Option".to_string(),
+        ))
     }
 }

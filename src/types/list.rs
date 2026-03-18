@@ -189,7 +189,9 @@ fn zip(args: &[Value]) -> Result<Value, RuntimeError> {
 // ─── NanValue-native API ─────────────────────────────────────────────────────
 
 pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
-    let methods = &["len", "get", "append", "prepend", "concat", "reverse", "contains", "zip"];
+    let methods = &[
+        "len", "get", "append", "prepend", "concat", "reverse", "contains", "zip",
+    ];
     let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
     for method in methods {
         let idx = arena.push_builtin(&format!("List.{}", method));
@@ -202,7 +204,11 @@ pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
     global.insert("List".to_string(), NanValue::new_namespace(ns_idx));
 }
 
-pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Result<NanValue, RuntimeError>> {
+pub fn call_nv(
+    name: &str,
+    args: &[NanValue],
+    arena: &mut Arena,
+) -> Option<Result<NanValue, RuntimeError>> {
     match name {
         "List.len" => Some(len_nv(args, arena)),
         "List.get" => Some(get_nv(args, arena)),
@@ -217,16 +223,38 @@ pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Resul
 }
 
 fn len_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    if args.len() != 1 { return Err(RuntimeError::Error(format!("List.len() takes 1 argument, got {}", args.len()))); }
-    if !args[0].is_list() { return Err(RuntimeError::Error("List.len() argument must be a List".to_string())); }
+    if args.len() != 1 {
+        return Err(RuntimeError::Error(format!(
+            "List.len() takes 1 argument, got {}",
+            args.len()
+        )));
+    }
+    if !args[0].is_list() {
+        return Err(RuntimeError::Error(
+            "List.len() argument must be a List".to_string(),
+        ));
+    }
     let items = arena.get_list(args[0].arena_index());
     Ok(NanValue::new_int(items.len() as i64, arena))
 }
 
 fn get_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    if args.len() != 2 { return Err(RuntimeError::Error(format!("List.get() takes 2 arguments (list, index), got {}", args.len()))); }
-    if !args[0].is_list() { return Err(RuntimeError::Error("List.get() first argument must be a List".to_string())); }
-    if !args[1].is_int() { return Err(RuntimeError::Error("List.get() index must be an Int".to_string())); }
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!(
+            "List.get() takes 2 arguments (list, index), got {}",
+            args.len()
+        )));
+    }
+    if !args[0].is_list() {
+        return Err(RuntimeError::Error(
+            "List.get() first argument must be a List".to_string(),
+        ));
+    }
+    if !args[1].is_int() {
+        return Err(RuntimeError::Error(
+            "List.get() index must be an Int".to_string(),
+        ));
+    }
     let index = args[1].as_int(arena);
     if index < 0 {
         return Ok(NanValue::NONE);
@@ -243,8 +271,17 @@ fn get_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
 }
 
 fn append_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    if args.len() != 2 { return Err(RuntimeError::Error(format!("List.append() takes 2 arguments (list, val), got {}", args.len()))); }
-    if !args[0].is_list() { return Err(RuntimeError::Error("List.append() first argument must be a List".to_string())); }
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!(
+            "List.append() takes 2 arguments (list, val), got {}",
+            args.len()
+        )));
+    }
+    if !args[0].is_list() {
+        return Err(RuntimeError::Error(
+            "List.append() first argument must be a List".to_string(),
+        ));
+    }
     let mut items = arena.get_list(args[0].arena_index()).to_vec();
     items.push(args[1]);
     let list_idx = arena.push_list(items);
@@ -252,8 +289,17 @@ fn append_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeEr
 }
 
 fn prepend_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    if args.len() != 2 { return Err(RuntimeError::Error(format!("List.prepend() takes 2 arguments (val, list), got {}", args.len()))); }
-    if !args[1].is_list() { return Err(RuntimeError::Error("List.prepend() second argument must be a List".to_string())); }
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!(
+            "List.prepend() takes 2 arguments (val, list), got {}",
+            args.len()
+        )));
+    }
+    if !args[1].is_list() {
+        return Err(RuntimeError::Error(
+            "List.prepend() second argument must be a List".to_string(),
+        ));
+    }
     let old_items = arena.get_list(args[1].arena_index()).to_vec();
     let mut items = Vec::with_capacity(old_items.len() + 1);
     items.push(args[0]);
@@ -263,9 +309,22 @@ fn prepend_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeE
 }
 
 fn concat_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    if args.len() != 2 { return Err(RuntimeError::Error(format!("List.concat() takes 2 arguments (list, list), got {}", args.len()))); }
-    if !args[0].is_list() { return Err(RuntimeError::Error("List.concat() first argument must be a List".to_string())); }
-    if !args[1].is_list() { return Err(RuntimeError::Error("List.concat() second argument must be a List".to_string())); }
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!(
+            "List.concat() takes 2 arguments (list, list), got {}",
+            args.len()
+        )));
+    }
+    if !args[0].is_list() {
+        return Err(RuntimeError::Error(
+            "List.concat() first argument must be a List".to_string(),
+        ));
+    }
+    if !args[1].is_list() {
+        return Err(RuntimeError::Error(
+            "List.concat() second argument must be a List".to_string(),
+        ));
+    }
     let a = arena.get_list(args[0].arena_index()).to_vec();
     let b = arena.get_list(args[1].arena_index()).to_vec();
     let mut items = Vec::with_capacity(a.len() + b.len());
@@ -276,8 +335,17 @@ fn concat_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeEr
 }
 
 fn reverse_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    if args.len() != 1 { return Err(RuntimeError::Error(format!("List.reverse() takes 1 argument, got {}", args.len()))); }
-    if !args[0].is_list() { return Err(RuntimeError::Error("List.reverse() argument must be a List".to_string())); }
+    if args.len() != 1 {
+        return Err(RuntimeError::Error(format!(
+            "List.reverse() takes 1 argument, got {}",
+            args.len()
+        )));
+    }
+    if !args[0].is_list() {
+        return Err(RuntimeError::Error(
+            "List.reverse() argument must be a List".to_string(),
+        ));
+    }
     let mut items = arena.get_list(args[0].arena_index()).to_vec();
     items.reverse();
     let list_idx = arena.push_list(items);
@@ -285,8 +353,17 @@ fn reverse_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeE
 }
 
 fn contains_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    if args.len() != 2 { return Err(RuntimeError::Error(format!("List.contains() takes 2 arguments (list, value), got {}", args.len()))); }
-    if !args[0].is_list() { return Err(RuntimeError::Error("List.contains() first argument must be a List".to_string())); }
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!(
+            "List.contains() takes 2 arguments (list, value), got {}",
+            args.len()
+        )));
+    }
+    if !args[0].is_list() {
+        return Err(RuntimeError::Error(
+            "List.contains() first argument must be a List".to_string(),
+        ));
+    }
     let items = arena.get_list(args[0].arena_index()).to_vec();
     let target = args[1];
     let found = items.iter().any(|item| item.eq_in(target, arena));
@@ -294,15 +371,32 @@ fn contains_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtime
 }
 
 fn zip_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    if args.len() != 2 { return Err(RuntimeError::Error(format!("List.zip() takes 2 arguments (list, list), got {}", args.len()))); }
-    if !args[0].is_list() { return Err(RuntimeError::Error("List.zip() first argument must be a List".to_string())); }
-    if !args[1].is_list() { return Err(RuntimeError::Error("List.zip() second argument must be a List".to_string())); }
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!(
+            "List.zip() takes 2 arguments (list, list), got {}",
+            args.len()
+        )));
+    }
+    if !args[0].is_list() {
+        return Err(RuntimeError::Error(
+            "List.zip() first argument must be a List".to_string(),
+        ));
+    }
+    if !args[1].is_list() {
+        return Err(RuntimeError::Error(
+            "List.zip() second argument must be a List".to_string(),
+        ));
+    }
     let a = arena.get_list(args[0].arena_index()).to_vec();
     let b = arena.get_list(args[1].arena_index()).to_vec();
-    let pairs: Vec<NanValue> = a.iter().zip(b.iter()).map(|(x, y)| {
-        let tuple_idx = arena.push_tuple(vec![*x, *y]);
-        NanValue::new_tuple(tuple_idx)
-    }).collect();
+    let pairs: Vec<NanValue> = a
+        .iter()
+        .zip(b.iter())
+        .map(|(x, y)| {
+            let tuple_idx = arena.push_tuple(vec![*x, *y]);
+            NanValue::new_tuple(tuple_idx)
+        })
+        .collect();
     let list_idx = arena.push_list(pairs);
     Ok(NanValue::new_list(list_idx))
 }

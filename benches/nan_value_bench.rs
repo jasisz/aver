@@ -79,7 +79,7 @@ fn bench_record_old(c: &mut Criterion) {
                     ("z".to_string(), OldValue::Int(i * 3)),
                 ];
                 // Linear scan by name (like old interpreter)
-                for (name, val) in &fields {
+                for (_name, val) in &fields {
                     let OldValue::Int(v) = val;
                     sum += v;
                 }

@@ -162,9 +162,16 @@ pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
 }
 
 /// Bridge: convert NanValue args to Value, call old implementation, convert result back.
-pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Result<NanValue, RuntimeError>> {
+pub fn call_nv(
+    name: &str,
+    args: &[NanValue],
+    arena: &mut Arena,
+) -> Option<Result<NanValue, RuntimeError>> {
     // Check if this name is owned by us
-    if !matches!(name, "Http.get" | "Http.head" | "Http.delete" | "Http.post" | "Http.put" | "Http.patch") {
+    if !matches!(
+        name,
+        "Http.get" | "Http.head" | "Http.delete" | "Http.post" | "Http.put" | "Http.patch"
+    ) {
         return None;
     }
     let old_args: Vec<Value> = args.iter().map(|nv| nv.to_value(arena)).collect();

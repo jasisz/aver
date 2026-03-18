@@ -1,6 +1,7 @@
 use super::*;
 
 impl Interpreter {
+    #[allow(dead_code)]
     pub(super) fn eval_binop(
         &self,
         op: &BinOp,

@@ -110,7 +110,11 @@ pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
     global.insert("Byte".to_string(), NanValue::new_namespace(ns_idx));
 }
 
-pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Result<NanValue, RuntimeError>> {
+pub fn call_nv(
+    name: &str,
+    args: &[NanValue],
+    arena: &mut Arena,
+) -> Option<Result<NanValue, RuntimeError>> {
     match name {
         "Byte.toHex" => Some(to_hex_nv(args, arena)),
         "Byte.fromHex" => Some(from_hex_nv(args, arena)),
@@ -133,21 +137,45 @@ fn nv_err_str(s: &str, arena: &mut Arena) -> NanValue {
 }
 
 fn to_hex_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    if args.len() != 1 { return Err(RuntimeError::Error(format!("Byte.toHex() takes 1 argument, got {}", args.len()))); }
-    if !args[0].is_int() { return Err(RuntimeError::Error("Byte.toHex: argument must be an Int".to_string())); }
+    if args.len() != 1 {
+        return Err(RuntimeError::Error(format!(
+            "Byte.toHex() takes 1 argument, got {}",
+            args.len()
+        )));
+    }
+    if !args[0].is_int() {
+        return Err(RuntimeError::Error(
+            "Byte.toHex: argument must be an Int".to_string(),
+        ));
+    }
     let n = args[0].as_int(arena);
     if !(0..=255).contains(&n) {
-        return Ok(nv_err_str(&format!("Byte.toHex: {} is out of range 0-255", n), arena));
+        return Ok(nv_err_str(
+            &format!("Byte.toHex: {} is out of range 0-255", n),
+            arena,
+        ));
     }
     Ok(nv_ok_str(&format!("{:02x}", n), arena))
 }
 
 fn from_hex_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    if args.len() != 1 { return Err(RuntimeError::Error(format!("Byte.fromHex() takes 1 argument, got {}", args.len()))); }
-    if !args[0].is_string() { return Err(RuntimeError::Error("Byte.fromHex: argument must be a String".to_string())); }
+    if args.len() != 1 {
+        return Err(RuntimeError::Error(format!(
+            "Byte.fromHex() takes 1 argument, got {}",
+            args.len()
+        )));
+    }
+    if !args[0].is_string() {
+        return Err(RuntimeError::Error(
+            "Byte.fromHex: argument must be a String".to_string(),
+        ));
+    }
     let s = arena.get_string(args[0].arena_index()).to_string();
     if s.len() != 2 {
-        return Ok(nv_err_str(&format!("Byte.fromHex: expected exactly 2 hex chars, got '{}'", s), arena));
+        return Ok(nv_err_str(
+            &format!("Byte.fromHex: expected exactly 2 hex chars, got '{}'", s),
+            arena,
+        ));
     }
     match u8::from_str_radix(&s, 16) {
         Ok(n) => {
@@ -155,6 +183,9 @@ fn from_hex_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtime
             let box_idx = arena.push_boxed(inner);
             Ok(NanValue::new_ok(box_idx))
         }
-        Err(_) => Ok(nv_err_str(&format!("Byte.fromHex: invalid hex '{}'", s), arena)),
+        Err(_) => Ok(nv_err_str(
+            &format!("Byte.fromHex: invalid hex '{}'", s),
+            arena,
+        )),
     }
 }

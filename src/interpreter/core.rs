@@ -482,9 +482,7 @@ impl Interpreter {
         .ok_or_else(|| RuntimeError::Error(format!("Undefined variable: '{}'", name)))
     }
 
-    pub(super) fn global_scope_clone(
-        &self,
-    ) -> Result<HashMap<String, NanValue>, RuntimeError> {
+    pub(super) fn global_scope_clone(&self) -> Result<HashMap<String, NanValue>, RuntimeError> {
         let frame = self
             .env
             .first()
@@ -765,7 +763,8 @@ impl Interpreter {
             // Re-encode sub's NanValues into self's arena so that
             // home_globals NanValue indices are valid in self.arena.
             let sub_globals_nv = sub.global_scope_clone()?;
-            let mut reencoded_globals: HashMap<String, NanValue> = HashMap::with_capacity(sub_globals_nv.len());
+            let mut reencoded_globals: HashMap<String, NanValue> =
+                HashMap::with_capacity(sub_globals_nv.len());
             for (k, nv) in &sub_globals_nv {
                 let old_val = nv.to_value(&sub.arena);
                 let new_nv = NanValue::from_value(&old_val, &mut self.arena);

@@ -53,7 +53,11 @@ fn with_default(args: &[Value]) -> Result<Value, RuntimeError> {
 
 // ─── NanValue-native API ─────────────────────────────────────────────────────
 
-pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Result<NanValue, RuntimeError>> {
+pub fn call_nv(
+    name: &str,
+    args: &[NanValue],
+    arena: &mut Arena,
+) -> Option<Result<NanValue, RuntimeError>> {
     match name {
         "Result.withDefault" => Some(with_default_nv(args, arena)),
         _ => None,
@@ -62,7 +66,10 @@ pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Resul
 
 fn with_default_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
     if args.len() != 2 {
-        return Err(RuntimeError::Error(format!("Result.withDefault() takes 2 arguments (result, default), got {}", args.len())));
+        return Err(RuntimeError::Error(format!(
+            "Result.withDefault() takes 2 arguments (result, default), got {}",
+            args.len()
+        )));
     }
     let v = args[0];
     if v.is_ok() {
@@ -70,6 +77,8 @@ fn with_default_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Run
     } else if v.is_err() {
         Ok(args[1])
     } else {
-        Err(RuntimeError::Error("Result.withDefault: first argument must be a Result".to_string()))
+        Err(RuntimeError::Error(
+            "Result.withDefault: first argument must be a Result".to_string(),
+        ))
     }
 }

@@ -107,7 +107,11 @@ pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
     global.insert("Time".to_string(), NanValue::new_namespace(ns_idx));
 }
 
-pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Result<NanValue, RuntimeError>> {
+pub fn call_nv(
+    name: &str,
+    args: &[NanValue],
+    arena: &mut Arena,
+) -> Option<Result<NanValue, RuntimeError>> {
     match name {
         "Time.now" => Some(now_nv(args, arena)),
         "Time.unixMs" => Some(unix_ms_nv(args, arena)),
@@ -117,22 +121,45 @@ pub fn call_nv(name: &str, args: &[NanValue], arena: &mut Arena) -> Option<Resul
 }
 
 fn now_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    if !args.is_empty() { return Err(RuntimeError::Error(format!("Time.now() takes 0 arguments, got {}", args.len()))); }
+    if !args.is_empty() {
+        return Err(RuntimeError::Error(format!(
+            "Time.now() takes 0 arguments, got {}",
+            args.len()
+        )));
+    }
     let s = aver_rt::time_now();
     let idx = arena.push_string(&s);
     Ok(NanValue::new_string(idx))
 }
 
 fn unix_ms_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    if !args.is_empty() { return Err(RuntimeError::Error(format!("Time.unixMs() takes 0 arguments, got {}", args.len()))); }
+    if !args.is_empty() {
+        return Err(RuntimeError::Error(format!(
+            "Time.unixMs() takes 0 arguments, got {}",
+            args.len()
+        )));
+    }
     Ok(NanValue::new_int(aver_rt::time_unix_ms(), arena))
 }
 
 fn sleep_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    if args.len() != 1 { return Err(RuntimeError::Error(format!("Time.sleep() takes 1 argument (ms), got {}", args.len()))); }
-    if !args[0].is_int() { return Err(RuntimeError::Error("Time.sleep: ms must be an Int".to_string())); }
+    if args.len() != 1 {
+        return Err(RuntimeError::Error(format!(
+            "Time.sleep() takes 1 argument (ms), got {}",
+            args.len()
+        )));
+    }
+    if !args[0].is_int() {
+        return Err(RuntimeError::Error(
+            "Time.sleep: ms must be an Int".to_string(),
+        ));
+    }
     let ms = args[0].as_int(arena);
-    if ms < 0 { return Err(RuntimeError::Error("Time.sleep: ms must be non-negative".to_string())); }
+    if ms < 0 {
+        return Err(RuntimeError::Error(
+            "Time.sleep: ms must be non-negative".to_string(),
+        ));
+    }
     aver_rt::time_sleep(ms);
     Ok(NanValue::UNIT)
 }

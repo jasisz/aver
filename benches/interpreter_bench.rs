@@ -1,3 +1,4 @@
+#![allow(clippy::approx_constant)]
 use criterion::{Criterion, criterion_group, criterion_main};
 
 use aver::interpreter::Interpreter;
