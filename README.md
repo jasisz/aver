@@ -451,6 +451,7 @@ Curated shared examples:
 | `formal/law_auto.av` | Lean proof export, `verify law`, conservative universal auto-proofs plus sampled/domain fallback |
 | `formal/spec_laws.av` | Implementation-vs-spec laws (`verify foo law fooSpec`) and Lean spec theorems for supported shapes |
 | `apps/mission_control.av` | Command parser, pure state machine, effectful shell |
+| `games/wumpus.av` | Hunt the Wumpus: cave exploration, match-driven control flow |
 | `modules/app.av` | Module imports via `depends [Data.Fibonacci]` |
 | `services/console_demo.av` | Console service and replay-friendly effectful flow |
 | `services/http_demo.av` | HTTP service with sub-effects: `Http.get`, `Http.post` |
