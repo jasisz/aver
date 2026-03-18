@@ -106,6 +106,7 @@ impl Interpreter {
         Interpreter {
             env: vec![EnvFrame::Owned(global)],
             env_base: 1,
+            arena: Arena::new(),
             module_cache: HashMap::new(),
             record_schemas,
             call_stack: Vec::new(),

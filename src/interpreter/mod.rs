@@ -1,3 +1,4 @@
+use crate::nan_value::{Arena, NanValue};
 use crate::value::hash_memo_args;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -226,6 +227,8 @@ pub struct Interpreter {
     /// lookup_ref sees env[0] (global) + env[env_base..] (current fn).
     /// Caller frames in env[1..env_base] are invisible.
     env_base: usize,
+    /// Arena for NaN-boxed value storage.
+    pub arena: Arena,
     module_cache: HashMap<String, Value>,
     /// Record field order schemas by type name (used to validate and
     /// canonicalize `RecordCreate` runtime values).
