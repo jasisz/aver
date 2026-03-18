@@ -839,6 +839,58 @@ fn emit_fuelized_int_countdown_fn(fd: &FnDef, ctx: &CodegenContext, param_index:
     .join("\n")
 }
 
+fn emit_fuelized_int_ascending_fn(
+    fd: &FnDef,
+    ctx: &CodegenContext,
+    param_index: usize,
+    bound_lean: &str,
+) -> String {
+    let helper_name = fuel_helper_name(&fd.name);
+    let params = emit_fn_params(&fd.params);
+    let ret_type = ret_type_or_unit(fd);
+    let rewritten = rewrite_recursive_calls_body(
+        &fd.body,
+        &HashSet::from([fd.name.clone()]),
+        STRING_POS_FUEL_VAR,
+    );
+    let body = strip_match_eq_binders(emit_fn_body_for(fd, &rewritten, ctx));
+
+    [
+        emit_doc_comment(&fd.desc),
+        emit_fuel_helper_def(&helper_name, &params, &ret_type, &body, ""),
+        vec![String::new()],
+        emit_int_ascending_wrapper(fd, &helper_name, param_index, bound_lean),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join("\n")
+}
+
+fn emit_int_ascending_wrapper(
+    fd: &FnDef,
+    helper_name: &str,
+    param_index: usize,
+    bound_lean: &str,
+) -> Vec<String> {
+    let fn_name = super::expr::aver_name_to_lean(&fd.name);
+    let params = emit_fn_params(&fd.params);
+    let ret_type = ret_type_or_unit(fd);
+    let arg_names = emit_fn_param_names(&fd.params);
+    let metric_name = fd
+        .params
+        .get(param_index)
+        .map(|(name, _)| super::expr::aver_name_to_lean(name))
+        .unwrap_or_else(|| "0".to_string());
+    vec![
+        format!("def {} {} : {} :=", fn_name, params, ret_type),
+        format!(
+            "  {} ((Int.natAbs ({} - {})) + 1) {}",
+            helper_name, bound_lean, metric_name, arg_names
+        ),
+    ]
+}
+
 fn emit_fuelized_sizeof_fn(fd: &FnDef, ctx: &CodegenContext) -> String {
     let helper_name = fuel_helper_name(&fd.name);
     let params = emit_fn_params(&fd.params);
@@ -1117,6 +1169,19 @@ pub fn emit_fn_def_proof(
         return Some(emit_fuelized_int_countdown_fn(fd, ctx, param_index));
     }
 
+    if let Some(RecursionPlan::IntAscending {
+        param_index,
+        ref bound_lean,
+    }) = recursion_plan
+    {
+        return Some(emit_fuelized_int_ascending_fn(
+            fd,
+            ctx,
+            param_index,
+            bound_lean,
+        ));
+    }
+
     if matches!(recursion_plan, Some(RecursionPlan::SizeOfStructural)) {
         return Some(emit_fuelized_sizeof_fn(fd, ctx));
     }
@@ -1144,6 +1209,7 @@ pub fn emit_fn_def_proof(
         match plan {
             RecursionPlan::LinearRecurrence2 => {}
             RecursionPlan::IntCountdown { .. } => {}
+            RecursionPlan::IntAscending { .. } => {}
             RecursionPlan::MutualIntCountdown => {
                 let Some((param_name, _)) = fd.params.first() else {
                     return Some(lines.join("\n"));
@@ -1705,7 +1771,7 @@ pub fn emit_mutual_group_proof(
         for line in body.lines() {
             lines.push(format!("  {}", line));
         }
-        match plans.get(&fd.name).copied() {
+        match plans.get(&fd.name).cloned() {
             Some(RecursionPlan::MutualIntCountdown) => {
                 if let Some((first_name, _)) = fd.params.first() {
                     let lean_first = aver_name_to_lean(first_name);

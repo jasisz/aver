@@ -34,10 +34,16 @@ pub enum VerifyEmitMode {
 }
 
 /// Proof-mode recursion support class for emitted Lean definitions.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RecursionPlan {
     /// Single-function recursion where an `Int` parameter decreases by 1.
     IntCountdown { param_index: usize },
+    /// Single-function recursion where an `Int` parameter increases by 1 up to a bound.
+    /// `bound_lean` is the Lean expression of the upper bound (e.g. `8` or `xs.length`).
+    IntAscending {
+        param_index: usize,
+        bound_lean: String,
+    },
     /// Single-function recurrence with `n < 0` guard, `0/1` bases, and a linear
     /// second-order recurrence over previous results, emitted through a private
     /// Nat helper.
@@ -1130,22 +1136,21 @@ fn single_int_countdown_param_index(fd: &FnDef) -> Option<usize> {
             }
             let countdown_ok = recursive_calls.iter().all(|args| {
                 args.get(idx)
-                    .copied()
+                    .cloned()
                     .is_some_and(|arg| is_int_minus_positive(arg, param_name))
             });
             if countdown_ok {
                 return Some(idx);
             }
 
+            // Negative-guarded ascent (match n < 0) is handled as countdown
+            // because the fuel is natAbs(n) which works for both directions.
             let ascent_ok = recursive_calls.iter().all(|args| {
                 args.get(idx)
                     .copied()
                     .is_some_and(|arg| is_int_plus_positive(arg, param_name))
             });
-            (ascent_ok
-                && (has_negative_guarded_ascent(fd, param_name)
-                    || has_equality_bounded_ascent(fd, param_name)))
-            .then_some(idx)
+            (ascent_ok && has_negative_guarded_ascent(fd, param_name)).then_some(idx)
         })
 }
 
@@ -1192,6 +1197,102 @@ fn has_negative_guarded_ascent(fd: &FnDef, param_name: &str) -> bool {
         && false_calls
             .iter()
             .all(|(name, _)| !call_matches(name, &fd.name))
+}
+
+/// Detect ascending-index recursion and extract the bound expression.
+/// Returns (param_index, bound_lean_string) if found.
+fn single_int_ascending_param(fd: &FnDef) -> Option<(usize, String)> {
+    let recursive_calls: Vec<Vec<&Expr>> = collect_calls_from_body(fd.body.as_ref())
+        .into_iter()
+        .filter(|(name, _)| call_matches(name, &fd.name))
+        .map(|(_, args)| args)
+        .collect();
+    if recursive_calls.is_empty() {
+        return None;
+    }
+
+    for (idx, (param_name, param_ty)) in fd.params.iter().enumerate() {
+        if param_ty != "Int" {
+            continue;
+        }
+        let ascent_ok = recursive_calls.iter().all(|args| {
+            args.get(idx)
+                .cloned()
+                .is_some_and(|arg| is_int_plus_positive(arg, param_name))
+        });
+        if !ascent_ok {
+            continue;
+        }
+        if let Some(bound_lean) = extract_equality_bound_lean(fd, param_name) {
+            return Some((idx, bound_lean));
+        }
+    }
+    None
+}
+
+/// Extract the bound expression from `match param == BOUND` as a Lean string.
+fn extract_equality_bound_lean(fd: &FnDef, param_name: &str) -> Option<String> {
+    let Expr::Match { subject, arms, .. } = fd.body.tail_expr()? else {
+        return None;
+    };
+    let Expr::BinOp(BinOp::Eq, left, right) = subject.as_ref() else {
+        return None;
+    };
+    if !is_ident(left, param_name) {
+        return None;
+    }
+    // Verify: true arm = base (no self-call), false arm = recursive (has self-call)
+    let mut true_has_self = false;
+    let mut false_has_self = false;
+    for arm in arms {
+        match arm.pattern {
+            Pattern::Literal(crate::ast::Literal::Bool(true)) => {
+                let mut calls = Vec::new();
+                collect_calls_from_expr(&arm.body, &mut calls);
+                true_has_self = calls.iter().any(|(n, _)| call_matches(n, &fd.name));
+            }
+            Pattern::Literal(crate::ast::Literal::Bool(false)) => {
+                let mut calls = Vec::new();
+                collect_calls_from_expr(&arm.body, &mut calls);
+                false_has_self = calls.iter().any(|(n, _)| call_matches(n, &fd.name));
+            }
+            _ => return None,
+        }
+    }
+    if true_has_self || !false_has_self {
+        return None;
+    }
+    // Convert bound expr to Lean string — works for literals and simple expressions
+    Some(bound_expr_to_lean(right))
+}
+
+fn bound_expr_to_lean(expr: &Expr) -> String {
+    match expr {
+        Expr::Literal(crate::ast::Literal::Int(n)) => format!("{}", n),
+        Expr::Ident(name) => expr::aver_name_to_lean(name),
+        Expr::FnCall(f, args) => {
+            if let Some(dotted) = crate::codegen::common::expr_to_dotted_name(f) {
+                // List.len(xs) → xs.length in Lean
+                if dotted == "List.len" && args.len() == 1 {
+                    return format!("{}.length", bound_expr_to_lean(&args[0]));
+                }
+                let lean_args: Vec<String> = args.iter().map(bound_expr_to_lean).collect();
+                format!(
+                    "({} {})",
+                    expr::aver_name_to_lean(&dotted),
+                    lean_args.join(" ")
+                )
+            } else {
+                "0".to_string()
+            }
+        }
+        Expr::Attr(obj, field) => format!(
+            "{}.{}",
+            bound_expr_to_lean(obj),
+            expr::aver_name_to_lean(field)
+        ),
+        _ => "0".to_string(),
+    }
 }
 
 /// Detect `match param == CONST` where true arm is base case and false arm recurses.
@@ -1284,7 +1385,7 @@ fn supports_single_sizeof_structural(fd: &FnDef, ctx: &CodegenContext) -> bool {
             let Some((param_name, _)) = fd.params.get(*idx) else {
                 return false;
             };
-            let Some(arg) = args.get(*idx).copied() else {
+            let Some(arg) = args.get(*idx).cloned() else {
                 return false;
             };
             if is_ident(arg, param_name) {
@@ -1320,7 +1421,7 @@ fn single_list_structural_param_index(fd: &FnDef) -> Option<usize> {
             let recursive_calls: Vec<Option<&Expr>> = collect_calls_from_body(fd.body.as_ref())
                 .into_iter()
                 .filter(|(name, _)| call_matches(name, &fd.name))
-                .map(|(_, args)| args.get(param_index).copied())
+                .map(|(_, args)| args.get(param_index).cloned())
                 .collect();
             if recursive_calls.is_empty() {
                 return None;
@@ -1490,7 +1591,7 @@ fn supports_single_string_pos_advance(fd: &FnDef) -> bool {
         collect_calls_from_body(fd.body.as_ref())
             .into_iter()
             .filter(|(name, _)| call_matches(name, &fd.name))
-            .map(|(_, args)| (args.first().copied(), args.get(1).copied()))
+            .map(|(_, args)| (args.first().cloned(), args.get(1).cloned()))
             .collect();
     if recursive_calls.is_empty() {
         return false;
@@ -1521,7 +1622,7 @@ fn supports_mutual_int_countdown(component: &[&FnDef]) -> bool {
                 continue;
             }
             any_intra = true;
-            let Some(arg0) = args.first().copied() else {
+            let Some(arg0) = args.first().cloned() else {
                 return false;
             };
             if !is_int_minus_positive(arg0, param_name) {
@@ -1557,8 +1658,8 @@ fn supports_mutual_string_pos_advance(component: &[&FnDef]) -> Option<HashMap<St
             };
             any_intra = true;
 
-            let arg0 = args.first().copied()?;
-            let arg1 = args.get(1).copied()?;
+            let arg0 = args.first().cloned()?;
+            let arg1 = args.get(1).cloned()?;
 
             if !is_ident(arg0, string_param) {
                 return None;
@@ -1637,7 +1738,7 @@ fn supports_mutual_sizeof_ranked(component: &[&FnDef]) -> Option<HashMap<String,
                     .iter()
                     .enumerate()
                     .all(|(pos, callee_idx)| {
-                        let Some(arg) = args.get(*callee_idx).copied() else {
+                        let Some(arg) = args.get(*callee_idx).cloned() else {
                             return false;
                         };
                         is_ident(arg, caller_metric_params[pos])
@@ -1658,7 +1759,7 @@ fn supports_mutual_sizeof_ranked(component: &[&FnDef]) -> Option<HashMap<String,
     let ranks = ranks_from_same_edges(&names, &same_edges)?;
     let mut out = HashMap::new();
     for fd in component {
-        let rank = ranks.get(&fd.name).copied()?;
+        let rank = ranks.get(&fd.name).cloned()?;
         out.insert(fd.name.clone(), rank);
     }
     Some(out)
@@ -1691,7 +1792,7 @@ fn proof_mode_recursion_analysis(
                 }
             } else if let Some(ranks) = supports_mutual_string_pos_advance(&component) {
                 for fd in &component {
-                    if let Some(rank) = ranks.get(&fd.name).copied() {
+                    if let Some(rank) = ranks.get(&fd.name).cloned() {
                         plans.insert(
                             fd.name.clone(),
                             RecursionPlan::MutualStringPosAdvance { rank },
@@ -1700,7 +1801,7 @@ fn proof_mode_recursion_analysis(
                 }
             } else if let Some(rankings) = supports_mutual_sizeof_ranked(&component) {
                 for fd in &component {
-                    if let Some(rank) = rankings.get(&fd.name).copied() {
+                    if let Some(rank) = rankings.get(&fd.name).cloned() {
                         plans.insert(fd.name.clone(), RecursionPlan::MutualSizeOfRanked { rank });
                     }
                 }
@@ -1725,6 +1826,14 @@ fn proof_mode_recursion_analysis(
         let fd = component[0];
         if recurrence::detect_second_order_int_linear_recurrence(fd).is_some() {
             plans.insert(fd.name.clone(), RecursionPlan::LinearRecurrence2);
+        } else if let Some((param_index, bound_lean)) = single_int_ascending_param(fd) {
+            plans.insert(
+                fd.name.clone(),
+                RecursionPlan::IntAscending {
+                    param_index,
+                    bound_lean,
+                },
+            );
         } else if let Some(param_index) = single_int_countdown_param_index(fd) {
             plans.insert(fd.name.clone(), RecursionPlan::IntCountdown { param_index });
         } else if supports_single_sizeof_structural(fd, ctx) {
@@ -2002,7 +2111,7 @@ fn emit_pure_functions_proof(
         let emitted = if is_recursive && !plans.contains_key(&fd.name) {
             toplevel::emit_fn_def(fd, recursive_names, ctx)
         } else {
-            toplevel::emit_fn_def_proof(fd, plans.get(&fd.name).copied(), ctx)
+            toplevel::emit_fn_def_proof(fd, plans.get(&fd.name).cloned(), ctx)
         };
         if let Some(code) = emitted {
             sections.push(code);
