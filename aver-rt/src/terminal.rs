@@ -4,13 +4,19 @@
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
-    execute,
     style::{self, Color, SetForegroundColor},
     terminal,
 };
-use std::io::{self, Write};
+use std::io::{self, BufWriter, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+
+use crossterm::{execute, QueueableCommand};
+
+thread_local! {
+    static STDOUT_BUF: std::cell::RefCell<BufWriter<io::Stdout>> =
+        std::cell::RefCell::new(BufWriter::with_capacity(65536, io::stdout()));
+}
 
 /// Global flag: true while raw mode is active.
 static RAW_MODE_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -39,28 +45,50 @@ pub fn restore_terminal() {
 }
 
 pub fn clear() -> Result<(), String> {
-    execute!(io::stdout(), terminal::Clear(terminal::ClearType::All)).map_err(|e| e.to_string())
+    STDOUT_BUF.with(|buf| {
+        buf.borrow_mut()
+            .queue(terminal::Clear(terminal::ClearType::All))
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })
 }
 
 pub fn move_to(x: i64, y: i64) -> Result<(), String> {
     let x = u16::try_from(x).map_err(|_| format!("Terminal.moveTo: x={} out of range", x))?;
     let y = u16::try_from(y).map_err(|_| format!("Terminal.moveTo: y={} out of range", y))?;
-    execute!(io::stdout(), cursor::MoveTo(x, y)).map_err(|e| e.to_string())
+    STDOUT_BUF.with(|buf| {
+        buf.borrow_mut()
+            .queue(cursor::MoveTo(x, y))
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })
 }
 
 pub fn print_at_cursor(s: &str) -> Result<(), String> {
-    io::stdout()
-        .write_all(s.as_bytes())
-        .map_err(|e| e.to_string())
+    STDOUT_BUF.with(|buf| {
+        buf.borrow_mut()
+            .write_all(s.as_bytes())
+            .map_err(|e| e.to_string())
+    })
 }
 
 pub fn set_color(color: &str) -> Result<(), String> {
     let c = parse_color(color)?;
-    execute!(io::stdout(), SetForegroundColor(c)).map_err(|e| e.to_string())
+    STDOUT_BUF.with(|buf| {
+        buf.borrow_mut()
+            .queue(SetForegroundColor(c))
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })
 }
 
 pub fn reset_color() -> Result<(), String> {
-    execute!(io::stdout(), style::ResetColor).map_err(|e| e.to_string())
+    STDOUT_BUF.with(|buf| {
+        buf.borrow_mut()
+            .queue(style::ResetColor)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })
 }
 
 /// Non-blocking key read. Returns `None` if no key is available.
@@ -98,15 +126,25 @@ pub fn size() -> Result<(i64, i64), String> {
 }
 
 pub fn hide_cursor() -> Result<(), String> {
-    execute!(io::stdout(), cursor::Hide).map_err(|e| e.to_string())
+    STDOUT_BUF.with(|buf| {
+        buf.borrow_mut()
+            .queue(cursor::Hide)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })
 }
 
 pub fn show_cursor() -> Result<(), String> {
-    execute!(io::stdout(), cursor::Show).map_err(|e| e.to_string())
+    STDOUT_BUF.with(|buf| {
+        buf.borrow_mut()
+            .queue(cursor::Show)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })
 }
 
 pub fn flush() -> Result<(), String> {
-    io::stdout().flush().map_err(|e| e.to_string())
+    STDOUT_BUF.with(|buf| buf.borrow_mut().flush().map_err(|e| e.to_string()))
 }
 
 /// RAII guard that restores the terminal on drop.
