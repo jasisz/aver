@@ -19,5 +19,6 @@ pub mod source;
 pub mod tail_check;
 pub mod tco;
 pub mod types;
+pub mod nan_value;
 pub mod value;
 pub mod verify_law;
