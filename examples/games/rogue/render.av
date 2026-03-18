@@ -43,65 +43,65 @@ fn renderPlayer(player: Player) -> Unit
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     drawChar(player.pos.x, player.pos.y, "@", "yellow")
 
-fn isPointVisible(visible: List<Point>, target: Point, i: Int) -> Bool
-    ? "Check if target point is in the visible list starting from index i"
-    match List.get(visible, i)
+fn isVisible(visGrid: List<List<Bool>>, x: Int, y: Int) -> Bool
+    ? "O(1) visibility check from precomputed grid"
+    match List.get(visGrid, y)
+        Option.Some(row) -> match List.get(row, x)
+            Option.Some(v) -> v
+            Option.None -> false
         Option.None -> false
-        Option.Some(p) -> match Types.ptEq(p, target)
-            true -> true
-            false -> isPointVisible(visible, target, i + 1)
 
-verify isPointVisible
-    isPointVisible([Types.pt(1, 2), Types.pt(3, 4)], Types.pt(3, 4), 0) => true
-    isPointVisible([Types.pt(1, 2)], Types.pt(5, 5), 0) => false
-    isPointVisible([], Types.pt(0, 0), 0) => false
+verify isVisible
+    isVisible([[true, false], [false, true]], 0, 0) => true
+    isVisible([[true, false], [false, true]], 1, 0) => false
+    isVisible([], 0, 0) => false
 
-fn renderEntity(entity: Entity, visible: List<Point>) -> Unit
+fn renderEntity(entity: Entity, visGrid: List<List<Bool>>) -> Unit
     ? "Draw an entity with its glyph and color if it is visible"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    match isPointVisible(visible, entity.pos, 0)
+    match isVisible(visGrid, entity.pos.x, entity.pos.y)
         true -> drawChar(entity.pos.x, entity.pos.y, Types.entityGlyph(entity.kind), Types.entityColor(entity.kind))
         false -> drawChar(0, 0, "", "black")
 
-fn renderEntities(entities: List<Entity>, visible: List<Point>, i: Int) -> Unit
+fn renderEntities(entities: List<Entity>, visGrid: List<List<Bool>>, i: Int) -> Unit
     ? "Draw all entities that are visible"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match List.get(entities, i)
         Option.None -> drawChar(0, 0, "", "black")
-        Option.Some(e) -> renderEntity(e, visible)
+        Option.Some(e) -> renderEntity(e, visGrid)
 
-fn renderEntitiesNext(entities: List<Entity>, visible: List<Point>, i: Int) -> Unit
+fn renderEntitiesNext(entities: List<Entity>, visGrid: List<List<Bool>>, i: Int) -> Unit
     ? "Render entity at index i then continue to the rest"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match List.get(entities, i)
         Option.None -> drawChar(0, 0, "", "black")
-        Option.Some(e) -> renderEntityAndContinue(e, entities, visible, i)
+        Option.Some(e) -> renderEntityAndContinue(e, entities, visGrid, i)
 
-fn renderEntityAndContinue(entity: Entity, entities: List<Entity>, visible: List<Point>, i: Int) -> Unit
+fn renderEntityAndContinue(entity: Entity, entities: List<Entity>, visGrid: List<List<Bool>>, i: Int) -> Unit
     ? "Render one entity and recurse to next"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderEntity(entity, visible)
-    renderEntitiesNext(entities, visible, i + 1)
+    renderEntity(entity, visGrid)
+    renderEntitiesNext(entities, visGrid, i + 1)
 
-fn renderItem(item: Item, visible: List<Point>) -> Unit
+fn renderItem(item: Item, visGrid: List<List<Bool>>) -> Unit
     ? "Draw an item with its glyph and color if it is visible"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    match isPointVisible(visible, item.pos, 0)
+    match isVisible(visGrid, item.pos.x, item.pos.y)
         true -> drawChar(item.pos.x, item.pos.y, Types.itemGlyph(item.kind), Types.itemColor(item.kind))
         false -> drawChar(0, 0, "", "black")
 
-fn renderItemsNext(items: List<Item>, visible: List<Point>, i: Int) -> Unit
+fn renderItemsNext(items: List<Item>, visGrid: List<List<Bool>>, i: Int) -> Unit
     ? "Render item at index i then continue to the rest"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match List.get(items, i)
         Option.None -> drawChar(0, 0, "", "black")
-        Option.Some(item) -> renderItemAndContinue(item, items, visible, i)
+        Option.Some(item) -> renderItemAndContinue(item, items, visGrid, i)
 
-fn renderItemAndContinue(item: Item, items: List<Item>, visible: List<Point>, i: Int) -> Unit
+fn renderItemAndContinue(item: Item, items: List<Item>, visGrid: List<List<Bool>>, i: Int) -> Unit
     ? "Render one item and recurse to next"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderItem(item, visible)
-    renderItemsNext(items, visible, i + 1)
+    renderItem(item, visGrid)
+    renderItemsNext(items, visGrid, i + 1)
 
 fn getRemembered(remembered: List<List<Bool>>, x: Int, y: Int) -> Bool
     ? "Get whether tile at (x,y) has been seen before"
@@ -117,39 +117,39 @@ verify getRemembered
     getRemembered([[true, false], [false, true]], 1, 1) => true
     getRemembered([], 0, 0) => false
 
-fn renderTileCol(map: List<List<Tile>>, visible: List<Point>, remembered: List<List<Bool>>, x: Int, y: Int) -> Unit
+fn renderTileCol(map: List<List<Tile>>, visGrid: List<List<Bool>>, remembered: List<List<Bool>>, x: Int, y: Int) -> Unit
     ? "Render one tile at column x, row y"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     tile = Map.getT(map, x, y)
-    isVis = isPointVisible(visible, Types.pt(x, y), 0)
+    isVis = isVisible(visGrid, x, y)
     isRem = getRemembered(remembered, x, y)
     renderTile(x, y, tile, isVis, isRem)
 
-fn renderMapRow(map: List<List<Tile>>, visible: List<Point>, remembered: List<List<Bool>>, x: Int, y: Int) -> Unit
+fn renderMapRow(map: List<List<Tile>>, visGrid: List<List<Bool>>, remembered: List<List<Bool>>, x: Int, y: Int) -> Unit
     ? "Render all tiles in row y from column x to mapW"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match x == Map.mapW()
         true -> drawChar(0, 0, "", "black")
-        false -> renderTileAndNextCol(map, visible, remembered, x, y)
+        false -> renderTileAndNextCol(map, visGrid, remembered, x, y)
 
-fn renderTileAndNextCol(map: List<List<Tile>>, visible: List<Point>, remembered: List<List<Bool>>, x: Int, y: Int) -> Unit
+fn renderTileAndNextCol(map: List<List<Tile>>, visGrid: List<List<Bool>>, remembered: List<List<Bool>>, x: Int, y: Int) -> Unit
     ? "Render tile at (x,y) then continue to next column"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderTileCol(map, visible, remembered, x, y)
-    renderMapRow(map, visible, remembered, x + 1, y)
+    renderTileCol(map, visGrid, remembered, x, y)
+    renderMapRow(map, visGrid, remembered, x + 1, y)
 
-fn renderMapRows(map: List<List<Tile>>, visible: List<Point>, remembered: List<List<Bool>>, y: Int) -> Unit
+fn renderMapRows(map: List<List<Tile>>, visGrid: List<List<Bool>>, remembered: List<List<Bool>>, y: Int) -> Unit
     ? "Render all map rows from y to mapH"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match y == Map.mapH()
         true -> drawChar(0, 0, "", "black")
-        false -> renderRowAndNext(map, visible, remembered, y)
+        false -> renderRowAndNext(map, visGrid, remembered, y)
 
-fn renderRowAndNext(map: List<List<Tile>>, visible: List<Point>, remembered: List<List<Bool>>, y: Int) -> Unit
+fn renderRowAndNext(map: List<List<Tile>>, visGrid: List<List<Bool>>, remembered: List<List<Bool>>, y: Int) -> Unit
     ? "Render row y then continue to next row"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderMapRow(map, visible, remembered, 0, y)
-    renderMapRows(map, visible, remembered, y + 1)
+    renderMapRow(map, visGrid, remembered, 0, y)
+    renderMapRows(map, visGrid, remembered, y + 1)
 
 fn intToStr(n: Int) -> String
     ? "Convert integer to string for HUD display"
@@ -208,14 +208,14 @@ fn renderMsgLine(msg: String, messages: List<String>, i: Int) -> Unit
     renderHudLine(0, 31 + i, msg, "white")
     renderMessages(messages, i + 1)
 
-fn renderMap(map: List<List<Tile>>, visible: List<Point>, remembered: List<List<Bool>>, entities: List<Entity>, items: List<Item>, player: Player) -> Unit
+fn renderMap(map: List<List<Tile>>, visGrid: List<List<Bool>>, remembered: List<List<Bool>>, entities: List<Entity>, items: List<Item>, player: Player) -> Unit
     ? "Full render pass: clear screen, draw map tiles with FOV, items, entities, player"
     ! [
         Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
     Terminal.clear()
-    renderMapRows(map, visible, remembered, 0)
-    renderItemsNext(items, visible, 0)
-    renderEntitiesNext(entities, visible, 0)
+    renderMapRows(map, visGrid, remembered, 0)
+    renderItemsNext(items, visGrid, 0)
+    renderEntitiesNext(entities, visGrid, 0)
     renderPlayer(player)
     Terminal.flush()

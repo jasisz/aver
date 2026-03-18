@@ -22,10 +22,19 @@ record GameState
     entities: List<Entity>
     items: List<Item>
     visible: List<Point>
+    visGrid: List<List<Bool>>
     remembered: List<List<Bool>>
     messages: List<String>
     seed: Int
     gameOver: Bool
+
+fn buildVisGrid(visible: List<Point>, grid: List<List<Bool>>, i: Int) -> List<List<Bool>>
+    ? "Build visibility grid from point list for O(1) lookups"
+    match i == List.len(visible)
+        true -> grid
+        false -> match List.get(visible, i)
+            Option.Some(p) -> buildVisGrid(visible, setRemCell(grid, p.x, p.y), i + 1)
+            Option.None -> grid
 
 fn emptyRemembered(y: Int) -> List<List<Bool>>
     ? "Build 30 rows of 50 false values"
@@ -97,7 +106,7 @@ fn addMessage(state: GameState, msg: String) -> GameState
     GameState.update(state, messages = List.prepend(msg, takeMessages(state.messages, 4, 0)))
 
 verify addMessage
-    List.len(addMessage(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [], items = [], visible = [], remembered = [], messages = [], seed = 0, gameOver = false), "hello").messages) => 1
+    List.len(addMessage(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), "hello").messages) => 1
 
 fn takeMessages(msgs: List<String>, n: Int, i: Int) -> List<String>
     ? "Take first n messages"
@@ -197,16 +206,16 @@ fn initGame(seed: Int) -> GameState
     itms = spawnItems(seed, rooms, 0)
     vis = Fov.computeFov(gameMap, Types.pt(px, py), 8)
     rem = markRemembered(emptyRemembered(0), vis, 0)
-    GameState(gameMap = gameMap, player = player, entities = ents, items = itms, visible = vis, remembered = rem, messages = ["You enter the Dungeon of Non-Aver. Match your way through!"], seed = Map.nextSeed(seed), gameOver = false)
+    GameState(gameMap = gameMap, player = player, entities = ents, items = itms, visible = vis, visGrid = buildVisGrid(vis, emptyRemembered(0), 0), remembered = rem, messages = ["You enter the Dungeon of Non-Aver. Match your way through!"], seed = Map.nextSeed(seed), gameOver = false)
 
 fn updateFov(state: GameState) -> GameState
     ? "Recompute FOV from player position"
     vis = Fov.computeFov(state.gameMap, state.player.pos, 8)
     rem = markRemembered(state.remembered, vis, 0)
-    GameState.update(state, visible = vis, remembered = rem)
+    GameState.update(state, visible = vis, visGrid = buildVisGrid(vis, emptyRemembered(0), 0), remembered = rem)
 
 verify updateFov
-    updateFov(GameState(gameMap = Map.generateMap(42), player = Types.makePlayer(10, 10), entities = [], items = [], visible = [], remembered = emptyRemembered(0), messages = [], seed = 42, gameOver = false)).visible => Fov.computeFov(Map.generateMap(42), Types.pt(10, 10), 8)
+    updateFov(GameState(gameMap = Map.generateMap(42), player = Types.makePlayer(10, 10), entities = [], items = [], visible = [], visGrid = emptyRemembered(0), remembered = emptyRemembered(0), messages = [], seed = 42, gameOver = false)).visible => Fov.computeFov(Map.generateMap(42), Types.pt(10, 10), 8)
 
 fn tryMove(state: GameState, dx: Int, dy: Int) -> GameState
     ? "Try to move player by delta, handle combat and items"
@@ -260,7 +269,7 @@ fn actualKill(state: GameState, target: Entity, idx: Int) -> GameState
     addMessage(GameState.update(state, entities = Combat.removeAt(state.entities, idx, 0), player = newPlayer), "You defeated {target.name}! (+{Int.toString(Combat.expForKill(target.kind))} exp)")
 
 verify actualKill
-    List.len(actualKill(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [Types.makeIfElse(1, 1)], items = [], visible = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.makeIfElse(1, 1), 0).entities) => 0
+    List.len(actualKill(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [Types.makeIfElse(1, 1)], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.makeIfElse(1, 1), 0).entities) => 0
 
 fn movePlayerTo(state: GameState, nx: Int, ny: Int) -> GameState
     ? "Move player and pick up items"
@@ -270,7 +279,7 @@ fn movePlayerTo(state: GameState, nx: Int, ny: Int) -> GameState
         Option.None -> checkStairs(GameState.update(state, player = movedPlayer))
 
 verify movePlayerTo
-    movePlayerTo(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [], items = [], visible = [], remembered = [], messages = [], seed = 0, gameOver = false), 3, 4).player.pos.x => 3
+    movePlayerTo(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), 3, 4).player.pos.x => 3
 
 fn pickUpItem(state: GameState, idx: Int) -> GameState
     ? "Pick up item at index"
@@ -279,7 +288,7 @@ fn pickUpItem(state: GameState, idx: Int) -> GameState
         Option.None -> state
 
 verify pickUpItem
-    pickUpItem(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [], items = [Types.makePurity(0, 0)], visible = [], remembered = [], messages = [], seed = 0, gameOver = false), 0).player.hp => 20
+    pickUpItem(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [], items = [Types.makePurity(0, 0)], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), 0).player.hp => 20
 
 fn applyItem(state: GameState, item: Item, idx: Int) -> GameState
     ? "Apply item effect"
@@ -289,7 +298,7 @@ fn applyItem(state: GameState, item: Item, idx: Int) -> GameState
         ItemKind.ShieldOfImmutability -> addMessage(GameState.update(state, player = Player.update(state.player, defense = state.player.defense + item.value), items = Combat.removeItemAt(state.items, idx, 0)), "You equip {item.name}. Nothing can change you! (+{Int.toString(item.value)} DEF)")
 
 verify applyItem
-    applyItem(GameState(gameMap = [], player = Player.update(Types.makePlayer(0, 0), hp = 10), entities = [], items = [Types.makePurity(0, 0)], visible = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.makePurity(0, 0), 0).player.hp => 18
+    applyItem(GameState(gameMap = [], player = Player.update(Types.makePlayer(0, 0), hp = 10), entities = [], items = [Types.makePurity(0, 0)], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.makePurity(0, 0), 0).player.hp => 18
 
 fn checkStairs(state: GameState) -> GameState
     ? "Check if player stepped on stairs"
@@ -298,7 +307,7 @@ fn checkStairs(state: GameState) -> GameState
         _ -> state
 
 verify checkStairs
-    List.len(checkStairs(GameState(gameMap = [[Tile.Floor]], player = Types.makePlayer(0, 0), entities = [], items = [], visible = [], remembered = [], messages = [], seed = 0, gameOver = false)).messages) => 0
+    List.len(checkStairs(GameState(gameMap = [[Tile.Floor]], player = Types.makePlayer(0, 0), entities = [], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false)).messages) => 0
 
 fn entityAI(state: GameState, i: Int) -> GameState
     ? "Run AI for each entity with unique behavior per kind"
@@ -355,7 +364,7 @@ fn loopAttack(state: GameState, entity: Entity, i: Int) -> GameState
         false -> addMessage(GameState.update(state, player = newPlayer), "{entity.name} iterates on you for {Int.toString(dmg)}!")
 
 verify loopAttack
-    loopAttack(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [Types.makeLoop(1, 0)], items = [], visible = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.makeLoop(1, 0), 0).player.hp < 20 => true
+    loopAttack(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [Types.makeLoop(1, 0)], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.makeLoop(1, 0), 0).player.hp < 20 => true
 
 fn nullAttack(state: GameState, entity: Entity, i: Int) -> GameState
     ? "null: steals EXP instead of dealing HP damage (null dereference — wipes memory)"
@@ -364,7 +373,7 @@ fn nullAttack(state: GameState, entity: Entity, i: Int) -> GameState
     addMessage(GameState.update(state, player = newPlayer), "{entity.name} dereferences your memory! -{Int.toString(stolen)} EXP!")
 
 verify nullAttack
-    nullAttack(GameState(gameMap = [], player = Player.update(Types.makePlayer(0, 0), exp = 40), entities = [Types.makeNull(1, 0)], items = [], visible = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.makeNull(1, 0), 0).player.exp => 30
+    nullAttack(GameState(gameMap = [], player = Player.update(Types.makePlayer(0, 0), exp = 40), entities = [Types.makeNull(1, 0)], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.makeNull(1, 0), 0).player.exp => 30
 
 fn entityBehavior(state: GameState, entity: Entity, i: Int) -> GameState
     ? "Movement behavior by kind"
@@ -459,7 +468,7 @@ fn descend(state: GameState) -> GameState
     itms = spawnItems(newSeed, rooms, 0)
     vis = Fov.computeFov(newMap, Types.pt(px, py), 8)
     rem = markRemembered(emptyRemembered(0), vis, 0)
-    addMessage(GameState(gameMap = newMap, player = newPlayer, entities = ents, items = itms, visible = vis, remembered = rem, messages = state.messages, seed = Map.nextSeed(newSeed), gameOver = false), "You descend to floor {Int.toString(newFloor)} of Non-Aver!")
+    addMessage(GameState(gameMap = newMap, player = newPlayer, entities = ents, items = itms, visible = vis, visGrid = buildVisGrid(vis, emptyRemembered(0), 0), remembered = rem, messages = state.messages, seed = Map.nextSeed(newSeed), gameOver = false), "You descend to floor {Int.toString(newFloor)} of Non-Aver!")
 
 fn handleInput(state: GameState, key: String) -> GameState
     ? "Process player input"
@@ -494,7 +503,7 @@ fn renderFrame(state: GameState) -> Unit
         Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
     Terminal.clear()
-    Render.renderMap(state.gameMap, state.visible, state.remembered, state.entities, state.items, state.player)
+    Render.renderMap(state.gameMap, state.visGrid, state.remembered, state.entities, state.items, state.player)
     Render.renderHud(state.player, state.messages)
     Terminal.flush()
 
