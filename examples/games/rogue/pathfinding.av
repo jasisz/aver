@@ -1,0 +1,192 @@
+module Pathfinding
+    intent =
+        "BFS-based pathfinding for enemy AI."
+        "Returns the next step toward a target, limited to 15 depth."
+    depends [Types, Map]
+
+record BfsNode
+    pos: Point
+    parentX: Int
+    parentY: Int
+    hasParent: Bool
+    dist: Int
+
+fn mkStart(x: Int, y: Int) -> BfsNode
+    ? "Create a starting BFS node at given position"
+    BfsNode(pos = Types.pt(x, y), parentX = 0, parentY = 0, hasParent = false, dist = 0)
+
+verify mkStart
+    mkStart(5, 5).dist => 0
+    mkStart(5, 5).hasParent => false
+
+fn emptyEnts() -> List<Entity>
+    ? "Return a non-interfering entity list for testing"
+    [Types.makeIfElse(99, 99), Types.makeIfElse(98, 98)]
+
+verify emptyEnts
+    List.len(emptyEnts()) => 2
+
+fn emptyNodes() -> List<BfsNode>
+    ? "Return a dummy node list for testing"
+    [mkStart(99, 99), mkStart(98, 98)]
+
+verify emptyNodes
+    List.len(emptyNodes()) => 2
+
+fn testMap3() -> List<List<Tile>>
+    ? "Test map with 3 floor tiles in a row at y=5: x=5,6,7"
+    Map.setT(Map.setT(Map.setT(Map.emptyMap(), 5, 5, Tile.Floor), 6, 5, Tile.Floor), 7, 5, Tile.Floor)
+
+verify testMap3
+    Types.tileWalkable(Map.getT(testMap3(), 5, 5)) => true
+    Types.tileWalkable(Map.getT(testMap3(), 6, 5)) => true
+
+fn testWallMap() -> List<List<Tile>>
+    ? "Test map: floor at (5,5),(7,5),(5,6),(6,6),(7,6) — wall at (6,5) forces detour"
+    Map.setT(Map.setT(Map.setT(Map.setT(Map.setT(Map.emptyMap(), 5, 5, Tile.Floor), 7, 5, Tile.Floor), 5, 6, Tile.Floor), 6, 6, Tile.Floor), 7, 6, Tile.Floor)
+
+verify testWallMap
+    Types.tileWalkable(Map.getT(testWallMap(), 5, 5)) => true
+    Types.tileWalkable(Map.getT(testWallMap(), 6, 5)) => false
+
+fn neighbors(pos: Point) -> List<Point>
+    ? "Return 4 cardinal neighbor points"
+    [Types.pt(pos.x, pos.y - 1), Types.pt(pos.x + 1, pos.y), Types.pt(pos.x, pos.y + 1), Types.pt(pos.x - 1, pos.y)]
+
+verify neighbors
+    List.len(neighbors(Types.pt(3, 3))) => 4
+
+fn containsPos(nodes: List<BfsNode>, pos: Point, i: Int) -> Bool
+    ? "Check if any node in the list has the given position"
+    match List.get(nodes, i)
+        Option.None -> false
+        Option.Some(n) -> match Types.ptEq(n.pos, pos)
+            true -> true
+            false -> containsPos(nodes, pos, i + 1)
+
+verify containsPos
+    containsPos([BfsNode(pos = Types.pt(1, 1), parentX = 0, parentY = 0, hasParent = false, dist = 0)], Types.pt(1, 1), 0) => true
+    containsPos([BfsNode(pos = Types.pt(1, 1), parentX = 0, parentY = 0, hasParent = false, dist = 0)], Types.pt(2, 2), 0) => false
+
+fn entityAtPos(entities: List<Entity>, pos: Point, i: Int) -> Bool
+    ? "Check if any entity occupies the given position"
+    match List.get(entities, i)
+        Option.None -> false
+        Option.Some(e) -> match Types.ptEq(e.pos, pos)
+            true -> true
+            false -> entityAtPos(entities, pos, i + 1)
+
+verify entityAtPos
+    entityAtPos([Types.makeIfElse(3, 3)], Types.pt(3, 3), 0) => true
+    entityAtPos([Types.makeIfElse(3, 3)], Types.pt(5, 5), 0) => false
+
+fn isWalkable(map: List<List<Tile>>, pos: Point, entities: List<Entity>) -> Bool
+    ? "True if tile is walkable and no entity blocks it"
+    match Map.inMap(pos.x, pos.y)
+        false -> false
+        true -> match Types.tileWalkable(Map.getT(map, pos.x, pos.y))
+            false -> false
+            true -> Bool.not(entityAtPos(entities, pos, 0))
+
+verify isWalkable
+    isWalkable(Map.setT(Map.emptyMap(), 5, 5, Tile.Floor), Types.pt(5, 5), [Types.makeIfElse(9, 9)]) => true
+    isWalkable(Map.emptyMap(), Types.pt(5, 5), [Types.makeIfElse(9, 9)]) => false
+    isWalkable(Map.setT(Map.emptyMap(), 5, 5, Tile.Floor), Types.pt(5, 5), [Types.makeIfElse(5, 5)]) => false
+
+fn filterNewNeighbors(map: List<List<Tile>>, nbrs: List<Point>, to: Point, entities: List<Entity>, open: List<BfsNode>, closed: List<BfsNode>, parent: Point, parentDist: Int, i: Int, acc: List<BfsNode>) -> List<BfsNode>
+    ? "Filter neighbor points to walkable ones not in open or closed, or the target even if occupied"
+    match List.get(nbrs, i)
+        Option.None -> acc
+        Option.Some(p) -> match containsPos(open, p, 0)
+            true -> filterNewNeighbors(map, nbrs, to, entities, open, closed, parent, parentDist, i + 1, acc)
+            false -> match containsPos(closed, p, 0)
+                true -> filterNewNeighbors(map, nbrs, to, entities, open, closed, parent, parentDist, i + 1, acc)
+                false -> match Types.ptEq(p, to)
+                    true -> filterNewNeighbors(map, nbrs, to, entities, open, closed, parent, parentDist, i + 1, List.append(acc, BfsNode(pos = p, parentX = parent.x, parentY = parent.y, hasParent = true, dist = parentDist + 1)))
+                    false -> match isWalkable(map, p, entities)
+                        true -> filterNewNeighbors(map, nbrs, to, entities, open, closed, parent, parentDist, i + 1, List.append(acc, BfsNode(pos = p, parentX = parent.x, parentY = parent.y, hasParent = true, dist = parentDist + 1)))
+                        false -> filterNewNeighbors(map, nbrs, to, entities, open, closed, parent, parentDist, i + 1, acc)
+
+verify filterNewNeighbors
+    List.len(filterNewNeighbors(testMap3(), [Types.pt(5, 4), Types.pt(6, 5)], Types.pt(9, 9), emptyEnts(), emptyNodes(), emptyNodes(), Types.pt(5, 5), 0, 0, emptyNodes())) => 3
+
+fn expandNode(map: List<List<Tile>>, node: BfsNode, to: Point, entities: List<Entity>, open: List<BfsNode>, closed: List<BfsNode>) -> List<BfsNode>
+    ? "Generate walkable neighbor BfsNodes not already visited"
+    nbrs = neighbors(node.pos)
+    filterNewNeighbors(map, nbrs, to, entities, open, closed, node.pos, node.dist, 0, [])
+
+verify expandNode
+    List.len(expandNode(testMap3(), mkStart(6, 5), Types.pt(9, 9), emptyEnts(), emptyNodes(), emptyNodes())) => 2
+
+fn appendAll(base: List<BfsNode>, extra: List<BfsNode>, i: Int) -> List<BfsNode>
+    ? "Append all elements from extra to base"
+    match List.get(extra, i)
+        Option.None -> base
+        Option.Some(n) -> appendAll(List.append(base, n), extra, i + 1)
+
+verify appendAll
+    List.len(appendAll([mkStart(0, 0)], [mkStart(1, 1)], 0)) => 2
+
+fn nodeAtPos(nodes: List<BfsNode>, pos: Point, i: Int) -> Option<BfsNode>
+    ? "Find a node by position in the list"
+    match List.get(nodes, i)
+        Option.None -> Option.None
+        Option.Some(n) -> match Types.ptEq(n.pos, pos)
+            true -> Option.Some(n)
+            false -> nodeAtPos(nodes, pos, i + 1)
+
+verify nodeAtPos
+    nodeAtPos([mkStart(1, 1)], Types.pt(1, 1), 0) => Option.Some(mkStart(1, 1))
+    nodeAtPos([mkStart(1, 1)], Types.pt(2, 2), 0) => Option.None
+
+fn tracePath(closed: List<BfsNode>, current: Point, from: Point) -> Option<Point>
+    ? "Trace back from current to from, returning the first step after from"
+    match Types.ptEq(current, from)
+        true -> Option.None
+        false -> match nodeAtPos(closed, current, 0)
+            Option.None -> Option.None
+            Option.Some(n) -> match n.hasParent
+                false -> Option.None
+                true -> match Types.ptEq(Types.pt(n.parentX, n.parentY), from)
+                    true -> Option.Some(current)
+                    false -> tracePath(closed, Types.pt(n.parentX, n.parentY), from)
+
+verify tracePath
+    tracePath([BfsNode(pos = Types.pt(1, 1), parentX = 0, parentY = 0, hasParent = false, dist = 0), BfsNode(pos = Types.pt(2, 1), parentX = 1, parentY = 1, hasParent = true, dist = 1), BfsNode(pos = Types.pt(3, 1), parentX = 2, parentY = 1, hasParent = true, dist = 2)], Types.pt(3, 1), Types.pt(1, 1)) => Option.Some(Types.pt(2, 1))
+    tracePath([mkStart(1, 1)], Types.pt(1, 1), Types.pt(1, 1)) => Option.None
+    tracePath([mkStart(1, 1)], Types.pt(5, 5), Types.pt(1, 1)) => Option.None
+
+fn restOfQueue(open: List<BfsNode>, i: Int, acc: List<BfsNode>) -> List<BfsNode>
+    ? "Return all elements of open except the first, starting collection from index i"
+    match List.get(open, i)
+        Option.None -> acc
+        Option.Some(n) -> restOfQueue(open, i + 1, List.append(acc, n))
+
+verify restOfQueue
+    List.len(restOfQueue([mkStart(0, 0), mkStart(1, 1)], 1, [mkStart(9, 9)])) => 2
+
+fn bfsSearch(map: List<List<Tile>>, from: Point, to: Point, entities: List<Entity>, open: List<BfsNode>, closed: List<BfsNode>, maxDepth: Int) -> Option<Point>
+    ? "BFS loop: expand front of open queue, stop when target found or depth exceeded"
+    match List.get(open, 0)
+        Option.None -> Option.None
+        Option.Some(current) -> match current.dist > maxDepth
+            true -> Option.None
+            false -> match Types.ptEq(current.pos, to)
+                true -> tracePath(List.append(closed, current), to, from)
+                false -> bfsSearch(map, from, to, entities, appendAll(restOfQueue(open, 1, []), expandNode(map, current, to, entities, open, closed), 0), List.append(closed, current), maxDepth)
+
+verify bfsSearch
+    bfsSearch(testMap3(), Types.pt(5, 5), Types.pt(7, 5), emptyEnts(), [mkStart(5, 5)], emptyNodes(), 15) => Option.Some(Types.pt(6, 5))
+    bfsSearch(Map.emptyMap(), Types.pt(5, 5), Types.pt(7, 5), emptyEnts(), [mkStart(5, 5)], emptyNodes(), 15) => Option.None
+
+fn nextStepAStar(map: List<List<Tile>>, from: Point, to: Point, entities: List<Entity>) -> Option<Point>
+    ? "Return the next point to move toward target, or None if no path exists within 15 steps"
+    match Types.ptEq(from, to)
+        true -> Option.None
+        false -> bfsSearch(map, from, to, entities, [BfsNode(pos = from, parentX = 0, parentY = 0, hasParent = false, dist = 0)], [], 15)
+
+verify nextStepAStar
+    nextStepAStar(testMap3(), Types.pt(5, 5), Types.pt(7, 5), emptyEnts()) => Option.Some(Types.pt(6, 5))
+    nextStepAStar(testWallMap(), Types.pt(5, 5), Types.pt(7, 5), emptyEnts()) => Option.Some(Types.pt(5, 6))
+    nextStepAStar(Map.emptyMap(), Types.pt(5, 5), Types.pt(7, 5), emptyEnts()) => Option.None
+    nextStepAStar(Map.emptyMap(), Types.pt(5, 5), Types.pt(5, 5), emptyEnts()) => Option.None

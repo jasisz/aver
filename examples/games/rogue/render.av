@@ -1,0 +1,221 @@
+module Render
+    intent =
+        "Terminal rendering for the roguelike: map with FOV, entities, items, player, HUD, messages."
+    depends [Types, Map, Fov]
+
+fn tileColor(tile: Tile) -> String
+    ? "Foreground color for a visible tile"
+    match tile
+        Tile.Wall -> "white"
+        Tile.Floor -> "black"
+        Tile.StairsDown -> "cyan"
+        Tile.Door -> "yellow"
+
+verify tileColor
+    tileColor(Tile.Wall) => "white"
+    tileColor(Tile.Floor) => "black"
+    tileColor(Tile.StairsDown) => "cyan"
+    tileColor(Tile.Door) => "yellow"
+
+fn drawChar(x: Int, y: Int, ch: String, color: String) -> Unit
+    ? "Print a colored character at terminal position (x, y)"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    Terminal.moveTo(x, y)
+    Terminal.setColor(color)
+    Terminal.print(ch)
+    Terminal.resetColor()
+
+fn renderTile(x: Int, y: Int, tile: Tile, isVisible: Bool, isRemembered: Bool) -> Unit
+    ? "Render one tile based on visibility: visible in color, remembered dim, unseen blank"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    match isVisible
+        true -> drawChar(x, y, Types.tileGlyph(tile), tileColor(tile))
+        false -> match isRemembered
+            true -> match tile
+                Tile.Wall -> drawChar(x, y, "#", "blue")
+                Tile.StairsDown -> drawChar(x, y, ">", "blue")
+                Tile.Door -> drawChar(x, y, "+", "blue")
+                _ -> drawChar(x, y, " ", "black")
+            false -> drawChar(x, y, " ", "black")
+
+fn renderPlayer(player: Player) -> Unit
+    ? "Draw the player as @ in white at their position"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    drawChar(player.pos.x, player.pos.y, "@", "yellow")
+
+fn isPointVisible(visible: List<Point>, target: Point, i: Int) -> Bool
+    ? "Check if target point is in the visible list starting from index i"
+    match List.get(visible, i)
+        Option.None -> false
+        Option.Some(p) -> match Types.ptEq(p, target)
+            true -> true
+            false -> isPointVisible(visible, target, i + 1)
+
+verify isPointVisible
+    isPointVisible([Types.pt(1, 2), Types.pt(3, 4)], Types.pt(3, 4), 0) => true
+    isPointVisible([Types.pt(1, 2)], Types.pt(5, 5), 0) => false
+    isPointVisible([], Types.pt(0, 0), 0) => false
+
+fn renderEntity(entity: Entity, visible: List<Point>) -> Unit
+    ? "Draw an entity with its glyph and color if it is visible"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    match isPointVisible(visible, entity.pos, 0)
+        true -> drawChar(entity.pos.x, entity.pos.y, Types.entityGlyph(entity.kind), Types.entityColor(entity.kind))
+        false -> drawChar(0, 0, "", "black")
+
+fn renderEntities(entities: List<Entity>, visible: List<Point>, i: Int) -> Unit
+    ? "Draw all entities that are visible"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    match List.get(entities, i)
+        Option.None -> drawChar(0, 0, "", "black")
+        Option.Some(e) -> renderEntity(e, visible)
+
+fn renderEntitiesNext(entities: List<Entity>, visible: List<Point>, i: Int) -> Unit
+    ? "Render entity at index i then continue to the rest"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    match List.get(entities, i)
+        Option.None -> drawChar(0, 0, "", "black")
+        Option.Some(e) -> renderEntityAndContinue(e, entities, visible, i)
+
+fn renderEntityAndContinue(entity: Entity, entities: List<Entity>, visible: List<Point>, i: Int) -> Unit
+    ? "Render one entity and recurse to next"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    renderEntity(entity, visible)
+    renderEntitiesNext(entities, visible, i + 1)
+
+fn renderItem(item: Item, visible: List<Point>) -> Unit
+    ? "Draw an item with its glyph and color if it is visible"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    match isPointVisible(visible, item.pos, 0)
+        true -> drawChar(item.pos.x, item.pos.y, Types.itemGlyph(item.kind), Types.itemColor(item.kind))
+        false -> drawChar(0, 0, "", "black")
+
+fn renderItemsNext(items: List<Item>, visible: List<Point>, i: Int) -> Unit
+    ? "Render item at index i then continue to the rest"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    match List.get(items, i)
+        Option.None -> drawChar(0, 0, "", "black")
+        Option.Some(item) -> renderItemAndContinue(item, items, visible, i)
+
+fn renderItemAndContinue(item: Item, items: List<Item>, visible: List<Point>, i: Int) -> Unit
+    ? "Render one item and recurse to next"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    renderItem(item, visible)
+    renderItemsNext(items, visible, i + 1)
+
+fn getRemembered(remembered: List<List<Bool>>, x: Int, y: Int) -> Bool
+    ? "Get whether tile at (x,y) has been seen before"
+    match List.get(remembered, y)
+        Option.Some(row) -> match List.get(row, x)
+            Option.Some(v) -> v
+            Option.None -> false
+        Option.None -> false
+
+verify getRemembered
+    getRemembered([[true, false], [false, true]], 0, 0) => true
+    getRemembered([[true, false], [false, true]], 1, 0) => false
+    getRemembered([[true, false], [false, true]], 1, 1) => true
+    getRemembered([], 0, 0) => false
+
+fn renderTileCol(map: List<List<Tile>>, visible: List<Point>, remembered: List<List<Bool>>, x: Int, y: Int) -> Unit
+    ? "Render one tile at column x, row y"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    tile = Map.getT(map, x, y)
+    isVis = isPointVisible(visible, Types.pt(x, y), 0)
+    isRem = getRemembered(remembered, x, y)
+    renderTile(x, y, tile, isVis, isRem)
+
+fn renderMapRow(map: List<List<Tile>>, visible: List<Point>, remembered: List<List<Bool>>, x: Int, y: Int) -> Unit
+    ? "Render all tiles in row y from column x to mapW"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    match x == Map.mapW()
+        true -> drawChar(0, 0, "", "black")
+        false -> renderTileAndNextCol(map, visible, remembered, x, y)
+
+fn renderTileAndNextCol(map: List<List<Tile>>, visible: List<Point>, remembered: List<List<Bool>>, x: Int, y: Int) -> Unit
+    ? "Render tile at (x,y) then continue to next column"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    renderTileCol(map, visible, remembered, x, y)
+    renderMapRow(map, visible, remembered, x + 1, y)
+
+fn renderMapRows(map: List<List<Tile>>, visible: List<Point>, remembered: List<List<Bool>>, y: Int) -> Unit
+    ? "Render all map rows from y to mapH"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    match y == Map.mapH()
+        true -> drawChar(0, 0, "", "black")
+        false -> renderRowAndNext(map, visible, remembered, y)
+
+fn renderRowAndNext(map: List<List<Tile>>, visible: List<Point>, remembered: List<List<Bool>>, y: Int) -> Unit
+    ? "Render row y then continue to next row"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    renderMapRow(map, visible, remembered, 0, y)
+    renderMapRows(map, visible, remembered, y + 1)
+
+fn intToStr(n: Int) -> String
+    ? "Convert integer to string for HUD display"
+    "{n}"
+
+verify intToStr
+    intToStr(42) => "42"
+    intToStr(0) => "0"
+
+fn renderHudLine(col: Int, row: Int, label: String, color: String) -> Unit
+    ? "Print a HUD label at the given column and row"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    Terminal.moveTo(col, row)
+    Terminal.setColor(color)
+    Terminal.print(label)
+    Terminal.resetColor()
+
+fn renderHud(player: Player, messages: List<String>) -> Unit
+    ? "Draw the status HUD on the right side (column 55+) and message log at bottom"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    renderHudLine(55, 1, "@ You (the Averist)", "white")
+    renderHudLine(55, 3, "HP: {player.hp}/{player.maxHp}", "red")
+    renderHudLine(55, 5, "ATK: {player.attack}", "yellow")
+    renderHudLine(55, 7, "DEF: {player.defense}", "cyan")
+    renderHudLine(55, 9, "Floor: {player.floor}", "green")
+    renderHudLine(55, 11, "EXP: {player.exp}", "magenta")
+    renderHudLine(55, 14, "? Wild if/else", "yellow")
+    renderHudLine(55, 15, "∞ Feral for-loop", "red")
+    renderHudLine(55, 16, "∅ The Null", "magenta")
+    renderHudLine(55, 18, "♥ Potion of Purity", "red")
+    renderHudLine(55, 19, "⚡ Scroll of Match", "cyan")
+    renderHudLine(55, 20, "◆ Shield of Immut.", "blue")
+    renderHudLine(55, 22, "> Stairs down", "cyan")
+    renderHudLine(55, 24, "←→↑↓ Move/Attack", "white")
+    renderHudLine(55, 25, ">    Descend stairs", "white")
+    renderHudLine(55, 26, "Q    Quit", "white")
+    renderMessages(messages, 0)
+
+fn renderMessages(messages: List<String>, i: Int) -> Unit
+    ? "Render up to 3 messages at the bottom of the screen (rows 31-33)"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    match List.get(messages, i)
+        Option.None -> drawChar(0, 0, "", "black")
+        Option.Some(msg) -> renderMessageAndNext(msg, messages, i)
+
+fn renderMessageAndNext(msg: String, messages: List<String>, i: Int) -> Unit
+    ? "Render one message line and continue"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    match i < 3
+        true -> renderMsgLine(msg, messages, i)
+        false -> drawChar(0, 0, "", "black")
+
+fn renderMsgLine(msg: String, messages: List<String>, i: Int) -> Unit
+    ? "Print a message at the appropriate bottom row"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    renderHudLine(0, 31 + i, msg, "white")
+    renderMessages(messages, i + 1)
+
+fn renderMap(map: List<List<Tile>>, visible: List<Point>, remembered: List<List<Bool>>, entities: List<Entity>, items: List<Item>, player: Player) -> Unit
+    ? "Full render pass: clear screen, draw map tiles with FOV, items, entities, player"
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+    ]
+    Terminal.clear()
+    renderMapRows(map, visible, remembered, 0)
+    renderItemsNext(items, visible, 0)
+    renderEntitiesNext(entities, visible, 0)
+    renderPlayer(player)
+    Terminal.flush()

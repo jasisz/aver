@@ -1,0 +1,167 @@
+module Combat
+    intent =
+        "Combat and entity management: damage, death, AI movement, spawning."
+    depends [Types]
+
+fn applyDamageToEntity(entity: Entity, damage: Int) -> Entity
+    ? "Reduce entity HP by damage amount"
+    Entity.update(entity, hp = entity.hp - damage)
+
+verify applyDamageToEntity
+    applyDamageToEntity(Types.makeIfElse(0, 0), 3).hp => 3
+
+fn isEntityDead(entity: Entity) -> Bool
+    ? "True if entity has no HP"
+    entity.hp < 1
+
+verify isEntityDead
+    isEntityDead(Types.makeIfElse(0, 0)) => false
+    isEntityDead(Entity.update(Types.makeIfElse(0, 0), hp = 0)) => true
+
+fn applyDamageToPlayer(player: Player, damage: Int) -> Player
+    ? "Reduce player HP by damage amount"
+    Player.update(player, hp = player.hp - damage)
+
+verify applyDamageToPlayer
+    applyDamageToPlayer(Types.makePlayer(0, 0), 5).hp => 15
+
+fn isPlayerDead(player: Player) -> Bool
+    ? "True if player has no HP"
+    player.hp < 1
+
+verify isPlayerDead
+    isPlayerDead(Types.makePlayer(0, 0)) => false
+
+fn healPlayer(player: Player, amount: Int) -> Player
+    ? "Heal player, capped at maxHp"
+    Player.update(player, hp = Int.min(player.hp + amount, player.maxHp))
+
+verify healPlayer
+    healPlayer(Types.makePlayer(0, 0), 5).hp => 20
+    healPlayer(Player.update(Types.makePlayer(0, 0), hp = 10), 5).hp => 15
+
+fn gainExp(player: Player, amount: Int) -> Player
+    ? "Add experience points"
+    Player.update(player, exp = player.exp + amount)
+
+verify gainExp
+    gainExp(Types.makePlayer(0, 0), 10).exp => 10
+
+fn expForKill(kind: EntityKind) -> Int
+    ? "Experience awarded for killing an entity"
+    match kind
+        EntityKind.WildIfElse -> 5
+        EntityKind.FeralLoop -> 15
+        EntityKind.TheNull -> 30
+
+verify expForKill
+    expForKill(EntityKind.WildIfElse) => 5
+    expForKill(EntityKind.TheNull) => 30
+
+fn moveEntity(entity: Entity, dx: Int, dy: Int) -> Entity
+    ? "Move entity by delta"
+    Entity.update(entity, pos = Types.pt(entity.pos.x + dx, entity.pos.y + dy))
+
+verify moveEntity
+    moveEntity(Types.makeIfElse(5, 5), 1, 0).pos.x => 6
+    moveEntity(Types.makeIfElse(5, 5), 0, 0 - 1).pos.y => 4
+
+fn movePlayer(player: Player, dx: Int, dy: Int) -> Player
+    ? "Move player by delta"
+    Player.update(player, pos = Types.pt(player.pos.x + dx, player.pos.y + dy))
+
+verify movePlayer
+    movePlayer(Types.makePlayer(5, 5), 1, 0).pos.x => 6
+
+fn entityAtPos(entities: List<Entity>, target: Point, i: Int) -> Option<Int>
+    ? "Find index of entity at target position"
+    match i == List.len(entities)
+        true -> Option.None
+        false -> match List.get(entities, i)
+            Option.Some(e) -> match Types.ptEq(e.pos, target)
+                true -> Option.Some(i)
+                false -> entityAtPos(entities, target, i + 1)
+            Option.None -> Option.None
+
+verify entityAtPos
+    entityAtPos([Types.makeIfElse(3, 3)], Types.pt(3, 3), 0) => Option.Some(0)
+    entityAtPos([Types.makeIfElse(3, 3)], Types.pt(5, 5), 0) => Option.None
+
+fn itemAtPos(items: List<Item>, target: Point, i: Int) -> Option<Int>
+    ? "Find index of item at target position"
+    match i == List.len(items)
+        true -> Option.None
+        false -> match List.get(items, i)
+            Option.Some(item) -> match Types.ptEq(item.pos, target)
+                true -> Option.Some(i)
+                false -> itemAtPos(items, target, i + 1)
+            Option.None -> Option.None
+
+verify itemAtPos
+    itemAtPos([Types.makePurity(3, 3)], Types.pt(3, 3), 0) => Option.Some(0)
+    itemAtPos([Types.makePurity(3, 3)], Types.pt(5, 5), 0) => Option.None
+
+fn removeAt(entities: List<Entity>, idx: Int, i: Int) -> List<Entity>
+    ? "Remove entity at index"
+    match i == List.len(entities)
+        true -> []
+        false -> match List.get(entities, i)
+            Option.Some(e) -> match i == idx
+                true -> removeAt(entities, idx, i + 1)
+                false -> List.prepend(e, removeAt(entities, idx, i + 1))
+            Option.None -> []
+
+verify removeAt
+    List.len(removeAt([Types.makeIfElse(0, 0), Types.makeLoop(1, 1)], 0, 0)) => 1
+
+fn removeItemAt(items: List<Item>, idx: Int, i: Int) -> List<Item>
+    ? "Remove item at index"
+    match i == List.len(items)
+        true -> []
+        false -> match List.get(items, i)
+            Option.Some(item) -> match i == idx
+                true -> removeItemAt(items, idx, i + 1)
+                false -> List.prepend(item, removeItemAt(items, idx, i + 1))
+            Option.None -> []
+
+verify removeItemAt
+    List.len(removeItemAt([Types.makePurity(0, 0), Types.makeScroll(1, 1)], 0, 0)) => 1
+
+fn replaceEntity(entities: List<Entity>, idx: Int, newEntity: Entity, i: Int) -> List<Entity>
+    ? "Replace entity at index"
+    match i == List.len(entities)
+        true -> []
+        false -> match List.get(entities, i)
+            Option.Some(e) -> match i == idx
+                true -> List.prepend(newEntity, replaceEntity(entities, idx, newEntity, i + 1))
+                false -> List.prepend(e, replaceEntity(entities, idx, newEntity, i + 1))
+            Option.None -> []
+
+verify replaceEntity
+    List.get(replaceEntity([Types.makeIfElse(0, 0)], 0, Types.makeLoop(1, 1), 0), 0) => Option.Some(Types.makeLoop(1, 1))
+
+fn signOf(n: Int) -> Int
+    ? "Sign of integer: -1, 0, or 1"
+    match n > 0
+        true -> 1
+        false -> match n < 0
+            true -> 0 - 1
+            false -> 0
+
+verify signOf
+    signOf(5) => 1
+    signOf(0 - 3) => 0 - 1
+    signOf(0) => 0
+
+fn stepToward(from: Point, to: Point) -> Point
+    ? "Move one step toward target (greedy)"
+    dx = signOf(to.x - from.x)
+    dy = signOf(to.y - from.y)
+    match Int.abs(to.x - from.x) > Int.abs(to.y - from.y)
+        true -> Types.pt(from.x + dx, from.y)
+        false -> Types.pt(from.x, from.y + dy)
+
+verify stepToward
+    stepToward(Types.pt(0, 0), Types.pt(3, 1)) => Types.pt(1, 0)
+    stepToward(Types.pt(0, 0), Types.pt(1, 3)) => Types.pt(0, 1)
+    stepToward(Types.pt(5, 5), Types.pt(5, 5)) => Types.pt(5, 5)
