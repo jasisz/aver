@@ -72,7 +72,7 @@ All notable changes to Aver are documented here.
 ## 0.5.2
 
 ### Added
-- `workflow_codegen_bench` for repeatable end-to-end comparisons between `aver run` and generated Rust on `projects/workflow_engine`
+- `workflow_codegen_bench` for repeatable end-to-end comparisons between interpreter, VM, and generated Rust on `projects/workflow_engine`
 
 ### Changed
 - interpreter function bodies now lower to shared `ExprId`-based runtime nodes, so the evaluation hot path no longer carries cloned AST fragments through continuations

@@ -13,17 +13,23 @@ const GENERATED_NAME: &str = "workflow_codegen_bench";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RuntimeKind {
     Interpreter,
+    Vm,
     Generated,
 }
 
 impl RuntimeKind {
     fn all() -> &'static [RuntimeKind] {
-        &[RuntimeKind::Interpreter, RuntimeKind::Generated]
+        &[
+            RuntimeKind::Interpreter,
+            RuntimeKind::Vm,
+            RuntimeKind::Generated,
+        ]
     }
 
     fn name(self) -> &'static str {
         match self {
             RuntimeKind::Interpreter => "interpreter",
+            RuntimeKind::Vm => "vm",
             RuntimeKind::Generated => "generated",
         }
     }
@@ -31,8 +37,10 @@ impl RuntimeKind {
     fn parse(input: &str) -> Option<Vec<RuntimeKind>> {
         match input {
             "interpreter" => Some(vec![RuntimeKind::Interpreter]),
+            "vm" => Some(vec![RuntimeKind::Vm]),
             "generated" => Some(vec![RuntimeKind::Generated]),
-            "both" => Some(Self::all().to_vec()),
+            "both" => Some(vec![RuntimeKind::Interpreter, RuntimeKind::Generated]),
+            "all" => Some(Self::all().to_vec()),
             _ => None,
         }
     }
@@ -96,7 +104,7 @@ struct BenchResult {
 }
 
 fn usage() -> &'static str {
-    "Usage: cargo run --release --bin workflow_codegen_bench -- [--seed N] [--iters N] [--runtime interpreter|generated|both] [--workload NAME|all] [--output DIR] [--rebuild]"
+    "Usage: cargo run --release --bin workflow_codegen_bench -- [--seed N] [--iters N] [--runtime interpreter|vm|generated|both|all] [--workload NAME|all] [--output DIR] [--rebuild]"
 }
 
 fn repo_root() -> PathBuf {
@@ -307,6 +315,17 @@ fn run_workflow_command(
                 .arg("--");
             cmd
         }
+        RuntimeKind::Vm => {
+            let mut cmd = Command::new(aver_bin);
+            cmd.current_dir(repo_root)
+                .arg("run")
+                .arg(repo_root.join(ENTRY_FILE))
+                .arg("--module-root")
+                .arg(repo_root.join(MODULE_ROOT))
+                .arg("--vm")
+                .arg("--");
+            cmd
+        }
         RuntimeKind::Generated => {
             let mut cmd = Command::new(generated_bin);
             cmd.current_dir(repo_root);
@@ -435,14 +454,31 @@ fn print_pair_speedup(results: &[BenchResult]) {
         let interpreter = results
             .iter()
             .find(|r| r.runtime == RuntimeKind::Interpreter && r.workload == *workload);
+        let vm = results
+            .iter()
+            .find(|r| r.runtime == RuntimeKind::Vm && r.workload == *workload);
         let generated = results
             .iter()
             .find(|r| r.runtime == RuntimeKind::Generated && r.workload == *workload);
-        let (Some(interpreter), Some(generated)) = (interpreter, generated) else {
+        let Some(interpreter) = interpreter else {
             continue;
         };
 
         let interp_secs = interpreter.measured.as_secs_f64();
+        if let Some(vm) = vm {
+            let vm_secs = vm.measured.as_secs_f64();
+            if vm_secs > 0.0 {
+                println!(
+                    "{:<12} vm_speedup={:.2}x",
+                    workload.name(),
+                    interp_secs / vm_secs
+                );
+            }
+        }
+
+        let Some(generated) = generated else {
+            continue;
+        };
         let gen_secs = generated.measured.as_secs_f64();
         if gen_secs > 0.0 {
             println!(
@@ -525,7 +561,7 @@ fn main() {
         }
     }
 
-    if cfg.runtimes.len() == 2 {
+    if cfg.runtimes.len() >= 2 {
         print_pair_speedup(&results);
     }
 }
