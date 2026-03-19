@@ -114,6 +114,7 @@ impl VM {
         let caller_depth = self.frames.len();
         let arena_mark = self.arena.young_len() as u32;
         let yard_mark = self.arena.yard_len() as u32;
+        let handoff_mark = self.arena.handoff_len() as u32;
         let bp = self.stack.len() as u32;
         for arg in args {
             self.stack.push(*arg);
@@ -128,8 +129,10 @@ impl VM {
             local_count: chunk.local_count,
             arena_mark,
             yard_mark,
+            handoff_mark,
             globals_dirty: false,
             yard_dirty: false,
+            handoff_dirty: false,
         });
         self.execute_until(caller_depth)
     }
@@ -155,12 +158,20 @@ impl VM {
         &mut self,
         arena_mark: u32,
         yard_mark: u32,
+        handoff_mark: u32,
         globals_dirty: bool,
         yard_dirty: bool,
         frame_roots: &mut [NanValue],
     ) {
         if globals_dirty {
             self.arena.promote_roots_to_stable(&mut self.globals);
+        }
+
+        let has_handoff = self.arena.handoff_len() > handoff_mark as usize;
+        if has_handoff {
+            self.arena
+                .evacuate_frame_to_yard(arena_mark, yard_mark, handoff_mark, frame_roots);
+            return;
         }
 
         if self.arena.young_len() > arena_mark as usize {
@@ -177,36 +188,37 @@ impl VM {
         &mut self,
         arena_mark: u32,
         yard_mark: u32,
+        handoff_mark: u32,
         globals_dirty: bool,
         frame_roots: &mut [NanValue],
-    ) -> bool {
+    ) -> (bool, bool) {
         if globals_dirty {
             self.arena.promote_roots_to_stable(&mut self.globals);
         }
 
-        let had_callee_yard = self.arena.yard_len() > yard_mark as usize;
-        let young_escape = frame_roots
-            .iter()
-            .filter_map(|value| value.heap_index())
-            .any(|index| self.arena.is_young_index_in_region(index, arena_mark));
+        let has_local_young = self.arena.young_len() > arena_mark as usize;
+        let has_local_yard = self.arena.yard_len() > yard_mark as usize;
+        let has_local_handoff = self.arena.handoff_len() > handoff_mark as usize;
 
-        if self.arena.young_len() > arena_mark as usize {
+        if !has_local_young && !has_local_yard {
+            return (false, has_local_handoff);
+        }
+
+        if has_local_young && !has_local_yard && !has_local_handoff {
             self.arena
-                .promote_young_roots_to_yard(arena_mark, frame_roots);
+                .promote_young_roots_to_handoff(arena_mark, frame_roots);
+            return (false, true);
         }
 
-        if had_callee_yard && self.arena.yard_len() > yard_mark as usize {
-            self.arena.collect_yard_from_roots(yard_mark, frame_roots);
-        }
-
-        self.arena.truncate_to(arena_mark);
-        had_callee_yard || young_escape
+        self.arena
+            .evacuate_frame_to_handoff(arena_mark, yard_mark, handoff_mark, frame_roots)
     }
 
     fn finalize_frame_return(
         &mut self,
         arena_mark: u32,
         yard_mark: u32,
+        handoff_mark: u32,
         globals_dirty: bool,
         frame_roots: &mut [NanValue],
     ) {
@@ -216,12 +228,16 @@ impl VM {
         self.arena.promote_roots_to_stable(frame_roots);
         self.arena.truncate_to(arena_mark);
         self.arena.truncate_yard_to(yard_mark);
+        self.arena.truncate_handoff_to(handoff_mark);
     }
 
     fn next_value_alloc_space(&self, code: &[u8], ip: usize) -> AllocSpace {
         if matches!(code.get(ip).copied(), Some(op) if op == TAIL_CALL_SELF || op == TAIL_CALL_KNOWN)
         {
             AllocSpace::Yard
+        } else if matches!(code.get(ip).copied(), Some(op) if op == RETURN) && self.frames.len() > 1
+        {
+            AllocSpace::Handoff
         } else {
             AllocSpace::Young
         }
@@ -270,6 +286,7 @@ impl VM {
                                 index,
                                 frame.arena_mark,
                                 frame.yard_mark,
+                                frame.handoff_mark,
                             )
                         })
                     {
@@ -398,8 +415,10 @@ impl VM {
                         local_count: target.local_count,
                         arena_mark: self.arena.young_len() as u32,
                         yard_mark: self.arena.yard_len() as u32,
+                        handoff_mark: self.arena.handoff_len() as u32,
                         globals_dirty: false,
                         yard_dirty: false,
+                        handoff_dirty: false,
                     });
 
                     fn_id = target_fn_id;
@@ -429,8 +448,10 @@ impl VM {
                         local_count: target.local_count,
                         arena_mark: self.arena.young_len() as u32,
                         yard_mark: self.arena.yard_len() as u32,
+                        handoff_mark: self.arena.handoff_len() as u32,
                         globals_dirty: false,
                         yard_dirty: false,
+                        handoff_dirty: false,
                     });
 
                     fn_id = target_fn_id;
@@ -474,12 +495,14 @@ impl VM {
                     let args_start = self.stack.len() - argc;
                     let frame_mark = self.frames.last().unwrap().arena_mark;
                     let yard_mark = self.frames.last().unwrap().yard_mark;
+                    let handoff_mark = self.frames.last().unwrap().handoff_mark;
                     let globals_dirty = self.frames.last().unwrap().globals_dirty;
                     let yard_dirty = self.frames.last().unwrap().yard_dirty;
                     let mut promoted_args = self.stack[args_start..].to_vec();
                     self.finalize_frame_locals_for_tail_call(
                         frame_mark,
                         yard_mark,
+                        handoff_mark,
                         globals_dirty,
                         yard_dirty,
                         &mut promoted_args,
@@ -493,6 +516,7 @@ impl VM {
                     let frame = self.frames.last_mut().unwrap();
                     frame.globals_dirty = false;
                     frame.yard_dirty = false;
+                    frame.handoff_dirty = false;
                     ip = 0;
                 }
 
@@ -504,12 +528,14 @@ impl VM {
                     let args_start = self.stack.len() - argc;
                     let frame_mark = self.frames.last().unwrap().arena_mark;
                     let yard_mark = self.frames.last().unwrap().yard_mark;
+                    let handoff_mark = self.frames.last().unwrap().handoff_mark;
                     let globals_dirty = self.frames.last().unwrap().globals_dirty;
                     let yard_dirty = self.frames.last().unwrap().yard_dirty;
                     let mut promoted_args = self.stack[args_start..].to_vec();
                     self.finalize_frame_locals_for_tail_call(
                         frame_mark,
                         yard_mark,
+                        handoff_mark,
                         globals_dirty,
                         yard_dirty,
                         &mut promoted_args,
@@ -532,6 +558,7 @@ impl VM {
                     frame.local_count = target_local_count;
                     frame.globals_dirty = false;
                     frame.yard_dirty = false;
+                    frame.handoff_dirty = false;
                     fn_id = target_fn_id;
                     ip = 0;
                 }
@@ -545,6 +572,7 @@ impl VM {
                         self.finalize_frame_return(
                             frame.arena_mark,
                             frame.yard_mark,
+                            frame.handoff_mark,
                             frame.globals_dirty,
                             std::slice::from_mut(&mut result),
                         );
@@ -554,13 +582,16 @@ impl VM {
                         return Ok(result);
                     }
 
-                    let yard_dirty = self.finalize_frame_return_to_caller(
+                    let (yard_dirty, handoff_dirty) = self.finalize_frame_return_to_caller(
                         frame.arena_mark,
                         frame.yard_mark,
+                        frame.handoff_mark,
                         frame.globals_dirty,
                         std::slice::from_mut(&mut result),
                     );
-                    self.frames.last_mut().unwrap().yard_dirty |= yard_dirty;
+                    let caller = self.frames.last_mut().unwrap();
+                    caller.yard_dirty |= yard_dirty;
+                    caller.handoff_dirty |= handoff_dirty;
                     self.stack.push(result);
 
                     // Restore caller frame state.
@@ -637,6 +668,7 @@ impl VM {
                             self.finalize_frame_return(
                                 frame.arena_mark,
                                 frame.yard_mark,
+                                frame.handoff_mark,
                                 frame.globals_dirty,
                                 std::slice::from_mut(&mut result),
                             );
@@ -646,13 +678,16 @@ impl VM {
                             return Ok(result);
                         }
 
-                        let yard_dirty = self.finalize_frame_return_to_caller(
+                        let (yard_dirty, handoff_dirty) = self.finalize_frame_return_to_caller(
                             frame.arena_mark,
                             frame.yard_mark,
+                            frame.handoff_mark,
                             frame.globals_dirty,
                             std::slice::from_mut(&mut result),
                         );
-                        self.frames.last_mut().unwrap().yard_dirty |= yard_dirty;
+                        let caller = self.frames.last_mut().unwrap();
+                        caller.yard_dirty |= yard_dirty;
+                        caller.handoff_dirty |= handoff_dirty;
                         self.stack.push(result);
 
                         let caller = self.frames.last().unwrap();
@@ -1195,8 +1230,10 @@ mod tests {
             local_count: 0,
             arena_mark: 0,
             yard_mark: 0,
+            handoff_mark: 0,
             globals_dirty: false,
             yard_dirty: false,
+            handoff_dirty: false,
         });
 
         let result = vm

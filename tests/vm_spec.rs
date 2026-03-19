@@ -363,6 +363,20 @@ fn vm_tco_reclaims_previous_aggregate_args() {
     );
 }
 
+#[test]
+fn vm_helper_returns_feed_tail_loop_without_accumulating() {
+    let src = "fn extend(acc: List<Int>, n: Int) -> List<Int>\n    List.prepend(n, acc)\n\nfn build(n: Int, acc: List<Int>) -> Int\n    match n == 0\n        true -> List.len(acc)\n        false -> build(n - 1, extend(acc, n))\n\nfn main() -> Int\n    build(200, [])\n";
+    let (result, arena) = vm_run_with_arena(src);
+    assert!(result.is_int());
+    let empty = Arena::new();
+    assert_eq!(result.as_int(&empty), 200);
+    assert!(
+        arena.len() < 12,
+        "helper-return handoff values should not accumulate, arena.len() = {}",
+        arena.len()
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Lists
 // ---------------------------------------------------------------------------

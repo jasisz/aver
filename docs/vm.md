@@ -72,19 +72,21 @@ It now uses a small runtime model shaped around Aver's execution style:
 
 - each frame records a young-region mark
 - each frame also records a shared `yard` mark for TCO survivors
+- each frame records a `handoff` mark for ordinary helper returns
 - temporary heap values allocate into the young arena
 - on `TAIL_CALL_*`, loop-carried survivors move from young into the frame's shared yard
-- on ordinary `RETURN`, results can move into the caller's yard rather than pretending to be globally long-lived
+- on ordinary `RETURN`, helper results can move into a handoff lane that survives into the caller without pretending to be globally long-lived
 - on external escape boundaries (top-level result, globals, host callbacks), values move into stable space
 - top-level completion compacts stable-space values from live roots
 
-In practice this gives the VM three distinct lifetimes:
+In practice this gives the VM four distinct spaces:
 
 - `young` for per-step temporaries
-- `yard` for values that survive the next tail-call iteration, or ordinary returns that stay within the current call chain, but still die with the frame
+- `yard` for values that survive the next tail-call iteration and stay with the reused frame
+- `handoff` for ordinary return values that stay within the current call chain but belong to the caller side of that chain
 - `stable` for values that truly escape beyond the frame
 
-The important part is that TCO survivors do not have to pretend to be globally long-lived values.
+The important part is that neither TCO survivors nor helper return values have to pretend to be globally long-lived values.
 
 This fits Aver unusually well because values are immutable, effects are explicit, and there are relatively few hidden escape paths.
 
@@ -102,7 +104,9 @@ This matters because the VM can now keep list construction aligned with Aver sem
 
 Pattern matching and destructuring (`MATCH_CONS`, `LIST_HEAD_TAIL`) use list helpers that understand these shapes directly.
 
-In obvious tail-call positions, the VM can also allocate new aggregate values directly into the frame yard instead of forcing an immediate young-to-yard copy on the next `TAIL_CALL_*`.
+In obvious tail-call positions, the VM can allocate new aggregate values directly into the frame yard instead of forcing an immediate young-to-yard copy on the next `TAIL_CALL_*`.
+
+In obvious ordinary return positions, the VM can allocate new aggregate values directly into the frame handoff lane, so helper returns can survive into the caller without first pretending to be temporaries or globally-stable values.
 
 ## Function References
 
