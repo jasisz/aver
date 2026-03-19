@@ -711,7 +711,34 @@ impl VM {
         use crate::value::Value;
 
         // Convert NanValue args to Value for the existing http_server module.
-        let val_args: Vec<Value> = args.iter().map(|a| a.to_value(&self.arena)).collect();
+        // Handler function is stored as NanValue::Int(fn_id) in the VM.
+        // HttpServer expects Value::Fn, so we must reconstruct it.
+        let val_args: Vec<Value> = args
+            .iter()
+            .map(|a| {
+                // If it's an int that maps to a known function, convert to Value::Fn.
+                if a.is_int() {
+                    let fn_id = a.as_int(&self.arena) as u32;
+                    if (fn_id as usize) < self.code.functions.len() {
+                        let chunk = &self.code.functions[fn_id as usize];
+                        // Build a minimal Value::Fn for HttpServer's handler dispatch.
+                        let body = crate::ast::FnBody::Block(Vec::new());
+                        return Value::Fn(std::rc::Rc::new(crate::value::FunctionValue {
+                            name: std::rc::Rc::new(chunk.name.clone()),
+                            params: std::rc::Rc::new(Vec::new()),
+                            return_type: std::rc::Rc::new(String::new()),
+                            effects: std::rc::Rc::new(chunk.effects.clone()),
+                            lowered_body: crate::interpreter::lowered::lower_fn_body(&body),
+                            body: std::rc::Rc::new(body),
+                            resolution: None,
+                            memo_eligible: false,
+                            home_globals: None,
+                        }));
+                    }
+                }
+                a.to_value(&self.arena)
+            })
+            .collect();
 
         // The invoke_handler closure calls back into the VM to execute the
         // Aver handler function. It receives the handler Value::Fn, callback

@@ -828,6 +828,27 @@ pub(super) fn cmd_run_vm(
 
     // Compile to bytecode
     let mut arena = Arena::new();
+    // Register service record types (HttpResponse, HttpRequest, Header, etc.)
+    arena.register_record_type(
+        "HttpResponse",
+        vec!["status".into(), "body".into(), "headers".into()],
+    );
+    arena.register_record_type(
+        "HttpRequest",
+        vec![
+            "method".into(),
+            "path".into(),
+            "body".into(),
+            "headers".into(),
+        ],
+    );
+    arena.register_record_type("Header", vec!["name".into(), "value".into()]);
+    arena.register_record_type(
+        "Tcp.Connection",
+        vec!["id".into(), "host".into(), "port".into()],
+    );
+    #[cfg(feature = "terminal")]
+    arena.register_record_type("Terminal.Size", vec!["width".into(), "height".into()]);
     let (code, globals) =
         match vm::compile_program_with_modules(&items, &mut arena, Some(&module_root)) {
             Ok(v) => v,
