@@ -34,7 +34,12 @@ fn main() {
             program_args,
         } => {
             if *vm {
-                commands::cmd_run_vm(file, module_root.as_deref(), record.as_deref());
+                commands::cmd_run_vm(
+                    file,
+                    module_root.as_deref(),
+                    record.as_deref(),
+                    program_args.clone(),
+                );
             } else {
                 commands::cmd_run(
                     file,

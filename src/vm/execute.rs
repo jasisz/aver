@@ -25,6 +25,8 @@ pub struct VM {
     pub arena: Arena,
     /// Effect capabilities granted to the current entry point.
     allowed_effects: Vec<String>,
+    /// CLI program arguments (for Args.get builtin).
+    cli_args: Vec<String>,
     /// Execution mode: Normal, Record, or Replay.
     execution_mode: VmExecutionMode,
     /// Recorded effects (populated in Record mode).
@@ -71,12 +73,18 @@ impl VM {
             code,
             arena,
             allowed_effects: Vec::new(),
+            cli_args: Vec::new(),
             execution_mode: VmExecutionMode::Normal,
             recorded_effects: Vec::new(),
             replay_effects: Vec::new(),
             replay_pos: 0,
             validate_replay_args: false,
         }
+    }
+
+    /// Set CLI arguments for Args.get().
+    pub fn set_cli_args(&mut self, args: Vec<String>) {
+        self.cli_args = args;
     }
 
     /// Start recording effectful calls.
@@ -333,12 +341,29 @@ impl VM {
                     let args: Vec<NanValue> = self.stack[args_start..].to_vec();
                     self.stack.truncate(args_start);
 
+                    // HttpServer.listen/listenWith: special case — needs VM callback.
+                    if builtin_name.starts_with("HttpServer.") {
+                        // Save execute loop state before calling into HttpServer.
+                        self.frames.last_mut().unwrap().ip = ip as u32;
+                        let result = self.dispatch_http_server(&builtin_name, &args)?;
+                        self.stack.push(result);
+                        // Restore cached state (dispatch may have modified frames).
+                        let f = self.frames.last().unwrap();
+                        fn_id = f.fn_id;
+                        ip = f.ip as usize;
+                        bp = f.bp as usize;
+                        continue;
+                    }
+
                     let is_effectful = !builtin_effects(&builtin_name).is_empty();
 
                     let result = match (is_effectful, self.execution_mode) {
-                        (_, VmExecutionMode::Normal) | (false, _) => {
-                            dispatch_builtin_nv(&builtin_name, &args, &mut self.arena)?
-                        }
+                        (_, VmExecutionMode::Normal) | (false, _) => dispatch_builtin_nv(
+                            &builtin_name,
+                            &args,
+                            &mut self.arena,
+                            &self.cli_args,
+                        )?,
                         (true, VmExecutionMode::Record) => {
                             // Call real service, then record the effect.
                             let args_json = {
@@ -346,8 +371,12 @@ impl VM {
                                     args.iter().map(|a| a.to_value(&self.arena)).collect();
                                 values_to_json_lossy(&vals)
                             };
-                            let nv_result =
-                                dispatch_builtin_nv(&builtin_name, &args, &mut self.arena)?;
+                            let nv_result = dispatch_builtin_nv(
+                                &builtin_name,
+                                &args,
+                                &mut self.arena,
+                                &self.cli_args,
+                            )?;
                             let result_val = nv_result.to_value(&self.arena);
                             let outcome = match value_to_json(&result_val) {
                                 Ok(json) => RecordedOutcome::Value(json),
@@ -676,6 +705,74 @@ impl VM {
         }
     }
 
+    /// Handle HttpServer.listen/listenWith with VM callback support.
+    fn dispatch_http_server(&mut self, name: &str, args: &[NanValue]) -> Result<NanValue, VmError> {
+        use crate::services::http_server;
+        use crate::value::Value;
+
+        // Convert NanValue args to Value for the existing http_server module.
+        let val_args: Vec<Value> = args.iter().map(|a| a.to_value(&self.arena)).collect();
+
+        // The invoke_handler closure calls back into the VM to execute the
+        // Aver handler function. It receives the handler Value::Fn, callback
+        // args, and an entry label.
+        let vm_ptr = self as *mut VM;
+        let invoke_handler = |handler: Value, callback_args: Vec<Value>, _entry: String| {
+            // Convert handler to NanValue and find its fn_id.
+            let vm = unsafe { &mut *vm_ptr };
+            let handler_nv = NanValue::from_value(&handler, &mut vm.arena);
+            let handler_fn_id = if handler_nv.is_fn() {
+                // Look up fn_id from the arena FunctionValue
+                // Actually, handler is a Value::Fn with a name. Find it.
+                if let Value::Fn(fv) = &handler {
+                    vm.code.find(&fv.name).ok_or_else(|| {
+                        crate::value::RuntimeError::Error(format!(
+                            "HttpServer: handler function '{}' not found in VM",
+                            fv.name
+                        ))
+                    })?
+                } else {
+                    return Err(crate::value::RuntimeError::Error(
+                        "HttpServer: handler is not a function".into(),
+                    ));
+                }
+            } else if handler_nv.is_int() {
+                // fn_id stored as int (VM convention).
+                handler_nv.as_int(&vm.arena) as u32
+            } else {
+                return Err(crate::value::RuntimeError::Error(
+                    "HttpServer: handler is not a function".into(),
+                ));
+            };
+
+            // Convert callback args to NanValue.
+            let nv_args: Vec<NanValue> = callback_args
+                .iter()
+                .map(|v| NanValue::from_value(v, &mut vm.arena))
+                .collect();
+
+            // Call the handler via VM.
+            let result_nv = vm
+                .call_function(handler_fn_id, &nv_args)
+                .map_err(|e| crate::value::RuntimeError::Error(format!("{}", e)))?;
+
+            Ok(result_nv.to_value(&vm.arena))
+        };
+
+        let skip_server = self.execution_mode == VmExecutionMode::Record;
+        let result = http_server::call_with_runtime(name, &val_args, invoke_handler, skip_server);
+
+        match result {
+            Some(Ok(val)) => Ok(NanValue::from_value(&val, &mut self.arena)),
+            Some(Err(crate::value::RuntimeError::Error(msg))) => Err(VmError::Runtime(msg)),
+            Some(Err(e)) => Err(VmError::Runtime(format!("{:?}", e))),
+            None => Err(VmError::Runtime(format!(
+                "unknown HttpServer builtin: {}",
+                name
+            ))),
+        }
+    }
+
     /// Check that a builtin call's required effects are satisfied by allowed_effects.
     fn check_builtin_effects(&self, builtin_name: &str) -> Result<(), VmError> {
         let required = builtin_effects(builtin_name);
@@ -877,10 +974,12 @@ fn dispatch_builtin_nv(
     name: &str,
     args: &[NanValue],
     arena: &mut Arena,
+    cli_args: &[String],
 ) -> Result<NanValue, VmError> {
     let namespace = name.split_once('.').map(|(ns, _)| ns);
 
     let result = match namespace {
+        Some("Args") => crate::services::args::call_nv(name, args, cli_args, arena),
         Some("Console") => console::call_nv(name, args, arena),
         Some("Http") => http::call_nv(name, args, arena),
         Some("Disk") => disk::call_nv(name, args, arena),

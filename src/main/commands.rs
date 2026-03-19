@@ -781,7 +781,12 @@ fn display_check_path(path: &str, module_root: &str) -> String {
     path.to_string()
 }
 
-pub(super) fn cmd_run_vm(file: &str, module_root_override: Option<&str>, record_dir: Option<&str>) {
+pub(super) fn cmd_run_vm(
+    file: &str,
+    module_root_override: Option<&str>,
+    record_dir: Option<&str>,
+    program_args: Vec<String>,
+) {
     use aver::nan_value::Arena;
     use aver::replay::{
         JsonValue, session::RecordedOutcome, session::SessionRecording,
@@ -834,6 +839,8 @@ pub(super) fn cmd_run_vm(file: &str, module_root_override: Option<&str>, record_
 
     // Execute
     let mut machine = vm::VM::new(code, globals, arena);
+
+    machine.set_cli_args(program_args);
 
     if record_dir.is_some() {
         machine.start_recording();
