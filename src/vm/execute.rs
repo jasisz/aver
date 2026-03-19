@@ -304,10 +304,13 @@ impl VM {
                     let target_fn_id = if fn_val.is_int() {
                         fn_val.as_int(&self.arena) as u32
                     } else {
+                        let caller_name = &self.code.functions[fn_id as usize].name;
                         return Err(VmError::Type(format!(
-                            "cannot call non-function (got {} = {:?})",
+                            "cannot call non-function (got {} = {:?}) in {} at ip={}",
                             fn_val.type_name(),
-                            fn_val
+                            fn_val,
+                            caller_name,
+                            ip
                         )));
                     };
 
