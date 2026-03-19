@@ -209,34 +209,17 @@ impl ProgramCompiler {
             }
         }
 
-        // Temporarily register simple names in code_store.fn_index so that
-        // intra-module calls resolve via CALL_KNOWN (not CALL_VALUE).
-        // E.g., inside map.av, `placeStairs(...)` needs to find fn_id for
-        // "Map.placeStairs" via simple name lookup.
-        let mut saved_fn_index: Vec<(String, Option<u32>)> = Vec::new();
-        for (fn_name, fn_id) in &module_fn_ids {
-            let prev = self.code.fn_index.get(fn_name).copied();
-            saved_fn_index.push((fn_name.clone(), prev));
-            self.code.fn_index.insert(fn_name.clone(), *fn_id);
-        }
+        // Build module scope: simple_name → fn_id for intra-module resolution.
+        let module_scope: HashMap<String, u32> = module_fn_ids.iter().cloned().collect();
 
-        // Compile functions.
+        // Compile functions using module_scope for intra-module call resolution.
         let mut fn_idx = 0;
         for item in &mod_items {
             if let TopLevel::FnDef(fndef) = item {
                 let (_, fn_id) = module_fn_ids[fn_idx];
-                let chunk = self.compile_fn(fndef, arena)?;
+                let chunk = self.compile_fn_with_scope(fndef, arena, &module_scope)?;
                 self.code.functions[fn_id as usize] = chunk;
                 fn_idx += 1;
-            }
-        }
-
-        // Restore fn_index to avoid cross-module name collisions.
-        for (fn_name, prev) in &saved_fn_index {
-            if let Some(old_id) = prev {
-                self.code.fn_index.insert(fn_name.clone(), *old_id);
-            } else {
-                self.code.fn_index.remove(fn_name.as_str());
             }
         }
 
@@ -303,6 +286,16 @@ impl ProgramCompiler {
     }
 
     fn compile_fn(&mut self, fndef: &FnDef, arena: &mut Arena) -> Result<FnChunk, CompileError> {
+        let empty_scope = HashMap::new();
+        self.compile_fn_with_scope(fndef, arena, &empty_scope)
+    }
+
+    fn compile_fn_with_scope(
+        &mut self,
+        fndef: &FnDef,
+        arena: &mut Arena,
+        module_scope: &HashMap<String, u32>,
+    ) -> Result<FnChunk, CompileError> {
         let resolution = fndef.resolution.as_ref();
         let local_count = resolution.map_or(fndef.params.len() as u16, |r| r.local_count);
         let local_slots: HashMap<String, u16> = resolution
@@ -323,6 +316,7 @@ impl ProgramCompiler {
             fndef.effects.clone(),
             local_slots,
             &self.global_names,
+            module_scope,
             &self.code,
             arena,
         );
@@ -351,6 +345,7 @@ impl ProgramCompiler {
             }
         }
 
+        let empty_mod_scope = HashMap::new();
         let mut fc = FnCompiler::new(
             "__top_level__",
             0,
@@ -358,6 +353,7 @@ impl ProgramCompiler {
             Vec::new(),
             HashMap::new(),
             &self.global_names,
+            &empty_mod_scope,
             &self.code,
             arena,
         );
@@ -399,6 +395,9 @@ struct FnCompiler<'a> {
     effects: Vec<String>,
     local_slots: HashMap<String, u16>,
     global_names: &'a HashMap<String, u16>,
+    /// Module-local function scope: simple_name → fn_id.
+    /// Used for intra-module calls (e.g. `placeStairs` inside map.av).
+    module_scope: &'a HashMap<String, u32>,
     code_store: &'a CodeStore,
     arena: &'a mut Arena,
     code: Vec<u8>,
@@ -414,6 +413,7 @@ impl<'a> FnCompiler<'a> {
         effects: Vec<String>,
         local_slots: HashMap<String, u16>,
         global_names: &'a HashMap<String, u16>,
+        module_scope: &'a HashMap<String, u32>,
         code_store: &'a CodeStore,
         arena: &'a mut Arena,
     ) -> Self {
@@ -424,6 +424,7 @@ impl<'a> FnCompiler<'a> {
             effects,
             local_slots,
             global_names,
+            module_scope,
             code_store,
             arena,
             code: Vec::new(),
@@ -769,7 +770,11 @@ impl<'a> FnCompiler<'a> {
 
     fn resolve_known_fn(&self, expr: &Expr) -> Option<u32> {
         match expr {
-            Expr::Ident(name) => self.code_store.find(name),
+            Expr::Ident(name) => self
+                .module_scope
+                .get(name)
+                .copied()
+                .or_else(|| self.code_store.find(name)),
             _ => None,
         }
     }
@@ -781,6 +786,10 @@ impl<'a> FnCompiler<'a> {
 
         if target == self.name {
             self.emit_op(TAIL_CALL_SELF);
+            self.emit_u8(args.len() as u8);
+        } else if let Some(&fn_id) = self.module_scope.get(target) {
+            self.emit_op(TAIL_CALL_KNOWN);
+            self.emit_u16(fn_id as u16);
             self.emit_u8(args.len() as u8);
         } else if let Some(fn_id) = self.code_store.find(target) {
             self.emit_op(TAIL_CALL_KNOWN);
