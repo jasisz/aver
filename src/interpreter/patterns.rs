@@ -154,7 +154,7 @@ impl Interpreter {
             }
             Pattern::Ident(name) => Some(vec![(name.clone(), value)]),
             Pattern::EmptyList => {
-                if value.is_list() && self.arena.get_list(value.arena_index()).is_empty() {
+                if value.is_list() && self.arena.list_is_empty(value.arena_index()) {
                     Some(Vec::new())
                 } else {
                     None
@@ -164,20 +164,14 @@ impl Interpreter {
                 if !value.is_list() {
                     return None;
                 }
-                let items = self.arena.get_list(value.arena_index());
-                if items.is_empty() {
-                    return None;
-                }
-                let head_val = items[0];
-                let tail_items: Vec<NanValue> = items[1..].to_vec();
+                let (head_val, tail_val) = self.arena.list_uncons(value)?;
 
                 let mut bindings = Vec::with_capacity(2);
                 if head != "_" {
                     bindings.push((head.clone(), head_val));
                 }
                 if tail != "_" {
-                    let tail_idx = self.arena.push_list(tail_items);
-                    bindings.push((tail.clone(), NanValue::new_list(tail_idx)));
+                    bindings.push((tail.clone(), tail_val));
                 }
                 Some(bindings)
             }

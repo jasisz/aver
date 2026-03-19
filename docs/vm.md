@@ -64,6 +64,36 @@ Common heap-backed shapes include:
 
 This is the main reason the VM can stay small without dragging a large object model everywhere.
 
+## Memory Model
+
+The VM does not use a single “grow forever” arena anymore.
+
+It now uses a small runtime model shaped around Aver's execution style:
+
+- each frame records a young-region mark
+- temporary heap values allocate into the young arena
+- on `RETURN` and `TAIL_CALL_*`, only values that escape through roots are promoted
+- promoted survivors move into a stable space instead of being recopied through young regions
+- top-level completion compacts stable-space values from live roots
+
+In practice this gives the VM region-style bulk cleanup for short-lived temporaries, without forcing the whole runtime into a full tracing GC model.
+
+This fits Aver unusually well because values are immutable, effects are explicit, and there are relatively few hidden escape paths.
+
+## List Representation
+
+Lists in the VM are not just flat `Vec` payloads.
+
+The current arena list storage supports three shapes:
+
+- `Flat` for compact literal / materialized lists
+- `Prepend` for cheap `List.prepend` and `LIST_CONS`
+- `Concat` for cheap structural concatenation
+
+This matters because the VM can now keep list construction aligned with Aver semantics instead of flattening on every prepend.
+
+Pattern matching and destructuring (`MATCH_CONS`, `LIST_HEAD_TAIL`) use list helpers that understand these shapes directly.
+
 ## Function References
 
 One of the more unusual choices is that **VM function values are encoded as inline `Int(fn_id)`**.

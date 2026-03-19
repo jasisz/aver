@@ -487,7 +487,7 @@ pub struct Arena {
 pub enum ArenaEntry {
     Int(i64),
     String(Rc<str>),
-    List(Vec<NanValue>),
+    List(ArenaList),
     Tuple(Vec<NanValue>),
     Map(PersistentMap),
     Record {
@@ -506,6 +506,24 @@ pub enum ArenaEntry {
         members: Vec<(Rc<str>, NanValue)>,
     },
     Boxed(NanValue),
+}
+
+#[derive(Debug, Clone)]
+pub enum ArenaList {
+    Flat {
+        items: Rc<Vec<NanValue>>,
+        start: usize,
+    },
+    Prepend {
+        head: NanValue,
+        tail: NanValue,
+        len: usize,
+    },
+    Concat {
+        left: NanValue,
+        right: NanValue,
+        len: usize,
+    },
 }
 
 const STABLE_SPACE_BIT: u32 = 1 << 31;
@@ -587,7 +605,10 @@ impl Arena {
         })
     }
     pub fn push_list(&mut self, items: Vec<NanValue>) -> u32 {
-        self.push(ArenaEntry::List(items))
+        self.push(ArenaEntry::List(ArenaList::Flat {
+            items: Rc::new(items),
+            start: 0,
+        }))
     }
     pub fn push_map(&mut self, map: PersistentMap) -> u32 {
         self.push(ArenaEntry::Map(map))
@@ -638,7 +659,7 @@ impl Arena {
             _ => panic!("Arena: expected Variant at {}", index),
         }
     }
-    pub fn get_list(&self, index: u32) -> &[NanValue] {
+    pub fn get_list(&self, index: u32) -> &ArenaList {
         match self.get(index) {
             ArenaEntry::List(items) => items,
             _ => panic!("Arena: expected List at {}", index),
@@ -727,6 +748,134 @@ impl Arena {
     }
     pub fn is_empty(&self) -> bool {
         self.young_entries.is_empty() && self.stable_entries.is_empty()
+    }
+
+    pub fn push_list_prepend(&mut self, head: NanValue, tail: NanValue) -> u32 {
+        debug_assert!(tail.is_list());
+        let len = self.list_len(tail.arena_index()) + 1;
+        self.push(ArenaEntry::List(ArenaList::Prepend { head, tail, len }))
+    }
+
+    pub fn push_list_concat(&mut self, left: NanValue, right: NanValue) -> u32 {
+        debug_assert!(left.is_list());
+        debug_assert!(right.is_list());
+        let len = self.list_len(left.arena_index()) + self.list_len(right.arena_index());
+        self.push(ArenaEntry::List(ArenaList::Concat { left, right, len }))
+    }
+
+    pub fn list_len(&self, index: u32) -> usize {
+        match self.get_list(index) {
+            ArenaList::Flat { items, start } => items.len().saturating_sub(*start),
+            ArenaList::Prepend { len, .. } | ArenaList::Concat { len, .. } => *len,
+        }
+    }
+
+    pub fn list_is_empty(&self, index: u32) -> bool {
+        self.list_len(index) == 0
+    }
+
+    pub fn list_get(&self, index: u32, position: usize) -> Option<NanValue> {
+        let mut current = NanValue::new_list(index);
+        let mut remaining = position;
+
+        loop {
+            match self.get_list(current.arena_index()) {
+                ArenaList::Flat { items, start } => {
+                    return items.get(start.saturating_add(remaining)).copied();
+                }
+                ArenaList::Prepend { head, tail, .. } => {
+                    if remaining == 0 {
+                        return Some(*head);
+                    }
+                    remaining -= 1;
+                    current = *tail;
+                }
+                ArenaList::Concat { left, right, .. } => {
+                    let left_len = self.list_len(left.arena_index());
+                    if remaining < left_len {
+                        current = *left;
+                    } else {
+                        remaining -= left_len;
+                        current = *right;
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn list_to_vec(&self, index: u32) -> Vec<NanValue> {
+        let mut out = Vec::with_capacity(self.list_len(index));
+        let mut stack = vec![NanValue::new_list(index)];
+
+        while let Some(list) = stack.pop() {
+            match self.get_list(list.arena_index()) {
+                ArenaList::Flat { items, start } => {
+                    out.extend(items[*start..].iter().copied());
+                }
+                ArenaList::Prepend { head, tail, .. } => {
+                    out.push(*head);
+                    stack.push(*tail);
+                }
+                ArenaList::Concat { left, right, .. } => {
+                    stack.push(*right);
+                    stack.push(*left);
+                }
+            }
+        }
+
+        out
+    }
+
+    pub fn list_uncons(&mut self, list: NanValue) -> Option<(NanValue, NanValue)> {
+        debug_assert!(list.is_list());
+        let mut rights = Vec::new();
+        let mut current = list;
+
+        loop {
+            match self.get_list(current.arena_index()).clone() {
+                ArenaList::Flat { items, start } => {
+                    let head = *items.get(start)?;
+                    let tail = if start + 1 >= items.len() {
+                        NanValue::new_list(self.push_list(Vec::new()))
+                    } else {
+                        let tail_idx = self.push(ArenaEntry::List(ArenaList::Flat {
+                            items: Rc::clone(&items),
+                            start: start + 1,
+                        }));
+                        NanValue::new_list(tail_idx)
+                    };
+                    return Some((head, self.rebuild_list_from_rights(tail, rights)));
+                }
+                ArenaList::Prepend { head, tail, .. } => {
+                    return Some((head, self.rebuild_list_from_rights(tail, rights)));
+                }
+                ArenaList::Concat { left, right, .. } => {
+                    if self.list_is_empty(left.arena_index()) {
+                        current = right;
+                    } else {
+                        rights.push(right);
+                        current = left;
+                    }
+                }
+            }
+        }
+    }
+
+    fn rebuild_list_from_rights(
+        &mut self,
+        mut base: NanValue,
+        mut rights: Vec<NanValue>,
+    ) -> NanValue {
+        while let Some(right) = rights.pop() {
+            if self.list_is_empty(base.arena_index()) {
+                base = right;
+            } else if self.list_is_empty(right.arena_index()) {
+                continue;
+            } else {
+                base = NanValue::new_list(self.push_list_concat(base, right));
+            }
+        }
+        base
     }
 }
 
@@ -822,11 +971,8 @@ impl Arena {
             ArenaEntry::Boxed(inner) => {
                 ArenaEntry::Boxed(self.promote_value_to_stable(inner, relocated))
             }
-            ArenaEntry::List(mut items) => {
-                for value in &mut items {
-                    *value = self.promote_value_to_stable(*value, relocated);
-                }
-                ArenaEntry::List(items)
+            ArenaEntry::List(list) => {
+                ArenaEntry::List(self.promote_list_to_stable(list, relocated))
             }
             ArenaEntry::Tuple(mut items) => {
                 for value in &mut items {
@@ -872,6 +1018,30 @@ impl Arena {
                 }
                 ArenaEntry::Namespace { name, members }
             }
+        }
+    }
+
+    fn promote_list_to_stable(&mut self, list: ArenaList, relocated: &mut [u32]) -> ArenaList {
+        match list {
+            ArenaList::Flat { items, start } => ArenaList::Flat {
+                items: Rc::new(
+                    items[start..]
+                        .iter()
+                        .map(|value| self.promote_value_to_stable(*value, relocated))
+                        .collect(),
+                ),
+                start: 0,
+            },
+            ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
+                head: self.promote_value_to_stable(head, relocated),
+                tail: self.promote_value_to_stable(tail, relocated),
+                len,
+            },
+            ArenaList::Concat { left, right, len } => ArenaList::Concat {
+                left: self.promote_value_to_stable(left, relocated),
+                right: self.promote_value_to_stable(right, relocated),
+                len,
+            },
         }
     }
 
@@ -937,11 +1107,8 @@ impl Arena {
             ArenaEntry::Boxed(inner) => {
                 ArenaEntry::Boxed(self.relocate_stable_value(inner, relocated, compacted))
             }
-            ArenaEntry::List(mut items) => {
-                for value in &mut items {
-                    *value = self.relocate_stable_value(*value, relocated, compacted);
-                }
-                ArenaEntry::List(items)
+            ArenaEntry::List(list) => {
+                ArenaEntry::List(self.relocate_stable_list(list, relocated, compacted))
             }
             ArenaEntry::Tuple(mut items) => {
                 for value in &mut items {
@@ -989,6 +1156,35 @@ impl Arena {
             }
         }
     }
+
+    fn relocate_stable_list(
+        &mut self,
+        list: ArenaList,
+        relocated: &mut [u32],
+        compacted: &mut Vec<ArenaEntry>,
+    ) -> ArenaList {
+        match list {
+            ArenaList::Flat { items, start } => ArenaList::Flat {
+                items: Rc::new(
+                    items[start..]
+                        .iter()
+                        .map(|value| self.relocate_stable_value(*value, relocated, compacted))
+                        .collect(),
+                ),
+                start: 0,
+            },
+            ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
+                head: self.relocate_stable_value(head, relocated, compacted),
+                tail: self.relocate_stable_value(tail, relocated, compacted),
+                len,
+            },
+            ArenaList::Concat { left, right, len } => ArenaList::Concat {
+                left: self.relocate_stable_value(left, relocated, compacted),
+                right: self.relocate_stable_value(right, relocated, compacted),
+                len,
+            },
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1023,9 +1219,15 @@ impl NanValue {
                 arena.get_string(self.arena_index()) == arena.get_string(other.arena_index())
             }
             TAG_LIST => {
-                let a = arena.get_list(self.arena_index());
-                let b = arena.get_list(other.arena_index());
-                a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.eq_in(*y, arena))
+                let a_idx = self.arena_index();
+                let b_idx = other.arena_index();
+                arena.list_len(a_idx) == arena.list_len(b_idx)
+                    && (0..arena.list_len(a_idx)).all(|i| {
+                        arena
+                            .list_get(a_idx, i)
+                            .zip(arena.list_get(b_idx, i))
+                            .is_some_and(|(x, y)| x.eq_in(y, arena))
+                    })
             }
             TAG_TUPLE => {
                 let a = arena.get_tuple(self.arena_index());
@@ -1083,9 +1285,9 @@ impl NanValue {
             }
             TAG_STRING => arena.get_string(self.arena_index()).hash(state),
             TAG_LIST => {
-                let items = arena.get_list(self.arena_index());
-                items.len().hash(state);
-                for item in items {
+                let list_idx = self.arena_index();
+                arena.list_len(list_idx).hash(state);
+                for item in arena.list_to_vec(list_idx) {
                     item.hash_in(state, arena);
                 }
             }
@@ -1140,8 +1342,11 @@ impl NanValue {
             }
             TAG_STRING => arena.get_string(self.arena_index()).to_string(),
             TAG_LIST => {
-                let items = arena.get_list(self.arena_index());
-                let parts: Vec<_> = items.iter().map(|v| v.repr_inner(arena)).collect();
+                let parts: Vec<_> = arena
+                    .list_to_vec(self.arena_index())
+                    .into_iter()
+                    .map(|v| v.repr_inner(arena))
+                    .collect();
                 format!("[{}]", parts.join(", "))
             }
             TAG_TUPLE => {
@@ -1338,8 +1543,11 @@ impl NanValue {
             }
             TAG_STRING => Value::Str(arena.get_string(self.arena_index()).to_string()),
             TAG_LIST => {
-                let items = arena.get_list(self.arena_index());
-                let vals: Vec<Value> = items.iter().map(|v| v.to_value(arena)).collect();
+                let vals: Vec<Value> = arena
+                    .list_to_vec(self.arena_index())
+                    .into_iter()
+                    .map(|v| v.to_value(arena))
+                    .collect();
                 Value::List(aver_rt::AverList::from_vec(vals))
             }
             TAG_TUPLE => {
@@ -1523,7 +1731,7 @@ mod tests {
         let idx = arena.push_list(items);
         let v = NanValue::new_list(idx);
         assert!(v.is_list());
-        assert_eq!(arena.get_list(v.arena_index()).len(), 2);
+        assert_eq!(arena.list_len(v.arena_index()), 2);
     }
 
     #[test]
@@ -1556,8 +1764,8 @@ mod tests {
         let list_idx = arena.push_list(vec![NanValue::new_record(p1), NanValue::new_record(p2)]);
         let list = NanValue::new_list(list_idx);
 
-        let items = arena.get_list(list.arena_index());
-        let (_, fields) = arena.get_record(items[1].arena_index());
+        let second = arena.list_get(list.arena_index(), 1).unwrap();
+        let (_, fields) = arena.get_record(second.arena_index());
         assert_eq!(fields[1].as_int(&arena), 4);
     }
 

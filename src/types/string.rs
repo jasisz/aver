@@ -585,7 +585,7 @@ fn join_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErro
             "String.join: second argument must be a String".to_string(),
         ));
     }
-    let items = arena.get_list(args[0].arena_index()).to_vec();
+    let items = arena.list_to_vec(args[0].arena_index());
     let sep = arena.get_string(args[1].arena_index()).to_string();
     let mut strs: Vec<String> = Vec::with_capacity(items.len());
     for item in &items {

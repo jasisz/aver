@@ -512,11 +512,7 @@ impl VM {
                     let tail = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let head = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     if tail.is_list() {
-                        let tail_items = self.arena.get_list(tail.arena_index()).to_vec();
-                        let mut items = Vec::with_capacity(tail_items.len() + 1);
-                        items.push(head);
-                        items.extend(tail_items);
-                        let idx = self.arena.push_list(items);
+                        let idx = self.arena.push_list_prepend(head, tail);
                         self.stack.push(NanValue::new_list(idx));
                     } else {
                         let idx = self.arena.push_list(vec![head]);
@@ -742,7 +738,7 @@ impl VM {
                 MATCH_NIL => {
                     let offset = read_i16!(code, ip);
                     let top = *self.stack.last().ok_or(VmError::StackUnderflow)?;
-                    let is_nil = top.is_list() && self.arena.get_list(top.arena_index()).is_empty();
+                    let is_nil = top.is_list() && self.arena.list_is_empty(top.arena_index());
                     if !is_nil {
                         ip = (ip as isize + offset as isize) as usize;
                     }
@@ -751,8 +747,7 @@ impl VM {
                 MATCH_CONS => {
                     let offset = read_i16!(code, ip);
                     let top = *self.stack.last().ok_or(VmError::StackUnderflow)?;
-                    let is_cons =
-                        top.is_list() && !self.arena.get_list(top.arena_index()).is_empty();
+                    let is_cons = top.is_list() && !self.arena.list_is_empty(top.arena_index());
                     if !is_cons {
                         ip = (ip as isize + offset as isize) as usize;
                     }
@@ -760,14 +755,10 @@ impl VM {
 
                 LIST_HEAD_TAIL => {
                     let list = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let items = self.arena.get_list(list.arena_index());
-                    if items.is_empty() {
+                    let Some((head, tail)) = self.arena.list_uncons(list) else {
                         return Err(VmError::Runtime("LIST_HEAD_TAIL on empty list".into()));
-                    }
-                    let head = items[0];
-                    let tail_items = items[1..].to_vec();
-                    let tail_idx = self.arena.push_list(tail_items);
-                    self.stack.push(NanValue::new_list(tail_idx));
+                    };
+                    self.stack.push(tail);
                     self.stack.push(head);
                 }
 

@@ -377,11 +377,28 @@ fn vm_empty_list() {
 fn vm_list_literal() {
     let (result, arena) = vm_run_with_arena("fn main() -> List<Int>\n    [1, 2, 3]\n");
     assert!(result.is_list());
-    let items = arena.get_list(result.arena_index());
-    assert_eq!(items.len(), 3);
-    assert_eq!(items[0].as_int(&arena), 1);
-    assert_eq!(items[1].as_int(&arena), 2);
-    assert_eq!(items[2].as_int(&arena), 3);
+    assert_eq!(arena.list_len(result.arena_index()), 3);
+    assert_eq!(
+        arena
+            .list_get(result.arena_index(), 0)
+            .unwrap()
+            .as_int(&arena),
+        1
+    );
+    assert_eq!(
+        arena
+            .list_get(result.arena_index(), 1)
+            .unwrap()
+            .as_int(&arena),
+        2
+    );
+    assert_eq!(
+        arena
+            .list_get(result.arena_index(), 2)
+            .unwrap()
+            .as_int(&arena),
+        3
+    );
 }
 
 #[test]
@@ -607,9 +624,14 @@ fn vm_list_prepend() {
     let (result, arena) =
         vm_run_with_arena("fn main() -> List<Int>\n    List.prepend(0, [1, 2])\n");
     assert!(result.is_list());
-    let items = arena.get_list(result.arena_index());
-    assert_eq!(items.len(), 3);
-    assert_eq!(items[0].as_int(&arena), 0);
+    assert_eq!(arena.list_len(result.arena_index()), 3);
+    assert_eq!(
+        arena
+            .list_get(result.arena_index(), 0)
+            .unwrap()
+            .as_int(&arena),
+        0
+    );
 }
 
 #[test]

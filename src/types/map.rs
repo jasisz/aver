@@ -518,7 +518,7 @@ fn from_list_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtim
             "Map.fromList() argument must be a List of (key, value) tuples".to_string(),
         ));
     }
-    let items = arena.get_list(args[0].arena_index()).to_vec();
+    let items = arena.list_to_vec(args[0].arena_index());
     let mut out = crate::nan_value::PersistentMap::new();
     for (idx, pair) in items.iter().enumerate() {
         if !pair.is_tuple() {
