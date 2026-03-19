@@ -581,3 +581,36 @@ fn vm_error_prop_chain() {
     let inner = arena.get_boxed(result.wrapper_index());
     assert_eq!(inner.as_int(&arena), 21);
 }
+
+// ---------------------------------------------------------------------------
+// Effect enforcement
+// ---------------------------------------------------------------------------
+
+#[test]
+fn vm_effect_allowed() {
+    // main declares ! [Console.print] — Console.print should work.
+    let src = "fn main() -> Unit\n    ! [Console.print]\n    Console.print(42)\n";
+    let _ = vm_run(src); // should not panic
+}
+
+#[test]
+fn vm_effect_violation() {
+    // main declares no effects — Console.print should be blocked.
+    let src = "fn main() -> Unit\n    Console.print(42)\n";
+    let mut items = parse(src);
+    tco::transform_program(&mut items);
+    resolver::resolve_program(&mut items);
+
+    let mut arena = Arena::new();
+    let (code, globals) = vm::compile_program(&items, &mut arena).expect("compile failed");
+    let mut machine = vm::VM::new(code, globals, arena);
+    let result = machine.run();
+    assert!(result.is_err(), "should fail with effect violation");
+    let err = result.unwrap_err();
+    let msg = format!("{}", err);
+    assert!(
+        msg.contains("effect violation"),
+        "error should mention effect violation, got: {}",
+        msg
+    );
+}

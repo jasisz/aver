@@ -46,6 +46,7 @@ pub fn compile_program_with_modules(
                     local_count: 0,
                     code: Vec::new(),
                     constants: Vec::new(),
+                    effects: fndef.effects.clone(),
                 });
                 let global_idx = compiler.global_names[&fndef.name];
                 compiler.globals[global_idx as usize] = NanValue::new_int_inline(fn_id as i64);
@@ -202,6 +203,7 @@ impl ProgramCompiler {
                     local_count: 0,
                     code: Vec::new(),
                     constants: Vec::new(),
+                    effects: fndef.effects.clone(),
                 });
                 module_fn_ids.push((fndef.name.clone(), fn_id));
             }
@@ -306,6 +308,7 @@ impl ProgramCompiler {
             &fndef.name,
             fndef.params.len() as u8,
             local_count,
+            fndef.effects.clone(),
             local_slots,
             &self.global_names,
             &self.code,
@@ -340,6 +343,7 @@ impl ProgramCompiler {
             "__top_level__",
             0,
             0,
+            Vec::new(),
             HashMap::new(),
             &self.global_names,
             &self.code,
@@ -380,6 +384,7 @@ struct FnCompiler<'a> {
     name: String,
     arity: u8,
     local_count: u16,
+    effects: Vec<String>,
     local_slots: HashMap<String, u16>,
     global_names: &'a HashMap<String, u16>,
     code_store: &'a CodeStore,
@@ -389,10 +394,12 @@ struct FnCompiler<'a> {
 }
 
 impl<'a> FnCompiler<'a> {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         name: &str,
         arity: u8,
         local_count: u16,
+        effects: Vec<String>,
         local_slots: HashMap<String, u16>,
         global_names: &'a HashMap<String, u16>,
         code_store: &'a CodeStore,
@@ -402,6 +409,7 @@ impl<'a> FnCompiler<'a> {
             name: name.to_string(),
             arity,
             local_count,
+            effects,
             local_slots,
             global_names,
             code_store,
@@ -418,6 +426,7 @@ impl<'a> FnCompiler<'a> {
             local_count: self.local_count,
             code: self.code,
             constants: self.constants,
+            effects: self.effects,
         }
     }
 

@@ -8,6 +8,8 @@ pub struct FnChunk {
     pub local_count: u16,
     pub code: Vec<u8>,
     pub constants: Vec<NanValue>,
+    /// Declared effects (e.g. `! [Console.print, Http]`). Empty for pure functions.
+    pub effects: Vec<String>,
 }
 
 /// Minimal call frame: 16 bytes of metadata, no closure/upvalue fields.

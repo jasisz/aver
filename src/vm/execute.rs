@@ -13,6 +13,8 @@ pub struct VM {
     globals: Vec<NanValue>,
     code: CodeStore,
     pub arena: Arena,
+    /// Effect capabilities granted to the current entry point (e.g. `! [Console.print]`).
+    allowed_effects: Vec<String>,
 }
 
 macro_rules! read_u8 {
@@ -50,6 +52,7 @@ impl VM {
             globals,
             code,
             arena,
+            allowed_effects: Vec::new(),
         }
     }
 
@@ -58,6 +61,8 @@ impl VM {
             self.call_function(top_id, &[])?;
         }
         if let Some(main_id) = self.code.find("main") {
+            // Set allowed effects from main's declared effects.
+            self.allowed_effects = self.code.get(main_id).effects.clone();
             self.call_function(main_id, &[])
         } else {
             Err(VmError::Runtime("no main() function defined".into()))
@@ -282,6 +287,10 @@ impl VM {
                     let name_idx = read_u16!(code, ip) as u32;
                     let argc = read_u8!(code, ip) as usize;
                     let builtin_name = self.arena.get_string(name_idx).to_string();
+
+                    // Effect enforcement: check that the builtin's required
+                    // effects are covered by the current allowed_effects.
+                    self.check_builtin_effects(&builtin_name)?;
 
                     // Collect args from stack.
                     let args_start = self.stack.len() - argc;
@@ -562,6 +571,27 @@ impl VM {
         }
     }
 
+    /// Check that a builtin call's required effects are satisfied by allowed_effects.
+    fn check_builtin_effects(&self, builtin_name: &str) -> Result<(), VmError> {
+        let required = builtin_effects(builtin_name);
+        if required.is_empty() {
+            return Ok(());
+        }
+        for effect in required {
+            if !self
+                .allowed_effects
+                .iter()
+                .any(|a| crate::effects::effect_satisfies(a, effect))
+            {
+                return Err(VmError::Runtime(format!(
+                    "Runtime effect violation: cannot call '{}' (missing effect: {})",
+                    builtin_name, effect
+                )));
+            }
+        }
+        Ok(())
+    }
+
     fn nan_tag(&self, val: NanValue) -> u8 {
         if val.is_float() {
             return 0xFF;
@@ -716,6 +746,23 @@ impl VM {
                 b.type_name()
             )))
         }
+    }
+}
+
+/// Look up which effects a builtin requires.
+fn builtin_effects(name: &str) -> &'static [&'static str] {
+    let namespace = name.split_once('.').map(|(ns, _)| ns);
+    match namespace {
+        Some("Console") => console::effects(name),
+        Some("Http") => http::effects(name),
+        Some("Disk") => disk::effects(name),
+        Some("Env") => env::effects(name),
+        Some("Random") => random::effects(name),
+        Some("Tcp") => tcp::effects(name),
+        #[cfg(feature = "terminal")]
+        Some("Terminal") => crate::services::terminal::effects(name),
+        Some("Time") => time::effects(name),
+        _ => &[],
     }
 }
 
