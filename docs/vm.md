@@ -33,6 +33,17 @@ Execution is stack-based:
 - calls create or reuse frames
 - returns leave one value on the caller stack
 
+The VM now also marks conservatively-classified **thin functions**.
+
+These are small helpers that do not use tail-call frame reuse, do not write globals, do not rely on arm-local match regions, and do not emit obvious aggregate-construction opcodes such as `RECORD_UPDATE`, `WRAP`, `LIST_*`, `TUPLE_NEW`, or `VARIANT_NEW`.
+
+When a thin function returns and the runtime can confirm that its local `young` / `yard` / `handoff` marks never moved, the VM skips the normal boundary relocation path entirely.
+In practice this means many tiny Aver helpers now behave like:
+
+- keep normal stack locals while running
+- but do not pay full survivor/stable bookkeeping on return
+- unless they actually created local heap state after all
+
 Execution-backed commands can run through the interpreter or through the VM:
 
 ```bash
@@ -87,18 +98,20 @@ Conceptually:
 - `handoff` means “this value is being built for an ordinary return path”
 - `stable` means “this value is safe to keep beyond the current frame boundary”
 
-Implementation-wise, the current VM takes a deliberately conservative path at frame boundaries:
+Implementation-wise, the current VM now splits boundary behavior by control-flow shape:
 
 - values can still be *allocated* into `yard` or `handoff` in obvious tail/return positions
-- but when a frame actually crosses a `RETURN` or `TAIL_CALL_*` boundary, its live roots are currently **canonicalized into `stable`**
-- then the frame-local `young` / `yard` / `handoff` suffixes are truncated
+- at `TAIL_CALL_*` boundaries, live roots are kept in `yard`, so loop-carried state stays out of `stable`
+- at ordinary `RETURN` boundaries, live roots are still **canonicalized into `stable`** before the caller resumes
+- then the frame-local `young` / `yard` / `handoff` suffixes are truncated or compacted as appropriate
 
-This matters because it keeps the runtime correct under real workloads like `examples/games/rogue`, even while the more ambitious survivor-relocation story is still evolving.
+This matters because it gives the VM a real survivor lane for TCO-heavy programs while keeping ordinary call/return behavior conservative and correct under real workloads like `examples/games/rogue` and `examples/data/json.av`.
 
 So the current VM is:
 
 - region-style for local scratch memory
-- stable-space based for boundary-crossing live values
+- yard-based for tail-call survivors
+- stable-space based for ordinary returns, globals, and host-facing escapes
 - explicit about which lanes are used during construction
 
 That already gives us the most important property: frame-local garbage dies in bulk, and long-lived values stop pretending to live in temporary memory.
@@ -110,8 +123,13 @@ The easiest way to think about the VM is:
 1. New local work starts in `young`.
 2. In obvious tail-position construction, aggregates may be built in `yard`.
 3. In obvious ordinary-return construction, aggregates may be built in `handoff`.
-4. When the frame actually crosses a boundary, live roots are promoted into `stable`.
-5. The frame-local `young` / `yard` / `handoff` suffixes are then truncated in one shot.
+4. On `TAIL_CALL_*`, live roots are evacuated into `yard`.
+5. On ordinary `RETURN`, live roots are promoted into `stable`.
+6. The frame-local `young` / `yard` / `handoff` suffixes are then truncated in one shot.
+
+For thin helpers there is now one more fast path:
+
+7. If a frame returns with unchanged local marks, the VM skips boundary promotion/truncation work for that frame and resumes the caller directly.
 
 That means the VM still distinguishes:
 
@@ -121,6 +139,7 @@ That means the VM still distinguishes:
 - truly long-lived values
 
 But it currently treats `stable` as the canonical “survives the boundary” home.
+Ordinary returns still use that rule; tail-call reuse does not.
 
 ### What Goes Where
 
@@ -129,7 +148,7 @@ Typical examples:
 - `tmp = (x, y)` inside a function body:
   lives in `young`
 - `List.prepend(n, acc)` used as the next argument of a tail-recursive call:
-  can be built in `yard`, then becomes `stable` when the tail-call boundary is finalized
+  can be built in `yard`, and stays in `yard` when the tail-call boundary is finalized
 - `Result.Ok(value)` built just before returning from a helper:
   can be built in `handoff`, then becomes `stable` before the caller resumes
 - storing a value into globals, returning from top-level, or passing a value across a host boundary:
@@ -216,6 +235,15 @@ Typical pieces are:
 This keeps the execute loop simple while preserving the structure of Aver patterns.
 
 The VM currently also reserves internal opcodes for arm-local match regions, but the compiler does **not** rely on that path in the default runtime path right now. The broad idea fits Aver well, but real workloads exposed enough edge cases that the stable-boundary path is the safer current choice.
+
+## Recent Correctness Notes
+
+Two recent fixes are worth calling out because they affected real example programs:
+
+- mutual tail calls with a larger target `local_count` now resize the VM stack before clearing new locals, which removed a crash in large verify suites such as `examples/data/json.av`
+- ordered string comparison in the VM now matches the interpreter, so examples like `examples/data/date.av` behave the same under `verify` and `verify --vm`
+
+Those are not design shifts, but they matter because they closed the last obvious gaps between the interpreter semantics and the production VM path.
 
 ## Effects And Host Runtime
 

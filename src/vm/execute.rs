@@ -1,7 +1,7 @@
 use super::opcode::*;
 use super::runtime::{VmExecutionMode, VmRuntime, is_http_server_builtin};
 use super::types::{CallFrame, CodeStore, VmError};
-use crate::nan_value::{AllocSpace, Arena, NanValue};
+use crate::nan_value::{AllocSpace, Arena, ArenaEntry, NanValue};
 
 /// The Aver bytecode virtual machine.
 pub struct VM {
@@ -12,6 +12,16 @@ pub struct VM {
     code: CodeStore,
     pub arena: Arena,
     runtime: VmRuntime,
+}
+
+enum ReturnControl {
+    Done(NanValue),
+    Resume {
+        result: NanValue,
+        fn_id: u32,
+        ip: usize,
+        bp: usize,
+    },
 }
 
 macro_rules! read_u8 {
@@ -136,6 +146,7 @@ impl VM {
             globals_dirty: false,
             yard_dirty: false,
             handoff_dirty: false,
+            thin: chunk.thin,
         });
         self.execute_until(caller_depth)
     }
@@ -170,10 +181,21 @@ impl VM {
         if globals_dirty {
             self.arena.promote_roots_to_stable(&mut self.globals);
         }
-        self.arena.promote_roots_to_stable(frame_roots);
-        self.arena.truncate_to(arena_mark);
-        self.arena.truncate_yard_to(yard_mark);
-        self.arena.truncate_handoff_to(handoff_mark);
+
+        let has_local_young = self.arena.young_len() > arena_mark as usize;
+        let has_local_yard = self.arena.yard_len() > yard_mark as usize;
+        let has_local_handoff = self.arena.handoff_len() > handoff_mark as usize;
+
+        if has_local_yard || has_local_handoff {
+            self.arena
+                .evacuate_frame_to_yard(arena_mark, yard_mark, handoff_mark, frame_roots);
+            return;
+        }
+
+        if has_local_young {
+            self.arena
+                .promote_young_roots_to_yard(arena_mark, frame_roots);
+        }
     }
 
     fn finalize_frame_return_to_caller(
@@ -220,6 +242,68 @@ impl VM {
             AllocSpace::Handoff
         } else {
             AllocSpace::Young
+        }
+    }
+
+    fn can_fast_return(&self, frame: &CallFrame) -> bool {
+        frame.thin
+            && !frame.globals_dirty
+            && !frame.yard_dirty
+            && !frame.handoff_dirty
+            && self.arena.young_len() == frame.arena_mark as usize
+            && self.arena.yard_len() == frame.yard_mark as usize
+            && self.arena.handoff_len() == frame.handoff_mark as usize
+    }
+
+    fn complete_frame_return(
+        &mut self,
+        frame: CallFrame,
+        mut result: NanValue,
+        caller_depth: usize,
+    ) -> ReturnControl {
+        if self.can_fast_return(&frame) {
+            if self.frames.len() == caller_depth {
+                return ReturnControl::Done(result);
+            }
+
+            let caller = self.frames.last().unwrap();
+            return ReturnControl::Resume {
+                result,
+                fn_id: caller.fn_id,
+                ip: caller.ip as usize,
+                bp: caller.bp as usize,
+            };
+        }
+
+        if self.frames.len() == caller_depth {
+            self.finalize_frame_return(
+                frame.arena_mark,
+                frame.yard_mark,
+                frame.handoff_mark,
+                frame.globals_dirty,
+                std::slice::from_mut(&mut result),
+            );
+            if caller_depth == 0 {
+                self.collect_stable_roots(std::slice::from_mut(&mut result));
+            }
+            return ReturnControl::Done(result);
+        }
+
+        let (yard_dirty, handoff_dirty) = self.finalize_frame_return_to_caller(
+            frame.arena_mark,
+            frame.yard_mark,
+            frame.handoff_mark,
+            frame.globals_dirty,
+            std::slice::from_mut(&mut result),
+        );
+        let caller = self.frames.last_mut().unwrap();
+        caller.yard_dirty |= yard_dirty;
+        caller.handoff_dirty |= handoff_dirty;
+        ReturnControl::Resume {
+            result,
+            fn_id: caller.fn_id,
+            ip: caller.ip as usize,
+            bp: caller.bp as usize,
         }
     }
 
@@ -444,6 +528,7 @@ impl VM {
                         globals_dirty: false,
                         yard_dirty: false,
                         handoff_dirty: false,
+                        thin: target.thin,
                     });
 
                     fn_id = target_fn_id;
@@ -478,6 +563,7 @@ impl VM {
                         globals_dirty: false,
                         yard_dirty: false,
                         handoff_dirty: false,
+                        thin: target.thin,
                     });
 
                     fn_id = target_fn_id;
@@ -574,12 +660,13 @@ impl VM {
 
                     let new_lc = target_local_count as usize;
                     let new_end = bp + new_lc;
+                    if new_end > self.stack.len() {
+                        self.stack.resize(new_end, NanValue::UNIT);
+                    }
                     for i in argc..new_lc {
                         self.stack[bp + i] = NanValue::UNIT;
                     }
-                    if new_end > self.stack.len() {
-                        self.stack.resize(new_end, NanValue::UNIT);
-                    } else {
+                    if new_end <= self.stack.len() {
                         self.stack.truncate(new_end);
                     }
 
@@ -594,43 +681,25 @@ impl VM {
                 }
 
                 RETURN => {
-                    let mut result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let frame = self.frames.pop().unwrap();
                     self.match_arm_marks
                         .truncate(frame.match_mark_base as usize);
                     self.stack.truncate(frame.bp as usize);
-
-                    if self.frames.len() == caller_depth {
-                        self.finalize_frame_return(
-                            frame.arena_mark,
-                            frame.yard_mark,
-                            frame.handoff_mark,
-                            frame.globals_dirty,
-                            std::slice::from_mut(&mut result),
-                        );
-                        if caller_depth == 0 {
-                            self.collect_stable_roots(std::slice::from_mut(&mut result));
+                    match self.complete_frame_return(frame, result, caller_depth) {
+                        ReturnControl::Done(result) => return Ok(result),
+                        ReturnControl::Resume {
+                            result,
+                            fn_id: next_fn_id,
+                            ip: next_ip,
+                            bp: next_bp,
+                        } => {
+                            self.stack.push(result);
+                            fn_id = next_fn_id;
+                            ip = next_ip;
+                            bp = next_bp;
                         }
-                        return Ok(result);
                     }
-
-                    let (yard_dirty, handoff_dirty) = self.finalize_frame_return_to_caller(
-                        frame.arena_mark,
-                        frame.yard_mark,
-                        frame.handoff_mark,
-                        frame.globals_dirty,
-                        std::slice::from_mut(&mut result),
-                    );
-                    let caller = self.frames.last_mut().unwrap();
-                    caller.yard_dirty |= yard_dirty;
-                    caller.handoff_dirty |= handoff_dirty;
-                    self.stack.push(result);
-
-                    // Restore caller frame state.
-                    let caller = self.frames.last().unwrap();
-                    fn_id = caller.fn_id;
-                    ip = caller.ip as usize;
-                    bp = caller.bp as usize;
                 }
 
                 LIST_NIL => {
@@ -692,43 +761,26 @@ impl VM {
                         continue;
                     }
                     if value.is_err() {
-                        let mut result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                        let result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                         let frame = self.frames.pop().unwrap();
                         self.match_arm_marks
                             .truncate(frame.match_mark_base as usize);
                         self.stack.truncate(frame.bp as usize);
-
-                        if self.frames.len() == caller_depth {
-                            self.finalize_frame_return(
-                                frame.arena_mark,
-                                frame.yard_mark,
-                                frame.handoff_mark,
-                                frame.globals_dirty,
-                                std::slice::from_mut(&mut result),
-                            );
-                            if caller_depth == 0 {
-                                self.collect_stable_roots(std::slice::from_mut(&mut result));
+                        match self.complete_frame_return(frame, result, caller_depth) {
+                            ReturnControl::Done(result) => return Ok(result),
+                            ReturnControl::Resume {
+                                result,
+                                fn_id: next_fn_id,
+                                ip: next_ip,
+                                bp: next_bp,
+                            } => {
+                                self.stack.push(result);
+                                fn_id = next_fn_id;
+                                ip = next_ip;
+                                bp = next_bp;
+                                continue;
                             }
-                            return Ok(result);
                         }
-
-                        let (yard_dirty, handoff_dirty) = self.finalize_frame_return_to_caller(
-                            frame.arena_mark,
-                            frame.yard_mark,
-                            frame.handoff_mark,
-                            frame.globals_dirty,
-                            std::slice::from_mut(&mut result),
-                        );
-                        let caller = self.frames.last_mut().unwrap();
-                        caller.yard_dirty |= yard_dirty;
-                        caller.handoff_dirty |= handoff_dirty;
-                        self.stack.push(result);
-
-                        let caller = self.frames.last().unwrap();
-                        fn_id = caller.fn_id;
-                        ip = caller.ip as usize;
-                        bp = caller.bp as usize;
-                        continue;
                     }
                     return Err(VmError::Type(
                         "error propagation expects a Result value".into(),
@@ -1094,11 +1146,20 @@ impl VM {
                 a.as_float() + b.as_int(&self.arena) as f64,
             ))
         } else if a.is_string() && b.is_string() {
-            let s = format!(
-                "{}{}",
-                self.arena.get_string(a.arena_index()),
-                self.arena.get_string(b.arena_index())
-            );
+            let a_idx = a.arena_index();
+            let b_idx = b.arena_index();
+            let (left, right) = match (self.arena.get(a_idx), self.arena.get(b_idx)) {
+                (ArenaEntry::String(left), ArenaEntry::String(right)) => {
+                    (left.as_ref(), right.as_ref())
+                }
+                (left_entry, right_entry) => {
+                    return Err(VmError::Runtime(format!(
+                        "string add expected string entries, got a={:?} -> {:?}, b={:?} -> {:?}",
+                        a, left_entry, b, right_entry
+                    )));
+                }
+            };
+            let s = format!("{left}{right}");
             let idx = self.arena.push_string(&s);
             Ok(NanValue::new_string(idx))
         } else {
@@ -1213,6 +1274,8 @@ impl VM {
             Ok(a.as_int(&self.arena) < b.as_int(&self.arena))
         } else if a.is_float() && b.is_float() {
             Ok(a.as_float() < b.as_float())
+        } else if a.is_string() && b.is_string() {
+            Ok(self.arena.get_string(a.arena_index()) < self.arena.get_string(b.arena_index()))
         } else if a.is_int() && b.is_float() {
             Ok((a.as_int(&self.arena) as f64) < b.as_float())
         } else if a.is_float() && b.is_int() {
@@ -1244,6 +1307,7 @@ mod tests {
             code: vec![LOAD_CONST, 0, 0, RETURN],
             constants: vec![caller_const],
             effects: Vec::new(),
+            thin: true,
         });
 
         let nested_const = NanValue::new_int_inline(20);
@@ -1254,6 +1318,7 @@ mod tests {
             code: vec![LOAD_CONST, 0, 0, RETURN],
             constants: vec![nested_const],
             effects: Vec::new(),
+            thin: true,
         });
 
         let mut vm = VM::new(code, Vec::new(), Arena::new());
@@ -1269,6 +1334,7 @@ mod tests {
             globals_dirty: false,
             yard_dirty: false,
             handoff_dirty: false,
+            thin: true,
         });
 
         let result = vm

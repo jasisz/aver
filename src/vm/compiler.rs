@@ -52,6 +52,7 @@ pub fn compile_program_with_modules(
                     code: Vec::new(),
                     constants: Vec::new(),
                     effects: fndef.effects.clone(),
+                    thin: false,
                 });
                 let global_idx = compiler.global_names[&fndef.name];
                 compiler.globals[global_idx as usize] = encode_vm_fn_ref(fn_id);
@@ -74,6 +75,7 @@ pub fn compile_program_with_modules(
 
     // Compile top-level statements.
     compiler.compile_top_level(items, arena)?;
+    classify_thin_functions(&mut compiler.code)?;
 
     Ok((compiler.code, compiler.globals))
 }
@@ -209,6 +211,7 @@ impl ProgramCompiler {
                     code: Vec::new(),
                     constants: Vec::new(),
                     effects: fndef.effects.clone(),
+                    thin: false,
                 });
                 module_fn_ids.push((fndef.name.clone(), fn_id));
             }
@@ -389,6 +392,84 @@ impl ProgramCompiler {
     }
 }
 
+fn classify_thin_functions(code: &mut CodeStore) -> Result<(), CompileError> {
+    let thin_flags: Vec<bool> = code
+        .functions
+        .iter()
+        .map(classify_thin_chunk)
+        .collect::<Result<_, _>>()?;
+
+    for (chunk, thin) in code.functions.iter_mut().zip(thin_flags) {
+        chunk.thin = thin;
+    }
+
+    Ok(())
+}
+
+fn classify_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
+    let code = &chunk.code;
+    let mut ip = 0usize;
+
+    while ip < code.len() {
+        let op = code[ip];
+        ip += 1;
+        match op {
+            STORE_GLOBAL | TAIL_CALL_SELF | TAIL_CALL_KNOWN | MATCH_ARM_ENTER | MATCH_ARM_LEAVE
+            | MATCH_ARM_ABORT | CONCAT | LIST_NIL | LIST_CONS | LIST_NEW | RECORD_NEW
+            | VARIANT_NEW | WRAP | TUPLE_NEW | RECORD_UPDATE => {
+                return Ok(false);
+            }
+
+            POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
+            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL => {}
+
+            LOAD_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD
+            | EXTRACT_TUPLE_ITEM => {
+                ip = advance_opcode_ip(chunk, ip, 1)?;
+            }
+
+            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | RECORD_GET_NAMED | MATCH_FAIL => {
+                ip = advance_opcode_ip(chunk, ip, 2)?;
+            }
+
+            CALL_KNOWN | CALL_BUILTIN | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE => {
+                ip = advance_opcode_ip(chunk, ip, 3)?;
+            }
+
+            MATCH_VARIANT => {
+                ip = advance_opcode_ip(chunk, ip, 4)?;
+            }
+
+            MATCH_NIL | MATCH_CONS => {
+                ip = advance_opcode_ip(chunk, ip, 2)?;
+            }
+
+            _ => {
+                return Err(CompileError {
+                    msg: format!(
+                        "unknown opcode 0x{op:02X} in {} at ip={} (code={:?})",
+                        chunk.name,
+                        ip - 1,
+                        chunk.code
+                    ),
+                });
+            }
+        }
+    }
+
+    Ok(true)
+}
+
+fn advance_opcode_ip(chunk: &FnChunk, ip: usize, width: usize) -> Result<usize, CompileError> {
+    let new_ip = ip + width;
+    if new_ip > chunk.code.len() {
+        return Err(CompileError {
+            msg: format!("truncated bytecode in {}", chunk.name),
+        });
+    }
+    Ok(new_ip)
+}
+
 // ---------------------------------------------------------------------------
 // Dotted path resolution
 // ---------------------------------------------------------------------------
@@ -463,6 +544,7 @@ impl<'a> FnCompiler<'a> {
             code: self.code,
             constants: self.constants,
             effects: self.effects,
+            thin: false,
         }
     }
 

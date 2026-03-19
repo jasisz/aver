@@ -48,6 +48,31 @@ fn vm_run_with_arena(src: &str) -> (NanValue, Arena) {
     (result, arena)
 }
 
+fn vm_machine(src: &str) -> vm::VM {
+    let mut items = parse(src);
+    tco::transform_program(&mut items);
+    resolver::resolve_program(&mut items);
+
+    let mut arena = Arena::new();
+    let (code, globals) = vm::compile_program(&items, &mut arena).expect("compile failed");
+    vm::VM::new(code, globals, arena)
+}
+
+fn vm_compile(src: &str) -> vm::CodeStore {
+    let mut items = parse(src);
+    tco::transform_program(&mut items);
+    resolver::resolve_program(&mut items);
+
+    let mut arena = Arena::new();
+    let (code, _globals) = vm::compile_program(&items, &mut arena).expect("compile failed");
+    code
+}
+
+fn nv_string(machine: &mut vm::VM, s: &str) -> NanValue {
+    let idx = machine.arena.push_string(s);
+    NanValue::new_string(idx)
+}
+
 // ---------------------------------------------------------------------------
 // Integer arithmetic
 // ---------------------------------------------------------------------------
@@ -149,6 +174,13 @@ fn vm_bool_gt() {
     assert!(result.as_bool());
 }
 
+#[test]
+fn vm_string_lt() {
+    let result = vm_run("fn main() -> Bool\n    \"2025-01-01\" < \"2026-01-01\"\n");
+    assert!(result.is_bool());
+    assert!(result.as_bool());
+}
+
 // ---------------------------------------------------------------------------
 // Function calls
 // ---------------------------------------------------------------------------
@@ -169,6 +201,299 @@ fn vm_nested_calls() {
     assert!(result.is_int());
     let arena = Arena::new();
     assert_eq!(result.as_int(&arena), 20);
+}
+
+#[test]
+fn vm_marks_small_pure_helpers_as_thin() {
+    let src = "fn inc(x: Int) -> Int\n    x + 1\n\nfn dec(x: Int) -> Int\n    x - 1\n\nfn bounce(x: Int) -> Int\n    dec(inc(x))\n\nfn main() -> Int\n    bounce(41)\n";
+    let code = vm_compile(src);
+
+    for name in ["inc", "dec", "bounce", "main"] {
+        let fn_id = code.find(name).unwrap_or_else(|| panic!("missing {name}"));
+        assert!(code.get(fn_id).thin, "{name} should be thin");
+    }
+
+    let result = vm_run(src);
+    assert_eq!(result.as_int(&Arena::new()), 41);
+}
+
+#[test]
+fn vm_marks_allocating_helper_as_non_thin() {
+    let src = "record Point\n    x: Int\n    y: Int\n\nfn moveRight(p: Point) -> Point\n    Point.update(p, x = p.x + 1)\n\nfn main() -> Int\n    moveRight(Point(x = 1, y = 2)).x\n";
+    let code = vm_compile(src);
+    let fn_id = code.find("moveRight").expect("missing moveRight");
+    assert!(
+        !code.get(fn_id).thin,
+        "record update helper must stay non-thin"
+    );
+}
+
+#[test]
+fn vm_helper_return_string_survives_ordinary_return() {
+    let src = "fn suffix() -> String\n    \"b\"\n\nfn main() -> String\n    \"a\" + suffix()\n";
+    let (result, arena) = vm_run_with_arena(src);
+    assert_eq!(
+        result.to_value(&arena),
+        aver::value::Value::Str("ab".to_string())
+    );
+}
+
+#[test]
+fn vm_helper_return_err_string_survives_ordinary_return() {
+    let src = "fn fail(flag: Bool) -> Result<String, String>\n    match flag\n        true -> Result.Ok(\"ok\")\n        false -> Result.Err(\"bad\")\n\nfn main() -> Result<String, String>\n    fail(false)\n";
+    let (result, arena) = vm_run_with_arena(src);
+    assert_eq!(
+        result.to_value(&arena),
+        aver::value::Value::Err(Box::new(aver::value::Value::Str("bad".to_string())))
+    );
+}
+
+#[test]
+fn vm_list_get_and_option_to_result_keep_strings_alive() {
+    let src = "fn extract(parts: List<String>) -> Result<String, String>\n    section = Option.toResult(List.get(parts, 1), \"Missing path segment\")?\n    match section == \"weather\"\n        false -> Result.Err(\"Not a weather endpoint\")\n        true  -> Option.toResult(List.get(parts, 2), \"Missing city\")\n\nfn main() -> Result<String, String>\n    extract([\"\", \"other\", \"Warsaw\"])\n";
+    let (result, arena) = vm_run_with_arena(src);
+    assert_eq!(
+        result.to_value(&arena),
+        aver::value::Value::Err(Box::new(aver::value::Value::Str(
+            "Not a weather endpoint".to_string()
+        )))
+    );
+}
+
+#[test]
+fn vm_repeated_helper_calls_keep_prefix_string_roots_valid() {
+    let src = "fn okCase() -> Result<String, String>\n    Result.Ok(\"Warsaw\")\n\nfn errCase() -> Result<String, String>\n    Result.Err(\"Not a weather endpoint\")\n";
+    let mut machine = vm_machine(src);
+
+    let ok = machine
+        .run_named_function("okCase", &[])
+        .expect("okCase failed");
+    assert_eq!(
+        ok.to_value(&machine.arena),
+        aver::value::Value::Ok(Box::new(aver::value::Value::Str("Warsaw".to_string())))
+    );
+
+    let err = machine
+        .run_named_function("errCase", &[])
+        .expect("errCase failed");
+    assert_eq!(
+        err.to_value(&machine.arena),
+        aver::value::Value::Err(Box::new(aver::value::Value::Str(
+            "Not a weather endpoint".to_string()
+        )))
+    );
+}
+
+#[test]
+fn vm_nested_result_wrappers_keep_strings_alive_across_calls() {
+    let src = "fn okCase() -> Result<Result<String, String>, String>\n    Result.Ok(Result.Ok(\"Warsaw\"))\n\nfn errCase() -> Result<Result<String, String>, String>\n    Result.Ok(Result.Err(\"Not a weather endpoint\"))\n";
+    let mut machine = vm_machine(src);
+
+    let ok = machine
+        .run_named_function("okCase", &[])
+        .expect("okCase failed");
+    assert_eq!(
+        ok.to_value(&machine.arena),
+        aver::value::Value::Ok(Box::new(aver::value::Value::Ok(Box::new(
+            aver::value::Value::Str("Warsaw".to_string())
+        ))))
+    );
+
+    let err = machine
+        .run_named_function("errCase", &[])
+        .expect("errCase failed");
+    assert_eq!(
+        err.to_value(&machine.arena),
+        aver::value::Value::Ok(Box::new(aver::value::Value::Err(Box::new(
+            aver::value::Value::Str("Not a weather endpoint".to_string())
+        ))))
+    );
+}
+
+#[test]
+fn vm_repeated_extract_calls_keep_string_roots_valid() {
+    let src = "fn extract(parts: List<String>) -> Result<String, String>\n    section = Option.toResult(List.get(parts, 1), \"Missing path segment\")?\n    match section == \"weather\"\n        false -> Result.Err(\"Not a weather endpoint\")\n        true  -> Option.toResult(List.get(parts, 2), \"Missing city\")\n\nfn okCase() -> Result<Result<String, String>, String>\n    Result.Ok(extract([\"\", \"weather\", \"Warsaw\"]))\n\nfn errCase() -> Result<Result<String, String>, String>\n    Result.Ok(extract([\"\", \"other\", \"Warsaw\"]))\n";
+    let mut machine = vm_machine(src);
+
+    let ok = machine
+        .run_named_function("okCase", &[])
+        .expect("okCase failed");
+    assert_eq!(
+        ok.to_value(&machine.arena),
+        aver::value::Value::Ok(Box::new(aver::value::Value::Ok(Box::new(
+            aver::value::Value::Str("Warsaw".to_string())
+        ))))
+    );
+
+    let err = machine
+        .run_named_function("errCase", &[])
+        .expect("errCase failed");
+    assert_eq!(
+        err.to_value(&machine.arena),
+        aver::value::Value::Ok(Box::new(aver::value::Value::Err(Box::new(
+            aver::value::Value::Str("Not a weather endpoint".to_string())
+        ))))
+    );
+}
+
+#[test]
+fn vm_verify_style_helper_sequence_keeps_string_roots_valid() {
+    let src = "fn extract(parts: List<String>) -> Result<String, String>\n    section = Option.toResult(List.get(parts, 1), \"Missing path segment\")?\n    match section == \"weather\"\n        false -> Result.Err(\"Not a weather endpoint\")\n        true  -> Option.toResult(List.get(parts, 2), \"Missing city\")\n\nfn left0() -> Unit\n    Result.Ok(extract([\"\", \"weather\", \"Warsaw\"]))\n\nfn right0() -> Unit\n    Result.Ok(Result.Ok(\"Warsaw\"))\n\nfn left1() -> Unit\n    Result.Ok(extract([\"\", \"other\", \"Warsaw\"]))\n\nfn right1() -> Unit\n    Result.Ok(Result.Err(\"Not a weather endpoint\"))\n";
+    let mut machine = vm_machine(src);
+
+    for (name, expected) in [
+        (
+            "left0",
+            aver::value::Value::Ok(Box::new(aver::value::Value::Ok(Box::new(
+                aver::value::Value::Str("Warsaw".to_string()),
+            )))),
+        ),
+        (
+            "right0",
+            aver::value::Value::Ok(Box::new(aver::value::Value::Ok(Box::new(
+                aver::value::Value::Str("Warsaw".to_string()),
+            )))),
+        ),
+        (
+            "left1",
+            aver::value::Value::Ok(Box::new(aver::value::Value::Err(Box::new(
+                aver::value::Value::Str("Not a weather endpoint".to_string()),
+            )))),
+        ),
+        (
+            "right1",
+            aver::value::Value::Ok(Box::new(aver::value::Value::Err(Box::new(
+                aver::value::Value::Str("Not a weather endpoint".to_string()),
+            )))),
+        ),
+    ] {
+        let value = machine
+            .run_named_function(name, &[])
+            .unwrap_or_else(|e| panic!("{} failed: {}", name, e));
+        assert_eq!(
+            value.to_value(&machine.arena),
+            expected,
+            "mismatch in {}",
+            name
+        );
+    }
+}
+
+#[test]
+fn vm_variant_return_keeps_string_field_alive_for_caller() {
+    let src = "type ParseResult\n    Ok(Int)\n    Err(String, Int)\n\nfn fail() -> ParseResult\n    ParseResult.Err(\"Leading zeros not allowed\", 1)\n\nfn main() -> String\n    match fail()\n        ParseResult.Err(msg, p) -> msg + \" at position \" + String.fromInt(p)\n        ParseResult.Ok(_) -> \"ok\"\n";
+    let (result, arena) = vm_run_with_arena(src);
+    assert_eq!(
+        result.to_value(&arena),
+        aver::value::Value::Str("Leading zeros not allowed at position 1".to_string())
+    );
+}
+
+#[test]
+fn vm_multi_hop_variant_return_keeps_string_field_alive_for_caller() {
+    let src = "type ParseResult\n    Ok(Int)\n    Err(String, Int)\n\nfn leaf() -> ParseResult\n    ParseResult.Err(\"Leading zeros not allowed\", 2)\n\nfn step1() -> ParseResult\n    leaf()\n\nfn step2() -> ParseResult\n    step1()\n\nfn step3() -> ParseResult\n    step2()\n\nfn main() -> String\n    match step3()\n        ParseResult.Err(msg, p) -> msg + \" at position \" + String.fromInt(p)\n        ParseResult.Ok(_) -> \"ok\"\n";
+    let (result, arena) = vm_run_with_arena(src);
+    assert_eq!(
+        result.to_value(&arena),
+        aver::value::Value::Str("Leading zeros not allowed at position 2".to_string())
+    );
+}
+
+#[test]
+fn vm_repeated_variant_error_rendering_keeps_message_strings_alive() {
+    let src = "type ParseResult\n    Ok(Int)\n    Err(String, Int)\n\nfn case1() -> ParseResult\n    ParseResult.Err(\"Trailing content: f\", 5)\n\nfn case2() -> ParseResult\n    ParseResult.Err(\"Trailing content: o\", 2)\n\nfn case3() -> ParseResult\n    ParseResult.Err(\"Expected digit after '-'\", 1)\n\nfn case4() -> ParseResult\n    ParseResult.Err(\"Leading zeros not allowed\", 1)\n\nfn case5() -> ParseResult\n    ParseResult.Err(\"Leading zeros not allowed\", 2)\n\nfn render(value: ParseResult) -> String\n    match value\n        ParseResult.Err(msg, p) -> msg + \" at position \" + String.fromInt(p)\n        ParseResult.Ok(_) -> \"ok\"\n";
+    let mut machine = vm_machine(src);
+
+    for (name, expected) in [
+        ("case1", "Trailing content: f at position 5"),
+        ("case2", "Trailing content: o at position 2"),
+        ("case3", "Expected digit after '-' at position 1"),
+        ("case4", "Leading zeros not allowed at position 1"),
+        ("case5", "Leading zeros not allowed at position 2"),
+    ] {
+        let value = machine
+            .run_named_function(name, &[])
+            .unwrap_or_else(|e| panic!("{} failed: {}", name, e));
+        let rendered = machine
+            .run_named_function("render", &[value])
+            .unwrap_or_else(|e| panic!("render({}) failed: {}", name, e));
+        assert_eq!(
+            rendered.to_value(&machine.arena),
+            aver::value::Value::Str(expected.to_string()),
+            "mismatch for {}",
+            name
+        );
+    }
+}
+
+#[test]
+fn vm_rebuilt_variant_error_chain_keeps_message_strings_alive() {
+    let src = "type ParseResult\n    Ok(Int)\n    Err(String, Int)\n\nfn leaf() -> ParseResult\n    ParseResult.Err(\"Leading zeros not allowed\", 2)\n\nfn step1() -> ParseResult\n    match leaf()\n        ParseResult.Err(msg, p) -> ParseResult.Err(msg, p)\n        ParseResult.Ok(v) -> ParseResult.Ok(v)\n\nfn step2() -> ParseResult\n    match step1()\n        ParseResult.Err(msg, p) -> ParseResult.Err(msg, p)\n        ParseResult.Ok(v) -> ParseResult.Ok(v)\n\nfn step3() -> ParseResult\n    match step2()\n        ParseResult.Err(msg, p) -> ParseResult.Err(msg, p)\n        ParseResult.Ok(v) -> ParseResult.Ok(v)\n\nfn main() -> String\n    match step3()\n        ParseResult.Err(msg, p) -> msg + \" at position \" + String.fromInt(p)\n        ParseResult.Ok(_) -> \"ok\"\n";
+    let (result, arena) = vm_run_with_arena(src);
+    assert_eq!(
+        result.to_value(&arena),
+        aver::value::Value::Str("Leading zeros not allowed at position 2".to_string())
+    );
+}
+
+#[test]
+fn vm_real_json_from_string_error_keeps_message_alive() {
+    let src = include_str!("../examples/data/json.av");
+    let mut machine = vm_machine(src);
+    let arg = nv_string(&mut machine, "01");
+    let result = machine
+        .run_named_function("fromString", &[arg])
+        .expect("fromString failed");
+    assert_eq!(
+        result.to_value(&machine.arena),
+        aver::value::Value::Err(Box::new(aver::value::Value::Str(
+            "Leading zeros not allowed at position 1".to_string()
+        )))
+    );
+}
+
+#[test]
+fn vm_real_json_negative_leading_zero_error_keeps_message_alive() {
+    let src = include_str!("../examples/data/json.av");
+    let mut machine = vm_machine(src);
+    let arg = nv_string(&mut machine, "-01");
+    let result = machine
+        .run_named_function("fromString", &[arg])
+        .expect("fromString failed");
+    assert_eq!(
+        result.to_value(&machine.arena),
+        aver::value::Value::Err(Box::new(aver::value::Value::Str(
+            "Leading zeros not allowed at position 2".to_string()
+        )))
+    );
+}
+
+#[test]
+fn vm_real_json_repeated_from_string_calls_keep_error_strings_alive() {
+    let src = include_str!("../examples/data/json.av");
+    let mut machine = vm_machine(src);
+
+    for (input, expected) in [
+        (
+            "true false",
+            "Trailing content: f at position 5".to_string(),
+        ),
+        ("42oops", "Trailing content: o at position 2".to_string()),
+        ("-", "Expected digit after '-' at position 1".to_string()),
+        ("01", "Leading zeros not allowed at position 1".to_string()),
+        ("-01", "Leading zeros not allowed at position 2".to_string()),
+    ] {
+        let arg = nv_string(&mut machine, input);
+        let result = machine
+            .run_named_function("fromString", &[arg])
+            .unwrap_or_else(|e| panic!("fromString({input:?}) failed: {}", e));
+        assert_eq!(
+            result.to_value(&machine.arena),
+            aver::value::Value::Err(Box::new(aver::value::Value::Str(expected))),
+            "mismatch for input {:?}",
+            input
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -375,6 +700,15 @@ fn vm_helper_returns_feed_tail_loop_without_accumulating() {
         "helper-return handoff values should not accumulate, arena.len() = {}",
         arena.len()
     );
+}
+
+#[test]
+fn vm_tail_call_known_resizes_stack_before_clearing_new_locals() {
+    let src = "fn stepA(n: Int) -> Int\n    match n == 0\n        true -> 0\n        false -> stepB(n - 1)\n\nfn stepB(n: Int) -> Int\n    x = n\n    y = x\n    z = y\n    match n == 0\n        true -> z\n        false -> stepA(n - 1)\n\nfn main() -> Int\n    stepA(200)\n";
+    let result = vm_run(src);
+    assert!(result.is_int());
+    let arena = Arena::new();
+    assert_eq!(result.as_int(&arena), 0);
 }
 
 // ---------------------------------------------------------------------------

@@ -230,8 +230,7 @@ record Order\n    id: Int\n    amount: Int\n    valid: Bool\n\nfn processOrder(o
 // Main benchmark test
 // ---------------------------------------------------------------------------
 
-#[test]
-fn vm_benchmark() {
+fn run_vm_benchmark() {
     let programs: Vec<(&str, &str)> = vec![
         // Micro benchmarks
         ("fib(25)", FIBONACCI),
@@ -309,4 +308,15 @@ fn vm_benchmark() {
         all_ok,
         "Some benchmarks produced different results between interpreter and VM"
     );
+}
+
+#[test]
+fn vm_benchmark() {
+    std::thread::Builder::new()
+        .name("vm_benchmark".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(run_vm_benchmark)
+        .expect("spawn vm_benchmark")
+        .join()
+        .expect("vm_benchmark thread");
 }

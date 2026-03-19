@@ -15,11 +15,14 @@ All notable changes to Aver are documented here.
 
 ### Changed
 - VM list builtins and pattern matching now operate through arena list helpers (`len/get/uncons/to_vec`) instead of assuming a flat `Vec`, which restores `list_builtins(1K)` to better-than-baseline VM performance.
-- Tail-position and ordinary-return code paths can now allocate obvious aggregates into `yard` / `handoff` construction lanes, while frame boundaries canonicalize live roots into `stable` before truncating local lanes.
-- `docs/vm.md` now documents the VM memory model and list representation, including young/yard/handoff/stable spaces, structural list nodes, and the current stable-boundary hardening strategy.
+- Tail-position and ordinary-return code paths can now allocate obvious aggregates into `yard` / `handoff` construction lanes. `TAIL_CALL_*` keeps loop-carried survivors in `yard`, while ordinary returns still canonicalize live roots into `stable`.
+- VM bytecode compilation now marks conservatively-classified **thin functions**, and `RETURN` / `?` use a fast path that skips boundary promotion work when those frames never created local heap survivors.
+- `docs/vm.md` now documents the VM memory model and list representation in more detail, including young/yard/handoff/stable spaces, structural list nodes, TCO survivor behavior, and the current conservative ordinary-return path.
 
 ### Fixed
 - VM no longer leaves stale heap handles behind in real workloads like `examples/games/rogue`; frame boundaries now promote live roots to `stable` before truncating local arenas.
+- `TAIL_CALL_KNOWN` now resizes the stack before clearing newly introduced locals, which fixes a real crash in `verify --vm` on larger programs such as `examples/data/json.av`.
+- VM ordered string comparison now matches the interpreter, so examples like `examples/data/date.av` behave the same under `verify` and `verify --vm`.
 
 ## 0.5.5
 

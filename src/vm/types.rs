@@ -10,6 +10,9 @@ pub struct FnChunk {
     pub constants: Vec<NanValue>,
     /// Declared effects (e.g. `! [Console.print, Http]`). Empty for pure functions.
     pub effects: Vec<String>,
+    /// Conservatively classified "thin" function: likely to return without
+    /// creating any frame-local heap survivors or dirtying globals.
+    pub thin: bool,
 }
 
 /// Minimal call frame: 16 bytes of metadata, no closure/upvalue fields.
@@ -42,6 +45,8 @@ pub struct CallFrame {
     /// Whether helper returns introduced handoff survivors that should be
     /// pruned on the next boundary of this frame.
     pub handoff_dirty: bool,
+    /// Conservatively classified as cheap enough for a fast return path.
+    pub thin: bool,
 }
 
 /// All compiled bytecode for a program.
