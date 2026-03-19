@@ -112,6 +112,7 @@ impl VM {
     pub fn call_function(&mut self, fn_id: u32, args: &[NanValue]) -> Result<NanValue, VmError> {
         let chunk = self.code.get(fn_id);
         let caller_depth = self.frames.len();
+        let arena_mark = self.arena.young_len() as u32;
         let bp = self.stack.len() as u32;
         for arg in args {
             self.stack.push(*arg);
@@ -124,8 +125,74 @@ impl VM {
             ip: 0,
             bp,
             local_count: chunk.local_count,
+            arena_mark,
+            globals_dirty: false,
         });
         self.execute_until(caller_depth)
+    }
+
+    fn collect_stable_roots(&mut self, frame_roots: &mut [NanValue]) {
+        let root_count = frame_roots.len();
+        let mut all_roots = Vec::with_capacity(root_count + self.globals.len());
+        all_roots.extend_from_slice(frame_roots);
+        all_roots.extend(self.globals.iter().copied());
+        self.arena.collect_stable_from_roots(&mut all_roots);
+
+        frame_roots.copy_from_slice(&all_roots[..root_count]);
+        for (dst, src) in self
+            .globals
+            .iter_mut()
+            .zip(all_roots[root_count..].iter().copied())
+        {
+            *dst = src;
+        }
+    }
+
+    fn promote_roots_from_mark(
+        &mut self,
+        mark: u32,
+        globals_dirty: bool,
+        frame_roots: &mut [NanValue],
+    ) {
+        if self.arena.young_len() <= mark as usize {
+            return;
+        }
+
+        let frame_has_escape = frame_roots
+            .iter()
+            .filter_map(|value| value.heap_index())
+            .any(|index| self.arena.is_young_index_in_region(index, mark));
+        let globals_have_escape = globals_dirty
+            && self
+                .globals
+                .iter()
+                .filter_map(|value| value.heap_index())
+                .any(|index| self.arena.is_young_index_in_region(index, mark));
+
+        if !frame_has_escape && !globals_have_escape {
+            self.arena.truncate_to(mark);
+            return;
+        }
+
+        if !globals_have_escape {
+            self.arena.promote_escapes_from(mark, frame_roots);
+            return;
+        }
+
+        let root_count = frame_roots.len();
+        let mut all_roots = Vec::with_capacity(root_count + self.globals.len());
+        all_roots.extend_from_slice(frame_roots);
+        all_roots.extend(self.globals.iter().copied());
+        self.arena.promote_escapes_from(mark, &mut all_roots);
+
+        frame_roots.copy_from_slice(&all_roots[..root_count]);
+        for (dst, src) in self
+            .globals
+            .iter_mut()
+            .zip(all_roots[root_count..].iter().copied())
+        {
+            *dst = src;
+        }
     }
 
     fn execute_until(&mut self, caller_depth: usize) -> Result<NanValue, VmError> {
@@ -165,6 +232,13 @@ impl VM {
                 STORE_GLOBAL => {
                     let idx = read_u16!(code, ip) as usize;
                     let val = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    if let Some(frame) = self.frames.last_mut()
+                        && val.heap_index().is_some_and(|index| {
+                            self.arena.is_young_index_in_region(index, frame.arena_mark)
+                        })
+                    {
+                        frame.globals_dirty = true;
+                    }
                     if idx >= self.globals.len() {
                         self.globals.resize(idx + 1, NanValue::UNIT);
                     }
@@ -286,6 +360,8 @@ impl VM {
                         ip: 0,
                         bp: new_bp as u32,
                         local_count: target.local_count,
+                        arena_mark: self.arena.young_len() as u32,
+                        globals_dirty: false,
                     });
 
                     fn_id = target_fn_id;
@@ -313,6 +389,8 @@ impl VM {
                         ip: 0,
                         bp: new_bp as u32,
                         local_count: target.local_count,
+                        arena_mark: self.arena.young_len() as u32,
+                        globals_dirty: false,
                     });
 
                     fn_id = target_fn_id;
@@ -353,28 +431,34 @@ impl VM {
                 TAIL_CALL_SELF => {
                     let argc = read_u8!(code, ip) as usize;
                     let args_start = self.stack.len() - argc;
-                    for i in 0..argc {
-                        self.stack[bp + i] = self.stack[args_start + i];
-                    }
+                    let frame_mark = self.frames.last().unwrap().arena_mark;
+                    let globals_dirty = self.frames.last().unwrap().globals_dirty;
+                    let mut promoted_args = self.stack[args_start..].to_vec();
+                    self.promote_roots_from_mark(frame_mark, globals_dirty, &mut promoted_args);
+                    self.stack[bp..(argc + bp)].copy_from_slice(&promoted_args[..argc]);
                     let lc = self.frames.last().unwrap().local_count as usize;
                     for i in argc..lc {
                         self.stack[bp + i] = NanValue::UNIT;
                     }
                     self.stack.truncate(bp + lc);
+                    let frame = self.frames.last_mut().unwrap();
+                    frame.globals_dirty = false;
                     ip = 0;
                 }
 
                 TAIL_CALL_KNOWN => {
                     let target_fn_id = read_u16!(code, ip) as u32;
                     let argc = read_u8!(code, ip) as usize;
-                    let target = self.code.get(target_fn_id);
+                    let target_local_count = self.code.get(target_fn_id).local_count;
 
                     let args_start = self.stack.len() - argc;
-                    for i in 0..argc {
-                        self.stack[bp + i] = self.stack[args_start + i];
-                    }
+                    let frame_mark = self.frames.last().unwrap().arena_mark;
+                    let globals_dirty = self.frames.last().unwrap().globals_dirty;
+                    let mut promoted_args = self.stack[args_start..].to_vec();
+                    self.promote_roots_from_mark(frame_mark, globals_dirty, &mut promoted_args);
+                    self.stack[bp..(argc + bp)].copy_from_slice(&promoted_args[..argc]);
 
-                    let new_lc = target.local_count as usize;
+                    let new_lc = target_local_count as usize;
                     let new_end = bp + new_lc;
                     for i in argc..new_lc {
                         self.stack[bp + i] = NanValue::UNIT;
@@ -387,17 +471,26 @@ impl VM {
 
                     let frame = self.frames.last_mut().unwrap();
                     frame.fn_id = target_fn_id;
-                    frame.local_count = target.local_count;
+                    frame.local_count = target_local_count;
+                    frame.globals_dirty = false;
                     fn_id = target_fn_id;
                     ip = 0;
                 }
 
                 RETURN => {
-                    let result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let mut result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let frame = self.frames.pop().unwrap();
+                    self.promote_roots_from_mark(
+                        frame.arena_mark,
+                        frame.globals_dirty,
+                        std::slice::from_mut(&mut result),
+                    );
                     self.stack.truncate(frame.bp as usize);
 
                     if self.frames.len() == caller_depth {
+                        if caller_depth == 0 {
+                            self.collect_stable_roots(std::slice::from_mut(&mut result));
+                        }
                         return Ok(result);
                     }
 
@@ -447,6 +540,81 @@ impl VM {
                     self.stack.truncate(start);
                     let idx = self.arena.push_tuple(items);
                     self.stack.push(NanValue::new_tuple(idx));
+                }
+
+                PROPAGATE_ERR => {
+                    let value = *self.stack.last().ok_or(VmError::StackUnderflow)?;
+                    if value.is_ok() {
+                        let inner = self.arena.get_boxed(value.wrapper_index());
+                        *self.stack.last_mut().ok_or(VmError::StackUnderflow)? = inner;
+                        continue;
+                    }
+                    if value.is_err() {
+                        let mut result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                        let frame = self.frames.pop().unwrap();
+                        self.promote_roots_from_mark(
+                            frame.arena_mark,
+                            frame.globals_dirty,
+                            std::slice::from_mut(&mut result),
+                        );
+                        self.stack.truncate(frame.bp as usize);
+
+                        if self.frames.len() == caller_depth {
+                            return Ok(result);
+                        }
+
+                        self.stack.push(result);
+
+                        let caller = self.frames.last().unwrap();
+                        fn_id = caller.fn_id;
+                        ip = caller.ip as usize;
+                        bp = caller.bp as usize;
+                        continue;
+                    }
+                    return Err(VmError::Type(
+                        "error propagation expects a Result value".into(),
+                    ));
+                }
+
+                RECORD_UPDATE => {
+                    let expected_type_id = read_u16!(code, ip) as u32;
+                    let count = read_u8!(code, ip) as usize;
+                    let field_indices_start = ip;
+                    ip += count;
+
+                    let base_pos = self
+                        .stack
+                        .len()
+                        .checked_sub(count + 1)
+                        .ok_or(VmError::StackUnderflow)?;
+                    let base = self.stack[base_pos];
+                    if !base.is_record() {
+                        return Err(VmError::Type("RECORD_UPDATE on non-record".into()));
+                    }
+                    let (type_id, old_fields) = self.arena.get_record(base.arena_index());
+                    if type_id != expected_type_id {
+                        return Err(VmError::Runtime(format!(
+                            "record update type mismatch: expected {}, got {}",
+                            self.arena.get_type_name(expected_type_id),
+                            self.arena.get_type_name(type_id)
+                        )));
+                    }
+
+                    let mut fields = old_fields.to_vec();
+                    for offset in (0..count).rev() {
+                        let field_idx = code[field_indices_start + offset] as usize;
+                        if field_idx >= fields.len() {
+                            return Err(VmError::Runtime(
+                                "record update field out of bounds".into(),
+                            ));
+                        }
+                        let val = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                        fields[field_idx] = val;
+                    }
+                    self.stack.pop().ok_or(VmError::StackUnderflow)?; // base record
+
+                    let idx = self.arena.push_record(type_id, fields);
+                    self.stack.push(NanValue::new_record(idx));
                 }
 
                 RECORD_NEW => {
@@ -924,6 +1092,8 @@ mod tests {
             ip: 0,
             bp: 0,
             local_count: 0,
+            arena_mark: 0,
+            globals_dirty: false,
         });
 
         let result = vm

@@ -1130,30 +1130,7 @@ impl<'a> FnCompiler<'a> {
 
     fn compile_error_prop(&mut self, inner: &Expr) -> Result<(), CompileError> {
         self.compile_expr(inner)?;
-        self.emit_op(DUP);
-        // Check if Err.
-        self.emit_op(MATCH_UNWRAP);
-        self.emit_u8(1); // Err
-        let is_err_patch = self.code.len();
-        self.emit_i16(0);
-        // Was Err, now unwrapped to error value. Re-wrap and return.
-        self.emit_op(WRAP);
-        self.emit_u8(1);
-        self.emit_op(RETURN);
-        // Not Err — patch jump to here.
-        self.patch_jump(is_err_patch);
-        // Top is still original value. Try unwrapping Ok.
-        self.emit_op(MATCH_UNWRAP);
-        self.emit_u8(0); // Ok
-        let not_ok_patch = self.code.len();
-        self.emit_i16(0);
-        // Unwrapped Ok → inner value on top.
-        let after = self.emit_jump(JUMP);
-        // Not Ok — error.
-        self.patch_jump(not_ok_patch);
-        self.emit_op(MATCH_FAIL);
-        self.emit_u16(0);
-        self.patch_jump(after);
+        self.emit_op(PROPAGATE_ERR);
         Ok(())
     }
 
@@ -1256,26 +1233,25 @@ impl<'a> FnCompiler<'a> {
                 msg: format!("unknown record type: {}", type_name),
             })?;
         let field_names = self.arena.get_field_names(type_id).to_vec();
+        let mut updated_fields = Vec::with_capacity(updates.len());
 
-        // For each field in canonical order: if updated, compile update expr;
-        // otherwise compile base + RECORD_GET_NAMED to extract old value.
-        // Re-compiles base for each non-updated field (wasteful but correct for v1).
-        for fname in &field_names {
-            if let Some((_, update_expr)) = updates.iter().find(|(n, _)| n == fname) {
+        self.compile_expr(base)?;
+
+        // Preserve existing evaluation order: updated expressions run in canonical
+        // field order, matching the previous v1 lowering.
+        for (field_idx, field_name) in field_names.iter().enumerate() {
+            if let Some((_, update_expr)) = updates.iter().find(|(n, _)| n == field_name) {
                 self.compile_expr(update_expr)?;
-            } else {
-                self.compile_expr(base)?;
-                let name_idx = self.arena.push_string(fname);
-                let nv = NanValue::new_string(name_idx);
-                let const_idx = self.add_constant(nv);
-                self.emit_op(RECORD_GET_NAMED);
-                self.emit_u16(const_idx);
+                updated_fields.push(field_idx as u8);
             }
         }
 
-        self.emit_op(RECORD_NEW);
+        self.emit_op(RECORD_UPDATE);
         self.emit_u16(type_id as u16);
-        self.emit_u8(field_names.len() as u8);
+        self.emit_u8(updated_fields.len() as u8);
+        for field_idx in updated_fields {
+            self.emit_u8(field_idx);
+        }
         Ok(())
     }
 

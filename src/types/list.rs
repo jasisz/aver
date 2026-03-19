@@ -282,7 +282,9 @@ fn append_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeEr
             "List.append() first argument must be a List".to_string(),
         ));
     }
-    let mut items = arena.get_list(args[0].arena_index()).to_vec();
+    let old_items = arena.get_list(args[0].arena_index());
+    let mut items = Vec::with_capacity(old_items.len() + 1);
+    items.extend_from_slice(old_items);
     items.push(args[1]);
     let list_idx = arena.push_list(items);
     Ok(NanValue::new_list(list_idx))
@@ -300,10 +302,10 @@ fn prepend_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeE
             "List.prepend() second argument must be a List".to_string(),
         ));
     }
-    let old_items = arena.get_list(args[1].arena_index()).to_vec();
+    let old_items = arena.get_list(args[1].arena_index());
     let mut items = Vec::with_capacity(old_items.len() + 1);
     items.push(args[0]);
-    items.extend_from_slice(&old_items);
+    items.extend_from_slice(old_items);
     let list_idx = arena.push_list(items);
     Ok(NanValue::new_list(list_idx))
 }
@@ -325,11 +327,11 @@ fn concat_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeEr
             "List.concat() second argument must be a List".to_string(),
         ));
     }
-    let a = arena.get_list(args[0].arena_index()).to_vec();
-    let b = arena.get_list(args[1].arena_index()).to_vec();
+    let a = arena.get_list(args[0].arena_index());
+    let b = arena.get_list(args[1].arena_index());
     let mut items = Vec::with_capacity(a.len() + b.len());
-    items.extend_from_slice(&a);
-    items.extend_from_slice(&b);
+    items.extend_from_slice(a);
+    items.extend_from_slice(b);
     let list_idx = arena.push_list(items);
     Ok(NanValue::new_list(list_idx))
 }

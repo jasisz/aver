@@ -251,6 +251,56 @@ impl NanValue {
         self.payload() as u32
     }
 
+    #[inline]
+    pub fn heap_index(self) -> Option<u32> {
+        if !self.is_nan_boxed() {
+            return None;
+        }
+        match self.tag() {
+            TAG_INT => {
+                let p = self.payload();
+                if p & INT_BIG_BIT != 0 {
+                    Some((p & !INT_BIG_BIT) as u32)
+                } else {
+                    None
+                }
+            }
+            TAG_WRAPPER => Some(self.wrapper_index()),
+            TAG_STRING | TAG_LIST | TAG_TUPLE | TAG_MAP | TAG_RECORD | TAG_VARIANT | TAG_FN
+            | TAG_BUILTIN | TAG_NAMESPACE => Some(self.arena_index()),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn with_heap_index(self, index: u32) -> Self {
+        if !self.is_nan_boxed() {
+            return self;
+        }
+        match self.tag() {
+            TAG_INT => {
+                debug_assert!(self.payload() & INT_BIG_BIT != 0);
+                Self::new_int_arena(index)
+            }
+            TAG_WRAPPER => match self.wrapper_kind() {
+                WRAP_SOME => Self::new_some(index),
+                WRAP_OK => Self::new_ok(index),
+                WRAP_ERR => Self::new_err(index),
+                _ => self,
+            },
+            TAG_STRING => Self::new_string(index),
+            TAG_LIST => Self::new_list(index),
+            TAG_TUPLE => Self::new_tuple(index),
+            TAG_MAP => Self::new_map(index),
+            TAG_RECORD => Self::new_record(index),
+            TAG_VARIANT => Self::new_variant(index),
+            TAG_FN => Self::new_fn(index),
+            TAG_BUILTIN => Self::new_builtin(index),
+            TAG_NAMESPACE => Self::new_namespace(index),
+            _ => self,
+        }
+    }
+
     // -- Type checks -------------------------------------------------------
 
     #[inline]
@@ -426,7 +476,8 @@ impl std::fmt::Debug for NanValue {
 
 #[derive(Debug, Clone)]
 pub struct Arena {
-    entries: Vec<ArenaEntry>,
+    young_entries: Vec<ArenaEntry>,
+    stable_entries: Vec<ArenaEntry>,
     pub(crate) type_names: Vec<String>,
     pub(crate) type_field_names: Vec<Vec<String>>,
     pub(crate) type_variant_names: Vec<Vec<String>>,
@@ -457,10 +508,14 @@ pub enum ArenaEntry {
     Boxed(NanValue),
 }
 
+const STABLE_SPACE_BIT: u32 = 1 << 31;
+const HEAP_INDEX_MASK_U32: u32 = !STABLE_SPACE_BIT;
+
 impl Arena {
     pub fn new() -> Self {
         Arena {
-            entries: Vec::with_capacity(256),
+            young_entries: Vec::with_capacity(256),
+            stable_entries: Vec::with_capacity(64),
             type_names: Vec::new(),
             type_field_names: Vec::new(),
             type_variant_names: Vec::new(),
@@ -469,14 +524,45 @@ impl Arena {
 
     #[inline]
     pub fn push(&mut self, entry: ArenaEntry) -> u32 {
-        let idx = self.entries.len() as u32;
-        self.entries.push(entry);
+        let idx = self.young_entries.len() as u32;
+        self.young_entries.push(entry);
         idx
     }
 
     #[inline]
     pub fn get(&self, index: u32) -> &ArenaEntry {
-        &self.entries[index as usize]
+        let (is_stable, raw_index) = Self::decode_index(index);
+        if is_stable {
+            &self.stable_entries[raw_index as usize]
+        } else {
+            &self.young_entries[raw_index as usize]
+        }
+    }
+
+    #[inline]
+    fn encode_stable_index(index: u32) -> u32 {
+        STABLE_SPACE_BIT | index
+    }
+
+    #[inline]
+    fn decode_index(index: u32) -> (bool, u32) {
+        ((index & STABLE_SPACE_BIT) != 0, index & HEAP_INDEX_MASK_U32)
+    }
+
+    #[inline]
+    pub fn is_stable_index(index: u32) -> bool {
+        (index & STABLE_SPACE_BIT) != 0
+    }
+
+    #[inline]
+    pub fn is_young_index_in_region(&self, index: u32, mark: u32) -> bool {
+        let (is_stable, raw_index) = Self::decode_index(index);
+        !is_stable && raw_index >= mark && raw_index < self.young_entries.len() as u32
+    }
+
+    #[inline]
+    pub fn young_len(&self) -> usize {
+        self.young_entries.len()
     }
 
     // -- Typed push helpers ------------------------------------------------
@@ -637,16 +723,271 @@ impl Arena {
     }
 
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.young_entries.len() + self.stable_entries.len()
     }
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.young_entries.is_empty() && self.stable_entries.is_empty()
     }
 }
 
 impl Default for Arena {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Arena {
+    pub fn truncate_to(&mut self, mark: u32) {
+        self.young_entries.truncate(mark as usize);
+    }
+
+    pub fn promote_escapes_from(&mut self, mark: u32, roots: &mut [NanValue]) {
+        if self.young_entries.len() <= mark as usize {
+            return;
+        }
+
+        let mut relocated = vec![u32::MAX; self.young_entries.len()];
+
+        for root in roots {
+            *root = self.promote_region_root_to_stable(*root, mark, &mut relocated);
+        }
+
+        self.young_entries.truncate(mark as usize);
+    }
+
+    pub fn collect_stable_from_roots(&mut self, roots: &mut [NanValue]) {
+        if self.stable_entries.is_empty() {
+            return;
+        }
+
+        let mut relocated = vec![u32::MAX; self.stable_entries.len()];
+        let mut compacted = Vec::with_capacity(self.stable_entries.len());
+
+        for root in roots {
+            *root = self.relocate_stable_root(*root, &mut relocated, &mut compacted);
+        }
+
+        self.stable_entries = compacted;
+    }
+
+    fn promote_region_root_to_stable(
+        &mut self,
+        value: NanValue,
+        mark: u32,
+        relocated: &mut [u32],
+    ) -> NanValue {
+        let Some(index) = value.heap_index() else {
+            return value;
+        };
+        if !self.is_young_index_in_region(index, mark) {
+            return value;
+        }
+        self.promote_value_to_stable(value, relocated)
+    }
+
+    fn promote_value_to_stable(&mut self, value: NanValue, relocated: &mut [u32]) -> NanValue {
+        let Some(index) = value.heap_index() else {
+            return value;
+        };
+        let (is_stable, raw_index) = Self::decode_index(index);
+        if is_stable {
+            return value;
+        }
+
+        let relocation_slot = raw_index as usize;
+        let relocated_index = relocated[relocation_slot];
+        if relocated_index != u32::MAX {
+            return value.with_heap_index(relocated_index);
+        }
+
+        let new_index = Self::encode_stable_index(self.stable_entries.len() as u32);
+        relocated[relocation_slot] = new_index;
+        self.stable_entries.push(ArenaEntry::Int(0));
+
+        let entry = std::mem::replace(
+            &mut self.young_entries[raw_index as usize],
+            ArenaEntry::Int(0),
+        );
+        let new_entry = self.promote_entry_to_stable(entry, relocated);
+        self.stable_entries[(new_index & HEAP_INDEX_MASK_U32) as usize] = new_entry;
+        value.with_heap_index(new_index)
+    }
+
+    fn promote_entry_to_stable(&mut self, entry: ArenaEntry, relocated: &mut [u32]) -> ArenaEntry {
+        match entry {
+            ArenaEntry::Int(i) => ArenaEntry::Int(i),
+            ArenaEntry::String(s) => ArenaEntry::String(s),
+            ArenaEntry::Builtin(name) => ArenaEntry::Builtin(name),
+            ArenaEntry::Fn(f) => ArenaEntry::Fn(f),
+            ArenaEntry::Boxed(inner) => {
+                ArenaEntry::Boxed(self.promote_value_to_stable(inner, relocated))
+            }
+            ArenaEntry::List(mut items) => {
+                for value in &mut items {
+                    *value = self.promote_value_to_stable(*value, relocated);
+                }
+                ArenaEntry::List(items)
+            }
+            ArenaEntry::Tuple(mut items) => {
+                for value in &mut items {
+                    *value = self.promote_value_to_stable(*value, relocated);
+                }
+                ArenaEntry::Tuple(items)
+            }
+            ArenaEntry::Map(map) => {
+                let mut out = PersistentMap::new();
+                for (hash, (key, value)) in map {
+                    let relocated_key = self.promote_value_to_stable(key, relocated);
+                    let relocated_value = self.promote_value_to_stable(value, relocated);
+                    out.insert(hash, (relocated_key, relocated_value));
+                }
+                ArenaEntry::Map(out)
+            }
+            ArenaEntry::Record {
+                type_id,
+                mut fields,
+            } => {
+                for value in &mut fields {
+                    *value = self.promote_value_to_stable(*value, relocated);
+                }
+                ArenaEntry::Record { type_id, fields }
+            }
+            ArenaEntry::Variant {
+                type_id,
+                variant_id,
+                mut fields,
+            } => {
+                for value in &mut fields {
+                    *value = self.promote_value_to_stable(*value, relocated);
+                }
+                ArenaEntry::Variant {
+                    type_id,
+                    variant_id,
+                    fields,
+                }
+            }
+            ArenaEntry::Namespace { name, mut members } => {
+                for (_, value) in &mut members {
+                    *value = self.promote_value_to_stable(*value, relocated);
+                }
+                ArenaEntry::Namespace { name, members }
+            }
+        }
+    }
+
+    fn relocate_stable_root(
+        &mut self,
+        value: NanValue,
+        relocated: &mut [u32],
+        compacted: &mut Vec<ArenaEntry>,
+    ) -> NanValue {
+        let Some(index) = value.heap_index() else {
+            return value;
+        };
+        if !Self::is_stable_index(index) {
+            return value;
+        }
+        self.relocate_stable_value(value, relocated, compacted)
+    }
+
+    fn relocate_stable_value(
+        &mut self,
+        value: NanValue,
+        relocated: &mut [u32],
+        compacted: &mut Vec<ArenaEntry>,
+    ) -> NanValue {
+        let Some(index) = value.heap_index() else {
+            return value;
+        };
+        let (is_stable, raw_index) = Self::decode_index(index);
+        if !is_stable {
+            return value;
+        }
+
+        let relocation_slot = raw_index as usize;
+        let relocated_index = relocated[relocation_slot];
+        if relocated_index != u32::MAX {
+            return value.with_heap_index(relocated_index);
+        }
+
+        let new_index = Self::encode_stable_index(compacted.len() as u32);
+        relocated[relocation_slot] = new_index;
+        compacted.push(ArenaEntry::Int(0));
+
+        let entry = std::mem::replace(
+            &mut self.stable_entries[raw_index as usize],
+            ArenaEntry::Int(0),
+        );
+        let new_entry = self.relocate_stable_entry(entry, relocated, compacted);
+        compacted[(new_index & HEAP_INDEX_MASK_U32) as usize] = new_entry;
+        value.with_heap_index(new_index)
+    }
+
+    fn relocate_stable_entry(
+        &mut self,
+        entry: ArenaEntry,
+        relocated: &mut [u32],
+        compacted: &mut Vec<ArenaEntry>,
+    ) -> ArenaEntry {
+        match entry {
+            ArenaEntry::Int(i) => ArenaEntry::Int(i),
+            ArenaEntry::String(s) => ArenaEntry::String(s),
+            ArenaEntry::Builtin(name) => ArenaEntry::Builtin(name),
+            ArenaEntry::Fn(f) => ArenaEntry::Fn(f),
+            ArenaEntry::Boxed(inner) => {
+                ArenaEntry::Boxed(self.relocate_stable_value(inner, relocated, compacted))
+            }
+            ArenaEntry::List(mut items) => {
+                for value in &mut items {
+                    *value = self.relocate_stable_value(*value, relocated, compacted);
+                }
+                ArenaEntry::List(items)
+            }
+            ArenaEntry::Tuple(mut items) => {
+                for value in &mut items {
+                    *value = self.relocate_stable_value(*value, relocated, compacted);
+                }
+                ArenaEntry::Tuple(items)
+            }
+            ArenaEntry::Map(map) => {
+                let mut out = PersistentMap::new();
+                for (hash, (key, value)) in map {
+                    let relocated_key = self.relocate_stable_value(key, relocated, compacted);
+                    let relocated_value = self.relocate_stable_value(value, relocated, compacted);
+                    out.insert(hash, (relocated_key, relocated_value));
+                }
+                ArenaEntry::Map(out)
+            }
+            ArenaEntry::Record {
+                type_id,
+                mut fields,
+            } => {
+                for value in &mut fields {
+                    *value = self.relocate_stable_value(*value, relocated, compacted);
+                }
+                ArenaEntry::Record { type_id, fields }
+            }
+            ArenaEntry::Variant {
+                type_id,
+                variant_id,
+                mut fields,
+            } => {
+                for value in &mut fields {
+                    *value = self.relocate_stable_value(*value, relocated, compacted);
+                }
+                ArenaEntry::Variant {
+                    type_id,
+                    variant_id,
+                    fields,
+                }
+            }
+            ArenaEntry::Namespace { name, mut members } => {
+                for (_, value) in &mut members {
+                    *value = self.relocate_stable_value(*value, relocated, compacted);
+                }
+                ArenaEntry::Namespace { name, members }
+            }
+        }
     }
 }
 

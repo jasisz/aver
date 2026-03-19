@@ -335,6 +335,34 @@ fn vm_tco_deep() {
     assert_eq!(result.as_int(&arena), 0);
 }
 
+#[test]
+fn vm_tco_reclaims_frame_local_allocations() {
+    let src = "fn loop(n: Int, acc: Int) -> Int\n    tmp = (n, acc)\n    match n == 0\n        true -> acc\n        false -> match tmp\n            (x, y) -> loop(n - 1, y + 1)\n            _ -> acc\n\nfn main() -> Int\n    loop(5000, 0)\n";
+    let (result, arena) = vm_run_with_arena(src);
+    assert!(result.is_int());
+    let empty = Arena::new();
+    assert_eq!(result.as_int(&empty), 5000);
+    assert!(
+        arena.len() < 8,
+        "tail-recursive temps should be reclaimed, arena.len() = {}",
+        arena.len()
+    );
+}
+
+#[test]
+fn vm_tco_reclaims_previous_aggregate_args() {
+    let src = "fn build(n: Int, acc: List<Int>) -> Int\n    match n == 0\n        true -> List.len(acc)\n        false -> build(n - 1, List.prepend(n, acc))\n\nfn main() -> Int\n    build(200, [])\n";
+    let (result, arena) = vm_run_with_arena(src);
+    assert!(result.is_int());
+    let empty = Arena::new();
+    assert_eq!(result.as_int(&empty), 200);
+    assert!(
+        arena.len() < 8,
+        "tail-recursive aggregate args should not accumulate, arena.len() = {}",
+        arena.len()
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Lists
 // ---------------------------------------------------------------------------

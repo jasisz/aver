@@ -23,6 +23,11 @@ pub struct CallFrame {
     pub bp: u32,
     /// Number of local slots (params + local bindings).
     pub local_count: u16,
+    /// Arena length at function entry; allocations above this mark are local
+    /// to the frame unless promoted on return/tail-call.
+    pub arena_mark: u32,
+    /// Whether this frame stored a young-region value into globals.
+    pub globals_dirty: bool,
 }
 
 /// All compiled bytecode for a program.

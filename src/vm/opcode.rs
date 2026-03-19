@@ -131,6 +131,13 @@ pub const WRAP: u8 = 0x66; // kind:u8
 /// Pop `count` items, build a tuple from them, push tuple.
 pub const TUPLE_NEW: u8 = 0x68; // count:u8
 
+/// Update selected fields on a record, preserving the rest from the base value.
+/// Stack: [..., base_record, update_0, ..., update_n-1] -> [..., updated_record]
+pub const RECORD_UPDATE: u8 = 0x69; // type_id:u16, count:u8, field_idx[count]:u8
+
+/// Propagate `Result.Err` to caller or unwrap `Result.Ok` in place.
+pub const PROPAGATE_ERR: u8 = 0x6A;
+
 // -- Pattern matching --------------------------------------------------------
 
 /// Peek top: if NaN tag != expected, ip += fail_offset.
@@ -206,6 +213,8 @@ pub fn opcode_name(op: u8) -> &'static str {
         VARIANT_NEW => "VARIANT_NEW",
         WRAP => "WRAP",
         TUPLE_NEW => "TUPLE_NEW",
+        RECORD_UPDATE => "RECORD_UPDATE",
+        PROPAGATE_ERR => "PROPAGATE_ERR",
         MATCH_TAG => "MATCH_TAG",
         MATCH_VARIANT => "MATCH_VARIANT",
         MATCH_UNWRAP => "MATCH_UNWRAP",
