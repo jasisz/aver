@@ -71,12 +71,19 @@ The VM does not use a single “grow forever” arena anymore.
 It now uses a small runtime model shaped around Aver's execution style:
 
 - each frame records a young-region mark
+- each frame also records a shared `yard` mark for TCO survivors
 - temporary heap values allocate into the young arena
-- on `RETURN` and `TAIL_CALL_*`, only values that escape through roots are promoted
-- promoted survivors move into a stable space instead of being recopied through young regions
+- on `TAIL_CALL_*`, loop-carried survivors move from young into the frame's shared yard
+- on `RETURN`, true escaping values move into stable space
 - top-level completion compacts stable-space values from live roots
 
-In practice this gives the VM region-style bulk cleanup for short-lived temporaries, without forcing the whole runtime into a full tracing GC model.
+In practice this gives the VM three distinct lifetimes:
+
+- `young` for per-step temporaries
+- `yard` for values that survive the next tail-call iteration but still die with the frame
+- `stable` for values that truly escape beyond the frame
+
+The important part is that TCO survivors do not have to pretend to be globally long-lived values.
 
 This fits Aver unusually well because values are immutable, effects are explicit, and there are relatively few hidden escape paths.
 
@@ -93,6 +100,8 @@ The current arena list storage supports three shapes:
 This matters because the VM can now keep list construction aligned with Aver semantics instead of flattening on every prepend.
 
 Pattern matching and destructuring (`MATCH_CONS`, `LIST_HEAD_TAIL`) use list helpers that understand these shapes directly.
+
+In obvious tail-call positions, the VM can also allocate new aggregate values directly into the frame yard instead of forcing an immediate young-to-yard copy on the next `TAIL_CALL_*`.
 
 ## Function References
 

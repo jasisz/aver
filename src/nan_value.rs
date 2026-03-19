@@ -477,7 +477,9 @@ impl std::fmt::Debug for NanValue {
 #[derive(Debug, Clone)]
 pub struct Arena {
     young_entries: Vec<ArenaEntry>,
+    yard_entries: Vec<ArenaEntry>,
     stable_entries: Vec<ArenaEntry>,
+    alloc_space: AllocSpace,
     pub(crate) type_names: Vec<String>,
     pub(crate) type_field_names: Vec<Vec<String>>,
     pub(crate) type_variant_names: Vec<Vec<String>>,
@@ -526,14 +528,30 @@ pub enum ArenaList {
     },
 }
 
-const STABLE_SPACE_BIT: u32 = 1 << 31;
-const HEAP_INDEX_MASK_U32: u32 = !STABLE_SPACE_BIT;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HeapSpace {
+    Young = 0,
+    Yard = 1,
+    Stable = 2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AllocSpace {
+    Young,
+    Yard,
+}
+
+const HEAP_SPACE_SHIFT: u32 = 30;
+const HEAP_SPACE_MASK_U32: u32 = 0b11 << HEAP_SPACE_SHIFT;
+const HEAP_INDEX_MASK_U32: u32 = (1 << HEAP_SPACE_SHIFT) - 1;
 
 impl Arena {
     pub fn new() -> Self {
         Arena {
             young_entries: Vec::with_capacity(256),
+            yard_entries: Vec::with_capacity(64),
             stable_entries: Vec::with_capacity(64),
+            alloc_space: AllocSpace::Young,
             type_names: Vec::new(),
             type_field_names: Vec::new(),
             type_variant_names: Vec::new(),
@@ -542,45 +560,99 @@ impl Arena {
 
     #[inline]
     pub fn push(&mut self, entry: ArenaEntry) -> u32 {
-        let idx = self.young_entries.len() as u32;
-        self.young_entries.push(entry);
-        idx
-    }
-
-    #[inline]
-    pub fn get(&self, index: u32) -> &ArenaEntry {
-        let (is_stable, raw_index) = Self::decode_index(index);
-        if is_stable {
-            &self.stable_entries[raw_index as usize]
-        } else {
-            &self.young_entries[raw_index as usize]
+        match self.alloc_space {
+            AllocSpace::Young => {
+                let idx = self.young_entries.len() as u32;
+                self.young_entries.push(entry);
+                Self::encode_index(HeapSpace::Young, idx)
+            }
+            AllocSpace::Yard => {
+                let idx = self.yard_entries.len() as u32;
+                self.yard_entries.push(entry);
+                Self::encode_index(HeapSpace::Yard, idx)
+            }
         }
     }
 
     #[inline]
-    fn encode_stable_index(index: u32) -> u32 {
-        STABLE_SPACE_BIT | index
+    pub fn get(&self, index: u32) -> &ArenaEntry {
+        let (space, raw_index) = Self::decode_index(index);
+        match space {
+            HeapSpace::Young => &self.young_entries[raw_index as usize],
+            HeapSpace::Yard => &self.yard_entries[raw_index as usize],
+            HeapSpace::Stable => &self.stable_entries[raw_index as usize],
+        }
     }
 
     #[inline]
-    fn decode_index(index: u32) -> (bool, u32) {
-        ((index & STABLE_SPACE_BIT) != 0, index & HEAP_INDEX_MASK_U32)
+    fn encode_index(space: HeapSpace, index: u32) -> u32 {
+        ((space as u32) << HEAP_SPACE_SHIFT) | index
+    }
+
+    #[inline]
+    fn encode_yard_index(index: u32) -> u32 {
+        Self::encode_index(HeapSpace::Yard, index)
+    }
+
+    #[inline]
+    fn encode_stable_index(index: u32) -> u32 {
+        Self::encode_index(HeapSpace::Stable, index)
+    }
+
+    #[inline]
+    fn decode_index(index: u32) -> (HeapSpace, u32) {
+        let space = match (index & HEAP_SPACE_MASK_U32) >> HEAP_SPACE_SHIFT {
+            0 => HeapSpace::Young,
+            1 => HeapSpace::Yard,
+            2 => HeapSpace::Stable,
+            _ => unreachable!("invalid heap space bits"),
+        };
+        (space, index & HEAP_INDEX_MASK_U32)
     }
 
     #[inline]
     pub fn is_stable_index(index: u32) -> bool {
-        (index & STABLE_SPACE_BIT) != 0
+        matches!(Self::decode_index(index).0, HeapSpace::Stable)
+    }
+
+    #[inline]
+    pub fn is_yard_index_in_region(&self, index: u32, mark: u32) -> bool {
+        let (space, raw_index) = Self::decode_index(index);
+        matches!(space, HeapSpace::Yard)
+            && raw_index >= mark
+            && raw_index < self.yard_entries.len() as u32
     }
 
     #[inline]
     pub fn is_young_index_in_region(&self, index: u32, mark: u32) -> bool {
-        let (is_stable, raw_index) = Self::decode_index(index);
-        !is_stable && raw_index >= mark && raw_index < self.young_entries.len() as u32
+        let (space, raw_index) = Self::decode_index(index);
+        matches!(space, HeapSpace::Young)
+            && raw_index >= mark
+            && raw_index < self.young_entries.len() as u32
     }
 
     #[inline]
     pub fn young_len(&self) -> usize {
         self.young_entries.len()
+    }
+
+    #[inline]
+    pub fn yard_len(&self) -> usize {
+        self.yard_entries.len()
+    }
+
+    #[inline]
+    pub fn is_frame_local_index(&self, index: u32, arena_mark: u32, yard_mark: u32) -> bool {
+        self.is_young_index_in_region(index, arena_mark)
+            || self.is_yard_index_in_region(index, yard_mark)
+    }
+
+    pub fn with_alloc_space<T>(&mut self, space: AllocSpace, f: impl FnOnce(&mut Arena) -> T) -> T {
+        let prev = self.alloc_space;
+        self.alloc_space = space;
+        let out = f(self);
+        self.alloc_space = prev;
+        out
     }
 
     // -- Typed push helpers ------------------------------------------------
@@ -744,10 +816,12 @@ impl Arena {
     }
 
     pub fn len(&self) -> usize {
-        self.young_entries.len() + self.stable_entries.len()
+        self.young_entries.len() + self.yard_entries.len() + self.stable_entries.len()
     }
     pub fn is_empty(&self) -> bool {
-        self.young_entries.is_empty() && self.stable_entries.is_empty()
+        self.young_entries.is_empty()
+            && self.yard_entries.is_empty()
+            && self.stable_entries.is_empty()
     }
 
     pub fn push_list_prepend(&mut self, head: NanValue, tail: NanValue) -> u32 {
@@ -890,7 +964,11 @@ impl Arena {
         self.young_entries.truncate(mark as usize);
     }
 
-    pub fn promote_escapes_from(&mut self, mark: u32, roots: &mut [NanValue]) {
+    pub fn truncate_yard_to(&mut self, mark: u32) {
+        self.yard_entries.truncate(mark as usize);
+    }
+
+    pub fn promote_young_roots_to_yard(&mut self, mark: u32, roots: &mut [NanValue]) {
         if self.young_entries.len() <= mark as usize {
             return;
         }
@@ -898,10 +976,35 @@ impl Arena {
         let mut relocated = vec![u32::MAX; self.young_entries.len()];
 
         for root in roots {
-            *root = self.promote_region_root_to_stable(*root, mark, &mut relocated);
+            *root = self.promote_region_root_to_yard(*root, mark, &mut relocated);
         }
 
         self.young_entries.truncate(mark as usize);
+    }
+
+    pub fn promote_roots_to_stable(&mut self, roots: &mut [NanValue]) {
+        let mut relocated_young = vec![u32::MAX; self.young_entries.len()];
+        let mut relocated_yard = vec![u32::MAX; self.yard_entries.len()];
+
+        for root in roots {
+            *root = self.promote_value_to_stable(*root, &mut relocated_young, &mut relocated_yard);
+        }
+    }
+
+    pub fn collect_yard_from_roots(&mut self, mark: u32, roots: &mut [NanValue]) {
+        if self.yard_entries.len() <= mark as usize {
+            return;
+        }
+
+        let mut relocated = vec![u32::MAX; self.yard_entries.len()];
+        let mut compacted = Vec::with_capacity(self.yard_entries.len() - mark as usize);
+
+        for root in roots {
+            *root = self.relocate_yard_root(*root, mark, &mut relocated, &mut compacted);
+        }
+
+        self.yard_entries.truncate(mark as usize);
+        self.yard_entries.extend(compacted);
     }
 
     pub fn collect_stable_from_roots(&mut self, roots: &mut [NanValue]) {
@@ -919,7 +1022,7 @@ impl Arena {
         self.stable_entries = compacted;
     }
 
-    fn promote_region_root_to_stable(
+    fn promote_region_root_to_yard(
         &mut self,
         value: NanValue,
         mark: u32,
@@ -931,15 +1034,15 @@ impl Arena {
         if !self.is_young_index_in_region(index, mark) {
             return value;
         }
-        self.promote_value_to_stable(value, relocated)
+        self.promote_value_to_yard(value, relocated)
     }
 
-    fn promote_value_to_stable(&mut self, value: NanValue, relocated: &mut [u32]) -> NanValue {
+    fn promote_value_to_yard(&mut self, value: NanValue, relocated: &mut [u32]) -> NanValue {
         let Some(index) = value.heap_index() else {
             return value;
         };
-        let (is_stable, raw_index) = Self::decode_index(index);
-        if is_stable {
+        let (space, raw_index) = Self::decode_index(index);
+        if !matches!(space, HeapSpace::Young) {
             return value;
         }
 
@@ -949,42 +1052,40 @@ impl Arena {
             return value.with_heap_index(relocated_index);
         }
 
-        let new_index = Self::encode_stable_index(self.stable_entries.len() as u32);
+        let new_index = Self::encode_yard_index(self.yard_entries.len() as u32);
         relocated[relocation_slot] = new_index;
-        self.stable_entries.push(ArenaEntry::Int(0));
+        self.yard_entries.push(ArenaEntry::Int(0));
 
         let entry = std::mem::replace(
             &mut self.young_entries[raw_index as usize],
             ArenaEntry::Int(0),
         );
-        let new_entry = self.promote_entry_to_stable(entry, relocated);
-        self.stable_entries[(new_index & HEAP_INDEX_MASK_U32) as usize] = new_entry;
+        let new_entry = self.promote_entry_to_yard(entry, relocated);
+        self.yard_entries[(new_index & HEAP_INDEX_MASK_U32) as usize] = new_entry;
         value.with_heap_index(new_index)
     }
 
-    fn promote_entry_to_stable(&mut self, entry: ArenaEntry, relocated: &mut [u32]) -> ArenaEntry {
+    fn promote_entry_to_yard(&mut self, entry: ArenaEntry, relocated: &mut [u32]) -> ArenaEntry {
         match entry {
             ArenaEntry::Int(i) => ArenaEntry::Int(i),
             ArenaEntry::String(s) => ArenaEntry::String(s),
             ArenaEntry::Builtin(name) => ArenaEntry::Builtin(name),
             ArenaEntry::Fn(f) => ArenaEntry::Fn(f),
             ArenaEntry::Boxed(inner) => {
-                ArenaEntry::Boxed(self.promote_value_to_stable(inner, relocated))
+                ArenaEntry::Boxed(self.promote_value_to_yard(inner, relocated))
             }
-            ArenaEntry::List(list) => {
-                ArenaEntry::List(self.promote_list_to_stable(list, relocated))
-            }
+            ArenaEntry::List(list) => ArenaEntry::List(self.promote_list_to_yard(list, relocated)),
             ArenaEntry::Tuple(mut items) => {
                 for value in &mut items {
-                    *value = self.promote_value_to_stable(*value, relocated);
+                    *value = self.promote_value_to_yard(*value, relocated);
                 }
                 ArenaEntry::Tuple(items)
             }
             ArenaEntry::Map(map) => {
                 let mut out = PersistentMap::new();
                 for (hash, (key, value)) in map {
-                    let relocated_key = self.promote_value_to_stable(key, relocated);
-                    let relocated_value = self.promote_value_to_stable(value, relocated);
+                    let relocated_key = self.promote_value_to_yard(key, relocated);
+                    let relocated_value = self.promote_value_to_yard(value, relocated);
                     out.insert(hash, (relocated_key, relocated_value));
                 }
                 ArenaEntry::Map(out)
@@ -994,7 +1095,7 @@ impl Arena {
                 mut fields,
             } => {
                 for value in &mut fields {
-                    *value = self.promote_value_to_stable(*value, relocated);
+                    *value = self.promote_value_to_yard(*value, relocated);
                 }
                 ArenaEntry::Record { type_id, fields }
             }
@@ -1004,7 +1105,7 @@ impl Arena {
                 mut fields,
             } => {
                 for value in &mut fields {
-                    *value = self.promote_value_to_stable(*value, relocated);
+                    *value = self.promote_value_to_yard(*value, relocated);
                 }
                 ArenaEntry::Variant {
                     type_id,
@@ -1014,32 +1115,327 @@ impl Arena {
             }
             ArenaEntry::Namespace { name, mut members } => {
                 for (_, value) in &mut members {
-                    *value = self.promote_value_to_stable(*value, relocated);
+                    *value = self.promote_value_to_yard(*value, relocated);
                 }
                 ArenaEntry::Namespace { name, members }
             }
         }
     }
 
-    fn promote_list_to_stable(&mut self, list: ArenaList, relocated: &mut [u32]) -> ArenaList {
+    fn promote_list_to_yard(&mut self, list: ArenaList, relocated: &mut [u32]) -> ArenaList {
         match list {
             ArenaList::Flat { items, start } => ArenaList::Flat {
                 items: Rc::new(
                     items[start..]
                         .iter()
-                        .map(|value| self.promote_value_to_stable(*value, relocated))
+                        .map(|value| self.promote_value_to_yard(*value, relocated))
                         .collect(),
                 ),
                 start: 0,
             },
             ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
-                head: self.promote_value_to_stable(head, relocated),
-                tail: self.promote_value_to_stable(tail, relocated),
+                head: self.promote_value_to_yard(head, relocated),
+                tail: self.promote_value_to_yard(tail, relocated),
                 len,
             },
             ArenaList::Concat { left, right, len } => ArenaList::Concat {
-                left: self.promote_value_to_stable(left, relocated),
-                right: self.promote_value_to_stable(right, relocated),
+                left: self.promote_value_to_yard(left, relocated),
+                right: self.promote_value_to_yard(right, relocated),
+                len,
+            },
+        }
+    }
+
+    fn promote_value_to_stable(
+        &mut self,
+        value: NanValue,
+        relocated_young: &mut [u32],
+        relocated_yard: &mut [u32],
+    ) -> NanValue {
+        let Some(index) = value.heap_index() else {
+            return value;
+        };
+        let (space, raw_index) = Self::decode_index(index);
+        match space {
+            HeapSpace::Stable => value,
+            HeapSpace::Young => {
+                let relocation_slot = raw_index as usize;
+                let relocated_index = relocated_young[relocation_slot];
+                if relocated_index != u32::MAX {
+                    return value.with_heap_index(relocated_index);
+                }
+
+                let new_index = Self::encode_stable_index(self.stable_entries.len() as u32);
+                relocated_young[relocation_slot] = new_index;
+                self.stable_entries.push(ArenaEntry::Int(0));
+
+                let entry = self.young_entries[raw_index as usize].clone();
+                let new_entry =
+                    self.promote_entry_to_stable(entry, relocated_young, relocated_yard);
+                self.stable_entries[(new_index & HEAP_INDEX_MASK_U32) as usize] = new_entry;
+                value.with_heap_index(new_index)
+            }
+            HeapSpace::Yard => {
+                let relocation_slot = raw_index as usize;
+                let relocated_index = relocated_yard[relocation_slot];
+                if relocated_index != u32::MAX {
+                    return value.with_heap_index(relocated_index);
+                }
+
+                let new_index = Self::encode_stable_index(self.stable_entries.len() as u32);
+                relocated_yard[relocation_slot] = new_index;
+                self.stable_entries.push(ArenaEntry::Int(0));
+
+                let entry = self.yard_entries[raw_index as usize].clone();
+                let new_entry =
+                    self.promote_entry_to_stable(entry, relocated_young, relocated_yard);
+                self.stable_entries[(new_index & HEAP_INDEX_MASK_U32) as usize] = new_entry;
+                value.with_heap_index(new_index)
+            }
+        }
+    }
+
+    fn promote_entry_to_stable(
+        &mut self,
+        entry: ArenaEntry,
+        relocated_young: &mut [u32],
+        relocated_yard: &mut [u32],
+    ) -> ArenaEntry {
+        match entry {
+            ArenaEntry::Int(i) => ArenaEntry::Int(i),
+            ArenaEntry::String(s) => ArenaEntry::String(s),
+            ArenaEntry::Builtin(name) => ArenaEntry::Builtin(name),
+            ArenaEntry::Fn(f) => ArenaEntry::Fn(f),
+            ArenaEntry::Boxed(inner) => ArenaEntry::Boxed(self.promote_value_to_stable(
+                inner,
+                relocated_young,
+                relocated_yard,
+            )),
+            ArenaEntry::List(list) => {
+                ArenaEntry::List(self.promote_list_to_stable(list, relocated_young, relocated_yard))
+            }
+            ArenaEntry::Tuple(mut items) => {
+                for value in &mut items {
+                    *value = self.promote_value_to_stable(*value, relocated_young, relocated_yard);
+                }
+                ArenaEntry::Tuple(items)
+            }
+            ArenaEntry::Map(map) => {
+                let mut out = PersistentMap::new();
+                for (hash, (key, value)) in map {
+                    let relocated_key =
+                        self.promote_value_to_stable(key, relocated_young, relocated_yard);
+                    let relocated_value =
+                        self.promote_value_to_stable(value, relocated_young, relocated_yard);
+                    out.insert(hash, (relocated_key, relocated_value));
+                }
+                ArenaEntry::Map(out)
+            }
+            ArenaEntry::Record {
+                type_id,
+                mut fields,
+            } => {
+                for value in &mut fields {
+                    *value = self.promote_value_to_stable(*value, relocated_young, relocated_yard);
+                }
+                ArenaEntry::Record { type_id, fields }
+            }
+            ArenaEntry::Variant {
+                type_id,
+                variant_id,
+                mut fields,
+            } => {
+                for value in &mut fields {
+                    *value = self.promote_value_to_stable(*value, relocated_young, relocated_yard);
+                }
+                ArenaEntry::Variant {
+                    type_id,
+                    variant_id,
+                    fields,
+                }
+            }
+            ArenaEntry::Namespace { name, mut members } => {
+                for (_, value) in &mut members {
+                    *value = self.promote_value_to_stable(*value, relocated_young, relocated_yard);
+                }
+                ArenaEntry::Namespace { name, members }
+            }
+        }
+    }
+
+    fn promote_list_to_stable(
+        &mut self,
+        list: ArenaList,
+        relocated_young: &mut [u32],
+        relocated_yard: &mut [u32],
+    ) -> ArenaList {
+        match list {
+            ArenaList::Flat { items, start } => ArenaList::Flat {
+                items: Rc::new(
+                    items[start..]
+                        .iter()
+                        .map(|value| {
+                            self.promote_value_to_stable(*value, relocated_young, relocated_yard)
+                        })
+                        .collect(),
+                ),
+                start: 0,
+            },
+            ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
+                head: self.promote_value_to_stable(head, relocated_young, relocated_yard),
+                tail: self.promote_value_to_stable(tail, relocated_young, relocated_yard),
+                len,
+            },
+            ArenaList::Concat { left, right, len } => ArenaList::Concat {
+                left: self.promote_value_to_stable(left, relocated_young, relocated_yard),
+                right: self.promote_value_to_stable(right, relocated_young, relocated_yard),
+                len,
+            },
+        }
+    }
+
+    fn relocate_yard_root(
+        &mut self,
+        value: NanValue,
+        mark: u32,
+        relocated: &mut [u32],
+        compacted: &mut Vec<ArenaEntry>,
+    ) -> NanValue {
+        let Some(index) = value.heap_index() else {
+            return value;
+        };
+        if !self.is_yard_index_in_region(index, mark) {
+            return value;
+        }
+        self.relocate_yard_value(value, mark, relocated, compacted)
+    }
+
+    fn relocate_yard_value(
+        &mut self,
+        value: NanValue,
+        mark: u32,
+        relocated: &mut [u32],
+        compacted: &mut Vec<ArenaEntry>,
+    ) -> NanValue {
+        let Some(index) = value.heap_index() else {
+            return value;
+        };
+        let (space, raw_index) = Self::decode_index(index);
+        if !matches!(space, HeapSpace::Yard) || raw_index < mark {
+            return value;
+        }
+
+        let relocation_slot = raw_index as usize;
+        let relocated_index = relocated[relocation_slot];
+        if relocated_index != u32::MAX {
+            return value.with_heap_index(relocated_index);
+        }
+
+        let compacted_pos = compacted.len() as u32;
+        let new_index = Self::encode_yard_index(mark + compacted_pos);
+        relocated[relocation_slot] = new_index;
+        compacted.push(ArenaEntry::Int(0));
+
+        let entry = std::mem::replace(
+            &mut self.yard_entries[raw_index as usize],
+            ArenaEntry::Int(0),
+        );
+        let new_entry = self.relocate_yard_entry(entry, mark, relocated, compacted);
+        compacted[compacted_pos as usize] = new_entry;
+        value.with_heap_index(new_index)
+    }
+
+    fn relocate_yard_entry(
+        &mut self,
+        entry: ArenaEntry,
+        mark: u32,
+        relocated: &mut [u32],
+        compacted: &mut Vec<ArenaEntry>,
+    ) -> ArenaEntry {
+        match entry {
+            ArenaEntry::Int(i) => ArenaEntry::Int(i),
+            ArenaEntry::String(s) => ArenaEntry::String(s),
+            ArenaEntry::Builtin(name) => ArenaEntry::Builtin(name),
+            ArenaEntry::Fn(f) => ArenaEntry::Fn(f),
+            ArenaEntry::Boxed(inner) => {
+                ArenaEntry::Boxed(self.relocate_yard_value(inner, mark, relocated, compacted))
+            }
+            ArenaEntry::List(list) => {
+                ArenaEntry::List(self.relocate_yard_list(list, mark, relocated, compacted))
+            }
+            ArenaEntry::Tuple(mut items) => {
+                for value in &mut items {
+                    *value = self.relocate_yard_value(*value, mark, relocated, compacted);
+                }
+                ArenaEntry::Tuple(items)
+            }
+            ArenaEntry::Map(map) => {
+                let mut out = PersistentMap::new();
+                for (hash, (key, value)) in map {
+                    let relocated_key = self.relocate_yard_value(key, mark, relocated, compacted);
+                    let relocated_value =
+                        self.relocate_yard_value(value, mark, relocated, compacted);
+                    out.insert(hash, (relocated_key, relocated_value));
+                }
+                ArenaEntry::Map(out)
+            }
+            ArenaEntry::Record {
+                type_id,
+                mut fields,
+            } => {
+                for value in &mut fields {
+                    *value = self.relocate_yard_value(*value, mark, relocated, compacted);
+                }
+                ArenaEntry::Record { type_id, fields }
+            }
+            ArenaEntry::Variant {
+                type_id,
+                variant_id,
+                mut fields,
+            } => {
+                for value in &mut fields {
+                    *value = self.relocate_yard_value(*value, mark, relocated, compacted);
+                }
+                ArenaEntry::Variant {
+                    type_id,
+                    variant_id,
+                    fields,
+                }
+            }
+            ArenaEntry::Namespace { name, mut members } => {
+                for (_, value) in &mut members {
+                    *value = self.relocate_yard_value(*value, mark, relocated, compacted);
+                }
+                ArenaEntry::Namespace { name, members }
+            }
+        }
+    }
+
+    fn relocate_yard_list(
+        &mut self,
+        list: ArenaList,
+        mark: u32,
+        relocated: &mut [u32],
+        compacted: &mut Vec<ArenaEntry>,
+    ) -> ArenaList {
+        match list {
+            ArenaList::Flat { items, start } => ArenaList::Flat {
+                items: Rc::new(
+                    items[start..]
+                        .iter()
+                        .map(|value| self.relocate_yard_value(*value, mark, relocated, compacted))
+                        .collect(),
+                ),
+                start: 0,
+            },
+            ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
+                head: self.relocate_yard_value(head, mark, relocated, compacted),
+                tail: self.relocate_yard_value(tail, mark, relocated, compacted),
+                len,
+            },
+            ArenaList::Concat { left, right, len } => ArenaList::Concat {
+                left: self.relocate_yard_value(left, mark, relocated, compacted),
+                right: self.relocate_yard_value(right, mark, relocated, compacted),
                 len,
             },
         }
@@ -1054,7 +1450,7 @@ impl Arena {
         let Some(index) = value.heap_index() else {
             return value;
         };
-        if !Self::is_stable_index(index) {
+        if !matches!(Self::decode_index(index).0, HeapSpace::Stable) {
             return value;
         }
         self.relocate_stable_value(value, relocated, compacted)
@@ -1069,8 +1465,8 @@ impl Arena {
         let Some(index) = value.heap_index() else {
             return value;
         };
-        let (is_stable, raw_index) = Self::decode_index(index);
-        if !is_stable {
+        let (space, raw_index) = Self::decode_index(index);
+        if !matches!(space, HeapSpace::Stable) {
             return value;
         }
 

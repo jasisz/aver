@@ -26,6 +26,9 @@ pub struct CallFrame {
     /// Arena length at function entry; allocations above this mark are local
     /// to the frame unless promoted on return/tail-call.
     pub arena_mark: u32,
+    /// Yard length at function entry; reused TCO frames compact this suffix
+    /// so loop-carried survivors do not accumulate across iterations.
+    pub yard_mark: u32,
     /// Whether this frame stored a young-region value into globals.
     pub globals_dirty: bool,
 }
