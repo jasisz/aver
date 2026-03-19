@@ -781,6 +781,72 @@ fn display_check_path(path: &str, module_root: &str) -> String {
     path.to_string()
 }
 
+pub(super) fn cmd_run_vm(file: &str, module_root_override: Option<&str>) {
+    use aver::nan_value::Arena;
+    use aver::vm;
+
+    let module_root = super::shared::resolve_module_root(module_root_override);
+    let source = match super::shared::read_file(file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+    let mut items = match super::shared::parse_file(&source) {
+        Ok(items) => items,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+
+    // TCO transform
+    tco::transform_program(&mut items);
+
+    // Type check
+    let tc_result = run_type_check_full(&items, Some(&module_root));
+    if !tc_result.errors.is_empty() {
+        eprintln!(
+            "{}",
+            super::shared::format_type_errors(&tc_result.errors).red()
+        );
+        process::exit(1);
+    }
+
+    // Resolver
+    resolver::resolve_program(&mut items);
+
+    // Compile to bytecode
+    let mut arena = Arena::new();
+    let (code, globals) =
+        match vm::compile_program_with_modules(&items, &mut arena, Some(&module_root)) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("{}", format!("VM compile error: {}", e).red());
+                process::exit(1);
+            }
+        };
+
+    // Execute
+    let mut machine = vm::VM::new(code, globals, arena);
+    match machine.run() {
+        Ok(result) => {
+            // If main returned Result.Err, report it
+            if result.is_err() {
+                let inner = machine.arena.get_boxed(result.wrapper_index());
+                let msg = inner.repr(&machine.arena);
+                eprintln!("{}", format!("Main returned error: {}", msg).red());
+                process::exit(1);
+            }
+        }
+        Err(e) => {
+            eprintln!("{}", format!("{}", e).red());
+            process::exit(1);
+        }
+    }
+}
+
 pub(super) fn cmd_run(
     file: &str,
     module_root_override: Option<&str>,

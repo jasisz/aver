@@ -22,3 +22,4 @@ pub mod tco;
 pub mod types;
 pub mod value;
 pub mod verify_law;
+pub mod vm;

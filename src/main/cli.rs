@@ -93,6 +93,9 @@ pub(super) enum Commands {
         /// Record effect calls and persist a replay session JSON into this directory
         #[arg(long)]
         record: Option<String>,
+        /// Execute using the bytecode VM instead of the tree-walking interpreter
+        #[arg(long)]
+        vm: bool,
         /// Arguments passed to the Aver program (available via Args.get()), after --
         #[arg(last = true)]
         program_args: Vec<String>,
