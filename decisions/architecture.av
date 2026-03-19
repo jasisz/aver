@@ -64,11 +64,12 @@ decision HybridExecutionModel
     author = "Aver core team"
     reason =
         "Interpreter keeps feedback loop fast for language work (run/check/verify/context)."
+        "Bytecode VM gives a real runtime path for run/verify/replay without leaving Aver source or its effect model."
         "Transpilation gives a deployment path to native projects without shipping the Aver runtime."
-        "These paths solve different problems, so they should coexist instead of replacing each other."
-    chosen = "InterpreterPlusTranspiler"
-    rejected = ["InterpreterOnly", "TranspilerOnly", "BytecodeVM"]
-    impacts = ["Interpreter", "Transpiler", "CLI", "Performance"]
+        "These three paths solve different problems, so they should coexist instead of replacing each other."
+    chosen = "InterpreterPlusVMPlusTranspiler"
+    rejected = ["InterpreterOnly", "VMOnly", "TranspilerOnly"]
+    impacts = ["Interpreter", "VM", "Transpiler", "CLI", "Performance"]
 
 decision RecordsAreDataMethodsInModules
     date = "2026-02-25"
@@ -132,7 +133,7 @@ fn describeDecision(decName: String, pick: String) -> String
 
 verify describeDecision
     describeDecision("HostLanguage", "Rust") => "Decision: HostLanguage -> chosen = Rust"
-    describeDecision("HybridExecutionModel", "InterpreterPlusTranspiler") => "Decision: HybridExecutionModel -> chosen = InterpreterPlusTranspiler"
+    describeDecision("HybridExecutionModel", "InterpreterPlusVMPlusTranspiler") => "Decision: HybridExecutionModel -> chosen = InterpreterPlusVMPlusTranspiler"
 
 fn main() -> Unit
     ! [Console.print]
@@ -143,7 +144,7 @@ fn main() -> Unit
     Console.print(describeDecision("ResultOverExceptions", "Result"))
     Console.print(describeDecision("ColocatedVerify", "ColocatedVerifyBlocks"))
     Console.print(describeDecision("DecisionBlocksAsLanguageFeature", "FirstClassDecisions"))
-    Console.print(describeDecision("HybridExecutionModel", "InterpreterPlusTranspiler"))
+    Console.print(describeDecision("HybridExecutionModel", "InterpreterPlusVMPlusTranspiler"))
     Console.print(describeDecision("RecordsAreDataMethodsInModules", "DataOnlyRecords"))
     Console.print(describeDecision("EffectContractsAreTransparentAcrossModules", "TransparentAcrossModules"))
     Console.print(describeDecision("FunctionBodiesUseIndentationOnly", "IndentedBodiesOnly"))
