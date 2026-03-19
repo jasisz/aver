@@ -88,6 +88,8 @@ dependencies = [
  "colored",
  "criterion",
  "im",
+ "serde",
+ "serde_json",
  "thiserror",
  "toml",
  "url",

@@ -1,6 +1,6 @@
 # Aver
 
-Aver is a statically typed language designed for AI to write in and humans to review, with a fast interpreter for iteration, a Rust backend for deployment, Lean proof export for pure core logic, and Dafny verification for automated law checking via Z3.
+Aver is a statically typed language designed for AI to write in and humans to review, with a fast interpreter for iteration, a bytecode VM for runtime execution, a Rust backend for deployment, Lean proof export for pure core logic, and Dafny verification for automated law checking via Z3.
 
 It is built around one idea: the risky part of AI-written code is usually not syntax, it is missing intent. Aver makes that intent explicit and machine-readable:
 
@@ -54,7 +54,9 @@ fn main() -> Unit
 EOF
 
 aver run      hello.av
+aver run      hello.av --vm
 aver verify   hello.av
+aver verify   hello.av --vm
 aver check    hello.av
 aver context  hello.av
 aver compile  hello.av -o out/
@@ -71,7 +73,9 @@ cd aver
 cargo install --path . --force
 
 aver run      examples/core/calculator.av
+aver run      examples/core/calculator.av --vm
 aver verify   examples/core/calculator.av
+aver verify   examples/core/calculator.av --vm
 aver check    examples/core/calculator.av
 aver context  examples/core/calculator.av
 aver compile  examples/core/calculator.av -o out/
@@ -80,6 +84,7 @@ aver proof    examples/formal/law_auto.av -o proof/
 (cd proof && lake build)
 aver run      examples/services/console_demo.av --record recordings/
 aver replay   recordings/ --test --diff
+aver replay   recordings/ --test --diff --vm
 ```
 
 Requires: Rust stable toolchain.
@@ -155,7 +160,19 @@ LLMs can produce function bodies quickly. They are much worse at preserving the 
 
 Traditional languages usually push that into comments, external docs, stale tests, or team memory. Aver makes those concerns part of the language and tooling.
 
-The intended workflow is explicit: AI writes Aver, humans review contracts and intent, and deployment happens either through the interpreter or by transpiling to Rust.
+The intended workflow is explicit: AI writes Aver, humans review contracts and intent, and execution happens through the interpreter or bytecode VM during development, with deployment also available through Rust code generation.
+
+### Bytecode VM
+
+```bash
+aver run hello.av --vm
+aver verify hello.av --vm
+aver replay recordings/ --vm
+```
+
+`--vm` executes the same Aver program, verify cases, or replay session through the bytecode virtual machine instead of the tree-walking interpreter. This is useful when you want a runtime path that is closer to the eventual compiled model, while keeping the same source language and effect checks.
+
+For the VM internals and design rationale, see [docs/vm.md](docs/vm.md).
 
 ---
 
@@ -483,6 +500,7 @@ For repository self-documentation via decision exports, see `decisions/architect
 | [docs/constructors.md](docs/constructors.md) | Constructor rules and parsing contract |
 | [editors/README.md](editors/README.md) | VS Code + LSP setup and Sublime Text support |
 | [docs/services.md](docs/services.md) | Full API reference for all namespaces (signatures, effects, notes) |
+| [docs/vm.md](docs/vm.md) | Bytecode VM design note: execution model, `NanValue`, opcodes, effects |
 | [docs/types.md](docs/types.md) | Key data types (compiler, AST, runtime) |
 | [docs/extending.md](docs/extending.md) | How to add keywords, namespace functions, expression types |
 | [docs/transpilation.md](docs/transpilation.md) | Overview of `aver compile` and `aver proof` |

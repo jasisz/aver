@@ -194,6 +194,50 @@ fn vm_binding_in_expression() {
 }
 
 // ---------------------------------------------------------------------------
+// Tuples
+// ---------------------------------------------------------------------------
+
+#[test]
+fn vm_tuple_literal() {
+    let (result, arena) = vm_run_with_arena("fn main() -> (Int, String)\n    (1, \"x\")\n");
+    let value = result.to_value(&arena);
+    assert_eq!(
+        value,
+        aver::value::Value::Tuple(vec![
+            aver::value::Value::Int(1),
+            aver::value::Value::Str("x".to_string())
+        ])
+    );
+}
+
+#[test]
+fn vm_match_tuple_pattern_binds_values() {
+    let src = "fn sum_pair(p: (Int, Int)) -> Int\n    match p\n        (a, b) -> a + b\n        _ -> 0\n\nfn main() -> Int\n    sum_pair((2, 5))\n";
+    let result = vm_run(src);
+    assert!(result.is_int());
+    let arena = Arena::new();
+    assert_eq!(result.as_int(&arena), 7);
+}
+
+#[test]
+fn vm_match_nested_tuple_pattern() {
+    let src = "fn flatten(p: ((Int, Int), Int)) -> Int\n    match p\n        ((a, b), c) -> a + b + c\n        _ -> 0\n\nfn main() -> Int\n    flatten(((1, 2), 3))\n";
+    let result = vm_run(src);
+    assert!(result.is_int());
+    let arena = Arena::new();
+    assert_eq!(result.as_int(&arena), 6);
+}
+
+#[test]
+fn vm_tuple_pattern_arity_mismatch_falls_through() {
+    let src = "fn test(p: (Int, Int)) -> Int\n    match p\n        (a, b, c) -> a + b + c\n        _ -> 42\n\nfn main() -> Int\n    test((1, 2))\n";
+    let result = vm_run(src);
+    assert!(result.is_int());
+    let arena = Arena::new();
+    assert_eq!(result.as_int(&arena), 42);
+}
+
+// ---------------------------------------------------------------------------
 // Match (integer literals)
 // ---------------------------------------------------------------------------
 
@@ -472,6 +516,13 @@ fn vm_string_interpolation() {
         vm_run_with_arena("fn main() -> String\n    x = 42\n    \"value is {x}\"\n");
     assert!(result.is_string());
     assert_eq!(arena.get_string(result.arena_index()), "value is 42");
+}
+
+#[test]
+fn vm_string_interpolation_single_expr_part() {
+    let (result, arena) = vm_run_with_arena("fn main() -> String\n    x = 42\n    \"{x}\"\n");
+    assert!(result.is_string());
+    assert_eq!(arena.get_string(result.arena_index()), "42");
 }
 
 // ---------------------------------------------------------------------------

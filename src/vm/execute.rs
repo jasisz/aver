@@ -1,20 +1,7 @@
-use crate::nan_value::{Arena, NanValue};
-use crate::replay::session::{EffectRecord, RecordedOutcome};
-use crate::replay::{json_to_value, value_to_json, values_to_json_lossy};
-use crate::services::{console, disk, env, http, random, tcp, time};
-use crate::types::{bool, byte, char, float, int, list, map, option, result, string};
-use crate::value::RuntimeError;
-
 use super::opcode::*;
+use super::runtime::{VmExecutionMode, VmRuntime, is_http_server_builtin};
 use super::types::{CallFrame, CodeStore, VmError};
-
-/// VM execution mode for record/replay.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum VmExecutionMode {
-    Normal,
-    Record,
-    Replay,
-}
+use crate::nan_value::{Arena, NanValue};
 
 /// The Aver bytecode virtual machine.
 pub struct VM {
@@ -23,18 +10,7 @@ pub struct VM {
     globals: Vec<NanValue>,
     code: CodeStore,
     pub arena: Arena,
-    /// Effect capabilities granted to the current entry point.
-    allowed_effects: Vec<String>,
-    /// CLI program arguments (for Args.get builtin).
-    cli_args: Vec<String>,
-    /// Execution mode: Normal, Record, or Replay.
-    execution_mode: VmExecutionMode,
-    /// Recorded effects (populated in Record mode).
-    pub recorded_effects: Vec<EffectRecord>,
-    /// Replay effects (consumed in Replay mode).
-    replay_effects: Vec<EffectRecord>,
-    replay_pos: usize,
-    validate_replay_args: bool,
+    runtime: VmRuntime,
 }
 
 macro_rules! read_u8 {
@@ -72,50 +48,70 @@ impl VM {
             globals,
             code,
             arena,
-            allowed_effects: Vec::new(),
-            cli_args: Vec::new(),
-            execution_mode: VmExecutionMode::Normal,
-            recorded_effects: Vec::new(),
-            replay_effects: Vec::new(),
-            replay_pos: 0,
-            validate_replay_args: false,
+            runtime: VmRuntime::new(),
         }
     }
 
     /// Set CLI arguments for Args.get().
     pub fn set_cli_args(&mut self, args: Vec<String>) {
-        self.cli_args = args;
+        self.runtime.set_cli_args(args);
     }
 
     /// Start recording effectful calls.
     pub fn start_recording(&mut self) {
-        self.execution_mode = VmExecutionMode::Record;
-        self.recorded_effects.clear();
+        self.runtime.start_recording();
     }
 
     /// Start replaying from recorded effects.
-    pub fn start_replay(&mut self, effects: Vec<EffectRecord>, validate_args: bool) {
-        self.execution_mode = VmExecutionMode::Replay;
-        self.replay_effects = effects;
-        self.replay_pos = 0;
-        self.validate_replay_args = validate_args;
+    pub fn start_replay(
+        &mut self,
+        effects: Vec<crate::replay::session::EffectRecord>,
+        validate_args: bool,
+    ) {
+        self.runtime.start_replay(effects, validate_args);
+    }
+
+    pub fn recorded_effects(&self) -> &[crate::replay::session::EffectRecord] {
+        self.runtime.recorded_effects()
+    }
+
+    pub fn replay_progress(&self) -> (usize, usize) {
+        self.runtime.replay_progress()
+    }
+
+    pub fn ensure_replay_consumed(&self) -> Result<(), VmError> {
+        self.runtime.ensure_replay_consumed()
     }
 
     pub fn run(&mut self) -> Result<NanValue, VmError> {
+        self.run_top_level()?;
+        self.run_named_function("main", &[])
+    }
+
+    pub fn run_top_level(&mut self) -> Result<(), VmError> {
         if let Some(top_id) = self.code.find("__top_level__") {
-            self.call_function(top_id, &[])?;
+            let _ = self.call_function(top_id, &[])?;
         }
-        if let Some(main_id) = self.code.find("main") {
-            // Set allowed effects from main's declared effects.
-            self.allowed_effects = self.code.get(main_id).effects.clone();
-            self.call_function(main_id, &[])
-        } else {
-            Err(VmError::Runtime("no main() function defined".into()))
-        }
+        Ok(())
+    }
+
+    pub fn run_named_function(
+        &mut self,
+        name: &str,
+        args: &[NanValue],
+    ) -> Result<NanValue, VmError> {
+        let fn_id = self
+            .code
+            .find(name)
+            .ok_or_else(|| VmError::Runtime(format!("function '{}' not found", name)))?;
+        self.runtime
+            .set_allowed_effects(self.code.get(fn_id).effects.clone());
+        self.call_function(fn_id, args)
     }
 
     pub fn call_function(&mut self, fn_id: u32, args: &[NanValue]) -> Result<NanValue, VmError> {
         let chunk = self.code.get(fn_id);
+        let caller_depth = self.frames.len();
         let bp = self.stack.len() as u32;
         for arg in args {
             self.stack.push(*arg);
@@ -129,10 +125,10 @@ impl VM {
             bp,
             local_count: chunk.local_count,
         });
-        self.execute()
+        self.execute_until(caller_depth)
     }
 
-    fn execute(&mut self) -> Result<NanValue, VmError> {
+    fn execute_until(&mut self, caller_depth: usize) -> Result<NanValue, VmError> {
         let mut fn_id = self.frames.last().unwrap().fn_id;
         let mut ip = self.frames.last().unwrap().ip as usize;
         let mut bp = self.frames.last().unwrap().bp as usize;
@@ -301,18 +297,7 @@ impl VM {
                     let argc = read_u8!(code, ip) as usize;
                     let fn_pos = self.stack.len() - 1 - argc;
                     let fn_val = self.stack[fn_pos];
-                    let target_fn_id = if fn_val.is_int() {
-                        fn_val.as_int(&self.arena) as u32
-                    } else {
-                        let caller_name = &self.code.functions[fn_id as usize].name;
-                        return Err(VmError::Type(format!(
-                            "cannot call non-function (got {} = {:?}) in {} at ip={}",
-                            fn_val.type_name(),
-                            fn_val,
-                            caller_name,
-                            ip
-                        )));
-                    };
+                    let target_fn_id = self.decode_vm_fn_ref(fn_val, fn_id, ip)?;
 
                     self.frames.last_mut().unwrap().ip = ip as u32;
                     self.stack.remove(fn_pos);
@@ -340,16 +325,13 @@ impl VM {
                     let argc = read_u8!(code, ip) as usize;
                     let builtin_name = self.arena.get_string(name_idx).to_string();
 
-                    // Effect enforcement.
-                    self.check_builtin_effects(&builtin_name)?;
-
                     // Collect args from stack.
                     let args_start = self.stack.len() - argc;
                     let args: Vec<NanValue> = self.stack[args_start..].to_vec();
                     self.stack.truncate(args_start);
 
                     // HttpServer.listen/listenWith: special case — needs VM callback.
-                    if builtin_name.starts_with("HttpServer.") {
+                    if is_http_server_builtin(&builtin_name) {
                         // Save execute loop state before calling into HttpServer.
                         self.frames.last_mut().unwrap().ip = ip as u32;
                         let result = self.dispatch_http_server(&builtin_name, &args)?;
@@ -362,83 +344,9 @@ impl VM {
                         continue;
                     }
 
-                    let is_effectful = !builtin_effects(&builtin_name).is_empty();
-
-                    let result = match (is_effectful, self.execution_mode) {
-                        (_, VmExecutionMode::Normal) | (false, _) => dispatch_builtin_nv(
-                            &builtin_name,
-                            &args,
-                            &mut self.arena,
-                            &self.cli_args,
-                        )?,
-                        (true, VmExecutionMode::Record) => {
-                            // Call real service, then record the effect.
-                            let args_json = {
-                                let vals: Vec<_> =
-                                    args.iter().map(|a| a.to_value(&self.arena)).collect();
-                                values_to_json_lossy(&vals)
-                            };
-                            let nv_result = dispatch_builtin_nv(
-                                &builtin_name,
-                                &args,
-                                &mut self.arena,
-                                &self.cli_args,
-                            )?;
-                            let result_val = nv_result.to_value(&self.arena);
-                            let outcome = match value_to_json(&result_val) {
-                                Ok(json) => RecordedOutcome::Value(json),
-                                Err(e) => RecordedOutcome::RuntimeError(e),
-                            };
-                            let seq = self.recorded_effects.len() as u32 + 1;
-                            self.recorded_effects.push(EffectRecord {
-                                seq,
-                                effect_type: builtin_name.clone(),
-                                args: args_json,
-                                outcome,
-                            });
-                            nv_result
-                        }
-                        (true, VmExecutionMode::Replay) => {
-                            // Skip real service, return recorded result.
-                            if self.replay_pos >= self.replay_effects.len() {
-                                return Err(VmError::Runtime(format!(
-                                    "Replay exhausted: no more recorded effects for '{}'",
-                                    builtin_name
-                                )));
-                            }
-                            let record = &self.replay_effects[self.replay_pos];
-                            if record.effect_type != builtin_name {
-                                return Err(VmError::Runtime(format!(
-                                    "Replay mismatch at #{}: expected '{}', got '{}'",
-                                    record.seq, record.effect_type, builtin_name
-                                )));
-                            }
-                            if self.validate_replay_args {
-                                let got_args = {
-                                    let vals: Vec<_> =
-                                        args.iter().map(|a| a.to_value(&self.arena)).collect();
-                                    values_to_json_lossy(&vals)
-                                };
-                                if got_args != record.args {
-                                    return Err(VmError::Runtime(format!(
-                                        "Replay args mismatch at #{} for '{}'",
-                                        record.seq, builtin_name
-                                    )));
-                                }
-                            }
-                            let result = match &record.outcome {
-                                RecordedOutcome::Value(json) => {
-                                    let val = json_to_value(json).map_err(VmError::Runtime)?;
-                                    NanValue::from_value(&val, &mut self.arena)
-                                }
-                                RecordedOutcome::RuntimeError(msg) => {
-                                    return Err(VmError::Runtime(msg.clone()));
-                                }
-                            };
-                            self.replay_pos += 1;
-                            result
-                        }
-                    };
+                    let result =
+                        self.runtime
+                            .invoke_builtin(&builtin_name, &args, &mut self.arena)?;
                     self.stack.push(result);
                 }
 
@@ -489,7 +397,7 @@ impl VM {
                     let frame = self.frames.pop().unwrap();
                     self.stack.truncate(frame.bp as usize);
 
-                    if self.frames.is_empty() {
+                    if self.frames.len() == caller_depth {
                         return Ok(result);
                     }
 
@@ -530,6 +438,15 @@ impl VM {
                     self.stack.truncate(start);
                     let idx = self.arena.push_list(items);
                     self.stack.push(NanValue::new_list(idx));
+                }
+
+                TUPLE_NEW => {
+                    let count = read_u8!(code, ip) as usize;
+                    let start = self.stack.len() - count;
+                    let items: Vec<NanValue> = self.stack[start..].to_vec();
+                    self.stack.truncate(start);
+                    let idx = self.arena.push_tuple(items);
+                    self.stack.push(NanValue::new_tuple(idx));
                 }
 
                 RECORD_NEW => {
@@ -700,6 +617,30 @@ impl VM {
                     }
                 }
 
+                MATCH_TUPLE => {
+                    let expected_len = read_u8!(code, ip) as usize;
+                    let offset = read_i16!(code, ip);
+                    let top = *self.stack.last().ok_or(VmError::StackUnderflow)?;
+                    let matches = top.is_tuple()
+                        && self.arena.get_tuple(top.arena_index()).len() == expected_len;
+                    if !matches {
+                        ip = (ip as isize + offset as isize) as usize;
+                    }
+                }
+
+                EXTRACT_TUPLE_ITEM => {
+                    let item_idx = read_u8!(code, ip) as usize;
+                    let top = *self.stack.last().ok_or(VmError::StackUnderflow)?;
+                    if !top.is_tuple() {
+                        return Err(VmError::Type("EXTRACT_TUPLE_ITEM on non-tuple".into()));
+                    }
+                    let items = self.arena.get_tuple(top.arena_index());
+                    if item_idx >= items.len() {
+                        return Err(VmError::Runtime("tuple index out of bounds".into()));
+                    }
+                    self.stack.push(items[item_idx]);
+                }
+
                 MATCH_FAIL => {
                     let line = read_u16!(code, ip);
                     return Err(VmError::MatchFail(line));
@@ -741,14 +682,23 @@ impl VM {
                 .map(|v| NanValue::from_value(v, &mut vm.arena))
                 .collect();
 
-            let result_nv = vm
-                .call_function(handler_fn_id, &nv_args)
-                .map_err(|e| crate::value::RuntimeError::Error(format!("{}", e)))?;
+            let handler_effects = vm.code.get(handler_fn_id).effects.clone();
+            let previous_effects = vm.runtime.swap_allowed_effects(handler_effects);
+            let result_nv = match vm.call_function(handler_fn_id, &nv_args) {
+                Ok(result) => {
+                    vm.runtime.set_allowed_effects(previous_effects);
+                    result
+                }
+                Err(e) => {
+                    vm.runtime.set_allowed_effects(previous_effects);
+                    return Err(crate::value::RuntimeError::Error(format!("{}", e)));
+                }
+            };
 
             Ok(result_nv.to_value(&vm.arena))
         };
 
-        let skip = self.execution_mode == VmExecutionMode::Record;
+        let skip = self.runtime.execution_mode() == VmExecutionMode::Record;
         match http_server::call_with_runtime(name, &val_args, invoke_handler, skip) {
             Some(Ok(val)) => Ok(NanValue::from_value(&val, &mut self.arena)),
             Some(Err(crate::value::RuntimeError::Error(msg))) => Err(VmError::Runtime(msg)),
@@ -760,32 +710,33 @@ impl VM {
         }
     }
 
-    /// Check that a builtin call's required effects are satisfied by allowed_effects.
-    fn check_builtin_effects(&self, builtin_name: &str) -> Result<(), VmError> {
-        let required = builtin_effects(builtin_name);
-        if required.is_empty() {
-            return Ok(());
-        }
-        for effect in required {
-            if !self
-                .allowed_effects
-                .iter()
-                .any(|a| crate::effects::effect_satisfies(a, effect))
-            {
-                return Err(VmError::Runtime(format!(
-                    "Runtime effect violation: cannot call '{}' (missing effect: {})",
-                    builtin_name, effect
-                )));
-            }
-        }
-        Ok(())
-    }
-
     fn nan_tag(&self, val: NanValue) -> u8 {
         if val.is_float() {
             return 0xFF;
         }
         ((val.bits() >> 46) & 0xF) as u8
+    }
+
+    fn decode_vm_fn_ref(
+        &self,
+        val: NanValue,
+        caller_fn_id: u32,
+        ip: usize,
+    ) -> Result<u32, VmError> {
+        if val.is_int() {
+            let fn_id = val.as_int(&self.arena);
+            if (0..self.code.functions.len() as i64).contains(&fn_id) {
+                return Ok(fn_id as u32);
+            }
+        }
+        let caller_name = &self.code.functions[caller_fn_id as usize].name;
+        Err(VmError::Type(format!(
+            "cannot call non-function (got {} = {:?}) in {} at ip={}",
+            val.type_name(),
+            val,
+            caller_name,
+            ip
+        )))
     }
 
     fn arith_add(&mut self, a: NanValue, b: NanValue) -> Result<NanValue, VmError> {
@@ -938,61 +889,49 @@ impl VM {
     }
 }
 
-/// Look up which effects a builtin requires.
-fn builtin_effects(name: &str) -> &'static [&'static str] {
-    let namespace = name.split_once('.').map(|(ns, _)| ns);
-    match namespace {
-        Some("Console") => console::effects(name),
-        Some("Http") => http::effects(name),
-        Some("Disk") => disk::effects(name),
-        Some("Env") => env::effects(name),
-        Some("Random") => random::effects(name),
-        Some("Tcp") => tcp::effects(name),
-        #[cfg(feature = "terminal")]
-        Some("Terminal") => crate::services::terminal::effects(name),
-        Some("Time") => time::effects(name),
-        _ => &[],
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vm::types::{CallFrame, CodeStore, FnChunk};
 
-/// Dispatch a builtin call by name to the appropriate service/type module.
-/// Reuses the existing `call_nv` functions from interpreter services.
-fn dispatch_builtin_nv(
-    name: &str,
-    args: &[NanValue],
-    arena: &mut Arena,
-    cli_args: &[String],
-) -> Result<NanValue, VmError> {
-    let namespace = name.split_once('.').map(|(ns, _)| ns);
+    #[test]
+    fn reentrant_call_function_returns_nested_result_without_resuming_caller() {
+        let mut code = CodeStore::new();
 
-    let result = match namespace {
-        Some("Args") => crate::services::args::call_nv(name, args, cli_args, arena),
-        Some("Console") => console::call_nv(name, args, arena),
-        Some("Http") => http::call_nv(name, args, arena),
-        Some("Disk") => disk::call_nv(name, args, arena),
-        Some("Env") => env::call_nv(name, args, arena),
-        Some("Random") => random::call_nv(name, args, arena),
-        Some("Tcp") => tcp::call_nv(name, args, arena),
-        #[cfg(feature = "terminal")]
-        Some("Terminal") => crate::services::terminal::call_nv(name, args, arena),
-        Some("Time") => time::call_nv(name, args, arena),
-        Some("Bool") => bool::call_nv(name, args, arena),
-        Some("Int") => int::call_nv(name, args, arena),
-        Some("Float") => float::call_nv(name, args, arena),
-        Some("String") => string::call_nv(name, args, arena),
-        Some("List") => list::call_nv(name, args, arena),
-        Some("Map") => map::call_nv(name, args, arena),
-        Some("Char") => char::call_nv(name, args, arena),
-        Some("Byte") => byte::call_nv(name, args, arena),
-        Some("Result") => result::call_nv(name, args, arena),
-        Some("Option") => option::call_nv(name, args, arena),
-        _ => None,
-    };
+        let caller_const = NanValue::new_int_inline(10);
+        let caller_id = code.add_function(FnChunk {
+            name: "caller".to_string(),
+            arity: 0,
+            local_count: 0,
+            code: vec![LOAD_CONST, 0, 0, RETURN],
+            constants: vec![caller_const],
+            effects: Vec::new(),
+        });
 
-    match result {
-        Some(Ok(val)) => Ok(val),
-        Some(Err(RuntimeError::Error(msg))) => Err(VmError::Runtime(msg)),
-        Some(Err(e)) => Err(VmError::Runtime(format!("{:?}", e))),
-        None => Err(VmError::Runtime(format!("unknown builtin: {}", name))),
+        let nested_const = NanValue::new_int_inline(20);
+        let nested_id = code.add_function(FnChunk {
+            name: "nested".to_string(),
+            arity: 0,
+            local_count: 0,
+            code: vec![LOAD_CONST, 0, 0, RETURN],
+            constants: vec![nested_const],
+            effects: Vec::new(),
+        });
+
+        let mut vm = VM::new(code, Vec::new(), Arena::new());
+        vm.frames.push(CallFrame {
+            fn_id: caller_id,
+            ip: 0,
+            bp: 0,
+            local_count: 0,
+        });
+
+        let result = vm
+            .call_function(nested_id, &[])
+            .expect("nested call should return");
+
+        assert_eq!(result.as_int(&vm.arena), 20);
+        assert_eq!(vm.frames.len(), 1, "caller frame should remain suspended");
+        assert_eq!(vm.frames[0].fn_id, caller_id);
     }
 }

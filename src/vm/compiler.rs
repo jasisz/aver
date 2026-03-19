@@ -7,6 +7,11 @@ use crate::source::find_module_file;
 use super::opcode::*;
 use super::types::{CodeStore, FnChunk};
 
+fn encode_vm_fn_ref(fn_id: u32) -> NanValue {
+    // VM callables are encoded as inline Int function ids.
+    NanValue::new_int_inline(fn_id as i64)
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -49,7 +54,7 @@ pub fn compile_program_with_modules(
                     effects: fndef.effects.clone(),
                 });
                 let global_idx = compiler.global_names[&fndef.name];
-                compiler.globals[global_idx as usize] = NanValue::new_int_inline(fn_id as i64);
+                compiler.globals[global_idx as usize] = encode_vm_fn_ref(fn_id);
             }
             TopLevel::TypeDef(td) => {
                 compiler.register_type_def(td, arena);
@@ -235,7 +240,7 @@ impl ProgramCompiler {
             if exposed {
                 let qualified = format!("{}.{}", dep_name, fn_name);
                 let global_idx = self.ensure_global(&qualified);
-                self.globals[global_idx as usize] = NanValue::new_int_inline(*fn_id as i64);
+                self.globals[global_idx as usize] = encode_vm_fn_ref(*fn_id);
             }
         }
 
@@ -388,16 +393,16 @@ impl ProgramCompiler {
 // Dotted path resolution
 // ---------------------------------------------------------------------------
 
-/// What a dotted path `Ns.member` resolves to.
-enum DottedResolution {
+/// What a function expression resolves to at compile time.
+enum CallTarget {
+    /// Known function id (local or qualified module function).
+    KnownFn(u32),
     /// Result.Ok / Result.Err / Option.Some → WRAP opcode. kind: 0=Ok, 1=Err, 2=Some.
     Wrapper(u8),
     /// Option.None → load constant.
     None_,
     /// User-defined variant constructor: Shape.Circle → VARIANT_NEW.
     Variant(u32, u16),
-    /// Module function: Data.Fibonacci.buildFibStats → CALL_KNOWN.
-    ModuleFn(u32),
     /// Builtin service: Console.print, List.len → CALL_BUILTIN.
     Builtin(String),
 }
@@ -515,6 +520,78 @@ impl<'a> FnCompiler<'a> {
         let bytes = (offset as u16).to_be_bytes();
         self.code[patch_pos] = bytes[0];
         self.code[patch_pos + 1] = bytes[1];
+    }
+
+    fn bind_top_to_local(&mut self, name: &str) {
+        if let Some(&slot) = self.local_slots.get(name) {
+            self.emit_op(STORE_LOCAL);
+            self.emit_u8(slot as u8);
+        } else {
+            self.emit_op(POP);
+        }
+    }
+
+    fn dup_and_bind_top_to_local(&mut self, name: &str) {
+        self.emit_op(DUP);
+        self.bind_top_to_local(name);
+    }
+
+    fn compile_unwrap_pattern(&mut self, kind: u8, binding: Option<&String>) -> Vec<usize> {
+        self.emit_op(MATCH_UNWRAP);
+        self.emit_u8(kind);
+        let fail_patch = self.code.len();
+        self.emit_i16(0);
+        if let Some(binding) = binding {
+            self.dup_and_bind_top_to_local(binding);
+        }
+        vec![fail_patch]
+    }
+
+    fn compile_extracted_subpattern<F>(
+        &mut self,
+        emit_subject: F,
+        pattern: &Pattern,
+    ) -> Result<Vec<usize>, CompileError>
+    where
+        F: FnOnce(&mut Self),
+    {
+        emit_subject(self);
+        let inner_fail_patches = self.compile_pattern(pattern)?;
+        self.emit_op(POP);
+
+        if inner_fail_patches.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let success_skip_cleanup = self.emit_jump(JUMP);
+        let cleanup_target = self.offset();
+        for patch in inner_fail_patches {
+            self.patch_jump_to(patch, cleanup_target);
+        }
+        self.emit_op(POP);
+        let outer_fail = self.emit_jump(JUMP);
+        self.patch_jump(success_skip_cleanup);
+        Ok(vec![outer_fail])
+    }
+
+    fn compile_tuple_pattern(&mut self, patterns: &[Pattern]) -> Result<Vec<usize>, CompileError> {
+        self.emit_op(MATCH_TUPLE);
+        self.emit_u8(patterns.len() as u8);
+        let tuple_fail = self.code.len();
+        self.emit_i16(0);
+
+        let mut fail_patches = vec![tuple_fail];
+        for (i, pattern) in patterns.iter().enumerate() {
+            let mut nested = self.compile_extracted_subpattern(
+                |this| {
+                    this.emit_op(EXTRACT_TUPLE_ITEM);
+                    this.emit_u8(i as u8);
+                },
+                pattern,
+            )?;
+            fail_patches.append(&mut nested);
+        }
+        Ok(fail_patches)
     }
 
     // -- Body compilation ----------------------------------------------------
@@ -666,27 +743,27 @@ impl<'a> FnCompiler<'a> {
     // -- Dotted path resolution ------------------------------------------------
 
     /// Resolve a dotted path (Ns, member) to what it means.
-    fn resolve_dotted(&self, ns: &str, method: &str) -> DottedResolution {
+    fn resolve_dotted_call(&self, ns: &str, method: &str) -> CallTarget {
         match (ns, method) {
-            ("Result", "Ok") => return DottedResolution::Wrapper(0),
-            ("Result", "Err") => return DottedResolution::Wrapper(1),
-            ("Option", "Some") => return DottedResolution::Wrapper(2),
-            ("Option", "None") => return DottedResolution::None_,
+            ("Result", "Ok") => return CallTarget::Wrapper(0),
+            ("Result", "Err") => return CallTarget::Wrapper(1),
+            ("Option", "Some") => return CallTarget::Wrapper(2),
+            ("Option", "None") => return CallTarget::None_,
             _ => {}
         }
         // User-defined variant?
         if let Some(type_id) = self.arena.find_type_id(ns)
             && let Some(variant_id) = self.arena.find_variant_id(type_id, method)
         {
-            return DottedResolution::Variant(type_id, variant_id);
+            return CallTarget::Variant(type_id, variant_id);
         }
         // Module function?
         let qualified = format!("{}.{}", ns, method);
         if let Some(fn_id) = self.code_store.find(&qualified) {
-            return DottedResolution::ModuleFn(fn_id);
+            return CallTarget::KnownFn(fn_id);
         }
         // Builtin service.
-        DottedResolution::Builtin(qualified)
+        CallTarget::Builtin(qualified)
     }
 
     /// Extract (namespace_path, method) from dotted Attr expressions.
@@ -717,41 +794,46 @@ impl<'a> FnCompiler<'a> {
             .or_else(|| self.code_store.find(name))
     }
 
+    fn resolve_call_target(&self, expr: &Expr) -> Option<CallTarget> {
+        match expr {
+            Expr::Ident(name) => self.resolve_fn_id(name).map(CallTarget::KnownFn),
+            _ => self
+                .extract_dotted_path(expr)
+                .map(|(ns, method)| self.resolve_dotted_call(&ns, &method)),
+        }
+    }
+
     // -- Call compilation ----------------------------------------------------
 
     fn compile_call(&mut self, fn_expr: &Expr, args: &[Expr]) -> Result<(), CompileError> {
-        // Dotted call: Ns.method(args)
-        if let Some((ns, method)) = self.extract_dotted_path(fn_expr) {
-            return self.compile_dotted_call(&ns, &method, args);
+        if let Some(target) = self.resolve_call_target(fn_expr) {
+            return self.compile_resolved_call(target, args);
         }
-        // Named function call.
-        if let Some(fn_id) = self.resolve_fn_from_expr(fn_expr) {
-            for arg in args {
-                self.compile_expr(arg)?;
-            }
-            self.emit_op(CALL_KNOWN);
-            self.emit_u16(fn_id as u16);
-            self.emit_u8(args.len() as u8);
-        } else {
-            // Dynamic call (HOF).
-            self.compile_expr(fn_expr)?;
-            for arg in args {
-                self.compile_expr(arg)?;
-            }
-            self.emit_op(CALL_VALUE);
-            self.emit_u8(args.len() as u8);
+        // Dynamic call (HOF).
+        self.compile_expr(fn_expr)?;
+        for arg in args {
+            self.compile_expr(arg)?;
         }
+        self.emit_op(CALL_VALUE);
+        self.emit_u8(args.len() as u8);
         Ok(())
     }
 
-    fn compile_dotted_call(
+    fn compile_resolved_call(
         &mut self,
-        ns: &str,
-        method: &str,
+        target: CallTarget,
         args: &[Expr],
     ) -> Result<(), CompileError> {
-        match self.resolve_dotted(ns, method) {
-            DottedResolution::Wrapper(kind) => {
+        match target {
+            CallTarget::KnownFn(fn_id) => {
+                for arg in args {
+                    self.compile_expr(arg)?;
+                }
+                self.emit_op(CALL_KNOWN);
+                self.emit_u16(fn_id as u16);
+                self.emit_u8(args.len() as u8);
+            }
+            CallTarget::Wrapper(kind) => {
                 if let Some(arg) = args.first() {
                     self.compile_expr(arg)?;
                 } else {
@@ -760,12 +842,12 @@ impl<'a> FnCompiler<'a> {
                 self.emit_op(WRAP);
                 self.emit_u8(kind);
             }
-            DottedResolution::None_ => {
+            CallTarget::None_ => {
                 let idx = self.add_constant(NanValue::NONE);
                 self.emit_op(LOAD_CONST);
                 self.emit_u16(idx);
             }
-            DottedResolution::Variant(type_id, variant_id) => {
+            CallTarget::Variant(type_id, variant_id) => {
                 for arg in args {
                     self.compile_expr(arg)?;
                 }
@@ -774,15 +856,7 @@ impl<'a> FnCompiler<'a> {
                 self.emit_u16(variant_id);
                 self.emit_u8(args.len() as u8);
             }
-            DottedResolution::ModuleFn(fn_id) => {
-                for arg in args {
-                    self.compile_expr(arg)?;
-                }
-                self.emit_op(CALL_KNOWN);
-                self.emit_u16(fn_id as u16);
-                self.emit_u8(args.len() as u8);
-            }
-            DottedResolution::Builtin(qualified) => {
+            CallTarget::Builtin(qualified) => {
                 for arg in args {
                     self.compile_expr(arg)?;
                 }
@@ -793,13 +867,6 @@ impl<'a> FnCompiler<'a> {
             }
         }
         Ok(())
-    }
-
-    fn resolve_fn_from_expr(&self, expr: &Expr) -> Option<u32> {
-        match expr {
-            Expr::Ident(name) => self.resolve_fn_id(name),
-            _ => Option::None,
-        }
     }
 
     fn compile_tail_call(&mut self, target: &str, args: &[Expr]) -> Result<(), CompileError> {
@@ -901,13 +968,7 @@ impl<'a> FnCompiler<'a> {
         match pattern {
             Pattern::Wildcard => Ok(Vec::new()),
             Pattern::Ident(name) => {
-                self.emit_op(DUP);
-                if let Some(&slot) = self.local_slots.get(name) {
-                    self.emit_op(STORE_LOCAL);
-                    self.emit_u8(slot as u8);
-                } else {
-                    self.emit_op(POP);
-                }
+                self.dup_and_bind_top_to_local(name);
                 Ok(Vec::new())
             }
             Pattern::Literal(lit) => {
@@ -936,31 +997,15 @@ impl<'a> FnCompiler<'a> {
                 // After DUP: [..., subject, subject_copy]
                 // LIST_HEAD_TAIL pops subject_copy, pushes tail, then head.
                 // Stack: [..., subject, tail, head]
-                if let Some(&slot) = self.local_slots.get(head) {
-                    self.emit_op(STORE_LOCAL);
-                    self.emit_u8(slot as u8);
-                } else {
-                    self.emit_op(POP);
-                }
-                if let Some(&slot) = self.local_slots.get(tail) {
-                    self.emit_op(STORE_LOCAL);
-                    self.emit_u8(slot as u8);
-                } else {
-                    self.emit_op(POP);
-                }
+                self.bind_top_to_local(head);
+                self.bind_top_to_local(tail);
 
                 Ok(vec![fail_patch])
             }
             Pattern::Constructor(name, bindings) => {
                 self.compile_constructor_pattern(name, bindings)
             }
-            Pattern::Tuple(patterns) => {
-                // For v1, only support simple tuple patterns.
-                let _ = patterns;
-                Err(CompileError {
-                    msg: "tuple patterns not yet supported in VM".into(),
-                })
-            }
+            Pattern::Tuple(patterns) => self.compile_tuple_pattern(patterns),
         }
     }
 
@@ -970,55 +1015,9 @@ impl<'a> FnCompiler<'a> {
         bindings: &[String],
     ) -> Result<Vec<usize>, CompileError> {
         match name {
-            "Result.Ok" => {
-                self.emit_op(MATCH_UNWRAP);
-                self.emit_u8(0); // Ok
-                let fail_patch = self.code.len();
-                self.emit_i16(0);
-                // Top is now the unwrapped inner value. Bind it.
-                if let Some(b) = bindings.first() {
-                    self.emit_op(DUP);
-                    if let Some(&slot) = self.local_slots.get(b) {
-                        self.emit_op(STORE_LOCAL);
-                        self.emit_u8(slot as u8);
-                    } else {
-                        self.emit_op(POP);
-                    }
-                }
-                Ok(vec![fail_patch])
-            }
-            "Result.Err" => {
-                self.emit_op(MATCH_UNWRAP);
-                self.emit_u8(1); // Err
-                let fail_patch = self.code.len();
-                self.emit_i16(0);
-                if let Some(b) = bindings.first() {
-                    self.emit_op(DUP);
-                    if let Some(&slot) = self.local_slots.get(b) {
-                        self.emit_op(STORE_LOCAL);
-                        self.emit_u8(slot as u8);
-                    } else {
-                        self.emit_op(POP);
-                    }
-                }
-                Ok(vec![fail_patch])
-            }
-            "Option.Some" => {
-                self.emit_op(MATCH_UNWRAP);
-                self.emit_u8(2); // Some
-                let fail_patch = self.code.len();
-                self.emit_i16(0);
-                if let Some(b) = bindings.first() {
-                    self.emit_op(DUP);
-                    if let Some(&slot) = self.local_slots.get(b) {
-                        self.emit_op(STORE_LOCAL);
-                        self.emit_u8(slot as u8);
-                    } else {
-                        self.emit_op(POP);
-                    }
-                }
-                Ok(vec![fail_patch])
-            }
+            "Result.Ok" => Ok(self.compile_unwrap_pattern(0, bindings.first())),
+            "Result.Err" => Ok(self.compile_unwrap_pattern(1, bindings.first())),
+            "Option.Some" => Ok(self.compile_unwrap_pattern(2, bindings.first())),
             "Option.None" => {
                 self.emit_op(DUP);
                 let none_const = self.add_constant(NanValue::NONE);
@@ -1054,12 +1053,7 @@ impl<'a> FnCompiler<'a> {
                         for (i, b) in bindings.iter().enumerate() {
                             self.emit_op(EXTRACT_FIELD);
                             self.emit_u8(i as u8);
-                            if let Some(&slot) = self.local_slots.get(b) {
-                                self.emit_op(STORE_LOCAL);
-                                self.emit_u8(slot as u8);
-                            } else {
-                                self.emit_op(POP);
-                            }
+                            self.bind_top_to_local(b);
                         }
 
                         return Ok(patches);
@@ -1200,10 +1194,16 @@ impl<'a> FnCompiler<'a> {
                 }
                 StrPart::Parsed(expr) => {
                     self.compile_expr(expr)?;
-                    // Convert to string via CONCAT with empty string.
-                    // Actually, CONCAT already calls repr on non-strings.
-                    // But we want display, not repr for interpolation...
-                    // For v1: leave as-is, CONCAT will handle it.
+                    // A standalone "{expr}" must still become a String.
+                    // CONCAT stringifies non-strings via repr, so coercing with
+                    // an empty suffix keeps both single-part and multi-part
+                    // interpolations on the same path.
+                    let empty_idx = self.arena.push_string("");
+                    let empty_nv = NanValue::new_string(empty_idx);
+                    let empty_const = self.add_constant(empty_nv);
+                    self.emit_op(LOAD_CONST);
+                    self.emit_u16(empty_const);
+                    self.emit_op(CONCAT);
                 }
             }
             if !first {
@@ -1284,23 +1284,38 @@ impl<'a> FnCompiler<'a> {
         if let Some(ns) = self.flatten_path(obj)
             && ns.chars().next().is_some_and(|c| c.is_uppercase())
         {
-            match self.resolve_dotted(&ns, field) {
-                DottedResolution::None_ => {
+            let qualified = format!("{}.{}", ns, field);
+            match self.resolve_dotted_call(&ns, field) {
+                CallTarget::KnownFn(_) => {
+                    if let Some(&idx) = self.global_names.get(&qualified) {
+                        self.emit_op(LOAD_GLOBAL);
+                        self.emit_u16(idx);
+                        return Ok(());
+                    }
+                }
+                CallTarget::None_ => {
                     let idx = self.add_constant(NanValue::NONE);
                     self.emit_op(LOAD_CONST);
                     self.emit_u16(idx);
                     return Ok(());
                 }
-                DottedResolution::Variant(type_id, variant_id) => {
+                CallTarget::Variant(type_id, variant_id) => {
                     self.emit_op(VARIANT_NEW);
                     self.emit_u16(type_id as u16);
                     self.emit_u16(variant_id);
                     self.emit_u8(0); // zero-arg
                     return Ok(());
                 }
+                CallTarget::Builtin(_) => {
+                    return Err(CompileError {
+                        msg: format!(
+                            "standalone builtin function values are not yet supported in VM: {}",
+                            qualified
+                        ),
+                    });
+                }
                 _ => {
-                    // Not a standalone value — could be a partial application
-                    // or namespace member. Fall through to record field access.
+                    // Not a standalone constructor/value. Fall through to record field access.
                 }
             }
         }
@@ -1319,7 +1334,7 @@ impl<'a> FnCompiler<'a> {
         for item in items {
             self.compile_expr(item)?;
         }
-        self.emit_op(LIST_NEW);
+        self.emit_op(TUPLE_NEW);
         self.emit_u8(items.len() as u8);
         Ok(())
     }

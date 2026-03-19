@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 
-use super::json::{JsonValue, format_json, parse_json};
+use serde::{Deserialize, Serialize};
+use serde_json::Value as SerdeJsonValue;
+
+use super::json::JsonValue;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RecordedOutcome {
@@ -29,228 +32,277 @@ pub struct SessionRecording {
     pub output: RecordedOutcome,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct SerdeSessionRecording {
+    schema_version: u32,
+    request_id: String,
+    timestamp: String,
+    program_file: String,
+    module_root: String,
+    entry_fn: String,
+    input: SerdeJsonValue,
+    effects: Vec<SerdeEffectRecord>,
+    output: SerdeRecordedOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct SerdeEffectRecord {
+    seq: u32,
+    #[serde(rename = "type")]
+    effect_type: String,
+    args: Vec<SerdeJsonValue>,
+    outcome: SerdeRecordedOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+enum SerdeRecordedOutcome {
+    #[serde(rename = "value")]
+    Value { value: SerdeJsonValue },
+    #[serde(rename = "runtime_error")]
+    RuntimeError { message: String },
+}
+
 pub fn parse_session_recording(input: &str) -> Result<SessionRecording, String> {
-    let json = parse_json(input)?;
-    session_recording_from_json(&json)
+    let recording: SerdeSessionRecording =
+        serde_json::from_str(input).map_err(|e| format!("invalid replay recording: {}", e))?;
+    session_recording_from_serde(recording)
 }
 
 pub fn session_recording_to_string_pretty(recording: &SessionRecording) -> String {
-    format_json(&session_recording_to_json(recording))
+    serde_json::to_string_pretty(&session_recording_to_serde(recording))
+        .expect("SessionRecording should always serialize to JSON")
 }
 
 pub fn session_recording_to_json(recording: &SessionRecording) -> JsonValue {
-    let mut obj = BTreeMap::new();
-    obj.insert(
-        "schema_version".to_string(),
-        JsonValue::Int(recording.schema_version as i64),
-    );
-    obj.insert(
-        "request_id".to_string(),
-        JsonValue::String(recording.request_id.clone()),
-    );
-    obj.insert(
-        "timestamp".to_string(),
-        JsonValue::String(recording.timestamp.clone()),
-    );
-    obj.insert(
-        "program_file".to_string(),
-        JsonValue::String(recording.program_file.clone()),
-    );
-    obj.insert(
-        "module_root".to_string(),
-        JsonValue::String(recording.module_root.clone()),
-    );
-    obj.insert(
-        "entry_fn".to_string(),
-        JsonValue::String(recording.entry_fn.clone()),
-    );
-    obj.insert("input".to_string(), recording.input.clone());
-
-    let effects = recording
-        .effects
-        .iter()
-        .map(effect_record_to_json)
-        .collect::<Vec<_>>();
-    obj.insert("effects".to_string(), JsonValue::Array(effects));
-    obj.insert("output".to_string(), outcome_to_json(&recording.output));
-
-    JsonValue::Object(obj)
+    let value = serde_json::to_value(session_recording_to_serde(recording))
+        .expect("SessionRecording should always convert to serde_json::Value");
+    serde_to_json_value(value).expect("serde_json::Value should always convert to JsonValue")
 }
 
 pub fn session_recording_from_json(json: &JsonValue) -> Result<SessionRecording, String> {
-    let obj = expect_object(json, "recording")?;
+    let value = json_value_to_serde(json);
+    let recording: SerdeSessionRecording =
+        serde_json::from_value(value).map_err(|e| format!("invalid replay recording: {}", e))?;
+    session_recording_from_serde(recording)
+}
 
-    let schema_version = match obj.get("schema_version") {
-        Some(v) => parse_u32(v, "recording.schema_version")?,
-        None => 1,
-    };
-
-    let request_id = parse_string(
-        get_required(obj, "request_id", "recording")?,
-        "recording.request_id",
-    )?
-    .to_string();
-    let timestamp = parse_string(
-        get_required(obj, "timestamp", "recording")?,
-        "recording.timestamp",
-    )?
-    .to_string();
-    let program_file = parse_string(
-        get_required(obj, "program_file", "recording")?,
-        "recording.program_file",
-    )?
-    .to_string();
-    let module_root = parse_string(
-        get_required(obj, "module_root", "recording")?,
-        "recording.module_root",
-    )?
-    .to_string();
-    let entry_fn = parse_string(
-        get_required(obj, "entry_fn", "recording")?,
-        "recording.entry_fn",
-    )?
-    .to_string();
-
-    let input = get_required(obj, "input", "recording")?.clone();
-
-    let effects_json = parse_array(
-        get_required(obj, "effects", "recording")?,
-        "recording.effects",
-    )?;
-    let mut effects = Vec::with_capacity(effects_json.len());
-    for (idx, effect_json) in effects_json.iter().enumerate() {
-        let path = format!("recording.effects[{}]", idx);
-        effects.push(effect_record_from_json(effect_json, &path)?);
+fn session_recording_to_serde(recording: &SessionRecording) -> SerdeSessionRecording {
+    SerdeSessionRecording {
+        schema_version: recording.schema_version,
+        request_id: recording.request_id.clone(),
+        timestamp: recording.timestamp.clone(),
+        program_file: recording.program_file.clone(),
+        module_root: recording.module_root.clone(),
+        entry_fn: recording.entry_fn.clone(),
+        input: json_value_to_serde(&recording.input),
+        effects: recording
+            .effects
+            .iter()
+            .map(effect_record_to_serde)
+            .collect(),
+        output: outcome_to_serde(&recording.output),
     }
+}
 
-    let output = outcome_from_json(
-        get_required(obj, "output", "recording")?,
-        "recording.output",
-    )?;
-
+fn session_recording_from_serde(
+    recording: SerdeSessionRecording,
+) -> Result<SessionRecording, String> {
     Ok(SessionRecording {
-        schema_version,
-        request_id,
-        timestamp,
-        program_file,
-        module_root,
-        entry_fn,
-        input,
-        effects,
-        output,
+        schema_version: recording.schema_version,
+        request_id: recording.request_id,
+        timestamp: recording.timestamp,
+        program_file: recording.program_file,
+        module_root: recording.module_root,
+        entry_fn: recording.entry_fn,
+        input: serde_to_json_value(recording.input)?,
+        effects: recording
+            .effects
+            .into_iter()
+            .map(effect_record_from_serde)
+            .collect::<Result<Vec<_>, _>>()?,
+        output: outcome_from_serde(recording.output)?,
     })
 }
 
-fn effect_record_to_json(effect: &EffectRecord) -> JsonValue {
-    let mut obj = BTreeMap::new();
-    obj.insert("seq".to_string(), JsonValue::Int(effect.seq as i64));
-    obj.insert(
-        "type".to_string(),
-        JsonValue::String(effect.effect_type.clone()),
-    );
-    obj.insert("args".to_string(), JsonValue::Array(effect.args.clone()));
-    obj.insert("outcome".to_string(), outcome_to_json(&effect.outcome));
-    JsonValue::Object(obj)
+fn effect_record_to_serde(effect: &EffectRecord) -> SerdeEffectRecord {
+    SerdeEffectRecord {
+        seq: effect.seq,
+        effect_type: effect.effect_type.clone(),
+        args: effect.args.iter().map(json_value_to_serde).collect(),
+        outcome: outcome_to_serde(&effect.outcome),
+    }
 }
 
-fn effect_record_from_json(json: &JsonValue, path: &str) -> Result<EffectRecord, String> {
-    let obj = expect_object(json, path)?;
-    let seq = parse_u32(get_required(obj, "seq", path)?, &format!("{}.seq", path))?;
-    let effect_type =
-        parse_string(get_required(obj, "type", path)?, &format!("{}.type", path))?.to_string();
-    let args = parse_array(get_required(obj, "args", path)?, &format!("{}.args", path))?.clone();
-    let outcome = outcome_from_json(
-        get_required(obj, "outcome", path)?,
-        &format!("{}.outcome", path),
-    )?;
-
+fn effect_record_from_serde(effect: SerdeEffectRecord) -> Result<EffectRecord, String> {
     Ok(EffectRecord {
-        seq,
-        effect_type,
-        args,
-        outcome,
+        seq: effect.seq,
+        effect_type: effect.effect_type,
+        args: effect
+            .args
+            .into_iter()
+            .map(serde_to_json_value)
+            .collect::<Result<Vec<_>, _>>()?,
+        outcome: outcome_from_serde(effect.outcome)?,
     })
 }
 
-fn outcome_to_json(outcome: &RecordedOutcome) -> JsonValue {
-    let mut obj = BTreeMap::new();
+fn outcome_to_serde(outcome: &RecordedOutcome) -> SerdeRecordedOutcome {
     match outcome {
-        RecordedOutcome::Value(value) => {
-            obj.insert("kind".to_string(), JsonValue::String("value".to_string()));
-            obj.insert("value".to_string(), value.clone());
-        }
-        RecordedOutcome::RuntimeError(message) => {
-            obj.insert(
-                "kind".to_string(),
-                JsonValue::String("runtime_error".to_string()),
-            );
-            obj.insert("message".to_string(), JsonValue::String(message.clone()));
-        }
+        RecordedOutcome::Value(value) => SerdeRecordedOutcome::Value {
+            value: json_value_to_serde(value),
+        },
+        RecordedOutcome::RuntimeError(message) => SerdeRecordedOutcome::RuntimeError {
+            message: message.clone(),
+        },
     }
-    JsonValue::Object(obj)
 }
 
-fn outcome_from_json(json: &JsonValue, path: &str) -> Result<RecordedOutcome, String> {
-    let obj = expect_object(json, path)?;
-    let kind = parse_string(get_required(obj, "kind", path)?, &format!("{}.kind", path))?;
+fn outcome_from_serde(outcome: SerdeRecordedOutcome) -> Result<RecordedOutcome, String> {
+    match outcome {
+        SerdeRecordedOutcome::Value { value } => {
+            Ok(RecordedOutcome::Value(serde_to_json_value(value)?))
+        }
+        SerdeRecordedOutcome::RuntimeError { message } => {
+            Ok(RecordedOutcome::RuntimeError(message))
+        }
+    }
+}
 
-    match kind {
-        "value" => Ok(RecordedOutcome::Value(
-            get_required(obj, "value", path)?.clone(),
+fn json_value_to_serde(value: &JsonValue) -> SerdeJsonValue {
+    match value {
+        JsonValue::Null => SerdeJsonValue::Null,
+        JsonValue::Bool(b) => SerdeJsonValue::Bool(*b),
+        JsonValue::Int(i) => SerdeJsonValue::Number((*i).into()),
+        JsonValue::Float(f) => SerdeJsonValue::Number(
+            serde_json::Number::from_f64(*f).expect("replay JSON cannot encode non-finite floats"),
+        ),
+        JsonValue::String(s) => SerdeJsonValue::String(s.clone()),
+        JsonValue::Array(items) => {
+            SerdeJsonValue::Array(items.iter().map(json_value_to_serde).collect())
+        }
+        JsonValue::Object(obj) => SerdeJsonValue::Object(
+            obj.iter()
+                .map(|(k, v)| (k.clone(), json_value_to_serde(v)))
+                .collect(),
+        ),
+    }
+}
+
+fn serde_to_json_value(value: SerdeJsonValue) -> Result<JsonValue, String> {
+    match value {
+        SerdeJsonValue::Null => Ok(JsonValue::Null),
+        SerdeJsonValue::Bool(b) => Ok(JsonValue::Bool(b)),
+        SerdeJsonValue::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(JsonValue::Int(i))
+            } else if let Some(u) = n.as_u64() {
+                let i = i64::try_from(u)
+                    .map_err(|_| format!("JSON integer {} is out of range for i64", u))?;
+                Ok(JsonValue::Int(i))
+            } else if let Some(f) = n.as_f64() {
+                Ok(JsonValue::Float(f))
+            } else {
+                Err(format!("unsupported JSON number: {}", n))
+            }
+        }
+        SerdeJsonValue::String(s) => Ok(JsonValue::String(s)),
+        SerdeJsonValue::Array(items) => Ok(JsonValue::Array(
+            items
+                .into_iter()
+                .map(serde_to_json_value)
+                .collect::<Result<Vec<_>, _>>()?,
         )),
-        "runtime_error" => Ok(RecordedOutcome::RuntimeError(
-            parse_string(
-                get_required(obj, "message", path)?,
-                &format!("{}.message", path),
-            )?
-            .to_string(),
-        )),
-        _ => Err(format!("{}: unknown outcome kind '{}'", path, kind)),
-    }
-}
-
-fn get_required<'a>(
-    obj: &'a BTreeMap<String, JsonValue>,
-    key: &str,
-    path: &str,
-) -> Result<&'a JsonValue, String> {
-    obj.get(key)
-        .ok_or_else(|| format!("{}: missing required field '{}'", path, key))
-}
-
-fn expect_object<'a>(
-    value: &'a JsonValue,
-    path: &str,
-) -> Result<&'a BTreeMap<String, JsonValue>, String> {
-    match value {
-        JsonValue::Object(obj) => Ok(obj),
-        _ => Err(format!("{} must be an object", path)),
-    }
-}
-
-fn parse_array<'a>(value: &'a JsonValue, path: &str) -> Result<&'a Vec<JsonValue>, String> {
-    match value {
-        JsonValue::Array(arr) => Ok(arr),
-        _ => Err(format!("{} must be an array", path)),
-    }
-}
-
-fn parse_string<'a>(value: &'a JsonValue, path: &str) -> Result<&'a str, String> {
-    match value {
-        JsonValue::String(s) => Ok(s),
-        _ => Err(format!("{} must be a string", path)),
-    }
-}
-
-fn parse_u32(value: &JsonValue, path: &str) -> Result<u32, String> {
-    match value {
-        JsonValue::Int(n) if *n >= 0 => {
-            u32::try_from(*n).map_err(|_| format!("{} out of range for u32", path))
+        SerdeJsonValue::Object(obj) => {
+            let mut out = BTreeMap::new();
+            for (key, value) in obj {
+                out.insert(key, serde_to_json_value(value)?);
+            }
+            Ok(JsonValue::Object(out))
         }
-        JsonValue::Float(n) if *n >= 0.0 && n.fract() == 0.0 => {
-            let as_i64 = *n as i64;
-            u32::try_from(as_i64).map_err(|_| format!("{} out of range for u32", path))
-        }
-        _ => Err(format!("{} must be a non-negative integer", path)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_recording_json_shape_stays_stable() {
+        let recording = SessionRecording {
+            schema_version: 1,
+            request_id: "rec-1".to_string(),
+            timestamp: "unix-1".to_string(),
+            program_file: "examples/app.av".to_string(),
+            module_root: ".".to_string(),
+            entry_fn: "main".to_string(),
+            input: JsonValue::Null,
+            effects: vec![EffectRecord {
+                seq: 1,
+                effect_type: "Console.print".to_string(),
+                args: vec![JsonValue::String("hi".to_string())],
+                outcome: RecordedOutcome::Value(JsonValue::Null),
+            }],
+            output: RecordedOutcome::RuntimeError("boom".to_string()),
+        };
+
+        let json = session_recording_to_json(&recording);
+        let JsonValue::Object(root) = json else {
+            panic!("recording should serialize as object");
+        };
+        let JsonValue::Array(effects) = root.get("effects").expect("effects field") else {
+            panic!("effects should be array");
+        };
+        let JsonValue::Object(effect) = &effects[0] else {
+            panic!("effect should be object");
+        };
+        let JsonValue::String(effect_type) = effect.get("type").expect("type field") else {
+            panic!("type should be string");
+        };
+        assert_eq!(effect_type, "Console.print");
+
+        let JsonValue::Object(output) = root.get("output").expect("output field") else {
+            panic!("output should be object");
+        };
+        let JsonValue::String(kind) = output.get("kind").expect("kind field") else {
+            panic!("kind should be string");
+        };
+        assert_eq!(kind, "runtime_error");
+    }
+
+    #[test]
+    fn parse_session_recording_roundtrips_existing_shape() {
+        let raw = r#"{
+  "schema_version": 1,
+  "request_id": "rec-1",
+  "timestamp": "unix-1",
+  "program_file": "examples/app.av",
+  "module_root": ".",
+  "entry_fn": "main",
+  "input": null,
+  "effects": [
+    {
+      "seq": 1,
+      "type": "Console.print",
+      "args": ["hi"],
+      "outcome": { "kind": "value", "value": null }
+    }
+  ],
+  "output": { "kind": "value", "value": {"ok": true} }
+}"#;
+
+        let recording = parse_session_recording(raw).expect("parse recording");
+        assert_eq!(recording.effects[0].effect_type, "Console.print");
+        assert_eq!(
+            recording.effects[0].args,
+            vec![JsonValue::String("hi".to_string())]
+        );
+        assert_eq!(
+            recording.output,
+            RecordedOutcome::Value(JsonValue::Object(BTreeMap::from([(
+                "ok".to_string(),
+                JsonValue::Bool(true),
+            )])))
+        );
     }
 }

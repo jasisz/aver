@@ -6,13 +6,18 @@ use colored::Colorize;
 
 use aver::ast::TopLevel;
 use aver::interpreter::{Interpreter, Value, aver_repr};
+use aver::nan_value::NanValue;
 use aver::replay::{
     JsonValue, RecordedOutcome, SessionRecording, first_diff_path, format_json, json_to_value,
     parse_session_recording, value_to_json,
 };
+use aver::resolver;
+use aver::tco;
+use aver::types::checker::run_type_check_full;
 use aver::value::{RuntimeError, list_to_vec};
+use aver::vm;
 
-use crate::shared::compile_program_for_exec;
+use crate::shared::{compile_program_for_exec, parse_file, read_file};
 
 fn collect_recording_files_from_dir(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
     let entries = fs::read_dir(dir)
@@ -330,7 +335,132 @@ pub(super) fn replay_recording_file(
     Ok(matched)
 }
 
-pub(super) fn cmd_replay(recording: &str, diff: bool, test_mode: bool, check_args: bool) {
+fn replay_recording_file_vm(path: &Path, diff: bool, check_args: bool) -> Result<bool, String> {
+    let raw = fs::read_to_string(path)
+        .map_err(|e| format!("Cannot read recording '{}': {}", path.display(), e))?;
+    let recording: SessionRecording = parse_session_recording(&raw)
+        .map_err(|e| format!("Invalid recording JSON '{}': {}", path.display(), e))?;
+
+    let replay_module_root = resolve_replay_module_root(path, &recording);
+    let replay_program_file = resolve_replay_program_file(&recording, &replay_module_root);
+    let source = read_file(&replay_program_file)?;
+    let mut items = parse_file(&source)?;
+    tco::transform_program(&mut items);
+
+    let tc_result = run_type_check_full(&items, Some(&replay_module_root));
+    if !tc_result.errors.is_empty() {
+        return Err(crate::shared::format_type_errors(&tc_result.errors));
+    }
+
+    resolver::resolve_program(&mut items);
+
+    let mut arena = aver::nan_value::Arena::new();
+    vm::register_service_types(&mut arena);
+    let (code, globals) =
+        vm::compile_program_with_modules(&items, &mut arena, Some(&replay_module_root))
+            .map_err(|e| format!("VM compile error: {}", e))?;
+    let mut machine = vm::VM::new(code, globals, arena);
+    machine.start_replay(recording.effects.clone(), check_args);
+
+    machine.run_top_level().map_err(|e| {
+        let (consumed, total) = machine.replay_progress();
+        format!(
+            "Replay: {}\nReplay failed: {}\nProgress: consumed {} of {} recorded effects",
+            path.display(),
+            e,
+            consumed,
+            total
+        )
+    })?;
+
+    let entry_args = decode_entry_args(&recording.input)?;
+    let nv_args: Vec<NanValue> = entry_args
+        .iter()
+        .map(|v| NanValue::from_value(v, &mut machine.arena))
+        .collect();
+
+    let run_out = machine
+        .run_named_function(&recording.entry_fn, &nv_args)
+        .map_err(|e| {
+            let (consumed, total) = machine.replay_progress();
+            format!(
+                "Replay: {}\nReplay failed: {}\nProgress: consumed {} of {} recorded effects",
+                path.display(),
+                e,
+                consumed,
+                total
+            )
+        })?;
+
+    let actual_outcome = if run_out.is_err() {
+        let inner = machine.arena.get_boxed(run_out.wrapper_index());
+        RecordedOutcome::RuntimeError(format!(
+            "{} returned error: {}",
+            recording.entry_fn,
+            inner.repr(&machine.arena)
+        ))
+    } else {
+        let val = run_out.to_value(&machine.arena);
+        RecordedOutcome::Value(value_to_json(&val)?)
+    };
+
+    machine.ensure_replay_consumed().map_err(|e| {
+        let (consumed, total) = machine.replay_progress();
+        format!(
+            "Replay: {}\nReplay failed: {}\nProgress: consumed {} of {} recorded effects",
+            path.display(),
+            e,
+            consumed,
+            total
+        )
+    })?;
+
+    let (consumed, total) = machine.replay_progress();
+    let matched = actual_outcome == recording.output;
+
+    println!();
+    println!("Replay: {}", path.display());
+    println!("Effects: {} replayed ({} matched)", consumed, total);
+    println!(
+        "Output:  {}",
+        if matched {
+            "MATCH".green().to_string()
+        } else {
+            "DIFFERS".red().to_string()
+        }
+    );
+
+    if diff && !matched {
+        match (&recording.output, &actual_outcome) {
+            (RecordedOutcome::Value(expected), RecordedOutcome::Value(got)) => {
+                println!();
+                println!("Expected: {}", format_json(expected));
+                println!("Got:      {}", format_json(got));
+                if let Some(path) = first_diff_path(expected, got) {
+                    println!("Diff at:  {}", path);
+                }
+            }
+            (RecordedOutcome::RuntimeError(expected), RecordedOutcome::RuntimeError(got)) => {
+                println!("Expected runtime error: {}", expected);
+                println!("Got runtime error:      {}", got);
+            }
+            (expected, got) => {
+                println!("Expected outcome: {:?}", expected);
+                println!("Got outcome:      {:?}", got);
+            }
+        }
+    }
+
+    Ok(matched)
+}
+
+pub(super) fn cmd_replay(
+    recording: &str,
+    diff: bool,
+    test_mode: bool,
+    check_args: bool,
+    vm_mode: bool,
+) {
     let files = match collect_recording_files(recording) {
         Ok(f) => f,
         Err(e) => {
@@ -341,7 +471,12 @@ pub(super) fn cmd_replay(recording: &str, diff: bool, test_mode: bool, check_arg
 
     let mut all_match = true;
     for file in files {
-        match replay_recording_file(&file, diff, check_args) {
+        let result = if vm_mode {
+            replay_recording_file_vm(&file, diff, check_args)
+        } else {
+            replay_recording_file(&file, diff, check_args)
+        };
+        match result {
             Ok(matched) => {
                 if !matched {
                     all_match = false;

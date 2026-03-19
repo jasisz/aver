@@ -2,20 +2,23 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
+use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use colored::Colorize;
 
-use aver::ast::{Expr, Pattern, Stmt, TopLevel, TypeDef, VerifyKind};
+use aver::ast::{Expr, FnBody, FnDef, Pattern, Stmt, TopLevel, TypeDef, VerifyBlock, VerifyKind};
 use aver::checker::{
-    CheckFinding, check_module_intent_with_sigs_in, collect_verify_coverage_warnings_in,
-    collect_verify_law_dependency_warnings_in, index_decisions, merge_verify_blocks, run_verify,
+    CheckFinding, VerifyResult, check_module_intent_with_sigs_in,
+    collect_verify_coverage_warnings_in, collect_verify_law_dependency_warnings_in, expr_to_str,
+    index_decisions, merge_verify_blocks, run_verify,
 };
 use aver::codegen;
 use aver::codegen::ModuleInfo;
 use aver::codegen::lean as lean_codegen;
 use aver::codegen::rust as rust_codegen;
 use aver::interpreter::{Interpreter, RecordingConfig, Value, aver_repr};
+use aver::nan_value::Arena;
 use aver::replay::{JsonValue, RecordedOutcome, value_to_json};
 use aver::resolver;
 use aver::source::{find_module_file, require_module_declaration};
@@ -27,6 +30,7 @@ use aver::verify_law::{
     collect_contextual_helper_law_hints, collect_missing_helper_law_hints,
     contextual_helper_law_message, missing_helper_law_message,
 };
+use aver::vm;
 
 use crate::shared::{
     compile_program_for_exec, compute_memo_fns, format_type_errors, load_dep_modules, parse_file,
@@ -784,15 +788,23 @@ fn display_check_path(path: &str, module_root: &str) -> String {
 pub(super) fn cmd_run_vm(
     file: &str,
     module_root_override: Option<&str>,
+    run_verify_blocks: bool,
     record_dir: Option<&str>,
     program_args: Vec<String>,
 ) {
-    use aver::nan_value::Arena;
     use aver::replay::{
         JsonValue, session::RecordedOutcome, session::SessionRecording,
         session_recording_to_string_pretty,
     };
-    use aver::vm;
+
+    if run_verify_blocks && record_dir.is_some() {
+        eprintln!(
+            "{}",
+            "Cannot combine --verify and --record in one run; record should capture only main flow."
+                .red()
+        );
+        process::exit(1);
+    }
 
     let module_root = super::shared::resolve_module_root(module_root_override);
     let source = match super::shared::read_file(file) {
@@ -881,7 +893,7 @@ pub(super) fn cmd_run_vm(
             module_root: record_module_root,
             entry_fn: "main".to_string(),
             input: JsonValue::Null,
-            effects: machine.recorded_effects.clone(),
+            effects: machine.recorded_effects().to_vec(),
             output,
         };
 
@@ -905,6 +917,21 @@ pub(super) fn cmd_run_vm(
         Err(e) => {
             eprintln!("{}", format!("{}", e).red());
             process::exit(1);
+        }
+    }
+
+    if run_verify_blocks {
+        println!();
+        match run_verify_for_items_vm(items, &module_root) {
+            Ok((_passed, failed, _had_blocks)) => {
+                if failed > 0 {
+                    process::exit(1);
+                }
+            }
+            Err(e) => {
+                eprintln!("{}", e.red());
+                process::exit(1);
+            }
         }
     }
 }
@@ -1225,6 +1252,313 @@ pub(super) fn cmd_check(path: &str, module_root_override: Option<&str>, deps: bo
     }
 }
 
+struct VmVerifyCaseFns {
+    left: String,
+    right: String,
+    guard: Option<String>,
+}
+
+struct VmVerifyPlan {
+    block: VerifyBlock,
+    cases: Vec<VmVerifyCaseFns>,
+}
+
+enum VmVerifyEval {
+    Value(Value),
+    ErrProp(Value),
+}
+
+fn make_verify_vm_helper(name: String, line: usize, expr: Expr, wrap_result: bool) -> TopLevel {
+    let body_expr = if wrap_result {
+        Expr::Constructor("Result.Ok".to_string(), Some(Box::new(expr)))
+    } else {
+        expr
+    };
+
+    TopLevel::FnDef(FnDef {
+        name,
+        line,
+        params: vec![],
+        return_type: "Unit".to_string(),
+        effects: vec![],
+        desc: None,
+        body: Rc::new(FnBody::from_expr(body_expr)),
+        resolution: None,
+    })
+}
+
+fn build_verify_vm_plans(
+    items: &mut Vec<TopLevel>,
+    verify_blocks: &[VerifyBlock],
+) -> Vec<VmVerifyPlan> {
+    let mut plans = Vec::with_capacity(verify_blocks.len());
+
+    for (block_idx, block) in verify_blocks.iter().enumerate() {
+        let mut case_plans = Vec::with_capacity(block.cases.len());
+        let sample_guards = match &block.kind {
+            VerifyKind::Law(law) => Some(&law.sample_guards),
+            VerifyKind::Cases => None,
+        };
+
+        for (case_idx, (left_expr, right_expr)) in block.cases.iter().cloned().enumerate() {
+            let prefix = format!("__verify_{}_{}_{}", block.fn_name, block_idx, case_idx);
+            let left_name = format!("{}_left", prefix);
+            let right_name = format!("{}_right", prefix);
+            items.push(make_verify_vm_helper(
+                left_name.clone(),
+                block.line,
+                left_expr,
+                true,
+            ));
+            items.push(make_verify_vm_helper(
+                right_name.clone(),
+                block.line,
+                right_expr,
+                true,
+            ));
+
+            let guard_name = sample_guards
+                .and_then(|guards| guards.get(case_idx))
+                .cloned()
+                .map(|guard_expr| {
+                    let name = format!("{}_guard", prefix);
+                    items.push(make_verify_vm_helper(
+                        name.clone(),
+                        block.line,
+                        guard_expr,
+                        false,
+                    ));
+                    name
+                });
+
+            case_plans.push(VmVerifyCaseFns {
+                left: left_name,
+                right: right_name,
+                guard: guard_name,
+            });
+        }
+
+        plans.push(VmVerifyPlan {
+            block: block.clone(),
+            cases: case_plans,
+        });
+    }
+
+    plans
+}
+
+fn vm_call_verify_helper(machine: &mut vm::VM, fn_name: &str) -> Result<VmVerifyEval, String> {
+    let value = machine
+        .run_named_function(fn_name, &[])
+        .map_err(|e| e.to_string())?
+        .to_value(&machine.arena);
+
+    match value {
+        Value::Ok(inner) => Ok(VmVerifyEval::Value(*inner)),
+        Value::Err(inner) => Ok(VmVerifyEval::ErrProp(*inner)),
+        other => Err(format!(
+            "verify helper '{}' returned unexpected shape: {}",
+            fn_name,
+            aver_repr(&other)
+        )),
+    }
+}
+
+fn vm_call_guard_helper(machine: &mut vm::VM, fn_name: &str) -> Result<Value, String> {
+    machine
+        .run_named_function(fn_name, &[])
+        .map_err(|e| e.to_string())
+        .map(|value| value.to_value(&machine.arena))
+}
+
+fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
+    let block = &plan.block;
+    let mut passed = 0;
+    let mut failed = 0;
+    let mut skipped = 0;
+    let mut failures = Vec::new();
+    let is_law = matches!(block.kind, VerifyKind::Law(_));
+
+    match &block.kind {
+        VerifyKind::Cases => println!("Verify: {}", block.fn_name.cyan()),
+        VerifyKind::Law(law) => {
+            println!("Verify: {} law {}", block.fn_name.cyan(), law.name.cyan());
+            for given in &law.givens {
+                let domain = match &given.domain {
+                    aver::ast::VerifyGivenDomain::IntRange { start, end } => {
+                        format!("{start}..{end}")
+                    }
+                    aver::ast::VerifyGivenDomain::Explicit(values) => {
+                        let parts: Vec<String> = values.iter().map(expr_to_str).collect();
+                        format!("[{}]", parts.join(", "))
+                    }
+                };
+                println!(
+                    "  {} {}: {} = {}",
+                    "given".dimmed(),
+                    given.name,
+                    given.type_name,
+                    domain
+                );
+            }
+            if let Some(when_expr) = &law.when {
+                println!("  {} {}", "when".dimmed(), expr_to_str(when_expr));
+            }
+            println!(
+                "  {} {} == {}",
+                "law".dimmed(),
+                expr_to_str(&law.lhs),
+                expr_to_str(&law.rhs)
+            );
+            println!("  {} {}", "cases".dimmed(), block.cases.len());
+        }
+    }
+
+    for (idx, ((left_expr, right_expr), case_fns)) in
+        block.cases.iter().zip(&plan.cases).enumerate()
+    {
+        let case_str = format!("{} == {}", expr_to_str(left_expr), expr_to_str(right_expr));
+        let case_label = if is_law {
+            format!("case {}/{}", idx + 1, block.cases.len())
+        } else {
+            case_str.clone()
+        };
+        let failure_case = if is_law {
+            format!("{} [{}]", case_label, case_str)
+        } else {
+            case_str.clone()
+        };
+
+        if let Some(guard_name) = &case_fns.guard {
+            match vm_call_guard_helper(machine, guard_name) {
+                Ok(Value::Bool(true)) => {}
+                Ok(Value::Bool(false)) => {
+                    skipped += 1;
+                    println!("  {} {} (when false)", "·".dimmed(), case_label.dimmed());
+                    continue;
+                }
+                Ok(Value::Err(err_val)) => {
+                    failed += 1;
+                    println!("  {} {}", "✗".red(), case_label);
+                    println!("      when ? hit Result.Err({})", aver_repr(&err_val));
+                    failures.push((
+                        failure_case,
+                        String::new(),
+                        format!("when ? hit Result.Err({})", aver_repr(&err_val)),
+                    ));
+                    continue;
+                }
+                Ok(other) => {
+                    failed += 1;
+                    println!("  {} {}", "✗".red(), case_label);
+                    println!("      when did not evaluate to Bool: {}", aver_repr(&other));
+                    failures.push((
+                        failure_case,
+                        "Bool".to_string(),
+                        format!("when produced {}", aver_repr(&other)),
+                    ));
+                    continue;
+                }
+                Err(e) => {
+                    failed += 1;
+                    println!("  {} {}", "✗".red(), case_label);
+                    println!("      when error: {}", e);
+                    failures.push((failure_case, String::new(), format!("WHEN ERROR: {}", e)));
+                    continue;
+                }
+            }
+        }
+
+        let left_result = vm_call_verify_helper(machine, &case_fns.left);
+        let right_result = vm_call_verify_helper(machine, &case_fns.right);
+
+        match (left_result, right_result) {
+            (Ok(VmVerifyEval::Value(left_val)), Ok(VmVerifyEval::Value(right_val))) => {
+                if left_val == right_val {
+                    passed += 1;
+                    if !is_law {
+                        println!("  {} {}", "✓".green(), case_label);
+                    }
+                } else {
+                    failed += 1;
+                    println!("  {} {}", "✗".red(), case_label);
+                    if is_law {
+                        println!("      expanded: {}", case_str);
+                    }
+                    let expected = aver_repr(&right_val);
+                    let actual = aver_repr(&left_val);
+                    println!("      expected: {}", expected);
+                    println!("      got:      {}", actual);
+                    failures.push((failure_case, expected, actual));
+                }
+            }
+            (Ok(VmVerifyEval::ErrProp(err_val)), _) | (_, Ok(VmVerifyEval::ErrProp(err_val))) => {
+                failed += 1;
+                println!("  {} {}", "✗".red(), case_label);
+                if is_law {
+                    println!("      expanded: {}", case_str);
+                }
+                println!("      ? hit Result.Err({})", aver_repr(&err_val));
+                failures.push((
+                    failure_case,
+                    String::new(),
+                    format!("? hit Result.Err({})", aver_repr(&err_val)),
+                ));
+            }
+            (Err(e), _) | (_, Err(e)) => {
+                failed += 1;
+                println!("  {} {}", "✗".red(), case_label);
+                if is_law {
+                    println!("      expanded: {}", case_str);
+                }
+                println!("      error: {}", e);
+                failures.push((failure_case, String::new(), format!("ERROR: {}", e)));
+            }
+        }
+    }
+
+    let total = passed + failed;
+    if is_law && failed == 0 {
+        if skipped == 0 {
+            println!(
+                "  {} all {} generated case(s) passed",
+                "✓".green(),
+                block.cases.len()
+            );
+        } else {
+            println!(
+                "  {} all {} active generated case(s) passed ({} skipped by when)",
+                "✓".green(),
+                passed,
+                skipped
+            );
+        }
+    }
+    if failed == 0 && skipped == 0 {
+        println!("  {}", format!("{}/{} passed", passed, total).green());
+    } else if failed == 0 {
+        println!(
+            "  {}",
+            format!("{}/{} passed, {} skipped", passed, total + skipped, skipped).green()
+        );
+    } else if skipped == 0 {
+        println!("  {}", format!("{}/{} passed", passed, total).red());
+    } else {
+        println!(
+            "  {}",
+            format!("{}/{} passed, {} skipped", passed, total + skipped, skipped).red()
+        );
+    }
+
+    VerifyResult {
+        fn_name: block.fn_name.clone(),
+        passed,
+        failed,
+        skipped,
+        failures,
+    }
+}
+
 fn run_verify_for_items(
     mut items: Vec<TopLevel>,
     module_root: &str,
@@ -1291,11 +1625,50 @@ fn run_verify_for_items(
     Ok((total_passed, total_failed, true))
 }
 
+fn run_verify_for_items_vm(
+    mut items: Vec<TopLevel>,
+    module_root: &str,
+) -> Result<(usize, usize, bool), String> {
+    tco::transform_program(&mut items);
+
+    let tc_result = run_type_check_full(&items, Some(module_root));
+    if !tc_result.errors.is_empty() {
+        return Err(format_type_errors(&tc_result.errors));
+    }
+
+    let verify_blocks = merge_verify_blocks(&items);
+    if verify_blocks.is_empty() {
+        return Ok((0, 0, false));
+    }
+
+    let plans = build_verify_vm_plans(&mut items, &verify_blocks);
+    resolver::resolve_program(&mut items);
+
+    let mut arena = Arena::new();
+    vm::register_service_types(&mut arena);
+    let (code, globals) = vm::compile_program_with_modules(&items, &mut arena, Some(module_root))
+        .map_err(|e| format!("VM compile error: {}", e))?;
+    let mut machine = vm::VM::new(code, globals, arena);
+
+    let mut total_passed = 0;
+    let mut total_failed = 0;
+
+    for plan in &plans {
+        let result = run_verify_vm(plan, &mut machine);
+        total_passed += result.passed;
+        total_failed += result.failed;
+        println!();
+    }
+
+    Ok((total_passed, total_failed, true))
+}
+
 fn run_verify_for_file(
     file: &str,
     module_root: &str,
     deps: bool,
     show_file_headers: bool,
+    vm_mode: bool,
 ) -> Result<(usize, usize, bool), String> {
     let units = collect_check_units(file, module_root, deps)?;
     let mut total_passed = 0;
@@ -1313,7 +1686,11 @@ fn run_verify_for_file(
             );
         }
 
-        let (passed, failed, had_blocks) = run_verify_for_items(items, module_root)?;
+        let (passed, failed, had_blocks) = if vm_mode {
+            run_verify_for_items_vm(items, module_root)?
+        } else {
+            run_verify_for_items(items, module_root)?
+        };
 
         if had_blocks {
             saw_verify_blocks = true;
@@ -1325,7 +1702,12 @@ fn run_verify_for_file(
     Ok((total_passed, total_failed, saw_verify_blocks))
 }
 
-pub(super) fn cmd_verify(path: &str, module_root_override: Option<&str>, deps: bool) {
+pub(super) fn cmd_verify(
+    path: &str,
+    module_root_override: Option<&str>,
+    deps: bool,
+    vm_mode: bool,
+) {
     let module_root = resolve_module_root(module_root_override);
     let inputs = match resolve_av_inputs(path) {
         Ok(inputs) => inputs,
@@ -1343,7 +1725,7 @@ pub(super) fn cmd_verify(path: &str, module_root_override: Option<&str>, deps: b
 
     for file in &inputs {
         let (passed, failed, had_blocks) =
-            match run_verify_for_file(file, &module_root, deps, batch || deps) {
+            match run_verify_for_file(file, &module_root, deps, batch || deps, vm_mode) {
                 Ok(counts) => counts,
                 Err(e) => {
                     eprintln!("{}", e.red());

@@ -2,7 +2,7 @@
 
 ## What is this?
 
-Aver is a programming language designed for AI-assisted development. Its interpreter is written in Rust. The language prioritises human and machine readability: every function carries an optional prose description, and architectural decisions are first-class citizens expressed as `decision` blocks co-located with the code they describe. This file is the single entry point for any AI resuming work on this project — read it before touching any source file.
+Aver is a programming language designed for AI-assisted development. Its interpreter and bytecode VM are written in Rust. The language prioritises human and machine readability: every function carries an optional prose description, and architectural decisions are first-class citizens expressed as `decision` blocks co-located with the code they describe. This file is the single entry point for any AI resuming work on this project — read it before touching any source file.
 
 ## Project philosophy
 
@@ -41,6 +41,7 @@ Below: implementation details relevant to development only.
 - **Auto-memoization** (`src/call_graph.rs`, `src/types/checker/memo.rs`, `src/interpreter/core.rs`): call graph built from AST, Tarjan SCC detects recursion, `call_fn_ref` checks/stores per-function HashMap cache (capped at 4096). Eligibility: pure + recursive + all params memo-safe (scalars, records/variants of scalars).
 - **TCO** (`src/tco.rs`): transform pass rewrites tail-position `FnCall` → `Expr::TailCall` in recursive SCCs. Interpreter trampoline in `call_fn_ref`: self-TCO rebinds args, mutual TCO switches to target fn. Pipeline: `parse → tco_transform → typecheck → resolve → interpret`.
 - **Compile-time variable resolution** (`src/resolver.rs`): `Ident("x")` → `Resolved(slot)` inside FnDef bodies. `EnvFrame::Slots(Vec<Rc<Value>>)` for O(1) lookup. REPL and sub-interpreters use unresolved path (`EnvFrame::Owned(HashMap)`).
+- **Bytecode VM** (`src/vm/`): stack VM over `NanValue`, with language-shaped opcodes for lists, records, variants, wrappers, tuple literals/patterns, and tail calls. `src/vm/runtime.rs` is the host/effect bridge; `src/vm/execute.rs` is the core loop; `src/vm/compiler.rs` lowers resolved AST to bytecode.
 - **`check` command**: warns when module has no `intent =`, function with effects/Result return has no `?` description, file exceeds 250 lines. `fn main()` is exempt from `?` requirement.
 - **Entry-point effect enforcement**: `main`/top-level entry calls use `call_value_with_effects_pub(...)` with synthetic call frame.
 - **Opaque types** (`exposes opaque [T]`): module-level access control for types. An opaque type is visible in signatures (can be passed, returned, stored) but cannot be constructed, have its fields accessed, or be pattern-matched from outside the defining module. Enforced at compile time in the typechecker; `load_module_sigs` registers a dummy sig (type resolves) but omits field types, constructors, and variant info. Parser recognizes `exposes opaque` after the `Exposes` token by checking for `Ident("opaque")`.
@@ -124,6 +125,13 @@ src/
                         json.rs    — JSON parser/formatter + Value↔JSON roundtrip
                         session.rs — EffectRecord / SessionRecording encoding
 
+  vm/                 — Bytecode compiler + virtual machine:
+                        compiler.rs — lowers resolved AST into Aver-specific opcodes
+                        execute.rs  — stack VM execution loop over `NanValue`
+                        opcode.rs   — bytecode ISA (calls, match, records, tuples, TCO)
+                        runtime.rs  — builtin/effect/record-replay host bridge
+                        types.rs    — function chunks, call frames, code store
+
   checker.rs          — Verify block runner, module intent warnings, decision index.
 
   value.rs            — Value, RuntimeError, Env, EnvFrame, aver_repr, aver_display.
@@ -156,6 +164,7 @@ src/
 aver run examples/hello.av
 aver run examples/calculator.av
 aver run examples/lists.av
+aver run examples/calculator.av --vm
 aver run examples/services/console_demo.av --record recordings/
 aver replay recordings/ --test --diff
 aver verify examples/calculator.av

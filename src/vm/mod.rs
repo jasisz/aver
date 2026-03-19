@@ -1,6 +1,7 @@
 mod compiler;
 mod execute;
 pub mod opcode;
+mod runtime;
 mod types;
 
 pub use compiler::{compile_program, compile_program_with_modules};

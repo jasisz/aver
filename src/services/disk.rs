@@ -157,9 +157,11 @@ fn one_str_arg(fn_name: &str, args: &[Value]) -> Result<String, RuntimeError> {
 fn two_str_args(fn_name: &str, args: &[Value]) -> Result<(String, String), RuntimeError> {
     match args {
         [Value::Str(a), Value::Str(b)] => Ok((a.clone(), b.clone())),
-        [_, _] => Err(RuntimeError::Error(format!(
-            "{}: both arguments must be Strings",
-            fn_name
+        [a, b] => Err(RuntimeError::Error(format!(
+            "{}: both arguments must be Strings (got {}, {})",
+            fn_name,
+            crate::value::aver_repr(a),
+            crate::value::aver_repr(b)
         ))),
         _ => Err(RuntimeError::Error(format!(
             "{}() takes 2 arguments (path, content), got {}",
@@ -243,8 +245,10 @@ fn nv_two_str(
     }
     if !args[0].is_string() || !args[1].is_string() {
         return Err(RuntimeError::Error(format!(
-            "{}: both arguments must be Strings",
-            fn_name
+            "{}: both arguments must be Strings (got {}, {})",
+            fn_name,
+            args[0].type_name(),
+            args[1].type_name()
         )));
     }
     Ok((

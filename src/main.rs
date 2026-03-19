@@ -37,6 +37,7 @@ fn main() {
                 commands::cmd_run_vm(
                     file,
                     module_root.as_deref(),
+                    *verify,
                     record.as_deref(),
                     program_args.clone(),
                 );
@@ -61,8 +62,9 @@ fn main() {
             file,
             module_root,
             deps,
+            vm,
         } => {
-            commands::cmd_verify(file, module_root.as_deref(), *deps);
+            commands::cmd_verify(file, module_root.as_deref(), *deps, *vm);
         }
         Commands::Format { path, check } => {
             format_cmd::cmd_format(path, *check);
@@ -72,8 +74,9 @@ fn main() {
             diff,
             test,
             check_args,
+            vm,
         } => {
-            replay_cmd::cmd_replay(recording, *diff, *test, *check_args);
+            replay_cmd::cmd_replay(recording, *diff, *test, *check_args, *vm);
         }
         Commands::Repl => {
             repl::cmd_repl();

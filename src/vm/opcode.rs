@@ -128,6 +128,9 @@ pub const VARIANT_NEW: u8 = 0x65; // type_id:u16, variant_id:u16, count:u8
 /// Pop value, push wrapped value. kind: 0=Ok, 1=Err, 2=Some.
 pub const WRAP: u8 = 0x66; // kind:u8
 
+/// Pop `count` items, build a tuple from them, push tuple.
+pub const TUPLE_NEW: u8 = 0x68; // count:u8
+
 // -- Pattern matching --------------------------------------------------------
 
 /// Peek top: if NaN tag != expected, ip += fail_offset.
@@ -152,6 +155,12 @@ pub const LIST_HEAD_TAIL: u8 = 0x75;
 
 /// Peek top (record/variant), push `fields[field_idx]` (non-destructive).
 pub const EXTRACT_FIELD: u8 = 0x76; // field_idx:u8
+
+/// Peek top: if not a tuple of `count` items, ip += fail_offset.
+pub const MATCH_TUPLE: u8 = 0x78; // count:u8, fail_offset:i16
+
+/// Peek top tuple, push `items[item_idx]` (non-destructive).
+pub const EXTRACT_TUPLE_ITEM: u8 = 0x79; // item_idx:u8
 
 /// Non-exhaustive match error at source line.
 pub const MATCH_FAIL: u8 = 0x77; // line:u16
@@ -196,6 +205,7 @@ pub fn opcode_name(op: u8) -> &'static str {
         RECORD_GET_NAMED => "RECORD_GET_NAMED",
         VARIANT_NEW => "VARIANT_NEW",
         WRAP => "WRAP",
+        TUPLE_NEW => "TUPLE_NEW",
         MATCH_TAG => "MATCH_TAG",
         MATCH_VARIANT => "MATCH_VARIANT",
         MATCH_UNWRAP => "MATCH_UNWRAP",
@@ -203,6 +213,8 @@ pub fn opcode_name(op: u8) -> &'static str {
         MATCH_CONS => "MATCH_CONS",
         LIST_HEAD_TAIL => "LIST_HEAD_TAIL",
         EXTRACT_FIELD => "EXTRACT_FIELD",
+        MATCH_TUPLE => "MATCH_TUPLE",
+        EXTRACT_TUPLE_ITEM => "EXTRACT_TUPLE_ITEM",
         MATCH_FAIL => "MATCH_FAIL",
         _ => "UNKNOWN",
     }

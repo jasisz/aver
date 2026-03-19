@@ -121,6 +121,9 @@ pub(super) enum Commands {
         /// Also run verify blocks for transitive `depends [...]` modules
         #[arg(long)]
         deps: bool,
+        /// Execute verify cases on the bytecode VM instead of the tree-walking interpreter
+        #[arg(long)]
+        vm: bool,
     },
     /// Format Aver source files
     Format {
@@ -143,6 +146,9 @@ pub(super) enum Commands {
         /// Validate effect arguments in addition to effect sequence/type
         #[arg(long = "check-args")]
         check_args: bool,
+        /// Replay using the bytecode VM instead of the tree-walking interpreter
+        #[arg(long)]
+        vm: bool,
     },
     /// Interactive REPL
     Repl,
@@ -213,11 +219,30 @@ mod tests {
     fn verify_accepts_deps_flag() {
         let cli = Cli::parse_from(["aver", "verify", "examples/modules/app.av", "--deps"]);
         match cli.command {
-            Commands::Verify { file, deps, .. } => {
+            Commands::Verify { file, deps, vm, .. } => {
                 assert_eq!(file, "examples/modules/app.av");
                 assert!(deps);
+                assert!(!vm);
             }
             _ => panic!("expected verify command"),
+        }
+    }
+
+    #[test]
+    fn verify_accepts_vm_flag() {
+        let cli = Cli::parse_from(["aver", "verify", "examples/modules/app.av", "--vm"]);
+        match cli.command {
+            Commands::Verify { vm, .. } => assert!(vm),
+            _ => panic!("expected verify command"),
+        }
+    }
+
+    #[test]
+    fn replay_accepts_vm_flag() {
+        let cli = Cli::parse_from(["aver", "replay", "recordings", "--vm"]);
+        match cli.command {
+            Commands::Replay { vm, .. } => assert!(vm),
+            _ => panic!("expected replay command"),
         }
     }
 
