@@ -63,7 +63,7 @@ struct BenchResult {
 fn median(mut v: Vec<f64>) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let mid = v.len() / 2;
-    if v.len() % 2 == 0 {
+    if v.len().is_multiple_of(2) {
         (v[mid - 1] + v[mid]) / 2.0
     } else {
         v[mid]
@@ -130,7 +130,7 @@ fn bench(name: &'static str, src: &str) -> BenchResult {
 
     let match_ok = results_match(&interp_result, vm_result, &vm_arena);
     let interp_repr = format!("{:?}", interp_result);
-    let vm_repr = format!("{}", vm_result.repr(&vm_arena));
+    let vm_repr = vm_result.repr(&vm_arena);
 
     BenchResult {
         name,

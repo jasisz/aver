@@ -18,7 +18,10 @@ pub struct VM {
 macro_rules! read_u8 {
     ($code:expr, $ip:expr) => {{
         let v = $code[$ip];
-        $ip += 1;
+        #[allow(unused_assignments)]
+        {
+            $ip += 1;
+        }
         v
     }};
 }
@@ -27,7 +30,10 @@ macro_rules! read_u16 {
     ($code:expr, $ip:expr) => {{
         let hi = $code[$ip] as u16;
         let lo = $code[$ip + 1] as u16;
-        $ip += 2;
+        #[allow(unused_assignments)]
+        {
+            $ip += 2;
+        }
         (hi << 8) | lo
     }};
 }

@@ -544,10 +544,10 @@ fn vm_result_with_default() {
 
 #[test]
 fn vm_float_abs() {
-    let src = "fn main() -> Float\n    Float.abs(0.0 - 3.14)\n";
+    let src = "fn main() -> Float\n    Float.abs(0.0 - 2.71)\n";
     let result = vm_run(src);
     assert!(result.is_float());
-    assert!((result.as_float() - 3.14).abs() < 0.001);
+    assert!((result.as_float() - 2.71).abs() < 0.001);
 }
 
 // ---------------------------------------------------------------------------
