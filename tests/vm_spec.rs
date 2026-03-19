@@ -614,3 +614,16 @@ fn vm_effect_violation() {
         msg
     );
 }
+
+// ---------------------------------------------------------------------------
+// Map literals
+// ---------------------------------------------------------------------------
+
+#[test]
+fn vm_map_literal() {
+    let src = "fn main() -> Int\n    m = {1 => 10, 2 => 20}\n    Map.len(m)\n";
+    let result = vm_run(src);
+    assert!(result.is_int());
+    let arena = Arena::new();
+    assert_eq!(result.as_int(&arena), 2);
+}

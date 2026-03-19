@@ -1295,9 +1295,35 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
-    fn compile_map(&mut self, _entries: &[(Expr, Expr)]) -> Result<(), CompileError> {
-        Err(CompileError {
-            msg: "map literals not yet supported in VM".into(),
-        })
+    fn compile_map(&mut self, entries: &[(Expr, Expr)]) -> Result<(), CompileError> {
+        // Compile as: build empty map, then insert each key-value pair via Map.set builtin.
+        // For v1, compile directly as arena map construction.
+        // Push all key-value pairs, then use a dedicated sequence.
+        // Simplest: compile each k/v, emit CALL_BUILTIN for Map.set iteratively.
+        //
+        // Actually, even simpler: build the map in the compiler if all entries
+        // are constants... but that's rare. For v1, compile as a series of
+        // Map.set calls starting from an empty map.
+
+        // Start with empty map.
+        // We need an opcode for empty map or a builtin call.
+        // For pragmatism: allocate empty map in arena at compile time.
+        let empty_map = self.arena.push_map(im::HashMap::new());
+        let nv = NanValue::new_map(empty_map);
+        let idx = self.add_constant(nv);
+        self.emit_op(LOAD_CONST);
+        self.emit_u16(idx);
+
+        // For each entry: stack has [..., map], compile key, compile value,
+        // then call Map.set(map, key, value) → new map.
+        for (key, value) in entries {
+            self.compile_expr(key)?;
+            self.compile_expr(value)?;
+            let name_idx = self.arena.push_string("Map.set");
+            self.emit_op(CALL_BUILTIN);
+            self.emit_u16(name_idx as u16);
+            self.emit_u8(3); // Map.set(map, key, value)
+        }
+        Ok(())
     }
 }
