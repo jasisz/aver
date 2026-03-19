@@ -385,6 +385,24 @@ impl ProgramCompiler {
 }
 
 // ---------------------------------------------------------------------------
+// Dotted path resolution
+// ---------------------------------------------------------------------------
+
+/// What a dotted path `Ns.member` resolves to.
+enum DottedResolution {
+    /// Result.Ok / Result.Err / Option.Some → WRAP opcode. kind: 0=Ok, 1=Err, 2=Some.
+    Wrapper(u8),
+    /// Option.None → load constant.
+    None_,
+    /// User-defined variant constructor: Shape.Circle → VARIANT_NEW.
+    Variant(u32, u16),
+    /// Module function: Data.Fibonacci.buildFibStats → CALL_KNOWN.
+    ModuleFn(u32),
+    /// Builtin service: Console.print, List.len → CALL_BUILTIN.
+    Builtin(String),
+}
+
+// ---------------------------------------------------------------------------
 // Function-level compiler
 // ---------------------------------------------------------------------------
 
@@ -645,86 +663,69 @@ impl<'a> FnCompiler<'a> {
         }
     }
 
+    // -- Dotted path resolution ------------------------------------------------
+
+    /// Resolve a dotted path (Ns, member) to what it means.
+    fn resolve_dotted(&self, ns: &str, method: &str) -> DottedResolution {
+        match (ns, method) {
+            ("Result", "Ok") => return DottedResolution::Wrapper(0),
+            ("Result", "Err") => return DottedResolution::Wrapper(1),
+            ("Option", "Some") => return DottedResolution::Wrapper(2),
+            ("Option", "None") => return DottedResolution::None_,
+            _ => {}
+        }
+        // User-defined variant?
+        if let Some(type_id) = self.arena.find_type_id(ns)
+            && let Some(variant_id) = self.arena.find_variant_id(type_id, method)
+        {
+            return DottedResolution::Variant(type_id, variant_id);
+        }
+        // Module function?
+        let qualified = format!("{}.{}", ns, method);
+        if let Some(fn_id) = self.code_store.find(&qualified) {
+            return DottedResolution::ModuleFn(fn_id);
+        }
+        // Builtin service.
+        DottedResolution::Builtin(qualified)
+    }
+
+    /// Extract (namespace_path, method) from dotted Attr expressions.
+    fn extract_dotted_path(&self, expr: &Expr) -> Option<(String, String)> {
+        if let Expr::Attr(obj, method) = expr {
+            let path = self.flatten_path(obj)?;
+            if path.chars().next().is_some_and(|c| c.is_uppercase()) {
+                return Some((path, method.clone()));
+            }
+        }
+        Option::None
+    }
+
+    /// Flatten Attr(Attr(Ident("A"), "B"), "C") → "A.B.C".
+    fn flatten_path(&self, expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Ident(name) => Some(name.clone()),
+            Expr::Attr(inner, field) => Some(format!("{}.{}", self.flatten_path(inner)?, field)),
+            _ => Option::None,
+        }
+    }
+
+    /// Resolve a function name to fn_id (module_scope first, then code_store).
+    fn resolve_fn_id(&self, name: &str) -> Option<u32> {
+        self.module_scope
+            .get(name)
+            .copied()
+            .or_else(|| self.code_store.find(name))
+    }
+
     // -- Call compilation ----------------------------------------------------
 
     fn compile_call(&mut self, fn_expr: &Expr, args: &[Expr]) -> Result<(), CompileError> {
-        // Detect constructor calls: FnCall(Attr(Ident("Result"), "Ok"), [arg])
-        if let Some((ns, method)) = self.extract_namespace_method(fn_expr) {
-            // Check if it's a constructor.
-            match (ns.as_str(), method.as_str()) {
-                ("Result", "Ok") => {
-                    if let Some(arg) = args.first() {
-                        self.compile_expr(arg)?;
-                    } else {
-                        self.emit_op(LOAD_UNIT);
-                    }
-                    self.emit_op(WRAP);
-                    self.emit_u8(0); // Ok
-                    return Ok(());
-                }
-                ("Result", "Err") => {
-                    if let Some(arg) = args.first() {
-                        self.compile_expr(arg)?;
-                    } else {
-                        self.emit_op(LOAD_UNIT);
-                    }
-                    self.emit_op(WRAP);
-                    self.emit_u8(1); // Err
-                    return Ok(());
-                }
-                ("Option", "Some") => {
-                    if let Some(arg) = args.first() {
-                        self.compile_expr(arg)?;
-                    } else {
-                        self.emit_op(LOAD_UNIT);
-                    }
-                    self.emit_op(WRAP);
-                    self.emit_u8(2); // Some
-                    return Ok(());
-                }
-                _ => {
-                    // Check user-defined variant constructor.
-                    if let Some(type_id) = self.arena.find_type_id(&ns)
-                        && let Some(variant_id) = self.arena.find_variant_id(type_id, &method)
-                    {
-                        for arg in args {
-                            self.compile_expr(arg)?;
-                        }
-                        self.emit_op(VARIANT_NEW);
-                        self.emit_u16(type_id as u16);
-                        self.emit_u16(variant_id);
-                        self.emit_u8(args.len() as u8);
-                        return Ok(());
-                    }
-
-                    // Check if it's a qualified module function call.
-                    let qualified = format!("{}.{}", ns, method);
-                    if let Some(fn_id) = self.code_store.find(&qualified) {
-                        for arg in args {
-                            self.compile_expr(arg)?;
-                        }
-                        self.emit_op(CALL_KNOWN);
-                        self.emit_u16(fn_id as u16);
-                        self.emit_u8(args.len() as u8);
-                        return Ok(());
-                    }
-
-                    // Namespace method call (builtin): Console.print, List.len, etc.
-                    let builtin_name = format!("{}.{}", ns, method);
-                    for arg in args {
-                        self.compile_expr(arg)?;
-                    }
-                    self.emit_op(CALL_BUILTIN);
-                    let name_idx = self.arena.push_string(&builtin_name);
-                    self.emit_u16(name_idx as u16);
-                    self.emit_u8(args.len() as u8);
-                    return Ok(());
-                }
-            }
+        // Dotted call: Ns.method(args)
+        if let Some((ns, method)) = self.extract_dotted_path(fn_expr) {
+            return self.compile_dotted_call(&ns, &method, args);
         }
-
-        // Try known function (by name).
-        if let Some(fn_id) = self.resolve_known_fn(fn_expr) {
+        // Named function call.
+        if let Some(fn_id) = self.resolve_fn_from_expr(fn_expr) {
             for arg in args {
                 self.compile_expr(arg)?;
             }
@@ -732,7 +733,7 @@ impl<'a> FnCompiler<'a> {
             self.emit_u16(fn_id as u16);
             self.emit_u8(args.len() as u8);
         } else {
-            // Dynamic call.
+            // Dynamic call (HOF).
             self.compile_expr(fn_expr)?;
             for arg in args {
                 self.compile_expr(arg)?;
@@ -743,39 +744,61 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
-    /// Extract (namespace_path, method) from dotted expressions.
-    /// `Attr(Ident("Console"), "print")` → Some(("Console", "print"))
-    /// `Attr(Attr(Ident("Data"), "Fibonacci"), "buildFibStats")` → Some(("Data.Fibonacci", "buildFibStats"))
-    fn extract_namespace_method(&self, expr: &Expr) -> Option<(String, String)> {
-        if let Expr::Attr(obj, method) = expr {
-            let path = self.flatten_dotted_path(obj)?;
-            if path.chars().next().is_some_and(|c| c.is_uppercase()) {
-                return Some((path, method.clone()));
+    fn compile_dotted_call(
+        &mut self,
+        ns: &str,
+        method: &str,
+        args: &[Expr],
+    ) -> Result<(), CompileError> {
+        match self.resolve_dotted(ns, method) {
+            DottedResolution::Wrapper(kind) => {
+                if let Some(arg) = args.first() {
+                    self.compile_expr(arg)?;
+                } else {
+                    self.emit_op(LOAD_UNIT);
+                }
+                self.emit_op(WRAP);
+                self.emit_u8(kind);
+            }
+            DottedResolution::None_ => {
+                let idx = self.add_constant(NanValue::NONE);
+                self.emit_op(LOAD_CONST);
+                self.emit_u16(idx);
+            }
+            DottedResolution::Variant(type_id, variant_id) => {
+                for arg in args {
+                    self.compile_expr(arg)?;
+                }
+                self.emit_op(VARIANT_NEW);
+                self.emit_u16(type_id as u16);
+                self.emit_u16(variant_id);
+                self.emit_u8(args.len() as u8);
+            }
+            DottedResolution::ModuleFn(fn_id) => {
+                for arg in args {
+                    self.compile_expr(arg)?;
+                }
+                self.emit_op(CALL_KNOWN);
+                self.emit_u16(fn_id as u16);
+                self.emit_u8(args.len() as u8);
+            }
+            DottedResolution::Builtin(qualified) => {
+                for arg in args {
+                    self.compile_expr(arg)?;
+                }
+                self.emit_op(CALL_BUILTIN);
+                let name_idx = self.arena.push_string(&qualified);
+                self.emit_u16(name_idx as u16);
+                self.emit_u8(args.len() as u8);
             }
         }
-        None
+        Ok(())
     }
 
-    /// Flatten a chain of Attr(Attr(Ident("A"), "B"), "C") → "A.B.C".
-    fn flatten_dotted_path(&self, expr: &Expr) -> Option<String> {
+    fn resolve_fn_from_expr(&self, expr: &Expr) -> Option<u32> {
         match expr {
-            Expr::Ident(name) => Some(name.clone()),
-            Expr::Attr(inner, field) => {
-                let base = self.flatten_dotted_path(inner)?;
-                Some(format!("{}.{}", base, field))
-            }
-            _ => None,
-        }
-    }
-
-    fn resolve_known_fn(&self, expr: &Expr) -> Option<u32> {
-        match expr {
-            Expr::Ident(name) => self
-                .module_scope
-                .get(name)
-                .copied()
-                .or_else(|| self.code_store.find(name)),
-            _ => None,
+            Expr::Ident(name) => self.resolve_fn_id(name),
+            _ => Option::None,
         }
     }
 
@@ -787,29 +810,14 @@ impl<'a> FnCompiler<'a> {
         if target == self.name {
             self.emit_op(TAIL_CALL_SELF);
             self.emit_u8(args.len() as u8);
-        } else if let Some(&fn_id) = self.module_scope.get(target) {
-            self.emit_op(TAIL_CALL_KNOWN);
-            self.emit_u16(fn_id as u16);
-            self.emit_u8(args.len() as u8);
-        } else if let Some(fn_id) = self.code_store.find(target) {
+        } else if let Some(fn_id) = self.resolve_fn_id(target) {
             self.emit_op(TAIL_CALL_KNOWN);
             self.emit_u16(fn_id as u16);
             self.emit_u8(args.len() as u8);
         } else {
-            // Forward reference — fall back to regular call + return.
-            if let Some(&idx) = self.global_names.get(target) {
-                self.emit_op(LOAD_GLOBAL);
-                self.emit_u16(idx);
-                for arg in args {
-                    self.compile_expr(arg)?;
-                }
-                self.emit_op(CALL_VALUE);
-                self.emit_u8(args.len() as u8);
-            } else {
-                return Err(CompileError {
-                    msg: format!("unknown tail call target: {}", target),
-                });
-            }
+            return Err(CompileError {
+                msg: format!("unknown tail call target: {}", target),
+            });
         }
         Ok(())
     }
@@ -1272,32 +1280,32 @@ impl<'a> FnCompiler<'a> {
     }
 
     fn compile_attr(&mut self, obj: &Expr, field: &str) -> Result<(), CompileError> {
-        // Namespace member access (Option.None, etc.) without call.
-        if let Expr::Ident(ns) = obj
-            && ns == "Option"
-            && field == "None"
-        {
-            let idx = self.add_constant(NanValue::NONE);
-            self.emit_op(LOAD_CONST);
-            self.emit_u16(idx);
-            return Ok(());
-        }
-
-        // Check for zero-arg variant constructor: Shape.Point, etc.
-        if let Expr::Ident(ns) = obj
+        // Dotted path on capitalized namespace: Option.None, Shape.Point, etc.
+        if let Some(ns) = self.flatten_path(obj)
             && ns.chars().next().is_some_and(|c| c.is_uppercase())
-            && let Some(type_id) = self.arena.find_type_id(ns)
-            && let Some(variant_id) = self.arena.find_variant_id(type_id, field)
         {
-            self.emit_op(VARIANT_NEW);
-            self.emit_u16(type_id as u16);
-            self.emit_u16(variant_id);
-            self.emit_u8(0); // zero fields
-            return Ok(());
+            match self.resolve_dotted(&ns, field) {
+                DottedResolution::None_ => {
+                    let idx = self.add_constant(NanValue::NONE);
+                    self.emit_op(LOAD_CONST);
+                    self.emit_u16(idx);
+                    return Ok(());
+                }
+                DottedResolution::Variant(type_id, variant_id) => {
+                    self.emit_op(VARIANT_NEW);
+                    self.emit_u16(type_id as u16);
+                    self.emit_u16(variant_id);
+                    self.emit_u8(0); // zero-arg
+                    return Ok(());
+                }
+                _ => {
+                    // Not a standalone value — could be a partial application
+                    // or namespace member. Fall through to record field access.
+                }
+            }
         }
 
-        // Record field access: emit RECORD_GET_NAMED with field name in constants.
-        // VM resolves field index at runtime based on the record's type_id.
+        // Record field access.
         self.compile_expr(obj)?;
         let name_idx = self.arena.push_string(field);
         let nv = NanValue::new_string(name_idx);

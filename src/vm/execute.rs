@@ -713,79 +713,34 @@ impl VM {
     }
 
     /// Handle HttpServer.listen/listenWith with VM callback support.
+    /// Uses unsafe self-pointer for re-entrant callback into VM.call_function.
     fn dispatch_http_server(&mut self, name: &str, args: &[NanValue]) -> Result<NanValue, VmError> {
         use crate::services::http_server;
         use crate::value::Value;
 
-        // Convert NanValue args to Value for the existing http_server module.
-        // Handler function is stored as NanValue::Int(fn_id) in the VM.
-        // HttpServer expects Value::Fn, so we must reconstruct it.
-        let val_args: Vec<Value> = args
-            .iter()
-            .map(|a| {
-                // If it's an int that maps to a known function, convert to Value::Fn.
-                if a.is_int() {
-                    let fn_id = a.as_int(&self.arena) as u32;
-                    if (fn_id as usize) < self.code.functions.len() {
-                        let chunk = &self.code.functions[fn_id as usize];
-                        // Build a minimal Value::Fn for HttpServer's handler dispatch.
-                        let body = crate::ast::FnBody::Block(Vec::new());
-                        return Value::Fn(std::rc::Rc::new(crate::value::FunctionValue {
-                            name: std::rc::Rc::new(chunk.name.clone()),
-                            params: std::rc::Rc::new(Vec::new()),
-                            return_type: std::rc::Rc::new(String::new()),
-                            effects: std::rc::Rc::new(chunk.effects.clone()),
-                            lowered_body: crate::interpreter::lowered::lower_fn_body(&body),
-                            body: std::rc::Rc::new(body),
-                            resolution: None,
-                            memo_eligible: false,
-                            home_globals: None,
-                        }));
-                    }
-                }
-                a.to_value(&self.arena)
-            })
-            .collect();
+        // Convert args to Value. Handler fn_id (NanValue::Int) becomes a
+        // Value::Int — the callback closure below extracts fn_id from it.
+        let val_args: Vec<Value> = args.iter().map(|a| a.to_value(&self.arena)).collect();
 
-        // The invoke_handler closure calls back into the VM to execute the
-        // Aver handler function. It receives the handler Value::Fn, callback
-        // args, and an entry label.
         let vm_ptr = self as *mut VM;
         let invoke_handler = |handler: Value, callback_args: Vec<Value>, _entry: String| {
-            // Convert handler to NanValue and find its fn_id.
             let vm = unsafe { &mut *vm_ptr };
-            let handler_nv = NanValue::from_value(&handler, &mut vm.arena);
-            let handler_fn_id = if handler_nv.is_fn() {
-                // Look up fn_id from the arena FunctionValue
-                // Actually, handler is a Value::Fn with a name. Find it.
-                if let Value::Fn(fv) = &handler {
-                    vm.code.find(&fv.name).ok_or_else(|| {
-                        crate::value::RuntimeError::Error(format!(
-                            "HttpServer: handler function '{}' not found in VM",
-                            fv.name
-                        ))
-                    })?
-                } else {
+
+            // Handler is Value::Int(fn_id) — the VM stores functions as int ids.
+            let handler_fn_id = match &handler {
+                Value::Int(id) if (*id as usize) < vm.code.functions.len() => *id as u32,
+                _ => {
                     return Err(crate::value::RuntimeError::Error(
-                        "HttpServer: handler is not a function".into(),
+                        "HttpServer: handler is not a valid VM function".into(),
                     ));
                 }
-            } else if handler_nv.is_int() {
-                // fn_id stored as int (VM convention).
-                handler_nv.as_int(&vm.arena) as u32
-            } else {
-                return Err(crate::value::RuntimeError::Error(
-                    "HttpServer: handler is not a function".into(),
-                ));
             };
 
-            // Convert callback args to NanValue.
             let nv_args: Vec<NanValue> = callback_args
                 .iter()
                 .map(|v| NanValue::from_value(v, &mut vm.arena))
                 .collect();
 
-            // Call the handler via VM.
             let result_nv = vm
                 .call_function(handler_fn_id, &nv_args)
                 .map_err(|e| crate::value::RuntimeError::Error(format!("{}", e)))?;
@@ -793,10 +748,8 @@ impl VM {
             Ok(result_nv.to_value(&vm.arena))
         };
 
-        let skip_server = self.execution_mode == VmExecutionMode::Record;
-        let result = http_server::call_with_runtime(name, &val_args, invoke_handler, skip_server);
-
-        match result {
+        let skip = self.execution_mode == VmExecutionMode::Record;
+        match http_server::call_with_runtime(name, &val_args, invoke_handler, skip) {
             Some(Ok(val)) => Ok(NanValue::from_value(&val, &mut self.arena)),
             Some(Err(crate::value::RuntimeError::Error(msg))) => Err(VmError::Runtime(msg)),
             Some(Err(e)) => Err(VmError::Runtime(format!("{:?}", e))),
