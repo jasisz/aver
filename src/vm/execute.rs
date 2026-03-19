@@ -304,7 +304,11 @@ impl VM {
                     let target_fn_id = if fn_val.is_int() {
                         fn_val.as_int(&self.arena) as u32
                     } else {
-                        return Err(VmError::Type("cannot call non-function".into()));
+                        return Err(VmError::Type(format!(
+                            "cannot call non-function (got {} = {:?})",
+                            fn_val.type_name(),
+                            fn_val
+                        )));
                     };
 
                     self.frames.last_mut().unwrap().ip = ip as u32;
