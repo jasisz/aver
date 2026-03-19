@@ -209,11 +209,18 @@ impl ProgramCompiler {
             }
         }
 
-        // Register simple names as globals so intra-module calls resolve.
+        // Temporarily register simple names as globals so intra-module calls resolve.
         // E.g., inside fibonacci.av, `fibTR` needs to find its own fn_id.
+        // Save previous values so we can restore after compilation (avoid cross-module
+        // name collisions when different modules define functions with the same name).
+        let mut saved_globals: Vec<(String, Option<(u16, NanValue)>)> = Vec::new();
         for (fn_name, fn_id) in &module_fn_ids {
-            self.ensure_global(fn_name);
-            let idx = self.global_names[fn_name.as_str()];
+            let prev = self
+                .global_names
+                .get(fn_name)
+                .map(|&idx| (idx, self.globals[idx as usize]));
+            saved_globals.push((fn_name.clone(), prev));
+            let idx = self.ensure_global(fn_name);
             self.globals[idx as usize] = NanValue::new_int_inline(*fn_id as i64);
         }
 
@@ -225,6 +232,19 @@ impl ProgramCompiler {
                 let chunk = self.compile_fn(fndef, arena)?;
                 self.code.functions[fn_id as usize] = chunk;
                 fn_idx += 1;
+            }
+        }
+
+        // Restore previous global values to avoid cross-module name collisions.
+        for (fn_name, prev) in &saved_globals {
+            if let Some((idx, val)) = prev {
+                self.globals[*idx as usize] = *val;
+            } else {
+                // Name didn't exist before — remove it.
+                if let Some(&idx) = self.global_names.get(fn_name.as_str()) {
+                    self.globals[idx as usize] = NanValue::UNIT;
+                    self.global_names.remove(fn_name.as_str());
+                }
             }
         }
 
