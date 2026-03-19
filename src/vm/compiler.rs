@@ -904,6 +904,11 @@ impl<'a> FnCompiler<'a> {
 
         for (i, arm) in arms.iter().enumerate() {
             let is_last = i == arms.len() - 1;
+            let use_arm_region = self.pattern_needs_arm_region(&arm.pattern);
+
+            if use_arm_region {
+                self.emit_op(MATCH_ARM_ENTER);
+            }
 
             let fail_patches = match &arm.pattern {
                 Pattern::Wildcard => Vec::new(),
@@ -923,16 +928,23 @@ impl<'a> FnCompiler<'a> {
             // Pattern matched — pop subject, compile body.
             self.emit_op(POP);
             self.compile_expr(&arm.body)?;
+            if use_arm_region {
+                self.emit_op(MATCH_ARM_LEAVE);
+            }
 
             if is_last {
                 // Save last arm's fail patches — they'll be patched to MATCH_FAIL.
                 last_arm_fail_patches = fail_patches;
             } else {
                 end_jumps.push(self.emit_jump(JUMP));
-                // Patch fail jumps to here (start of next arm).
-                let here = self.offset();
-                for patch in fail_patches {
-                    self.patch_jump_to(patch, here);
+                if !fail_patches.is_empty() {
+                    let fail_cleanup = self.offset();
+                    for patch in fail_patches {
+                        self.patch_jump_to(patch, fail_cleanup);
+                    }
+                    if use_arm_region {
+                        self.emit_op(MATCH_ARM_ABORT);
+                    }
                 }
             }
         }
@@ -944,10 +956,15 @@ impl<'a> FnCompiler<'a> {
         if last_refutable && !last_arm_fail_patches.is_empty() {
             // Last arm body succeeded — jump over MATCH_FAIL.
             end_jumps.push(self.emit_jump(JUMP));
-            // Fail target: POP subject + MATCH_FAIL.
+            // Fail target: abort arm region, POP subject + MATCH_FAIL.
             let fail_target = self.offset();
             for patch in last_arm_fail_patches {
                 self.patch_jump_to(patch, fail_target);
+            }
+            if let Some(last_arm) = arms.last()
+                && self.pattern_needs_arm_region(&last_arm.pattern)
+            {
+                self.emit_op(MATCH_ARM_ABORT);
             }
             self.emit_op(POP);
             self.emit_op(MATCH_FAIL);
@@ -960,6 +977,11 @@ impl<'a> FnCompiler<'a> {
         }
 
         Ok(())
+    }
+
+    fn pattern_needs_arm_region(&self, pattern: &Pattern) -> bool {
+        let _ = pattern;
+        false
     }
 
     /// Compile a pattern. Subject is on top of stack (peeked, not consumed).

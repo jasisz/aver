@@ -66,29 +66,85 @@ This is the main reason the VM can stay small without dragging a large object mo
 
 ## Memory Model
 
-The VM does not use a single “grow forever” arena anymore.
+The VM no longer uses one “grow forever” arena.
 
-It now uses a small runtime model shaped around Aver's execution style:
+Instead it splits heap-backed values into four runtime spaces:
 
-- each frame records a young-region mark
-- each frame also records a shared `yard` mark for TCO survivors
-- each frame records a `handoff` mark for ordinary helper returns
-- temporary heap values allocate into the young arena
-- on `TAIL_CALL_*`, loop-carried survivors move from young into the frame's shared yard
-- on ordinary `RETURN`, helper results can move into a handoff lane that survives into the caller without pretending to be globally long-lived
-- on external escape boundaries (top-level result, globals, host callbacks), values move into stable space
-- top-level completion compacts stable-space values from live roots
+- `young` for short-lived temporaries created while evaluating the current step
+- `yard` as a tail-position construction lane
+- `handoff` as an ordinary-return construction lane
+- `stable` as the canonical long-lived space
 
-In practice this gives the VM four distinct spaces:
+Each call frame records marks for the local `young`, `yard`, and `handoff` suffixes it owns.
+That means the VM knows exactly which heap entries were created “during this frame” and can reclaim them in bulk.
 
-- `young` for per-step temporaries
-- `yard` for values that survive the next tail-call iteration and stay with the reused frame
-- `handoff` for ordinary return values that stay within the current call chain but belong to the caller side of that chain
-- `stable` for values that truly escape beyond the frame
+### What Those Spaces Mean Today
 
-The important part is that neither TCO survivors nor helper return values have to pretend to be globally long-lived values.
+Conceptually:
 
-This fits Aver unusually well because values are immutable, effects are explicit, and there are relatively few hidden escape paths.
+- `young` means “local scratch work”
+- `yard` means “this value is being built for a tail-call path”
+- `handoff` means “this value is being built for an ordinary return path”
+- `stable` means “this value is safe to keep beyond the current frame boundary”
+
+Implementation-wise, the current VM takes a deliberately conservative path at frame boundaries:
+
+- values can still be *allocated* into `yard` or `handoff` in obvious tail/return positions
+- but when a frame actually crosses a `RETURN` or `TAIL_CALL_*` boundary, its live roots are currently **canonicalized into `stable`**
+- then the frame-local `young` / `yard` / `handoff` suffixes are truncated
+
+This matters because it keeps the runtime correct under real workloads like `examples/games/rogue`, even while the more ambitious survivor-relocation story is still evolving.
+
+So the current VM is:
+
+- region-style for local scratch memory
+- stable-space based for boundary-crossing live values
+- explicit about which lanes are used during construction
+
+That already gives us the most important property: frame-local garbage dies in bulk, and long-lived values stop pretending to live in temporary memory.
+
+### Memory Flow
+
+The easiest way to think about the VM is:
+
+1. New local work starts in `young`.
+2. In obvious tail-position construction, aggregates may be built in `yard`.
+3. In obvious ordinary-return construction, aggregates may be built in `handoff`.
+4. When the frame actually crosses a boundary, live roots are promoted into `stable`.
+5. The frame-local `young` / `yard` / `handoff` suffixes are then truncated in one shot.
+
+That means the VM still distinguishes:
+
+- local scratch work
+- tail-position construction
+- caller-facing return construction
+- truly long-lived values
+
+But it currently treats `stable` as the canonical “survives the boundary” home.
+
+### What Goes Where
+
+Typical examples:
+
+- `tmp = (x, y)` inside a function body:
+  lives in `young`
+- `List.prepend(n, acc)` used as the next argument of a tail-recursive call:
+  can be built in `yard`, then becomes `stable` when the tail-call boundary is finalized
+- `Result.Ok(value)` built just before returning from a helper:
+  can be built in `handoff`, then becomes `stable` before the caller resumes
+- storing a value into globals, returning from top-level, or passing a value across a host boundary:
+  goes to `stable`
+
+The point is not only speed. The point is that the runtime distinguishes “temporary while computing” from “safe to keep after this frame ends”.
+
+### Why There Is Still No Full GC Loop
+
+The VM still does not need a classical "GC everywhere" story:
+
+- `young`, `yard`, and `handoff` are reclaimed by explicit boundary truncation
+- `stable` is compacted from live roots at top-level completion or explicit escape boundaries
+
+So there is still tracing and relocation, but not as one global always-on collector. Most memory dies because control flow tells us it can die, and only `stable` needs long-lived root-driven maintenance.
 
 ## List Representation
 
@@ -158,6 +214,8 @@ Typical pieces are:
 - field extraction (`EXTRACT_FIELD`)
 
 This keeps the execute loop simple while preserving the structure of Aver patterns.
+
+The VM currently also reserves internal opcodes for arm-local match regions, but the compiler does **not** rely on that path in the default runtime path right now. The broad idea fits Aver well, but real workloads exposed enough edge cases that the stable-boundary path is the safer current choice.
 
 ## Effects And Host Runtime
 

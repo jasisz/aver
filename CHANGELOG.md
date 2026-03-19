@@ -10,14 +10,16 @@ All notable changes to Aver are documented here.
 - **Bool namespace** — `Bool.or`, `Bool.and`, `Bool.not` pure builtins for logical combinators.
 - **Checkers with AI** — `examples/games/checkers/`: international draughts with alpha-beta AI opponent, cursor-based UI, decision trace panel, forced capture rule, maximum capture rule, configurable search depth via CLI args. 5 modules, ~1500 lines, 144 verify cases. Compiles to native Rust binary for depth 8+ play.
 - **Snake demo** — `examples/games/snake.av`: classic Snake game showcasing immutable state threading, TCO game loop, records, verify blocks for game logic, and Terminal service for real-time I/O. 36 verify cases. Compiles to native Rust binary, formally verified in Lean 4 and Dafny/Z3.
-- **VM memory model** — the bytecode runtime now uses per-frame young-region marks, a shared TCO `yard` for loop-carried survivors, and stable space for true escapes instead of a single forever-growing arena.
+- **VM memory model** — the bytecode runtime now uses `NanValue` arenas split into `young`, `yard`, `handoff`, and `stable` spaces instead of a single forever-growing arena.
 - **Arena-native persistent list shapes** — VM lists now support `Flat`, `Prepend`, and `Concat` nodes, allowing `List.prepend`, `LIST_CONS`, and list destructuring to stay structural instead of flattening eagerly.
 
 ### Changed
 - VM list builtins and pattern matching now operate through arena list helpers (`len/get/uncons/to_vec`) instead of assuming a flat `Vec`, which restores `list_builtins(1K)` to better-than-baseline VM performance.
-- TCO now uses a shared frame-local yard instead of promoting loop-carried state straight to stable space, and obvious tail-position aggregate allocations can go there directly.
-- Ordinary bytecode `RETURN` now uses a dedicated caller-handoff lane instead of promoting helper results straight to stable space; `stable` is reserved for real escape boundaries.
-- `docs/vm.md` now documents the VM memory model and list representation, including young/yard/handoff/stable spaces and structural list nodes.
+- Tail-position and ordinary-return code paths can now allocate obvious aggregates into `yard` / `handoff` construction lanes, while frame boundaries canonicalize live roots into `stable` before truncating local lanes.
+- `docs/vm.md` now documents the VM memory model and list representation, including young/yard/handoff/stable spaces, structural list nodes, and the current stable-boundary hardening strategy.
+
+### Fixed
+- VM no longer leaves stale heap handles behind in real workloads like `examples/games/rogue`; frame boundaries now promote live roots to `stable` before truncating local arenas.
 
 ## 0.5.5
 

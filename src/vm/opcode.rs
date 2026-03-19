@@ -82,6 +82,16 @@ pub const JUMP: u8 = 0x30; // offset:i16
 /// Pop top, if falsy: ip += offset.
 pub const JUMP_IF_FALSE: u8 = 0x31; // offset:i16
 
+/// Enter an arm-local young subregion for match evaluation.
+pub const MATCH_ARM_ENTER: u8 = 0x32;
+
+/// Keep top-of-stack result, compact live young values from the current arm,
+/// and leave the arm-local young subregion.
+pub const MATCH_ARM_LEAVE: u8 = 0x33;
+
+/// Abort the current arm-local young subregion without preserving any roots.
+pub const MATCH_ARM_ABORT: u8 = 0x34;
+
 // -- Calls -------------------------------------------------------------------
 
 /// Call a known function by id. Args already on stack.
@@ -197,6 +207,9 @@ pub fn opcode_name(op: u8) -> &'static str {
         CONCAT => "CONCAT",
         JUMP => "JUMP",
         JUMP_IF_FALSE => "JUMP_IF_FALSE",
+        MATCH_ARM_ENTER => "MATCH_ARM_ENTER",
+        MATCH_ARM_LEAVE => "MATCH_ARM_LEAVE",
+        MATCH_ARM_ABORT => "MATCH_ARM_ABORT",
         CALL_KNOWN => "CALL_KNOWN",
         CALL_VALUE => "CALL_VALUE",
         CALL_BUILTIN => "CALL_BUILTIN",

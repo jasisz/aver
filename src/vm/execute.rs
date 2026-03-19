@@ -7,6 +7,7 @@ use crate::nan_value::{AllocSpace, Arena, NanValue};
 pub struct VM {
     stack: Vec<NanValue>,
     frames: Vec<CallFrame>,
+    match_arm_marks: Vec<u32>,
     globals: Vec<NanValue>,
     code: CodeStore,
     pub arena: Arena,
@@ -45,6 +46,7 @@ impl VM {
         VM {
             stack: Vec::with_capacity(1024),
             frames: Vec::with_capacity(64),
+            match_arm_marks: Vec::with_capacity(64),
             globals,
             code,
             arena,
@@ -130,6 +132,7 @@ impl VM {
             arena_mark,
             yard_mark,
             handoff_mark,
+            match_mark_base: self.match_arm_marks.len() as u16,
             globals_dirty: false,
             yard_dirty: false,
             handoff_dirty: false,
@@ -163,25 +166,14 @@ impl VM {
         yard_dirty: bool,
         frame_roots: &mut [NanValue],
     ) {
+        let _ = yard_dirty;
         if globals_dirty {
             self.arena.promote_roots_to_stable(&mut self.globals);
         }
-
-        let has_handoff = self.arena.handoff_len() > handoff_mark as usize;
-        if has_handoff {
-            self.arena
-                .evacuate_frame_to_yard(arena_mark, yard_mark, handoff_mark, frame_roots);
-            return;
-        }
-
-        if self.arena.young_len() > arena_mark as usize {
-            self.arena
-                .promote_young_roots_to_yard(arena_mark, frame_roots);
-        }
-
-        if yard_dirty && self.arena.yard_len() > yard_mark as usize {
-            self.arena.collect_yard_from_roots(yard_mark, frame_roots);
-        }
+        self.arena.promote_roots_to_stable(frame_roots);
+        self.arena.truncate_to(arena_mark);
+        self.arena.truncate_yard_to(yard_mark);
+        self.arena.truncate_handoff_to(handoff_mark);
     }
 
     fn finalize_frame_return_to_caller(
@@ -195,23 +187,11 @@ impl VM {
         if globals_dirty {
             self.arena.promote_roots_to_stable(&mut self.globals);
         }
-
-        let has_local_young = self.arena.young_len() > arena_mark as usize;
-        let has_local_yard = self.arena.yard_len() > yard_mark as usize;
-        let has_local_handoff = self.arena.handoff_len() > handoff_mark as usize;
-
-        if !has_local_young && !has_local_yard {
-            return (false, has_local_handoff);
-        }
-
-        if has_local_young && !has_local_yard && !has_local_handoff {
-            self.arena
-                .promote_young_roots_to_handoff(arena_mark, frame_roots);
-            return (false, true);
-        }
-
-        self.arena
-            .evacuate_frame_to_handoff(arena_mark, yard_mark, handoff_mark, frame_roots)
+        self.arena.promote_roots_to_stable(frame_roots);
+        self.arena.truncate_to(arena_mark);
+        self.arena.truncate_yard_to(yard_mark);
+        self.arena.truncate_handoff_to(handoff_mark);
+        (false, false)
     }
 
     fn finalize_frame_return(
@@ -395,6 +375,50 @@ impl VM {
                     }
                 }
 
+                MATCH_ARM_ENTER => {
+                    self.match_arm_marks.push(self.arena.young_len() as u32);
+                }
+
+                MATCH_ARM_LEAVE => {
+                    let mark = self.match_arm_marks.pop().ok_or_else(|| {
+                        VmError::Runtime("MATCH_ARM_LEAVE without active arm region".into())
+                    })?;
+                    if self.arena.young_len() <= mark as usize {
+                        continue;
+                    }
+                    // Arm-local young compaction must preserve every live VM root,
+                    // not just the arm result. Pattern bindings live in local slots,
+                    // and arm bodies can write young values into globals before the
+                    // arm returns. Re-root the whole live stack + globals so we do
+                    // not leave stale tagged handles behind.
+                    let frame_stack_start = bp;
+                    let frame_stack_len = self.stack.len().saturating_sub(frame_stack_start);
+                    let globals_len = self.globals.len();
+                    let mut roots = Vec::with_capacity(frame_stack_len + globals_len);
+                    roots.extend_from_slice(&self.stack[frame_stack_start..]);
+                    roots.extend_from_slice(&self.globals);
+                    self.arena.collect_young_from_roots(mark, &mut roots);
+                    self.stack[frame_stack_start..].copy_from_slice(&roots[..frame_stack_len]);
+                    self.globals
+                        .as_mut_slice()
+                        .copy_from_slice(&roots[frame_stack_len..frame_stack_len + globals_len]);
+                }
+
+                MATCH_ARM_ABORT => {
+                    let mark = self.match_arm_marks.pop().ok_or_else(|| {
+                        VmError::Runtime("MATCH_ARM_ABORT without active arm region".into())
+                    })?;
+                    for value in &mut self.stack[bp..] {
+                        if value
+                            .heap_index()
+                            .is_some_and(|index| self.arena.is_young_index_in_region(index, mark))
+                        {
+                            *value = NanValue::UNIT;
+                        }
+                    }
+                    self.arena.truncate_to(mark);
+                }
+
                 CALL_KNOWN => {
                     let target_fn_id = read_u16!(code, ip) as u32;
                     let argc = read_u8!(code, ip) as usize;
@@ -416,6 +440,7 @@ impl VM {
                         arena_mark: self.arena.young_len() as u32,
                         yard_mark: self.arena.yard_len() as u32,
                         handoff_mark: self.arena.handoff_len() as u32,
+                        match_mark_base: self.match_arm_marks.len() as u16,
                         globals_dirty: false,
                         yard_dirty: false,
                         handoff_dirty: false,
@@ -449,6 +474,7 @@ impl VM {
                         arena_mark: self.arena.young_len() as u32,
                         yard_mark: self.arena.yard_len() as u32,
                         handoff_mark: self.arena.handoff_len() as u32,
+                        match_mark_base: self.match_arm_marks.len() as u16,
                         globals_dirty: false,
                         yard_dirty: false,
                         handoff_dirty: false,
@@ -496,6 +522,7 @@ impl VM {
                     let frame_mark = self.frames.last().unwrap().arena_mark;
                     let yard_mark = self.frames.last().unwrap().yard_mark;
                     let handoff_mark = self.frames.last().unwrap().handoff_mark;
+                    let match_mark_base = self.frames.last().unwrap().match_mark_base as usize;
                     let globals_dirty = self.frames.last().unwrap().globals_dirty;
                     let yard_dirty = self.frames.last().unwrap().yard_dirty;
                     let mut promoted_args = self.stack[args_start..].to_vec();
@@ -507,6 +534,7 @@ impl VM {
                         yard_dirty,
                         &mut promoted_args,
                     );
+                    self.match_arm_marks.truncate(match_mark_base);
                     self.stack[bp..(argc + bp)].copy_from_slice(&promoted_args[..argc]);
                     let lc = self.frames.last().unwrap().local_count as usize;
                     for i in argc..lc {
@@ -529,6 +557,7 @@ impl VM {
                     let frame_mark = self.frames.last().unwrap().arena_mark;
                     let yard_mark = self.frames.last().unwrap().yard_mark;
                     let handoff_mark = self.frames.last().unwrap().handoff_mark;
+                    let match_mark_base = self.frames.last().unwrap().match_mark_base as usize;
                     let globals_dirty = self.frames.last().unwrap().globals_dirty;
                     let yard_dirty = self.frames.last().unwrap().yard_dirty;
                     let mut promoted_args = self.stack[args_start..].to_vec();
@@ -540,6 +569,7 @@ impl VM {
                         yard_dirty,
                         &mut promoted_args,
                     );
+                    self.match_arm_marks.truncate(match_mark_base);
                     self.stack[bp..(argc + bp)].copy_from_slice(&promoted_args[..argc]);
 
                     let new_lc = target_local_count as usize;
@@ -566,6 +596,8 @@ impl VM {
                 RETURN => {
                     let mut result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let frame = self.frames.pop().unwrap();
+                    self.match_arm_marks
+                        .truncate(frame.match_mark_base as usize);
                     self.stack.truncate(frame.bp as usize);
 
                     if self.frames.len() == caller_depth {
@@ -662,6 +694,8 @@ impl VM {
                     if value.is_err() {
                         let mut result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                         let frame = self.frames.pop().unwrap();
+                        self.match_arm_marks
+                            .truncate(frame.match_mark_base as usize);
                         self.stack.truncate(frame.bp as usize);
 
                         if self.frames.len() == caller_depth {
@@ -1231,6 +1265,7 @@ mod tests {
             arena_mark: 0,
             yard_mark: 0,
             handoff_mark: 0,
+            match_mark_base: 0,
             globals_dirty: false,
             yard_dirty: false,
             handoff_dirty: false,

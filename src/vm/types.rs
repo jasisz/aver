@@ -32,6 +32,8 @@ pub struct CallFrame {
     /// Handoff length at function entry; ordinary returns compact this suffix
     /// so helper results can survive into the caller without polluting stable.
     pub handoff_mark: u32,
+    /// Base depth in the VM's match-arm region stack for this frame.
+    pub match_mark_base: u16,
     /// Whether this frame stored a young-region value into globals.
     pub globals_dirty: bool,
     /// Whether ordinary returns introduced caller-yard survivors that should

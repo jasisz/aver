@@ -764,7 +764,7 @@ impl Arena {
                 variant_id,
                 fields,
             } => (*type_id, *variant_id, fields),
-            _ => panic!("Arena: expected Variant at {}", index),
+            other => panic!("Arena: expected Variant at {} but found {:?}", index, other),
         }
     }
     pub fn get_list(&self, index: u32) -> &ArenaList {
@@ -1002,6 +1002,22 @@ impl Default for Arena {
 impl Arena {
     pub fn truncate_to(&mut self, mark: u32) {
         self.young_entries.truncate(mark as usize);
+    }
+
+    pub fn collect_young_from_roots(&mut self, mark: u32, roots: &mut [NanValue]) {
+        if self.young_entries.len() <= mark as usize {
+            return;
+        }
+
+        let mut relocated = vec![u32::MAX; self.young_entries.len()];
+        let mut compacted = Vec::with_capacity(self.young_entries.len() - mark as usize);
+
+        for root in roots {
+            *root = self.relocate_young_root(*root, mark, &mut relocated, &mut compacted);
+        }
+
+        self.young_entries.truncate(mark as usize);
+        self.young_entries.extend(compacted);
     }
 
     pub fn truncate_yard_to(&mut self, mark: u32) {
@@ -1549,6 +1565,303 @@ impl Arena {
                     compacted_yard,
                     compacted_handoff,
                 ),
+                len,
+            },
+        }
+    }
+
+    fn relocate_young_root(
+        &mut self,
+        value: NanValue,
+        mark: u32,
+        relocated: &mut [u32],
+        compacted: &mut Vec<ArenaEntry>,
+    ) -> NanValue {
+        let Some(index) = value.heap_index() else {
+            return value;
+        };
+        let (space, raw_index) = Self::decode_index(index);
+        if matches!(space, HeapSpace::Young)
+            && raw_index >= mark
+            && raw_index < self.young_entries.len() as u32
+        {
+            return self.relocate_young_value(value, mark, relocated, compacted);
+        }
+        self.rewrite_young_refs_in_place(space, raw_index, mark, relocated, compacted);
+        value
+    }
+
+    fn relocate_young_value(
+        &mut self,
+        value: NanValue,
+        mark: u32,
+        relocated: &mut [u32],
+        compacted: &mut Vec<ArenaEntry>,
+    ) -> NanValue {
+        let Some(index) = value.heap_index() else {
+            return value;
+        };
+        let (space, raw_index) = Self::decode_index(index);
+        if !matches!(space, HeapSpace::Young) || raw_index < mark {
+            return value;
+        }
+
+        let relocation_slot = raw_index as usize;
+        let relocated_index = relocated[relocation_slot];
+        if relocated_index != u32::MAX {
+            return value.with_heap_index(relocated_index);
+        }
+
+        let compacted_pos = compacted.len() as u32;
+        let new_index = Self::encode_index(HeapSpace::Young, mark + compacted_pos);
+        relocated[relocation_slot] = new_index;
+        compacted.push(ArenaEntry::Int(0));
+
+        let entry = std::mem::replace(
+            &mut self.young_entries[raw_index as usize],
+            ArenaEntry::Int(0),
+        );
+        let new_entry = self.relocate_young_entry(entry, mark, relocated, compacted);
+        compacted[compacted_pos as usize] = new_entry;
+        value.with_heap_index(new_index)
+    }
+
+    fn relocate_young_entry(
+        &mut self,
+        entry: ArenaEntry,
+        mark: u32,
+        relocated: &mut [u32],
+        compacted: &mut Vec<ArenaEntry>,
+    ) -> ArenaEntry {
+        match entry {
+            ArenaEntry::Int(i) => ArenaEntry::Int(i),
+            ArenaEntry::String(s) => ArenaEntry::String(s),
+            ArenaEntry::Builtin(name) => ArenaEntry::Builtin(name),
+            ArenaEntry::Fn(f) => ArenaEntry::Fn(f),
+            ArenaEntry::Boxed(inner) => {
+                ArenaEntry::Boxed(self.relocate_young_value(inner, mark, relocated, compacted))
+            }
+            ArenaEntry::List(list) => {
+                ArenaEntry::List(self.relocate_young_list(list, mark, relocated, compacted))
+            }
+            ArenaEntry::Tuple(mut items) => {
+                for value in &mut items {
+                    *value = self.relocate_young_value(*value, mark, relocated, compacted);
+                }
+                ArenaEntry::Tuple(items)
+            }
+            ArenaEntry::Map(map) => {
+                let mut out = PersistentMap::new();
+                for (hash, (key, value)) in map {
+                    let relocated_key = self.relocate_young_value(key, mark, relocated, compacted);
+                    let relocated_value =
+                        self.relocate_young_value(value, mark, relocated, compacted);
+                    out.insert(hash, (relocated_key, relocated_value));
+                }
+                ArenaEntry::Map(out)
+            }
+            ArenaEntry::Record {
+                type_id,
+                mut fields,
+            } => {
+                for value in &mut fields {
+                    *value = self.relocate_young_value(*value, mark, relocated, compacted);
+                }
+                ArenaEntry::Record { type_id, fields }
+            }
+            ArenaEntry::Variant {
+                type_id,
+                variant_id,
+                mut fields,
+            } => {
+                for value in &mut fields {
+                    *value = self.relocate_young_value(*value, mark, relocated, compacted);
+                }
+                ArenaEntry::Variant {
+                    type_id,
+                    variant_id,
+                    fields,
+                }
+            }
+            ArenaEntry::Namespace { name, mut members } => {
+                for (_, value) in &mut members {
+                    *value = self.relocate_young_value(*value, mark, relocated, compacted);
+                }
+                ArenaEntry::Namespace { name, members }
+            }
+        }
+    }
+
+    fn relocate_young_list(
+        &mut self,
+        list: ArenaList,
+        mark: u32,
+        relocated: &mut [u32],
+        compacted: &mut Vec<ArenaEntry>,
+    ) -> ArenaList {
+        match list {
+            ArenaList::Flat { items, start } => ArenaList::Flat {
+                items: Rc::new(
+                    items[start..]
+                        .iter()
+                        .map(|value| self.relocate_young_value(*value, mark, relocated, compacted))
+                        .collect(),
+                ),
+                start: 0,
+            },
+            ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
+                head: self.relocate_young_value(head, mark, relocated, compacted),
+                tail: self.relocate_young_value(tail, mark, relocated, compacted),
+                len,
+            },
+            ArenaList::Concat { left, right, len } => ArenaList::Concat {
+                left: self.relocate_young_value(left, mark, relocated, compacted),
+                right: self.relocate_young_value(right, mark, relocated, compacted),
+                len,
+            },
+        }
+    }
+
+    fn rewrite_young_refs_in_place(
+        &mut self,
+        space: HeapSpace,
+        raw_index: u32,
+        mark: u32,
+        relocated: &mut [u32],
+        compacted: &mut Vec<ArenaEntry>,
+    ) {
+        let raw_index = raw_index as usize;
+        match space {
+            HeapSpace::Young => {
+                if raw_index >= self.young_entries.len() || raw_index >= mark as usize {
+                    return;
+                }
+                let entry =
+                    std::mem::replace(&mut self.young_entries[raw_index], ArenaEntry::Int(0));
+                let new_entry = self.rewrite_young_entry(entry, mark, relocated, compacted);
+                self.young_entries[raw_index] = new_entry;
+            }
+            HeapSpace::Yard => {
+                if raw_index >= self.yard_entries.len() {
+                    return;
+                }
+                let entry =
+                    std::mem::replace(&mut self.yard_entries[raw_index], ArenaEntry::Int(0));
+                let new_entry = self.rewrite_young_entry(entry, mark, relocated, compacted);
+                self.yard_entries[raw_index] = new_entry;
+            }
+            HeapSpace::Handoff => {
+                if raw_index >= self.handoff_entries.len() {
+                    return;
+                }
+                let entry =
+                    std::mem::replace(&mut self.handoff_entries[raw_index], ArenaEntry::Int(0));
+                let new_entry = self.rewrite_young_entry(entry, mark, relocated, compacted);
+                self.handoff_entries[raw_index] = new_entry;
+            }
+            HeapSpace::Stable => {
+                if raw_index >= self.stable_entries.len() {
+                    return;
+                }
+                let entry =
+                    std::mem::replace(&mut self.stable_entries[raw_index], ArenaEntry::Int(0));
+                let new_entry = self.rewrite_young_entry(entry, mark, relocated, compacted);
+                self.stable_entries[raw_index] = new_entry;
+            }
+        }
+    }
+
+    fn rewrite_young_entry(
+        &mut self,
+        entry: ArenaEntry,
+        mark: u32,
+        relocated: &mut [u32],
+        compacted: &mut Vec<ArenaEntry>,
+    ) -> ArenaEntry {
+        match entry {
+            ArenaEntry::Int(i) => ArenaEntry::Int(i),
+            ArenaEntry::String(s) => ArenaEntry::String(s),
+            ArenaEntry::Builtin(name) => ArenaEntry::Builtin(name),
+            ArenaEntry::Fn(f) => ArenaEntry::Fn(f),
+            ArenaEntry::Boxed(inner) => {
+                ArenaEntry::Boxed(self.relocate_young_root(inner, mark, relocated, compacted))
+            }
+            ArenaEntry::List(list) => {
+                ArenaEntry::List(self.rewrite_young_list(list, mark, relocated, compacted))
+            }
+            ArenaEntry::Tuple(mut items) => {
+                for value in &mut items {
+                    *value = self.relocate_young_root(*value, mark, relocated, compacted);
+                }
+                ArenaEntry::Tuple(items)
+            }
+            ArenaEntry::Map(map) => {
+                let mut out = PersistentMap::new();
+                for (hash, (key, value)) in map {
+                    let relocated_key = self.relocate_young_root(key, mark, relocated, compacted);
+                    let relocated_value =
+                        self.relocate_young_root(value, mark, relocated, compacted);
+                    out.insert(hash, (relocated_key, relocated_value));
+                }
+                ArenaEntry::Map(out)
+            }
+            ArenaEntry::Record {
+                type_id,
+                mut fields,
+            } => {
+                for value in &mut fields {
+                    *value = self.relocate_young_root(*value, mark, relocated, compacted);
+                }
+                ArenaEntry::Record { type_id, fields }
+            }
+            ArenaEntry::Variant {
+                type_id,
+                variant_id,
+                mut fields,
+            } => {
+                for value in &mut fields {
+                    *value = self.relocate_young_root(*value, mark, relocated, compacted);
+                }
+                ArenaEntry::Variant {
+                    type_id,
+                    variant_id,
+                    fields,
+                }
+            }
+            ArenaEntry::Namespace { name, mut members } => {
+                for (_, value) in &mut members {
+                    *value = self.relocate_young_root(*value, mark, relocated, compacted);
+                }
+                ArenaEntry::Namespace { name, members }
+            }
+        }
+    }
+
+    fn rewrite_young_list(
+        &mut self,
+        list: ArenaList,
+        mark: u32,
+        relocated: &mut [u32],
+        compacted: &mut Vec<ArenaEntry>,
+    ) -> ArenaList {
+        match list {
+            ArenaList::Flat { items, start } => ArenaList::Flat {
+                items: Rc::new(
+                    items[start..]
+                        .iter()
+                        .map(|value| self.relocate_young_root(*value, mark, relocated, compacted))
+                        .collect(),
+                ),
+                start: 0,
+            },
+            ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
+                head: self.relocate_young_root(head, mark, relocated, compacted),
+                tail: self.relocate_young_root(tail, mark, relocated, compacted),
+                len,
+            },
+            ArenaList::Concat { left, right, len } => ArenaList::Concat {
+                left: self.relocate_young_root(left, mark, relocated, compacted),
+                right: self.relocate_young_root(right, mark, relocated, compacted),
                 len,
             },
         }
