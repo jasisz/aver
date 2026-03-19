@@ -222,6 +222,10 @@ fn validate(n: Int) -> Result<Int, String>\n    match n < 0\n        true -> Res
 const LIST_BUILTINS: &str = "\
 fn buildAndMeasure(n: Int, acc: List<Int>) -> Int\n    match n == 0\n        true -> List.len(acc)\n        false -> buildAndMeasure(n - 1, List.prepend(n, acc))\n\nfn main() -> Int\n    buildAndMeasure(1000, [])\n";
 
+/// Rogue-shaped list workload — append in a loop, then scan via List.get.
+const LIST_APPEND_SCAN: &str = "\
+fn build(n: Int, acc: List<Int>) -> List<Int>\n    match n == 0\n        true -> acc\n        false -> build(n - 1, List.append(acc, n))\n\nfn sum(xs: List<Int>, i: Int, acc: Int) -> Int\n    match List.get(xs, i)\n        Option.None -> acc\n        Option.Some(v) -> sum(xs, i + 1, acc + v)\n\nfn main() -> Int\n    sum(build(1000, []), 0, 0)\n";
+
 /// Mixed: records + variants + match + Result. Most realistic Aver pattern.
 const MIXED_REAL: &str = "\
 record Order\n    id: Int\n    amount: Int\n    valid: Bool\n\nfn processOrder(o: Order) -> Result<Int, String>\n    match o.valid\n        true -> Result.Ok(o.amount * 2)\n        false -> Result.Err(\"invalid\")\n\nfn processAll(n: Int, acc: Int) -> Int\n    match n == 0\n        true -> acc\n        false -> processAll(n - 1, acc + Result.withDefault(processOrder(Order(id = n, amount = n * 10, valid = true)), 0))\n\nfn main() -> Int\n    processAll(10000, 0)\n";
@@ -246,6 +250,7 @@ fn run_vm_benchmark() {
         ("string_build(1K)", STRING_BUILD),
         ("error_pipeline(10K)", ERROR_PIPELINE),
         ("list_builtins(1K)", LIST_BUILTINS),
+        ("list_append_scan(1K)", LIST_APPEND_SCAN),
         ("mixed_real(10K)", MIXED_REAL),
     ];
 

@@ -82,16 +82,6 @@ pub const JUMP: u8 = 0x30; // offset:i16
 /// Pop top, if falsy: ip += offset.
 pub const JUMP_IF_FALSE: u8 = 0x31; // offset:i16
 
-/// Enter an arm-local young subregion for match evaluation.
-pub const MATCH_ARM_ENTER: u8 = 0x32;
-
-/// Keep top-of-stack result, compact live young values from the current arm,
-/// and leave the arm-local young subregion.
-pub const MATCH_ARM_LEAVE: u8 = 0x33;
-
-/// Abort the current arm-local young subregion without preserving any roots.
-pub const MATCH_ARM_ABORT: u8 = 0x34;
-
 // -- Calls -------------------------------------------------------------------
 
 /// Call a known function by id. Args already on stack.
@@ -147,6 +137,21 @@ pub const RECORD_UPDATE: u8 = 0x69; // type_id:u16, count:u8, field_idx[count]:u
 
 /// Propagate `Result.Err` to caller or unwrap `Result.Ok` in place.
 pub const PROPAGATE_ERR: u8 = 0x6A;
+
+/// Pop list, push its length as Int.
+pub const LIST_LEN: u8 = 0x6B;
+
+/// Pop index, pop list, push Option.Some(value) or Option.None.
+pub const LIST_GET: u8 = 0x6C;
+
+/// Pop value, pop list, push appended list.
+pub const LIST_APPEND: u8 = 0x6D;
+
+/// Pop list, pop value, push prepended list.
+pub const LIST_PREPEND: u8 = 0x6E;
+
+/// Pop index, pop list. If found, push value then true; otherwise push false.
+pub const LIST_GET_MATCH: u8 = 0x6F;
 
 // -- Pattern matching --------------------------------------------------------
 
@@ -207,9 +212,6 @@ pub fn opcode_name(op: u8) -> &'static str {
         CONCAT => "CONCAT",
         JUMP => "JUMP",
         JUMP_IF_FALSE => "JUMP_IF_FALSE",
-        MATCH_ARM_ENTER => "MATCH_ARM_ENTER",
-        MATCH_ARM_LEAVE => "MATCH_ARM_LEAVE",
-        MATCH_ARM_ABORT => "MATCH_ARM_ABORT",
         CALL_KNOWN => "CALL_KNOWN",
         CALL_VALUE => "CALL_VALUE",
         CALL_BUILTIN => "CALL_BUILTIN",
@@ -228,6 +230,11 @@ pub fn opcode_name(op: u8) -> &'static str {
         TUPLE_NEW => "TUPLE_NEW",
         RECORD_UPDATE => "RECORD_UPDATE",
         PROPAGATE_ERR => "PROPAGATE_ERR",
+        LIST_LEN => "LIST_LEN",
+        LIST_GET => "LIST_GET",
+        LIST_APPEND => "LIST_APPEND",
+        LIST_PREPEND => "LIST_PREPEND",
+        LIST_GET_MATCH => "LIST_GET_MATCH",
         MATCH_TAG => "MATCH_TAG",
         MATCH_VARIANT => "MATCH_VARIANT",
         MATCH_UNWRAP => "MATCH_UNWRAP",

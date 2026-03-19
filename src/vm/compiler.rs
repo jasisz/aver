@@ -414,14 +414,14 @@ fn classify_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
         let op = code[ip];
         ip += 1;
         match op {
-            STORE_GLOBAL | TAIL_CALL_SELF | TAIL_CALL_KNOWN | MATCH_ARM_ENTER | MATCH_ARM_LEAVE
-            | MATCH_ARM_ABORT | CONCAT | LIST_NIL | LIST_CONS | LIST_NEW | RECORD_NEW
-            | VARIANT_NEW | WRAP | TUPLE_NEW | RECORD_UPDATE => {
+            STORE_GLOBAL | TAIL_CALL_SELF | TAIL_CALL_KNOWN | CONCAT | LIST_NIL | LIST_CONS
+            | LIST_NEW | RECORD_NEW | VARIANT_NEW | WRAP | TUPLE_NEW | RECORD_UPDATE | LIST_LEN
+            | LIST_GET | LIST_APPEND | LIST_PREPEND => {
                 return Ok(false);
             }
 
             POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
-            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL => {}
+            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | LIST_GET_MATCH => {}
 
             LOAD_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD
             | EXTRACT_TUPLE_ITEM => {
@@ -942,10 +942,18 @@ impl<'a> FnCompiler<'a> {
                 for arg in args {
                     self.compile_expr(arg)?;
                 }
-                self.emit_op(CALL_BUILTIN);
-                let name_idx = self.arena.push_string(&qualified);
-                self.emit_u16(name_idx as u16);
-                self.emit_u8(args.len() as u8);
+                match qualified.as_str() {
+                    "List.len" => self.emit_op(LIST_LEN),
+                    "List.get" => self.emit_op(LIST_GET),
+                    "List.append" => self.emit_op(LIST_APPEND),
+                    "List.prepend" => self.emit_op(LIST_PREPEND),
+                    _ => {
+                        self.emit_op(CALL_BUILTIN);
+                        let name_idx = self.arena.push_string(&qualified);
+                        self.emit_u16(name_idx as u16);
+                        self.emit_u8(args.len() as u8);
+                    }
+                }
             }
         }
         Ok(())
@@ -979,6 +987,18 @@ impl<'a> FnCompiler<'a> {
         arms: &[crate::ast::MatchArm],
         line: usize,
     ) -> Result<(), CompileError> {
+        if let Some((list_expr, index_expr, some_binding, some_body, none_body)) =
+            self.try_match_list_get_arms(subject, arms)
+        {
+            return self.compile_list_get_match(
+                list_expr,
+                index_expr,
+                some_binding,
+                some_body,
+                none_body,
+            );
+        }
+
         self.compile_expr(subject)?;
 
         let mut end_jumps = Vec::new();
@@ -986,11 +1006,6 @@ impl<'a> FnCompiler<'a> {
 
         for (i, arm) in arms.iter().enumerate() {
             let is_last = i == arms.len() - 1;
-            let use_arm_region = self.pattern_needs_arm_region(&arm.pattern);
-
-            if use_arm_region {
-                self.emit_op(MATCH_ARM_ENTER);
-            }
 
             let fail_patches = match &arm.pattern {
                 Pattern::Wildcard => Vec::new(),
@@ -1010,9 +1025,6 @@ impl<'a> FnCompiler<'a> {
             // Pattern matched — pop subject, compile body.
             self.emit_op(POP);
             self.compile_expr(&arm.body)?;
-            if use_arm_region {
-                self.emit_op(MATCH_ARM_LEAVE);
-            }
 
             if is_last {
                 // Save last arm's fail patches — they'll be patched to MATCH_FAIL.
@@ -1023,9 +1035,6 @@ impl<'a> FnCompiler<'a> {
                     let fail_cleanup = self.offset();
                     for patch in fail_patches {
                         self.patch_jump_to(patch, fail_cleanup);
-                    }
-                    if use_arm_region {
-                        self.emit_op(MATCH_ARM_ABORT);
                     }
                 }
             }
@@ -1043,11 +1052,6 @@ impl<'a> FnCompiler<'a> {
             for patch in last_arm_fail_patches {
                 self.patch_jump_to(patch, fail_target);
             }
-            if let Some(last_arm) = arms.last()
-                && self.pattern_needs_arm_region(&last_arm.pattern)
-            {
-                self.emit_op(MATCH_ARM_ABORT);
-            }
             self.emit_op(POP);
             self.emit_op(MATCH_FAIL);
             self.emit_u16(line as u16);
@@ -1061,9 +1065,80 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
-    fn pattern_needs_arm_region(&self, pattern: &Pattern) -> bool {
-        let _ = pattern;
-        false
+    fn try_match_list_get_arms<'b>(
+        &self,
+        subject: &'b Expr,
+        arms: &'b [crate::ast::MatchArm],
+    ) -> Option<(&'b Expr, &'b Expr, Option<&'b str>, &'b Expr, &'b Expr)> {
+        if arms.len() != 2 {
+            return None;
+        }
+        let Expr::FnCall(fn_expr, args) = subject else {
+            return None;
+        };
+        if args.len() != 2 {
+            return None;
+        }
+        let Some(CallTarget::Builtin(qualified)) = self.resolve_call_target(fn_expr) else {
+            return None;
+        };
+        if qualified != "List.get" {
+            return None;
+        }
+
+        let mut some_binding = None;
+        let mut some_body = None;
+        let mut none_body = None;
+
+        for arm in arms {
+            match &arm.pattern {
+                Pattern::Constructor(name, bindings) if name == "Option.Some" => {
+                    if some_body.is_some() || bindings.len() > 1 {
+                        return None;
+                    }
+                    some_binding = bindings.first().map(|s| s.as_str());
+                    some_body = Some(arm.body.as_ref());
+                }
+                Pattern::Constructor(name, bindings)
+                    if name == "Option.None" && bindings.is_empty() =>
+                {
+                    if none_body.is_some() {
+                        return None;
+                    }
+                    none_body = Some(arm.body.as_ref());
+                }
+                _ => return None,
+            }
+        }
+
+        Some((&args[0], &args[1], some_binding, some_body?, none_body?))
+    }
+
+    fn compile_list_get_match(
+        &mut self,
+        list_expr: &Expr,
+        index_expr: &Expr,
+        some_binding: Option<&str>,
+        some_body: &Expr,
+        none_body: &Expr,
+    ) -> Result<(), CompileError> {
+        self.compile_expr(list_expr)?;
+        self.compile_expr(index_expr)?;
+        self.emit_op(LIST_GET_MATCH);
+
+        let none_jump = self.emit_jump(JUMP_IF_FALSE);
+
+        if let Some(binding) = some_binding {
+            self.dup_and_bind_top_to_local(binding);
+        }
+        self.emit_op(POP);
+        self.compile_expr(some_body)?;
+        let end_jump = self.emit_jump(JUMP);
+
+        self.patch_jump(none_jump);
+        self.compile_expr(none_body)?;
+        self.patch_jump(end_jump);
+        Ok(())
     }
 
     /// Compile a pattern. Subject is on top of stack (peeked, not consumed).

@@ -15,12 +15,18 @@ All notable changes to Aver are documented here.
 
 ### Changed
 - VM list builtins and pattern matching now operate through arena list helpers (`len/get/uncons/to_vec`) instead of assuming a flat `Vec`, which restores `list_builtins(1K)` to better-than-baseline VM performance.
+- Core list builtins (`List.len`, `List.get`, `List.append`, `List.prepend`) now compile to dedicated VM opcodes instead of going through the generic string-dispatched builtin path.
+- `match List.get(xs, i)` now has a dedicated VM lowering path that branches directly on presence/absence instead of materializing `Option.Some(Boxed(v))` just to immediately match on it.
+- Structural list append now grows chunked right spines instead of a singleton-per-append concat chain, which materially improves `rogue`-style `List.append(...); List.get(..., i)` workloads.
+- `LIST_HEAD_TAIL` on concat-backed lists now returns a structural segment-view tail instead of rebuilding a fresh concat suffix each time, which further reduces list destructuring churn in VM workloads.
 - Tail-position and ordinary-return code paths can now allocate obvious aggregates into `yard` / `handoff` construction lanes. `TAIL_CALL_*` keeps loop-carried survivors in `yard`, while ordinary returns still canonicalize live roots into `stable`.
 - VM bytecode compilation now marks conservatively-classified **thin functions**, and `RETURN` / `?` use a fast path that skips boundary promotion work when those frames never created local heap survivors.
 - `docs/vm.md` now documents the VM memory model and list representation in more detail, including young/yard/handoff/stable spaces, structural list nodes, TCO survivor behavior, and the current conservative ordinary-return path.
 
 ### Fixed
 - VM no longer leaves stale heap handles behind in real workloads like `examples/games/rogue`; frame boundaries now promote live roots to `stable` before truncating local arenas.
+- TCO list accumulators no longer get recursively re-evacuated through older immutable tails on every iteration; shared-yard cleanup now only rewrites the actual local suffix, which removes the pathological slowdown in persistent-list loops.
+- Dead VM match-arm region machinery was removed after profiling showed that helper-thin functions and list specialization matter much more than per-arm frame tricks in real Aver programs.
 - `TAIL_CALL_KNOWN` now resizes the stack before clearing newly introduced locals, which fixes a real crash in `verify --vm` on larger programs such as `examples/data/json.av`.
 - VM ordered string comparison now matches the interpreter, so examples like `examples/data/date.av` behave the same under `verify` and `verify --vm`.
 

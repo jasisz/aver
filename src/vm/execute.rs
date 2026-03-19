@@ -7,7 +7,6 @@ use crate::nan_value::{AllocSpace, Arena, ArenaEntry, NanValue};
 pub struct VM {
     stack: Vec<NanValue>,
     frames: Vec<CallFrame>,
-    match_arm_marks: Vec<u32>,
     globals: Vec<NanValue>,
     code: CodeStore,
     pub arena: Arena,
@@ -56,7 +55,6 @@ impl VM {
         VM {
             stack: Vec::with_capacity(1024),
             frames: Vec::with_capacity(64),
-            match_arm_marks: Vec::with_capacity(64),
             globals,
             code,
             arena,
@@ -140,9 +138,9 @@ impl VM {
             bp,
             local_count: chunk.local_count,
             arena_mark,
+            yard_base: yard_mark,
             yard_mark,
             handoff_mark,
-            match_mark_base: self.match_arm_marks.len() as u16,
             globals_dirty: false,
             yard_dirty: false,
             handoff_dirty: false,
@@ -201,7 +199,7 @@ impl VM {
     fn finalize_frame_return_to_caller(
         &mut self,
         arena_mark: u32,
-        yard_mark: u32,
+        yard_base: u32,
         handoff_mark: u32,
         globals_dirty: bool,
         frame_roots: &mut [NanValue],
@@ -211,7 +209,7 @@ impl VM {
         }
         self.arena.promote_roots_to_stable(frame_roots);
         self.arena.truncate_to(arena_mark);
-        self.arena.truncate_yard_to(yard_mark);
+        self.arena.truncate_yard_to(yard_base);
         self.arena.truncate_handoff_to(handoff_mark);
         (false, false)
     }
@@ -219,7 +217,7 @@ impl VM {
     fn finalize_frame_return(
         &mut self,
         arena_mark: u32,
-        yard_mark: u32,
+        yard_base: u32,
         handoff_mark: u32,
         globals_dirty: bool,
         frame_roots: &mut [NanValue],
@@ -229,7 +227,7 @@ impl VM {
         }
         self.arena.promote_roots_to_stable(frame_roots);
         self.arena.truncate_to(arena_mark);
-        self.arena.truncate_yard_to(yard_mark);
+        self.arena.truncate_yard_to(yard_base);
         self.arena.truncate_handoff_to(handoff_mark);
     }
 
@@ -278,7 +276,7 @@ impl VM {
         if self.frames.len() == caller_depth {
             self.finalize_frame_return(
                 frame.arena_mark,
-                frame.yard_mark,
+                frame.yard_base,
                 frame.handoff_mark,
                 frame.globals_dirty,
                 std::slice::from_mut(&mut result),
@@ -291,7 +289,7 @@ impl VM {
 
         let (yard_dirty, handoff_dirty) = self.finalize_frame_return_to_caller(
             frame.arena_mark,
-            frame.yard_mark,
+            frame.yard_base,
             frame.handoff_mark,
             frame.globals_dirty,
             std::slice::from_mut(&mut result),
@@ -349,7 +347,7 @@ impl VM {
                             self.arena.is_frame_local_index(
                                 index,
                                 frame.arena_mark,
-                                frame.yard_mark,
+                                frame.yard_base,
                                 frame.handoff_mark,
                             )
                         })
@@ -459,50 +457,6 @@ impl VM {
                     }
                 }
 
-                MATCH_ARM_ENTER => {
-                    self.match_arm_marks.push(self.arena.young_len() as u32);
-                }
-
-                MATCH_ARM_LEAVE => {
-                    let mark = self.match_arm_marks.pop().ok_or_else(|| {
-                        VmError::Runtime("MATCH_ARM_LEAVE without active arm region".into())
-                    })?;
-                    if self.arena.young_len() <= mark as usize {
-                        continue;
-                    }
-                    // Arm-local young compaction must preserve every live VM root,
-                    // not just the arm result. Pattern bindings live in local slots,
-                    // and arm bodies can write young values into globals before the
-                    // arm returns. Re-root the whole live stack + globals so we do
-                    // not leave stale tagged handles behind.
-                    let frame_stack_start = bp;
-                    let frame_stack_len = self.stack.len().saturating_sub(frame_stack_start);
-                    let globals_len = self.globals.len();
-                    let mut roots = Vec::with_capacity(frame_stack_len + globals_len);
-                    roots.extend_from_slice(&self.stack[frame_stack_start..]);
-                    roots.extend_from_slice(&self.globals);
-                    self.arena.collect_young_from_roots(mark, &mut roots);
-                    self.stack[frame_stack_start..].copy_from_slice(&roots[..frame_stack_len]);
-                    self.globals
-                        .as_mut_slice()
-                        .copy_from_slice(&roots[frame_stack_len..frame_stack_len + globals_len]);
-                }
-
-                MATCH_ARM_ABORT => {
-                    let mark = self.match_arm_marks.pop().ok_or_else(|| {
-                        VmError::Runtime("MATCH_ARM_ABORT without active arm region".into())
-                    })?;
-                    for value in &mut self.stack[bp..] {
-                        if value
-                            .heap_index()
-                            .is_some_and(|index| self.arena.is_young_index_in_region(index, mark))
-                        {
-                            *value = NanValue::UNIT;
-                        }
-                    }
-                    self.arena.truncate_to(mark);
-                }
-
                 CALL_KNOWN => {
                     let target_fn_id = read_u16!(code, ip) as u32;
                     let argc = read_u8!(code, ip) as usize;
@@ -522,9 +476,9 @@ impl VM {
                         bp: new_bp as u32,
                         local_count: target.local_count,
                         arena_mark: self.arena.young_len() as u32,
+                        yard_base: self.arena.yard_len() as u32,
                         yard_mark: self.arena.yard_len() as u32,
                         handoff_mark: self.arena.handoff_len() as u32,
-                        match_mark_base: self.match_arm_marks.len() as u16,
                         globals_dirty: false,
                         yard_dirty: false,
                         handoff_dirty: false,
@@ -557,9 +511,9 @@ impl VM {
                         bp: new_bp as u32,
                         local_count: target.local_count,
                         arena_mark: self.arena.young_len() as u32,
+                        yard_base: self.arena.yard_len() as u32,
                         yard_mark: self.arena.yard_len() as u32,
                         handoff_mark: self.arena.handoff_len() as u32,
-                        match_mark_base: self.match_arm_marks.len() as u16,
                         globals_dirty: false,
                         yard_dirty: false,
                         handoff_dirty: false,
@@ -608,7 +562,6 @@ impl VM {
                     let frame_mark = self.frames.last().unwrap().arena_mark;
                     let yard_mark = self.frames.last().unwrap().yard_mark;
                     let handoff_mark = self.frames.last().unwrap().handoff_mark;
-                    let match_mark_base = self.frames.last().unwrap().match_mark_base as usize;
                     let globals_dirty = self.frames.last().unwrap().globals_dirty;
                     let yard_dirty = self.frames.last().unwrap().yard_dirty;
                     let mut promoted_args = self.stack[args_start..].to_vec();
@@ -620,7 +573,6 @@ impl VM {
                         yard_dirty,
                         &mut promoted_args,
                     );
-                    self.match_arm_marks.truncate(match_mark_base);
                     self.stack[bp..(argc + bp)].copy_from_slice(&promoted_args[..argc]);
                     let lc = self.frames.last().unwrap().local_count as usize;
                     for i in argc..lc {
@@ -631,6 +583,7 @@ impl VM {
                     frame.globals_dirty = false;
                     frame.yard_dirty = false;
                     frame.handoff_dirty = false;
+                    frame.yard_mark = self.arena.yard_len() as u32;
                     ip = 0;
                 }
 
@@ -643,7 +596,6 @@ impl VM {
                     let frame_mark = self.frames.last().unwrap().arena_mark;
                     let yard_mark = self.frames.last().unwrap().yard_mark;
                     let handoff_mark = self.frames.last().unwrap().handoff_mark;
-                    let match_mark_base = self.frames.last().unwrap().match_mark_base as usize;
                     let globals_dirty = self.frames.last().unwrap().globals_dirty;
                     let yard_dirty = self.frames.last().unwrap().yard_dirty;
                     let mut promoted_args = self.stack[args_start..].to_vec();
@@ -655,7 +607,6 @@ impl VM {
                         yard_dirty,
                         &mut promoted_args,
                     );
-                    self.match_arm_marks.truncate(match_mark_base);
                     self.stack[bp..(argc + bp)].copy_from_slice(&promoted_args[..argc]);
 
                     let new_lc = target_local_count as usize;
@@ -676,6 +627,7 @@ impl VM {
                     frame.globals_dirty = false;
                     frame.yard_dirty = false;
                     frame.handoff_dirty = false;
+                    frame.yard_mark = self.arena.yard_len() as u32;
                     fn_id = target_fn_id;
                     ip = 0;
                 }
@@ -683,8 +635,6 @@ impl VM {
                 RETURN => {
                     let result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let frame = self.frames.pop().unwrap();
-                    self.match_arm_marks
-                        .truncate(frame.match_mark_base as usize);
                     self.stack.truncate(frame.bp as usize);
                     match self.complete_frame_return(frame, result, caller_depth) {
                         ReturnControl::Done(result) => return Ok(result),
@@ -700,6 +650,103 @@ impl VM {
                             bp = next_bp;
                         }
                     }
+                }
+
+                LIST_LEN => {
+                    let list = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    if !list.is_list() {
+                        return Err(VmError::Runtime(
+                            "List.len() argument must be a List".into(),
+                        ));
+                    }
+                    self.stack.push(NanValue::new_int(
+                        self.arena.list_len(list.arena_index()) as i64,
+                        &mut self.arena,
+                    ));
+                }
+
+                LIST_GET => {
+                    let index = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let list = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    if !list.is_list() {
+                        return Err(VmError::Runtime(
+                            "List.get() first argument must be a List".into(),
+                        ));
+                    }
+                    if !index.is_int() {
+                        return Err(VmError::Runtime("List.get() index must be an Int".into()));
+                    }
+                    let idx = index.as_int(&self.arena);
+                    if idx < 0 {
+                        self.stack.push(NanValue::NONE);
+                    } else if let Some(value) =
+                        self.arena.list_get(list.arena_index(), idx as usize)
+                    {
+                        let box_idx = self
+                            .arena
+                            .with_alloc_space(self.next_value_alloc_space(code, ip), |arena| {
+                                arena.push_boxed(value)
+                            });
+                        self.stack.push(NanValue::new_some(box_idx));
+                    } else {
+                        self.stack.push(NanValue::NONE);
+                    }
+                }
+
+                LIST_GET_MATCH => {
+                    let index = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let list = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    if !list.is_list() {
+                        return Err(VmError::Runtime(
+                            "List.get() first argument must be a List".into(),
+                        ));
+                    }
+                    if !index.is_int() {
+                        return Err(VmError::Runtime("List.get() index must be an Int".into()));
+                    }
+                    let idx = index.as_int(&self.arena);
+                    if idx < 0 {
+                        self.stack.push(NanValue::FALSE);
+                    } else if let Some(value) =
+                        self.arena.list_get(list.arena_index(), idx as usize)
+                    {
+                        self.stack.push(value);
+                        self.stack.push(NanValue::TRUE);
+                    } else {
+                        self.stack.push(NanValue::FALSE);
+                    }
+                }
+
+                LIST_APPEND => {
+                    let value = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let list = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    if !list.is_list() {
+                        return Err(VmError::Runtime(
+                            "List.append() first argument must be a List".into(),
+                        ));
+                    }
+                    let idx = self
+                        .arena
+                        .with_alloc_space(self.next_value_alloc_space(code, ip), |arena| {
+                            arena.push_list_append(list, value)
+                        });
+                    self.stack.push(NanValue::new_list(idx));
+                }
+
+                LIST_PREPEND => {
+                    let list = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let value = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    if !list.is_list() {
+                        return Err(VmError::Runtime(
+                            "List.prepend() second argument must be a List".into(),
+                        ));
+                    }
+                    let idx = self
+                        .arena
+                        .with_alloc_space(self.next_value_alloc_space(code, ip), |arena| {
+                            arena.push_list_prepend(value, list)
+                        });
+                    self.stack.push(NanValue::new_list(idx));
                 }
 
                 LIST_NIL => {
@@ -763,8 +810,6 @@ impl VM {
                     if value.is_err() {
                         let result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                         let frame = self.frames.pop().unwrap();
-                        self.match_arm_marks
-                            .truncate(frame.match_mark_base as usize);
                         self.stack.truncate(frame.bp as usize);
                         match self.complete_frame_return(frame, result, caller_depth) {
                             ReturnControl::Done(result) => return Ok(result),
@@ -1328,9 +1373,9 @@ mod tests {
             bp: 0,
             local_count: 0,
             arena_mark: 0,
+            yard_base: 0,
             yard_mark: 0,
             handoff_mark: 0,
-            match_mark_base: 0,
             globals_dirty: false,
             yard_dirty: false,
             handoff_dirty: false,

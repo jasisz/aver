@@ -35,7 +35,7 @@ Execution is stack-based:
 
 The VM now also marks conservatively-classified **thin functions**.
 
-These are small helpers that do not use tail-call frame reuse, do not write globals, do not rely on arm-local match regions, and do not emit obvious aggregate-construction opcodes such as `RECORD_UPDATE`, `WRAP`, `LIST_*`, `TUPLE_NEW`, or `VARIANT_NEW`.
+These are small helpers that do not use tail-call frame reuse, do not write globals, and do not emit obvious aggregate-construction opcodes such as `RECORD_UPDATE`, `WRAP`, `LIST_*`, `TUPLE_NEW`, or `VARIANT_NEW`.
 
 When a thin function returns and the runtime can confirm that its local `young` / `yard` / `handoff` marks never moved, the VM skips the normal boundary relocation path entirely.
 In practice this means many tiny Aver helpers now behave like:
@@ -169,15 +169,28 @@ So there is still tracing and relocation, but not as one global always-on collec
 
 Lists in the VM are not just flat `Vec` payloads.
 
-The current arena list storage supports three shapes:
+The current arena list storage supports four shapes:
 
 - `Flat` for compact literal / materialized lists
 - `Prepend` for cheap `List.prepend` and `LIST_CONS`
 - `Concat` for cheap structural concatenation
+- `Segments` for concat-tail views produced by repeated destructuring
+
+Repeated `List.append` does not keep building a one-element-deep concat chain forever. The VM grows the right edge in flat chunks, so append-heavy code stays structural without turning indexed access into a totally degenerate tree walk.
 
 This matters because the VM can now keep list construction aligned with Aver semantics instead of flattening on every prepend.
 
-Pattern matching and destructuring (`MATCH_CONS`, `LIST_HEAD_TAIL`) use list helpers that understand these shapes directly.
+Pattern matching and destructuring (`MATCH_CONS`, `LIST_HEAD_TAIL`) use list helpers that understand these shapes directly. In particular, destructuring a `Concat` tail no longer rebuilds a fresh concat suffix on every step; it can carry a cheap segment-view instead.
+
+Core list operations also have dedicated bytecode paths:
+
+- `LIST_LEN`
+- `LIST_GET`
+- `LIST_APPEND`
+- `LIST_PREPEND`
+- `LIST_GET_MATCH`
+
+That avoids paying full generic builtin-dispatch overhead for the most common list operations in real Aver programs.
 
 In obvious tail-call positions, the VM can allocate new aggregate values directly into the frame yard instead of forcing an immediate young-to-yard copy on the next `TAIL_CALL_*`.
 
@@ -209,6 +222,11 @@ Examples:
 - `EXTRACT_FIELD`
 - `EXTRACT_TUPLE_ITEM`
 - `TUPLE_NEW`
+- `LIST_LEN`
+- `LIST_GET`
+- `LIST_APPEND`
+- `LIST_PREPEND`
+- `LIST_GET_MATCH`
 
 These opcodes exist because Aver already has strong opinions:
 
@@ -234,7 +252,7 @@ Typical pieces are:
 
 This keeps the execute loop simple while preserving the structure of Aver patterns.
 
-The VM currently also reserves internal opcodes for arm-local match regions, but the compiler does **not** rely on that path in the default runtime path right now. The broad idea fits Aver well, but real workloads exposed enough edge cases that the stable-boundary path is the safer current choice.
+The current VM no longer uses arm-local match-region opcodes. In practice they were adding machinery at the wrong granularity for Aver: most functions are tiny, and the bigger wins came from better list/value placement and more semantic bytecode around common patterns such as `match List.get(xs, i)`.
 
 ## Recent Correctness Notes
 

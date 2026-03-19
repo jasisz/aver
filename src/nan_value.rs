@@ -527,7 +527,15 @@ pub enum ArenaList {
         right: NanValue,
         len: usize,
     },
+    Segments {
+        current: NanValue,
+        rest: Rc<Vec<NanValue>>,
+        start: usize,
+        len: usize,
+    },
 }
+
+const LIST_APPEND_CHUNK_LIMIT: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HeapSpace {
@@ -870,6 +878,46 @@ impl Arena {
         self.push(ArenaEntry::List(ArenaList::Prepend { head, tail, len }))
     }
 
+    pub fn push_list_append(&mut self, list: NanValue, value: NanValue) -> u32 {
+        debug_assert!(list.is_list());
+        if self.list_is_empty(list.arena_index()) {
+            return self.push_list(vec![value]);
+        }
+
+        match self.get_list(list.arena_index()).clone() {
+            ArenaList::Flat { items, start } => {
+                let slice = &items[start..];
+                if slice.len() < LIST_APPEND_CHUNK_LIMIT {
+                    let mut out = Vec::with_capacity(slice.len() + 1);
+                    out.extend(slice.iter().copied());
+                    out.push(value);
+                    return self.push_list(out);
+                }
+            }
+            ArenaList::Concat { left, right, len } => {
+                if let ArenaList::Flat { items, start } = self.get_list(right.arena_index()).clone()
+                {
+                    let slice = &items[start..];
+                    if slice.len() < LIST_APPEND_CHUNK_LIMIT {
+                        let mut out = Vec::with_capacity(slice.len() + 1);
+                        out.extend(slice.iter().copied());
+                        out.push(value);
+                        let right_idx = self.push_list(out);
+                        return self.push(ArenaEntry::List(ArenaList::Concat {
+                            left,
+                            right: NanValue::new_list(right_idx),
+                            len: len + 1,
+                        }));
+                    }
+                }
+            }
+            ArenaList::Prepend { .. } | ArenaList::Segments { .. } => {}
+        }
+
+        let singleton_idx = self.push_list(vec![value]);
+        self.push_list_concat(list, NanValue::new_list(singleton_idx))
+    }
+
     pub fn push_list_concat(&mut self, left: NanValue, right: NanValue) -> u32 {
         debug_assert!(left.is_list());
         debug_assert!(right.is_list());
@@ -880,7 +928,9 @@ impl Arena {
     pub fn list_len(&self, index: u32) -> usize {
         match self.get_list(index) {
             ArenaList::Flat { items, start } => items.len().saturating_sub(*start),
-            ArenaList::Prepend { len, .. } | ArenaList::Concat { len, .. } => *len,
+            ArenaList::Prepend { len, .. }
+            | ArenaList::Concat { len, .. }
+            | ArenaList::Segments { len, .. } => *len,
         }
     }
 
@@ -913,6 +963,29 @@ impl Arena {
                         current = *right;
                     }
                 }
+                ArenaList::Segments {
+                    current: head,
+                    rest,
+                    start,
+                    ..
+                } => {
+                    let head_len = self.list_len(head.arena_index());
+                    if remaining < head_len {
+                        current = *head;
+                    } else {
+                        remaining -= head_len;
+                        let mut found = None;
+                        for part in &rest[*start..] {
+                            let part_len = self.list_len(part.arena_index());
+                            if remaining < part_len {
+                                found = Some(*part);
+                                break;
+                            }
+                            remaining -= part_len;
+                        }
+                        current = found?;
+                    }
+                }
             }
         }
     }
@@ -934,6 +1007,17 @@ impl Arena {
                     stack.push(*right);
                     stack.push(*left);
                 }
+                ArenaList::Segments {
+                    current,
+                    rest,
+                    start,
+                    ..
+                } => {
+                    for part in rest[*start..].iter().rev() {
+                        stack.push(*part);
+                    }
+                    stack.push(*current);
+                }
             }
         }
 
@@ -950,7 +1034,7 @@ impl Arena {
                 ArenaList::Flat { items, start } => {
                     let head = *items.get(start)?;
                     let tail = if start + 1 >= items.len() {
-                        NanValue::new_list(self.push_list(Vec::new()))
+                        self.empty_list_value()
                     } else {
                         let tail_idx = self.push(ArenaEntry::List(ArenaList::Flat {
                             items: Rc::clone(&items),
@@ -958,10 +1042,12 @@ impl Arena {
                         }));
                         NanValue::new_list(tail_idx)
                     };
-                    return Some((head, self.rebuild_list_from_rights(tail, rights)));
+                    rights.reverse();
+                    return Some((head, self.push_list_segments(tail, rights)));
                 }
                 ArenaList::Prepend { head, tail, .. } => {
-                    return Some((head, self.rebuild_list_from_rights(tail, rights)));
+                    rights.reverse();
+                    return Some((head, self.push_list_segments(tail, rights)));
                 }
                 ArenaList::Concat { left, right, .. } => {
                     if self.list_is_empty(left.arena_index()) {
@@ -971,25 +1057,65 @@ impl Arena {
                         current = left;
                     }
                 }
+                ArenaList::Segments {
+                    current: head_segment,
+                    rest,
+                    start,
+                    ..
+                } => {
+                    let (head, tail) = self.list_uncons(head_segment)?;
+                    return Some((
+                        head,
+                        self.push_list_segments_rc(tail, Rc::clone(&rest), start),
+                    ));
+                }
             }
         }
     }
 
-    fn rebuild_list_from_rights(
+    fn empty_list_value(&mut self) -> NanValue {
+        NanValue::new_list(self.push_list(Vec::new()))
+    }
+
+    fn push_list_segments(&mut self, current: NanValue, rest: Vec<NanValue>) -> NanValue {
+        let filtered: Vec<NanValue> = rest
+            .into_iter()
+            .filter(|part| !self.list_is_empty(part.arena_index()))
+            .collect();
+        self.push_list_segments_rc(current, Rc::new(filtered), 0)
+    }
+
+    fn push_list_segments_rc(
         &mut self,
-        mut base: NanValue,
-        mut rights: Vec<NanValue>,
+        mut current: NanValue,
+        rest: Rc<Vec<NanValue>>,
+        mut start: usize,
     ) -> NanValue {
-        while let Some(right) = rights.pop() {
-            if self.list_is_empty(base.arena_index()) {
-                base = right;
-            } else if self.list_is_empty(right.arena_index()) {
-                continue;
+        while self.list_is_empty(current.arena_index()) {
+            if let Some(next) = rest.get(start).copied() {
+                current = next;
+                start += 1;
             } else {
-                base = NanValue::new_list(self.push_list_concat(base, right));
+                return self.empty_list_value();
             }
         }
-        base
+
+        if start >= rest.len() {
+            return current;
+        }
+
+        let len = self.list_len(current.arena_index())
+            + rest[start..]
+                .iter()
+                .map(|part| self.list_len(part.arena_index()))
+                .sum::<usize>();
+        let idx = self.push(ArenaEntry::List(ArenaList::Segments {
+            current,
+            rest,
+            start,
+            len,
+        }));
+        NanValue::new_list(idx)
     }
 }
 
@@ -1062,9 +1188,16 @@ impl Arena {
         roots: &mut [NanValue],
         young_target: AllocSpace,
     ) -> (bool, bool) {
-        let mut relocated_young = vec![u32::MAX; self.young_entries.len()];
-        let mut relocated_yard = vec![u32::MAX; self.yard_entries.len()];
-        let mut relocated_handoff = vec![u32::MAX; self.handoff_entries.len()];
+        let mut relocated_young =
+            vec![u32::MAX; self.young_entries.len().saturating_sub(young_mark as usize)];
+        let mut relocated_yard =
+            vec![u32::MAX; self.yard_entries.len().saturating_sub(yard_mark as usize)];
+        let mut relocated_handoff = vec![
+            u32::MAX;
+            self.handoff_entries
+                .len()
+                .saturating_sub(handoff_mark as usize)
+        ];
         let mut compacted_yard =
             Vec::with_capacity(self.yard_entries.len().saturating_sub(yard_mark as usize));
         let mut compacted_handoff = Vec::with_capacity(
@@ -1155,7 +1288,7 @@ impl Arena {
         let Some(index) = value.heap_index() else {
             return value;
         };
-        let (space, raw_index) = Self::decode_index(index);
+        let (space, _) = Self::decode_index(index);
         match space {
             HeapSpace::Young if self.is_young_index_in_region(index, young_mark) => self
                 .evacuate_young_value(
@@ -1196,22 +1329,10 @@ impl Arena {
                     compacted_yard,
                     compacted_handoff,
                 ),
-            _ => {
-                self.rewrite_local_refs_in_place(
-                    space,
-                    raw_index,
-                    young_mark,
-                    yard_mark,
-                    handoff_mark,
-                    young_target,
-                    relocated_young,
-                    relocated_yard,
-                    relocated_handoff,
-                    compacted_yard,
-                    compacted_handoff,
-                );
-                value
-            }
+            // Older immutable prefixes cannot start referencing current-frame
+            // locals after the fact, so evacuation only needs to rewrite the
+            // actual local suffixes.
+            _ => value,
         }
     }
 
@@ -1231,7 +1352,7 @@ impl Arena {
     ) -> NanValue {
         let index = value.heap_index().expect("young value must be heap-backed");
         let (_, raw_index) = Self::decode_index(index);
-        let relocation_slot = raw_index as usize;
+        let relocation_slot = (raw_index - young_mark) as usize;
         let relocated_index = relocated_young[relocation_slot];
         if relocated_index != u32::MAX {
             return value.with_heap_index(relocated_index);
@@ -1288,7 +1409,7 @@ impl Arena {
     ) -> NanValue {
         let index = value.heap_index().expect("yard value must be heap-backed");
         let (_, raw_index) = Self::decode_index(index);
-        let relocation_slot = raw_index as usize;
+        let relocation_slot = (raw_index - yard_mark) as usize;
         let relocated_index = relocated_yard[relocation_slot];
         if relocated_index != u32::MAX {
             return value.with_heap_index(relocated_index);
@@ -1352,7 +1473,7 @@ impl Arena {
             .heap_index()
             .expect("handoff value must be heap-backed");
         let (_, raw_index) = Self::decode_index(index);
-        let relocation_slot = raw_index as usize;
+        let relocation_slot = (raw_index - handoff_mark) as usize;
         let relocated_index = relocated_handoff[relocation_slot];
         if relocated_index != u32::MAX {
             return value.with_heap_index(relocated_index);
@@ -1398,6 +1519,7 @@ impl Arena {
         value.with_heap_index(new_index)
     }
 
+    #[allow(dead_code)]
     #[allow(clippy::too_many_arguments)]
     fn rewrite_local_refs_in_place(
         &mut self,
@@ -1498,6 +1620,7 @@ impl Arena {
         }
     }
 
+    #[allow(dead_code)]
     #[allow(clippy::too_many_arguments)]
     fn rewrite_local_entry(
         &mut self,
@@ -1654,6 +1777,7 @@ impl Arena {
         }
     }
 
+    #[allow(dead_code)]
     #[allow(clippy::too_many_arguments)]
     fn rewrite_local_list(
         &mut self,
@@ -1743,6 +1867,46 @@ impl Arena {
                     compacted_yard,
                     compacted_handoff,
                 ),
+                len,
+            },
+            ArenaList::Segments {
+                current,
+                rest,
+                start,
+                len,
+            } => ArenaList::Segments {
+                current: self.evacuate_local_root(
+                    current,
+                    young_mark,
+                    yard_mark,
+                    handoff_mark,
+                    young_target,
+                    relocated_young,
+                    relocated_yard,
+                    relocated_handoff,
+                    compacted_yard,
+                    compacted_handoff,
+                ),
+                rest: Rc::new(
+                    rest[start..]
+                        .iter()
+                        .map(|value| {
+                            self.evacuate_local_root(
+                                *value,
+                                young_mark,
+                                yard_mark,
+                                handoff_mark,
+                                young_target,
+                                relocated_young,
+                                relocated_yard,
+                                relocated_handoff,
+                                compacted_yard,
+                                compacted_handoff,
+                            )
+                        })
+                        .collect(),
+                ),
+                start: 0,
                 len,
             },
         }
@@ -1995,6 +2159,46 @@ impl Arena {
                 ),
                 len,
             },
+            ArenaList::Segments {
+                current,
+                rest,
+                start,
+                len,
+            } => ArenaList::Segments {
+                current: self.evacuate_local_root(
+                    current,
+                    young_mark,
+                    yard_mark,
+                    handoff_mark,
+                    young_target,
+                    relocated_young,
+                    relocated_yard,
+                    relocated_handoff,
+                    compacted_yard,
+                    compacted_handoff,
+                ),
+                rest: Rc::new(
+                    rest[start..]
+                        .iter()
+                        .map(|value| {
+                            self.evacuate_local_root(
+                                *value,
+                                young_mark,
+                                yard_mark,
+                                handoff_mark,
+                                young_target,
+                                relocated_young,
+                                relocated_yard,
+                                relocated_handoff,
+                                compacted_yard,
+                                compacted_handoff,
+                            )
+                        })
+                        .collect(),
+                ),
+                start: 0,
+                len,
+            },
         }
     }
 
@@ -2147,6 +2351,22 @@ impl Arena {
                 right: self.relocate_young_value(right, mark, relocated, compacted),
                 len,
             },
+            ArenaList::Segments {
+                current,
+                rest,
+                start,
+                len,
+            } => ArenaList::Segments {
+                current: self.relocate_young_value(current, mark, relocated, compacted),
+                rest: Rc::new(
+                    rest[start..]
+                        .iter()
+                        .map(|value| self.relocate_young_value(*value, mark, relocated, compacted))
+                        .collect(),
+                ),
+                start: 0,
+                len,
+            },
         }
     }
 
@@ -2290,6 +2510,22 @@ impl Arena {
             ArenaList::Concat { left, right, len } => ArenaList::Concat {
                 left: self.relocate_young_root(left, mark, relocated, compacted),
                 right: self.relocate_young_root(right, mark, relocated, compacted),
+                len,
+            },
+            ArenaList::Segments {
+                current,
+                rest,
+                start,
+                len,
+            } => ArenaList::Segments {
+                current: self.relocate_young_root(current, mark, relocated, compacted),
+                rest: Rc::new(
+                    rest[start..]
+                        .iter()
+                        .map(|value| self.relocate_young_root(*value, mark, relocated, compacted))
+                        .collect(),
+                ),
+                start: 0,
                 len,
             },
         }
@@ -2556,6 +2792,24 @@ impl Arena {
                 right: self.promote_region_root_to_target(right, mark, relocated, target),
                 len,
             },
+            ArenaList::Segments {
+                current,
+                rest,
+                start,
+                len,
+            } => ArenaList::Segments {
+                current: self.promote_region_root_to_target(current, mark, relocated, target),
+                rest: Rc::new(
+                    rest[start..]
+                        .iter()
+                        .map(|value| {
+                            self.promote_region_root_to_target(*value, mark, relocated, target)
+                        })
+                        .collect(),
+                ),
+                start: 0,
+                len,
+            },
         }
     }
 
@@ -2752,6 +3006,22 @@ impl Arena {
                 right: self.promote_value_to_yard(right, relocated),
                 len,
             },
+            ArenaList::Segments {
+                current,
+                rest,
+                start,
+                len,
+            } => ArenaList::Segments {
+                current: self.promote_value_to_yard(current, relocated),
+                rest: Rc::new(
+                    rest[start..]
+                        .iter()
+                        .map(|value| self.promote_value_to_yard(*value, relocated))
+                        .collect(),
+                ),
+                start: 0,
+                len,
+            },
         }
     }
 
@@ -2774,6 +3044,22 @@ impl Arena {
             ArenaList::Concat { left, right, len } => ArenaList::Concat {
                 left: self.promote_value_to_handoff(left, relocated),
                 right: self.promote_value_to_handoff(right, relocated),
+                len,
+            },
+            ArenaList::Segments {
+                current,
+                rest,
+                start,
+                len,
+            } => ArenaList::Segments {
+                current: self.promote_value_to_handoff(current, relocated),
+                rest: Rc::new(
+                    rest[start..]
+                        .iter()
+                        .map(|value| self.promote_value_to_handoff(*value, relocated))
+                        .collect(),
+                ),
+                start: 0,
                 len,
             },
         }
@@ -3011,6 +3297,34 @@ impl Arena {
                     relocated_yard,
                     relocated_handoff,
                 ),
+                len,
+            },
+            ArenaList::Segments {
+                current,
+                rest,
+                start,
+                len,
+            } => ArenaList::Segments {
+                current: self.promote_value_to_stable(
+                    current,
+                    relocated_young,
+                    relocated_yard,
+                    relocated_handoff,
+                ),
+                rest: Rc::new(
+                    rest[start..]
+                        .iter()
+                        .map(|value| {
+                            self.promote_value_to_stable(
+                                *value,
+                                relocated_young,
+                                relocated_yard,
+                                relocated_handoff,
+                            )
+                        })
+                        .collect(),
+                ),
+                start: 0,
                 len,
             },
         }
@@ -3279,6 +3593,22 @@ impl Arena {
                 right: self.relocate_yard_root(right, mark, relocated, compacted),
                 len,
             },
+            ArenaList::Segments {
+                current,
+                rest,
+                start,
+                len,
+            } => ArenaList::Segments {
+                current: self.relocate_yard_root(current, mark, relocated, compacted),
+                rest: Rc::new(
+                    rest[start..]
+                        .iter()
+                        .map(|value| self.relocate_yard_root(*value, mark, relocated, compacted))
+                        .collect(),
+                ),
+                start: 0,
+                len,
+            },
         }
     }
 
@@ -3307,6 +3637,22 @@ impl Arena {
             ArenaList::Concat { left, right, len } => ArenaList::Concat {
                 left: self.relocate_yard_value(left, mark, relocated, compacted),
                 right: self.relocate_yard_value(right, mark, relocated, compacted),
+                len,
+            },
+            ArenaList::Segments {
+                current,
+                rest,
+                start,
+                len,
+            } => ArenaList::Segments {
+                current: self.relocate_yard_value(current, mark, relocated, compacted),
+                rest: Rc::new(
+                    rest[start..]
+                        .iter()
+                        .map(|value| self.relocate_yard_value(*value, mark, relocated, compacted))
+                        .collect(),
+                ),
+                start: 0,
                 len,
             },
         }
@@ -3448,6 +3794,22 @@ impl Arena {
             ArenaList::Concat { left, right, len } => ArenaList::Concat {
                 left: self.relocate_stable_value(left, relocated, compacted),
                 right: self.relocate_stable_value(right, relocated, compacted),
+                len,
+            },
+            ArenaList::Segments {
+                current,
+                rest,
+                start,
+                len,
+            } => ArenaList::Segments {
+                current: self.relocate_stable_value(current, relocated, compacted),
+                rest: Rc::new(
+                    rest[start..]
+                        .iter()
+                        .map(|value| self.relocate_stable_value(*value, relocated, compacted))
+                        .collect(),
+                ),
+                start: 0,
                 len,
             },
         }
@@ -3999,6 +4361,65 @@ mod tests {
         let v = NanValue::new_list(idx);
         assert!(v.is_list());
         assert_eq!(arena.list_len(v.arena_index()), 2);
+    }
+
+    #[test]
+    fn concat_uncons_returns_segment_view_tail() {
+        let mut arena = Arena::new();
+        let left = NanValue::new_list(arena.push_list(vec![
+            NanValue::new_int_inline(1),
+            NanValue::new_int_inline(2),
+        ]));
+        let right = NanValue::new_list(arena.push_list(vec![
+            NanValue::new_int_inline(3),
+            NanValue::new_int_inline(4),
+        ]));
+        let concat = NanValue::new_list(arena.push_list_concat(left, right));
+
+        let (head1, tail1) = arena.list_uncons(concat).expect("first uncons");
+        assert_eq!(head1.as_int(&arena), 1);
+        match arena.get_list(tail1.arena_index()) {
+            ArenaList::Segments { .. } => {}
+            other => panic!("expected segment tail view, got {other:?}"),
+        }
+        assert_eq!(
+            arena
+                .list_get(tail1.arena_index(), 0)
+                .unwrap()
+                .as_int(&arena),
+            2
+        );
+        assert_eq!(
+            arena
+                .list_get(tail1.arena_index(), 1)
+                .unwrap()
+                .as_int(&arena),
+            3
+        );
+        assert_eq!(
+            arena
+                .list_get(tail1.arena_index(), 2)
+                .unwrap()
+                .as_int(&arena),
+            4
+        );
+
+        let (head2, tail2) = arena.list_uncons(tail1).expect("second uncons");
+        assert_eq!(head2.as_int(&arena), 2);
+        assert_eq!(
+            arena
+                .list_get(tail2.arena_index(), 0)
+                .unwrap()
+                .as_int(&arena),
+            3
+        );
+        assert_eq!(
+            arena
+                .list_get(tail2.arena_index(), 1)
+                .unwrap()
+                .as_int(&arena),
+            4
+        );
     }
 
     #[test]

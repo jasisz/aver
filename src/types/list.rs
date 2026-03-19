@@ -282,12 +282,7 @@ fn append_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeEr
             "List.append() first argument must be a List".to_string(),
         ));
     }
-    let singleton_idx = arena.push_list(vec![args[1]]);
-    let list_idx = if arena.list_is_empty(args[0].arena_index()) {
-        singleton_idx
-    } else {
-        arena.push_list_concat(args[0], NanValue::new_list(singleton_idx))
-    };
+    let list_idx = arena.push_list_append(args[0], args[1]);
     Ok(NanValue::new_list(list_idx))
 }
 
