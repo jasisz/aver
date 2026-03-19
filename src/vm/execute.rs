@@ -887,6 +887,8 @@ fn dispatch_builtin_nv(
         Some("Env") => env::call_nv(name, args, arena),
         Some("Random") => random::call_nv(name, args, arena),
         Some("Tcp") => tcp::call_nv(name, args, arena),
+        #[cfg(feature = "terminal")]
+        Some("Terminal") => crate::services::terminal::call_nv(name, args, arena),
         Some("Time") => time::call_nv(name, args, arena),
         Some("Bool") => bool::call_nv(name, args, arena),
         Some("Int") => int::call_nv(name, args, arena),
