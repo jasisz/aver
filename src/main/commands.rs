@@ -781,8 +781,12 @@ fn display_check_path(path: &str, module_root: &str) -> String {
     path.to_string()
 }
 
-pub(super) fn cmd_run_vm(file: &str, module_root_override: Option<&str>) {
+pub(super) fn cmd_run_vm(file: &str, module_root_override: Option<&str>, record_dir: Option<&str>) {
     use aver::nan_value::Arena;
+    use aver::replay::{
+        JsonValue, session::RecordedOutcome, session::SessionRecording,
+        session_recording_to_string_pretty,
+    };
     use aver::vm;
 
     let module_root = super::shared::resolve_module_root(module_root_override);
@@ -830,9 +834,59 @@ pub(super) fn cmd_run_vm(file: &str, module_root_override: Option<&str>) {
 
     // Execute
     let mut machine = vm::VM::new(code, globals, arena);
-    match machine.run() {
+
+    if record_dir.is_some() {
+        machine.start_recording();
+    }
+
+    let run_result = machine.run();
+
+    // Persist recording if requested.
+    if let Some(dir) = record_dir {
+        let request_id = generate_request_id();
+        let timestamp = generate_timestamp();
+        let (record_program_file, record_module_root) = recording_paths(file, &module_root);
+        let out_path = match prepare_recording_path(dir, &request_id) {
+            Ok(path) => path,
+            Err(e) => {
+                eprintln!("{}", e.red());
+                process::exit(1);
+            }
+        };
+
+        let output = match &run_result {
+            Ok(result) => {
+                let val = result.to_value(&machine.arena);
+                match aver::replay::value_to_json(&val) {
+                    Ok(json) => RecordedOutcome::Value(json),
+                    Err(e) => RecordedOutcome::RuntimeError(e),
+                }
+            }
+            Err(e) => RecordedOutcome::RuntimeError(format!("{}", e)),
+        };
+
+        let recording = SessionRecording {
+            schema_version: 1,
+            request_id,
+            timestamp,
+            program_file: record_program_file,
+            module_root: record_module_root,
+            entry_fn: "main".to_string(),
+            input: JsonValue::Null,
+            effects: machine.recorded_effects.clone(),
+            output,
+        };
+
+        let json_str = session_recording_to_string_pretty(&recording);
+        if let Err(e) = std::fs::write(&out_path, json_str) {
+            eprintln!("{}", format!("Failed to write recording: {}", e).red());
+            process::exit(1);
+        }
+        println!("Recording saved: {}", out_path.display());
+    }
+
+    match run_result {
         Ok(result) => {
-            // If main returned Result.Err, report it
             if result.is_err() {
                 let inner = machine.arena.get_boxed(result.wrapper_index());
                 let msg = inner.repr(&machine.arena);

@@ -1,10 +1,20 @@
 use crate::nan_value::{Arena, NanValue};
+use crate::replay::session::{EffectRecord, RecordedOutcome};
+use crate::replay::{json_to_value, value_to_json, values_to_json_lossy};
 use crate::services::{console, disk, env, http, random, tcp, time};
 use crate::types::{bool, byte, char, float, int, list, map, option, result, string};
 use crate::value::RuntimeError;
 
 use super::opcode::*;
 use super::types::{CallFrame, CodeStore, VmError};
+
+/// VM execution mode for record/replay.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum VmExecutionMode {
+    Normal,
+    Record,
+    Replay,
+}
 
 /// The Aver bytecode virtual machine.
 pub struct VM {
@@ -13,8 +23,16 @@ pub struct VM {
     globals: Vec<NanValue>,
     code: CodeStore,
     pub arena: Arena,
-    /// Effect capabilities granted to the current entry point (e.g. `! [Console.print]`).
+    /// Effect capabilities granted to the current entry point.
     allowed_effects: Vec<String>,
+    /// Execution mode: Normal, Record, or Replay.
+    execution_mode: VmExecutionMode,
+    /// Recorded effects (populated in Record mode).
+    pub recorded_effects: Vec<EffectRecord>,
+    /// Replay effects (consumed in Replay mode).
+    replay_effects: Vec<EffectRecord>,
+    replay_pos: usize,
+    validate_replay_args: bool,
 }
 
 macro_rules! read_u8 {
@@ -53,7 +71,26 @@ impl VM {
             code,
             arena,
             allowed_effects: Vec::new(),
+            execution_mode: VmExecutionMode::Normal,
+            recorded_effects: Vec::new(),
+            replay_effects: Vec::new(),
+            replay_pos: 0,
+            validate_replay_args: false,
         }
+    }
+
+    /// Start recording effectful calls.
+    pub fn start_recording(&mut self) {
+        self.execution_mode = VmExecutionMode::Record;
+        self.recorded_effects.clear();
+    }
+
+    /// Start replaying from recorded effects.
+    pub fn start_replay(&mut self, effects: Vec<EffectRecord>, validate_args: bool) {
+        self.execution_mode = VmExecutionMode::Replay;
+        self.replay_effects = effects;
+        self.replay_pos = 0;
+        self.validate_replay_args = validate_args;
     }
 
     pub fn run(&mut self) -> Result<NanValue, VmError> {
@@ -288,8 +325,7 @@ impl VM {
                     let argc = read_u8!(code, ip) as usize;
                     let builtin_name = self.arena.get_string(name_idx).to_string();
 
-                    // Effect enforcement: check that the builtin's required
-                    // effects are covered by the current allowed_effects.
+                    // Effect enforcement.
                     self.check_builtin_effects(&builtin_name)?;
 
                     // Collect args from stack.
@@ -297,7 +333,76 @@ impl VM {
                     let args: Vec<NanValue> = self.stack[args_start..].to_vec();
                     self.stack.truncate(args_start);
 
-                    let result = dispatch_builtin_nv(&builtin_name, &args, &mut self.arena)?;
+                    let is_effectful = !builtin_effects(&builtin_name).is_empty();
+
+                    let result = match (is_effectful, self.execution_mode) {
+                        (_, VmExecutionMode::Normal) | (false, _) => {
+                            dispatch_builtin_nv(&builtin_name, &args, &mut self.arena)?
+                        }
+                        (true, VmExecutionMode::Record) => {
+                            // Call real service, then record the effect.
+                            let args_json = {
+                                let vals: Vec<_> =
+                                    args.iter().map(|a| a.to_value(&self.arena)).collect();
+                                values_to_json_lossy(&vals)
+                            };
+                            let nv_result =
+                                dispatch_builtin_nv(&builtin_name, &args, &mut self.arena)?;
+                            let result_val = nv_result.to_value(&self.arena);
+                            let outcome = match value_to_json(&result_val) {
+                                Ok(json) => RecordedOutcome::Value(json),
+                                Err(e) => RecordedOutcome::RuntimeError(e),
+                            };
+                            let seq = self.recorded_effects.len() as u32 + 1;
+                            self.recorded_effects.push(EffectRecord {
+                                seq,
+                                effect_type: builtin_name.clone(),
+                                args: args_json,
+                                outcome,
+                            });
+                            nv_result
+                        }
+                        (true, VmExecutionMode::Replay) => {
+                            // Skip real service, return recorded result.
+                            if self.replay_pos >= self.replay_effects.len() {
+                                return Err(VmError::Runtime(format!(
+                                    "Replay exhausted: no more recorded effects for '{}'",
+                                    builtin_name
+                                )));
+                            }
+                            let record = &self.replay_effects[self.replay_pos];
+                            if record.effect_type != builtin_name {
+                                return Err(VmError::Runtime(format!(
+                                    "Replay mismatch at #{}: expected '{}', got '{}'",
+                                    record.seq, record.effect_type, builtin_name
+                                )));
+                            }
+                            if self.validate_replay_args {
+                                let got_args = {
+                                    let vals: Vec<_> =
+                                        args.iter().map(|a| a.to_value(&self.arena)).collect();
+                                    values_to_json_lossy(&vals)
+                                };
+                                if got_args != record.args {
+                                    return Err(VmError::Runtime(format!(
+                                        "Replay args mismatch at #{} for '{}'",
+                                        record.seq, builtin_name
+                                    )));
+                                }
+                            }
+                            let result = match &record.outcome {
+                                RecordedOutcome::Value(json) => {
+                                    let val = json_to_value(json).map_err(VmError::Runtime)?;
+                                    NanValue::from_value(&val, &mut self.arena)
+                                }
+                                RecordedOutcome::RuntimeError(msg) => {
+                                    return Err(VmError::Runtime(msg.clone()));
+                                }
+                            };
+                            self.replay_pos += 1;
+                            result
+                        }
+                    };
                     self.stack.push(result);
                 }
 
