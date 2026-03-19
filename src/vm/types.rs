@@ -31,6 +31,9 @@ pub struct CallFrame {
     pub yard_mark: u32,
     /// Whether this frame stored a young-region value into globals.
     pub globals_dirty: bool,
+    /// Whether ordinary returns introduced caller-yard survivors that should
+    /// be pruned on the next tail-call boundary.
+    pub yard_dirty: bool,
 }
 
 /// All compiled bytecode for a program.

@@ -16,6 +16,7 @@ All notable changes to Aver are documented here.
 ### Changed
 - VM list builtins and pattern matching now operate through arena list helpers (`len/get/uncons/to_vec`) instead of assuming a flat `Vec`, which restores `list_builtins(1K)` to better-than-baseline VM performance.
 - TCO now uses a shared frame-local yard instead of promoting loop-carried state straight to stable space, and obvious tail-position aggregate allocations can go there directly.
+- Ordinary bytecode `RETURN` now hands values back into the caller's yard instead of promoting them straight to stable space; `stable` is reserved for real escape boundaries.
 - `docs/vm.md` now documents the VM memory model and list representation, including young/yard/stable spaces and structural list nodes.
 
 ## 0.5.5

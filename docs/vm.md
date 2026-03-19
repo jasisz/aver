@@ -74,13 +74,14 @@ It now uses a small runtime model shaped around Aver's execution style:
 - each frame also records a shared `yard` mark for TCO survivors
 - temporary heap values allocate into the young arena
 - on `TAIL_CALL_*`, loop-carried survivors move from young into the frame's shared yard
-- on `RETURN`, true escaping values move into stable space
+- on ordinary `RETURN`, results can move into the caller's yard rather than pretending to be globally long-lived
+- on external escape boundaries (top-level result, globals, host callbacks), values move into stable space
 - top-level completion compacts stable-space values from live roots
 
 In practice this gives the VM three distinct lifetimes:
 
 - `young` for per-step temporaries
-- `yard` for values that survive the next tail-call iteration but still die with the frame
+- `yard` for values that survive the next tail-call iteration, or ordinary returns that stay within the current call chain, but still die with the frame
 - `stable` for values that truly escape beyond the frame
 
 The important part is that TCO survivors do not have to pretend to be globally long-lived values.

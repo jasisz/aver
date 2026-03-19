@@ -129,6 +129,7 @@ impl VM {
             arena_mark,
             yard_mark,
             globals_dirty: false,
+            yard_dirty: false,
         });
         self.execute_until(caller_depth)
     }
@@ -153,7 +154,9 @@ impl VM {
     fn finalize_frame_locals_for_tail_call(
         &mut self,
         arena_mark: u32,
+        yard_mark: u32,
         globals_dirty: bool,
+        yard_dirty: bool,
         frame_roots: &mut [NanValue],
     ) {
         if globals_dirty {
@@ -164,6 +167,40 @@ impl VM {
             self.arena
                 .promote_young_roots_to_yard(arena_mark, frame_roots);
         }
+
+        if yard_dirty && self.arena.yard_len() > yard_mark as usize {
+            self.arena.collect_yard_from_roots(yard_mark, frame_roots);
+        }
+    }
+
+    fn finalize_frame_return_to_caller(
+        &mut self,
+        arena_mark: u32,
+        yard_mark: u32,
+        globals_dirty: bool,
+        frame_roots: &mut [NanValue],
+    ) -> bool {
+        if globals_dirty {
+            self.arena.promote_roots_to_stable(&mut self.globals);
+        }
+
+        let had_callee_yard = self.arena.yard_len() > yard_mark as usize;
+        let young_escape = frame_roots
+            .iter()
+            .filter_map(|value| value.heap_index())
+            .any(|index| self.arena.is_young_index_in_region(index, arena_mark));
+
+        if self.arena.young_len() > arena_mark as usize {
+            self.arena
+                .promote_young_roots_to_yard(arena_mark, frame_roots);
+        }
+
+        if had_callee_yard && self.arena.yard_len() > yard_mark as usize {
+            self.arena.collect_yard_from_roots(yard_mark, frame_roots);
+        }
+
+        self.arena.truncate_to(arena_mark);
+        had_callee_yard || young_escape
     }
 
     fn finalize_frame_return(
@@ -362,6 +399,7 @@ impl VM {
                         arena_mark: self.arena.young_len() as u32,
                         yard_mark: self.arena.yard_len() as u32,
                         globals_dirty: false,
+                        yard_dirty: false,
                     });
 
                     fn_id = target_fn_id;
@@ -392,6 +430,7 @@ impl VM {
                         arena_mark: self.arena.young_len() as u32,
                         yard_mark: self.arena.yard_len() as u32,
                         globals_dirty: false,
+                        yard_dirty: false,
                     });
 
                     fn_id = target_fn_id;
@@ -434,11 +473,15 @@ impl VM {
                     let argc = read_u8!(code, ip) as usize;
                     let args_start = self.stack.len() - argc;
                     let frame_mark = self.frames.last().unwrap().arena_mark;
+                    let yard_mark = self.frames.last().unwrap().yard_mark;
                     let globals_dirty = self.frames.last().unwrap().globals_dirty;
+                    let yard_dirty = self.frames.last().unwrap().yard_dirty;
                     let mut promoted_args = self.stack[args_start..].to_vec();
                     self.finalize_frame_locals_for_tail_call(
                         frame_mark,
+                        yard_mark,
                         globals_dirty,
+                        yard_dirty,
                         &mut promoted_args,
                     );
                     self.stack[bp..(argc + bp)].copy_from_slice(&promoted_args[..argc]);
@@ -449,6 +492,7 @@ impl VM {
                     self.stack.truncate(bp + lc);
                     let frame = self.frames.last_mut().unwrap();
                     frame.globals_dirty = false;
+                    frame.yard_dirty = false;
                     ip = 0;
                 }
 
@@ -459,11 +503,15 @@ impl VM {
 
                     let args_start = self.stack.len() - argc;
                     let frame_mark = self.frames.last().unwrap().arena_mark;
+                    let yard_mark = self.frames.last().unwrap().yard_mark;
                     let globals_dirty = self.frames.last().unwrap().globals_dirty;
+                    let yard_dirty = self.frames.last().unwrap().yard_dirty;
                     let mut promoted_args = self.stack[args_start..].to_vec();
                     self.finalize_frame_locals_for_tail_call(
                         frame_mark,
+                        yard_mark,
                         globals_dirty,
+                        yard_dirty,
                         &mut promoted_args,
                     );
                     self.stack[bp..(argc + bp)].copy_from_slice(&promoted_args[..argc]);
@@ -483,6 +531,7 @@ impl VM {
                     frame.fn_id = target_fn_id;
                     frame.local_count = target_local_count;
                     frame.globals_dirty = false;
+                    frame.yard_dirty = false;
                     fn_id = target_fn_id;
                     ip = 0;
                 }
@@ -490,21 +539,28 @@ impl VM {
                 RETURN => {
                     let mut result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let frame = self.frames.pop().unwrap();
-                    self.finalize_frame_return(
-                        frame.arena_mark,
-                        frame.yard_mark,
-                        frame.globals_dirty,
-                        std::slice::from_mut(&mut result),
-                    );
                     self.stack.truncate(frame.bp as usize);
 
                     if self.frames.len() == caller_depth {
+                        self.finalize_frame_return(
+                            frame.arena_mark,
+                            frame.yard_mark,
+                            frame.globals_dirty,
+                            std::slice::from_mut(&mut result),
+                        );
                         if caller_depth == 0 {
                             self.collect_stable_roots(std::slice::from_mut(&mut result));
                         }
                         return Ok(result);
                     }
 
+                    let yard_dirty = self.finalize_frame_return_to_caller(
+                        frame.arena_mark,
+                        frame.yard_mark,
+                        frame.globals_dirty,
+                        std::slice::from_mut(&mut result),
+                    );
+                    self.frames.last_mut().unwrap().yard_dirty |= yard_dirty;
                     self.stack.push(result);
 
                     // Restore caller frame state.
@@ -575,18 +631,28 @@ impl VM {
                     if value.is_err() {
                         let mut result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                         let frame = self.frames.pop().unwrap();
-                        self.finalize_frame_return(
+                        self.stack.truncate(frame.bp as usize);
+
+                        if self.frames.len() == caller_depth {
+                            self.finalize_frame_return(
+                                frame.arena_mark,
+                                frame.yard_mark,
+                                frame.globals_dirty,
+                                std::slice::from_mut(&mut result),
+                            );
+                            if caller_depth == 0 {
+                                self.collect_stable_roots(std::slice::from_mut(&mut result));
+                            }
+                            return Ok(result);
+                        }
+
+                        let yard_dirty = self.finalize_frame_return_to_caller(
                             frame.arena_mark,
                             frame.yard_mark,
                             frame.globals_dirty,
                             std::slice::from_mut(&mut result),
                         );
-                        self.stack.truncate(frame.bp as usize);
-
-                        if self.frames.len() == caller_depth {
-                            return Ok(result);
-                        }
-
+                        self.frames.last_mut().unwrap().yard_dirty |= yard_dirty;
                         self.stack.push(result);
 
                         let caller = self.frames.last().unwrap();
@@ -1130,6 +1196,7 @@ mod tests {
             arena_mark: 0,
             yard_mark: 0,
             globals_dirty: false,
+            yard_dirty: false,
         });
 
         let result = vm
