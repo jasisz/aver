@@ -209,19 +209,15 @@ impl ProgramCompiler {
             }
         }
 
-        // Temporarily register simple names as globals so intra-module calls resolve.
-        // E.g., inside fibonacci.av, `fibTR` needs to find its own fn_id.
-        // Save previous values so we can restore after compilation (avoid cross-module
-        // name collisions when different modules define functions with the same name).
-        let mut saved_globals: Vec<(String, Option<(u16, NanValue)>)> = Vec::new();
+        // Temporarily register simple names in code_store.fn_index so that
+        // intra-module calls resolve via CALL_KNOWN (not CALL_VALUE).
+        // E.g., inside map.av, `placeStairs(...)` needs to find fn_id for
+        // "Map.placeStairs" via simple name lookup.
+        let mut saved_fn_index: Vec<(String, Option<u32>)> = Vec::new();
         for (fn_name, fn_id) in &module_fn_ids {
-            let prev = self
-                .global_names
-                .get(fn_name)
-                .map(|&idx| (idx, self.globals[idx as usize]));
-            saved_globals.push((fn_name.clone(), prev));
-            let idx = self.ensure_global(fn_name);
-            self.globals[idx as usize] = NanValue::new_int_inline(*fn_id as i64);
+            let prev = self.code.fn_index.get(fn_name).copied();
+            saved_fn_index.push((fn_name.clone(), prev));
+            self.code.fn_index.insert(fn_name.clone(), *fn_id);
         }
 
         // Compile functions.
@@ -235,16 +231,12 @@ impl ProgramCompiler {
             }
         }
 
-        // Restore previous global values to avoid cross-module name collisions.
-        for (fn_name, prev) in &saved_globals {
-            if let Some((idx, val)) = prev {
-                self.globals[*idx as usize] = *val;
+        // Restore fn_index to avoid cross-module name collisions.
+        for (fn_name, prev) in &saved_fn_index {
+            if let Some(old_id) = prev {
+                self.code.fn_index.insert(fn_name.clone(), *old_id);
             } else {
-                // Name didn't exist before — remove it.
-                if let Some(&idx) = self.global_names.get(fn_name.as_str()) {
-                    self.globals[idx as usize] = NanValue::UNIT;
-                    self.global_names.remove(fn_name.as_str());
-                }
+                self.code.fn_index.remove(fn_name.as_str());
             }
         }
 
