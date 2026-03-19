@@ -1,0 +1,585 @@
+mod calls;
+mod expr;
+mod patterns;
+
+use std::collections::{HashMap, HashSet};
+
+use crate::ast::{FnBody, FnDef, Stmt, TopLevel, TypeDef};
+use crate::nan_value::{Arena, NanValue};
+use crate::source::find_module_file;
+
+use super::opcode::*;
+use super::types::{CodeStore, FnChunk};
+
+fn encode_vm_fn_ref(fn_id: u32) -> NanValue {
+    // VM callables are encoded as inline Int function ids.
+    NanValue::new_int_inline(fn_id as i64)
+}
+
+/// Compile a parsed + TCO-transformed + resolved program into bytecode.
+/// Also loads dependent modules if a `module` declaration with `depends` is present.
+pub fn compile_program(
+    items: &[TopLevel],
+    arena: &mut Arena,
+) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
+    compile_program_with_modules(items, arena, None)
+}
+
+/// Compile with explicit module root for `depends` resolution.
+pub fn compile_program_with_modules(
+    items: &[TopLevel],
+    arena: &mut Arena,
+    module_root: Option<&str>,
+) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
+    let mut compiler = ProgramCompiler::new();
+
+    if let Some(module_root) = module_root {
+        compiler.load_modules(items, module_root, arena)?;
+    }
+
+    for item in items {
+        match item {
+            TopLevel::FnDef(fndef) => {
+                compiler.ensure_global(&fndef.name);
+                let fn_id = compiler.code.add_function(FnChunk {
+                    name: fndef.name.clone(),
+                    arity: fndef.params.len() as u8,
+                    local_count: 0,
+                    code: Vec::new(),
+                    constants: Vec::new(),
+                    effects: fndef.effects.clone(),
+                    thin: false,
+                });
+                let global_idx = compiler.global_names[&fndef.name];
+                compiler.globals[global_idx as usize] = encode_vm_fn_ref(fn_id);
+            }
+            TopLevel::TypeDef(td) => {
+                compiler.register_type_def(td, arena);
+            }
+            _ => {}
+        }
+    }
+
+    for item in items {
+        if let TopLevel::FnDef(fndef) = item {
+            let fn_id = compiler.code.find(&fndef.name).unwrap();
+            let chunk = compiler.compile_fn(fndef, arena)?;
+            compiler.code.functions[fn_id as usize] = chunk;
+        }
+    }
+
+    compiler.compile_top_level(items, arena)?;
+    classify_thin_functions(&mut compiler.code)?;
+
+    Ok((compiler.code, compiler.globals))
+}
+
+#[derive(Debug)]
+pub struct CompileError {
+    pub msg: String,
+}
+
+impl std::fmt::Display for CompileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Compile error: {}", self.msg)
+    }
+}
+
+struct ProgramCompiler {
+    code: CodeStore,
+    globals: Vec<NanValue>,
+    global_names: HashMap<String, u16>,
+}
+
+impl ProgramCompiler {
+    fn new() -> Self {
+        ProgramCompiler {
+            code: CodeStore::new(),
+            globals: Vec::new(),
+            global_names: HashMap::new(),
+        }
+    }
+
+    /// Load all modules from `depends [...]` declarations.
+    /// Compiles each module's functions into the shared CodeStore and builds
+    /// namespace globals so that `Data.Fibonacci.buildFibStats` resolves to
+    /// a CALL_KNOWN with the correct fn_id.
+    fn load_modules(
+        &mut self,
+        items: &[TopLevel],
+        module_root: &str,
+        arena: &mut Arena,
+    ) -> Result<(), CompileError> {
+        let module = items.iter().find_map(|i| {
+            if let TopLevel::Module(m) = i {
+                Some(m)
+            } else {
+                None
+            }
+        });
+        let module = match module {
+            Some(m) => m,
+            None => return Ok(()),
+        };
+
+        let mut loaded = HashSet::new();
+        for dep_name in &module.depends {
+            self.load_module_recursive(dep_name, module_root, arena, &mut loaded)?;
+        }
+        Ok(())
+    }
+
+    fn load_module_recursive(
+        &mut self,
+        dep_name: &str,
+        module_root: &str,
+        arena: &mut Arena,
+        loaded: &mut HashSet<String>,
+    ) -> Result<(), CompileError> {
+        if loaded.contains(dep_name) {
+            return Ok(());
+        }
+        loaded.insert(dep_name.to_string());
+
+        let file_path = find_module_file(dep_name, module_root).ok_or_else(|| CompileError {
+            msg: format!("module '{}' not found (root: {})", dep_name, module_root),
+        })?;
+
+        let source = std::fs::read_to_string(&file_path).map_err(|e| CompileError {
+            msg: format!("cannot read module '{}': {}", dep_name, e),
+        })?;
+
+        let mut mod_items = crate::source::parse_source(&source).map_err(|e| CompileError {
+            msg: format!("parse error in module '{}': {}", dep_name, e),
+        })?;
+
+        crate::tco::transform_program(&mut mod_items);
+        crate::resolver::resolve_program(&mut mod_items);
+
+        if let Some(sub_module) = mod_items.iter().find_map(|i| {
+            if let TopLevel::Module(m) = i {
+                Some(m)
+            } else {
+                None
+            }
+        }) {
+            for sub_dep in &sub_module.depends {
+                self.load_module_recursive(sub_dep, module_root, arena, loaded)?;
+            }
+        }
+
+        for item in &mod_items {
+            if let TopLevel::TypeDef(td) = item {
+                self.register_type_def(td, arena);
+            }
+        }
+
+        let exposes: Option<Vec<String>> = mod_items.iter().find_map(|i| {
+            if let TopLevel::Module(m) = i {
+                if m.exposes.is_empty() {
+                    None
+                } else {
+                    Some(m.exposes.clone())
+                }
+            } else {
+                None
+            }
+        });
+
+        let mut module_fn_ids: Vec<(String, u32)> = Vec::new();
+        for item in &mod_items {
+            if let TopLevel::FnDef(fndef) = item {
+                let fn_id = self.code.add_function(FnChunk {
+                    name: format!("{}.{}", dep_name, fndef.name),
+                    arity: fndef.params.len() as u8,
+                    local_count: 0,
+                    code: Vec::new(),
+                    constants: Vec::new(),
+                    effects: fndef.effects.clone(),
+                    thin: false,
+                });
+                module_fn_ids.push((fndef.name.clone(), fn_id));
+            }
+        }
+
+        let module_scope: HashMap<String, u32> = module_fn_ids.iter().cloned().collect();
+
+        let mut fn_idx = 0;
+        for item in &mod_items {
+            if let TopLevel::FnDef(fndef) = item {
+                let (_, fn_id) = module_fn_ids[fn_idx];
+                let chunk = self.compile_fn_with_scope(fndef, arena, &module_scope)?;
+                self.code.functions[fn_id as usize] = chunk;
+                fn_idx += 1;
+            }
+        }
+
+        for (fn_name, fn_id) in &module_fn_ids {
+            let exposed = match &exposes {
+                Some(list) => list.iter().any(|e| e == fn_name),
+                None => !fn_name.starts_with('_'),
+            };
+            if exposed {
+                let qualified = format!("{}.{}", dep_name, fn_name);
+                let global_idx = self.ensure_global(&qualified);
+                self.globals[global_idx as usize] = encode_vm_fn_ref(*fn_id);
+            }
+        }
+
+        for item in &mod_items {
+            if let TopLevel::TypeDef(td) = item {
+                let type_name = match td {
+                    TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name,
+                };
+                let exposed = match &exposes {
+                    Some(list) => list.iter().any(|e| e == type_name),
+                    None => !type_name.starts_with('_'),
+                };
+                if exposed {
+                    // Make the type accessible under its qualified path.
+                    // For now, just ensure the type is findable by its simple name
+                    // (it's already registered in the arena type registry).
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn ensure_global(&mut self, name: &str) -> u16 {
+        if let Some(&idx) = self.global_names.get(name) {
+            return idx;
+        }
+        let idx = self.globals.len() as u16;
+        self.global_names.insert(name.to_string(), idx);
+        self.globals.push(NanValue::UNIT);
+        idx
+    }
+
+    fn register_type_def(&mut self, td: &TypeDef, arena: &mut Arena) {
+        match td {
+            TypeDef::Product { name, fields, .. } => {
+                let field_names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
+                arena.register_record_type(name, field_names);
+            }
+            TypeDef::Sum { name, variants, .. } => {
+                let variant_names: Vec<String> = variants.iter().map(|v| v.name.clone()).collect();
+                arena.register_sum_type(name, variant_names);
+            }
+        }
+    }
+
+    fn compile_fn(&mut self, fndef: &FnDef, arena: &mut Arena) -> Result<FnChunk, CompileError> {
+        let empty_scope = HashMap::new();
+        self.compile_fn_with_scope(fndef, arena, &empty_scope)
+    }
+
+    fn compile_fn_with_scope(
+        &mut self,
+        fndef: &FnDef,
+        arena: &mut Arena,
+        module_scope: &HashMap<String, u32>,
+    ) -> Result<FnChunk, CompileError> {
+        let resolution = fndef.resolution.as_ref();
+        let local_count = resolution.map_or(fndef.params.len() as u16, |r| r.local_count);
+        let local_slots: HashMap<String, u16> = resolution
+            .map(|r| r.local_slots.as_ref().clone())
+            .unwrap_or_else(|| {
+                fndef
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (name, _))| (name.clone(), i as u16))
+                    .collect()
+            });
+
+        let mut fc = FnCompiler::new(
+            &fndef.name,
+            fndef.params.len() as u8,
+            local_count,
+            fndef.effects.clone(),
+            local_slots,
+            &self.global_names,
+            module_scope,
+            &self.code,
+            arena,
+        );
+
+        match fndef.body.as_ref() {
+            FnBody::Block(stmts) => fc.compile_body(stmts)?,
+        }
+
+        Ok(fc.finish())
+    }
+
+    fn compile_top_level(
+        &mut self,
+        items: &[TopLevel],
+        arena: &mut Arena,
+    ) -> Result<(), CompileError> {
+        let has_stmts = items.iter().any(|i| matches!(i, TopLevel::Stmt(_)));
+        if !has_stmts {
+            return Ok(());
+        }
+
+        for item in items {
+            if let TopLevel::Stmt(Stmt::Binding(name, _, _)) = item {
+                self.ensure_global(name);
+            }
+        }
+
+        let empty_mod_scope = HashMap::new();
+        let mut fc = FnCompiler::new(
+            "__top_level__",
+            0,
+            0,
+            Vec::new(),
+            HashMap::new(),
+            &self.global_names,
+            &empty_mod_scope,
+            &self.code,
+            arena,
+        );
+
+        for item in items {
+            if let TopLevel::Stmt(stmt) = item {
+                match stmt {
+                    Stmt::Binding(name, _type_ann, expr) => {
+                        fc.compile_expr(expr)?;
+                        let idx = self.global_names[name.as_str()];
+                        fc.emit_op(STORE_GLOBAL);
+                        fc.emit_u16(idx);
+                    }
+                    Stmt::Expr(expr) => {
+                        fc.compile_expr(expr)?;
+                        fc.emit_op(POP);
+                    }
+                }
+            }
+        }
+
+        fc.emit_op(LOAD_UNIT);
+        fc.emit_op(RETURN);
+
+        let chunk = fc.finish();
+        self.code.add_function(chunk);
+        Ok(())
+    }
+}
+
+fn classify_thin_functions(code: &mut CodeStore) -> Result<(), CompileError> {
+    let thin_flags: Vec<bool> = code
+        .functions
+        .iter()
+        .map(classify_thin_chunk)
+        .collect::<Result<_, _>>()?;
+
+    for (chunk, thin) in code.functions.iter_mut().zip(thin_flags) {
+        chunk.thin = thin;
+    }
+
+    Ok(())
+}
+
+fn classify_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
+    let code = &chunk.code;
+    let mut ip = 0usize;
+
+    while ip < code.len() {
+        let op = code[ip];
+        ip += 1;
+        match op {
+            STORE_GLOBAL | TAIL_CALL_SELF | TAIL_CALL_KNOWN | CONCAT | LIST_NIL | LIST_CONS
+            | LIST_NEW | RECORD_NEW | VARIANT_NEW | WRAP | TUPLE_NEW | RECORD_UPDATE | LIST_LEN
+            | LIST_GET | LIST_APPEND | LIST_PREPEND => {
+                return Ok(false);
+            }
+
+            POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
+            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | LIST_GET_MATCH => {}
+
+            LOAD_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD
+            | EXTRACT_TUPLE_ITEM => {
+                ip = advance_opcode_ip(chunk, ip, 1)?;
+            }
+
+            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | RECORD_GET_NAMED | MATCH_FAIL => {
+                ip = advance_opcode_ip(chunk, ip, 2)?;
+            }
+
+            CALL_KNOWN | CALL_BUILTIN | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE => {
+                ip = advance_opcode_ip(chunk, ip, 3)?;
+            }
+
+            MATCH_VARIANT => {
+                ip = advance_opcode_ip(chunk, ip, 4)?;
+            }
+
+            MATCH_NIL | MATCH_CONS => {
+                ip = advance_opcode_ip(chunk, ip, 2)?;
+            }
+
+            _ => {
+                return Err(CompileError {
+                    msg: format!(
+                        "unknown opcode 0x{op:02X} in {} at ip={} (code={:?})",
+                        chunk.name,
+                        ip - 1,
+                        chunk.code
+                    ),
+                });
+            }
+        }
+    }
+
+    Ok(true)
+}
+
+fn advance_opcode_ip(chunk: &FnChunk, ip: usize, width: usize) -> Result<usize, CompileError> {
+    let new_ip = ip + width;
+    if new_ip > chunk.code.len() {
+        return Err(CompileError {
+            msg: format!("truncated bytecode in {}", chunk.name),
+        });
+    }
+    Ok(new_ip)
+}
+
+/// What a function expression resolves to at compile time.
+enum CallTarget {
+    /// Known function id (local or qualified module function).
+    KnownFn(u32),
+    /// Result.Ok / Result.Err / Option.Some → WRAP opcode. kind: 0=Ok, 1=Err, 2=Some.
+    Wrapper(u8),
+    /// Option.None → load constant.
+    None_,
+    /// User-defined variant constructor: Shape.Circle → VARIANT_NEW.
+    Variant(u32, u16),
+    /// Builtin service: Console.print, List.len → CALL_BUILTIN.
+    Builtin(String),
+}
+
+struct FnCompiler<'a> {
+    name: String,
+    arity: u8,
+    local_count: u16,
+    effects: Vec<String>,
+    local_slots: HashMap<String, u16>,
+    global_names: &'a HashMap<String, u16>,
+    /// Module-local function scope: simple_name → fn_id.
+    /// Used for intra-module calls (e.g. `placeStairs` inside map.av).
+    module_scope: &'a HashMap<String, u32>,
+    code_store: &'a CodeStore,
+    arena: &'a mut Arena,
+    code: Vec<u8>,
+    constants: Vec<NanValue>,
+}
+
+impl<'a> FnCompiler<'a> {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        name: &str,
+        arity: u8,
+        local_count: u16,
+        effects: Vec<String>,
+        local_slots: HashMap<String, u16>,
+        global_names: &'a HashMap<String, u16>,
+        module_scope: &'a HashMap<String, u32>,
+        code_store: &'a CodeStore,
+        arena: &'a mut Arena,
+    ) -> Self {
+        FnCompiler {
+            name: name.to_string(),
+            arity,
+            local_count,
+            effects,
+            local_slots,
+            global_names,
+            module_scope,
+            code_store,
+            arena,
+            code: Vec::new(),
+            constants: Vec::new(),
+        }
+    }
+
+    fn finish(self) -> FnChunk {
+        FnChunk {
+            name: self.name,
+            arity: self.arity,
+            local_count: self.local_count,
+            code: self.code,
+            constants: self.constants,
+            effects: self.effects,
+            thin: false,
+        }
+    }
+
+    fn emit_op(&mut self, op: u8) {
+        self.code.push(op);
+    }
+
+    fn emit_u8(&mut self, val: u8) {
+        self.code.push(val);
+    }
+
+    fn emit_u16(&mut self, val: u16) {
+        self.code.push((val >> 8) as u8);
+        self.code.push((val & 0xFF) as u8);
+    }
+
+    fn emit_i16(&mut self, val: i16) {
+        self.emit_u16(val as u16);
+    }
+
+    fn add_constant(&mut self, val: NanValue) -> u16 {
+        for (i, c) in self.constants.iter().enumerate() {
+            if c.bits() == val.bits() {
+                return i as u16;
+            }
+        }
+        let idx = self.constants.len() as u16;
+        self.constants.push(val);
+        idx
+    }
+
+    fn offset(&self) -> usize {
+        self.code.len()
+    }
+
+    fn emit_jump(&mut self, op: u8) -> usize {
+        self.emit_op(op);
+        let patch_pos = self.code.len();
+        self.emit_i16(0);
+        patch_pos
+    }
+
+    fn patch_jump(&mut self, patch_pos: usize) {
+        let target = self.code.len();
+        let offset = (target as isize - patch_pos as isize - 2) as i16;
+        let bytes = (offset as u16).to_be_bytes();
+        self.code[patch_pos] = bytes[0];
+        self.code[patch_pos + 1] = bytes[1];
+    }
+
+    fn patch_jump_to(&mut self, patch_pos: usize, target: usize) {
+        let offset = (target as isize - patch_pos as isize - 2) as i16;
+        let bytes = (offset as u16).to_be_bytes();
+        self.code[patch_pos] = bytes[0];
+        self.code[patch_pos + 1] = bytes[1];
+    }
+
+    fn bind_top_to_local(&mut self, name: &str) {
+        if let Some(&slot) = self.local_slots.get(name) {
+            self.emit_op(STORE_LOCAL);
+            self.emit_u8(slot as u8);
+        } else {
+            self.emit_op(POP);
+        }
+    }
+
+    fn dup_and_bind_top_to_local(&mut self, name: &str) {
+        self.emit_op(DUP);
+        self.bind_top_to_local(name);
+    }
+}
