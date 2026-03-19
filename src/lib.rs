@@ -15,6 +15,7 @@ pub mod nan_value;
 pub mod parser;
 pub mod replay;
 pub mod resolver;
+pub mod runtime_bench_cases;
 pub mod services;
 pub mod source;
 pub mod tail_check;

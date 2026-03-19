@@ -834,7 +834,7 @@ impl<'a> FnCompiler<'a> {
             _ => {}
         }
         // User-defined variant?
-        if let Some(type_id) = self.arena.find_type_id(ns)
+        if let Some(type_id) = self.resolve_type_id(ns)
             && let Some(variant_id) = self.arena.find_variant_id(type_id, method)
         {
             return CallTarget::Variant(type_id, variant_id);
@@ -866,6 +866,15 @@ impl<'a> FnCompiler<'a> {
             Expr::Attr(inner, field) => Some(format!("{}.{}", self.flatten_path(inner)?, field)),
             _ => Option::None,
         }
+    }
+
+    fn resolve_type_id(&self, name: &str) -> Option<u32> {
+        self.arena.find_type_id(name).or_else(|| {
+            name.rsplit('.')
+                .next()
+                .filter(|short| *short != name)
+                .and_then(|short| self.arena.find_type_id(short))
+        })
     }
 
     /// Resolve a function name to fn_id (module_scope first, then code_store).
@@ -1217,26 +1226,23 @@ impl<'a> FnCompiler<'a> {
                 self.emit_i16(0);
                 patches.push(tag_fail);
 
-                if let Some(dot_pos) = name.find('.') {
-                    let type_name = &name[..dot_pos];
-                    let variant_name = &name[dot_pos + 1..];
-                    if let Some(type_id) = self.arena.find_type_id(type_name)
-                        && let Some(variant_id) = self.arena.find_variant_id(type_id, variant_name)
-                    {
-                        self.emit_op(MATCH_VARIANT);
-                        self.emit_u16(variant_id);
-                        let variant_fail = self.code.len();
-                        self.emit_i16(0);
-                        patches.push(variant_fail);
+                if let Some((type_name, variant_name)) = name.rsplit_once('.')
+                    && let Some(type_id) = self.resolve_type_id(type_name)
+                    && let Some(variant_id) = self.arena.find_variant_id(type_id, variant_name)
+                {
+                    self.emit_op(MATCH_VARIANT);
+                    self.emit_u16(variant_id);
+                    let variant_fail = self.code.len();
+                    self.emit_i16(0);
+                    patches.push(variant_fail);
 
-                        for (i, b) in bindings.iter().enumerate() {
-                            self.emit_op(EXTRACT_FIELD);
-                            self.emit_u8(i as u8);
-                            self.bind_top_to_local(b);
-                        }
-
-                        return Ok(patches);
+                    for (i, b) in bindings.iter().enumerate() {
+                        self.emit_op(EXTRACT_FIELD);
+                        self.emit_u8(i as u8);
+                        self.bind_top_to_local(b);
                     }
+
+                    return Ok(patches);
                 }
 
                 Err(CompileError {
@@ -1271,24 +1277,21 @@ impl<'a> FnCompiler<'a> {
                 self.emit_u16(idx);
             }
             _ => {
-                if let Some(dot_pos) = name.find('.') {
-                    let type_name = &name[..dot_pos];
-                    let variant_name = &name[dot_pos + 1..];
-                    if let Some(type_id) = self.arena.find_type_id(type_name)
-                        && let Some(variant_id) = self.arena.find_variant_id(type_id, variant_name)
-                    {
-                        let field_count = if let Some(a) = arg {
-                            self.compile_expr(a)?;
-                            1u8
-                        } else {
-                            0u8
-                        };
-                        self.emit_op(VARIANT_NEW);
-                        self.emit_u16(type_id as u16);
-                        self.emit_u16(variant_id);
-                        self.emit_u8(field_count);
-                        return Ok(());
-                    }
+                if let Some((type_name, variant_name)) = name.rsplit_once('.')
+                    && let Some(type_id) = self.resolve_type_id(type_name)
+                    && let Some(variant_id) = self.arena.find_variant_id(type_id, variant_name)
+                {
+                    let field_count = if let Some(a) = arg {
+                        self.compile_expr(a)?;
+                        1u8
+                    } else {
+                        0u8
+                    };
+                    self.emit_op(VARIANT_NEW);
+                    self.emit_u16(type_id as u16);
+                    self.emit_u16(variant_id);
+                    self.emit_u8(field_count);
+                    return Ok(());
                 }
                 return Err(CompileError {
                     msg: format!("unknown constructor: {}", name),
@@ -1376,8 +1379,7 @@ impl<'a> FnCompiler<'a> {
         fields: &[(String, Expr)],
     ) -> Result<(), CompileError> {
         let type_id = self
-            .arena
-            .find_type_id(type_name)
+            .resolve_type_id(type_name)
             .ok_or_else(|| CompileError {
                 msg: format!("unknown record type: {}", type_name),
             })?;
@@ -1406,8 +1408,7 @@ impl<'a> FnCompiler<'a> {
         updates: &[(String, Expr)],
     ) -> Result<(), CompileError> {
         let type_id = self
-            .arena
-            .find_type_id(type_name)
+            .resolve_type_id(type_name)
             .ok_or_else(|| CompileError {
                 msg: format!("unknown record type: {}", type_name),
             })?;
