@@ -18,6 +18,16 @@ impl NanValue {
             (Some(_), None) | (None, Some(_)) => return false,
             (None, None) => {}
         }
+        match (self.variant_parts(arena), other.variant_parts(arena)) {
+            (Some((st, sv, sf)), Some((ot, ov, of))) => {
+                return st == ot
+                    && sv == ov
+                    && sf.len() == of.len()
+                    && sf.iter().zip(of).all(|(a, b)| a.eq_in(*b, arena));
+            }
+            (Some(_), None) | (None, Some(_)) => return false,
+            (None, None) => {}
+        }
         if self.tag() != other.tag() {
             return false;
         }
@@ -58,13 +68,8 @@ impl NanValue {
                     && fa.len() == fb.len()
                     && fa.iter().zip(fb).all(|(a, b)| a.eq_in(*b, arena))
             }
-            TAG_VARIANT => {
-                let (ta, va, fa) = arena.get_variant(self.arena_index());
-                let (tb, vb, fb) = arena.get_variant(other.arena_index());
-                ta == tb
-                    && va == vb
-                    && fa.len() == fb.len()
-                    && fa.iter().zip(fb).all(|(a, b)| a.eq_in(*b, arena))
+            TAG_VARIANT | TAG_NULLARY_VARIANT => {
+                unreachable!("variant comparison handled above")
             }
             TAG_FN => self.arena_index() == other.arena_index(),
             _ => false,
@@ -88,6 +93,15 @@ impl NanValue {
             (TAG_WRAPPER as u8).hash(state);
             kind.hash(state);
             inner.hash_in(state, arena);
+            return;
+        }
+        if let Some((tid, vid, fields)) = self.variant_parts(arena) {
+            (TAG_VARIANT as u8).hash(state);
+            tid.hash(state);
+            vid.hash(state);
+            for field in fields {
+                field.hash_in(state, arena);
+            }
             return;
         }
         let tag = self.tag();
@@ -118,13 +132,8 @@ impl NanValue {
                     f.hash_in(state, arena);
                 }
             }
-            TAG_VARIANT => {
-                let (tid, vid, fields) = arena.get_variant(self.arena_index());
-                tid.hash(state);
-                vid.hash(state);
-                for f in fields {
-                    f.hash_in(state, arena);
-                }
+            TAG_VARIANT | TAG_NULLARY_VARIANT => {
+                unreachable!("variant hashing handled above")
             }
             _ => self.0.hash(state),
         }
@@ -141,6 +150,15 @@ impl NanValue {
                 WRAP_OK => format!("Result.Ok({})", ir),
                 WRAP_ERR => format!("Result.Err({})", ir),
                 _ => "??".into(),
+            };
+        }
+        if let Some((tid, vid, fields)) = self.variant_parts(arena) {
+            let vname = arena.get_variant_name(tid, vid);
+            return if fields.is_empty() {
+                vname.to_string()
+            } else {
+                let parts: Vec<_> = fields.iter().map(|v| v.repr_inner(arena)).collect();
+                format!("{}({})", vname, parts.join(", "))
             };
         }
         match self.tag() {
@@ -191,16 +209,7 @@ impl NanValue {
                     .collect();
                 format!("{}({})", name, parts.join(", "))
             }
-            TAG_VARIANT => {
-                let (tid, vid, fields) = arena.get_variant(self.arena_index());
-                let vname = arena.get_variant_name(tid, vid);
-                if fields.is_empty() {
-                    vname.to_string()
-                } else {
-                    let parts: Vec<_> = fields.iter().map(|v| v.repr_inner(arena)).collect();
-                    format!("{}({})", vname, parts.join(", "))
-                }
-            }
+            TAG_VARIANT | TAG_NULLARY_VARIANT => unreachable!("variant repr handled above"),
             TAG_FN => format!("<fn {}>", arena.get_fn(self.arena_index()).name),
             TAG_BUILTIN => format!("<builtin {}>", arena.get_builtin(self.arena_index())),
             TAG_NAMESPACE => {

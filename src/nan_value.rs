@@ -17,19 +17,22 @@
 //! ```
 //!
 //! Tag map:
-//!   0  = Int        payload bit45: 0=inline(45-bit signed), 1=arena index
-//!   1  = Immediate  payload 0-3: false/true/unit/none; 4-15: wrapped immediate
-//!   2  = Wrapper    payload bits 0-1: 00=some, 01=ok, 10=err; rest=arena index
-//!   3  = String     payload = arena index
-//!   4  = List       payload = arena index
-//!   5  = Tuple      payload = arena index
-//!   6  = Map        payload = arena index
-//!   7  = Record     payload = arena index
-//!   8  = Variant    payload = arena index
-//!   9  = Fn         payload = arena index
-//!   10 = Builtin    payload = arena index
-//!   11 = Namespace  payload = arena index
-//!   12-15 = (reserved)
+//!   0  = Int             payload bit45: 0=inline(45-bit signed), 1=arena index
+//!   1  = Immediate       payload 0-3: false/true/unit/none; 4-15: wrapped immediate
+//!   2  = Wrapper         payload bits 0-1: 00=some, 01=ok, 10=err; rest=arena index
+//!   3  = String          payload = arena index
+//!   4  = List            payload = arena index
+//!   5  = Tuple           payload = arena index
+//!   6  = Map             payload = arena index
+//!   7  = Record          payload = arena index
+//!   8  = Variant         payload = arena index
+//!   9  = Fn              payload = arena index
+//!   10 = Builtin         payload = arena index
+//!   11 = Namespace       payload = arena index
+//!   12 = SomeInlineInt   payload = inline int bits
+//!   13 = OkInlineInt     payload = inline int bits
+//!   14 = ErrInlineInt    payload = inline int bits
+//!   15 = NullaryVariant  payload = ctor id
 
 use std::rc::Rc;
 
@@ -60,6 +63,10 @@ const TAG_VARIANT: u64 = 8;
 const TAG_FN: u64 = 9;
 const TAG_BUILTIN: u64 = 10;
 const TAG_NAMESPACE: u64 = 11;
+const TAG_SOME_INT: u64 = 12;
+const TAG_OK_INT: u64 = 13;
+const TAG_ERR_INT: u64 = 14;
+const TAG_NULLARY_VARIANT: u64 = 15;
 
 const IMM_FALSE: u64 = 0;
 const IMM_TRUE: u64 = 1;
@@ -87,6 +94,17 @@ pub struct NanValue(u64);
 // -- Encoding / decoding ---------------------------------------------------
 
 impl NanValue {
+    #[inline]
+    fn decode_inline_int_payload(payload: u64) -> i64 {
+        debug_assert!(payload & INT_BIG_BIT == 0);
+        let raw = payload & INT_INLINE_MASK;
+        if raw & (1u64 << 44) != 0 {
+            (raw | !INT_INLINE_MASK) as i64
+        } else {
+            raw as i64
+        }
+    }
+
     #[inline]
     fn encode(tag: u64, payload: u64) -> Self {
         debug_assert!(tag <= TAG_MASK);
@@ -155,13 +173,14 @@ impl NanValue {
             let idx = (p & !INT_BIG_BIT) as u32;
             arena.get_i64(idx)
         } else {
-            let raw = p & INT_INLINE_MASK;
-            if raw & (1u64 << 44) != 0 {
-                (raw | !INT_INLINE_MASK) as i64
-            } else {
-                raw as i64
-            }
+            Self::decode_inline_int_payload(p)
         }
+    }
+
+    #[inline]
+    fn inline_int_payload(self) -> Option<u64> {
+        (self.is_nan_boxed() && self.tag() == TAG_INT && self.payload() & INT_BIG_BIT == 0)
+            .then_some(self.payload())
     }
 
     // -- Immediates --------------------------------------------------------
@@ -212,6 +231,31 @@ impl NanValue {
         )
     }
 
+    #[inline]
+    fn wrapped_inline_int_parts(self) -> Option<(u64, u64)> {
+        if !self.is_nan_boxed() {
+            return None;
+        }
+        let kind = match self.tag() {
+            TAG_SOME_INT => WRAP_SOME,
+            TAG_OK_INT => WRAP_OK,
+            TAG_ERR_INT => WRAP_ERR,
+            _ => return None,
+        };
+        Some((kind, self.payload()))
+    }
+
+    #[inline]
+    fn new_wrapped_inline_int(kind: u64, int_payload: u64) -> Self {
+        debug_assert!(int_payload & INT_BIG_BIT == 0);
+        match kind {
+            WRAP_SOME => Self::encode(TAG_SOME_INT, int_payload),
+            WRAP_OK => Self::encode(TAG_OK_INT, int_payload),
+            WRAP_ERR => Self::encode(TAG_ERR_INT, int_payload),
+            _ => unreachable!("invalid wrapper kind"),
+        }
+    }
+
     // -- Wrappers (Some/Ok/Err) -------------------------------------------
 
     #[inline]
@@ -232,6 +276,8 @@ impl NanValue {
     #[inline]
     pub fn wrapper_kind(self) -> u64 {
         if let Some((kind, _)) = self.wrapped_immediate_parts() {
+            kind
+        } else if let Some((kind, _)) = self.wrapped_inline_int_parts() {
             kind
         } else {
             debug_assert!(self.is_nan_boxed() && self.tag() == TAG_WRAPPER);
@@ -255,6 +301,9 @@ impl NanValue {
             TAG_IMMEDIATE => self
                 .wrapped_immediate_parts()
                 .map(|(kind, inner)| (kind, Self::encode(TAG_IMMEDIATE, inner))),
+            TAG_SOME_INT | TAG_OK_INT | TAG_ERR_INT => self
+                .wrapped_inline_int_parts()
+                .map(|(kind, inner)| (kind, Self::encode(TAG_INT, inner))),
             _ => None,
         }
     }
@@ -270,6 +319,8 @@ impl NanValue {
     fn wrap_value(kind: u64, inner: NanValue, arena: &mut Arena) -> Self {
         if let Some(payload) = inner.plain_immediate_payload() {
             Self::new_wrapped_immediate(kind, payload)
+        } else if let Some(payload) = inner.inline_int_payload() {
+            Self::new_wrapped_inline_int(kind, payload)
         } else {
             let idx = arena.push_boxed(inner);
             match kind {
@@ -326,6 +377,11 @@ impl NanValue {
     #[inline]
     pub fn new_variant(arena_index: u32) -> Self {
         Self::encode(TAG_VARIANT, arena_index as u64)
+    }
+
+    #[inline]
+    pub fn new_nullary_variant(ctor_id: u32) -> Self {
+        Self::encode(TAG_NULLARY_VARIANT, ctor_id as u64)
     }
 
     #[inline]
@@ -431,7 +487,7 @@ impl NanValue {
     pub fn is_some(self) -> bool {
         self.is_nan_boxed()
             && match self.tag() {
-                TAG_WRAPPER => self.wrapper_kind() == WRAP_SOME,
+                TAG_WRAPPER | TAG_SOME_INT => self.wrapper_kind() == WRAP_SOME,
                 TAG_IMMEDIATE => self
                     .wrapped_immediate_parts()
                     .is_some_and(|(kind, _)| kind == WRAP_SOME),
@@ -443,7 +499,7 @@ impl NanValue {
     pub fn is_ok(self) -> bool {
         self.is_nan_boxed()
             && match self.tag() {
-                TAG_WRAPPER => self.wrapper_kind() == WRAP_OK,
+                TAG_WRAPPER | TAG_OK_INT => self.wrapper_kind() == WRAP_OK,
                 TAG_IMMEDIATE => self
                     .wrapped_immediate_parts()
                     .is_some_and(|(kind, _)| kind == WRAP_OK),
@@ -455,7 +511,7 @@ impl NanValue {
     pub fn is_err(self) -> bool {
         self.is_nan_boxed()
             && match self.tag() {
-                TAG_WRAPPER => self.wrapper_kind() == WRAP_ERR,
+                TAG_WRAPPER | TAG_ERR_INT => self.wrapper_kind() == WRAP_ERR,
                 TAG_IMMEDIATE => self
                     .wrapped_immediate_parts()
                     .is_some_and(|(kind, _)| kind == WRAP_ERR),
@@ -485,7 +541,7 @@ impl NanValue {
 
     #[inline]
     pub fn is_variant(self) -> bool {
-        self.is_nan_boxed() && self.tag() == TAG_VARIANT
+        self.is_nan_boxed() && matches!(self.tag(), TAG_VARIANT | TAG_NULLARY_VARIANT)
     }
 
     #[inline]
@@ -537,16 +593,52 @@ impl NanValue {
                 WRAP_ERR => "Result.Err",
                 _ => "Unknown",
             },
+            TAG_SOME_INT => "Option.Some",
+            TAG_OK_INT => "Result.Ok",
+            TAG_ERR_INT => "Result.Err",
             TAG_STRING => "String",
             TAG_LIST => "List",
             TAG_TUPLE => "Tuple",
             TAG_MAP => "Map",
             TAG_RECORD => "Record",
-            TAG_VARIANT => "Variant",
+            TAG_VARIANT | TAG_NULLARY_VARIANT => "Variant",
             TAG_FN => "Fn",
             TAG_BUILTIN => "Builtin",
             TAG_NAMESPACE => "Namespace",
             _ => "Unknown",
+        }
+    }
+
+    #[inline]
+    pub fn variant_ctor_id(self, arena: &Arena) -> Option<u32> {
+        if !self.is_nan_boxed() {
+            return None;
+        }
+        match self.tag() {
+            TAG_VARIANT => {
+                let (type_id, variant_id, _) = arena.get_variant(self.arena_index());
+                arena.find_ctor_id(type_id, variant_id)
+            }
+            TAG_NULLARY_VARIANT => Some(self.payload() as u32),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn variant_parts(self, arena: &Arena) -> Option<(u32, u16, &[NanValue])> {
+        if !self.is_nan_boxed() {
+            return None;
+        }
+        match self.tag() {
+            TAG_VARIANT => {
+                let (type_id, variant_id, fields) = arena.get_variant(self.arena_index());
+                Some((type_id, variant_id, fields))
+            }
+            TAG_NULLARY_VARIANT => {
+                let (type_id, variant_id) = arena.get_ctor_parts(self.payload() as u32);
+                Some((type_id, variant_id, &[]))
+            }
+            _ => None,
         }
     }
 
@@ -585,13 +677,11 @@ impl std::fmt::Debug for NanValue {
                 if self.payload() & INT_BIG_BIT != 0 {
                     write!(f, "Int(arena:{})", (self.payload() & !INT_BIG_BIT) as u32)
                 } else {
-                    let raw = self.payload() & INT_INLINE_MASK;
-                    let val = if raw & (1u64 << 44) != 0 {
-                        (raw | !INT_INLINE_MASK) as i64
-                    } else {
-                        raw as i64
-                    };
-                    write!(f, "Int({})", val)
+                    write!(
+                        f,
+                        "Int({})",
+                        Self::decode_inline_int_payload(self.payload())
+                    )
                 }
             }
             TAG_IMMEDIATE => {
@@ -629,6 +719,21 @@ impl std::fmt::Debug for NanValue {
                 };
                 write!(f, "{}(arena:{})", kind, self.wrapper_index())
             }
+            TAG_SOME_INT | TAG_OK_INT | TAG_ERR_INT => {
+                let kind = match self.tag() {
+                    TAG_SOME_INT => "Some",
+                    TAG_OK_INT => "Ok",
+                    TAG_ERR_INT => "Err",
+                    _ => "?",
+                };
+                write!(
+                    f,
+                    "{}(Int({}))",
+                    kind,
+                    Self::decode_inline_int_payload(self.payload())
+                )
+            }
+            TAG_NULLARY_VARIANT => write!(f, "NullaryVariant(ctor:{})", self.payload()),
             _ => write!(f, "{}(arena:{})", self.type_name(), self.arena_index()),
         }
     }
@@ -653,6 +758,8 @@ pub struct Arena {
     pub(crate) type_names: Vec<String>,
     pub(crate) type_field_names: Vec<Vec<String>>,
     pub(crate) type_variant_names: Vec<Vec<String>>,
+    pub(crate) type_variant_ctor_ids: Vec<Vec<u32>>,
+    pub(crate) ctor_to_type_variant: Vec<(u32, u16)>,
 }
 
 #[derive(Debug, Clone)]

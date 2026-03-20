@@ -16,6 +16,8 @@ impl Arena {
             type_names: Vec::new(),
             type_field_names: Vec::new(),
             type_variant_names: Vec::new(),
+            type_variant_ctor_ids: Vec::new(),
+            ctor_to_type_variant: Vec::new(),
         }
     }
 
@@ -320,6 +322,7 @@ impl Arena {
         self.type_names.push(name.to_string());
         self.type_field_names.push(field_names);
         self.type_variant_names.push(Vec::new());
+        self.type_variant_ctor_ids.push(Vec::new());
         id
     }
 
@@ -327,8 +330,28 @@ impl Arena {
         let id = self.type_names.len() as u32;
         self.type_names.push(name.to_string());
         self.type_field_names.push(Vec::new());
+        let ctor_ids: Vec<u32> = (0..variant_names.len())
+            .map(|variant_idx| {
+                let ctor_id = self.ctor_to_type_variant.len() as u32;
+                self.ctor_to_type_variant.push((id, variant_idx as u16));
+                ctor_id
+            })
+            .collect();
         self.type_variant_names.push(variant_names);
+        self.type_variant_ctor_ids.push(ctor_ids);
         id
+    }
+
+    pub fn register_variant_name(&mut self, type_id: u32, variant_name: String) -> u16 {
+        let variants = &mut self.type_variant_names[type_id as usize];
+        let variant_id = variants.len() as u16;
+        variants.push(variant_name);
+
+        let ctor_id = self.ctor_to_type_variant.len() as u32;
+        self.ctor_to_type_variant.push((type_id, variant_id));
+        self.type_variant_ctor_ids[type_id as usize].push(ctor_id);
+
+        variant_id
     }
 
     pub fn get_type_name(&self, type_id: u32) -> &str {
@@ -352,6 +375,20 @@ impl Arena {
             .iter()
             .position(|n| n == variant_name)
             .map(|i| i as u16)
+    }
+
+    pub fn find_ctor_id(&self, type_id: u32, variant_id: u16) -> Option<u32> {
+        self.type_variant_ctor_ids
+            .get(type_id as usize)?
+            .get(variant_id as usize)
+            .copied()
+    }
+
+    pub fn get_ctor_parts(&self, ctor_id: u32) -> (u32, u16) {
+        self.ctor_to_type_variant
+            .get(ctor_id as usize)
+            .copied()
+            .unwrap_or_else(|| panic!("Arena: expected ctor id {} to be registered", ctor_id))
     }
 
     pub fn len(&self) -> usize {

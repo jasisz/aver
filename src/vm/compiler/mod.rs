@@ -620,7 +620,7 @@ enum CallTarget {
     Wrapper(u8),
     /// Option.None → load constant.
     None_,
-    /// User-defined variant constructor: Shape.Circle → VARIANT_NEW.
+    /// User-defined variant constructor: Shape.Circle → VARIANT_NEW (or inline nullary at runtime).
     Variant(u32, u16),
     /// Builtin service: Console.print, List.len → CALL_BUILTIN.
     Builtin(String),

@@ -243,8 +243,7 @@ impl Interpreter {
                         if !value.is_variant() {
                             return None;
                         }
-                        let (type_id, variant_id, fields) =
-                            self.arena.get_variant(value.arena_index());
+                        let (type_id, variant_id, fields) = value.variant_parts(&self.arena)?;
                         let type_name = self.arena.get_type_name(type_id);
                         let variant_name = self.arena.get_variant_name(type_id, variant_id);
 

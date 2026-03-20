@@ -80,7 +80,14 @@ Common heap-backed shapes include:
 - `Map`
 - boxed wrapper payloads (`Result.Ok`, `Result.Err`, `Option.Some`)
 
-There is one important exception now: wrappers around plain immediates (`Bool`, `Unit`, `None`) can stay fully inline as tagged `NanValue`s instead of allocating a one-edge boxed node in the arena. That keeps common `Result` / `Option` pipelines from manufacturing heap churn just to carry `Ok(true)` or `Some(Unit)` through the VM.
+There are two important exceptions now:
+
+- wrappers around plain immediates (`Bool`, `Unit`, `None`) can stay fully inline as tagged `NanValue`s instead of allocating a one-edge boxed node in the arena
+- wrappers around inline `Int` values (`Some(42)`, `Ok(-7)`, `Err(0)`) use dedicated NaN-box tags, so they also avoid arena churn
+
+That keeps common `Result` / `Option` pipelines from manufacturing heap churn just to carry `Ok(true)`, `Some(Unit)`, or `Result.Ok(42)` through the VM.
+
+There is also one user-defined inline case now: **nullary variants**. Constructors like `Status.Todo` or `Color.Red` do not need arena storage when they carry no fields; they can travel as inline constructor ids and still participate in normal `match` / convert / compare logic.
 
 This is the main reason the VM can stay small without dragging a large object model everywhere.
 

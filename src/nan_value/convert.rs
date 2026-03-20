@@ -71,18 +71,18 @@ impl NanValue {
                 let type_id = arena
                     .find_type_id(type_name)
                     .unwrap_or_else(|| arena.register_sum_type(type_name, vec![variant.clone()]));
-                let variant_id = arena.find_variant_id(type_id, variant).unwrap_or_else(|| {
-                    // Register new variant dynamically
-                    let variants = &mut arena.type_variant_names[type_id as usize];
-                    let id = variants.len() as u16;
-                    variants.push(variant.clone());
-                    id
-                });
+                let variant_id = arena
+                    .find_variant_id(type_id, variant)
+                    .unwrap_or_else(|| arena.register_variant_name(type_id, variant.clone()));
                 let nv_fields: Vec<_> = fields
                     .iter()
                     .map(|v| NanValue::from_value(v, arena))
                     .collect();
-                NanValue::new_variant(arena.push_variant(type_id, variant_id, nv_fields))
+                if nv_fields.is_empty() {
+                    NanValue::new_nullary_variant(arena.find_ctor_id(type_id, variant_id).unwrap())
+                } else {
+                    NanValue::new_variant(arena.push_variant(type_id, variant_id, nv_fields))
+                }
             }
             Value::Namespace { name, members } => {
                 let nv_members: Vec<_> = members
@@ -103,35 +103,36 @@ impl NanValue {
         if self.is_float() {
             return Value::Float(self.as_float());
         }
+        if let Some((kind, inner)) = self.wrapper_parts(arena) {
+            let inner = inner.to_value(arena);
+            return match kind {
+                WRAP_SOME => Value::Some(Box::new(inner)),
+                WRAP_OK => Value::Ok(Box::new(inner)),
+                WRAP_ERR => Value::Err(Box::new(inner)),
+                _ => Value::Unit,
+            };
+        }
+        if let Some((type_id, variant_id, fields)) = self.variant_parts(arena) {
+            let type_name = arena.get_type_name(type_id).to_string();
+            let variant = arena.get_variant_name(type_id, variant_id).to_string();
+            let vals: Vec<Value> = fields.iter().map(|v| v.to_value(arena)).collect();
+            return Value::Variant {
+                type_name,
+                variant,
+                fields: vals.into(),
+            };
+        }
         match self.tag() {
             TAG_INT => Value::Int(self.as_int(arena)),
-            TAG_IMMEDIATE => {
-                if let Some((kind, inner)) = self.wrapper_parts(arena) {
-                    let inner = inner.to_value(arena);
-                    match kind {
-                        WRAP_SOME => Value::Some(Box::new(inner)),
-                        WRAP_OK => Value::Ok(Box::new(inner)),
-                        WRAP_ERR => Value::Err(Box::new(inner)),
-                        _ => Value::Unit,
-                    }
-                } else {
-                    match self.payload() {
-                        IMM_FALSE => Value::Bool(false),
-                        IMM_TRUE => Value::Bool(true),
-                        IMM_UNIT => Value::Unit,
-                        IMM_NONE => Value::None,
-                        _ => Value::Unit,
-                    }
-                }
-            }
-            TAG_WRAPPER => {
-                let inner = self.wrapper_inner(arena).to_value(arena);
-                match self.wrapper_kind() {
-                    WRAP_SOME => Value::Some(Box::new(inner)),
-                    WRAP_OK => Value::Ok(Box::new(inner)),
-                    WRAP_ERR => Value::Err(Box::new(inner)),
-                    _ => Value::Unit,
-                }
+            TAG_IMMEDIATE => match self.payload() {
+                IMM_FALSE => Value::Bool(false),
+                IMM_TRUE => Value::Bool(true),
+                IMM_UNIT => Value::Unit,
+                IMM_NONE => Value::None,
+                _ => Value::Unit,
+            },
+            TAG_WRAPPER | TAG_SOME_INT | TAG_OK_INT | TAG_ERR_INT => {
+                unreachable!("wrapper conversion handled before tag switch")
             }
             TAG_STRING => Value::Str(arena.get_string(self.arena_index()).to_string()),
             TAG_LIST => {
@@ -168,16 +169,8 @@ impl NanValue {
                     fields: pairs.into(),
                 }
             }
-            TAG_VARIANT => {
-                let (type_id, variant_id, fields) = arena.get_variant(self.arena_index());
-                let type_name = arena.get_type_name(type_id).to_string();
-                let variant = arena.get_variant_name(type_id, variant_id).to_string();
-                let vals: Vec<Value> = fields.iter().map(|v| v.to_value(arena)).collect();
-                Value::Variant {
-                    type_name,
-                    variant,
-                    fields: vals.into(),
-                }
+            TAG_VARIANT | TAG_NULLARY_VARIANT => {
+                unreachable!("variant conversion handled before tag switch")
             }
             TAG_FN => Value::Fn(Rc::clone(arena.get_fn_rc(self.arena_index()))),
             TAG_BUILTIN => Value::Builtin(arena.get_builtin(self.arena_index()).to_string()),

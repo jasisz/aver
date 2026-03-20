@@ -122,6 +122,38 @@ fn inline_and_boxed_wrapped_immediates_compare_equal() {
 }
 
 #[test]
+fn wrapped_inline_ints_stay_inline() {
+    let mut arena = Arena::new();
+    let before = arena.len();
+
+    let some_int = NanValue::new_some_value(NanValue::new_int_inline(42), &mut arena);
+    let ok_int = NanValue::new_ok_value(NanValue::new_int_inline(-7), &mut arena);
+    let err_int = NanValue::new_err_value(NanValue::new_int_inline(1234), &mut arena);
+
+    assert!(some_int.is_some());
+    assert!(ok_int.is_ok());
+    assert!(err_int.is_err());
+    assert_eq!(arena.len(), before);
+    assert!(some_int.heap_index().is_none());
+    assert!(ok_int.heap_index().is_none());
+    assert!(err_int.heap_index().is_none());
+    assert_eq!(some_int.wrapper_inner(&arena).as_int(&arena), 42);
+    assert_eq!(ok_int.wrapper_inner(&arena).as_int(&arena), -7);
+    assert_eq!(err_int.wrapper_inner(&arena).as_int(&arena), 1234);
+}
+
+#[test]
+fn inline_and_boxed_wrapped_ints_compare_equal() {
+    let mut arena = Arena::new();
+    let inline_some = NanValue::new_some_value(NanValue::new_int_inline(5), &mut arena);
+    let boxed_some = NanValue::new_some(arena.push_boxed(NanValue::new_int_inline(5)));
+
+    assert!(inline_some.eq_in(boxed_some, &arena));
+    assert_eq!(inline_some.repr(&arena), "Option.Some(5)");
+    assert_eq!(boxed_some.repr(&arena), "Option.Some(5)");
+}
+
+#[test]
 fn string_roundtrip() {
     let mut arena = Arena::new();
     let idx = arena.push_string("hello");
@@ -140,6 +172,47 @@ fn record_roundtrip() {
     let (tid, fields) = arena.get_record(v.arena_index());
     assert_eq!(tid, 0);
     assert_eq!(fields.len(), 2);
+}
+
+#[test]
+fn nullary_variants_stay_inline() {
+    let mut arena = Arena::new();
+    let type_id = arena.register_sum_type("Status", vec!["Todo".into(), "Done".into()]);
+    let todo_id = arena.find_variant_id(type_id, "Todo").unwrap();
+    let todo_ctor = arena.find_ctor_id(type_id, todo_id).unwrap();
+
+    let todo = NanValue::new_nullary_variant(todo_ctor);
+    assert!(todo.is_variant());
+    assert!(todo.heap_index().is_none());
+    assert_eq!(todo.repr(&arena), "Todo");
+
+    let value = todo.to_value(&arena);
+    match value {
+        crate::value::Value::Variant {
+            type_name,
+            variant,
+            fields,
+        } => {
+            assert_eq!(type_name, "Status");
+            assert_eq!(variant, "Todo");
+            assert!(fields.is_empty());
+        }
+        other => panic!("expected nullary variant value, got {other:?}"),
+    }
+}
+
+#[test]
+fn inline_and_boxed_nullary_variants_compare_equal() {
+    let mut arena = Arena::new();
+    let type_id = arena.register_sum_type("Status", vec!["Todo".into()]);
+    let variant_id = arena.find_variant_id(type_id, "Todo").unwrap();
+    let ctor_id = arena.find_ctor_id(type_id, variant_id).unwrap();
+    let inline = NanValue::new_nullary_variant(ctor_id);
+    let boxed = NanValue::new_variant(arena.push_variant(type_id, variant_id, Vec::new()));
+
+    assert!(inline.eq_in(boxed, &arena));
+    assert_eq!(inline.repr(&arena), "Todo");
+    assert_eq!(boxed.repr(&arena), "Todo");
 }
 
 #[test]

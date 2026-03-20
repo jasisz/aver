@@ -159,7 +159,7 @@ pub const LIST_GET_MATCH: u8 = 0x6F;
 pub const MATCH_TAG: u8 = 0x70; // expected_tag:u8, fail_offset:i16
 
 /// Peek top (must be variant): if variant_id != expected, ip += fail_offset.
-pub const MATCH_VARIANT: u8 = 0x71; // variant_id:u16, fail_offset:i16
+pub const MATCH_VARIANT: u8 = 0x71; // ctor_id:u16, fail_offset:i16
 
 /// Peek top: if not wrapper of `kind`, ip += fail_offset.
 /// If matches, replace top with inner value (unwrap in-place).

@@ -276,20 +276,19 @@ impl<'a> FnCompiler<'a> {
                 Ok(vec![fail_patch])
             }
             _ => {
-                let mut patches = Vec::new();
-
-                self.emit_op(MATCH_TAG);
-                self.emit_u8(8);
-                let tag_fail = self.code.len();
-                self.emit_i16(0);
-                patches.push(tag_fail);
-
                 if let Some((type_name, variant_name)) = name.rsplit_once('.')
                     && let Some(type_id) = self.resolve_type_id(type_name)
                     && let Some(variant_id) = self.arena.find_variant_id(type_id, variant_name)
+                    && let Some(ctor_id) = self.arena.find_ctor_id(type_id, variant_id)
                 {
+                    if ctor_id > u16::MAX as u32 {
+                        return Err(CompileError {
+                            msg: format!("constructor id too large for VM pattern match: {}", name),
+                        });
+                    }
+                    let mut patches = Vec::new();
                     self.emit_op(MATCH_VARIANT);
-                    self.emit_u16(variant_id);
+                    self.emit_u16(ctor_id as u16);
                     let variant_fail = self.code.len();
                     self.emit_i16(0);
                     patches.push(variant_fail);

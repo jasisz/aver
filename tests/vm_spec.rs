@@ -893,6 +893,15 @@ fn vm_variant_match() {
     assert!((result.as_float() - 25.0).abs() < 0.001);
 }
 
+#[test]
+fn vm_nullary_variant_match() {
+    let src = "type Status\n    Todo\n    Done\n\nfn score(s: Status) -> Int\n    match s\n        Status.Todo -> 1\n        Status.Done -> 2\n\nfn main() -> Int\n    score(Status.Todo)\n";
+    let result = vm_run(src);
+    assert!(result.is_int());
+    let arena = Arena::new();
+    assert_eq!(result.as_int(&arena), 1);
+}
+
 // ---------------------------------------------------------------------------
 // Unit return
 // ---------------------------------------------------------------------------

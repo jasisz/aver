@@ -669,12 +669,18 @@ impl VM {
                     let start = self.stack.len() - count;
                     let fields: Vec<NanValue> = self.stack[start..].to_vec();
                     self.stack.truncate(start);
-                    let idx = self
-                        .arena
-                        .with_alloc_space(self.next_value_alloc_space(code, ip), |arena| {
-                            arena.push_variant(type_id, variant_id, fields)
-                        });
-                    self.stack.push(NanValue::new_variant(idx));
+                    if fields.is_empty()
+                        && let Some(ctor_id) = self.arena.find_ctor_id(type_id, variant_id)
+                    {
+                        self.stack.push(NanValue::new_nullary_variant(ctor_id));
+                    } else {
+                        let idx = self
+                            .arena
+                            .with_alloc_space(self.next_value_alloc_space(code, ip), |arena| {
+                                arena.push_variant(type_id, variant_id, fields)
+                            });
+                        self.stack.push(NanValue::new_variant(idx));
+                    }
                 }
 
                 WRAP => {
@@ -702,15 +708,10 @@ impl VM {
                 }
 
                 MATCH_VARIANT => {
-                    let expected_vid = read_u16!(code, ip);
+                    let expected_ctor = read_u16!(code, ip) as u32;
                     let offset = read_i16!(code, ip);
                     let top = *self.stack.last().ok_or(VmError::StackUnderflow)?;
-                    if top.is_variant() {
-                        let (_, vid, _) = self.arena.get_variant(top.arena_index());
-                        if vid != expected_vid {
-                            ip = (ip as isize + offset as isize) as usize;
-                        }
-                    } else {
+                    if top.variant_ctor_id(&self.arena) != Some(expected_ctor) {
                         ip = (ip as isize + offset as isize) as usize;
                     }
                 }
@@ -767,7 +768,9 @@ impl VM {
                         let (_, fields) = self.arena.get_record(top.arena_index());
                         self.stack.push(fields[field_idx]);
                     } else if top.is_variant() {
-                        let (_, _, fields) = self.arena.get_variant(top.arena_index());
+                        let (_, _, fields) = top.variant_parts(&self.arena).ok_or_else(|| {
+                            VmError::Type("EXTRACT_FIELD on invalid variant".into())
+                        })?;
                         self.stack.push(fields[field_idx]);
                     } else {
                         return Err(VmError::Type("EXTRACT_FIELD on non-record/variant".into()));
