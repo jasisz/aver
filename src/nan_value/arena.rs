@@ -1,0 +1,324 @@
+use super::*;
+
+impl Arena {
+    pub fn new() -> Self {
+        Arena {
+            young_entries: Vec::with_capacity(256),
+            yard_entries: Vec::with_capacity(64),
+            handoff_entries: Vec::with_capacity(64),
+            stable_entries: Vec::with_capacity(64),
+            alloc_space: AllocSpace::Young,
+            type_names: Vec::new(),
+            type_field_names: Vec::new(),
+            type_variant_names: Vec::new(),
+        }
+    }
+
+    #[inline]
+    pub fn push(&mut self, entry: ArenaEntry) -> u32 {
+        match self.alloc_space {
+            AllocSpace::Young => {
+                let idx = self.young_entries.len() as u32;
+                self.young_entries.push(entry);
+                Self::encode_index(HeapSpace::Young, idx)
+            }
+            AllocSpace::Yard => {
+                let idx = self.yard_entries.len() as u32;
+                self.yard_entries.push(entry);
+                Self::encode_index(HeapSpace::Yard, idx)
+            }
+            AllocSpace::Handoff => {
+                let idx = self.handoff_entries.len() as u32;
+                self.handoff_entries.push(entry);
+                Self::encode_index(HeapSpace::Handoff, idx)
+            }
+        }
+    }
+
+    #[inline]
+    pub fn get(&self, index: u32) -> &ArenaEntry {
+        let (space, raw_index) = Self::decode_index(index);
+        match space {
+            HeapSpace::Young => &self.young_entries[raw_index as usize],
+            HeapSpace::Yard => &self.yard_entries[raw_index as usize],
+            HeapSpace::Handoff => &self.handoff_entries[raw_index as usize],
+            HeapSpace::Stable => &self.stable_entries[raw_index as usize],
+        }
+    }
+
+    #[inline]
+    pub(super) fn encode_index(space: HeapSpace, index: u32) -> u32 {
+        ((space as u32) << HEAP_SPACE_SHIFT) | index
+    }
+
+    #[inline]
+    pub(super) fn encode_yard_index(index: u32) -> u32 {
+        Self::encode_index(HeapSpace::Yard, index)
+    }
+
+    #[inline]
+    pub(super) fn encode_stable_index(index: u32) -> u32 {
+        Self::encode_index(HeapSpace::Stable, index)
+    }
+
+    #[inline]
+    pub(super) fn encode_handoff_index(index: u32) -> u32 {
+        Self::encode_index(HeapSpace::Handoff, index)
+    }
+
+    #[inline]
+    pub(super) fn decode_index(index: u32) -> (HeapSpace, u32) {
+        let space = match (index & HEAP_SPACE_MASK_U32) >> HEAP_SPACE_SHIFT {
+            0 => HeapSpace::Young,
+            1 => HeapSpace::Yard,
+            2 => HeapSpace::Handoff,
+            3 => HeapSpace::Stable,
+            _ => unreachable!("invalid heap space bits"),
+        };
+        (space, index & HEAP_INDEX_MASK_U32)
+    }
+
+    #[inline]
+    pub fn is_stable_index(index: u32) -> bool {
+        matches!(Self::decode_index(index).0, HeapSpace::Stable)
+    }
+
+    #[inline]
+    pub fn is_yard_index_in_region(&self, index: u32, mark: u32) -> bool {
+        let (space, raw_index) = Self::decode_index(index);
+        matches!(space, HeapSpace::Yard)
+            && raw_index >= mark
+            && raw_index < self.yard_entries.len() as u32
+    }
+
+    #[inline]
+    pub fn is_handoff_index_in_region(&self, index: u32, mark: u32) -> bool {
+        let (space, raw_index) = Self::decode_index(index);
+        matches!(space, HeapSpace::Handoff)
+            && raw_index >= mark
+            && raw_index < self.handoff_entries.len() as u32
+    }
+
+    #[inline]
+    pub fn is_young_index_in_region(&self, index: u32, mark: u32) -> bool {
+        let (space, raw_index) = Self::decode_index(index);
+        matches!(space, HeapSpace::Young)
+            && raw_index >= mark
+            && raw_index < self.young_entries.len() as u32
+    }
+
+    #[inline]
+    pub fn young_len(&self) -> usize {
+        self.young_entries.len()
+    }
+
+    #[inline]
+    pub fn yard_len(&self) -> usize {
+        self.yard_entries.len()
+    }
+
+    #[inline]
+    pub fn handoff_len(&self) -> usize {
+        self.handoff_entries.len()
+    }
+
+    #[inline]
+    pub fn is_frame_local_index(
+        &self,
+        index: u32,
+        arena_mark: u32,
+        yard_mark: u32,
+        handoff_mark: u32,
+    ) -> bool {
+        self.is_young_index_in_region(index, arena_mark)
+            || self.is_yard_index_in_region(index, yard_mark)
+            || self.is_handoff_index_in_region(index, handoff_mark)
+    }
+
+    pub fn with_alloc_space<T>(&mut self, space: AllocSpace, f: impl FnOnce(&mut Arena) -> T) -> T {
+        let prev = self.alloc_space;
+        self.alloc_space = space;
+        let out = f(self);
+        self.alloc_space = prev;
+        out
+    }
+
+    // -- Typed push helpers ------------------------------------------------
+
+    pub fn push_i64(&mut self, val: i64) -> u32 {
+        self.push(ArenaEntry::Int(val))
+    }
+    pub fn push_string(&mut self, s: &str) -> u32 {
+        self.push(ArenaEntry::String(Rc::from(s)))
+    }
+    pub fn push_boxed(&mut self, val: NanValue) -> u32 {
+        self.push(ArenaEntry::Boxed(val))
+    }
+    pub fn push_record(&mut self, type_id: u32, fields: Vec<NanValue>) -> u32 {
+        self.push(ArenaEntry::Record { type_id, fields })
+    }
+    pub fn push_variant(&mut self, type_id: u32, variant_id: u16, fields: Vec<NanValue>) -> u32 {
+        self.push(ArenaEntry::Variant {
+            type_id,
+            variant_id,
+            fields,
+        })
+    }
+    pub fn push_list(&mut self, items: Vec<NanValue>) -> u32 {
+        self.push(ArenaEntry::List(ArenaList::Flat {
+            items: Rc::new(items),
+            start: 0,
+        }))
+    }
+    pub fn push_map(&mut self, map: PersistentMap) -> u32 {
+        self.push(ArenaEntry::Map(map))
+    }
+    pub fn push_tuple(&mut self, items: Vec<NanValue>) -> u32 {
+        self.push(ArenaEntry::Tuple(items))
+    }
+    pub fn push_fn(&mut self, f: Rc<FunctionValue>) -> u32 {
+        self.push(ArenaEntry::Fn(f))
+    }
+    pub fn push_builtin(&mut self, name: &str) -> u32 {
+        self.push(ArenaEntry::Builtin(Rc::from(name)))
+    }
+
+    // -- Typed getters -----------------------------------------------------
+
+    pub fn get_i64(&self, index: u32) -> i64 {
+        match self.get(index) {
+            ArenaEntry::Int(i) => *i,
+            _ => panic!("Arena: expected Int at {}", index),
+        }
+    }
+    pub fn get_string(&self, index: u32) -> &str {
+        match self.get(index) {
+            ArenaEntry::String(s) => s,
+            other => panic!("Arena: expected String at {} but found {:?}", index, other),
+        }
+    }
+    pub fn get_boxed(&self, index: u32) -> NanValue {
+        match self.get(index) {
+            ArenaEntry::Boxed(v) => *v,
+            _ => panic!("Arena: expected Boxed at {}", index),
+        }
+    }
+    pub fn get_record(&self, index: u32) -> (u32, &[NanValue]) {
+        match self.get(index) {
+            ArenaEntry::Record { type_id, fields } => (*type_id, fields),
+            _ => panic!("Arena: expected Record at {}", index),
+        }
+    }
+    pub fn get_variant(&self, index: u32) -> (u32, u16, &[NanValue]) {
+        match self.get(index) {
+            ArenaEntry::Variant {
+                type_id,
+                variant_id,
+                fields,
+            } => (*type_id, *variant_id, fields),
+            other => panic!("Arena: expected Variant at {} but found {:?}", index, other),
+        }
+    }
+    pub fn get_list(&self, index: u32) -> &ArenaList {
+        match self.get(index) {
+            ArenaEntry::List(items) => items,
+            _ => panic!("Arena: expected List at {}", index),
+        }
+    }
+    pub fn get_tuple(&self, index: u32) -> &[NanValue] {
+        match self.get(index) {
+            ArenaEntry::Tuple(items) => items,
+            _ => panic!("Arena: expected Tuple at {}", index),
+        }
+    }
+    pub fn get_map(&self, index: u32) -> &PersistentMap {
+        match self.get(index) {
+            ArenaEntry::Map(map) => map,
+            _ => panic!("Arena: expected Map at {}", index),
+        }
+    }
+    pub fn get_fn(&self, index: u32) -> &FunctionValue {
+        match self.get(index) {
+            ArenaEntry::Fn(f) => f,
+            _ => panic!("Arena: expected Fn at {}", index),
+        }
+    }
+    pub fn get_fn_rc(&self, index: u32) -> &Rc<FunctionValue> {
+        match self.get(index) {
+            ArenaEntry::Fn(f) => f,
+            _ => panic!("Arena: expected Fn at {}", index),
+        }
+    }
+    pub fn get_builtin(&self, index: u32) -> &str {
+        match self.get(index) {
+            ArenaEntry::Builtin(s) => s,
+            _ => panic!("Arena: expected Builtin at {}", index),
+        }
+    }
+    pub fn get_namespace(&self, index: u32) -> (&str, &[(Rc<str>, NanValue)]) {
+        match self.get(index) {
+            ArenaEntry::Namespace { name, members } => (name, members),
+            _ => panic!("Arena: expected Namespace at {}", index),
+        }
+    }
+
+    // -- Type registry -----------------------------------------------------
+
+    pub fn register_record_type(&mut self, name: &str, field_names: Vec<String>) -> u32 {
+        let id = self.type_names.len() as u32;
+        self.type_names.push(name.to_string());
+        self.type_field_names.push(field_names);
+        self.type_variant_names.push(Vec::new());
+        id
+    }
+
+    pub fn register_sum_type(&mut self, name: &str, variant_names: Vec<String>) -> u32 {
+        let id = self.type_names.len() as u32;
+        self.type_names.push(name.to_string());
+        self.type_field_names.push(Vec::new());
+        self.type_variant_names.push(variant_names);
+        id
+    }
+
+    pub fn get_type_name(&self, type_id: u32) -> &str {
+        &self.type_names[type_id as usize]
+    }
+    pub fn get_field_names(&self, type_id: u32) -> &[String] {
+        &self.type_field_names[type_id as usize]
+    }
+    pub fn get_variant_name(&self, type_id: u32, variant_id: u16) -> &str {
+        &self.type_variant_names[type_id as usize][variant_id as usize]
+    }
+    pub fn find_type_id(&self, name: &str) -> Option<u32> {
+        self.type_names
+            .iter()
+            .position(|n| n == name)
+            .map(|i| i as u32)
+    }
+    pub fn find_variant_id(&self, type_id: u32, variant_name: &str) -> Option<u16> {
+        self.type_variant_names
+            .get(type_id as usize)?
+            .iter()
+            .position(|n| n == variant_name)
+            .map(|i| i as u16)
+    }
+
+    pub fn len(&self) -> usize {
+        self.young_entries.len()
+            + self.yard_entries.len()
+            + self.handoff_entries.len()
+            + self.stable_entries.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.young_entries.is_empty()
+            && self.yard_entries.is_empty()
+            && self.handoff_entries.is_empty()
+            && self.stable_entries.is_empty()
+    }
+}
+
+impl Default for Arena {
+    fn default() -> Self {
+        Self::new()
+    }
+}
