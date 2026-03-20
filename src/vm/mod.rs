@@ -1,8 +1,10 @@
+mod builtin;
 mod compiler;
 mod execute;
 pub mod opcode;
 mod profile;
 mod runtime;
+mod symbol;
 mod types;
 
 pub use compiler::{compile_program, compile_program_with_modules};

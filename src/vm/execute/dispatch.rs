@@ -1,7 +1,6 @@
 use super::{ReturnControl, VM};
 use crate::nan_value::NanValue;
 use crate::vm::opcode::*;
-use crate::vm::runtime::is_http_server_builtin;
 use crate::vm::types::{CallFrame, VmError};
 
 macro_rules! read_u8 {
@@ -29,6 +28,20 @@ macro_rules! read_u16 {
 
 macro_rules! read_i16 {
     ($code:expr, $ip:expr) => {{ read_u16!($code, $ip) as i16 }};
+}
+
+macro_rules! read_u32 {
+    ($code:expr, $ip:expr) => {{
+        let b0 = $code[$ip] as u32;
+        let b1 = $code[$ip + 1] as u32;
+        let b2 = $code[$ip + 2] as u32;
+        let b3 = $code[$ip + 3] as u32;
+        #[allow(unused_assignments)]
+        {
+            $ip += 4;
+        }
+        (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
+    }};
 }
 
 impl VM {
@@ -263,11 +276,23 @@ impl VM {
                 }
 
                 CALL_BUILTIN => {
-                    let name_idx = read_u16!(code, ip) as u32;
+                    let symbol_id = read_u32!(code, ip);
                     let argc = read_u8!(code, ip) as usize;
-                    let builtin_name = self.arena.get_string(name_idx).to_string();
+                    let builtin =
+                        self.code
+                            .symbols
+                            .resolve_builtin(symbol_id)
+                            .ok_or_else(|| {
+                                let name = self
+                                    .code
+                                    .symbols
+                                    .get(symbol_id)
+                                    .map(|info| info.name.as_str())
+                                    .unwrap_or("<unknown>");
+                                VmError::Runtime(format!("symbol {} is not a builtin", name))
+                            })?;
                     if let Some(profile) = self.profile.as_mut() {
-                        profile.record_builtin_call(&builtin_name);
+                        profile.record_builtin_call(builtin.name());
                     }
                     let alloc_space = self.next_value_alloc_space(code, ip);
 
@@ -275,9 +300,11 @@ impl VM {
                     let args: Vec<NanValue> = self.stack[args_start..].to_vec();
                     self.stack.truncate(args_start);
 
-                    if is_http_server_builtin(&builtin_name) {
+                    if builtin.is_http_server() {
+                        self.runtime
+                            .ensure_builtin_effects_allowed(&self.code.symbols, builtin)?;
                         self.frames.last_mut().unwrap().ip = ip as u32;
-                        let result = self.dispatch_http_server(&builtin_name, &args)?;
+                        let result = self.dispatch_http_server(builtin, &args)?;
                         self.stack.push(result);
                         let f = self.frames.last().unwrap();
                         fn_id = f.fn_id;
@@ -287,7 +314,8 @@ impl VM {
                     }
 
                     let result = self.arena.with_alloc_space(alloc_space, |arena| {
-                        self.runtime.invoke_builtin(&builtin_name, &args, arena)
+                        self.runtime
+                            .invoke_builtin(&self.code.symbols, builtin, &args, arena)
                     })?;
                     self.stack.push(result);
                 }
@@ -646,24 +674,24 @@ impl VM {
                 }
 
                 RECORD_GET_NAMED => {
-                    let name_const_idx = read_u16!(code, ip) as usize;
-                    let field_name_nv =
-                        self.code.functions[fn_id as usize].constants[name_const_idx];
-                    let field_name = self.arena.get_string(field_name_nv.arena_index());
+                    let field_symbol_id = read_u32!(code, ip);
 
                     let record = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     if record.is_record() {
                         let (type_id, fields) = self.arena.get_record(record.arena_index());
-                        let field_names = self.arena.get_field_names(type_id);
-                        let mut found = false;
-                        for (i, fname) in field_names.iter().enumerate() {
-                            if fname == field_name {
-                                self.stack.push(fields[i]);
-                                found = true;
-                                break;
-                            }
-                        }
-                        if !found {
+                        if let Some(&field_idx) = self
+                            .code
+                            .record_field_slots
+                            .get(&(type_id, field_symbol_id))
+                        {
+                            self.stack.push(fields[field_idx as usize]);
+                        } else {
+                            let field_name = self
+                                .code
+                                .symbols
+                                .get(field_symbol_id)
+                                .map(|info| info.name.as_str())
+                                .unwrap_or("<unknown>");
                             return Err(VmError::Runtime(format!(
                                 "record has no field '{}'",
                                 field_name

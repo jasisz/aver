@@ -371,6 +371,9 @@ impl Arena {
     pub fn get_type_name(&self, type_id: u32) -> &str {
         &self.type_names[type_id as usize]
     }
+    pub fn type_count(&self) -> u32 {
+        self.type_names.len() as u32
+    }
     pub fn get_field_names(&self, type_id: u32) -> &[String] {
         &self.type_field_names[type_id as usize]
     }

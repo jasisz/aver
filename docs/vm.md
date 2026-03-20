@@ -232,15 +232,42 @@ In obvious tail-call positions, the VM can allocate new aggregate values directl
 
 In obvious ordinary return positions, the VM can allocate new aggregate values directly into the frame handoff lane, so helper returns can survive into the caller without first pretending to be temporaries or globally-stable values.
 
+## Symbol Table
+
+The VM now keeps a single interned table of **compile-time-known names**:
+
+- function names
+- builtin/service members
+- declared effect names
+- type / field / variant names discovered while compiling
+
+Each entry gets a stable `symbol_id`.
+
+That lets the VM stop carrying string-ish dispatch state through hot paths:
+
+- function values travel as inline `Int(symbol_id)`
+- `CALL_VALUE` resolves `symbol_id -> function`
+- `CALL_BUILTIN` carries `symbol_id` instead of a builtin name or arena string
+- builtin effect checks compare interned effect ids instead of runtime strings
+
+This is intentionally simple and Aver-shaped:
+
+- one symbol table
+- one inline handle format
+- metadata attached to the symbol entry
+
+Not every runtime value is a symbol. User data is still just data. But anything the compiler already knows by name no longer needs string dispatch during execution.
+
 ## Function References
 
-One of the more unusual choices is that **VM function values are encoded as inline `Int(fn_id)`**.
+One of the more unusual choices is that **VM callable references are encoded as inline `Int(symbol_id)`**.
 
 That means:
 
 - a known top-level function can be passed around as a first-class value
 - `CALL_VALUE` can dispatch without a separate closure object model
 - the current VM does not need upvalues or captured environments
+- the same inline handle model also works for other compile-time-known symbols such as builtins and effect names
 
 This is an internal encoding choice, not a surface-language feature. At the language level, functions are still just Aver functions.
 
@@ -311,7 +338,7 @@ That logic does not live in the main execute loop. Instead:
 `VmRuntime` is responsible for:
 
 - builtin dispatch
-- effect checking
+- effect checking from interned effect ids attached to VM symbols
 - record/replay integration
 - CLI argument access
 
@@ -324,7 +351,8 @@ This split is intentional: the VM core should mostly be “bytecode mechanics”
 Today that bridge works by:
 
 - converting callback args into VM values
-- calling the target VM function by `fn_id`
+- resolving the callback's inline `symbol_id` back to a VM function
+- calling that VM function
 - converting the result back into host `Value`
 
 This boundary is more complex than normal builtin calls and is one of the few places where the VM still has explicit host-runtime plumbing.

@@ -1,6 +1,7 @@
 use super::{CompileError, FnCompiler};
 use crate::ast::{BinOp, Expr, Literal, Stmt, StrPart};
 use crate::nan_value::NanValue;
+use crate::vm::builtin::VmBuiltin;
 use crate::vm::opcode::*;
 
 impl<'a> FnCompiler<'a> {
@@ -280,9 +281,9 @@ impl<'a> FnCompiler<'a> {
         for (key, value) in entries {
             self.compile_expr(key)?;
             self.compile_expr(value)?;
-            let name_idx = self.arena.push_string("Map.set");
+            let symbol_id = self.symbols.intern_builtin(VmBuiltin::MapSet);
             self.emit_op(CALL_BUILTIN);
-            self.emit_u16(name_idx as u16);
+            self.emit_u32(symbol_id);
             self.emit_u8(3);
         }
         Ok(())

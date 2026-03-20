@@ -1,11 +1,9 @@
-use crate::effects::effect_satisfies;
 use crate::nan_value::{Arena, NanValue};
 use crate::replay::session::{EffectRecord, RecordedOutcome};
 use crate::replay::{json_to_value, value_to_json, values_to_json_lossy};
-use crate::services::{console, disk, env, http, random, tcp, time};
-use crate::types::{bool, byte, char, float, int, list, map, option, result, string};
-use crate::value::RuntimeError;
 
+use super::builtin::VmBuiltin;
+use super::symbol::VmSymbolTable;
 use super::types::VmError;
 
 /// VM execution mode for record/replay.
@@ -21,7 +19,7 @@ pub enum VmExecutionMode {
 /// This is intentionally separate from the core execute loop so the VM stays
 /// focused on bytecode mechanics rather than service plumbing.
 pub(super) struct VmRuntime {
-    allowed_effects: Vec<String>,
+    allowed_effects: Vec<u32>,
     cli_args: Vec<String>,
     silent_console: bool,
     execution_mode: VmExecutionMode,
@@ -51,11 +49,11 @@ impl VmRuntime {
         }
     }
 
-    pub(super) fn set_allowed_effects(&mut self, effects: Vec<String>) {
+    pub(super) fn set_allowed_effects(&mut self, effects: Vec<u32>) {
         self.allowed_effects = effects;
     }
 
-    pub(super) fn swap_allowed_effects(&mut self, effects: Vec<String>) -> Vec<String> {
+    pub(super) fn swap_allowed_effects(&mut self, effects: Vec<u32>) -> Vec<u32> {
         std::mem::replace(&mut self.allowed_effects, effects)
     }
 
@@ -106,37 +104,42 @@ impl VmRuntime {
 
     pub(super) fn invoke_builtin(
         &mut self,
-        builtin_name: &str,
+        symbols: &VmSymbolTable,
+        builtin: VmBuiltin,
         args: &[NanValue],
         arena: &mut Arena,
     ) -> Result<NanValue, VmError> {
         debug_assert!(
-            !is_http_server_builtin(builtin_name),
+            !builtin.is_http_server(),
             "HttpServer builtins require VM callback handling outside VmRuntime"
         );
-        self.check_builtin_effects(builtin_name)?;
+        self.ensure_builtin_effects_allowed(symbols, builtin)?;
 
-        let is_effectful = !builtin_effects(builtin_name).is_empty();
+        let builtin_name = builtin.name();
+        let required_effects = symbols
+            .find(builtin_name)
+            .and_then(|symbol_id| symbols.get(symbol_id))
+            .map(|info| info.required_effects.as_slice())
+            .unwrap_or(&[]);
+        let is_effectful = !required_effects.is_empty();
         match (is_effectful, self.execution_mode) {
-            (_, VmExecutionMode::Normal) | (false, _) => dispatch_builtin_nv(
-                builtin_name,
-                args,
-                arena,
-                &self.cli_args,
-                self.silent_console,
-            ),
+            (_, VmExecutionMode::Normal) | (false, _) => builtin
+                .invoke_nv(args, arena, &self.cli_args, self.silent_console)
+                .map_err(|err| match err {
+                    crate::value::RuntimeError::Error(msg) => VmError::Runtime(msg),
+                    other => VmError::Runtime(format!("{:?}", other)),
+                }),
             (true, VmExecutionMode::Record) => {
                 let args_json = {
                     let vals: Vec<_> = args.iter().map(|a| a.to_value(arena)).collect();
                     values_to_json_lossy(&vals)
                 };
-                let nv_result = dispatch_builtin_nv(
-                    builtin_name,
-                    args,
-                    arena,
-                    &self.cli_args,
-                    self.silent_console,
-                )?;
+                let nv_result = builtin
+                    .invoke_nv(args, arena, &self.cli_args, self.silent_console)
+                    .map_err(|err| match err {
+                        crate::value::RuntimeError::Error(msg) => VmError::Runtime(msg),
+                        other => VmError::Runtime(format!("{:?}", other)),
+                    })?;
                 let result_val = nv_result.to_value(arena);
                 let outcome = match value_to_json(&result_val) {
                     Ok(json) => RecordedOutcome::Value(json),
@@ -197,91 +200,41 @@ impl VmRuntime {
         Ok(result)
     }
 
-    fn check_builtin_effects(&self, builtin_name: &str) -> Result<(), VmError> {
-        let required = builtin_effects(builtin_name);
-        if required.is_empty() {
+    pub(super) fn ensure_effects_allowed(
+        &self,
+        symbols: &VmSymbolTable,
+        callable_name: &str,
+        required_effects: &[u32],
+    ) -> Result<(), VmError> {
+        if required_effects.is_empty() {
             return Ok(());
         }
-        for effect in required {
-            if !self
-                .allowed_effects
-                .iter()
-                .any(|allowed| effect_satisfies(allowed, effect))
-            {
+        for effect_id in required_effects {
+            if !self.allowed_effects.contains(effect_id) {
+                let effect_name = symbols
+                    .get(*effect_id)
+                    .map(|info| info.name.as_str())
+                    .unwrap_or("<unknown>");
                 return Err(VmError::Runtime(format!(
                     "Runtime effect violation: cannot call '{}' (missing effect: {})",
-                    builtin_name, effect
+                    callable_name, effect_name
                 )));
             }
         }
         Ok(())
     }
-}
 
-pub(super) fn is_http_server_builtin(name: &str) -> bool {
-    name.starts_with("HttpServer.")
-}
-
-/// Look up which effects a builtin requires.
-fn builtin_effects(name: &str) -> &'static [&'static str] {
-    let namespace = name.split_once('.').map(|(ns, _)| ns);
-    match namespace {
-        Some("Console") => console::effects(name),
-        Some("Http") => http::effects(name),
-        Some("Disk") => disk::effects(name),
-        Some("Env") => env::effects(name),
-        Some("Random") => random::effects(name),
-        Some("Tcp") => tcp::effects(name),
-        #[cfg(feature = "terminal")]
-        Some("Terminal") => crate::services::terminal::effects(name),
-        Some("Time") => time::effects(name),
-        _ => &[],
-    }
-}
-
-/// Dispatch a builtin call by name to the appropriate service/type module.
-/// Reuses the existing `call_nv` functions from interpreter services.
-fn dispatch_builtin_nv(
-    name: &str,
-    args: &[NanValue],
-    arena: &mut Arena,
-    cli_args: &[String],
-    silent_console: bool,
-) -> Result<NanValue, VmError> {
-    if silent_console && matches!(name, "Console.print" | "Console.error" | "Console.warn") {
-        return Ok(NanValue::UNIT);
-    }
-
-    let namespace = name.split_once('.').map(|(ns, _)| ns);
-
-    let result = match namespace {
-        Some("Args") => crate::services::args::call_nv(name, args, cli_args, arena),
-        Some("Console") => console::call_nv(name, args, arena),
-        Some("Http") => http::call_nv(name, args, arena),
-        Some("Disk") => disk::call_nv(name, args, arena),
-        Some("Env") => env::call_nv(name, args, arena),
-        Some("Random") => random::call_nv(name, args, arena),
-        Some("Tcp") => tcp::call_nv(name, args, arena),
-        #[cfg(feature = "terminal")]
-        Some("Terminal") => crate::services::terminal::call_nv(name, args, arena),
-        Some("Time") => time::call_nv(name, args, arena),
-        Some("Bool") => bool::call_nv(name, args, arena),
-        Some("Int") => int::call_nv(name, args, arena),
-        Some("Float") => float::call_nv(name, args, arena),
-        Some("String") => string::call_nv(name, args, arena),
-        Some("List") => list::call_nv(name, args, arena),
-        Some("Map") => map::call_nv(name, args, arena),
-        Some("Char") => char::call_nv(name, args, arena),
-        Some("Byte") => byte::call_nv(name, args, arena),
-        Some("Result") => result::call_nv(name, args, arena),
-        Some("Option") => option::call_nv(name, args, arena),
-        _ => None,
-    };
-
-    match result {
-        Some(Ok(val)) => Ok(val),
-        Some(Err(RuntimeError::Error(msg))) => Err(VmError::Runtime(msg)),
-        Some(Err(e)) => Err(VmError::Runtime(format!("{:?}", e))),
-        None => Err(VmError::Runtime(format!("unknown builtin: {}", name))),
+    pub(super) fn ensure_builtin_effects_allowed(
+        &self,
+        symbols: &VmSymbolTable,
+        builtin: VmBuiltin,
+    ) -> Result<(), VmError> {
+        let builtin_name = builtin.name();
+        let required_effects = symbols
+            .find(builtin_name)
+            .and_then(|symbol_id| symbols.get(symbol_id))
+            .map(|info| info.required_effects.as_slice())
+            .unwrap_or(&[]);
+        self.ensure_effects_allowed(symbols, builtin_name, required_effects)
     }
 }

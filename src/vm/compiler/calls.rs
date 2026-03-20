@@ -1,6 +1,7 @@
 use super::{CallTarget, CompileError, FnCompiler};
 use crate::ast::Expr;
 use crate::nan_value::NanValue;
+use crate::vm::builtin::VmBuiltin;
 use crate::vm::opcode::*;
 
 impl<'a> FnCompiler<'a> {
@@ -22,7 +23,11 @@ impl<'a> FnCompiler<'a> {
         if let Some(fn_id) = self.code_store.find(&qualified) {
             return CallTarget::KnownFn(fn_id);
         }
-        CallTarget::Builtin(qualified)
+        if let Some(builtin) = VmBuiltin::from_name(&qualified) {
+            CallTarget::Builtin(builtin)
+        } else {
+            CallTarget::UnknownQualified(qualified)
+        }
     }
 
     fn extract_dotted_path(&self, expr: &Expr) -> Option<(String, String)> {
@@ -122,22 +127,27 @@ impl<'a> FnCompiler<'a> {
                 self.emit_u16(variant_id);
                 self.emit_u8(args.len() as u8);
             }
-            CallTarget::Builtin(qualified) => {
+            CallTarget::Builtin(builtin) => {
                 for arg in args {
                     self.compile_expr(arg)?;
                 }
-                match qualified.as_str() {
-                    "List.len" => self.emit_op(LIST_LEN),
-                    "List.get" => self.emit_op(LIST_GET),
-                    "List.append" => self.emit_op(LIST_APPEND),
-                    "List.prepend" => self.emit_op(LIST_PREPEND),
+                match builtin {
+                    VmBuiltin::ListLen => self.emit_op(LIST_LEN),
+                    VmBuiltin::ListGet => self.emit_op(LIST_GET),
+                    VmBuiltin::ListAppend => self.emit_op(LIST_APPEND),
+                    VmBuiltin::ListPrepend => self.emit_op(LIST_PREPEND),
                     _ => {
+                        let symbol_id = self.symbols.intern_builtin(builtin);
                         self.emit_op(CALL_BUILTIN);
-                        let name_idx = self.arena.push_string(&qualified);
-                        self.emit_u16(name_idx as u16);
+                        self.emit_u32(symbol_id);
                         self.emit_u8(args.len() as u8);
                     }
                 }
+            }
+            CallTarget::UnknownQualified(qualified) => {
+                return Err(CompileError {
+                    msg: format!("unknown builtin or namespace member: {}", qualified),
+                });
             }
         }
         Ok(())
@@ -253,7 +263,7 @@ impl<'a> FnCompiler<'a> {
                     self.emit_u8(0);
                     return Ok(());
                 }
-                CallTarget::Builtin(_) => {
+                CallTarget::Builtin(_) | CallTarget::UnknownQualified(_) => {
                     return Err(CompileError {
                         msg: format!(
                             "standalone builtin function values are not yet supported in VM: {}",
@@ -265,12 +275,51 @@ impl<'a> FnCompiler<'a> {
             }
         }
 
+        if let Some(field_idx) = self
+            .infer_record_field_idx(obj, field)
+            .or_else(|| self.resolve_record_field_idx(obj, field))
+        {
+            self.compile_expr(obj)?;
+            self.emit_op(RECORD_GET);
+            self.emit_u8(field_idx);
+            return Ok(());
+        }
+
         self.compile_expr(obj)?;
-        let name_idx = self.arena.push_string(field);
-        let nv = NanValue::new_string(name_idx);
-        let const_idx = self.add_constant(nv);
+        let field_symbol_id = self.symbols.intern_name(field);
         self.emit_op(RECORD_GET_NAMED);
-        self.emit_u16(const_idx);
+        self.emit_u32(field_symbol_id);
         Ok(())
+    }
+
+    fn infer_record_field_idx(&self, obj: &Expr, field: &str) -> Option<u8> {
+        let type_name = match obj {
+            Expr::RecordCreate { type_name, .. } | Expr::RecordUpdate { type_name, .. } => {
+                type_name.as_str()
+            }
+            _ => return None,
+        };
+        let type_id = self.resolve_type_id(type_name)?;
+        let fields = self.arena.get_field_names(type_id);
+        fields
+            .iter()
+            .position(|name| name == field)
+            .map(|idx| idx as u8)
+    }
+
+    fn resolve_record_field_idx(&self, obj: &Expr, field: &str) -> Option<u8> {
+        let field_symbol_id = self.code_store.symbols.find(field)?;
+        match obj {
+            Expr::Ident(type_name)
+                if type_name.chars().next().is_some_and(|c| c.is_uppercase()) =>
+            {
+                let type_id = self.resolve_type_id(type_name)?;
+                self.code_store
+                    .record_field_slots
+                    .get(&(type_id, field_symbol_id))
+                    .copied()
+            }
+            _ => None,
+        }
     }
 }

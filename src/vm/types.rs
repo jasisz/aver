@@ -1,5 +1,7 @@
 use crate::nan_value::NanValue;
 
+use super::symbol::VmSymbolTable;
+
 /// A compiled function chunk — bytecode + metadata.
 #[derive(Debug, Clone)]
 pub struct FnChunk {
@@ -9,7 +11,7 @@ pub struct FnChunk {
     pub code: Vec<u8>,
     pub constants: Vec<NanValue>,
     /// Declared effects (e.g. `! [Console.print, Http]`). Empty for pure functions.
-    pub effects: Vec<String>,
+    pub effects: Vec<u32>,
     /// Conservatively classified "thin" function: likely to return without
     /// creating any frame-local heap survivors or dirtying globals.
     pub thin: bool,
@@ -63,6 +65,10 @@ pub struct CodeStore {
     pub functions: Vec<FnChunk>,
     /// Map from function name to index in `functions`.
     pub fn_index: std::collections::HashMap<String, u32>,
+    /// Compile-time-known symbol table for functions, builtins, effects, and other names.
+    pub(crate) symbols: VmSymbolTable,
+    /// Per-record-type field slot lookup: (type_id, field_symbol_id) -> field_idx.
+    pub(crate) record_field_slots: std::collections::HashMap<(u32, u32), u8>,
 }
 
 impl Default for CodeStore {
@@ -76,6 +82,8 @@ impl CodeStore {
         CodeStore {
             functions: Vec::new(),
             fn_index: std::collections::HashMap::new(),
+            symbols: VmSymbolTable::default(),
+            record_field_slots: std::collections::HashMap::new(),
         }
     }
 
@@ -92,6 +100,13 @@ impl CodeStore {
 
     pub fn find(&self, name: &str) -> Option<u32> {
         self.fn_index.get(name).copied()
+    }
+
+    pub fn register_record_fields(&mut self, type_id: u32, field_symbol_ids: &[u32]) {
+        for (field_idx, symbol_id) in field_symbol_ids.iter().copied().enumerate() {
+            self.record_field_slots
+                .insert((type_id, symbol_id), field_idx as u8);
+        }
     }
 }
 

@@ -154,12 +154,11 @@ impl<'a> FnCompiler<'a> {
         if args.len() != 2 {
             return None;
         }
-        let Some(super::CallTarget::Builtin(qualified)) = self.resolve_call_target(fn_expr) else {
+        let Some(super::CallTarget::Builtin(crate::vm::builtin::VmBuiltin::ListGet)) =
+            self.resolve_call_target(fn_expr)
+        else {
             return None;
         };
-        if qualified != "List.get" {
-            return None;
-        }
 
         let mut some_binding = None;
         let mut some_body = None;

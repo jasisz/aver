@@ -113,7 +113,10 @@ impl VM {
     ) -> Result<NanValue, VmError> {
         let fn_id = self
             .code
+            .symbols
             .find(name)
+            .and_then(|symbol_id| self.code.symbols.resolve_function(symbol_id))
+            .or_else(|| self.code.find(name))
             .ok_or_else(|| VmError::Runtime(format!("function '{}' not found", name)))?;
         self.runtime
             .set_allowed_effects(self.code.get(fn_id).effects.clone());

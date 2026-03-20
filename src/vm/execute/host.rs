@@ -1,6 +1,7 @@
 use super::VM;
 use crate::nan_value::NanValue;
 use crate::value::Value;
+use crate::vm::builtin::VmBuiltin;
 use crate::vm::runtime::VmExecutionMode;
 use crate::vm::types::VmError;
 
@@ -44,7 +45,7 @@ impl VM {
     /// Uses unsafe self-pointer for re-entrant callback into VM.call_function.
     pub(super) fn dispatch_http_server(
         &mut self,
-        name: &str,
+        builtin: VmBuiltin,
         args: &[NanValue],
     ) -> Result<NanValue, VmError> {
         use crate::services::http_server;
@@ -56,13 +57,18 @@ impl VM {
             let vm = unsafe { &mut *vm_ptr };
 
             let handler_fn_id = match &handler {
-                Value::Int(id) if (*id as usize) < vm.code.functions.len() => *id as u32,
+                Value::Int(id) if *id >= 0 => vm.code.symbols.resolve_function(*id as u32),
                 _ => {
                     return Err(crate::value::RuntimeError::Error(
                         "HttpServer: handler is not a valid VM function".into(),
                     ));
                 }
-            };
+            }
+            .ok_or_else(|| {
+                crate::value::RuntimeError::Error(
+                    "HttpServer: handler is not a valid VM function".into(),
+                )
+            })?;
 
             let nv_args: Vec<NanValue> = callback_args
                 .iter()
@@ -88,13 +94,13 @@ impl VM {
         };
 
         let skip = self.runtime.execution_mode() == VmExecutionMode::Record;
-        match http_server::call_with_runtime(name, &val_args, invoke_handler, skip) {
+        match http_server::call_with_runtime(builtin.name(), &val_args, invoke_handler, skip) {
             Some(Ok(val)) => Ok(NanValue::from_value(&val, &mut self.arena)),
             Some(Err(crate::value::RuntimeError::Error(msg))) => Err(VmError::Runtime(msg)),
             Some(Err(e)) => Err(VmError::Runtime(format!("{:?}", e))),
             None => Err(VmError::Runtime(format!(
                 "unknown HttpServer builtin: {}",
-                name
+                builtin.name()
             ))),
         }
     }

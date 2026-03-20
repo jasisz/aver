@@ -17,9 +17,11 @@ impl VM {
         ip: usize,
     ) -> Result<u32, VmError> {
         if val.is_int() {
-            let fn_id = val.as_int(&self.arena);
-            if (0..self.code.functions.len() as i64).contains(&fn_id) {
-                return Ok(fn_id as u32);
+            let symbol_id = val.as_int(&self.arena);
+            if symbol_id >= 0
+                && let Some(fn_id) = self.code.symbols.resolve_function(symbol_id as u32)
+            {
+                return Ok(fn_id);
             }
         }
         let caller_name = &self.code.functions[caller_fn_id as usize].name;

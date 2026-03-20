@@ -8,12 +8,14 @@ use crate::ast::{FnBody, FnDef, Stmt, TopLevel, TypeDef};
 use crate::nan_value::{Arena, NanValue};
 use crate::source::find_module_file;
 
+use super::builtin::{VmBuiltin, VmBuiltinParentThinClass};
 use super::opcode::*;
+use super::symbol::VmSymbolTable;
 use super::types::{CodeStore, FnChunk};
 
-fn encode_vm_fn_ref(fn_id: u32) -> NanValue {
-    // VM callables are encoded as inline Int function ids.
-    NanValue::new_int_inline(fn_id as i64)
+fn encode_vm_symbol_ref(symbol_id: u32) -> NanValue {
+    // VM-known symbols are encoded as inline Int symbol ids.
+    NanValue::new_int_inline(symbol_id as i64)
 }
 
 /// Compile a parsed + TCO-transformed + resolved program into bytecode.
@@ -32,6 +34,7 @@ pub fn compile_program_with_modules(
     module_root: Option<&str>,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
     let mut compiler = ProgramCompiler::new();
+    compiler.sync_record_field_symbols(arena);
 
     if let Some(module_root) = module_root {
         compiler.load_modules(items, module_root, arena)?;
@@ -41,18 +44,27 @@ pub fn compile_program_with_modules(
         match item {
             TopLevel::FnDef(fndef) => {
                 compiler.ensure_global(&fndef.name);
+                let effect_ids: Vec<u32> = fndef
+                    .effects
+                    .iter()
+                    .map(|effect| compiler.symbols.intern_name(effect))
+                    .collect();
                 let fn_id = compiler.code.add_function(FnChunk {
                     name: fndef.name.clone(),
                     arity: fndef.params.len() as u8,
                     local_count: 0,
                     code: Vec::new(),
                     constants: Vec::new(),
-                    effects: fndef.effects.clone(),
+                    effects: effect_ids,
                     thin: false,
                     parent_thin: false,
                 });
+                let symbol_id =
+                    compiler
+                        .symbols
+                        .intern_function(&fndef.name, fn_id, &fndef.effects);
                 let global_idx = compiler.global_names[&fndef.name];
-                compiler.globals[global_idx as usize] = encode_vm_fn_ref(fn_id);
+                compiler.globals[global_idx as usize] = encode_vm_symbol_ref(symbol_id);
             }
             TopLevel::TypeDef(td) => {
                 compiler.register_type_def(td, arena);
@@ -70,6 +82,7 @@ pub fn compile_program_with_modules(
     }
 
     compiler.compile_top_level(items, arena)?;
+    compiler.code.symbols = compiler.symbols.clone();
     classify_thin_functions(&mut compiler.code, arena)?;
 
     Ok((compiler.code, compiler.globals))
@@ -88,6 +101,7 @@ impl std::fmt::Display for CompileError {
 
 struct ProgramCompiler {
     code: CodeStore,
+    symbols: VmSymbolTable,
     globals: Vec<NanValue>,
     global_names: HashMap<String, u16>,
 }
@@ -96,8 +110,25 @@ impl ProgramCompiler {
     fn new() -> Self {
         ProgramCompiler {
             code: CodeStore::new(),
+            symbols: VmSymbolTable::default(),
             globals: Vec::new(),
             global_names: HashMap::new(),
+        }
+    }
+
+    fn sync_record_field_symbols(&mut self, arena: &Arena) {
+        for type_id in 0..arena.type_count() {
+            let type_name = arena.get_type_name(type_id);
+            self.symbols.intern_name(type_name);
+            let field_names = arena.get_field_names(type_id);
+            if field_names.is_empty() {
+                continue;
+            }
+            let field_symbol_ids: Vec<u32> = field_names
+                .iter()
+                .map(|field_name| self.symbols.intern_name(field_name))
+                .collect();
+            self.code.register_record_fields(type_id, &field_symbol_ids);
         }
     }
 
@@ -190,16 +221,24 @@ impl ProgramCompiler {
         let mut module_fn_ids: Vec<(String, u32)> = Vec::new();
         for item in &mod_items {
             if let TopLevel::FnDef(fndef) = item {
+                let qualified_name = format!("{}.{}", dep_name, fndef.name);
+                let effect_ids: Vec<u32> = fndef
+                    .effects
+                    .iter()
+                    .map(|effect| self.symbols.intern_name(effect))
+                    .collect();
                 let fn_id = self.code.add_function(FnChunk {
-                    name: format!("{}.{}", dep_name, fndef.name),
+                    name: qualified_name.clone(),
                     arity: fndef.params.len() as u8,
                     local_count: 0,
                     code: Vec::new(),
                     constants: Vec::new(),
-                    effects: fndef.effects.clone(),
+                    effects: effect_ids,
                     thin: false,
                     parent_thin: false,
                 });
+                self.symbols
+                    .intern_function(&qualified_name, fn_id, &fndef.effects);
                 module_fn_ids.push((fndef.name.clone(), fn_id));
             }
         }
@@ -216,7 +255,7 @@ impl ProgramCompiler {
             }
         }
 
-        for (fn_name, fn_id) in &module_fn_ids {
+        for (fn_name, _fn_id) in &module_fn_ids {
             let exposed = match &exposes {
                 Some(list) => list.iter().any(|e| e == fn_name),
                 None => !fn_name.starts_with('_'),
@@ -224,7 +263,10 @@ impl ProgramCompiler {
             if exposed {
                 let qualified = format!("{}.{}", dep_name, fn_name);
                 let global_idx = self.ensure_global(&qualified);
-                self.globals[global_idx as usize] = encode_vm_fn_ref(*fn_id);
+                let symbol_id = self.symbols.find(&qualified).ok_or_else(|| CompileError {
+                    msg: format!("missing VM symbol for exposed function {}", qualified),
+                })?;
+                self.globals[global_idx as usize] = encode_vm_symbol_ref(symbol_id);
             }
         }
 
@@ -261,11 +303,23 @@ impl ProgramCompiler {
     fn register_type_def(&mut self, td: &TypeDef, arena: &mut Arena) {
         match td {
             TypeDef::Product { name, fields, .. } => {
+                self.symbols.intern_name(name);
                 let field_names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
-                arena.register_record_type(name, field_names);
+                let field_symbol_ids: Vec<u32> = field_names
+                    .iter()
+                    .map(|field_name| self.symbols.intern_name(field_name))
+                    .collect();
+                let type_id = arena.register_record_type(name, field_names);
+                self.code.register_record_fields(type_id, &field_symbol_ids);
             }
             TypeDef::Sum { name, variants, .. } => {
+                self.symbols.intern_name(name);
                 let variant_names: Vec<String> = variants.iter().map(|v| v.name.clone()).collect();
+                for variant_name in &variant_names {
+                    self.symbols.intern_name(variant_name);
+                    self.symbols
+                        .intern_name(&format!("{}.{}", name, variant_name));
+                }
                 arena.register_sum_type(name, variant_names);
             }
         }
@@ -299,11 +353,16 @@ impl ProgramCompiler {
             &fndef.name,
             fndef.params.len() as u8,
             local_count,
-            fndef.effects.clone(),
+            fndef
+                .effects
+                .iter()
+                .map(|effect| self.symbols.intern_name(effect))
+                .collect(),
             local_slots,
             &self.global_names,
             module_scope,
             &self.code,
+            &mut self.symbols,
             arena,
         );
 
@@ -340,6 +399,7 @@ impl ProgramCompiler {
             &self.global_names,
             &empty_mod_scope,
             &self.code,
+            &mut self.symbols,
             arena,
         );
 
@@ -393,11 +453,14 @@ fn classify_thin_functions(code: &mut CodeStore, arena: &Arena) -> Result<(), Co
 const MAX_PARENT_THIN_CODE_LEN: usize = 48;
 const MAX_PARENT_THIN_LOCALS: u16 = 8;
 
-fn classify_parent_thin_chunks(code: &CodeStore, arena: &Arena) -> Result<Vec<bool>, CompileError> {
+fn classify_parent_thin_chunks(
+    code: &CodeStore,
+    _arena: &Arena,
+) -> Result<Vec<bool>, CompileError> {
     let mut candidates: Vec<bool> = code
         .functions
         .iter()
-        .map(|chunk| base_parent_thin_chunk(chunk, arena))
+        .map(|chunk| base_parent_thin_chunk(code, chunk))
         .collect::<Result<_, _>>()?;
 
     loop {
@@ -419,47 +482,35 @@ fn classify_parent_thin_chunks(code: &CodeStore, arena: &Arena) -> Result<Vec<bo
     Ok(candidates)
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum BuiltinParentThinClass {
-    Heapless,
-    Cheap,
-    AllocHeavy,
-}
-
-fn classify_parent_thin_builtin(name: &str) -> BuiltinParentThinClass {
-    match name {
-        "Bool.or" | "Bool.and" | "Bool.not" | "Int.fromFloat" | "Int.abs" | "Int.min"
-        | "Int.max" | "Int.toFloat" | "Float.fromInt" | "Float.abs" | "Float.floor"
-        | "Float.ceil" | "Float.round" | "Float.min" | "Float.max" | "String.len"
-        | "String.byteLength" | "String.startsWith" | "String.endsWith" | "String.contains"
-        | "List.contains" | "Map.empty" | "Map.len" | "Map.has" | "Option.withDefault"
-        | "Result.withDefault" | "Char.toCode" => BuiltinParentThinClass::Heapless,
-
-        "List.get" | "Map.get" => BuiltinParentThinClass::Cheap,
-
-        _ => BuiltinParentThinClass::AllocHeavy,
-    }
-}
-
 fn parent_thin_builtin_is_allowed(
+    code_store: &CodeStore,
     chunk: &FnChunk,
-    arena: &Arena,
     ip: usize,
 ) -> Result<bool, CompileError> {
-    if ip + 3 > chunk.code.len() {
+    if ip + 5 > chunk.code.len() {
         return Err(CompileError {
             msg: format!("truncated bytecode in {}", chunk.name),
         });
     }
-    let name_idx = u16::from_be_bytes([chunk.code[ip], chunk.code[ip + 1]]) as u32;
-    let builtin_name = arena.get_string(name_idx);
+    let symbol_id = u32::from_be_bytes([
+        chunk.code[ip],
+        chunk.code[ip + 1],
+        chunk.code[ip + 2],
+        chunk.code[ip + 3],
+    ]);
+    let builtin = code_store
+        .symbols
+        .resolve_builtin(symbol_id)
+        .ok_or_else(|| CompileError {
+            msg: format!("unknown builtin symbol {} in {}", symbol_id, chunk.name),
+        })?;
     Ok(!matches!(
-        classify_parent_thin_builtin(builtin_name),
-        BuiltinParentThinClass::AllocHeavy
+        builtin.parent_thin_class(),
+        VmBuiltinParentThinClass::AllocHeavy
     ))
 }
 
-fn base_parent_thin_chunk(chunk: &FnChunk, arena: &Arena) -> Result<bool, CompileError> {
+fn base_parent_thin_chunk(code_store: &CodeStore, chunk: &FnChunk) -> Result<bool, CompileError> {
     if !chunk.effects.is_empty()
         || chunk.code.len() > MAX_PARENT_THIN_CODE_LEN
         || chunk.local_count > MAX_PARENT_THIN_LOCALS
@@ -494,15 +545,19 @@ fn base_parent_thin_chunk(chunk: &FnChunk, arena: &Arena) -> Result<bool, Compil
                 ip = advance_opcode_ip(chunk, ip, 1)?;
             }
 
-            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | RECORD_GET_NAMED | MATCH_FAIL => {
+            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL => {
                 ip = advance_opcode_ip(chunk, ip, 2)?;
             }
 
+            RECORD_GET_NAMED => {
+                ip = advance_opcode_ip(chunk, ip, 4)?;
+            }
+
             CALL_BUILTIN => {
-                if !parent_thin_builtin_is_allowed(chunk, arena, ip)? {
+                if !parent_thin_builtin_is_allowed(code_store, chunk, ip)? {
                     return Ok(false);
                 }
-                ip = advance_opcode_ip(chunk, ip, 3)?;
+                ip = advance_opcode_ip(chunk, ip, 5)?;
             }
 
             CALL_KNOWN | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE => {
@@ -578,11 +633,19 @@ fn parent_thin_calls_are_safe(
                 ip = advance_opcode_ip(chunk, ip, 1)?;
             }
 
-            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | RECORD_GET_NAMED | MATCH_FAIL => {
+            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL => {
                 ip = advance_opcode_ip(chunk, ip, 2)?;
             }
 
-            CALL_BUILTIN | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE => {
+            RECORD_GET_NAMED => {
+                ip = advance_opcode_ip(chunk, ip, 4)?;
+            }
+
+            CALL_BUILTIN => {
+                ip = advance_opcode_ip(chunk, ip, 5)?;
+            }
+
+            MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE => {
                 ip = advance_opcode_ip(chunk, ip, 3)?;
             }
 
@@ -634,11 +697,19 @@ fn classify_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
                 ip = advance_opcode_ip(chunk, ip, 1)?;
             }
 
-            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | RECORD_GET_NAMED | MATCH_FAIL => {
+            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL => {
                 ip = advance_opcode_ip(chunk, ip, 2)?;
             }
 
-            CALL_KNOWN | CALL_BUILTIN | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE => {
+            RECORD_GET_NAMED => {
+                ip = advance_opcode_ip(chunk, ip, 4)?;
+            }
+
+            CALL_BUILTIN => {
+                ip = advance_opcode_ip(chunk, ip, 5)?;
+            }
+
+            CALL_KNOWN | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE => {
                 ip = advance_opcode_ip(chunk, ip, 3)?;
             }
 
@@ -699,21 +770,24 @@ enum CallTarget {
     None_,
     /// User-defined variant constructor: Shape.Circle → VARIANT_NEW (or inline nullary at runtime).
     Variant(u32, u16),
-    /// Builtin service: Console.print, List.len → CALL_BUILTIN.
-    Builtin(String),
+    /// Known VM builtin/service resolved by name and interned into the VM symbol table.
+    Builtin(VmBuiltin),
+    /// Unknown capitalized dotted path that did not resolve to a function, variant, or builtin.
+    UnknownQualified(String),
 }
 
 struct FnCompiler<'a> {
     name: String,
     arity: u8,
     local_count: u16,
-    effects: Vec<String>,
+    effects: Vec<u32>,
     local_slots: HashMap<String, u16>,
     global_names: &'a HashMap<String, u16>,
     /// Module-local function scope: simple_name → fn_id.
     /// Used for intra-module calls (e.g. `placeStairs` inside map.av).
     module_scope: &'a HashMap<String, u32>,
     code_store: &'a CodeStore,
+    symbols: &'a mut VmSymbolTable,
     arena: &'a mut Arena,
     code: Vec<u8>,
     constants: Vec<NanValue>,
@@ -725,11 +799,12 @@ impl<'a> FnCompiler<'a> {
         name: &str,
         arity: u8,
         local_count: u16,
-        effects: Vec<String>,
+        effects: Vec<u32>,
         local_slots: HashMap<String, u16>,
         global_names: &'a HashMap<String, u16>,
         module_scope: &'a HashMap<String, u32>,
         code_store: &'a CodeStore,
+        symbols: &'a mut VmSymbolTable,
         arena: &'a mut Arena,
     ) -> Self {
         FnCompiler {
@@ -741,6 +816,7 @@ impl<'a> FnCompiler<'a> {
             global_names,
             module_scope,
             code_store,
+            symbols,
             arena,
             code: Vec::new(),
             constants: Vec::new(),
@@ -775,6 +851,13 @@ impl<'a> FnCompiler<'a> {
 
     fn emit_i16(&mut self, val: i16) {
         self.emit_u16(val as u16);
+    }
+
+    fn emit_u32(&mut self, val: u32) {
+        self.code.push((val >> 24) as u8);
+        self.code.push(((val >> 16) & 0xFF) as u8);
+        self.code.push(((val >> 8) & 0xFF) as u8);
+        self.code.push((val & 0xFF) as u8);
     }
 
     fn add_constant(&mut self, val: NanValue) -> u16 {

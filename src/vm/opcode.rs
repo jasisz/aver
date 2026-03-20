@@ -91,7 +91,7 @@ pub const CALL_KNOWN: u8 = 0x40; // fn_id:u16, argc:u8
 pub const CALL_VALUE: u8 = 0x41; // argc:u8
 
 /// Call a builtin service function.
-pub const CALL_BUILTIN: u8 = 0x42; // builtin_id:u16, argc:u8
+pub const CALL_BUILTIN: u8 = 0x42; // symbol_id:u32, argc:u8
 
 /// Self tail-call: reuse current frame with new args.
 pub const TAIL_CALL_SELF: u8 = 0x43; // argc:u8
@@ -119,8 +119,8 @@ pub const RECORD_NEW: u8 = 0x63; // type_id:u16, count:u8
 /// Pop record, push `fields[field_idx]` (compile-time resolved index).
 pub const RECORD_GET: u8 = 0x64; // field_idx:u8
 
-/// Pop record, lookup field by name (constants[name_idx] is string), push value.
-pub const RECORD_GET_NAMED: u8 = 0x67; // name_idx:u16
+/// Pop record, lookup field by interned field symbol, push value.
+pub const RECORD_GET_NAMED: u8 = 0x67; // field_symbol_id:u32
 
 /// Pop `count` field values, push a new variant.
 pub const VARIANT_NEW: u8 = 0x65; // type_id:u16, variant_id:u16, count:u8
