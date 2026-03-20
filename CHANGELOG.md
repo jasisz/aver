@@ -10,6 +10,7 @@ All notable changes to Aver are documented here.
 - VM empty collections now use immediate `NanValue` encodings for `[]` and `Map.empty()`, so empty list/map literals and empty builtin results avoid arena allocation while list/map traversal paths stay value-aware.
 - VM `parent-thin` classification now accepts small match/binding helpers and nullary-variant constructors, so more tiny control-flow helpers can return without paying ordinary-return handoff churn.
 - VM `parent-thin` classification now also allows audited heapless/cheap pure builtins such as `Bool.*`, scalar `Int.*` / `Float.*`, string predicate/length helpers, and `Map.get` / `Map.len` / `Map.has`, instead of rejecting every `CALL_BUILTIN`.
+- `aver context --json` now serializes through `serde` view structs instead of hand-built JSON strings, keeping the schema the same while simplifying escaping and output maintenance.
 
 ### Fixed
 - `runtime_bench` now invalidates generated benchmark projects when the Aver binary or `aver-rt` manifest changes, so generated results no longer reuse stale toolchain-pinned outputs across runtime revisions.

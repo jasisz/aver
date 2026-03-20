@@ -1,4 +1,5 @@
 use aver::ast::{DecisionBlock, DecisionImpact, FnDef, TypeDef};
+use serde::Serialize;
 
 use crate::context_data::FileContext;
 
@@ -24,13 +25,6 @@ fn impact_texts(impacts: &[DecisionImpact]) -> Vec<String> {
         .collect()
 }
 
-fn impact_json_texts(impacts: &[DecisionImpact]) -> Vec<String> {
-    impacts
-        .iter()
-        .map(|impact| impact.text().to_string())
-        .collect()
-}
-
 fn decision_ref_text(reference: &DecisionImpact) -> String {
     reference.as_context_string()
 }
@@ -41,6 +35,142 @@ fn decision_ref_json_text(reference: &DecisionImpact) -> &str {
 
 const CONTEXT_SCHEMA_VERSION: u32 = 6;
 
+#[derive(Serialize)]
+struct JsonSelection<'a> {
+    depth_mode: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    budget_bytes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    included_depth: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_element_cost: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    focus_symbol: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    elements_selected: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    elements_total: Option<usize>,
+    truncated: bool,
+    used_bytes: usize,
+}
+
+#[derive(Serialize)]
+struct JsonEffectSet<'a> {
+    name: &'a str,
+    effects: Vec<&'a str>,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum JsonVariant<'a> {
+    Nullary(&'a str),
+    WithFields { name: &'a str, fields: Vec<&'a str> },
+}
+
+#[derive(Serialize)]
+struct JsonType<'a> {
+    name: &'a str,
+    variants: Vec<JsonVariant<'a>>,
+}
+
+#[derive(Serialize)]
+struct JsonRecordField<'a> {
+    name: &'a str,
+    #[serde(rename = "type")]
+    field_type: &'a str,
+}
+
+#[derive(Serialize)]
+struct JsonRecord<'a> {
+    name: &'a str,
+    fields: Vec<JsonRecordField<'a>>,
+}
+
+#[derive(Serialize)]
+struct JsonAnalysis {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    memo: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tco: Option<bool>,
+}
+
+#[derive(Serialize)]
+struct JsonFunction<'a> {
+    sig: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    effects: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    analysis: Option<JsonAnalysis>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    desc: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    specs: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verify_count: Option<usize>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    verify: Vec<&'a str>,
+}
+
+#[derive(Serialize)]
+struct JsonModule<'a> {
+    source_file: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    module: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    intent: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    depends: Option<Vec<&'a str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exposes_opaque: Option<Vec<&'a str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effects: Option<Vec<&'a str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    api_effects: Option<Vec<&'a str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    module_effects: Option<Vec<&'a str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    main_effects: Option<Vec<&'a str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effect_sets: Option<Vec<JsonEffectSet<'a>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    types: Option<Vec<JsonType<'a>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    records: Option<Vec<JsonRecord<'a>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    functions: Option<Vec<JsonFunction<'a>>>,
+}
+
+#[derive(Serialize)]
+struct JsonDecision<'a> {
+    name: &'a str,
+    date: &'a str,
+    chosen: &'a str,
+    rejected: Vec<&'a str>,
+    reason: &'a str,
+    impacts: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    author: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+struct JsonContextDoc<'a> {
+    schema_version: u32,
+    entry: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selection: Option<JsonSelection<'a>>,
+    modules: Vec<JsonModule<'a>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    decisions: Vec<JsonDecision<'a>>,
+}
+
+#[derive(Serialize)]
+struct JsonDecisionsDoc<'a> {
+    entry: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selection: Option<JsonSelection<'a>>,
+    decisions: Vec<JsonDecision<'a>>,
+}
+
 fn fn_sig(fd: &FnDef) -> String {
     let params: Vec<String> = fd
         .params
@@ -48,6 +178,206 @@ fn fn_sig(fd: &FnDef) -> String {
         .map(|(pname, ptype)| format!("{}: {}", pname, ptype))
         .collect();
     format!("{}({}) -> {}", fd.name, params.join(", "), fd.return_type)
+}
+
+fn selection_to_json(selection: &ContextSelection) -> JsonSelection<'_> {
+    JsonSelection {
+        depth_mode: &selection.depth_mode,
+        budget_bytes: selection.budget_bytes,
+        included_depth: selection.included_depth,
+        next_element_cost: selection
+            .next_used_bytes
+            .map(|next_used| next_used.saturating_sub(selection.used_bytes)),
+        focus_symbol: selection.focus_symbol.as_deref(),
+        elements_selected: selection.elements_selected,
+        elements_total: selection.elements_total,
+        truncated: selection.truncated,
+        used_bytes: selection.used_bytes,
+    }
+}
+
+fn vec_refs(values: &[String]) -> Vec<&str> {
+    values.iter().map(String::as_str).collect()
+}
+
+fn decision_to_json(decision: &DecisionBlock) -> JsonDecision<'_> {
+    JsonDecision {
+        name: &decision.name,
+        date: &decision.date,
+        chosen: decision_ref_json_text(&decision.chosen),
+        rejected: decision
+            .rejected
+            .iter()
+            .map(decision_ref_json_text)
+            .collect(),
+        reason: &decision.reason,
+        impacts: decision.impacts.iter().map(DecisionImpact::text).collect(),
+        author: decision.author.as_deref(),
+    }
+}
+
+fn module_to_json(ctx: &FileContext) -> JsonModule<'_> {
+    let effect_sets = (!ctx.effect_sets.is_empty()).then(|| {
+        ctx.effect_sets
+            .iter()
+            .map(|(name, effects)| JsonEffectSet {
+                name,
+                effects: vec_refs(effects),
+            })
+            .collect()
+    });
+
+    let types = {
+        let items = ctx
+            .type_defs
+            .iter()
+            .filter_map(|td| match td {
+                TypeDef::Sum { name, variants, .. } => Some(JsonType {
+                    name,
+                    variants: variants
+                        .iter()
+                        .map(|variant| {
+                            if variant.fields.is_empty() {
+                                JsonVariant::Nullary(&variant.name)
+                            } else {
+                                JsonVariant::WithFields {
+                                    name: &variant.name,
+                                    fields: vec_refs(&variant.fields),
+                                }
+                            }
+                        })
+                        .collect(),
+                }),
+                TypeDef::Product { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        (!items.is_empty()).then_some(items)
+    };
+
+    let records = {
+        let items = ctx
+            .type_defs
+            .iter()
+            .filter_map(|td| match td {
+                TypeDef::Product { name, fields, .. } => Some(JsonRecord {
+                    name,
+                    fields: fields
+                        .iter()
+                        .map(|(fname, ftype)| JsonRecordField {
+                            name: fname,
+                            field_type: ftype,
+                        })
+                        .collect(),
+                }),
+                TypeDef::Sum { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        (!items.is_empty()).then_some(items)
+    };
+
+    let functions = {
+        let items = ctx
+            .fn_defs
+            .iter()
+            .filter(|fd| fd.name != "main")
+            .map(|fd| {
+                let has_memo = ctx.fn_auto_memo.contains(&fd.name);
+                let has_tco = ctx.fn_auto_tco.contains(&fd.name);
+                let analysis = (has_memo || has_tco).then_some(JsonAnalysis {
+                    memo: has_memo.then_some(true),
+                    tco: has_tco.then_some(true),
+                });
+                let specs = ctx
+                    .fn_specs
+                    .get(&fd.name)
+                    .map_or_else(Vec::new, |specs| vec_refs(specs));
+                let verify = ctx
+                    .verify_samples
+                    .get(&fd.name)
+                    .map_or_else(Vec::new, |samples| vec_refs(samples));
+                JsonFunction {
+                    sig: fn_sig(fd),
+                    effects: vec_refs(&fd.effects),
+                    analysis,
+                    desc: fd.desc.as_deref(),
+                    specs,
+                    verify_count: ctx.verify_counts.get(&fd.name).copied().filter(|n| *n > 0),
+                    verify,
+                }
+            })
+            .collect::<Vec<_>>();
+        (!items.is_empty()).then_some(items)
+    };
+
+    let (effects, api_effects, module_effects) =
+        if effects_equal(&ctx.api_effects, &ctx.module_effects) {
+            (
+                (!ctx.module_effects.is_empty()).then(|| vec_refs(&ctx.module_effects)),
+                None,
+                None,
+            )
+        } else {
+            (
+                None,
+                Some(vec_refs(&ctx.api_effects)),
+                Some(vec_refs(&ctx.module_effects)),
+            )
+        };
+
+    JsonModule {
+        source_file: &ctx.source_file,
+        module: ctx.module_name.as_deref(),
+        intent: ctx.intent.as_deref(),
+        depends: (!ctx.depends.is_empty()).then(|| vec_refs(&ctx.depends)),
+        exposes_opaque: (!ctx.exposes_opaque.is_empty()).then(|| vec_refs(&ctx.exposes_opaque)),
+        effects,
+        api_effects,
+        module_effects,
+        main_effects: ctx.main_effects.as_ref().map(|effects| vec_refs(effects)),
+        effect_sets,
+        types,
+        records,
+        functions,
+    }
+}
+
+fn context_doc_to_json<'a>(
+    contexts: &'a [FileContext],
+    entry_file: &'a str,
+    selection: Option<&'a ContextSelection>,
+) -> JsonContextDoc<'a> {
+    let modules = contexts
+        .iter()
+        .filter(|ctx| {
+            ctx.module_name.is_some() || !ctx.fn_defs.is_empty() || !ctx.type_defs.is_empty()
+        })
+        .map(module_to_json)
+        .collect();
+    let decisions = contexts
+        .iter()
+        .flat_map(|ctx| ctx.decisions.iter())
+        .map(decision_to_json)
+        .collect();
+
+    JsonContextDoc {
+        schema_version: CONTEXT_SCHEMA_VERSION,
+        entry: entry_file,
+        selection: selection.map(selection_to_json),
+        modules,
+        decisions,
+    }
+}
+
+fn decisions_doc_to_json<'a>(
+    decisions: &[&'a DecisionBlock],
+    entry_file: &'a str,
+    selection: Option<&'a ContextSelection>,
+) -> JsonDecisionsDoc<'a> {
+    JsonDecisionsDoc {
+        entry: entry_file,
+        selection: selection.map(selection_to_json),
+        decisions: decisions.iter().copied().map(decision_to_json).collect(),
+    }
 }
 
 fn effects_equal(a: &[String], b: &[String]) -> bool {
@@ -266,366 +596,13 @@ pub(super) fn format_context_md(
     out
 }
 
-pub(super) fn json_str(s: &str) -> String {
-    format!(
-        "\"{}\"",
-        s.replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-    )
-}
-
 pub(super) fn format_context_json(
     contexts: &[FileContext],
     entry_file: &str,
     selection: Option<&ContextSelection>,
 ) -> String {
-    let all_decisions: Vec<&DecisionBlock> =
-        contexts.iter().flat_map(|c| c.decisions.iter()).collect();
-
-    let mut out = String::from("{\n");
-    out.push_str(&format!(
-        "  \"schema_version\": {},\n",
-        CONTEXT_SCHEMA_VERSION
-    ));
-    out.push_str(&format!("  \"entry\": {},\n", json_str(entry_file)));
-    if let Some(selection) = selection {
-        out.push_str("  \"selection\": {\n");
-        out.push_str(&format!(
-            "    \"depth_mode\": {},\n",
-            json_str(&selection.depth_mode)
-        ));
-        if let Some(budget) = selection.budget_bytes {
-            out.push_str(&format!("    \"budget_bytes\": {},\n", budget));
-        }
-        if let Some(depth) = selection.included_depth {
-            out.push_str(&format!("    \"included_depth\": {},\n", depth));
-        }
-        if let Some(next_used) = selection.next_used_bytes {
-            out.push_str(&format!(
-                "    \"next_element_cost\": {},\n",
-                next_used.saturating_sub(selection.used_bytes)
-            ));
-        }
-        if let Some(focus_symbol) = &selection.focus_symbol {
-            out.push_str(&format!(
-                "    \"focus_symbol\": {},\n",
-                json_str(focus_symbol)
-            ));
-        }
-        if let (Some(selected), Some(total)) =
-            (selection.elements_selected, selection.elements_total)
-        {
-            out.push_str(&format!("    \"elements_selected\": {},\n", selected));
-            out.push_str(&format!("    \"elements_total\": {},\n", total));
-        }
-        out.push_str(&format!(
-            "    \"truncated\": {},\n",
-            if selection.truncated { "true" } else { "false" }
-        ));
-        out.push_str(&format!("    \"used_bytes\": {}\n", selection.used_bytes));
-        out.push_str("  },\n");
-    }
-    out.push_str("  \"modules\": [\n");
-
-    let non_empty: Vec<&FileContext> = contexts
-        .iter()
-        .filter(|c| c.module_name.is_some() || !c.fn_defs.is_empty() || !c.type_defs.is_empty())
-        .collect();
-
-    for (mi, ctx) in non_empty.iter().enumerate() {
-        let comma_m = if mi + 1 < non_empty.len() { "," } else { "" };
-        out.push_str("    {\n");
-        out.push_str(&format!(
-            "      \"source_file\": {},\n",
-            json_str(&ctx.source_file)
-        ));
-        if let Some(n) = &ctx.module_name {
-            out.push_str(&format!("      \"module\": {},\n", json_str(n)));
-        }
-        if let Some(i) = &ctx.intent {
-            out.push_str(&format!("      \"intent\": {},\n", json_str(i)));
-        }
-        if !ctx.depends.is_empty() {
-            let depends = ctx
-                .depends
-                .iter()
-                .map(|dep| json_str(dep))
-                .collect::<Vec<_>>()
-                .join(", ");
-            out.push_str(&format!("      \"depends\": [{}],\n", depends));
-        }
-        if !ctx.exposes_opaque.is_empty() {
-            let opaque = ctx
-                .exposes_opaque
-                .iter()
-                .map(|name| json_str(name))
-                .collect::<Vec<_>>()
-                .join(", ");
-            out.push_str(&format!("      \"exposes_opaque\": [{}],\n", opaque));
-        }
-
-        // Effects: merge when identical, omit when empty
-        if effects_equal(&ctx.api_effects, &ctx.module_effects) {
-            if !ctx.module_effects.is_empty() {
-                let effs = ctx
-                    .module_effects
-                    .iter()
-                    .map(|e| json_str(e))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                out.push_str(&format!("      \"effects\": [{}],\n", effs));
-            }
-        } else {
-            let api = ctx
-                .api_effects
-                .iter()
-                .map(|e| json_str(e))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let module = ctx
-                .module_effects
-                .iter()
-                .map(|e| json_str(e))
-                .collect::<Vec<_>>()
-                .join(", ");
-            out.push_str(&format!("      \"api_effects\": [{}],\n", api));
-            out.push_str(&format!("      \"module_effects\": [{}],\n", module));
-        }
-
-        if let Some(main_effects) = &ctx.main_effects {
-            let main_effs = main_effects
-                .iter()
-                .map(|e| json_str(e))
-                .collect::<Vec<_>>()
-                .join(", ");
-            out.push_str(&format!("      \"main_effects\": [{}],\n", main_effs));
-        }
-
-        // effect_sets — omit key when empty
-        if !ctx.effect_sets.is_empty() {
-            out.push_str("      \"effect_sets\": [\n");
-            for (ei, (name, effects)) in ctx.effect_sets.iter().enumerate() {
-                let comma_e = if ei + 1 < ctx.effect_sets.len() {
-                    ","
-                } else {
-                    ""
-                };
-                let effs: Vec<String> = effects.iter().map(|e| json_str(e)).collect();
-                out.push_str(&format!(
-                    "        {{\"name\": {}, \"effects\": [{}]}}{}\n",
-                    json_str(name),
-                    effs.join(", "),
-                    comma_e
-                ));
-            }
-            out.push_str("      ],\n");
-        }
-
-        // types — omit key when empty
-        let sum_types: Vec<&TypeDef> = ctx
-            .type_defs
-            .iter()
-            .filter(|td| matches!(td, TypeDef::Sum { .. }))
-            .collect();
-        if !sum_types.is_empty() {
-            out.push_str("      \"types\": [\n");
-            for (ti, td) in sum_types.iter().enumerate() {
-                let comma_t = if ti + 1 < sum_types.len() { "," } else { "" };
-                if let TypeDef::Sum { name, variants, .. } = td {
-                    let vars: Vec<String> = variants
-                        .iter()
-                        .map(|v| {
-                            if v.fields.is_empty() {
-                                json_str(&v.name)
-                            } else {
-                                format!(
-                                    "{{\"name\": {}, \"fields\": [{}]}}",
-                                    json_str(&v.name),
-                                    v.fields
-                                        .iter()
-                                        .map(|f| json_str(f))
-                                        .collect::<Vec<_>>()
-                                        .join(", ")
-                                )
-                            }
-                        })
-                        .collect();
-                    out.push_str(&format!(
-                        "        {{\"name\": {}, \"variants\": [{}]}}{}\n",
-                        json_str(name),
-                        vars.join(", "),
-                        comma_t
-                    ));
-                }
-            }
-            out.push_str("      ],\n");
-        }
-
-        // records — omit key when empty
-        let records: Vec<&TypeDef> = ctx
-            .type_defs
-            .iter()
-            .filter(|td| matches!(td, TypeDef::Product { .. }))
-            .collect();
-        if !records.is_empty() {
-            out.push_str("      \"records\": [\n");
-            for (ri, td) in records.iter().enumerate() {
-                let comma_r = if ri + 1 < records.len() { "," } else { "" };
-                if let TypeDef::Product { name, fields, .. } = td {
-                    let flds: Vec<String> = fields
-                        .iter()
-                        .map(|(fname, ftype)| {
-                            format!(
-                                "{{\"name\": {}, \"type\": {}}}",
-                                json_str(fname),
-                                json_str(ftype)
-                            )
-                        })
-                        .collect();
-                    out.push_str(&format!(
-                        "        {{\"name\": {}, \"fields\": [{}]}}{}\n",
-                        json_str(name),
-                        flds.join(", "),
-                        comma_r
-                    ));
-                }
-            }
-            out.push_str("      ],\n");
-        }
-
-        let fns: Vec<&FnDef> = ctx.fn_defs.iter().filter(|fd| fd.name != "main").collect();
-        if !fns.is_empty() {
-            out.push_str("      \"functions\": [\n");
-            for (fi, fd) in fns.iter().enumerate() {
-                let comma_f = if fi + 1 < fns.len() { "," } else { "" };
-                out.push_str("        {\n");
-                out.push_str(&format!("          \"sig\": {},\n", json_str(&fn_sig(fd))));
-
-                if !fd.effects.is_empty() {
-                    let effs: Vec<String> = fd.effects.iter().map(|e| json_str(e)).collect();
-                    out.push_str(&format!("          \"effects\": [{}],\n", effs.join(", ")));
-                }
-
-                // Analysis — only when non-default
-                let has_memo = ctx.fn_auto_memo.contains(&fd.name);
-                let has_tco = ctx.fn_auto_tco.contains(&fd.name);
-                if has_memo || has_tco {
-                    let mut analysis_fields = Vec::new();
-                    if has_memo {
-                        analysis_fields.push("\"memo\": true".to_string());
-                    }
-                    if has_tco {
-                        analysis_fields.push("\"tco\": true".to_string());
-                    }
-                    out.push_str(&format!(
-                        "          \"analysis\": {{{}}},\n",
-                        analysis_fields.join(", ")
-                    ));
-                }
-
-                if let Some(d) = &fd.desc {
-                    out.push_str(&format!("          \"desc\": {},\n", json_str(d)));
-                }
-
-                let specs = ctx.fn_specs.get(&fd.name).cloned().unwrap_or_default();
-                if !specs.is_empty() {
-                    let specs_json = specs
-                        .iter()
-                        .map(|spec| json_str(spec))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    out.push_str(&format!("          \"specs\": [{}],\n", specs_json));
-                }
-
-                let verify_total = ctx.verify_counts.get(&fd.name).copied().unwrap_or(0);
-                if verify_total > 0 {
-                    out.push_str(&format!("          \"verify_count\": {},\n", verify_total));
-                }
-
-                let verify_cases: Vec<String> = ctx
-                    .verify_samples
-                    .get(&fd.name)
-                    .cloned()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|sample| json_str(&sample))
-                    .collect();
-
-                if !verify_cases.is_empty() {
-                    out.push_str(&format!(
-                        "          \"verify\": [{}]\n",
-                        verify_cases.join(", ")
-                    ));
-                } else {
-                    // Trim trailing comma from last field
-                    if out.ends_with(",\n") {
-                        out.truncate(out.len() - 2);
-                        out.push('\n');
-                    }
-                }
-
-                out.push_str(&format!("        }}{}\n", comma_f));
-            }
-            out.push_str("      ]\n");
-        } else if out.ends_with(",\n") {
-            out.truncate(out.len() - 2);
-            out.push('\n');
-        }
-
-        out.push_str(&format!("    }}{}\n", comma_m));
-    }
-
-    if all_decisions.is_empty() {
-        out.push_str("  ]\n");
-        out.push('}');
-        return out;
-    }
-
-    out.push_str("  ],\n");
-
-    // decisions
-    out.push_str("  \"decisions\": [");
-    out.push('\n');
-    for (di, dec) in all_decisions.iter().enumerate() {
-        let comma_d = if di + 1 < all_decisions.len() {
-            ","
-        } else {
-            ""
-        };
-        out.push_str("    {\n");
-        out.push_str(&format!("      \"name\": {},\n", json_str(&dec.name)));
-        out.push_str(&format!("      \"date\": {},\n", json_str(&dec.date)));
-        out.push_str(&format!(
-            "      \"chosen\": {},\n",
-            json_str(decision_ref_json_text(&dec.chosen))
-        ));
-        let rej: Vec<String> = dec
-            .rejected
-            .iter()
-            .map(|r| json_str(decision_ref_json_text(r)))
-            .collect();
-        out.push_str(&format!("      \"rejected\": [{}],\n", rej.join(", ")));
-        out.push_str(&format!("      \"reason\": {},\n", json_str(&dec.reason)));
-        let imp: Vec<String> = impact_json_texts(&dec.impacts)
-            .iter()
-            .map(|i| json_str(i))
-            .collect();
-        out.push_str(&format!("      \"impacts\": [{}],\n", imp.join(", ")));
-        if let Some(a) = &dec.author {
-            out.push_str(&format!("      \"author\": {}\n", json_str(a)));
-        }
-        // Trim trailing comma if author was omitted
-        if out.ends_with(",\n") {
-            out.truncate(out.len() - 2);
-            out.push('\n');
-        }
-        out.push_str(&format!("    }}{}\n", comma_d));
-    }
-    out.push_str("  ]\n");
-
-    out.push('}');
-    out
+    serde_json::to_string_pretty(&context_doc_to_json(contexts, entry_file, selection))
+        .expect("context JSON should always serialize")
 }
 
 pub(super) fn collect_all_decisions(contexts: &[FileContext]) -> Vec<&DecisionBlock> {
@@ -709,84 +686,8 @@ pub(super) fn format_decisions_json(
     entry_file: &str,
     selection: Option<&ContextSelection>,
 ) -> String {
-    let mut out = String::from("{\n");
-    out.push_str(&format!("  \"entry\": {},\n", json_str(entry_file)));
-    if let Some(selection) = selection {
-        out.push_str("  \"selection\": {\n");
-        out.push_str(&format!(
-            "    \"depth_mode\": {},\n",
-            json_str(&selection.depth_mode)
-        ));
-        if let Some(budget) = selection.budget_bytes {
-            out.push_str(&format!("    \"budget_bytes\": {},\n", budget));
-        }
-        if let Some(depth) = selection.included_depth {
-            out.push_str(&format!("    \"included_depth\": {},\n", depth));
-        }
-        if let Some(next_used) = selection.next_used_bytes {
-            out.push_str(&format!(
-                "    \"next_element_cost\": {},\n",
-                next_used.saturating_sub(selection.used_bytes)
-            ));
-        }
-        if let Some(focus_symbol) = &selection.focus_symbol {
-            out.push_str(&format!(
-                "    \"focus_symbol\": {},\n",
-                json_str(focus_symbol)
-            ));
-        }
-        if let (Some(selected), Some(total)) =
-            (selection.elements_selected, selection.elements_total)
-        {
-            out.push_str(&format!("    \"elements_selected\": {},\n", selected));
-            out.push_str(&format!("    \"elements_total\": {},\n", total));
-        }
-        out.push_str(&format!(
-            "    \"truncated\": {},\n",
-            if selection.truncated { "true" } else { "false" }
-        ));
-        out.push_str(&format!("    \"used_bytes\": {}\n", selection.used_bytes));
-        out.push_str("  },\n");
-    }
-    out.push_str("  \"decisions\": [");
-    if decisions.is_empty() {
-        out.push_str("]\n");
-    } else {
-        out.push('\n');
-        for (di, dec) in decisions.iter().enumerate() {
-            let comma_d = if di + 1 < decisions.len() { "," } else { "" };
-            out.push_str("    {\n");
-            out.push_str(&format!("      \"name\": {},\n", json_str(&dec.name)));
-            out.push_str(&format!("      \"date\": {},\n", json_str(&dec.date)));
-            out.push_str(&format!(
-                "      \"chosen\": {},\n",
-                json_str(decision_ref_json_text(&dec.chosen))
-            ));
-            let rej: Vec<String> = dec
-                .rejected
-                .iter()
-                .map(|r| json_str(decision_ref_json_text(r)))
-                .collect();
-            out.push_str(&format!("      \"rejected\": [{}],\n", rej.join(", ")));
-            out.push_str(&format!("      \"reason\": {},\n", json_str(&dec.reason)));
-            let imp: Vec<String> = impact_json_texts(&dec.impacts)
-                .iter()
-                .map(|i| json_str(i))
-                .collect();
-            out.push_str(&format!("      \"impacts\": [{}],\n", imp.join(", ")));
-            if let Some(a) = &dec.author {
-                out.push_str(&format!("      \"author\": {}\n", json_str(a)));
-            }
-            if out.ends_with(",\n") {
-                out.truncate(out.len() - 2);
-                out.push('\n');
-            }
-            out.push_str(&format!("    }}{}\n", comma_d));
-        }
-        out.push_str("  ]\n");
-    }
-    out.push('}');
-    out
+    serde_json::to_string_pretty(&decisions_doc_to_json(decisions, entry_file, selection))
+        .expect("decisions JSON should always serialize")
 }
 
 #[cfg(test)]
@@ -861,12 +762,19 @@ mod tests {
     #[test]
     fn json_context_renders_specs_array() {
         let out = format_context_json(&[file_context_with_spec()], "examples/spec.av", None);
-        assert!(out.contains("\"schema_version\": 6"));
-        assert!(out.contains("\"depends\": [\"Math.Core\"]"));
-        assert!(out.contains("\"sig\": \"fib(n: Int) -> Int\""));
-        assert!(out.contains("\"specs\": [\"fibSpec\"]"));
-        assert!(out.contains("\"verify_count\": 1"));
-        assert!(out.contains("\"verify\": [\"fib(5) → 8\"]"));
+        let json: serde_json::Value = serde_json::from_str(&out).expect("valid context JSON");
+        assert_eq!(json["schema_version"], 6);
+        assert_eq!(json["modules"][0]["depends"][0], "Math.Core");
+        assert_eq!(
+            json["modules"][0]["functions"][0]["sig"],
+            "fib(n: Int) -> Int"
+        );
+        assert_eq!(json["modules"][0]["functions"][0]["specs"][0], "fibSpec");
+        assert_eq!(json["modules"][0]["functions"][0]["verify_count"], 1);
+        assert_eq!(
+            json["modules"][0]["functions"][0]["verify"][0],
+            "fib(5) → 8"
+        );
     }
 
     #[test]
@@ -876,9 +784,9 @@ mod tests {
         ctx.fn_auto_tco.insert("fib".to_string());
 
         let out = format_context_json(&[ctx], "examples/spec.av", None);
-        assert!(out.contains("\"analysis\": {\"memo\": true, \"tco\": true}"));
-        assert!(!out.contains("\"memo\": true,\n"));
-        assert!(!out.contains("\"tco\": true,\n"));
+        let json: serde_json::Value = serde_json::from_str(&out).expect("valid context JSON");
+        assert_eq!(json["modules"][0]["functions"][0]["analysis"]["memo"], true);
+        assert_eq!(json["modules"][0]["functions"][0]["analysis"]["tco"], true);
     }
 
     #[test]
