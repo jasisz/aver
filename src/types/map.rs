@@ -378,10 +378,7 @@ fn get_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
     let key_hash = nv_key_bits(args[1], arena);
     let map = arena.get_map(args[0].arena_index());
     match map.get(&key_hash) {
-        Some((_, v)) => {
-            let box_idx = arena.push_boxed(*v);
-            Ok(NanValue::new_some(box_idx))
-        }
+        Some((_, v)) => Ok(NanValue::new_some_value(*v, arena)),
         None => Ok(NanValue::NONE),
     }
 }

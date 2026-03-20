@@ -80,6 +80,8 @@ Common heap-backed shapes include:
 - `Map`
 - boxed wrapper payloads (`Result.Ok`, `Result.Err`, `Option.Some`)
 
+There is one important exception now: wrappers around plain immediates (`Bool`, `Unit`, `None`) can stay fully inline as tagged `NanValue`s instead of allocating a one-edge boxed node in the arena. That keeps common `Result` / `Option` pipelines from manufacturing heap churn just to carry `Ok(true)` or `Some(Unit)` through the VM.
+
 This is the main reason the VM can stay small without dragging a large object model everywhere.
 
 ## Memory Model

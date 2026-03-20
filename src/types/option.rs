@@ -94,7 +94,7 @@ fn with_default_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Run
     }
     let v = args[0];
     if v.is_some() {
-        Ok(arena.get_boxed(v.wrapper_index()))
+        Ok(v.wrapper_inner(arena))
     } else if v.is_none() {
         Ok(args[1])
     } else {
@@ -113,11 +113,10 @@ fn to_result_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtim
     }
     let v = args[0];
     if v.is_some() {
-        // Some(inner) -> Ok(inner) — reuse the same boxed index
-        Ok(NanValue::new_ok(v.wrapper_index()))
+        let inner = v.wrapper_inner(arena);
+        Ok(NanValue::new_ok_value(inner, arena))
     } else if v.is_none() {
-        let box_idx = arena.push_boxed(args[1]);
-        Ok(NanValue::new_err(box_idx))
+        Ok(NanValue::new_err_value(args[1], arena))
     } else {
         Err(RuntimeError::Error(
             "Option.toResult: first argument must be an Option".to_string(),

@@ -203,7 +203,7 @@ impl Interpreter {
                         if !value.is_ok() {
                             return None;
                         }
-                        let inner = self.arena.get_boxed(value.wrapper_index());
+                        let inner = value.wrapper_inner(&self.arena);
                         let mut result = Vec::with_capacity(1);
                         if let Some(name) = bindings.first()
                             && name != "_"
@@ -216,7 +216,7 @@ impl Interpreter {
                         if !value.is_err() {
                             return None;
                         }
-                        let inner = self.arena.get_boxed(value.wrapper_index());
+                        let inner = value.wrapper_inner(&self.arena);
                         let mut result = Vec::with_capacity(1);
                         if let Some(name) = bindings.first()
                             && name != "_"
@@ -229,7 +229,7 @@ impl Interpreter {
                         if !value.is_some() {
                             return None;
                         }
-                        let inner = self.arena.get_boxed(value.wrapper_index());
+                        let inner = value.wrapper_inner(&self.arena);
                         let mut result = Vec::with_capacity(1);
                         if let Some(name) = bindings.first()
                             && name != "_"

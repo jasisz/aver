@@ -152,14 +152,12 @@ fn read_line_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtim
         Ok(line) => {
             let s_idx = arena.push_string(&line);
             let inner = NanValue::new_string(s_idx);
-            let box_idx = arena.push_boxed(inner);
-            Ok(NanValue::new_ok(box_idx))
+            Ok(NanValue::new_ok_value(inner, arena))
         }
         Err(e) => {
             let s_idx = arena.push_string(&e);
             let inner = NanValue::new_string(s_idx);
-            let box_idx = arena.push_boxed(inner);
-            Ok(NanValue::new_err(box_idx))
+            Ok(NanValue::new_err_value(inner, arena))
         }
     }
 }

@@ -11,19 +11,20 @@ impl NanValue {
         if self.is_float() {
             return self.as_float() == other.as_float();
         }
+        match (self.wrapper_parts(arena), other.wrapper_parts(arena)) {
+            (Some((self_kind, self_inner)), Some((other_kind, other_inner))) => {
+                return self_kind == other_kind && self_inner.eq_in(other_inner, arena);
+            }
+            (Some(_), None) | (None, Some(_)) => return false,
+            (None, None) => {}
+        }
         if self.tag() != other.tag() {
             return false;
         }
         match self.tag() {
             TAG_INT => self.as_int(arena) == other.as_int(arena),
             TAG_IMMEDIATE => false,
-            TAG_WRAPPER => {
-                self.wrapper_kind() == other.wrapper_kind() && {
-                    let a = arena.get_boxed(self.wrapper_index());
-                    let b = arena.get_boxed(other.wrapper_index());
-                    a.eq_in(b, arena)
-                }
-            }
+            TAG_WRAPPER => unreachable!("wrapper comparison handled above"),
             TAG_STRING => {
                 arena.get_string(self.arena_index()) == arena.get_string(other.arena_index())
             }
@@ -83,15 +84,18 @@ impl NanValue {
             bits.hash(state);
             return;
         }
+        if let Some((kind, inner)) = self.wrapper_parts(arena) {
+            (TAG_WRAPPER as u8).hash(state);
+            kind.hash(state);
+            inner.hash_in(state, arena);
+            return;
+        }
         let tag = self.tag();
         (tag as u8).hash(state);
         match tag {
             TAG_INT => self.as_int(arena).hash(state),
             TAG_IMMEDIATE => self.payload().hash(state),
-            TAG_WRAPPER => {
-                self.wrapper_kind().hash(state);
-                arena.get_boxed(self.wrapper_index()).hash_in(state, arena);
-            }
+            TAG_WRAPPER => unreachable!("wrapper hashing handled above"),
             TAG_STRING => arena.get_string(self.arena_index()).hash(state),
             TAG_LIST => {
                 let list_idx = self.arena_index();
@@ -130,6 +134,15 @@ impl NanValue {
         if self.is_float() {
             return self.as_float().to_string();
         }
+        if let Some((kind, inner)) = self.wrapper_parts(arena) {
+            let ir = inner.repr_inner(arena);
+            return match kind {
+                WRAP_SOME => format!("Option.Some({})", ir),
+                WRAP_OK => format!("Result.Ok({})", ir),
+                WRAP_ERR => format!("Result.Err({})", ir),
+                _ => "??".into(),
+            };
+        }
         match self.tag() {
             TAG_INT => self.as_int(arena).to_string(),
             TAG_IMMEDIATE => match self.payload() {
@@ -139,16 +152,7 @@ impl NanValue {
                 IMM_NONE => "Option.None".into(),
                 _ => "??".into(),
             },
-            TAG_WRAPPER => {
-                let inner = arena.get_boxed(self.wrapper_index());
-                let ir = inner.repr_inner(arena);
-                match self.wrapper_kind() {
-                    WRAP_SOME => format!("Option.Some({})", ir),
-                    WRAP_OK => format!("Result.Ok({})", ir),
-                    WRAP_ERR => format!("Result.Err({})", ir),
-                    _ => "??".into(),
-                }
-            }
+            TAG_WRAPPER => unreachable!("wrapper repr handled above"),
             TAG_STRING => arena.get_string(self.arena_index()).to_string(),
             TAG_LIST => {
                 let parts: Vec<_> = arena

@@ -1002,7 +1002,7 @@ fn vm_int_mod() {
     let src = "fn main() -> Result<Int, String>\n    Int.mod(17, 5)\n";
     let (result, arena) = vm_run_with_arena(src);
     assert!(result.is_ok());
-    let inner = arena.get_boxed(result.wrapper_index());
+    let inner = result.wrapper_inner(&arena);
     assert_eq!(inner.as_int(&arena), 2);
 }
 
@@ -1029,7 +1029,7 @@ fn vm_list_head() {
     let src = "fn main() -> Option<Int>\n    List.get([10, 20, 30], 0)\n";
     let (result, arena) = vm_run_with_arena(src);
     assert!(result.is_some());
-    let inner = arena.get_boxed(result.wrapper_index());
+    let inner = result.wrapper_inner(&arena);
     assert_eq!(inner.as_int(&arena), 10);
 }
 
@@ -1074,7 +1074,7 @@ fn vm_error_prop_ok() {
     let src = "fn safeDivide(a: Int, b: Int) -> Result<Int, String>\n    match b == 0\n        true -> Result.Err(\"div by zero\")\n        false -> Result.Ok(a / b)\n\nfn run() -> Result<Int, String>\n    x = safeDivide(10, 2)?\n    Result.Ok(x + 1)\n\nfn main() -> Result<Int, String>\n    run()\n";
     let (result, arena) = vm_run_with_arena(src);
     assert!(result.is_ok());
-    let inner = arena.get_boxed(result.wrapper_index());
+    let inner = result.wrapper_inner(&arena);
     assert_eq!(inner.as_int(&arena), 6);
 }
 
@@ -1083,7 +1083,7 @@ fn vm_error_prop_err() {
     let src = "fn safeDivide(a: Int, b: Int) -> Result<Int, String>\n    match b == 0\n        true -> Result.Err(\"div by zero\")\n        false -> Result.Ok(a / b)\n\nfn run() -> Result<Int, String>\n    x = safeDivide(10, 0)?\n    Result.Ok(x + 1)\n\nfn main() -> Result<Int, String>\n    run()\n";
     let (result, arena) = vm_run_with_arena(src);
     assert!(result.is_err());
-    let inner = arena.get_boxed(result.wrapper_index());
+    let inner = result.wrapper_inner(&arena);
     assert!(inner.is_string());
     assert_eq!(arena.get_string(inner.arena_index()), "div by zero");
 }
@@ -1093,7 +1093,7 @@ fn vm_error_prop_chain() {
     let src = "fn step1() -> Result<Int, String>\n    Result.Ok(10)\n\nfn step2(x: Int) -> Result<Int, String>\n    Result.Ok(x * 2)\n\nfn run() -> Result<Int, String>\n    a = step1()?\n    b = step2(a)?\n    Result.Ok(b + 1)\n\nfn main() -> Result<Int, String>\n    run()\n";
     let (result, arena) = vm_run_with_arena(src);
     assert!(result.is_ok());
-    let inner = arena.get_boxed(result.wrapper_index());
+    let inner = result.wrapper_inner(&arena);
     assert_eq!(inner.as_int(&arena), 21);
 }
 

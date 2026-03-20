@@ -18,7 +18,7 @@
 //!
 //! Tag map:
 //!   0  = Int        payload bit45: 0=inline(45-bit signed), 1=arena index
-//!   1  = Immediate  payload bits 0-1: 00=false, 01=true, 10=unit, 11=none
+//!   1  = Immediate  payload 0-3: false/true/unit/none; 4-15: wrapped immediate
 //!   2  = Wrapper    payload bits 0-1: 00=some, 01=ok, 10=err; rest=arena index
 //!   3  = String     payload = arena index
 //!   4  = List       payload = arena index
@@ -65,6 +65,8 @@ const IMM_FALSE: u64 = 0;
 const IMM_TRUE: u64 = 1;
 const IMM_UNIT: u64 = 2;
 const IMM_NONE: u64 = 3;
+const IMM_WRAPPED_BASE: u64 = 4;
+const IMM_INNER_MASK: u64 = 0b11;
 
 const WRAP_SOME: u64 = 0;
 const WRAP_OK: u64 = 1;
@@ -179,6 +181,37 @@ impl NanValue {
         self.0 == Self::TRUE.0
     }
 
+    #[inline]
+    fn plain_immediate_payload(self) -> Option<u64> {
+        (self.is_nan_boxed() && self.tag() == TAG_IMMEDIATE && self.payload() <= IMM_NONE)
+            .then_some(self.payload())
+    }
+
+    #[inline]
+    fn wrapped_immediate_parts(self) -> Option<(u64, u64)> {
+        if !self.is_nan_boxed() || self.tag() != TAG_IMMEDIATE {
+            return None;
+        }
+        let payload = self.payload();
+        if payload < IMM_WRAPPED_BASE {
+            return None;
+        }
+        let encoded = payload - IMM_WRAPPED_BASE;
+        let kind = encoded >> 2;
+        let inner = encoded & IMM_INNER_MASK;
+        (kind <= WRAP_ERR && inner <= IMM_NONE).then_some((kind, inner))
+    }
+
+    #[inline]
+    fn new_wrapped_immediate(kind: u64, inner_payload: u64) -> Self {
+        debug_assert!(kind <= WRAP_ERR);
+        debug_assert!(inner_payload <= IMM_NONE);
+        Self::encode(
+            TAG_IMMEDIATE,
+            IMM_WRAPPED_BASE + (kind << 2) + inner_payload,
+        )
+    }
+
     // -- Wrappers (Some/Ok/Err) -------------------------------------------
 
     #[inline]
@@ -198,12 +231,69 @@ impl NanValue {
 
     #[inline]
     pub fn wrapper_kind(self) -> u64 {
-        self.payload() & 3
+        if let Some((kind, _)) = self.wrapped_immediate_parts() {
+            kind
+        } else {
+            debug_assert!(self.is_nan_boxed() && self.tag() == TAG_WRAPPER);
+            self.payload() & 3
+        }
     }
 
     #[inline]
     pub fn wrapper_index(self) -> u32 {
+        debug_assert!(self.is_nan_boxed() && self.tag() == TAG_WRAPPER);
         (self.payload() >> 2) as u32
+    }
+
+    #[inline]
+    fn wrapper_parts(self, arena: &Arena) -> Option<(u64, NanValue)> {
+        if !self.is_nan_boxed() {
+            return None;
+        }
+        match self.tag() {
+            TAG_WRAPPER => Some((self.wrapper_kind(), arena.get_boxed(self.wrapper_index()))),
+            TAG_IMMEDIATE => self
+                .wrapped_immediate_parts()
+                .map(|(kind, inner)| (kind, Self::encode(TAG_IMMEDIATE, inner))),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn wrapper_inner(self, arena: &Arena) -> NanValue {
+        self.wrapper_parts(arena)
+            .map(|(_, inner)| inner)
+            .expect("wrapper_inner() called on non-wrapper")
+    }
+
+    #[inline]
+    fn wrap_value(kind: u64, inner: NanValue, arena: &mut Arena) -> Self {
+        if let Some(payload) = inner.plain_immediate_payload() {
+            Self::new_wrapped_immediate(kind, payload)
+        } else {
+            let idx = arena.push_boxed(inner);
+            match kind {
+                WRAP_SOME => Self::new_some(idx),
+                WRAP_OK => Self::new_ok(idx),
+                WRAP_ERR => Self::new_err(idx),
+                _ => unreachable!("invalid wrapper kind"),
+            }
+        }
+    }
+
+    #[inline]
+    pub fn new_some_value(inner: NanValue, arena: &mut Arena) -> Self {
+        Self::wrap_value(WRAP_SOME, inner, arena)
+    }
+
+    #[inline]
+    pub fn new_ok_value(inner: NanValue, arena: &mut Arena) -> Self {
+        Self::wrap_value(WRAP_OK, inner, arena)
+    }
+
+    #[inline]
+    pub fn new_err_value(inner: NanValue, arena: &mut Arena) -> Self {
+        Self::wrap_value(WRAP_ERR, inner, arena)
     }
 
     // -- Arena-backed constructors -----------------------------------------
@@ -339,17 +429,38 @@ impl NanValue {
 
     #[inline]
     pub fn is_some(self) -> bool {
-        self.is_nan_boxed() && self.tag() == TAG_WRAPPER && self.wrapper_kind() == WRAP_SOME
+        self.is_nan_boxed()
+            && match self.tag() {
+                TAG_WRAPPER => self.wrapper_kind() == WRAP_SOME,
+                TAG_IMMEDIATE => self
+                    .wrapped_immediate_parts()
+                    .is_some_and(|(kind, _)| kind == WRAP_SOME),
+                _ => false,
+            }
     }
 
     #[inline]
     pub fn is_ok(self) -> bool {
-        self.is_nan_boxed() && self.tag() == TAG_WRAPPER && self.wrapper_kind() == WRAP_OK
+        self.is_nan_boxed()
+            && match self.tag() {
+                TAG_WRAPPER => self.wrapper_kind() == WRAP_OK,
+                TAG_IMMEDIATE => self
+                    .wrapped_immediate_parts()
+                    .is_some_and(|(kind, _)| kind == WRAP_OK),
+                _ => false,
+            }
     }
 
     #[inline]
     pub fn is_err(self) -> bool {
-        self.is_nan_boxed() && self.tag() == TAG_WRAPPER && self.wrapper_kind() == WRAP_ERR
+        self.is_nan_boxed()
+            && match self.tag() {
+                TAG_WRAPPER => self.wrapper_kind() == WRAP_ERR,
+                TAG_IMMEDIATE => self
+                    .wrapped_immediate_parts()
+                    .is_some_and(|(kind, _)| kind == WRAP_ERR),
+                _ => false,
+            }
     }
 
     #[inline]
@@ -403,12 +514,23 @@ impl NanValue {
         }
         match self.tag() {
             TAG_INT => "Int",
-            TAG_IMMEDIATE => match self.payload() {
-                IMM_FALSE | IMM_TRUE => "Bool",
-                IMM_UNIT => "Unit",
-                IMM_NONE => "Option.None",
-                _ => "Unknown",
-            },
+            TAG_IMMEDIATE => {
+                if let Some((kind, _)) = self.wrapped_immediate_parts() {
+                    match kind {
+                        WRAP_SOME => "Option.Some",
+                        WRAP_OK => "Result.Ok",
+                        WRAP_ERR => "Result.Err",
+                        _ => "Unknown",
+                    }
+                } else {
+                    match self.payload() {
+                        IMM_FALSE | IMM_TRUE => "Bool",
+                        IMM_UNIT => "Unit",
+                        IMM_NONE => "Option.None",
+                        _ => "Unknown",
+                    }
+                }
+            }
             TAG_WRAPPER => match self.wrapper_kind() {
                 WRAP_SOME => "Option.Some",
                 WRAP_OK => "Result.Ok",
@@ -472,13 +594,32 @@ impl std::fmt::Debug for NanValue {
                     write!(f, "Int({})", val)
                 }
             }
-            TAG_IMMEDIATE => match self.payload() {
-                IMM_FALSE => write!(f, "False"),
-                IMM_TRUE => write!(f, "True"),
-                IMM_UNIT => write!(f, "Unit"),
-                IMM_NONE => write!(f, "None"),
-                _ => write!(f, "Immediate({})", self.payload()),
-            },
+            TAG_IMMEDIATE => {
+                if let Some((kind, inner)) = self.wrapped_immediate_parts() {
+                    let kind = match kind {
+                        WRAP_SOME => "Some",
+                        WRAP_OK => "Ok",
+                        WRAP_ERR => "Err",
+                        _ => "?",
+                    };
+                    let inner = match inner {
+                        IMM_FALSE => "False",
+                        IMM_TRUE => "True",
+                        IMM_UNIT => "Unit",
+                        IMM_NONE => "None",
+                        _ => "?",
+                    };
+                    write!(f, "{}({})", kind, inner)
+                } else {
+                    match self.payload() {
+                        IMM_FALSE => write!(f, "False"),
+                        IMM_TRUE => write!(f, "True"),
+                        IMM_UNIT => write!(f, "Unit"),
+                        IMM_NONE => write!(f, "None"),
+                        _ => write!(f, "Immediate({})", self.payload()),
+                    }
+                }
+            }
             TAG_WRAPPER => {
                 let kind = match self.wrapper_kind() {
                     WRAP_SOME => "Some",

@@ -12,6 +12,7 @@ All notable changes to Aver are documented here.
 
 ### Changed
 - `aver-rt::AverList` now packs repeated `append` chains into segmented chunk spines, improving list-heavy workloads in both the interpreter and generated Rust.
+- VM `Result.Ok` / `Result.Err` / `Option.Some` now keep wrapped `Bool` / `Unit` / `None` values inline inside `NanValue` instead of boxing them in the arena, reducing wrapper-heavy memory churn on interpreter and VM paths.
 
 ## 0.5.5
 

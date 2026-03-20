@@ -347,8 +347,7 @@ impl Interpreter {
                         args.len()
                     )));
                 }
-                let idx = self.arena.push_boxed(args[0]);
-                Ok(NanValue::new_ok(idx))
+                Ok(NanValue::new_ok_value(args[0], &mut self.arena))
             }
             "__ctor:Result.Err" => {
                 if args.len() != 1 {
@@ -357,8 +356,7 @@ impl Interpreter {
                         args.len()
                     )));
                 }
-                let idx = self.arena.push_boxed(args[0]);
-                Ok(NanValue::new_err(idx))
+                Ok(NanValue::new_err_value(args[0], &mut self.arena))
             }
             "__ctor:Option.Some" => {
                 if args.len() != 1 {
@@ -367,8 +365,7 @@ impl Interpreter {
                         args.len()
                     )));
                 }
-                let idx = self.arena.push_boxed(args[0]);
-                Ok(NanValue::new_some(idx))
+                Ok(NanValue::new_some_value(args[0], &mut self.arena))
             }
             name if name.starts_with("__ctor:") => {
                 // Variant constructors — need type registry, fall back to bridge

@@ -15,18 +15,15 @@ impl NanValue {
             Value::Str(s) => NanValue::new_string(arena.push_string(s)),
             Value::Ok(inner) => {
                 let inner_nv = NanValue::from_value(inner, arena);
-                let idx = arena.push_boxed(inner_nv);
-                NanValue::new_ok(idx)
+                NanValue::new_ok_value(inner_nv, arena)
             }
             Value::Err(inner) => {
                 let inner_nv = NanValue::from_value(inner, arena);
-                let idx = arena.push_boxed(inner_nv);
-                NanValue::new_err(idx)
+                NanValue::new_err_value(inner_nv, arena)
             }
             Value::Some(inner) => {
                 let inner_nv = NanValue::from_value(inner, arena);
-                let idx = arena.push_boxed(inner_nv);
-                NanValue::new_some(idx)
+                NanValue::new_some_value(inner_nv, arena)
             }
             Value::Tuple(items) => {
                 let nv_items: Vec<_> = items
@@ -108,15 +105,27 @@ impl NanValue {
         }
         match self.tag() {
             TAG_INT => Value::Int(self.as_int(arena)),
-            TAG_IMMEDIATE => match self.payload() {
-                IMM_FALSE => Value::Bool(false),
-                IMM_TRUE => Value::Bool(true),
-                IMM_UNIT => Value::Unit,
-                IMM_NONE => Value::None,
-                _ => Value::Unit,
-            },
+            TAG_IMMEDIATE => {
+                if let Some((kind, inner)) = self.wrapper_parts(arena) {
+                    let inner = inner.to_value(arena);
+                    match kind {
+                        WRAP_SOME => Value::Some(Box::new(inner)),
+                        WRAP_OK => Value::Ok(Box::new(inner)),
+                        WRAP_ERR => Value::Err(Box::new(inner)),
+                        _ => Value::Unit,
+                    }
+                } else {
+                    match self.payload() {
+                        IMM_FALSE => Value::Bool(false),
+                        IMM_TRUE => Value::Bool(true),
+                        IMM_UNIT => Value::Unit,
+                        IMM_NONE => Value::None,
+                        _ => Value::Unit,
+                    }
+                }
+            }
             TAG_WRAPPER => {
-                let inner = arena.get_boxed(self.wrapper_index()).to_value(arena);
+                let inner = self.wrapper_inner(arena).to_value(arena);
                 match self.wrapper_kind() {
                     WRAP_SOME => Value::Some(Box::new(inner)),
                     WRAP_OK => Value::Ok(Box::new(inner)),

@@ -393,7 +393,7 @@ fn replay_recording_file_vm(path: &Path, diff: bool, check_args: bool) -> Result
         })?;
 
     let actual_outcome = if run_out.is_err() {
-        let inner = machine.arena.get_boxed(run_out.wrapper_index());
+        let inner = run_out.wrapper_inner(&machine.arena);
         RecordedOutcome::RuntimeError(format!(
             "{} returned error: {}",
             recording.entry_fn,

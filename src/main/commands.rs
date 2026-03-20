@@ -908,7 +908,7 @@ pub(super) fn cmd_run_vm(
     match run_result {
         Ok(result) => {
             if result.is_err() {
-                let inner = machine.arena.get_boxed(result.wrapper_index());
+                let inner = result.wrapper_inner(&machine.arena);
                 let msg = inner.repr(&machine.arena);
                 eprintln!("{}", format!("Main returned error: {}", msg).red());
                 process::exit(1);

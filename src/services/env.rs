@@ -133,8 +133,7 @@ fn get_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
         Some(v) => {
             let s_idx = arena.push_string(&v);
             let inner = NanValue::new_string(s_idx);
-            let box_idx = arena.push_boxed(inner);
-            Ok(NanValue::new_some(box_idx))
+            Ok(NanValue::new_some_value(inner, arena))
         }
         None => Ok(NanValue::NONE),
     }

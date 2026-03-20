@@ -73,7 +73,7 @@ fn with_default_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Run
     }
     let v = args[0];
     if v.is_ok() {
-        Ok(arena.get_boxed(v.wrapper_index()))
+        Ok(v.wrapper_inner(arena))
     } else if v.is_err() {
         Ok(args[1])
     } else {

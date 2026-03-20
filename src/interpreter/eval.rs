@@ -486,18 +486,9 @@ impl Interpreter {
             },
             EvalCont::Constructor(name) => match result {
                 Ok(inner) => EvalState::Apply(match name.as_str() {
-                    "Ok" => {
-                        let idx = self.arena.push_boxed(inner);
-                        Ok(NanValue::new_ok(idx))
-                    }
-                    "Err" => {
-                        let idx = self.arena.push_boxed(inner);
-                        Ok(NanValue::new_err(idx))
-                    }
-                    "Some" => {
-                        let idx = self.arena.push_boxed(inner);
-                        Ok(NanValue::new_some(idx))
-                    }
+                    "Ok" => Ok(NanValue::new_ok_value(inner, &mut self.arena)),
+                    "Err" => Ok(NanValue::new_err_value(inner, &mut self.arena)),
+                    "Some" => Ok(NanValue::new_some_value(inner, &mut self.arena)),
                     "None" => Err(RuntimeError::Error(
                         "Constructor 'None' does not take an argument".to_string(),
                     )),
@@ -510,10 +501,10 @@ impl Interpreter {
             },
             EvalCont::ErrorProp => match result {
                 Ok(value) => EvalState::Apply(if value.is_ok() {
-                    let inner = self.arena.get_boxed(value.wrapper_index());
+                    let inner = value.wrapper_inner(&self.arena);
                     Ok(inner)
                 } else if value.is_err() {
-                    let inner = self.arena.get_boxed(value.wrapper_index());
+                    let inner = value.wrapper_inner(&self.arena);
                     Err(RuntimeError::ErrProp(inner))
                 } else {
                     Err(RuntimeError::Error(
@@ -983,8 +974,7 @@ impl Interpreter {
                 let final_result = match other {
                     Ok(value) => Ok(value),
                     Err(RuntimeError::ErrProp(err_nv)) => {
-                        let idx = self.arena.push_boxed(err_nv);
-                        Ok(NanValue::new_err(idx))
+                        Ok(NanValue::new_err_value(err_nv, &mut self.arena))
                     }
                     Err(err) => Err(err),
                 };

@@ -125,15 +125,13 @@ pub fn call_nv(
 fn nv_ok_str(s: &str, arena: &mut Arena) -> NanValue {
     let s_idx = arena.push_string(s);
     let inner = NanValue::new_string(s_idx);
-    let box_idx = arena.push_boxed(inner);
-    NanValue::new_ok(box_idx)
+    NanValue::new_ok_value(inner, arena)
 }
 
 fn nv_err_str(s: &str, arena: &mut Arena) -> NanValue {
     let s_idx = arena.push_string(s);
     let inner = NanValue::new_string(s_idx);
-    let box_idx = arena.push_boxed(inner);
-    NanValue::new_err(box_idx)
+    NanValue::new_err_value(inner, arena)
 }
 
 fn to_hex_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
@@ -180,8 +178,7 @@ fn from_hex_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtime
     match u8::from_str_radix(&s, 16) {
         Ok(n) => {
             let inner = NanValue::new_int(n as i64, arena);
-            let box_idx = arena.push_boxed(inner);
-            Ok(NanValue::new_ok(box_idx))
+            Ok(NanValue::new_ok_value(inner, arena))
         }
         Err(_) => Ok(nv_err_str(
             &format!("Byte.fromHex: invalid hex '{}'", s),

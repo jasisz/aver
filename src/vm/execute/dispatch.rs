@@ -406,12 +406,12 @@ impl VM {
                     } else if let Some(value) =
                         self.arena.list_get(list.arena_index(), idx as usize)
                     {
-                        let box_idx = self
+                        let wrapped = self
                             .arena
                             .with_alloc_space(self.next_value_alloc_space(code, ip), |arena| {
-                                arena.push_boxed(value)
+                                NanValue::new_some_value(value, arena)
                             });
-                        self.stack.push(NanValue::new_some(box_idx));
+                        self.stack.push(wrapped);
                     } else {
                         self.stack.push(NanValue::NONE);
                     }
@@ -527,7 +527,7 @@ impl VM {
                 PROPAGATE_ERR => {
                     let value = *self.stack.last().ok_or(VmError::StackUnderflow)?;
                     if value.is_ok() {
-                        let inner = self.arena.get_boxed(value.wrapper_index());
+                        let inner = value.wrapper_inner(&self.arena);
                         *self.stack.last_mut().ok_or(VmError::StackUnderflow)? = inner;
                         continue;
                     }
@@ -680,17 +680,15 @@ impl VM {
                 WRAP => {
                     let kind = read_u8!(code, ip);
                     let val = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let boxed_idx = self
-                        .arena
-                        .with_alloc_space(self.next_value_alloc_space(code, ip), |arena| {
-                            arena.push_boxed(val)
-                        });
-                    let wrapped = match kind {
-                        0 => NanValue::new_ok(boxed_idx),
-                        1 => NanValue::new_err(boxed_idx),
-                        2 => NanValue::new_some(boxed_idx),
-                        _ => return Err(VmError::Runtime("invalid wrap kind".into())),
-                    };
+                    let wrapped = self.arena.with_alloc_space(
+                        self.next_value_alloc_space(code, ip),
+                        |arena| match kind {
+                            0 => Ok(NanValue::new_ok_value(val, arena)),
+                            1 => Ok(NanValue::new_err_value(val, arena)),
+                            2 => Ok(NanValue::new_some_value(val, arena)),
+                            _ => Err(VmError::Runtime("invalid wrap kind".into())),
+                        },
+                    )?;
                     self.stack.push(wrapped);
                 }
 
@@ -728,7 +726,7 @@ impl VM {
                         _ => false,
                     };
                     if matches {
-                        let inner = self.arena.get_boxed(top.wrapper_index());
+                        let inner = top.wrapper_inner(&self.arena);
                         *self.stack.last_mut().unwrap() = inner;
                     } else {
                         ip = (ip as isize + offset as isize) as usize;

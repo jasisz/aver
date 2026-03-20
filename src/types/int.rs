@@ -256,15 +256,13 @@ fn from_string_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runt
     match s.parse::<i64>() {
         Ok(n) => {
             let inner = NanValue::new_int(n, arena);
-            let idx = arena.push_boxed(inner);
-            Ok(NanValue::new_ok(idx))
+            Ok(NanValue::new_ok_value(inner, arena))
         }
         Err(_) => {
             let msg = format!("Cannot parse '{}' as Int", s);
             let inner_idx = arena.push_string(&msg);
             let inner = NanValue::new_string(inner_idx);
-            let idx = arena.push_boxed(inner);
-            Ok(NanValue::new_err(idx))
+            Ok(NanValue::new_err_value(inner, arena))
         }
     }
 }
@@ -339,12 +337,10 @@ fn modulo_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeEr
     if y == 0 {
         let msg_idx = arena.push_string("division by zero");
         let inner = NanValue::new_string(msg_idx);
-        let idx = arena.push_boxed(inner);
-        Ok(NanValue::new_err(idx))
+        Ok(NanValue::new_err_value(inner, arena))
     } else {
         let inner = NanValue::new_int(x % y, arena);
-        let idx = arena.push_boxed(inner);
-        Ok(NanValue::new_ok(idx))
+        Ok(NanValue::new_ok_value(inner, arena))
     }
 }
 

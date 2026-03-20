@@ -90,6 +90,38 @@ fn wrapper_ok_err_roundtrip() {
 }
 
 #[test]
+fn wrapped_immediates_stay_inline() {
+    let mut arena = Arena::new();
+    let before = arena.len();
+
+    let some_true = NanValue::new_some_value(NanValue::TRUE, &mut arena);
+    let ok_unit = NanValue::new_ok_value(NanValue::UNIT, &mut arena);
+    let err_none = NanValue::new_err_value(NanValue::NONE, &mut arena);
+
+    assert!(some_true.is_some());
+    assert!(ok_unit.is_ok());
+    assert!(err_none.is_err());
+    assert_eq!(arena.len(), before);
+    assert!(some_true.heap_index().is_none());
+    assert!(ok_unit.heap_index().is_none());
+    assert!(err_none.heap_index().is_none());
+    assert!(some_true.wrapper_inner(&arena).is_bool());
+    assert!(ok_unit.wrapper_inner(&arena).is_unit());
+    assert!(err_none.wrapper_inner(&arena).is_none());
+}
+
+#[test]
+fn inline_and_boxed_wrapped_immediates_compare_equal() {
+    let mut arena = Arena::new();
+    let inline_ok = NanValue::new_ok_value(NanValue::TRUE, &mut arena);
+    let boxed_ok = NanValue::new_ok(arena.push_boxed(NanValue::TRUE));
+
+    assert!(inline_ok.eq_in(boxed_ok, &arena));
+    assert_eq!(inline_ok.repr(&arena), "Result.Ok(true)");
+    assert_eq!(boxed_ok.repr(&arena), "Result.Ok(true)");
+}
+
+#[test]
 fn string_roundtrip() {
     let mut arena = Arena::new();
     let idx = arena.push_string("hello");
@@ -250,6 +282,8 @@ fn repr_basics() {
     let ok_idx = arena.push_boxed(NanValue::new_int_inline(1));
     let ok = NanValue::new_ok(ok_idx);
     assert_eq!(ok.repr(&arena), "Result.Ok(1)");
+    let some_true = NanValue::new_some_value(NanValue::TRUE, &mut arena);
+    assert_eq!(some_true.repr(&arena), "Option.Some(true)");
 }
 
 #[test]

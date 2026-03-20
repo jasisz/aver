@@ -625,8 +625,7 @@ fn char_at_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeE
             let cs = c.to_string();
             let s_idx = arena.push_string(&cs);
             let inner = NanValue::new_string(s_idx);
-            let box_idx = arena.push_boxed(inner);
-            Ok(NanValue::new_some(box_idx))
+            Ok(NanValue::new_some_value(inner, arena))
         }
         None => Ok(NanValue::NONE),
     }

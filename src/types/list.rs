@@ -263,8 +263,7 @@ fn get_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
     }
     let idx = index as usize;
     if let Some(val) = arena.list_get(args[0].arena_index(), idx) {
-        let box_idx = arena.push_boxed(val);
-        Ok(NanValue::new_some(box_idx))
+        Ok(NanValue::new_some_value(val, arena))
     } else {
         Ok(NanValue::NONE)
     }

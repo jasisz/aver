@@ -265,15 +265,13 @@ fn from_string_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runt
     match s.parse::<f64>() {
         Ok(f) => {
             let inner = NanValue::new_float(f);
-            let idx = arena.push_boxed(inner);
-            Ok(NanValue::new_ok(idx))
+            Ok(NanValue::new_ok_value(inner, arena))
         }
         Err(_) => {
             let msg = format!("Cannot parse '{}' as Float", s);
             let inner_idx = arena.push_string(&msg);
             let inner = NanValue::new_string(inner_idx);
-            let idx = arena.push_boxed(inner);
-            Ok(NanValue::new_err(idx))
+            Ok(NanValue::new_err_value(inner, arena))
         }
     }
 }
