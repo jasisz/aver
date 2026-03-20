@@ -13,6 +13,9 @@ pub struct FnChunk {
     /// Conservatively classified "thin" function: likely to return without
     /// creating any frame-local heap survivors or dirtying globals.
     pub thin: bool,
+    /// Narrow wrapper-like helper that borrows the caller young region and
+    /// skips ordinary-return handoff as long as it stays out of yard/handoff.
+    pub parent_thin: bool,
 }
 
 /// Minimal call frame: 16 bytes of metadata, no closure/upvalue fields.
@@ -49,6 +52,9 @@ pub struct CallFrame {
     pub handoff_dirty: bool,
     /// Conservatively classified as cheap enough for a fast return path.
     pub thin: bool,
+    /// Uses the caller young region as its allocation lane and skips
+    /// ordinary-return handoff while it remains a pure wrapper frame.
+    pub parent_thin: bool,
 }
 
 /// All compiled bytecode for a program.

@@ -209,6 +209,7 @@ impl VM {
                         yard_dirty: false,
                         handoff_dirty: false,
                         thin: target.thin,
+                        parent_thin: target.parent_thin,
                     });
 
                     fn_id = target_fn_id;
@@ -244,6 +245,7 @@ impl VM {
                         yard_dirty: false,
                         handoff_dirty: false,
                         thin: target.thin,
+                        parent_thin: target.parent_thin,
                     });
 
                     fn_id = target_fn_id;

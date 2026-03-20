@@ -16,6 +16,7 @@ fn reentrant_call_function_returns_nested_result_without_resuming_caller() {
         constants: vec![caller_const],
         effects: Vec::new(),
         thin: true,
+        parent_thin: false,
     });
 
     let nested_const = NanValue::new_int_inline(20);
@@ -27,6 +28,7 @@ fn reentrant_call_function_returns_nested_result_without_resuming_caller() {
         constants: vec![nested_const],
         effects: Vec::new(),
         thin: true,
+        parent_thin: false,
     });
 
     let mut vm = VM::new(code, Vec::new(), Arena::new());
@@ -43,6 +45,7 @@ fn reentrant_call_function_returns_nested_result_without_resuming_caller() {
         yard_dirty: false,
         handoff_dirty: false,
         thin: true,
+        parent_thin: false,
     });
 
     let result = vm

@@ -737,6 +737,38 @@ fn vm_mixed_young_handoff_helper_returns_keep_strings_alive_for_caller() {
 }
 
 #[test]
+fn vm_parent_thin_string_helpers_use_parent_young_path() {
+    let src = "fn escapeField(text: String) -> String\n    p = String.replace(text, \"%\", \"%25\")\n    bar = String.replace(p, \"|\", \"%7C\")\n    String.replace(bar, \"\\n\", \"%0A\")\n\nfn wrap1(text: String) -> String\n    escapeField(text)\n\nfn wrap2(text: String) -> String\n    wrap1(text)\n\nfn render(name: String) -> String\n    escaped = wrap2(name)\n    \"project:\" + escaped\n\nfn main() -> String\n    render(\"Alpha | team\")\n";
+    let code = vm_compile(src);
+    assert!(!code.get(code.find("escapeField").unwrap()).parent_thin);
+    assert!(code.get(code.find("wrap1").unwrap()).parent_thin);
+    assert!(code.get(code.find("wrap2").unwrap()).parent_thin);
+
+    let (result, arena) = vm_run_with_arena(src);
+    assert_eq!(
+        result.to_value(&arena),
+        aver::value::Value::Str("project:Alpha %7C team".to_string())
+    );
+    assert!(
+        arena.peak_usage().handoff < 4,
+        "parent-thin helper chain should avoid ordinary-return handoff churn, peak handoff = {}",
+        arena.peak_usage().handoff
+    );
+}
+
+#[test]
+fn vm_parent_thin_rejects_builtin_heavy_wrapper_chain() {
+    let src = "fn keepNonEmpty(lines: List<String>) -> List<String>\n    lines\n\nfn splitNonEmptyLines(content: String) -> List<String>\n    keepNonEmpty(String.split(content, \"\\n\"))\n\nfn main() -> List<String>\n    splitNonEmptyLines(\"a\\n\\nb\")\n";
+    let code = vm_compile(src);
+    assert!(
+        !code
+            .get(code.find("splitNonEmptyLines").unwrap())
+            .parent_thin,
+        "wrapper around String.split should stay off parent-thin so large intermediate lists do not borrow caller young"
+    );
+}
+
+#[test]
 fn vm_tail_call_known_resizes_stack_before_clearing_new_locals() {
     let src = "fn stepA(n: Int) -> Int\n    match n == 0\n        true -> 0\n        false -> stepB(n - 1)\n\nfn stepB(n: Int) -> Int\n    x = n\n    y = x\n    z = y\n    match n == 0\n        true -> z\n        false -> stepA(n - 1)\n\nfn main() -> Int\n    stepA(200)\n";
     let result = vm_run(src);

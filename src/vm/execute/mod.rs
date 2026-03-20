@@ -125,6 +125,7 @@ impl VM {
             yard_dirty: false,
             handoff_dirty: false,
             thin: chunk.thin,
+            parent_thin: chunk.parent_thin,
         });
         self.execute_until(caller_depth)
     }

@@ -49,6 +49,7 @@ pub fn compile_program_with_modules(
                     constants: Vec::new(),
                     effects: fndef.effects.clone(),
                     thin: false,
+                    parent_thin: false,
                 });
                 let global_idx = compiler.global_names[&fndef.name];
                 compiler.globals[global_idx as usize] = encode_vm_fn_ref(fn_id);
@@ -69,7 +70,7 @@ pub fn compile_program_with_modules(
     }
 
     compiler.compile_top_level(items, arena)?;
-    classify_thin_functions(&mut compiler.code)?;
+    classify_thin_functions(&mut compiler.code, arena)?;
 
     Ok((compiler.code, compiler.globals))
 }
@@ -197,6 +198,7 @@ impl ProgramCompiler {
                     constants: Vec::new(),
                     effects: fndef.effects.clone(),
                     thin: false,
+                    parent_thin: false,
                 });
                 module_fn_ids.push((fndef.name.clone(), fn_id));
             }
@@ -367,18 +369,183 @@ impl ProgramCompiler {
     }
 }
 
-fn classify_thin_functions(code: &mut CodeStore) -> Result<(), CompileError> {
+fn classify_thin_functions(code: &mut CodeStore, arena: &Arena) -> Result<(), CompileError> {
     let thin_flags: Vec<bool> = code
         .functions
         .iter()
         .map(classify_thin_chunk)
         .collect::<Result<_, _>>()?;
+    let parent_thin_flags = classify_parent_thin_chunks(code, arena)?;
 
-    for (chunk, thin) in code.functions.iter_mut().zip(thin_flags) {
+    for ((chunk, thin), parent_thin) in code
+        .functions
+        .iter_mut()
+        .zip(thin_flags)
+        .zip(parent_thin_flags)
+    {
         chunk.thin = thin;
+        chunk.parent_thin = parent_thin;
     }
 
     Ok(())
+}
+
+const MAX_PARENT_THIN_CODE_LEN: usize = 48;
+const MAX_PARENT_THIN_LOCALS: u16 = 8;
+
+fn classify_parent_thin_chunks(
+    code: &CodeStore,
+    _arena: &Arena,
+) -> Result<Vec<bool>, CompileError> {
+    let mut candidates: Vec<bool> = code
+        .functions
+        .iter()
+        .map(base_parent_thin_chunk)
+        .collect::<Result<_, _>>()?;
+
+    loop {
+        let mut changed = false;
+        for fn_id in 0..code.functions.len() {
+            if !candidates[fn_id] {
+                continue;
+            }
+            if !parent_thin_calls_are_safe(fn_id, code, &candidates)? {
+                candidates[fn_id] = false;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    Ok(candidates)
+}
+
+fn base_parent_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
+    if !chunk.effects.is_empty()
+        || chunk.code.len() > MAX_PARENT_THIN_CODE_LEN
+        || chunk.local_count > MAX_PARENT_THIN_LOCALS
+    {
+        return Ok(false);
+    }
+
+    let code = &chunk.code;
+    let mut ip = 0usize;
+    while ip < code.len() {
+        let op = code[ip];
+        ip += 1;
+        match op {
+            STORE_GLOBAL | STORE_LOCAL | TAIL_CALL_SELF | TAIL_CALL_KNOWN | CALL_VALUE | JUMP
+            | JUMP_IF_FALSE | MATCH_TAG | MATCH_VARIANT | MATCH_UNWRAP | MATCH_NIL | MATCH_CONS
+            | LIST_HEAD_TAIL | MATCH_TUPLE | EXTRACT_FIELD | EXTRACT_TUPLE_ITEM | MATCH_FAIL => {
+                return Ok(false);
+            }
+
+            CALL_BUILTIN | CONCAT | LIST_NIL | LIST_CONS | LIST_GET | LIST_APPEND
+            | LIST_PREPEND | RECORD_UPDATE => {
+                return Ok(false);
+            }
+
+            POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
+            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_LEN | LIST_GET_MATCH => {}
+
+            LIST_NEW | WRAP | TUPLE_NEW | RECORD_NEW | VARIANT_NEW => {
+                return Ok(false);
+            }
+
+            LOAD_LOCAL | RECORD_GET => {
+                ip = advance_opcode_ip(chunk, ip, 1)?;
+            }
+
+            LOAD_CONST | LOAD_GLOBAL | RECORD_GET_NAMED => {
+                ip = advance_opcode_ip(chunk, ip, 2)?;
+            }
+
+            CALL_KNOWN => {
+                ip = advance_opcode_ip(chunk, ip, 3)?;
+            }
+
+            _ => {
+                return Err(CompileError {
+                    msg: format!(
+                        "unknown opcode 0x{op:02X} in {} at ip={} (code={:?})",
+                        chunk.name,
+                        ip - 1,
+                        chunk.code
+                    ),
+                });
+            }
+        }
+    }
+
+    Ok(true)
+}
+
+fn parent_thin_calls_are_safe(
+    current_fn_id: usize,
+    code: &CodeStore,
+    candidates: &[bool],
+) -> Result<bool, CompileError> {
+    let chunk = &code.functions[current_fn_id];
+    let bytes = &chunk.code;
+    let mut ip = 0usize;
+    while ip < bytes.len() {
+        let op = bytes[ip];
+        ip += 1;
+        match op {
+            CALL_KNOWN => {
+                if ip + 3 > bytes.len() {
+                    return Err(CompileError {
+                        msg: format!("truncated bytecode in {}", chunk.name),
+                    });
+                }
+                let target_fn_id = u16::from_be_bytes([bytes[ip], bytes[ip + 1]]) as usize;
+                if target_fn_id == current_fn_id || target_fn_id >= candidates.len() {
+                    return Ok(false);
+                }
+                if !code.functions[target_fn_id].effects.is_empty() {
+                    return Ok(false);
+                }
+                ip = advance_opcode_ip(chunk, ip, 3)?;
+            }
+
+            LOAD_LOCAL | STORE_LOCAL | RECORD_GET | EXTRACT_FIELD | EXTRACT_TUPLE_ITEM => {
+                ip = advance_opcode_ip(chunk, ip, 1)?;
+            }
+
+            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | RECORD_GET_NAMED | MATCH_FAIL => {
+                ip = advance_opcode_ip(chunk, ip, 2)?;
+            }
+
+            CALL_BUILTIN | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE => {
+                ip = advance_opcode_ip(chunk, ip, 3)?;
+            }
+
+            MATCH_VARIANT => {
+                ip = advance_opcode_ip(chunk, ip, 4)?;
+            }
+
+            MATCH_NIL | MATCH_CONS => {
+                ip = advance_opcode_ip(chunk, ip, 2)?;
+            }
+
+            LIST_NEW | WRAP | TUPLE_NEW => {
+                ip = advance_opcode_ip(chunk, ip, 1)?;
+            }
+
+            RECORD_NEW => {
+                ip = advance_opcode_ip(chunk, ip, 3)?;
+            }
+
+            VARIANT_NEW => {
+                ip = advance_opcode_ip(chunk, ip, 5)?;
+            }
+
+            _ => {}
+        }
+    }
+    Ok(true)
 }
 
 fn classify_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
@@ -512,6 +679,7 @@ impl<'a> FnCompiler<'a> {
             constants: self.constants,
             effects: self.effects,
             thin: false,
+            parent_thin: false,
         }
     }
 

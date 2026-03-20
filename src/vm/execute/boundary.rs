@@ -6,18 +6,35 @@ use crate::vm::types::CallFrame;
 impl VM {
     pub(super) fn collect_stable_roots(&mut self, frame_roots: &mut [NanValue]) {
         let root_count = frame_roots.len();
-        let mut all_roots = Vec::with_capacity(root_count + self.globals.len());
+        let global_count = self.globals.len();
+        let constant_count: usize = self
+            .code
+            .functions
+            .iter()
+            .map(|chunk| chunk.constants.len())
+            .sum();
+        let mut all_roots = Vec::with_capacity(root_count + global_count + constant_count);
         all_roots.extend_from_slice(frame_roots);
         all_roots.extend(self.globals.iter().copied());
+        for chunk in &self.code.functions {
+            all_roots.extend(chunk.constants.iter().copied());
+        }
         self.arena.collect_stable_from_roots(&mut all_roots);
 
         frame_roots.copy_from_slice(&all_roots[..root_count]);
         for (dst, src) in self
             .globals
             .iter_mut()
-            .zip(all_roots[root_count..].iter().copied())
+            .zip(all_roots[root_count..root_count + global_count].iter().copied())
         {
             *dst = src;
+        }
+        let mut constant_offset = root_count + global_count;
+        for chunk in &mut self.code.functions {
+            let len = chunk.constants.len();
+            chunk.constants
+                .copy_from_slice(&all_roots[constant_offset..constant_offset + len]);
+            constant_offset += len;
         }
     }
 
@@ -65,7 +82,10 @@ impl VM {
         let has_local_young = self.arena.young_len() > arena_mark as usize;
         let has_local_yard = self.arena.yard_len() > yard_base as usize;
         let has_local_handoff = self.arena.handoff_len() > handoff_mark as usize;
-        let handoff_growth = self.arena.handoff_len().saturating_sub(handoff_mark as usize);
+        let handoff_growth = self
+            .arena
+            .handoff_len()
+            .saturating_sub(handoff_mark as usize);
         let result_is_single_local_handoff = matches!(
             frame_roots,
             [result]
@@ -131,10 +151,47 @@ impl VM {
         self.arena.truncate_handoff_to(handoff_mark);
     }
 
+    pub(super) fn finalize_parent_thin_return_to_caller(
+        &mut self,
+        arena_mark: u32,
+        yard_base: u32,
+        handoff_mark: u32,
+        globals_dirty: bool,
+        frame_roots: &mut [NanValue],
+    ) -> (bool, bool) {
+        if globals_dirty {
+            self.arena.promote_roots_to_stable(&mut self.globals);
+        }
+
+        let has_local_young = self.arena.young_len() > arena_mark as usize;
+        let has_local_yard = self.arena.yard_len() > yard_base as usize;
+        let has_local_handoff = self.arena.handoff_len() > handoff_mark as usize;
+
+        if has_local_yard || has_local_handoff {
+            return self.finalize_frame_return_to_caller(
+                arena_mark,
+                yard_base,
+                handoff_mark,
+                globals_dirty,
+                frame_roots,
+            );
+        }
+
+        // Parent-thin frames borrow the caller young lane on purpose.
+        // If they stayed out of yard/handoff, their local young scratch can
+        // simply remain in the caller region and die at the caller boundary.
+        let _ = has_local_young;
+        self.arena.truncate_yard_to(yard_base);
+        self.arena.truncate_handoff_to(handoff_mark);
+        (false, false)
+    }
+
     pub(super) fn next_value_alloc_space(&self, code: &[u8], ip: usize) -> AllocSpace {
         if matches!(code.get(ip).copied(), Some(op) if op == TAIL_CALL_SELF || op == TAIL_CALL_KNOWN)
         {
             AllocSpace::Yard
+        } else if self.frames.last().is_some_and(|frame| frame.parent_thin) {
+            AllocSpace::Young
         } else if matches!(code.get(ip).copied(), Some(op) if op == RETURN) && self.frames.len() > 1
         {
             AllocSpace::Handoff
@@ -144,6 +201,16 @@ impl VM {
     }
 
     pub(super) fn can_fast_return(&self, frame: &CallFrame) -> bool {
+        if frame.parent_thin {
+            // Parent-thin frames are allowed to grow the borrowed young lane;
+            // the key fast-path condition is "no separate survivor lane work".
+            return !frame.globals_dirty
+                && !frame.yard_dirty
+                && !frame.handoff_dirty
+                && self.arena.yard_len() == frame.yard_mark as usize
+                && self.arena.handoff_len() == frame.handoff_mark as usize;
+        }
+
         frame.thin
             && !frame.globals_dirty
             && !frame.yard_dirty
@@ -185,6 +252,25 @@ impl VM {
                 self.collect_stable_roots(std::slice::from_mut(&mut result));
             }
             return ReturnControl::Done(result);
+        }
+
+        if frame.parent_thin {
+            let (yard_dirty, handoff_dirty) = self.finalize_parent_thin_return_to_caller(
+                frame.arena_mark,
+                frame.yard_base,
+                frame.handoff_mark,
+                frame.globals_dirty,
+                std::slice::from_mut(&mut result),
+            );
+            let caller = self.frames.last_mut().unwrap();
+            caller.yard_dirty |= yard_dirty;
+            caller.handoff_dirty |= handoff_dirty;
+            return ReturnControl::Resume {
+                result,
+                fn_id: caller.fn_id,
+                ip: caller.ip as usize,
+                bp: caller.bp as usize,
+            };
         }
 
         let (yard_dirty, handoff_dirty) = self.finalize_frame_return_to_caller(

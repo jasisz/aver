@@ -33,7 +33,7 @@ Execution is stack-based:
 - calls create or reuse frames
 - returns leave one value on the caller stack
 
-The VM now also marks conservatively-classified **thin functions**.
+The VM now also marks conservatively-classified **thin functions** and **parent-thin functions**.
 
 These are small helpers that do not use tail-call frame reuse, do not write globals, and do not emit obvious aggregate-construction opcodes such as `RECORD_UPDATE`, `WRAP`, `LIST_*`, `TUPLE_NEW`, or `VARIANT_NEW`.
 
@@ -43,6 +43,13 @@ In practice this means many tiny Aver helpers now behave like:
 - keep normal stack locals while running
 - but do not pay full survivor/stable bookkeeping on return
 - unless they actually created local heap state after all
+
+`parent-thin` is narrower and more Aver-specific:
+
+- it is meant for wrapper-like helpers, not for general small functions
+- it borrows the caller `young` lane directly
+- it avoids ordinary-return `handoff` as long as it never touches `yard` / `handoff`
+- its local `young` scratch dies later at the caller boundary instead of forcing a helper-local relocation step
 
 Execution-backed commands can run through the interpreter or through the VM:
 
@@ -103,6 +110,7 @@ Implementation-wise, the current VM now splits boundary behavior by control-flow
 - values can still be *allocated* into `yard` or `handoff` in obvious tail/return positions
 - at `TAIL_CALL_*` boundaries, live roots are kept in `yard`, so loop-carried state stays out of `stable`
 - at ordinary `RETURN` boundaries to another Aver frame, live roots stay on the handoff path instead of being forced into `stable`
+- parent-thin wrappers are the exception: they borrow caller `young` and skip ordinary-return handoff entirely unless they spill into `yard` / `handoff`
 - pure-`handoff`, pure-`young`, and single-result mixed helper returns use fast ordinary-return paths
 - larger mixed `young + handoff` graphs still fall back to full evacuation, because correctness matters more than over-eager survivor cleverness
 - only globals, host-facing escapes, and top-level completion are canonicalized into `stable`
@@ -132,9 +140,10 @@ The easiest way to think about the VM is:
 6. On top-level completion or real escape boundaries, live roots are canonicalized into `stable`.
 7. The frame-local `young` / `yard` / `handoff` suffixes are then truncated in one shot.
 
-For thin helpers there is now one more fast path:
+For helper-sized functions there are now two extra fast paths:
 
 8. If a frame returns with unchanged local marks, the VM skips boundary promotion/truncation work for that frame and resumes the caller directly.
+9. If a `parent-thin` frame only touched borrowed `young`, it returns directly to the caller without building ordinary-return handoff state at all.
 
 That means the VM still distinguishes:
 
@@ -147,6 +156,7 @@ The important distinction now is:
 
 - `yard` survives the next tail-call boundary
 - `handoff` survives the next ordinary call/return boundary
+- borrowed parent-`young` is the cheapest path of all, but only for very narrow wrapper-like helpers
 - `stable` is for values that really outlive the current Aver call chain
 
 ### What Goes Where
