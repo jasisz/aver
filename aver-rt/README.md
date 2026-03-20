@@ -16,7 +16,9 @@ programs and the interpreter-facing adapters that rely on the same semantics.
 ## What it contains
 
 - `AverList<T>`: persistent list used by Aver list operations, including deep-list
-  paths such as teardown, `tail`, and `list_uncons`
+  paths such as teardown, `tail`, and `list_uncons`; append-heavy chains are
+  packed into structural segments so interpreter and generated Rust share the
+  same faster behavior on `append + get(i)` workloads
 - `AverDisplay`: Aver-specific display formatting used by `Console.print` and string interpolation
 - shared runtime helpers for console, time, disk, env, and string operations
 - shared service types:

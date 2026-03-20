@@ -15,6 +15,7 @@ All notable changes to Aver are documented here.
 - **Arena-native persistent list shapes** — VM lists now support `Flat`, `Prepend`, and `Concat` nodes, allowing `List.prepend`, `LIST_CONS`, and list destructuring to stay structural instead of flattening eagerly.
 
 ### Changed
+- `aver-rt::AverList` now packs repeated `append` chains into segmented chunk spines instead of leaving them as singleton-by-singleton concat ladders, which drastically improves shared interpreter/generated workloads like `list_append_scan`.
 - VM list builtins and pattern matching now operate through arena list helpers (`len/get/uncons/to_vec`) instead of assuming a flat `Vec`, which restores `list_builtins(1K)` to better-than-baseline VM performance.
 - Core list builtins (`List.len`, `List.get`, `List.append`, `List.prepend`) now compile to dedicated VM opcodes instead of going through the generic string-dispatched builtin path.
 - `match List.get(xs, i)` now has a dedicated VM lowering path that branches directly on presence/absence instead of materializing `Option.Some(Boxed(v))` just to immediately match on it.

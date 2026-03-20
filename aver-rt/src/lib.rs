@@ -35,6 +35,8 @@ use std::hash::{Hash, Hasher};
 use std::iter::FusedIterator;
 use std::rc::Rc;
 
+const LIST_APPEND_CHUNK_LIMIT: usize = 128;
+
 pub struct AverList<T> {
     inner: Rc<AverListInner<T>>,
 }
@@ -52,6 +54,12 @@ enum AverListInner<T> {
     Concat {
         left: AverList<T>,
         right: AverList<T>,
+        len: usize,
+    },
+    Segments {
+        current: AverList<T>,
+        rest: Rc<Vec<AverList<T>>>,
+        start: usize,
         len: usize,
     },
 }
@@ -91,6 +99,15 @@ fn detach_unique_children<T>(
             pending.push(take_list_inner(left, empty_inner));
             pending.push(take_list_inner(right, empty_inner));
         }
+        AverListInner::Segments { current, rest, .. } => {
+            pending.push(take_list_inner(current, empty_inner));
+            let rest_rc = std::mem::replace(rest, Rc::new(Vec::new()));
+            if let Ok(mut rest_vec) = Rc::try_unwrap(rest_rc) {
+                for part in &mut rest_vec {
+                    pending.push(take_list_inner(part, empty_inner));
+                }
+            }
+        }
     }
 }
 
@@ -119,6 +136,7 @@ impl<T> Drop for AverListInner<T> {
 enum ListCursor<'a, T> {
     Node(&'a AverList<T>),
     Slice(&'a [T], usize),
+    SegmentSlice(&'a [AverList<T>], usize),
 }
 
 pub struct AverListIter<'a, T> {
@@ -141,6 +159,31 @@ impl<T> AverList<T> {
                 left: left.clone(),
                 right: right.clone(),
                 len: left.len() + right.len(),
+            }),
+        }
+    }
+
+    fn segments_rc(mut current: Self, rest: Rc<Vec<Self>>, mut start: usize) -> Self {
+        while current.is_empty() {
+            if let Some(next) = rest.get(start).cloned() {
+                current = next;
+                start += 1;
+            } else {
+                return Self::empty();
+            }
+        }
+
+        if start >= rest.len() {
+            return current;
+        }
+
+        let len = current.len() + rest[start..].iter().map(AverList::len).sum::<usize>();
+        Self {
+            inner: Rc::new(AverListInner::Segments {
+                current,
+                rest,
+                start,
+                len,
             }),
         }
     }
@@ -189,6 +232,15 @@ impl<T> AverList<T> {
                     rights.push(right.clone());
                     current = left;
                 }
+                AverListInner::Segments {
+                    current: head_segment,
+                    rest,
+                    start,
+                    ..
+                } => {
+                    let (head, tail) = head_segment.uncons()?;
+                    return Some((head, Self::segments_rc(tail, Rc::clone(rest), *start)));
+                }
             }
         }
     }
@@ -197,21 +249,7 @@ impl<T> AverList<T> {
     where
         T: Clone,
     {
-        match self.inner.as_ref() {
-            AverListInner::Flat { items, start } => {
-                let head = items.get(*start)?.clone();
-                let tail = Self::flat_tail(items, *start).unwrap_or_else(Self::empty);
-                Some((head, tail))
-            }
-            AverListInner::Prepend { head, tail, .. } => Some((head.clone(), tail.clone())),
-            AverListInner::Concat { .. } => {
-                let mut iter = self.iter();
-                let head = iter.next()?.clone();
-                let mut tail = Vec::with_capacity(self.len().saturating_sub(1));
-                tail.extend(iter.cloned());
-                Some((head, Self::from_vec(tail)))
-            }
-        }
+        self.uncons().map(|(head, tail)| (head.clone(), tail))
     }
 
     pub fn empty() -> Self {
@@ -230,7 +268,9 @@ impl<T> AverList<T> {
     pub fn len(&self) -> usize {
         match self.inner.as_ref() {
             AverListInner::Flat { items, start } => items.len().saturating_sub(*start),
-            AverListInner::Prepend { len, .. } | AverListInner::Concat { len, .. } => *len,
+            AverListInner::Prepend { len, .. }
+            | AverListInner::Concat { len, .. }
+            | AverListInner::Segments { len, .. } => *len,
         }
     }
 
@@ -263,6 +303,29 @@ impl<T> AverList<T> {
                         current = right;
                     }
                 }
+                AverListInner::Segments {
+                    current: head_segment,
+                    rest,
+                    start,
+                    ..
+                } => {
+                    let head_len = head_segment.len();
+                    if remaining < head_len {
+                        current = head_segment;
+                    } else {
+                        remaining -= head_len;
+                        let mut found = None;
+                        for part in &rest[*start..] {
+                            let part_len = part.len();
+                            if remaining < part_len {
+                                found = Some(part);
+                                break;
+                            }
+                            remaining -= part_len;
+                        }
+                        current = found?;
+                    }
+                }
             }
         }
     }
@@ -274,7 +337,9 @@ impl<T> AverList<T> {
     pub fn as_slice(&self) -> Option<&[T]> {
         match self.inner.as_ref() {
             AverListInner::Flat { items, start } => Some(items.get(*start..).unwrap_or(&[])),
-            AverListInner::Prepend { .. } | AverListInner::Concat { .. } => None,
+            AverListInner::Prepend { .. }
+            | AverListInner::Concat { .. }
+            | AverListInner::Segments { .. } => None,
         }
     }
 
@@ -289,7 +354,9 @@ impl<T> AverList<T> {
         match self.inner.as_ref() {
             AverListInner::Flat { items, start } => Self::flat_tail(items, *start),
             AverListInner::Prepend { tail, .. } => Some(tail.clone()),
-            AverListInner::Concat { .. } => self.uncons().map(|(_, tail)| tail),
+            AverListInner::Concat { .. } | AverListInner::Segments { .. } => {
+                self.uncons().map(|(_, tail)| tail)
+            }
         }
     }
 
@@ -317,7 +384,33 @@ impl<T> AverList<T> {
     }
 
     pub fn append(list: &Self, item: T) -> Self {
-        Self::concat(list, &Self::from_vec(vec![item]))
+        let singleton = Self::from_vec(vec![item]);
+        if list.is_empty() {
+            return singleton;
+        }
+
+        match list.inner.as_ref() {
+            AverListInner::Segments {
+                current,
+                rest,
+                start,
+                ..
+            } => {
+                let mut parts = rest[*start..].to_vec();
+                if let Some(last) = parts.last_mut() {
+                    if last.len() < LIST_APPEND_CHUNK_LIMIT {
+                        *last = Self::concat(last, &singleton);
+                    } else {
+                        parts.push(singleton);
+                    }
+                } else {
+                    parts.push(singleton);
+                }
+                Self::segments_rc(current.clone(), Rc::new(parts), 0)
+            }
+            _ if list.len() < LIST_APPEND_CHUNK_LIMIT => Self::concat(list, &singleton),
+            _ => Self::segments_rc(list.clone(), Rc::new(vec![singleton]), 0),
+        }
     }
 
     pub fn to_vec(&self) -> Vec<T>
@@ -375,7 +468,25 @@ impl<'a, T> Iterator for AverListIter<'a, T> {
                         self.stack.push(ListCursor::Node(right));
                         self.stack.push(ListCursor::Node(left));
                     }
+                    AverListInner::Segments {
+                        current,
+                        rest,
+                        start,
+                        ..
+                    } => {
+                        let slice = rest.get(*start..).unwrap_or(&[]);
+                        if !slice.is_empty() {
+                            self.stack.push(ListCursor::SegmentSlice(slice, 0));
+                        }
+                        self.stack.push(ListCursor::Node(current));
+                    }
                 },
+                ListCursor::SegmentSlice(items, index) => {
+                    if let Some(item) = items.get(index) {
+                        self.stack.push(ListCursor::SegmentSlice(items, index + 1));
+                        self.stack.push(ListCursor::Node(item));
+                    }
+                }
             }
         }
         None
@@ -459,7 +570,9 @@ pub fn string_join<S: AsRef<str>>(parts: &AverList<S>, sep: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{AverList, aver_display, env_set, string_slice};
+    use super::{
+        AverList, AverListInner, LIST_APPEND_CHUNK_LIMIT, aver_display, env_set, string_slice,
+    };
 
     #[test]
     fn prepend_and_tail_share_structure() {
@@ -514,7 +627,7 @@ mod tests {
     }
 
     #[test]
-    fn cloned_uncons_flattens_append_chain_tail() {
+    fn cloned_uncons_preserves_append_chain_tail_contents() {
         let mut list = AverList::empty();
         for value in 0..5 {
             list = AverList::append(&list, value);
@@ -522,7 +635,7 @@ mod tests {
 
         let (head, tail) = super::list_uncons_cloned(&list).expect("non-empty list must uncons");
         assert_eq!(head, 0);
-        assert_eq!(tail.as_slice(), Some(&[1, 2, 3, 4][..]));
+        assert_eq!(tail.to_vec(), vec![1, 2, 3, 4]);
     }
 
     #[test]
@@ -564,6 +677,45 @@ mod tests {
     }
 
     #[test]
+    fn append_promotes_long_right_spines_into_segments() {
+        let mut list = AverList::empty();
+        for value in 0..200 {
+            list = AverList::append(&list, value);
+        }
+
+        match list.inner.as_ref() {
+            AverListInner::Segments {
+                current,
+                rest,
+                start,
+                ..
+            } => {
+                assert_eq!(current.len(), LIST_APPEND_CHUNK_LIMIT);
+                assert_eq!(rest[*start].len(), 72);
+            }
+            other => panic!(
+                "expected segmented append shape, got {}",
+                aver_display_shape(other)
+            ),
+        }
+    }
+
+    #[test]
+    fn get_walks_segmented_append_chain_without_losing_order() {
+        let mut list = AverList::empty();
+        for value in 0..300 {
+            list = AverList::append(&list, value);
+        }
+
+        assert_eq!(list.get(0), Some(&0));
+        assert_eq!(list.get(127), Some(&127));
+        assert_eq!(list.get(128), Some(&128));
+        assert_eq!(list.get(255), Some(&255));
+        assert_eq!(list.get(299), Some(&299));
+        assert_eq!(list.get(300), None);
+    }
+
+    #[test]
     fn aver_display_quotes_strings_inside_lists() {
         let parts = AverList::from_vec(vec!["a".to_string(), "b".to_string()]);
         assert_eq!(aver_display(&parts), "[\"a\", \"b\"]");
@@ -590,5 +742,14 @@ mod tests {
             env_set("A=B", "x"),
             Err("Env.set: key must not contain '='".to_string())
         );
+    }
+
+    fn aver_display_shape<T>(inner: &AverListInner<T>) -> &'static str {
+        match inner {
+            AverListInner::Flat { .. } => "Flat",
+            AverListInner::Prepend { .. } => "Prepend",
+            AverListInner::Concat { .. } => "Concat",
+            AverListInner::Segments { .. } => "Segments",
+        }
     }
 }
