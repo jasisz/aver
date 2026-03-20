@@ -408,12 +408,17 @@ fn ensure_generated_project(
     }
 
     let cargo_toml = output_dir.join("Cargo.toml");
-    let latest_input = latest_source_mtime(file)?.max(
-        module_root
-            .map(latest_source_mtime)
-            .transpose()?
-            .unwrap_or(SystemTime::UNIX_EPOCH),
-    );
+    let latest_input = latest_source_mtime(file)?
+        .max(
+            module_root
+                .map(latest_source_mtime)
+                .transpose()?
+                .unwrap_or(SystemTime::UNIX_EPOCH),
+        )
+        .max(latest_source_mtime(aver_bin)?)
+        .max(latest_source_mtime(
+            &repo_root.join("aver-rt").join("Cargo.toml"),
+        )?);
     let output_mtime = fs::metadata(&cargo_toml)
         .ok()
         .and_then(|meta| meta.modified().ok())
