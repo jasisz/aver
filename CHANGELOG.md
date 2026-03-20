@@ -2,45 +2,16 @@
 
 All notable changes to Aver are documented here.
 
-## Unreleased
+## 0.6.0
 
 ### Added
+- **Bytecode VM** — `aver run --vm` compiles Aver to a stack-based bytecode VM with NaN-boxed values, region-based arena memory (young/yard/handoff/stable), dedicated list opcodes, structural persistent lists, and thin-function fast return paths. 5-9x faster than the tree-walking interpreter on compute-heavy workloads.
 - **Terminal service** — `Terminal.*` namespace (12 methods) for raw-mode terminal I/O via crossterm: cursor control, colored output, non-blocking key input, screen management. Behind `terminal` cargo feature (enabled by default).
 - **Terminal guard** — `aver run` installs a drop guard that restores terminal state (cursor, colors, raw mode) on exit, panic, or runtime error.
 - **Bool namespace** — `Bool.or`, `Bool.and`, `Bool.not` pure builtins for logical combinators.
-- **Unified runtime benchmark** — `runtime_bench` binary compares interpreter, VM, and generated Rust on the same core cases and on real app workloads from `projects/workflow_engine` and `projects/payment_ops`.
-- **Checkers with AI** — `examples/games/checkers/`: international draughts with alpha-beta AI opponent, cursor-based UI, decision trace panel, forced capture rule, maximum capture rule, configurable search depth via CLI args. 5 modules, ~1500 lines, 144 verify cases. Compiles to native Rust binary for depth 8+ play.
-- **Snake demo** — `examples/games/snake.av`: classic Snake game showcasing immutable state threading, TCO game loop, records, verify blocks for game logic, and Terminal service for real-time I/O. 36 verify cases. Compiles to native Rust binary, formally verified in Lean 4 and Dafny/Z3.
-- **VM memory model** — the bytecode runtime now uses `NanValue` arenas split into `young`, `yard`, `handoff`, and `stable` spaces instead of a single forever-growing arena.
-- **Arena-native persistent list shapes** — VM lists now support `Flat`, `Prepend`, and `Concat` nodes, allowing `List.prepend`, `LIST_CONS`, and list destructuring to stay structural instead of flattening eagerly.
 
 ### Changed
-- `aver-rt::AverList` now packs repeated `append` chains into segmented chunk spines instead of leaving them as singleton-by-singleton concat ladders, which drastically improves shared interpreter/generated workloads like `list_append_scan`.
-- VM arena relocation now reuses scratch relocation tables across boundaries and drops an old dead-code local-rewrite path from `memory.rs`, which reduces per-boundary allocation churn and lowers maintenance risk in the hottest memory module.
-- VM list builtins and pattern matching now operate through arena list helpers (`len/get/uncons/to_vec`) instead of assuming a flat `Vec`, which restores `list_builtins(1K)` to better-than-baseline VM performance.
-- Core list builtins (`List.len`, `List.get`, `List.append`, `List.prepend`) now compile to dedicated VM opcodes instead of going through the generic string-dispatched builtin path.
-- `match List.get(xs, i)` now has a dedicated VM lowering path that branches directly on presence/absence instead of materializing `Option.Some(Boxed(v))` just to immediately match on it.
-- Structural list append now grows chunked right spines instead of a singleton-per-append concat chain, which materially improves `rogue`-style `List.append(...); List.get(..., i)` workloads.
-- `LIST_HEAD_TAIL` on concat-backed lists now returns a structural segment-view tail instead of rebuilding a fresh concat suffix each time, which further reduces list destructuring churn in VM workloads.
-- Tail-position and ordinary-return code paths can now allocate obvious aggregates into `yard` / `handoff` construction lanes. `TAIL_CALL_*` keeps loop-carried survivors in `yard`, and ordinary returns now keep helper-facing survivors in `handoff` instead of forcing them through `stable`.
-- Ordinary-return handoff now has refined fast paths: pure `handoff`, pure `young`, and one-result mixed helper returns stay cheap, while larger mixed `young + handoff` graphs deliberately fall back to full evacuation after a real `workflow_engine` crash exposed the unsafe version.
-- VM bytecode compilation now marks conservatively-classified **thin functions**, and `RETURN` / `?` use a fast path that skips boundary promotion work when those frames never created local heap survivors.
-- VM now also marks a much narrower **parent-thin** helper class for wrapper-like functions that can borrow caller `young` directly and skip ordinary-return handoff unless they spill into other survivor lanes.
-- `tests/vm_bench.rs` now reports execution-time arena memory deltas (`peak+` and `live+`) for interpreter and VM, measured above setup/compile baseline instead of raw total heap size.
-- `runtime_bench` now keeps the full core sweep by default, uses a smaller default `workflow_engine` seed for app benchmarks unless `--full` or `--seed` is requested, and scales up the previously too-small core cases so VM timings are less dominated by startup noise.
-
-### Docs
-- `docs/vm.md` now documents the VM memory model and list representation in more detail, including young/yard/handoff/stable spaces, structural list nodes, TCO survivor behavior, and ordinary-return handoff survivors.
-
-### Removed
-- Dead VM match-arm region machinery was removed after profiling showed that helper-thin functions and list specialization matter much more than per-arm frame tricks in real Aver programs.
-
-### Fixed
-- VM no longer leaves stale heap handles behind in real workloads like `examples/games/rogue`; frame boundaries now promote live roots to `stable` before truncating local arenas.
-- TCO list accumulators no longer get recursively re-evacuated through older immutable tails on every iteration; shared-yard cleanup now only rewrites the actual local suffix, which removes the pathological slowdown in persistent-list loops.
-- VM now resolves qualified type constructors more consistently in bytecode compilation, which unblocks module-heavy apps like `projects/workflow_engine` under `aver run --vm`.
-- `TAIL_CALL_KNOWN` now resizes the stack before clearing newly introduced locals, which fixes a real crash in `verify --vm` on larger programs such as `examples/data/json.av`.
-- VM ordered string comparison now matches the interpreter, so examples like `examples/data/date.av` behave the same under `verify` and `verify --vm`.
+- `aver-rt::AverList` now packs repeated `append` chains into segmented chunk spines, improving list-heavy workloads in both the interpreter and generated Rust.
 
 ## 0.5.5
 
