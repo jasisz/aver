@@ -503,6 +503,7 @@ pub struct Arena {
     yard_entries: Vec<ArenaEntry>,
     handoff_entries: Vec<ArenaEntry>,
     stable_entries: Vec<ArenaEntry>,
+    peak_usage: ArenaUsage,
     alloc_space: AllocSpace,
     pub(crate) type_names: Vec<String>,
     pub(crate) type_field_names: Vec<Vec<String>>,
@@ -573,6 +574,20 @@ pub enum AllocSpace {
     Young,
     Yard,
     Handoff,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ArenaUsage {
+    pub young: usize,
+    pub yard: usize,
+    pub handoff: usize,
+    pub stable: usize,
+}
+
+impl ArenaUsage {
+    pub fn total(self) -> usize {
+        self.young + self.yard + self.handoff + self.stable
+    }
 }
 
 const HEAP_SPACE_SHIFT: u32 = 30;

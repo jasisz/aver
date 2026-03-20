@@ -23,6 +23,7 @@ All notable changes to Aver are documented here.
 - Tail-position and ordinary-return code paths can now allocate obvious aggregates into `yard` / `handoff` construction lanes. `TAIL_CALL_*` keeps loop-carried survivors in `yard`, while ordinary returns still canonicalize live roots into `stable`.
 - VM bytecode compilation now marks conservatively-classified **thin functions**, and `RETURN` / `?` use a fast path that skips boundary promotion work when those frames never created local heap survivors.
 - `docs/vm.md` now documents the VM memory model and list representation in more detail, including young/yard/handoff/stable spaces, structural list nodes, TCO survivor behavior, and the current conservative ordinary-return path.
+- `tests/vm_bench.rs` now reports execution-time arena memory deltas (`peak+` and `live+`) for interpreter and VM, measured above setup/compile baseline instead of raw total heap size.
 
 ### Fixed
 - VM no longer leaves stale heap handles behind in real workloads like `examples/games/rogue`; frame boundaries now promote live roots to `stable` before truncating local arenas.

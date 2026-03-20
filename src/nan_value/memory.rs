@@ -101,6 +101,7 @@ impl Arena {
         self.yard_entries.extend(compacted_yard);
         self.handoff_entries.truncate(handoff_mark as usize);
         self.handoff_entries.extend(compacted_handoff);
+        self.note_peak_usage();
 
         (
             self.yard_entries.len() > yard_mark as usize,
@@ -1706,6 +1707,7 @@ impl Arena {
         let new_index = Self::encode_yard_index(self.yard_entries.len() as u32);
         relocated[relocation_slot] = new_index;
         self.yard_entries.push(ArenaEntry::Int(0));
+        self.note_peak_usage();
 
         let entry = std::mem::replace(
             &mut self.young_entries[raw_index as usize],
@@ -1791,6 +1793,7 @@ impl Arena {
         let new_index = Self::encode_handoff_index(self.handoff_entries.len() as u32);
         relocated[relocation_slot] = new_index;
         self.handoff_entries.push(ArenaEntry::Int(0));
+        self.note_peak_usage();
 
         let entry = std::mem::replace(
             &mut self.young_entries[raw_index as usize],
@@ -1962,6 +1965,7 @@ impl Arena {
                 let new_index = Self::encode_stable_index(self.stable_entries.len() as u32);
                 relocated_young[relocation_slot] = new_index;
                 self.stable_entries.push(ArenaEntry::Int(0));
+                self.note_peak_usage();
 
                 let entry = self.young_entries[raw_index as usize].clone();
                 let new_entry = self.promote_entry_to_stable(
@@ -1983,6 +1987,7 @@ impl Arena {
                 let new_index = Self::encode_stable_index(self.stable_entries.len() as u32);
                 relocated_yard[relocation_slot] = new_index;
                 self.stable_entries.push(ArenaEntry::Int(0));
+                self.note_peak_usage();
 
                 let entry = self.yard_entries[raw_index as usize].clone();
                 let new_entry = self.promote_entry_to_stable(
@@ -2004,6 +2009,7 @@ impl Arena {
                 let new_index = Self::encode_stable_index(self.stable_entries.len() as u32);
                 relocated_handoff[relocation_slot] = new_index;
                 self.stable_entries.push(ArenaEntry::Int(0));
+                self.note_peak_usage();
 
                 let entry = self.handoff_entries[raw_index as usize].clone();
                 let new_entry = self.promote_entry_to_stable(

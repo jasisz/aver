@@ -7,6 +7,7 @@ impl Arena {
             yard_entries: Vec::with_capacity(64),
             handoff_entries: Vec::with_capacity(64),
             stable_entries: Vec::with_capacity(64),
+            peak_usage: ArenaUsage::default(),
             alloc_space: AllocSpace::Young,
             type_names: Vec::new(),
             type_field_names: Vec::new(),
@@ -20,16 +21,19 @@ impl Arena {
             AllocSpace::Young => {
                 let idx = self.young_entries.len() as u32;
                 self.young_entries.push(entry);
+                self.note_peak_usage();
                 Self::encode_index(HeapSpace::Young, idx)
             }
             AllocSpace::Yard => {
                 let idx = self.yard_entries.len() as u32;
                 self.yard_entries.push(entry);
+                self.note_peak_usage();
                 Self::encode_index(HeapSpace::Yard, idx)
             }
             AllocSpace::Handoff => {
                 let idx = self.handoff_entries.len() as u32;
                 self.handoff_entries.push(entry);
+                self.note_peak_usage();
                 Self::encode_index(HeapSpace::Handoff, idx)
             }
         }
@@ -120,6 +124,35 @@ impl Arena {
     #[inline]
     pub fn handoff_len(&self) -> usize {
         self.handoff_entries.len()
+    }
+
+    #[inline]
+    pub fn stable_len(&self) -> usize {
+        self.stable_entries.len()
+    }
+
+    #[inline]
+    pub fn usage(&self) -> ArenaUsage {
+        ArenaUsage {
+            young: self.young_entries.len(),
+            yard: self.yard_entries.len(),
+            handoff: self.handoff_entries.len(),
+            stable: self.stable_entries.len(),
+        }
+    }
+
+    #[inline]
+    pub fn peak_usage(&self) -> ArenaUsage {
+        self.peak_usage
+    }
+
+    #[inline]
+    pub(super) fn note_peak_usage(&mut self) {
+        let usage = self.usage();
+        self.peak_usage.young = self.peak_usage.young.max(usage.young);
+        self.peak_usage.yard = self.peak_usage.yard.max(usage.yard);
+        self.peak_usage.handoff = self.peak_usage.handoff.max(usage.handoff);
+        self.peak_usage.stable = self.peak_usage.stable.max(usage.stable);
     }
 
     #[inline]
