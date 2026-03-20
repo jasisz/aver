@@ -7,6 +7,10 @@ impl Arena {
             yard_entries: Vec::with_capacity(64),
             handoff_entries: Vec::with_capacity(64),
             stable_entries: Vec::with_capacity(64),
+            scratch_young: Vec::new(),
+            scratch_yard: Vec::new(),
+            scratch_handoff: Vec::new(),
+            scratch_stable: Vec::new(),
             peak_usage: ArenaUsage::default(),
             alloc_space: AllocSpace::Young,
             type_names: Vec::new(),
@@ -153,6 +157,20 @@ impl Arena {
         self.peak_usage.yard = self.peak_usage.yard.max(usage.yard);
         self.peak_usage.handoff = self.peak_usage.handoff.max(usage.handoff);
         self.peak_usage.stable = self.peak_usage.stable.max(usage.stable);
+    }
+
+    #[inline]
+    pub(super) fn take_u32_scratch(slot: &mut Vec<u32>, len: usize) -> Vec<u32> {
+        let mut scratch = std::mem::take(slot);
+        scratch.clear();
+        scratch.resize(len, u32::MAX);
+        scratch
+    }
+
+    #[inline]
+    pub(super) fn recycle_u32_scratch(slot: &mut Vec<u32>, mut scratch: Vec<u32>) {
+        scratch.clear();
+        *slot = scratch;
     }
 
     #[inline]

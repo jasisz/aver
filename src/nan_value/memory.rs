@@ -10,7 +10,8 @@ impl Arena {
             return;
         }
 
-        let mut relocated = vec![u32::MAX; self.young_entries.len()];
+        let mut relocated =
+            Self::take_u32_scratch(&mut self.scratch_young, self.young_entries.len());
         let mut compacted = Vec::with_capacity(self.young_entries.len() - mark as usize);
 
         for root in roots {
@@ -19,6 +20,7 @@ impl Arena {
 
         self.young_entries.truncate(mark as usize);
         self.young_entries.extend(compacted);
+        Self::recycle_u32_scratch(&mut self.scratch_young, relocated);
     }
 
     pub fn truncate_yard_to(&mut self, mark: u32) {
@@ -63,16 +65,20 @@ impl Arena {
         roots: &mut [NanValue],
         young_target: AllocSpace,
     ) -> (bool, bool) {
-        let mut relocated_young =
-            vec![u32::MAX; self.young_entries.len().saturating_sub(young_mark as usize)];
-        let mut relocated_yard =
-            vec![u32::MAX; self.yard_entries.len().saturating_sub(yard_mark as usize)];
-        let mut relocated_handoff = vec![
-            u32::MAX;
+        let mut relocated_young = Self::take_u32_scratch(
+            &mut self.scratch_young,
+            self.young_entries.len().saturating_sub(young_mark as usize),
+        );
+        let mut relocated_yard = Self::take_u32_scratch(
+            &mut self.scratch_yard,
+            self.yard_entries.len().saturating_sub(yard_mark as usize),
+        );
+        let mut relocated_handoff = Self::take_u32_scratch(
+            &mut self.scratch_handoff,
             self.handoff_entries
                 .len()
-                .saturating_sub(handoff_mark as usize)
-        ];
+                .saturating_sub(handoff_mark as usize),
+        );
         let mut compacted_yard =
             Vec::with_capacity(self.yard_entries.len().saturating_sub(yard_mark as usize));
         let mut compacted_handoff = Vec::with_capacity(
@@ -102,6 +108,9 @@ impl Arena {
         self.handoff_entries.truncate(handoff_mark as usize);
         self.handoff_entries.extend(compacted_handoff);
         self.note_peak_usage();
+        Self::recycle_u32_scratch(&mut self.scratch_young, relocated_young);
+        Self::recycle_u32_scratch(&mut self.scratch_yard, relocated_yard);
+        Self::recycle_u32_scratch(&mut self.scratch_handoff, relocated_handoff);
 
         (
             self.yard_entries.len() > yard_mark as usize,
@@ -393,399 +402,6 @@ impl Arena {
             compacted_handoff,
         );
         value.with_heap_index(new_index)
-    }
-
-    #[allow(dead_code)]
-    #[allow(clippy::too_many_arguments)]
-    fn rewrite_local_refs_in_place(
-        &mut self,
-        space: HeapSpace,
-        raw_index: u32,
-        young_mark: u32,
-        yard_mark: u32,
-        handoff_mark: u32,
-        young_target: AllocSpace,
-        relocated_young: &mut [u32],
-        relocated_yard: &mut [u32],
-        relocated_handoff: &mut [u32],
-        compacted_yard: &mut Vec<ArenaEntry>,
-        compacted_handoff: &mut Vec<ArenaEntry>,
-    ) {
-        let raw_index = raw_index as usize;
-        match space {
-            HeapSpace::Young => {
-                if raw_index >= self.young_entries.len() || raw_index >= young_mark as usize {
-                    return;
-                }
-                let entry =
-                    std::mem::replace(&mut self.young_entries[raw_index], ArenaEntry::Int(0));
-                let new_entry = self.rewrite_local_entry(
-                    entry,
-                    young_mark,
-                    yard_mark,
-                    handoff_mark,
-                    young_target,
-                    relocated_young,
-                    relocated_yard,
-                    relocated_handoff,
-                    compacted_yard,
-                    compacted_handoff,
-                );
-                self.young_entries[raw_index] = new_entry;
-            }
-            HeapSpace::Yard => {
-                if raw_index >= self.yard_entries.len() || raw_index >= yard_mark as usize {
-                    return;
-                }
-                let entry =
-                    std::mem::replace(&mut self.yard_entries[raw_index], ArenaEntry::Int(0));
-                let new_entry = self.rewrite_local_entry(
-                    entry,
-                    young_mark,
-                    yard_mark,
-                    handoff_mark,
-                    young_target,
-                    relocated_young,
-                    relocated_yard,
-                    relocated_handoff,
-                    compacted_yard,
-                    compacted_handoff,
-                );
-                self.yard_entries[raw_index] = new_entry;
-            }
-            HeapSpace::Handoff => {
-                if raw_index >= self.handoff_entries.len() || raw_index >= handoff_mark as usize {
-                    return;
-                }
-                let entry =
-                    std::mem::replace(&mut self.handoff_entries[raw_index], ArenaEntry::Int(0));
-                let new_entry = self.rewrite_local_entry(
-                    entry,
-                    young_mark,
-                    yard_mark,
-                    handoff_mark,
-                    young_target,
-                    relocated_young,
-                    relocated_yard,
-                    relocated_handoff,
-                    compacted_yard,
-                    compacted_handoff,
-                );
-                self.handoff_entries[raw_index] = new_entry;
-            }
-            HeapSpace::Stable => {
-                if raw_index >= self.stable_entries.len() {
-                    return;
-                }
-                let entry =
-                    std::mem::replace(&mut self.stable_entries[raw_index], ArenaEntry::Int(0));
-                let new_entry = self.rewrite_local_entry(
-                    entry,
-                    young_mark,
-                    yard_mark,
-                    handoff_mark,
-                    young_target,
-                    relocated_young,
-                    relocated_yard,
-                    relocated_handoff,
-                    compacted_yard,
-                    compacted_handoff,
-                );
-                self.stable_entries[raw_index] = new_entry;
-            }
-        }
-    }
-
-    #[allow(dead_code)]
-    #[allow(clippy::too_many_arguments)]
-    fn rewrite_local_entry(
-        &mut self,
-        entry: ArenaEntry,
-        young_mark: u32,
-        yard_mark: u32,
-        handoff_mark: u32,
-        young_target: AllocSpace,
-        relocated_young: &mut [u32],
-        relocated_yard: &mut [u32],
-        relocated_handoff: &mut [u32],
-        compacted_yard: &mut Vec<ArenaEntry>,
-        compacted_handoff: &mut Vec<ArenaEntry>,
-    ) -> ArenaEntry {
-        match entry {
-            ArenaEntry::Int(i) => ArenaEntry::Int(i),
-            ArenaEntry::String(s) => ArenaEntry::String(s),
-            ArenaEntry::Builtin(name) => ArenaEntry::Builtin(name),
-            ArenaEntry::Fn(f) => ArenaEntry::Fn(f),
-            ArenaEntry::Boxed(inner) => ArenaEntry::Boxed(self.evacuate_local_root(
-                inner,
-                young_mark,
-                yard_mark,
-                handoff_mark,
-                young_target,
-                relocated_young,
-                relocated_yard,
-                relocated_handoff,
-                compacted_yard,
-                compacted_handoff,
-            )),
-            ArenaEntry::List(list) => ArenaEntry::List(self.rewrite_local_list(
-                list,
-                young_mark,
-                yard_mark,
-                handoff_mark,
-                young_target,
-                relocated_young,
-                relocated_yard,
-                relocated_handoff,
-                compacted_yard,
-                compacted_handoff,
-            )),
-            ArenaEntry::Tuple(mut items) => {
-                for value in &mut items {
-                    *value = self.evacuate_local_root(
-                        *value,
-                        young_mark,
-                        yard_mark,
-                        handoff_mark,
-                        young_target,
-                        relocated_young,
-                        relocated_yard,
-                        relocated_handoff,
-                        compacted_yard,
-                        compacted_handoff,
-                    );
-                }
-                ArenaEntry::Tuple(items)
-            }
-            ArenaEntry::Map(map) => {
-                let mut out = PersistentMap::new();
-                for (hash, (key, value)) in map {
-                    let new_key = self.evacuate_local_root(
-                        key,
-                        young_mark,
-                        yard_mark,
-                        handoff_mark,
-                        young_target,
-                        relocated_young,
-                        relocated_yard,
-                        relocated_handoff,
-                        compacted_yard,
-                        compacted_handoff,
-                    );
-                    let new_value = self.evacuate_local_root(
-                        value,
-                        young_mark,
-                        yard_mark,
-                        handoff_mark,
-                        young_target,
-                        relocated_young,
-                        relocated_yard,
-                        relocated_handoff,
-                        compacted_yard,
-                        compacted_handoff,
-                    );
-                    out.insert(hash, (new_key, new_value));
-                }
-                ArenaEntry::Map(out)
-            }
-            ArenaEntry::Record {
-                type_id,
-                mut fields,
-            } => {
-                for value in &mut fields {
-                    *value = self.evacuate_local_root(
-                        *value,
-                        young_mark,
-                        yard_mark,
-                        handoff_mark,
-                        young_target,
-                        relocated_young,
-                        relocated_yard,
-                        relocated_handoff,
-                        compacted_yard,
-                        compacted_handoff,
-                    );
-                }
-                ArenaEntry::Record { type_id, fields }
-            }
-            ArenaEntry::Variant {
-                type_id,
-                variant_id,
-                mut fields,
-            } => {
-                for value in &mut fields {
-                    *value = self.evacuate_local_root(
-                        *value,
-                        young_mark,
-                        yard_mark,
-                        handoff_mark,
-                        young_target,
-                        relocated_young,
-                        relocated_yard,
-                        relocated_handoff,
-                        compacted_yard,
-                        compacted_handoff,
-                    );
-                }
-                ArenaEntry::Variant {
-                    type_id,
-                    variant_id,
-                    fields,
-                }
-            }
-            ArenaEntry::Namespace { name, mut members } => {
-                for (_, value) in &mut members {
-                    *value = self.evacuate_local_root(
-                        *value,
-                        young_mark,
-                        yard_mark,
-                        handoff_mark,
-                        young_target,
-                        relocated_young,
-                        relocated_yard,
-                        relocated_handoff,
-                        compacted_yard,
-                        compacted_handoff,
-                    );
-                }
-                ArenaEntry::Namespace { name, members }
-            }
-        }
-    }
-
-    #[allow(dead_code)]
-    #[allow(clippy::too_many_arguments)]
-    fn rewrite_local_list(
-        &mut self,
-        list: ArenaList,
-        young_mark: u32,
-        yard_mark: u32,
-        handoff_mark: u32,
-        young_target: AllocSpace,
-        relocated_young: &mut [u32],
-        relocated_yard: &mut [u32],
-        relocated_handoff: &mut [u32],
-        compacted_yard: &mut Vec<ArenaEntry>,
-        compacted_handoff: &mut Vec<ArenaEntry>,
-    ) -> ArenaList {
-        match list {
-            ArenaList::Flat { items, start } => ArenaList::Flat {
-                items: Rc::new(
-                    items[start..]
-                        .iter()
-                        .map(|value| {
-                            self.evacuate_local_root(
-                                *value,
-                                young_mark,
-                                yard_mark,
-                                handoff_mark,
-                                young_target,
-                                relocated_young,
-                                relocated_yard,
-                                relocated_handoff,
-                                compacted_yard,
-                                compacted_handoff,
-                            )
-                        })
-                        .collect(),
-                ),
-                start: 0,
-            },
-            ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
-                head: self.evacuate_local_root(
-                    head,
-                    young_mark,
-                    yard_mark,
-                    handoff_mark,
-                    young_target,
-                    relocated_young,
-                    relocated_yard,
-                    relocated_handoff,
-                    compacted_yard,
-                    compacted_handoff,
-                ),
-                tail: self.evacuate_local_root(
-                    tail,
-                    young_mark,
-                    yard_mark,
-                    handoff_mark,
-                    young_target,
-                    relocated_young,
-                    relocated_yard,
-                    relocated_handoff,
-                    compacted_yard,
-                    compacted_handoff,
-                ),
-                len,
-            },
-            ArenaList::Concat { left, right, len } => ArenaList::Concat {
-                left: self.evacuate_local_root(
-                    left,
-                    young_mark,
-                    yard_mark,
-                    handoff_mark,
-                    young_target,
-                    relocated_young,
-                    relocated_yard,
-                    relocated_handoff,
-                    compacted_yard,
-                    compacted_handoff,
-                ),
-                right: self.evacuate_local_root(
-                    right,
-                    young_mark,
-                    yard_mark,
-                    handoff_mark,
-                    young_target,
-                    relocated_young,
-                    relocated_yard,
-                    relocated_handoff,
-                    compacted_yard,
-                    compacted_handoff,
-                ),
-                len,
-            },
-            ArenaList::Segments {
-                current,
-                rest,
-                start,
-                len,
-            } => ArenaList::Segments {
-                current: self.evacuate_local_root(
-                    current,
-                    young_mark,
-                    yard_mark,
-                    handoff_mark,
-                    young_target,
-                    relocated_young,
-                    relocated_yard,
-                    relocated_handoff,
-                    compacted_yard,
-                    compacted_handoff,
-                ),
-                rest: Rc::new(
-                    rest[start..]
-                        .iter()
-                        .map(|value| {
-                            self.evacuate_local_root(
-                                *value,
-                                young_mark,
-                                yard_mark,
-                                handoff_mark,
-                                young_target,
-                                relocated_young,
-                                relocated_yard,
-                                relocated_handoff,
-                                compacted_yard,
-                                compacted_handoff,
-                            )
-                        })
-                        .collect(),
-                ),
-                start: 0,
-                len,
-            },
-        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1433,13 +1049,15 @@ impl Arena {
             return;
         }
 
-        let mut relocated = vec![u32::MAX; self.young_entries.len()];
+        let mut relocated =
+            Self::take_u32_scratch(&mut self.scratch_young, self.young_entries.len());
 
         for root in roots {
             *root = self.promote_region_root_to_yard(*root, mark, &mut relocated);
         }
 
         self.young_entries.truncate(mark as usize);
+        Self::recycle_u32_scratch(&mut self.scratch_young, relocated);
     }
 
     pub fn promote_young_roots_to_handoff(&mut self, mark: u32, roots: &mut [NanValue]) {
@@ -1447,19 +1065,24 @@ impl Arena {
             return;
         }
 
-        let mut relocated = vec![u32::MAX; self.young_entries.len()];
+        let mut relocated =
+            Self::take_u32_scratch(&mut self.scratch_young, self.young_entries.len());
 
         for root in roots {
             *root = self.promote_region_root_to_handoff(*root, mark, &mut relocated);
         }
 
         self.young_entries.truncate(mark as usize);
+        Self::recycle_u32_scratch(&mut self.scratch_young, relocated);
     }
 
     pub fn promote_roots_to_stable(&mut self, roots: &mut [NanValue]) {
-        let mut relocated_young = vec![u32::MAX; self.young_entries.len()];
-        let mut relocated_yard = vec![u32::MAX; self.yard_entries.len()];
-        let mut relocated_handoff = vec![u32::MAX; self.handoff_entries.len()];
+        let mut relocated_young =
+            Self::take_u32_scratch(&mut self.scratch_young, self.young_entries.len());
+        let mut relocated_yard =
+            Self::take_u32_scratch(&mut self.scratch_yard, self.yard_entries.len());
+        let mut relocated_handoff =
+            Self::take_u32_scratch(&mut self.scratch_handoff, self.handoff_entries.len());
 
         for root in roots {
             *root = self.promote_value_to_stable(
@@ -1469,6 +1092,9 @@ impl Arena {
                 &mut relocated_handoff,
             );
         }
+        Self::recycle_u32_scratch(&mut self.scratch_young, relocated_young);
+        Self::recycle_u32_scratch(&mut self.scratch_yard, relocated_yard);
+        Self::recycle_u32_scratch(&mut self.scratch_handoff, relocated_handoff);
     }
 
     pub fn collect_yard_from_roots(&mut self, mark: u32, roots: &mut [NanValue]) {
@@ -1476,7 +1102,7 @@ impl Arena {
             return;
         }
 
-        let mut relocated = vec![u32::MAX; self.yard_entries.len()];
+        let mut relocated = Self::take_u32_scratch(&mut self.scratch_yard, self.yard_entries.len());
         let mut compacted = Vec::with_capacity(self.yard_entries.len() - mark as usize);
 
         for root in roots {
@@ -1485,6 +1111,7 @@ impl Arena {
 
         self.yard_entries.truncate(mark as usize);
         self.yard_entries.extend(compacted);
+        Self::recycle_u32_scratch(&mut self.scratch_yard, relocated);
     }
 
     pub fn collect_stable_from_roots(&mut self, roots: &mut [NanValue]) {
@@ -1492,7 +1119,8 @@ impl Arena {
             return;
         }
 
-        let mut relocated = vec![u32::MAX; self.stable_entries.len()];
+        let mut relocated =
+            Self::take_u32_scratch(&mut self.scratch_stable, self.stable_entries.len());
         let mut compacted = Vec::with_capacity(self.stable_entries.len());
 
         for root in roots {
@@ -1500,6 +1128,7 @@ impl Arena {
         }
 
         self.stable_entries = compacted;
+        Self::recycle_u32_scratch(&mut self.scratch_stable, relocated);
     }
 
     fn promote_region_root_to_yard(
