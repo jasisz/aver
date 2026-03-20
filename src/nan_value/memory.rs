@@ -1422,11 +1422,7 @@ impl Arena {
             && raw_index >= mark
             && raw_index < self.young_entries.len() as u32
         {
-            return match target {
-                AllocSpace::Yard => self.promote_value_to_yard(value, relocated),
-                AllocSpace::Handoff => self.promote_value_to_handoff(value, relocated),
-                AllocSpace::Young => unreachable!("promotion target must be yard or handoff"),
-            };
+            return self.promote_value_to_target(value, mark, relocated, target);
         }
         self.rewrite_promoted_young_refs_in_place(space, raw_index, mark, relocated, target);
         value
@@ -1689,12 +1685,18 @@ impl Arena {
         }
     }
 
-    fn promote_value_to_yard(&mut self, value: NanValue, relocated: &mut [u32]) -> NanValue {
+    fn promote_value_to_target(
+        &mut self,
+        value: NanValue,
+        mark: u32,
+        relocated: &mut [u32],
+        target: AllocSpace,
+    ) -> NanValue {
         let Some(index) = value.heap_index() else {
             return value;
         };
         let (space, raw_index) = Self::decode_index(index);
-        if !matches!(space, HeapSpace::Young) {
+        if !matches!(space, HeapSpace::Young) || raw_index < mark {
             return value;
         }
 
@@ -1704,129 +1706,67 @@ impl Arena {
             return value.with_heap_index(relocated_index);
         }
 
-        let new_index = Self::encode_yard_index(self.yard_entries.len() as u32);
-        relocated[relocation_slot] = new_index;
-        self.yard_entries.push(ArenaEntry::Int(0));
-        self.note_peak_usage();
-
-        let entry = std::mem::replace(
-            &mut self.young_entries[raw_index as usize],
-            ArenaEntry::Int(0),
-        );
-        let new_entry = self.promote_entry_to_yard(entry, relocated);
-        self.yard_entries[(new_index & HEAP_INDEX_MASK_U32) as usize] = new_entry;
-        value.with_heap_index(new_index)
-    }
-
-    fn promote_entry_to_yard(&mut self, entry: ArenaEntry, relocated: &mut [u32]) -> ArenaEntry {
-        match entry {
-            ArenaEntry::Int(i) => ArenaEntry::Int(i),
-            ArenaEntry::String(s) => ArenaEntry::String(s),
-            ArenaEntry::Builtin(name) => ArenaEntry::Builtin(name),
-            ArenaEntry::Fn(f) => ArenaEntry::Fn(f),
-            ArenaEntry::Boxed(inner) => {
-                ArenaEntry::Boxed(self.promote_value_to_yard(inner, relocated))
-            }
-            ArenaEntry::List(list) => ArenaEntry::List(self.promote_list_to_yard(list, relocated)),
-            ArenaEntry::Tuple(mut items) => {
-                for value in &mut items {
-                    *value = self.promote_value_to_yard(*value, relocated);
-                }
-                ArenaEntry::Tuple(items)
-            }
-            ArenaEntry::Map(map) => {
-                let mut out = PersistentMap::new();
-                for (hash, (key, value)) in map {
-                    let relocated_key = self.promote_value_to_yard(key, relocated);
-                    let relocated_value = self.promote_value_to_yard(value, relocated);
-                    out.insert(hash, (relocated_key, relocated_value));
-                }
-                ArenaEntry::Map(out)
-            }
-            ArenaEntry::Record {
-                type_id,
-                mut fields,
-            } => {
-                for value in &mut fields {
-                    *value = self.promote_value_to_yard(*value, relocated);
-                }
-                ArenaEntry::Record { type_id, fields }
-            }
-            ArenaEntry::Variant {
-                type_id,
-                variant_id,
-                mut fields,
-            } => {
-                for value in &mut fields {
-                    *value = self.promote_value_to_yard(*value, relocated);
-                }
-                ArenaEntry::Variant {
-                    type_id,
-                    variant_id,
-                    fields,
-                }
-            }
-            ArenaEntry::Namespace { name, mut members } => {
-                for (_, value) in &mut members {
-                    *value = self.promote_value_to_yard(*value, relocated);
-                }
-                ArenaEntry::Namespace { name, members }
-            }
-        }
-    }
-
-    fn promote_value_to_handoff(&mut self, value: NanValue, relocated: &mut [u32]) -> NanValue {
-        let Some(index) = value.heap_index() else {
-            return value;
+        let new_index = match target {
+            AllocSpace::Yard => Self::encode_yard_index(self.yard_entries.len() as u32),
+            AllocSpace::Handoff => Self::encode_handoff_index(self.handoff_entries.len() as u32),
+            AllocSpace::Young => unreachable!("promotion target must be yard or handoff"),
         };
-        let (space, raw_index) = Self::decode_index(index);
-        if !matches!(space, HeapSpace::Young) {
-            return value;
-        }
-
-        let relocation_slot = raw_index as usize;
-        let relocated_index = relocated[relocation_slot];
-        if relocated_index != u32::MAX {
-            return value.with_heap_index(relocated_index);
-        }
-
-        let new_index = Self::encode_handoff_index(self.handoff_entries.len() as u32);
         relocated[relocation_slot] = new_index;
-        self.handoff_entries.push(ArenaEntry::Int(0));
+        match target {
+            AllocSpace::Yard => self.yard_entries.push(ArenaEntry::Int(0)),
+            AllocSpace::Handoff => self.handoff_entries.push(ArenaEntry::Int(0)),
+            AllocSpace::Young => unreachable!(),
+        }
         self.note_peak_usage();
 
         let entry = std::mem::replace(
             &mut self.young_entries[raw_index as usize],
             ArenaEntry::Int(0),
         );
-        let new_entry = self.promote_entry_to_handoff(entry, relocated);
-        self.handoff_entries[(new_index & HEAP_INDEX_MASK_U32) as usize] = new_entry;
+        let new_entry = self.promote_entry_to_target(entry, mark, relocated, target);
+        match target {
+            AllocSpace::Yard => {
+                self.yard_entries[(new_index & HEAP_INDEX_MASK_U32) as usize] = new_entry;
+            }
+            AllocSpace::Handoff => {
+                self.handoff_entries[(new_index & HEAP_INDEX_MASK_U32) as usize] = new_entry;
+            }
+            AllocSpace::Young => unreachable!(),
+        }
         value.with_heap_index(new_index)
     }
 
-    fn promote_entry_to_handoff(&mut self, entry: ArenaEntry, relocated: &mut [u32]) -> ArenaEntry {
+    fn promote_entry_to_target(
+        &mut self,
+        entry: ArenaEntry,
+        mark: u32,
+        relocated: &mut [u32],
+        target: AllocSpace,
+    ) -> ArenaEntry {
         match entry {
             ArenaEntry::Int(i) => ArenaEntry::Int(i),
             ArenaEntry::String(s) => ArenaEntry::String(s),
             ArenaEntry::Builtin(name) => ArenaEntry::Builtin(name),
             ArenaEntry::Fn(f) => ArenaEntry::Fn(f),
-            ArenaEntry::Boxed(inner) => {
-                ArenaEntry::Boxed(self.promote_value_to_handoff(inner, relocated))
-            }
+            ArenaEntry::Boxed(inner) => ArenaEntry::Boxed(
+                self.promote_region_root_to_target(inner, mark, relocated, target),
+            ),
             ArenaEntry::List(list) => {
-                ArenaEntry::List(self.promote_list_to_handoff(list, relocated))
+                ArenaEntry::List(self.promote_list_to_target(list, mark, relocated, target))
             }
             ArenaEntry::Tuple(mut items) => {
                 for value in &mut items {
-                    *value = self.promote_value_to_handoff(*value, relocated);
+                    *value = self.promote_region_root_to_target(*value, mark, relocated, target);
                 }
                 ArenaEntry::Tuple(items)
             }
             ArenaEntry::Map(map) => {
                 let mut out = PersistentMap::new();
                 for (hash, (key, value)) in map {
-                    let relocated_key = self.promote_value_to_handoff(key, relocated);
-                    let relocated_value = self.promote_value_to_handoff(value, relocated);
+                    let relocated_key =
+                        self.promote_region_root_to_target(key, mark, relocated, target);
+                    let relocated_value =
+                        self.promote_region_root_to_target(value, mark, relocated, target);
                     out.insert(hash, (relocated_key, relocated_value));
                 }
                 ArenaEntry::Map(out)
@@ -1836,7 +1776,7 @@ impl Arena {
                 mut fields,
             } => {
                 for value in &mut fields {
-                    *value = self.promote_value_to_handoff(*value, relocated);
+                    *value = self.promote_region_root_to_target(*value, mark, relocated, target);
                 }
                 ArenaEntry::Record { type_id, fields }
             }
@@ -1846,7 +1786,7 @@ impl Arena {
                 mut fields,
             } => {
                 for value in &mut fields {
-                    *value = self.promote_value_to_handoff(*value, relocated);
+                    *value = self.promote_region_root_to_target(*value, mark, relocated, target);
                 }
                 ArenaEntry::Variant {
                     type_id,
@@ -1856,32 +1796,40 @@ impl Arena {
             }
             ArenaEntry::Namespace { name, mut members } => {
                 for (_, value) in &mut members {
-                    *value = self.promote_value_to_handoff(*value, relocated);
+                    *value = self.promote_region_root_to_target(*value, mark, relocated, target);
                 }
                 ArenaEntry::Namespace { name, members }
             }
         }
     }
 
-    fn promote_list_to_yard(&mut self, list: ArenaList, relocated: &mut [u32]) -> ArenaList {
+    fn promote_list_to_target(
+        &mut self,
+        list: ArenaList,
+        mark: u32,
+        relocated: &mut [u32],
+        target: AllocSpace,
+    ) -> ArenaList {
         match list {
             ArenaList::Flat { items, start } => ArenaList::Flat {
                 items: Rc::new(
                     items[start..]
                         .iter()
-                        .map(|value| self.promote_value_to_yard(*value, relocated))
+                        .map(|value| {
+                            self.promote_region_root_to_target(*value, mark, relocated, target)
+                        })
                         .collect(),
                 ),
                 start: 0,
             },
             ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
-                head: self.promote_value_to_yard(head, relocated),
-                tail: self.promote_value_to_yard(tail, relocated),
+                head: self.promote_region_root_to_target(head, mark, relocated, target),
+                tail: self.promote_region_root_to_target(tail, mark, relocated, target),
                 len,
             },
             ArenaList::Concat { left, right, len } => ArenaList::Concat {
-                left: self.promote_value_to_yard(left, relocated),
-                right: self.promote_value_to_yard(right, relocated),
+                left: self.promote_region_root_to_target(left, mark, relocated, target),
+                right: self.promote_region_root_to_target(right, mark, relocated, target),
                 len,
             },
             ArenaList::Segments {
@@ -1890,51 +1838,13 @@ impl Arena {
                 start,
                 len,
             } => ArenaList::Segments {
-                current: self.promote_value_to_yard(current, relocated),
+                current: self.promote_region_root_to_target(current, mark, relocated, target),
                 rest: Rc::new(
                     rest[start..]
                         .iter()
-                        .map(|value| self.promote_value_to_yard(*value, relocated))
-                        .collect(),
-                ),
-                start: 0,
-                len,
-            },
-        }
-    }
-
-    fn promote_list_to_handoff(&mut self, list: ArenaList, relocated: &mut [u32]) -> ArenaList {
-        match list {
-            ArenaList::Flat { items, start } => ArenaList::Flat {
-                items: Rc::new(
-                    items[start..]
-                        .iter()
-                        .map(|value| self.promote_value_to_handoff(*value, relocated))
-                        .collect(),
-                ),
-                start: 0,
-            },
-            ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
-                head: self.promote_value_to_handoff(head, relocated),
-                tail: self.promote_value_to_handoff(tail, relocated),
-                len,
-            },
-            ArenaList::Concat { left, right, len } => ArenaList::Concat {
-                left: self.promote_value_to_handoff(left, relocated),
-                right: self.promote_value_to_handoff(right, relocated),
-                len,
-            },
-            ArenaList::Segments {
-                current,
-                rest,
-                start,
-                len,
-            } => ArenaList::Segments {
-                current: self.promote_value_to_handoff(current, relocated),
-                rest: Rc::new(
-                    rest[start..]
-                        .iter()
-                        .map(|value| self.promote_value_to_handoff(*value, relocated))
+                        .map(|value| {
+                            self.promote_region_root_to_target(*value, mark, relocated, target)
+                        })
                         .collect(),
                 ),
                 start: 0,

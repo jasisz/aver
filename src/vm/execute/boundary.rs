@@ -22,17 +22,18 @@ impl VM {
         self.arena.collect_stable_from_roots(&mut all_roots);
 
         frame_roots.copy_from_slice(&all_roots[..root_count]);
-        for (dst, src) in self
-            .globals
-            .iter_mut()
-            .zip(all_roots[root_count..root_count + global_count].iter().copied())
-        {
+        for (dst, src) in self.globals.iter_mut().zip(
+            all_roots[root_count..root_count + global_count]
+                .iter()
+                .copied(),
+        ) {
             *dst = src;
         }
         let mut constant_offset = root_count + global_count;
         for chunk in &mut self.code.functions {
             let len = chunk.constants.len();
-            chunk.constants
+            chunk
+                .constants
                 .copy_from_slice(&all_roots[constant_offset..constant_offset + len]);
             constant_offset += len;
         }
