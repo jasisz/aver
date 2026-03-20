@@ -80,7 +80,10 @@ fn empty_collection_immediates_roundtrip_through_value() {
     use crate::value::Value;
 
     let mut arena = Arena::new();
-    let empty_list = NanValue::from_value(&Value::List(aver_rt::AverList::from_vec(Vec::new())), &mut arena);
+    let empty_list = NanValue::from_value(
+        &Value::List(aver_rt::AverList::from_vec(Vec::new())),
+        &mut arena,
+    );
     let empty_map = NanValue::from_value(&Value::Map(std::collections::HashMap::new()), &mut arena);
 
     assert_eq!(empty_list.bits(), NanValue::EMPTY_LIST.bits());
@@ -255,10 +258,9 @@ fn list_roundtrip() {
 #[test]
 fn prepend_with_empty_immediate_tail_traverses_correctly() {
     let mut arena = Arena::new();
-    let list = NanValue::new_list(arena.push_list_prepend(
-        NanValue::new_int_inline(7),
-        NanValue::EMPTY_LIST,
-    ));
+    let list = NanValue::new_list(
+        arena.push_list_prepend(NanValue::new_int_inline(7), NanValue::EMPTY_LIST),
+    );
 
     assert_eq!(arena.list_len_value(list), 1);
     assert_eq!(arena.list_get_value(list, 0).unwrap().as_int(&arena), 7);

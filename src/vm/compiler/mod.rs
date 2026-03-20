@@ -393,10 +393,7 @@ fn classify_thin_functions(code: &mut CodeStore, arena: &Arena) -> Result<(), Co
 const MAX_PARENT_THIN_CODE_LEN: usize = 48;
 const MAX_PARENT_THIN_LOCALS: u16 = 8;
 
-fn classify_parent_thin_chunks(
-    code: &CodeStore,
-    arena: &Arena,
-) -> Result<Vec<bool>, CompileError> {
+fn classify_parent_thin_chunks(code: &CodeStore, arena: &Arena) -> Result<Vec<bool>, CompileError> {
     let mut candidates: Vec<bool> = code
         .functions
         .iter()
@@ -431,16 +428,12 @@ enum BuiltinParentThinClass {
 
 fn classify_parent_thin_builtin(name: &str) -> BuiltinParentThinClass {
     match name {
-        "Bool.or" | "Bool.and" | "Bool.not"
-        | "Int.fromFloat" | "Int.abs" | "Int.min" | "Int.max" | "Int.toFloat"
-        | "Float.fromInt" | "Float.abs" | "Float.floor" | "Float.ceil" | "Float.round"
-        | "Float.min" | "Float.max"
-        | "String.len" | "String.byteLength" | "String.startsWith" | "String.endsWith"
-        | "String.contains"
-        | "List.contains"
-        | "Map.empty" | "Map.len" | "Map.has"
-        | "Option.withDefault" | "Result.withDefault"
-        | "Char.toCode" => BuiltinParentThinClass::Heapless,
+        "Bool.or" | "Bool.and" | "Bool.not" | "Int.fromFloat" | "Int.abs" | "Int.min"
+        | "Int.max" | "Int.toFloat" | "Float.fromInt" | "Float.abs" | "Float.floor"
+        | "Float.ceil" | "Float.round" | "Float.min" | "Float.max" | "String.len"
+        | "String.byteLength" | "String.startsWith" | "String.endsWith" | "String.contains"
+        | "List.contains" | "Map.empty" | "Map.len" | "Map.has" | "Option.withDefault"
+        | "Result.withDefault" | "Char.toCode" => BuiltinParentThinClass::Heapless,
 
         "List.get" | "Map.get" => BuiltinParentThinClass::Cheap,
 

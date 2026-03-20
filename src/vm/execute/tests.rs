@@ -83,7 +83,10 @@ fn collect_live_vm_roots_drops_callback_only_stable_values() {
     let result = vm
         .call_function(callback_id, &[])
         .expect("callback should return");
-    assert_eq!(result.to_value(&vm.arena), crate::value::Value::Str("callback".to_string()));
+    assert_eq!(
+        result.to_value(&vm.arena),
+        crate::value::Value::Str("callback".to_string())
+    );
     assert!(
         vm.arena.stable_len() > 0,
         "top-level callback return should have promoted result into stable before cleanup"
