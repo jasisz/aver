@@ -800,6 +800,31 @@ fn vm_parent_thin_allows_nullary_variant_helpers() {
 }
 
 #[test]
+fn vm_parent_thin_allows_heapless_builtin_helpers() {
+    let src = "fn keepCount(name: String) -> Int\n    String.len(name)\n\nfn wrap(name: String) -> Int\n    keepCount(name)\n\nfn main() -> Int\n    wrap(\"alpha\")\n";
+    let code = vm_compile(src);
+    assert!(code.get(code.find("keepCount").unwrap()).parent_thin);
+    assert!(code.get(code.find("wrap").unwrap()).parent_thin);
+
+    let result = vm_run(src);
+    assert_eq!(result.as_int(&Arena::new()), 5);
+}
+
+#[test]
+fn vm_parent_thin_allows_cheap_builtin_lookup_helpers() {
+    let src = "fn lookup(values: Map<String, Int>) -> Option<Int>\n    Map.get(values, \"x\")\n\nfn wrap(values: Map<String, Int>) -> Option<Int>\n    lookup(values)\n\nfn main() -> Option<Int>\n    wrap(Map.set(Map.empty(), \"x\", 9))\n";
+    let code = vm_compile(src);
+    assert!(code.get(code.find("lookup").unwrap()).parent_thin);
+    assert!(code.get(code.find("wrap").unwrap()).parent_thin);
+
+    let (result, arena) = vm_run_with_arena(src);
+    assert_eq!(
+        result.to_value(&arena),
+        aver::value::Value::Some(Box::new(aver::value::Value::Int(9)))
+    );
+}
+
+#[test]
 fn vm_parent_thin_rejects_builtin_heavy_wrapper_chain() {
     let src = "fn keepNonEmpty(lines: List<String>) -> List<String>\n    lines\n\nfn splitNonEmptyLines(content: String) -> List<String>\n    keepNonEmpty(String.split(content, \"\\n\"))\n\nfn main() -> List<String>\n    splitNonEmptyLines(\"a\\n\\nb\")\n";
     let code = vm_compile(src);
@@ -808,6 +833,16 @@ fn vm_parent_thin_rejects_builtin_heavy_wrapper_chain() {
             .get(code.find("splitNonEmptyLines").unwrap())
             .parent_thin,
         "wrapper around String.split should stay off parent-thin so large intermediate lists do not borrow caller young"
+    );
+}
+
+#[test]
+fn vm_parent_thin_rejects_allocating_builtin_wrappers() {
+    let src = "fn upper(name: String) -> String\n    String.toUpper(name)\n\nfn wrap(name: String) -> String\n    upper(name)\n\nfn main() -> String\n    wrap(\"alpha\")\n";
+    let code = vm_compile(src);
+    assert!(
+        !code.get(code.find("upper").unwrap()).parent_thin,
+        "allocating string builtins should still stay off parent-thin"
     );
 }
 

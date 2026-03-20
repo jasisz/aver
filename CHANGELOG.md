@@ -2,6 +2,19 @@
 
 All notable changes to Aver are documented here.
 
+## Unreleased
+
+### Changed
+- VM `Result.Ok` / `Result.Err` / `Option.Some` now keep wrapped `Bool` / `Unit` / `None` values inline inside `NanValue` instead of boxing them in the arena, reducing wrapper-heavy memory churn on interpreter and VM paths.
+- VM now also keeps wrapped inline `Int` values (`Some(42)`, `Ok(-7)`, `Err(0)`) fully inline via dedicated NaN-box tags, and nullary user-defined variants (`Status.Todo`, `Color.Red`) now use inline constructor ids instead of arena entries.
+- VM empty collections now use immediate `NanValue` encodings for `[]` and `Map.empty()`, so empty list/map literals and empty builtin results avoid arena allocation while list/map traversal paths stay value-aware.
+- VM `parent-thin` classification now accepts small match/binding helpers and nullary-variant constructors, so more tiny control-flow helpers can return without paying ordinary-return handoff churn.
+- VM `parent-thin` classification now also allows audited heapless/cheap pure builtins such as `Bool.*`, scalar `Int.*` / `Float.*`, string predicate/length helpers, and `Map.get` / `Map.len` / `Map.has`, instead of rejecting every `CALL_BUILTIN`.
+
+### Fixed
+- `runtime_bench` now invalidates generated benchmark projects when the Aver binary or `aver-rt` manifest changes, so generated results no longer reuse stale toolchain-pinned outputs across runtime revisions.
+- VM `HttpServer.listen` / `listenWith` callbacks now compact `stable` against live VM roots after converting the handler result back to host values, so request-local response graphs do not accumulate in `stable` across requests.
+
 ## 0.6.0
 
 ### Added
@@ -12,9 +25,6 @@ All notable changes to Aver are documented here.
 
 ### Changed
 - `aver-rt::AverList` now packs repeated `append` chains into segmented chunk spines, improving list-heavy workloads in both the interpreter and generated Rust.
-- VM `Result.Ok` / `Result.Err` / `Option.Some` now keep wrapped `Bool` / `Unit` / `None` values inline inside `NanValue` instead of boxing them in the arena, reducing wrapper-heavy memory churn on interpreter and VM paths.
-- VM now also keeps wrapped inline `Int` values (`Some(42)`, `Ok(-7)`, `Err(0)`) fully inline via dedicated NaN-box tags, and nullary user-defined variants (`Status.Todo`, `Color.Red`) now use inline constructor ids instead of arena entries.
-- VM `parent-thin` classification now accepts small match/binding helpers and nullary-variant constructors, so more tiny control-flow helpers can return without paying ordinary-return handoff churn.
 
 ## 0.5.5
 

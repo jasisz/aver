@@ -235,7 +235,7 @@ fn len_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
         ));
     }
     Ok(NanValue::new_int(
-        arena.list_len(args[0].arena_index()) as i64,
+        arena.list_len_value(args[0]) as i64,
         arena,
     ))
 }
@@ -262,7 +262,7 @@ fn get_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
         return Ok(NanValue::NONE);
     }
     let idx = index as usize;
-    if let Some(val) = arena.list_get(args[0].arena_index(), idx) {
+    if let Some(val) = arena.list_get_value(args[0], idx) {
         Ok(NanValue::new_some_value(val, arena))
     } else {
         Ok(NanValue::NONE)
@@ -318,10 +318,10 @@ fn concat_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeEr
             "List.concat() second argument must be a List".to_string(),
         ));
     }
-    if arena.list_is_empty(args[0].arena_index()) {
+    if arena.list_is_empty_value(args[0]) {
         return Ok(args[1]);
     }
-    if arena.list_is_empty(args[1].arena_index()) {
+    if arena.list_is_empty_value(args[1]) {
         return Ok(args[0]);
     }
     let list_idx = arena.push_list_concat(args[0], args[1]);
@@ -340,8 +340,11 @@ fn reverse_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeE
             "List.reverse() argument must be a List".to_string(),
         ));
     }
-    let mut items = arena.list_to_vec(args[0].arena_index());
+    let mut items = arena.list_to_vec_value(args[0]);
     items.reverse();
+    if items.is_empty() {
+        return Ok(NanValue::EMPTY_LIST);
+    }
     let list_idx = arena.push_list(items);
     Ok(NanValue::new_list(list_idx))
 }
@@ -358,7 +361,7 @@ fn contains_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtime
             "List.contains() first argument must be a List".to_string(),
         ));
     }
-    let items = arena.list_to_vec(args[0].arena_index());
+    let items = arena.list_to_vec_value(args[0]);
     let target = args[1];
     let found = items.iter().any(|item| item.eq_in(target, arena));
     Ok(NanValue::new_bool(found))
@@ -381,8 +384,8 @@ fn zip_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
             "List.zip() second argument must be a List".to_string(),
         ));
     }
-    let a = arena.list_to_vec(args[0].arena_index());
-    let b = arena.list_to_vec(args[1].arena_index());
+    let a = arena.list_to_vec_value(args[0]);
+    let b = arena.list_to_vec_value(args[1]);
     let pairs: Vec<NanValue> = a
         .iter()
         .zip(b.iter())
@@ -391,6 +394,9 @@ fn zip_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
             NanValue::new_tuple(tuple_idx)
         })
         .collect();
+    if pairs.is_empty() {
+        return Ok(NanValue::EMPTY_LIST);
+    }
     let list_idx = arena.push_list(pairs);
     Ok(NanValue::new_list(list_idx))
 }

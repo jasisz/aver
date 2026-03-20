@@ -395,12 +395,12 @@ const MAX_PARENT_THIN_LOCALS: u16 = 8;
 
 fn classify_parent_thin_chunks(
     code: &CodeStore,
-    _arena: &Arena,
+    arena: &Arena,
 ) -> Result<Vec<bool>, CompileError> {
     let mut candidates: Vec<bool> = code
         .functions
         .iter()
-        .map(base_parent_thin_chunk)
+        .map(|chunk| base_parent_thin_chunk(chunk, arena))
         .collect::<Result<_, _>>()?;
 
     loop {
@@ -422,7 +422,51 @@ fn classify_parent_thin_chunks(
     Ok(candidates)
 }
 
-fn base_parent_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BuiltinParentThinClass {
+    Heapless,
+    Cheap,
+    AllocHeavy,
+}
+
+fn classify_parent_thin_builtin(name: &str) -> BuiltinParentThinClass {
+    match name {
+        "Bool.or" | "Bool.and" | "Bool.not"
+        | "Int.fromFloat" | "Int.abs" | "Int.min" | "Int.max" | "Int.toFloat"
+        | "Float.fromInt" | "Float.abs" | "Float.floor" | "Float.ceil" | "Float.round"
+        | "Float.min" | "Float.max"
+        | "String.len" | "String.byteLength" | "String.startsWith" | "String.endsWith"
+        | "String.contains"
+        | "List.contains"
+        | "Map.empty" | "Map.len" | "Map.has"
+        | "Option.withDefault" | "Result.withDefault"
+        | "Char.toCode" => BuiltinParentThinClass::Heapless,
+
+        "List.get" | "Map.get" => BuiltinParentThinClass::Cheap,
+
+        _ => BuiltinParentThinClass::AllocHeavy,
+    }
+}
+
+fn parent_thin_builtin_is_allowed(
+    chunk: &FnChunk,
+    arena: &Arena,
+    ip: usize,
+) -> Result<bool, CompileError> {
+    if ip + 3 > chunk.code.len() {
+        return Err(CompileError {
+            msg: format!("truncated bytecode in {}", chunk.name),
+        });
+    }
+    let name_idx = u16::from_be_bytes([chunk.code[ip], chunk.code[ip + 1]]) as u32;
+    let builtin_name = arena.get_string(name_idx);
+    Ok(!matches!(
+        classify_parent_thin_builtin(builtin_name),
+        BuiltinParentThinClass::AllocHeavy
+    ))
+}
+
+fn base_parent_thin_chunk(chunk: &FnChunk, arena: &Arena) -> Result<bool, CompileError> {
     if !chunk.effects.is_empty()
         || chunk.code.len() > MAX_PARENT_THIN_CODE_LEN
         || chunk.local_count > MAX_PARENT_THIN_LOCALS
@@ -441,13 +485,13 @@ fn base_parent_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
                 return Ok(false);
             }
 
-            CALL_BUILTIN | CONCAT | LIST_NIL | LIST_CONS | LIST_GET | LIST_APPEND
-            | LIST_PREPEND | RECORD_UPDATE => {
+            CONCAT | LIST_CONS | LIST_GET | LIST_APPEND | LIST_PREPEND | RECORD_UPDATE => {
                 return Ok(false);
             }
 
             POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
-            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_LEN | LIST_GET_MATCH => {}
+            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_LEN | LIST_GET_MATCH
+            | LIST_NIL => {}
 
             LIST_NEW | WRAP | TUPLE_NEW | RECORD_NEW => {
                 return Ok(false);
@@ -459,6 +503,13 @@ fn base_parent_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
 
             LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | RECORD_GET_NAMED | MATCH_FAIL => {
                 ip = advance_opcode_ip(chunk, ip, 2)?;
+            }
+
+            CALL_BUILTIN => {
+                if !parent_thin_builtin_is_allowed(chunk, arena, ip)? {
+                    return Ok(false);
+                }
+                ip = advance_opcode_ip(chunk, ip, 3)?;
             }
 
             CALL_KNOWN | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE => {

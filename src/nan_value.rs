@@ -18,7 +18,7 @@
 //!
 //! Tag map:
 //!   0  = Int             payload bit45: 0=inline(45-bit signed), 1=arena index
-//!   1  = Immediate       payload 0-3: false/true/unit/none; 4-15: wrapped immediate
+//!   1  = Immediate       payload 0-5: false/true/unit/none/empty-list/empty-map; 16+: wrapped immediate
 //!   2  = Wrapper         payload bits 0-1: 00=some, 01=ok, 10=err; rest=arena index
 //!   3  = String          payload = arena index
 //!   4  = List            payload = arena index
@@ -72,7 +72,9 @@ const IMM_FALSE: u64 = 0;
 const IMM_TRUE: u64 = 1;
 const IMM_UNIT: u64 = 2;
 const IMM_NONE: u64 = 3;
-const IMM_WRAPPED_BASE: u64 = 4;
+const IMM_EMPTY_LIST: u64 = 4;
+const IMM_EMPTY_MAP: u64 = 5;
+const IMM_WRAPPED_BASE: u64 = 16;
 const IMM_INNER_MASK: u64 = 0b11;
 
 const WRAP_SOME: u64 = 0;
@@ -189,6 +191,8 @@ impl NanValue {
     pub const TRUE: NanValue = NanValue(QNAN | (TAG_IMMEDIATE << TAG_SHIFT) | IMM_TRUE);
     pub const UNIT: NanValue = NanValue(QNAN | (TAG_IMMEDIATE << TAG_SHIFT) | IMM_UNIT);
     pub const NONE: NanValue = NanValue(QNAN | (TAG_IMMEDIATE << TAG_SHIFT) | IMM_NONE);
+    pub const EMPTY_LIST: NanValue = NanValue(QNAN | (TAG_IMMEDIATE << TAG_SHIFT) | IMM_EMPTY_LIST);
+    pub const EMPTY_MAP: NanValue = NanValue(QNAN | (TAG_IMMEDIATE << TAG_SHIFT) | IMM_EMPTY_MAP);
 
     #[inline]
     pub fn new_bool(b: bool) -> Self {
@@ -526,7 +530,9 @@ impl NanValue {
 
     #[inline]
     pub fn is_list(self) -> bool {
-        self.is_nan_boxed() && self.tag() == TAG_LIST
+        self.is_nan_boxed()
+            && (self.tag() == TAG_LIST
+                || (self.tag() == TAG_IMMEDIATE && self.payload() == IMM_EMPTY_LIST))
     }
 
     #[inline]
@@ -546,7 +552,9 @@ impl NanValue {
 
     #[inline]
     pub fn is_map(self) -> bool {
-        self.is_nan_boxed() && self.tag() == TAG_MAP
+        self.is_nan_boxed()
+            && (self.tag() == TAG_MAP
+                || (self.tag() == TAG_IMMEDIATE && self.payload() == IMM_EMPTY_MAP))
     }
 
     #[inline]
@@ -562,6 +570,16 @@ impl NanValue {
     #[inline]
     pub fn is_namespace(self) -> bool {
         self.is_nan_boxed() && self.tag() == TAG_NAMESPACE
+    }
+
+    #[inline]
+    pub fn is_empty_list_immediate(self) -> bool {
+        self.is_nan_boxed() && self.tag() == TAG_IMMEDIATE && self.payload() == IMM_EMPTY_LIST
+    }
+
+    #[inline]
+    pub fn is_empty_map_immediate(self) -> bool {
+        self.is_nan_boxed() && self.tag() == TAG_IMMEDIATE && self.payload() == IMM_EMPTY_MAP
     }
 
     pub fn type_name(self) -> &'static str {
@@ -583,6 +601,8 @@ impl NanValue {
                         IMM_FALSE | IMM_TRUE => "Bool",
                         IMM_UNIT => "Unit",
                         IMM_NONE => "Option.None",
+                        IMM_EMPTY_LIST => "List",
+                        IMM_EMPTY_MAP => "Map",
                         _ => "Unknown",
                     }
                 }
@@ -706,6 +726,8 @@ impl std::fmt::Debug for NanValue {
                         IMM_TRUE => write!(f, "True"),
                         IMM_UNIT => write!(f, "Unit"),
                         IMM_NONE => write!(f, "None"),
+                        IMM_EMPTY_LIST => write!(f, "EmptyList"),
+                        IMM_EMPTY_MAP => write!(f, "EmptyMap"),
                         _ => write!(f, "Immediate({})", self.payload()),
                     }
                 }

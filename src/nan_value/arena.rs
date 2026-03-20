@@ -290,6 +290,20 @@ impl Arena {
             _ => panic!("Arena: expected Map at {}", index),
         }
     }
+    pub fn map_ref_value(&self, map: NanValue) -> &PersistentMap {
+        static EMPTY_MAP: std::sync::OnceLock<PersistentMap> = std::sync::OnceLock::new();
+        if map.is_empty_map_immediate() {
+            return EMPTY_MAP.get_or_init(PersistentMap::new);
+        }
+        self.get_map(map.arena_index())
+    }
+    pub fn clone_map_value(&self, map: NanValue) -> PersistentMap {
+        if map.is_empty_map_immediate() {
+            PersistentMap::new()
+        } else {
+            self.get_map(map.arena_index()).clone()
+        }
+    }
     pub fn get_fn(&self, index: u32) -> &FunctionValue {
         match self.get(index) {
             ArenaEntry::Fn(f) => f,

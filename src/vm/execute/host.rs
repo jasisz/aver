@@ -5,6 +5,41 @@ use crate::vm::runtime::VmExecutionMode;
 use crate::vm::types::VmError;
 
 impl VM {
+    pub(super) fn collect_live_vm_roots(&mut self) {
+        let stack_count = self.stack.len();
+        let global_count = self.globals.len();
+        let constant_count: usize = self
+            .code
+            .functions
+            .iter()
+            .map(|chunk| chunk.constants.len())
+            .sum();
+        let mut roots = Vec::with_capacity(stack_count + global_count + constant_count);
+        roots.extend(self.stack.iter().copied());
+        roots.extend(self.globals.iter().copied());
+        for chunk in &self.code.functions {
+            roots.extend(chunk.constants.iter().copied());
+        }
+        self.arena.collect_stable_from_roots(&mut roots);
+
+        self.stack.copy_from_slice(&roots[..stack_count]);
+        for (dst, src) in self.globals.iter_mut().zip(
+            roots[stack_count..stack_count + global_count]
+                .iter()
+                .copied(),
+        ) {
+            *dst = src;
+        }
+        let mut constant_offset = stack_count + global_count;
+        for chunk in &mut self.code.functions {
+            let len = chunk.constants.len();
+            chunk
+                .constants
+                .copy_from_slice(&roots[constant_offset..constant_offset + len]);
+            constant_offset += len;
+        }
+    }
+
     /// Handle HttpServer.listen/listenWith with VM callback support.
     /// Uses unsafe self-pointer for re-entrant callback into VM.call_function.
     pub(super) fn dispatch_http_server(
@@ -47,7 +82,9 @@ impl VM {
                 }
             };
 
-            Ok(result_nv.to_value(&vm.arena))
+            let result = result_nv.to_value(&vm.arena);
+            vm.collect_live_vm_roots();
+            Ok(result)
         };
 
         let skip = self.runtime.execution_mode() == VmExecutionMode::Record;

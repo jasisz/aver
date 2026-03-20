@@ -154,7 +154,7 @@ impl Interpreter {
             }
             Pattern::Ident(name) => Some(vec![(name.clone(), value)]),
             Pattern::EmptyList => {
-                if value.is_list() && self.arena.list_is_empty(value.arena_index()) {
+                if value.is_list() && self.arena.list_is_empty_value(value) {
                     Some(Vec::new())
                 } else {
                     None

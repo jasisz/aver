@@ -337,8 +337,8 @@ fn empty_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErr
             args.len()
         )));
     }
-    let map_idx = arena.push_map(crate::nan_value::PersistentMap::new());
-    Ok(NanValue::new_map(map_idx))
+    let _ = arena;
+    Ok(NanValue::EMPTY_MAP)
 }
 
 fn set_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
@@ -354,7 +354,7 @@ fn set_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
         ));
     }
     ensure_hashable_nv("Map.set", args[1])?;
-    let old_map = arena.get_map(args[0].arena_index()).clone();
+    let old_map = arena.clone_map_value(args[0]);
     let mut new_map = old_map;
     let key_hash = nv_key_bits(args[1], arena);
     new_map.insert(key_hash, (args[1], args[2]));
@@ -376,7 +376,7 @@ fn get_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
     }
     ensure_hashable_nv("Map.get", args[1])?;
     let key_hash = nv_key_bits(args[1], arena);
-    let map = arena.get_map(args[0].arena_index());
+    let map = arena.map_ref_value(args[0]);
     match map.get(&key_hash) {
         Some((_, v)) => Ok(NanValue::new_some_value(*v, arena)),
         None => Ok(NanValue::NONE),
@@ -396,12 +396,16 @@ fn remove_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeEr
         ));
     }
     ensure_hashable_nv("Map.remove", args[1])?;
-    let old_map = arena.get_map(args[0].arena_index()).clone();
+    let old_map = arena.clone_map_value(args[0]);
     let mut new_map = old_map;
     let key_hash = nv_key_bits(args[1], arena);
     new_map.remove(&key_hash);
-    let map_idx = arena.push_map(new_map);
-    Ok(NanValue::new_map(map_idx))
+    if new_map.is_empty() {
+        Ok(NanValue::EMPTY_MAP)
+    } else {
+        let map_idx = arena.push_map(new_map);
+        Ok(NanValue::new_map(map_idx))
+    }
 }
 
 fn has_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
@@ -418,7 +422,7 @@ fn has_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
     }
     ensure_hashable_nv("Map.has", args[1])?;
     let key_hash = nv_key_bits(args[1], arena);
-    let map = arena.get_map(args[0].arena_index());
+    let map = arena.map_ref_value(args[0]);
     Ok(NanValue::new_bool(map.contains_key(&key_hash)))
 }
 
@@ -434,9 +438,12 @@ fn keys_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErro
             "Map.keys() argument must be a Map".to_string(),
         ));
     }
-    let map = arena.get_map(args[0].arena_index()).clone();
+    let map = arena.clone_map_value(args[0]);
     let mut keys: Vec<NanValue> = map.values().map(|(k, _)| *k).collect();
     keys.sort_by_key(|a| a.repr(arena));
+    if keys.is_empty() {
+        return Ok(NanValue::EMPTY_LIST);
+    }
     let list_idx = arena.push_list(keys);
     Ok(NanValue::new_list(list_idx))
 }
@@ -453,10 +460,13 @@ fn values_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeEr
             "Map.values() argument must be a Map".to_string(),
         ));
     }
-    let map = arena.get_map(args[0].arena_index()).clone();
+    let map = arena.clone_map_value(args[0]);
     let mut entries: Vec<(NanValue, NanValue)> = map.values().cloned().collect();
     entries.sort_by(|(a, _), (b, _)| a.repr(arena).cmp(&b.repr(arena)));
     let vals: Vec<NanValue> = entries.into_iter().map(|(_, v)| v).collect();
+    if vals.is_empty() {
+        return Ok(NanValue::EMPTY_LIST);
+    }
     let list_idx = arena.push_list(vals);
     Ok(NanValue::new_list(list_idx))
 }
@@ -473,7 +483,7 @@ fn entries_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeE
             "Map.entries() argument must be a Map".to_string(),
         ));
     }
-    let map = arena.get_map(args[0].arena_index()).clone();
+    let map = arena.clone_map_value(args[0]);
     let mut entries: Vec<(NanValue, NanValue)> = map.values().cloned().collect();
     entries.sort_by(|(a, _), (b, _)| a.repr(arena).cmp(&b.repr(arena)));
     let pairs: Vec<NanValue> = entries
@@ -483,6 +493,9 @@ fn entries_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeE
             NanValue::new_tuple(tuple_idx)
         })
         .collect();
+    if pairs.is_empty() {
+        return Ok(NanValue::EMPTY_LIST);
+    }
     let list_idx = arena.push_list(pairs);
     Ok(NanValue::new_list(list_idx))
 }
@@ -499,7 +512,7 @@ fn len_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
             "Map.len() argument must be a Map".to_string(),
         ));
     }
-    let map = arena.get_map(args[0].arena_index());
+    let map = arena.map_ref_value(args[0]);
     Ok(NanValue::new_int(map.len() as i64, arena))
 }
 
@@ -515,7 +528,7 @@ fn from_list_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtim
             "Map.fromList() argument must be a List of (key, value) tuples".to_string(),
         ));
     }
-    let items = arena.list_to_vec(args[0].arena_index());
+    let items = arena.list_to_vec_value(args[0]);
     let mut out = crate::nan_value::PersistentMap::new();
     for (idx, pair) in items.iter().enumerate() {
         if !pair.is_tuple() {
@@ -537,6 +550,10 @@ fn from_list_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtim
         let key_hash = nv_key_bits(key, arena);
         out.insert(key_hash, (key, value));
     }
-    let map_idx = arena.push_map(out);
-    Ok(NanValue::new_map(map_idx))
+    if out.is_empty() {
+        Ok(NanValue::EMPTY_MAP)
+    } else {
+        let map_idx = arena.push_map(out);
+        Ok(NanValue::new_map(map_idx))
+    }
 }

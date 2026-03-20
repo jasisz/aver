@@ -3,13 +3,13 @@ use super::*;
 impl Arena {
     pub fn push_list_prepend(&mut self, head: NanValue, tail: NanValue) -> u32 {
         debug_assert!(tail.is_list());
-        let len = self.list_len(tail.arena_index()) + 1;
+        let len = self.list_len_value(tail) + 1;
         self.push(ArenaEntry::List(ArenaList::Prepend { head, tail, len }))
     }
 
     pub fn push_list_append(&mut self, list: NanValue, value: NanValue) -> u32 {
         debug_assert!(list.is_list());
-        if self.list_is_empty(list.arena_index()) {
+        if self.list_is_empty_value(list) {
             return self.push_list(vec![value]);
         }
 
@@ -50,8 +50,46 @@ impl Arena {
     pub fn push_list_concat(&mut self, left: NanValue, right: NanValue) -> u32 {
         debug_assert!(left.is_list());
         debug_assert!(right.is_list());
-        let len = self.list_len(left.arena_index()) + self.list_len(right.arena_index());
+        if self.list_is_empty_value(left) {
+            return if right.is_empty_list_immediate() {
+                self.push_list(Vec::new())
+            } else {
+                right.arena_index()
+            };
+        }
+        if self.list_is_empty_value(right) {
+            return left.arena_index();
+        }
+        let len = self.list_len_value(left) + self.list_len_value(right);
         self.push(ArenaEntry::List(ArenaList::Concat { left, right, len }))
+    }
+
+    pub fn list_len_value(&self, list: NanValue) -> usize {
+        if list.is_empty_list_immediate() {
+            0
+        } else {
+            self.list_len(list.arena_index())
+        }
+    }
+
+    pub fn list_is_empty_value(&self, list: NanValue) -> bool {
+        self.list_len_value(list) == 0
+    }
+
+    pub fn list_get_value(&self, list: NanValue, position: usize) -> Option<NanValue> {
+        if list.is_empty_list_immediate() {
+            None
+        } else {
+            self.list_get(list.arena_index(), position)
+        }
+    }
+
+    pub fn list_to_vec_value(&self, list: NanValue) -> Vec<NanValue> {
+        if list.is_empty_list_immediate() {
+            Vec::new()
+        } else {
+            self.list_to_vec(list.arena_index())
+        }
     }
 
     pub fn list_len(&self, index: u32) -> usize {
@@ -72,6 +110,9 @@ impl Arena {
         let mut remaining = position;
 
         loop {
+            if current.is_empty_list_immediate() {
+                return None;
+            }
             match self.get_list(current.arena_index()) {
                 ArenaList::Flat { items, start } => {
                     return items.get(start.saturating_add(remaining)).copied();
@@ -84,7 +125,7 @@ impl Arena {
                     current = *tail;
                 }
                 ArenaList::Concat { left, right, .. } => {
-                    let left_len = self.list_len(left.arena_index());
+                    let left_len = self.list_len_value(*left);
                     if remaining < left_len {
                         current = *left;
                     } else {
@@ -98,14 +139,14 @@ impl Arena {
                     start,
                     ..
                 } => {
-                    let head_len = self.list_len(head.arena_index());
+                    let head_len = self.list_len_value(*head);
                     if remaining < head_len {
                         current = *head;
                     } else {
                         remaining -= head_len;
                         let mut found = None;
                         for part in &rest[*start..] {
-                            let part_len = self.list_len(part.arena_index());
+                            let part_len = self.list_len_value(*part);
                             if remaining < part_len {
                                 found = Some(*part);
                                 break;
@@ -124,6 +165,9 @@ impl Arena {
         let mut stack = vec![NanValue::new_list(index)];
 
         while let Some(list) = stack.pop() {
+            if list.is_empty_list_immediate() {
+                continue;
+            }
             match self.get_list(list.arena_index()) {
                 ArenaList::Flat { items, start } => {
                     out.extend(items[*start..].iter().copied());
@@ -155,10 +199,16 @@ impl Arena {
 
     pub fn list_uncons(&mut self, list: NanValue) -> Option<(NanValue, NanValue)> {
         debug_assert!(list.is_list());
+        if list.is_empty_list_immediate() {
+            return None;
+        }
         let mut rights = Vec::new();
         let mut current = list;
 
         loop {
+            if current.is_empty_list_immediate() {
+                return None;
+            }
             match self.get_list(current.arena_index()).clone() {
                 ArenaList::Flat { items, start } => {
                     let head = *items.get(start)?;
@@ -179,7 +229,7 @@ impl Arena {
                     return Some((head, self.push_list_segments(tail, rights)));
                 }
                 ArenaList::Concat { left, right, .. } => {
-                    if self.list_is_empty(left.arena_index()) {
+                    if self.list_is_empty_value(left) {
                         current = right;
                     } else {
                         rights.push(right);
@@ -203,13 +253,13 @@ impl Arena {
     }
 
     fn empty_list_value(&mut self) -> NanValue {
-        NanValue::new_list(self.push_list(Vec::new()))
+        NanValue::EMPTY_LIST
     }
 
     fn push_list_segments(&mut self, current: NanValue, rest: Vec<NanValue>) -> NanValue {
         let filtered: Vec<NanValue> = rest
             .into_iter()
-            .filter(|part| !self.list_is_empty(part.arena_index()))
+            .filter(|part| !self.list_is_empty_value(*part))
             .collect();
         self.push_list_segments_rc(current, Rc::new(filtered), 0)
     }
@@ -220,7 +270,7 @@ impl Arena {
         rest: Rc<Vec<NanValue>>,
         mut start: usize,
     ) -> NanValue {
-        while self.list_is_empty(current.arena_index()) {
+        while self.list_is_empty_value(current) {
             if let Some(next) = rest.get(start).copied() {
                 current = next;
                 start += 1;
@@ -233,10 +283,10 @@ impl Arena {
             return current;
         }
 
-        let len = self.list_len(current.arena_index())
+        let len = self.list_len_value(current)
             + rest[start..]
                 .iter()
-                .map(|part| self.list_len(part.arena_index()))
+                .map(|part| self.list_len_value(*part))
                 .sum::<usize>();
         let idx = self.push(ArenaEntry::List(ArenaList::Segments {
             current,

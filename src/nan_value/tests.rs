@@ -63,6 +63,33 @@ fn immediates() {
 }
 
 #[test]
+fn empty_collections_stay_inline() {
+    let arena = Arena::new();
+
+    assert!(NanValue::EMPTY_LIST.is_list());
+    assert!(NanValue::EMPTY_LIST.heap_index().is_none());
+    assert_eq!(NanValue::EMPTY_LIST.repr(&arena), "[]");
+
+    assert!(NanValue::EMPTY_MAP.is_map());
+    assert!(NanValue::EMPTY_MAP.heap_index().is_none());
+    assert_eq!(NanValue::EMPTY_MAP.repr(&arena), "{}");
+}
+
+#[test]
+fn empty_collection_immediates_roundtrip_through_value() {
+    use crate::value::Value;
+
+    let mut arena = Arena::new();
+    let empty_list = NanValue::from_value(&Value::List(aver_rt::AverList::from_vec(Vec::new())), &mut arena);
+    let empty_map = NanValue::from_value(&Value::Map(std::collections::HashMap::new()), &mut arena);
+
+    assert_eq!(empty_list.bits(), NanValue::EMPTY_LIST.bits());
+    assert_eq!(empty_map.bits(), NanValue::EMPTY_MAP.bits());
+    assert!(matches!(empty_list.to_value(&arena), Value::List(items) if items.is_empty()));
+    assert!(matches!(empty_map.to_value(&arena), Value::Map(map) if map.is_empty()));
+}
+
+#[test]
 fn wrapper_some_roundtrip() {
     let mut arena = Arena::new();
     let inner = NanValue::new_int_inline(42);
@@ -223,6 +250,23 @@ fn list_roundtrip() {
     let v = NanValue::new_list(idx);
     assert!(v.is_list());
     assert_eq!(arena.list_len(v.arena_index()), 2);
+}
+
+#[test]
+fn prepend_with_empty_immediate_tail_traverses_correctly() {
+    let mut arena = Arena::new();
+    let list = NanValue::new_list(arena.push_list_prepend(
+        NanValue::new_int_inline(7),
+        NanValue::EMPTY_LIST,
+    ));
+
+    assert_eq!(arena.list_len_value(list), 1);
+    assert_eq!(arena.list_get_value(list, 0).unwrap().as_int(&arena), 7);
+    assert_eq!(arena.list_to_vec_value(list).len(), 1);
+
+    let (head, tail) = arena.list_uncons(list).expect("prepend should uncons");
+    assert_eq!(head.as_int(&arena), 7);
+    assert!(tail.is_empty_list_immediate());
 }
 
 #[test]

@@ -33,19 +33,22 @@ impl NanValue {
         }
         match self.tag() {
             TAG_INT => self.as_int(arena) == other.as_int(arena),
-            TAG_IMMEDIATE => false,
+            TAG_IMMEDIATE => matches!(
+                (self.payload(), other.payload()),
+                (IMM_EMPTY_LIST, IMM_EMPTY_LIST) | (IMM_EMPTY_MAP, IMM_EMPTY_MAP)
+            ),
             TAG_WRAPPER => unreachable!("wrapper comparison handled above"),
             TAG_STRING => {
                 arena.get_string(self.arena_index()) == arena.get_string(other.arena_index())
             }
             TAG_LIST => {
-                let a_idx = self.arena_index();
-                let b_idx = other.arena_index();
-                arena.list_len(a_idx) == arena.list_len(b_idx)
-                    && (0..arena.list_len(a_idx)).all(|i| {
+                let a_len = arena.list_len_value(self);
+                let b_len = arena.list_len_value(other);
+                a_len == b_len
+                    && (0..a_len).all(|i| {
                         arena
-                            .list_get(a_idx, i)
-                            .zip(arena.list_get(b_idx, i))
+                            .list_get_value(self, i)
+                            .zip(arena.list_get_value(other, i))
                             .is_some_and(|(x, y)| x.eq_in(y, arena))
                     })
             }
@@ -55,8 +58,8 @@ impl NanValue {
                 a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.eq_in(*y, arena))
             }
             TAG_MAP => {
-                let a = arena.get_map(self.arena_index());
-                let b = arena.get_map(other.arena_index());
+                let a = arena.map_ref_value(self);
+                let b = arena.map_ref_value(other);
                 a.len() == b.len()
                     && a.iter()
                         .all(|(k, (_, v1))| b.get(k).is_some_and(|(_, v2)| v1.eq_in(*v2, arena)))
@@ -112,9 +115,8 @@ impl NanValue {
             TAG_WRAPPER => unreachable!("wrapper hashing handled above"),
             TAG_STRING => arena.get_string(self.arena_index()).hash(state),
             TAG_LIST => {
-                let list_idx = self.arena_index();
-                arena.list_len(list_idx).hash(state);
-                for item in arena.list_to_vec(list_idx) {
+                arena.list_len_value(self).hash(state);
+                for item in arena.list_to_vec_value(self) {
                     item.hash_in(state, arena);
                 }
             }
@@ -168,13 +170,15 @@ impl NanValue {
                 IMM_TRUE => "true".into(),
                 IMM_UNIT => "Unit".into(),
                 IMM_NONE => "Option.None".into(),
+                IMM_EMPTY_LIST => "[]".into(),
+                IMM_EMPTY_MAP => "{}".into(),
                 _ => "??".into(),
             },
             TAG_WRAPPER => unreachable!("wrapper repr handled above"),
             TAG_STRING => arena.get_string(self.arena_index()).to_string(),
             TAG_LIST => {
                 let parts: Vec<_> = arena
-                    .list_to_vec(self.arena_index())
+                    .list_to_vec_value(self)
                     .into_iter()
                     .map(|v| v.repr_inner(arena))
                     .collect();
@@ -186,7 +190,7 @@ impl NanValue {
                 format!("({})", parts.join(", "))
             }
             TAG_MAP => {
-                let map = arena.get_map(self.arena_index());
+                let map = arena.map_ref_value(self);
                 let mut pairs: Vec<_> = map
                     .values()
                     .map(|(k, v)| (k.repr_inner(arena), v.repr_inner(arena)))

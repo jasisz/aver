@@ -38,9 +38,16 @@ impl NanValue {
                     .iter()
                     .map(|v| NanValue::from_value(v, arena))
                     .collect();
-                NanValue::new_list(arena.push_list(items))
+                if items.is_empty() {
+                    NanValue::EMPTY_LIST
+                } else {
+                    NanValue::new_list(arena.push_list(items))
+                }
             }
             Value::Map(map) => {
+                if map.is_empty() {
+                    return NanValue::EMPTY_MAP;
+                }
                 let mut nv_map = PersistentMap::new();
                 for (k, v) in map {
                     let nk = NanValue::from_value(k, arena);
@@ -129,6 +136,8 @@ impl NanValue {
                 IMM_TRUE => Value::Bool(true),
                 IMM_UNIT => Value::Unit,
                 IMM_NONE => Value::None,
+                IMM_EMPTY_LIST => Value::List(aver_rt::AverList::from_vec(Vec::new())),
+                IMM_EMPTY_MAP => Value::Map(HashMap::new()),
                 _ => Value::Unit,
             },
             TAG_WRAPPER | TAG_SOME_INT | TAG_OK_INT | TAG_ERR_INT => {

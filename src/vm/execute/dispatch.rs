@@ -384,7 +384,7 @@ impl VM {
                         ));
                     }
                     self.stack.push(NanValue::new_int(
-                        self.arena.list_len(list.arena_index()) as i64,
+                        self.arena.list_len_value(list) as i64,
                         &mut self.arena,
                     ));
                 }
@@ -403,9 +403,7 @@ impl VM {
                     let idx = index.as_int(&self.arena);
                     if idx < 0 {
                         self.stack.push(NanValue::NONE);
-                    } else if let Some(value) =
-                        self.arena.list_get(list.arena_index(), idx as usize)
-                    {
+                    } else if let Some(value) = self.arena.list_get_value(list, idx as usize) {
                         let wrapped = self
                             .arena
                             .with_alloc_space(self.next_value_alloc_space(code, ip), |arena| {
@@ -431,9 +429,7 @@ impl VM {
                     let idx = index.as_int(&self.arena);
                     if idx < 0 {
                         self.stack.push(NanValue::FALSE);
-                    } else if let Some(value) =
-                        self.arena.list_get(list.arena_index(), idx as usize)
-                    {
+                    } else if let Some(value) = self.arena.list_get_value(list, idx as usize) {
                         self.stack.push(value);
                         self.stack.push(NanValue::TRUE);
                     } else {
@@ -474,12 +470,7 @@ impl VM {
                 }
 
                 LIST_NIL => {
-                    let idx = self
-                        .arena
-                        .with_alloc_space(self.next_value_alloc_space(code, ip), |arena| {
-                            arena.push_list(Vec::new())
-                        });
-                    self.stack.push(NanValue::new_list(idx));
+                    self.stack.push(NanValue::EMPTY_LIST);
                 }
 
                 LIST_CONS => {
@@ -503,6 +494,10 @@ impl VM {
                     let start = self.stack.len() - count;
                     let items: Vec<NanValue> = self.stack[start..].to_vec();
                     self.stack.truncate(start);
+                    if items.is_empty() {
+                        self.stack.push(NanValue::EMPTY_LIST);
+                        continue;
+                    }
                     let idx = self
                         .arena
                         .with_alloc_space(self.next_value_alloc_space(code, ip), |arena| {
@@ -737,7 +732,7 @@ impl VM {
                 MATCH_NIL => {
                     let offset = read_i16!(code, ip);
                     let top = *self.stack.last().ok_or(VmError::StackUnderflow)?;
-                    let is_nil = top.is_list() && self.arena.list_is_empty(top.arena_index());
+                    let is_nil = top.is_list() && self.arena.list_is_empty_value(top);
                     if !is_nil {
                         ip = (ip as isize + offset as isize) as usize;
                     }
@@ -746,7 +741,7 @@ impl VM {
                 MATCH_CONS => {
                     let offset = read_i16!(code, ip);
                     let top = *self.stack.last().ok_or(VmError::StackUnderflow)?;
-                    let is_cons = top.is_list() && !self.arena.list_is_empty(top.arena_index());
+                    let is_cons = top.is_list() && !self.arena.list_is_empty_value(top);
                     if !is_cons {
                         ip = (ip as isize + offset as isize) as usize;
                     }
