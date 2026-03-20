@@ -4,6 +4,9 @@ All notable changes to Aver are documented here.
 
 ## Unreleased
 
+### Added
+- `vm_profile` release binary for VM opcode/function/builtin profiling on real Aver app workloads, including return-path stats for `thin` / `parent-thin` fast paths.
+
 ### Changed
 - VM `Result.Ok` / `Result.Err` / `Option.Some` now keep wrapped `Bool` / `Unit` / `None` values inline inside `NanValue` instead of boxing them in the arena, reducing wrapper-heavy memory churn on interpreter and VM paths.
 - VM now also keeps wrapped inline `Int` values (`Some(42)`, `Ok(-7)`, `Err(0)`) fully inline via dedicated NaN-box tags, and nullary user-defined variants (`Status.Todo`, `Color.Red`) now use inline constructor ids instead of arena entries.

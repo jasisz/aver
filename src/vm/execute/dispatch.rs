@@ -42,6 +42,9 @@ impl VM {
 
             let op = code[ip];
             ip += 1;
+            if let Some(profile) = self.profile.as_mut() {
+                profile.record_opcode(op);
+            }
 
             match op {
                 LOAD_LOCAL => {
@@ -211,6 +214,9 @@ impl VM {
                         thin: target.thin,
                         parent_thin: target.parent_thin,
                     });
+                    if let Some(profile) = self.profile.as_mut() {
+                        profile.record_function_entry(target, target_fn_id);
+                    }
 
                     fn_id = target_fn_id;
                     ip = 0;
@@ -247,6 +253,9 @@ impl VM {
                         thin: target.thin,
                         parent_thin: target.parent_thin,
                     });
+                    if let Some(profile) = self.profile.as_mut() {
+                        profile.record_function_entry(target, target_fn_id);
+                    }
 
                     fn_id = target_fn_id;
                     ip = 0;
@@ -257,6 +266,9 @@ impl VM {
                     let name_idx = read_u16!(code, ip) as u32;
                     let argc = read_u8!(code, ip) as usize;
                     let builtin_name = self.arena.get_string(name_idx).to_string();
+                    if let Some(profile) = self.profile.as_mut() {
+                        profile.record_builtin_call(&builtin_name);
+                    }
                     let alloc_space = self.next_value_alloc_space(code, ip);
 
                     let args_start = self.stack.len() - argc;
@@ -308,6 +320,10 @@ impl VM {
                     frame.yard_dirty = false;
                     frame.handoff_dirty = false;
                     frame.yard_mark = self.arena.yard_len() as u32;
+                    if let Some(profile) = self.profile.as_mut() {
+                        let chunk = &self.code.functions[fn_id as usize];
+                        profile.record_function_entry(chunk, fn_id);
+                    }
                     ip = 0;
                 }
 
@@ -352,6 +368,10 @@ impl VM {
                     frame.yard_dirty = false;
                     frame.handoff_dirty = false;
                     frame.yard_mark = self.arena.yard_len() as u32;
+                    if let Some(profile) = self.profile.as_mut() {
+                        let target = self.code.get(target_fn_id);
+                        profile.record_function_entry(target, target_fn_id);
+                    }
                     fn_id = target_fn_id;
                     ip = 0;
                 }

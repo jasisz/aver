@@ -8,6 +8,7 @@ mod tests;
 
 use super::runtime::VmRuntime;
 use super::types::{CallFrame, CodeStore, VmError};
+use super::{VmProfileReport, profile::VmProfileState};
 use crate::nan_value::{Arena, NanValue};
 
 /// The Aver bytecode virtual machine.
@@ -18,6 +19,7 @@ pub struct VM {
     code: CodeStore,
     pub arena: Arena,
     runtime: VmRuntime,
+    profile: Option<VmProfileState>,
 }
 
 enum ReturnControl {
@@ -39,12 +41,31 @@ impl VM {
             code,
             arena,
             runtime: VmRuntime::new(),
+            profile: None,
         }
+    }
+
+    pub fn start_profiling(&mut self) {
+        self.profile = Some(VmProfileState::new(self.code.functions.len()));
+    }
+
+    pub fn clear_profile(&mut self) {
+        self.profile = None;
+    }
+
+    pub fn profile_report(&self) -> Option<VmProfileReport> {
+        self.profile
+            .as_ref()
+            .map(|profile| profile.report(&self.code))
     }
 
     /// Set CLI arguments for Args.get().
     pub fn set_cli_args(&mut self, args: Vec<String>) {
         self.runtime.set_cli_args(args);
+    }
+
+    pub fn set_silent_console(&mut self, silent: bool) {
+        self.runtime.set_silent_console(silent);
     }
 
     /// Start recording effectful calls.
@@ -127,6 +148,9 @@ impl VM {
             thin: chunk.thin,
             parent_thin: chunk.parent_thin,
         });
+        if let Some(profile) = self.profile.as_mut() {
+            profile.record_function_entry(chunk, fn_id);
+        }
         self.execute_until(caller_depth)
     }
 }

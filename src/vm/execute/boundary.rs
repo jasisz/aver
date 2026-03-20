@@ -1,6 +1,7 @@
 use super::{ReturnControl, VM};
 use crate::nan_value::{AllocSpace, NanValue};
 use crate::vm::opcode::{RETURN, TAIL_CALL_KNOWN, TAIL_CALL_SELF};
+use crate::vm::profile::ReturnPathProfileKind;
 use crate::vm::types::CallFrame;
 
 impl VM {
@@ -249,6 +250,9 @@ impl VM {
         caller_depth: usize,
     ) -> ReturnControl {
         if self.can_fast_return(&frame) {
+            if let Some(profile) = self.profile.as_mut() {
+                profile.record_return_path(&frame, ReturnPathProfileKind::Fast);
+            }
             if self.frames.len() == caller_depth {
                 return ReturnControl::Done(result);
             }
@@ -263,6 +267,9 @@ impl VM {
         }
 
         if self.can_fast_return_with_young_truncate(&frame, result) {
+            if let Some(profile) = self.profile.as_mut() {
+                profile.record_return_path(&frame, ReturnPathProfileKind::YoungTruncateFast);
+            }
             self.arena.truncate_to(frame.arena_mark);
             if self.frames.len() == caller_depth {
                 return ReturnControl::Done(result);
@@ -275,6 +282,10 @@ impl VM {
                 ip: caller.ip as usize,
                 bp: caller.bp as usize,
             };
+        }
+
+        if let Some(profile) = self.profile.as_mut() {
+            profile.record_return_path(&frame, ReturnPathProfileKind::Slow);
         }
 
         if self.frames.len() == caller_depth {

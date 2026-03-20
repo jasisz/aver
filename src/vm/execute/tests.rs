@@ -102,3 +102,51 @@ fn collect_live_vm_roots_drops_callback_only_stable_values() {
         "stable should be cleaned when callback result is no longer a VM root"
     );
 }
+
+#[test]
+fn profiling_tracks_opcodes_and_fast_returns() {
+    let mut code = CodeStore::new();
+    let fn_id = code.add_function(FnChunk {
+        name: "leaf".to_string(),
+        arity: 0,
+        local_count: 0,
+        code: vec![LOAD_CONST, 0, 0, RETURN],
+        constants: vec![NanValue::new_int_inline(7)],
+        effects: Vec::new(),
+        thin: true,
+        parent_thin: false,
+    });
+
+    let mut vm = VM::new(code, Vec::new(), Arena::new());
+    vm.start_profiling();
+    let result = vm.call_function(fn_id, &[]).expect("leaf should return");
+    assert_eq!(result.as_int(&vm.arena), 7);
+
+    let report = vm.profile_report().expect("profiling should be enabled");
+    assert_eq!(report.total_opcodes, 2);
+    assert!(
+        report
+            .opcodes
+            .iter()
+            .any(|entry| entry.name == "LOAD_CONST" && entry.count == 1),
+        "LOAD_CONST should be counted once"
+    );
+    assert!(
+        report
+            .opcodes
+            .iter()
+            .any(|entry| entry.name == "RETURN" && entry.count == 1),
+        "RETURN should be counted once"
+    );
+
+    let function = report
+        .functions
+        .iter()
+        .find(|entry| entry.name == "leaf")
+        .expect("leaf function should be present");
+    assert_eq!(function.entries, 1);
+    assert_eq!(function.fast_returns, 1);
+    assert_eq!(function.slow_returns, 0);
+    assert_eq!(report.returns.thin_entries, 1);
+    assert_eq!(report.returns.thin_fast_returns, 1);
+}

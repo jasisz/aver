@@ -23,6 +23,7 @@ pub enum VmExecutionMode {
 pub(super) struct VmRuntime {
     allowed_effects: Vec<String>,
     cli_args: Vec<String>,
+    silent_console: bool,
     execution_mode: VmExecutionMode,
     recorded_effects: Vec<EffectRecord>,
     replay_effects: Vec<EffectRecord>,
@@ -41,6 +42,7 @@ impl VmRuntime {
         Self {
             allowed_effects: Vec::new(),
             cli_args: Vec::new(),
+            silent_console: false,
             execution_mode: VmExecutionMode::Normal,
             recorded_effects: Vec::new(),
             replay_effects: Vec::new(),
@@ -59,6 +61,10 @@ impl VmRuntime {
 
     pub(super) fn set_cli_args(&mut self, args: Vec<String>) {
         self.cli_args = args;
+    }
+
+    pub(super) fn set_silent_console(&mut self, silent: bool) {
+        self.silent_console = silent;
     }
 
     pub(super) fn start_recording(&mut self) {
@@ -112,15 +118,25 @@ impl VmRuntime {
 
         let is_effectful = !builtin_effects(builtin_name).is_empty();
         match (is_effectful, self.execution_mode) {
-            (_, VmExecutionMode::Normal) | (false, _) => {
-                dispatch_builtin_nv(builtin_name, args, arena, &self.cli_args)
-            }
+            (_, VmExecutionMode::Normal) | (false, _) => dispatch_builtin_nv(
+                builtin_name,
+                args,
+                arena,
+                &self.cli_args,
+                self.silent_console,
+            ),
             (true, VmExecutionMode::Record) => {
                 let args_json = {
                     let vals: Vec<_> = args.iter().map(|a| a.to_value(arena)).collect();
                     values_to_json_lossy(&vals)
                 };
-                let nv_result = dispatch_builtin_nv(builtin_name, args, arena, &self.cli_args)?;
+                let nv_result = dispatch_builtin_nv(
+                    builtin_name,
+                    args,
+                    arena,
+                    &self.cli_args,
+                    self.silent_console,
+                )?;
                 let result_val = nv_result.to_value(arena);
                 let outcome = match value_to_json(&result_val) {
                     Ok(json) => RecordedOutcome::Value(json),
@@ -230,7 +246,12 @@ fn dispatch_builtin_nv(
     args: &[NanValue],
     arena: &mut Arena,
     cli_args: &[String],
+    silent_console: bool,
 ) -> Result<NanValue, VmError> {
+    if silent_console && matches!(name, "Console.print" | "Console.error" | "Console.warn") {
+        return Ok(NanValue::UNIT);
+    }
+
     let namespace = name.split_once('.').map(|(ns, _)| ns);
 
     let result = match namespace {
