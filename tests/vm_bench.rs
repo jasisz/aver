@@ -268,7 +268,7 @@ fn run_vm_benchmark() {
 fn vm_benchmark() {
     std::thread::Builder::new()
         .name("vm_benchmark".to_string())
-        .stack_size(32 * 1024 * 1024)
+        .stack_size(128 * 1024 * 1024)
         .spawn(run_vm_benchmark)
         .expect("spawn vm_benchmark")
         .join()

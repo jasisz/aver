@@ -24,6 +24,7 @@ All notable changes to Aver are documented here.
 - VM bytecode compilation now marks conservatively-classified **thin functions**, and `RETURN` / `?` use a fast path that skips boundary promotion work when those frames never created local heap survivors.
 - `docs/vm.md` now documents the VM memory model and list representation in more detail, including young/yard/handoff/stable spaces, structural list nodes, TCO survivor behavior, and the current conservative ordinary-return path.
 - `tests/vm_bench.rs` now reports execution-time arena memory deltas (`peak+` and `live+`) for interpreter and VM, measured above setup/compile baseline instead of raw total heap size.
+- `runtime_bench` now keeps the full core sweep by default, uses a smaller default `workflow_engine` seed for app benchmarks unless `--full` or `--seed` is requested, and scales up the previously too-small core cases so VM timings are less dominated by startup noise.
 
 ### Fixed
 - VM no longer leaves stale heap handles behind in real workloads like `examples/games/rogue`; frame boundaries now promote live roots to `stable` before truncating local arenas.

@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use aver::runtime_bench_cases::{CORE_BENCH_CASES, CoreBenchCase};
 
@@ -11,6 +11,7 @@ const WORKFLOW_MODULE_ROOT: &str = "projects/workflow_engine";
 const WORKFLOW_ENTRY_FILE: &str = "projects/workflow_engine/main.av";
 const WORKFLOW_DATA_DIR: &str = "/tmp/aver_workflow_engine";
 const WORKFLOW_GENERATED_NAME: &str = "runtime_bench_workflow_engine";
+const DEFAULT_WORKFLOW_APP_SEED: usize = 250;
 const PAYMENT_MODULE_ROOT: &str = "projects/payment_ops";
 const PAYMENT_ENTRY_FILE: &str = "projects/payment_ops/main.av";
 const PAYMENT_DATA_DIR: &str = "/tmp/aver_payment_ops";
@@ -98,7 +99,9 @@ struct Config {
     core_case: Option<String>,
     app: Option<String>,
     workload: Option<String>,
+    full: bool,
     seed: usize,
+    seed_explicit: bool,
     iters: usize,
     warmup: usize,
     output_dir: PathBuf,
@@ -142,7 +145,7 @@ struct RunContext<'a> {
 }
 
 fn usage() -> &'static str {
-    "Usage: cargo run --release --bin runtime_bench -- [--suite core|apps|all] [--runtime interpreter|vm|generated|all] [--core-case SLUG|all] [--app workflow_engine|payment_ops|all] [--workload NAME|all] [--seed N] [--iters N] [--warmup N] [--output DIR] [--rebuild]"
+    "Usage: cargo run --release --bin runtime_bench -- [--suite core|apps|all] [--runtime interpreter|vm|generated|all] [--core-case SLUG|all] [--app workflow_engine|payment_ops|all] [--workload NAME|all] [--full] [--seed N] [--iters N] [--warmup N] [--output DIR] [--rebuild]"
 }
 
 fn parse_suite(value: &str) -> Option<SuiteKind> {
@@ -185,7 +188,9 @@ fn parse_args() -> Result<Config, String> {
     let mut core_case = None;
     let mut app = None;
     let mut workload = None;
+    let mut full = false;
     let mut seed = 1_000usize;
+    let mut seed_explicit = false;
     let mut iters = 3usize;
     let mut warmup = 1usize;
     let mut output_dir = PathBuf::from(DEFAULT_OUTPUT_DIR);
@@ -232,6 +237,7 @@ fn parse_args() -> Result<Config, String> {
                     workload = Some(value);
                 }
             }
+            "--full" => full = true,
             "--seed" => {
                 let value = args
                     .next()
@@ -239,6 +245,7 @@ fn parse_args() -> Result<Config, String> {
                 seed = value
                     .parse::<usize>()
                     .map_err(|_| format!("invalid --seed '{}'", value))?;
+                seed_explicit = true;
             }
             "--iters" => {
                 let value = args
@@ -274,7 +281,9 @@ fn parse_args() -> Result<Config, String> {
         core_case,
         app,
         workload,
+        full,
         seed,
+        seed_explicit,
         iters,
         warmup,
         output_dir,
@@ -291,6 +300,23 @@ fn host_aver_path(repo_root: &Path) -> PathBuf {
         .join("target")
         .join("release")
         .join(format!("aver{}", env::consts::EXE_SUFFIX))
+}
+
+fn latest_source_mtime(path: &Path) -> Result<SystemTime, String> {
+    let metadata =
+        fs::metadata(path).map_err(|e| format!("cannot stat '{}': {}", path.display(), e))?;
+    let mut newest = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+    if metadata.is_dir() {
+        for entry in
+            fs::read_dir(path).map_err(|e| format!("cannot read '{}': {}", path.display(), e))?
+        {
+            let entry =
+                entry.map_err(|e| format!("cannot read entry in '{}': {}", path.display(), e))?;
+            let child_newest = latest_source_mtime(&entry.path())?;
+            newest = newest.max(child_newest);
+        }
+    }
+    Ok(newest)
 }
 
 fn render_status(status: ExitStatus) -> String {
@@ -381,7 +407,19 @@ fn ensure_generated_project(
             .map_err(|e| format!("cannot remove '{}': {}", output_dir.display(), e))?;
     }
 
-    if rebuild || !output_dir.join("Cargo.toml").exists() {
+    let cargo_toml = output_dir.join("Cargo.toml");
+    let latest_input = latest_source_mtime(file)?.max(
+        module_root
+            .map(latest_source_mtime)
+            .transpose()?
+            .unwrap_or(SystemTime::UNIX_EPOCH),
+    );
+    let output_mtime = fs::metadata(&cargo_toml)
+        .ok()
+        .and_then(|meta| meta.modified().ok())
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+
+    if rebuild || !cargo_toml.exists() || latest_input > output_mtime {
         let mut cmd = Command::new(aver_bin);
         cmd.current_dir(repo_root)
             .env("AVER_RUNTIME_PATH", repo_root.join("aver-rt"))
@@ -636,6 +674,17 @@ fn workflow_commands(workload: &str, seed: usize) -> Option<WorkloadPlan> {
     }
 }
 
+fn effective_app_seed(app: AppKind, cfg: &Config) -> usize {
+    if cfg.seed_explicit || cfg.full {
+        return cfg.seed;
+    }
+
+    match app {
+        AppKind::WorkflowEngine => DEFAULT_WORKFLOW_APP_SEED,
+        AppKind::PaymentOps => cfg.seed,
+    }
+}
+
 fn payment_commands(workload: &str) -> Option<WorkloadPlan> {
     let ingest = vec![
         "ingest_webhooks".to_string(),
@@ -682,7 +731,7 @@ fn selected_apps(cfg: &Config) -> Vec<AppKind> {
 }
 
 fn selected_workloads(app: AppKind, cfg: &Config) -> Vec<&'static str> {
-    let all = match app {
+    match app {
         AppKind::WorkflowEngine => vec!["seed_tasks", "list_tasks", "show_task", "run_rules"],
         AppKind::PaymentOps => vec![
             "ingest_webhooks",
@@ -693,10 +742,10 @@ fn selected_workloads(app: AppKind, cfg: &Config) -> Vec<&'static str> {
             "provider_summary",
             "show_audit",
         ],
-    };
-    all.into_iter()
-        .filter(|name| cfg.workload.as_deref().is_none_or(|filter| filter == *name))
-        .collect()
+    }
+    .into_iter()
+    .filter(|name| cfg.workload.as_deref().is_none_or(|filter| filter == *name))
+    .collect()
 }
 
 fn reset_store(app: AppKind) -> Result<(), String> {
@@ -811,9 +860,15 @@ fn bench_app_runtime(
     Ok(median(times))
 }
 
-fn print_app_results(results: &[AppResult]) {
+fn print_app_results(results: &[AppResult], full: bool) {
     println!();
     println!("App benchmarks — end-to-end wall time (median)");
+    if !full {
+        println!(
+            "default app scale uses workflow_engine seed={}; pass --full or --seed N for larger workloads",
+            DEFAULT_WORKFLOW_APP_SEED
+        );
+    }
     println!("{:-<132}", "");
     println!(
         "{:<18} {:<18} {:>12} {:>12} {:>12} {:>12} {:>12}",
@@ -852,6 +907,7 @@ fn benchmark_apps(
 ) -> Result<Vec<AppResult>, String> {
     let mut results = Vec::new();
     for app in selected_apps(cfg) {
+        let app_seed = effective_app_seed(app, cfg);
         let workloads = selected_workloads(app, cfg);
         if workloads.is_empty() {
             return Err(format!("no workloads matched for {}", app.name()));
@@ -891,7 +947,7 @@ fn benchmark_apps(
                 RuntimeKind::Interpreter,
                 app,
                 workload,
-                cfg.seed,
+                app_seed,
                 &ctx,
                 cfg.warmup,
                 cfg.iters,
@@ -900,7 +956,7 @@ fn benchmark_apps(
                 RuntimeKind::Vm,
                 app,
                 workload,
-                cfg.seed,
+                app_seed,
                 &ctx,
                 cfg.warmup,
                 cfg.iters,
@@ -909,7 +965,7 @@ fn benchmark_apps(
                 RuntimeKind::Generated,
                 app,
                 workload,
-                cfg.seed,
+                app_seed,
                 &ctx,
                 cfg.warmup,
                 cfg.iters,
@@ -953,13 +1009,14 @@ fn main() {
     };
 
     println!(
-        "runtime_bench suite={:?} runtimes={} seed={} iters={} warmup={} output={}",
+        "runtime_bench suite={:?} runtimes={} full={} seed={} iters={} warmup={} output={}",
         cfg.suite,
         cfg.runtimes
             .iter()
             .map(|runtime| runtime.name())
             .collect::<Vec<_>>()
             .join(","),
+        cfg.full,
         cfg.seed,
         cfg.iters,
         cfg.warmup,
@@ -978,7 +1035,7 @@ fn main() {
 
     if matches!(cfg.suite, SuiteKind::Apps | SuiteKind::All) {
         match benchmark_apps(&cfg, &repo_root, &aver_bin) {
-            Ok(results) => print_app_results(&results),
+            Ok(results) => print_app_results(&results, cfg.full),
             Err(msg) => {
                 eprintln!("{msg}");
                 std::process::exit(1);
