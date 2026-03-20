@@ -156,6 +156,107 @@ impl Arena {
         }
     }
 
+    #[inline(always)]
+    fn rewrite_entry_with<F>(&mut self, entry: ArenaEntry, rewrite: &mut F) -> ArenaEntry
+    where
+        F: FnMut(&mut Arena, NanValue) -> NanValue,
+    {
+        match entry {
+            ArenaEntry::Int(i) => ArenaEntry::Int(i),
+            ArenaEntry::String(s) => ArenaEntry::String(s),
+            ArenaEntry::Builtin(name) => ArenaEntry::Builtin(name),
+            ArenaEntry::Fn(f) => ArenaEntry::Fn(f),
+            ArenaEntry::Boxed(inner) => ArenaEntry::Boxed(rewrite(self, inner)),
+            ArenaEntry::List(list) => ArenaEntry::List(self.rewrite_list_with(list, rewrite)),
+            ArenaEntry::Tuple(mut items) => {
+                for value in &mut items {
+                    *value = rewrite(self, *value);
+                }
+                ArenaEntry::Tuple(items)
+            }
+            ArenaEntry::Map(map) => {
+                let mut out = PersistentMap::new();
+                for (hash, (key, value)) in map {
+                    out.insert(hash, (rewrite(self, key), rewrite(self, value)));
+                }
+                ArenaEntry::Map(out)
+            }
+            ArenaEntry::Record {
+                type_id,
+                mut fields,
+            } => {
+                for value in &mut fields {
+                    *value = rewrite(self, *value);
+                }
+                ArenaEntry::Record { type_id, fields }
+            }
+            ArenaEntry::Variant {
+                type_id,
+                variant_id,
+                mut fields,
+            } => {
+                for value in &mut fields {
+                    *value = rewrite(self, *value);
+                }
+                ArenaEntry::Variant {
+                    type_id,
+                    variant_id,
+                    fields,
+                }
+            }
+            ArenaEntry::Namespace { name, mut members } => {
+                for (_, value) in &mut members {
+                    *value = rewrite(self, *value);
+                }
+                ArenaEntry::Namespace { name, members }
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn rewrite_list_with<F>(&mut self, list: ArenaList, rewrite: &mut F) -> ArenaList
+    where
+        F: FnMut(&mut Arena, NanValue) -> NanValue,
+    {
+        match list {
+            ArenaList::Flat { items, start } => ArenaList::Flat {
+                items: Rc::new(
+                    items[start..]
+                        .iter()
+                        .map(|value| rewrite(self, *value))
+                        .collect(),
+                ),
+                start: 0,
+            },
+            ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
+                head: rewrite(self, head),
+                tail: rewrite(self, tail),
+                len,
+            },
+            ArenaList::Concat { left, right, len } => ArenaList::Concat {
+                left: rewrite(self, left),
+                right: rewrite(self, right),
+                len,
+            },
+            ArenaList::Segments {
+                current,
+                rest,
+                start,
+                len,
+            } => ArenaList::Segments {
+                current: rewrite(self, current),
+                rest: Rc::new(
+                    rest[start..]
+                        .iter()
+                        .map(|value| rewrite(self, *value))
+                        .collect(),
+                ),
+                start: 0,
+                len,
+            },
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn evacuate_local_root(
         &mut self,
@@ -418,13 +519,9 @@ impl Arena {
         compacted_yard: &mut Vec<ArenaEntry>,
         compacted_handoff: &mut Vec<ArenaEntry>,
     ) -> ArenaEntry {
-        match entry {
-            ArenaEntry::Int(i) => ArenaEntry::Int(i),
-            ArenaEntry::String(s) => ArenaEntry::String(s),
-            ArenaEntry::Builtin(name) => ArenaEntry::Builtin(name),
-            ArenaEntry::Fn(f) => ArenaEntry::Fn(f),
-            ArenaEntry::Boxed(inner) => ArenaEntry::Boxed(self.evacuate_local_root(
-                inner,
+        let mut rewrite = |arena: &mut Arena, value: NanValue| {
+            arena.evacuate_local_root(
+                value,
                 young_mark,
                 yard_mark,
                 handoff_mark,
@@ -434,264 +531,9 @@ impl Arena {
                 relocated_handoff,
                 compacted_yard,
                 compacted_handoff,
-            )),
-            ArenaEntry::List(list) => ArenaEntry::List(self.evacuate_local_list(
-                list,
-                young_mark,
-                yard_mark,
-                handoff_mark,
-                young_target,
-                relocated_young,
-                relocated_yard,
-                relocated_handoff,
-                compacted_yard,
-                compacted_handoff,
-            )),
-            ArenaEntry::Tuple(mut items) => {
-                for value in &mut items {
-                    *value = self.evacuate_local_root(
-                        *value,
-                        young_mark,
-                        yard_mark,
-                        handoff_mark,
-                        young_target,
-                        relocated_young,
-                        relocated_yard,
-                        relocated_handoff,
-                        compacted_yard,
-                        compacted_handoff,
-                    );
-                }
-                ArenaEntry::Tuple(items)
-            }
-            ArenaEntry::Map(map) => {
-                let mut out = PersistentMap::new();
-                for (hash, (key, value)) in map {
-                    let new_key = self.evacuate_local_root(
-                        key,
-                        young_mark,
-                        yard_mark,
-                        handoff_mark,
-                        young_target,
-                        relocated_young,
-                        relocated_yard,
-                        relocated_handoff,
-                        compacted_yard,
-                        compacted_handoff,
-                    );
-                    let new_value = self.evacuate_local_root(
-                        value,
-                        young_mark,
-                        yard_mark,
-                        handoff_mark,
-                        young_target,
-                        relocated_young,
-                        relocated_yard,
-                        relocated_handoff,
-                        compacted_yard,
-                        compacted_handoff,
-                    );
-                    out.insert(hash, (new_key, new_value));
-                }
-                ArenaEntry::Map(out)
-            }
-            ArenaEntry::Record {
-                type_id,
-                mut fields,
-            } => {
-                for value in &mut fields {
-                    *value = self.evacuate_local_root(
-                        *value,
-                        young_mark,
-                        yard_mark,
-                        handoff_mark,
-                        young_target,
-                        relocated_young,
-                        relocated_yard,
-                        relocated_handoff,
-                        compacted_yard,
-                        compacted_handoff,
-                    );
-                }
-                ArenaEntry::Record { type_id, fields }
-            }
-            ArenaEntry::Variant {
-                type_id,
-                variant_id,
-                mut fields,
-            } => {
-                for value in &mut fields {
-                    *value = self.evacuate_local_root(
-                        *value,
-                        young_mark,
-                        yard_mark,
-                        handoff_mark,
-                        young_target,
-                        relocated_young,
-                        relocated_yard,
-                        relocated_handoff,
-                        compacted_yard,
-                        compacted_handoff,
-                    );
-                }
-                ArenaEntry::Variant {
-                    type_id,
-                    variant_id,
-                    fields,
-                }
-            }
-            ArenaEntry::Namespace { name, mut members } => {
-                for (_, value) in &mut members {
-                    *value = self.evacuate_local_root(
-                        *value,
-                        young_mark,
-                        yard_mark,
-                        handoff_mark,
-                        young_target,
-                        relocated_young,
-                        relocated_yard,
-                        relocated_handoff,
-                        compacted_yard,
-                        compacted_handoff,
-                    );
-                }
-                ArenaEntry::Namespace { name, members }
-            }
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn evacuate_local_list(
-        &mut self,
-        list: ArenaList,
-        young_mark: u32,
-        yard_mark: u32,
-        handoff_mark: u32,
-        young_target: AllocSpace,
-        relocated_young: &mut [u32],
-        relocated_yard: &mut [u32],
-        relocated_handoff: &mut [u32],
-        compacted_yard: &mut Vec<ArenaEntry>,
-        compacted_handoff: &mut Vec<ArenaEntry>,
-    ) -> ArenaList {
-        match list {
-            ArenaList::Flat { items, start } => ArenaList::Flat {
-                items: Rc::new(
-                    items[start..]
-                        .iter()
-                        .map(|value| {
-                            self.evacuate_local_root(
-                                *value,
-                                young_mark,
-                                yard_mark,
-                                handoff_mark,
-                                young_target,
-                                relocated_young,
-                                relocated_yard,
-                                relocated_handoff,
-                                compacted_yard,
-                                compacted_handoff,
-                            )
-                        })
-                        .collect(),
-                ),
-                start: 0,
-            },
-            ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
-                head: self.evacuate_local_root(
-                    head,
-                    young_mark,
-                    yard_mark,
-                    handoff_mark,
-                    young_target,
-                    relocated_young,
-                    relocated_yard,
-                    relocated_handoff,
-                    compacted_yard,
-                    compacted_handoff,
-                ),
-                tail: self.evacuate_local_root(
-                    tail,
-                    young_mark,
-                    yard_mark,
-                    handoff_mark,
-                    young_target,
-                    relocated_young,
-                    relocated_yard,
-                    relocated_handoff,
-                    compacted_yard,
-                    compacted_handoff,
-                ),
-                len,
-            },
-            ArenaList::Concat { left, right, len } => ArenaList::Concat {
-                left: self.evacuate_local_root(
-                    left,
-                    young_mark,
-                    yard_mark,
-                    handoff_mark,
-                    young_target,
-                    relocated_young,
-                    relocated_yard,
-                    relocated_handoff,
-                    compacted_yard,
-                    compacted_handoff,
-                ),
-                right: self.evacuate_local_root(
-                    right,
-                    young_mark,
-                    yard_mark,
-                    handoff_mark,
-                    young_target,
-                    relocated_young,
-                    relocated_yard,
-                    relocated_handoff,
-                    compacted_yard,
-                    compacted_handoff,
-                ),
-                len,
-            },
-            ArenaList::Segments {
-                current,
-                rest,
-                start,
-                len,
-            } => ArenaList::Segments {
-                current: self.evacuate_local_root(
-                    current,
-                    young_mark,
-                    yard_mark,
-                    handoff_mark,
-                    young_target,
-                    relocated_young,
-                    relocated_yard,
-                    relocated_handoff,
-                    compacted_yard,
-                    compacted_handoff,
-                ),
-                rest: Rc::new(
-                    rest[start..]
-                        .iter()
-                        .map(|value| {
-                            self.evacuate_local_root(
-                                *value,
-                                young_mark,
-                                yard_mark,
-                                handoff_mark,
-                                young_target,
-                                relocated_young,
-                                relocated_yard,
-                                relocated_handoff,
-                                compacted_yard,
-                                compacted_handoff,
-                            )
-                        })
-                        .collect(),
-                ),
-                start: 0,
-                len,
-            },
-        }
+            )
+        };
+        self.rewrite_entry_with(entry, &mut rewrite)
     }
 
     fn relocate_young_root(
@@ -757,109 +599,10 @@ impl Arena {
         relocated: &mut [u32],
         compacted: &mut Vec<ArenaEntry>,
     ) -> ArenaEntry {
-        match entry {
-            ArenaEntry::Int(i) => ArenaEntry::Int(i),
-            ArenaEntry::String(s) => ArenaEntry::String(s),
-            ArenaEntry::Builtin(name) => ArenaEntry::Builtin(name),
-            ArenaEntry::Fn(f) => ArenaEntry::Fn(f),
-            ArenaEntry::Boxed(inner) => {
-                ArenaEntry::Boxed(self.relocate_young_value(inner, mark, relocated, compacted))
-            }
-            ArenaEntry::List(list) => {
-                ArenaEntry::List(self.relocate_young_list(list, mark, relocated, compacted))
-            }
-            ArenaEntry::Tuple(mut items) => {
-                for value in &mut items {
-                    *value = self.relocate_young_value(*value, mark, relocated, compacted);
-                }
-                ArenaEntry::Tuple(items)
-            }
-            ArenaEntry::Map(map) => {
-                let mut out = PersistentMap::new();
-                for (hash, (key, value)) in map {
-                    let relocated_key = self.relocate_young_value(key, mark, relocated, compacted);
-                    let relocated_value =
-                        self.relocate_young_value(value, mark, relocated, compacted);
-                    out.insert(hash, (relocated_key, relocated_value));
-                }
-                ArenaEntry::Map(out)
-            }
-            ArenaEntry::Record {
-                type_id,
-                mut fields,
-            } => {
-                for value in &mut fields {
-                    *value = self.relocate_young_value(*value, mark, relocated, compacted);
-                }
-                ArenaEntry::Record { type_id, fields }
-            }
-            ArenaEntry::Variant {
-                type_id,
-                variant_id,
-                mut fields,
-            } => {
-                for value in &mut fields {
-                    *value = self.relocate_young_value(*value, mark, relocated, compacted);
-                }
-                ArenaEntry::Variant {
-                    type_id,
-                    variant_id,
-                    fields,
-                }
-            }
-            ArenaEntry::Namespace { name, mut members } => {
-                for (_, value) in &mut members {
-                    *value = self.relocate_young_value(*value, mark, relocated, compacted);
-                }
-                ArenaEntry::Namespace { name, members }
-            }
-        }
-    }
-
-    fn relocate_young_list(
-        &mut self,
-        list: ArenaList,
-        mark: u32,
-        relocated: &mut [u32],
-        compacted: &mut Vec<ArenaEntry>,
-    ) -> ArenaList {
-        match list {
-            ArenaList::Flat { items, start } => ArenaList::Flat {
-                items: Rc::new(
-                    items[start..]
-                        .iter()
-                        .map(|value| self.relocate_young_value(*value, mark, relocated, compacted))
-                        .collect(),
-                ),
-                start: 0,
-            },
-            ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
-                head: self.relocate_young_value(head, mark, relocated, compacted),
-                tail: self.relocate_young_value(tail, mark, relocated, compacted),
-                len,
-            },
-            ArenaList::Concat { left, right, len } => ArenaList::Concat {
-                left: self.relocate_young_value(left, mark, relocated, compacted),
-                right: self.relocate_young_value(right, mark, relocated, compacted),
-                len,
-            },
-            ArenaList::Segments {
-                current,
-                rest,
-                start,
-                len,
-            } => ArenaList::Segments {
-                current: self.relocate_young_value(current, mark, relocated, compacted),
-                rest: Rc::new(
-                    rest[start..]
-                        .iter()
-                        .map(|value| self.relocate_young_value(*value, mark, relocated, compacted))
-                        .collect(),
-                ),
-                start: 0,
-                len,
-            },
-        }
+        let mut rewrite = |arena: &mut Arena, value: NanValue| {
+            arena.relocate_young_value(value, mark, relocated, compacted)
+        };
+        self.rewrite_entry_with(entry, &mut rewrite)
     }
 
     fn rewrite_young_refs_in_place(
@@ -918,109 +661,10 @@ impl Arena {
         relocated: &mut [u32],
         compacted: &mut Vec<ArenaEntry>,
     ) -> ArenaEntry {
-        match entry {
-            ArenaEntry::Int(i) => ArenaEntry::Int(i),
-            ArenaEntry::String(s) => ArenaEntry::String(s),
-            ArenaEntry::Builtin(name) => ArenaEntry::Builtin(name),
-            ArenaEntry::Fn(f) => ArenaEntry::Fn(f),
-            ArenaEntry::Boxed(inner) => {
-                ArenaEntry::Boxed(self.relocate_young_root(inner, mark, relocated, compacted))
-            }
-            ArenaEntry::List(list) => {
-                ArenaEntry::List(self.rewrite_young_list(list, mark, relocated, compacted))
-            }
-            ArenaEntry::Tuple(mut items) => {
-                for value in &mut items {
-                    *value = self.relocate_young_root(*value, mark, relocated, compacted);
-                }
-                ArenaEntry::Tuple(items)
-            }
-            ArenaEntry::Map(map) => {
-                let mut out = PersistentMap::new();
-                for (hash, (key, value)) in map {
-                    let relocated_key = self.relocate_young_root(key, mark, relocated, compacted);
-                    let relocated_value =
-                        self.relocate_young_root(value, mark, relocated, compacted);
-                    out.insert(hash, (relocated_key, relocated_value));
-                }
-                ArenaEntry::Map(out)
-            }
-            ArenaEntry::Record {
-                type_id,
-                mut fields,
-            } => {
-                for value in &mut fields {
-                    *value = self.relocate_young_root(*value, mark, relocated, compacted);
-                }
-                ArenaEntry::Record { type_id, fields }
-            }
-            ArenaEntry::Variant {
-                type_id,
-                variant_id,
-                mut fields,
-            } => {
-                for value in &mut fields {
-                    *value = self.relocate_young_root(*value, mark, relocated, compacted);
-                }
-                ArenaEntry::Variant {
-                    type_id,
-                    variant_id,
-                    fields,
-                }
-            }
-            ArenaEntry::Namespace { name, mut members } => {
-                for (_, value) in &mut members {
-                    *value = self.relocate_young_root(*value, mark, relocated, compacted);
-                }
-                ArenaEntry::Namespace { name, members }
-            }
-        }
-    }
-
-    fn rewrite_young_list(
-        &mut self,
-        list: ArenaList,
-        mark: u32,
-        relocated: &mut [u32],
-        compacted: &mut Vec<ArenaEntry>,
-    ) -> ArenaList {
-        match list {
-            ArenaList::Flat { items, start } => ArenaList::Flat {
-                items: Rc::new(
-                    items[start..]
-                        .iter()
-                        .map(|value| self.relocate_young_root(*value, mark, relocated, compacted))
-                        .collect(),
-                ),
-                start: 0,
-            },
-            ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
-                head: self.relocate_young_root(head, mark, relocated, compacted),
-                tail: self.relocate_young_root(tail, mark, relocated, compacted),
-                len,
-            },
-            ArenaList::Concat { left, right, len } => ArenaList::Concat {
-                left: self.relocate_young_root(left, mark, relocated, compacted),
-                right: self.relocate_young_root(right, mark, relocated, compacted),
-                len,
-            },
-            ArenaList::Segments {
-                current,
-                rest,
-                start,
-                len,
-            } => ArenaList::Segments {
-                current: self.relocate_young_root(current, mark, relocated, compacted),
-                rest: Rc::new(
-                    rest[start..]
-                        .iter()
-                        .map(|value| self.relocate_young_root(*value, mark, relocated, compacted))
-                        .collect(),
-                ),
-                start: 0,
-                len,
-            },
-        }
+        let mut rewrite = |arena: &mut Arena, value: NanValue| {
+            arena.relocate_young_root(value, mark, relocated, compacted)
+        };
+        self.rewrite_entry_with(entry, &mut rewrite)
     }
 
     fn promote_region_root_to_target(
@@ -1205,113 +849,10 @@ impl Arena {
         relocated: &mut [u32],
         target: AllocSpace,
     ) -> ArenaEntry {
-        match entry {
-            ArenaEntry::Int(i) => ArenaEntry::Int(i),
-            ArenaEntry::String(s) => ArenaEntry::String(s),
-            ArenaEntry::Builtin(name) => ArenaEntry::Builtin(name),
-            ArenaEntry::Fn(f) => ArenaEntry::Fn(f),
-            ArenaEntry::Boxed(inner) => ArenaEntry::Boxed(
-                self.promote_region_root_to_target(inner, mark, relocated, target),
-            ),
-            ArenaEntry::List(list) => {
-                ArenaEntry::List(self.rewrite_promoted_young_list(list, mark, relocated, target))
-            }
-            ArenaEntry::Tuple(mut items) => {
-                for value in &mut items {
-                    *value = self.promote_region_root_to_target(*value, mark, relocated, target);
-                }
-                ArenaEntry::Tuple(items)
-            }
-            ArenaEntry::Map(map) => {
-                let mut out = PersistentMap::new();
-                for (hash, (key, value)) in map {
-                    let new_key = self.promote_region_root_to_target(key, mark, relocated, target);
-                    let new_value =
-                        self.promote_region_root_to_target(value, mark, relocated, target);
-                    out.insert(hash, (new_key, new_value));
-                }
-                ArenaEntry::Map(out)
-            }
-            ArenaEntry::Record {
-                type_id,
-                mut fields,
-            } => {
-                for value in &mut fields {
-                    *value = self.promote_region_root_to_target(*value, mark, relocated, target);
-                }
-                ArenaEntry::Record { type_id, fields }
-            }
-            ArenaEntry::Variant {
-                type_id,
-                variant_id,
-                mut fields,
-            } => {
-                for value in &mut fields {
-                    *value = self.promote_region_root_to_target(*value, mark, relocated, target);
-                }
-                ArenaEntry::Variant {
-                    type_id,
-                    variant_id,
-                    fields,
-                }
-            }
-            ArenaEntry::Namespace { name, mut members } => {
-                for (_, value) in &mut members {
-                    *value = self.promote_region_root_to_target(*value, mark, relocated, target);
-                }
-                ArenaEntry::Namespace { name, members }
-            }
-        }
-    }
-
-    fn rewrite_promoted_young_list(
-        &mut self,
-        list: ArenaList,
-        mark: u32,
-        relocated: &mut [u32],
-        target: AllocSpace,
-    ) -> ArenaList {
-        match list {
-            ArenaList::Flat { items, start } => ArenaList::Flat {
-                items: Rc::new(
-                    items[start..]
-                        .iter()
-                        .map(|value| {
-                            self.promote_region_root_to_target(*value, mark, relocated, target)
-                        })
-                        .collect(),
-                ),
-                start: 0,
-            },
-            ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
-                head: self.promote_region_root_to_target(head, mark, relocated, target),
-                tail: self.promote_region_root_to_target(tail, mark, relocated, target),
-                len,
-            },
-            ArenaList::Concat { left, right, len } => ArenaList::Concat {
-                left: self.promote_region_root_to_target(left, mark, relocated, target),
-                right: self.promote_region_root_to_target(right, mark, relocated, target),
-                len,
-            },
-            ArenaList::Segments {
-                current,
-                rest,
-                start,
-                len,
-            } => ArenaList::Segments {
-                current: self.promote_region_root_to_target(current, mark, relocated, target),
-                rest: Rc::new(
-                    rest[start..]
-                        .iter()
-                        .map(|value| {
-                            self.promote_region_root_to_target(*value, mark, relocated, target)
-                        })
-                        .collect(),
-                ),
-                start: 0,
-                len,
-            },
-        }
+        let mut rewrite = |arena: &mut Arena, value: NanValue| {
+            arena.promote_region_root_to_target(value, mark, relocated, target)
+        };
+        self.rewrite_entry_with(entry, &mut rewrite)
     }
 
     fn promote_value_to_target(
@@ -1372,114 +913,10 @@ impl Arena {
         relocated: &mut [u32],
         target: AllocSpace,
     ) -> ArenaEntry {
-        match entry {
-            ArenaEntry::Int(i) => ArenaEntry::Int(i),
-            ArenaEntry::String(s) => ArenaEntry::String(s),
-            ArenaEntry::Builtin(name) => ArenaEntry::Builtin(name),
-            ArenaEntry::Fn(f) => ArenaEntry::Fn(f),
-            ArenaEntry::Boxed(inner) => ArenaEntry::Boxed(
-                self.promote_region_root_to_target(inner, mark, relocated, target),
-            ),
-            ArenaEntry::List(list) => {
-                ArenaEntry::List(self.promote_list_to_target(list, mark, relocated, target))
-            }
-            ArenaEntry::Tuple(mut items) => {
-                for value in &mut items {
-                    *value = self.promote_region_root_to_target(*value, mark, relocated, target);
-                }
-                ArenaEntry::Tuple(items)
-            }
-            ArenaEntry::Map(map) => {
-                let mut out = PersistentMap::new();
-                for (hash, (key, value)) in map {
-                    let relocated_key =
-                        self.promote_region_root_to_target(key, mark, relocated, target);
-                    let relocated_value =
-                        self.promote_region_root_to_target(value, mark, relocated, target);
-                    out.insert(hash, (relocated_key, relocated_value));
-                }
-                ArenaEntry::Map(out)
-            }
-            ArenaEntry::Record {
-                type_id,
-                mut fields,
-            } => {
-                for value in &mut fields {
-                    *value = self.promote_region_root_to_target(*value, mark, relocated, target);
-                }
-                ArenaEntry::Record { type_id, fields }
-            }
-            ArenaEntry::Variant {
-                type_id,
-                variant_id,
-                mut fields,
-            } => {
-                for value in &mut fields {
-                    *value = self.promote_region_root_to_target(*value, mark, relocated, target);
-                }
-                ArenaEntry::Variant {
-                    type_id,
-                    variant_id,
-                    fields,
-                }
-            }
-            ArenaEntry::Namespace { name, mut members } => {
-                for (_, value) in &mut members {
-                    *value = self.promote_region_root_to_target(*value, mark, relocated, target);
-                }
-                ArenaEntry::Namespace { name, members }
-            }
-        }
-    }
-
-    fn promote_list_to_target(
-        &mut self,
-        list: ArenaList,
-        mark: u32,
-        relocated: &mut [u32],
-        target: AllocSpace,
-    ) -> ArenaList {
-        match list {
-            ArenaList::Flat { items, start } => ArenaList::Flat {
-                items: Rc::new(
-                    items[start..]
-                        .iter()
-                        .map(|value| {
-                            self.promote_region_root_to_target(*value, mark, relocated, target)
-                        })
-                        .collect(),
-                ),
-                start: 0,
-            },
-            ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
-                head: self.promote_region_root_to_target(head, mark, relocated, target),
-                tail: self.promote_region_root_to_target(tail, mark, relocated, target),
-                len,
-            },
-            ArenaList::Concat { left, right, len } => ArenaList::Concat {
-                left: self.promote_region_root_to_target(left, mark, relocated, target),
-                right: self.promote_region_root_to_target(right, mark, relocated, target),
-                len,
-            },
-            ArenaList::Segments {
-                current,
-                rest,
-                start,
-                len,
-            } => ArenaList::Segments {
-                current: self.promote_region_root_to_target(current, mark, relocated, target),
-                rest: Rc::new(
-                    rest[start..]
-                        .iter()
-                        .map(|value| {
-                            self.promote_region_root_to_target(*value, mark, relocated, target)
-                        })
-                        .collect(),
-                ),
-                start: 0,
-                len,
-            },
-        }
+        let mut rewrite = |arena: &mut Arena, value: NanValue| {
+            arena.promote_region_root_to_target(value, mark, relocated, target)
+        };
+        self.rewrite_entry_with(entry, &mut rewrite)
     }
 
     fn promote_value_to_stable(
@@ -1571,183 +1008,10 @@ impl Arena {
         relocated_yard: &mut [u32],
         relocated_handoff: &mut [u32],
     ) -> ArenaEntry {
-        match entry {
-            ArenaEntry::Int(i) => ArenaEntry::Int(i),
-            ArenaEntry::String(s) => ArenaEntry::String(s),
-            ArenaEntry::Builtin(name) => ArenaEntry::Builtin(name),
-            ArenaEntry::Fn(f) => ArenaEntry::Fn(f),
-            ArenaEntry::Boxed(inner) => ArenaEntry::Boxed(self.promote_value_to_stable(
-                inner,
-                relocated_young,
-                relocated_yard,
-                relocated_handoff,
-            )),
-            ArenaEntry::List(list) => ArenaEntry::List(self.promote_list_to_stable(
-                list,
-                relocated_young,
-                relocated_yard,
-                relocated_handoff,
-            )),
-            ArenaEntry::Tuple(mut items) => {
-                for value in &mut items {
-                    *value = self.promote_value_to_stable(
-                        *value,
-                        relocated_young,
-                        relocated_yard,
-                        relocated_handoff,
-                    );
-                }
-                ArenaEntry::Tuple(items)
-            }
-            ArenaEntry::Map(map) => {
-                let mut out = PersistentMap::new();
-                for (hash, (key, value)) in map {
-                    let relocated_key = self.promote_value_to_stable(
-                        key,
-                        relocated_young,
-                        relocated_yard,
-                        relocated_handoff,
-                    );
-                    let relocated_value = self.promote_value_to_stable(
-                        value,
-                        relocated_young,
-                        relocated_yard,
-                        relocated_handoff,
-                    );
-                    out.insert(hash, (relocated_key, relocated_value));
-                }
-                ArenaEntry::Map(out)
-            }
-            ArenaEntry::Record {
-                type_id,
-                mut fields,
-            } => {
-                for value in &mut fields {
-                    *value = self.promote_value_to_stable(
-                        *value,
-                        relocated_young,
-                        relocated_yard,
-                        relocated_handoff,
-                    );
-                }
-                ArenaEntry::Record { type_id, fields }
-            }
-            ArenaEntry::Variant {
-                type_id,
-                variant_id,
-                mut fields,
-            } => {
-                for value in &mut fields {
-                    *value = self.promote_value_to_stable(
-                        *value,
-                        relocated_young,
-                        relocated_yard,
-                        relocated_handoff,
-                    );
-                }
-                ArenaEntry::Variant {
-                    type_id,
-                    variant_id,
-                    fields,
-                }
-            }
-            ArenaEntry::Namespace { name, mut members } => {
-                for (_, value) in &mut members {
-                    *value = self.promote_value_to_stable(
-                        *value,
-                        relocated_young,
-                        relocated_yard,
-                        relocated_handoff,
-                    );
-                }
-                ArenaEntry::Namespace { name, members }
-            }
-        }
-    }
-
-    fn promote_list_to_stable(
-        &mut self,
-        list: ArenaList,
-        relocated_young: &mut [u32],
-        relocated_yard: &mut [u32],
-        relocated_handoff: &mut [u32],
-    ) -> ArenaList {
-        match list {
-            ArenaList::Flat { items, start } => ArenaList::Flat {
-                items: Rc::new(
-                    items[start..]
-                        .iter()
-                        .map(|value| {
-                            self.promote_value_to_stable(
-                                *value,
-                                relocated_young,
-                                relocated_yard,
-                                relocated_handoff,
-                            )
-                        })
-                        .collect(),
-                ),
-                start: 0,
-            },
-            ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
-                head: self.promote_value_to_stable(
-                    head,
-                    relocated_young,
-                    relocated_yard,
-                    relocated_handoff,
-                ),
-                tail: self.promote_value_to_stable(
-                    tail,
-                    relocated_young,
-                    relocated_yard,
-                    relocated_handoff,
-                ),
-                len,
-            },
-            ArenaList::Concat { left, right, len } => ArenaList::Concat {
-                left: self.promote_value_to_stable(
-                    left,
-                    relocated_young,
-                    relocated_yard,
-                    relocated_handoff,
-                ),
-                right: self.promote_value_to_stable(
-                    right,
-                    relocated_young,
-                    relocated_yard,
-                    relocated_handoff,
-                ),
-                len,
-            },
-            ArenaList::Segments {
-                current,
-                rest,
-                start,
-                len,
-            } => ArenaList::Segments {
-                current: self.promote_value_to_stable(
-                    current,
-                    relocated_young,
-                    relocated_yard,
-                    relocated_handoff,
-                ),
-                rest: Rc::new(
-                    rest[start..]
-                        .iter()
-                        .map(|value| {
-                            self.promote_value_to_stable(
-                                *value,
-                                relocated_young,
-                                relocated_yard,
-                                relocated_handoff,
-                            )
-                        })
-                        .collect(),
-                ),
-                start: 0,
-                len,
-            },
-        }
+        let mut rewrite = |arena: &mut Arena, value: NanValue| {
+            arena.promote_value_to_stable(value, relocated_young, relocated_yard, relocated_handoff)
+        };
+        self.rewrite_entry_with(entry, &mut rewrite)
     }
 
     fn relocate_yard_root(
@@ -1813,63 +1077,10 @@ impl Arena {
         relocated: &mut [u32],
         compacted: &mut Vec<ArenaEntry>,
     ) -> ArenaEntry {
-        match entry {
-            ArenaEntry::Int(i) => ArenaEntry::Int(i),
-            ArenaEntry::String(s) => ArenaEntry::String(s),
-            ArenaEntry::Builtin(name) => ArenaEntry::Builtin(name),
-            ArenaEntry::Fn(f) => ArenaEntry::Fn(f),
-            ArenaEntry::Boxed(inner) => {
-                ArenaEntry::Boxed(self.relocate_yard_value(inner, mark, relocated, compacted))
-            }
-            ArenaEntry::List(list) => {
-                ArenaEntry::List(self.relocate_yard_list(list, mark, relocated, compacted))
-            }
-            ArenaEntry::Tuple(mut items) => {
-                for value in &mut items {
-                    *value = self.relocate_yard_value(*value, mark, relocated, compacted);
-                }
-                ArenaEntry::Tuple(items)
-            }
-            ArenaEntry::Map(map) => {
-                let mut out = PersistentMap::new();
-                for (hash, (key, value)) in map {
-                    let relocated_key = self.relocate_yard_value(key, mark, relocated, compacted);
-                    let relocated_value =
-                        self.relocate_yard_value(value, mark, relocated, compacted);
-                    out.insert(hash, (relocated_key, relocated_value));
-                }
-                ArenaEntry::Map(out)
-            }
-            ArenaEntry::Record {
-                type_id,
-                mut fields,
-            } => {
-                for value in &mut fields {
-                    *value = self.relocate_yard_value(*value, mark, relocated, compacted);
-                }
-                ArenaEntry::Record { type_id, fields }
-            }
-            ArenaEntry::Variant {
-                type_id,
-                variant_id,
-                mut fields,
-            } => {
-                for value in &mut fields {
-                    *value = self.relocate_yard_value(*value, mark, relocated, compacted);
-                }
-                ArenaEntry::Variant {
-                    type_id,
-                    variant_id,
-                    fields,
-                }
-            }
-            ArenaEntry::Namespace { name, mut members } => {
-                for (_, value) in &mut members {
-                    *value = self.relocate_yard_value(*value, mark, relocated, compacted);
-                }
-                ArenaEntry::Namespace { name, members }
-            }
-        }
+        let mut rewrite = |arena: &mut Arena, value: NanValue| {
+            arena.relocate_yard_value(value, mark, relocated, compacted)
+        };
+        self.rewrite_entry_with(entry, &mut rewrite)
     }
 
     fn rewrite_yard_refs_in_place(
@@ -1928,154 +1139,10 @@ impl Arena {
         relocated: &mut [u32],
         compacted: &mut Vec<ArenaEntry>,
     ) -> ArenaEntry {
-        match entry {
-            ArenaEntry::Int(i) => ArenaEntry::Int(i),
-            ArenaEntry::String(s) => ArenaEntry::String(s),
-            ArenaEntry::Builtin(name) => ArenaEntry::Builtin(name),
-            ArenaEntry::Fn(f) => ArenaEntry::Fn(f),
-            ArenaEntry::Boxed(inner) => {
-                ArenaEntry::Boxed(self.relocate_yard_root(inner, mark, relocated, compacted))
-            }
-            ArenaEntry::List(list) => {
-                ArenaEntry::List(self.rewrite_yard_list(list, mark, relocated, compacted))
-            }
-            ArenaEntry::Tuple(mut items) => {
-                for value in &mut items {
-                    *value = self.relocate_yard_root(*value, mark, relocated, compacted);
-                }
-                ArenaEntry::Tuple(items)
-            }
-            ArenaEntry::Map(map) => {
-                let mut out = PersistentMap::new();
-                for (hash, (key, value)) in map {
-                    let new_key = self.relocate_yard_root(key, mark, relocated, compacted);
-                    let new_value = self.relocate_yard_root(value, mark, relocated, compacted);
-                    out.insert(hash, (new_key, new_value));
-                }
-                ArenaEntry::Map(out)
-            }
-            ArenaEntry::Record {
-                type_id,
-                mut fields,
-            } => {
-                for value in &mut fields {
-                    *value = self.relocate_yard_root(*value, mark, relocated, compacted);
-                }
-                ArenaEntry::Record { type_id, fields }
-            }
-            ArenaEntry::Variant {
-                type_id,
-                variant_id,
-                mut fields,
-            } => {
-                for value in &mut fields {
-                    *value = self.relocate_yard_root(*value, mark, relocated, compacted);
-                }
-                ArenaEntry::Variant {
-                    type_id,
-                    variant_id,
-                    fields,
-                }
-            }
-            ArenaEntry::Namespace { name, mut members } => {
-                for (_, value) in &mut members {
-                    *value = self.relocate_yard_root(*value, mark, relocated, compacted);
-                }
-                ArenaEntry::Namespace { name, members }
-            }
-        }
-    }
-
-    fn rewrite_yard_list(
-        &mut self,
-        list: ArenaList,
-        mark: u32,
-        relocated: &mut [u32],
-        compacted: &mut Vec<ArenaEntry>,
-    ) -> ArenaList {
-        match list {
-            ArenaList::Flat { items, start } => ArenaList::Flat {
-                items: Rc::new(
-                    items[start..]
-                        .iter()
-                        .map(|value| self.relocate_yard_root(*value, mark, relocated, compacted))
-                        .collect(),
-                ),
-                start: 0,
-            },
-            ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
-                head: self.relocate_yard_root(head, mark, relocated, compacted),
-                tail: self.relocate_yard_root(tail, mark, relocated, compacted),
-                len,
-            },
-            ArenaList::Concat { left, right, len } => ArenaList::Concat {
-                left: self.relocate_yard_root(left, mark, relocated, compacted),
-                right: self.relocate_yard_root(right, mark, relocated, compacted),
-                len,
-            },
-            ArenaList::Segments {
-                current,
-                rest,
-                start,
-                len,
-            } => ArenaList::Segments {
-                current: self.relocate_yard_root(current, mark, relocated, compacted),
-                rest: Rc::new(
-                    rest[start..]
-                        .iter()
-                        .map(|value| self.relocate_yard_root(*value, mark, relocated, compacted))
-                        .collect(),
-                ),
-                start: 0,
-                len,
-            },
-        }
-    }
-
-    fn relocate_yard_list(
-        &mut self,
-        list: ArenaList,
-        mark: u32,
-        relocated: &mut [u32],
-        compacted: &mut Vec<ArenaEntry>,
-    ) -> ArenaList {
-        match list {
-            ArenaList::Flat { items, start } => ArenaList::Flat {
-                items: Rc::new(
-                    items[start..]
-                        .iter()
-                        .map(|value| self.relocate_yard_value(*value, mark, relocated, compacted))
-                        .collect(),
-                ),
-                start: 0,
-            },
-            ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
-                head: self.relocate_yard_value(head, mark, relocated, compacted),
-                tail: self.relocate_yard_value(tail, mark, relocated, compacted),
-                len,
-            },
-            ArenaList::Concat { left, right, len } => ArenaList::Concat {
-                left: self.relocate_yard_value(left, mark, relocated, compacted),
-                right: self.relocate_yard_value(right, mark, relocated, compacted),
-                len,
-            },
-            ArenaList::Segments {
-                current,
-                rest,
-                start,
-                len,
-            } => ArenaList::Segments {
-                current: self.relocate_yard_value(current, mark, relocated, compacted),
-                rest: Rc::new(
-                    rest[start..]
-                        .iter()
-                        .map(|value| self.relocate_yard_value(*value, mark, relocated, compacted))
-                        .collect(),
-                ),
-                start: 0,
-                len,
-            },
-        }
+        let mut rewrite = |arena: &mut Arena, value: NanValue| {
+            arena.relocate_yard_root(value, mark, relocated, compacted)
+        };
+        self.rewrite_entry_with(entry, &mut rewrite)
     }
 
     fn relocate_stable_root(
@@ -2132,106 +1199,9 @@ impl Arena {
         relocated: &mut [u32],
         compacted: &mut Vec<ArenaEntry>,
     ) -> ArenaEntry {
-        match entry {
-            ArenaEntry::Int(i) => ArenaEntry::Int(i),
-            ArenaEntry::String(s) => ArenaEntry::String(s),
-            ArenaEntry::Builtin(name) => ArenaEntry::Builtin(name),
-            ArenaEntry::Fn(f) => ArenaEntry::Fn(f),
-            ArenaEntry::Boxed(inner) => {
-                ArenaEntry::Boxed(self.relocate_stable_value(inner, relocated, compacted))
-            }
-            ArenaEntry::List(list) => {
-                ArenaEntry::List(self.relocate_stable_list(list, relocated, compacted))
-            }
-            ArenaEntry::Tuple(mut items) => {
-                for value in &mut items {
-                    *value = self.relocate_stable_value(*value, relocated, compacted);
-                }
-                ArenaEntry::Tuple(items)
-            }
-            ArenaEntry::Map(map) => {
-                let mut out = PersistentMap::new();
-                for (hash, (key, value)) in map {
-                    let relocated_key = self.relocate_stable_value(key, relocated, compacted);
-                    let relocated_value = self.relocate_stable_value(value, relocated, compacted);
-                    out.insert(hash, (relocated_key, relocated_value));
-                }
-                ArenaEntry::Map(out)
-            }
-            ArenaEntry::Record {
-                type_id,
-                mut fields,
-            } => {
-                for value in &mut fields {
-                    *value = self.relocate_stable_value(*value, relocated, compacted);
-                }
-                ArenaEntry::Record { type_id, fields }
-            }
-            ArenaEntry::Variant {
-                type_id,
-                variant_id,
-                mut fields,
-            } => {
-                for value in &mut fields {
-                    *value = self.relocate_stable_value(*value, relocated, compacted);
-                }
-                ArenaEntry::Variant {
-                    type_id,
-                    variant_id,
-                    fields,
-                }
-            }
-            ArenaEntry::Namespace { name, mut members } => {
-                for (_, value) in &mut members {
-                    *value = self.relocate_stable_value(*value, relocated, compacted);
-                }
-                ArenaEntry::Namespace { name, members }
-            }
-        }
-    }
-
-    fn relocate_stable_list(
-        &mut self,
-        list: ArenaList,
-        relocated: &mut [u32],
-        compacted: &mut Vec<ArenaEntry>,
-    ) -> ArenaList {
-        match list {
-            ArenaList::Flat { items, start } => ArenaList::Flat {
-                items: Rc::new(
-                    items[start..]
-                        .iter()
-                        .map(|value| self.relocate_stable_value(*value, relocated, compacted))
-                        .collect(),
-                ),
-                start: 0,
-            },
-            ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
-                head: self.relocate_stable_value(head, relocated, compacted),
-                tail: self.relocate_stable_value(tail, relocated, compacted),
-                len,
-            },
-            ArenaList::Concat { left, right, len } => ArenaList::Concat {
-                left: self.relocate_stable_value(left, relocated, compacted),
-                right: self.relocate_stable_value(right, relocated, compacted),
-                len,
-            },
-            ArenaList::Segments {
-                current,
-                rest,
-                start,
-                len,
-            } => ArenaList::Segments {
-                current: self.relocate_stable_value(current, relocated, compacted),
-                rest: Rc::new(
-                    rest[start..]
-                        .iter()
-                        .map(|value| self.relocate_stable_value(*value, relocated, compacted))
-                        .collect(),
-                ),
-                start: 0,
-                len,
-            },
-        }
+        let mut rewrite = |arena: &mut Arena, value: NanValue| {
+            arena.relocate_stable_value(value, relocated, compacted)
+        };
+        self.rewrite_entry_with(entry, &mut rewrite)
     }
 }
