@@ -26,14 +26,18 @@ All notable changes to Aver are documented here.
 - Ordinary-return handoff now has refined fast paths: pure `handoff`, pure `young`, and one-result mixed helper returns stay cheap, while larger mixed `young + handoff` graphs deliberately fall back to full evacuation after a real `workflow_engine` crash exposed the unsafe version.
 - VM bytecode compilation now marks conservatively-classified **thin functions**, and `RETURN` / `?` use a fast path that skips boundary promotion work when those frames never created local heap survivors.
 - VM now also marks a much narrower **parent-thin** helper class for wrapper-like functions that can borrow caller `young` directly and skip ordinary-return handoff unless they spill into other survivor lanes.
-- `docs/vm.md` now documents the VM memory model and list representation in more detail, including young/yard/handoff/stable spaces, structural list nodes, TCO survivor behavior, and ordinary-return handoff survivors.
 - `tests/vm_bench.rs` now reports execution-time arena memory deltas (`peak+` and `live+`) for interpreter and VM, measured above setup/compile baseline instead of raw total heap size.
 - `runtime_bench` now keeps the full core sweep by default, uses a smaller default `workflow_engine` seed for app benchmarks unless `--full` or `--seed` is requested, and scales up the previously too-small core cases so VM timings are less dominated by startup noise.
+
+### Docs
+- `docs/vm.md` now documents the VM memory model and list representation in more detail, including young/yard/handoff/stable spaces, structural list nodes, TCO survivor behavior, and ordinary-return handoff survivors.
+
+### Removed
+- Dead VM match-arm region machinery was removed after profiling showed that helper-thin functions and list specialization matter much more than per-arm frame tricks in real Aver programs.
 
 ### Fixed
 - VM no longer leaves stale heap handles behind in real workloads like `examples/games/rogue`; frame boundaries now promote live roots to `stable` before truncating local arenas.
 - TCO list accumulators no longer get recursively re-evacuated through older immutable tails on every iteration; shared-yard cleanup now only rewrites the actual local suffix, which removes the pathological slowdown in persistent-list loops.
-- Dead VM match-arm region machinery was removed after profiling showed that helper-thin functions and list specialization matter much more than per-arm frame tricks in real Aver programs.
 - VM now resolves qualified type constructors more consistently in bytecode compilation, which unblocks module-heavy apps like `projects/workflow_engine` under `aver run --vm`.
 - `TAIL_CALL_KNOWN` now resizes the stack before clearing newly introduced locals, which fixes a real crash in `verify --vm` on larger programs such as `examples/data/json.av`.
 - VM ordered string comparison now matches the interpreter, so examples like `examples/data/date.av` behave the same under `verify` and `verify --vm`.
