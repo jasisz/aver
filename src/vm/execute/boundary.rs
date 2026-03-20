@@ -62,7 +62,52 @@ impl VM {
         if globals_dirty {
             self.arena.promote_roots_to_stable(&mut self.globals);
         }
-        self.arena.promote_roots_to_stable(frame_roots);
+        let has_local_young = self.arena.young_len() > arena_mark as usize;
+        let has_local_yard = self.arena.yard_len() > yard_base as usize;
+        let has_local_handoff = self.arena.handoff_len() > handoff_mark as usize;
+        let handoff_growth = self.arena.handoff_len().saturating_sub(handoff_mark as usize);
+        let result_is_single_local_handoff = matches!(
+            frame_roots,
+            [result]
+                if result
+                    .heap_index()
+                    .is_some_and(|index| self.arena.is_handoff_index_in_region(index, handoff_mark))
+                    && handoff_growth == 1
+        );
+
+        // Ordinary helper returns often build their final value directly in
+        // handoff. We can keep that suffix in place cheaply when the frame is
+        // "pure handoff" or "pure young". Mixed young+handoff returns still
+        // go through full evacuation so nested refs stay correct.
+        if !has_local_yard && !has_local_young {
+            self.arena.truncate_to(arena_mark);
+            self.arena.truncate_yard_to(yard_base);
+            return (false, has_local_handoff);
+        }
+
+        if !has_local_yard && !has_local_handoff {
+            self.arena
+                .promote_young_roots_to_handoff(arena_mark, frame_roots);
+            self.arena.truncate_yard_to(yard_base);
+            return (false, self.arena.handoff_len() > handoff_mark as usize);
+        }
+
+        if !has_local_yard && has_local_young && result_is_single_local_handoff {
+            self.arena
+                .promote_young_roots_to_handoff(arena_mark, frame_roots);
+            self.arena.truncate_yard_to(yard_base);
+            return (false, self.arena.handoff_len() > handoff_mark as usize);
+        }
+
+        if has_local_young || has_local_yard || has_local_handoff {
+            return self.arena.evacuate_frame_to_handoff(
+                arena_mark,
+                yard_base,
+                handoff_mark,
+                frame_roots,
+            );
+        }
+
         self.arena.truncate_to(arena_mark);
         self.arena.truncate_yard_to(yard_base);
         self.arena.truncate_handoff_to(handoff_mark);

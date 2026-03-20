@@ -102,16 +102,20 @@ Implementation-wise, the current VM now splits boundary behavior by control-flow
 
 - values can still be *allocated* into `yard` or `handoff` in obvious tail/return positions
 - at `TAIL_CALL_*` boundaries, live roots are kept in `yard`, so loop-carried state stays out of `stable`
-- at ordinary `RETURN` boundaries, live roots are still **canonicalized into `stable`** before the caller resumes
+- at ordinary `RETURN` boundaries to another Aver frame, live roots stay on the handoff path instead of being forced into `stable`
+- pure-`handoff`, pure-`young`, and single-result mixed helper returns use fast ordinary-return paths
+- larger mixed `young + handoff` graphs still fall back to full evacuation, because correctness matters more than over-eager survivor cleverness
+- only globals, host-facing escapes, and top-level completion are canonicalized into `stable`
 - then the frame-local `young` / `yard` / `handoff` suffixes are truncated or compacted as appropriate
 
-This matters because it gives the VM a real survivor lane for TCO-heavy programs while keeping ordinary call/return behavior conservative and correct under real workloads like `examples/games/rogue` and `examples/data/json.av`.
+This matters because it gives the VM a real survivor lane for TCO-heavy programs and for ordinary helper chains, without forcing every “survives one more call boundary” value through `stable`.
 
 So the current VM is:
 
 - region-style for local scratch memory
 - yard-based for tail-call survivors
-- stable-space based for ordinary returns, globals, and host-facing escapes
+- handoff-based for ordinary helper returns, with a conservative fallback for larger mixed graphs
+- stable-space based for globals, host-facing escapes, and top-level canonicalization
 - explicit about which lanes are used during construction
 
 That already gives us the most important property: frame-local garbage dies in bulk, and long-lived values stop pretending to live in temporary memory.
@@ -124,12 +128,13 @@ The easiest way to think about the VM is:
 2. In obvious tail-position construction, aggregates may be built in `yard`.
 3. In obvious ordinary-return construction, aggregates may be built in `handoff`.
 4. On `TAIL_CALL_*`, live roots are evacuated into `yard`.
-5. On ordinary `RETURN`, live roots are promoted into `stable`.
-6. The frame-local `young` / `yard` / `handoff` suffixes are then truncated in one shot.
+5. On ordinary `RETURN` to another Aver frame, live roots stay on the handoff path.
+6. On top-level completion or real escape boundaries, live roots are canonicalized into `stable`.
+7. The frame-local `young` / `yard` / `handoff` suffixes are then truncated in one shot.
 
 For thin helpers there is now one more fast path:
 
-7. If a frame returns with unchanged local marks, the VM skips boundary promotion/truncation work for that frame and resumes the caller directly.
+8. If a frame returns with unchanged local marks, the VM skips boundary promotion/truncation work for that frame and resumes the caller directly.
 
 That means the VM still distinguishes:
 
@@ -138,8 +143,11 @@ That means the VM still distinguishes:
 - caller-facing return construction
 - truly long-lived values
 
-But it currently treats `stable` as the canonical “survives the boundary” home.
-Ordinary returns still use that rule; tail-call reuse does not.
+The important distinction now is:
+
+- `yard` survives the next tail-call boundary
+- `handoff` survives the next ordinary call/return boundary
+- `stable` is for values that really outlive the current Aver call chain
 
 ### What Goes Where
 
@@ -150,7 +158,9 @@ Typical examples:
 - `List.prepend(n, acc)` used as the next argument of a tail-recursive call:
   can be built in `yard`, and stays in `yard` when the tail-call boundary is finalized
 - `Result.Ok(value)` built just before returning from a helper:
-  can be built in `handoff`, then becomes `stable` before the caller resumes
+  can be built in `handoff`, and stays in `handoff` while the caller continues
+- a helper that built both local temporaries and one final returned aggregate:
+  can still stay on the fast ordinary-return path when that returned aggregate is the only fresh handoff root; larger mixed graphs fall back to full evacuation
 - storing a value into globals, returning from top-level, or passing a value across a host boundary:
   goes to `stable`
 

@@ -700,6 +700,40 @@ fn vm_helper_returns_feed_tail_loop_without_accumulating() {
         "helper-return handoff values should not accumulate, arena.len() = {}",
         arena.len()
     );
+    assert!(
+        arena.peak_usage().stable < 16,
+        "helper-return handoff should not spill into stable, peak stable = {}",
+        arena.peak_usage().stable
+    );
+}
+
+#[test]
+fn vm_multi_hop_helper_returns_feed_tail_loop_without_stable_churn() {
+    let src = "fn extend0(acc: List<Int>, n: Int) -> List<Int>\n    List.prepend(n, acc)\n\nfn extend1(acc: List<Int>, n: Int) -> List<Int>\n    extend0(acc, n)\n\nfn extend2(acc: List<Int>, n: Int) -> List<Int>\n    extend1(acc, n)\n\nfn extend3(acc: List<Int>, n: Int) -> List<Int>\n    extend2(acc, n)\n\nfn build(n: Int, acc: List<Int>) -> Int\n    match n == 0\n        true -> List.len(acc)\n        false -> build(n - 1, extend3(acc, n))\n\nfn main() -> Int\n    build(200, [])\n";
+    let (result, arena) = vm_run_with_arena(src);
+    assert!(result.is_int());
+    let empty = Arena::new();
+    assert_eq!(result.as_int(&empty), 200);
+    assert!(
+        arena.len() < 16,
+        "multi-hop helper returns should not accumulate, arena.len() = {}",
+        arena.len()
+    );
+    assert!(
+        arena.peak_usage().stable < 16,
+        "multi-hop helper returns should stay off stable, peak stable = {}",
+        arena.peak_usage().stable
+    );
+}
+
+#[test]
+fn vm_mixed_young_handoff_helper_returns_keep_strings_alive_for_caller() {
+    let src = "fn escapeField(text: String) -> String\n    p = String.replace(text, \"%\", \"%25\")\n    bar = String.replace(p, \"|\", \"%7C\")\n    String.replace(bar, \"\\n\", \"%0A\")\n\nfn wrap1(text: String) -> String\n    escapeField(text)\n\nfn wrap2(text: String) -> String\n    wrap1(text)\n\nfn render(name: String) -> String\n    escaped = wrap2(name)\n    \"project:\" + escaped\n\nfn main() -> String\n    render(\"Alpha | team\")\n";
+    let (result, arena) = vm_run_with_arena(src);
+    assert_eq!(
+        result.to_value(&arena),
+        aver::value::Value::Str("project:Alpha %7C team".to_string())
+    );
 }
 
 #[test]

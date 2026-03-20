@@ -20,9 +20,10 @@ All notable changes to Aver are documented here.
 - `match List.get(xs, i)` now has a dedicated VM lowering path that branches directly on presence/absence instead of materializing `Option.Some(Boxed(v))` just to immediately match on it.
 - Structural list append now grows chunked right spines instead of a singleton-per-append concat chain, which materially improves `rogue`-style `List.append(...); List.get(..., i)` workloads.
 - `LIST_HEAD_TAIL` on concat-backed lists now returns a structural segment-view tail instead of rebuilding a fresh concat suffix each time, which further reduces list destructuring churn in VM workloads.
-- Tail-position and ordinary-return code paths can now allocate obvious aggregates into `yard` / `handoff` construction lanes. `TAIL_CALL_*` keeps loop-carried survivors in `yard`, while ordinary returns still canonicalize live roots into `stable`.
+- Tail-position and ordinary-return code paths can now allocate obvious aggregates into `yard` / `handoff` construction lanes. `TAIL_CALL_*` keeps loop-carried survivors in `yard`, and ordinary returns now keep helper-facing survivors in `handoff` instead of forcing them through `stable`.
+- Ordinary-return handoff now has refined fast paths: pure `handoff`, pure `young`, and one-result mixed helper returns stay cheap, while larger mixed `young + handoff` graphs deliberately fall back to full evacuation after a real `workflow_engine` crash exposed the unsafe version.
 - VM bytecode compilation now marks conservatively-classified **thin functions**, and `RETURN` / `?` use a fast path that skips boundary promotion work when those frames never created local heap survivors.
-- `docs/vm.md` now documents the VM memory model and list representation in more detail, including young/yard/handoff/stable spaces, structural list nodes, TCO survivor behavior, and the current conservative ordinary-return path.
+- `docs/vm.md` now documents the VM memory model and list representation in more detail, including young/yard/handoff/stable spaces, structural list nodes, TCO survivor behavior, and ordinary-return handoff survivors.
 - `tests/vm_bench.rs` now reports execution-time arena memory deltas (`peak+` and `live+`) for interpreter and VM, measured above setup/compile baseline instead of raw total heap size.
 - `runtime_bench` now keeps the full core sweep by default, uses a smaller default `workflow_engine` seed for app benchmarks unless `--full` or `--seed` is requested, and scales up the previously too-small core cases so VM timings are less dominated by startup noise.
 
