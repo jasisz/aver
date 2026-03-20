@@ -51,6 +51,13 @@ In practice this means many tiny Aver helpers now behave like:
 - it avoids ordinary-return `handoff` as long as it never touches `yard` / `handoff`
 - its local `young` scratch dies later at the caller boundary instead of forcing a helper-local relocation step
 
+The classifier is deliberately less strict than a pure "single expression only" rule:
+
+- small `match` helpers with local bindings can still be `parent-thin`
+- field/tuple extraction and other tiny control-flow opcodes are allowed
+- nullary variant constructors (`Status.Todo`) are treated as inline results, so they can still stay on the thin / parent-thin fast path
+- list destructuring and obviously aggregate-building builtins still stay out of `parent-thin`
+
 Execution-backed commands can run through the interpreter or through the VM:
 
 ```bash

@@ -14,6 +14,7 @@ All notable changes to Aver are documented here.
 - `aver-rt::AverList` now packs repeated `append` chains into segmented chunk spines, improving list-heavy workloads in both the interpreter and generated Rust.
 - VM `Result.Ok` / `Result.Err` / `Option.Some` now keep wrapped `Bool` / `Unit` / `None` values inline inside `NanValue` instead of boxing them in the arena, reducing wrapper-heavy memory churn on interpreter and VM paths.
 - VM now also keeps wrapped inline `Int` values (`Some(42)`, `Ok(-7)`, `Err(0)`) fully inline via dedicated NaN-box tags, and nullary user-defined variants (`Status.Todo`, `Color.Red`) now use inline constructor ids instead of arena entries.
+- VM `parent-thin` classification now accepts small match/binding helpers and nullary-variant constructors, so more tiny control-flow helpers can return without paying ordinary-return handoff churn.
 
 ## 0.5.5
 

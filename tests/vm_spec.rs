@@ -757,6 +757,49 @@ fn vm_parent_thin_string_helpers_use_parent_young_path() {
 }
 
 #[test]
+fn vm_parent_thin_allows_small_match_binding_helpers() {
+    let src = "fn pick(flag: Bool, left: String, right: String) -> String\n    chosen = match flag\n        true -> left\n        false -> right\n    chosen\n\nfn wrap(flag: Bool, left: String, right: String) -> String\n    pick(flag, left, right)\n\nfn main() -> String\n    wrap(true, \"alpha\", \"beta\")\n";
+    let code = vm_compile(src);
+    assert!(code.get(code.find("pick").unwrap()).parent_thin);
+    assert!(code.get(code.find("wrap").unwrap()).parent_thin);
+
+    let (result, arena) = vm_run_with_arena(src);
+    assert_eq!(
+        result.to_value(&arena),
+        aver::value::Value::Str("alpha".to_string())
+    );
+    assert!(
+        arena.peak_usage().handoff < 4,
+        "small match helpers should stay off ordinary-return handoff churn, peak handoff = {}",
+        arena.peak_usage().handoff
+    );
+}
+
+#[test]
+fn vm_parent_thin_allows_nullary_variant_helpers() {
+    let src = "type Status\n    Todo\n    Done\n\nfn normalize(flag: Bool) -> Status\n    match flag\n        true -> Status.Todo\n        false -> Status.Done\n\nfn passthrough(flag: Bool) -> Status\n    normalize(flag)\n\nfn main() -> Status\n    passthrough(false)\n";
+    let code = vm_compile(src);
+    assert!(code.get(code.find("normalize").unwrap()).thin);
+    assert!(code.get(code.find("normalize").unwrap()).parent_thin);
+    assert!(code.get(code.find("passthrough").unwrap()).parent_thin);
+
+    let (result, arena) = vm_run_with_arena(src);
+    assert_eq!(
+        result.to_value(&arena),
+        aver::value::Value::Variant {
+            type_name: "Status".to_string(),
+            variant: "Done".to_string(),
+            fields: vec![].into(),
+        }
+    );
+    assert!(
+        arena.peak_usage().handoff < 2,
+        "nullary variant helpers should stay off ordinary-return handoff churn, peak handoff = {}",
+        arena.peak_usage().handoff
+    );
+}
+
+#[test]
 fn vm_parent_thin_rejects_builtin_heavy_wrapper_chain() {
     let src = "fn keepNonEmpty(lines: List<String>) -> List<String>\n    lines\n\nfn splitNonEmptyLines(content: String) -> List<String>\n    keepNonEmpty(String.split(content, \"\\n\"))\n\nfn main() -> List<String>\n    splitNonEmptyLines(\"a\\n\\nb\")\n";
     let code = vm_compile(src);

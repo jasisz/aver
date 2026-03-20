@@ -436,9 +436,8 @@ fn base_parent_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
         let op = code[ip];
         ip += 1;
         match op {
-            STORE_GLOBAL | STORE_LOCAL | TAIL_CALL_SELF | TAIL_CALL_KNOWN | CALL_VALUE | JUMP
-            | JUMP_IF_FALSE | MATCH_TAG | MATCH_VARIANT | MATCH_UNWRAP | MATCH_NIL | MATCH_CONS
-            | LIST_HEAD_TAIL | MATCH_TUPLE | EXTRACT_FIELD | EXTRACT_TUPLE_ITEM | MATCH_FAIL => {
+            STORE_GLOBAL | TAIL_CALL_SELF | TAIL_CALL_KNOWN | CALL_VALUE | MATCH_CONS
+            | LIST_HEAD_TAIL => {
                 return Ok(false);
             }
 
@@ -450,20 +449,41 @@ fn base_parent_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
             POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
             | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_LEN | LIST_GET_MATCH => {}
 
-            LIST_NEW | WRAP | TUPLE_NEW | RECORD_NEW | VARIANT_NEW => {
+            LIST_NEW | WRAP | TUPLE_NEW | RECORD_NEW => {
                 return Ok(false);
             }
 
-            LOAD_LOCAL | RECORD_GET => {
+            LOAD_LOCAL | STORE_LOCAL | RECORD_GET | EXTRACT_FIELD | EXTRACT_TUPLE_ITEM => {
                 ip = advance_opcode_ip(chunk, ip, 1)?;
             }
 
-            LOAD_CONST | LOAD_GLOBAL | RECORD_GET_NAMED => {
+            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | RECORD_GET_NAMED | MATCH_FAIL => {
                 ip = advance_opcode_ip(chunk, ip, 2)?;
             }
 
-            CALL_KNOWN => {
+            CALL_KNOWN | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE => {
                 ip = advance_opcode_ip(chunk, ip, 3)?;
+            }
+
+            MATCH_VARIANT => {
+                ip = advance_opcode_ip(chunk, ip, 4)?;
+            }
+
+            MATCH_NIL => {
+                ip = advance_opcode_ip(chunk, ip, 2)?;
+            }
+
+            VARIANT_NEW => {
+                if ip + 5 > code.len() {
+                    return Err(CompileError {
+                        msg: format!("truncated bytecode in {}", chunk.name),
+                    });
+                }
+                let field_count = code[ip + 4];
+                if field_count != 0 {
+                    return Ok(false);
+                }
+                ip = advance_opcode_ip(chunk, ip, 5)?;
             }
 
             _ => {
@@ -557,8 +577,8 @@ fn classify_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
         ip += 1;
         match op {
             STORE_GLOBAL | TAIL_CALL_SELF | TAIL_CALL_KNOWN | CONCAT | LIST_NIL | LIST_CONS
-            | LIST_NEW | RECORD_NEW | VARIANT_NEW | WRAP | TUPLE_NEW | RECORD_UPDATE | LIST_LEN
-            | LIST_GET | LIST_APPEND | LIST_PREPEND => {
+            | LIST_NEW | RECORD_NEW | WRAP | TUPLE_NEW | RECORD_UPDATE | LIST_LEN | LIST_GET
+            | LIST_APPEND | LIST_PREPEND => {
                 return Ok(false);
             }
 
@@ -584,6 +604,19 @@ fn classify_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
 
             MATCH_NIL | MATCH_CONS => {
                 ip = advance_opcode_ip(chunk, ip, 2)?;
+            }
+
+            VARIANT_NEW => {
+                if ip + 5 > code.len() {
+                    return Err(CompileError {
+                        msg: format!("truncated bytecode in {}", chunk.name),
+                    });
+                }
+                let field_count = code[ip + 4];
+                if field_count != 0 {
+                    return Ok(false);
+                }
+                ip = advance_opcode_ip(chunk, ip, 5)?;
             }
 
             _ => {

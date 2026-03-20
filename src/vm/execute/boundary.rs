@@ -4,6 +4,27 @@ use crate::vm::opcode::{RETURN, TAIL_CALL_KNOWN, TAIL_CALL_SELF};
 use crate::vm::types::CallFrame;
 
 impl VM {
+    fn result_uses_frame_local_heap(&self, frame: &CallFrame, result: NanValue) -> bool {
+        result.heap_index().is_some_and(|index| {
+            self.arena.is_frame_local_index(
+                index,
+                frame.arena_mark,
+                frame.yard_mark,
+                frame.handoff_mark,
+            )
+        })
+    }
+
+    fn can_fast_return_with_young_truncate(&self, frame: &CallFrame, result: NanValue) -> bool {
+        !frame.globals_dirty
+            && !frame.yard_dirty
+            && !frame.handoff_dirty
+            && self.arena.yard_len() == frame.yard_mark as usize
+            && self.arena.handoff_len() == frame.handoff_mark as usize
+            && self.arena.young_len() > frame.arena_mark as usize
+            && !self.result_uses_frame_local_heap(frame, result)
+    }
+
     pub(super) fn collect_stable_roots(&mut self, frame_roots: &mut [NanValue]) {
         let root_count = frame_roots.len();
         let global_count = self.globals.len();
@@ -228,6 +249,21 @@ impl VM {
         caller_depth: usize,
     ) -> ReturnControl {
         if self.can_fast_return(&frame) {
+            if self.frames.len() == caller_depth {
+                return ReturnControl::Done(result);
+            }
+
+            let caller = self.frames.last().unwrap();
+            return ReturnControl::Resume {
+                result,
+                fn_id: caller.fn_id,
+                ip: caller.ip as usize,
+                bp: caller.bp as usize,
+            };
+        }
+
+        if self.can_fast_return_with_young_truncate(&frame, result) {
+            self.arena.truncate_to(frame.arena_mark);
             if self.frames.len() == caller_depth {
                 return ReturnControl::Done(result);
             }
