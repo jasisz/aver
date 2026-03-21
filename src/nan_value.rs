@@ -26,13 +26,11 @@
 //!   6  = Map             payload = arena index
 //!   7  = Record          payload = arena index
 //!   8  = Variant         payload = arena index
-//!   9  = Fn              payload = arena index
-//!   10 = Builtin         payload = arena index
-//!   11 = Namespace       payload = arena index
+//!   9  = Symbol          payload bits 0-1: fn/builtin/namespace/nullary-variant; rest=symbol index
 //!   12 = SomeInlineInt   payload = inline int bits
 //!   13 = OkInlineInt     payload = inline int bits
 //!   14 = ErrInlineInt    payload = inline int bits
-//!   15 = NullaryVariant  payload = ctor id
+//!   15 = (reserved)
 
 use std::rc::Rc;
 
@@ -60,13 +58,16 @@ const TAG_TUPLE: u64 = 5;
 const TAG_MAP: u64 = 6;
 const TAG_RECORD: u64 = 7;
 const TAG_VARIANT: u64 = 8;
-const TAG_FN: u64 = 9;
-const TAG_BUILTIN: u64 = 10;
-const TAG_NAMESPACE: u64 = 11;
+const TAG_SYMBOL: u64 = 9;
 const TAG_SOME_INT: u64 = 12;
 const TAG_OK_INT: u64 = 13;
 const TAG_ERR_INT: u64 = 14;
-const TAG_NULLARY_VARIANT: u64 = 15;
+
+const SYMBOL_FN: u64 = 0;
+const SYMBOL_BUILTIN: u64 = 1;
+const SYMBOL_NAMESPACE: u64 = 2;
+const SYMBOL_NULLARY_VARIANT: u64 = 3;
+const SYMBOL_KIND_MASK: u64 = 0b11;
 
 const IMM_FALSE: u64 = 0;
 const IMM_TRUE: u64 = 1;
@@ -390,23 +391,40 @@ impl NanValue {
     }
 
     #[inline]
-    pub fn new_nullary_variant(ctor_id: u32) -> Self {
-        Self::encode(TAG_NULLARY_VARIANT, ctor_id as u64)
+    fn new_symbol(symbol_kind: u64, symbol_index: u32) -> Self {
+        Self::encode(TAG_SYMBOL, symbol_kind | ((symbol_index as u64) << 2))
+    }
+
+    #[inline]
+    pub(crate) fn symbol_kind(self) -> u64 {
+        debug_assert!(self.is_nan_boxed() && self.tag() == TAG_SYMBOL);
+        self.payload() & SYMBOL_KIND_MASK
+    }
+
+    #[inline]
+    pub(crate) fn symbol_index(self) -> u32 {
+        debug_assert!(self.is_nan_boxed() && self.tag() == TAG_SYMBOL);
+        (self.payload() >> 2) as u32
+    }
+
+    #[inline]
+    pub fn new_nullary_variant(symbol_index: u32) -> Self {
+        Self::new_symbol(SYMBOL_NULLARY_VARIANT, symbol_index)
     }
 
     #[inline]
     pub fn new_fn(arena_index: u32) -> Self {
-        Self::encode(TAG_FN, arena_index as u64)
+        Self::new_symbol(SYMBOL_FN, arena_index)
     }
 
     #[inline]
     pub fn new_builtin(arena_index: u32) -> Self {
-        Self::encode(TAG_BUILTIN, arena_index as u64)
+        Self::new_symbol(SYMBOL_BUILTIN, arena_index)
     }
 
     #[inline]
     pub fn new_namespace(arena_index: u32) -> Self {
-        Self::encode(TAG_NAMESPACE, arena_index as u64)
+        Self::new_symbol(SYMBOL_NAMESPACE, arena_index)
     }
 
     #[inline]
@@ -429,8 +447,9 @@ impl NanValue {
                 }
             }
             TAG_WRAPPER => Some(self.wrapper_index()),
-            TAG_STRING | TAG_LIST | TAG_TUPLE | TAG_MAP | TAG_RECORD | TAG_VARIANT | TAG_FN
-            | TAG_BUILTIN | TAG_NAMESPACE => Some(self.arena_index()),
+            TAG_STRING | TAG_LIST | TAG_TUPLE | TAG_MAP | TAG_RECORD | TAG_VARIANT => {
+                Some(self.arena_index())
+            }
             _ => None,
         }
     }
@@ -457,9 +476,6 @@ impl NanValue {
             TAG_MAP => Self::new_map(index),
             TAG_RECORD => Self::new_record(index),
             TAG_VARIANT => Self::new_variant(index),
-            TAG_FN => Self::new_fn(index),
-            TAG_BUILTIN => Self::new_builtin(index),
-            TAG_NAMESPACE => Self::new_namespace(index),
             _ => self,
         }
     }
@@ -548,12 +564,14 @@ impl NanValue {
 
     #[inline]
     pub fn is_fn(self) -> bool {
-        self.is_nan_boxed() && self.tag() == TAG_FN
+        self.is_nan_boxed() && self.tag() == TAG_SYMBOL && self.symbol_kind() == SYMBOL_FN
     }
 
     #[inline]
     pub fn is_variant(self) -> bool {
-        self.is_nan_boxed() && matches!(self.tag(), TAG_VARIANT | TAG_NULLARY_VARIANT)
+        self.is_nan_boxed()
+            && (self.tag() == TAG_VARIANT
+                || (self.tag() == TAG_SYMBOL && self.symbol_kind() == SYMBOL_NULLARY_VARIANT))
     }
 
     #[inline]
@@ -570,12 +588,12 @@ impl NanValue {
 
     #[inline]
     pub fn is_builtin(self) -> bool {
-        self.is_nan_boxed() && self.tag() == TAG_BUILTIN
+        self.is_nan_boxed() && self.tag() == TAG_SYMBOL && self.symbol_kind() == SYMBOL_BUILTIN
     }
 
     #[inline]
     pub fn is_namespace(self) -> bool {
-        self.is_nan_boxed() && self.tag() == TAG_NAMESPACE
+        self.is_nan_boxed() && self.tag() == TAG_SYMBOL && self.symbol_kind() == SYMBOL_NAMESPACE
     }
 
     #[inline]
@@ -627,10 +645,14 @@ impl NanValue {
             TAG_TUPLE => "Tuple",
             TAG_MAP => "Map",
             TAG_RECORD => "Record",
-            TAG_VARIANT | TAG_NULLARY_VARIANT => "Variant",
-            TAG_FN => "Fn",
-            TAG_BUILTIN => "Builtin",
-            TAG_NAMESPACE => "Namespace",
+            TAG_VARIANT => "Variant",
+            TAG_SYMBOL => match self.symbol_kind() {
+                SYMBOL_FN => "Fn",
+                SYMBOL_BUILTIN => "Builtin",
+                SYMBOL_NAMESPACE => "Namespace",
+                SYMBOL_NULLARY_VARIANT => "Variant",
+                _ => "Unknown",
+            },
             _ => "Unknown",
         }
     }
@@ -645,7 +667,9 @@ impl NanValue {
                 let (type_id, variant_id, _) = arena.get_variant(self.arena_index());
                 arena.find_ctor_id(type_id, variant_id)
             }
-            TAG_NULLARY_VARIANT => Some(self.payload() as u32),
+            TAG_SYMBOL if self.symbol_kind() == SYMBOL_NULLARY_VARIANT => {
+                Some(arena.get_nullary_variant_ctor(self.symbol_index()))
+            }
             _ => None,
         }
     }
@@ -660,8 +684,9 @@ impl NanValue {
                 let (type_id, variant_id, fields) = arena.get_variant(self.arena_index());
                 Some((type_id, variant_id, fields))
             }
-            TAG_NULLARY_VARIANT => {
-                let (type_id, variant_id) = arena.get_ctor_parts(self.payload() as u32);
+            TAG_SYMBOL if self.symbol_kind() == SYMBOL_NULLARY_VARIANT => {
+                let (type_id, variant_id) =
+                    arena.get_ctor_parts(arena.get_nullary_variant_ctor(self.symbol_index()));
                 Some((type_id, variant_id, &[]))
             }
             _ => None,
@@ -761,7 +786,15 @@ impl std::fmt::Debug for NanValue {
                     Self::decode_inline_int_payload(self.payload())
                 )
             }
-            TAG_NULLARY_VARIANT => write!(f, "NullaryVariant(ctor:{})", self.payload()),
+            TAG_SYMBOL => match self.symbol_kind() {
+                SYMBOL_FN => write!(f, "Fn(symbol:{})", self.symbol_index()),
+                SYMBOL_BUILTIN => write!(f, "Builtin(symbol:{})", self.symbol_index()),
+                SYMBOL_NAMESPACE => write!(f, "Namespace(symbol:{})", self.symbol_index()),
+                SYMBOL_NULLARY_VARIANT => {
+                    write!(f, "NullaryVariant(symbol:{})", self.symbol_index())
+                }
+                _ => write!(f, "Symbol({})", self.payload()),
+            },
             _ => write!(f, "{}(arena:{})", self.type_name(), self.arena_index()),
         }
     }
@@ -788,6 +821,7 @@ pub struct Arena {
     pub(crate) type_variant_names: Vec<Vec<String>>,
     pub(crate) type_variant_ctor_ids: Vec<Vec<u32>>,
     pub(crate) ctor_to_type_variant: Vec<(u32, u16)>,
+    pub(crate) symbol_entries: Vec<ArenaSymbol>,
 }
 
 #[derive(Debug, Clone)]
@@ -813,6 +847,19 @@ pub enum ArenaEntry {
         members: Vec<(Rc<str>, NanValue)>,
     },
     Boxed(NanValue),
+}
+
+#[derive(Debug, Clone)]
+pub enum ArenaSymbol {
+    Fn(Rc<FunctionValue>),
+    Builtin(Rc<str>),
+    Namespace {
+        name: Rc<str>,
+        members: Vec<(Rc<str>, NanValue)>,
+    },
+    NullaryVariant {
+        ctor_id: u32,
+    },
 }
 
 #[derive(Debug, Clone)]

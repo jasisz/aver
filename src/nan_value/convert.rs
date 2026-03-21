@@ -86,7 +86,9 @@ impl NanValue {
                     .map(|v| NanValue::from_value(v, arena))
                     .collect();
                 if nv_fields.is_empty() {
-                    NanValue::new_nullary_variant(arena.find_ctor_id(type_id, variant_id).unwrap())
+                    NanValue::new_nullary_variant(arena.push_nullary_variant_symbol(
+                        arena.find_ctor_id(type_id, variant_id).unwrap(),
+                    ))
                 } else {
                     NanValue::new_variant(arena.push_variant(type_id, variant_id, nv_fields))
                 }
@@ -178,22 +180,30 @@ impl NanValue {
                     fields: pairs.into(),
                 }
             }
-            TAG_VARIANT | TAG_NULLARY_VARIANT => {
+            TAG_VARIANT => {
                 unreachable!("variant conversion handled before tag switch")
             }
-            TAG_FN => Value::Fn(Rc::clone(arena.get_fn_rc(self.arena_index()))),
-            TAG_BUILTIN => Value::Builtin(arena.get_builtin(self.arena_index()).to_string()),
-            TAG_NAMESPACE => {
-                let (name, members) = arena.get_namespace(self.arena_index());
-                let mut hm = HashMap::new();
-                for (k, v) in members {
-                    hm.insert(k.to_string(), v.to_value(arena));
+            TAG_SYMBOL => match self.symbol_kind() {
+                SYMBOL_FN => Value::Fn(Rc::clone(arena.get_fn_rc(self.symbol_index()))),
+                SYMBOL_BUILTIN => {
+                    Value::Builtin(arena.get_builtin(self.symbol_index()).to_string())
                 }
-                Value::Namespace {
-                    name: name.to_string(),
-                    members: hm,
+                SYMBOL_NAMESPACE => {
+                    let (name, members) = arena.get_namespace(self.symbol_index());
+                    let mut hm = HashMap::new();
+                    for (k, v) in members {
+                        hm.insert(k.to_string(), v.to_value(arena));
+                    }
+                    Value::Namespace {
+                        name: name.to_string(),
+                        members: hm,
+                    }
                 }
-            }
+                SYMBOL_NULLARY_VARIANT => {
+                    unreachable!("variant conversion handled before tag switch")
+                }
+                _ => Value::Unit,
+            },
             _ => Value::Unit,
         }
     }

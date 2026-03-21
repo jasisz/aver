@@ -19,6 +19,7 @@ All notable changes to Aver are documented here.
 ### Fixed
 - `runtime_bench` now invalidates generated benchmark projects when the Aver binary or `aver-rt` manifest changes, so generated results no longer reuse stale toolchain-pinned outputs across runtime revisions.
 - VM `HttpServer.listen` / `listenWith` callbacks now compact `stable` against live VM roots after converting the handler result back to host values, so request-local response graphs do not accumulate in `stable` across requests.
+- `NanValue` now collapses arena-backed `Fn` / `Builtin` / `Namespace` / nullary-variant handles into one shared `Symbol` tag backed by an arena symbol table, recovering three NaN-box tag slots without changing runtime semantics.
 
 ## 0.6.0
 

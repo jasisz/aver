@@ -211,7 +211,7 @@ fn nullary_variants_stay_inline() {
     let todo_id = arena.find_variant_id(type_id, "Todo").unwrap();
     let todo_ctor = arena.find_ctor_id(type_id, todo_id).unwrap();
 
-    let todo = NanValue::new_nullary_variant(todo_ctor);
+    let todo = NanValue::new_nullary_variant(arena.push_nullary_variant_symbol(todo_ctor));
     assert!(todo.is_variant());
     assert!(todo.heap_index().is_none());
     assert_eq!(todo.repr(&arena), "Todo");
@@ -237,7 +237,7 @@ fn inline_and_boxed_nullary_variants_compare_equal() {
     let type_id = arena.register_sum_type("Status", vec!["Todo".into()]);
     let variant_id = arena.find_variant_id(type_id, "Todo").unwrap();
     let ctor_id = arena.find_ctor_id(type_id, variant_id).unwrap();
-    let inline = NanValue::new_nullary_variant(ctor_id);
+    let inline = NanValue::new_nullary_variant(arena.push_nullary_variant_symbol(ctor_id));
     let boxed = NanValue::new_variant(arena.push_variant(type_id, variant_id, Vec::new()));
 
     assert!(inline.eq_in(boxed, &arena));

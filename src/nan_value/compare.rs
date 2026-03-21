@@ -71,10 +71,10 @@ impl NanValue {
                     && fa.len() == fb.len()
                     && fa.iter().zip(fb).all(|(a, b)| a.eq_in(*b, arena))
             }
-            TAG_VARIANT | TAG_NULLARY_VARIANT => {
+            TAG_VARIANT => {
                 unreachable!("variant comparison handled above")
             }
-            TAG_FN => self.arena_index() == other.arena_index(),
+            TAG_SYMBOL => self.bits() == other.bits(),
             _ => false,
         }
     }
@@ -134,9 +134,10 @@ impl NanValue {
                     f.hash_in(state, arena);
                 }
             }
-            TAG_VARIANT | TAG_NULLARY_VARIANT => {
+            TAG_VARIANT => {
                 unreachable!("variant hashing handled above")
             }
+            TAG_SYMBOL => self.bits().hash(state),
             _ => self.0.hash(state),
         }
     }
@@ -213,13 +214,17 @@ impl NanValue {
                     .collect();
                 format!("{}({})", name, parts.join(", "))
             }
-            TAG_VARIANT | TAG_NULLARY_VARIANT => unreachable!("variant repr handled above"),
-            TAG_FN => format!("<fn {}>", arena.get_fn(self.arena_index()).name),
-            TAG_BUILTIN => format!("<builtin {}>", arena.get_builtin(self.arena_index())),
-            TAG_NAMESPACE => {
-                let (name, _) = arena.get_namespace(self.arena_index());
-                format!("<type {}>", name)
-            }
+            TAG_VARIANT => unreachable!("variant repr handled above"),
+            TAG_SYMBOL => match self.symbol_kind() {
+                SYMBOL_FN => format!("<fn {}>", arena.get_fn(self.symbol_index()).name),
+                SYMBOL_BUILTIN => format!("<builtin {}>", arena.get_builtin(self.symbol_index())),
+                SYMBOL_NAMESPACE => {
+                    let (name, _) = arena.get_namespace(self.symbol_index());
+                    format!("<type {}>", name)
+                }
+                SYMBOL_NULLARY_VARIANT => unreachable!("variant repr handled above"),
+                _ => "??".into(),
+            },
             _ => "??".into(),
         }
     }

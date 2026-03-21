@@ -320,7 +320,9 @@ impl VM {
                             }
                             self.stack.remove(fn_pos);
                             if ctor.field_count == 0 {
-                                self.stack.push(NanValue::new_nullary_variant(ctor.ctor_id));
+                                self.stack.push(NanValue::new_nullary_variant(
+                                    self.arena.push_nullary_variant_symbol(ctor.ctor_id),
+                                ));
                                 continue;
                             }
                             let args_start = self.stack.len() - argc;
@@ -818,7 +820,9 @@ impl VM {
                                     self.code.symbols.resolve_variant_ctor(member_symbol_id)
                                 && ctor.field_count == 0
                             {
-                                value = NanValue::new_nullary_variant(ctor.ctor_id);
+                                value = NanValue::new_nullary_variant(
+                                    self.arena.push_nullary_variant_symbol(ctor.ctor_id),
+                                );
                             }
                             self.stack.push(value);
                         } else {
@@ -857,7 +861,9 @@ impl VM {
                     if fields.is_empty()
                         && let Some(ctor_id) = self.arena.find_ctor_id(type_id, variant_id)
                     {
-                        self.stack.push(NanValue::new_nullary_variant(ctor_id));
+                        self.stack.push(NanValue::new_nullary_variant(
+                            self.arena.push_nullary_variant_symbol(ctor_id),
+                        ));
                     } else {
                         let idx = self
                             .arena

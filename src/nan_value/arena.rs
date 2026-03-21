@@ -18,31 +18,52 @@ impl Arena {
             type_variant_names: Vec::new(),
             type_variant_ctor_ids: Vec::new(),
             ctor_to_type_variant: Vec::new(),
+            symbol_entries: Vec::new(),
         }
     }
 
     #[inline]
     pub fn push(&mut self, entry: ArenaEntry) -> u32 {
-        match self.alloc_space {
-            AllocSpace::Young => {
-                let idx = self.young_entries.len() as u32;
-                self.young_entries.push(entry);
-                self.note_peak_usage();
-                Self::encode_index(HeapSpace::Young, idx)
-            }
-            AllocSpace::Yard => {
-                let idx = self.yard_entries.len() as u32;
-                self.yard_entries.push(entry);
-                self.note_peak_usage();
-                Self::encode_index(HeapSpace::Yard, idx)
-            }
-            AllocSpace::Handoff => {
-                let idx = self.handoff_entries.len() as u32;
-                self.handoff_entries.push(entry);
-                self.note_peak_usage();
-                Self::encode_index(HeapSpace::Handoff, idx)
+        match &entry {
+            ArenaEntry::Fn(_) | ArenaEntry::Builtin(_) | ArenaEntry::Namespace { .. } => {}
+            _ => {
+                return match self.alloc_space {
+                    AllocSpace::Young => {
+                        let idx = self.young_entries.len() as u32;
+                        self.young_entries.push(entry);
+                        self.note_peak_usage();
+                        Self::encode_index(HeapSpace::Young, idx)
+                    }
+                    AllocSpace::Yard => {
+                        let idx = self.yard_entries.len() as u32;
+                        self.yard_entries.push(entry);
+                        self.note_peak_usage();
+                        Self::encode_index(HeapSpace::Yard, idx)
+                    }
+                    AllocSpace::Handoff => {
+                        let idx = self.handoff_entries.len() as u32;
+                        self.handoff_entries.push(entry);
+                        self.note_peak_usage();
+                        Self::encode_index(HeapSpace::Handoff, idx)
+                    }
+                };
             }
         }
+        match entry {
+            ArenaEntry::Fn(f) => self.push_symbol(ArenaSymbol::Fn(f)),
+            ArenaEntry::Builtin(name) => self.push_symbol(ArenaSymbol::Builtin(name)),
+            ArenaEntry::Namespace { name, members } => {
+                self.push_symbol(ArenaSymbol::Namespace { name, members })
+            }
+            _ => unreachable!("non-symbol entry already returned above"),
+        }
+    }
+
+    #[inline]
+    pub fn push_symbol(&mut self, symbol: ArenaSymbol) -> u32 {
+        let idx = self.symbol_entries.len() as u32;
+        self.symbol_entries.push(symbol);
+        idx
     }
 
     #[inline]
@@ -230,10 +251,13 @@ impl Arena {
         self.push(ArenaEntry::Tuple(items))
     }
     pub fn push_fn(&mut self, f: Rc<FunctionValue>) -> u32 {
-        self.push(ArenaEntry::Fn(f))
+        self.push_symbol(ArenaSymbol::Fn(f))
     }
     pub fn push_builtin(&mut self, name: &str) -> u32 {
-        self.push(ArenaEntry::Builtin(Rc::from(name)))
+        self.push_symbol(ArenaSymbol::Builtin(Rc::from(name)))
+    }
+    pub fn push_nullary_variant_symbol(&mut self, ctor_id: u32) -> u32 {
+        self.push_symbol(ArenaSymbol::NullaryVariant { ctor_id })
     }
 
     // -- Typed getters -----------------------------------------------------
@@ -305,27 +329,33 @@ impl Arena {
         }
     }
     pub fn get_fn(&self, index: u32) -> &FunctionValue {
-        match self.get(index) {
-            ArenaEntry::Fn(f) => f,
-            _ => panic!("Arena: expected Fn at {}", index),
+        match &self.symbol_entries[index as usize] {
+            ArenaSymbol::Fn(f) => f,
+            _ => panic!("Arena: expected Fn symbol at {}", index),
         }
     }
     pub fn get_fn_rc(&self, index: u32) -> &Rc<FunctionValue> {
-        match self.get(index) {
-            ArenaEntry::Fn(f) => f,
-            _ => panic!("Arena: expected Fn at {}", index),
+        match &self.symbol_entries[index as usize] {
+            ArenaSymbol::Fn(f) => f,
+            _ => panic!("Arena: expected Fn symbol at {}", index),
         }
     }
     pub fn get_builtin(&self, index: u32) -> &str {
-        match self.get(index) {
-            ArenaEntry::Builtin(s) => s,
-            _ => panic!("Arena: expected Builtin at {}", index),
+        match &self.symbol_entries[index as usize] {
+            ArenaSymbol::Builtin(s) => s,
+            _ => panic!("Arena: expected Builtin symbol at {}", index),
         }
     }
     pub fn get_namespace(&self, index: u32) -> (&str, &[(Rc<str>, NanValue)]) {
-        match self.get(index) {
-            ArenaEntry::Namespace { name, members } => (name, members),
-            _ => panic!("Arena: expected Namespace at {}", index),
+        match &self.symbol_entries[index as usize] {
+            ArenaSymbol::Namespace { name, members } => (name, members),
+            _ => panic!("Arena: expected Namespace symbol at {}", index),
+        }
+    }
+    pub fn get_nullary_variant_ctor(&self, index: u32) -> u32 {
+        match &self.symbol_entries[index as usize] {
+            ArenaSymbol::NullaryVariant { ctor_id } => *ctor_id,
+            _ => panic!("Arena: expected NullaryVariant symbol at {}", index),
         }
     }
 

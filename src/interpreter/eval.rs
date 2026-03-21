@@ -721,7 +721,7 @@ impl Interpreter {
             return Err(RuntimeError::Error(format!("Unknown field '{}'", field)));
         }
         if nv.is_namespace() {
-            let (name, members) = self.arena.get_namespace(nv.arena_index());
+            let (name, members) = self.arena.get_namespace(nv.symbol_index());
             if let Some((_, member_nv)) = members.iter().find(|(k, _)| k.as_ref() == field) {
                 return Ok(*member_nv);
             }
@@ -810,13 +810,13 @@ impl Interpreter {
         args: Vec<NanValue>,
     ) -> Result<CallDispatch, RuntimeError> {
         if fn_val.is_builtin() {
-            let name = self.arena.get_builtin(fn_val.arena_index()).to_string();
+            let name = self.arena.get_builtin(fn_val.symbol_index()).to_string();
             self.ensure_effects_allowed(&name, Self::builtin_effects(&name).iter().copied())?;
             let result = self.call_builtin_nv(&name, &args);
             return Ok(CallDispatch::Immediate(result));
         }
         if fn_val.is_fn() {
-            let function = Rc::clone(self.arena.get_fn_rc(fn_val.arena_index()));
+            let function = Rc::clone(self.arena.get_fn_rc(fn_val.symbol_index()));
             if args.len() != function.params.len() {
                 return Err(RuntimeError::Error(format!(
                     "Function '{}' expects {} arguments, got {}",
@@ -941,7 +941,7 @@ impl Interpreter {
                                     nv.repr(&self.arena)
                                 ))));
                             }
-                            Rc::clone(self.arena.get_fn_rc(nv.arena_index()))
+                            Rc::clone(self.arena.get_fn_rc(nv.symbol_index()))
                         }
                         Err(err) => return EvalState::Apply(Err(err)),
                     };
