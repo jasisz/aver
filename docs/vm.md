@@ -72,31 +72,73 @@ aver replay recordings/ --vm
 
 The VM runs on `NanValue`, not on the higher-level `Value` enum.
 
-That matters because most runtime values are represented as one compact machine word:
+The current layout is best thought of as **semantic tags first, storage second**.
 
-- small integers can stay inline
-- floats use NaN-boxing
-- heap-backed values live in the VM arena and are referenced by tagged payloads
+Floats still use the plain IEEE path. Everything else is a tagged quiet-NaN:
 
-Common heap-backed shapes include:
+```text
+63      50 49  46 45                    0
+┌────────┬──────┬────────────────────────┐
+│ 0x7FFC │ tag  │       payload          │
+│ 14 bits│ 4 bit│       46 bits          │
+└────────┴──────┴────────────────────────┘
+```
 
-- `List`
+Current tags:
+
+| Tag | Meaning | Payload shape |
+|---:|---|---|
+| `0` | `Immediate` | `false` / `true` / `Unit` |
+| `1` | `Symbol` | fn / builtin / namespace / nullary-variant handle |
+| `2` | `Int` | inline signed int or arena big-int |
+| `3` | `String` | inline small string or arena string |
+| `4` | `Some` | inline payload or boxed arena payload |
+| `5` | `None` | singleton |
+| `6` | `Ok` | inline payload or boxed arena payload |
+| `7` | `Err` | inline payload or boxed arena payload |
+| `8` | `List` | empty list or arena list |
+| `9` | `Tuple` | arena tuple |
+| `10` | `Map` | empty map or arena map |
+| `11` | `Record` | arena record |
+| `12` | `Variant` | arena payload variant |
+
+The important convention in `v2` is that `bit45` is now mostly the **“does this value carry an arena reference?”** discriminator:
+
+- `Int`: inline int vs arena big-int
+- `String`: inline small string vs arena string
+- `Some` / `Ok` / `Err`: inline payload vs boxed arena payload
+- `List` / `Map`: empty singleton vs arena aggregate
+- `Tuple` / `Record` / `Variant`: always arena-backed
+
+That makes the representation much more regular than the older wrapper-heavy scheme.
+
+### Inline Cases That Matter
+
+The point of `v2` is not only compactness. It is to keep the common Aver shapes cheap:
+
+- `Bool`, `Unit`, and `None` are pure inline singletons
+- `Some(true)`, `Ok(Unit)`, `Err(None)` stay inline
+- `Some(42)`, `Ok(-7)`, `Err(0)` stay inline as long as the int fits the wrapper-inline range
+- `[]` and `Map.empty()` are real values under their normal collection tags, not exceptions hidden in `Immediate`
+- strings up to 5 UTF-8 bytes stay inline under `TAG_STRING`
+- nullary variants such as `Status.Todo` or `Color.Red` travel as `Symbol` handles instead of arena entries
+
+That keeps `Result` / `Option` pipelines, empty collections, and short-string-heavy code from manufacturing arena churn just to move tiny values around.
+
+### What Still Goes To The Arena
+
+The arena is still where the real aggregate payloads live:
+
+- large `Int`
+- long `String`
+- non-empty `List`
+- non-empty `Map`
 - `Tuple`
 - `Record`
-- `Variant`
-- `Map`
-- boxed wrapper payloads (`Result.Ok`, `Result.Err`, `Option.Some`)
+- payload-carrying `Variant`
+- boxed wrapper payloads when `Some` / `Ok` / `Err` cannot stay inline
 
-There are two important exceptions now:
-
-- wrappers around plain immediates (`Bool`, `Unit`, `None`) can stay fully inline as tagged `NanValue`s instead of allocating a one-edge boxed node in the arena
-- wrappers around inline `Int` values (`Some(42)`, `Ok(-7)`, `Err(0)`) use dedicated NaN-box tags, so they also avoid arena churn
-
-That keeps common `Result` / `Option` pipelines from manufacturing heap churn just to carry `Ok(true)`, `Some(Unit)`, or `Result.Ok(42)` through the VM.
-
-There is also one user-defined inline case now: **nullary variants**. Constructors like `Status.Todo` or `Color.Red` do not need arena storage when they carry no fields; they can travel as inline constructor ids and still participate in normal `match` / convert / compare logic.
-
-This is the main reason the VM can stay small without dragging a large object model everywhere.
+This is the main reason the VM can stay small without dragging a bigger object model through every helper call.
 
 ## Memory Model
 
@@ -260,7 +302,19 @@ Not every runtime value is a symbol. User data is still just data. But anything 
 
 ## Function References
 
-One of the more unusual choices is that **VM callable references are encoded as inline `Int(symbol_id)`**.
+One of the more unusual choices is that the VM separates:
+
+- **runtime symbolic values** in `NanValue` via `TAG_SYMBOL`
+- **VM-known callable ids** in bytecode and call dispatch via inline `symbol_id`
+
+That means the runtime still has one shared symbolic handle class for things like:
+
+- `Fn`
+- `Builtin`
+- `Namespace`
+- nullary variants
+
+while the hottest VM paths can still dispatch directly on interned symbol ids instead of names.
 
 That means:
 

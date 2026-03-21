@@ -8,9 +8,7 @@ All notable changes to Aver are documented here.
 - `vm_profile` release binary for VM opcode/function/builtin profiling on real Aver app workloads, including return-path stats for `thin` / `parent-thin` fast paths.
 
 ### Changed
-- VM `NanValue` now uses a cleaner v2 tag layout: `Immediate` is only `false` / `true` / `Unit`, `Option.None` has its own singleton tag, `Option.Some` / `Result.Ok` / `Result.Err` have dedicated semantic tags with `bit45` deciding inline-vs-arena payloads, empty list/map values live under their own `List` / `Map` tags, and arena-backed `Tuple` / `Record` / `Variant` values now always carry the arena bit.
-- VM wrappers now inline the common payload shapes directly under `Some` / `Ok` / `Err`: `Bool`, `Unit`, `None`, and small inline `Int` values avoid arena boxing, while larger or heap-backed payloads still fall back to boxed arena storage.
-- VM `String` values now use a split representation like inline `Int`: strings up to 5 UTF-8 bytes stay directly inside `TAG_STRING`, while longer strings keep the arena path, so short literals and 1-char results avoid string arena allocation.
+- VM `NanValue` now uses a real semantic `v2` layout instead of the previous incremental patchwork: `Immediate` only covers `false` / `true` / `Unit`, `Option.None` has its own singleton tag, `Option.Some` / `Result.Ok` / `Result.Err` have dedicated tags with inline-or-arena payloads selected by `bit45`, empty list/map values live under the normal `List` / `Map` tags, short strings stay inline inside `TAG_STRING`, and shared symbolic runtime handles (`Fn`, `Builtin`, `Namespace`, nullary variants) travel through one `Symbol` tag. Common wrapper payloads (`Bool`, `Unit`, `None`, and small inline `Int`) now stay fully inline, while larger or heap-backed payloads still fall back to boxed arena storage.
 - VM `parent-thin` classification now accepts small match/binding helpers and nullary-variant constructors, so more tiny control-flow helpers can return without paying ordinary-return handoff churn.
 - VM `parent-thin` classification now also allows audited heapless/cheap pure builtins such as `Bool.*`, scalar `Int.*` / `Float.*`, string predicate/length helpers, and `Map.get` / `Map.len` / `Map.has`, instead of rejecting every `CALL_BUILTIN`.
 - VM now interns compile-time-known names into one symbol table for VM execution: function refs travel as inline `Int(symbol_id)`, `CALL_BUILTIN` carries `symbol_id` instead of string-ish dispatch state, runtime effect checks compare interned effect ids instead of strings on the hot path, and nested module/type namespace paths such as `Domain.Types.TaskEvent.TaskCreated` resolve through the same symbol/member graph.
@@ -19,7 +17,6 @@ All notable changes to Aver are documented here.
 ### Fixed
 - `runtime_bench` now invalidates generated benchmark projects when the Aver binary or `aver-rt` manifest changes, so generated results no longer reuse stale toolchain-pinned outputs across runtime revisions.
 - VM `HttpServer.listen` / `listenWith` callbacks now compact `stable` against live VM roots after converting the handler result back to host values, so request-local response graphs do not accumulate in `stable` across requests.
-- `NanValue` now collapses arena-backed `Fn` / `Builtin` / `Namespace` / nullary-variant handles into one shared `Symbol` tag backed by an arena symbol table, recovering three NaN-box tag slots without changing runtime semantics.
 
 ## 0.6.0
 
