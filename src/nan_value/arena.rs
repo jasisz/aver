@@ -274,6 +274,13 @@ impl Arena {
             other => panic!("Arena: expected String at {} but found {:?}", index, other),
         }
     }
+    pub fn get_string_value(&self, value: NanValue) -> &str {
+        if value.is_empty_string_immediate() {
+            ""
+        } else {
+            self.get_string(value.arena_index())
+        }
+    }
     pub fn get_boxed(&self, index: u32) -> NanValue {
         match self.get(index) {
             ArenaEntry::Boxed(v) => *v,

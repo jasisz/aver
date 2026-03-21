@@ -1,5 +1,5 @@
 use super::VM;
-use crate::nan_value::{ArenaEntry, NanValue};
+use crate::nan_value::NanValue;
 use crate::vm::symbol::VmSymbolKind;
 use crate::vm::types::VmError;
 
@@ -135,22 +135,12 @@ impl VM {
                 a.as_float() + b.as_int(&self.arena) as f64,
             ))
         } else if a.is_string() && b.is_string() {
-            let a_idx = a.arena_index();
-            let b_idx = b.arena_index();
-            let (left, right) = match (self.arena.get(a_idx), self.arena.get(b_idx)) {
-                (ArenaEntry::String(left), ArenaEntry::String(right)) => {
-                    (left.as_ref(), right.as_ref())
-                }
-                (left_entry, right_entry) => {
-                    return Err(VmError::Runtime(format!(
-                        "string add expected string entries, got a={:?} -> {:?}, b={:?} -> {:?}",
-                        a, left_entry, b, right_entry
-                    )));
-                }
-            };
-            let s = format!("{left}{right}");
-            let idx = self.arena.push_string(&s);
-            Ok(NanValue::new_string(idx))
+            let s = format!(
+                "{}{}",
+                self.arena.get_string_value(a),
+                self.arena.get_string_value(b)
+            );
+            Ok(NanValue::new_string_value(&s, &mut self.arena))
         } else {
             Err(VmError::Type(format!(
                 "cannot add {} and {}",
@@ -264,7 +254,7 @@ impl VM {
         } else if a.is_float() && b.is_float() {
             Ok(a.as_float() < b.as_float())
         } else if a.is_string() && b.is_string() {
-            Ok(self.arena.get_string(a.arena_index()) < self.arena.get_string(b.arena_index()))
+            Ok(self.arena.get_string_value(a) < self.arena.get_string_value(b))
         } else if a.is_int() && b.is_float() {
             Ok((a.as_int(&self.arena) as f64) < b.as_float())
         } else if a.is_float() && b.is_int() {

@@ -116,7 +116,7 @@ fn wrapper_ok_err_roundtrip() {
 
     assert_eq!(arena.get_boxed(ok_val.wrapper_index()).as_int(&arena), 100);
     let inner = arena.get_boxed(err_val.wrapper_index());
-    assert_eq!(arena.get_string(inner.arena_index()), "error");
+    assert_eq!(arena.get_string_value(inner), "error");
 }
 
 #[test]
@@ -189,7 +189,16 @@ fn string_roundtrip() {
     let idx = arena.push_string("hello");
     let v = NanValue::new_string(idx);
     assert!(v.is_string());
-    assert_eq!(arena.get_string(v.arena_index()), "hello");
+    assert_eq!(arena.get_string_value(v), "hello");
+}
+
+#[test]
+fn empty_string_stays_inline() {
+    let mut arena = Arena::new();
+    let v = NanValue::new_string_value("", &mut arena);
+    assert!(v.is_string());
+    assert!(v.heap_index().is_none());
+    assert_eq!(arena.get_string_value(v), "");
 }
 
 #[test]
@@ -382,8 +391,11 @@ fn eq_string_by_content() {
     let a = NanValue::new_string(arena.push_string("hello"));
     let b = NanValue::new_string(arena.push_string("hello"));
     let c = NanValue::new_string(arena.push_string("world"));
+    let empty_inline = NanValue::new_string_value("", &mut arena);
+    let empty_boxed = NanValue::new_string(arena.push_string(""));
     assert!(a.eq_in(b, &arena));
     assert!(!a.eq_in(c, &arena));
+    assert!(empty_inline.eq_in(empty_boxed, &arena));
 }
 
 #[test]
@@ -394,6 +406,7 @@ fn repr_basics() {
     assert_eq!(NanValue::TRUE.repr(&arena), "true");
     assert_eq!(NanValue::UNIT.repr(&arena), "Unit");
     assert_eq!(NanValue::NONE.repr(&arena), "Option.None");
+    assert_eq!(NanValue::EMPTY_STRING.repr(&arena), "");
 
     let s = NanValue::new_string(arena.push_string("hi"));
     assert_eq!(s.repr(&arena), "hi");

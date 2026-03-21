@@ -28,6 +28,11 @@ impl NanValue {
             (Some(_), None) | (None, Some(_)) => return false,
             (None, None) => {}
         }
+        if self.is_string() || other.is_string() {
+            return self.is_string()
+                && other.is_string()
+                && arena.get_string_value(self) == arena.get_string_value(other);
+        }
         if self.tag() != other.tag() {
             return false;
         }
@@ -35,12 +40,12 @@ impl NanValue {
             TAG_INT => self.as_int(arena) == other.as_int(arena),
             TAG_IMMEDIATE => matches!(
                 (self.payload(), other.payload()),
-                (IMM_EMPTY_LIST, IMM_EMPTY_LIST) | (IMM_EMPTY_MAP, IMM_EMPTY_MAP)
+                (IMM_EMPTY_LIST, IMM_EMPTY_LIST)
+                    | (IMM_EMPTY_MAP, IMM_EMPTY_MAP)
+                    | (IMM_EMPTY_STRING, IMM_EMPTY_STRING)
             ),
             TAG_WRAPPER => unreachable!("wrapper comparison handled above"),
-            TAG_STRING => {
-                arena.get_string(self.arena_index()) == arena.get_string(other.arena_index())
-            }
+            TAG_STRING => arena.get_string_value(self) == arena.get_string_value(other),
             TAG_LIST => {
                 let a_len = arena.list_len_value(self);
                 let b_len = arena.list_len_value(other);
@@ -107,13 +112,18 @@ impl NanValue {
             }
             return;
         }
+        if self.is_string() {
+            (TAG_STRING as u8).hash(state);
+            arena.get_string_value(self).hash(state);
+            return;
+        }
         let tag = self.tag();
         (tag as u8).hash(state);
         match tag {
             TAG_INT => self.as_int(arena).hash(state),
             TAG_IMMEDIATE => self.payload().hash(state),
             TAG_WRAPPER => unreachable!("wrapper hashing handled above"),
-            TAG_STRING => arena.get_string(self.arena_index()).hash(state),
+            TAG_STRING => arena.get_string_value(self).hash(state),
             TAG_LIST => {
                 arena.list_len_value(self).hash(state);
                 for item in arena.list_to_vec_value(self) {
@@ -164,6 +174,9 @@ impl NanValue {
                 format!("{}({})", vname, parts.join(", "))
             };
         }
+        if self.is_string() {
+            return arena.get_string_value(self).to_string();
+        }
         match self.tag() {
             TAG_INT => self.as_int(arena).to_string(),
             TAG_IMMEDIATE => match self.payload() {
@@ -173,10 +186,11 @@ impl NanValue {
                 IMM_NONE => "Option.None".into(),
                 IMM_EMPTY_LIST => "[]".into(),
                 IMM_EMPTY_MAP => "{}".into(),
+                IMM_EMPTY_STRING => String::new(),
                 _ => "??".into(),
             },
             TAG_WRAPPER => unreachable!("wrapper repr handled above"),
-            TAG_STRING => arena.get_string(self.arena_index()).to_string(),
+            TAG_STRING => arena.get_string_value(self).to_string(),
             TAG_LIST => {
                 let parts: Vec<_> = arena
                     .list_to_vec_value(self)
@@ -231,7 +245,7 @@ impl NanValue {
 
     fn repr_inner(self, arena: &Arena) -> String {
         if self.is_string() {
-            return format!("\"{}\"", arena.get_string(self.arena_index()));
+            return format!("\"{}\"", arena.get_string_value(self));
         }
         self.repr(arena)
     }

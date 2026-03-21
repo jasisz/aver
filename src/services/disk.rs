@@ -228,7 +228,7 @@ fn nv_one_str(fn_name: &str, args: &[NanValue], arena: &Arena) -> Result<String,
             fn_name
         )));
     }
-    Ok(arena.get_string(args[0].arena_index()).to_string())
+    Ok(arena.get_string_value(args[0]).to_string())
 }
 
 fn nv_two_str(
@@ -252,8 +252,8 @@ fn nv_two_str(
         )));
     }
     Ok((
-        arena.get_string(args[0].arena_index()).to_string(),
-        arena.get_string(args[1].arena_index()).to_string(),
+        arena.get_string_value(args[0]).to_string(),
+        arena.get_string_value(args[1]).to_string(),
     ))
 }
 
@@ -262,14 +262,12 @@ fn nv_ok_unit(arena: &mut Arena) -> NanValue {
 }
 
 fn nv_ok_str(s: &str, arena: &mut Arena) -> NanValue {
-    let s_idx = arena.push_string(s);
-    let inner = NanValue::new_string(s_idx);
+    let inner = NanValue::new_string_value(s, arena);
     NanValue::new_ok_value(inner, arena)
 }
 
 fn nv_err_str(s: &str, arena: &mut Arena) -> NanValue {
-    let s_idx = arena.push_string(s);
-    let inner = NanValue::new_string(s_idx);
+    let inner = NanValue::new_string_value(s, arena);
     NanValue::new_err_value(inner, arena)
 }
 
@@ -324,10 +322,7 @@ fn list_dir_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtime
         Ok(entries) => {
             let items: Vec<NanValue> = entries
                 .into_iter()
-                .map(|s| {
-                    let idx = arena.push_string(&s);
-                    NanValue::new_string(idx)
-                })
+                .map(|s| NanValue::new_string_value(&s, arena))
                 .collect();
             let list_idx = arena.push_list(items);
             let inner = NanValue::new_list(list_idx);

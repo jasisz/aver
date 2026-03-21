@@ -128,8 +128,7 @@ fn now_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
         )));
     }
     let s = aver_rt::time_now();
-    let idx = arena.push_string(&s);
-    Ok(NanValue::new_string(idx))
+    Ok(NanValue::new_string_value(&s, arena))
 }
 
 fn unix_ms_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {

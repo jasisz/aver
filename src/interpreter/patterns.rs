@@ -144,8 +144,7 @@ impl Interpreter {
                     Literal::Int(i) => value.is_int() && value.as_int(&self.arena) == *i,
                     Literal::Float(f) => value.is_float() && value.as_float() == *f,
                     Literal::Str(s) => {
-                        value.is_string()
-                            && self.arena.get_string(value.arena_index()) == s.as_str()
+                        value.is_string() && self.arena.get_string_value(value) == s.as_str()
                     }
                     Literal::Bool(b) => value.is_bool() && value.as_bool() == *b,
                     Literal::Unit => value.is_unit(),

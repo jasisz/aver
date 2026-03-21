@@ -87,10 +87,7 @@ fn get_args_nv(
     }
     let items: Vec<NanValue> = cli_args
         .iter()
-        .map(|s| {
-            let idx = arena.push_string(s);
-            NanValue::new_string(idx)
-        })
+        .map(|s| NanValue::new_string_value(s, arena))
         .collect();
     let list_idx = arena.push_list(items);
     Ok(NanValue::new_list(list_idx))

@@ -97,8 +97,7 @@ impl<'a> FnCompiler<'a> {
             Literal::Bool(false) => self.emit_op(LOAD_FALSE),
             Literal::Unit => self.emit_op(LOAD_UNIT),
             Literal::Str(s) => {
-                let arena_idx = self.arena.push_string(s);
-                let nv = NanValue::new_string(arena_idx);
+                let nv = NanValue::new_string_value(s, self.arena);
                 let idx = self.add_constant(nv);
                 self.emit_op(LOAD_CONST);
                 self.emit_u16(idx);
@@ -176,8 +175,7 @@ impl<'a> FnCompiler<'a> {
 
     fn compile_interpolated_str(&mut self, parts: &[StrPart]) -> Result<(), CompileError> {
         if parts.is_empty() {
-            let idx = self.arena.push_string("");
-            let nv = NanValue::new_string(idx);
+            let nv = NanValue::new_string_value("", self.arena);
             let cidx = self.add_constant(nv);
             self.emit_op(LOAD_CONST);
             self.emit_u16(cidx);
@@ -188,16 +186,14 @@ impl<'a> FnCompiler<'a> {
         for part in parts {
             match part {
                 StrPart::Literal(s) => {
-                    let idx = self.arena.push_string(s);
-                    let nv = NanValue::new_string(idx);
+                    let nv = NanValue::new_string_value(s, self.arena);
                     let cidx = self.add_constant(nv);
                     self.emit_op(LOAD_CONST);
                     self.emit_u16(cidx);
                 }
                 StrPart::Parsed(expr) => {
                     self.compile_expr(expr)?;
-                    let empty_idx = self.arena.push_string("");
-                    let empty_nv = NanValue::new_string(empty_idx);
+                    let empty_nv = NanValue::new_string_value("", self.arena);
                     let empty_const = self.add_constant(empty_nv);
                     self.emit_op(LOAD_CONST);
                     self.emit_u16(empty_const);

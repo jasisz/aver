@@ -128,11 +128,10 @@ fn get_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
             "Env.get: key must be a String".to_string(),
         ));
     }
-    let key = arena.get_string(args[0].arena_index()).to_string();
+    let key = arena.get_string_value(args[0]).to_string();
     match aver_rt::env_get(&key) {
         Some(v) => {
-            let s_idx = arena.push_string(&v);
-            let inner = NanValue::new_string(s_idx);
+            let inner = NanValue::new_string_value(&v, arena);
             Ok(NanValue::new_some_value(inner, arena))
         }
         None => Ok(NanValue::NONE),
@@ -156,8 +155,8 @@ fn set_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
             "Env.set: value must be a String".to_string(),
         ));
     }
-    let key = arena.get_string(args[0].arena_index()).to_string();
-    let value = arena.get_string(args[1].arena_index()).to_string();
+    let key = arena.get_string_value(args[0]).to_string();
+    let value = arena.get_string_value(args[1]).to_string();
     if let Err(e) = aver_rt::env_set(&key, &value) {
         return Err(RuntimeError::Error(e));
     }

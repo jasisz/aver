@@ -130,7 +130,7 @@ fn to_code_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeE
             "Char.toCode: argument must be a String".to_string(),
         ));
     }
-    let s = arena.get_string(args[0].arena_index());
+    let s = arena.get_string_value(args[0]);
     match s.chars().next() {
         Some(c) => Ok(NanValue::new_int(c as i64, arena)),
         None => Err(RuntimeError::Error(
@@ -161,8 +161,7 @@ fn from_code_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtim
     match char::from_u32(code) {
         Some(c) => {
             let s = c.to_string();
-            let s_idx = arena.push_string(&s);
-            let inner = NanValue::new_string(s_idx);
+            let inner = NanValue::new_string_value(&s, arena);
             Ok(NanValue::new_some_value(inner, arena))
         }
         None => Ok(NanValue::NONE),

@@ -150,13 +150,11 @@ fn read_line_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtim
     }
     match aver_rt::read_line() {
         Ok(line) => {
-            let s_idx = arena.push_string(&line);
-            let inner = NanValue::new_string(s_idx);
+            let inner = NanValue::new_string_value(&line, arena);
             Ok(NanValue::new_ok_value(inner, arena))
         }
         Err(e) => {
-            let s_idx = arena.push_string(&e);
-            let inner = NanValue::new_string(s_idx);
+            let inner = NanValue::new_string_value(&e, arena);
             Ok(NanValue::new_err_value(inner, arena))
         }
     }

@@ -183,8 +183,10 @@ impl VM {
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let sa = self.value_repr(a);
                     let sb = self.value_repr(b);
-                    let idx = self.arena.push_string(&format!("{}{}", sa, sb));
-                    self.stack.push(NanValue::new_string(idx));
+                    self.stack.push(NanValue::new_string_value(
+                        &format!("{}{}", sa, sb),
+                        &mut self.arena,
+                    ));
                 }
 
                 JUMP => {

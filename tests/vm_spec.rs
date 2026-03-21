@@ -107,8 +107,7 @@ fn temp_module_root(tag: &str) -> PathBuf {
 }
 
 fn nv_string(machine: &mut vm::VM, s: &str) -> NanValue {
-    let idx = machine.arena.push_string(s);
-    NanValue::new_string(idx)
+    NanValue::new_string_value(s, &mut machine.arena)
 }
 
 // ---------------------------------------------------------------------------
@@ -1107,7 +1106,7 @@ fn vm_float_mul() {
 fn vm_string_literal() {
     let (result, arena) = vm_run_with_arena("fn main() -> String\n    \"hello\"\n");
     assert!(result.is_string());
-    assert_eq!(arena.get_string(result.arena_index()), "hello");
+    assert_eq!(arena.get_string_value(result), "hello");
 }
 
 #[test]
@@ -1130,7 +1129,7 @@ fn vm_string_concat() {
         "fn greet(name: String) -> String\n    \"hello \" + name\n\nfn main() -> String\n    greet(\"world\")\n",
     );
     assert!(result.is_string());
-    assert_eq!(arena.get_string(result.arena_index()), "hello world");
+    assert_eq!(arena.get_string_value(result), "hello world");
 }
 
 #[test]
@@ -1147,14 +1146,22 @@ fn vm_string_interpolation() {
     let (result, arena) =
         vm_run_with_arena("fn main() -> String\n    x = 42\n    \"value is {x}\"\n");
     assert!(result.is_string());
-    assert_eq!(arena.get_string(result.arena_index()), "value is 42");
+    assert_eq!(arena.get_string_value(result), "value is 42");
 }
 
 #[test]
 fn vm_string_interpolation_single_expr_part() {
     let (result, arena) = vm_run_with_arena("fn main() -> String\n    x = 42\n    \"{x}\"\n");
     assert!(result.is_string());
-    assert_eq!(arena.get_string(result.arena_index()), "42");
+    assert_eq!(arena.get_string_value(result), "42");
+}
+
+#[test]
+fn vm_empty_string_is_immediate() {
+    let (result, arena) = vm_run_with_arena("fn main() -> String\n    \"\"\n");
+    assert!(result.is_string());
+    assert!(result.heap_index().is_none());
+    assert_eq!(arena.get_string_value(result), "");
 }
 
 // ---------------------------------------------------------------------------
@@ -1258,7 +1265,7 @@ fn vm_error_prop_err() {
     assert!(result.is_err());
     let inner = result.wrapper_inner(&arena);
     assert!(inner.is_string());
-    assert_eq!(arena.get_string(inner.arena_index()), "div by zero");
+    assert_eq!(arena.get_string_value(inner), "div by zero");
 }
 
 #[test]

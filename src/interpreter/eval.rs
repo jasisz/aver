@@ -1027,8 +1027,7 @@ impl Interpreter {
                 }
             }
         }
-        let idx = self.arena.push_string(&result);
-        EvalState::Apply(Ok(NanValue::new_string(idx)))
+        EvalState::Apply(Ok(NanValue::new_string_value(&result, &mut self.arena)))
     }
 
     fn resume_list(
@@ -1272,7 +1271,7 @@ impl Interpreter {
         match lit {
             Literal::Int(i) => NanValue::new_int(*i, &mut self.arena),
             Literal::Float(f) => NanValue::new_float(*f),
-            Literal::Str(s) => NanValue::new_string(self.arena.push_string(s)),
+            Literal::Str(s) => NanValue::new_string_value(s, &mut self.arena),
             Literal::Bool(b) => NanValue::new_bool(*b),
             Literal::Unit => NanValue::UNIT,
         }

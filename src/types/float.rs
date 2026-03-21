@@ -261,7 +261,7 @@ fn from_string_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runt
             "Float.fromString: argument must be a String".to_string(),
         ));
     }
-    let s = arena.get_string(v.arena_index());
+    let s = arena.get_string_value(v);
     match s.parse::<f64>() {
         Ok(f) => {
             let inner = NanValue::new_float(f);
@@ -269,8 +269,7 @@ fn from_string_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runt
         }
         Err(_) => {
             let msg = format!("Cannot parse '{}' as Float", s);
-            let inner_idx = arena.push_string(&msg);
-            let inner = NanValue::new_string(inner_idx);
+            let inner = NanValue::new_string_value(&msg, arena);
             Ok(NanValue::new_err_value(inner, arena))
         }
     }
@@ -294,8 +293,7 @@ fn to_string_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtim
         ));
     }
     let s = format!("{}", v.as_float());
-    let idx = arena.push_string(&s);
-    Ok(NanValue::new_string(idx))
+    Ok(NanValue::new_string_value(&s, arena))
 }
 
 fn abs_nv(args: &[NanValue], _arena: &mut Arena) -> Result<NanValue, RuntimeError> {

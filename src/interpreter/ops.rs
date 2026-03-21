@@ -205,11 +205,12 @@ impl Interpreter {
             return Ok(NanValue::new_float(a.as_float() + b.as_float()));
         }
         if a.is_string() && b.is_string() {
-            let sa = self.arena.get_string(a.arena_index()).to_string();
-            let sb = self.arena.get_string(b.arena_index());
-            let combined = format!("{}{}", sa, sb);
-            let idx = self.arena.push_string(&combined);
-            return Ok(NanValue::new_string(idx));
+            let combined = format!(
+                "{}{}",
+                self.arena.get_string_value(a),
+                self.arena.get_string_value(b)
+            );
+            return Ok(NanValue::new_string_value(&combined, &mut self.arena));
         }
         Err(RuntimeError::Error(
             "Operator '+' does not support these types".to_string(),
@@ -293,8 +294,8 @@ impl Interpreter {
             return Ok(NanValue::new_bool(result));
         }
         if a.is_string() && b.is_string() {
-            let x = self.arena.get_string(a.arena_index());
-            let y = self.arena.get_string(b.arena_index());
+            let x = self.arena.get_string_value(a);
+            let y = self.arena.get_string_value(b);
             let result = match op {
                 "<" => x < y,
                 ">" => x > y,

@@ -123,14 +123,12 @@ pub fn call_nv(
 }
 
 fn nv_ok_str(s: &str, arena: &mut Arena) -> NanValue {
-    let s_idx = arena.push_string(s);
-    let inner = NanValue::new_string(s_idx);
+    let inner = NanValue::new_string_value(s, arena);
     NanValue::new_ok_value(inner, arena)
 }
 
 fn nv_err_str(s: &str, arena: &mut Arena) -> NanValue {
-    let s_idx = arena.push_string(s);
-    let inner = NanValue::new_string(s_idx);
+    let inner = NanValue::new_string_value(s, arena);
     NanValue::new_err_value(inner, arena)
 }
 
@@ -168,7 +166,7 @@ fn from_hex_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtime
             "Byte.fromHex: argument must be a String".to_string(),
         ));
     }
-    let s = arena.get_string(args[0].arena_index()).to_string();
+    let s = arena.get_string_value(args[0]).to_string();
     if s.len() != 2 {
         return Ok(nv_err_str(
             &format!("Byte.fromHex: expected exactly 2 hex chars, got '{}'", s),

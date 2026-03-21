@@ -394,7 +394,7 @@ pub fn call_nv(
 
 fn nv_str(v: NanValue, arena: &Arena) -> Option<&str> {
     if v.is_string() {
-        Some(arena.get_string(v.arena_index()))
+        Some(arena.get_string_value(v))
     } else {
         None
     }
@@ -437,8 +437,8 @@ fn starts_with_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runt
             "String.startsWith: both arguments must be String".to_string(),
         ));
     }
-    let s = arena.get_string(args[0].arena_index());
-    let prefix = arena.get_string(args[1].arena_index());
+    let s = arena.get_string_value(args[0]);
+    let prefix = arena.get_string_value(args[1]);
     let result = s.starts_with(prefix);
     Ok(NanValue::new_bool(result))
 }
@@ -455,8 +455,8 @@ fn ends_with_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtim
             "String.endsWith: both arguments must be String".to_string(),
         ));
     }
-    let s = arena.get_string(args[0].arena_index());
-    let suffix = arena.get_string(args[1].arena_index());
+    let s = arena.get_string_value(args[0]);
+    let suffix = arena.get_string_value(args[1]);
     let result = s.ends_with(suffix);
     Ok(NanValue::new_bool(result))
 }
@@ -473,8 +473,8 @@ fn contains_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtime
             "String.contains: both arguments must be String".to_string(),
         ));
     }
-    let s = arena.get_string(args[0].arena_index());
-    let sub = arena.get_string(args[1].arena_index());
+    let s = arena.get_string_value(args[0]);
+    let sub = arena.get_string_value(args[1]);
     let result = s.contains(sub);
     Ok(NanValue::new_bool(result))
 }
@@ -501,12 +501,11 @@ fn slice_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErr
             "String.slice: third argument must be an Int".to_string(),
         ));
     }
-    let s = arena.get_string(args[0].arena_index()).to_string();
+    let s = arena.get_string_value(args[0]).to_string();
     let from = args[1].as_int(arena);
     let to = args[2].as_int(arena);
     let result = aver_rt::string_slice(&s, from, to);
-    let idx = arena.push_string(&result);
-    Ok(NanValue::new_string(idx))
+    Ok(NanValue::new_string_value(&result, arena))
 }
 
 fn trim_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
@@ -519,8 +518,7 @@ fn trim_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErro
     let s = nv_str(args[0], arena)
         .ok_or_else(|| RuntimeError::Error("String.trim: argument must be a String".to_string()))?;
     let result = s.trim().to_string();
-    let idx = arena.push_string(&result);
-    Ok(NanValue::new_string(idx))
+    Ok(NanValue::new_string_value(&result, arena))
 }
 
 fn split_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
@@ -535,14 +533,11 @@ fn split_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErr
             "String.split: both arguments must be String".to_string(),
         ));
     }
-    let s = arena.get_string(args[0].arena_index()).to_string();
-    let delim = arena.get_string(args[1].arena_index()).to_string();
+    let s = arena.get_string_value(args[0]).to_string();
+    let delim = arena.get_string_value(args[1]).to_string();
     let parts: Vec<NanValue> = s
         .split(&*delim)
-        .map(|p| {
-            let idx = arena.push_string(p);
-            NanValue::new_string(idx)
-        })
+        .map(|p| NanValue::new_string_value(p, arena))
         .collect();
     let list_idx = arena.push_list(parts);
     Ok(NanValue::new_list(list_idx))
@@ -560,12 +555,11 @@ fn replace_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeE
             "String.replace: all arguments must be String".to_string(),
         ));
     }
-    let s = arena.get_string(args[0].arena_index()).to_string();
-    let old = arena.get_string(args[1].arena_index()).to_string();
-    let new = arena.get_string(args[2].arena_index()).to_string();
+    let s = arena.get_string_value(args[0]).to_string();
+    let old = arena.get_string_value(args[1]).to_string();
+    let new = arena.get_string_value(args[2]).to_string();
     let result = s.replace(&*old, &new);
-    let idx = arena.push_string(&result);
-    Ok(NanValue::new_string(idx))
+    Ok(NanValue::new_string_value(&result, arena))
 }
 
 fn join_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
@@ -586,7 +580,7 @@ fn join_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErro
         ));
     }
     let items = arena.list_to_vec_value(args[0]);
-    let sep = arena.get_string(args[1].arena_index()).to_string();
+    let sep = arena.get_string_value(args[1]).to_string();
     let mut strs: Vec<String> = Vec::with_capacity(items.len());
     for item in &items {
         if !item.is_string() {
@@ -594,11 +588,10 @@ fn join_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErro
                 "String.join: list elements must be String".to_string(),
             ));
         }
-        strs.push(arena.get_string(item.arena_index()).to_string());
+        strs.push(arena.get_string_value(*item).to_string());
     }
     let result = strs.join(&sep);
-    let idx = arena.push_string(&result);
-    Ok(NanValue::new_string(idx))
+    Ok(NanValue::new_string_value(&result, arena))
 }
 
 fn char_at_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
@@ -618,13 +611,12 @@ fn char_at_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeE
             "String.charAt: second argument must be an Int".to_string(),
         ));
     }
-    let s = arena.get_string(args[0].arena_index());
+    let s = arena.get_string_value(args[0]);
     let idx_val = args[1].as_int(arena) as usize;
     match s.chars().nth(idx_val) {
         Some(c) => {
             let cs = c.to_string();
-            let s_idx = arena.push_string(&cs);
-            let inner = NanValue::new_string(s_idx);
+            let inner = NanValue::new_string_value(&cs, arena);
             Ok(NanValue::new_some_value(inner, arena))
         }
         None => Ok(NanValue::NONE),
@@ -643,14 +635,10 @@ fn chars_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErr
             "String.chars: argument must be a String".to_string(),
         ));
     }
-    let s = arena.get_string(args[0].arena_index()).to_string();
+    let s = arena.get_string_value(args[0]).to_string();
     let items: Vec<NanValue> = s
         .chars()
-        .map(|c| {
-            let cs = c.to_string();
-            let idx = arena.push_string(&cs);
-            NanValue::new_string(idx)
-        })
+        .map(|c| NanValue::new_string_value(&c.to_string(), arena))
         .collect();
     let list_idx = arena.push_list(items);
     Ok(NanValue::new_list(list_idx))
@@ -669,8 +657,7 @@ fn from_int_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtime
         ));
     }
     let s = format!("{}", args[0].as_int(arena));
-    let idx = arena.push_string(&s);
-    Ok(NanValue::new_string(idx))
+    Ok(NanValue::new_string_value(&s, arena))
 }
 
 fn from_float_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
@@ -686,8 +673,7 @@ fn from_float_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runti
         ));
     }
     let s = format!("{}", args[0].as_float());
-    let idx = arena.push_string(&s);
-    Ok(NanValue::new_string(idx))
+    Ok(NanValue::new_string_value(&s, arena))
 }
 
 fn from_bool_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
@@ -703,8 +689,7 @@ fn from_bool_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtim
         ));
     }
     let s = if args[0].as_bool() { "true" } else { "false" };
-    let idx = arena.push_string(s);
-    Ok(NanValue::new_string(idx))
+    Ok(NanValue::new_string_value(s, arena))
 }
 
 fn to_lower_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
@@ -719,9 +704,8 @@ fn to_lower_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtime
             "String.toLower: argument must be a String".to_string(),
         ));
     }
-    let s = arena.get_string(args[0].arena_index()).to_lowercase();
-    let idx = arena.push_string(&s);
-    Ok(NanValue::new_string(idx))
+    let s = arena.get_string_value(args[0]).to_lowercase();
+    Ok(NanValue::new_string_value(&s, arena))
 }
 
 fn to_upper_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
@@ -736,7 +720,6 @@ fn to_upper_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtime
             "String.toUpper: argument must be a String".to_string(),
         ));
     }
-    let s = arena.get_string(args[0].arena_index()).to_uppercase();
-    let idx = arena.push_string(&s);
-    Ok(NanValue::new_string(idx))
+    let s = arena.get_string_value(args[0]).to_uppercase();
+    Ok(NanValue::new_string_value(&s, arena))
 }

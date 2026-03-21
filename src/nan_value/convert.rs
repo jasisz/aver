@@ -12,7 +12,7 @@ impl NanValue {
             Value::Bool(b) => NanValue::new_bool(*b),
             Value::Unit => NanValue::UNIT,
             Value::None => NanValue::NONE,
-            Value::Str(s) => NanValue::new_string(arena.push_string(s)),
+            Value::Str(s) => NanValue::new_string_value(s, arena),
             Value::Ok(inner) => {
                 let inner_nv = NanValue::from_value(inner, arena);
                 NanValue::new_ok_value(inner_nv, arena)
@@ -140,12 +140,13 @@ impl NanValue {
                 IMM_NONE => Value::None,
                 IMM_EMPTY_LIST => Value::List(aver_rt::AverList::from_vec(Vec::new())),
                 IMM_EMPTY_MAP => Value::Map(HashMap::new()),
+                IMM_EMPTY_STRING => Value::Str(String::new()),
                 _ => Value::Unit,
             },
             TAG_WRAPPER | TAG_SOME_INT | TAG_OK_INT | TAG_ERR_INT => {
                 unreachable!("wrapper conversion handled before tag switch")
             }
-            TAG_STRING => Value::Str(arena.get_string(self.arena_index()).to_string()),
+            TAG_STRING => Value::Str(arena.get_string_value(self).to_string()),
             TAG_LIST => {
                 let vals: Vec<Value> = arena
                     .list_to_vec(self.arena_index())
