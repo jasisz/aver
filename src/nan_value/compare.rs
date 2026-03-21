@@ -38,11 +38,7 @@ impl NanValue {
         }
         match self.tag() {
             TAG_INT => self.as_int(arena) == other.as_int(arena),
-            TAG_IMMEDIATE => matches!(
-                (self.payload(), other.payload()),
-                (IMM_EMPTY_LIST, IMM_EMPTY_LIST) | (IMM_EMPTY_MAP, IMM_EMPTY_MAP)
-            ),
-            TAG_WRAPPER => unreachable!("wrapper comparison handled above"),
+            TAG_IMMEDIATE | TAG_NONE => false,
             TAG_STRING => arena.get_string_value(self) == arena.get_string_value(other),
             TAG_LIST => {
                 let a_len = arena.list_len_value(self);
@@ -96,8 +92,12 @@ impl NanValue {
             return;
         }
         if let Some((kind, inner)) = self.wrapper_parts(arena) {
-            (TAG_WRAPPER as u8).hash(state);
-            kind.hash(state);
+            match kind {
+                WRAP_SOME => (TAG_SOME as u8).hash(state),
+                WRAP_OK => (TAG_OK as u8).hash(state),
+                WRAP_ERR => (TAG_ERR as u8).hash(state),
+                _ => (0xFFu8).hash(state),
+            }
             inner.hash_in(state, arena);
             return;
         }
@@ -120,7 +120,7 @@ impl NanValue {
         match tag {
             TAG_INT => self.as_int(arena).hash(state),
             TAG_IMMEDIATE => self.payload().hash(state),
-            TAG_WRAPPER => unreachable!("wrapper hashing handled above"),
+            TAG_NONE => 0u8.hash(state),
             TAG_STRING => arena.get_string_value(self).hash(state),
             TAG_LIST => {
                 arena.list_len_value(self).hash(state);
@@ -181,12 +181,9 @@ impl NanValue {
                 IMM_FALSE => "false".into(),
                 IMM_TRUE => "true".into(),
                 IMM_UNIT => "Unit".into(),
-                IMM_NONE => "Option.None".into(),
-                IMM_EMPTY_LIST => "[]".into(),
-                IMM_EMPTY_MAP => "{}".into(),
                 _ => "??".into(),
             },
-            TAG_WRAPPER => unreachable!("wrapper repr handled above"),
+            TAG_NONE => "Option.None".into(),
             TAG_STRING => arena.get_string_value(self).to_string(),
             TAG_LIST => {
                 let parts: Vec<_> = arena

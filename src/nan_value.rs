@@ -17,20 +17,20 @@
 //! ```
 //!
 //! Tag map:
-//!   0  = Int             payload bit45: 0=inline(45-bit signed), 1=arena index
-//!   1  = Immediate       payload 0-5: false/true/unit/none/empty-list/empty-map; 16+: wrapped immediate
-//!   2  = Wrapper         payload bits 0-1: 00=some, 01=ok, 10=err; rest=arena index
+//!   0  = Immediate       payload 0-2: false/true/unit
+//!   1  = Symbol          payload bits 0-1: fn/builtin/namespace/nullary-variant; rest=symbol index
+//!   2  = Int             payload bit45: 0=inline(45-bit signed), 1=arena index
 //!   3  = String          payload bit45: 0=inline small string (len + 5 bytes), 1=arena index
-//!   4  = List            payload = arena index
-//!   5  = Tuple           payload = arena index
-//!   6  = Map             payload = arena index
-//!   7  = Record          payload = arena index
-//!   8  = Variant         payload = arena index
-//!   9  = Symbol          payload bits 0-1: fn/builtin/namespace/nullary-variant; rest=symbol index
-//!   12 = SomeInlineInt   payload = inline int bits
-//!   13 = OkInlineInt     payload = inline int bits
-//!   14 = ErrInlineInt    payload = inline int bits
-//!   15 = (reserved)
+//!   4  = Some            payload bit45: 0=inline inner, 1=arena index
+//!   5  = None            singleton
+//!   6  = Ok              payload bit45: 0=inline inner, 1=arena index
+//!   7  = Err             payload bit45: 0=inline inner, 1=arena index
+//!   8  = List            payload bit45: 0=empty list, 1=arena index
+//!   9  = Tuple           payload bit45: 1=arena index
+//!   10 = Map             payload bit45: 0=empty map, 1=arena index
+//!   11 = Record          payload bit45: 1=arena index
+//!   12 = Variant         payload bit45: 1=arena index
+//!   13-15 = (reserved)
 
 use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
@@ -52,19 +52,19 @@ const TAG_SHIFT: u32 = 46;
 const TAG_MASK: u64 = 0xF;
 const PAYLOAD_MASK: u64 = (1u64 << 46) - 1;
 
-const TAG_INT: u64 = 0;
-const TAG_IMMEDIATE: u64 = 1;
-const TAG_WRAPPER: u64 = 2;
+const TAG_IMMEDIATE: u64 = 0;
+const TAG_SYMBOL: u64 = 1;
+const TAG_INT: u64 = 2;
 const TAG_STRING: u64 = 3;
-const TAG_LIST: u64 = 4;
-const TAG_TUPLE: u64 = 5;
-const TAG_MAP: u64 = 6;
-const TAG_RECORD: u64 = 7;
-const TAG_VARIANT: u64 = 8;
-const TAG_SYMBOL: u64 = 9;
-const TAG_SOME_INT: u64 = 12;
-const TAG_OK_INT: u64 = 13;
-const TAG_ERR_INT: u64 = 14;
+const TAG_SOME: u64 = 4;
+const TAG_NONE: u64 = 5;
+const TAG_OK: u64 = 6;
+const TAG_ERR: u64 = 7;
+const TAG_LIST: u64 = 8;
+const TAG_TUPLE: u64 = 9;
+const TAG_MAP: u64 = 10;
+const TAG_RECORD: u64 = 11;
+const TAG_VARIANT: u64 = 12;
 
 const SYMBOL_FN: u64 = 0;
 const SYMBOL_BUILTIN: u64 = 1;
@@ -75,22 +75,27 @@ const SYMBOL_KIND_MASK: u64 = 0b11;
 const IMM_FALSE: u64 = 0;
 const IMM_TRUE: u64 = 1;
 const IMM_UNIT: u64 = 2;
-const IMM_NONE: u64 = 3;
-const IMM_EMPTY_LIST: u64 = 4;
-const IMM_EMPTY_MAP: u64 = 5;
-const IMM_WRAPPED_BASE: u64 = 16;
-const IMM_INNER_MASK: u64 = 0b11;
 
 const WRAP_SOME: u64 = 0;
 const WRAP_OK: u64 = 1;
 const WRAP_ERR: u64 = 2;
+const WRAPPER_INLINE_KIND_SHIFT: u32 = 43;
+const WRAPPER_INLINE_KIND_MASK: u64 = 0b11 << WRAPPER_INLINE_KIND_SHIFT;
+const WRAPPER_INLINE_PAYLOAD_MASK: u64 = (1u64 << WRAPPER_INLINE_KIND_SHIFT) - 1;
+const WRAPPER_INLINE_IMMEDIATE: u64 = 0;
+const WRAPPER_INLINE_INT: u64 = 1;
+const WRAPPER_INLINE_NONE: u64 = 2;
+const WRAPPER_INT_INLINE_MASK: u64 = WRAPPER_INLINE_PAYLOAD_MASK;
+const WRAPPER_INT_INLINE_MAX: i64 = (1i64 << 42) - 1;
+const WRAPPER_INT_INLINE_MIN: i64 = -(1i64 << 42);
 
-const INT_BIG_BIT: u64 = 1u64 << 45;
+const ARENA_REF_BIT: u64 = 1u64 << 45;
+const INT_BIG_BIT: u64 = ARENA_REF_BIT;
 const INT_INLINE_MASK: u64 = (1u64 << 45) - 1;
 const INT_INLINE_MAX: i64 = (1i64 << 44) - 1;
 const INT_INLINE_MIN: i64 = -(1i64 << 44);
 
-const STRING_ARENA_BIT: u64 = 1u64 << 45;
+const STRING_ARENA_BIT: u64 = ARENA_REF_BIT;
 const STRING_INLINE_LEN_SHIFT: u32 = 40;
 const STRING_INLINE_LEN_MASK: u64 = 0b111 << STRING_INLINE_LEN_SHIFT;
 const STRING_INLINE_MAX_BYTES: usize = 5;
@@ -285,9 +290,9 @@ impl NanValue {
     pub const FALSE: NanValue = NanValue(QNAN | (TAG_IMMEDIATE << TAG_SHIFT) | IMM_FALSE);
     pub const TRUE: NanValue = NanValue(QNAN | (TAG_IMMEDIATE << TAG_SHIFT) | IMM_TRUE);
     pub const UNIT: NanValue = NanValue(QNAN | (TAG_IMMEDIATE << TAG_SHIFT) | IMM_UNIT);
-    pub const NONE: NanValue = NanValue(QNAN | (TAG_IMMEDIATE << TAG_SHIFT) | IMM_NONE);
-    pub const EMPTY_LIST: NanValue = NanValue(QNAN | (TAG_IMMEDIATE << TAG_SHIFT) | IMM_EMPTY_LIST);
-    pub const EMPTY_MAP: NanValue = NanValue(QNAN | (TAG_IMMEDIATE << TAG_SHIFT) | IMM_EMPTY_MAP);
+    pub const NONE: NanValue = NanValue(QNAN | (TAG_NONE << TAG_SHIFT));
+    pub const EMPTY_LIST: NanValue = NanValue(QNAN | (TAG_LIST << TAG_SHIFT));
+    pub const EMPTY_MAP: NanValue = NanValue(QNAN | (TAG_MAP << TAG_SHIFT));
     pub const EMPTY_STRING: NanValue = NanValue(QNAN | (TAG_STRING << TAG_SHIFT));
 
     #[inline]
@@ -302,93 +307,69 @@ impl NanValue {
 
     #[inline]
     fn plain_immediate_payload(self) -> Option<u64> {
-        (self.is_nan_boxed() && self.tag() == TAG_IMMEDIATE && self.payload() <= IMM_NONE)
+        (self.is_nan_boxed() && self.tag() == TAG_IMMEDIATE && self.payload() <= IMM_UNIT)
             .then_some(self.payload())
     }
 
     #[inline]
-    fn wrapped_immediate_parts(self) -> Option<(u64, u64)> {
-        if !self.is_nan_boxed() || self.tag() != TAG_IMMEDIATE {
-            return None;
+    fn wrapper_kind(self) -> u64 {
+        match self.tag() {
+            TAG_SOME => WRAP_SOME,
+            TAG_OK => WRAP_OK,
+            TAG_ERR => WRAP_ERR,
+            _ => panic!("wrapper_kind() called on non-wrapper"),
         }
-        let payload = self.payload();
-        if payload < IMM_WRAPPED_BASE {
-            return None;
-        }
-        let encoded = payload - IMM_WRAPPED_BASE;
-        let kind = encoded >> 2;
-        let inner = encoded & IMM_INNER_MASK;
-        (kind <= WRAP_ERR && inner <= IMM_NONE).then_some((kind, inner))
     }
 
     #[inline]
-    fn new_wrapped_immediate(kind: u64, inner_payload: u64) -> Self {
-        debug_assert!(kind <= WRAP_ERR);
-        debug_assert!(inner_payload <= IMM_NONE);
-        Self::encode(
-            TAG_IMMEDIATE,
-            IMM_WRAPPED_BASE + (kind << 2) + inner_payload,
-        )
-    }
-
-    #[inline]
-    fn wrapped_inline_int_parts(self) -> Option<(u64, u64)> {
+    fn wrapper_inline_kind(self) -> Option<u64> {
         if !self.is_nan_boxed() {
             return None;
         }
-        let kind = match self.tag() {
-            TAG_SOME_INT => WRAP_SOME,
-            TAG_OK_INT => WRAP_OK,
-            TAG_ERR_INT => WRAP_ERR,
-            _ => return None,
-        };
-        Some((kind, self.payload()))
-    }
-
-    #[inline]
-    fn new_wrapped_inline_int(kind: u64, int_payload: u64) -> Self {
-        debug_assert!(int_payload & INT_BIG_BIT == 0);
-        match kind {
-            WRAP_SOME => Self::encode(TAG_SOME_INT, int_payload),
-            WRAP_OK => Self::encode(TAG_OK_INT, int_payload),
-            WRAP_ERR => Self::encode(TAG_ERR_INT, int_payload),
-            _ => unreachable!("invalid wrapper kind"),
+        match self.tag() {
+            TAG_SOME | TAG_OK | TAG_ERR if self.payload() & ARENA_REF_BIT == 0 => {
+                Some((self.payload() & WRAPPER_INLINE_KIND_MASK) >> WRAPPER_INLINE_KIND_SHIFT)
+            }
+            _ => None,
         }
     }
 
-    // -- Wrappers (Some/Ok/Err) -------------------------------------------
-
     #[inline]
-    pub fn new_some(inner_index: u32) -> Self {
-        Self::encode(TAG_WRAPPER, WRAP_SOME | ((inner_index as u64) << 2))
-    }
-
-    #[inline]
-    pub fn new_ok(inner_index: u32) -> Self {
-        Self::encode(TAG_WRAPPER, WRAP_OK | ((inner_index as u64) << 2))
-    }
-
-    #[inline]
-    pub fn new_err(inner_index: u32) -> Self {
-        Self::encode(TAG_WRAPPER, WRAP_ERR | ((inner_index as u64) << 2))
-    }
-
-    #[inline]
-    pub fn wrapper_kind(self) -> u64 {
-        if let Some((kind, _)) = self.wrapped_immediate_parts() {
-            kind
-        } else if let Some((kind, _)) = self.wrapped_inline_int_parts() {
-            kind
+    fn decode_wrapper_inline_int_payload(payload: u64) -> i64 {
+        let raw = payload & WRAPPER_INT_INLINE_MASK;
+        if raw & (1u64 << 42) != 0 {
+            (raw | !WRAPPER_INT_INLINE_MASK) as i64
         } else {
-            debug_assert!(self.is_nan_boxed() && self.tag() == TAG_WRAPPER);
-            self.payload() & 3
+            raw as i64
         }
     }
 
     #[inline]
-    pub fn wrapper_index(self) -> u32 {
-        debug_assert!(self.is_nan_boxed() && self.tag() == TAG_WRAPPER);
-        (self.payload() >> 2) as u32
+    fn encode_wrapper_inline_int(i: i64) -> u64 {
+        debug_assert!((WRAPPER_INT_INLINE_MIN..=WRAPPER_INT_INLINE_MAX).contains(&i));
+        (i as u64) & WRAPPER_INT_INLINE_MASK
+    }
+
+    #[inline]
+    fn wrapper_inline_inner(self) -> Option<NanValue> {
+        let kind = self.wrapper_inline_kind()?;
+        let payload = self.payload() & WRAPPER_INLINE_PAYLOAD_MASK;
+        match kind {
+            WRAPPER_INLINE_IMMEDIATE => Some(Self::encode(TAG_IMMEDIATE, payload)),
+            WRAPPER_INLINE_INT => Some(Self::new_int_inline(
+                Self::decode_wrapper_inline_int_payload(payload),
+            )),
+            WRAPPER_INLINE_NONE => Some(Self::NONE),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    fn new_inline_wrapper(tag: u64, inline_kind: u64, payload: u64) -> Self {
+        debug_assert!(matches!(tag, TAG_SOME | TAG_OK | TAG_ERR));
+        debug_assert!(inline_kind <= WRAPPER_INLINE_NONE);
+        debug_assert!(payload <= WRAPPER_INLINE_PAYLOAD_MASK);
+        Self::encode(tag, (inline_kind << WRAPPER_INLINE_KIND_SHIFT) | payload)
     }
 
     #[inline]
@@ -397,15 +378,41 @@ impl NanValue {
             return None;
         }
         match self.tag() {
-            TAG_WRAPPER => Some((self.wrapper_kind(), arena.get_boxed(self.wrapper_index()))),
-            TAG_IMMEDIATE => self
-                .wrapped_immediate_parts()
-                .map(|(kind, inner)| (kind, Self::encode(TAG_IMMEDIATE, inner))),
-            TAG_SOME_INT | TAG_OK_INT | TAG_ERR_INT => self
-                .wrapped_inline_int_parts()
-                .map(|(kind, inner)| (kind, Self::encode(TAG_INT, inner))),
+            TAG_SOME | TAG_OK | TAG_ERR if self.payload() & ARENA_REF_BIT != 0 => {
+                Some((self.wrapper_kind(), arena.get_boxed(self.arena_index())))
+            }
+            TAG_SOME | TAG_OK | TAG_ERR => self
+                .wrapper_inline_inner()
+                .map(|inner| (self.wrapper_kind(), inner)),
             _ => None,
         }
+    }
+
+    // -- Wrappers (Some/Ok/Err) -------------------------------------------
+
+    #[inline]
+    pub fn new_some(inner_index: u32) -> Self {
+        Self::encode(TAG_SOME, ARENA_REF_BIT | (inner_index as u64))
+    }
+
+    #[inline]
+    pub fn new_ok(inner_index: u32) -> Self {
+        Self::encode(TAG_OK, ARENA_REF_BIT | (inner_index as u64))
+    }
+
+    #[inline]
+    pub fn new_err(inner_index: u32) -> Self {
+        Self::encode(TAG_ERR, ARENA_REF_BIT | (inner_index as u64))
+    }
+
+    #[inline]
+    pub fn wrapper_index(self) -> u32 {
+        debug_assert!(
+            self.is_nan_boxed()
+                && matches!(self.tag(), TAG_SOME | TAG_OK | TAG_ERR)
+                && self.payload() & ARENA_REF_BIT != 0
+        );
+        self.arena_index()
     }
 
     #[inline]
@@ -418,9 +425,42 @@ impl NanValue {
     #[inline]
     fn wrap_value(kind: u64, inner: NanValue, arena: &mut Arena) -> Self {
         if let Some(payload) = inner.plain_immediate_payload() {
-            Self::new_wrapped_immediate(kind, payload)
-        } else if let Some(payload) = inner.inline_int_payload() {
-            Self::new_wrapped_inline_int(kind, payload)
+            let tag = match kind {
+                WRAP_SOME => TAG_SOME,
+                WRAP_OK => TAG_OK,
+                WRAP_ERR => TAG_ERR,
+                _ => unreachable!("invalid wrapper kind"),
+            };
+            Self::new_inline_wrapper(tag, WRAPPER_INLINE_IMMEDIATE, payload)
+        } else if inner.is_none() {
+            let tag = match kind {
+                WRAP_SOME => TAG_SOME,
+                WRAP_OK => TAG_OK,
+                WRAP_ERR => TAG_ERR,
+                _ => unreachable!("invalid wrapper kind"),
+            };
+            Self::new_inline_wrapper(tag, WRAPPER_INLINE_NONE, 0)
+        } else if let Some(value) = inner.inline_int_value() {
+            if (WRAPPER_INT_INLINE_MIN..=WRAPPER_INT_INLINE_MAX).contains(&value) {
+                let tag = match kind {
+                    WRAP_SOME => TAG_SOME,
+                    WRAP_OK => TAG_OK,
+                    WRAP_ERR => TAG_ERR,
+                    _ => unreachable!("invalid wrapper kind"),
+                };
+                return Self::new_inline_wrapper(
+                    tag,
+                    WRAPPER_INLINE_INT,
+                    Self::encode_wrapper_inline_int(value),
+                );
+            }
+            let idx = arena.push_boxed(inner);
+            match kind {
+                WRAP_SOME => Self::new_some(idx),
+                WRAP_OK => Self::new_ok(idx),
+                WRAP_ERR => Self::new_err(idx),
+                _ => unreachable!("invalid wrapper kind"),
+            }
         } else {
             let idx = arena.push_boxed(inner);
             match kind {
@@ -495,27 +535,27 @@ impl NanValue {
 
     #[inline]
     pub fn new_list(arena_index: u32) -> Self {
-        Self::encode(TAG_LIST, arena_index as u64)
+        Self::encode(TAG_LIST, ARENA_REF_BIT | (arena_index as u64))
     }
 
     #[inline]
     pub fn new_tuple(arena_index: u32) -> Self {
-        Self::encode(TAG_TUPLE, arena_index as u64)
+        Self::encode(TAG_TUPLE, ARENA_REF_BIT | (arena_index as u64))
     }
 
     #[inline]
     pub fn new_map(arena_index: u32) -> Self {
-        Self::encode(TAG_MAP, arena_index as u64)
+        Self::encode(TAG_MAP, ARENA_REF_BIT | (arena_index as u64))
     }
 
     #[inline]
     pub fn new_record(arena_index: u32) -> Self {
-        Self::encode(TAG_RECORD, arena_index as u64)
+        Self::encode(TAG_RECORD, ARENA_REF_BIT | (arena_index as u64))
     }
 
     #[inline]
     pub fn new_variant(arena_index: u32) -> Self {
-        Self::encode(TAG_VARIANT, arena_index as u64)
+        Self::encode(TAG_VARIANT, ARENA_REF_BIT | (arena_index as u64))
     }
 
     #[inline]
@@ -557,7 +597,7 @@ impl NanValue {
 
     #[inline]
     pub fn arena_index(self) -> u32 {
-        self.payload() as u32
+        (self.payload() & !ARENA_REF_BIT) as u32
     }
 
     #[inline]
@@ -574,9 +614,10 @@ impl NanValue {
                     None
                 }
             }
-            TAG_WRAPPER => Some(self.wrapper_index()),
-            TAG_STRING => (self.payload() & STRING_ARENA_BIT != 0).then_some(self.arena_index()),
-            TAG_LIST | TAG_TUPLE | TAG_MAP | TAG_RECORD | TAG_VARIANT => Some(self.arena_index()),
+            TAG_STRING | TAG_SOME | TAG_OK | TAG_ERR | TAG_LIST | TAG_TUPLE | TAG_MAP
+            | TAG_RECORD | TAG_VARIANT => {
+                (self.payload() & ARENA_REF_BIT != 0).then_some(self.arena_index())
+            }
             _ => None,
         }
     }
@@ -591,12 +632,9 @@ impl NanValue {
                 debug_assert!(self.payload() & INT_BIG_BIT != 0);
                 Self::new_int_arena(index)
             }
-            TAG_WRAPPER => match self.wrapper_kind() {
-                WRAP_SOME => Self::new_some(index),
-                WRAP_OK => Self::new_ok(index),
-                WRAP_ERR => Self::new_err(index),
-                _ => self,
-            },
+            TAG_SOME => Self::new_some(index),
+            TAG_OK => Self::new_ok(index),
+            TAG_ERR => Self::new_err(index),
             TAG_STRING => Self::new_string(index),
             TAG_LIST => Self::new_list(index),
             TAG_TUPLE => Self::new_tuple(index),
@@ -638,38 +676,17 @@ impl NanValue {
 
     #[inline]
     pub fn is_some(self) -> bool {
-        self.is_nan_boxed()
-            && match self.tag() {
-                TAG_WRAPPER | TAG_SOME_INT => self.wrapper_kind() == WRAP_SOME,
-                TAG_IMMEDIATE => self
-                    .wrapped_immediate_parts()
-                    .is_some_and(|(kind, _)| kind == WRAP_SOME),
-                _ => false,
-            }
+        self.is_nan_boxed() && self.tag() == TAG_SOME
     }
 
     #[inline]
     pub fn is_ok(self) -> bool {
-        self.is_nan_boxed()
-            && match self.tag() {
-                TAG_WRAPPER | TAG_OK_INT => self.wrapper_kind() == WRAP_OK,
-                TAG_IMMEDIATE => self
-                    .wrapped_immediate_parts()
-                    .is_some_and(|(kind, _)| kind == WRAP_OK),
-                _ => false,
-            }
+        self.is_nan_boxed() && self.tag() == TAG_OK
     }
 
     #[inline]
     pub fn is_err(self) -> bool {
-        self.is_nan_boxed()
-            && match self.tag() {
-                TAG_WRAPPER | TAG_ERR_INT => self.wrapper_kind() == WRAP_ERR,
-                TAG_IMMEDIATE => self
-                    .wrapped_immediate_parts()
-                    .is_some_and(|(kind, _)| kind == WRAP_ERR),
-                _ => false,
-            }
+        self.is_nan_boxed() && self.tag() == TAG_ERR
     }
 
     #[inline]
@@ -679,9 +696,7 @@ impl NanValue {
 
     #[inline]
     pub fn is_list(self) -> bool {
-        self.is_nan_boxed()
-            && (self.tag() == TAG_LIST
-                || (self.tag() == TAG_IMMEDIATE && self.payload() == IMM_EMPTY_LIST))
+        self.is_nan_boxed() && self.tag() == TAG_LIST
     }
 
     #[inline]
@@ -703,9 +718,7 @@ impl NanValue {
 
     #[inline]
     pub fn is_map(self) -> bool {
-        self.is_nan_boxed()
-            && (self.tag() == TAG_MAP
-                || (self.tag() == TAG_IMMEDIATE && self.payload() == IMM_EMPTY_MAP))
+        self.is_nan_boxed() && self.tag() == TAG_MAP
     }
 
     #[inline]
@@ -725,12 +738,12 @@ impl NanValue {
 
     #[inline]
     pub fn is_empty_list_immediate(self) -> bool {
-        self.is_nan_boxed() && self.tag() == TAG_IMMEDIATE && self.payload() == IMM_EMPTY_LIST
+        self.is_nan_boxed() && self.tag() == TAG_LIST && self.payload() & ARENA_REF_BIT == 0
     }
 
     #[inline]
     pub fn is_empty_map_immediate(self) -> bool {
-        self.is_nan_boxed() && self.tag() == TAG_IMMEDIATE && self.payload() == IMM_EMPTY_MAP
+        self.is_nan_boxed() && self.tag() == TAG_MAP && self.payload() & ARENA_REF_BIT == 0
     }
 
     pub fn type_name(self) -> &'static str {
@@ -739,34 +752,15 @@ impl NanValue {
         }
         match self.tag() {
             TAG_INT => "Int",
-            TAG_IMMEDIATE => {
-                if let Some((kind, _)) = self.wrapped_immediate_parts() {
-                    match kind {
-                        WRAP_SOME => "Option.Some",
-                        WRAP_OK => "Result.Ok",
-                        WRAP_ERR => "Result.Err",
-                        _ => "Unknown",
-                    }
-                } else {
-                    match self.payload() {
-                        IMM_FALSE | IMM_TRUE => "Bool",
-                        IMM_UNIT => "Unit",
-                        IMM_NONE => "Option.None",
-                        IMM_EMPTY_LIST => "List",
-                        IMM_EMPTY_MAP => "Map",
-                        _ => "Unknown",
-                    }
-                }
-            }
-            TAG_WRAPPER => match self.wrapper_kind() {
-                WRAP_SOME => "Option.Some",
-                WRAP_OK => "Result.Ok",
-                WRAP_ERR => "Result.Err",
+            TAG_IMMEDIATE => match self.payload() {
+                IMM_FALSE | IMM_TRUE => "Bool",
+                IMM_UNIT => "Unit",
                 _ => "Unknown",
             },
-            TAG_SOME_INT => "Option.Some",
-            TAG_OK_INT => "Result.Ok",
-            TAG_ERR_INT => "Result.Err",
+            TAG_SOME => "Option.Some",
+            TAG_NONE => "Option.None",
+            TAG_OK => "Result.Ok",
+            TAG_ERR => "Result.Err",
             TAG_STRING => "String",
             TAG_LIST => "List",
             TAG_TUPLE => "Tuple",
@@ -862,56 +856,27 @@ impl std::fmt::Debug for NanValue {
                     )
                 }
             }
-            TAG_IMMEDIATE => {
-                if let Some((kind, inner)) = self.wrapped_immediate_parts() {
-                    let kind = match kind {
-                        WRAP_SOME => "Some",
-                        WRAP_OK => "Ok",
-                        WRAP_ERR => "Err",
-                        _ => "?",
-                    };
-                    let inner = match inner {
-                        IMM_FALSE => "False",
-                        IMM_TRUE => "True",
-                        IMM_UNIT => "Unit",
-                        IMM_NONE => "None",
-                        _ => "?",
-                    };
-                    write!(f, "{}({})", kind, inner)
-                } else {
-                    match self.payload() {
-                        IMM_FALSE => write!(f, "False"),
-                        IMM_TRUE => write!(f, "True"),
-                        IMM_UNIT => write!(f, "Unit"),
-                        IMM_NONE => write!(f, "None"),
-                        IMM_EMPTY_LIST => write!(f, "EmptyList"),
-                        IMM_EMPTY_MAP => write!(f, "EmptyMap"),
-                        _ => write!(f, "Immediate({})", self.payload()),
-                    }
-                }
-            }
-            TAG_WRAPPER => {
-                let kind = match self.wrapper_kind() {
-                    WRAP_SOME => "Some",
-                    WRAP_OK => "Ok",
-                    WRAP_ERR => "Err",
-                    _ => "?",
-                };
-                write!(f, "{}(arena:{})", kind, self.wrapper_index())
-            }
-            TAG_SOME_INT | TAG_OK_INT | TAG_ERR_INT => {
+            TAG_IMMEDIATE => match self.payload() {
+                IMM_FALSE => write!(f, "False"),
+                IMM_TRUE => write!(f, "True"),
+                IMM_UNIT => write!(f, "Unit"),
+                _ => write!(f, "Immediate({})", self.payload()),
+            },
+            TAG_NONE => write!(f, "None"),
+            TAG_SOME | TAG_OK | TAG_ERR => {
                 let kind = match self.tag() {
-                    TAG_SOME_INT => "Some",
-                    TAG_OK_INT => "Ok",
-                    TAG_ERR_INT => "Err",
+                    TAG_SOME => "Some",
+                    TAG_OK => "Ok",
+                    TAG_ERR => "Err",
                     _ => "?",
                 };
-                write!(
-                    f,
-                    "{}(Int({}))",
-                    kind,
-                    Self::decode_inline_int_payload(self.payload())
-                )
+                if self.payload() & ARENA_REF_BIT != 0 {
+                    write!(f, "{}(arena:{})", kind, self.arena_index())
+                } else if let Some(inner) = self.wrapper_inline_inner() {
+                    write!(f, "{}({:?})", kind, inner)
+                } else {
+                    write!(f, "{}(?)", kind)
+                }
             }
             TAG_SYMBOL => match self.symbol_kind() {
                 SYMBOL_FN => write!(f, "Fn(symbol:{})", self.symbol_index()),
@@ -929,6 +894,8 @@ impl std::fmt::Debug for NanValue {
                     write!(f, "String(arena:{})", self.arena_index())
                 }
             }
+            TAG_LIST if self.is_empty_list_immediate() => write!(f, "EmptyList"),
+            TAG_MAP if self.is_empty_map_immediate() => write!(f, "EmptyMap"),
             _ => write!(f, "{}(arena:{})", self.type_name(), self.arena_index()),
         }
     }

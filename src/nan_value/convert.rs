@@ -137,18 +137,16 @@ impl NanValue {
                 IMM_FALSE => Value::Bool(false),
                 IMM_TRUE => Value::Bool(true),
                 IMM_UNIT => Value::Unit,
-                IMM_NONE => Value::None,
-                IMM_EMPTY_LIST => Value::List(aver_rt::AverList::from_vec(Vec::new())),
-                IMM_EMPTY_MAP => Value::Map(HashMap::new()),
                 _ => Value::Unit,
             },
-            TAG_WRAPPER | TAG_SOME_INT | TAG_OK_INT | TAG_ERR_INT => {
+            TAG_NONE => Value::None,
+            TAG_SOME | TAG_OK | TAG_ERR => {
                 unreachable!("wrapper conversion handled before tag switch")
             }
             TAG_STRING => Value::Str(arena.get_string_value(self).to_string()),
             TAG_LIST => {
                 let vals: Vec<Value> = arena
-                    .list_to_vec(self.arena_index())
+                    .list_to_vec_value(self)
                     .into_iter()
                     .map(|v| v.to_value(arena))
                     .collect();
@@ -159,7 +157,7 @@ impl NanValue {
                 Value::Tuple(items.iter().map(|v| v.to_value(arena)).collect())
             }
             TAG_MAP => {
-                let map = arena.get_map(self.arena_index());
+                let map = arena.map_ref_value(self);
                 let mut hm = HashMap::new();
                 for (k, v) in map.values() {
                     hm.insert(k.to_value(arena), v.to_value(arena));

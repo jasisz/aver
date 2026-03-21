@@ -8,9 +8,8 @@ All notable changes to Aver are documented here.
 - `vm_profile` release binary for VM opcode/function/builtin profiling on real Aver app workloads, including return-path stats for `thin` / `parent-thin` fast paths.
 
 ### Changed
-- VM `Result.Ok` / `Result.Err` / `Option.Some` now keep wrapped `Bool` / `Unit` / `None` values inline inside `NanValue` instead of boxing them in the arena, reducing wrapper-heavy memory churn on interpreter and VM paths.
-- VM now also keeps wrapped inline `Int` values (`Some(42)`, `Ok(-7)`, `Err(0)`) fully inline via dedicated NaN-box tags, and nullary user-defined variants (`Status.Todo`, `Color.Red`) now use inline constructor ids instead of arena entries.
-- VM empty collections now use immediate `NanValue` encodings for `[]` and `Map.empty()`, so empty list/map literals and empty builtin results avoid arena allocation while list/map traversal paths stay value-aware.
+- VM `NanValue` now uses a cleaner v2 tag layout: `Immediate` is only `false` / `true` / `Unit`, `Option.None` has its own singleton tag, `Option.Some` / `Result.Ok` / `Result.Err` have dedicated semantic tags with `bit45` deciding inline-vs-arena payloads, empty list/map values live under their own `List` / `Map` tags, and arena-backed `Tuple` / `Record` / `Variant` values now always carry the arena bit.
+- VM wrappers now inline the common payload shapes directly under `Some` / `Ok` / `Err`: `Bool`, `Unit`, `None`, and small inline `Int` values avoid arena boxing, while larger or heap-backed payloads still fall back to boxed arena storage.
 - VM `String` values now use a split representation like inline `Int`: strings up to 5 UTF-8 bytes stay directly inside `TAG_STRING`, while longer strings keep the arena path, so short literals and 1-char results avoid string arena allocation.
 - VM `parent-thin` classification now accepts small match/binding helpers and nullary-variant constructors, so more tiny control-flow helpers can return without paying ordinary-return handoff churn.
 - VM `parent-thin` classification now also allows audited heapless/cheap pure builtins such as `Bool.*`, scalar `Int.*` / `Float.*`, string predicate/length helpers, and `Map.get` / `Map.len` / `Map.has`, instead of rejecting every `CALL_BUILTIN`.
