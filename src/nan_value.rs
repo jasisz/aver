@@ -18,9 +18,9 @@
 //!
 //! Tag map:
 //!   0  = Int             payload bit45: 0=inline(45-bit signed), 1=arena index
-//!   1  = Immediate       payload 0-6: false/true/unit/none/empty-list/empty-map/empty-string; 16+: wrapped immediate
+//!   1  = Immediate       payload 0-5: false/true/unit/none/empty-list/empty-map; 16+: wrapped immediate
 //!   2  = Wrapper         payload bits 0-1: 00=some, 01=ok, 10=err; rest=arena index
-//!   3  = String          payload = arena index
+//!   3  = String          payload bit45: 0=inline small string (len + 5 bytes), 1=arena index
 //!   4  = List            payload = arena index
 //!   5  = Tuple           payload = arena index
 //!   6  = Map             payload = arena index
@@ -32,6 +32,9 @@
 //!   14 = ErrInlineInt    payload = inline int bits
 //!   15 = (reserved)
 
+use std::cmp::Ordering;
+use std::hash::{Hash, Hasher};
+use std::ops::Deref;
 use std::rc::Rc;
 
 use crate::value::FunctionValue;
@@ -75,7 +78,6 @@ const IMM_UNIT: u64 = 2;
 const IMM_NONE: u64 = 3;
 const IMM_EMPTY_LIST: u64 = 4;
 const IMM_EMPTY_MAP: u64 = 5;
-const IMM_EMPTY_STRING: u64 = 6;
 const IMM_WRAPPED_BASE: u64 = 16;
 const IMM_INNER_MASK: u64 = 0b11;
 
@@ -88,12 +90,97 @@ const INT_INLINE_MASK: u64 = (1u64 << 45) - 1;
 const INT_INLINE_MAX: i64 = (1i64 << 44) - 1;
 const INT_INLINE_MIN: i64 = -(1i64 << 44);
 
+const STRING_ARENA_BIT: u64 = 1u64 << 45;
+const STRING_INLINE_LEN_SHIFT: u32 = 40;
+const STRING_INLINE_LEN_MASK: u64 = 0b111 << STRING_INLINE_LEN_SHIFT;
+const STRING_INLINE_MAX_BYTES: usize = 5;
+
 // ---------------------------------------------------------------------------
 // NanValue - the 8-byte compact value
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy)]
 pub struct NanValue(u64);
+
+#[derive(Clone, Copy, Debug)]
+pub enum NanString<'a> {
+    Borrowed(&'a str),
+    Inline {
+        len: u8,
+        bytes: [u8; STRING_INLINE_MAX_BYTES],
+    },
+}
+
+impl<'a> NanString<'a> {
+    #[inline]
+    pub fn as_str(&self) -> &str {
+        match self {
+            NanString::Borrowed(s) => s,
+            NanString::Inline { len, bytes } => std::str::from_utf8(&bytes[..*len as usize])
+                .expect("NanString inline payload must be valid UTF-8"),
+        }
+    }
+}
+
+impl Deref for NanString<'_> {
+    type Target = str;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl PartialEq for NanString<'_> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for NanString<'_> {}
+
+impl PartialEq<&str> for NanString<'_> {
+    #[inline]
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<NanString<'_>> for &str {
+    #[inline]
+    fn eq(&self, other: &NanString<'_>) -> bool {
+        *self == other.as_str()
+    }
+}
+
+impl PartialOrd for NanString<'_> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for NanString<'_> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
+impl Hash for NanString<'_> {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_str().hash(state);
+    }
+}
+
+impl std::fmt::Display for NanString<'_> {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 // -- Encoding / decoding ---------------------------------------------------
 
@@ -201,8 +288,7 @@ impl NanValue {
     pub const NONE: NanValue = NanValue(QNAN | (TAG_IMMEDIATE << TAG_SHIFT) | IMM_NONE);
     pub const EMPTY_LIST: NanValue = NanValue(QNAN | (TAG_IMMEDIATE << TAG_SHIFT) | IMM_EMPTY_LIST);
     pub const EMPTY_MAP: NanValue = NanValue(QNAN | (TAG_IMMEDIATE << TAG_SHIFT) | IMM_EMPTY_MAP);
-    pub const EMPTY_STRING: NanValue =
-        NanValue(QNAN | (TAG_IMMEDIATE << TAG_SHIFT) | IMM_EMPTY_STRING);
+    pub const EMPTY_STRING: NanValue = NanValue(QNAN | (TAG_STRING << TAG_SHIFT));
 
     #[inline]
     pub fn new_bool(b: bool) -> Self {
@@ -365,13 +451,43 @@ impl NanValue {
 
     #[inline]
     pub fn new_string(arena_index: u32) -> Self {
-        Self::encode(TAG_STRING, arena_index as u64)
+        Self::encode(TAG_STRING, STRING_ARENA_BIT | (arena_index as u64))
+    }
+
+    #[inline]
+    fn new_small_string_bytes(bytes: &[u8]) -> Self {
+        debug_assert!(bytes.len() <= STRING_INLINE_MAX_BYTES);
+        let mut payload = (bytes.len() as u64) << STRING_INLINE_LEN_SHIFT;
+        for (idx, byte) in bytes.iter().enumerate() {
+            payload |= (*byte as u64) << (idx * 8);
+        }
+        Self::encode(TAG_STRING, payload)
+    }
+
+    #[inline]
+    pub(crate) fn small_string(self) -> Option<NanString<'static>> {
+        if !self.is_nan_boxed()
+            || self.tag() != TAG_STRING
+            || self.payload() & STRING_ARENA_BIT != 0
+        {
+            return None;
+        }
+        let payload = self.payload();
+        let len = ((payload & STRING_INLINE_LEN_MASK) >> STRING_INLINE_LEN_SHIFT) as u8;
+        if len as usize > STRING_INLINE_MAX_BYTES {
+            return None;
+        }
+        let mut bytes = [0u8; STRING_INLINE_MAX_BYTES];
+        for (idx, slot) in bytes.iter_mut().take(len as usize).enumerate() {
+            *slot = ((payload >> (idx * 8)) & 0xFF) as u8;
+        }
+        Some(NanString::Inline { len, bytes })
     }
 
     #[inline]
     pub fn new_string_value(s: &str, arena: &mut Arena) -> Self {
-        if s.is_empty() {
-            Self::EMPTY_STRING
+        if s.len() <= STRING_INLINE_MAX_BYTES {
+            Self::new_small_string_bytes(s.as_bytes())
         } else {
             Self::new_string(arena.push_string(s))
         }
@@ -459,9 +575,8 @@ impl NanValue {
                 }
             }
             TAG_WRAPPER => Some(self.wrapper_index()),
-            TAG_STRING | TAG_LIST | TAG_TUPLE | TAG_MAP | TAG_RECORD | TAG_VARIANT => {
-                Some(self.arena_index())
-            }
+            TAG_STRING => (self.payload() & STRING_ARENA_BIT != 0).then_some(self.arena_index()),
+            TAG_LIST | TAG_TUPLE | TAG_MAP | TAG_RECORD | TAG_VARIANT => Some(self.arena_index()),
             _ => None,
         }
     }
@@ -559,9 +674,7 @@ impl NanValue {
 
     #[inline]
     pub fn is_string(self) -> bool {
-        self.is_nan_boxed()
-            && (self.tag() == TAG_STRING
-                || (self.tag() == TAG_IMMEDIATE && self.payload() == IMM_EMPTY_STRING))
+        self.is_nan_boxed() && self.tag() == TAG_STRING
     }
 
     #[inline]
@@ -620,11 +733,6 @@ impl NanValue {
         self.is_nan_boxed() && self.tag() == TAG_IMMEDIATE && self.payload() == IMM_EMPTY_MAP
     }
 
-    #[inline]
-    pub fn is_empty_string_immediate(self) -> bool {
-        self.is_nan_boxed() && self.tag() == TAG_IMMEDIATE && self.payload() == IMM_EMPTY_STRING
-    }
-
     pub fn type_name(self) -> &'static str {
         if self.is_float() {
             return "Float";
@@ -646,7 +754,6 @@ impl NanValue {
                         IMM_NONE => "Option.None",
                         IMM_EMPTY_LIST => "List",
                         IMM_EMPTY_MAP => "Map",
-                        IMM_EMPTY_STRING => "String",
                         _ => "Unknown",
                     }
                 }
@@ -779,7 +886,6 @@ impl std::fmt::Debug for NanValue {
                         IMM_NONE => write!(f, "None"),
                         IMM_EMPTY_LIST => write!(f, "EmptyList"),
                         IMM_EMPTY_MAP => write!(f, "EmptyMap"),
-                        IMM_EMPTY_STRING => write!(f, "EmptyString"),
                         _ => write!(f, "Immediate({})", self.payload()),
                     }
                 }
@@ -816,6 +922,13 @@ impl std::fmt::Debug for NanValue {
                 }
                 _ => write!(f, "Symbol({})", self.payload()),
             },
+            TAG_STRING => {
+                if let Some(s) = self.small_string() {
+                    write!(f, "String({:?})", s.as_str())
+                } else {
+                    write!(f, "String(arena:{})", self.arena_index())
+                }
+            }
             _ => write!(f, "{}(arena:{})", self.type_name(), self.arena_index()),
         }
     }

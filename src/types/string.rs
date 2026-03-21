@@ -23,7 +23,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::nan_value::{Arena, NanValue};
+use crate::nan_value::{Arena, NanString, NanValue};
 use crate::value::{RuntimeError, Value, list_from_vec, list_view};
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -392,7 +392,7 @@ pub fn call_nv(
     }
 }
 
-fn nv_str(v: NanValue, arena: &Arena) -> Option<&str> {
+fn nv_str(v: NanValue, arena: &Arena) -> Option<NanString<'_>> {
     if v.is_string() {
         Some(arena.get_string_value(v))
     } else {
@@ -439,7 +439,7 @@ fn starts_with_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runt
     }
     let s = arena.get_string_value(args[0]);
     let prefix = arena.get_string_value(args[1]);
-    let result = s.starts_with(prefix);
+    let result = s.starts_with(prefix.as_str());
     Ok(NanValue::new_bool(result))
 }
 
@@ -457,7 +457,7 @@ fn ends_with_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtim
     }
     let s = arena.get_string_value(args[0]);
     let suffix = arena.get_string_value(args[1]);
-    let result = s.ends_with(suffix);
+    let result = s.ends_with(suffix.as_str());
     Ok(NanValue::new_bool(result))
 }
 
@@ -475,7 +475,7 @@ fn contains_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtime
     }
     let s = arena.get_string_value(args[0]);
     let sub = arena.get_string_value(args[1]);
-    let result = s.contains(sub);
+    let result = s.contains(sub.as_str());
     Ok(NanValue::new_bool(result))
 }
 

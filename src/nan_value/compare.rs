@@ -40,9 +40,7 @@ impl NanValue {
             TAG_INT => self.as_int(arena) == other.as_int(arena),
             TAG_IMMEDIATE => matches!(
                 (self.payload(), other.payload()),
-                (IMM_EMPTY_LIST, IMM_EMPTY_LIST)
-                    | (IMM_EMPTY_MAP, IMM_EMPTY_MAP)
-                    | (IMM_EMPTY_STRING, IMM_EMPTY_STRING)
+                (IMM_EMPTY_LIST, IMM_EMPTY_LIST) | (IMM_EMPTY_MAP, IMM_EMPTY_MAP)
             ),
             TAG_WRAPPER => unreachable!("wrapper comparison handled above"),
             TAG_STRING => arena.get_string_value(self) == arena.get_string_value(other),
@@ -186,7 +184,6 @@ impl NanValue {
                 IMM_NONE => "Option.None".into(),
                 IMM_EMPTY_LIST => "[]".into(),
                 IMM_EMPTY_MAP => "{}".into(),
-                IMM_EMPTY_STRING => String::new(),
                 _ => "??".into(),
             },
             TAG_WRAPPER => unreachable!("wrapper repr handled above"),

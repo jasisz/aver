@@ -193,8 +193,13 @@ fn string_roundtrip() {
 }
 
 #[test]
-fn empty_string_stays_inline() {
+fn small_string_stays_inline() {
     let mut arena = Arena::new();
+    let short = NanValue::new_string_value("hello", &mut arena);
+    assert!(short.is_string());
+    assert!(short.heap_index().is_none());
+    assert_eq!(arena.get_string_value(short), "hello");
+
     let v = NanValue::new_string_value("", &mut arena);
     assert!(v.is_string());
     assert!(v.heap_index().is_none());

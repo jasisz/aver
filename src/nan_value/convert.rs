@@ -140,7 +140,6 @@ impl NanValue {
                 IMM_NONE => Value::None,
                 IMM_EMPTY_LIST => Value::List(aver_rt::AverList::from_vec(Vec::new())),
                 IMM_EMPTY_MAP => Value::Map(HashMap::new()),
-                IMM_EMPTY_STRING => Value::Str(String::new()),
                 _ => Value::Unit,
             },
             TAG_WRAPPER | TAG_SOME_INT | TAG_OK_INT | TAG_ERR_INT => {

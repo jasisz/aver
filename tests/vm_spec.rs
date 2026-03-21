@@ -1106,6 +1106,7 @@ fn vm_float_mul() {
 fn vm_string_literal() {
     let (result, arena) = vm_run_with_arena("fn main() -> String\n    \"hello\"\n");
     assert!(result.is_string());
+    assert!(result.heap_index().is_none());
     assert_eq!(arena.get_string_value(result), "hello");
 }
 
@@ -1157,7 +1158,7 @@ fn vm_string_interpolation_single_expr_part() {
 }
 
 #[test]
-fn vm_empty_string_is_immediate() {
+fn vm_empty_string_is_inline() {
     let (result, arena) = vm_run_with_arena("fn main() -> String\n    \"\"\n");
     assert!(result.is_string());
     assert!(result.heap_index().is_none());
