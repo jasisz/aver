@@ -7,16 +7,12 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::{FnBody, FnDef, Stmt, TopLevel, TypeDef};
 use crate::nan_value::{Arena, NanValue};
 use crate::source::find_module_file;
+use crate::types::{option, result};
 
 use super::builtin::{VmBuiltin, VmBuiltinParentThinClass};
 use super::opcode::*;
-use super::symbol::VmSymbolTable;
+use super::symbol::{VmSymbolTable, VmVariantCtor};
 use super::types::{CodeStore, FnChunk};
-
-fn encode_vm_symbol_ref(symbol_id: u32) -> NanValue {
-    // VM-known symbols are encoded as inline Int symbol ids.
-    NanValue::new_int_inline(symbol_id as i64)
-}
 
 /// Compile a parsed + TCO-transformed + resolved program into bytecode.
 /// Also loads dependent modules if a `module` declaration with `depends` is present.
@@ -64,7 +60,7 @@ pub fn compile_program_with_modules(
                         .symbols
                         .intern_function(&fndef.name, fn_id, &fndef.effects);
                 let global_idx = compiler.global_names[&fndef.name];
-                compiler.globals[global_idx as usize] = encode_vm_symbol_ref(symbol_id);
+                compiler.globals[global_idx as usize] = VmSymbolTable::symbol_ref(symbol_id);
             }
             TopLevel::TypeDef(td) => {
                 compiler.register_type_def(td, arena);
@@ -72,6 +68,8 @@ pub fn compile_program_with_modules(
             _ => {}
         }
     }
+
+    compiler.register_current_module_namespace(items);
 
     for item in items {
         if let TopLevel::FnDef(fndef) = item {
@@ -108,18 +106,20 @@ struct ProgramCompiler {
 
 impl ProgramCompiler {
     fn new() -> Self {
-        ProgramCompiler {
+        let mut compiler = ProgramCompiler {
             code: CodeStore::new(),
             symbols: VmSymbolTable::default(),
             globals: Vec::new(),
             global_names: HashMap::new(),
-        }
+        };
+        compiler.bootstrap_core_symbols();
+        compiler
     }
 
     fn sync_record_field_symbols(&mut self, arena: &Arena) {
         for type_id in 0..arena.type_count() {
             let type_name = arena.get_type_name(type_id);
-            self.symbols.intern_name(type_name);
+            self.symbols.intern_namespace_path(type_name);
             let field_names = arena.get_field_names(type_id);
             if field_names.is_empty() {
                 continue;
@@ -266,10 +266,11 @@ impl ProgramCompiler {
                 let symbol_id = self.symbols.find(&qualified).ok_or_else(|| CompileError {
                     msg: format!("missing VM symbol for exposed function {}", qualified),
                 })?;
-                self.globals[global_idx as usize] = encode_vm_symbol_ref(symbol_id);
+                self.globals[global_idx as usize] = VmSymbolTable::symbol_ref(symbol_id);
             }
         }
 
+        let module_symbol_id = self.symbols.intern_namespace_path(dep_name);
         for item in &mod_items {
             if let TopLevel::TypeDef(td) = item {
                 let type_name = match td {
@@ -279,10 +280,31 @@ impl ProgramCompiler {
                     Some(list) => list.iter().any(|e| e == type_name),
                     None => !type_name.starts_with('_'),
                 };
-                if exposed {
-                    // Make the type accessible under its qualified path.
-                    // For now, just ensure the type is findable by its simple name
-                    // (it's already registered in the arena type registry).
+                if exposed && let Some(type_symbol_id) = self.symbols.find(type_name) {
+                    let member_symbol_id = self.symbols.intern_name(type_name);
+                    self.symbols.add_namespace_member_by_id(
+                        module_symbol_id,
+                        member_symbol_id,
+                        VmSymbolTable::symbol_ref(type_symbol_id),
+                    );
+                }
+            }
+        }
+
+        for (fn_name, _fn_id) in &module_fn_ids {
+            let exposed = match &exposes {
+                Some(list) => list.iter().any(|e| e == fn_name),
+                None => !fn_name.starts_with('_'),
+            };
+            if exposed {
+                let qualified = format!("{}.{}", dep_name, fn_name);
+                if let Some(fn_symbol_id) = self.symbols.find(&qualified) {
+                    let member_symbol_id = self.symbols.intern_name(fn_name);
+                    self.symbols.add_namespace_member_by_id(
+                        module_symbol_id,
+                        member_symbol_id,
+                        VmSymbolTable::symbol_ref(fn_symbol_id),
+                    );
                 }
             }
         }
@@ -303,7 +325,7 @@ impl ProgramCompiler {
     fn register_type_def(&mut self, td: &TypeDef, arena: &mut Arena) {
         match td {
             TypeDef::Product { name, fields, .. } => {
-                self.symbols.intern_name(name);
+                self.symbols.intern_namespace_path(name);
                 let field_names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
                 let field_symbol_ids: Vec<u32> = field_names
                     .iter()
@@ -313,14 +335,97 @@ impl ProgramCompiler {
                 self.code.register_record_fields(type_id, &field_symbol_ids);
             }
             TypeDef::Sum { name, variants, .. } => {
-                self.symbols.intern_name(name);
+                let type_symbol_id = self.symbols.intern_namespace_path(name);
                 let variant_names: Vec<String> = variants.iter().map(|v| v.name.clone()).collect();
-                for variant_name in &variant_names {
-                    self.symbols.intern_name(variant_name);
-                    self.symbols
-                        .intern_name(&format!("{}.{}", name, variant_name));
+                let type_id = arena.register_sum_type(name, variant_names);
+                for (variant_id, variant) in variants.iter().enumerate() {
+                    let ctor_id = arena
+                        .find_ctor_id(type_id, variant_id as u16)
+                        .expect("ctor id");
+                    let qualified_name = format!("{}.{}", name, variant.name);
+                    let ctor_symbol_id = self.symbols.intern_variant_ctor(
+                        &qualified_name,
+                        VmVariantCtor {
+                            type_id,
+                            variant_id: variant_id as u16,
+                            ctor_id,
+                            field_count: variant.fields.len() as u8,
+                        },
+                    );
+                    let member_symbol_id = self.symbols.intern_name(&variant.name);
+                    self.symbols.add_namespace_member_by_id(
+                        type_symbol_id,
+                        member_symbol_id,
+                        VmSymbolTable::symbol_ref(ctor_symbol_id),
+                    );
                 }
-                arena.register_sum_type(name, variant_names);
+            }
+        }
+    }
+
+    fn bootstrap_core_symbols(&mut self) {
+        for builtin in VmBuiltin::ALL.iter().copied() {
+            let builtin_symbol_id = self.symbols.intern_builtin(builtin);
+            if let Some((namespace, member)) = builtin.name().split_once('.') {
+                let namespace_symbol_id = self.symbols.intern_namespace_path(namespace);
+                let member_symbol_id = self.symbols.intern_name(member);
+                self.symbols.add_namespace_member_by_id(
+                    namespace_symbol_id,
+                    member_symbol_id,
+                    VmSymbolTable::symbol_ref(builtin_symbol_id),
+                );
+            }
+        }
+
+        let result_symbol_id = self.symbols.intern_namespace_path("Result");
+        let ok_symbol_id = self.symbols.intern_wrapper("Result.Ok", 0);
+        let err_symbol_id = self.symbols.intern_wrapper("Result.Err", 1);
+        let ok_member_symbol_id = self.symbols.intern_name("Ok");
+        self.symbols.add_namespace_member_by_id(
+            result_symbol_id,
+            ok_member_symbol_id,
+            VmSymbolTable::symbol_ref(ok_symbol_id),
+        );
+        let err_member_symbol_id = self.symbols.intern_name("Err");
+        self.symbols.add_namespace_member_by_id(
+            result_symbol_id,
+            err_member_symbol_id,
+            VmSymbolTable::symbol_ref(err_symbol_id),
+        );
+        for (member, builtin_name) in result::extra_members() {
+            if let Some(symbol_id) = self.symbols.find(&builtin_name) {
+                let member_symbol_id = self.symbols.intern_name(member);
+                self.symbols.add_namespace_member_by_id(
+                    result_symbol_id,
+                    member_symbol_id,
+                    VmSymbolTable::symbol_ref(symbol_id),
+                );
+            }
+        }
+
+        let option_symbol_id = self.symbols.intern_namespace_path("Option");
+        let some_symbol_id = self.symbols.intern_wrapper("Option.Some", 2);
+        self.symbols.intern_constant("Option.None", NanValue::NONE);
+        let some_member_symbol_id = self.symbols.intern_name("Some");
+        self.symbols.add_namespace_member_by_id(
+            option_symbol_id,
+            some_member_symbol_id,
+            VmSymbolTable::symbol_ref(some_symbol_id),
+        );
+        let none_member_symbol_id = self.symbols.intern_name("None");
+        self.symbols.add_namespace_member_by_id(
+            option_symbol_id,
+            none_member_symbol_id,
+            NanValue::NONE,
+        );
+        for (member, builtin_name) in option::extra_members() {
+            if let Some(symbol_id) = self.symbols.find(&builtin_name) {
+                let member_symbol_id = self.symbols.intern_name(member);
+                self.symbols.add_namespace_member_by_id(
+                    option_symbol_id,
+                    member_symbol_id,
+                    VmSymbolTable::symbol_ref(symbol_id),
+                );
             }
         }
     }
@@ -426,6 +531,56 @@ impl ProgramCompiler {
         let chunk = fc.finish();
         self.code.add_function(chunk);
         Ok(())
+    }
+
+    fn register_current_module_namespace(&mut self, items: &[TopLevel]) {
+        let Some(module) = items.iter().find_map(|item| {
+            if let TopLevel::Module(module) = item {
+                Some(module)
+            } else {
+                None
+            }
+        }) else {
+            return;
+        };
+
+        let module_symbol_id = self.symbols.intern_namespace_path(&module.name);
+
+        for item in items {
+            match item {
+                TopLevel::FnDef(fndef) => {
+                    let exposed = if module.exposes.is_empty() {
+                        !fndef.name.starts_with('_')
+                    } else {
+                        module.exposes.iter().any(|name| name == &fndef.name)
+                    };
+                    if exposed && let Some(symbol_id) = self.symbols.find(&fndef.name) {
+                        let member_symbol_id = self.symbols.intern_name(&fndef.name);
+                        self.symbols.add_namespace_member_by_id(
+                            module_symbol_id,
+                            member_symbol_id,
+                            VmSymbolTable::symbol_ref(symbol_id),
+                        );
+                    }
+                }
+                TopLevel::TypeDef(TypeDef::Product { name, .. } | TypeDef::Sum { name, .. }) => {
+                    let exposed = if module.exposes.is_empty() {
+                        !name.starts_with('_')
+                    } else {
+                        module.exposes.iter().any(|member| member == name)
+                    };
+                    if exposed && let Some(symbol_id) = self.symbols.find(name) {
+                        let member_symbol_id = self.symbols.intern_name(name);
+                        self.symbols.add_namespace_member_by_id(
+                            module_symbol_id,
+                            member_symbol_id,
+                            VmSymbolTable::symbol_ref(symbol_id),
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 }
 

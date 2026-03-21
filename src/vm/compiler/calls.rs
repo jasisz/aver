@@ -3,31 +3,51 @@ use crate::ast::Expr;
 use crate::nan_value::NanValue;
 use crate::vm::builtin::VmBuiltin;
 use crate::vm::opcode::*;
+use crate::vm::symbol::VmSymbolTable;
 
 impl<'a> FnCompiler<'a> {
     /// Resolve a dotted path (Ns, member) to what it means.
     fn resolve_dotted_call(&self, ns: &str, method: &str) -> CallTarget {
-        match (ns, method) {
-            ("Result", "Ok") => return CallTarget::Wrapper(0),
-            ("Result", "Err") => return CallTarget::Wrapper(1),
-            ("Option", "Some") => return CallTarget::Wrapper(2),
-            ("Option", "None") => return CallTarget::None_,
-            _ => {}
-        }
-        if let Some(type_id) = self.resolve_type_id(ns)
-            && let Some(variant_id) = self.arena.find_variant_id(type_id, method)
-        {
-            return CallTarget::Variant(type_id, variant_id);
-        }
         let qualified = format!("{}.{}", ns, method);
-        if let Some(fn_id) = self.code_store.find(&qualified) {
+        if let Some(symbol_id) = self.symbols.find(&qualified) {
+            return self.resolve_symbol_call_target(symbol_id, qualified);
+        }
+
+        if let Some(namespace_symbol_id) = self.symbols.resolve_namespace_path(ns)
+            && let Some(member_symbol_id) = self.symbols.find(method)
+            && let Some(member) = self
+                .symbols
+                .resolve_member(namespace_symbol_id, member_symbol_id)
+        {
+            if let Some(symbol_id) = self.symbols.resolve_symbol_ref(member) {
+                return self.resolve_symbol_call_target(symbol_id, qualified);
+            }
+            if member.bits() == NanValue::NONE.bits() {
+                return CallTarget::None_;
+            }
+        }
+        CallTarget::UnknownQualified(qualified)
+    }
+
+    fn resolve_symbol_call_target(&self, symbol_id: u32, qualified: String) -> CallTarget {
+        if let Some(fn_id) = self.symbols.resolve_function(symbol_id) {
             return CallTarget::KnownFn(fn_id);
         }
-        if let Some(builtin) = VmBuiltin::from_name(&qualified) {
-            CallTarget::Builtin(builtin)
-        } else {
-            CallTarget::UnknownQualified(qualified)
+        if let Some(builtin) = self.symbols.resolve_builtin(symbol_id) {
+            return CallTarget::Builtin(builtin);
         }
+        if let Some(kind) = self.symbols.resolve_wrapper(symbol_id) {
+            return CallTarget::Wrapper(kind);
+        }
+        if let Some(value) = self.symbols.resolve_constant(symbol_id)
+            && value.bits() == NanValue::NONE.bits()
+        {
+            return CallTarget::None_;
+        }
+        if let Some(ctor) = self.symbols.resolve_variant_ctor(symbol_id) {
+            return CallTarget::Variant(ctor.type_id, ctor.variant_id);
+        }
+        CallTarget::UnknownQualified(qualified)
     }
 
     fn extract_dotted_path(&self, expr: &Expr) -> Option<(String, String)> {
@@ -238,41 +258,16 @@ impl<'a> FnCompiler<'a> {
     }
 
     pub(super) fn compile_attr(&mut self, obj: &Expr, field: &str) -> Result<(), CompileError> {
-        if let Some(ns) = self.flatten_path(obj)
-            && ns.chars().next().is_some_and(|c| c.is_uppercase())
+        if let Some(path) = self.flatten_path(obj)
+            && let Some(symbol_id) = self.symbols.resolve_namespace_path(&path)
         {
-            let qualified = format!("{}.{}", ns, field);
-            match self.resolve_dotted_call(&ns, field) {
-                CallTarget::KnownFn(_) => {
-                    if let Some(&idx) = self.global_names.get(&qualified) {
-                        self.emit_op(LOAD_GLOBAL);
-                        self.emit_u16(idx);
-                        return Ok(());
-                    }
-                }
-                CallTarget::None_ => {
-                    let idx = self.add_constant(NanValue::NONE);
-                    self.emit_op(LOAD_CONST);
-                    self.emit_u16(idx);
-                    return Ok(());
-                }
-                CallTarget::Variant(type_id, variant_id) => {
-                    self.emit_op(VARIANT_NEW);
-                    self.emit_u16(type_id as u16);
-                    self.emit_u16(variant_id);
-                    self.emit_u8(0);
-                    return Ok(());
-                }
-                CallTarget::Builtin(_) | CallTarget::UnknownQualified(_) => {
-                    return Err(CompileError {
-                        msg: format!(
-                            "standalone builtin function values are not yet supported in VM: {}",
-                            qualified
-                        ),
-                    });
-                }
-                _ => {}
-            }
+            let idx = self.add_constant(VmSymbolTable::symbol_ref(symbol_id));
+            self.emit_op(LOAD_CONST);
+            self.emit_u16(idx);
+            let field_symbol_id = self.symbols.intern_name(field);
+            self.emit_op(RECORD_GET_NAMED);
+            self.emit_u32(field_symbol_id);
+            return Ok(());
         }
 
         if let Some(field_idx) = self

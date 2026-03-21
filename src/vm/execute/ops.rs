@@ -1,8 +1,22 @@
 use super::VM;
 use crate::nan_value::{ArenaEntry, NanValue};
+use crate::vm::symbol::VmSymbolKind;
 use crate::vm::types::VmError;
 
 impl VM {
+    pub(super) fn decode_vm_symbol_id(&self, val: NanValue) -> Option<u32> {
+        if !val.is_int() {
+            return None;
+        }
+        let symbol_id = val.as_int(&self.arena);
+        (symbol_id >= 0).then_some(symbol_id as u32).filter(|&id| {
+            self.code
+                .symbols
+                .get(id)
+                .is_some_and(|info| info.kind.is_some())
+        })
+    }
+
     pub(super) fn nan_tag(&self, val: NanValue) -> u8 {
         if val.is_float() {
             return 0xFF;
@@ -16,22 +30,92 @@ impl VM {
         caller_fn_id: u32,
         ip: usize,
     ) -> Result<u32, VmError> {
-        if val.is_int() {
-            let symbol_id = val.as_int(&self.arena);
-            if symbol_id >= 0
-                && let Some(fn_id) = self.code.symbols.resolve_function(symbol_id as u32)
-            {
-                return Ok(fn_id);
-            }
+        if let Some(symbol_id) = self.decode_vm_symbol_id(val)
+            && let Some(fn_id) = self.code.symbols.resolve_function(symbol_id)
+        {
+            return Ok(fn_id);
         }
         let caller_name = &self.code.functions[caller_fn_id as usize].name;
         Err(VmError::Type(format!(
             "cannot call non-function (got {} = {:?}) in {} at ip={}",
-            val.type_name(),
-            val,
+            self.value_type_name(val),
+            self.value_repr(val),
             caller_name,
             ip
         )))
+    }
+
+    pub(super) fn variant_ctor_id_vm(&self, val: NanValue) -> Option<u32> {
+        if let Some(symbol_id) = self.decode_vm_symbol_id(val)
+            && let Some(ctor) = self.code.symbols.resolve_variant_ctor(symbol_id)
+            && ctor.field_count == 0
+        {
+            return Some(ctor.ctor_id);
+        }
+        val.variant_ctor_id(&self.arena)
+    }
+
+    pub(super) fn value_type_name(&self, val: NanValue) -> String {
+        if let Some(symbol_id) = self.decode_vm_symbol_id(val)
+            && let Some(info) = self.code.symbols.get(symbol_id)
+            && let Some(kind) = info.kind
+        {
+            return match kind {
+                VmSymbolKind::Function(_) => "Fn".to_string(),
+                VmSymbolKind::Builtin(_) => "Builtin".to_string(),
+                VmSymbolKind::Namespace => "Namespace".to_string(),
+                VmSymbolKind::VariantCtor(ctor) => {
+                    if ctor.field_count == 0 {
+                        "Variant".to_string()
+                    } else {
+                        "VariantCtor".to_string()
+                    }
+                }
+                VmSymbolKind::Wrapper(kind) => match kind {
+                    0 => "Result.Ok".to_string(),
+                    1 => "Result.Err".to_string(),
+                    2 => "Option.Some".to_string(),
+                    _ => "Wrapper".to_string(),
+                },
+                VmSymbolKind::Constant(value) => value.type_name().to_string(),
+            };
+        }
+        val.type_name().to_string()
+    }
+
+    pub(super) fn value_repr(&self, val: NanValue) -> String {
+        if let Some(symbol_id) = self.decode_vm_symbol_id(val)
+            && let Some(info) = self.code.symbols.get(symbol_id)
+            && let Some(kind) = info.kind
+        {
+            return match kind {
+                VmSymbolKind::Function(_) => {
+                    format!("<fn {}>", info.name)
+                }
+                VmSymbolKind::Builtin(_) => {
+                    format!("<builtin {}>", info.name)
+                }
+                VmSymbolKind::Namespace => {
+                    format!("<type {}>", info.name)
+                }
+                VmSymbolKind::VariantCtor(ctor) => {
+                    if ctor.field_count == 0 {
+                        info.name
+                            .rsplit('.')
+                            .next()
+                            .unwrap_or(info.name.as_str())
+                            .to_string()
+                    } else {
+                        format!("<ctor {}>", info.name)
+                    }
+                }
+                VmSymbolKind::Wrapper(_) => {
+                    format!("<ctor {}>", info.name)
+                }
+                VmSymbolKind::Constant(value) => value.repr(&self.arena),
+            };
+        }
+        val.repr(&self.arena)
     }
 
     pub(super) fn arith_add(&mut self, a: NanValue, b: NanValue) -> Result<NanValue, VmError> {
@@ -70,8 +154,8 @@ impl VM {
         } else {
             Err(VmError::Type(format!(
                 "cannot add {} and {}",
-                a.type_name(),
-                b.type_name()
+                self.value_type_name(a),
+                self.value_type_name(b)
             )))
         }
     }
@@ -95,8 +179,8 @@ impl VM {
         } else {
             Err(VmError::Type(format!(
                 "cannot subtract {} and {}",
-                a.type_name(),
-                b.type_name()
+                self.value_type_name(a),
+                self.value_type_name(b)
             )))
         }
     }
@@ -120,8 +204,8 @@ impl VM {
         } else {
             Err(VmError::Type(format!(
                 "cannot multiply {} and {}",
-                a.type_name(),
-                b.type_name()
+                self.value_type_name(a),
+                self.value_type_name(b)
             )))
         }
     }
@@ -149,8 +233,8 @@ impl VM {
         } else {
             Err(VmError::Type(format!(
                 "cannot divide {} and {}",
-                a.type_name(),
-                b.type_name()
+                self.value_type_name(a),
+                self.value_type_name(b)
             )))
         }
     }
@@ -168,8 +252,8 @@ impl VM {
         } else {
             Err(VmError::Type(format!(
                 "cannot modulo {} and {}",
-                a.type_name(),
-                b.type_name()
+                self.value_type_name(a),
+                self.value_type_name(b)
             )))
         }
     }
@@ -188,8 +272,8 @@ impl VM {
         } else {
             Err(VmError::Type(format!(
                 "cannot compare {} and {}",
-                a.type_name(),
-                b.type_name()
+                self.value_type_name(a),
+                self.value_type_name(b)
             )))
         }
     }

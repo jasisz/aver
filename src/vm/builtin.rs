@@ -14,18 +14,15 @@ macro_rules! vm_builtins {
         }
 
         impl VmBuiltin {
-            pub(crate) fn from_name(name: &str) -> Option<Self> {
-                match name {
-                    $($name => Some(Self::$variant),)+
-                    _ => None,
-                }
-            }
-
             pub(crate) const fn name(self) -> &'static str {
                 match self {
                     $(Self::$variant => $name,)+
                 }
             }
+
+            pub(crate) const ALL: &'static [Self] = &[
+                $(Self::$variant,)+
+            ];
         }
     };
 }
@@ -407,7 +404,8 @@ mod tests {
     use super::VmBuiltin;
 
     #[test]
-    fn builtin_id_roundtrip_works() {
+    fn builtin_names_are_unique() {
+        let mut seen = std::collections::HashSet::new();
         for builtin in [
             VmBuiltin::ConsolePrint,
             VmBuiltin::HttpServerListenWith,
@@ -415,7 +413,11 @@ mod tests {
             VmBuiltin::OptionToResult,
             VmBuiltin::MapFromList,
         ] {
-            assert_eq!(VmBuiltin::from_name(builtin.name()), Some(builtin));
+            assert!(
+                seen.insert(builtin.name()),
+                "duplicate builtin name {}",
+                builtin.name()
+            );
         }
     }
 }

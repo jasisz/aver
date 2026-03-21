@@ -2,6 +2,8 @@
 ///
 /// Tests compile Aver source to bytecode and execute via the VM,
 /// verifying that the VM produces correct results for core language features.
+use std::path::{Path, PathBuf};
+
 use aver::ast::TopLevel;
 use aver::lexer::Lexer;
 use aver::nan_value::{Arena, NanValue};
@@ -32,6 +34,28 @@ fn vm_run(src: &str) -> NanValue {
     let (code, globals) = vm::compile_program(&items, &mut arena).expect("compile failed");
     let mut machine = vm::VM::new(code, globals, arena);
     machine.run().expect("VM execution failed")
+}
+
+fn vm_run_with_module_root_and_arena(src: &str, module_root: &Path) -> (NanValue, Arena) {
+    let mut items = parse(src);
+    tco::transform_program(&mut items);
+    resolver::resolve_program(&mut items);
+
+    let mut arena = Arena::new();
+    let (code, globals) = vm::compile_program_with_modules(
+        &items,
+        &mut arena,
+        Some(
+            module_root
+                .to_str()
+                .expect("module root must be valid UTF-8"),
+        ),
+    )
+    .expect("compile failed");
+    let mut machine = vm::VM::new(code, globals, arena);
+    let result = machine.run().expect("VM execution failed");
+    let arena = std::mem::replace(&mut machine.arena, Arena::new());
+    (result, arena)
 }
 
 /// Like vm_run but returns the arena too (for inspecting heap values).
@@ -66,6 +90,20 @@ fn vm_compile(src: &str) -> vm::CodeStore {
     let mut arena = Arena::new();
     let (code, _globals) = vm::compile_program(&items, &mut arena).expect("compile failed");
     code
+}
+
+fn temp_module_root(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "aver_vm_spec_{}_{}_{}",
+        tag,
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("create temp module root");
+    dir
 }
 
 fn nv_string(machine: &mut vm::VM, s: &str) -> NanValue {
@@ -978,6 +1016,54 @@ fn vm_nullary_variant_match() {
     assert!(result.is_int());
     let arena = Arena::new();
     assert_eq!(result.as_int(&arena), 1);
+}
+
+#[test]
+fn vm_standalone_builtin_function_value() {
+    let src = "fn apply(f: Fn(String) -> String, value: String) -> String\n    f(value)\n\nfn main() -> String\n    upper = String.toUpper\n    apply(upper, \"alpha\")\n";
+    let (result, arena) = vm_run_with_arena(src);
+    assert_eq!(
+        result.to_value(&arena),
+        aver::value::Value::Str("ALPHA".to_string())
+    );
+}
+
+#[test]
+fn vm_wrapper_constructor_value() {
+    let src = "fn apply(f: Fn(Int) -> Result<Int, String>, value: Int) -> Result<Int, String>\n    f(value)\n\nfn main() -> Result<Int, String>\n    wrap = Result.Ok\n    apply(wrap, 7)\n";
+    let (result, arena) = vm_run_with_arena(src);
+    assert_eq!(
+        result.to_value(&arena),
+        aver::value::Value::Ok(Box::new(aver::value::Value::Int(7)))
+    );
+}
+
+#[test]
+fn vm_option_none_namespace_member_value() {
+    let src = "fn fallback(value: Option<Int>) -> Int\n    match value\n        Option.Some(v) -> v\n        Option.None -> 0\n\nfn main() -> Int\n    missing = Option.None\n    fallback(missing)\n";
+    let result = vm_run(src);
+    assert!(result.is_int());
+    let arena = Arena::new();
+    assert_eq!(result.as_int(&arena), 0);
+}
+
+#[test]
+fn vm_resolves_nested_module_type_constructor_paths() {
+    let root = temp_module_root("qualified_ctor");
+    let domain_dir = root.join("domain");
+    std::fs::create_dir_all(&domain_dir).expect("create domain dir");
+    std::fs::write(
+        domain_dir.join("types.av"),
+        "module Types\n    exposes [TaskEvent]\n    intent =\n        \"Domain types.\"\n\ntype TaskEvent\n    TaskCreated(String)\n    TaskStarted(String)\n",
+    )
+    .expect("write domain/types.av");
+
+    let src = "module App\n    depends [Domain.Types]\n    intent =\n        \"Uses qualified constructors.\"\n\nfn main() -> String\n    event = Domain.Types.TaskEvent.TaskCreated(\"now\")\n    match event\n        Domain.Types.TaskEvent.TaskCreated(at) -> at\n        Domain.Types.TaskEvent.TaskStarted(at) -> at\n";
+    let (result, arena) = vm_run_with_module_root_and_arena(src, &root);
+    assert_eq!(
+        result.to_value(&arena),
+        aver::value::Value::Str("now".into())
+    );
 }
 
 // ---------------------------------------------------------------------------

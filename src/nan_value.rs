@@ -185,6 +185,12 @@ impl NanValue {
             .then_some(self.payload())
     }
 
+    #[inline]
+    pub fn inline_int_value(self) -> Option<i64> {
+        self.inline_int_payload()
+            .map(Self::decode_inline_int_payload)
+    }
+
     // -- Immediates --------------------------------------------------------
 
     pub const FALSE: NanValue = NanValue(QNAN | (TAG_IMMEDIATE << TAG_SHIFT) | IMM_FALSE);

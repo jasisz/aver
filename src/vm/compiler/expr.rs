@@ -3,6 +3,7 @@ use crate::ast::{BinOp, Expr, Literal, Stmt, StrPart};
 use crate::nan_value::NanValue;
 use crate::vm::builtin::VmBuiltin;
 use crate::vm::opcode::*;
+use crate::vm::symbol::VmSymbolTable;
 
 impl<'a> FnCompiler<'a> {
     pub(super) fn compile_body(&mut self, stmts: &[Stmt]) -> Result<(), CompileError> {
@@ -112,6 +113,15 @@ impl<'a> FnCompiler<'a> {
             self.emit_u8(slot as u8);
         } else if let Some(&idx) = self.global_names.get(name) {
             self.emit_op(LOAD_GLOBAL);
+            self.emit_u16(idx);
+        } else if let Some(symbol_id) = self.symbols.find(name)
+            && self
+                .symbols
+                .get(symbol_id)
+                .is_some_and(|info| info.kind.is_some())
+        {
+            let idx = self.add_constant(VmSymbolTable::symbol_ref(symbol_id));
+            self.emit_op(LOAD_CONST);
             self.emit_u16(idx);
         } else {
             return Err(CompileError {

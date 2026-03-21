@@ -181,8 +181,8 @@ impl VM {
                 CONCAT => {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let sa = a.repr(&self.arena);
-                    let sb = b.repr(&self.arena);
+                    let sa = self.value_repr(a);
+                    let sb = self.value_repr(b);
                     let idx = self.arena.push_string(&format!("{}{}", sa, sb));
                     self.stack.push(NanValue::new_string(idx));
                 }
@@ -240,6 +240,116 @@ impl VM {
                     let argc = read_u8!(code, ip) as usize;
                     let fn_pos = self.stack.len() - 1 - argc;
                     let fn_val = self.stack[fn_pos];
+
+                    if let Some(symbol_id) = self.decode_vm_symbol_id(fn_val) {
+                        if let Some(builtin) = self.code.symbols.resolve_builtin(symbol_id) {
+                            if let Some(profile) = self.profile.as_mut() {
+                                profile.record_builtin_call(builtin.name());
+                            }
+                            let alloc_space = self.next_value_alloc_space(code, ip);
+                            self.stack.remove(fn_pos);
+                            let args_start = self.stack.len() - argc;
+                            let args: Vec<NanValue> = self.stack[args_start..].to_vec();
+                            self.stack.truncate(args_start);
+
+                            if builtin.is_http_server() {
+                                self.runtime
+                                    .ensure_builtin_effects_allowed(&self.code.symbols, builtin)?;
+                                self.frames.last_mut().unwrap().ip = ip as u32;
+                                let result = self.dispatch_http_server(builtin, &args)?;
+                                self.stack.push(result);
+                                let f = self.frames.last().unwrap();
+                                fn_id = f.fn_id;
+                                ip = f.ip as usize;
+                                bp = f.bp as usize;
+                                continue;
+                            }
+
+                            let result = self.arena.with_alloc_space(alloc_space, |arena| {
+                                self.runtime.invoke_builtin(
+                                    &self.code.symbols,
+                                    builtin,
+                                    &args,
+                                    arena,
+                                )
+                            })?;
+                            self.stack.push(result);
+                            continue;
+                        }
+
+                        if let Some(wrap_kind) = self.code.symbols.resolve_wrapper(symbol_id) {
+                            if argc != 1 {
+                                let name = self
+                                    .code
+                                    .symbols
+                                    .get(symbol_id)
+                                    .map(|info| info.name.as_str())
+                                    .unwrap_or("<wrapper>");
+                                return Err(VmError::Runtime(format!(
+                                    "{} expects 1 argument, got {}",
+                                    name, argc
+                                )));
+                            }
+                            self.stack.remove(fn_pos);
+                            let val = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                            let wrapped = self.arena.with_alloc_space(
+                                self.next_value_alloc_space(code, ip),
+                                |arena| match wrap_kind {
+                                    0 => Ok(NanValue::new_ok_value(val, arena)),
+                                    1 => Ok(NanValue::new_err_value(val, arena)),
+                                    2 => Ok(NanValue::new_some_value(val, arena)),
+                                    _ => Err(VmError::Runtime("invalid wrap kind".into())),
+                                },
+                            )?;
+                            self.stack.push(wrapped);
+                            continue;
+                        }
+
+                        if let Some(ctor) = self.code.symbols.resolve_variant_ctor(symbol_id) {
+                            if argc != ctor.field_count as usize {
+                                let name = self
+                                    .code
+                                    .symbols
+                                    .get(symbol_id)
+                                    .map(|info| info.name.as_str())
+                                    .unwrap_or("<ctor>");
+                                return Err(VmError::Runtime(format!(
+                                    "{} expects {} argument(s), got {}",
+                                    name, ctor.field_count, argc
+                                )));
+                            }
+                            self.stack.remove(fn_pos);
+                            if ctor.field_count == 0 {
+                                self.stack.push(NanValue::new_nullary_variant(ctor.ctor_id));
+                                continue;
+                            }
+                            let args_start = self.stack.len() - argc;
+                            let fields: Vec<NanValue> = self.stack[args_start..].to_vec();
+                            self.stack.truncate(args_start);
+                            let idx = self
+                                .arena
+                                .with_alloc_space(self.next_value_alloc_space(code, ip), |arena| {
+                                    arena.push_variant(ctor.type_id, ctor.variant_id, fields)
+                                });
+                            self.stack.push(NanValue::new_variant(idx));
+                            continue;
+                        }
+
+                        if let Some(value) = self.code.symbols.resolve_constant(symbol_id) {
+                            let name = self
+                                .code
+                                .symbols
+                                .get(symbol_id)
+                                .map(|info| info.name.as_str())
+                                .unwrap_or("<constant>");
+                            return Err(VmError::Runtime(format!(
+                                "cannot call constant {} = {}",
+                                name,
+                                self.value_repr(value)
+                            )));
+                        }
+                    }
+
                     let target_fn_id = self.decode_vm_fn_ref(fn_val, fn_id, ip)?;
 
                     self.frames.last_mut().unwrap().ip = ip as u32;
@@ -697,10 +807,42 @@ impl VM {
                                 field_name
                             )));
                         }
+                    } else if let Some(symbol_id) = self.decode_vm_symbol_id(record)
+                        && self.code.symbols.is_namespace(symbol_id)
+                    {
+                        if let Some(mut value) =
+                            self.code.symbols.resolve_member(symbol_id, field_symbol_id)
+                        {
+                            if let Some(member_symbol_id) = self.decode_vm_symbol_id(value)
+                                && let Some(ctor) =
+                                    self.code.symbols.resolve_variant_ctor(member_symbol_id)
+                                && ctor.field_count == 0
+                            {
+                                value = NanValue::new_nullary_variant(ctor.ctor_id);
+                            }
+                            self.stack.push(value);
+                        } else {
+                            let namespace = self
+                                .code
+                                .symbols
+                                .get(symbol_id)
+                                .map(|info| info.name.as_str())
+                                .unwrap_or("<namespace>");
+                            let field_name = self
+                                .code
+                                .symbols
+                                .get(field_symbol_id)
+                                .map(|info| info.name.as_str())
+                                .unwrap_or("<unknown>");
+                            return Err(VmError::Runtime(format!(
+                                "namespace {} has no member '{}'",
+                                namespace, field_name
+                            )));
+                        }
                     } else {
                         return Err(VmError::Type(format!(
                             "field access on non-record value ({})",
-                            record.type_name()
+                            self.value_type_name(record)
                         )));
                     }
                 }
@@ -754,7 +896,7 @@ impl VM {
                     let expected_ctor = read_u16!(code, ip) as u32;
                     let offset = read_i16!(code, ip);
                     let top = *self.stack.last().ok_or(VmError::StackUnderflow)?;
-                    if top.variant_ctor_id(&self.arena) != Some(expected_ctor) {
+                    if self.variant_ctor_id_vm(top) != Some(expected_ctor) {
                         ip = (ip as isize + offset as isize) as usize;
                     }
                 }
