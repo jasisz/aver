@@ -485,6 +485,7 @@ Standalone projects:
 |------|-------------|
 | `projects/workflow_engine/main.av` | Explicit app/domain/infra flow, event replay, derived events, verify-driven orchestration |
 | `projects/payment_ops/main.av` | Dirty payment backoffice flow: provider normalization, replay, settlement reconcile, manual-review cases, audit trail |
+| `projects/self_hosted/main.av` | Self-hosting: mini Aver interpreter (lexer + AST + evaluator) written in Aver, running on the VM |
 
 See `examples/` and `projects/` for the full set.
 For repository self-documentation via decision exports, see `decisions/architecture.av`.

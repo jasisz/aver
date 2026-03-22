@@ -1491,11 +1491,6 @@ fn emit_verify_law_block(
                 ));
             }
             lines.extend(auto_proof.proof_lines);
-        } else if verify_mode == VerifyEmitMode::NativeDecide {
-            lines.push(format!(
-                "-- universal theorem {} omitted: sampled law shape is not auto-proved yet",
-                theorem_base
-            ));
         } else {
             lines.push(format!(
                 "theorem {} : ∀ {}, {} := by",

@@ -1,8 +1,14 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::*;
 
 const EXHAUSTIVENESS_MAX_DEPTH: usize = 64;
+
+/// Maximum depth for recursive Named types in exhaustiveness checking.
+/// Recursive sum types (e.g. Expr with ExprAdd(Expr, Expr)) cause exponential
+/// branching. After this many nested expansions of the same Named type,
+/// we assume coverage and stop exploring deeper.
+const RECURSIVE_TYPE_MAX_DEPTH: usize = 2;
 
 #[derive(Debug, Clone, PartialEq)]
 enum CoverPat {
@@ -54,8 +60,9 @@ impl TypeChecker {
             .map(|arm| vec![normalize_pattern(&arm.pattern)])
             .collect();
         let mut seen = HashSet::new();
+        let mut type_depth = HashMap::new();
         if let Some(witness_vec) =
-            self.find_uncovered_vector(std::slice::from_ref(subject_ty), &rows, &mut seen, 0)
+            self.find_uncovered_vector(std::slice::from_ref(subject_ty), &rows, &mut seen, 0, &mut type_depth)
         {
             let witness_msg = if let Some(first) = witness_vec.first() {
                 if is_catch_all_witness(first) {
@@ -78,6 +85,7 @@ impl TypeChecker {
         rows: &[Vec<CoverPat>],
         seen: &mut HashSet<String>,
         depth: usize,
+        type_depth: &mut HashMap<String, usize>,
     ) -> Option<Vec<CoverPat>> {
         if types.is_empty() {
             return if rows.is_empty() { Some(vec![]) } else { None };
@@ -96,6 +104,21 @@ impl TypeChecker {
         let head_ty = &types[0];
         let tail_tys = &types[1..];
 
+        // Track how deeply we've expanded each Named type to prevent
+        // exponential branching on recursive sum types.
+        let named_key = if let Type::Named(name) = head_ty {
+            let d = type_depth.entry(name.clone()).or_insert(0);
+            *d += 1;
+            if *d > RECURSIVE_TYPE_MAX_DEPTH {
+                *d -= 1;
+                seen.remove(&key);
+                return None; // assume covered at this depth
+            }
+            Some(name.clone())
+        } else {
+            None
+        };
+
         let out = if let Some(ctors) = self.constructors_for_type(head_ty) {
             let mut missing = None;
             for ctor in ctors {
@@ -104,7 +127,7 @@ impl TypeChecker {
                 sub_types.extend_from_slice(tail_tys);
 
                 if let Some(mut sub_witness) =
-                    self.find_uncovered_vector(&sub_types, &specialized, seen, depth + 1)
+                    self.find_uncovered_vector(&sub_types, &specialized, seen, depth + 1, type_depth)
                 {
                     let arg_count = ctor.arg_types.len();
                     let args = sub_witness.drain(..arg_count).collect::<Vec<_>>();
@@ -119,7 +142,7 @@ impl TypeChecker {
         } else {
             let default_rows = default_matrix(rows);
             if let Some(mut tail_witness) =
-                self.find_uncovered_vector(tail_tys, &default_rows, seen, depth + 1)
+                self.find_uncovered_vector(tail_tys, &default_rows, seen, depth + 1, type_depth)
             {
                 let mut full = vec![CoverPat::Wild];
                 full.append(&mut tail_witness);
@@ -128,6 +151,13 @@ impl TypeChecker {
                 None
             }
         };
+
+        // Restore Named type depth counter.
+        if let Some(name) = named_key {
+            if let Some(d) = type_depth.get_mut(&name) {
+                *d -= 1;
+            }
+        }
 
         // Only remove the key when a witness was found (Some).
         // When out is None (covered), keep the key in `seen` so sibling

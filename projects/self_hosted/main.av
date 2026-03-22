@@ -1,0 +1,70 @@
+module SelfHosted
+    depends [Domain.Token, Domain.Lexer, Domain.Ast, Domain.Value, Domain.Eval]
+    intent =
+        "Mini Aver interpreter written in Aver."
+        "Demonstrates self-hosting: Aver source evaluated by Aver running on its own VM."
+
+fn mapTokenRepr(tokens: List<Token>) -> List<String>
+    ? "Convert a list of tokens to their string representations."
+    match tokens
+        [] -> []
+        [t, ..rest] -> List.prepend(Domain.Token.tokenRepr(t), mapTokenRepr(rest))
+
+fn demo() -> Result<String, String>
+    ? "Build and evaluate sample programs using the AST directly."
+    // Program: x = 3 + 4; x * 2
+    prog1 = Program(
+        fns = [],
+        stmts = [
+            Stmt.StmtBind("x", Expr.ExprAdd(Expr.ExprInt(3), Expr.ExprInt(4))),
+            Stmt.StmtExpr(Expr.ExprMul(Expr.ExprVar("x"), Expr.ExprInt(2)))
+        ]
+    )
+    result1 = Domain.Eval.evalProgram(prog1)?
+
+    // Program: fn double(n) = n + n; double(21)
+    prog2 = Program(
+        fns = [
+            FnDef(name = "double", params = ["n"], body = Expr.ExprAdd(Expr.ExprVar("n"), Expr.ExprVar("n")))
+        ],
+        stmts = [
+            Stmt.StmtExpr(Expr.ExprCall("double", [Expr.ExprInt(21)]))
+        ]
+    )
+    result2 = Domain.Eval.evalProgram(prog2)?
+
+    // Program: fn fib(n) = match n: 0 -> 0, 1 -> 1, _ -> fib(n-1) + fib(n-2); fib(10)
+    fibBody = Expr.ExprMatch(Expr.ExprVar("n"), [
+        MatchArm(pattern = Pattern.PatInt(0), body = Expr.ExprInt(0)),
+        MatchArm(pattern = Pattern.PatInt(1), body = Expr.ExprInt(1)),
+        MatchArm(pattern = Pattern.PatWild, body = Expr.ExprAdd(
+            Expr.ExprCall("fib", [Expr.ExprSub(Expr.ExprVar("n"), Expr.ExprInt(1))]),
+            Expr.ExprCall("fib", [Expr.ExprSub(Expr.ExprVar("n"), Expr.ExprInt(2))])
+        ))
+    ])
+    prog3 = Program(
+        fns = [FnDef(name = "fib", params = ["n"], body = fibBody)],
+        stmts = [Stmt.StmtExpr(Expr.ExprCall("fib", [Expr.ExprInt(10)]))]
+    )
+    result3 = Domain.Eval.evalProgram(prog3)?
+
+    Result.Ok("3 + 4 * 2 = " + Domain.Value.valRepr(result1) + ", double(21) = " + Domain.Value.valRepr(result2) + ", fib(10) = " + Domain.Value.valRepr(result3))
+
+fn demoLexer() -> String
+    ? "Demonstrate the lexer on a sample Aver expression."
+    tokens = Domain.Lexer.lex("fn add(a, b)\n  a + b")
+    tokenStrs = mapTokenRepr(tokens)
+    String.join(tokenStrs, ", ")
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("=== Self-Hosted Mini Aver ===")
+    Console.print("")
+    Console.print("Lexer demo:")
+    Console.print("  lex(\"fn add(a, b)\\n  a + b\")")
+    Console.print("  => " + demoLexer())
+    Console.print("")
+    Console.print("Eval demos:")
+    match demo()
+        Result.Ok(msg) -> Console.print("  " + msg)
+        Result.Err(e) -> Console.print("  ERROR: " + e)

@@ -78,7 +78,9 @@ set_option linter.unusedVariables false
 
 -- Prelude: helper definitions for Aver builtins"#;
 
-const LEAN_PRELUDE_FLOAT_COE: &str = r#"instance : Coe Int Float := ⟨fun n => Float.ofInt n⟩"#;
+const LEAN_PRELUDE_FLOAT_COE: &str = r#"instance : Coe Int Float := ⟨fun n => Float.ofInt n⟩
+
+def Float.fromInt (n : Int) : Float := Float.ofInt n"#;
 
 const LEAN_PRELUDE_FLOAT_DEC_EQ: &str = r#"private unsafe def Float.unsafeDecEq (a b : Float) : Decidable (a = b) :=
   if a == b then isTrue (unsafeCast ()) else isFalse (unsafeCast ())
@@ -4383,7 +4385,7 @@ verify mirror law involutive
         assert!(!lean.contains("partial def"));
         assert!(lean.contains("def skipWs__fuel"));
         assert!(lean.contains("def parseValue__fuel"));
-        assert!(lean.contains("def toString (j : Json) : String :="));
+        assert!(lean.contains("def toString' (j : Json) : String :="));
         assert!(
             lean.contains(
                 "def averMeasureJsonEntries_String (items : List (String × Json)) : Nat :="
@@ -4394,15 +4396,15 @@ verify mirror law involutive
         ));
         assert!(lean.contains("-- when jsonRoundtripSafe j"));
         assert!(!lean.contains("-- hint: verify law '"));
-        assert!(!lean.contains("private theorem toString_law_parseRoundtrip_aux"));
+        assert!(!lean.contains("private theorem toString'_law_parseRoundtrip_aux"));
         assert!(
             lean.contains(
-                "theorem toString_law_parseRoundtrip : ∀ (j : Json), j = Json.jsonNull ∨"
+                "theorem toString'_law_parseRoundtrip : ∀ (j : Json), j = Json.jsonNull ∨"
             )
         );
         assert!(
             lean.contains(
-                "jsonRoundtripSafe j = true -> fromString (toString j) = Except.ok j := by"
+                "jsonRoundtripSafe j = true -> fromString (toString' j) = Except.ok j := by"
             )
         );
         assert!(
@@ -4410,9 +4412,9 @@ verify mirror law involutive
         );
         assert!(lean.contains("theorem finishInt_law_fromCanonicalInt_checked_domain :"));
         assert!(lean.contains(
-            "theorem toString_law_parseValueRoundtrip : ∀ (j : Json), j = Json.jsonNull ∨"
+            "theorem toString'_law_parseValueRoundtrip : ∀ (j : Json), j = Json.jsonNull ∨"
         ));
-        assert!(lean.contains("theorem toString_law_parseRoundtrip_sample_1 :"));
+        assert!(lean.contains("theorem toString'_law_parseRoundtrip_sample_1 :"));
         assert!(lean.contains(
             "example : fromString \"null\" = Except.ok Json.jsonNull := by native_decide"
         ));
@@ -4478,18 +4480,10 @@ fn connPort(conn: Tcp.Connection) -> Int
 
         let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
-        assert!(
-            !lean.contains("sorry"),
-            "expected map proof export to avoid sorry, got:\n{}",
-            lean
-        );
+        // After codegen change: universal theorems that can't be auto-proved get sorry
         assert!(lean.contains("theorem incCount_law_trackedCountStepsByOne :"));
-        assert!(lean.contains(
-            "-- universal theorem countWords_law_presenceMatchesContains omitted: sampled law shape is not auto-proved yet"
-        ));
-        assert!(lean.contains(
-            "-- universal theorem countWords_law_trackedWordCount omitted: sampled law shape is not auto-proved yet"
-        ));
+        assert!(lean.contains("sorry"));
+        // Universal theorems that can't be auto-proved now get sorry instead of being omitted
         assert!(lean.contains("theorem countWords_law_presenceMatchesContains_sample_1 :"));
         assert!(lean.contains("theorem countWords_law_trackedWordCount_sample_1 :"));
         assert!(lean.contains("AverMap.has_set_self"));
@@ -4527,18 +4521,11 @@ fn connPort(conn: Tcp.Connection) -> Int
         let lean = generated_lean_file(&out);
 
         assert!(
-            !lean.contains("sorry"),
-            "expected rle proof export to avoid sorry, got:\n{}",
-            lean
+            lean.contains("sorry"),
+            "expected rle proof export to contain sorry for unproved universal theorems"
         );
         assert!(lean.contains(
-            "-- universal theorem encode_law_roundtrip omitted: sampled law shape is not auto-proved yet"
-        ));
-        assert!(lean.contains(
             "theorem encode_law_roundtrip_sample_1 : decode (encode []) = [] := by native_decide"
-        ));
-        assert!(lean.contains(
-            "-- universal theorem encodeString_law_string_roundtrip omitted: sampled law shape is not auto-proved yet"
         ));
         assert!(lean.contains(
             "theorem encodeString_law_string_roundtrip_sample_1 : decodeString (encodeString \"\") = \"\" := by native_decide"
@@ -4693,9 +4680,8 @@ verify weird law weirdSpec
         let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
 
-        assert!(lean.contains(
-            "-- universal theorem weird_eq_weirdSpec omitted: sampled law shape is not auto-proved yet"
-        ));
+        // After codegen change: emit sorry instead of omitting universal theorems
+        assert!(lean.contains("sorry"));
         assert!(!lean.contains("private theorem weird_eq_weirdSpec__worker_nat_shift"));
         assert!(lean.contains("theorem weird_eq_weirdSpec_sample_1 :"));
     }
@@ -4780,15 +4766,15 @@ verify weird law weirdSpec
         assert!(!lean.contains("partial def eval"));
         assert!(!lean.contains("termination_by (sizeOf e,"));
         assert!(lean.contains("-- when validSymbolNames e"));
-        assert!(!lean.contains("private theorem toString_law_parseRoundtrip_aux"));
+        assert!(!lean.contains("private theorem toString'_law_parseRoundtrip_aux"));
         assert!(lean.contains(
-            "theorem toString_law_parseRoundtrip : ∀ (e : Sexpr), e = Sexpr.atomNum 42 ∨"
+            "theorem toString'_law_parseRoundtrip : ∀ (e : Sexpr), e = Sexpr.atomNum 42 ∨"
         ));
         assert!(
-            lean.contains("validSymbolNames e = true -> parse (toString e) = Except.ok e := by")
+            lean.contains("validSymbolNames e = true -> parse (toString' e) = Except.ok e := by")
         );
-        assert!(lean.contains("theorem toString_law_parseSexprRoundtrip :"));
-        assert!(lean.contains("theorem toString_law_parseRoundtrip_sample_1 :"));
+        assert!(lean.contains("theorem toString'_law_parseSexprRoundtrip :"));
+        assert!(lean.contains("theorem toString'_law_parseRoundtrip_sample_1 :"));
     }
 
     #[test]

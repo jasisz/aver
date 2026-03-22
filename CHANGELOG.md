@@ -6,6 +6,8 @@ All notable changes to Aver are documented here.
 
 ### Added
 - `vm_profile` release binary for VM opcode/function/builtin profiling on real Aver app workloads, including return-path stats for `thin` / `parent-thin` fast paths.
+- **Self-hosted mini interpreter** (`projects/self_hosted/`) — lexer, AST, evaluator, and pattern matcher for an Aver subset, written entirely in Aver. Demonstrates Aver executing Aver: tokenizes source, builds AST, evaluates expressions including recursive fibonacci. Runs on both interpreter and VM. 23 verify cases across 4 modules.
+- Lean proof export now emits universal theorems with `sorry` when auto-proof fails, instead of silently omitting them. This enables external proof assistants to attempt closing the gaps.
 
 ### Changed
 - VM `NanValue` now uses a real semantic `v2` layout instead of the previous incremental patchwork: `Immediate` only covers `false` / `true` / `Unit`, `Option.None` has its own singleton tag, `Option.Some` / `Result.Ok` / `Result.Err` have dedicated tags with inline-or-arena payloads selected by `bit45`, empty list/map values live under the normal `List` / `Map` tags, short strings stay inline inside `TAG_STRING`, and shared symbolic runtime handles (`Fn`, `Builtin`, `Namespace`, nullary variants) travel through one `Symbol` tag. Common wrapper payloads (`Bool`, `Unit`, `None`, and small inline `Int`) now stay fully inline, while larger or heap-backed payloads still fall back to boxed arena storage.
@@ -16,6 +18,8 @@ All notable changes to Aver are documented here.
 
 ### Fixed
 - `runtime_bench` now invalidates generated benchmark projects when the Aver binary or `aver-rt` manifest changes, so generated results no longer reuse stale toolchain-pinned outputs across runtime revisions.
+- Exhaustiveness checker no longer hangs on recursive sum types (e.g. `Expr` with `ExprAdd(Expr, Expr)`). Recursive Named types are now depth-limited to 2 expansions, preventing exponential branching while still catching real missing-pattern bugs.
+- Lean proof export: `toString` added to reserved-word list, preventing ambiguity with Lean 4's `ToString.toString` typeclass method. `Float.fromInt` alias added to prelude for Aver's `Float.fromInt` builtin.
 - VM `HttpServer.listen` / `listenWith` callbacks now compact `stable` against live VM roots after converting the handler result back to host values, so request-local response graphs do not accumulate in `stable` across requests.
 
 ## 0.6.0

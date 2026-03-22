@@ -406,6 +406,7 @@ const LEAN_RESERVED: &[&str] = &[
     "termination_by",
     "then",
     "theorem",
+    "toString",
     "where",
     "with",
 ];

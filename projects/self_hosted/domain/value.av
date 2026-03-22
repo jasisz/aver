@@ -1,0 +1,21 @@
+module Value
+    intent =
+        "Runtime values for the mini interpreter."
+    exposes [Val, valRepr]
+
+type Val
+    ValInt(Int)
+    ValStr(String)
+    ValUnit
+
+fn valRepr(v: Val) -> String
+    ? "Display representation of a runtime value."
+    match v
+        Val.ValInt(n) -> Int.toString(n)
+        Val.ValStr(s) -> s
+        Val.ValUnit -> "()"
+
+verify valRepr
+    valRepr(Val.ValInt(42)) => "42"
+    valRepr(Val.ValStr("hello")) => "hello"
+    valRepr(Val.ValUnit) => "()"

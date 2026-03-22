@@ -1,0 +1,179 @@
+module Eval
+    depends [Domain.Ast, Domain.Value]
+    intent =
+        "Tree-walking evaluator for the mini Aver AST."
+        "Evaluates expressions in an environment of bindings and function definitions."
+    exposes [evalProgram]
+
+fn checkVarMatch(k: String, v: Val, name: String, rest: List<(String, Val)>) -> Result<Val, String>
+    ? "Check if k matches name, otherwise continue lookup."
+    match k == name
+        true -> Result.Ok(v)
+        false -> lookupVar(rest, name)
+
+fn lookupVar(env: List<(String, Val)>, name: String) -> Result<Val, String>
+    ? "Look up a variable in the environment."
+    match env
+        [] -> Result.Err("undefined variable: " + name)
+        [pair, ..rest] -> match pair
+            (k, v) -> checkVarMatch(k, v, name, rest)
+
+fn lookupFn(fns: List<FnDef>, name: String) -> Result<FnDef, String>
+    ? "Look up a function definition by name."
+    match fns
+        [] -> Result.Err("undefined function: " + name)
+        [f, ..rest] -> match f.name == name
+            true -> Result.Ok(f)
+            false -> lookupFn(rest, name)
+
+fn zipArgs(params: List<String>, args: List<Val>) -> List<(String, Val)>
+    ? "Pair parameter names with argument values."
+    match params
+        [] -> []
+        [p, ..ps] -> match args
+            [] -> []
+            [a, ..as_] -> List.prepend((p, a), zipArgs(ps, as_))
+
+fn evalExpr(expr: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
+    ? "Evaluate an expression in the given environment."
+    match expr
+        Expr.ExprInt(n) -> Result.Ok(Val.ValInt(n))
+        Expr.ExprStr(s) -> Result.Ok(Val.ValStr(s))
+        Expr.ExprVar(name) -> lookupVar(env, name)
+        Expr.ExprAdd(a, b) -> evalBinop(a, b, env, fns, "add")
+        Expr.ExprSub(a, b) -> evalBinop(a, b, env, fns, "sub")
+        Expr.ExprMul(a, b) -> evalBinop(a, b, env, fns, "mul")
+        Expr.ExprCall(name, argExprs) -> evalCall(name, argExprs, env, fns)
+        Expr.ExprMatch(scrutinee, arms) -> evalMatchExpr(scrutinee, arms, env, fns)
+
+fn evalMatchExpr(scrutinee: Expr, arms: List<MatchArm>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
+    ? "Evaluate a match expression."
+    match evalExpr(scrutinee, env, fns)
+        Result.Ok(v) -> evalMatch(v, arms, env, fns)
+        Result.Err(e) -> Result.Err(e)
+
+fn applyBinop(x: Int, y: Int, op: String) -> Result<Val, String>
+    ? "Apply a binary operation to two integers."
+    match op
+        "add" -> Result.Ok(Val.ValInt(x + y))
+        "sub" -> Result.Ok(Val.ValInt(x - y))
+        "mul" -> Result.Ok(Val.ValInt(x * y))
+        _ -> Result.Err("unknown op: " + op)
+
+fn evalBinopVals(va: Val, vb: Val, op: String) -> Result<Val, String>
+    ? "Apply binary op to two evaluated values."
+    match (va, vb)
+        (Val.ValInt(x), Val.ValInt(y)) -> applyBinop(x, y, op)
+        _ -> Result.Err("binop requires ints")
+
+fn evalBinopRight(va: Val, b: Expr, env: List<(String, Val)>, fns: List<FnDef>, op: String) -> Result<Val, String>
+    ? "Evaluate right side of binop and apply."
+    match evalExpr(b, env, fns)
+        Result.Err(e) -> Result.Err(e)
+        Result.Ok(vb) -> evalBinopVals(va, vb, op)
+
+fn evalBinop(a: Expr, b: Expr, env: List<(String, Val)>, fns: List<FnDef>, op: String) -> Result<Val, String>
+    ? "Evaluate a binary operation on two expressions."
+    match evalExpr(a, env, fns)
+        Result.Err(e) -> Result.Err(e)
+        Result.Ok(va) -> evalBinopRight(va, b, env, fns, op)
+
+fn evalArgsRest(v: Val, rest: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<List<Val>, String>
+    ? "Evaluate remaining args and prepend v."
+    match evalArgs(rest, env, fns)
+        Result.Err(err) -> Result.Err(err)
+        Result.Ok(vs) -> Result.Ok(List.prepend(v, vs))
+
+fn evalArgs(exprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<List<Val>, String>
+    ? "Evaluate a list of argument expressions."
+    match exprs
+        [] -> Result.Ok([])
+        [e, ..rest] -> match evalExpr(e, env, fns)
+            Result.Err(err) -> Result.Err(err)
+            Result.Ok(v) -> evalArgsRest(v, rest, env, fns)
+
+fn callWithArgs(args: List<Val>, name: String, fns: List<FnDef>) -> Result<Val, String>
+    ? "Look up function and call it with args."
+    match lookupFn(fns, name)
+        Result.Err(e) -> Result.Err(e)
+        Result.Ok(fd) -> evalExpr(fd.body, zipArgs(fd.params, args), fns)
+
+fn evalCall(name: String, argExprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
+    ? "Evaluate a function call."
+    match evalArgs(argExprs, env, fns)
+        Result.Err(e) -> Result.Err(e)
+        Result.Ok(args) -> callWithArgs(args, name, fns)
+
+fn matchPattern(pat: Pattern, v: Val) -> Result<List<(String, Val)>, String>
+    ? "Try to match a value against a pattern. Returns bindings on success."
+    match pat
+        Pattern.PatWild -> Result.Ok([])
+        Pattern.PatInt(n) -> matchPatInt(n, v)
+        Pattern.PatVar(name) -> Result.Ok([(name, v)])
+
+verify matchPattern
+    matchPattern(Pattern.PatWild, Val.ValInt(42)) => Result.Ok([])
+    matchPattern(Pattern.PatInt(5), Val.ValInt(5)) => Result.Ok([])
+    matchPattern(Pattern.PatInt(5), Val.ValInt(6)) => Result.Err("no match")
+    matchPattern(Pattern.PatVar("x"), Val.ValInt(42)) => Result.Ok([("x", Val.ValInt(42))])
+
+fn matchPatInt(n: Int, v: Val) -> Result<List<(String, Val)>, String>
+    ? "Match a PatInt pattern against a value."
+    match v
+        Val.ValInt(m) -> match n == m
+            true -> Result.Ok([])
+            false -> Result.Err("no match")
+        _ -> Result.Err("no match")
+
+fn evalMatch(v: Val, arms: List<MatchArm>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
+    ? "Try each match arm until one matches."
+    match arms
+        [] -> Result.Err("no matching arm")
+        [arm, ..rest] -> tryArm(arm, v, rest, env, fns)
+
+fn tryArm(arm: MatchArm, v: Val, rest: List<MatchArm>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
+    ? "Try a single match arm, fall through to rest on failure."
+    match matchPattern(arm.pattern, v)
+        Result.Ok(bindings) -> evalExpr(arm.body, List.concat(bindings, env), fns)
+        Result.Err(_) -> evalMatch(v, rest, env, fns)
+
+fn evalStmtExpr(e: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<(Val, List<(String, Val)>), String>
+    ? "Evaluate a statement expression."
+    match evalExpr(e, env, fns)
+        Result.Ok(v) -> Result.Ok((v, env))
+        Result.Err(e) -> Result.Err(e)
+
+fn evalStmtBind(name: String, e: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<(Val, List<(String, Val)>), String>
+    ? "Evaluate a binding statement."
+    match evalExpr(e, env, fns)
+        Result.Ok(v) -> Result.Ok((v, List.prepend((name, v), env)))
+        Result.Err(e) -> Result.Err(e)
+
+fn evalStmt(stmt: Stmt, env: List<(String, Val)>, fns: List<FnDef>) -> Result<(Val, List<(String, Val)>), String>
+    ? "Evaluate a statement, returning the result and updated environment."
+    match stmt
+        Stmt.StmtExpr(e) -> evalStmtExpr(e, env, fns)
+        Stmt.StmtBind(name, e) -> evalStmtBind(name, e, env, fns)
+
+fn evalStmtsRest(v: Val, newEnv: List<(String, Val)>, rest: List<Stmt>, fns: List<FnDef>) -> Result<Val, String>
+    ? "Continue evaluating remaining statements."
+    match rest
+        [] -> Result.Ok(v)
+        _ -> evalStmts(rest, newEnv, fns)
+
+fn evalStmtsContinue(pair: (Val, List<(String, Val)>), rest: List<Stmt>, fns: List<FnDef>) -> Result<Val, String>
+    ? "Unpack stmt result and continue."
+    match pair
+        (v, newEnv) -> evalStmtsRest(v, newEnv, rest, fns)
+
+fn evalStmts(stmts: List<Stmt>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
+    ? "Evaluate a list of statements, threading the environment."
+    match stmts
+        [] -> Result.Ok(Val.ValUnit)
+        [s, ..rest] -> match evalStmt(s, env, fns)
+            Result.Err(e) -> Result.Err(e)
+            Result.Ok(pair) -> evalStmtsContinue(pair, rest, fns)
+
+fn evalProgram(prog: Program) -> Result<Val, String>
+    ? "Evaluate a complete program."
+    evalStmts(prog.stmts, [], prog.fns)

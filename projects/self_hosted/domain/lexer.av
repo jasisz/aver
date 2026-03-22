@@ -1,0 +1,190 @@
+module Lexer
+    depends [Domain.Token]
+    intent =
+        "Lexer for the mini Aver subset."
+        "Tokenizes source string into a list of tokens."
+    exposes [lex]
+
+fn isDigit(c: String) -> Bool
+    ? "Check if a single character is a digit."
+    match c
+        "0" -> true
+        "1" -> true
+        "2" -> true
+        "3" -> true
+        "4" -> true
+        "5" -> true
+        "6" -> true
+        "7" -> true
+        "8" -> true
+        "9" -> true
+        _ -> false
+
+verify isDigit
+    isDigit("0") => true
+    isDigit("9") => true
+    isDigit("a") => false
+
+fn isLower(c: String) -> Bool
+    ? "Check if a character is a lowercase letter."
+    match c >= "a"
+        true -> c <= "z"
+        false -> false
+
+fn isUpper(c: String) -> Bool
+    ? "Check if a character is an uppercase letter."
+    match c >= "A"
+        true -> c <= "Z"
+        false -> false
+
+fn isLetterOrUnderscore(c: String) -> Bool
+    ? "Check if a character is a letter or underscore."
+    match isLower(c)
+        true -> true
+        false -> match isUpper(c)
+            true -> true
+            false -> c == "_"
+
+fn isAlpha(c: String) -> Bool
+    ? "Check if a single character is a letter or underscore."
+    match String.len(c) == 1
+        true -> isLetterOrUnderscore(c)
+        false -> false
+
+verify isAlpha
+    isAlpha("a") => true
+    isAlpha("Z") => true
+    isAlpha("_") => true
+    isAlpha("0") => false
+
+fn isAlphaNum(c: String) -> Bool
+    ? "Check if a character is alphanumeric or underscore."
+    match isAlpha(c)
+        true -> true
+        false -> isDigit(c)
+
+fn digitVal(c: String) -> Int
+    ? "Convert a digit character to its integer value."
+    match c
+        "0" -> 0
+        "1" -> 1
+        "2" -> 2
+        "3" -> 3
+        "4" -> 4
+        "5" -> 5
+        "6" -> 6
+        "7" -> 7
+        "8" -> 8
+        "9" -> 9
+        _ -> 0
+
+verify digitVal
+    digitVal("0") => 0
+    digitVal("5") => 5
+    digitVal("9") => 9
+
+fn readNumberLoop(src: String, pos: Int, acc: Int) -> (Int, Int)
+    ? "Read consecutive digits from pos, return (number, newPos)."
+    match pos < String.len(src)
+        true -> match String.charAt(src, pos)
+            Option.Some(c) -> match isDigit(c)
+                true -> readNumberLoop(src, pos + 1, acc * 10 + digitVal(c))
+                false -> (acc, pos)
+            Option.None -> (acc, pos)
+        false -> (acc, pos)
+
+fn readNumber(src: String, pos: Int, acc: Int) -> (Int, Int)
+    ? "Read consecutive digits from pos, return (number, newPos)."
+    readNumberLoop(src, pos, acc)
+
+fn readIdentLoop(src: String, pos: Int, acc: String) -> (String, Int)
+    ? "Read consecutive alphanumeric characters from pos."
+    match pos < String.len(src)
+        true -> match String.charAt(src, pos)
+            Option.Some(c) -> match isAlphaNum(c)
+                true -> readIdentLoop(src, pos + 1, acc + c)
+                false -> (acc, pos)
+            Option.None -> (acc, pos)
+        false -> (acc, pos)
+
+fn readIdent(src: String, pos: Int, acc: String) -> (String, Int)
+    ? "Read consecutive alphanumeric characters from pos."
+    readIdentLoop(src, pos, acc)
+
+fn keywordOrIdent(s: String) -> Token
+    ? "Classify an identifier as keyword or plain ident."
+    match s
+        "fn" -> Token.TkFn
+        "match" -> Token.TkMatch
+        _ -> Token.TkIdent(s)
+
+fn tokenizeDigit(src: String, pos: Int) -> List<Token>
+    ? "Tokenize starting from a digit character."
+    match readNumber(src, pos, 0)
+        (n, newPos) -> List.prepend(Token.TkInt(n), tokenize(src, newPos))
+
+fn tokenizeAlpha(src: String, pos: Int) -> List<Token>
+    ? "Tokenize starting from an alpha character."
+    match readIdent(src, pos, "")
+        (word, newPos) -> List.prepend(keywordOrIdent(word), tokenize(src, newPos))
+
+fn isGreaterThan(c: String) -> Bool
+    ? "Check if a character is the greater-than sign."
+    c == ">"
+
+fn tokenizeMinus(src: String, pos: Int) -> List<Token>
+    ? "Tokenize a minus or arrow token."
+    match String.charAt(src, pos + 1)
+        Option.Some(c) -> match isGreaterThan(c)
+            true -> List.prepend(Token.TkArrow, tokenize(src, pos + 2))
+            false -> List.prepend(Token.TkMinus, tokenize(src, pos + 1))
+        Option.None -> List.prepend(Token.TkMinus, tokenize(src, pos + 1))
+
+fn tokenizeDefault(c: String, src: String, pos: Int) -> List<Token>
+    ? "Tokenize a character that is not a known single-char token."
+    match isDigit(c)
+        true -> tokenizeDigit(src, pos)
+        false -> match isAlpha(c)
+            true -> tokenizeAlpha(src, pos)
+            false -> tokenize(src, pos + 1)
+
+fn tokenizeChar(c: String, src: String, pos: Int) -> List<Token>
+    ? "Tokenize based on the current character."
+    match c
+        " " -> tokenize(src, pos + 1)
+        "\n" -> List.prepend(Token.TkNewline, tokenize(src, pos + 1))
+        "+" -> List.prepend(Token.TkPlus, tokenize(src, pos + 1))
+        "*" -> List.prepend(Token.TkStar, tokenize(src, pos + 1))
+        "(" -> List.prepend(Token.TkLParen, tokenize(src, pos + 1))
+        ")" -> List.prepend(Token.TkRParen, tokenize(src, pos + 1))
+        "," -> List.prepend(Token.TkComma, tokenize(src, pos + 1))
+        "=" -> List.prepend(Token.TkEq, tokenize(src, pos + 1))
+        "-" -> tokenizeMinus(src, pos)
+        _ -> tokenizeDefault(c, src, pos)
+
+fn tokenizeSome(c: String, src: String, pos: Int) -> List<Token>
+    ? "Tokenize when charAt returned Some."
+    tokenizeChar(c, src, pos)
+
+fn tokenizeAtPos(src: String, pos: Int) -> List<Token>
+    ? "Tokenize at given position after bounds check."
+    match String.charAt(src, pos)
+        Option.None -> [Token.TkEof]
+        Option.Some(c) -> tokenizeSome(c, src, pos)
+
+fn tokenize(src: String, pos: Int) -> List<Token>
+    ? "Tokenize source string starting from pos."
+    match pos >= String.len(src)
+        true -> [Token.TkEof]
+        false -> tokenizeAtPos(src, pos)
+
+fn lex(src: String) -> List<Token>
+    ? "Tokenize a complete source string."
+    tokenize(src, 0)
+
+verify lex
+    lex("42") => [Token.TkInt(42), Token.TkEof]
+    lex("a + b") => [Token.TkIdent("a"), Token.TkPlus, Token.TkIdent("b"), Token.TkEof]
+    lex("fn") => [Token.TkFn, Token.TkEof]
+    lex("match") => [Token.TkMatch, Token.TkEof]
+    lex("") => [Token.TkEof]

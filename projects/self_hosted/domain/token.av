@@ -1,0 +1,48 @@
+module Token
+    intent =
+        "Token types for the mini Aver lexer."
+        "Covers a subset: Int, identifiers, operators, parens, keywords."
+    exposes [Token, tokenRepr]
+
+type Token
+    TkInt(Int)
+    TkStr(String)
+    TkIdent(String)
+    TkPlus
+    TkMinus
+    TkStar
+    TkEq
+    TkLParen
+    TkRParen
+    TkComma
+    TkArrow
+    TkNewline
+    TkFn
+    TkMatch
+    TkEof
+
+fn tokenRepr(t: Token) -> String
+    ? "Debug representation of a token."
+    match t
+        Token.TkInt(n) -> "Int({n})"
+        Token.TkStr(s) -> "Str({s})"
+        Token.TkIdent(s) -> "Ident({s})"
+        Token.TkPlus -> "Plus"
+        Token.TkMinus -> "Minus"
+        Token.TkStar -> "Star"
+        Token.TkEq -> "Eq"
+        Token.TkLParen -> "LParen"
+        Token.TkRParen -> "RParen"
+        Token.TkComma -> "Comma"
+        Token.TkArrow -> "Arrow"
+        Token.TkNewline -> "Newline"
+        Token.TkFn -> "Fn"
+        Token.TkMatch -> "Match"
+        Token.TkEof -> "Eof"
+
+verify tokenRepr
+    tokenRepr(Token.TkInt(42)) => "Int(42)"
+    tokenRepr(Token.TkIdent("foo")) => "Ident(foo)"
+    tokenRepr(Token.TkPlus) => "Plus"
+    tokenRepr(Token.TkFn) => "Fn"
+    tokenRepr(Token.TkEof) => "Eof"
