@@ -202,6 +202,20 @@ pub const MATCH_FAIL: u8 = 0x77; // line:u16
 /// All offsets are relative to the end of the full instruction.
 pub const MATCH_DISPATCH: u8 = 0x7A;
 
+/// Like MATCH_DISPATCH but every entry carries an inline result instead
+/// of a jump offset.  When an entry matches, the result is pushed directly
+/// onto the stack and the match body is skipped entirely.
+///
+/// Encoding:
+///   MATCH_DISPATCH_CONST count:u8 default_offset:i16
+///     [(kind:u8, expected:u64, result:u64) × count]
+///
+/// Hit → pop subject, push result NanValue.
+/// Miss → pop subject, ip += default_offset (execute default arm body).
+///
+/// Emitted when ALL dispatchable arms have constant bodies (literals).
+pub const MATCH_DISPATCH_CONST: u8 = 0x7B;
+
 /// Tail-call self for thin frames: no arena finalization needed.
 /// The compiler emits this instead of TAIL_CALL_SELF when the function
 /// is known to be "thin" (no heap allocations within the frame).
@@ -268,6 +282,7 @@ pub fn opcode_name(op: u8) -> &'static str {
         EXTRACT_TUPLE_ITEM => "EXTRACT_TUPLE_ITEM",
         MATCH_FAIL => "MATCH_FAIL",
         MATCH_DISPATCH => "MATCH_DISPATCH",
+        MATCH_DISPATCH_CONST => "MATCH_DISPATCH_CONST",
         TAIL_CALL_SELF_THIN => "TAIL_CALL_SELF_THIN",
         _ => "UNKNOWN",
     }

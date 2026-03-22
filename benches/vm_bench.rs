@@ -48,11 +48,11 @@ fn countdown(n: Int) -> Int
         _ -> countdown(n - 1)
 
 fn main() -> Int
-    countdown(100000)
+    countdown(1000000)
 "#;
 
 fn bench_countdown(c: &mut Criterion) {
-    c.bench_function("vm countdown(100k) TCO", |b| {
+    c.bench_function("vm countdown(1M) TCO", |b| {
         b.iter(|| run_vm(COUNTDOWN_SRC));
     });
 }
@@ -72,11 +72,11 @@ fn sumFields(p: Point, n: Int) -> Int
         _ -> p.x + p.y + p.z + sumFields(p, n - 1)
 
 fn main() -> Int
-    sumFields(Point(x = 1, y = 2, z = 3), 10000)
+    sumFields(Point(x = 1, y = 2, z = 3), 100000)
 "#;
 
 fn bench_record_access(c: &mut Criterion) {
-    c.bench_function("vm record field access 10k", |b| {
+    c.bench_function("vm record field access 100k", |b| {
         b.iter(|| run_vm(RECORD_SRC));
     });
 }
@@ -108,11 +108,11 @@ fn sumAreas(n: Int, acc: Float, pick: Int) -> Float
         _ -> sumAreas(n - 1, acc + area(pickShape(pick)), pick)
 
 fn main() -> Float
-    sumAreas(10000, 0.0, 1) + sumAreas(10000, 0.0, 2) + sumAreas(10000, 0.0, 3)
+    sumAreas(100000, 0.0, 1) + sumAreas(100000, 0.0, 2) + sumAreas(100000, 0.0, 3)
 "#;
 
 fn bench_pattern_matching(c: &mut Criterion) {
-    c.bench_function("vm pattern match 10k variants", |b| {
+    c.bench_function("vm pattern match 100k variants", |b| {
         b.iter(|| run_vm(MATCH_SRC));
     });
 }
@@ -127,11 +127,11 @@ fn buildString(n: Int, acc: String) -> String
         _ -> buildString(n - 1, "{acc}-{Int.toString(n)}")
 
 fn main() -> String
-    buildString(1000, "start")
+    buildString(10000, "start")
 "#;
 
 fn bench_string_build(c: &mut Criterion) {
-    c.bench_function("vm string interpolation 1k", |b| {
+    c.bench_function("vm string interpolation 10k", |b| {
         b.iter(|| run_vm(STRING_SRC));
     });
 }

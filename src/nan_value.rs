@@ -820,6 +820,11 @@ impl NanValue {
         self.0
     }
 
+    #[inline]
+    pub fn from_bits(bits: u64) -> Self {
+        NanValue(bits)
+    }
+
     /// Content-based hash for use as map key. For inline values (int, float, bool),
     /// uses bits(). For arena-backed strings, hashes the string content so that
     /// two NanValues for the same string content produce the same key regardless

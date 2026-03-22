@@ -761,15 +761,15 @@ fn base_parent_thin_chunk(code_store: &CodeStore, chunk: &FnChunk) -> Result<boo
                 ip = advance_opcode_ip(chunk, ip, 5)?;
             }
 
-            MATCH_DISPATCH => {
-                // count:u8 + default_offset:i16 + count * (kind:u8 + expected:u64 + offset:i16)
+            MATCH_DISPATCH | MATCH_DISPATCH_CONST => {
                 if ip >= code.len() {
                     return Err(CompileError {
                         msg: format!("truncated MATCH_DISPATCH in {}", chunk.name),
                     });
                 }
                 let count = code[ip] as usize;
-                ip = advance_opcode_ip(chunk, ip, 3 + count * 11)?;
+                let entry_size = if op == MATCH_DISPATCH { 11 } else { 17 };
+                ip = advance_opcode_ip(chunk, ip, 3 + count * entry_size)?;
             }
 
             TAIL_CALL_SELF_THIN => {
@@ -860,12 +860,13 @@ fn parent_thin_calls_are_safe(
                 ip = advance_opcode_ip(chunk, ip, 5)?;
             }
 
-            MATCH_DISPATCH => {
+            MATCH_DISPATCH | MATCH_DISPATCH_CONST => {
                 if ip >= bytes.len() {
                     break;
                 }
                 let count = bytes[ip] as usize;
-                ip = advance_opcode_ip(chunk, ip, 3 + count * 11)?;
+                let entry_size = if op == MATCH_DISPATCH { 11 } else { 17 };
+                ip = advance_opcode_ip(chunk, ip, 3 + count * entry_size)?;
             }
 
             TAIL_CALL_SELF_THIN => {
@@ -937,14 +938,15 @@ fn classify_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
                 ip = advance_opcode_ip(chunk, ip, 5)?;
             }
 
-            MATCH_DISPATCH => {
+            MATCH_DISPATCH | MATCH_DISPATCH_CONST => {
                 if ip >= code.len() {
                     return Err(CompileError {
                         msg: format!("truncated MATCH_DISPATCH in {}", chunk.name),
                     });
                 }
                 let count = code[ip] as usize;
-                ip = advance_opcode_ip(chunk, ip, 3 + count * 11)?;
+                let entry_size = if op == MATCH_DISPATCH { 11 } else { 17 };
+                ip = advance_opcode_ip(chunk, ip, 3 + count * entry_size)?;
             }
 
             TAIL_CALL_SELF_THIN => {
@@ -1024,14 +1026,15 @@ fn classify_thin_ignoring_self_tco(chunk: &FnChunk) -> Result<bool, CompileError
                 ip = advance_opcode_ip(chunk, ip, 5)?;
             }
 
-            MATCH_DISPATCH => {
+            MATCH_DISPATCH | MATCH_DISPATCH_CONST => {
                 if ip >= code.len() {
                     return Err(CompileError {
                         msg: format!("truncated MATCH_DISPATCH in {}", chunk.name),
                     });
                 }
                 let count = code[ip] as usize;
-                ip = advance_opcode_ip(chunk, ip, 3 + count * 11)?;
+                let entry_size = if op == MATCH_DISPATCH { 11 } else { 17 };
+                ip = advance_opcode_ip(chunk, ip, 3 + count * entry_size)?;
             }
 
             _ => {
@@ -1070,10 +1073,11 @@ fn find_opcode_positions(chunk: &FnChunk, target_op: u8) -> Vec<usize> {
             CALL_KNOWN | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE | RECORD_NEW => 3,
             MATCH_VARIANT | RECORD_GET_NAMED => 4,
             CALL_BUILTIN | VARIANT_NEW => 5,
-            MATCH_DISPATCH => {
+            MATCH_DISPATCH | MATCH_DISPATCH_CONST => {
                 if ip < code.len() {
                     let count = code[ip] as usize;
-                    3 + count * 11
+                    let entry_size = if op == MATCH_DISPATCH { 11 } else { 17 };
+                    3 + count * entry_size
                 } else {
                     0
                 }
