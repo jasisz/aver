@@ -469,6 +469,26 @@ impl VM {
                     ip = 0;
                 }
 
+                TAIL_CALL_SELF_THIN => {
+                    let argc = read_u8!(code, ip) as usize;
+                    let args_start = self.stack.len() - argc;
+                    // Thin frame: no heap alloc, no arena work.
+                    // Just copy args in-place and reset ip.
+                    for i in 0..argc {
+                        self.stack[bp + i] = self.stack[args_start + i];
+                    }
+                    let lc = self.frames.last().unwrap().local_count as usize;
+                    for i in argc..lc {
+                        self.stack[bp + i] = NanValue::UNIT;
+                    }
+                    self.stack.truncate(bp + lc);
+                    if let Some(profile) = self.profile.as_mut() {
+                        let chunk = &self.code.functions[fn_id as usize];
+                        profile.record_function_entry(chunk, fn_id);
+                    }
+                    ip = 0;
+                }
+
                 TAIL_CALL_KNOWN => {
                     let target_fn_id = read_u16!(code, ip) as u32;
                     let argc = read_u8!(code, ip) as usize;
@@ -997,6 +1017,53 @@ impl VM {
                 MATCH_FAIL => {
                     let line = read_u16!(code, ip);
                     return Err(VmError::MatchFail(line));
+                }
+
+                MATCH_DISPATCH => {
+                    /// QNAN (14 bits) + tag (4 bits) = top 18 bits.
+                    const TAG_MASK_FULL: u64 = 0xFFFF_C000_0000_0000;
+
+                    let count = read_u8!(code, ip) as usize;
+                    let default_offset = read_i16!(code, ip);
+                    // Subject stays on the stack — each arm body is responsible
+                    // for popping it (with optional unwrap/bind beforehand).
+                    let bits = self.stack.last().ok_or(VmError::StackUnderflow)?.bits();
+
+                    let table_start = ip;
+                    // Each entry: kind:u8 + expected:u64 + offset:i16 = 11 bytes
+                    let table_end = ip + count * 11;
+
+                    let mut matched_offset: Option<i16> = None;
+                    let mut scan_ip = table_start;
+                    for _ in 0..count {
+                        let kind = code[scan_ip];
+                        let expected = u64::from_be_bytes([
+                            code[scan_ip + 1],
+                            code[scan_ip + 2],
+                            code[scan_ip + 3],
+                            code[scan_ip + 4],
+                            code[scan_ip + 5],
+                            code[scan_ip + 6],
+                            code[scan_ip + 7],
+                            code[scan_ip + 8],
+                        ]);
+                        let offset = i16::from_be_bytes([code[scan_ip + 9], code[scan_ip + 10]]);
+                        scan_ip += 11;
+
+                        let hit = match kind {
+                            0 => bits == expected,                   // exact match
+                            1 => (bits & TAG_MASK_FULL) == expected, // tag prefix
+                            _ => false,
+                        };
+                        if hit {
+                            matched_offset = Some(offset);
+                            break;
+                        }
+                    }
+
+                    ip = table_end;
+                    let jump = matched_offset.unwrap_or(default_offset);
+                    ip = (ip as isize + jump as isize) as usize;
                 }
 
                 _ => {

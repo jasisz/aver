@@ -61,9 +61,13 @@ impl TypeChecker {
             .collect();
         let mut seen = HashSet::new();
         let mut type_depth = HashMap::new();
-        if let Some(witness_vec) =
-            self.find_uncovered_vector(std::slice::from_ref(subject_ty), &rows, &mut seen, 0, &mut type_depth)
-        {
+        if let Some(witness_vec) = self.find_uncovered_vector(
+            std::slice::from_ref(subject_ty),
+            &rows,
+            &mut seen,
+            0,
+            &mut type_depth,
+        ) {
             let witness_msg = if let Some(first) = witness_vec.first() {
                 if is_catch_all_witness(first) {
                     "missing catch-all (_) pattern".to_string()
@@ -126,9 +130,13 @@ impl TypeChecker {
                 let mut sub_types = ctor.arg_types.clone();
                 sub_types.extend_from_slice(tail_tys);
 
-                if let Some(mut sub_witness) =
-                    self.find_uncovered_vector(&sub_types, &specialized, seen, depth + 1, type_depth)
-                {
+                if let Some(mut sub_witness) = self.find_uncovered_vector(
+                    &sub_types,
+                    &specialized,
+                    seen,
+                    depth + 1,
+                    type_depth,
+                ) {
                     let arg_count = ctor.arg_types.len();
                     let args = sub_witness.drain(..arg_count).collect::<Vec<_>>();
                     let head_pat = build_witness_head(&ctor, args);

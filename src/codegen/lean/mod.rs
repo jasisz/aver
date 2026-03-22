@@ -4402,11 +4402,9 @@ verify mirror law involutive
                 "theorem toString'_law_parseRoundtrip : ∀ (j : Json), j = Json.jsonNull ∨"
             )
         );
-        assert!(
-            lean.contains(
-                "jsonRoundtripSafe j = true -> fromString (toString' j) = Except.ok j := by"
-            )
-        );
+        assert!(lean.contains(
+            "jsonRoundtripSafe j = true -> fromString (toString' j) = Except.ok j := by"
+        ));
         assert!(
             lean.contains("theorem finishFloat_law_fromCanonicalFloat : ∀ (f : Float), f = 3.5 ∨")
         );

@@ -1,7 +1,23 @@
 use super::{CompileError, FnCompiler};
-use crate::ast::{Expr, MatchArm, Pattern};
+use crate::ast::{Expr, Literal, MatchArm, Pattern};
 use crate::nan_value::NanValue;
 use crate::vm::opcode::*;
+
+const QNAN: u64 = 0x7FFC_0000_0000_0000;
+const TAG_SHIFT: u32 = 46;
+const TAG_SOME: u64 = 4;
+const TAG_OK: u64 = 6;
+const TAG_ERR: u64 = 7;
+
+const DISPATCH_KIND_EXACT: u8 = 0;
+const DISPATCH_KIND_TAG: u8 = 1;
+
+/// Info about a pattern that can be dispatched via MATCH_DISPATCH.
+struct DispatchableArm {
+    kind: u8,      // DISPATCH_KIND_EXACT or DISPATCH_KIND_TAG
+    expected: u64, // bits to compare
+    arm_index: usize,
+}
 
 impl<'a> FnCompiler<'a> {
     fn compile_unwrap_pattern(&mut self, kind: u8, binding: Option<&String>) -> Vec<usize> {
@@ -62,6 +78,80 @@ impl<'a> FnCompiler<'a> {
         Ok(fail_patches)
     }
 
+    /// Try to classify a pattern for MATCH_DISPATCH.
+    fn classify_dispatchable(
+        &mut self,
+        pattern: &Pattern,
+        arm_index: usize,
+    ) -> Option<DispatchableArm> {
+        match pattern {
+            Pattern::Literal(lit) => {
+                let bits = match lit {
+                    Literal::Int(i) => NanValue::new_int(*i, self.arena).bits(),
+                    Literal::Float(f) => NanValue::new_float(*f).bits(),
+                    Literal::Bool(b) => NanValue::new_bool(*b).bits(),
+                    Literal::Unit => NanValue::UNIT.bits(),
+                    Literal::Str(s) => NanValue::new_string_value(s, self.arena).bits(),
+                };
+                Some(DispatchableArm {
+                    kind: DISPATCH_KIND_EXACT,
+                    expected: bits,
+                    arm_index,
+                })
+            }
+            Pattern::EmptyList => Some(DispatchableArm {
+                kind: DISPATCH_KIND_EXACT,
+                expected: NanValue::EMPTY_LIST.bits(),
+                arm_index,
+            }),
+            Pattern::Constructor(name, bindings) => match name.as_str() {
+                "Option.None" if bindings.is_empty() => Some(DispatchableArm {
+                    kind: DISPATCH_KIND_EXACT,
+                    expected: NanValue::NONE.bits(),
+                    arm_index,
+                }),
+                "Result.Ok" if bindings.len() <= 1 => Some(DispatchableArm {
+                    kind: DISPATCH_KIND_TAG,
+                    expected: QNAN | (TAG_OK << TAG_SHIFT),
+                    arm_index,
+                }),
+                "Result.Err" if bindings.len() <= 1 => Some(DispatchableArm {
+                    kind: DISPATCH_KIND_TAG,
+                    expected: QNAN | (TAG_ERR << TAG_SHIFT),
+                    arm_index,
+                }),
+                "Option.Some" if bindings.len() <= 1 => Some(DispatchableArm {
+                    kind: DISPATCH_KIND_TAG,
+                    expected: QNAN | (TAG_SOME << TAG_SHIFT),
+                    arm_index,
+                }),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Emit the arm-body prologue for a dispatched arm.
+    /// Subject is on TOS. For tag-match arms with bindings,
+    /// unwraps inner value and binds it. Then pops subject.
+    fn emit_dispatch_arm_prologue(&mut self, pattern: &Pattern) {
+        if let Pattern::Constructor(name, bindings) = pattern
+            && matches!(name.as_str(), "Result.Ok" | "Result.Err" | "Option.Some")
+            && !bindings.is_empty()
+        {
+            let kind = match name.as_str() {
+                "Result.Ok" => 0,
+                "Result.Err" => 1,
+                _ => 2,
+            };
+            // MATCH_UNWRAP replaces TOS with inner; offset 0 = no-op (already matched).
+            self.emit_op(MATCH_UNWRAP);
+            self.emit_u8(kind);
+            self.emit_i16(0);
+            self.dup_and_bind_top_to_local(&bindings[0]);
+        }
+    }
+
     pub(super) fn compile_match(
         &mut self,
         subject: &Expr,
@@ -80,6 +170,12 @@ impl<'a> FnCompiler<'a> {
             );
         }
 
+        // --- Try MATCH_DISPATCH optimization ---
+        if let Some(result) = self.try_compile_match_dispatch(subject, arms, line)? {
+            return Ok(result);
+        }
+
+        // --- Fallback: original linear match compilation ---
         self.compile_expr(subject)?;
 
         let mut end_jumps = Vec::new();
@@ -138,6 +234,118 @@ impl<'a> FnCompiler<'a> {
         }
 
         Ok(())
+    }
+
+    /// Try to compile a match as a MATCH_DISPATCH table.
+    /// Returns Some(()) if successful, None if the match doesn't qualify.
+    fn try_compile_match_dispatch(
+        &mut self,
+        subject: &Expr,
+        arms: &[MatchArm],
+        line: usize,
+    ) -> Result<Option<()>, CompileError> {
+        if arms.len() < 2 {
+            return Ok(None);
+        }
+
+        // Classify arms. Last arm may be wildcard/ident (default).
+        let has_default = matches!(
+            arms.last().map(|a| &a.pattern),
+            Some(Pattern::Wildcard | Pattern::Ident(_))
+        );
+        let dispatchable_end = if has_default {
+            arms.len() - 1
+        } else {
+            arms.len()
+        };
+
+        let mut entries = Vec::new();
+        for (i, arm) in arms[..dispatchable_end].iter().enumerate() {
+            if let Some(entry) = self.classify_dispatchable(&arm.pattern, i) {
+                entries.push(entry);
+            } else {
+                return Ok(None); // non-dispatchable arm found → bail
+            }
+        }
+
+        // Need at least 2 dispatchable arms to be worth it.
+        if entries.len() < 2 {
+            return Ok(None);
+        }
+
+        // Limit to 255 entries (count is u8).
+        if entries.len() > 255 {
+            return Ok(None);
+        }
+
+        // --- Emit MATCH_DISPATCH ---
+        self.compile_expr(subject)?;
+
+        self.emit_op(MATCH_DISPATCH);
+        self.emit_u8(entries.len() as u8);
+        let default_offset_patch = self.code.len();
+        self.emit_i16(0); // default_offset — patched later
+
+        // Emit table entries with placeholder offsets.
+        let mut entry_offset_patches = Vec::new();
+        for entry in &entries {
+            self.emit_u8(entry.kind);
+            self.emit_u64(entry.expected);
+            entry_offset_patches.push(self.code.len());
+            self.emit_i16(0); // offset — patched later
+        }
+
+        let table_end = self.offset(); // all offsets relative to here
+
+        // Emit arm bodies.
+        let mut end_jumps = Vec::new();
+
+        for (table_idx, entry) in entries.iter().enumerate() {
+            let arm = &arms[entry.arm_index];
+
+            // Patch this entry's offset to point here.
+            let arm_start = self.offset();
+            let rel = (arm_start as isize - table_end as isize) as i16;
+            let bytes = (rel as u16).to_be_bytes();
+            self.code[entry_offset_patches[table_idx]] = bytes[0];
+            self.code[entry_offset_patches[table_idx] + 1] = bytes[1];
+
+            // Prologue: unwrap/bind for tag-match arms.
+            self.emit_dispatch_arm_prologue(&arm.pattern);
+
+            // Pop subject, compile body.
+            self.emit_op(POP);
+            self.compile_expr(&arm.body)?;
+
+            end_jumps.push(self.emit_jump(JUMP));
+        }
+
+        // Default arm (wildcard/ident or MATCH_FAIL).
+        let default_start = self.offset();
+        let default_rel = (default_start as isize - table_end as isize) as i16;
+        let default_bytes = (default_rel as u16).to_be_bytes();
+        self.code[default_offset_patch] = default_bytes[0];
+        self.code[default_offset_patch + 1] = default_bytes[1];
+
+        if has_default {
+            let default_arm = arms.last().unwrap();
+            if let Pattern::Ident(name) = &default_arm.pattern {
+                self.dup_and_bind_top_to_local(name);
+            }
+            self.emit_op(POP);
+            self.compile_expr(&default_arm.body)?;
+        } else {
+            // No default — emit MATCH_FAIL.
+            self.emit_op(POP);
+            self.emit_op(MATCH_FAIL);
+            self.emit_u16(line as u16);
+        }
+
+        for patch in end_jumps {
+            self.patch_jump(patch);
+        }
+
+        Ok(Some(()))
     }
 
     fn try_match_list_get_arms<'b>(

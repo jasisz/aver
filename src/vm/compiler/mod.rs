@@ -595,17 +595,36 @@ fn classify_thin_functions(code: &mut CodeStore, arena: &Arena) -> Result<(), Co
     for ((chunk, thin), parent_thin) in code
         .functions
         .iter_mut()
-        .zip(thin_flags)
+        .zip(thin_flags.iter().copied())
         .zip(parent_thin_flags)
     {
         chunk.thin = thin;
         chunk.parent_thin = parent_thin;
     }
 
+    // Post-pass: upgrade TAIL_CALL_SELF → TAIL_CALL_SELF_THIN.
+    // A function qualifies if it would be thin *ignoring* TAIL_CALL_SELF
+    // (since TAIL_CALL_SELF_THIN skips arena finalization, making the fn truly thin).
+    let thin_ignoring_tco: Vec<bool> = code
+        .functions
+        .iter()
+        .map(classify_thin_ignoring_self_tco)
+        .collect::<Result<_, _>>()?;
+    for (fn_id, qualifies) in thin_ignoring_tco.iter().enumerate() {
+        if !qualifies {
+            continue;
+        }
+        for byte in &mut code.functions[fn_id].code {
+            if *byte == TAIL_CALL_SELF {
+                *byte = TAIL_CALL_SELF_THIN;
+            }
+        }
+    }
+
     Ok(())
 }
 
-const MAX_PARENT_THIN_CODE_LEN: usize = 48;
+const MAX_PARENT_THIN_CODE_LEN: usize = 80;
 const MAX_PARENT_THIN_LOCALS: u16 = 8;
 
 fn classify_parent_thin_chunks(
@@ -740,6 +759,21 @@ fn base_parent_thin_chunk(code_store: &CodeStore, chunk: &FnChunk) -> Result<boo
                 ip = advance_opcode_ip(chunk, ip, 5)?;
             }
 
+            MATCH_DISPATCH => {
+                // count:u8 + default_offset:i16 + count * (kind:u8 + expected:u64 + offset:i16)
+                if ip >= code.len() {
+                    return Err(CompileError {
+                        msg: format!("truncated MATCH_DISPATCH in {}", chunk.name),
+                    });
+                }
+                let count = code[ip] as usize;
+                ip = advance_opcode_ip(chunk, ip, 3 + count * 11)?;
+            }
+
+            TAIL_CALL_SELF_THIN => {
+                return Ok(false);
+            }
+
             _ => {
                 return Err(CompileError {
                     msg: format!(
@@ -824,6 +858,18 @@ fn parent_thin_calls_are_safe(
                 ip = advance_opcode_ip(chunk, ip, 5)?;
             }
 
+            MATCH_DISPATCH => {
+                if ip >= bytes.len() {
+                    break;
+                }
+                let count = bytes[ip] as usize;
+                ip = advance_opcode_ip(chunk, ip, 3 + count * 11)?;
+            }
+
+            TAIL_CALL_SELF_THIN => {
+                ip = advance_opcode_ip(chunk, ip, 1)?;
+            }
+
             _ => {}
         }
     }
@@ -889,6 +935,20 @@ fn classify_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
                 ip = advance_opcode_ip(chunk, ip, 5)?;
             }
 
+            MATCH_DISPATCH => {
+                if ip >= code.len() {
+                    return Err(CompileError {
+                        msg: format!("truncated MATCH_DISPATCH in {}", chunk.name),
+                    });
+                }
+                let count = code[ip] as usize;
+                ip = advance_opcode_ip(chunk, ip, 3 + count * 11)?;
+            }
+
+            TAIL_CALL_SELF_THIN => {
+                return Ok(false);
+            }
+
             _ => {
                 return Err(CompileError {
                     msg: format!(
@@ -902,6 +962,88 @@ fn classify_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
         }
     }
 
+    Ok(true)
+}
+
+/// Like classify_thin_chunk but treats TAIL_CALL_SELF as acceptable.
+/// Used to decide whether TAIL_CALL_SELF can be upgraded to TAIL_CALL_SELF_THIN.
+fn classify_thin_ignoring_self_tco(chunk: &FnChunk) -> Result<bool, CompileError> {
+    let code = &chunk.code;
+    let mut ip = 0usize;
+    while ip < code.len() {
+        let op = code[ip];
+        ip += 1;
+        match op {
+            // Same as classify_thin_chunk BUT without TAIL_CALL_SELF in reject list.
+            STORE_GLOBAL | TAIL_CALL_KNOWN | CONCAT | LIST_NIL | LIST_CONS | LIST_NEW
+            | RECORD_NEW | WRAP | TUPLE_NEW | RECORD_UPDATE | LIST_LEN | LIST_GET | LIST_APPEND
+            | LIST_PREPEND => {
+                return Ok(false);
+            }
+
+            POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
+            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | LIST_GET_MATCH => {}
+
+            // TAIL_CALL_SELF accepted — will become TAIL_CALL_SELF_THIN.
+            LOAD_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD
+            | EXTRACT_TUPLE_ITEM | TAIL_CALL_SELF => {
+                ip = advance_opcode_ip(chunk, ip, 1)?;
+            }
+
+            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL => {
+                ip = advance_opcode_ip(chunk, ip, 2)?;
+            }
+            RECORD_GET_NAMED => {
+                ip = advance_opcode_ip(chunk, ip, 4)?;
+            }
+            CALL_BUILTIN => {
+                ip = advance_opcode_ip(chunk, ip, 5)?;
+            }
+            CALL_KNOWN | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE => {
+                ip = advance_opcode_ip(chunk, ip, 3)?;
+            }
+            MATCH_VARIANT => {
+                ip = advance_opcode_ip(chunk, ip, 4)?;
+            }
+            MATCH_NIL | MATCH_CONS => {
+                ip = advance_opcode_ip(chunk, ip, 2)?;
+            }
+
+            VARIANT_NEW => {
+                if ip + 5 > code.len() {
+                    return Err(CompileError {
+                        msg: format!("truncated bytecode in {}", chunk.name),
+                    });
+                }
+                let field_count = code[ip + 4];
+                if field_count != 0 {
+                    return Ok(false);
+                }
+                ip = advance_opcode_ip(chunk, ip, 5)?;
+            }
+
+            MATCH_DISPATCH => {
+                if ip >= code.len() {
+                    return Err(CompileError {
+                        msg: format!("truncated MATCH_DISPATCH in {}", chunk.name),
+                    });
+                }
+                let count = code[ip] as usize;
+                ip = advance_opcode_ip(chunk, ip, 3 + count * 11)?;
+            }
+
+            _ => {
+                return Err(CompileError {
+                    msg: format!(
+                        "unknown opcode 0x{op:02X} in {} at ip={} (code={:?})",
+                        chunk.name,
+                        ip - 1,
+                        chunk.code
+                    ),
+                });
+            }
+        }
+    }
     Ok(true)
 }
 
@@ -1013,6 +1155,10 @@ impl<'a> FnCompiler<'a> {
         self.code.push(((val >> 16) & 0xFF) as u8);
         self.code.push(((val >> 8) & 0xFF) as u8);
         self.code.push((val & 0xFF) as u8);
+    }
+
+    fn emit_u64(&mut self, val: u64) {
+        self.code.extend_from_slice(&val.to_be_bytes());
     }
 
     fn add_constant(&mut self, val: NanValue) -> u16 {

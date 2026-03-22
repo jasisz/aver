@@ -187,6 +187,28 @@ pub const EXTRACT_TUPLE_ITEM: u8 = 0x79; // item_idx:u8
 /// Non-exhaustive match error at source line.
 pub const MATCH_FAIL: u8 = 0x77; // line:u16
 
+/// Unified prefix/exact dispatch on NanValue bits.
+///
+/// Encoding:
+///   MATCH_DISPATCH count:u8 default_offset:i16
+///     [(kind:u8, expected:u64, offset:i16) × count]
+///
+/// kind=0: exact match  — `val.bits() == expected`
+/// kind=1: tag match    — `(val.bits() & TAG_MASK_FULL) == expected`
+///   where TAG_MASK_FULL = 0xFFFF_C000_0000_0000 (QNAN 14 bits + tag 4 bits)
+///
+/// Pops subject. Scans entries in order; first match wins → ip += offset.
+/// No match → ip += default_offset.
+/// All offsets are relative to the end of the full instruction.
+pub const MATCH_DISPATCH: u8 = 0x7A;
+
+/// Tail-call self for thin frames: no arena finalization needed.
+/// The compiler emits this instead of TAIL_CALL_SELF when the function
+/// is known to be "thin" (no heap allocations within the frame).
+/// Skips finalize_frame_locals_for_tail_call entirely — just copies
+/// args in-place and resets ip.
+pub const TAIL_CALL_SELF_THIN: u8 = 0x45; // argc:u8
+
 /// Opcode name for debug/disassembly.
 pub fn opcode_name(op: u8) -> &'static str {
     match op {
@@ -245,6 +267,8 @@ pub fn opcode_name(op: u8) -> &'static str {
         MATCH_TUPLE => "MATCH_TUPLE",
         EXTRACT_TUPLE_ITEM => "EXTRACT_TUPLE_ITEM",
         MATCH_FAIL => "MATCH_FAIL",
+        MATCH_DISPATCH => "MATCH_DISPATCH",
+        TAIL_CALL_SELF_THIN => "TAIL_CALL_SELF_THIN",
         _ => "UNKNOWN",
     }
 }

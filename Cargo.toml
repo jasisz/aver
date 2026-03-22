@@ -53,3 +53,7 @@ harness = false
 [[bench]]
 name = "nan_value_bench"
 harness = false
+
+[[bench]]
+name = "vm_bench"
+harness = false
