@@ -214,14 +214,15 @@ impl VM {
                         self.stack.push(NanValue::UNIT);
                     }
 
+                    let yard_len = self.arena.yard_len() as u32;
                     self.frames.push(CallFrame {
                         fn_id: target_fn_id,
                         ip: 0,
                         bp: new_bp as u32,
                         local_count: target.local_count,
                         arena_mark: self.arena.young_len() as u32,
-                        yard_base: self.arena.yard_len() as u32,
-                        yard_mark: self.arena.yard_len() as u32,
+                        yard_base: yard_len,
+                        yard_mark: yard_len,
                         handoff_mark: self.arena.handoff_len() as u32,
                         globals_dirty: false,
                         yard_dirty: false,

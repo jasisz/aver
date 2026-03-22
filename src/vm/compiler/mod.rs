@@ -614,10 +614,12 @@ fn classify_thin_functions(code: &mut CodeStore, arena: &Arena) -> Result<(), Co
         if !qualifies {
             continue;
         }
-        for byte in &mut code.functions[fn_id].code {
-            if *byte == TAIL_CALL_SELF {
-                *byte = TAIL_CALL_SELF_THIN;
-            }
+        // Must walk opcodes properly (not byte-by-byte) to avoid
+        // rewriting data bytes that happen to equal TAIL_CALL_SELF.
+        let chunk = &code.functions[fn_id];
+        let positions: Vec<usize> = find_opcode_positions(chunk, TAIL_CALL_SELF);
+        for pos in positions {
+            code.functions[fn_id].code[pos] = TAIL_CALL_SELF_THIN;
         }
     }
 
@@ -1045,6 +1047,50 @@ fn classify_thin_ignoring_self_tco(chunk: &FnChunk) -> Result<bool, CompileError
         }
     }
     Ok(true)
+}
+
+/// Find byte positions of a specific opcode in a chunk, walking operands correctly.
+fn find_opcode_positions(chunk: &FnChunk, target_op: u8) -> Vec<usize> {
+    let code = &chunk.code;
+    let mut positions = Vec::new();
+    let mut ip = 0usize;
+    while ip < code.len() {
+        let op = code[ip];
+        if op == target_op {
+            positions.push(ip);
+        }
+        ip += 1;
+        // Skip operand bytes (same width table as classify_thin_chunk).
+        let width = match op {
+            LOAD_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD
+            | EXTRACT_TUPLE_ITEM | LIST_NEW | WRAP | TUPLE_NEW | TAIL_CALL_SELF
+            | TAIL_CALL_SELF_THIN => 1,
+            LOAD_CONST | LOAD_GLOBAL | STORE_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL
+            | MATCH_NIL | MATCH_CONS => 2,
+            CALL_KNOWN | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE | RECORD_NEW => 3,
+            MATCH_VARIANT | RECORD_GET_NAMED => 4,
+            CALL_BUILTIN | VARIANT_NEW => 5,
+            MATCH_DISPATCH => {
+                if ip < code.len() {
+                    let count = code[ip] as usize;
+                    3 + count * 11
+                } else {
+                    0
+                }
+            }
+            RECORD_UPDATE => {
+                if ip + 3 <= code.len() {
+                    let count = code[ip + 2] as usize;
+                    3 + count
+                } else {
+                    0
+                }
+            }
+            _ => 0, // POP, DUP, LOAD_UNIT/TRUE/FALSE, ADD, SUB, etc.
+        };
+        ip += width;
+    }
+    positions
 }
 
 fn advance_opcode_ip(chunk: &FnChunk, ip: usize, width: usize) -> Result<usize, CompileError> {

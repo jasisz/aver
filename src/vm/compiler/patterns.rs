@@ -152,6 +152,39 @@ impl<'a> FnCompiler<'a> {
         }
     }
 
+    /// Unconditionally extract bindings from a constructor pattern (last arm, exhaustive).
+    /// Subject is on TOS.  For Result.Ok/Err/Option.Some: unwrap inner + bind.
+    /// For user variants: extract fields + bind.
+    fn emit_constructor_bindings_unconditional(
+        &mut self,
+        name: &str,
+        bindings: &[String],
+    ) -> Result<(), CompileError> {
+        match name {
+            "Result.Ok" | "Result.Err" | "Option.Some" if !bindings.is_empty() => {
+                let kind = match name {
+                    "Result.Ok" => 0,
+                    "Result.Err" => 1,
+                    _ => 2,
+                };
+                self.emit_op(MATCH_UNWRAP);
+                self.emit_u8(kind);
+                self.emit_i16(0); // no-fail (we know it matches)
+                self.dup_and_bind_top_to_local(&bindings[0]);
+            }
+            "Option.None" => {} // no bindings to extract
+            _ => {
+                // User variant: extract fields unconditionally.
+                for (i, b) in bindings.iter().enumerate() {
+                    self.emit_op(EXTRACT_FIELD);
+                    self.emit_u8(i as u8);
+                    self.bind_top_to_local(b);
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn compile_match(
         &mut self,
         subject: &Expr,
@@ -179,32 +212,40 @@ impl<'a> FnCompiler<'a> {
         self.compile_expr(subject)?;
 
         let mut end_jumps = Vec::new();
-        let mut last_arm_fail_patches = Vec::new();
 
         for (i, arm) in arms.iter().enumerate() {
             let is_last = i == arms.len() - 1;
 
-            let fail_patches = match &arm.pattern {
-                Pattern::Wildcard => Vec::new(),
-                Pattern::Ident(name) => {
+            // Match is exhaustive — last arm always matches, skip pattern check.
+            let fail_patches = if is_last {
+                // Bind if needed (Ident pattern), otherwise treat as wildcard.
+                if let Pattern::Ident(name) = &arm.pattern {
+                    self.dup_and_bind_top_to_local(name);
+                } else if let Pattern::Constructor(name, bindings) = &arm.pattern {
+                    // Last arm constructor: bindings still need extracting.
+                    self.emit_constructor_bindings_unconditional(name, bindings)?;
+                } else if let Pattern::Cons(head, tail) = &arm.pattern {
                     self.emit_op(DUP);
-                    if let Some(&slot) = self.local_slots.get(name) {
-                        self.emit_op(STORE_LOCAL);
-                        self.emit_u8(slot as u8);
-                    } else {
-                        self.emit_op(POP);
-                    }
-                    Vec::new()
+                    self.emit_op(LIST_HEAD_TAIL);
+                    self.bind_top_to_local(head);
+                    self.bind_top_to_local(tail);
                 }
-                pat => self.compile_pattern(pat)?,
+                Vec::new()
+            } else {
+                match &arm.pattern {
+                    Pattern::Wildcard => Vec::new(),
+                    Pattern::Ident(name) => {
+                        self.dup_and_bind_top_to_local(name);
+                        Vec::new()
+                    }
+                    pat => self.compile_pattern(pat)?,
+                }
             };
 
             self.emit_op(POP);
             self.compile_expr(&arm.body)?;
 
-            if is_last {
-                last_arm_fail_patches = fail_patches;
-            } else {
+            if !is_last {
                 end_jumps.push(self.emit_jump(JUMP));
                 if !fail_patches.is_empty() {
                     let fail_cleanup = self.offset();
@@ -213,20 +254,6 @@ impl<'a> FnCompiler<'a> {
                     }
                 }
             }
-        }
-
-        let last_refutable = arms
-            .last()
-            .is_none_or(|a| !matches!(a.pattern, Pattern::Wildcard | Pattern::Ident(_)));
-        if last_refutable && !last_arm_fail_patches.is_empty() {
-            end_jumps.push(self.emit_jump(JUMP));
-            let fail_target = self.offset();
-            for patch in last_arm_fail_patches {
-                self.patch_jump_to(patch, fail_target);
-            }
-            self.emit_op(POP);
-            self.emit_op(MATCH_FAIL);
-            self.emit_u16(line as u16);
         }
 
         for patch in end_jumps {
@@ -242,7 +269,7 @@ impl<'a> FnCompiler<'a> {
         &mut self,
         subject: &Expr,
         arms: &[MatchArm],
-        line: usize,
+        _line: usize,
     ) -> Result<Option<()>, CompileError> {
         if arms.len() < 2 {
             return Ok(None);
@@ -335,10 +362,8 @@ impl<'a> FnCompiler<'a> {
             self.emit_op(POP);
             self.compile_expr(&default_arm.body)?;
         } else {
-            // No default — emit MATCH_FAIL.
-            self.emit_op(POP);
-            self.emit_op(MATCH_FAIL);
-            self.emit_u16(line as u16);
+            // Match is exhaustive by Aver's type system — no MATCH_FAIL needed.
+            // Default offset points here but is unreachable in correct programs.
         }
 
         for patch in end_jumps {
