@@ -152,6 +152,23 @@ impl<'a> FnCompiler<'a> {
         }
     }
 
+    /// Try to evaluate an expression to a compile-time constant NanValue.
+    fn try_const_expr(&mut self, expr: &Expr) -> Option<u64> {
+        match expr {
+            Expr::Literal(lit) => {
+                let nv = match lit {
+                    Literal::Int(i) => NanValue::new_int(*i, self.arena),
+                    Literal::Float(f) => NanValue::new_float(*f),
+                    Literal::Bool(b) => NanValue::new_bool(*b),
+                    Literal::Unit => NanValue::UNIT,
+                    Literal::Str(s) => NanValue::new_string_value(s, self.arena),
+                };
+                Some(nv.bits())
+            }
+            _ => None,
+        }
+    }
+
     /// Unconditionally extract bindings from a constructor pattern (last arm, exhaustive).
     /// Subject is on TOS.  For Result.Ok/Err/Option.Some: unwrap inner + bind.
     /// For user variants: extract fields + bind.
@@ -305,7 +322,18 @@ impl<'a> FnCompiler<'a> {
             return Ok(None);
         }
 
-        // --- Emit MATCH_DISPATCH ---
+        // --- Check if ALL dispatchable arms have const bodies (no bindings) ---
+        let all_const = entries.iter().all(|e| {
+            let arm = &arms[e.arm_index];
+            // Must be exact match (not tag prefix — those need unwrap/bind).
+            e.kind == DISPATCH_KIND_EXACT && self.try_const_expr(&arm.body).is_some()
+        });
+
+        if all_const {
+            return self.emit_match_dispatch_const(&entries, arms, subject, has_default);
+        }
+
+        // --- Emit MATCH_DISPATCH (jump-based) ---
         self.compile_expr(subject)?;
 
         self.emit_op(MATCH_DISPATCH);
@@ -347,7 +375,7 @@ impl<'a> FnCompiler<'a> {
             end_jumps.push(self.emit_jump(JUMP));
         }
 
-        // Default arm (wildcard/ident or MATCH_FAIL).
+        // Default arm (wildcard/ident or exhaustive fallthrough).
         let default_start = self.offset();
         let default_rel = (default_start as isize - table_end as isize) as i16;
         let default_bytes = (default_rel as u16).to_be_bytes();
@@ -363,10 +391,69 @@ impl<'a> FnCompiler<'a> {
             self.compile_expr(&default_arm.body)?;
         } else {
             // Match is exhaustive by Aver's type system — no MATCH_FAIL needed.
-            // Default offset points here but is unreachable in correct programs.
         }
 
         for patch in end_jumps {
+            self.patch_jump(patch);
+        }
+
+        Ok(Some(()))
+    }
+
+    /// Emit MATCH_DISPATCH_CONST — all dispatchable entries have inline const results.
+    fn emit_match_dispatch_const(
+        &mut self,
+        entries: &[DispatchableArm],
+        arms: &[MatchArm],
+        subject: &Expr,
+        has_default: bool,
+    ) -> Result<Option<()>, CompileError> {
+        self.compile_expr(subject)?;
+
+        self.emit_op(MATCH_DISPATCH_CONST);
+        self.emit_u8(entries.len() as u8);
+        let default_offset_patch = self.code.len();
+        self.emit_i16(0); // default_offset — patched later
+
+        // Emit table entries with inline results.
+        for entry in entries {
+            let arm = &arms[entry.arm_index];
+            let result_bits = self.try_const_expr(&arm.body).unwrap();
+            self.emit_u8(entry.kind);
+            self.emit_u64(entry.expected);
+            self.emit_u64(result_bits);
+        }
+
+        let table_end = self.offset();
+
+        // On hit: opcode pushes result and ip lands here.
+        // Emit a JUMP to skip past the default arm body.
+        let hit_skip_jump = if has_default {
+            Some(self.emit_jump(JUMP))
+        } else {
+            None
+        };
+
+        // Default arm starts here — patch offset so miss lands after the JUMP.
+        let default_start = self.offset();
+        let default_rel = (default_start as isize - table_end as isize) as i16;
+        let default_bytes = (default_rel as u16).to_be_bytes();
+        self.code[default_offset_patch] = default_bytes[0];
+        self.code[default_offset_patch + 1] = default_bytes[1];
+
+        if has_default {
+            // Default arm body — subject was popped by opcode on miss,
+            // then pushed back. Compile normally.
+            let default_arm = arms.last().unwrap();
+            if let Pattern::Ident(name) = &default_arm.pattern {
+                self.dup_and_bind_top_to_local(name);
+            }
+            self.emit_op(POP);
+            self.compile_expr(&default_arm.body)?;
+        }
+
+        // Patch the hit-skip JUMP to land here (after the default body).
+        if let Some(patch) = hit_skip_jump {
             self.patch_jump(patch);
         }
 

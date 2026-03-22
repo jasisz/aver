@@ -542,9 +542,14 @@ impl VM {
                 }
 
                 RETURN => {
-                    let result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let mut result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let frame = self.frames.pop().unwrap();
                     self.stack.truncate(frame.bp as usize);
+                    // Flatten deep lists before frame return to avoid stack
+                    // overflow during arena evacuation of Prepend/Concat chains.
+                    if !self.can_fast_return(&frame) {
+                        result = self.arena.flatten_deep_list(result);
+                    }
                     match self.complete_frame_return(frame, result, caller_depth) {
                         ReturnControl::Done(result) => return Ok(result),
                         ReturnControl::Resume {
@@ -1067,6 +1072,66 @@ impl VM {
                     ip = table_end;
                     let jump = matched_offset.unwrap_or(default_offset);
                     ip = (ip as isize + jump as isize) as usize;
+                }
+
+                MATCH_DISPATCH_CONST => {
+                    const TAG_MASK_FULL: u64 = 0xFFFF_C000_0000_0000;
+
+                    let count = read_u8!(code, ip) as usize;
+                    let default_offset = read_i16!(code, ip);
+                    let val = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let bits = val.bits();
+
+                    let table_start = ip;
+                    // Each entry: kind:u8 + expected:u64 + result:u64 = 17 bytes
+                    let table_end = ip + count * 17;
+
+                    let mut matched_result: Option<NanValue> = None;
+                    let mut scan_ip = table_start;
+                    for _ in 0..count {
+                        let kind = code[scan_ip];
+                        let expected = u64::from_be_bytes([
+                            code[scan_ip + 1],
+                            code[scan_ip + 2],
+                            code[scan_ip + 3],
+                            code[scan_ip + 4],
+                            code[scan_ip + 5],
+                            code[scan_ip + 6],
+                            code[scan_ip + 7],
+                            code[scan_ip + 8],
+                        ]);
+                        let result_bits = u64::from_be_bytes([
+                            code[scan_ip + 9],
+                            code[scan_ip + 10],
+                            code[scan_ip + 11],
+                            code[scan_ip + 12],
+                            code[scan_ip + 13],
+                            code[scan_ip + 14],
+                            code[scan_ip + 15],
+                            code[scan_ip + 16],
+                        ]);
+                        scan_ip += 17;
+
+                        let hit = match kind {
+                            0 => bits == expected,
+                            1 => (bits & TAG_MASK_FULL) == expected,
+                            _ => false,
+                        };
+                        if hit {
+                            matched_result = Some(NanValue::from_bits(result_bits));
+                            break;
+                        }
+                    }
+
+                    ip = table_end;
+                    if let Some(result) = matched_result {
+                        self.stack.push(result);
+                    } else {
+                        // No match — execute default arm body.
+                        // Push subject back (default body expects it on stack).
+                        self.stack.push(val);
+                        ip = (ip as isize + default_offset as isize) as usize;
+                    }
                 }
 
                 _ => {

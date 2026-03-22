@@ -257,6 +257,28 @@ impl Arena {
         }
     }
 
+    /// Flatten a deep list (Prepend/Concat chain) into a single Flat entry.
+    /// Returns the original value unchanged if not a deep list.
+    /// Uses the existing iterative `list_to_vec` — no recursion, no stack overflow.
+    pub fn flatten_deep_list(&mut self, value: NanValue) -> NanValue {
+        const FLATTEN_THRESHOLD: usize = 64;
+
+        if !value.is_list() || value.is_empty_list_immediate() {
+            return value;
+        }
+        let len = self.list_len_value(value);
+        if len <= FLATTEN_THRESHOLD {
+            return value;
+        }
+        let elements = self.list_to_vec_value(value);
+        let flat = ArenaList::Flat {
+            items: Rc::new(elements),
+            start: 0,
+        };
+        let index = self.push(ArenaEntry::List(flat));
+        NanValue::new_list(index)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn evacuate_local_root(
         &mut self,

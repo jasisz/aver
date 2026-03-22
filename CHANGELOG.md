@@ -15,12 +15,15 @@ All notable changes to Aver are documented here.
 - VM `parent-thin` classification now also allows audited heapless/cheap pure builtins such as `Bool.*`, scalar `Int.*` / `Float.*`, string predicate/length helpers, and `Map.get` / `Map.len` / `Map.has`, instead of rejecting every `CALL_BUILTIN`.
 - VM now interns compile-time-known names into one symbol table for VM execution: function refs travel as inline `Int(symbol_id)`, `CALL_BUILTIN` carries `symbol_id` instead of string-ish dispatch state, runtime effect checks compare interned effect ids instead of strings on the hot path, and nested module/type namespace paths such as `Domain.Types.TaskEvent.TaskCreated` resolve through the same symbol/member graph.
 - `aver context --json` now serializes through `serde` view structs instead of hand-built JSON strings, keeping the schema the same while simplifying escaping and output maintenance.
+- `fib(30)` reduced to `fib(25)` in `runtime_bench_cases` to avoid excessive benchmark time.
 
 ### Fixed
 - `runtime_bench` now invalidates generated benchmark projects when the Aver binary or `aver-rt` manifest changes, so generated results no longer reuse stale toolchain-pinned outputs across runtime revisions.
 - Exhaustiveness checker no longer hangs on recursive sum types (e.g. `Expr` with `ExprAdd(Expr, Expr)`). Recursive Named types are now depth-limited to 2 expansions, preventing exponential branching while still catching real missing-pattern bugs.
 - Lean proof export: `toString` added to reserved-word list, preventing ambiguity with Lean 4's `ToString.toString` typeclass method. `Float.fromInt` alias added to prelude for Aver's `Float.fromInt` builtin.
 - VM `HttpServer.listen` / `listenWith` callbacks now compact `stable` against live VM roots after converting the handler result back to host values, so request-local response graphs do not accumulate in `stable` across requests.
+- `MATCH_DISPATCH_CONST` lacked a `JUMP` past the default arm body after a table hit, causing the default arm to execute unconditionally — leading to infinite recursion and 81 GB memory usage on patterns like `fib(n)`.
+- Arena stack overflow on deep list promotion — `flatten_deep_list()` now materializes Prepend/Concat chains (>64 elements) to `Flat(Vec)` before frame-return evacuation, using the existing iterative `list_to_vec`.
 
 ## 0.6.0
 
