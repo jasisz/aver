@@ -181,8 +181,10 @@ impl VM {
                 CONCAT => {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let sa = self.value_repr(a);
-                    let sb = self.value_repr(b);
+                    // Use NanValue::repr directly — not value_repr which
+                    // misidentifies data Ints as VM symbol references.
+                    let sa = a.repr(&self.arena);
+                    let sb = b.repr(&self.arena);
                     self.stack.push(NanValue::new_string_value(
                         &format!("{}{}", sa, sb),
                         &mut self.arena,
