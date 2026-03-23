@@ -40,7 +40,7 @@ fn evalExpr(expr: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Va
         Expr.ExprInt(n) -> Result.Ok(Val.ValInt(n))
         Expr.ExprStr(s) -> Result.Ok(Val.ValStr(s))
         Expr.ExprBool(b) -> Result.Ok(Val.ValBool(b))
-        Expr.ExprVar(name) -> lookupVar(env, name)
+        Expr.ExprVar(name) -> evalVar(name, env)
         Expr.ExprAdd(a, b) -> evalBinop(a, b, env, fns, "add")
         Expr.ExprSub(a, b) -> evalBinop(a, b, env, fns, "sub")
         Expr.ExprMul(a, b) -> evalBinop(a, b, env, fns, "mul")
@@ -57,6 +57,12 @@ fn evalExpr(expr: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Va
         Expr.ExprCall(name, argExprs) -> evalCall(name, argExprs, env, fns)
         Expr.ExprMatch(scrutinee, arms) -> evalMatchExpr(scrutinee, arms, env, fns)
         Expr.ExprPropagate(inner) -> evalPropagate(inner, env, fns)
+
+fn evalVar(name: String, env: List<(String, Val)>) -> Result<Val, String>
+    ? "Look up variable, with special handling for Option.None."
+    match name
+        "Option.None" -> Result.Ok(Val.ValNone)
+        _ -> lookupVar(env, name)
 
 fn evalPropagate(inner: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate ? operator: unwrap Ok or propagate Err."
@@ -228,6 +234,10 @@ fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
         "String.join" -> builtinStringJoin(args)
         "Result.Ok" -> builtinResultOk(args)
         "Result.Err" -> builtinResultErr(args)
+        "Result.withDefault" -> builtinResultWithDefault(args)
+        "Option.Some" -> builtinOptionSome(args)
+        "Option.None" -> Result.Ok(Val.ValNone)
+        "Option.withDefault" -> builtinOptionWithDefault(args)
         _ -> Result.Err("undefined function: {name}")
 
 fn oneArg(args: List<Val>) -> Result<Val, String>
@@ -300,12 +310,12 @@ fn builtinListGet(args: List<Val>) -> Result<Val, String>
         (lstV, idxV) -> builtinListGetInner(lstV, idxV)
 
 fn builtinListGetInner(lstV: Val, idxV: Val) -> Result<Val, String>
-    ? "Inner impl of List.get."
+    ? "Inner impl of List.get. Returns Option (ValSome/ValNone)."
     items = expectList(lstV)?
     idx = expectInt(idxV)?
     match List.get(items, idx)
-        Option.Some(v) -> Result.Ok(v)
-        Option.None -> Result.Err("index out of bounds")
+        Option.Some(v) -> Result.Ok(Val.ValSome(v))
+        Option.None -> Result.Ok(Val.ValNone)
 
 fn builtinIntToString(args: List<Val>) -> Result<Val, String>
     ? "Int.toString(n) → string representation."
@@ -318,6 +328,29 @@ fn builtinIntAbs(args: List<Val>) -> Result<Val, String>
     v = oneArg(args)?
     n = expectInt(v)?
     Result.Ok(Val.ValInt(Int.abs(n)))
+
+fn builtinOptionSome(args: List<Val>) -> Result<Val, String>
+    ? "Option.Some(value) → wrapped Some value."
+    v = oneArg(args)?
+    Result.Ok(Val.ValSome(v))
+
+fn builtinOptionWithDefault(args: List<Val>) -> Result<Val, String>
+    ? "Option.withDefault(option, default) → unwrap Some or return default."
+    pair = twoArgs(args)?
+    match pair
+        (opt, def) -> match opt
+            Val.ValSome(inner) -> Result.Ok(inner)
+            Val.ValNone -> Result.Ok(def)
+            _ -> Result.Err("Option.withDefault requires Option value")
+
+fn builtinResultWithDefault(args: List<Val>) -> Result<Val, String>
+    ? "Result.withDefault(result, default) → unwrap Ok or return default."
+    pair = twoArgs(args)?
+    match pair
+        (res, def) -> match res
+            Val.ValOk(inner) -> Result.Ok(inner)
+            Val.ValErr(_) -> Result.Ok(def)
+            _ -> Result.Err("Result.withDefault requires Result value")
 
 fn builtinResultOk(args: List<Val>) -> Result<Val, String>
     ? "Result.Ok(value) → wrapped Ok value."
@@ -426,17 +459,29 @@ fn matchPatConstructor(ctorName: String, bindings: List<String>, v: Val) -> Resu
     match ctorName
         "Result.Ok" -> matchWrapperPat(v, "Ok", bindings)
         "Result.Err" -> matchWrapperPat(v, "Err", bindings)
+        "Option.Some" -> matchWrapperPat(v, "Some", bindings)
+        "Option.None" -> matchNonePat(v)
+        _ -> Result.Err("no match")
+
+fn matchNonePat(v: Val) -> Result<List<(String, Val)>, String>
+    ? "Match Option.None pattern."
+    match v
+        Val.ValNone -> Result.Ok([])
         _ -> Result.Err("no match")
 
 fn matchWrapperPat(v: Val, tag: String, bindings: List<String>) -> Result<List<(String, Val)>, String>
-    ? "Match Ok/Err wrapper and bind inner value."
-    match tag == "Ok"
-        true -> match v
+    ? "Match Ok/Err/Some wrapper and bind inner value."
+    match tag
+        "Ok" -> match v
             Val.ValOk(inner) -> zipBindings(bindings, [inner])
             _ -> Result.Err("no match")
-        false -> match v
+        "Err" -> match v
             Val.ValErr(inner) -> zipBindings(bindings, [inner])
             _ -> Result.Err("no match")
+        "Some" -> match v
+            Val.ValSome(inner) -> zipBindings(bindings, [inner])
+            _ -> Result.Err("no match")
+        _ -> Result.Err("no match")
 
 fn zipBindings(names: List<String>, vals: List<Val>) -> Result<List<(String, Val)>, String>
     ? "Pair binding names with values."

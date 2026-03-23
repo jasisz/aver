@@ -10,6 +10,8 @@ type Val
     ValList(List<Val>)
     ValOk(Val)
     ValErr(Val)
+    ValSome(Val)
+    ValNone
     ValRecord(String, List<(String, Val)>)
     ValUnit
 
@@ -30,6 +32,8 @@ fn valRepr(v: Val) -> String
         Val.ValList(items) -> valListRepr(items, "", true)
         Val.ValOk(inner) -> "Result.Ok({valRepr(inner)})"
         Val.ValErr(inner) -> "Result.Err({valRepr(inner)})"
+        Val.ValSome(inner) -> "Option.Some({valRepr(inner)})"
+        Val.ValNone -> "Option.None"
         Val.ValRecord(name, _) -> "{name}(...)"
         Val.ValUnit -> "()"
 

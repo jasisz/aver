@@ -98,3 +98,8 @@ verify run
     run("p = Point(x = 3, y = 4)\np.x + p.y") => Result.Ok(Val.ValInt(7))
     run("fn unwrap(r)\nmatch r\nResult.Ok(v) -> v\nResult.Err(e) -> -1\n\nunwrap(Result.Ok(42))") => Result.Ok(Val.ValInt(42))
     run("fn unwrap(r)\nmatch r\nResult.Ok(v) -> v\nResult.Err(e) -> -1\n\nunwrap(Result.Err(0))") => Result.Ok(Val.ValInt(-1))
+    run("Option.withDefault(Option.Some(42), 0)") => Result.Ok(Val.ValInt(42))
+    run("Option.withDefault(Option.None, 0)") => Result.Ok(Val.ValInt(0))
+    run("Option.withDefault(List.get([10, 20, 30], 1), -1)") => Result.Ok(Val.ValInt(20))
+    run("Option.withDefault(List.get([10], 5), -1)") => Result.Ok(Val.ValInt(-1))
+    run("fn safe_get(xs, i)\nmatch List.get(xs, i)\nOption.Some(v) -> v\nOption.None -> -1\n\nsafe_get([10, 20], 0)") => Result.Ok(Val.ValInt(10))
