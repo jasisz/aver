@@ -541,6 +541,7 @@ fn matchPattern(pat: Pattern, v: Val) -> Result<List<(String, Val)>, String>
         Pattern.PatWild -> Result.Ok([])
         Pattern.PatInt(n) -> matchPatInt(n, v)
         Pattern.PatBool(b) -> matchPatBool(b, v)
+        Pattern.PatStr(s) -> matchPatStr(s, v)
         Pattern.PatEmpty -> matchPatEmpty(v)
         Pattern.PatCons(h, t) -> matchPatCons(h, t, v)
         Pattern.PatConstructor(ctorName, bindings) -> matchPatConstructor(ctorName, bindings, v)
@@ -559,6 +560,14 @@ fn matchPatBool(b: Bool, v: Val) -> Result<List<(String, Val)>, String>
     ? "Match a PatBool pattern against a value."
     match v
         Val.ValBool(vb) -> match b == vb
+            true -> Result.Ok([])
+            false -> Result.Err("no match")
+        _ -> Result.Err("no match")
+
+fn matchPatStr(s: String, v: Val) -> Result<List<(String, Val)>, String>
+    ? "Match a string literal pattern."
+    match v
+        Val.ValStr(vs) -> match s == vs
             true -> Result.Ok([])
             false -> Result.Err("no match")
         _ -> Result.Err("no match")

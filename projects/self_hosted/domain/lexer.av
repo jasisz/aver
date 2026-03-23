@@ -256,9 +256,24 @@ fn tokenizeInterpPunct(src: String, pos: Int, c: String) -> List<Token>
         "(" -> List.prepend(Token.TkLParen, tokenizeInterpExpr(src, pos + 1))
         ")" -> List.prepend(Token.TkRParen, tokenizeInterpExpr(src, pos + 1))
         "+" -> List.prepend(Token.TkPlus, tokenizeInterpExpr(src, pos + 1))
+        "-" -> List.prepend(Token.TkMinus, tokenizeInterpExpr(src, pos + 1))
+        "*" -> List.prepend(Token.TkStar, tokenizeInterpExpr(src, pos + 1))
         "," -> List.prepend(Token.TkComma, tokenizeInterpExpr(src, pos + 1))
         "." -> List.prepend(Token.TkDot, tokenizeInterpExpr(src, pos + 1))
+        "[" -> List.prepend(Token.TkLBracket, tokenizeInterpExpr(src, pos + 1))
+        "]" -> List.prepend(Token.TkRBracket, tokenizeInterpExpr(src, pos + 1))
+        "\"" -> tokenizeInterpString(src, pos + 1, "")
         _ -> tokenizeInterpExpr(src, pos + 1)
+
+fn tokenizeInterpString(src: String, pos: Int, acc: String) -> List<Token>
+    ? "Read string literal inside interpolation braces."
+    match pos >= String.len(src)
+        true -> List.prepend(Token.TkStr(acc), tokenizeInterpExpr(src, pos))
+        false -> match String.charAt(src, pos)
+            Option.Some(c) -> match c == "\""
+                true -> List.prepend(Token.TkStr(acc), tokenizeInterpExpr(src, pos + 1))
+                false -> tokenizeInterpString(src, pos + 1, acc + c)
+            Option.None -> List.prepend(Token.TkStr(acc), tokenizeInterpExpr(src, pos))
 
 fn tokenizeInterpDigit(src: String, pos: Int) -> List<Token>
     ? "Read number inside interpolation."

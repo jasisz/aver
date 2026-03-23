@@ -36,6 +36,7 @@ fn parsePattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), String>
     t = tokenAt(tokens, pos)
     match t
         Token.TkInt(n) -> Result.Ok((Pattern.PatInt(n), pos + 1))
+        Token.TkStr(s) -> Result.Ok((Pattern.PatStr(s), pos + 1))
         Token.TkTrue -> Result.Ok((Pattern.PatBool(true), pos + 1))
         Token.TkFalse -> Result.Ok((Pattern.PatBool(false), pos + 1))
         Token.TkLBracket -> parseListPattern(tokens, pos + 1)
@@ -371,6 +372,7 @@ fn isArmStart(tokens: List<Token>, pos: Int) -> Bool
     t = tokenAt(tokens, pos)
     match t
         Token.TkInt(_) -> isArrow(tokens, pos + 1)
+        Token.TkStr(_) -> isArrow(tokens, pos + 1)
         Token.TkTrue -> isArrow(tokens, pos + 1)
         Token.TkFalse -> isArrow(tokens, pos + 1)
         Token.TkLBracket -> true
@@ -643,64 +645,35 @@ fn skipToNextLine(tokens: List<Token>, pos: Int) -> Int
         _ -> skipToNextLine(tokens, pos + 1)
 
 fn parseModuleHeader(tokens: List<Token>, pos: Int, fns: List<FnDef>, stmts: List<Stmt>) -> Result<Program, String>
-    ? "Parse module header, extracting depends list."
-    deps = extractDepends(tokens, pos)
-    match deps
-        (depList, endPos) -> parseProgram(tokens, endPos, depList, fns, stmts)
+    ? "Parse module header: find depends list, skip everything else."
+    endPos = skipBlock(tokens, pos)
+    depList = findDependsInRange(tokens, pos, endPos)
+    parseProgram(tokens, endPos, depList, fns, stmts)
 
-fn extractDepends(tokens: List<Token>, pos: Int) -> (List<String>, Int)
-    ? "Scan module header for depends [...] and extract module names."
-    extractDependsLoop(tokens, pos, [])
+fn findDependsInRange(tokens: List<Token>, pos: Int, endPos: Int) -> List<String>
+    ? "Scan token range for depends [...] and extract module names."
+    match pos >= endPos
+        true -> []
+        false -> match tokenAt(tokens, pos)
+            Token.TkIdent(kw) -> match kw == "depends"
+                true -> findDependsListAt(tokens, pos + 1, endPos)
+                false -> findDependsInRange(tokens, pos + 1, endPos)
+            _ -> findDependsInRange(tokens, pos + 1, endPos)
 
-fn extractDependsLoop(tokens: List<Token>, pos: Int, acc: List<String>) -> (List<String>, Int)
-    ? "Scan for depends keyword in module header."
+fn findDependsListAt(tokens: List<Token>, pos: Int, endPos: Int) -> List<String>
+    ? "Parse [Name, Name] after depends keyword."
     match tokenAt(tokens, pos)
-        Token.TkEof -> (acc, pos)
-        Token.TkFn -> (acc, pos)
-        Token.TkIdent(kw) -> extractDependsCheck(tokens, pos, acc, kw)
-        Token.TkNewline -> extractDependsCheckEnd(tokens, pos + 1, acc)
-        _ -> extractDependsLoop(tokens, pos + 1, acc)
+        Token.TkLBracket -> collectDependsNames(tokens, pos + 1, endPos, [])
+        _ -> []
 
-fn extractDependsCheckEnd(tokens: List<Token>, pos: Int, acc: List<String>) -> (List<String>, Int)
-    ? "After newline in module header: blank line or fn means end."
-    match tokenAt(tokens, pos)
-        Token.TkNewline -> (acc, pos)
-        Token.TkFn -> (acc, pos)
-        Token.TkEof -> (acc, pos)
-        Token.TkIdent(kw) -> match kw
-            "type" -> (acc, pos)
-            "record" -> (acc, pos)
-            "verify" -> (acc, pos)
-            "decision" -> (acc, pos)
-            _ -> extractDependsLoop(tokens, pos, acc)
-        _ -> extractDependsLoop(tokens, pos, acc)
-
-fn extractDependsCheck(tokens: List<Token>, pos: Int, acc: List<String>, kw: String) -> (List<String>, Int)
-    ? "Check if keyword is depends."
-    match kw
-        "depends" -> extractDependsList(tokens, pos + 1, acc)
-        _ -> extractDependsLoop(tokens, pos + 1, acc)
-
-fn extractDependsList(tokens: List<Token>, pos: Int, acc: List<String>) -> (List<String>, Int)
-    ? "Parse [Module.Name, Module.Name] after depends keyword."
-    match tokenAt(tokens, pos)
-        Token.TkLBracket -> extractDependsNames(tokens, pos + 1, acc)
-        _ -> extractDependsLoop(tokens, pos, acc)
-
-fn extractDependsNames(tokens: List<Token>, pos: Int, acc: List<String>) -> (List<String>, Int)
-    ? "Parse module names inside depends [...]."
-    match tokenAt(tokens, pos)
-        Token.TkRBracket -> extractDependsLoop(tokens, pos + 1, acc)
-        Token.TkIdent(name) -> extractDependsNamesTail(tokens, pos + 1, List.append(acc, name))
-        Token.TkComma -> extractDependsNames(tokens, pos + 1, acc)
-        _ -> extractDependsLoop(tokens, pos + 1, acc)
-
-fn extractDependsNamesTail(tokens: List<Token>, pos: Int, acc: List<String>) -> (List<String>, Int)
-    ? "After module name: comma or ]."
-    match tokenAt(tokens, pos)
-        Token.TkRBracket -> extractDependsLoop(tokens, pos + 1, acc)
-        Token.TkComma -> extractDependsNames(tokens, pos + 1, acc)
-        _ -> extractDependsNames(tokens, pos, acc)
+fn collectDependsNames(tokens: List<Token>, pos: Int, endPos: Int, acc: List<String>) -> List<String>
+    ? "Collect module names until ]."
+    match pos >= endPos
+        true -> acc
+        false -> match tokenAt(tokens, pos)
+            Token.TkRBracket -> acc
+            Token.TkIdent(name) -> collectDependsNames(tokens, pos + 1, endPos, List.append(acc, name))
+            _ -> collectDependsNames(tokens, pos + 1, endPos, acc)
 
 fn skipReturnType(tokens: List<Token>, pos: Int) -> Int
     ? "Skip optional -> ReturnType annotation."

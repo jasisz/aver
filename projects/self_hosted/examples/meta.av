@@ -1,0 +1,9 @@
+// Meta: self-hosted interpreter running a program
+// This is executed BY the self-hosted interpreter
+
+fn fib(n)
+match n < 2
+true -> n
+false -> fib(n - 1) + fib(n - 2)
+
+fib(10)
