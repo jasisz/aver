@@ -4,29 +4,31 @@ All notable changes to Aver are documented here.
 
 ## 0.6.1
 
-### Performance
-- **VM 25-54% faster** across all benchmarks. Interpreter-to-VM speed ratios improved from 5-7× to **7-13×**.
-- New VM opcodes for common patterns: `Option.withDefault`/`Result.withDefault` unwrapping, boolean branches, list access with default value, and fused load pairs.
-- Frameless calls for small leaf functions — no call frame overhead for pure helpers like `cellAt`, `evolve`, `cellChar`.
-- `match expr: true → A, false → B` now compiles to a single conditional branch. Also eliminates redundant `NOT` for `>=`, `<=`, `!=`.
+Highlights:
+- VM is 25–54% faster across benchmarks; interpreter-to-VM speed ratios improved from 5–7× to 7–13×.
+- Added `aver run --profile` for opcode/function-level VM profiling.
+- Fixed several VM correctness and memory issues, including match fallthrough, deep-list return overflow, and request-local stable-space retention.
 
 ### Added
-- `aver run --profile` — VM execution profile: opcode counts, function call stats, and opcode pair analysis.
-- Game of Life example (`examples/games/life.av`) — terminal visualization with FPS counter.
-- Self-hosted mini interpreter (`projects/self_hosted/`) — Aver executing Aver: lexer, AST, evaluator, pattern matcher. 23 verify cases.
-- Lean proof export emits universal theorems with `sorry` when auto-proof fails.
+- `aver run --profile` — VM execution profile with opcode counts, function stats, and opcode-pair analysis.
+- Game of Life example (`examples/games/life.av`) with terminal visualization and FPS counter.
+- Experimental self-hosted mini interpreter project in Aver (`projects/self_hosted/`).
 
 ### Changed
-- Improved VM internal value representation (NanValue v2): dedicated tags for Option/Result wrappers, inline small values, interned symbol table for faster dispatch.
-- `Terminal.size` returns a record with `width`/`height` fields (was tuple). **Requires aver-rt ≥ 0.3.1 for codegen.**
-- `aver context --json` uses serde serialization.
+- Added specialized VM handling for common unwrap/default, boolean branch, and fused-load patterns.
+- Added frameless calls for small leaf functions to reduce hot-path call overhead.
+- Bool `match` on `true/false` now compiles to a direct conditional branch.
+- Refined VM value layout to reduce wrapper overhead and speed up dispatch.
+- `Terminal.size` now returns a record with `width`/`height` fields instead of a tuple. Generated Rust requires `aver-rt >= 0.3.1`.
+- `aver context --json` now uses `serde` serialization.
+- Lean proof export now emits universal theorems with `sorry` when auto-proof fails.
 
 ### Fixed
-- Exhaustiveness checker hang on recursive sum types (e.g. `Expr` with `ExprAdd(Expr, Expr)`).
-- VM `MATCH_DISPATCH_CONST` fallthrough causing infinite recursion on patterns like `fib(n)`.
-- Arena stack overflow on deep list return (>64 element Prepend/Concat chains).
-- `HttpServer` callback memory leak — stable-space compaction after each request.
-- Lean export `toString` reserved-word conflict.
+- Exhaustiveness checker hang on recursive sum types.
+- `MATCH_DISPATCH_CONST` fallthrough causing infinite recursion in patterns like `fib(n)`.
+- Arena stack overflow on deep list returns.
+- `HttpServer` callback stable-space retention across requests.
+- Lean export reserved-word conflict for `toString`.
 
 ## 0.6.0
 
