@@ -955,6 +955,26 @@ impl VM {
                     }
                 }
 
+                UNWRAP_OR => {
+                    let default = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let option = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    if option.is_some() {
+                        self.stack.push(option.wrapper_inner(&self.arena));
+                    } else {
+                        self.stack.push(default);
+                    }
+                }
+
+                UNWRAP_RESULT_OR => {
+                    let default = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    if result.is_ok() {
+                        self.stack.push(result.wrapper_inner(&self.arena));
+                    } else {
+                        self.stack.push(default);
+                    }
+                }
+
                 MATCH_NIL => {
                     let offset = read_i16!(code, ip);
                     let top = *self.stack.last().ok_or(VmError::StackUnderflow)?;

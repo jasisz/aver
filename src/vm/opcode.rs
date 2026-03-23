@@ -223,6 +223,18 @@ pub const MATCH_DISPATCH_CONST: u8 = 0x7B;
 /// args in-place and resets ip.
 pub const TAIL_CALL_SELF_THIN: u8 = 0x45; // argc:u8
 
+/// Inline Option.withDefault: pop default, pop option → push inner or default.
+/// Stack: [option, default] → [result]
+/// If option is Some → push unwrapped inner value.
+/// If option is None → push default.
+pub const UNWRAP_OR: u8 = 0x7C;
+
+/// Inline Result.withDefault: pop default, pop result → push inner or default.
+/// Stack: [result, default] → [value]
+/// If result is Ok → push unwrapped inner value.
+/// If result is Err → push default.
+pub const UNWRAP_RESULT_OR: u8 = 0x7D;
+
 /// Opcode name for debug/disassembly.
 pub fn opcode_name(op: u8) -> &'static str {
     match op {
@@ -284,6 +296,8 @@ pub fn opcode_name(op: u8) -> &'static str {
         MATCH_DISPATCH => "MATCH_DISPATCH",
         MATCH_DISPATCH_CONST => "MATCH_DISPATCH_CONST",
         TAIL_CALL_SELF_THIN => "TAIL_CALL_SELF_THIN",
+        UNWRAP_OR => "UNWRAP_OR",
+        UNWRAP_RESULT_OR => "UNWRAP_RESULT_OR",
         _ => "UNKNOWN",
     }
 }

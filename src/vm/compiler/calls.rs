@@ -156,6 +156,8 @@ impl<'a> FnCompiler<'a> {
                     VmBuiltin::ListGet => self.emit_op(LIST_GET),
                     VmBuiltin::ListAppend => self.emit_op(LIST_APPEND),
                     VmBuiltin::ListPrepend => self.emit_op(LIST_PREPEND),
+                    VmBuiltin::OptionWithDefault => self.emit_op(UNWRAP_OR),
+                    VmBuiltin::ResultWithDefault => self.emit_op(UNWRAP_RESULT_OR),
                     _ => {
                         let symbol_id = self.symbols.intern_builtin(builtin);
                         self.emit_op(CALL_BUILTIN);

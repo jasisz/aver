@@ -711,7 +711,7 @@ fn base_parent_thin_chunk(code_store: &CodeStore, chunk: &FnChunk) -> Result<boo
 
             POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
             | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_LEN | LIST_GET_MATCH
-            | LIST_NIL => {}
+            | LIST_NIL | UNWRAP_OR | UNWRAP_RESULT_OR => {}
 
             LIST_NEW | WRAP | TUPLE_NEW | RECORD_NEW => {
                 return Ok(false);
@@ -894,7 +894,8 @@ fn classify_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
             }
 
             POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
-            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | LIST_GET_MATCH => {}
+            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | LIST_GET_MATCH
+            | UNWRAP_OR | UNWRAP_RESULT_OR => {}
 
             LOAD_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD
             | EXTRACT_TUPLE_ITEM => {
@@ -986,7 +987,8 @@ fn classify_thin_ignoring_self_tco(chunk: &FnChunk) -> Result<bool, CompileError
             }
 
             POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
-            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | LIST_GET_MATCH => {}
+            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | LIST_GET_MATCH
+            | UNWRAP_OR | UNWRAP_RESULT_OR => {}
 
             // TAIL_CALL_SELF accepted — will become TAIL_CALL_SELF_THIN.
             LOAD_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD

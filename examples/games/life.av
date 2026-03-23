@@ -1,0 +1,245 @@
+module Main
+    intent =
+        "Conway's Game of Life — real-time terminal visualization with FPS counter."
+        "Runs at unlimited speed (no frame limiter) to benchmark VM vs interpreter."
+        "aver run examples/games/life.av          — interpreter"
+        "aver run --vm examples/games/life.av     — VM"
+    depends []
+
+record FpsState
+    frames: Int
+    lastMs: Int
+    display: Int
+
+// ─── Helpers ────────────────────────────────────────────────
+
+fn minInt(a: Int, b: Int) -> Int
+    match a < b
+        true -> a
+        false -> b
+
+// ─── Grid (pure) ────────────────────────────────────────────
+
+fn makeGrid(n: Int, acc: List<Int>) -> List<Int>
+    ? "Create a grid of n dead cells."
+    match n == 0
+        true -> acc
+        false -> makeGrid(n - 1, List.prepend(0, acc))
+
+fn setCell(grid: List<Int>, target: Int, idx: Int, acc: List<Int>) -> List<Int>
+    ? "Copy grid, flipping cell at target index to alive."
+    match grid
+        [] -> List.reverse(acc)
+        [h, ..t] -> match idx == target
+            true -> setCell(t, target, idx + 1, List.prepend(1, acc))
+            false -> setCell(t, target, idx + 1, List.prepend(h, acc))
+
+fn place(grid: List<Int>, w: Int, x: Int, y: Int) -> List<Int>
+    ? "Set cell (x,y) to alive."
+    setCell(grid, y * w + x, 0, [])
+
+fn cellAt(grid: List<Int>, w: Int, h: Int, x: Int, y: Int) -> Int
+    ? "Cell value; 0 for dead or out of bounds."
+    match x < 0
+        true -> 0
+        false -> match x >= w
+            true -> 0
+            false -> match y < 0
+                true -> 0
+                false -> match y >= h
+                    true -> 0
+                    false -> Option.withDefault(List.get(grid, y * w + x), 0)
+
+fn neighbors(grid: List<Int>, w: Int, h: Int, x: Int, y: Int) -> Int
+    ? "Count the 8 neighbors of (x,y)."
+    cellAt(grid, w, h, x - 1, y - 1) + cellAt(grid, w, h, x, y - 1) + cellAt(grid, w, h, x + 1, y - 1) + cellAt(grid, w, h, x - 1, y) + cellAt(grid, w, h, x + 1, y) + cellAt(grid, w, h, x - 1, y + 1) + cellAt(grid, w, h, x, y + 1) + cellAt(grid, w, h, x + 1, y + 1)
+
+fn evolve(alive: Int, n: Int) -> Int
+    ? "Conway rules: survive with 2-3, born with exactly 3."
+    match alive == 1
+        true -> match n == 2
+            true -> 1
+            false -> match n == 3
+                true -> 1
+                false -> 0
+        false -> match n == 3
+            true -> 1
+            false -> 0
+
+fn stepLoop(old: List<Int>, w: Int, h: Int, size: Int, idx: Int, acc: List<Int>) -> List<Int>
+    ? "Build next generation cell by cell."
+    match idx == size
+        true -> List.reverse(acc)
+        false -> stepOne(old, w, h, size, idx, acc)
+
+fn stepOne(old: List<Int>, w: Int, h: Int, size: Int, idx: Int, acc: List<Int>) -> List<Int>
+    x = Result.withDefault(Int.mod(idx, w), 0)
+    y = idx / w
+    alive = Option.withDefault(List.get(old, idx), 0)
+    n = neighbors(old, w, h, x, y)
+    stepLoop(old, w, h, size, idx + 1, List.prepend(evolve(alive, n), acc))
+
+fn step(grid: List<Int>, w: Int, h: Int) -> List<Int>
+    ? "Compute the next generation."
+    stepLoop(grid, w, h, w * h, 0, [])
+
+// ─── Seed patterns ──────────────────────────────────────────
+
+fn placeRPentomino(grid: List<Int>, w: Int, cx: Int, cy: Int) -> List<Int>
+    ? "R-pentomino: a classic long-lived methuselah."
+    g1 = place(grid, w, cx + 1, cy)
+    g2 = place(g1, w, cx + 2, cy)
+    g3 = place(g2, w, cx, cy + 1)
+    g4 = place(g3, w, cx + 1, cy + 1)
+    place(g4, w, cx + 1, cy + 2)
+
+fn placeGlider(grid: List<Int>, w: Int, cx: Int, cy: Int) -> List<Int>
+    ? "Glider: moves diagonally forever."
+    g1 = place(grid, w, cx + 1, cy)
+    g2 = place(g1, w, cx + 2, cy + 1)
+    g3 = place(g2, w, cx, cy + 2)
+    g4 = place(g3, w, cx + 1, cy + 2)
+    place(g4, w, cx + 2, cy + 2)
+
+fn seed(w: Int, h: Int) -> List<Int>
+    ? "Initial grid: R-pentomino at center, gliders in corners."
+    empty = makeGrid(w * h, [])
+    g1 = placeRPentomino(empty, w, w / 2 - 1, h / 2 - 1)
+    g2 = placeGlider(g1, w, 2, 2)
+    g3 = placeGlider(g2, w, w - 6, 2)
+    placeGlider(g3, w, 2, h - 5)
+
+// ─── Rendering ──────────────────────────────────────────────
+
+fn cellChar(v: Int) -> String
+    match v == 1
+        true -> "█"
+        false -> " "
+
+fn buildRow(grid: List<Int>, w: Int, y: Int, x: Int, acc: String) -> String
+    ? "Build one row as a string."
+    match x == w
+        true -> acc
+        false -> buildRow(grid, w, y, x + 1, acc + cellChar(Option.withDefault(List.get(grid, y * w + x), 0)))
+
+fn drawRows(grid: List<Int>, w: Int, h: Int, y: Int) -> Unit
+    ? "Render grid rows to terminal."
+    ! [Terminal.moveTo, Terminal.print]
+    match y == h
+        true -> Terminal.print("")
+        false -> drawOneRow(grid, w, h, y)
+
+fn drawOneRow(grid: List<Int>, w: Int, h: Int, y: Int) -> Unit
+    ! [Terminal.moveTo, Terminal.print]
+    Terminal.moveTo(0, y + 1)
+    Terminal.print(buildRow(grid, w, y, 0, ""))
+    drawRows(grid, w, h, y + 1)
+
+fn drawHud(fps: Int, gen: Int) -> Unit
+    ? "Status bar at top of screen."
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor, Terminal.resetColor]
+    Terminal.moveTo(0, 0)
+    Terminal.setColor("green")
+    Terminal.print("  FPS: {Int.toString(fps)}  Gen: {Int.toString(gen)}  [q]uit [r]estart          ")
+    Terminal.resetColor()
+
+// ─── FPS tracking ───────────────────────────────────────────
+
+fn tickFps(state: FpsState, nowMs: Int) -> FpsState
+    ? "Recalculate FPS each second."
+    elapsed = nowMs - state.lastMs
+    match elapsed >= 1000
+        true -> FpsState(frames = 1, lastMs = nowMs, display = state.frames * 1000 / elapsed)
+        false -> FpsState(frames = state.frames + 1, lastMs = state.lastMs, display = state.display)
+
+// ─── Game loop ──────────────────────────────────────────────
+
+fn gameLoop(grid: List<Int>, w: Int, h: Int, fps: FpsState, gen: Int) -> Result<String, String>
+    ? "Render, step, check input, repeat."
+    ! [
+        Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
+        Time.unixMs,
+    ]
+    drawRows(grid, w, h, 0)
+    drawHud(fps.display, gen)
+    Terminal.flush()
+    now = Time.unixMs()
+    newFps = tickFps(fps, now)
+    nextGrid = step(grid, w, h)
+    key = Terminal.readKey()
+    onKey(key, nextGrid, w, h, newFps, gen + 1)
+
+fn onKey(key: Option<String>, grid: List<Int>, w: Int, h: Int, fps: FpsState, gen: Int) -> Result<String, String>
+    ? "Dispatch keyboard input."
+    ! [
+        Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
+        Time.unixMs,
+    ]
+    match key
+        Option.Some(k) -> onKeyChar(k, grid, w, h, fps, gen)
+        Option.None -> gameLoop(grid, w, h, fps, gen)
+
+fn onKeyChar(k: String, grid: List<Int>, w: Int, h: Int, fps: FpsState, gen: Int) -> Result<String, String>
+    ? "Handle a specific key press."
+    ! [
+        Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
+        Time.unixMs,
+    ]
+    match k == "q"
+        true -> Result.Ok("Stopped at generation {Int.toString(gen)}.")
+        false -> match k == "r"
+            true -> gameLoop(seed(w, h), w, h, fps, 0)
+            false -> gameLoop(grid, w, h, fps, gen)
+
+// ─── Entry ──────────────────────────────────────────────────
+
+fn run() -> Result<String, String>
+    ? "Setup terminal, run game loop, teardown."
+    ! [
+        Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode,
+        Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print,
+        Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size,
+        Time.unixMs,
+    ]
+    Terminal.enableRawMode()
+    Terminal.hideCursor()
+    Terminal.clear()
+    size = Terminal.size()
+    w = minInt(size.width, 80)
+    h = minInt(size.height - 2, 40)
+    now = Time.unixMs()
+    grid = seed(w, h)
+    result = gameLoop(grid, w, h, FpsState(frames = 0, lastMs = now, display = 0), 0)
+    Terminal.showCursor()
+    Terminal.disableRawMode()
+    Terminal.clear()
+    result
+
+fn main()
+    ? "Conway's Game of Life with FPS counter."
+    ! [
+        Console.print,
+        Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode,
+        Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print,
+        Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size,
+        Time.unixMs,
+    ]
+    match run()
+        Result.Ok(msg) -> Console.print(msg)
+        Result.Err(err) -> Console.print("Error: {err}")
+
+// ─── Verify ─────────────────────────────────────────────────
+
+verify evolve
+    evolve(1, 1) => 0
+    evolve(1, 2) => 1
+    evolve(1, 3) => 1
+    evolve(1, 4) => 0
+    evolve(0, 2) => 0
+    evolve(0, 3) => 1
+
+verify cellAt
+    cellAt([1, 0, 0, 1], 2, 2, 0, 0) => 1
+    cellAt([1, 0, 0, 1], 2, 2, 1, 1) => 1
+    cellAt([1, 0, 0, 1], 2, 2, 0 - 1, 0) => 0
+    cellAt([1, 0, 0, 1], 2, 2, 5, 0) => 0
