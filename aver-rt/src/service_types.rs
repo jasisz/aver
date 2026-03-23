@@ -1,6 +1,26 @@
 use crate::{AverDisplay, AverList};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct TerminalSize {
+    pub width: i64,
+    pub height: i64,
+}
+
+impl AverDisplay for TerminalSize {
+    fn aver_display(&self) -> String {
+        format!(
+            "Terminal.Size(width: {}, height: {})",
+            self.width.aver_display_inner(),
+            self.height.aver_display_inner()
+        )
+    }
+
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct Header {
     pub name: String,
     pub value: String,

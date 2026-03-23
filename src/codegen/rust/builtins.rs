@@ -641,7 +641,7 @@ fn emit_builtin_call_inner(
         "Terminal.resetColor" => Some("aver_rt::terminal_reset_color().unwrap()".to_string()),
         "Terminal.readKey" => Some("aver_rt::terminal_read_key()".to_string()),
         "Terminal.size" => {
-            Some("{ let (w, h) = aver_rt::terminal_size().unwrap(); (w, h) }".to_string())
+            Some("{ let (w, h) = aver_rt::terminal_size().unwrap(); aver_rt::TerminalSize { width: w, height: h } }".to_string())
         }
         "Terminal.hideCursor" => Some("aver_rt::terminal_hide_cursor().unwrap()".to_string()),
         "Terminal.showCursor" => Some("aver_rt::terminal_show_cursor().unwrap()".to_string()),
