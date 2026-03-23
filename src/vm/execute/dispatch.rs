@@ -50,6 +50,9 @@ impl VM {
         let mut ip = self.frames.last().unwrap().ip as usize;
         let mut bp = self.frames.last().unwrap().bp as usize;
 
+        // Leaf call state: saved caller context for frameless calls.
+        let mut leaf_return: Option<(u32, usize, usize)> = None; // (fn_id, ip, bp)
+
         loop {
             let code = &self.code.functions[fn_id as usize].code;
 
@@ -236,6 +239,19 @@ impl VM {
                         profile.record_function_entry(target, target_fn_id);
                     }
 
+                    fn_id = target_fn_id;
+                    ip = 0;
+                    bp = new_bp;
+                }
+
+                CALL_LEAF => {
+                    let target_fn_id = read_u16!(code, ip) as u32;
+                    let _argc = read_u8!(code, ip);
+
+                    // Save caller state — no CallFrame pushed.
+                    leaf_return = Some((fn_id, ip, bp));
+
+                    let new_bp = self.stack.len() - _argc as usize;
                     fn_id = target_fn_id;
                     ip = 0;
                     bp = new_bp;
@@ -542,6 +558,17 @@ impl VM {
                 }
 
                 RETURN => {
+                    // Fast path: frameless leaf return.
+                    if let Some((saved_fn_id, saved_ip, saved_bp)) = leaf_return.take() {
+                        let result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                        self.stack.truncate(bp);
+                        self.stack.push(result);
+                        fn_id = saved_fn_id;
+                        ip = saved_ip;
+                        bp = saved_bp;
+                        continue;
+                    }
+
                     let mut result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let frame = self.frames.pop().unwrap();
                     self.stack.truncate(frame.bp as usize);

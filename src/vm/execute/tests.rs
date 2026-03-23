@@ -17,6 +17,7 @@ fn reentrant_call_function_returns_nested_result_without_resuming_caller() {
         effects: Vec::new(),
         thin: true,
         parent_thin: false,
+        leaf: false,
     });
 
     let nested_const = NanValue::new_int_inline(20);
@@ -29,6 +30,7 @@ fn reentrant_call_function_returns_nested_result_without_resuming_caller() {
         effects: Vec::new(),
         thin: true,
         parent_thin: false,
+        leaf: false,
     });
 
     let mut vm = VM::new(code, Vec::new(), Arena::new());
@@ -73,6 +75,7 @@ fn collect_live_vm_roots_drops_callback_only_stable_values() {
         effects: Vec::new(),
         thin: false,
         parent_thin: false,
+        leaf: false,
     });
 
     let mut arena = Arena::new();
@@ -115,6 +118,7 @@ fn profiling_tracks_opcodes_and_fast_returns() {
         effects: Vec::new(),
         thin: true,
         parent_thin: false,
+        leaf: false,
     });
 
     let mut vm = VM::new(code, Vec::new(), Arena::new());

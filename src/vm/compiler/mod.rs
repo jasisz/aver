@@ -54,6 +54,7 @@ pub fn compile_program_with_modules(
                     effects: effect_ids,
                     thin: false,
                     parent_thin: false,
+                    leaf: false,
                 });
                 let symbol_id =
                     compiler
@@ -236,6 +237,7 @@ impl ProgramCompiler {
                     effects: effect_ids,
                     thin: false,
                     parent_thin: false,
+                    leaf: false,
                 });
                 self.symbols
                     .intern_function(&qualified_name, fn_id, &fndef.effects);
@@ -592,14 +594,22 @@ fn classify_thin_functions(code: &mut CodeStore, arena: &Arena) -> Result<(), Co
         .collect::<Result<_, _>>()?;
     let parent_thin_flags = classify_parent_thin_chunks(code, arena)?;
 
-    for ((chunk, thin), parent_thin) in code
+    let leaf_flags: Vec<bool> = code
+        .functions
+        .iter()
+        .map(classify_leaf_chunk)
+        .collect::<Result<_, _>>()?;
+
+    for (((chunk, thin), parent_thin), leaf) in code
         .functions
         .iter_mut()
         .zip(thin_flags.iter().copied())
         .zip(parent_thin_flags)
+        .zip(leaf_flags)
     {
         chunk.thin = thin;
         chunk.parent_thin = parent_thin;
+        chunk.leaf = leaf;
     }
 
     // Post-pass: upgrade TAIL_CALL_SELF → TAIL_CALL_SELF_THIN.
@@ -620,6 +630,26 @@ fn classify_thin_functions(code: &mut CodeStore, arena: &Arena) -> Result<(), Co
         let positions: Vec<usize> = find_opcode_positions(chunk, TAIL_CALL_SELF);
         for pos in positions {
             code.functions[fn_id].code[pos] = TAIL_CALL_SELF_THIN;
+        }
+    }
+
+    // Post-pass: upgrade CALL_KNOWN → CALL_LEAF for leaf+thin+args-only targets.
+    for fn_id in 0..code.functions.len() {
+        let positions: Vec<usize> = find_opcode_positions(&code.functions[fn_id], CALL_KNOWN);
+        for pos in positions {
+            let chunk_code = &code.functions[fn_id].code;
+            if pos + 3 >= chunk_code.len() {
+                continue;
+            }
+            let target_fn_id =
+                u16::from_be_bytes([chunk_code[pos + 1], chunk_code[pos + 2]]) as usize;
+            if target_fn_id >= code.functions.len() {
+                continue;
+            }
+            let target = &code.functions[target_fn_id];
+            if target.leaf && target.thin && target.local_count == target.arity as u16 {
+                code.functions[fn_id].code[pos] = CALL_LEAF;
+            }
         }
     }
 
@@ -736,7 +766,7 @@ fn base_parent_thin_chunk(code_store: &CodeStore, chunk: &FnChunk) -> Result<boo
                 ip = advance_opcode_ip(chunk, ip, 5)?;
             }
 
-            CALL_KNOWN | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE => {
+            CALL_KNOWN | CALL_LEAF | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE => {
                 ip = advance_opcode_ip(chunk, ip, 3)?;
             }
 
@@ -879,6 +909,73 @@ fn parent_thin_calls_are_safe(
     Ok(true)
 }
 
+/// Leaf function: no user function calls (CALL_KNOWN, CALL_VALUE, TAIL_CALL_*).
+/// May still call builtins (CALL_BUILTIN) and use inline opcodes.
+fn classify_leaf_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
+    let code = &chunk.code;
+    let mut ip = 0usize;
+    while ip < code.len() {
+        let op = code[ip];
+        ip += 1;
+        match op {
+            CALL_KNOWN | CALL_VALUE | TAIL_CALL_SELF | TAIL_CALL_KNOWN | TAIL_CALL_SELF_THIN => {
+                return Ok(false);
+            }
+
+            // 0-operand opcodes
+            POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
+            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | LIST_GET_MATCH
+            | LIST_NIL | LIST_CONS | LIST_LEN | LIST_GET | LIST_APPEND | LIST_PREPEND
+            | UNWRAP_OR | UNWRAP_RESULT_OR | CONCAT => {}
+
+            // 1-byte operand
+            LOAD_LOCAL | STORE_LOCAL | RECORD_GET | EXTRACT_FIELD | EXTRACT_TUPLE_ITEM
+            | LIST_NEW | WRAP | TUPLE_NEW => {
+                ip += 1;
+            }
+
+            // 2-byte operand
+            LOAD_CONST | LOAD_GLOBAL | STORE_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL
+            | MATCH_NIL | MATCH_CONS => {
+                ip += 2;
+            }
+
+            // 3-byte operand
+            MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE | RECORD_NEW => {
+                ip += 3;
+            }
+
+            // 4-byte operand
+            MATCH_VARIANT | RECORD_GET_NAMED => {
+                ip += 4;
+            }
+
+            // 5-byte operand
+            CALL_BUILTIN | VARIANT_NEW => {
+                ip += 5;
+            }
+
+            // Variable-length
+            MATCH_DISPATCH | MATCH_DISPATCH_CONST => {
+                if ip < code.len() {
+                    let count = code[ip] as usize;
+                    let entry_size = if op == MATCH_DISPATCH { 11 } else { 17 };
+                    ip += 3 + count * entry_size;
+                }
+            }
+            RECORD_UPDATE => {
+                if ip + 3 <= code.len() {
+                    let count = code[ip + 2] as usize;
+                    ip += 3 + count;
+                }
+            }
+
+            _ => {}
+        }
+    }
+    Ok(true)
+}
+
 fn classify_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
     let code = &chunk.code;
     let mut ip = 0usize;
@@ -914,7 +1011,7 @@ fn classify_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
                 ip = advance_opcode_ip(chunk, ip, 5)?;
             }
 
-            CALL_KNOWN | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE => {
+            CALL_KNOWN | CALL_LEAF | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE => {
                 ip = advance_opcode_ip(chunk, ip, 3)?;
             }
 
@@ -1005,7 +1102,7 @@ fn classify_thin_ignoring_self_tco(chunk: &FnChunk) -> Result<bool, CompileError
             CALL_BUILTIN => {
                 ip = advance_opcode_ip(chunk, ip, 5)?;
             }
-            CALL_KNOWN | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE => {
+            CALL_KNOWN | CALL_LEAF | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE => {
                 ip = advance_opcode_ip(chunk, ip, 3)?;
             }
             MATCH_VARIANT => {
@@ -1072,7 +1169,7 @@ fn find_opcode_positions(chunk: &FnChunk, target_op: u8) -> Vec<usize> {
             | TAIL_CALL_SELF_THIN => 1,
             LOAD_CONST | LOAD_GLOBAL | STORE_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL
             | MATCH_NIL | MATCH_CONS => 2,
-            CALL_KNOWN | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE | RECORD_NEW => 3,
+            CALL_KNOWN | CALL_LEAF | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE | RECORD_NEW => 3,
             MATCH_VARIANT | RECORD_GET_NAMED => 4,
             CALL_BUILTIN | VARIANT_NEW => 5,
             MATCH_DISPATCH | MATCH_DISPATCH_CONST => {
@@ -1182,6 +1279,7 @@ impl<'a> FnCompiler<'a> {
             effects: self.effects,
             thin: false,
             parent_thin: false,
+            leaf: false,
         }
     }
 

@@ -235,6 +235,13 @@ pub const UNWRAP_OR: u8 = 0x7C;
 /// If result is Err → push default.
 pub const UNWRAP_RESULT_OR: u8 = 0x7D;
 
+/// Frameless call to a leaf+thin+args-only function.
+/// No CallFrame is pushed — just saves (fn_id, ip) in the dispatch loop,
+/// sets bp to the args already on stack, and jumps to the target.
+/// On RETURN, restores the caller's state directly.
+/// Format: fn_id:u16, argc:u8 (same as CALL_KNOWN).
+pub const CALL_LEAF: u8 = 0x7E;
+
 /// Opcode name for debug/disassembly.
 pub fn opcode_name(op: u8) -> &'static str {
     match op {
@@ -298,6 +305,7 @@ pub fn opcode_name(op: u8) -> &'static str {
         TAIL_CALL_SELF_THIN => "TAIL_CALL_SELF_THIN",
         UNWRAP_OR => "UNWRAP_OR",
         UNWRAP_RESULT_OR => "UNWRAP_RESULT_OR",
+        CALL_LEAF => "CALL_LEAF",
         _ => "UNKNOWN",
     }
 }

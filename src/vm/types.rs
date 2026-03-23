@@ -18,6 +18,10 @@ pub struct FnChunk {
     /// Narrow wrapper-like helper that borrows the caller young region and
     /// skips ordinary-return handoff as long as it stays out of yard/handoff.
     pub parent_thin: bool,
+    /// Leaf function: no CALL_KNOWN or CALL_VALUE in bytecode (only builtins
+    /// and opcodes). When also thin and args-only (local_count == arity),
+    /// can be called without pushing a CallFrame.
+    pub leaf: bool,
 }
 
 /// Minimal call frame: 16 bytes of metadata, no closure/upvalue fields.
