@@ -1,5 +1,6 @@
 module Eval
     depends [Domain.Ast, Domain.Value]
+    // Note: Console.print, Disk.readText, Args.get effects declared per-function
     intent =
         "Tree-walking evaluator for the mini Aver AST."
         "Evaluates expressions in an environment of bindings and function definitions."
@@ -275,6 +276,11 @@ fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
         "String.fromInt" -> builtinStringFromInt(args)
         "String.contains" -> builtinStringContains(args)
         "String.startsWith" -> builtinStringStartsWith(args)
+        "String.toLower" -> builtinStringToLower(args)
+        "Char.fromCode" -> builtinCharFromCode(args)
+        "Console.print" -> builtinConsolePrint(args)
+        "Disk.readText" -> builtinDiskReadText(args)
+        "Args.get" -> builtinArgsGet(args)
         _ -> tryVariantConstructor(name, args)
 
 fn oneArg(args: List<Val>) -> Result<Val, String>
@@ -563,6 +569,49 @@ fn matchPatBool(b: Bool, v: Val) -> Result<List<(String, Val)>, String>
             true -> Result.Ok([])
             false -> Result.Err("no match")
         _ -> Result.Err("no match")
+
+fn builtinStringToLower(args: List<Val>) -> Result<Val, String>
+    ? "String.toLower(s) → lowercase string."
+    v = oneArg(args)?
+    s = expectStr(v)?
+    Result.Ok(Val.ValStr(String.toLower(s)))
+
+fn builtinCharFromCode(args: List<Val>) -> Result<Val, String>
+    ? "Char.fromCode(n) → single character string."
+    v = oneArg(args)?
+    n = expectInt(v)?
+    match Char.fromCode(n)
+        Option.Some(c) -> Result.Ok(Val.ValSome(Val.ValStr(c)))
+        Option.None -> Result.Ok(Val.ValNone)
+
+fn builtinConsolePrint(args: List<Val>) -> Result<Val, String>
+    ? "Console.print(s) → print and return Unit."
+    ! [Console.print]
+    v = oneArg(args)?
+    s = expectStr(v)?
+    Console.print(s)
+    Result.Ok(Val.ValUnit)
+
+fn builtinDiskReadText(args: List<Val>) -> Result<Val, String>
+    ? "Disk.readText(path) → Result string."
+    ! [Disk.readText]
+    v = oneArg(args)?
+    path = expectStr(v)?
+    match Disk.readText(path)
+        Result.Ok(content) -> Result.Ok(Val.ValOk(Val.ValStr(content)))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
+
+fn builtinArgsGet(args: List<Val>) -> Result<Val, String>
+    ? "Args.get() → list of string args."
+    ! [Args.get]
+    rawArgs = Args.get()
+    Result.Ok(Val.ValList(stringsToVals(rawArgs, [])))
+
+fn stringsToVals(strs: List<String>, acc: List<Val>) -> List<Val>
+    ? "Convert list of strings to list of ValStr."
+    match strs
+        [] -> List.reverse(acc)
+        [s, ..rest] -> stringsToVals(rest, List.prepend(Val.ValStr(s), acc))
 
 fn matchPatStr(s: String, v: Val) -> Result<List<(String, Val)>, String>
     ? "Match a string literal pattern."
