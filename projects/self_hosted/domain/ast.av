@@ -39,7 +39,7 @@ type Pattern
     PatEmpty
     PatCons(String, String)
     PatConstructor(String, List<String>)
-    PatTuple(List<String>)
+    PatTuple(List<Pattern>)
     PatWild
     PatVar(String)
 

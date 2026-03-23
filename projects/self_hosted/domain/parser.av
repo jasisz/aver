@@ -71,23 +71,27 @@ fn parseConstructorPatternTail(tokens: List<Token>, pos: Int, name: String, acc:
         _ -> Result.Err("Expected ',' or ')' in constructor pattern")
 
 fn parseTuplePattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), String>
-    ? "Parse tuple pattern: (a, b, ...)."
-    match tokenAt(tokens, pos)
-        Token.TkIdent(name) -> parseTuplePatternTail(tokens, pos + 1, [name])
-        _ -> Result.Err("Expected binding name in tuple pattern")
+    ? "Parse tuple pattern: (pat, pat, ...)."
+    parseTuplePatternElements(tokens, pos, [])
 
-fn parseTuplePatternTail(tokens: List<Token>, pos: Int, acc: List<String>) -> Result<(Pattern, Int), String>
-    ? "After binding in tuple pattern: ',' for more or ')' to end."
+fn parseTuplePatternElements(tokens: List<Token>, pos: Int, acc: List<Pattern>) -> Result<(Pattern, Int), String>
+    ? "Parse elements of a tuple pattern."
     match tokenAt(tokens, pos)
-        Token.TkComma -> parseTuplePatternNext(tokens, pos + 1, acc)
+        Token.TkRParen -> Result.Ok((Pattern.PatTuple(acc), pos + 1))
+        _ -> parseTuplePatternElement(tokens, pos, acc)
+
+fn parseTuplePatternElement(tokens: List<Token>, pos: Int, acc: List<Pattern>) -> Result<(Pattern, Int), String>
+    ? "Parse one pattern element and continue."
+    pr = parsePattern(tokens, pos)?
+    match pr
+        (pat, pos2) -> parseTuplePatternElementTail(tokens, pos2, List.append(acc, pat))
+
+fn parseTuplePatternElementTail(tokens: List<Token>, pos: Int, acc: List<Pattern>) -> Result<(Pattern, Int), String>
+    ? "After element: ',' for more or ')' to end."
+    match tokenAt(tokens, pos)
+        Token.TkComma -> parseTuplePatternElements(tokens, pos + 1, acc)
         Token.TkRParen -> Result.Ok((Pattern.PatTuple(acc), pos + 1))
         _ -> Result.Err("Expected ',' or ')' in tuple pattern")
-
-fn parseTuplePatternNext(tokens: List<Token>, pos: Int, acc: List<String>) -> Result<(Pattern, Int), String>
-    ? "Parse next binding in tuple pattern."
-    match tokenAt(tokens, pos)
-        Token.TkIdent(name) -> parseTuplePatternTail(tokens, pos + 1, List.append(acc, name))
-        _ -> Result.Err("Expected binding name in tuple pattern")
 
 fn parseListPattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), String>
     ? "Parse [] or [h, ..t] list pattern."

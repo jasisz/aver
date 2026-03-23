@@ -187,12 +187,24 @@ fn tokenizeDefault(c: String, src: String, pos: Int) -> List<Token>
             false -> tokenize(src, pos + 1)
 
 fn tokenizeString(src: String, pos: Int, acc: String) -> List<Token>
-    ? "Read string literal with interpolation until closing quote."
+    ? "Read string literal with interpolation and escape sequences."
     match pos >= String.len(src)
         true -> [Token.TkStr(acc), Token.TkEof]
-        false -> match String.charAt(src, pos)
-            Option.Some(c) -> tokenizeStringChar(src, pos, acc, c)
-            Option.None -> [Token.TkStr(acc), Token.TkEof]
+        false -> tokenizeStringAt(src, pos, acc)
+
+fn tokenizeStringAt(src: String, pos: Int, acc: String) -> List<Token>
+    ? "Read one character of string."
+    match String.charAt(src, pos)
+        Option.Some(c) -> match c == "\\"
+            true -> tokenizeStringEscape(src, pos + 1, acc)
+            false -> tokenizeStringChar(src, pos, acc, c)
+        Option.None -> [Token.TkStr(acc), Token.TkEof]
+
+fn tokenizeStringEscape(src: String, pos: Int, acc: String) -> List<Token>
+    ? "Handle escape sequence in string."
+    match String.charAt(src, pos)
+        Option.Some(c) -> tokenizeString(src, pos + 1, acc + c)
+        Option.None -> [Token.TkStr(acc), Token.TkEof]
 
 fn openBrace() -> String
     ? "Return the opening brace character."

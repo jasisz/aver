@@ -597,11 +597,25 @@ fn matchPatConstructor(ctorName: String, bindings: List<String>, v: Val) -> Resu
         "Option.None" -> matchNonePat(v)
         _ -> matchGenericConstructor(ctorName, bindings, v)
 
-fn matchPatTuple(bindings: List<String>, v: Val) -> Result<List<(String, Val)>, String>
-    ? "Match tuple pattern: (a, b, ...) binds elements by position."
+fn matchPatTuple(pats: List<Pattern>, v: Val) -> Result<List<(String, Val)>, String>
+    ? "Match tuple pattern with nested patterns."
     match v
-        Val.ValTuple(items) -> zipBindings(bindings, items)
+        Val.ValTuple(items) -> matchPatTupleItems(pats, items)
         _ -> Result.Err("no match")
+
+fn matchPatTupleItems(pats: List<Pattern>, items: List<Val>) -> Result<List<(String, Val)>, String>
+    ? "Match each pattern against corresponding tuple item."
+    match pats
+        [] -> Result.Ok([])
+        [pat, ..restPats] -> match items
+            [] -> Result.Err("no match")
+            [item, ..restItems] -> matchPatTupleOne(pat, item, restPats, restItems)
+
+fn matchPatTupleOne(pat: Pattern, item: Val, restPats: List<Pattern>, restItems: List<Val>) -> Result<List<(String, Val)>, String>
+    ? "Match one tuple element and continue."
+    bindings = matchPattern(pat, item)?
+    restBindings = matchPatTupleItems(restPats, restItems)?
+    Result.Ok(List.concat(bindings, restBindings))
 
 fn matchGenericConstructor(ctorName: String, bindings: List<String>, v: Val) -> Result<List<(String, Val)>, String>
     ? "Match a generic variant constructor pattern."
