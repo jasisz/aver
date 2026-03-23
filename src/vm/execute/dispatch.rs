@@ -1146,6 +1146,12 @@ impl VM {
                         let hit = match kind {
                             0 => bits == expected,                   // exact match
                             1 => (bits & TAG_MASK_FULL) == expected, // tag prefix
+                            2 => {
+                                // String deep equality: compare via arena
+                                let subject = NanValue::from_bits(bits);
+                                let pattern = NanValue::from_bits(expected);
+                                subject.string_eq(pattern, &self.arena)
+                            }
                             _ => false,
                         };
                         if hit {
@@ -1200,6 +1206,11 @@ impl VM {
                         let hit = match kind {
                             0 => bits == expected,
                             1 => (bits & TAG_MASK_FULL) == expected,
+                            2 => {
+                                let subject = NanValue::from_bits(bits);
+                                let pattern = NanValue::from_bits(expected);
+                                subject.string_eq(pattern, &self.arena)
+                            }
                             _ => false,
                         };
                         if hit {

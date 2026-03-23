@@ -694,6 +694,18 @@ impl NanValue {
         self.is_nan_boxed() && self.tag() == TAG_STRING
     }
 
+    /// Deep string equality: compare actual string content, not NanValue bits.
+    /// Handles both inline short strings and arena-allocated strings.
+    pub fn string_eq(self, other: NanValue, arena: &Arena) -> bool {
+        if self.bits() == other.bits() {
+            return true; // fast path: same bits (inline or same arena entry)
+        }
+        if !self.is_string() || !other.is_string() {
+            return false;
+        }
+        arena.get_string_value(self).as_str() == arena.get_string_value(other).as_str()
+    }
+
     #[inline]
     pub fn is_list(self) -> bool {
         self.is_nan_boxed() && self.tag() == TAG_LIST

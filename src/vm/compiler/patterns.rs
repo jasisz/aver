@@ -11,6 +11,7 @@ const TAG_ERR: u64 = 7;
 
 const DISPATCH_KIND_EXACT: u8 = 0;
 const DISPATCH_KIND_TAG: u8 = 1;
+const DISPATCH_KIND_STRING: u8 = 2;
 
 /// Info about a pattern that can be dispatched via MATCH_DISPATCH.
 struct DispatchableArm {
@@ -86,15 +87,21 @@ impl<'a> FnCompiler<'a> {
     ) -> Option<DispatchableArm> {
         match pattern {
             Pattern::Literal(lit) => {
-                let bits = match lit {
-                    Literal::Int(i) => NanValue::new_int(*i, self.arena).bits(),
-                    Literal::Float(f) => NanValue::new_float(*f).bits(),
-                    Literal::Bool(b) => NanValue::new_bool(*b).bits(),
-                    Literal::Unit => NanValue::UNIT.bits(),
-                    Literal::Str(s) => NanValue::new_string_value(s, self.arena).bits(),
+                let (kind, bits) = match lit {
+                    Literal::Int(i) => (
+                        DISPATCH_KIND_EXACT,
+                        NanValue::new_int(*i, self.arena).bits(),
+                    ),
+                    Literal::Float(f) => (DISPATCH_KIND_EXACT, NanValue::new_float(*f).bits()),
+                    Literal::Bool(b) => (DISPATCH_KIND_EXACT, NanValue::new_bool(*b).bits()),
+                    Literal::Unit => (DISPATCH_KIND_EXACT, NanValue::UNIT.bits()),
+                    Literal::Str(s) => (
+                        DISPATCH_KIND_STRING,
+                        NanValue::new_string_value(s, self.arena).bits(),
+                    ),
                 };
                 Some(DispatchableArm {
-                    kind: DISPATCH_KIND_EXACT,
+                    kind,
                     expected: bits,
                     arm_index,
                 })
@@ -404,7 +411,8 @@ impl<'a> FnCompiler<'a> {
         let all_const = entries.iter().all(|e| {
             let arm = &arms[e.arm_index];
             // Must be exact match (not tag prefix — those need unwrap/bind).
-            e.kind == DISPATCH_KIND_EXACT && self.try_const_expr(&arm.body).is_some()
+            (e.kind == DISPATCH_KIND_EXACT || e.kind == DISPATCH_KIND_STRING)
+                && self.try_const_expr(&arm.body).is_some()
         });
 
         if all_const {
