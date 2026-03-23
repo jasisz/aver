@@ -52,5 +52,6 @@ record FnDef
     body: List<Stmt>
 
 record Program
+    deps: List<String>
     fns: List<FnDef>
     stmts: List<Stmt>

@@ -3,7 +3,7 @@ module Eval
     intent =
         "Tree-walking evaluator for the mini Aver AST."
         "Evaluates expressions in an environment of bindings and function definitions."
-    exposes [evalProgram]
+    exposes [evalProgram, evalProgramWithFns]
 
 fn checkVarMatch(k: String, v: Val, name: String, rest: List<(String, Val)>) -> Result<Val, String>
     ? "Check if k matches name, otherwise continue lookup."
@@ -687,8 +687,13 @@ fn evalStmts(stmts: List<Stmt>, env: List<(String, Val)>, fns: List<FnDef>) -> R
             Result.Ok(pair) -> evalStmtsContinue(pair, rest, fns)
 
 fn evalProgram(prog: Program) -> Result<Val, String>
-    ? "Evaluate a complete program."
+    ? "Evaluate a complete program (no module dependencies)."
     evalStmts(prog.stmts, [], prog.fns)
+
+fn evalProgramWithFns(prog: Program, extraFns: List<FnDef>) -> Result<Val, String>
+    ? "Evaluate a program with additional functions from loaded modules."
+    allFns = List.concat(extraFns, prog.fns)
+    evalStmts(prog.stmts, [], allFns)
 
 verify matchPattern
     matchPattern(Pattern.PatWild, Val.ValInt(42)) => Result.Ok([])

@@ -8,10 +8,59 @@ module SelfHosted
 // ─── Full pipeline: source string → result ──────────────────
 
 fn run(source: String) -> Result<Val, String>
-    ? "Lex, parse, and evaluate an Aver source string."
+    ? "Lex, parse, and evaluate an Aver source string (no module loading)."
     tokens = Domain.Lexer.lex(source)
     prog = Domain.Parser.parse(tokens)?
     Domain.Eval.evalProgram(prog)
+
+fn runWithModules(source: String, moduleRoot: String) -> Result<Val, String>
+    ? "Lex, parse, load modules, and evaluate."
+    ! [Disk.readText]
+    tokens = Domain.Lexer.lex(source)
+    prog = Domain.Parser.parse(tokens)?
+    moduleFns = loadModules(prog.deps, moduleRoot, [])?
+    Domain.Eval.evalProgramWithFns(prog, moduleFns)
+
+fn loadModules(deps: List<String>, moduleRoot: String, acc: List<FnDef>) -> Result<List<FnDef>, String>
+    ? "Load all module dependencies and collect their functions."
+    ! [Disk.readText]
+    match deps
+        [] -> Result.Ok(acc)
+        [dep, ..rest] -> loadOneModule(dep, rest, moduleRoot, acc)
+
+fn loadOneModule(dep: String, rest: List<String>, moduleRoot: String, acc: List<FnDef>) -> Result<List<FnDef>, String>
+    ? "Load one module, add its functions, continue with rest."
+    ! [Disk.readText]
+    path = modulePathFromName(dep, moduleRoot)
+    source = Disk.readText(path)?
+    tokens = Domain.Lexer.lex(source)
+    prog = Domain.Parser.parse(tokens)?
+    // Qualify function names with module prefix
+    qualifiedFns = qualifyFns(prog.fns, dep, [])
+    // Recursively load this module's dependencies too
+    innerFns = loadModules(prog.deps, moduleRoot, [])?
+    loadModules(rest, moduleRoot, List.concat(acc, List.concat(innerFns, qualifiedFns)))
+
+fn modulePathFromName(name: String, moduleRoot: String) -> String
+    ? "Convert Module.Name to file path: Domain.Foo -> domain/foo.av"
+    // Simple: replace dots with / and lowercase
+    moduleRoot + "/" + dotToSlash(name, 0, String.len(name), "") + ".av"
+
+fn dotToSlash(name: String, pos: Int, total: Int, acc: String) -> String
+    ? "Replace dots with slashes and lowercase first char of each segment."
+    match pos >= total
+        true -> acc
+        false -> match String.charAt(name, pos)
+            Option.Some(c) -> match c == "."
+                true -> dotToSlash(name, pos + 1, total, acc + "/")
+                false -> dotToSlash(name, pos + 1, total, acc + String.toLower(c))
+            Option.None -> acc
+
+fn qualifyFns(fns: List<FnDef>, prefix: String, acc: List<FnDef>) -> List<FnDef>
+    ? "Prefix function names with module name: fn foo -> Domain.Foo.foo"
+    match fns
+        [] -> List.reverse(acc)
+        [f, ..rest] -> qualifyFns(rest, prefix, List.prepend(FnDef(name = prefix + "." + f.name, params = f.params, body = f.body), acc))
 
 fn runRepr(source: String) -> String
     ? "Run source and return result representation or error."
@@ -21,11 +70,11 @@ fn runRepr(source: String) -> String
 
 // ─── File runner ────────────────────────────────────────────
 
-fn runFile(path: String) -> Result<String, String>
-    ? "Read a file and run it through the self-hosted pipeline."
+fn runFile(path: String, moduleRoot: String) -> Result<String, String>
+    ? "Read a file and run it through the self-hosted pipeline with module loading."
     ! [Disk.readText]
     source = Disk.readText(path)?
-    match run(source)
+    match runWithModules(source, moduleRoot)
         Result.Ok(val) -> Result.Ok(Domain.Value.valRepr(val))
         Result.Err(e) -> Result.Err(e)
 
@@ -35,13 +84,13 @@ fn main() -> Unit
     ! [Console.print, Disk.readText, Args.get]
     args = Args.get()
     match List.get(args, 0)
-        Option.Some(path) -> runFromFile(path)
+        Option.Some(path) -> runFromFile(path, Option.withDefault(List.get(args, 1), "."))
         Option.None -> runDemo()
 
-fn runFromFile(path: String) -> Unit
+fn runFromFile(path: String, moduleRoot: String) -> Unit
     ? "Read and execute a file through the self-hosted pipeline."
     ! [Console.print, Disk.readText]
-    match runFile(path)
+    match runFile(path, moduleRoot)
         Result.Ok(result) -> Console.print(result)
         Result.Err(e) -> Console.print("Error: {e}")
 

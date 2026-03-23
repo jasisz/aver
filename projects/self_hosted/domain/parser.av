@@ -595,36 +595,36 @@ fn skipUntilClose(tokens: List<Token>, pos: Int, depth: Int) -> Int
 
 // ─── Program (top-level) ────────────────────────────────────
 
-fn parseProgram(tokens: List<Token>, pos: Int, fns: List<FnDef>, stmts: List<Stmt>) -> Result<Program, String>
+fn parseProgram(tokens: List<Token>, pos: Int, deps: List<String>, fns: List<FnDef>, stmts: List<Stmt>) -> Result<Program, String>
     ? "Parse top-level items until EOF."
     pos2 = skipNewlines(tokens, pos)
     match tokenAt(tokens, pos2)
-        Token.TkEof -> Result.Ok(Program(fns = fns, stmts = stmts))
-        Token.TkFn -> parseProgramFn(tokens, pos2 + 1, fns, stmts)
-        Token.TkIdent(kw) -> parseProgramKeyword(tokens, pos2, fns, stmts, kw)
-        _ -> parseProgramStmt(tokens, pos2, fns, stmts)
+        Token.TkEof -> Result.Ok(Program(deps = deps, fns = fns, stmts = stmts))
+        Token.TkFn -> parseProgramFn(tokens, pos2 + 1, deps, fns, stmts)
+        Token.TkIdent(kw) -> parseProgramKeyword(tokens, pos2, deps, fns, stmts, kw)
+        _ -> parseProgramStmt(tokens, pos2, deps, fns, stmts)
 
-fn parseProgramKeyword(tokens: List<Token>, pos: Int, fns: List<FnDef>, stmts: List<Stmt>, kw: String) -> Result<Program, String>
-    ? "Handle keywords that should be skipped: module, type, record, verify."
+fn parseProgramKeyword(tokens: List<Token>, pos: Int, deps: List<String>, fns: List<FnDef>, stmts: List<Stmt>, kw: String) -> Result<Program, String>
+    ? "Handle keywords: module (extract depends), type/record/verify/decision (skip)."
     match kw
-        "module" -> parseProgram(tokens, skipBlock(tokens, pos + 1), fns, stmts)
-        "type" -> parseProgram(tokens, skipBlock(tokens, pos + 1), fns, stmts)
-        "record" -> parseProgram(tokens, skipBlock(tokens, pos + 1), fns, stmts)
-        "verify" -> parseProgram(tokens, skipBlock(tokens, pos + 1), fns, stmts)
-        "decision" -> parseProgram(tokens, skipBlock(tokens, pos + 1), fns, stmts)
-        _ -> parseProgramStmt(tokens, pos, fns, stmts)
+        "module" -> parseModuleHeader(tokens, pos + 1, fns, stmts)
+        "type" -> parseProgram(tokens, skipBlock(tokens, pos + 1), deps, fns, stmts)
+        "record" -> parseProgram(tokens, skipBlock(tokens, pos + 1), deps, fns, stmts)
+        "verify" -> parseProgram(tokens, skipBlock(tokens, pos + 1), deps, fns, stmts)
+        "decision" -> parseProgram(tokens, skipBlock(tokens, pos + 1), deps, fns, stmts)
+        _ -> parseProgramStmt(tokens, pos, deps, fns, stmts)
 
-fn parseProgramFn(tokens: List<Token>, pos: Int, fns: List<FnDef>, stmts: List<Stmt>) -> Result<Program, String>
+fn parseProgramFn(tokens: List<Token>, pos: Int, deps: List<String>, fns: List<FnDef>, stmts: List<Stmt>) -> Result<Program, String>
     ? "Parse a function definition and continue."
     r = parseFnDef(tokens, pos)?
     match r
-        (fd, pos2) -> parseProgram(tokens, skipNewlines(tokens, pos2), List.append(fns, fd), stmts)
+        (fd, pos2) -> parseProgram(tokens, skipNewlines(tokens, pos2), deps, List.append(fns, fd), stmts)
 
-fn parseProgramStmt(tokens: List<Token>, pos: Int, fns: List<FnDef>, stmts: List<Stmt>) -> Result<Program, String>
+fn parseProgramStmt(tokens: List<Token>, pos: Int, deps: List<String>, fns: List<FnDef>, stmts: List<Stmt>) -> Result<Program, String>
     ? "Parse a statement and continue."
     r = parseStmt(tokens, pos)?
     match r
-        (st, pos2) -> parseProgram(tokens, skipNewlines(tokens, pos2), fns, List.append(stmts, st))
+        (st, pos2) -> parseProgram(tokens, skipNewlines(tokens, pos2), deps, fns, List.append(stmts, st))
 
 // ─── Public API ─────────────────────────────────────────────
 
@@ -641,6 +641,66 @@ fn skipToNextLine(tokens: List<Token>, pos: Int) -> Int
         Token.TkEof -> pos
         Token.TkNewline -> pos + 1
         _ -> skipToNextLine(tokens, pos + 1)
+
+fn parseModuleHeader(tokens: List<Token>, pos: Int, fns: List<FnDef>, stmts: List<Stmt>) -> Result<Program, String>
+    ? "Parse module header, extracting depends list."
+    deps = extractDepends(tokens, pos)
+    match deps
+        (depList, endPos) -> parseProgram(tokens, endPos, depList, fns, stmts)
+
+fn extractDepends(tokens: List<Token>, pos: Int) -> (List<String>, Int)
+    ? "Scan module header for depends [...] and extract module names."
+    extractDependsLoop(tokens, pos, [])
+
+fn extractDependsLoop(tokens: List<Token>, pos: Int, acc: List<String>) -> (List<String>, Int)
+    ? "Scan for depends keyword in module header."
+    match tokenAt(tokens, pos)
+        Token.TkEof -> (acc, pos)
+        Token.TkFn -> (acc, pos)
+        Token.TkIdent(kw) -> extractDependsCheck(tokens, pos, acc, kw)
+        Token.TkNewline -> extractDependsCheckEnd(tokens, pos + 1, acc)
+        _ -> extractDependsLoop(tokens, pos + 1, acc)
+
+fn extractDependsCheckEnd(tokens: List<Token>, pos: Int, acc: List<String>) -> (List<String>, Int)
+    ? "After newline in module header: blank line or fn means end."
+    match tokenAt(tokens, pos)
+        Token.TkNewline -> (acc, pos)
+        Token.TkFn -> (acc, pos)
+        Token.TkEof -> (acc, pos)
+        Token.TkIdent(kw) -> match kw
+            "type" -> (acc, pos)
+            "record" -> (acc, pos)
+            "verify" -> (acc, pos)
+            "decision" -> (acc, pos)
+            _ -> extractDependsLoop(tokens, pos, acc)
+        _ -> extractDependsLoop(tokens, pos, acc)
+
+fn extractDependsCheck(tokens: List<Token>, pos: Int, acc: List<String>, kw: String) -> (List<String>, Int)
+    ? "Check if keyword is depends."
+    match kw
+        "depends" -> extractDependsList(tokens, pos + 1, acc)
+        _ -> extractDependsLoop(tokens, pos + 1, acc)
+
+fn extractDependsList(tokens: List<Token>, pos: Int, acc: List<String>) -> (List<String>, Int)
+    ? "Parse [Module.Name, Module.Name] after depends keyword."
+    match tokenAt(tokens, pos)
+        Token.TkLBracket -> extractDependsNames(tokens, pos + 1, acc)
+        _ -> extractDependsLoop(tokens, pos, acc)
+
+fn extractDependsNames(tokens: List<Token>, pos: Int, acc: List<String>) -> (List<String>, Int)
+    ? "Parse module names inside depends [...]."
+    match tokenAt(tokens, pos)
+        Token.TkRBracket -> extractDependsLoop(tokens, pos + 1, acc)
+        Token.TkIdent(name) -> extractDependsNamesTail(tokens, pos + 1, List.append(acc, name))
+        Token.TkComma -> extractDependsNames(tokens, pos + 1, acc)
+        _ -> extractDependsLoop(tokens, pos + 1, acc)
+
+fn extractDependsNamesTail(tokens: List<Token>, pos: Int, acc: List<String>) -> (List<String>, Int)
+    ? "After module name: comma or ]."
+    match tokenAt(tokens, pos)
+        Token.TkRBracket -> extractDependsLoop(tokens, pos + 1, acc)
+        Token.TkComma -> extractDependsNames(tokens, pos + 1, acc)
+        _ -> extractDependsNames(tokens, pos, acc)
 
 fn skipReturnType(tokens: List<Token>, pos: Int) -> Int
     ? "Skip optional -> ReturnType annotation."
@@ -672,13 +732,13 @@ fn skipBlockAfterNewline(tokens: List<Token>, pos: Int) -> Int
 
 fn parse(tokens: List<Token>) -> Result<Program, String>
     ? "Parse a token list into a Program."
-    parseProgram(tokens, 0, [], [])
+    parseProgram(tokens, 0, [], [], [])
 
 // ─── Verify ─────────────────────────────────────────────────
 
 verify parse
-    parse(Domain.Lexer.lex("x = 5")) => Result.Ok(Program(fns = [], stmts = [Stmt.StmtBind("x", Expr.ExprInt(5))]))
-    parse(Domain.Lexer.lex("1 + 2")) => Result.Ok(Program(fns = [], stmts = [Stmt.StmtExpr(Expr.ExprAdd(Expr.ExprInt(1), Expr.ExprInt(2)))]))
-    parse(Domain.Lexer.lex("3 == 3")) => Result.Ok(Program(fns = [], stmts = [Stmt.StmtExpr(Expr.ExprEq(Expr.ExprInt(3), Expr.ExprInt(3)))]))
-    parse(Domain.Lexer.lex("[1, 2]")) => Result.Ok(Program(fns = [], stmts = [Stmt.StmtExpr(Expr.ExprList([Expr.ExprInt(1), Expr.ExprInt(2)]))]))
+    parse(Domain.Lexer.lex("x = 5")) => Result.Ok(Program(deps = [], fns = [], stmts = [Stmt.StmtBind("x", Expr.ExprInt(5))]))
+    parse(Domain.Lexer.lex("1 + 2")) => Result.Ok(Program(deps = [], fns = [], stmts = [Stmt.StmtExpr(Expr.ExprAdd(Expr.ExprInt(1), Expr.ExprInt(2)))]))
+    parse(Domain.Lexer.lex("3 == 3")) => Result.Ok(Program(deps = [], fns = [], stmts = [Stmt.StmtExpr(Expr.ExprEq(Expr.ExprInt(3), Expr.ExprInt(3)))]))
+    parse(Domain.Lexer.lex("[1, 2]")) => Result.Ok(Program(deps = [], fns = [], stmts = [Stmt.StmtExpr(Expr.ExprList([Expr.ExprInt(1), Expr.ExprInt(2)]))]))
     parse(Domain.Lexer.lex("+")) => Result.Err("Expected expression, got Plus")
