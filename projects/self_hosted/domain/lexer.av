@@ -308,12 +308,12 @@ fn tokenizeSlashOrComment(src: String, pos: Int) -> List<Token>
         Option.None -> List.prepend(Token.TkSlash, tokenize(src, pos + 1))
 
 fn skipLineComment(src: String, pos: Int) -> List<Token>
-    ? "Skip characters until newline or EOF."
+    ? "Skip characters until newline or EOF. Does not emit newline for the comment line."
     match pos >= String.len(src)
         true -> [Token.TkEof]
         false -> match String.charAt(src, pos)
             Option.Some(c) -> match c == "\n"
-                true -> List.prepend(Token.TkNewline, tokenize(src, pos + 1))
+                true -> tokenize(src, pos + 1)
                 false -> skipLineComment(src, pos + 1)
             Option.None -> [Token.TkEof]
 

@@ -58,10 +58,15 @@ fn dotToSlash(name: String, pos: Int, total: Int, acc: String) -> String
             Option.None -> acc
 
 fn qualifyFns(fns: List<FnDef>, prefix: String, acc: List<FnDef>) -> List<FnDef>
-    ? "Prefix function names with module name: fn foo -> Domain.Foo.foo"
+    ? "Register functions with both qualified (Domain.Foo.bar) and unqualified (bar) names."
     match fns
         [] -> List.reverse(acc)
-        [f, ..rest] -> qualifyFns(rest, prefix, List.prepend(FnDef(name = prefix + "." + f.name, params = f.params, body = f.body), acc))
+        [f, ..rest] -> qualifyFnsOne(f, rest, prefix, acc)
+
+fn qualifyFnsOne(f: FnDef, rest: List<FnDef>, prefix: String, acc: List<FnDef>) -> List<FnDef>
+    ? "Add both qualified and unqualified versions."
+    qualified = FnDef(name = prefix + "." + f.name, params = f.params, body = f.body)
+    qualifyFns(rest, prefix, List.prepend(f, List.prepend(qualified, acc)))
 
 fn runRepr(source: String) -> String
     ? "Run source and return result representation or error."
