@@ -1,9 +1,9 @@
 module Eval
-    depends [Domain.Ast, Domain.Value]
-    // Note: Console.print, Disk.readText, Args.get effects declared per-function
+    depends [Domain.Ast, Domain.Value, Domain.Builtins, Domain.Match]
     intent =
         "Tree-walking evaluator for the mini Aver AST."
         "Evaluates expressions in an environment of bindings and function definitions."
+        "Delegates builtins to Domain.Builtins and pattern matching to Domain.Match."
     exposes [evalProgram, evalProgramWithFns]
 
 fn checkVarMatch(k: String, v: Val, name: String, rest: List<(String, Val)>) -> Result<Val, String>
@@ -18,6 +18,10 @@ fn lookupVar(env: List<(String, Val)>, name: String) -> Result<Val, String>
         [] -> Result.Err("undefined variable: " + name)
         [pair, ..rest] -> match pair
             (k, v) -> checkVarMatch(k, v, name, rest)
+
+verify lookupVar
+    lookupVar([("x", Val.ValInt(1))], "x") => Result.Ok(Val.ValInt(1))
+    lookupVar([], "x") => Result.Err("undefined variable: x")
 
 fn lookupFn(fns: List<FnDef>, name: String) -> Result<FnDef, String>
     ? "Look up a function definition by name."
@@ -35,9 +39,12 @@ fn zipArgs(params: List<String>, args: List<Val>) -> List<(String, Val)>
             [] -> []
             [a, ..as_] -> List.prepend((p, a), zipArgs(ps, as_))
 
+verify zipArgs
+    zipArgs(["a", "b"], [Val.ValInt(1), Val.ValInt(2)]) => [("a", Val.ValInt(1)), ("b", Val.ValInt(2))]
+
 fn evalExpr(expr: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate an expression in the given environment."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match expr
         Expr.ExprInt(n) -> Result.Ok(Val.ValInt(n))
         Expr.ExprStr(s) -> Result.Ok(Val.ValStr(s))
@@ -72,14 +79,14 @@ fn evalVar(name: String, env: List<(String, Val)>) -> Result<Val, String>
 
 fn evalVarFallback(name: String) -> Result<Val, String>
     ? "If variable not in env, try as nullary variant (e.g. Token.TkPlus)."
-    match splitDotted(name)
+    match Domain.Builtins.splitDotted(name)
         Option.Some(pair) -> match pair
             (typeName, ctorName) -> Result.Ok(Val.ValVariant(typeName, ctorName, []))
         Option.None -> Result.Err("undefined variable: {name}")
 
 fn evalPropagate(inner: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate ? operator: unwrap Ok or propagate Err."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     v = evalExpr(inner, env, fns)?
     match v
         Val.ValOk(x) -> Result.Ok(x)
@@ -90,7 +97,7 @@ fn evalPropagate(inner: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Res
 
 fn evalMatchExpr(scrutinee: Expr, arms: List<MatchArm>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate a match expression."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match evalExpr(scrutinee, env, fns)
         Result.Ok(v) -> evalMatch(v, arms, env, fns)
         Result.Err(e) -> Result.Err(e)
@@ -127,72 +134,95 @@ fn evalBinopVals(va: Val, vb: Val, op: String) -> Result<Val, String>
         _ -> Result.Err("binop type mismatch")
 
 fn evalCmpVals(va: Val, vb: Val, op: String) -> Result<Val, String>
-    ? "Apply comparison to two evaluated values."
+    ? "Apply comparison to two evaluated values (Int or String)."
     match (va, vb)
         (Val.ValInt(x), Val.ValInt(y)) -> applyCmp(x, y, op)
+        (Val.ValStr(x), Val.ValStr(y)) -> applyStrCmp(x, y, op)
+        (Val.ValBool(x), Val.ValBool(y)) -> applyBoolCmp(x, y, op)
+        _ -> evalCmpRepr(va, vb, op)
+
+fn applyStrCmp(x: String, y: String, op: String) -> Result<Val, String>
+    ? "String comparison: only eq and neq supported."
+    match op
+        "eq" -> Result.Ok(Val.ValBool(x == y))
+        "neq" -> Result.Ok(Val.ValBool(x != y))
+        _ -> Result.Err("strings only support == and !=")
+
+fn applyBoolCmp(x: Bool, y: Bool, op: String) -> Result<Val, String>
+    ? "Bool comparison: eq and neq."
+    match op
+        "eq" -> Result.Ok(Val.ValBool(x == y))
+        "neq" -> Result.Ok(Val.ValBool(x != y))
+        _ -> Result.Err("bools only support == and !=")
+
+fn evalCmpRepr(va: Val, vb: Val, op: String) -> Result<Val, String>
+    ? "Fallback comparison using repr (for variants, lists, etc)."
+    match op
+        "eq" -> Result.Ok(Val.ValBool(Domain.Value.valRepr(va) == Domain.Value.valRepr(vb)))
+        "neq" -> Result.Ok(Val.ValBool(Domain.Value.valRepr(va) != Domain.Value.valRepr(vb)))
         _ -> Result.Err("comparison requires ints")
 
 fn evalBinopRight(va: Val, b: Expr, env: List<(String, Val)>, fns: List<FnDef>, op: String) -> Result<Val, String>
     ? "Evaluate right side of binop and apply."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match evalExpr(b, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(vb) -> evalBinopVals(va, vb, op)
 
 fn evalBinop(a: Expr, b: Expr, env: List<(String, Val)>, fns: List<FnDef>, op: String) -> Result<Val, String>
     ? "Evaluate a binary operation on two expressions."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match evalExpr(a, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(va) -> evalBinopRight(va, b, env, fns, op)
 
 fn evalCmpRight(va: Val, b: Expr, env: List<(String, Val)>, fns: List<FnDef>, op: String) -> Result<Val, String>
     ? "Evaluate right side of comparison and apply."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match evalExpr(b, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(vb) -> evalCmpVals(va, vb, op)
 
 fn evalCmp(a: Expr, b: Expr, env: List<(String, Val)>, fns: List<FnDef>, op: String) -> Result<Val, String>
     ? "Evaluate a comparison expression."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match evalExpr(a, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(va) -> evalCmpRight(va, b, env, fns, op)
 
 fn evalConcatExpr(parts: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate string interpolation: concat all parts as strings."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     evalConcatParts(parts, env, fns, "")
 
 fn evalConcatParts(parts: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>, acc: String) -> Result<Val, String>
     ? "Concatenate interpolation parts into a string."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match parts
         [] -> Result.Ok(Val.ValStr(acc))
         [p, ..rest] -> evalConcatOnePart(p, rest, env, fns, acc)
 
 fn evalConcatOnePart(part: Expr, rest: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>, acc: String) -> Result<Val, String>
     ? "Evaluate one interpolation part and continue."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     v = evalExpr(part, env, fns)?
     evalConcatParts(rest, env, fns, acc + Domain.Value.valRepr(v))
 
 fn evalTupleExpr(exprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate tuple literal."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     items = evalListItems(exprs, env, fns)?
     Result.Ok(Val.ValTuple(items))
 
 fn evalRecordExpr(name: String, fieldExprs: List<(String, Expr)>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate record constructor."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     fields = evalRecordFields(fieldExprs, env, fns)?
     Result.Ok(Val.ValRecord(name, fields))
 
 fn evalRecordFields(fieldExprs: List<(String, Expr)>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<List<(String, Val)>, String>
     ? "Evaluate record field expressions."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match fieldExprs
         [] -> Result.Ok([])
         [pair, ..rest] -> match pair
@@ -200,14 +230,14 @@ fn evalRecordFields(fieldExprs: List<(String, Expr)>, env: List<(String, Val)>, 
 
 fn evalRecordFieldOne(fname: String, expr: Expr, rest: List<(String, Expr)>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<List<(String, Val)>, String>
     ? "Evaluate one record field and continue."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     v = evalExpr(expr, env, fns)?
     restFields = evalRecordFields(rest, env, fns)?
     Result.Ok(List.prepend((fname, v), restFields))
 
 fn evalFieldAccess(obj: Expr, field: String, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate field access: obj.field."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     v = evalExpr(obj, env, fns)?
     match v
         Val.ValRecord(_, fields) -> lookupField(fields, field)
@@ -224,14 +254,14 @@ fn lookupField(fields: List<(String, Val)>, name: String) -> Result<Val, String>
 
 fn evalListExpr(exprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate a list literal."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match evalListItems(exprs, env, fns)
         Result.Ok(items) -> Result.Ok(Val.ValList(items))
         Result.Err(e) -> Result.Err(e)
 
 fn evalListItems(exprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<List<Val>, String>
     ? "Evaluate list of expressions into list of values."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match exprs
         [] -> Result.Ok([])
         [e, ..rest] -> match evalExpr(e, env, fns)
@@ -242,14 +272,14 @@ fn evalListItems(exprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) 
 
 fn evalArgsRest(v: Val, rest: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<List<Val>, String>
     ? "Evaluate remaining args and prepend v."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match evalArgs(rest, env, fns)
         Result.Err(err) -> Result.Err(err)
         Result.Ok(vs) -> Result.Ok(List.prepend(v, vs))
 
 fn evalArgs(exprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<List<Val>, String>
     ? "Evaluate a list of argument expressions."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match exprs
         [] -> Result.Ok([])
         [e, ..rest] -> match evalExpr(e, env, fns)
@@ -258,532 +288,69 @@ fn evalArgs(exprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Re
 
 fn callWithArgs(args: List<Val>, name: String, fns: List<FnDef>) -> Result<Val, String>
     ? "Look up function and call it with args. Falls back to builtins for qualified names."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match lookupFn(fns, name)
         Result.Ok(fd) -> evalStmts(fd.body, zipArgs(fd.params, args), fns)
-        Result.Err(_) -> callBuiltin(name, args)
+        Result.Err(_) -> Domain.Builtins.callBuiltin(name, args)
 
 fn evalCall(name: String, argExprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate a function call."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match evalArgs(argExprs, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(args) -> callWithArgs(args, name, fns)
 
-// ─── Builtins (delegate to host) ────────────────────────────
-
-fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
-    ? "Dispatch qualified builtin calls to host implementations."
-    ! [Console.print, Disk.readText, Args.get]
-    match name
-        "List.prepend" -> builtinListPrepend(args)
-        "List.len" -> builtinListLen(args)
-        "List.reverse" -> builtinListReverse(args)
-        "List.append" -> builtinListAppend(args)
-        "List.get" -> builtinListGet(args)
-        "Int.toString" -> builtinIntToString(args)
-        "Int.abs" -> builtinIntAbs(args)
-        "String.len" -> builtinStringLen(args)
-        "String.charAt" -> builtinStringCharAt(args)
-        "String.join" -> builtinStringJoin(args)
-        "Result.Ok" -> builtinResultOk(args)
-        "Result.Err" -> builtinResultErr(args)
-        "Result.withDefault" -> builtinResultWithDefault(args)
-        "Option.Some" -> builtinOptionSome(args)
-        "Option.None" -> Result.Ok(Val.ValNone)
-        "Option.withDefault" -> builtinOptionWithDefault(args)
-        "Int.mod" -> builtinIntMod(args)
-        "String.slice" -> builtinStringSlice(args)
-        "String.fromBool" -> builtinStringFromBool(args)
-        "String.fromInt" -> builtinStringFromInt(args)
-        "String.contains" -> builtinStringContains(args)
-        "String.startsWith" -> builtinStringStartsWith(args)
-        "String.toLower" -> builtinStringToLower(args)
-        "Char.fromCode" -> builtinCharFromCode(args)
-        "Console.print" -> builtinConsolePrint(args)
-        "Disk.readText" -> builtinDiskReadText(args)
-        "Args.get" -> builtinArgsGet(args)
-        _ -> tryVariantConstructor(name, args)
-
-fn oneArg(args: List<Val>) -> Result<Val, String>
-    ? "Extract single argument from args list."
-    match args
-        [a, ..rest] -> match rest
-            [] -> Result.Ok(a)
-            _ -> Result.Err("expected 1 argument")
-        _ -> Result.Err("expected 1 argument")
-
-fn twoArgs(args: List<Val>) -> Result<(Val, Val), String>
-    ? "Extract two arguments from args list."
-    match args
-        [a, ..rest] -> match rest
-            [b, ..rest2] -> match rest2
-                [] -> Result.Ok((a, b))
-                _ -> Result.Err("expected 2 arguments")
-            _ -> Result.Err("expected 2 arguments")
-        _ -> Result.Err("expected 2 arguments")
-
-fn expectList(v: Val) -> Result<List<Val>, String>
-    ? "Extract list from Val or error."
-    match v
-        Val.ValList(items) -> Result.Ok(items)
-        _ -> Result.Err("expected list argument")
-
-fn expectInt(v: Val) -> Result<Int, String>
-    ? "Extract int from Val or error."
-    match v
-        Val.ValInt(n) -> Result.Ok(n)
-        _ -> Result.Err("expected int argument")
-
-fn builtinListPrepend(args: List<Val>) -> Result<Val, String>
-    ? "List.prepend(value, list) → list with value at front."
-    pair = twoArgs(args)?
-    match pair
-        (v, lstV) -> builtinListPrependInner(v, lstV)
-
-fn builtinListPrependInner(v: Val, lstV: Val) -> Result<Val, String>
-    items = expectList(lstV)?
-    Result.Ok(Val.ValList(List.prepend(v, items)))
-
-fn builtinListLen(args: List<Val>) -> Result<Val, String>
-    ? "List.len(list) → length as Int."
-    v = oneArg(args)?
-    items = expectList(v)?
-    Result.Ok(Val.ValInt(List.len(items)))
-
-fn builtinListReverse(args: List<Val>) -> Result<Val, String>
-    ? "List.reverse(list) → reversed list."
-    v = oneArg(args)?
-    items = expectList(v)?
-    Result.Ok(Val.ValList(List.reverse(items)))
-
-fn builtinListAppend(args: List<Val>) -> Result<Val, String>
-    ? "List.append(list, val) → list with val at end."
-    pair = twoArgs(args)?
-    match pair
-        (lstV, v) -> builtinListAppendInner(lstV, v)
-
-fn builtinListAppendInner(lstV: Val, v: Val) -> Result<Val, String>
-    ? "Inner impl of List.append."
-    items = expectList(lstV)?
-    Result.Ok(Val.ValList(List.append(items, v)))
-
-fn builtinListGet(args: List<Val>) -> Result<Val, String>
-    ? "List.get(list, index) → element or error."
-    pair = twoArgs(args)?
-    match pair
-        (lstV, idxV) -> builtinListGetInner(lstV, idxV)
-
-fn builtinListGetInner(lstV: Val, idxV: Val) -> Result<Val, String>
-    ? "Inner impl of List.get. Returns Option (ValSome/ValNone)."
-    items = expectList(lstV)?
-    idx = expectInt(idxV)?
-    match List.get(items, idx)
-        Option.Some(v) -> Result.Ok(Val.ValSome(v))
-        Option.None -> Result.Ok(Val.ValNone)
-
-fn builtinIntToString(args: List<Val>) -> Result<Val, String>
-    ? "Int.toString(n) → string representation."
-    v = oneArg(args)?
-    n = expectInt(v)?
-    Result.Ok(Val.ValStr(Int.toString(n)))
-
-fn builtinIntAbs(args: List<Val>) -> Result<Val, String>
-    ? "Int.abs(n) → absolute value."
-    v = oneArg(args)?
-    n = expectInt(v)?
-    Result.Ok(Val.ValInt(Int.abs(n)))
-
-fn builtinIntMod(args: List<Val>) -> Result<Val, String>
-    ? "Int.mod(a, b) → a mod b as Result."
-    pair = twoArgs(args)?
-    match pair
-        (aV, bV) -> builtinIntModInner(aV, bV)
-
-fn builtinIntModInner(aV: Val, bV: Val) -> Result<Val, String>
-    a = expectInt(aV)?
-    b = expectInt(bV)?
-    match b == 0
-        true -> Result.Ok(Val.ValErr(Val.ValStr("modulo by zero")))
-        false -> Result.Ok(Val.ValOk(Val.ValInt(Result.withDefault(Int.mod(a, b), 0))))
-
-fn builtinStringSlice(args: List<Val>) -> Result<Val, String>
-    ? "String.slice(s, start, end) → substring."
-    match args
-        [sV, ..rest] -> match rest
-            [startV, ..rest2] -> match rest2
-                [endV, ..rest3] -> match rest3
-                    [] -> builtinStringSliceInner(sV, startV, endV)
-                    _ -> Result.Err("String.slice takes 3 arguments")
-                _ -> Result.Err("String.slice takes 3 arguments")
-            _ -> Result.Err("String.slice takes 3 arguments")
-        _ -> Result.Err("String.slice takes 3 arguments")
-
-fn builtinStringSliceInner(sV: Val, startV: Val, endV: Val) -> Result<Val, String>
-    s = expectStr(sV)?
-    start = expectInt(startV)?
-    end = expectInt(endV)?
-    Result.Ok(Val.ValStr(String.slice(s, start, end)))
-
-fn builtinStringFromBool(args: List<Val>) -> Result<Val, String>
-    ? "String.fromBool(b) → string."
-    v = oneArg(args)?
-    match v
-        Val.ValBool(b) -> Result.Ok(Val.ValStr(String.fromBool(b)))
-        _ -> Result.Err("String.fromBool requires Bool")
-
-fn builtinStringFromInt(args: List<Val>) -> Result<Val, String>
-    ? "String.fromInt(n) → string (alias for Int.toString)."
-    v = oneArg(args)?
-    n = expectInt(v)?
-    Result.Ok(Val.ValStr(Int.toString(n)))
-
-fn builtinStringContains(args: List<Val>) -> Result<Val, String>
-    ? "String.contains(haystack, needle) → Bool."
-    pair = twoArgs(args)?
-    match pair
-        (hV, nV) -> builtinStringContainsInner(hV, nV)
-
-fn builtinStringContainsInner(hV: Val, nV: Val) -> Result<Val, String>
-    h = expectStr(hV)?
-    n = expectStr(nV)?
-    Result.Ok(Val.ValBool(String.contains(h, n)))
-
-fn builtinStringStartsWith(args: List<Val>) -> Result<Val, String>
-    ? "String.startsWith(s, prefix) → Bool."
-    pair = twoArgs(args)?
-    match pair
-        (sV, pV) -> builtinStringStartsWithInner(sV, pV)
-
-fn builtinStringStartsWithInner(sV: Val, pV: Val) -> Result<Val, String>
-    s = expectStr(sV)?
-    p = expectStr(pV)?
-    Result.Ok(Val.ValBool(String.startsWith(s, p)))
-
-fn builtinOptionSome(args: List<Val>) -> Result<Val, String>
-    ? "Option.Some(value) → wrapped Some value."
-    v = oneArg(args)?
-    Result.Ok(Val.ValSome(v))
-
-fn builtinOptionWithDefault(args: List<Val>) -> Result<Val, String>
-    ? "Option.withDefault(option, default) → unwrap Some or return default."
-    pair = twoArgs(args)?
-    match pair
-        (opt, def) -> match opt
-            Val.ValSome(inner) -> Result.Ok(inner)
-            Val.ValNone -> Result.Ok(def)
-            _ -> Result.Err("Option.withDefault requires Option value")
-
-fn builtinResultWithDefault(args: List<Val>) -> Result<Val, String>
-    ? "Result.withDefault(result, default) → unwrap Ok or return default."
-    pair = twoArgs(args)?
-    match pair
-        (res, def) -> match res
-            Val.ValOk(inner) -> Result.Ok(inner)
-            Val.ValErr(_) -> Result.Ok(def)
-            _ -> Result.Err("Result.withDefault requires Result value")
-
-fn builtinResultOk(args: List<Val>) -> Result<Val, String>
-    ? "Result.Ok(value) → wrapped Ok value."
-    v = oneArg(args)?
-    Result.Ok(Val.ValOk(v))
-
-fn builtinResultErr(args: List<Val>) -> Result<Val, String>
-    ? "Result.Err(value) → wrapped Err value."
-    v = oneArg(args)?
-    Result.Ok(Val.ValErr(v))
-
-fn tryVariantConstructor(name: String, args: List<Val>) -> Result<Val, String>
-    ? "Try to construct a variant value from a dotted name like Type.Ctor."
-    match splitDotted(name)
-        Option.Some(pair) -> match pair
-            (typeName, ctorName) -> Result.Ok(Val.ValVariant(typeName, ctorName, args))
-        Option.None -> Result.Err("undefined function: {name}")
-
-fn splitDotted(name: String) -> Option<(String, String)>
-    ? "Split 'Type.Ctor' into (Type, Ctor). Returns None if no dot."
-    splitDottedLoop(name, 0, String.len(name))
-
-fn splitDottedLoop(name: String, pos: Int, total: Int) -> Option<(String, String)>
-    ? "Find first dot and split."
-    match pos >= total
-        true -> Option.None
-        false -> match String.charAt(name, pos)
-            Option.Some(c) -> match c == "."
-                true -> Option.Some((String.slice(name, 0, pos), String.slice(name, pos + 1, total)))
-                false -> splitDottedLoop(name, pos + 1, total)
-            Option.None -> Option.None
-
-fn expectStr(v: Val) -> Result<String, String>
-    ? "Extract string from Val or error."
-    match v
-        Val.ValStr(s) -> Result.Ok(s)
-        _ -> Result.Err("expected string argument")
-
-fn builtinStringLen(args: List<Val>) -> Result<Val, String>
-    ? "String.len(s) → length as Int."
-    v = oneArg(args)?
-    s = expectStr(v)?
-    Result.Ok(Val.ValInt(String.len(s)))
-
-fn builtinStringCharAt(args: List<Val>) -> Result<Val, String>
-    ? "String.charAt(s, index) → single character string or error."
-    pair = twoArgs(args)?
-    match pair
-        (sV, idxV) -> builtinStringCharAtInner(sV, idxV)
-
-fn builtinStringCharAtInner(sV: Val, idxV: Val) -> Result<Val, String>
-    ? "Inner impl of String.charAt."
-    s = expectStr(sV)?
-    idx = expectInt(idxV)?
-    match String.charAt(s, idx)
-        Option.Some(c) -> Result.Ok(Val.ValStr(c))
-        Option.None -> Result.Err("charAt index out of bounds")
-
-fn builtinStringJoin(args: List<Val>) -> Result<Val, String>
-    ? "String.join(list, separator) → joined string."
-    pair = twoArgs(args)?
-    match pair
-        (lstV, sepV) -> builtinStringJoinInner(lstV, sepV)
-
-fn builtinStringJoinInner(lstV: Val, sepV: Val) -> Result<Val, String>
-    ? "Inner impl of String.join."
-    items = expectList(lstV)?
-    sep = expectStr(sepV)?
-    strs = extractStrings(items, [])?
-    Result.Ok(Val.ValStr(String.join(strs, sep)))
-
-fn extractStrings(items: List<Val>, acc: List<String>) -> Result<List<String>, String>
-    ? "Convert list of ValStr to list of String."
-    match items
-        [] -> Result.Ok(List.reverse(acc))
-        [v, ..rest] -> match v
-            Val.ValStr(s) -> extractStrings(rest, List.prepend(s, acc))
-            _ -> Result.Err("String.join requires list of strings")
-
-// ─── Pattern matching ───────────────────────────────────────
-
-fn matchPattern(pat: Pattern, v: Val) -> Result<List<(String, Val)>, String>
-    ? "Try to match a value against a pattern. Returns bindings on success."
-    match pat
-        Pattern.PatWild -> Result.Ok([])
-        Pattern.PatInt(n) -> matchPatInt(n, v)
-        Pattern.PatBool(b) -> matchPatBool(b, v)
-        Pattern.PatStr(s) -> matchPatStr(s, v)
-        Pattern.PatEmpty -> matchPatEmpty(v)
-        Pattern.PatCons(h, t) -> matchPatCons(h, t, v)
-        Pattern.PatConstructor(ctorName, bindings) -> matchPatConstructor(ctorName, bindings, v)
-        Pattern.PatTuple(bindings) -> matchPatTuple(bindings, v)
-        Pattern.PatVar(name) -> Result.Ok([(name, v)])
-
-fn matchPatInt(n: Int, v: Val) -> Result<List<(String, Val)>, String>
-    ? "Match a PatInt pattern against a value."
-    match v
-        Val.ValInt(m) -> match n == m
-            true -> Result.Ok([])
-            false -> Result.Err("no match")
-        _ -> Result.Err("no match")
-
-fn matchPatBool(b: Bool, v: Val) -> Result<List<(String, Val)>, String>
-    ? "Match a PatBool pattern against a value."
-    match v
-        Val.ValBool(vb) -> match b == vb
-            true -> Result.Ok([])
-            false -> Result.Err("no match")
-        _ -> Result.Err("no match")
-
-fn builtinStringToLower(args: List<Val>) -> Result<Val, String>
-    ? "String.toLower(s) → lowercase string."
-    v = oneArg(args)?
-    s = expectStr(v)?
-    Result.Ok(Val.ValStr(String.toLower(s)))
-
-fn builtinCharFromCode(args: List<Val>) -> Result<Val, String>
-    ? "Char.fromCode(n) → single character string."
-    v = oneArg(args)?
-    n = expectInt(v)?
-    match Char.fromCode(n)
-        Option.Some(c) -> Result.Ok(Val.ValSome(Val.ValStr(c)))
-        Option.None -> Result.Ok(Val.ValNone)
-
-fn builtinConsolePrint(args: List<Val>) -> Result<Val, String>
-    ? "Console.print(s) → print and return Unit."
-    ! [Console.print]
-    v = oneArg(args)?
-    s = expectStr(v)?
-    Console.print(s)
-    Result.Ok(Val.ValUnit)
-
-fn builtinDiskReadText(args: List<Val>) -> Result<Val, String>
-    ? "Disk.readText(path) → Result string."
-    ! [Disk.readText]
-    v = oneArg(args)?
-    path = expectStr(v)?
-    match Disk.readText(path)
-        Result.Ok(content) -> Result.Ok(Val.ValOk(Val.ValStr(content)))
-        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
-
-fn builtinArgsGet(args: List<Val>) -> Result<Val, String>
-    ? "Args.get() → list of string args."
-    ! [Args.get]
-    rawArgs = Args.get()
-    Result.Ok(Val.ValList(stringsToVals(rawArgs, [])))
-
-fn stringsToVals(strs: List<String>, acc: List<Val>) -> List<Val>
-    ? "Convert list of strings to list of ValStr."
-    match strs
-        [] -> List.reverse(acc)
-        [s, ..rest] -> stringsToVals(rest, List.prepend(Val.ValStr(s), acc))
-
-fn matchPatStr(s: String, v: Val) -> Result<List<(String, Val)>, String>
-    ? "Match a string literal pattern."
-    match v
-        Val.ValStr(vs) -> match s == vs
-            true -> Result.Ok([])
-            false -> Result.Err("no match")
-        _ -> Result.Err("no match")
-
-fn matchPatEmpty(v: Val) -> Result<List<(String, Val)>, String>
-    ? "Match empty list pattern []."
-    match v
-        Val.ValList(items) -> match items
-            [] -> Result.Ok([])
-            _ -> Result.Err("no match")
-        _ -> Result.Err("no match")
-
-fn matchPatCons(h: String, t: String, v: Val) -> Result<List<(String, Val)>, String>
-    ? "Match cons pattern [h, ..t]."
-    match v
-        Val.ValList(items) -> match items
-            [] -> Result.Err("no match")
-            [head, ..tail] -> Result.Ok([(h, head), (t, Val.ValList(tail))])
-        _ -> Result.Err("no match")
-
-fn matchPatConstructor(ctorName: String, bindings: List<String>, v: Val) -> Result<List<(String, Val)>, String>
-    ? "Match constructor pattern. Checks tag name and extracts inner values."
-    match ctorName
-        "Result.Ok" -> matchWrapperPat(v, "Ok", bindings)
-        "Result.Err" -> matchWrapperPat(v, "Err", bindings)
-        "Option.Some" -> matchWrapperPat(v, "Some", bindings)
-        "Option.None" -> matchNonePat(v)
-        _ -> matchGenericConstructor(ctorName, bindings, v)
-
-fn matchPatTuple(pats: List<Pattern>, v: Val) -> Result<List<(String, Val)>, String>
-    ? "Match tuple pattern with nested patterns."
-    match v
-        Val.ValTuple(items) -> matchPatTupleItems(pats, items)
-        _ -> Result.Err("no match")
-
-fn matchPatTupleItems(pats: List<Pattern>, items: List<Val>) -> Result<List<(String, Val)>, String>
-    ? "Match each pattern against corresponding tuple item."
-    ! [Console.print, Disk.readText, Args.get]
-    match pats
-        [] -> Result.Ok([])
-        [pat, ..restPats] -> match items
-            [] -> Result.Err("no match")
-            [item, ..restItems] -> matchPatTupleOne(pat, item, restPats, restItems)
-
-fn matchPatTupleOne(pat: Pattern, item: Val, restPats: List<Pattern>, restItems: List<Val>) -> Result<List<(String, Val)>, String>
-    ? "Match one tuple element and continue."
-    ! [Console.print, Disk.readText, Args.get]
-    bindings = matchPattern(pat, item)?
-    restBindings = matchPatTupleItems(restPats, restItems)?
-    Result.Ok(List.concat(bindings, restBindings))
-
-fn matchGenericConstructor(ctorName: String, bindings: List<String>, v: Val) -> Result<List<(String, Val)>, String>
-    ? "Match a generic variant constructor pattern."
-    match v
-        Val.ValVariant(typeName, varName, fields) -> matchGenericCtorCheck(ctorName, typeName, varName, bindings, fields)
-        _ -> Result.Err("no match")
-
-fn matchGenericCtorCheck(ctorName: String, typeName: String, varName: String, bindings: List<String>, fields: List<Val>) -> Result<List<(String, Val)>, String>
-    ? "Check if variant matches constructor name."
-    fullName = typeName + "." + varName
-    match fullName == ctorName
-        true -> zipBindings(bindings, fields)
-        false -> Result.Err("no match")
-
-fn matchNonePat(v: Val) -> Result<List<(String, Val)>, String>
-    ? "Match Option.None pattern."
-    match v
-        Val.ValNone -> Result.Ok([])
-        _ -> Result.Err("no match")
-
-fn matchWrapperPat(v: Val, tag: String, bindings: List<String>) -> Result<List<(String, Val)>, String>
-    ? "Match Ok/Err/Some wrapper and bind inner value."
-    match tag
-        "Ok" -> match v
-            Val.ValOk(inner) -> zipBindings(bindings, [inner])
-            _ -> Result.Err("no match")
-        "Err" -> match v
-            Val.ValErr(inner) -> zipBindings(bindings, [inner])
-            _ -> Result.Err("no match")
-        "Some" -> match v
-            Val.ValSome(inner) -> zipBindings(bindings, [inner])
-            _ -> Result.Err("no match")
-        _ -> Result.Err("no match")
-
-fn zipBindings(names: List<String>, vals: List<Val>) -> Result<List<(String, Val)>, String>
-    ? "Pair binding names with values."
-    match names
-        [] -> Result.Ok([])
-        [n, ..ns] -> match vals
-            [] -> Result.Ok([])
-            [v, ..vs] -> match zipBindings(ns, vs)
-                Result.Ok(rest) -> Result.Ok(List.prepend((n, v), rest))
-                Result.Err(e) -> Result.Err(e)
-
 fn evalMatch(v: Val, arms: List<MatchArm>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Try each match arm until one matches."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match arms
         [] -> Result.Err("no matching arm")
         [arm, ..rest] -> tryArm(arm, v, rest, env, fns)
 
 fn tryArm(arm: MatchArm, v: Val, rest: List<MatchArm>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Try a single match arm, fall through to rest on failure."
-    ! [Console.print, Disk.readText, Args.get]
-    match matchPattern(arm.pattern, v)
+    ! [Args.get, Console.print, Disk.readText]
+    match Domain.Match.matchPattern(arm.pattern, v)
         Result.Ok(bindings) -> evalExpr(arm.body, List.concat(bindings, env), fns)
         Result.Err(_) -> evalMatch(v, rest, env, fns)
 
 fn evalStmtExpr(e: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<(Val, List<(String, Val)>), String>
     ? "Evaluate a statement expression."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match evalExpr(e, env, fns)
         Result.Ok(v) -> Result.Ok((v, env))
         Result.Err(e) -> Result.Err(e)
 
 fn evalStmtBind(name: String, e: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<(Val, List<(String, Val)>), String>
     ? "Evaluate a binding statement."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match evalExpr(e, env, fns)
         Result.Ok(v) -> Result.Ok((v, List.prepend((name, v), env)))
         Result.Err(e) -> Result.Err(e)
 
 fn evalStmt(stmt: Stmt, env: List<(String, Val)>, fns: List<FnDef>) -> Result<(Val, List<(String, Val)>), String>
     ? "Evaluate a statement, returning the result and updated environment."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match stmt
         Stmt.StmtExpr(e) -> evalStmtExpr(e, env, fns)
         Stmt.StmtBind(name, e) -> evalStmtBind(name, e, env, fns)
 
 fn evalStmtsRest(v: Val, newEnv: List<(String, Val)>, rest: List<Stmt>, fns: List<FnDef>) -> Result<Val, String>
     ? "Continue evaluating remaining statements."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match rest
         [] -> Result.Ok(v)
         _ -> evalStmts(rest, newEnv, fns)
 
 fn evalStmtsContinue(pair: (Val, List<(String, Val)>), rest: List<Stmt>, fns: List<FnDef>) -> Result<Val, String>
     ? "Unpack stmt result and continue."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match pair
         (v, newEnv) -> evalStmtsRest(v, newEnv, rest, fns)
 
 fn evalStmts(stmts: List<Stmt>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate a list of statements, threading the environment."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match stmts
         [] -> Result.Ok(Val.ValUnit)
         [s, ..rest] -> match evalStmt(s, env, fns)
@@ -791,8 +358,10 @@ fn evalStmts(stmts: List<Stmt>, env: List<(String, Val)>, fns: List<FnDef>) -> R
             Result.Ok(pair) -> evalStmtsContinue(pair, rest, fns)
 
 fn evalProgram(prog: Program) -> Result<Val, String>
-    ? "Evaluate a complete program. Pure programs work; IO programs need evalProgramWithFns."
-    evalStmtsPure(prog.stmts, [], prog.fns)
+    ? "Evaluate a complete program: run top-level stmts, then call main() if it exists."
+    ! [Args.get, Console.print, Disk.readText]
+    v = evalStmts(prog.stmts, [], prog.fns)?
+    maybeCallMain(prog.fns, v)
 
 fn evalStmtsPure(stmts: List<Stmt>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate statements without IO effect declarations."
@@ -811,14 +380,14 @@ fn evalStmtsContinuePure(pair: (Val, List<(String, Val)>), rest: List<Stmt>, fns
 
 fn evalProgramWithFns(prog: Program, extraFns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate a program with additional functions from loaded modules."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     allFns = List.concat(extraFns, prog.fns)
-    evalStmts(prog.stmts, [], allFns)
+    v = evalStmts(prog.stmts, [], allFns)?
+    maybeCallMain(allFns, v)
 
-verify matchPattern
-    matchPattern(Pattern.PatWild, Val.ValInt(42)) => Result.Ok([])
-    matchPattern(Pattern.PatInt(5), Val.ValInt(5)) => Result.Ok([])
-    matchPattern(Pattern.PatInt(5), Val.ValInt(6)) => Result.Err("no match")
-    matchPattern(Pattern.PatBool(true), Val.ValBool(true)) => Result.Ok([])
-    matchPattern(Pattern.PatBool(true), Val.ValBool(false)) => Result.Err("no match")
-    matchPattern(Pattern.PatVar("x"), Val.ValInt(42)) => Result.Ok([("x", Val.ValInt(42))])
+fn maybeCallMain(fns: List<FnDef>, fallback: Val) -> Result<Val, String>
+    ? "If a main() function exists, call it. Otherwise return fallback value."
+    ! [Args.get, Console.print, Disk.readText]
+    match lookupFn(fns, "main")
+        Result.Ok(fd) -> evalStmts(fd.body, [], fns)
+        Result.Err(_) -> Result.Ok(fallback)

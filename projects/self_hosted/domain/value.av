@@ -41,6 +41,12 @@ fn valRepr(v: Val) -> String
         Val.ValVariant(typeName, ctorName, fields) -> valVariantRepr(typeName, ctorName, fields)
         Val.ValUnit -> "()"
 
+verify valRepr
+    valRepr(Val.ValInt(42)) => "42"
+    valRepr(Val.ValStr("hello")) => "hello"
+    valRepr(Val.ValBool(true)) => "true"
+    valRepr(Val.ValUnit) => "()"
+
 fn valVariantRepr(typeName: String, ctorName: String, fields: List<Val>) -> String
     ? "Display a variant value."
     match fields
@@ -54,9 +60,3 @@ fn valFieldsRepr(items: List<Val>, acc: String, first: Bool) -> String
         [v, ..rest] -> match first
             true -> valFieldsRepr(rest, valRepr(v), false)
             false -> valFieldsRepr(rest, acc + ", " + valRepr(v), false)
-
-verify valRepr
-    valRepr(Val.ValInt(42)) => "42"
-    valRepr(Val.ValStr("hello")) => "hello"
-    valRepr(Val.ValBool(true)) => "true"
-    valRepr(Val.ValUnit) => "()"

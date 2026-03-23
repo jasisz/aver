@@ -9,14 +9,14 @@ module SelfHosted
 
 fn run(source: String) -> Result<Val, String>
     ? "Lex, parse, and evaluate an Aver source string (no module loading)."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     tokens = Domain.Lexer.lex(source)
     prog = Domain.Parser.parse(tokens)?
     Domain.Eval.evalProgram(prog)
 
 fn runWithModules(source: String, moduleRoot: String) -> Result<Val, String>
     ? "Lex, parse, load modules, and evaluate."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     tokens = Domain.Lexer.lex(source)
     prog = Domain.Parser.parse(tokens)?
     moduleFns = loadModules(prog.deps, moduleRoot, [])?
@@ -24,14 +24,14 @@ fn runWithModules(source: String, moduleRoot: String) -> Result<Val, String>
 
 fn loadModules(deps: List<String>, moduleRoot: String, acc: List<FnDef>) -> Result<List<FnDef>, String>
     ? "Load all module dependencies and collect their functions."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match deps
         [] -> Result.Ok(acc)
         [dep, ..rest] -> loadOneModule(dep, rest, moduleRoot, acc)
 
 fn loadOneModule(dep: String, rest: List<String>, moduleRoot: String, acc: List<FnDef>) -> Result<List<FnDef>, String>
     ? "Load one module, add its functions, continue with rest."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     path = modulePathFromName(dep, moduleRoot)
     source = Disk.readText(path)?
     tokens = Domain.Lexer.lex(source)
@@ -70,7 +70,7 @@ fn qualifyFnsOne(f: FnDef, rest: List<FnDef>, prefix: String, acc: List<FnDef>) 
 
 fn runRepr(source: String) -> String
     ? "Run source and return result representation or error."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match run(source)
         Result.Ok(val) -> Domain.Value.valRepr(val)
         Result.Err(e) -> "ERROR: {e}"
@@ -79,7 +79,7 @@ fn runRepr(source: String) -> String
 
 fn runFile(path: String, moduleRoot: String) -> Result<String, String>
     ? "Read a file and run it through the self-hosted pipeline with module loading."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     source = Disk.readText(path)?
     match runWithModules(source, moduleRoot)
         Result.Ok(val) -> Result.Ok(Domain.Value.valRepr(val))
@@ -88,7 +88,7 @@ fn runFile(path: String, moduleRoot: String) -> Result<String, String>
 // ─── Entry ──────────────────────────────────────────────────
 
 fn main() -> Unit
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     args = Args.get()
     match List.get(args, 0)
         Option.Some(path) -> runFromFile(path, Option.withDefault(List.get(args, 1), "."))
@@ -96,10 +96,17 @@ fn main() -> Unit
 
 fn runFromFile(path: String, moduleRoot: String) -> Unit
     ? "Read and execute a file through the self-hosted pipeline."
-    ! [Console.print, Disk.readText, Args.get]
+    ! [Args.get, Console.print, Disk.readText]
     match runFile(path, moduleRoot)
-        Result.Ok(result) -> Console.print(result)
+        Result.Ok(result) -> printIfNotUnit(result)
         Result.Err(e) -> Console.print("Error: {e}")
+
+fn printIfNotUnit(s: String) -> Unit
+    ? "Print unless the result is Unit."
+    ! [Console.print]
+    match s == "()"
+        true -> Console.print("")
+        false -> Console.print(s)
 
 fn runDemo() -> Unit
     ? "Show built-in demo programs."

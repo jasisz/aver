@@ -1,4 +1,0 @@
-fn greet(name)
-"Hello, {name}!"
-
-greet("World")

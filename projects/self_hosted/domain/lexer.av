@@ -308,12 +308,12 @@ fn tokenizeSlashOrComment(src: String, pos: Int) -> List<Token>
         Option.None -> List.prepend(Token.TkSlash, tokenize(src, pos + 1))
 
 fn skipLineComment(src: String, pos: Int) -> List<Token>
-    ? "Skip characters until newline or EOF. Does not emit newline for the comment line."
+    ? "Skip characters until newline or EOF. Newline goes through indent handling."
     match pos >= String.len(src)
         true -> [Token.TkEof]
         false -> match String.charAt(src, pos)
             Option.Some(c) -> match c == "\n"
-                true -> tokenize(src, pos + 1)
+                true -> tokenizeNewline(src, pos + 1)
                 false -> skipLineComment(src, pos + 1)
             Option.None -> [Token.TkEof]
 
@@ -363,7 +363,7 @@ fn tokenizeChar(c: String, src: String, pos: Int) -> List<Token>
     ? "Tokenize based on the current character."
     match c
         " " -> tokenize(src, pos + 1)
-        "\n" -> List.prepend(Token.TkNewline, tokenize(src, pos + 1))
+        "\n" -> tokenizeNewline(src, pos + 1)
         "/" -> tokenizeSlashOrComment(src, pos)
         "+" -> List.prepend(Token.TkPlus, tokenize(src, pos + 1))
         "*" -> List.prepend(Token.TkStar, tokenize(src, pos + 1))
@@ -399,9 +399,34 @@ fn tokenize(src: String, pos: Int) -> List<Token>
         true -> [Token.TkEof]
         false -> tokenizeAtPos(src, pos)
 
+fn tokenizeNewline(src: String, pos: Int) -> List<Token>
+    ? "Handle newline: count indent of next line, emit NEWLINE + raw indent marker."
+    r = countIndent(src, pos, 0)
+    match r
+        (indent, newPos) -> List.prepend(Token.TkNewline, List.prepend(Token.TkInt(0 - indent - 1), tokenize(src, newPos)))
+
+fn countIndent(src: String, pos: Int, spaces: Int) -> (Int, Int)
+    ? "Count leading spaces after newline. Skip blank lines (reset on another newline)."
+    match pos >= String.len(src)
+        true -> (spaces, pos)
+        false -> countIndentChar(src, pos, spaces)
+
+fn countIndentChar(src: String, pos: Int, spaces: Int) -> (Int, Int)
+    ? "Check one character for indent counting."
+    match String.charAt(src, pos)
+        Option.Some(c) -> match c
+            " " -> countIndent(src, pos + 1, spaces + 1)
+            "\n" -> countIndent(src, pos + 1, 0)
+            _ -> (spaces, pos)
+        Option.None -> (spaces, pos)
+
 fn lex(src: String) -> List<Token>
-    ? "Tokenize a complete source string."
-    tokenize(src, 0)
+    ? "Tokenize a complete source string with INDENT/DEDENT."
+    raw = tokenize(src, 0)
+    processed = processIndentation(raw, [0])
+    processed
+
+// ─── INDENT/DEDENT post-processing ──────────────────────────
 
 verify lex
     lex("42") => [Token.TkInt(42), Token.TkEof]
@@ -409,3 +434,61 @@ verify lex
     lex("fn") => [Token.TkFn, Token.TkEof]
     lex("match") => [Token.TkMatch, Token.TkEof]
     lex("") => [Token.TkEof]
+
+fn processIndentation(tokens: List<Token>, stack: List<Int>) -> List<Token>
+    ? "Convert raw indent markers (negative TkInt after TkNewline) into INDENT/DEDENT tokens."
+    match tokens
+        [] -> emitFinalDedents(stack)
+        [t, ..rest] -> processIndentToken(t, rest, stack)
+
+fn processIndentToken(t: Token, rest: List<Token>, stack: List<Int>) -> List<Token>
+    ? "Process one token in the indentation pass."
+    match t
+        Token.TkNewline -> processAfterNewline(rest, stack)
+        Token.TkEof -> List.concat(emitFinalDedents(stack), [Token.TkEof])
+        _ -> List.prepend(t, processIndentation(rest, stack))
+
+fn processAfterNewline(tokens: List<Token>, stack: List<Int>) -> List<Token>
+    ? "After TkNewline, check for raw indent marker (negative TkInt)."
+    match tokens
+        [] -> List.prepend(Token.TkNewline, emitFinalDedents(stack))
+        [t, ..rest] -> processAfterNewlineToken(t, rest, stack)
+
+fn processAfterNewlineToken(t: Token, rest: List<Token>, stack: List<Int>) -> List<Token>
+    ? "Check if token after newline is a raw indent marker."
+    match t
+        Token.TkInt(n) -> match n < 0
+            true -> emitIndentChange(0 - n - 1, rest, stack)
+            false -> List.prepend(Token.TkNewline, List.prepend(t, processIndentation(rest, stack)))
+        _ -> List.prepend(Token.TkNewline, List.prepend(t, processIndentation(rest, stack)))
+
+fn emitIndentChange(indent: Int, rest: List<Token>, stack: List<Int>) -> List<Token>
+    ? "Compare indent level to stack top and emit INDENT, DEDENT, or NEWLINE."
+    currentIndent = stackTop(stack)
+    match indent > currentIndent
+        true -> List.prepend(Token.TkNewline, List.prepend(Token.TkIndent, processIndentation(rest, List.prepend(indent, stack))))
+        false -> match indent < currentIndent
+            true -> emitDedents(indent, rest, stack)
+            false -> List.prepend(Token.TkNewline, processIndentation(rest, stack))
+
+fn emitDedents(targetIndent: Int, rest: List<Token>, stack: List<Int>) -> List<Token>
+    ? "Emit DEDENT tokens until stack matches target indent."
+    match stack
+        [] -> processIndentation(rest, [0])
+        [top, ..below] -> match top <= targetIndent
+            true -> List.prepend(Token.TkNewline, processIndentation(rest, stack))
+            false -> List.prepend(Token.TkDedent, emitDedents(targetIndent, rest, below))
+
+fn emitFinalDedents(stack: List<Int>) -> List<Token>
+    ? "At EOF, emit DEDENT for each indent level above 0."
+    match stack
+        [] -> []
+        [top, ..rest] -> match top > 0
+            true -> List.prepend(Token.TkDedent, emitFinalDedents(rest))
+            false -> []
+
+fn stackTop(stack: List<Int>) -> Int
+    ? "Return top of indent stack, or 0 if empty."
+    match stack
+        [] -> 0
+        [top, ..rest] -> top

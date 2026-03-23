@@ -1,9 +1,0 @@
-module Math
-    intent = "Simple math helpers."
-    exposes [square, cube]
-
-fn square(n: Int) -> Int
-n * n
-
-fn cube(n: Int) -> Int
-n * n * n

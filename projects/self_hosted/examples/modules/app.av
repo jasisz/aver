@@ -1,8 +1,0 @@
-module App
-    depends [Modules.Math]
-    intent = "Test module loading."
-
-fn main() -> Int
-Modules.Math.square(5) + Modules.Math.cube(2)
-
-main()
