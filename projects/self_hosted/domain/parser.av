@@ -90,6 +90,7 @@ fn parseCmpExprRight(tokens: List<Token>, pos: Int, left: Expr, op: Int) -> Resu
         (right, pos2) -> buildCmpExpr(left, right, pos2, op)
 
 fn buildCmpExpr(left: Expr, right: Expr, pos: Int, op: Int) -> Result<(Expr, Int), String>
+    ? "Build comparison AST node from op code."
     match op
         0 -> Result.Ok((Expr.ExprEq(left, right), pos))
         1 -> Result.Ok((Expr.ExprNeq(left, right), pos))
@@ -168,6 +169,7 @@ fn parseListItems(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(Exp
         (expr, pos2) -> parseListItemsTail(tokens, pos2, List.append(acc, expr))
 
 fn parseListItemsTail(tokens: List<Token>, pos: Int, items: List<Expr>) -> Result<(Expr, Int), String>
+    ? "After a list item: ',' for more or ']' to end."
     match tokenAt(tokens, pos)
         Token.TkComma -> parseListItems(tokens, pos + 1, items)
         Token.TkRBracket -> Result.Ok((Expr.ExprList(items), pos + 1))
@@ -224,6 +226,7 @@ fn isArmStart(tokens: List<Token>, pos: Int) -> Bool
         _ -> false
 
 fn isArrow(tokens: List<Token>, pos: Int) -> Bool
+    ? "Check if token at pos is an arrow."
     match tokenAt(tokens, pos)
         Token.TkArrow -> true
         _ -> false
@@ -283,16 +286,19 @@ fn parseStmtExprFrom(tokens: List<Token>, pos: Int, name: String) -> Result<(Stm
         (expr, pos2) -> parseStmtExprFromMul(tokens, pos2, expr)
 
 fn parseStmtExprFromMul(tokens: List<Token>, pos: Int, expr: Expr) -> Result<(Stmt, Int), String>
+    ? "Continue parsing expression statement from multiplicative level."
     mr = parseMulExprTail(tokens, pos, expr)?
     match mr
         (expr2, pos2) -> parseStmtExprFromAdd(tokens, pos2, expr2)
 
 fn parseStmtExprFromAdd(tokens: List<Token>, pos: Int, expr: Expr) -> Result<(Stmt, Int), String>
+    ? "Continue parsing expression statement from additive level."
     ar = parseAddExprTail(tokens, pos, expr)?
     match ar
         (expr2, pos2) -> parseStmtExprFromCmp(tokens, pos2, expr2)
 
 fn parseStmtExprFromCmp(tokens: List<Token>, pos: Int, expr: Expr) -> Result<(Stmt, Int), String>
+    ? "Continue parsing expression statement from comparison level."
     cr = parseCmpExprTail(tokens, pos, expr)?
     match cr
         (expr2, pos2) -> Result.Ok((Stmt.StmtExpr(expr2), pos2))
@@ -367,3 +373,6 @@ fn parse(tokens: List<Token>) -> Result<Program, String>
 verify parse
     parse(Domain.Lexer.lex("x = 5")) => Result.Ok(Program(fns = [], stmts = [Stmt.StmtBind("x", Expr.ExprInt(5))]))
     parse(Domain.Lexer.lex("1 + 2")) => Result.Ok(Program(fns = [], stmts = [Stmt.StmtExpr(Expr.ExprAdd(Expr.ExprInt(1), Expr.ExprInt(2)))]))
+    parse(Domain.Lexer.lex("3 == 3")) => Result.Ok(Program(fns = [], stmts = [Stmt.StmtExpr(Expr.ExprEq(Expr.ExprInt(3), Expr.ExprInt(3)))]))
+    parse(Domain.Lexer.lex("[1, 2]")) => Result.Ok(Program(fns = [], stmts = [Stmt.StmtExpr(Expr.ExprList([Expr.ExprInt(1), Expr.ExprInt(2)]))]))
+    parse(Domain.Lexer.lex("+")) => Result.Err("Expected expression, got Plus")

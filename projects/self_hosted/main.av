@@ -39,12 +39,14 @@ fn main() -> Unit
         Option.None -> runDemo()
 
 fn runFromFile(path: String) -> Unit
+    ? "Read and execute a file through the self-hosted pipeline."
     ! [Console.print, Disk.readText]
     match runFile(path)
         Result.Ok(result) -> Console.print(result)
         Result.Err(e) -> Console.print("Error: {e}")
 
 fn runDemo() -> Unit
+    ? "Show built-in demo programs."
     ! [Console.print]
     Console.print("=== Self-Hosted Mini Aver ===")
     Console.print("")
@@ -56,6 +58,10 @@ fn runDemo() -> Unit
     Console.print("  fib(10) = {runRepr("fn fib(n)\nmatch n\n0 -> 0\n1 -> 1\n_ -> fib(n - 1) + fib(n - 2)\nfib(10)")}")
 
 // ─── Verify ─────────────────────────────────────────────────
+
+verify runRepr
+    runRepr("42") => "42"
+    runRepr("xyz") => "ERROR: undefined variable: xyz"
 
 verify run
     run("42") => Result.Ok(Val.ValInt(42))
@@ -72,6 +78,7 @@ verify run
     run("3 <= 3") => Result.Ok(Val.ValBool(true))
     run("3 >= 4") => Result.Ok(Val.ValBool(false))
     run("fn abs(n)\nmatch n < 0\ntrue -> 0 - n\nfalse -> n\nabs(0 - 42)") => Result.Ok(Val.ValInt(42))
+    run("xyz") => Result.Err("undefined variable: xyz")
     run("[1, 2, 3]") => Result.Ok(Val.ValList([Val.ValInt(1), Val.ValInt(2), Val.ValInt(3)]))
     run("[]") => Result.Ok(Val.ValList([]))
     run("fn sum(xs)\nmatch xs\n[] -> 0\n[h, ..t] -> h + sum(t)\nsum([1, 2, 3])") => Result.Ok(Val.ValInt(6))

@@ -111,6 +111,7 @@ fn evalBinop(a: Expr, b: Expr, env: List<(String, Val)>, fns: List<FnDef>, op: S
         Result.Ok(va) -> evalBinopRight(va, b, env, fns, op)
 
 fn evalCmpRight(va: Val, b: Expr, env: List<(String, Val)>, fns: List<FnDef>, op: String) -> Result<Val, String>
+    ? "Evaluate right side of comparison and apply."
     match evalExpr(b, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(vb) -> evalCmpVals(va, vb, op)
@@ -128,6 +129,7 @@ fn evalListExpr(exprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -
         Result.Err(e) -> Result.Err(e)
 
 fn evalListItems(exprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<List<Val>, String>
+    ? "Evaluate list of expressions into list of values."
     match exprs
         [] -> Result.Ok([])
         [e, ..rest] -> match evalExpr(e, env, fns)
