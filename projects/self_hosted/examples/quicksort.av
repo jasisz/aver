@@ -1,0 +1,25 @@
+// Quicksort in mini-Aver
+
+fn partition(xs, pivot, lo, hi)
+match xs
+[] -> [List.reverse(lo), List.reverse(hi)]
+[h, ..t] -> match h <= pivot
+true -> partition(t, pivot, List.prepend(h, lo), hi)
+false -> partition(t, pivot, lo, List.prepend(h, hi))
+
+fn concat(a, b)
+match a
+[] -> b
+[h, ..t] -> List.prepend(h, concat(t, b))
+
+fn qsort(xs)
+match xs
+[] -> []
+[pivot, ..rest] -> qsortDo(pivot, partition(rest, pivot, [], []))
+
+fn qsortDo(pivot, parts)
+lo = Option.withDefault(List.get(parts, 0), [])
+hi = Option.withDefault(List.get(parts, 1), [])
+concat(qsort(lo), List.prepend(pivot, qsort(hi)))
+
+qsort([5, 3, 8, 1, 9, 2, 7, 4, 6])
