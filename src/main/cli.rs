@@ -96,6 +96,9 @@ pub(super) enum Commands {
         /// Execute using the bytecode VM instead of the tree-walking interpreter
         #[arg(long)]
         vm: bool,
+        /// Print VM opcode/function profile after execution (implies --vm)
+        #[arg(long)]
+        profile: bool,
         /// Arguments passed to the Aver program (available via Args.get()), after --
         #[arg(last = true)]
         program_args: Vec<String>,

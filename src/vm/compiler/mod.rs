@@ -633,7 +633,9 @@ fn classify_thin_functions(code: &mut CodeStore, arena: &Arena) -> Result<(), Co
         }
     }
 
-    // Post-pass: upgrade CALL_KNOWN → CALL_LEAF for leaf+thin+args-only targets.
+    // Post-pass: upgrade CALL_KNOWN → CALL_LEAF for leaf+args-only targets.
+    // Leaf functions have no user-function calls, so their arena allocations
+    // merge into the caller's frame — no arena marks needed.
     for fn_id in 0..code.functions.len() {
         let positions: Vec<usize> = find_opcode_positions(&code.functions[fn_id], CALL_KNOWN);
         for pos in positions {
@@ -647,7 +649,7 @@ fn classify_thin_functions(code: &mut CodeStore, arena: &Arena) -> Result<(), Co
                 continue;
             }
             let target = &code.functions[target_fn_id];
-            if target.leaf && target.thin && target.local_count == target.arity as u16 {
+            if target.leaf && target.local_count == target.arity as u16 {
                 code.functions[fn_id].code[pos] = CALL_LEAF;
             }
         }

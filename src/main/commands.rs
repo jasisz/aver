@@ -791,6 +791,7 @@ pub(super) fn cmd_run_vm(
     run_verify_blocks: bool,
     record_dir: Option<&str>,
     program_args: Vec<String>,
+    profile: bool,
 ) {
     use aver::replay::{
         JsonValue, session::RecordedOutcome, session::SessionRecording,
@@ -855,6 +856,10 @@ pub(super) fn cmd_run_vm(
 
     machine.set_cli_args(program_args);
 
+    if profile {
+        machine.start_profiling();
+    }
+
     if record_dir.is_some() {
         machine.start_recording();
     }
@@ -903,6 +908,53 @@ pub(super) fn cmd_run_vm(
             process::exit(1);
         }
         println!("Recording saved: {}", out_path.display());
+    }
+
+    if profile {
+        if let Some(report) = machine.profile_report() {
+            eprintln!("\n── VM Profile ──────────────────────────────────");
+            eprintln!("Total opcodes: {}", report.total_opcodes);
+            eprintln!("\nTop opcodes:");
+            let mut sorted = report.opcodes.clone();
+            sorted.sort_by(|a, b| b.count.cmp(&a.count));
+            for op in sorted.iter().take(20).filter(|o| o.count > 0) {
+                let pct = op.count as f64 / report.total_opcodes as f64 * 100.0;
+                eprintln!("  {:>22} {:>12}  ({:.1}%)", op.name, op.count, pct);
+            }
+            eprintln!("\nTop functions (by entries):");
+            let mut fns = report.functions.clone();
+            fns.sort_by(|a, b| b.entries.cmp(&a.entries));
+            for f in fns.iter().take(15).filter(|f| f.entries > 0) {
+                let flags = format!(
+                    "{}{}",
+                    if f.thin { "T" } else { "" },
+                    if f.parent_thin { "P" } else { "" }
+                );
+                eprintln!(
+                    "  {:>22} {:>10} entries  fast:{} slow:{} {}",
+                    f.name, f.entries, f.fast_returns, f.slow_returns, flags
+                );
+            }
+            if !report.builtins.is_empty() {
+                eprintln!("\nTop builtins:");
+                for b in report.builtins.iter().take(10) {
+                    eprintln!("  {:>22} {:>12}", b.name, b.count);
+                }
+            }
+            eprintln!("\nReturn stats:");
+            let r = &report.returns;
+            eprintln!(
+                "  total:{} thin:{} parent-thin:{}",
+                r.total_entries, r.thin_entries, r.parent_thin_entries
+            );
+            eprintln!(
+                "  fast:{} young-trunc:{} slow:{}",
+                r.thin_fast_returns + r.parent_thin_fast_returns,
+                r.young_truncate_fast_returns,
+                r.thin_slow_returns + r.parent_thin_slow_returns + r.regular_slow_returns
+            );
+            eprintln!("────────────────────────────────────────────────\n");
+        }
     }
 
     match run_result {

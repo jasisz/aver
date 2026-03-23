@@ -31,15 +31,17 @@ fn main() {
             verify,
             record,
             vm,
+            profile,
             program_args,
         } => {
-            if *vm {
+            if *vm || *profile {
                 commands::cmd_run_vm(
                     file,
                     module_root.as_deref(),
                     *verify,
                     record.as_deref(),
                     program_args.clone(),
+                    *profile,
                 );
             } else {
                 commands::cmd_run(
