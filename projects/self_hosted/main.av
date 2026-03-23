@@ -3,6 +3,7 @@ module SelfHosted
     intent =
         "Mini Aver interpreter written in Aver."
         "Demonstrates self-hosting: Aver source parsed and evaluated by Aver running on its own VM."
+        "Usage: aver run projects/self_hosted/main.av --module-root projects/self_hosted -- <file.av>"
 
 // ─── Full pipeline: source string → result ──────────────────
 
@@ -18,21 +19,41 @@ fn runRepr(source: String) -> String
         Result.Ok(val) -> Domain.Value.valRepr(val)
         Result.Err(e) -> "ERROR: {e}"
 
-// ─── Demos ──────────────────────────────────────────────────
+// ─── File runner ────────────────────────────────────────────
 
-fn demoFullPipeline() -> String
-    ? "Demonstrate lex → parse → eval on real source strings."
-    r1 = runRepr("x = 3 + 4\nx * 2")
-    r2 = runRepr("fn double(n)\nn + n\ndouble(21)")
-    r3 = runRepr("fn fib(n)\nmatch n\n0 -> 0\n1 -> 1\n_ -> fib(n - 1) + fib(n - 2)\nfib(10)")
-    "  x=3+4; x*2 = {r1}\n  double(21) = {r2}\n  fib(10) = {r3}"
+fn runFile(path: String) -> Result<String, String>
+    ? "Read a file and run it through the self-hosted pipeline."
+    ! [Disk.readText]
+    source = Disk.readText(path)?
+    match run(source)
+        Result.Ok(val) -> Result.Ok(Domain.Value.valRepr(val))
+        Result.Err(e) -> Result.Err(e)
+
+// ─── Entry ──────────────────────────────────────────────────
 
 fn main() -> Unit
+    ! [Console.print, Disk.readText, Args.get]
+    args = Args.get()
+    match List.get(args, 0)
+        Option.Some(path) -> runFromFile(path)
+        Option.None -> runDemo()
+
+fn runFromFile(path: String) -> Unit
+    ! [Console.print, Disk.readText]
+    match runFile(path)
+        Result.Ok(result) -> Console.print(result)
+        Result.Err(e) -> Console.print("Error: {e}")
+
+fn runDemo() -> Unit
     ! [Console.print]
     Console.print("=== Self-Hosted Mini Aver ===")
     Console.print("")
-    Console.print("Full pipeline (lex -> parse -> eval):")
-    Console.print("  {demoFullPipeline()}")
+    Console.print("Usage: aver run main.av --module-root . -- <file.av>")
+    Console.print("")
+    Console.print("Built-in demos:")
+    Console.print("  x=3+4; x*2 = {runRepr("x = 3 + 4\nx * 2")}")
+    Console.print("  double(21) = {runRepr("fn double(n)\nn + n\ndouble(21)")}")
+    Console.print("  fib(10) = {runRepr("fn fib(n)\nmatch n\n0 -> 0\n1 -> 1\n_ -> fib(n - 1) + fib(n - 2)\nfib(10)")}")
 
 // ─── Verify ─────────────────────────────────────────────────
 
