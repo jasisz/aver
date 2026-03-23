@@ -153,16 +153,121 @@ fn evalArgs(exprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Re
             Result.Ok(v) -> evalArgsRest(v, rest, env, fns)
 
 fn callWithArgs(args: List<Val>, name: String, fns: List<FnDef>) -> Result<Val, String>
-    ? "Look up function and call it with args."
+    ? "Look up function and call it with args. Falls back to builtins for qualified names."
     match lookupFn(fns, name)
-        Result.Err(e) -> Result.Err(e)
         Result.Ok(fd) -> evalStmts(fd.body, zipArgs(fd.params, args), fns)
+        Result.Err(_) -> callBuiltin(name, args)
 
 fn evalCall(name: String, argExprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate a function call."
     match evalArgs(argExprs, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(args) -> callWithArgs(args, name, fns)
+
+// ─── Builtins (delegate to host) ────────────────────────────
+
+fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
+    ? "Dispatch qualified builtin calls to host implementations."
+    match name
+        "List.prepend" -> builtinListPrepend(args)
+        "List.len" -> builtinListLen(args)
+        "List.reverse" -> builtinListReverse(args)
+        "List.append" -> builtinListAppend(args)
+        "List.get" -> builtinListGet(args)
+        "Int.toString" -> builtinIntToString(args)
+        "Int.abs" -> builtinIntAbs(args)
+        _ -> Result.Err("undefined function: {name}")
+
+fn oneArg(args: List<Val>) -> Result<Val, String>
+    ? "Extract single argument from args list."
+    match args
+        [a, ..rest] -> match rest
+            [] -> Result.Ok(a)
+            _ -> Result.Err("expected 1 argument")
+        _ -> Result.Err("expected 1 argument")
+
+fn twoArgs(args: List<Val>) -> Result<(Val, Val), String>
+    ? "Extract two arguments from args list."
+    match args
+        [a, ..rest] -> match rest
+            [b, ..rest2] -> match rest2
+                [] -> Result.Ok((a, b))
+                _ -> Result.Err("expected 2 arguments")
+            _ -> Result.Err("expected 2 arguments")
+        _ -> Result.Err("expected 2 arguments")
+
+fn expectList(v: Val) -> Result<List<Val>, String>
+    ? "Extract list from Val or error."
+    match v
+        Val.ValList(items) -> Result.Ok(items)
+        _ -> Result.Err("expected list argument")
+
+fn expectInt(v: Val) -> Result<Int, String>
+    ? "Extract int from Val or error."
+    match v
+        Val.ValInt(n) -> Result.Ok(n)
+        _ -> Result.Err("expected int argument")
+
+fn builtinListPrepend(args: List<Val>) -> Result<Val, String>
+    ? "List.prepend(value, list) → list with value at front."
+    pair = twoArgs(args)?
+    match pair
+        (v, lstV) -> builtinListPrependInner(v, lstV)
+
+fn builtinListPrependInner(v: Val, lstV: Val) -> Result<Val, String>
+    items = expectList(lstV)?
+    Result.Ok(Val.ValList(List.prepend(v, items)))
+
+fn builtinListLen(args: List<Val>) -> Result<Val, String>
+    ? "List.len(list) → length as Int."
+    v = oneArg(args)?
+    items = expectList(v)?
+    Result.Ok(Val.ValInt(List.len(items)))
+
+fn builtinListReverse(args: List<Val>) -> Result<Val, String>
+    ? "List.reverse(list) → reversed list."
+    v = oneArg(args)?
+    items = expectList(v)?
+    Result.Ok(Val.ValList(List.reverse(items)))
+
+fn builtinListAppend(args: List<Val>) -> Result<Val, String>
+    ? "List.append(list, val) → list with val at end."
+    pair = twoArgs(args)?
+    match pair
+        (lstV, v) -> builtinListAppendInner(lstV, v)
+
+fn builtinListAppendInner(lstV: Val, v: Val) -> Result<Val, String>
+    ? "Inner impl of List.append."
+    items = expectList(lstV)?
+    Result.Ok(Val.ValList(List.append(items, v)))
+
+fn builtinListGet(args: List<Val>) -> Result<Val, String>
+    ? "List.get(list, index) → element or error."
+    pair = twoArgs(args)?
+    match pair
+        (lstV, idxV) -> builtinListGetInner(lstV, idxV)
+
+fn builtinListGetInner(lstV: Val, idxV: Val) -> Result<Val, String>
+    ? "Inner impl of List.get."
+    items = expectList(lstV)?
+    idx = expectInt(idxV)?
+    match List.get(items, idx)
+        Option.Some(v) -> Result.Ok(v)
+        Option.None -> Result.Err("index out of bounds")
+
+fn builtinIntToString(args: List<Val>) -> Result<Val, String>
+    ? "Int.toString(n) → string representation."
+    v = oneArg(args)?
+    n = expectInt(v)?
+    Result.Ok(Val.ValStr(Int.toString(n)))
+
+fn builtinIntAbs(args: List<Val>) -> Result<Val, String>
+    ? "Int.abs(n) → absolute value."
+    v = oneArg(args)?
+    n = expectInt(v)?
+    Result.Ok(Val.ValInt(Int.abs(n)))
+
+// ─── Pattern matching ───────────────────────────────────────
 
 fn matchPattern(pat: Pattern, v: Val) -> Result<List<(String, Val)>, String>
     ? "Try to match a value against a pattern. Returns bindings on success."

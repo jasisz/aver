@@ -97,11 +97,17 @@ fn readNumber(src: String, pos: Int, acc: Int) -> (Int, Int)
     ? "Read consecutive digits from pos, return (number, newPos)."
     readNumberLoop(src, pos, acc)
 
+fn isIdentChar(c: String) -> Bool
+    ? "Check if character can continue an identifier (alphanumeric, underscore, or dot for qualified names)."
+    match isAlphaNum(c)
+        true -> true
+        false -> c == "."
+
 fn readIdentLoop(src: String, pos: Int, acc: String) -> (String, Int)
-    ? "Read consecutive alphanumeric characters from pos."
+    ? "Read consecutive identifier characters from pos (including dots for qualified names)."
     match pos < String.len(src)
         true -> match String.charAt(src, pos)
-            Option.Some(c) -> match isAlphaNum(c)
+            Option.Some(c) -> match isIdentChar(c)
                 true -> readIdentLoop(src, pos + 1, acc + c)
                 false -> (acc, pos)
             Option.None -> (acc, pos)
