@@ -111,3 +111,6 @@ verify run
     run("Int.toString(42)") => Result.Ok(Val.ValStr("42"))
     run("(1, 2)") => Result.Ok(Val.ValTuple([Val.ValInt(1), Val.ValInt(2)]))
     run("fn swap(p)\nmatch p\n(a, b) -> (b, a)\n\nswap((1, 2))") => Result.Ok(Val.ValTuple([Val.ValInt(2), Val.ValInt(1)]))
+    run("fn add(a: Int, b: Int) -> Int\na + b\n\nadd(3, 4)") => Result.Ok(Val.ValInt(7))
+    run("module Foo\n  intent = \"test\"\n  depends []\n\nfn main() -> Int\n42\n\nmain()") => Result.Ok(Val.ValInt(42))
+    run("fn greet(name: String) -> String\n? \"Says hello.\"\nname + name\n\ngreet(\"hi\")") => Result.Ok(Val.ValStr("hihi"))

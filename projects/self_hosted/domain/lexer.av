@@ -147,6 +147,7 @@ fn keywordOrIdent(s: String) -> Token
         "depends" -> Token.TkIdent("depends")
         "exposes" -> Token.TkIdent("exposes")
         "intent" -> Token.TkIdent("intent")
+        "decision" -> Token.TkIdent("decision")
         _ -> Token.TkIdent(s)
 
 fn tokenizeDigit(src: String, pos: Int) -> List<Token>
@@ -184,6 +185,16 @@ fn tokenizeDefault(c: String, src: String, pos: Int) -> List<Token>
         false -> match isAlpha(c)
             true -> tokenizeAlpha(src, pos)
             false -> tokenize(src, pos + 1)
+
+fn tokenizeString(src: String, pos: Int, acc: String) -> List<Token>
+    ? "Read string literal until closing quote."
+    match pos >= String.len(src)
+        true -> [Token.TkStr(acc), Token.TkEof]
+        false -> match String.charAt(src, pos)
+            Option.Some(c) -> match c == "\""
+                true -> List.prepend(Token.TkStr(acc), tokenize(src, pos + 1))
+                false -> tokenizeString(src, pos + 1, acc + c)
+            Option.None -> [Token.TkStr(acc), Token.TkEof]
 
 fn tokenizeSlashOrComment(src: String, pos: Int) -> List<Token>
     ? "Tokenize / (division) or // (line comment)."
@@ -228,19 +239,21 @@ fn tokenizeGt(src: String, pos: Int) -> List<Token>
         Option.None -> List.prepend(Token.TkGt, tokenize(src, pos + 1))
 
 fn tokenizeBang(src: String, pos: Int) -> List<Token>
-    ? "Tokenize != (only valid two-char sequence starting with !)."
+    ? "Tokenize ! or !=."
     match String.charAt(src, pos + 1)
         Option.Some(c) -> match c == "="
             true -> List.prepend(Token.TkNeq, tokenize(src, pos + 2))
-            false -> tokenize(src, pos + 1)
-        Option.None -> tokenize(src, pos + 1)
+            false -> List.prepend(Token.TkBang, tokenize(src, pos + 1))
+        Option.None -> List.prepend(Token.TkBang, tokenize(src, pos + 1))
 
 fn tokenizeEq(src: String, pos: Int) -> List<Token>
-    ? "Tokenize = or ==."
+    ? "Tokenize =, ==, or =>."
     match String.charAt(src, pos + 1)
         Option.Some(c) -> match c == "="
             true -> List.prepend(Token.TkEqEq, tokenize(src, pos + 2))
-            false -> List.prepend(Token.TkEq, tokenize(src, pos + 1))
+            false -> match c == ">"
+                true -> List.prepend(Token.TkFatArrow, tokenize(src, pos + 2))
+                false -> List.prepend(Token.TkEq, tokenize(src, pos + 1))
         Option.None -> List.prepend(Token.TkEq, tokenize(src, pos + 1))
 
 fn tokenizeChar(c: String, src: String, pos: Int) -> List<Token>
@@ -255,12 +268,14 @@ fn tokenizeChar(c: String, src: String, pos: Int) -> List<Token>
         ">" -> tokenizeGt(src, pos)
         "!" -> tokenizeBang(src, pos)
         "?" -> List.prepend(Token.TkQuestion, tokenize(src, pos + 1))
+        "\"" -> tokenizeString(src, pos + 1, "")
         "(" -> List.prepend(Token.TkLParen, tokenize(src, pos + 1))
         ")" -> List.prepend(Token.TkRParen, tokenize(src, pos + 1))
         "[" -> List.prepend(Token.TkLBracket, tokenize(src, pos + 1))
         "]" -> List.prepend(Token.TkRBracket, tokenize(src, pos + 1))
         "." -> tokenizeDot(src, pos)
         "," -> List.prepend(Token.TkComma, tokenize(src, pos + 1))
+        ":" -> List.prepend(Token.TkColon, tokenize(src, pos + 1))
         "=" -> tokenizeEq(src, pos)
         "-" -> tokenizeMinus(src, pos)
         _ -> tokenizeDefault(c, src, pos)
