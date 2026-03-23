@@ -220,6 +220,11 @@ impl<'a> FnCompiler<'a> {
             );
         }
 
+        // --- Try bool match → JUMP_IF_FALSE optimization ---
+        if let Some(result) = self.try_compile_bool_match(subject, arms)? {
+            return Ok(result);
+        }
+
         // --- Try MATCH_DISPATCH optimization ---
         if let Some(result) = self.try_compile_match_dispatch(subject, arms, line)? {
             return Ok(result);
@@ -278,6 +283,43 @@ impl<'a> FnCompiler<'a> {
         }
 
         Ok(())
+    }
+
+    /// Compile `match <expr>: true → A, false → B` as JUMP_IF_FALSE.
+    /// Avoids MATCH_DISPATCH overhead for the most common Aver branch pattern.
+    fn try_compile_bool_match(
+        &mut self,
+        subject: &Expr,
+        arms: &[MatchArm],
+    ) -> Result<Option<()>, CompileError> {
+        if arms.len() != 2 {
+            return Ok(None);
+        }
+
+        let (true_body, false_body) = match (&arms[0].pattern, &arms[1].pattern) {
+            (Pattern::Literal(Literal::Bool(true)), Pattern::Literal(Literal::Bool(false))) => {
+                (&arms[0].body, &arms[1].body)
+            }
+            (Pattern::Literal(Literal::Bool(false)), Pattern::Literal(Literal::Bool(true))) => {
+                (&arms[1].body, &arms[0].body)
+            }
+            // Also handle `true -> A, _ -> B` (wildcard/ident as false).
+            (Pattern::Literal(Literal::Bool(true)), Pattern::Wildcard | Pattern::Ident(_)) => {
+                (&arms[0].body, &arms[1].body)
+            }
+            _ => return Ok(None),
+        };
+
+        // Emit: subject, JUMP_IF_FALSE → false_body, true_body, JUMP → end, false_body
+        self.compile_expr(subject)?;
+        let false_jump = self.emit_jump(JUMP_IF_FALSE);
+        self.compile_expr(true_body)?;
+        let end_jump = self.emit_jump(JUMP);
+        self.patch_jump(false_jump);
+        self.compile_expr(false_body)?;
+        self.patch_jump(end_jump);
+
+        Ok(Some(()))
     }
 
     /// Try to compile a match as a MATCH_DISPATCH table.
