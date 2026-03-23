@@ -251,6 +251,17 @@ impl<'a> FnCompiler<'a> {
                     self.emit_op(LIST_HEAD_TAIL);
                     self.bind_top_to_local(head);
                     self.bind_top_to_local(tail);
+                } else if let Pattern::Tuple(patterns) = &arm.pattern {
+                    // Last arm tuple: extract and bind each element.
+                    for (idx, pat) in patterns.iter().enumerate() {
+                        self.emit_op(EXTRACT_TUPLE_ITEM);
+                        self.emit_u8(idx as u8);
+                        if let Pattern::Ident(name) = pat {
+                            self.bind_top_to_local(name);
+                        } else {
+                            self.emit_op(POP);
+                        }
+                    }
                 }
                 Vec::new()
             } else {
