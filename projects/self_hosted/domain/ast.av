@@ -42,7 +42,7 @@ type Stmt
 record FnDef
     name: String
     params: List<String>
-    body: Expr
+    body: List<Stmt>
 
 record Program
     fns: List<FnDef>

@@ -320,11 +320,38 @@ fn parseFnDefParams(tokens: List<Token>, pos: Int, name: String) -> Result<(FnDe
         (params, pos3) -> parseFnDefBody(tokens, pos3, name, params)
 
 fn parseFnDefBody(tokens: List<Token>, pos: Int, name: String, params: List<String>) -> Result<(FnDef, Int), String>
-    ? "Parse function body after params."
-    pos2 = skipNewlines(tokens, pos)
-    br = parseExpr(tokens, pos2)?
-    match br
-        (body, pos3) -> Result.Ok((FnDef(name = name, params = params, body = body), pos3))
+    ? "Parse function body: one or more statements after single newline."
+    pos2 = expect(tokens, pos, Token.TkNewline)?
+    sr = parseFnBodyStmts(tokens, pos2, [])?
+    match sr
+        (stmts, pos3) -> Result.Ok((FnDef(name = name, params = params, body = stmts), pos3))
+
+fn isBodyEnd(tokens: List<Token>, pos: Int) -> Bool
+    ? "Check if we've reached the end of a function body (EOF, fn, or blank line)."
+    t = tokenAt(tokens, pos)
+    match t
+        Token.TkEof -> true
+        Token.TkFn -> true
+        Token.TkNewline -> true
+        _ -> false
+
+fn parseFnBodyStmts(tokens: List<Token>, pos: Int, acc: List<Stmt>) -> Result<(List<Stmt>, Int), String>
+    ? "Parse statements in function body. Blank line or fn/EOF ends body."
+    match isBodyEnd(tokens, pos)
+        true -> Result.Ok((acc, pos))
+        false -> parseFnBodyOneStmt(tokens, pos, acc)
+
+fn parseFnBodyOneStmt(tokens: List<Token>, pos: Int, acc: List<Stmt>) -> Result<(List<Stmt>, Int), String>
+    ? "Parse one statement in function body and continue."
+    r = parseStmt(tokens, pos)?
+    match r
+        (stmt, pos2) -> parseFnBodyAfterStmt(tokens, pos2, List.append(acc, stmt))
+
+fn parseFnBodyAfterStmt(tokens: List<Token>, pos: Int, acc: List<Stmt>) -> Result<(List<Stmt>, Int), String>
+    ? "After a body statement: single newline continues, anything else ends."
+    match tokenAt(tokens, pos)
+        Token.TkNewline -> parseFnBodyStmts(tokens, pos + 1, acc)
+        _ -> Result.Ok((acc, pos))
 
 fn parseParamList(tokens: List<Token>, pos: Int, acc: List<String>) -> Result<(List<String>, Int), String>
     ? "Parse comma-separated parameter names until ')'."

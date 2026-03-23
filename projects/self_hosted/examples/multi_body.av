@@ -1,0 +1,9 @@
+fn square(x)
+x * x
+
+fn hypotenuse_sq(a, b)
+a2 = square(a)
+b2 = square(b)
+a2 + b2
+
+hypotenuse_sq(3, 4)

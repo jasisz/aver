@@ -156,7 +156,7 @@ fn callWithArgs(args: List<Val>, name: String, fns: List<FnDef>) -> Result<Val, 
     ? "Look up function and call it with args."
     match lookupFn(fns, name)
         Result.Err(e) -> Result.Err(e)
-        Result.Ok(fd) -> evalExpr(fd.body, zipArgs(fd.params, args), fns)
+        Result.Ok(fd) -> evalStmts(fd.body, zipArgs(fd.params, args), fns)
 
 fn evalCall(name: String, argExprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate a function call."
