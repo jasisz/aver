@@ -176,6 +176,9 @@ fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
         "List.get" -> builtinListGet(args)
         "Int.toString" -> builtinIntToString(args)
         "Int.abs" -> builtinIntAbs(args)
+        "String.len" -> builtinStringLen(args)
+        "String.charAt" -> builtinStringCharAt(args)
+        "String.join" -> builtinStringJoin(args)
         _ -> Result.Err("undefined function: {name}")
 
 fn oneArg(args: List<Val>) -> Result<Val, String>
@@ -266,6 +269,53 @@ fn builtinIntAbs(args: List<Val>) -> Result<Val, String>
     v = oneArg(args)?
     n = expectInt(v)?
     Result.Ok(Val.ValInt(Int.abs(n)))
+
+fn expectStr(v: Val) -> Result<String, String>
+    ? "Extract string from Val or error."
+    match v
+        Val.ValStr(s) -> Result.Ok(s)
+        _ -> Result.Err("expected string argument")
+
+fn builtinStringLen(args: List<Val>) -> Result<Val, String>
+    ? "String.len(s) → length as Int."
+    v = oneArg(args)?
+    s = expectStr(v)?
+    Result.Ok(Val.ValInt(String.len(s)))
+
+fn builtinStringCharAt(args: List<Val>) -> Result<Val, String>
+    ? "String.charAt(s, index) → single character string or error."
+    pair = twoArgs(args)?
+    match pair
+        (sV, idxV) -> builtinStringCharAtInner(sV, idxV)
+
+fn builtinStringCharAtInner(sV: Val, idxV: Val) -> Result<Val, String>
+    ? "Inner impl of String.charAt."
+    s = expectStr(sV)?
+    idx = expectInt(idxV)?
+    match String.charAt(s, idx)
+        Option.Some(c) -> Result.Ok(Val.ValStr(c))
+        Option.None -> Result.Err("charAt index out of bounds")
+
+fn builtinStringJoin(args: List<Val>) -> Result<Val, String>
+    ? "String.join(list, separator) → joined string."
+    pair = twoArgs(args)?
+    match pair
+        (lstV, sepV) -> builtinStringJoinInner(lstV, sepV)
+
+fn builtinStringJoinInner(lstV: Val, sepV: Val) -> Result<Val, String>
+    ? "Inner impl of String.join."
+    items = expectList(lstV)?
+    sep = expectStr(sepV)?
+    strs = extractStrings(items, [])?
+    Result.Ok(Val.ValStr(String.join(strs, sep)))
+
+fn extractStrings(items: List<Val>, acc: List<String>) -> Result<List<String>, String>
+    ? "Convert list of ValStr to list of String."
+    match items
+        [] -> Result.Ok(List.reverse(acc))
+        [v, ..rest] -> match v
+            Val.ValStr(s) -> extractStrings(rest, List.prepend(s, acc))
+            _ -> Result.Err("String.join requires list of strings")
 
 // ─── Pattern matching ───────────────────────────────────────
 

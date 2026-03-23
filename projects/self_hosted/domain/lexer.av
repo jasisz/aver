@@ -156,6 +156,24 @@ fn tokenizeDefault(c: String, src: String, pos: Int) -> List<Token>
             true -> tokenizeAlpha(src, pos)
             false -> tokenize(src, pos + 1)
 
+fn tokenizeSlashOrComment(src: String, pos: Int) -> List<Token>
+    ? "Tokenize / (division) or // (line comment)."
+    match String.charAt(src, pos + 1)
+        Option.Some(c) -> match c == "/"
+            true -> skipLineComment(src, pos + 2)
+            false -> List.prepend(Token.TkSlash, tokenize(src, pos + 1))
+        Option.None -> List.prepend(Token.TkSlash, tokenize(src, pos + 1))
+
+fn skipLineComment(src: String, pos: Int) -> List<Token>
+    ? "Skip characters until newline or EOF."
+    match pos >= String.len(src)
+        true -> [Token.TkEof]
+        false -> match String.charAt(src, pos)
+            Option.Some(c) -> match c == "\n"
+                true -> List.prepend(Token.TkNewline, tokenize(src, pos + 1))
+                false -> skipLineComment(src, pos + 1)
+            Option.None -> [Token.TkEof]
+
 fn tokenizeDot(src: String, pos: Int) -> List<Token>
     ? "Tokenize .. (rest pattern)."
     match String.charAt(src, pos + 1)
@@ -201,9 +219,9 @@ fn tokenizeChar(c: String, src: String, pos: Int) -> List<Token>
     match c
         " " -> tokenize(src, pos + 1)
         "\n" -> List.prepend(Token.TkNewline, tokenize(src, pos + 1))
+        "/" -> tokenizeSlashOrComment(src, pos)
         "+" -> List.prepend(Token.TkPlus, tokenize(src, pos + 1))
         "*" -> List.prepend(Token.TkStar, tokenize(src, pos + 1))
-        "/" -> List.prepend(Token.TkSlash, tokenize(src, pos + 1))
         "<" -> tokenizeLt(src, pos)
         ">" -> tokenizeGt(src, pos)
         "!" -> tokenizeBang(src, pos)
