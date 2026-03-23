@@ -655,7 +655,95 @@ fn classify_thin_functions(code: &mut CodeStore, arena: &Arena) -> Result<(), Co
         }
     }
 
+    // Post-pass: fuse common opcode pairs into superinstructions.
+    for fn_id in 0..code.functions.len() {
+        fuse_superinstructions(&mut code.functions[fn_id]);
+    }
+
     Ok(())
+}
+
+/// Fuse consecutive opcodes into superinstructions.
+/// Scans bytecode and replaces patterns in-place with NOP padding.
+fn fuse_superinstructions(chunk: &mut FnChunk) {
+    let code = &mut chunk.code;
+    let mut ip = 0usize;
+
+    while ip < code.len() {
+        let op = code[ip];
+
+        // Pattern: LIST_GET, LOAD_CONST idx, UNWRAP_OR
+        // → LIST_GET_OR idx  (3 bytes replaces 5 bytes)
+        if op == LIST_GET
+            && ip + 4 <= code.len()
+            && code[ip] == LOAD_CONST
+            && code[ip + 3] == UNWRAP_OR
+        {
+            let const_hi = code[ip + 1];
+            let const_lo = code[ip + 2];
+            code[ip - 1] = LIST_GET_OR;
+            code[ip] = const_hi;
+            code[ip + 1] = const_lo;
+            code[ip + 2] = NOP;
+            code[ip + 3] = NOP;
+            ip += 4;
+            continue;
+        }
+
+        // Pattern: LOAD_LOCAL a, LOAD_LOCAL b → LOAD_LOCAL_2 a, b
+        if op == LOAD_LOCAL && ip + 3 < code.len() && code[ip + 2] == LOAD_LOCAL {
+            let slot_a = code[ip + 1];
+            let slot_b = code[ip + 3];
+            code[ip] = LOAD_LOCAL_2;
+            code[ip + 1] = slot_a;
+            code[ip + 2] = slot_b;
+            code[ip + 3] = NOP;
+            ip += 4;
+            continue;
+        }
+
+        // Pattern: LOAD_LOCAL a, LOAD_CONST idx → LOAD_LOCAL_CONST a, idx
+        if op == LOAD_LOCAL && ip + 4 < code.len() && code[ip + 2] == LOAD_CONST {
+            let slot = code[ip + 1];
+            let const_hi = code[ip + 3];
+            let const_lo = code[ip + 4];
+            code[ip] = LOAD_LOCAL_CONST;
+            code[ip + 1] = slot;
+            code[ip + 2] = const_hi;
+            code[ip + 3] = const_lo;
+            code[ip + 4] = NOP;
+            ip += 5;
+            continue;
+        }
+
+        // Skip operand bytes, handling variable-length opcodes
+        ip += 1;
+        match op {
+            LOAD_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD
+            | EXTRACT_TUPLE_ITEM | LIST_NEW | WRAP | TUPLE_NEW | TAIL_CALL_SELF
+            | TAIL_CALL_SELF_THIN => ip += 1,
+            LOAD_CONST | LOAD_GLOBAL | STORE_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL
+            | MATCH_NIL | MATCH_CONS | LOAD_LOCAL_2 | LIST_GET_OR => ip += 2,
+            CALL_KNOWN | CALL_LEAF | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE | RECORD_NEW
+            | LOAD_LOCAL_CONST => ip += 3,
+            MATCH_VARIANT | RECORD_GET_NAMED => ip += 4,
+            CALL_BUILTIN | VARIANT_NEW => ip += 5,
+            MATCH_DISPATCH | MATCH_DISPATCH_CONST => {
+                if ip < code.len() {
+                    let count = code[ip] as usize;
+                    let entry_size = if op == MATCH_DISPATCH { 11 } else { 17 };
+                    ip += 3 + count * entry_size;
+                }
+            }
+            RECORD_UPDATE => {
+                if ip + 3 <= code.len() {
+                    let count = code[ip + 2] as usize;
+                    ip += 3 + count;
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 const MAX_PARENT_THIN_CODE_LEN: usize = 80;
@@ -1170,8 +1258,9 @@ fn find_opcode_positions(chunk: &FnChunk, target_op: u8) -> Vec<usize> {
             | EXTRACT_TUPLE_ITEM | LIST_NEW | WRAP | TUPLE_NEW | TAIL_CALL_SELF
             | TAIL_CALL_SELF_THIN => 1,
             LOAD_CONST | LOAD_GLOBAL | STORE_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL
-            | MATCH_NIL | MATCH_CONS => 2,
-            CALL_KNOWN | CALL_LEAF | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE | RECORD_NEW => 3,
+            | MATCH_NIL | MATCH_CONS | LOAD_LOCAL_2 | LIST_GET_OR => 2,
+            CALL_KNOWN | CALL_LEAF | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE | RECORD_NEW
+            | LOAD_LOCAL_CONST => 3,
             MATCH_VARIANT | RECORD_GET_NAMED => 4,
             CALL_BUILTIN | VARIANT_NEW => 5,
             MATCH_DISPATCH | MATCH_DISPATCH_CONST => {

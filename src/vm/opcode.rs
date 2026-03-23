@@ -5,6 +5,9 @@
 
 // -- Stack / locals ----------------------------------------------------------
 
+/// No-op, used as padding after superinstruction fusion.
+pub const NOP: u8 = 0x00;
+
 /// Push `stack[bp + slot]` onto the operand stack.
 pub const LOAD_LOCAL: u8 = 0x01; // slot:u8
 
@@ -242,6 +245,19 @@ pub const UNWRAP_RESULT_OR: u8 = 0x7D;
 /// Format: fn_id:u16, argc:u8 (same as CALL_KNOWN).
 pub const CALL_LEAF: u8 = 0x7E;
 
+// ─── Superinstructions ──────────────────────────────────────
+
+/// Push two locals in one dispatch. Format: slot_a:u8, slot_b:u8.
+pub const LOAD_LOCAL_2: u8 = 0x80;
+
+/// Push one local + one constant in one dispatch. Format: slot:u8, const_idx:u16.
+pub const LOAD_LOCAL_CONST: u8 = 0x81;
+
+/// LIST_GET + UNWRAP_OR fused: pop index, pop list, push value or default.
+/// Format: const_idx:u16 (default value from constants pool).
+/// Equivalent to: LIST_GET, LOAD_CONST idx, UNWRAP_OR.
+pub const LIST_GET_OR: u8 = 0x82;
+
 /// Opcode name for debug/disassembly.
 pub fn opcode_name(op: u8) -> &'static str {
     match op {
@@ -306,6 +322,10 @@ pub fn opcode_name(op: u8) -> &'static str {
         UNWRAP_OR => "UNWRAP_OR",
         UNWRAP_RESULT_OR => "UNWRAP_RESULT_OR",
         CALL_LEAF => "CALL_LEAF",
+        LOAD_LOCAL_2 => "LOAD_LOCAL_2",
+        LOAD_LOCAL_CONST => "LOAD_LOCAL_CONST",
+        LIST_GET_OR => "LIST_GET_OR",
+        NOP => "NOP",
         _ => "UNKNOWN",
     }
 }

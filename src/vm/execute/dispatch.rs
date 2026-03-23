@@ -63,9 +63,47 @@ impl VM {
             }
 
             match op {
+                NOP => {}
+
                 LOAD_LOCAL => {
                     let slot = read_u8!(code, ip) as usize;
                     self.stack.push(self.stack[bp + slot]);
+                }
+
+                LOAD_LOCAL_2 => {
+                    let slot_a = read_u8!(code, ip) as usize;
+                    let slot_b = read_u8!(code, ip) as usize;
+                    self.stack.push(self.stack[bp + slot_a]);
+                    self.stack.push(self.stack[bp + slot_b]);
+                }
+
+                LOAD_LOCAL_CONST => {
+                    let slot = read_u8!(code, ip) as usize;
+                    let const_idx = read_u16!(code, ip) as usize;
+                    self.stack.push(self.stack[bp + slot]);
+                    self.stack
+                        .push(self.code.functions[fn_id as usize].constants[const_idx]);
+                }
+
+                LIST_GET_OR => {
+                    let const_idx = read_u16!(code, ip) as usize;
+                    let index = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let list = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let default = self.code.functions[fn_id as usize].constants[const_idx];
+                    if list.is_list() {
+                        let idx = index.as_int(&self.arena);
+                        if idx >= 0 {
+                            if let Some(value) = self.arena.list_get_value(list, idx as usize) {
+                                self.stack.push(value);
+                            } else {
+                                self.stack.push(default);
+                            }
+                        } else {
+                            self.stack.push(default);
+                        }
+                    } else {
+                        self.stack.push(default);
+                    }
                 }
 
                 STORE_LOCAL => {
