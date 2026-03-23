@@ -51,6 +51,7 @@ fn evalExpr(expr: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Va
         Expr.ExprGt(a, b) -> evalCmp(a, b, env, fns, "gt")
         Expr.ExprLte(a, b) -> evalCmp(a, b, env, fns, "lte")
         Expr.ExprGte(a, b) -> evalCmp(a, b, env, fns, "gte")
+        Expr.ExprConcat(parts) -> evalConcatExpr(parts, env, fns)
         Expr.ExprTuple(exprs) -> evalTupleExpr(exprs, env, fns)
         Expr.ExprList(exprs) -> evalListExpr(exprs, env, fns)
         Expr.ExprRecord(name, fieldExprs) -> evalRecordExpr(name, fieldExprs, env, fns)
@@ -150,6 +151,21 @@ fn evalCmp(a: Expr, b: Expr, env: List<(String, Val)>, fns: List<FnDef>, op: Str
     match evalExpr(a, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(va) -> evalCmpRight(va, b, env, fns, op)
+
+fn evalConcatExpr(parts: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
+    ? "Evaluate string interpolation: concat all parts as strings."
+    evalConcatParts(parts, env, fns, "")
+
+fn evalConcatParts(parts: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>, acc: String) -> Result<Val, String>
+    ? "Concatenate interpolation parts into a string."
+    match parts
+        [] -> Result.Ok(Val.ValStr(acc))
+        [p, ..rest] -> evalConcatOnePart(p, rest, env, fns, acc)
+
+fn evalConcatOnePart(part: Expr, rest: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>, acc: String) -> Result<Val, String>
+    ? "Evaluate one interpolation part and continue."
+    v = evalExpr(part, env, fns)?
+    evalConcatParts(rest, env, fns, acc + Domain.Value.valRepr(v))
 
 fn evalTupleExpr(exprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate tuple literal."

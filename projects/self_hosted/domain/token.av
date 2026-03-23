@@ -31,6 +31,8 @@ type Token
     TkDotDot
     TkQuestion
     TkNewline
+    TkInterpStart
+    TkInterpEnd
     TkColon
     TkBang
     TkFatArrow
@@ -67,6 +69,8 @@ fn tokenRepr(t: Token) -> String
         Token.TkDotDot -> "DotDot"
         Token.TkQuestion -> "Question"
         Token.TkNewline -> "Newline"
+        Token.TkInterpStart -> "InterpStart"
+        Token.TkInterpEnd -> "InterpEnd"
         Token.TkColon -> "Colon"
         Token.TkBang -> "Bang"
         Token.TkFatArrow -> "FatArrow"

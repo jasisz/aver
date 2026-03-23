@@ -200,7 +200,7 @@ fn parseAtom(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
     match t
         Token.TkMinus -> parseNegAtom(tokens, pos + 1)
         Token.TkInt(n) -> Result.Ok((Expr.ExprInt(n), pos + 1))
-        Token.TkStr(s) -> Result.Ok((Expr.ExprStr(s), pos + 1))
+        Token.TkStr(s) -> parseStringOrInterp(tokens, pos + 1, s)
         Token.TkTrue -> Result.Ok((Expr.ExprBool(true), pos + 1))
         Token.TkFalse -> Result.Ok((Expr.ExprBool(false), pos + 1))
         Token.TkLBracket -> parseListExpr(tokens, pos + 1)
@@ -208,6 +208,37 @@ fn parseAtom(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
         Token.TkMatch -> parseMatchExpr(tokens, pos + 1)
         Token.TkIdent(name) -> parseIdentOrCall(tokens, pos + 1, name)
         _ -> Result.Err("Expected expression, got {Domain.Token.tokenRepr(t)}")
+
+fn parseStringOrInterp(tokens: List<Token>, pos: Int, prefix: String) -> Result<(Expr, Int), String>
+    ? "After TkStr: check for interpolation (TkInterpStart) or plain string."
+    match tokenAt(tokens, pos)
+        Token.TkInterpStart -> parseInterpParts(tokens, pos + 1, [Expr.ExprStr(prefix)])
+        _ -> Result.Ok((Expr.ExprStr(prefix), pos))
+
+fn parseInterpParts(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(Expr, Int), String>
+    ? "Parse interpolation parts: expressions between TkInterpStart/TkInterpEnd and TkStr segments."
+    r = parseExpr(tokens, pos)?
+    match r
+        (expr, pos2) -> parseInterpAfterExpr(tokens, pos2, List.append(acc, expr))
+
+fn parseInterpAfterExpr(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(Expr, Int), String>
+    ? "After interpolation expr: expect TkInterpEnd, then maybe more string."
+    match tokenAt(tokens, pos)
+        Token.TkInterpEnd -> parseInterpContinue(tokens, pos + 1, acc)
+        _ -> Result.Err("Expected } in string interpolation")
+
+fn parseInterpContinue(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(Expr, Int), String>
+    ? "After }: next TkStr continues, or end of string."
+    match tokenAt(tokens, pos)
+        Token.TkStr(s) -> parseInterpAfterStr(tokens, pos + 1, List.append(acc, Expr.ExprStr(s)))
+        Token.TkInterpStart -> parseInterpParts(tokens, pos + 1, acc)
+        _ -> Result.Ok((Expr.ExprConcat(acc), pos))
+
+fn parseInterpAfterStr(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(Expr, Int), String>
+    ? "After string segment: more interpolation or end."
+    match tokenAt(tokens, pos)
+        Token.TkInterpStart -> parseInterpParts(tokens, pos + 1, acc)
+        _ -> Result.Ok((Expr.ExprConcat(acc), pos))
 
 fn parseNegAtom(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
     ? "Parse unary minus: -expr → 0 - expr."

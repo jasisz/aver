@@ -19,6 +19,7 @@ type Expr
     ExprGt(Expr, Expr)
     ExprLte(Expr, Expr)
     ExprGte(Expr, Expr)
+    ExprConcat(List<Expr>)
     ExprTuple(List<Expr>)
     ExprList(List<Expr>)
     ExprRecord(String, List<(String, Expr)>)

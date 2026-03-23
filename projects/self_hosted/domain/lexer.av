@@ -187,14 +187,90 @@ fn tokenizeDefault(c: String, src: String, pos: Int) -> List<Token>
             false -> tokenize(src, pos + 1)
 
 fn tokenizeString(src: String, pos: Int, acc: String) -> List<Token>
-    ? "Read string literal until closing quote."
+    ? "Read string literal with interpolation until closing quote."
     match pos >= String.len(src)
         true -> [Token.TkStr(acc), Token.TkEof]
         false -> match String.charAt(src, pos)
-            Option.Some(c) -> match c == "\""
-                true -> List.prepend(Token.TkStr(acc), tokenize(src, pos + 1))
-                false -> tokenizeString(src, pos + 1, acc + c)
+            Option.Some(c) -> tokenizeStringChar(src, pos, acc, c)
             Option.None -> [Token.TkStr(acc), Token.TkEof]
+
+fn openBrace() -> String
+    ? "Return the opening brace character."
+    Option.withDefault(Char.fromCode(123), "x")
+
+fn tokenizeStringChar(src: String, pos: Int, acc: String, c: String) -> List<Token>
+    ? "Handle one character inside a string literal."
+    match c == "\""
+        true -> List.prepend(Token.TkStr(acc), tokenize(src, pos + 1))
+        false -> tokenizeStringCharInner(src, pos, acc, c)
+
+fn tokenizeStringCharInner(src: String, pos: Int, acc: String, c: String) -> List<Token>
+    ? "Check for interpolation start or continue string."
+    match c == openBrace()
+        true -> tokenizeInterp(src, pos, acc)
+        false -> tokenizeString(src, pos + 1, acc + c)
+
+fn tokenizeInterp(src: String, pos: Int, acc: String) -> List<Token>
+    ? "Start interpolation: emit accumulated string, TkInterpStart, expr tokens, TkInterpEnd."
+    // Emit string so far, then TkInterpStart
+    List.prepend(Token.TkStr(acc), List.prepend(Token.TkInterpStart, tokenizeInterpExpr(src, pos + 1)))
+
+fn tokenizeInterpExpr(src: String, pos: Int) -> List<Token>
+    ? "Tokenize expression inside interpolation braces."
+    match pos >= String.len(src)
+        true -> [Token.TkInterpEnd, Token.TkEof]
+        false -> tokenizeInterpExprAt(src, pos)
+
+fn tokenizeInterpExprAt(src: String, pos: Int) -> List<Token>
+    ? "Read one token of interpolation expression."
+    match String.charAt(src, pos)
+        Option.Some(c) -> tokenizeInterpExprC(src, pos, c)
+        Option.None -> [Token.TkInterpEnd, Token.TkEof]
+
+fn closeBrace() -> String
+    ? "Return the closing brace character."
+    Option.withDefault(Char.fromCode(125), "x")
+
+fn tokenizeInterpExprC(src: String, pos: Int, c: String) -> List<Token>
+    ? "Dispatch interpolation char."
+    match c == closeBrace()
+        true -> List.prepend(Token.TkInterpEnd, tokenizeString(src, pos + 1, ""))
+        false -> tokenizeInterpExprChar(src, pos, c)
+
+fn tokenizeInterpExprChar(src: String, pos: Int, c: String) -> List<Token>
+    ? "Tokenize one char of interpolation expression."
+    match isDigit(c)
+        true -> tokenizeInterpDigit(src, pos)
+        false -> tokenizeInterpNonDigit(src, pos, c)
+
+fn tokenizeInterpNonDigit(src: String, pos: Int, c: String) -> List<Token>
+    ? "Handle non-digit char in interpolation."
+    match isAlpha(c)
+        true -> tokenizeInterpAlpha(src, pos)
+        false -> tokenizeInterpPunct(src, pos, c)
+
+fn tokenizeInterpPunct(src: String, pos: Int, c: String) -> List<Token>
+    ? "Handle punctuation in interpolation."
+    match c
+        " " -> tokenizeInterpExpr(src, pos + 1)
+        "(" -> List.prepend(Token.TkLParen, tokenizeInterpExpr(src, pos + 1))
+        ")" -> List.prepend(Token.TkRParen, tokenizeInterpExpr(src, pos + 1))
+        "+" -> List.prepend(Token.TkPlus, tokenizeInterpExpr(src, pos + 1))
+        "," -> List.prepend(Token.TkComma, tokenizeInterpExpr(src, pos + 1))
+        "." -> List.prepend(Token.TkDot, tokenizeInterpExpr(src, pos + 1))
+        _ -> tokenizeInterpExpr(src, pos + 1)
+
+fn tokenizeInterpDigit(src: String, pos: Int) -> List<Token>
+    ? "Read number inside interpolation."
+    match readNumber(src, pos, 0)
+        (n, newPos) -> List.prepend(Token.TkInt(n), tokenizeInterpExpr(src, newPos))
+
+fn tokenizeInterpAlpha(src: String, pos: Int) -> List<Token>
+    ? "Read identifier inside interpolation."
+    match String.charAt(src, pos)
+        Option.Some(c) -> match readIdent(src, pos, "", isUpper(c))
+            (word, newPos) -> List.prepend(keywordOrIdent(word), tokenizeInterpExpr(src, newPos))
+        Option.None -> tokenizeInterpExpr(src, pos)
 
 fn tokenizeSlashOrComment(src: String, pos: Int) -> List<Token>
     ? "Tokenize / (division) or // (line comment)."
