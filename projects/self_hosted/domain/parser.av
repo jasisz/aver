@@ -36,6 +36,8 @@ fn parsePattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), String>
     t = tokenAt(tokens, pos)
     match t
         Token.TkInt(n) -> Result.Ok((Pattern.PatInt(n), pos + 1))
+        Token.TkTrue -> Result.Ok((Pattern.PatBool(true), pos + 1))
+        Token.TkFalse -> Result.Ok((Pattern.PatBool(false), pos + 1))
         Token.TkIdent(s) -> match s == "_"
             true -> Result.Ok((Pattern.PatWild, pos + 1))
             false -> Result.Ok((Pattern.PatVar(s), pos + 1))
@@ -44,8 +46,32 @@ fn parsePattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), String>
 // ─── Expression parsing (precedence climbing) ──────────────
 
 fn parseExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
-    ? "Parse an expression: additive level."
-    parseAddExpr(tokens, pos)
+    ? "Parse an expression: comparison level (lowest precedence)."
+    parseCmpExpr(tokens, pos)
+
+fn parseCmpExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
+    ? "Parse comparison: addExpr (('==' | '<' | '>') addExpr)?"
+    r = parseAddExpr(tokens, pos)?
+    match r
+        (left, pos2) -> parseCmpExprTail(tokens, pos2, left)
+
+fn parseCmpExprTail(tokens: List<Token>, pos: Int, left: Expr) -> Result<(Expr, Int), String>
+    ? "Check for comparison operator."
+    match tokenAt(tokens, pos)
+        Token.TkEqEq -> parseCmpExprRight(tokens, pos + 1, left, 0)
+        Token.TkLt -> parseCmpExprRight(tokens, pos + 1, left, 1)
+        Token.TkGt -> parseCmpExprRight(tokens, pos + 1, left, 2)
+        _ -> Result.Ok((left, pos))
+
+fn parseCmpExprRight(tokens: List<Token>, pos: Int, left: Expr, op: Int) -> Result<(Expr, Int), String>
+    ? "Parse right side of comparison."
+    r = parseAddExpr(tokens, pos)?
+    match r
+        (right, pos2) -> match op == 0
+            true -> Result.Ok((Expr.ExprEq(left, right), pos2))
+            false -> match op == 1
+                true -> Result.Ok((Expr.ExprLt(left, right), pos2))
+                false -> Result.Ok((Expr.ExprGt(left, right), pos2))
 
 fn parseAddExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
     ? "Parse additive: mulExpr (('+' | '-') mulExpr)*"
@@ -78,14 +104,17 @@ fn parseMulExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
 fn parseMulExprTail(tokens: List<Token>, pos: Int, left: Expr) -> Result<(Expr, Int), String>
     ? "Continue parsing multiplicative operators."
     match tokenAt(tokens, pos)
-        Token.TkStar -> parseMulExprRight(tokens, pos + 1, left)
+        Token.TkStar -> parseMulExprRight(tokens, pos + 1, left, 0)
+        Token.TkSlash -> parseMulExprRight(tokens, pos + 1, left, 1)
         _ -> Result.Ok((left, pos))
 
-fn parseMulExprRight(tokens: List<Token>, pos: Int, left: Expr) -> Result<(Expr, Int), String>
-    ? "Parse right side of mul op."
+fn parseMulExprRight(tokens: List<Token>, pos: Int, left: Expr, op: Int) -> Result<(Expr, Int), String>
+    ? "Parse right side of mul/div op."
     r = parseAtom(tokens, pos)?
     match r
-        (right, pos2) -> parseMulExprTail(tokens, pos2, Expr.ExprMul(left, right))
+        (right, pos2) -> match op == 0
+            true -> parseMulExprTail(tokens, pos2, Expr.ExprMul(left, right))
+            false -> parseMulExprTail(tokens, pos2, Expr.ExprDiv(left, right))
 
 fn parseAtom(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
     ? "Parse atomic expression: literal, variable, call, match, or parenthesized."
@@ -93,6 +122,8 @@ fn parseAtom(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
     match t
         Token.TkInt(n) -> Result.Ok((Expr.ExprInt(n), pos + 1))
         Token.TkStr(s) -> Result.Ok((Expr.ExprStr(s), pos + 1))
+        Token.TkTrue -> Result.Ok((Expr.ExprBool(true), pos + 1))
+        Token.TkFalse -> Result.Ok((Expr.ExprBool(false), pos + 1))
         Token.TkLParen -> parseParenExpr(tokens, pos + 1)
         Token.TkMatch -> parseMatchExpr(tokens, pos + 1)
         Token.TkIdent(name) -> parseIdentOrCall(tokens, pos + 1, name)
@@ -142,6 +173,8 @@ fn isArmStart(tokens: List<Token>, pos: Int) -> Bool
     t = tokenAt(tokens, pos)
     match t
         Token.TkInt(_) -> isArrow(tokens, pos + 1)
+        Token.TkTrue -> isArrow(tokens, pos + 1)
+        Token.TkFalse -> isArrow(tokens, pos + 1)
         Token.TkIdent(_) -> isArrow(tokens, pos + 1)
         _ -> false
 
@@ -212,6 +245,11 @@ fn parseStmtExprFromMul(tokens: List<Token>, pos: Int, expr: Expr) -> Result<(St
 fn parseStmtExprFromAdd(tokens: List<Token>, pos: Int, expr: Expr) -> Result<(Stmt, Int), String>
     ar = parseAddExprTail(tokens, pos, expr)?
     match ar
+        (expr2, pos2) -> parseStmtExprFromCmp(tokens, pos2, expr2)
+
+fn parseStmtExprFromCmp(tokens: List<Token>, pos: Int, expr: Expr) -> Result<(Stmt, Int), String>
+    cr = parseCmpExprTail(tokens, pos, expr)?
+    match cr
         (expr2, pos2) -> Result.Ok((Stmt.StmtExpr(expr2), pos2))
 
 // ─── Function definition ────────────────────────────────────

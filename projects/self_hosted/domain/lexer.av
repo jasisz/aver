@@ -116,6 +116,8 @@ fn keywordOrIdent(s: String) -> Token
     match s
         "fn" -> Token.TkFn
         "match" -> Token.TkMatch
+        "true" -> Token.TkTrue
+        "false" -> Token.TkFalse
         _ -> Token.TkIdent(s)
 
 fn tokenizeDigit(src: String, pos: Int) -> List<Token>
@@ -148,6 +150,14 @@ fn tokenizeDefault(c: String, src: String, pos: Int) -> List<Token>
             true -> tokenizeAlpha(src, pos)
             false -> tokenize(src, pos + 1)
 
+fn tokenizeEq(src: String, pos: Int) -> List<Token>
+    ? "Tokenize = or ==."
+    match String.charAt(src, pos + 1)
+        Option.Some(c) -> match c == "="
+            true -> List.prepend(Token.TkEqEq, tokenize(src, pos + 2))
+            false -> List.prepend(Token.TkEq, tokenize(src, pos + 1))
+        Option.None -> List.prepend(Token.TkEq, tokenize(src, pos + 1))
+
 fn tokenizeChar(c: String, src: String, pos: Int) -> List<Token>
     ? "Tokenize based on the current character."
     match c
@@ -155,10 +165,13 @@ fn tokenizeChar(c: String, src: String, pos: Int) -> List<Token>
         "\n" -> List.prepend(Token.TkNewline, tokenize(src, pos + 1))
         "+" -> List.prepend(Token.TkPlus, tokenize(src, pos + 1))
         "*" -> List.prepend(Token.TkStar, tokenize(src, pos + 1))
+        "/" -> List.prepend(Token.TkSlash, tokenize(src, pos + 1))
+        "<" -> List.prepend(Token.TkLt, tokenize(src, pos + 1))
+        ">" -> List.prepend(Token.TkGt, tokenize(src, pos + 1))
         "(" -> List.prepend(Token.TkLParen, tokenize(src, pos + 1))
         ")" -> List.prepend(Token.TkRParen, tokenize(src, pos + 1))
         "," -> List.prepend(Token.TkComma, tokenize(src, pos + 1))
-        "=" -> List.prepend(Token.TkEq, tokenize(src, pos + 1))
+        "=" -> tokenizeEq(src, pos)
         "-" -> tokenizeMinus(src, pos)
         _ -> tokenizeDefault(c, src, pos)
 

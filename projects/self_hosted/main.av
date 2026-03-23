@@ -63,3 +63,8 @@ verify run
     run("x = 10\nx + 5") => Result.Ok(Val.ValInt(15))
     run("fn double(n)\nn + n\ndouble(21)") => Result.Ok(Val.ValInt(42))
     run("fn fib(n)\nmatch n\n0 -> 0\n1 -> 1\n_ -> fib(n - 1) + fib(n - 2)\nfib(10)") => Result.Ok(Val.ValInt(55))
+    run("3 == 3") => Result.Ok(Val.ValBool(true))
+    run("3 < 5") => Result.Ok(Val.ValBool(true))
+    run("5 > 3") => Result.Ok(Val.ValBool(true))
+    run("10 / 3") => Result.Ok(Val.ValInt(3))
+    run("fn fib(n)\nmatch n < 2\ntrue -> n\nfalse -> fib(n - 1) + fib(n - 2)\nfib(10)") => Result.Ok(Val.ValInt(55))

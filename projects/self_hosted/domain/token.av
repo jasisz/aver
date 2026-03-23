@@ -1,17 +1,23 @@
 module Token
     intent =
         "Token types for the mini Aver lexer."
-        "Covers a subset: Int, identifiers, operators, parens, keywords."
+        "Covers a subset: Int, Bool, identifiers, operators, parens, keywords."
     exposes [Token, tokenRepr]
 
 type Token
     TkInt(Int)
     TkStr(String)
     TkIdent(String)
+    TkTrue
+    TkFalse
     TkPlus
     TkMinus
     TkStar
+    TkSlash
     TkEq
+    TkEqEq
+    TkLt
+    TkGt
     TkLParen
     TkRParen
     TkComma
@@ -27,10 +33,16 @@ fn tokenRepr(t: Token) -> String
         Token.TkInt(n) -> "Int({n})"
         Token.TkStr(s) -> "Str({s})"
         Token.TkIdent(s) -> "Ident({s})"
+        Token.TkTrue -> "True"
+        Token.TkFalse -> "False"
         Token.TkPlus -> "Plus"
         Token.TkMinus -> "Minus"
         Token.TkStar -> "Star"
+        Token.TkSlash -> "Slash"
         Token.TkEq -> "Eq"
+        Token.TkEqEq -> "EqEq"
+        Token.TkLt -> "Lt"
+        Token.TkGt -> "Gt"
         Token.TkLParen -> "LParen"
         Token.TkRParen -> "RParen"
         Token.TkComma -> "Comma"
@@ -43,6 +55,7 @@ fn tokenRepr(t: Token) -> String
 verify tokenRepr
     tokenRepr(Token.TkInt(42)) => "Int(42)"
     tokenRepr(Token.TkIdent("foo")) => "Ident(foo)"
-    tokenRepr(Token.TkPlus) => "Plus"
-    tokenRepr(Token.TkFn) => "Fn"
+    tokenRepr(Token.TkTrue) => "True"
+    tokenRepr(Token.TkEqEq) => "EqEq"
+    tokenRepr(Token.TkLt) => "Lt"
     tokenRepr(Token.TkEof) => "Eof"

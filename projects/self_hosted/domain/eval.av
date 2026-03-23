@@ -39,10 +39,15 @@ fn evalExpr(expr: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Va
     match expr
         Expr.ExprInt(n) -> Result.Ok(Val.ValInt(n))
         Expr.ExprStr(s) -> Result.Ok(Val.ValStr(s))
+        Expr.ExprBool(b) -> Result.Ok(Val.ValBool(b))
         Expr.ExprVar(name) -> lookupVar(env, name)
         Expr.ExprAdd(a, b) -> evalBinop(a, b, env, fns, "add")
         Expr.ExprSub(a, b) -> evalBinop(a, b, env, fns, "sub")
         Expr.ExprMul(a, b) -> evalBinop(a, b, env, fns, "mul")
+        Expr.ExprDiv(a, b) -> evalBinop(a, b, env, fns, "div")
+        Expr.ExprEq(a, b) -> evalCmp(a, b, env, fns, "eq")
+        Expr.ExprLt(a, b) -> evalCmp(a, b, env, fns, "lt")
+        Expr.ExprGt(a, b) -> evalCmp(a, b, env, fns, "gt")
         Expr.ExprCall(name, argExprs) -> evalCall(name, argExprs, env, fns)
         Expr.ExprMatch(scrutinee, arms) -> evalMatchExpr(scrutinee, arms, env, fns)
 
@@ -58,13 +63,30 @@ fn applyBinop(x: Int, y: Int, op: String) -> Result<Val, String>
         "add" -> Result.Ok(Val.ValInt(x + y))
         "sub" -> Result.Ok(Val.ValInt(x - y))
         "mul" -> Result.Ok(Val.ValInt(x * y))
+        "div" -> match y == 0
+            true -> Result.Err("division by zero")
+            false -> Result.Ok(Val.ValInt(x / y))
         _ -> Result.Err("unknown op: " + op)
+
+fn applyCmp(x: Int, y: Int, op: String) -> Result<Val, String>
+    ? "Apply a comparison operation to two integers."
+    match op
+        "eq" -> Result.Ok(Val.ValBool(x == y))
+        "lt" -> Result.Ok(Val.ValBool(x < y))
+        "gt" -> Result.Ok(Val.ValBool(x > y))
+        _ -> Result.Err("unknown cmp: " + op)
 
 fn evalBinopVals(va: Val, vb: Val, op: String) -> Result<Val, String>
     ? "Apply binary op to two evaluated values."
     match (va, vb)
         (Val.ValInt(x), Val.ValInt(y)) -> applyBinop(x, y, op)
         _ -> Result.Err("binop requires ints")
+
+fn evalCmpVals(va: Val, vb: Val, op: String) -> Result<Val, String>
+    ? "Apply comparison to two evaluated values."
+    match (va, vb)
+        (Val.ValInt(x), Val.ValInt(y)) -> applyCmp(x, y, op)
+        _ -> Result.Err("comparison requires ints")
 
 fn evalBinopRight(va: Val, b: Expr, env: List<(String, Val)>, fns: List<FnDef>, op: String) -> Result<Val, String>
     ? "Evaluate right side of binop and apply."
@@ -77,6 +99,17 @@ fn evalBinop(a: Expr, b: Expr, env: List<(String, Val)>, fns: List<FnDef>, op: S
     match evalExpr(a, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(va) -> evalBinopRight(va, b, env, fns, op)
+
+fn evalCmpRight(va: Val, b: Expr, env: List<(String, Val)>, fns: List<FnDef>, op: String) -> Result<Val, String>
+    match evalExpr(b, env, fns)
+        Result.Err(e) -> Result.Err(e)
+        Result.Ok(vb) -> evalCmpVals(va, vb, op)
+
+fn evalCmp(a: Expr, b: Expr, env: List<(String, Val)>, fns: List<FnDef>, op: String) -> Result<Val, String>
+    ? "Evaluate a comparison expression."
+    match evalExpr(a, env, fns)
+        Result.Err(e) -> Result.Err(e)
+        Result.Ok(va) -> evalCmpRight(va, b, env, fns, op)
 
 fn evalArgsRest(v: Val, rest: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<List<Val>, String>
     ? "Evaluate remaining args and prepend v."
@@ -109,18 +142,21 @@ fn matchPattern(pat: Pattern, v: Val) -> Result<List<(String, Val)>, String>
     match pat
         Pattern.PatWild -> Result.Ok([])
         Pattern.PatInt(n) -> matchPatInt(n, v)
+        Pattern.PatBool(b) -> matchPatBool(b, v)
         Pattern.PatVar(name) -> Result.Ok([(name, v)])
-
-verify matchPattern
-    matchPattern(Pattern.PatWild, Val.ValInt(42)) => Result.Ok([])
-    matchPattern(Pattern.PatInt(5), Val.ValInt(5)) => Result.Ok([])
-    matchPattern(Pattern.PatInt(5), Val.ValInt(6)) => Result.Err("no match")
-    matchPattern(Pattern.PatVar("x"), Val.ValInt(42)) => Result.Ok([("x", Val.ValInt(42))])
 
 fn matchPatInt(n: Int, v: Val) -> Result<List<(String, Val)>, String>
     ? "Match a PatInt pattern against a value."
     match v
         Val.ValInt(m) -> match n == m
+            true -> Result.Ok([])
+            false -> Result.Err("no match")
+        _ -> Result.Err("no match")
+
+fn matchPatBool(b: Bool, v: Val) -> Result<List<(String, Val)>, String>
+    ? "Match a PatBool pattern against a value."
+    match v
+        Val.ValBool(vb) -> match b == vb
             true -> Result.Ok([])
             false -> Result.Err("no match")
         _ -> Result.Err("no match")
@@ -177,3 +213,11 @@ fn evalStmts(stmts: List<Stmt>, env: List<(String, Val)>, fns: List<FnDef>) -> R
 fn evalProgram(prog: Program) -> Result<Val, String>
     ? "Evaluate a complete program."
     evalStmts(prog.stmts, [], prog.fns)
+
+verify matchPattern
+    matchPattern(Pattern.PatWild, Val.ValInt(42)) => Result.Ok([])
+    matchPattern(Pattern.PatInt(5), Val.ValInt(5)) => Result.Ok([])
+    matchPattern(Pattern.PatInt(5), Val.ValInt(6)) => Result.Err("no match")
+    matchPattern(Pattern.PatBool(true), Val.ValBool(true)) => Result.Ok([])
+    matchPattern(Pattern.PatBool(true), Val.ValBool(false)) => Result.Err("no match")
+    matchPattern(Pattern.PatVar("x"), Val.ValInt(42)) => Result.Ok([("x", Val.ValInt(42))])
