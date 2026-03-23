@@ -52,6 +52,8 @@ fn evalExpr(expr: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Va
         Expr.ExprLte(a, b) -> evalCmp(a, b, env, fns, "lte")
         Expr.ExprGte(a, b) -> evalCmp(a, b, env, fns, "gte")
         Expr.ExprList(exprs) -> evalListExpr(exprs, env, fns)
+        Expr.ExprRecord(name, fieldExprs) -> evalRecordExpr(name, fieldExprs, env, fns)
+        Expr.ExprFieldAccess(obj, field) -> evalFieldAccess(obj, field, env, fns)
         Expr.ExprCall(name, argExprs) -> evalCall(name, argExprs, env, fns)
         Expr.ExprMatch(scrutinee, arms) -> evalMatchExpr(scrutinee, arms, env, fns)
         Expr.ExprPropagate(inner) -> evalPropagate(inner, env, fns)
@@ -132,6 +134,40 @@ fn evalCmp(a: Expr, b: Expr, env: List<(String, Val)>, fns: List<FnDef>, op: Str
     match evalExpr(a, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(va) -> evalCmpRight(va, b, env, fns, op)
+
+fn evalRecordExpr(name: String, fieldExprs: List<(String, Expr)>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
+    ? "Evaluate record constructor."
+    fields = evalRecordFields(fieldExprs, env, fns)?
+    Result.Ok(Val.ValRecord(name, fields))
+
+fn evalRecordFields(fieldExprs: List<(String, Expr)>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<List<(String, Val)>, String>
+    ? "Evaluate record field expressions."
+    match fieldExprs
+        [] -> Result.Ok([])
+        [pair, ..rest] -> match pair
+            (fname, expr) -> evalRecordFieldOne(fname, expr, rest, env, fns)
+
+fn evalRecordFieldOne(fname: String, expr: Expr, rest: List<(String, Expr)>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<List<(String, Val)>, String>
+    ? "Evaluate one record field and continue."
+    v = evalExpr(expr, env, fns)?
+    restFields = evalRecordFields(rest, env, fns)?
+    Result.Ok(List.prepend((fname, v), restFields))
+
+fn evalFieldAccess(obj: Expr, field: String, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
+    ? "Evaluate field access: obj.field."
+    v = evalExpr(obj, env, fns)?
+    match v
+        Val.ValRecord(_, fields) -> lookupField(fields, field)
+        _ -> Result.Err("field access on non-record")
+
+fn lookupField(fields: List<(String, Val)>, name: String) -> Result<Val, String>
+    ? "Look up a field in a record's field list."
+    match fields
+        [] -> Result.Err("unknown field: {name}")
+        [pair, ..rest] -> match pair
+            (k, v) -> match k == name
+                true -> Result.Ok(v)
+                false -> lookupField(rest, name)
 
 fn evalListExpr(exprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate a list literal."
@@ -350,6 +386,7 @@ fn matchPattern(pat: Pattern, v: Val) -> Result<List<(String, Val)>, String>
         Pattern.PatBool(b) -> matchPatBool(b, v)
         Pattern.PatEmpty -> matchPatEmpty(v)
         Pattern.PatCons(h, t) -> matchPatCons(h, t, v)
+        Pattern.PatConstructor(ctorName, bindings) -> matchPatConstructor(ctorName, bindings, v)
         Pattern.PatVar(name) -> Result.Ok([(name, v)])
 
 fn matchPatInt(n: Int, v: Val) -> Result<List<(String, Val)>, String>
@@ -383,6 +420,33 @@ fn matchPatCons(h: String, t: String, v: Val) -> Result<List<(String, Val)>, Str
             [] -> Result.Err("no match")
             [head, ..tail] -> Result.Ok([(h, head), (t, Val.ValList(tail))])
         _ -> Result.Err("no match")
+
+fn matchPatConstructor(ctorName: String, bindings: List<String>, v: Val) -> Result<List<(String, Val)>, String>
+    ? "Match constructor pattern. Checks tag name and extracts inner values."
+    match ctorName
+        "Result.Ok" -> matchWrapperPat(v, "Ok", bindings)
+        "Result.Err" -> matchWrapperPat(v, "Err", bindings)
+        _ -> Result.Err("no match")
+
+fn matchWrapperPat(v: Val, tag: String, bindings: List<String>) -> Result<List<(String, Val)>, String>
+    ? "Match Ok/Err wrapper and bind inner value."
+    match tag == "Ok"
+        true -> match v
+            Val.ValOk(inner) -> zipBindings(bindings, [inner])
+            _ -> Result.Err("no match")
+        false -> match v
+            Val.ValErr(inner) -> zipBindings(bindings, [inner])
+            _ -> Result.Err("no match")
+
+fn zipBindings(names: List<String>, vals: List<Val>) -> Result<List<(String, Val)>, String>
+    ? "Pair binding names with values."
+    match names
+        [] -> Result.Ok([])
+        [n, ..ns] -> match vals
+            [] -> Result.Ok([])
+            [v, ..vs] -> match zipBindings(ns, vs)
+                Result.Ok(rest) -> Result.Ok(List.prepend((n, v), rest))
+                Result.Err(e) -> Result.Err(e)
 
 fn evalMatch(v: Val, arms: List<MatchArm>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Try each match arm until one matches."

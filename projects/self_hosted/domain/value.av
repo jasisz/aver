@@ -10,6 +10,7 @@ type Val
     ValList(List<Val>)
     ValOk(Val)
     ValErr(Val)
+    ValRecord(String, List<(String, Val)>)
     ValUnit
 
 fn valListRepr(items: List<Val>, acc: String, first: Bool) -> String
@@ -29,6 +30,7 @@ fn valRepr(v: Val) -> String
         Val.ValList(items) -> valListRepr(items, "", true)
         Val.ValOk(inner) -> "Result.Ok({valRepr(inner)})"
         Val.ValErr(inner) -> "Result.Err({valRepr(inner)})"
+        Val.ValRecord(name, _) -> "{name}(...)"
         Val.ValUnit -> "()"
 
 verify valRepr

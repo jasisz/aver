@@ -27,6 +27,7 @@ type Token
     TkArrow
     TkLBracket
     TkRBracket
+    TkDot
     TkDotDot
     TkQuestion
     TkNewline
@@ -59,6 +60,7 @@ fn tokenRepr(t: Token) -> String
         Token.TkArrow -> "Arrow"
         Token.TkLBracket -> "LBracket"
         Token.TkRBracket -> "RBracket"
+        Token.TkDot -> "Dot"
         Token.TkDotDot -> "DotDot"
         Token.TkQuestion -> "Question"
         Token.TkNewline -> "Newline"

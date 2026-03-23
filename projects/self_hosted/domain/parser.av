@@ -39,10 +39,34 @@ fn parsePattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), String>
         Token.TkTrue -> Result.Ok((Pattern.PatBool(true), pos + 1))
         Token.TkFalse -> Result.Ok((Pattern.PatBool(false), pos + 1))
         Token.TkLBracket -> parseListPattern(tokens, pos + 1)
-        Token.TkIdent(s) -> match s == "_"
-            true -> Result.Ok((Pattern.PatWild, pos + 1))
-            false -> Result.Ok((Pattern.PatVar(s), pos + 1))
+        Token.TkIdent(s) -> parseIdentPattern(tokens, pos + 1, s)
         _ -> Result.Err("Expected pattern, got {Domain.Token.tokenRepr(t)}")
+
+fn parseIdentPattern(tokens: List<Token>, pos: Int, name: String) -> Result<(Pattern, Int), String>
+    ? "Parse ident pattern: wildcard _, variable, or constructor Foo.Bar(bindings)."
+    match name == "_"
+        true -> Result.Ok((Pattern.PatWild, pos))
+        false -> parseIdentPatternMaybeConstructor(tokens, pos, name)
+
+fn parseIdentPatternMaybeConstructor(tokens: List<Token>, pos: Int, name: String) -> Result<(Pattern, Int), String>
+    ? "Check for constructor pattern: Name(binding) or plain variable."
+    match tokenAt(tokens, pos)
+        Token.TkLParen -> parseConstructorPatternBindings(tokens, pos + 1, name, [])
+        _ -> Result.Ok((Pattern.PatVar(name), pos))
+
+fn parseConstructorPatternBindings(tokens: List<Token>, pos: Int, name: String, acc: List<String>) -> Result<(Pattern, Int), String>
+    ? "Parse bindings inside constructor pattern: Ctor(a, b) or Ctor()."
+    match tokenAt(tokens, pos)
+        Token.TkRParen -> Result.Ok((Pattern.PatConstructor(name, acc), pos + 1))
+        Token.TkIdent(binding) -> parseConstructorPatternTail(tokens, pos + 1, name, List.append(acc, binding))
+        _ -> Result.Err("Expected binding or ')' in constructor pattern")
+
+fn parseConstructorPatternTail(tokens: List<Token>, pos: Int, name: String, acc: List<String>) -> Result<(Pattern, Int), String>
+    ? "After binding: ',' for more or ')' to end."
+    match tokenAt(tokens, pos)
+        Token.TkComma -> parseConstructorPatternBindings(tokens, pos + 1, name, acc)
+        Token.TkRParen -> Result.Ok((Pattern.PatConstructor(name, acc), pos + 1))
+        _ -> Result.Err("Expected ',' or ')' in constructor pattern")
 
 fn parseListPattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), String>
     ? "Parse [] or [h, ..t] list pattern."
@@ -197,10 +221,56 @@ fn parseParenExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
         (expr, pos2) -> Result.Ok((expr, expect(tokens, pos2, Token.TkRParen)?))
 
 fn parseIdentOrCall(tokens: List<Token>, pos: Int, name: String) -> Result<(Expr, Int), String>
-    ? "After reading an identifier: is it a call f(...) or a variable?"
+    ? "After reading an identifier: call, record constructor, field access, or variable?"
     match tokenAt(tokens, pos)
-        Token.TkLParen -> parseCallArgs(tokens, pos + 1, name)
+        Token.TkLParen -> parseCallOrRecord(tokens, pos + 1, name)
+        Token.TkDot -> parseFieldAccess(tokens, pos + 1, Expr.ExprVar(name))
         _ -> Result.Ok((Expr.ExprVar(name), pos))
+
+fn parseFieldAccess(tokens: List<Token>, pos: Int, obj: Expr) -> Result<(Expr, Int), String>
+    ? "Parse .field after an expression."
+    match tokenAt(tokens, pos)
+        Token.TkIdent(field) -> parseFieldAccessTail(tokens, pos + 1, Expr.ExprFieldAccess(obj, field))
+        _ -> Result.Err("Expected field name after '.'")
+
+fn parseFieldAccessTail(tokens: List<Token>, pos: Int, expr: Expr) -> Result<(Expr, Int), String>
+    ? "Check for chained field access."
+    match tokenAt(tokens, pos)
+        Token.TkDot -> parseFieldAccess(tokens, pos + 1, expr)
+        _ -> Result.Ok((expr, pos))
+
+fn parseCallOrRecord(tokens: List<Token>, pos: Int, name: String) -> Result<(Expr, Int), String>
+    ? "After '(': is this a function call f(args) or record Foo(field = val)?"
+    match tokenAt(tokens, pos)
+        Token.TkRParen -> Result.Ok((Expr.ExprCall(name, []), pos + 1))
+        Token.TkIdent(first) -> parseCallOrRecordLookahead(tokens, pos, name, first)
+        _ -> parseCallArgsList(tokens, pos, name, [])
+
+fn parseCallOrRecordLookahead(tokens: List<Token>, pos: Int, name: String, first: String) -> Result<(Expr, Int), String>
+    ? "Lookahead after first ident in parens: '=' means record, otherwise call."
+    match tokenAt(tokens, pos + 1)
+        Token.TkEq -> parseRecordFields(tokens, pos, name, [])
+        _ -> parseCallArgsList(tokens, pos, name, [])
+
+fn parseRecordFields(tokens: List<Token>, pos: Int, name: String, acc: List<(String, Expr)>) -> Result<(Expr, Int), String>
+    ? "Parse record fields: field = expr, ..."
+    match tokenAt(tokens, pos)
+        Token.TkIdent(field) -> parseRecordField(tokens, pos + 1, name, acc, field)
+        _ -> Result.Err("Expected field name in record constructor")
+
+fn parseRecordField(tokens: List<Token>, pos: Int, name: String, acc: List<(String, Expr)>, field: String) -> Result<(Expr, Int), String>
+    ? "Parse = expr after field name."
+    pos2 = expect(tokens, pos, Token.TkEq)?
+    r = parseExpr(tokens, pos2)?
+    match r
+        (expr, pos3) -> parseRecordFieldsTail(tokens, pos3, name, List.append(acc, (field, expr)))
+
+fn parseRecordFieldsTail(tokens: List<Token>, pos: Int, name: String, fields: List<(String, Expr)>) -> Result<(Expr, Int), String>
+    ? "After a field: ',' for more or ')' to end."
+    match tokenAt(tokens, pos)
+        Token.TkComma -> parseRecordFields(tokens, pos + 1, name, fields)
+        Token.TkRParen -> Result.Ok((Expr.ExprRecord(name, fields), pos + 1))
+        _ -> Result.Err("Expected ',' or ')' in record constructor")
 
 fn parseCallArgs(tokens: List<Token>, pos: Int, name: String) -> Result<(Expr, Int), String>
     ? "Parse function call arguments: expr (',' expr)* ')'"
@@ -237,8 +307,23 @@ fn isArmStart(tokens: List<Token>, pos: Int) -> Bool
         Token.TkTrue -> isArrow(tokens, pos + 1)
         Token.TkFalse -> isArrow(tokens, pos + 1)
         Token.TkLBracket -> true
-        Token.TkIdent(_) -> isArrow(tokens, pos + 1)
+        Token.TkIdent(name) -> isArmStartIdent(tokens, pos + 1, name)
         _ -> false
+
+fn isArmStartIdent(tokens: List<Token>, pos: Int, name: String) -> Bool
+    ? "After ident in arm: arrow (var/wildcard), or '(' for uppercase (constructor)."
+    match tokenAt(tokens, pos)
+        Token.TkArrow -> true
+        Token.TkLParen -> isUpperStart(name)
+        _ -> false
+
+fn isUpperStart(name: String) -> Bool
+    ? "Check if name starts with uppercase letter."
+    match String.charAt(name, 0)
+        Option.Some(c) -> match c >= "A"
+            true -> c <= "Z"
+            false -> false
+        Option.None -> false
 
 fn isArrow(tokens: List<Token>, pos: Int) -> Bool
     ? "Check if token at pos is an arrow."

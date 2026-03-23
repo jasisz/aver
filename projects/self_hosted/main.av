@@ -54,8 +54,8 @@ fn runDemo() -> Unit
     Console.print("")
     Console.print("Built-in demos:")
     Console.print("  x=3+4; x*2 = {runRepr("x = 3 + 4\nx * 2")}")
-    Console.print("  double(21) = {runRepr("fn double(n)\nn + n\ndouble(21)")}")
-    Console.print("  fib(10) = {runRepr("fn fib(n)\nmatch n\n0 -> 0\n1 -> 1\n_ -> fib(n - 1) + fib(n - 2)\nfib(10)")}")
+    Console.print("  double(21) = {runRepr("fn double(n)\nn + n\n\ndouble(21)")}")
+    Console.print("  fib(10) = {runRepr("fn fib(n)\nmatch n\n0 -> 0\n1 -> 1\n_ -> fib(n - 1) + fib(n - 2)\n\nfib(10)")}")
 
 // ─── Verify ─────────────────────────────────────────────────
 
@@ -95,3 +95,6 @@ verify run
     run("[]") => Result.Ok(Val.ValList([]))
     run("fn sum(xs)\nmatch xs\n[] -> 0\n[h, ..t] -> h + sum(t)\nsum([1, 2, 3])") => Result.Ok(Val.ValInt(6))
     run("fn len(xs)\nmatch xs\n[] -> 0\n[h, ..t] -> 1 + len(t)\nlen([10, 20, 30, 40])") => Result.Ok(Val.ValInt(4))
+    run("p = Point(x = 3, y = 4)\np.x + p.y") => Result.Ok(Val.ValInt(7))
+    run("fn unwrap(r)\nmatch r\nResult.Ok(v) -> v\nResult.Err(e) -> -1\n\nunwrap(Result.Ok(42))") => Result.Ok(Val.ValInt(42))
+    run("fn unwrap(r)\nmatch r\nResult.Ok(v) -> v\nResult.Err(e) -> -1\n\nunwrap(Result.Err(0))") => Result.Ok(Val.ValInt(-1))
