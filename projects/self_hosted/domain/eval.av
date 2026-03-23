@@ -37,6 +37,7 @@ fn zipArgs(params: List<String>, args: List<Val>) -> List<(String, Val)>
 
 fn evalExpr(expr: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate an expression in the given environment."
+    ! [Console.print, Disk.readText, Args.get]
     match expr
         Expr.ExprInt(n) -> Result.Ok(Val.ValInt(n))
         Expr.ExprStr(s) -> Result.Ok(Val.ValStr(s))
@@ -78,6 +79,7 @@ fn evalVarFallback(name: String) -> Result<Val, String>
 
 fn evalPropagate(inner: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate ? operator: unwrap Ok or propagate Err."
+    ! [Console.print, Disk.readText, Args.get]
     v = evalExpr(inner, env, fns)?
     match v
         Val.ValOk(x) -> Result.Ok(x)
@@ -88,6 +90,7 @@ fn evalPropagate(inner: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Res
 
 fn evalMatchExpr(scrutinee: Expr, arms: List<MatchArm>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate a match expression."
+    ! [Console.print, Disk.readText, Args.get]
     match evalExpr(scrutinee, env, fns)
         Result.Ok(v) -> evalMatch(v, arms, env, fns)
         Result.Err(e) -> Result.Err(e)
@@ -131,55 +134,65 @@ fn evalCmpVals(va: Val, vb: Val, op: String) -> Result<Val, String>
 
 fn evalBinopRight(va: Val, b: Expr, env: List<(String, Val)>, fns: List<FnDef>, op: String) -> Result<Val, String>
     ? "Evaluate right side of binop and apply."
+    ! [Console.print, Disk.readText, Args.get]
     match evalExpr(b, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(vb) -> evalBinopVals(va, vb, op)
 
 fn evalBinop(a: Expr, b: Expr, env: List<(String, Val)>, fns: List<FnDef>, op: String) -> Result<Val, String>
     ? "Evaluate a binary operation on two expressions."
+    ! [Console.print, Disk.readText, Args.get]
     match evalExpr(a, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(va) -> evalBinopRight(va, b, env, fns, op)
 
 fn evalCmpRight(va: Val, b: Expr, env: List<(String, Val)>, fns: List<FnDef>, op: String) -> Result<Val, String>
     ? "Evaluate right side of comparison and apply."
+    ! [Console.print, Disk.readText, Args.get]
     match evalExpr(b, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(vb) -> evalCmpVals(va, vb, op)
 
 fn evalCmp(a: Expr, b: Expr, env: List<(String, Val)>, fns: List<FnDef>, op: String) -> Result<Val, String>
     ? "Evaluate a comparison expression."
+    ! [Console.print, Disk.readText, Args.get]
     match evalExpr(a, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(va) -> evalCmpRight(va, b, env, fns, op)
 
 fn evalConcatExpr(parts: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate string interpolation: concat all parts as strings."
+    ! [Console.print, Disk.readText, Args.get]
     evalConcatParts(parts, env, fns, "")
 
 fn evalConcatParts(parts: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>, acc: String) -> Result<Val, String>
     ? "Concatenate interpolation parts into a string."
+    ! [Console.print, Disk.readText, Args.get]
     match parts
         [] -> Result.Ok(Val.ValStr(acc))
         [p, ..rest] -> evalConcatOnePart(p, rest, env, fns, acc)
 
 fn evalConcatOnePart(part: Expr, rest: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>, acc: String) -> Result<Val, String>
     ? "Evaluate one interpolation part and continue."
+    ! [Console.print, Disk.readText, Args.get]
     v = evalExpr(part, env, fns)?
     evalConcatParts(rest, env, fns, acc + Domain.Value.valRepr(v))
 
 fn evalTupleExpr(exprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate tuple literal."
+    ! [Console.print, Disk.readText, Args.get]
     items = evalListItems(exprs, env, fns)?
     Result.Ok(Val.ValTuple(items))
 
 fn evalRecordExpr(name: String, fieldExprs: List<(String, Expr)>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate record constructor."
+    ! [Console.print, Disk.readText, Args.get]
     fields = evalRecordFields(fieldExprs, env, fns)?
     Result.Ok(Val.ValRecord(name, fields))
 
 fn evalRecordFields(fieldExprs: List<(String, Expr)>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<List<(String, Val)>, String>
     ? "Evaluate record field expressions."
+    ! [Console.print, Disk.readText, Args.get]
     match fieldExprs
         [] -> Result.Ok([])
         [pair, ..rest] -> match pair
@@ -187,12 +200,14 @@ fn evalRecordFields(fieldExprs: List<(String, Expr)>, env: List<(String, Val)>, 
 
 fn evalRecordFieldOne(fname: String, expr: Expr, rest: List<(String, Expr)>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<List<(String, Val)>, String>
     ? "Evaluate one record field and continue."
+    ! [Console.print, Disk.readText, Args.get]
     v = evalExpr(expr, env, fns)?
     restFields = evalRecordFields(rest, env, fns)?
     Result.Ok(List.prepend((fname, v), restFields))
 
 fn evalFieldAccess(obj: Expr, field: String, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate field access: obj.field."
+    ! [Console.print, Disk.readText, Args.get]
     v = evalExpr(obj, env, fns)?
     match v
         Val.ValRecord(_, fields) -> lookupField(fields, field)
@@ -209,12 +224,14 @@ fn lookupField(fields: List<(String, Val)>, name: String) -> Result<Val, String>
 
 fn evalListExpr(exprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate a list literal."
+    ! [Console.print, Disk.readText, Args.get]
     match evalListItems(exprs, env, fns)
         Result.Ok(items) -> Result.Ok(Val.ValList(items))
         Result.Err(e) -> Result.Err(e)
 
 fn evalListItems(exprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<List<Val>, String>
     ? "Evaluate list of expressions into list of values."
+    ! [Console.print, Disk.readText, Args.get]
     match exprs
         [] -> Result.Ok([])
         [e, ..rest] -> match evalExpr(e, env, fns)
@@ -225,12 +242,14 @@ fn evalListItems(exprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) 
 
 fn evalArgsRest(v: Val, rest: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<List<Val>, String>
     ? "Evaluate remaining args and prepend v."
+    ! [Console.print, Disk.readText, Args.get]
     match evalArgs(rest, env, fns)
         Result.Err(err) -> Result.Err(err)
         Result.Ok(vs) -> Result.Ok(List.prepend(v, vs))
 
 fn evalArgs(exprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<List<Val>, String>
     ? "Evaluate a list of argument expressions."
+    ! [Console.print, Disk.readText, Args.get]
     match exprs
         [] -> Result.Ok([])
         [e, ..rest] -> match evalExpr(e, env, fns)
@@ -239,12 +258,14 @@ fn evalArgs(exprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Re
 
 fn callWithArgs(args: List<Val>, name: String, fns: List<FnDef>) -> Result<Val, String>
     ? "Look up function and call it with args. Falls back to builtins for qualified names."
+    ! [Console.print, Disk.readText, Args.get]
     match lookupFn(fns, name)
         Result.Ok(fd) -> evalStmts(fd.body, zipArgs(fd.params, args), fns)
         Result.Err(_) -> callBuiltin(name, args)
 
 fn evalCall(name: String, argExprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate a function call."
+    ! [Console.print, Disk.readText, Args.get]
     match evalArgs(argExprs, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(args) -> callWithArgs(args, name, fns)
@@ -253,6 +274,7 @@ fn evalCall(name: String, argExprs: List<Expr>, env: List<(String, Val)>, fns: L
 
 fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch qualified builtin calls to host implementations."
+    ! [Console.print, Disk.readText, Args.get]
     match name
         "List.prepend" -> builtinListPrepend(args)
         "List.len" -> builtinListLen(args)
@@ -654,6 +676,7 @@ fn matchPatTuple(pats: List<Pattern>, v: Val) -> Result<List<(String, Val)>, Str
 
 fn matchPatTupleItems(pats: List<Pattern>, items: List<Val>) -> Result<List<(String, Val)>, String>
     ? "Match each pattern against corresponding tuple item."
+    ! [Console.print, Disk.readText, Args.get]
     match pats
         [] -> Result.Ok([])
         [pat, ..restPats] -> match items
@@ -662,6 +685,7 @@ fn matchPatTupleItems(pats: List<Pattern>, items: List<Val>) -> Result<List<(Str
 
 fn matchPatTupleOne(pat: Pattern, item: Val, restPats: List<Pattern>, restItems: List<Val>) -> Result<List<(String, Val)>, String>
     ? "Match one tuple element and continue."
+    ! [Console.print, Disk.readText, Args.get]
     bindings = matchPattern(pat, item)?
     restBindings = matchPatTupleItems(restPats, restItems)?
     Result.Ok(List.concat(bindings, restBindings))
@@ -711,47 +735,55 @@ fn zipBindings(names: List<String>, vals: List<Val>) -> Result<List<(String, Val
 
 fn evalMatch(v: Val, arms: List<MatchArm>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Try each match arm until one matches."
+    ! [Console.print, Disk.readText, Args.get]
     match arms
         [] -> Result.Err("no matching arm")
         [arm, ..rest] -> tryArm(arm, v, rest, env, fns)
 
 fn tryArm(arm: MatchArm, v: Val, rest: List<MatchArm>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Try a single match arm, fall through to rest on failure."
+    ! [Console.print, Disk.readText, Args.get]
     match matchPattern(arm.pattern, v)
         Result.Ok(bindings) -> evalExpr(arm.body, List.concat(bindings, env), fns)
         Result.Err(_) -> evalMatch(v, rest, env, fns)
 
 fn evalStmtExpr(e: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<(Val, List<(String, Val)>), String>
     ? "Evaluate a statement expression."
+    ! [Console.print, Disk.readText, Args.get]
     match evalExpr(e, env, fns)
         Result.Ok(v) -> Result.Ok((v, env))
         Result.Err(e) -> Result.Err(e)
 
 fn evalStmtBind(name: String, e: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<(Val, List<(String, Val)>), String>
     ? "Evaluate a binding statement."
+    ! [Console.print, Disk.readText, Args.get]
     match evalExpr(e, env, fns)
         Result.Ok(v) -> Result.Ok((v, List.prepend((name, v), env)))
         Result.Err(e) -> Result.Err(e)
 
 fn evalStmt(stmt: Stmt, env: List<(String, Val)>, fns: List<FnDef>) -> Result<(Val, List<(String, Val)>), String>
     ? "Evaluate a statement, returning the result and updated environment."
+    ! [Console.print, Disk.readText, Args.get]
     match stmt
         Stmt.StmtExpr(e) -> evalStmtExpr(e, env, fns)
         Stmt.StmtBind(name, e) -> evalStmtBind(name, e, env, fns)
 
 fn evalStmtsRest(v: Val, newEnv: List<(String, Val)>, rest: List<Stmt>, fns: List<FnDef>) -> Result<Val, String>
     ? "Continue evaluating remaining statements."
+    ! [Console.print, Disk.readText, Args.get]
     match rest
         [] -> Result.Ok(v)
         _ -> evalStmts(rest, newEnv, fns)
 
 fn evalStmtsContinue(pair: (Val, List<(String, Val)>), rest: List<Stmt>, fns: List<FnDef>) -> Result<Val, String>
     ? "Unpack stmt result and continue."
+    ! [Console.print, Disk.readText, Args.get]
     match pair
         (v, newEnv) -> evalStmtsRest(v, newEnv, rest, fns)
 
 fn evalStmts(stmts: List<Stmt>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate a list of statements, threading the environment."
+    ! [Console.print, Disk.readText, Args.get]
     match stmts
         [] -> Result.Ok(Val.ValUnit)
         [s, ..rest] -> match evalStmt(s, env, fns)
@@ -759,11 +791,27 @@ fn evalStmts(stmts: List<Stmt>, env: List<(String, Val)>, fns: List<FnDef>) -> R
             Result.Ok(pair) -> evalStmtsContinue(pair, rest, fns)
 
 fn evalProgram(prog: Program) -> Result<Val, String>
-    ? "Evaluate a complete program (no module dependencies)."
-    evalStmts(prog.stmts, [], prog.fns)
+    ? "Evaluate a complete program. Pure programs work; IO programs need evalProgramWithFns."
+    evalStmtsPure(prog.stmts, [], prog.fns)
+
+fn evalStmtsPure(stmts: List<Stmt>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
+    ? "Evaluate statements without IO effect declarations."
+    match stmts
+        [] -> Result.Ok(Val.ValUnit)
+        [s, ..rest] -> match evalStmt(s, env, fns)
+            Result.Err(e) -> Result.Err(e)
+            Result.Ok(pair) -> evalStmtsContinuePure(pair, rest, fns)
+
+fn evalStmtsContinuePure(pair: (Val, List<(String, Val)>), rest: List<Stmt>, fns: List<FnDef>) -> Result<Val, String>
+    ? "Continue pure evaluation."
+    match pair
+        (v, newEnv) -> match rest
+            [] -> Result.Ok(v)
+            _ -> evalStmtsPure(rest, newEnv, fns)
 
 fn evalProgramWithFns(prog: Program, extraFns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate a program with additional functions from loaded modules."
+    ! [Console.print, Disk.readText, Args.get]
     allFns = List.concat(extraFns, prog.fns)
     evalStmts(prog.stmts, [], allFns)
 

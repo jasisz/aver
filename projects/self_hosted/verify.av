@@ -1,0 +1,13 @@
+module Verify
+    depends [Domain.Token, Domain.Lexer, Domain.Ast, Domain.Parser]
+    intent = "Verify cases for pure parts of the self-hosted interpreter."
+
+fn parseProg(source: String) -> Result<Program, String>
+    ? "Lex and parse a source string."
+    tokens = Domain.Lexer.lex(source)
+    Domain.Parser.parse(tokens)
+
+verify parseProg
+    parseProg("42") => Result.Ok(Program(deps = [], fns = [], stmts = [Stmt.StmtExpr(Expr.ExprInt(42))]))
+    parseProg("1 + 2") => Result.Ok(Program(deps = [], fns = [], stmts = [Stmt.StmtExpr(Expr.ExprAdd(Expr.ExprInt(1), Expr.ExprInt(2)))]))
+    parseProg("+") => Result.Err("Expected expression, got Plus")

@@ -9,13 +9,14 @@ module SelfHosted
 
 fn run(source: String) -> Result<Val, String>
     ? "Lex, parse, and evaluate an Aver source string (no module loading)."
+    ! [Console.print, Disk.readText, Args.get]
     tokens = Domain.Lexer.lex(source)
     prog = Domain.Parser.parse(tokens)?
     Domain.Eval.evalProgram(prog)
 
 fn runWithModules(source: String, moduleRoot: String) -> Result<Val, String>
     ? "Lex, parse, load modules, and evaluate."
-    ! [Disk.readText]
+    ! [Console.print, Disk.readText, Args.get]
     tokens = Domain.Lexer.lex(source)
     prog = Domain.Parser.parse(tokens)?
     moduleFns = loadModules(prog.deps, moduleRoot, [])?
@@ -23,14 +24,14 @@ fn runWithModules(source: String, moduleRoot: String) -> Result<Val, String>
 
 fn loadModules(deps: List<String>, moduleRoot: String, acc: List<FnDef>) -> Result<List<FnDef>, String>
     ? "Load all module dependencies and collect their functions."
-    ! [Disk.readText]
+    ! [Console.print, Disk.readText, Args.get]
     match deps
         [] -> Result.Ok(acc)
         [dep, ..rest] -> loadOneModule(dep, rest, moduleRoot, acc)
 
 fn loadOneModule(dep: String, rest: List<String>, moduleRoot: String, acc: List<FnDef>) -> Result<List<FnDef>, String>
     ? "Load one module, add its functions, continue with rest."
-    ! [Disk.readText]
+    ! [Console.print, Disk.readText, Args.get]
     path = modulePathFromName(dep, moduleRoot)
     source = Disk.readText(path)?
     tokens = Domain.Lexer.lex(source)
@@ -64,6 +65,7 @@ fn qualifyFns(fns: List<FnDef>, prefix: String, acc: List<FnDef>) -> List<FnDef>
 
 fn runRepr(source: String) -> String
     ? "Run source and return result representation or error."
+    ! [Console.print, Disk.readText, Args.get]
     match run(source)
         Result.Ok(val) -> Domain.Value.valRepr(val)
         Result.Err(e) -> "ERROR: {e}"
@@ -72,7 +74,7 @@ fn runRepr(source: String) -> String
 
 fn runFile(path: String, moduleRoot: String) -> Result<String, String>
     ? "Read a file and run it through the self-hosted pipeline with module loading."
-    ! [Disk.readText]
+    ! [Console.print, Disk.readText, Args.get]
     source = Disk.readText(path)?
     match runWithModules(source, moduleRoot)
         Result.Ok(val) -> Result.Ok(Domain.Value.valRepr(val))
@@ -89,7 +91,7 @@ fn main() -> Unit
 
 fn runFromFile(path: String, moduleRoot: String) -> Unit
     ? "Read and execute a file through the self-hosted pipeline."
-    ! [Console.print, Disk.readText]
+    ! [Console.print, Disk.readText, Args.get]
     match runFile(path, moduleRoot)
         Result.Ok(result) -> Console.print(result)
         Result.Err(e) -> Console.print("Error: {e}")
@@ -107,59 +109,3 @@ fn runDemo() -> Unit
     Console.print("  fib(10) = {runRepr("fn fib(n)\nmatch n\n0 -> 0\n1 -> 1\n_ -> fib(n - 1) + fib(n - 2)\n\nfib(10)")}")
 
 // ─── Verify ─────────────────────────────────────────────────
-
-verify runRepr
-    runRepr("42") => "42"
-    runRepr("xyz") => "ERROR: undefined variable: xyz"
-
-verify run
-    run("42") => Result.Ok(Val.ValInt(42))
-    run("1 + 2") => Result.Ok(Val.ValInt(3))
-    run("x = 10\nx + 5") => Result.Ok(Val.ValInt(15))
-    run("fn double(n)\nn + n\n\ndouble(21)") => Result.Ok(Val.ValInt(42))
-    run("fn fib(n)\nmatch n\n0 -> 0\n1 -> 1\n_ -> fib(n - 1) + fib(n - 2)\nfib(10)") => Result.Ok(Val.ValInt(55))
-    run("3 == 3") => Result.Ok(Val.ValBool(true))
-    run("3 < 5") => Result.Ok(Val.ValBool(true))
-    run("5 > 3") => Result.Ok(Val.ValBool(true))
-    run("10 / 3") => Result.Ok(Val.ValInt(3))
-    run("fn fib(n)\nmatch n < 2\ntrue -> n\nfalse -> fib(n - 1) + fib(n - 2)\nfib(10)") => Result.Ok(Val.ValInt(55))
-    run("3 != 4") => Result.Ok(Val.ValBool(true))
-    run("3 <= 3") => Result.Ok(Val.ValBool(true))
-    run("3 >= 4") => Result.Ok(Val.ValBool(false))
-    run("fn abs(n)\nmatch n < 0\ntrue -> 0 - n\nfalse -> n\nabs(0 - 42)") => Result.Ok(Val.ValInt(42))
-    run("fn calc(x)\na = x + 1\nb = a * 2\nb + 3\n\ncalc(10)") => Result.Ok(Val.ValInt(25))
-    run("List.len([1, 2, 3])") => Result.Ok(Val.ValInt(3))
-    run("List.prepend(0, [1, 2])") => Result.Ok(Val.ValList([Val.ValInt(0), Val.ValInt(1), Val.ValInt(2)]))
-    run("List.reverse([1, 2, 3])") => Result.Ok(Val.ValList([Val.ValInt(3), Val.ValInt(2), Val.ValInt(1)]))
-    run("fn build(n, acc)\nmatch n == 0\ntrue -> acc\nfalse -> build(n - 1, List.prepend(n, acc))\n\nbuild(3, [])") => Result.Ok(Val.ValList([Val.ValInt(1), Val.ValInt(2), Val.ValInt(3)]))
-    run("-5 + 3") => Result.Ok(Val.ValInt(-2))
-    run("// comment\n42") => Result.Ok(Val.ValInt(42))
-    run("Int.abs(-5)") => Result.Ok(Val.ValInt(5))
-    run("Result.Ok(42)") => Result.Ok(Val.ValOk(Val.ValInt(42)))
-    run("Result.Err(0)") => Result.Ok(Val.ValErr(Val.ValInt(0)))
-    run("fn safe(n)\nmatch n == 0\ntrue -> Result.Err(0)\nfalse -> Result.Ok(10 / n)\n\nsafe(5)?") => Result.Ok(Val.ValInt(2))
-    run("fn safe(n)\nmatch n == 0\ntrue -> Result.Err(0)\nfalse -> Result.Ok(10 / n)\n\nsafe(0)?") => Result.Err("propagated error")
-    run("xyz") => Result.Err("undefined variable: xyz")
-    run("[1, 2, 3]") => Result.Ok(Val.ValList([Val.ValInt(1), Val.ValInt(2), Val.ValInt(3)]))
-    run("[]") => Result.Ok(Val.ValList([]))
-    run("fn sum(xs)\nmatch xs\n[] -> 0\n[h, ..t] -> h + sum(t)\nsum([1, 2, 3])") => Result.Ok(Val.ValInt(6))
-    run("fn len(xs)\nmatch xs\n[] -> 0\n[h, ..t] -> 1 + len(t)\nlen([10, 20, 30, 40])") => Result.Ok(Val.ValInt(4))
-    run("p = Point(x = 3, y = 4)\np.x + p.y") => Result.Ok(Val.ValInt(7))
-    run("fn unwrap(r)\nmatch r\nResult.Ok(v) -> v\nResult.Err(e) -> -1\n\nunwrap(Result.Ok(42))") => Result.Ok(Val.ValInt(42))
-    run("fn unwrap(r)\nmatch r\nResult.Ok(v) -> v\nResult.Err(e) -> -1\n\nunwrap(Result.Err(0))") => Result.Ok(Val.ValInt(-1))
-    run("Option.withDefault(Option.Some(42), 0)") => Result.Ok(Val.ValInt(42))
-    run("Option.withDefault(Option.None, 0)") => Result.Ok(Val.ValInt(0))
-    run("Option.withDefault(List.get([10, 20, 30], 1), -1)") => Result.Ok(Val.ValInt(20))
-    run("Option.withDefault(List.get([10], 5), -1)") => Result.Ok(Val.ValInt(-1))
-    run("fn safe_get(xs, i)\nmatch List.get(xs, i)\nOption.Some(v) -> v\nOption.None -> -1\n\nsafe_get([10, 20], 0)") => Result.Ok(Val.ValInt(10))
-    run("Color.Red") => Result.Ok(Val.ValVariant("Color", "Red", []))
-    run("Shape.Circle(5)") => Result.Ok(Val.ValVariant("Shape", "Circle", [Val.ValInt(5)]))
-    run("fn area(s)\nmatch s\nShape.Circle(r) -> r * r\nShape.Point -> 0\n\narea(Shape.Circle(3))") => Result.Ok(Val.ValInt(9))
-    run("fn area(s)\nmatch s\nShape.Circle(r) -> r * r\nShape.Point -> 0\n\narea(Shape.Point)") => Result.Ok(Val.ValInt(0))
-    run("Result.withDefault(Int.mod(10, 3), 0)") => Result.Ok(Val.ValInt(1))
-    run("Int.toString(42)") => Result.Ok(Val.ValStr("42"))
-    run("(1, 2)") => Result.Ok(Val.ValTuple([Val.ValInt(1), Val.ValInt(2)]))
-    run("fn swap(p)\nmatch p\n(a, b) -> (b, a)\n\nswap((1, 2))") => Result.Ok(Val.ValTuple([Val.ValInt(2), Val.ValInt(1)]))
-    run("fn add(a: Int, b: Int) -> Int\na + b\n\nadd(3, 4)") => Result.Ok(Val.ValInt(7))
-    run("module Foo\n  intent = \"test\"\n  depends []\n\nfn main() -> Int\n42\n\nmain()") => Result.Ok(Val.ValInt(42))
-    run("fn greet(name: String) -> String\n? \"Says hello.\"\nname + name\n\ngreet(\"hi\")") => Result.Ok(Val.ValStr("hihi"))
