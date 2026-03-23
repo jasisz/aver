@@ -54,6 +54,17 @@ fn evalExpr(expr: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Va
         Expr.ExprList(exprs) -> evalListExpr(exprs, env, fns)
         Expr.ExprCall(name, argExprs) -> evalCall(name, argExprs, env, fns)
         Expr.ExprMatch(scrutinee, arms) -> evalMatchExpr(scrutinee, arms, env, fns)
+        Expr.ExprPropagate(inner) -> evalPropagate(inner, env, fns)
+
+fn evalPropagate(inner: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
+    ? "Evaluate ? operator: unwrap Ok or propagate Err."
+    v = evalExpr(inner, env, fns)?
+    match v
+        Val.ValOk(x) -> Result.Ok(x)
+        Val.ValErr(e) -> match e
+            Val.ValStr(msg) -> Result.Err(msg)
+            _ -> Result.Err("propagated error")
+        _ -> Result.Err("? operator requires Result value")
 
 fn evalMatchExpr(scrutinee: Expr, arms: List<MatchArm>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate a match expression."
@@ -179,6 +190,8 @@ fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
         "String.len" -> builtinStringLen(args)
         "String.charAt" -> builtinStringCharAt(args)
         "String.join" -> builtinStringJoin(args)
+        "Result.Ok" -> builtinResultOk(args)
+        "Result.Err" -> builtinResultErr(args)
         _ -> Result.Err("undefined function: {name}")
 
 fn oneArg(args: List<Val>) -> Result<Val, String>
@@ -269,6 +282,16 @@ fn builtinIntAbs(args: List<Val>) -> Result<Val, String>
     v = oneArg(args)?
     n = expectInt(v)?
     Result.Ok(Val.ValInt(Int.abs(n)))
+
+fn builtinResultOk(args: List<Val>) -> Result<Val, String>
+    ? "Result.Ok(value) → wrapped Ok value."
+    v = oneArg(args)?
+    Result.Ok(Val.ValOk(v))
+
+fn builtinResultErr(args: List<Val>) -> Result<Val, String>
+    ? "Result.Err(value) → wrapped Err value."
+    v = oneArg(args)?
+    Result.Ok(Val.ValErr(v))
 
 fn expectStr(v: Val) -> Result<String, String>
     ? "Extract string from Val or error."

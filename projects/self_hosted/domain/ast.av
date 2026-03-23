@@ -22,6 +22,7 @@ type Expr
     ExprList(List<Expr>)
     ExprCall(String, List<Expr>)
     ExprMatch(Expr, List<MatchArm>)
+    ExprPropagate(Expr)
 
 record MatchArm
     pattern: Pattern

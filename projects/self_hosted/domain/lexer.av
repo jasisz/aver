@@ -225,6 +225,7 @@ fn tokenizeChar(c: String, src: String, pos: Int) -> List<Token>
         "<" -> tokenizeLt(src, pos)
         ">" -> tokenizeGt(src, pos)
         "!" -> tokenizeBang(src, pos)
+        "?" -> List.prepend(Token.TkQuestion, tokenize(src, pos + 1))
         "(" -> List.prepend(Token.TkLParen, tokenize(src, pos + 1))
         ")" -> List.prepend(Token.TkRParen, tokenize(src, pos + 1))
         "[" -> List.prepend(Token.TkLBracket, tokenize(src, pos + 1))

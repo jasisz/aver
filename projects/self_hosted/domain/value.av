@@ -8,6 +8,8 @@ type Val
     ValStr(String)
     ValBool(Bool)
     ValList(List<Val>)
+    ValOk(Val)
+    ValErr(Val)
     ValUnit
 
 fn valListRepr(items: List<Val>, acc: String, first: Bool) -> String
@@ -25,6 +27,8 @@ fn valRepr(v: Val) -> String
         Val.ValStr(s) -> s
         Val.ValBool(b) -> String.fromBool(b)
         Val.ValList(items) -> valListRepr(items, "", true)
+        Val.ValOk(inner) -> "Result.Ok({valRepr(inner)})"
+        Val.ValErr(inner) -> "Result.Err({valRepr(inner)})"
         Val.ValUnit -> "()"
 
 verify valRepr

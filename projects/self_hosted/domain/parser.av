@@ -63,8 +63,16 @@ fn parseConsPattern(tokens: List<Token>, pos: Int, head: String) -> Result<(Patt
 // ─── Expression parsing (precedence climbing) ──────────────
 
 fn parseExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
-    ? "Parse an expression: comparison level (lowest precedence)."
-    parseCmpExpr(tokens, pos)
+    ? "Parse an expression: comparison level, then optional ? postfix."
+    r = parseCmpExpr(tokens, pos)?
+    match r
+        (expr, pos2) -> parsePostfixQuestion(tokens, pos2, expr)
+
+fn parsePostfixQuestion(tokens: List<Token>, pos: Int, expr: Expr) -> Result<(Expr, Int), String>
+    ? "Check for postfix ? (error propagation)."
+    match tokenAt(tokens, pos)
+        Token.TkQuestion -> Result.Ok((Expr.ExprPropagate(expr), pos + 1))
+        _ -> Result.Ok((expr, pos))
 
 fn parseCmpExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
     ? "Parse comparison: addExpr (('==' | '<' | '>') addExpr)?"
@@ -308,6 +316,12 @@ fn parseStmtExprFromCmp(tokens: List<Token>, pos: Int, expr: Expr) -> Result<(St
     ? "Continue parsing expression statement from comparison level."
     cr = parseCmpExprTail(tokens, pos, expr)?
     match cr
+        (expr2, pos2) -> parseStmtExprFromQ(tokens, pos2, expr2)
+
+fn parseStmtExprFromQ(tokens: List<Token>, pos: Int, expr: Expr) -> Result<(Stmt, Int), String>
+    ? "Check for postfix ? on expression statement."
+    qr = parsePostfixQuestion(tokens, pos, expr)?
+    match qr
         (expr2, pos2) -> Result.Ok((Stmt.StmtExpr(expr2), pos2))
 
 // ─── Function definition ────────────────────────────────────
