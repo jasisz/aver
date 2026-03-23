@@ -941,6 +941,20 @@ pub(super) fn cmd_run_vm(
                     eprintln!("  {:>22} {:>12}", b.name, b.count);
                 }
             }
+            let bigrams = machine.profile_top_bigrams(15);
+            if !bigrams.is_empty() {
+                eprintln!("\nTop opcode pairs:");
+                for ((a, b), count) in &bigrams {
+                    let pct = *count as f64 / report.total_opcodes as f64 * 100.0;
+                    eprintln!(
+                        "  {:>14} → {:<14} {:>12}  ({:.1}%)",
+                        aver::vm::opcode::opcode_name(*a),
+                        aver::vm::opcode::opcode_name(*b),
+                        count,
+                        pct
+                    );
+                }
+            }
             eprintln!("\nReturn stats:");
             let r = &report.returns;
             eprintln!(

@@ -59,6 +59,13 @@ impl VM {
             .map(|profile| profile.report(&self.code))
     }
 
+    pub fn profile_top_bigrams(&self, n: usize) -> Vec<((u8, u8), u64)> {
+        self.profile
+            .as_ref()
+            .map(|p| p.top_bigrams(n))
+            .unwrap_or_default()
+    }
+
     /// Set CLI arguments for Args.get().
     pub fn set_cli_args(&mut self, args: Vec<String>) {
         self.runtime.set_cli_args(args);

@@ -106,6 +106,8 @@ pub(crate) enum ReturnPathProfileKind {
 #[derive(Debug, Clone)]
 pub(crate) struct VmProfileState {
     opcode_counts: [u64; 256],
+    prev_opcode: u8,
+    bigram_counts: BTreeMap<(u8, u8), u64>,
     function_entries: Vec<u64>,
     function_fast_returns: Vec<u64>,
     function_young_truncate_fast_returns: Vec<u64>,
@@ -118,6 +120,8 @@ impl VmProfileState {
     pub(crate) fn new(function_count: usize) -> Self {
         Self {
             opcode_counts: [0; 256],
+            prev_opcode: 0xFF,
+            bigram_counts: BTreeMap::new(),
             function_entries: vec![0; function_count],
             function_fast_returns: vec![0; function_count],
             function_young_truncate_fast_returns: vec![0; function_count],
@@ -129,6 +133,20 @@ impl VmProfileState {
 
     pub(crate) fn record_opcode(&mut self, opcode: u8) {
         self.opcode_counts[opcode as usize] += 1;
+        if self.prev_opcode != 0xFF {
+            *self
+                .bigram_counts
+                .entry((self.prev_opcode, opcode))
+                .or_insert(0) += 1;
+        }
+        self.prev_opcode = opcode;
+    }
+
+    pub(crate) fn top_bigrams(&self, n: usize) -> Vec<((u8, u8), u64)> {
+        let mut pairs: Vec<_> = self.bigram_counts.iter().map(|(&k, &v)| (k, v)).collect();
+        pairs.sort_by(|a, b| b.1.cmp(&a.1));
+        pairs.truncate(n);
+        pairs
     }
 
     pub(crate) fn record_function_entry(&mut self, chunk: &super::types::FnChunk, fn_id: u32) {
