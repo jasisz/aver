@@ -51,6 +51,7 @@ fn evalExpr(expr: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Va
         Expr.ExprGt(a, b) -> evalCmp(a, b, env, fns, "gt")
         Expr.ExprLte(a, b) -> evalCmp(a, b, env, fns, "lte")
         Expr.ExprGte(a, b) -> evalCmp(a, b, env, fns, "gte")
+        Expr.ExprTuple(exprs) -> evalTupleExpr(exprs, env, fns)
         Expr.ExprList(exprs) -> evalListExpr(exprs, env, fns)
         Expr.ExprRecord(name, fieldExprs) -> evalRecordExpr(name, fieldExprs, env, fns)
         Expr.ExprFieldAccess(obj, field) -> evalFieldAccess(obj, field, env, fns)
@@ -149,6 +150,11 @@ fn evalCmp(a: Expr, b: Expr, env: List<(String, Val)>, fns: List<FnDef>, op: Str
     match evalExpr(a, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(va) -> evalCmpRight(va, b, env, fns, op)
+
+fn evalTupleExpr(exprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
+    ? "Evaluate tuple literal."
+    items = evalListItems(exprs, env, fns)?
+    Result.Ok(Val.ValTuple(items))
 
 fn evalRecordExpr(name: String, fieldExprs: List<(String, Expr)>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate record constructor."
@@ -522,6 +528,7 @@ fn matchPattern(pat: Pattern, v: Val) -> Result<List<(String, Val)>, String>
         Pattern.PatEmpty -> matchPatEmpty(v)
         Pattern.PatCons(h, t) -> matchPatCons(h, t, v)
         Pattern.PatConstructor(ctorName, bindings) -> matchPatConstructor(ctorName, bindings, v)
+        Pattern.PatTuple(bindings) -> matchPatTuple(bindings, v)
         Pattern.PatVar(name) -> Result.Ok([(name, v)])
 
 fn matchPatInt(n: Int, v: Val) -> Result<List<(String, Val)>, String>
@@ -564,6 +571,12 @@ fn matchPatConstructor(ctorName: String, bindings: List<String>, v: Val) -> Resu
         "Option.Some" -> matchWrapperPat(v, "Some", bindings)
         "Option.None" -> matchNonePat(v)
         _ -> matchGenericConstructor(ctorName, bindings, v)
+
+fn matchPatTuple(bindings: List<String>, v: Val) -> Result<List<(String, Val)>, String>
+    ? "Match tuple pattern: (a, b, ...) binds elements by position."
+    match v
+        Val.ValTuple(items) -> zipBindings(bindings, items)
+        _ -> Result.Err("no match")
 
 fn matchGenericConstructor(ctorName: String, bindings: List<String>, v: Val) -> Result<List<(String, Val)>, String>
     ? "Match a generic variant constructor pattern."

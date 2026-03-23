@@ -12,6 +12,7 @@ type Val
     ValErr(Val)
     ValSome(Val)
     ValNone
+    ValTuple(List<Val>)
     ValRecord(String, List<(String, Val)>)
     ValVariant(String, String, List<Val>)
     ValUnit
@@ -33,6 +34,7 @@ fn valRepr(v: Val) -> String
         Val.ValList(items) -> valListRepr(items, "", true)
         Val.ValOk(inner) -> "Result.Ok({valRepr(inner)})"
         Val.ValErr(inner) -> "Result.Err({valRepr(inner)})"
+        Val.ValTuple(items) -> "({valFieldsRepr(items, "", true)})"
         Val.ValSome(inner) -> "Option.Some({valRepr(inner)})"
         Val.ValNone -> "Option.None"
         Val.ValRecord(name, _) -> "{name}(...)"

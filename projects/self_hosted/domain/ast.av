@@ -19,6 +19,7 @@ type Expr
     ExprGt(Expr, Expr)
     ExprLte(Expr, Expr)
     ExprGte(Expr, Expr)
+    ExprTuple(List<Expr>)
     ExprList(List<Expr>)
     ExprRecord(String, List<(String, Expr)>)
     ExprFieldAccess(Expr, String)
@@ -36,6 +37,7 @@ type Pattern
     PatEmpty
     PatCons(String, String)
     PatConstructor(String, List<String>)
+    PatTuple(List<String>)
     PatWild
     PatVar(String)
 

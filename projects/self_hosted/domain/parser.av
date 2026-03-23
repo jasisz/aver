@@ -39,6 +39,7 @@ fn parsePattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), String>
         Token.TkTrue -> Result.Ok((Pattern.PatBool(true), pos + 1))
         Token.TkFalse -> Result.Ok((Pattern.PatBool(false), pos + 1))
         Token.TkLBracket -> parseListPattern(tokens, pos + 1)
+        Token.TkLParen -> parseTuplePattern(tokens, pos + 1)
         Token.TkIdent(s) -> parseIdentPattern(tokens, pos + 1, s)
         _ -> Result.Err("Expected pattern, got {Domain.Token.tokenRepr(t)}")
 
@@ -67,6 +68,25 @@ fn parseConstructorPatternTail(tokens: List<Token>, pos: Int, name: String, acc:
         Token.TkComma -> parseConstructorPatternBindings(tokens, pos + 1, name, acc)
         Token.TkRParen -> Result.Ok((Pattern.PatConstructor(name, acc), pos + 1))
         _ -> Result.Err("Expected ',' or ')' in constructor pattern")
+
+fn parseTuplePattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), String>
+    ? "Parse tuple pattern: (a, b, ...)."
+    match tokenAt(tokens, pos)
+        Token.TkIdent(name) -> parseTuplePatternTail(tokens, pos + 1, [name])
+        _ -> Result.Err("Expected binding name in tuple pattern")
+
+fn parseTuplePatternTail(tokens: List<Token>, pos: Int, acc: List<String>) -> Result<(Pattern, Int), String>
+    ? "After binding in tuple pattern: ',' for more or ')' to end."
+    match tokenAt(tokens, pos)
+        Token.TkComma -> parseTuplePatternNext(tokens, pos + 1, acc)
+        Token.TkRParen -> Result.Ok((Pattern.PatTuple(acc), pos + 1))
+        _ -> Result.Err("Expected ',' or ')' in tuple pattern")
+
+fn parseTuplePatternNext(tokens: List<Token>, pos: Int, acc: List<String>) -> Result<(Pattern, Int), String>
+    ? "Parse next binding in tuple pattern."
+    match tokenAt(tokens, pos)
+        Token.TkIdent(name) -> parseTuplePatternTail(tokens, pos + 1, List.append(acc, name))
+        _ -> Result.Err("Expected binding name in tuple pattern")
 
 fn parseListPattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), String>
     ? "Parse [] or [h, ..t] list pattern."
@@ -215,10 +235,26 @@ fn parseListItemsTail(tokens: List<Token>, pos: Int, items: List<Expr>) -> Resul
         _ -> Result.Err("Expected ',' or ']' in list literal")
 
 fn parseParenExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
-    ? "Parse parenthesized expression."
+    ? "Parse parenthesized expression or tuple."
     r = parseExpr(tokens, pos)?
     match r
-        (expr, pos2) -> Result.Ok((expr, expect(tokens, pos2, Token.TkRParen)?))
+        (expr, pos2) -> match tokenAt(tokens, pos2)
+            Token.TkComma -> parseTupleRest(tokens, pos2 + 1, [expr])
+            Token.TkRParen -> Result.Ok((expr, pos2 + 1))
+            _ -> Result.Err("Expected ')' or ',' after expression")
+
+fn parseTupleRest(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(Expr, Int), String>
+    ? "Parse remaining tuple elements after first comma."
+    r = parseExpr(tokens, pos)?
+    match r
+        (expr, pos2) -> parseTupleRestTail(tokens, pos2, List.append(acc, expr))
+
+fn parseTupleRestTail(tokens: List<Token>, pos: Int, items: List<Expr>) -> Result<(Expr, Int), String>
+    ? "After tuple element: ',' for more or ')' to end."
+    match tokenAt(tokens, pos)
+        Token.TkComma -> parseTupleRest(tokens, pos + 1, items)
+        Token.TkRParen -> Result.Ok((Expr.ExprTuple(items), pos + 1))
+        _ -> Result.Err("Expected ')' or ',' in tuple")
 
 fn parseIdentOrCall(tokens: List<Token>, pos: Int, name: String) -> Result<(Expr, Int), String>
     ? "After reading an identifier: call, record constructor, field access, or variable?"
@@ -307,6 +343,7 @@ fn isArmStart(tokens: List<Token>, pos: Int) -> Bool
         Token.TkTrue -> isArrow(tokens, pos + 1)
         Token.TkFalse -> isArrow(tokens, pos + 1)
         Token.TkLBracket -> true
+        Token.TkLParen -> true
         Token.TkIdent(name) -> isArmStartIdent(tokens, pos + 1, name)
         _ -> false
 

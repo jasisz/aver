@@ -109,3 +109,5 @@ verify run
     run("fn area(s)\nmatch s\nShape.Circle(r) -> r * r\nShape.Point -> 0\n\narea(Shape.Point)") => Result.Ok(Val.ValInt(0))
     run("Result.withDefault(Int.mod(10, 3), 0)") => Result.Ok(Val.ValInt(1))
     run("Int.toString(42)") => Result.Ok(Val.ValStr("42"))
+    run("(1, 2)") => Result.Ok(Val.ValTuple([Val.ValInt(1), Val.ValInt(2)]))
+    run("fn swap(p)\nmatch p\n(a, b) -> (b, a)\n\nswap((1, 2))") => Result.Ok(Val.ValTuple([Val.ValInt(2), Val.ValInt(1)]))
