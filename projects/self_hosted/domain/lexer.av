@@ -150,6 +150,38 @@ fn tokenizeDefault(c: String, src: String, pos: Int) -> List<Token>
             true -> tokenizeAlpha(src, pos)
             false -> tokenize(src, pos + 1)
 
+fn tokenizeDot(src: String, pos: Int) -> List<Token>
+    ? "Tokenize .. (rest pattern)."
+    match String.charAt(src, pos + 1)
+        Option.Some(c) -> match c == "."
+            true -> List.prepend(Token.TkDotDot, tokenize(src, pos + 2))
+            false -> tokenize(src, pos + 1)
+        Option.None -> tokenize(src, pos + 1)
+
+fn tokenizeLt(src: String, pos: Int) -> List<Token>
+    ? "Tokenize < or <=."
+    match String.charAt(src, pos + 1)
+        Option.Some(c) -> match c == "="
+            true -> List.prepend(Token.TkLte, tokenize(src, pos + 2))
+            false -> List.prepend(Token.TkLt, tokenize(src, pos + 1))
+        Option.None -> List.prepend(Token.TkLt, tokenize(src, pos + 1))
+
+fn tokenizeGt(src: String, pos: Int) -> List<Token>
+    ? "Tokenize > or >=."
+    match String.charAt(src, pos + 1)
+        Option.Some(c) -> match c == "="
+            true -> List.prepend(Token.TkGte, tokenize(src, pos + 2))
+            false -> List.prepend(Token.TkGt, tokenize(src, pos + 1))
+        Option.None -> List.prepend(Token.TkGt, tokenize(src, pos + 1))
+
+fn tokenizeBang(src: String, pos: Int) -> List<Token>
+    ? "Tokenize != (only valid two-char sequence starting with !)."
+    match String.charAt(src, pos + 1)
+        Option.Some(c) -> match c == "="
+            true -> List.prepend(Token.TkNeq, tokenize(src, pos + 2))
+            false -> tokenize(src, pos + 1)
+        Option.None -> tokenize(src, pos + 1)
+
 fn tokenizeEq(src: String, pos: Int) -> List<Token>
     ? "Tokenize = or ==."
     match String.charAt(src, pos + 1)
@@ -166,10 +198,14 @@ fn tokenizeChar(c: String, src: String, pos: Int) -> List<Token>
         "+" -> List.prepend(Token.TkPlus, tokenize(src, pos + 1))
         "*" -> List.prepend(Token.TkStar, tokenize(src, pos + 1))
         "/" -> List.prepend(Token.TkSlash, tokenize(src, pos + 1))
-        "<" -> List.prepend(Token.TkLt, tokenize(src, pos + 1))
-        ">" -> List.prepend(Token.TkGt, tokenize(src, pos + 1))
+        "<" -> tokenizeLt(src, pos)
+        ">" -> tokenizeGt(src, pos)
+        "!" -> tokenizeBang(src, pos)
         "(" -> List.prepend(Token.TkLParen, tokenize(src, pos + 1))
         ")" -> List.prepend(Token.TkRParen, tokenize(src, pos + 1))
+        "[" -> List.prepend(Token.TkLBracket, tokenize(src, pos + 1))
+        "]" -> List.prepend(Token.TkRBracket, tokenize(src, pos + 1))
+        "." -> tokenizeDot(src, pos)
         "," -> List.prepend(Token.TkComma, tokenize(src, pos + 1))
         "=" -> tokenizeEq(src, pos)
         "-" -> tokenizeMinus(src, pos)

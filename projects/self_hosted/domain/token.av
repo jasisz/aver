@@ -16,12 +16,18 @@ type Token
     TkSlash
     TkEq
     TkEqEq
+    TkNeq
     TkLt
     TkGt
+    TkLte
+    TkGte
     TkLParen
     TkRParen
     TkComma
     TkArrow
+    TkLBracket
+    TkRBracket
+    TkDotDot
     TkNewline
     TkFn
     TkMatch
@@ -41,12 +47,18 @@ fn tokenRepr(t: Token) -> String
         Token.TkSlash -> "Slash"
         Token.TkEq -> "Eq"
         Token.TkEqEq -> "EqEq"
+        Token.TkNeq -> "Neq"
         Token.TkLt -> "Lt"
         Token.TkGt -> "Gt"
+        Token.TkLte -> "Lte"
+        Token.TkGte -> "Gte"
         Token.TkLParen -> "LParen"
         Token.TkRParen -> "RParen"
         Token.TkComma -> "Comma"
         Token.TkArrow -> "Arrow"
+        Token.TkLBracket -> "LBracket"
+        Token.TkRBracket -> "RBracket"
+        Token.TkDotDot -> "DotDot"
         Token.TkNewline -> "Newline"
         Token.TkFn -> "Fn"
         Token.TkMatch -> "Match"

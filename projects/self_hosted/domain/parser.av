@@ -38,10 +38,27 @@ fn parsePattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), String>
         Token.TkInt(n) -> Result.Ok((Pattern.PatInt(n), pos + 1))
         Token.TkTrue -> Result.Ok((Pattern.PatBool(true), pos + 1))
         Token.TkFalse -> Result.Ok((Pattern.PatBool(false), pos + 1))
+        Token.TkLBracket -> parseListPattern(tokens, pos + 1)
         Token.TkIdent(s) -> match s == "_"
             true -> Result.Ok((Pattern.PatWild, pos + 1))
             false -> Result.Ok((Pattern.PatVar(s), pos + 1))
         _ -> Result.Err("Expected pattern, got {Domain.Token.tokenRepr(t)}")
+
+fn parseListPattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), String>
+    ? "Parse [] or [h, ..t] list pattern."
+    match tokenAt(tokens, pos)
+        Token.TkRBracket -> Result.Ok((Pattern.PatEmpty, pos + 1))
+        Token.TkIdent(head) -> parseConsPattern(tokens, pos + 1, head)
+        _ -> Result.Err("Expected identifier or ']' in list pattern")
+
+fn parseConsPattern(tokens: List<Token>, pos: Int, head: String) -> Result<(Pattern, Int), String>
+    ? "Parse [h, ..t] after reading head ident."
+    pos2 = expect(tokens, pos, Token.TkComma)?
+    pos3 = expect(tokens, pos2, Token.TkDotDot)?
+    t = tokenAt(tokens, pos3)
+    match t
+        Token.TkIdent(tail) -> Result.Ok((Pattern.PatCons(head, tail), expect(tokens, pos3 + 1, Token.TkRBracket)?))
+        _ -> Result.Err("Expected tail identifier in cons pattern")
 
 // ─── Expression parsing (precedence climbing) ──────────────
 
@@ -59,19 +76,27 @@ fn parseCmpExprTail(tokens: List<Token>, pos: Int, left: Expr) -> Result<(Expr, 
     ? "Check for comparison operator."
     match tokenAt(tokens, pos)
         Token.TkEqEq -> parseCmpExprRight(tokens, pos + 1, left, 0)
-        Token.TkLt -> parseCmpExprRight(tokens, pos + 1, left, 1)
-        Token.TkGt -> parseCmpExprRight(tokens, pos + 1, left, 2)
+        Token.TkNeq -> parseCmpExprRight(tokens, pos + 1, left, 1)
+        Token.TkLt -> parseCmpExprRight(tokens, pos + 1, left, 2)
+        Token.TkGt -> parseCmpExprRight(tokens, pos + 1, left, 3)
+        Token.TkLte -> parseCmpExprRight(tokens, pos + 1, left, 4)
+        Token.TkGte -> parseCmpExprRight(tokens, pos + 1, left, 5)
         _ -> Result.Ok((left, pos))
 
 fn parseCmpExprRight(tokens: List<Token>, pos: Int, left: Expr, op: Int) -> Result<(Expr, Int), String>
     ? "Parse right side of comparison."
     r = parseAddExpr(tokens, pos)?
     match r
-        (right, pos2) -> match op == 0
-            true -> Result.Ok((Expr.ExprEq(left, right), pos2))
-            false -> match op == 1
-                true -> Result.Ok((Expr.ExprLt(left, right), pos2))
-                false -> Result.Ok((Expr.ExprGt(left, right), pos2))
+        (right, pos2) -> buildCmpExpr(left, right, pos2, op)
+
+fn buildCmpExpr(left: Expr, right: Expr, pos: Int, op: Int) -> Result<(Expr, Int), String>
+    match op
+        0 -> Result.Ok((Expr.ExprEq(left, right), pos))
+        1 -> Result.Ok((Expr.ExprNeq(left, right), pos))
+        2 -> Result.Ok((Expr.ExprLt(left, right), pos))
+        3 -> Result.Ok((Expr.ExprGt(left, right), pos))
+        4 -> Result.Ok((Expr.ExprLte(left, right), pos))
+        _ -> Result.Ok((Expr.ExprGte(left, right), pos))
 
 fn parseAddExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
     ? "Parse additive: mulExpr (('+' | '-') mulExpr)*"
@@ -124,10 +149,29 @@ fn parseAtom(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
         Token.TkStr(s) -> Result.Ok((Expr.ExprStr(s), pos + 1))
         Token.TkTrue -> Result.Ok((Expr.ExprBool(true), pos + 1))
         Token.TkFalse -> Result.Ok((Expr.ExprBool(false), pos + 1))
+        Token.TkLBracket -> parseListExpr(tokens, pos + 1)
         Token.TkLParen -> parseParenExpr(tokens, pos + 1)
         Token.TkMatch -> parseMatchExpr(tokens, pos + 1)
         Token.TkIdent(name) -> parseIdentOrCall(tokens, pos + 1, name)
         _ -> Result.Err("Expected expression, got {Domain.Token.tokenRepr(t)}")
+
+fn parseListExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
+    ? "Parse list literal: [expr, expr, ...] or []."
+    match tokenAt(tokens, pos)
+        Token.TkRBracket -> Result.Ok((Expr.ExprList([]), pos + 1))
+        _ -> parseListItems(tokens, pos, [])
+
+fn parseListItems(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(Expr, Int), String>
+    ? "Parse comma-separated list items."
+    r = parseExpr(tokens, pos)?
+    match r
+        (expr, pos2) -> parseListItemsTail(tokens, pos2, List.append(acc, expr))
+
+fn parseListItemsTail(tokens: List<Token>, pos: Int, items: List<Expr>) -> Result<(Expr, Int), String>
+    match tokenAt(tokens, pos)
+        Token.TkComma -> parseListItems(tokens, pos + 1, items)
+        Token.TkRBracket -> Result.Ok((Expr.ExprList(items), pos + 1))
+        _ -> Result.Err("Expected ',' or ']' in list literal")
 
 fn parseParenExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
     ? "Parse parenthesized expression."
@@ -175,6 +219,7 @@ fn isArmStart(tokens: List<Token>, pos: Int) -> Bool
         Token.TkInt(_) -> isArrow(tokens, pos + 1)
         Token.TkTrue -> isArrow(tokens, pos + 1)
         Token.TkFalse -> isArrow(tokens, pos + 1)
+        Token.TkLBracket -> true
         Token.TkIdent(_) -> isArrow(tokens, pos + 1)
         _ -> false
 

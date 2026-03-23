@@ -14,8 +14,12 @@ type Expr
     ExprMul(Expr, Expr)
     ExprDiv(Expr, Expr)
     ExprEq(Expr, Expr)
+    ExprNeq(Expr, Expr)
     ExprLt(Expr, Expr)
     ExprGt(Expr, Expr)
+    ExprLte(Expr, Expr)
+    ExprGte(Expr, Expr)
+    ExprList(List<Expr>)
     ExprCall(String, List<Expr>)
     ExprMatch(Expr, List<MatchArm>)
 
@@ -26,6 +30,8 @@ record MatchArm
 type Pattern
     PatInt(Int)
     PatBool(Bool)
+    PatEmpty
+    PatCons(String, String)
     PatWild
     PatVar(String)
 

@@ -7,7 +7,16 @@ type Val
     ValInt(Int)
     ValStr(String)
     ValBool(Bool)
+    ValList(List<Val>)
     ValUnit
+
+fn valListRepr(items: List<Val>, acc: String, first: Bool) -> String
+    ? "Build list repr recursively."
+    match items
+        [] -> "[{acc}]"
+        [v, ..rest] -> match first
+            true -> valListRepr(rest, valRepr(v), false)
+            false -> valListRepr(rest, acc + ", " + valRepr(v), false)
 
 fn valRepr(v: Val) -> String
     ? "Display representation of a runtime value."
@@ -15,6 +24,7 @@ fn valRepr(v: Val) -> String
         Val.ValInt(n) -> Int.toString(n)
         Val.ValStr(s) -> s
         Val.ValBool(b) -> String.fromBool(b)
+        Val.ValList(items) -> valListRepr(items, "", true)
         Val.ValUnit -> "()"
 
 verify valRepr

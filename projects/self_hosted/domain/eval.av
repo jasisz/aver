@@ -46,8 +46,12 @@ fn evalExpr(expr: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Va
         Expr.ExprMul(a, b) -> evalBinop(a, b, env, fns, "mul")
         Expr.ExprDiv(a, b) -> evalBinop(a, b, env, fns, "div")
         Expr.ExprEq(a, b) -> evalCmp(a, b, env, fns, "eq")
+        Expr.ExprNeq(a, b) -> evalCmp(a, b, env, fns, "neq")
         Expr.ExprLt(a, b) -> evalCmp(a, b, env, fns, "lt")
         Expr.ExprGt(a, b) -> evalCmp(a, b, env, fns, "gt")
+        Expr.ExprLte(a, b) -> evalCmp(a, b, env, fns, "lte")
+        Expr.ExprGte(a, b) -> evalCmp(a, b, env, fns, "gte")
+        Expr.ExprList(exprs) -> evalListExpr(exprs, env, fns)
         Expr.ExprCall(name, argExprs) -> evalCall(name, argExprs, env, fns)
         Expr.ExprMatch(scrutinee, arms) -> evalMatchExpr(scrutinee, arms, env, fns)
 
@@ -72,15 +76,21 @@ fn applyCmp(x: Int, y: Int, op: String) -> Result<Val, String>
     ? "Apply a comparison operation to two integers."
     match op
         "eq" -> Result.Ok(Val.ValBool(x == y))
+        "neq" -> Result.Ok(Val.ValBool(x != y))
         "lt" -> Result.Ok(Val.ValBool(x < y))
         "gt" -> Result.Ok(Val.ValBool(x > y))
+        "lte" -> Result.Ok(Val.ValBool(x <= y))
+        "gte" -> Result.Ok(Val.ValBool(x >= y))
         _ -> Result.Err("unknown cmp: " + op)
 
 fn evalBinopVals(va: Val, vb: Val, op: String) -> Result<Val, String>
     ? "Apply binary op to two evaluated values."
     match (va, vb)
         (Val.ValInt(x), Val.ValInt(y)) -> applyBinop(x, y, op)
-        _ -> Result.Err("binop requires ints")
+        (Val.ValStr(x), Val.ValStr(y)) -> match op == "add"
+            true -> Result.Ok(Val.ValStr(x + y))
+            false -> Result.Err("strings only support +")
+        _ -> Result.Err("binop type mismatch")
 
 fn evalCmpVals(va: Val, vb: Val, op: String) -> Result<Val, String>
     ? "Apply comparison to two evaluated values."
@@ -110,6 +120,21 @@ fn evalCmp(a: Expr, b: Expr, env: List<(String, Val)>, fns: List<FnDef>, op: Str
     match evalExpr(a, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(va) -> evalCmpRight(va, b, env, fns, op)
+
+fn evalListExpr(exprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
+    ? "Evaluate a list literal."
+    match evalListItems(exprs, env, fns)
+        Result.Ok(items) -> Result.Ok(Val.ValList(items))
+        Result.Err(e) -> Result.Err(e)
+
+fn evalListItems(exprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<List<Val>, String>
+    match exprs
+        [] -> Result.Ok([])
+        [e, ..rest] -> match evalExpr(e, env, fns)
+            Result.Err(err) -> Result.Err(err)
+            Result.Ok(v) -> match evalListItems(rest, env, fns)
+                Result.Err(err) -> Result.Err(err)
+                Result.Ok(vs) -> Result.Ok(List.prepend(v, vs))
 
 fn evalArgsRest(v: Val, rest: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<List<Val>, String>
     ? "Evaluate remaining args and prepend v."
@@ -143,6 +168,8 @@ fn matchPattern(pat: Pattern, v: Val) -> Result<List<(String, Val)>, String>
         Pattern.PatWild -> Result.Ok([])
         Pattern.PatInt(n) -> matchPatInt(n, v)
         Pattern.PatBool(b) -> matchPatBool(b, v)
+        Pattern.PatEmpty -> matchPatEmpty(v)
+        Pattern.PatCons(h, t) -> matchPatCons(h, t, v)
         Pattern.PatVar(name) -> Result.Ok([(name, v)])
 
 fn matchPatInt(n: Int, v: Val) -> Result<List<(String, Val)>, String>
@@ -159,6 +186,22 @@ fn matchPatBool(b: Bool, v: Val) -> Result<List<(String, Val)>, String>
         Val.ValBool(vb) -> match b == vb
             true -> Result.Ok([])
             false -> Result.Err("no match")
+        _ -> Result.Err("no match")
+
+fn matchPatEmpty(v: Val) -> Result<List<(String, Val)>, String>
+    ? "Match empty list pattern []."
+    match v
+        Val.ValList(items) -> match items
+            [] -> Result.Ok([])
+            _ -> Result.Err("no match")
+        _ -> Result.Err("no match")
+
+fn matchPatCons(h: String, t: String, v: Val) -> Result<List<(String, Val)>, String>
+    ? "Match cons pattern [h, ..t]."
+    match v
+        Val.ValList(items) -> match items
+            [] -> Result.Err("no match")
+            [head, ..tail] -> Result.Ok([(h, head), (t, Val.ValList(tail))])
         _ -> Result.Err("no match")
 
 fn evalMatch(v: Val, arms: List<MatchArm>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
