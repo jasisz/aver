@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here.
 
-## Unreleased
+## 0.6.1
 
 ### Added
 - **VM superinstructions**: `LOAD_LOCAL_2`, `LOAD_LOCAL_CONST`, `LIST_GET_OR` — fused at compile time via peephole in `emit_op()`. Eliminates ~35% of dispatch overhead in compute-heavy workloads.
