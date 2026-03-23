@@ -4,39 +4,29 @@ All notable changes to Aver are documented here.
 
 ## 0.6.1
 
-### Added
-- **VM superinstructions**: `LOAD_LOCAL_2`, `LOAD_LOCAL_CONST`, `LIST_GET_OR` — fused at compile time via peephole in `emit_op()`. Eliminates ~35% of dispatch overhead in compute-heavy workloads.
-- **VM `UNWRAP_OR` / `UNWRAP_RESULT_OR` opcodes**: `Option.withDefault` and `Result.withDefault` now bypass `CALL_BUILTIN` dispatch entirely, executing as inline tag check + value extraction.
-- **VM `CALL_LEAF` opcode**: frameless calls for leaf functions (no user-function calls, args-only locals). No `CallFrame` pushed — caller state saved in dispatch loop locals. Functions like `cellAt`, `evolve`, `cellChar` execute with zero frame management overhead.
-- **VM `--profile` flag**: `aver run --profile` prints opcode counts, function entry/return stats, builtin call counts, and **opcode bigram analysis** for identifying superinstruction candidates.
-- **Bool match → `JUMP_IF_FALSE`**: `match expr: true → A, false → B` (the only branch pattern in Aver) compiles to a single conditional jump instead of `MATCH_DISPATCH` table scan. Also eliminates `NOT` for `>=`/`<=`/`!=` by swapping branches.
-- **Game of Life example** (`examples/games/life.av`): real-time terminal visualization with FPS counter, padded grid for zero-bounds-check neighbor lookup.
-- `list_get_or` benchmark case for `Option.withDefault(List.get(...), default)` pattern.
-- `vm_profile` release binary for VM opcode/function/builtin profiling on real Aver app workloads, including return-path stats for `thin` / `parent-thin` fast paths.
-- **Self-hosted mini interpreter** (`projects/self_hosted/`) — lexer, AST, evaluator, and pattern matcher for an Aver subset, written entirely in Aver. Demonstrates Aver executing Aver: tokenizes source, builds AST, evaluates expressions including recursive fibonacci. Runs on both interpreter and VM. 23 verify cases across 4 modules.
-- Lean proof export now emits universal theorems with `sorry` when auto-proof fails, instead of silently omitting them. This enables external proof assistants to attempt closing the gaps.
-
 ### Performance
-- VM benchmarks **25-54% faster** across the board vs pre-session baseline: `fib(25)` 12.6→9.3ms, `countdown(10M)` 364→252ms, `error_pipeline(200K)` 50→23ms, `list_get_or(30K)` 5.5→2.6ms.
-- VM exec-to-interpreter ratios improved from 5-7x to **7-13x**.
-- Game of Life: **38 → 330 FPS** on VM (8.7× faster). Padded grid eliminates bounds checking; superinstructions + frameless calls reduce dispatch count by ~65%.
-- `Terminal.size` codegen now returns `TerminalSize` record (was tuple), fixing `.width`/`.height` access in compiled Rust output.
+- **VM 25-54% faster** across all benchmarks. Interpreter-to-VM speed ratios improved from 5-7× to **7-13×**.
+- New VM opcodes for common patterns: `Option.withDefault`/`Result.withDefault` unwrapping, boolean branches, list access with default value, and fused load pairs.
+- Frameless calls for small leaf functions — no call frame overhead for pure helpers like `cellAt`, `evolve`, `cellChar`.
+- `match expr: true → A, false → B` now compiles to a single conditional branch. Also eliminates redundant `NOT` for `>=`, `<=`, `!=`.
+
+### Added
+- `aver run --profile` — VM execution profile: opcode counts, function call stats, and opcode pair analysis.
+- Game of Life example (`examples/games/life.av`) — terminal visualization with FPS counter.
+- Self-hosted mini interpreter (`projects/self_hosted/`) — Aver executing Aver: lexer, AST, evaluator, pattern matcher. 23 verify cases.
+- Lean proof export emits universal theorems with `sorry` when auto-proof fails.
 
 ### Changed
-- VM `NanValue` now uses a real semantic `v2` layout instead of the previous incremental patchwork: `Immediate` only covers `false` / `true` / `Unit`, `Option.None` has its own singleton tag, `Option.Some` / `Result.Ok` / `Result.Err` have dedicated tags with inline-or-arena payloads selected by `bit45`, empty list/map values live under the normal `List` / `Map` tags, short strings stay inline inside `TAG_STRING`, and shared symbolic runtime handles (`Fn`, `Builtin`, `Namespace`, nullary variants) travel through one `Symbol` tag. Common wrapper payloads (`Bool`, `Unit`, `None`, and small inline `Int`) now stay fully inline, while larger or heap-backed payloads still fall back to boxed arena storage.
-- VM `parent-thin` classification now accepts small match/binding helpers and nullary-variant constructors, so more tiny control-flow helpers can return without paying ordinary-return handoff churn.
-- VM `parent-thin` classification now also allows audited heapless/cheap pure builtins such as `Bool.*`, scalar `Int.*` / `Float.*`, string predicate/length helpers, and `Map.get` / `Map.len` / `Map.has`, instead of rejecting every `CALL_BUILTIN`.
-- VM now interns compile-time-known names into one symbol table for VM execution: function refs travel as inline `Int(symbol_id)`, `CALL_BUILTIN` carries `symbol_id` instead of string-ish dispatch state, runtime effect checks compare interned effect ids instead of strings on the hot path, and nested module/type namespace paths such as `Domain.Types.TaskEvent.TaskCreated` resolve through the same symbol/member graph.
-- `aver context --json` now serializes through `serde` view structs instead of hand-built JSON strings, keeping the schema the same while simplifying escaping and output maintenance.
-- `fib(30)` reduced to `fib(25)` in `runtime_bench_cases` to avoid excessive benchmark time.
+- Improved VM internal value representation (NanValue v2): dedicated tags for Option/Result wrappers, inline small values, interned symbol table for faster dispatch.
+- `Terminal.size` returns a record with `width`/`height` fields (was tuple). **Requires aver-rt ≥ 0.3.1 for codegen.**
+- `aver context --json` uses serde serialization.
 
 ### Fixed
-- `runtime_bench` now invalidates generated benchmark projects when the Aver binary or `aver-rt` manifest changes, so generated results no longer reuse stale toolchain-pinned outputs across runtime revisions.
-- Exhaustiveness checker no longer hangs on recursive sum types (e.g. `Expr` with `ExprAdd(Expr, Expr)`). Recursive Named types are now depth-limited to 2 expansions, preventing exponential branching while still catching real missing-pattern bugs.
-- Lean proof export: `toString` added to reserved-word list, preventing ambiguity with Lean 4's `ToString.toString` typeclass method. `Float.fromInt` alias added to prelude for Aver's `Float.fromInt` builtin.
-- VM `HttpServer.listen` / `listenWith` callbacks now compact `stable` against live VM roots after converting the handler result back to host values, so request-local response graphs do not accumulate in `stable` across requests.
-- `MATCH_DISPATCH_CONST` lacked a `JUMP` past the default arm body after a table hit, causing the default arm to execute unconditionally — leading to infinite recursion and 81 GB memory usage on patterns like `fib(n)`.
-- Arena stack overflow on deep list promotion — `flatten_deep_list()` now materializes Prepend/Concat chains (>64 elements) to `Flat(Vec)` before frame-return evacuation, using the existing iterative `list_to_vec`.
+- Exhaustiveness checker hang on recursive sum types (e.g. `Expr` with `ExprAdd(Expr, Expr)`).
+- VM `MATCH_DISPATCH_CONST` fallthrough causing infinite recursion on patterns like `fib(n)`.
+- Arena stack overflow on deep list return (>64 element Prepend/Concat chains).
+- `HttpServer` callback memory leak — stable-space compaction after each request.
+- Lean export `toString` reserved-word conflict.
 
 ## 0.6.0
 
