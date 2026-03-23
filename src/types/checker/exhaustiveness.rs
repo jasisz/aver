@@ -161,10 +161,10 @@ impl TypeChecker {
         };
 
         // Restore Named type depth counter.
-        if let Some(name) = named_key {
-            if let Some(d) = type_depth.get_mut(&name) {
-                *d -= 1;
-            }
+        if let Some(name) = named_key
+            && let Some(d) = type_depth.get_mut(&name)
+        {
+            *d -= 1;
         }
 
         // Only remove the key when a witness was found (Some).
