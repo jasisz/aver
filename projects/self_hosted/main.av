@@ -103,3 +103,7 @@ verify run
     run("Option.withDefault(List.get([10, 20, 30], 1), -1)") => Result.Ok(Val.ValInt(20))
     run("Option.withDefault(List.get([10], 5), -1)") => Result.Ok(Val.ValInt(-1))
     run("fn safe_get(xs, i)\nmatch List.get(xs, i)\nOption.Some(v) -> v\nOption.None -> -1\n\nsafe_get([10, 20], 0)") => Result.Ok(Val.ValInt(10))
+    run("Color.Red") => Result.Ok(Val.ValVariant("Color", "Red", []))
+    run("Shape.Circle(5)") => Result.Ok(Val.ValVariant("Shape", "Circle", [Val.ValInt(5)]))
+    run("fn area(s)\nmatch s\nShape.Circle(r) -> r * r\nShape.Point -> 0\n\narea(Shape.Circle(3))") => Result.Ok(Val.ValInt(9))
+    run("fn area(s)\nmatch s\nShape.Circle(r) -> r * r\nShape.Point -> 0\n\narea(Shape.Point)") => Result.Ok(Val.ValInt(0))

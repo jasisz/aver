@@ -59,10 +59,19 @@ fn evalExpr(expr: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Va
         Expr.ExprPropagate(inner) -> evalPropagate(inner, env, fns)
 
 fn evalVar(name: String, env: List<(String, Val)>) -> Result<Val, String>
-    ? "Look up variable, with special handling for Option.None."
+    ? "Look up variable, Option.None, or nullary variant constructor."
     match name
         "Option.None" -> Result.Ok(Val.ValNone)
-        _ -> lookupVar(env, name)
+        _ -> match lookupVar(env, name)
+            Result.Ok(v) -> Result.Ok(v)
+            Result.Err(_) -> evalVarFallback(name)
+
+fn evalVarFallback(name: String) -> Result<Val, String>
+    ? "If variable not in env, try as nullary variant (e.g. Token.TkPlus)."
+    match splitDotted(name)
+        Option.Some(pair) -> match pair
+            (typeName, ctorName) -> Result.Ok(Val.ValVariant(typeName, ctorName, []))
+        Option.None -> Result.Err("undefined variable: {name}")
 
 fn evalPropagate(inner: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate ? operator: unwrap Ok or propagate Err."
@@ -238,7 +247,7 @@ fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
         "Option.Some" -> builtinOptionSome(args)
         "Option.None" -> Result.Ok(Val.ValNone)
         "Option.withDefault" -> builtinOptionWithDefault(args)
-        _ -> Result.Err("undefined function: {name}")
+        _ -> tryVariantConstructor(name, args)
 
 fn oneArg(args: List<Val>) -> Result<Val, String>
     ? "Extract single argument from args list."
@@ -362,6 +371,27 @@ fn builtinResultErr(args: List<Val>) -> Result<Val, String>
     v = oneArg(args)?
     Result.Ok(Val.ValErr(v))
 
+fn tryVariantConstructor(name: String, args: List<Val>) -> Result<Val, String>
+    ? "Try to construct a variant value from a dotted name like Type.Ctor."
+    match splitDotted(name)
+        Option.Some(pair) -> match pair
+            (typeName, ctorName) -> Result.Ok(Val.ValVariant(typeName, ctorName, args))
+        Option.None -> Result.Err("undefined function: {name}")
+
+fn splitDotted(name: String) -> Option<(String, String)>
+    ? "Split 'Type.Ctor' into (Type, Ctor). Returns None if no dot."
+    splitDottedLoop(name, 0, String.len(name))
+
+fn splitDottedLoop(name: String, pos: Int, total: Int) -> Option<(String, String)>
+    ? "Find first dot and split."
+    match pos >= total
+        true -> Option.None
+        false -> match String.charAt(name, pos)
+            Option.Some(c) -> match c == "."
+                true -> Option.Some((String.slice(name, 0, pos), String.slice(name, pos + 1, total)))
+                false -> splitDottedLoop(name, pos + 1, total)
+            Option.None -> Option.None
+
 fn expectStr(v: Val) -> Result<String, String>
     ? "Extract string from Val or error."
     match v
@@ -461,7 +491,20 @@ fn matchPatConstructor(ctorName: String, bindings: List<String>, v: Val) -> Resu
         "Result.Err" -> matchWrapperPat(v, "Err", bindings)
         "Option.Some" -> matchWrapperPat(v, "Some", bindings)
         "Option.None" -> matchNonePat(v)
+        _ -> matchGenericConstructor(ctorName, bindings, v)
+
+fn matchGenericConstructor(ctorName: String, bindings: List<String>, v: Val) -> Result<List<(String, Val)>, String>
+    ? "Match a generic variant constructor pattern."
+    match v
+        Val.ValVariant(typeName, varName, fields) -> matchGenericCtorCheck(ctorName, typeName, varName, bindings, fields)
         _ -> Result.Err("no match")
+
+fn matchGenericCtorCheck(ctorName: String, typeName: String, varName: String, bindings: List<String>, fields: List<Val>) -> Result<List<(String, Val)>, String>
+    ? "Check if variant matches constructor name."
+    fullName = typeName + "." + varName
+    match fullName == ctorName
+        true -> zipBindings(bindings, fields)
+        false -> Result.Err("no match")
 
 fn matchNonePat(v: Val) -> Result<List<(String, Val)>, String>
     ? "Match Option.None pattern."

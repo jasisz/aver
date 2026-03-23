@@ -13,6 +13,7 @@ type Val
     ValSome(Val)
     ValNone
     ValRecord(String, List<(String, Val)>)
+    ValVariant(String, String, List<Val>)
     ValUnit
 
 fn valListRepr(items: List<Val>, acc: String, first: Bool) -> String
@@ -35,7 +36,22 @@ fn valRepr(v: Val) -> String
         Val.ValSome(inner) -> "Option.Some({valRepr(inner)})"
         Val.ValNone -> "Option.None"
         Val.ValRecord(name, _) -> "{name}(...)"
+        Val.ValVariant(typeName, ctorName, fields) -> valVariantRepr(typeName, ctorName, fields)
         Val.ValUnit -> "()"
+
+fn valVariantRepr(typeName: String, ctorName: String, fields: List<Val>) -> String
+    ? "Display a variant value."
+    match fields
+        [] -> "{typeName}.{ctorName}"
+        _ -> "{typeName}.{ctorName}({valFieldsRepr(fields, "", true)})"
+
+fn valFieldsRepr(items: List<Val>, acc: String, first: Bool) -> String
+    ? "Build comma-separated repr of variant fields."
+    match items
+        [] -> acc
+        [v, ..rest] -> match first
+            true -> valFieldsRepr(rest, valRepr(v), false)
+            false -> valFieldsRepr(rest, acc + ", " + valRepr(v), false)
 
 verify valRepr
     valRepr(Val.ValInt(42)) => "42"
