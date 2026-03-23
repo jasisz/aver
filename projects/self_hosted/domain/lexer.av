@@ -140,6 +140,13 @@ fn keywordOrIdent(s: String) -> Token
         "match" -> Token.TkMatch
         "true" -> Token.TkTrue
         "false" -> Token.TkFalse
+        "module" -> Token.TkIdent("module")
+        "type" -> Token.TkIdent("type")
+        "record" -> Token.TkIdent("record")
+        "verify" -> Token.TkIdent("verify")
+        "depends" -> Token.TkIdent("depends")
+        "exposes" -> Token.TkIdent("exposes")
+        "intent" -> Token.TkIdent("intent")
         _ -> Token.TkIdent(s)
 
 fn tokenizeDigit(src: String, pos: Int) -> List<Token>

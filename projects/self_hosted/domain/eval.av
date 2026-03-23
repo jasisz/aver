@@ -247,6 +247,12 @@ fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
         "Option.Some" -> builtinOptionSome(args)
         "Option.None" -> Result.Ok(Val.ValNone)
         "Option.withDefault" -> builtinOptionWithDefault(args)
+        "Int.mod" -> builtinIntMod(args)
+        "String.slice" -> builtinStringSlice(args)
+        "String.fromBool" -> builtinStringFromBool(args)
+        "String.fromInt" -> builtinStringFromInt(args)
+        "String.contains" -> builtinStringContains(args)
+        "String.startsWith" -> builtinStringStartsWith(args)
         _ -> tryVariantConstructor(name, args)
 
 fn oneArg(args: List<Val>) -> Result<Val, String>
@@ -337,6 +343,72 @@ fn builtinIntAbs(args: List<Val>) -> Result<Val, String>
     v = oneArg(args)?
     n = expectInt(v)?
     Result.Ok(Val.ValInt(Int.abs(n)))
+
+fn builtinIntMod(args: List<Val>) -> Result<Val, String>
+    ? "Int.mod(a, b) → a mod b as Result."
+    pair = twoArgs(args)?
+    match pair
+        (aV, bV) -> builtinIntModInner(aV, bV)
+
+fn builtinIntModInner(aV: Val, bV: Val) -> Result<Val, String>
+    a = expectInt(aV)?
+    b = expectInt(bV)?
+    match b == 0
+        true -> Result.Ok(Val.ValErr(Val.ValStr("modulo by zero")))
+        false -> Result.Ok(Val.ValOk(Val.ValInt(Result.withDefault(Int.mod(a, b), 0))))
+
+fn builtinStringSlice(args: List<Val>) -> Result<Val, String>
+    ? "String.slice(s, start, end) → substring."
+    match args
+        [sV, ..rest] -> match rest
+            [startV, ..rest2] -> match rest2
+                [endV, ..rest3] -> match rest3
+                    [] -> builtinStringSliceInner(sV, startV, endV)
+                    _ -> Result.Err("String.slice takes 3 arguments")
+                _ -> Result.Err("String.slice takes 3 arguments")
+            _ -> Result.Err("String.slice takes 3 arguments")
+        _ -> Result.Err("String.slice takes 3 arguments")
+
+fn builtinStringSliceInner(sV: Val, startV: Val, endV: Val) -> Result<Val, String>
+    s = expectStr(sV)?
+    start = expectInt(startV)?
+    end = expectInt(endV)?
+    Result.Ok(Val.ValStr(String.slice(s, start, end)))
+
+fn builtinStringFromBool(args: List<Val>) -> Result<Val, String>
+    ? "String.fromBool(b) → string."
+    v = oneArg(args)?
+    match v
+        Val.ValBool(b) -> Result.Ok(Val.ValStr(String.fromBool(b)))
+        _ -> Result.Err("String.fromBool requires Bool")
+
+fn builtinStringFromInt(args: List<Val>) -> Result<Val, String>
+    ? "String.fromInt(n) → string (alias for Int.toString)."
+    v = oneArg(args)?
+    n = expectInt(v)?
+    Result.Ok(Val.ValStr(Int.toString(n)))
+
+fn builtinStringContains(args: List<Val>) -> Result<Val, String>
+    ? "String.contains(haystack, needle) → Bool."
+    pair = twoArgs(args)?
+    match pair
+        (hV, nV) -> builtinStringContainsInner(hV, nV)
+
+fn builtinStringContainsInner(hV: Val, nV: Val) -> Result<Val, String>
+    h = expectStr(hV)?
+    n = expectStr(nV)?
+    Result.Ok(Val.ValBool(String.contains(h, n)))
+
+fn builtinStringStartsWith(args: List<Val>) -> Result<Val, String>
+    ? "String.startsWith(s, prefix) → Bool."
+    pair = twoArgs(args)?
+    match pair
+        (sV, pV) -> builtinStringStartsWithInner(sV, pV)
+
+fn builtinStringStartsWithInner(sV: Val, pV: Val) -> Result<Val, String>
+    s = expectStr(sV)?
+    p = expectStr(pV)?
+    Result.Ok(Val.ValBool(String.startsWith(s, p)))
 
 fn builtinOptionSome(args: List<Val>) -> Result<Val, String>
     ? "Option.Some(value) → wrapped Some value."

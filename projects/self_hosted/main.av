@@ -107,3 +107,5 @@ verify run
     run("Shape.Circle(5)") => Result.Ok(Val.ValVariant("Shape", "Circle", [Val.ValInt(5)]))
     run("fn area(s)\nmatch s\nShape.Circle(r) -> r * r\nShape.Point -> 0\n\narea(Shape.Circle(3))") => Result.Ok(Val.ValInt(9))
     run("fn area(s)\nmatch s\nShape.Circle(r) -> r * r\nShape.Point -> 0\n\narea(Shape.Point)") => Result.Ok(Val.ValInt(0))
+    run("Result.withDefault(Int.mod(10, 3), 0)") => Result.Ok(Val.ValInt(1))
+    run("Int.toString(42)") => Result.Ok(Val.ValStr("42"))
