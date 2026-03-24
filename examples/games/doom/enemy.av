@@ -2,7 +2,7 @@ module Enemy
     intent =
         "Enemy AI movement and combat for Braille Doom."
         "Imp chases, Demon guards, Ghost teleports."
-    depends [Types, Random, Level, Math]
+    depends [Types, Rng, Level, Math]
 
 // ─── AI movement ───────────────────────────────────────────────────────────
 
@@ -35,10 +35,10 @@ fn slideMoveEnemy(enemy: Enemy, nx: Float, ny: Float, canX: Bool, canY: Bool) ->
 
 fn ghostTeleport(enemy: Enemy, seed: Int, levelMap: List<String>) -> Enemy
     ? "Teleport ghost to a random nearby floor tile"
-    s1 = Random.nextSeed(seed)
-    s2 = Random.nextSeed(s1)
-    dx = Int.toFloat(Random.seedToRange(s1, 0 - 4, 4))
-    dy = Int.toFloat(Random.seedToRange(s2, 0 - 4, 4))
+    s1 = Rng.nextSeed(seed)
+    s2 = Rng.nextSeed(s1)
+    dx = Int.toFloat(Rng.seedToRange(s1, 0 - 4, 4))
+    dy = Int.toFloat(Rng.seedToRange(s2, 0 - 4, 4))
     nx = enemy.x + dx
     ny = enemy.y + dy
     match Level.isWall(levelMap, Float.floor(nx), Float.floor(ny))
@@ -79,14 +79,14 @@ fn updateEnemies(enemies: List<Enemy>, px: Float, py: Float, levelMap: List<Stri
     match i == List.len(enemies)
         true -> acc
         false -> match List.get(enemies, i)
-            Option.Some(e) -> updateEnemies(enemies, px, py, levelMap, Random.nextSeed(seed), turn, i + 1, List.append(acc, stepEnemy(e, px, py, levelMap, seed, turn)))
+            Option.Some(e) -> updateEnemies(enemies, px, py, levelMap, Rng.nextSeed(seed), turn, i + 1, List.append(acc, stepEnemy(e, px, py, levelMap, seed, turn)))
             Option.None -> acc
 
 // ─── Combat ────────────────────────────────────────────────────────────────
 
 fn enemyTouchingPlayer(enemy: Enemy, px: Float, py: Float) -> Bool
     ? "Is the enemy close enough to hurt the player"
-    Math.dist(enemy.x, enemy.y, px, py) < 0.8
+    Math.dist(enemy.x, enemy.y, px, py) < 0.5
 
 verify enemyTouchingPlayer
     enemyTouchingPlayer(Types.mkEnemy(5.0, 5.0, EnemyKind.Imp, 3), 5.0, 5.0) => true

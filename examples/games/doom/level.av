@@ -3,7 +3,7 @@ module Level
         "Procedural level generation for the raycaster."
         "Map stored as List<String> where '#' is wall, '.' is floor."
         "Wall type map uses 'S'=Stone, 'B'=Brick, 'M'=Metal."
-    depends [Random, Types]
+    depends [Rng, Types]
 
 record Room
     x: Int
@@ -213,11 +213,11 @@ fn connectWalls(wallMap: List<String>, r1: Room, r2: Room) -> List<String>
 
 fn roomFromSeed(s: Int) -> Room
     ? "Generate a room from a seed value"
-    s1 = Random.nextSeed(s)
-    s2 = Random.nextSeed(s1)
-    s3 = Random.nextSeed(s2)
-    s4 = Random.nextSeed(s3)
-    Room(x = Random.seedToRange(s1, 2, 24), y = Random.seedToRange(s2, 2, 24), w = Random.seedToRange(s3, 4, 8), h = Random.seedToRange(s4, 4, 8))
+    s1 = Rng.nextSeed(s)
+    s2 = Rng.nextSeed(s1)
+    s3 = Rng.nextSeed(s2)
+    s4 = Rng.nextSeed(s3)
+    Room(x = Rng.seedToRange(s1, 2, 24), y = Rng.seedToRange(s2, 2, 24), w = Rng.seedToRange(s3, 4, 8), h = Rng.seedToRange(s4, 4, 8))
 
 verify roomFromSeed
     roomFromSeed(42).w >= 4 => true
@@ -235,7 +235,7 @@ fn genRooms(seed: Int, n: Int, i: Int, acc: List<Room>) -> List<Room>
     ? "Generate n rooms from seed"
     match i == n
         true -> acc
-        false -> genRooms(Random.advanceSeed(seed, 5), n, i + 1, List.append(acc, roomFromSeed(Random.advanceSeed(seed, i))))
+        false -> genRooms(Rng.advanceSeed(seed, 5), n, i + 1, List.append(acc, roomFromSeed(Rng.advanceSeed(seed, i))))
 
 verify genRooms
     List.len(genRooms(42, 6, 0, [])) => 6

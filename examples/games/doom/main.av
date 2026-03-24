@@ -2,7 +2,7 @@ module Main
     intent =
         "Doom-like raycasting FPS rendered with Unicode Braille characters."
         "Procedural levels, wall textures, enemies with AI, minimap."
-    depends [Math, Level, Render, Types, Random, Enemy]
+    depends [Math, Level, Render, Types, Rng, Enemy]
 
 decision BrailleRendering
     date = "2026-03-24"
@@ -38,7 +38,7 @@ fn spawnInRoom(room: Level.Room, seed: Int) -> Enemy
 
 fn pickKind(seed: Int) -> EnemyKind
     ? "Choose enemy kind from seed"
-    n = Random.seedToRange(seed, 0, 2)
+    n = Rng.seedToRange(seed, 0, 2)
     match n
         0 -> EnemyKind.Imp
         1 -> EnemyKind.Demon
@@ -55,8 +55,8 @@ fn spawnEnemies(rooms: List<Level.Room>, seed: Int, i: Int, acc: List<Enemy>) ->
 fn spawnSkipFirst(rooms: List<Level.Room>, seed: Int, i: Int, acc: List<Enemy>, room: Level.Room) -> List<Enemy>
     ? "Skip first room, spawn in rest"
     match i == 0
-        true -> spawnEnemies(rooms, Random.nextSeed(seed), i + 1, acc)
-        false -> spawnEnemies(rooms, Random.nextSeed(seed), i + 1, List.append(acc, spawnInRoom(room, seed)))
+        true -> spawnEnemies(rooms, Rng.nextSeed(seed), i + 1, acc)
+        false -> spawnEnemies(rooms, Rng.nextSeed(seed), i + 1, List.append(acc, spawnInRoom(room, seed)))
 
 fn initGame(seed: Int) -> GameState
     ? "Create initial game state from seed"
@@ -64,9 +64,9 @@ fn initGame(seed: Int) -> GameState
     wallMap = Level.generateWallTypes(seed)
     rooms = Level.getRooms(seed)
     pos = Level.startPos(seed)
-    enemies = spawnEnemies(rooms, Random.nextSeed(seed), 0, [])
+    enemies = spawnEnemies(rooms, Rng.nextSeed(seed), 0, [])
     match pos
-        (px, py) -> GameState(levelMap = levelMap, wallMap = wallMap, player = Player(x = px, y = py, angle = 0.0, hp = 20), enemies = enemies, seed = seed, messages = ["Welcome to Braille Doom!"], gameOver = false, turnCount = 0)
+        (px, py) -> GameState(levelMap = levelMap, wallMap = wallMap, player = Player(x = px, y = py, angle = 0.0, hp = 100), enemies = enemies, seed = seed, messages = ["Welcome to Braille Doom!"], gameOver = false, turnCount = 0)
 
 fn tryMove(state: GameState, dx: Float, dy: Float) -> Player
     ? "Attempt to move the player; slide along walls if blocked"
@@ -127,7 +127,7 @@ fn handleInput(state: GameState, key: String) -> GameState
 
 fn updateTurn(state: GameState) -> GameState
     ? "Run enemy AI and apply damage after player moves"
-    newEnemies = Enemy.updateEnemies(state.enemies, state.player.x, state.player.y, state.levelMap, Random.advanceSeed(state.seed, state.turnCount), state.turnCount, 0, [])
+    newEnemies = Enemy.updateEnemies(state.enemies, state.player.x, state.player.y, state.levelMap, Rng.advanceSeed(state.seed, state.turnCount), state.turnCount, 0, [])
     damaged = Enemy.applyEnemyDamage(newEnemies, state.player, 0)
     isOver = damaged.hp < 1
     msgs = match isOver
@@ -162,6 +162,7 @@ fn gameLoop(state: GameState) -> Unit
     ? "Main game loop: render, read input, update state, repeat"
     ! [
         Console.print,
+        Random.int,
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
         Time.sleep,
     ]
@@ -176,6 +177,7 @@ fn gameOverScreen(state: GameState) -> Unit
     ? "Show game over then wait for quit"
     ! [
         Console.print,
+        Random.int,
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
         Time.sleep,
     ]
@@ -193,6 +195,7 @@ fn waitForQuit() -> Unit
     ? "Wait for q key to exit"
     ! [
         Console.print,
+        Random.int,
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
         Time.sleep,
     ]
@@ -206,6 +209,7 @@ fn waitForQuitSleep() -> Unit
     ? "Sleep and retry"
     ! [
         Console.print,
+        Random.int,
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
         Time.sleep,
     ]
@@ -216,6 +220,7 @@ fn waitAndProcess(state: GameState) -> Unit
     ? "Wait for key then dispatch"
     ! [
         Console.print,
+        Random.int,
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
         Time.sleep,
     ]
@@ -227,6 +232,7 @@ fn waitAfterNone(state: GameState) -> Unit
     ? "Brief sleep then retry"
     ! [
         Console.print,
+        Random.int,
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
         Time.sleep,
     ]
@@ -237,6 +243,7 @@ fn dispatch(state: GameState, key: String) -> Unit
     ? "Handle quit or continue game loop"
     ! [
         Console.print,
+        Random.int,
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
         Time.sleep,
     ]

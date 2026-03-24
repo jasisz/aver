@@ -341,7 +341,7 @@ fn renderHud(state: GameState) -> Unit
     Terminal.print("BRAILLE DOOM")
     Terminal.setColor("red")
     Terminal.moveTo(hudX, 3)
-    Terminal.print("HP: {Int.toString(state.player.hp)}/20")
+    Terminal.print("HP: {Int.toString(state.player.hp)}/100")
     Terminal.setColor("white")
     Terminal.moveTo(hudX, 4)
     deg = Float.floor(Math.radToDeg(state.player.angle))

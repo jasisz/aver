@@ -1,4 +1,4 @@
-module Random
+module Rng
     intent =
         "Deterministic LCG pseudo-random number generator."
         "Pure functions, no effects, fully verify-able."
