@@ -349,6 +349,17 @@ fn callFloat(name: String, args: List<Val>) -> Result<Val, String>
         "Float.fromInt" -> builtinFloatFromInt(args)
         "Float.round" -> builtinFloatRound(args)
         "Float.fromString" -> builtinFloatFromString(args)
+        "Float.abs" -> builtinFloatAbs(args)
+        "Float.floor" -> builtinFloatFloor(args)
+        "Float.ceil" -> builtinFloatCeil(args)
+        "Float.min" -> builtinFloatMin(args)
+        "Float.max" -> builtinFloatMax(args)
+        "Float.sin" -> builtinFloatSin(args)
+        "Float.cos" -> builtinFloatCos(args)
+        "Float.sqrt" -> builtinFloatSqrt(args)
+        "Float.pow" -> builtinFloatPow(args)
+        "Float.atan2" -> builtinFloatAtan2(args)
+        "Float.pi" -> builtinFloatPi(args)
         _ -> Result.Err("unknown float builtin: {name}")
 
 fn builtinFloatFromString(args: List<Val>) -> Result<Val, String>
@@ -384,6 +395,88 @@ fn builtinFloatToString(args: List<Val>) -> Result<Val, String>
 
 verify builtinFloatToString
     builtinFloatToString([Val.ValFloat(3.14)]) => Result.Ok(Val.ValStr("3.14"))
+
+fn builtinFloatAbs(args: List<Val>) -> Result<Val, String>
+    ? "Float.abs(f) -> Float."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    match v
+        Val.ValFloat(f) -> Result.Ok(Val.ValFloat(Float.abs(f)))
+        _ -> Result.Err("Float.abs requires Float")
+
+fn builtinFloatFloor(args: List<Val>) -> Result<Val, String>
+    ? "Float.floor(f) -> Int."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    match v
+        Val.ValFloat(f) -> Result.Ok(Val.ValInt(Float.floor(f)))
+        _ -> Result.Err("Float.floor requires Float")
+
+fn builtinFloatCeil(args: List<Val>) -> Result<Val, String>
+    ? "Float.ceil(f) -> Int."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    match v
+        Val.ValFloat(f) -> Result.Ok(Val.ValInt(Float.ceil(f)))
+        _ -> Result.Err("Float.ceil requires Float")
+
+fn builtinFloatMin(args: List<Val>) -> Result<Val, String>
+    ? "Float.min(a, b) -> Float."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (Val.ValFloat(a), Val.ValFloat(b)) -> Result.Ok(Val.ValFloat(Float.min(a, b)))
+        _ -> Result.Err("Float.min requires two Floats")
+
+fn builtinFloatMax(args: List<Val>) -> Result<Val, String>
+    ? "Float.max(a, b) -> Float."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (Val.ValFloat(a), Val.ValFloat(b)) -> Result.Ok(Val.ValFloat(Float.max(a, b)))
+        _ -> Result.Err("Float.max requires two Floats")
+
+fn builtinFloatSin(args: List<Val>) -> Result<Val, String>
+    ? "Float.sin(f) -> Float."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    match v
+        Val.ValFloat(f) -> Result.Ok(Val.ValFloat(Float.sin(f)))
+        _ -> Result.Err("Float.sin requires Float")
+
+fn builtinFloatCos(args: List<Val>) -> Result<Val, String>
+    ? "Float.cos(f) -> Float."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    match v
+        Val.ValFloat(f) -> Result.Ok(Val.ValFloat(Float.cos(f)))
+        _ -> Result.Err("Float.cos requires Float")
+
+fn builtinFloatSqrt(args: List<Val>) -> Result<Val, String>
+    ? "Float.sqrt(f) -> Float."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    match v
+        Val.ValFloat(f) -> Result.Ok(Val.ValFloat(Float.sqrt(f)))
+        _ -> Result.Err("Float.sqrt requires Float")
+
+fn builtinFloatPow(args: List<Val>) -> Result<Val, String>
+    ? "Float.pow(base, exp) -> Float."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (Val.ValFloat(a), Val.ValFloat(b)) -> Result.Ok(Val.ValFloat(Float.pow(a, b)))
+        _ -> Result.Err("Float.pow requires two Floats")
+
+fn builtinFloatAtan2(args: List<Val>) -> Result<Val, String>
+    ? "Float.atan2(y, x) -> Float."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (Val.ValFloat(a), Val.ValFloat(b)) -> Result.Ok(Val.ValFloat(Float.atan2(a, b)))
+        _ -> Result.Err("Float.atan2 requires two Floats")
+
+fn builtinFloatPi(args: List<Val>) -> Result<Val, String>
+    ? "Float.pi() -> Float."
+    match List.len(args) == 0
+        true -> Result.Ok(Val.ValFloat(Float.pi()))
+        false -> Result.Err("Float.pi takes 0 arguments")
+
+verify builtinFloatSin
+    builtinFloatSin([Val.ValFloat(0.0)]) => Result.Ok(Val.ValFloat(0.0))
+
+verify builtinFloatPi
+    builtinFloatPi([]) => Result.Ok(Val.ValFloat(Float.pi()))
 
 fn builtinStringToUpper(args: List<Val>) -> Result<Val, String>
     ? "String.toUpper(s) -> uppercase string."

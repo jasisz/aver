@@ -14,7 +14,7 @@ decision BrailleRendering
         "smooth wall edges without needing a graphics library."
     chosen = "BrailleEncoding"
     rejected = ["AsciiShading", "AnsiBlockChars"]
-    impacts = [renderFrame, columnBraille, cellBits]
+    impacts = ["renderFrame", "columnBraille", "cellBits"]
 
 record Player
     x: Float
@@ -93,44 +93,63 @@ verify handleInput
 
 fn gameLoop(levelMap: List<String>, player: Player) -> Unit
     ? "Main game loop: render, read input, update state, repeat"
-    ! [Terminal.enableRawMode, Terminal.disableRawMode, Terminal.clear,
-       Terminal.moveTo, Terminal.print, Terminal.setColor, Terminal.resetColor,
-       Terminal.readKey, Terminal.hideCursor, Terminal.showCursor, Terminal.flush,
-       Terminal.size, Time.sleep]
+    ! [
+        Terminal.enableRawMode, Terminal.disableRawMode, Terminal.clear,
+        Terminal.flush, Terminal.moveTo, Terminal.print,
+        Terminal.setColor, Terminal.resetColor, Terminal.readKey,
+        Terminal.hideCursor, Terminal.showCursor,
+        Time.sleep, Console.print,
+    ]
     Terminal.clear()
     Render.renderFrame(levelMap, player.x, player.y, player.angle)
     Render.renderMinimap(levelMap, player.x, player.y, player.angle)
     Terminal.flush()
-    key = waitForKey()
-    processInput(levelMap, player, key)
+    waitAndProcess(levelMap, player)
 
-fn processInput(levelMap: List<String>, player: Player, key: String) -> Unit
-    ? "Handle input: quit or update and loop"
-    ! [Terminal.enableRawMode, Terminal.disableRawMode, Terminal.clear,
-       Terminal.moveTo, Terminal.print, Terminal.setColor, Terminal.resetColor,
-       Terminal.readKey, Terminal.hideCursor, Terminal.showCursor, Terminal.flush,
-       Terminal.size, Time.sleep]
+fn waitAndProcess(levelMap: List<String>, player: Player) -> Unit
+    ? "Wait for key then dispatch"
+    ! [
+        Terminal.enableRawMode, Terminal.disableRawMode, Terminal.clear,
+        Terminal.flush, Terminal.moveTo, Terminal.print,
+        Terminal.setColor, Terminal.resetColor, Terminal.readKey,
+        Terminal.hideCursor, Terminal.showCursor,
+        Time.sleep, Console.print,
+    ]
+    match Terminal.readKey()
+        Option.Some(k) -> dispatch(levelMap, player, k)
+        Option.None -> waitAfterNone(levelMap, player)
+
+fn waitAfterNone(levelMap: List<String>, player: Player) -> Unit
+    ? "Brief sleep then retry"
+    ! [
+        Terminal.enableRawMode, Terminal.disableRawMode, Terminal.clear,
+        Terminal.flush, Terminal.moveTo, Terminal.print,
+        Terminal.setColor, Terminal.resetColor, Terminal.readKey,
+        Terminal.hideCursor, Terminal.showCursor,
+        Time.sleep, Console.print,
+    ]
+    Time.sleep(16)
+    waitAndProcess(levelMap, player)
+
+fn dispatch(levelMap: List<String>, player: Player, key: String) -> Unit
+    ? "Handle quit or continue game loop"
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print,
+        Terminal.setColor, Terminal.resetColor, Terminal.readKey,
+        Terminal.enableRawMode, Terminal.disableRawMode,
+        Terminal.hideCursor, Terminal.showCursor,
+        Time.sleep, Console.print,
+    ]
     match key
         "q" -> cleanup()
         _ -> gameLoop(levelMap, handleInput(levelMap, player, key))
 
-fn waitForKey() -> String
-    ? "Poll for a key press"
-    ! [Terminal.readKey, Time.sleep]
-    match Terminal.readKey()
-        Option.Some(k) -> k
-        Option.None -> waitAfterNone()
-
-fn waitAfterNone() -> String
-    ? "Sleep briefly then poll again"
-    ! [Terminal.readKey, Time.sleep]
-    Time.sleep(16)
-    waitForKey()
-
 fn cleanup() -> Unit
     ? "Restore terminal state before exit"
-    ! [Terminal.disableRawMode, Terminal.showCursor, Terminal.clear,
-       Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.flush]
+    ! [
+        Terminal.disableRawMode, Terminal.showCursor, Terminal.clear,
+        Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.flush,
+    ]
     Terminal.disableRawMode()
     Terminal.showCursor()
     Terminal.clear()
@@ -139,25 +158,15 @@ fn cleanup() -> Unit
     Terminal.print("Thanks for playing Braille Doom!\n")
     Terminal.flush()
 
-fn run() -> Result<String, String>
-    ? "Entry point — set up terminal and start the game loop"
-    ! [Terminal.enableRawMode, Terminal.disableRawMode, Terminal.clear,
-       Terminal.moveTo, Terminal.print, Terminal.setColor, Terminal.resetColor,
-       Terminal.readKey, Terminal.hideCursor, Terminal.showCursor, Terminal.flush,
-       Terminal.size, Time.sleep]
+fn main() -> Unit
+    ! [
+        Terminal.enableRawMode, Terminal.disableRawMode, Terminal.clear,
+        Terminal.flush, Terminal.moveTo, Terminal.print,
+        Terminal.setColor, Terminal.resetColor, Terminal.readKey,
+        Terminal.hideCursor, Terminal.showCursor,
+        Time.sleep, Console.print,
+    ]
     Terminal.enableRawMode()
     Terminal.hideCursor()
     Terminal.clear()
-    levelMap = Level.demoMap()
-    player = startPlayer()
-    gameLoop(levelMap, player)
-    Result.Ok("done")
-
-fn main() -> Unit
-    ! [Terminal.enableRawMode, Terminal.disableRawMode, Terminal.clear,
-       Terminal.moveTo, Terminal.print, Terminal.setColor, Terminal.resetColor,
-       Terminal.readKey, Terminal.hideCursor, Terminal.showCursor, Terminal.flush,
-       Terminal.size, Time.sleep, Console.print]
-    match run()
-        Result.Ok(_) -> Console.print("")
-        Result.Err(e) -> Console.print("Error: {e}")
+    gameLoop(Level.demoMap(), startPlayer())

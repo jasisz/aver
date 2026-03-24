@@ -106,6 +106,12 @@ vm_builtins! {
     FloatRound => "Float.round",
     FloatMin => "Float.min",
     FloatMax => "Float.max",
+    FloatSin => "Float.sin",
+    FloatCos => "Float.cos",
+    FloatSqrt => "Float.sqrt",
+    FloatPow => "Float.pow",
+    FloatAtan2 => "Float.atan2",
+    FloatPi => "Float.pi",
 
     StringLen => "String.len",
     StringByteLength => "String.byteLength",
@@ -184,6 +190,12 @@ impl VmBuiltin {
             | Self::FloatRound
             | Self::FloatMin
             | Self::FloatMax
+            | Self::FloatSin
+            | Self::FloatCos
+            | Self::FloatSqrt
+            | Self::FloatPow
+            | Self::FloatAtan2
+            | Self::FloatPi
             | Self::StringLen
             | Self::StringByteLength
             | Self::StringStartsWith
@@ -345,7 +357,13 @@ impl VmBuiltin {
             | Self::FloatCeil
             | Self::FloatRound
             | Self::FloatMin
-            | Self::FloatMax => float::call_nv(self.name(), args, arena),
+            | Self::FloatMax
+            | Self::FloatSin
+            | Self::FloatCos
+            | Self::FloatSqrt
+            | Self::FloatPow
+            | Self::FloatAtan2
+            | Self::FloatPi => float::call_nv(self.name(), args, arena),
 
             Self::StringLen
             | Self::StringByteLength

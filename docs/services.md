@@ -80,6 +80,12 @@ Source: `src/types/float.rs`
 | `Float.round` | `Float -> Int` |
 | `Float.min` | `(Float, Float) -> Float` |
 | `Float.max` | `(Float, Float) -> Float` |
+| `Float.sin` | `Float -> Float` | sine (radians) |
+| `Float.cos` | `Float -> Float` | cosine (radians) |
+| `Float.sqrt` | `Float -> Float` | square root |
+| `Float.pow` | `(Float, Float) -> Float` | exponentiation |
+| `Float.atan2` | `(Float, Float) -> Float` | two-argument arctangent |
+| `Float.pi` | `() -> Float` | π constant |
 
 ### `String` namespace
 
