@@ -33,6 +33,7 @@ fn callBuiltinOther(name: String, args: List<Val>) -> Result<Val, String>
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     match name
         "Char.fromCode" -> Domain.Builtins.Primitives.callChar(name, args)
+        "Char.toCode" -> Domain.Builtins.Primitives.callChar(name, args)
         "Console.print" -> builtinConsolePrint(args)
         "Console.readLine" -> builtinConsoleReadLine(args)
         "Console.error" -> builtinConsoleError(args)

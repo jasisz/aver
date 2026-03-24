@@ -257,7 +257,7 @@ fn evalCmpRepr(va: Val, vb: Val, op: String) -> Result<Val, String>
     match op
         "eq" -> Result.Ok(Val.ValBool(Domain.Value.valRepr(va) == Domain.Value.valRepr(vb)))
         "neq" -> Result.Ok(Val.ValBool(Domain.Value.valRepr(va) != Domain.Value.valRepr(vb)))
-        _ -> Result.Err("comparison requires ints")
+        _ -> Result.Err("comparison requires ints: " + Domain.Value.valRepr(va) + " " + op + " " + Domain.Value.valRepr(vb))
 
 verify evalCmpRepr
     evalCmpRepr(Val.ValNone, Val.ValNone, "eq") => Result.Ok(Val.ValBool(true))

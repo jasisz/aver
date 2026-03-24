@@ -57,6 +57,7 @@ fn callString(name: String, args: List<Val>) -> Result<Val, String>
         "String.slice" -> builtinStringSlice(args)
         "String.fromBool" -> builtinStringFromBool(args)
         "String.fromInt" -> builtinStringFromInt(args)
+        "String.fromFloat" -> builtinStringFromFloat(args)
         "String.contains" -> builtinStringContains(args)
         "String.startsWith" -> builtinStringStartsWith(args)
         "String.toLower" -> builtinStringToLower(args)
@@ -75,6 +76,7 @@ fn callChar(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch Char.* builtins."
     match name
         "Char.fromCode" -> builtinCharFromCode(args)
+        "Char.toCode" -> builtinCharToCode(args)
         _ -> Result.Err("unknown char builtin: {name}")
 
 verify callChar
@@ -232,6 +234,13 @@ fn builtinStringFromInt(args: List<Val>) -> Result<Val, String>
 verify builtinStringFromInt
     builtinStringFromInt([Val.ValInt(99)]) => Result.Ok(Val.ValStr("99"))
 
+fn builtinStringFromFloat(args: List<Val>) -> Result<Val, String>
+    ? "String.fromFloat(f) -> string."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    match v
+        Val.ValFloat(f) -> Result.Ok(Val.ValStr(Float.toString(f)))
+        _ -> Result.Err("String.fromFloat requires Float")
+
 fn builtinStringContains(args: List<Val>) -> Result<Val, String>
     ? "String.contains(haystack, needle) -> Bool."
     pair = Domain.Builtins.Helpers.twoArgs(args)?
@@ -290,6 +299,16 @@ fn builtinCharFromCode(args: List<Val>) -> Result<Val, String>
 verify builtinCharFromCode
     builtinCharFromCode([Val.ValInt(65)]) => Result.Ok(Val.ValSome(Val.ValStr("A")))
 
+fn builtinCharToCode(args: List<Val>) -> Result<Val, String>
+    ? "Char.toCode(c) -> Int code point."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    s = Domain.Builtins.Helpers.expectStr(v)?
+    Result.Ok(Val.ValInt(Char.toCode(s)))
+
+verify builtinCharToCode
+    builtinCharToCode([Val.ValStr("A")]) => Result.Ok(Val.ValInt(65))
+    builtinCharToCode([Val.ValStr("0")]) => Result.Ok(Val.ValInt(48))
+
 fn builtinIntFromString(args: List<Val>) -> Result<Val, String>
     ? "Int.fromString(s) -> Result<Int, String>."
     v = Domain.Builtins.Helpers.oneArg(args)?
@@ -329,7 +348,16 @@ fn callFloat(name: String, args: List<Val>) -> Result<Val, String>
         "Float.toString" -> builtinFloatToString(args)
         "Float.fromInt" -> builtinFloatFromInt(args)
         "Float.round" -> builtinFloatRound(args)
+        "Float.fromString" -> builtinFloatFromString(args)
         _ -> Result.Err("unknown float builtin: {name}")
+
+fn builtinFloatFromString(args: List<Val>) -> Result<Val, String>
+    ? "Float.fromString(s) -> Result<Float, String>."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    s = Domain.Builtins.Helpers.expectStr(v)?
+    match Float.fromString(s)
+        Result.Ok(f) -> Result.Ok(Val.ValOk(Val.ValFloat(f)))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn builtinFloatFromInt(args: List<Val>) -> Result<Val, String>
     ? "Float.fromInt(n) -> Float."
