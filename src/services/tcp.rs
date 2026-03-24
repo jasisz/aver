@@ -170,7 +170,7 @@ fn tcp_connection_to_value(conn: TcpConnection) -> Value {
 
 fn tcp_connection_arg(val: &Value, method: &str) -> Result<TcpConnection, RuntimeError> {
     match val {
-        Value::Record { type_name, fields } if type_name == "Tcp.Connection" => {
+        Value::Record { fields, .. } => {
             let mut id = None;
             let mut host = None;
             let mut port = None;

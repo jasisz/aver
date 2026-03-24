@@ -4,6 +4,12 @@ module Builtins
         "Builtin function implementations for the self-hosted evaluator."
         "Dispatches qualified names like List.len, String.charAt, Console.print to sub-modules."
     exposes [callBuiltin, splitDotted, tryVariantConstructor]
+    exposes opaque [TcpConn]
+
+record TcpConn
+    id: String
+    host: String
+    port: Int
 
 fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch qualified builtin calls to sub-module implementations."
@@ -227,6 +233,10 @@ fn callBuiltinServices(name: String, args: List<Val>) -> Result<Val, String>
         "Http.patch" -> builtinHttpBody(args, "patch")
         "Tcp.send" -> builtinTcpSend(args)
         "Tcp.ping" -> builtinTcpPing(args)
+        "Tcp.connect" -> builtinTcpConnect(args)
+        "Tcp.writeLine" -> builtinTcpWriteLine(args)
+        "Tcp.readLine" -> builtinTcpReadLine(args)
+        "Tcp.close" -> builtinTcpClose(args)
         "Terminal.clear" -> builtinTerminalNoArg(name, args)
         "Terminal.flush" -> builtinTerminalNoArg(name, args)
         "Terminal.enableRawMode" -> builtinTerminalNoArg(name, args)
@@ -686,5 +696,87 @@ fn builtinTcpPingInner(hostV: Val, portV: Val) -> Result<Val, String>
     host = Domain.Builtins.Helpers.expectStr(hostV)?
     port = Domain.Builtins.Helpers.expectInt(portV)?
     match Tcp.ping(host, port)
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
+
+fn builtinTcpConnect(args: List<Val>) -> Result<Val, String>
+    ? "Tcp.connect(host, port) -> Result<Tcp.Connection, String>."
+    ! [Tcp.connect]
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (hostV, portV) -> builtinTcpConnectInner(hostV, portV)
+
+fn builtinTcpConnectInner(hostV: Val, portV: Val) -> Result<Val, String>
+    ? "Inner Tcp.connect."
+    ! [Tcp.connect]
+    host = Domain.Builtins.Helpers.expectStr(hostV)?
+    port = Domain.Builtins.Helpers.expectInt(portV)?
+    match Tcp.connect(host, port)
+        Result.Ok(conn) -> Result.Ok(Val.ValOk(tcpConnToVal(conn)))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
+
+fn tcpConnToVal(conn: Tcp.Connection) -> Val
+    ? "Convert host Tcp.Connection record to Val using own TcpConn type."
+    Val.ValRecord("TcpConn", [("id", Val.ValStr(conn.id)), ("host", Val.ValStr(conn.host)), ("port", Val.ValInt(conn.port))])
+
+fn valToTcpConn(v: Val) -> Result<TcpConn, String>
+    ? "Extract TcpConn fields from ValRecord."
+    match v
+        Val.ValRecord(_, fields) -> valToTcpConnFields(fields)
+        _ -> Result.Err("expected TcpConn record")
+
+fn valToTcpConnFields(fields: List<(String, Val)>) -> Result<TcpConn, String>
+    ? "Build TcpConn from field list."
+    idVal = lookupFieldVal(fields, "id")
+    hostVal = lookupFieldVal(fields, "host")
+    portVal = lookupFieldVal(fields, "port")
+    match idVal
+        Val.ValStr(id) -> match hostVal
+            Val.ValStr(host) -> match portVal
+                Val.ValInt(port) -> Result.Ok(TcpConn(id = id, host = host, port = port))
+                _ -> Result.Err("bad TcpConn port")
+            _ -> Result.Err("bad TcpConn host")
+        _ -> Result.Err("bad TcpConn id")
+
+fn lookupFieldVal(fields: List<(String, Val)>, name: String) -> Val
+    ? "Find field value by name, return ValUnit if missing."
+    match fields
+        [] -> Val.ValUnit
+        [pair, ..rest] -> match pair
+            (k, v) -> match k == name
+                true -> v
+                false -> lookupFieldVal(rest, name)
+
+fn builtinTcpWriteLine(args: List<Val>) -> Result<Val, String>
+    ? "Tcp.writeLine(conn, line) -> Result<Unit, String>."
+    ! [Tcp.writeLine]
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (connV, lineV) -> builtinTcpWriteLineInner(connV, lineV)
+
+fn builtinTcpWriteLineInner(connV: Val, lineV: Val) -> Result<Val, String>
+    ? "Inner Tcp.writeLine."
+    ! [Tcp.writeLine]
+    tc = valToTcpConn(connV)?
+    line = Domain.Builtins.Helpers.expectStr(lineV)?
+    match Tcp.writeLine(tc, line)
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
+
+fn builtinTcpReadLine(args: List<Val>) -> Result<Val, String>
+    ? "Tcp.readLine(conn) -> Result<String, String>."
+    ! [Tcp.readLine]
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    tc = valToTcpConn(v)?
+    match Tcp.readLine(tc)
+        Result.Ok(line) -> Result.Ok(Val.ValOk(Val.ValStr(line)))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
+
+fn builtinTcpClose(args: List<Val>) -> Result<Val, String>
+    ? "Tcp.close(conn) -> Result<Unit, String>."
+    ! [Tcp.close]
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    tc = valToTcpConn(v)?
+    match Tcp.close(tc)
         Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
         Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
