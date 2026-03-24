@@ -106,7 +106,7 @@ fn main() -> Unit
     _ = Disk.readText("data.txt")
 ```
 
-Broad namespace declarations such as `! [Http]` do not cover `Http.get`, and `effects X = [...]` aliases are no longer supported.
+Both granular and namespace shorthand declarations are supported. `! [Disk.readText]` declares a single effect, while `! [Disk]` covers all `Disk.*` effects (namespace shorthand). `aver check` suggests narrowing when a shorthand could be more specific. `effects X = [...]` aliases are no longer supported.
 
 ## Command-line arguments
 

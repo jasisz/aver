@@ -161,19 +161,19 @@ src/
 ## How to run
 
 ```bash
-aver run examples/hello.av
-aver run examples/calculator.av
-aver run examples/lists.av
-aver run examples/calculator.av --vm
+aver run examples/core/hello.av
+aver run examples/core/calculator.av
+aver run examples/core/lists.av
+aver run examples/core/calculator.av --vm
 aver run examples/services/console_demo.av --record recordings/
 aver replay recordings/ --test --diff
-aver verify examples/calculator.av
-aver verify examples/lists.av
-aver check examples/hello.av
-aver check examples/calculator.av
+aver verify examples/core/calculator.av
+aver verify examples/core/lists.av
+aver check examples/core/hello.av
+aver check examples/core/calculator.av
 aver context decisions/architecture.av --decisions-only
 aver context decisions/architecture.av --decisions-only -o docs/decisions.md
-aver context examples/calculator.av
+aver context examples/core/calculator.av
 ```
 
 ## Spec test suite
@@ -204,7 +204,7 @@ The `src/lib.rs` exports all modules as `pub mod` so integration tests can acces
 | `BinOp` | ast.rs | Arithmetic and comparison operators as enum variants |
 | `Pattern` | ast.rs | Match arm pattern: `Wildcard`, `Literal`, `Ident`, `EmptyList`, `Cons`, `Constructor` |
 | `StrPart` | ast.rs | Piece of an interpolated string: `Literal(String)` or `Parsed(Box<Expr>)` |
-| `Expr` | ast.rs | Every expression form: `Literal`, `Ident`, `Attr`, `FnCall`, `BinOp`, `Match`, `Pipe`, `Constructor`, `ErrorProp`, `InterpolatedStr`, `List(Vec<Expr>)`, `RecordCreate { type_name, fields }` |
+| `Expr` | ast.rs | Every expression form: `Literal`, `Ident`, `Resolved(u16)`, `Attr`, `FnCall`, `BinOp`, `Match`, `Constructor`, `ErrorProp`, `InterpolatedStr`, `List(Vec<Expr>)`, `Tuple(Vec<Expr>)`, `MapLiteral(Vec<(Expr, Expr)>)`, `RecordCreate { type_name, fields }`, `RecordUpdate { type_name, base, updates }`, `TailCall(Box<(String, Vec<Expr>)>)` |
 | `Stmt` | ast.rs | `Binding(name, Option<type_ann>, expr)`, `Expr(expr)` |
 | `FnBody` | ast.rs | `Expr(Expr)` for `= expr` shorthand, or `Block(Vec<Stmt>)` where Stmt is `Binding` or `Expr` |
 | `FnDef` | ast.rs | Name, params, return type, effects, optional description, body |

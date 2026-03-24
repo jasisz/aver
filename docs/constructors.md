@@ -83,18 +83,15 @@ This is not an independent rule — it follows automatically from rules 4 and 5:
 
 There is no third kind of constructor. The parser sees `=` after the first argument name → record. No `=` → variant. One token of lookahead, zero ambiguity.
 
-### 8. Opaque types are non-constructable
+### 8. Dotted record constructors
 
-Some record types are internal to a service and cannot be constructed by user code:
+Dotted record constructors like `Tcp.Connection(id = ..., host = ..., port = ...)` are supported. Any `Namespace.Type(...)` form where the final segment is UpperCamel follows the same constructor rules as bare record types (rule 4: named arguments with `=`).
 
 ```aver
-// Tcp.Connection is opaque — use Tcp.connect(host, port) instead
-conn = Tcp.connect("localhost", 8080)?
+conn = Tcp.Connection(id = "tcp-1", host = "localhost", port = 8080)
 ```
 
-The parser rejects `Tcp.Connection(...)` with an actionable error message.
-
-User-defined types can also be opaque via `exposes opaque [TypeName]` in the module declaration. From outside the defining module, opaque types cannot be constructed, have fields accessed, or be pattern-matched. See [language.md](language.md#opaque-types).
+User-defined types can be made opaque via `exposes opaque [TypeName]` in the module declaration. From outside the defining module, opaque types cannot be constructed, have fields accessed, or be pattern-matched. See [language.md](language.md#opaque-types).
 
 ## Parser decision tree
 
