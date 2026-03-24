@@ -144,10 +144,39 @@ fn parseAtom(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
         Token.TkTrue -> Result.Ok((Expr.ExprBool(true), pos + 1))
         Token.TkFalse -> Result.Ok((Expr.ExprBool(false), pos + 1))
         Token.TkLBracket -> parseListExpr(tokens, pos + 1)
+        Token.TkLBrace -> parseMapLiteral(tokens, pos + 1)
         Token.TkLParen -> parseParenExpr(tokens, pos + 1)
         Token.TkMatch -> parseMatchExpr(tokens, pos + 1)
         Token.TkIdent(name) -> parseIdentOrCall(tokens, pos + 1, name)
         _ -> Result.Err("Expected expression, got {Domain.Token.tokenRepr(t)}")
+
+fn parseMapLiteral(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
+    ? "Parse map literal into Map.fromList call."
+    pos2 = skipNl(tokens, pos)
+    match Domain.ParserMatch.tokenAt(tokens, pos2)
+        Token.TkRBrace -> Result.Ok((Expr.ExprCall("Map.fromList", [Expr.ExprList([])]), pos2 + 1))
+        _ -> parseMapEntries(tokens, pos2, [])
+
+fn parseMapEntries(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(Expr, Int), String>
+    ? "Parse key => value pairs."
+    kr = parseExpr(tokens, pos)?
+    match kr
+        (keyExpr, pos2) -> parseMapAfterKey(tokens, pos2, acc, keyExpr)
+
+fn parseMapAfterKey(tokens: List<Token>, pos: Int, acc: List<Expr>, keyExpr: Expr) -> Result<(Expr, Int), String>
+    ? "After key, expect => then value."
+    pos2 = Domain.ParserMatch.expect(tokens, pos, Token.TkFatArrow)?
+    vr = parseExpr(tokens, pos2)?
+    match vr
+        (valExpr, pos3) -> parseMapEntryTail(tokens, pos3, List.append(acc, Expr.ExprTuple([keyExpr, valExpr])))
+
+fn parseMapEntryTail(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(Expr, Int), String>
+    ? "After entry: , for more or } to end."
+    pos2 = skipNl(tokens, pos)
+    match Domain.ParserMatch.tokenAt(tokens, pos2)
+        Token.TkComma -> parseMapEntries(tokens, skipNl(tokens, pos2 + 1), acc)
+        Token.TkRBrace -> Result.Ok((Expr.ExprCall("Map.fromList", [Expr.ExprList(acc)]), pos2 + 1))
+        _ -> Result.Err("Expected ',' or '}' in map literal")
 
 verify parseAtom
     parseAtom([Token.TkInt(42), Token.TkEof], 0) => Result.Ok((Expr.ExprInt(42), 1))

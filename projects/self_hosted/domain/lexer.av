@@ -109,6 +109,14 @@ fn tokenizeDefault(c: String, src: String, pos: Int) -> List<Token>
         true -> tokenizeDigit(src, pos)
         false -> match Domain.Lexer.Chars.isAlpha(c)
             true -> tokenizeAlpha(src, pos)
+            false -> tokenizeBraceOrSkip(c, src, pos)
+
+fn tokenizeBraceOrSkip(c: String, src: String, pos: Int) -> List<Token>
+    ? "Handle brace tokens or skip unknown chars."
+    match c == openBrace()
+        true -> List.prepend(Token.TkLBrace, tokenize(src, pos + 1))
+        false -> match c == closeBrace()
+            true -> List.prepend(Token.TkRBrace, tokenize(src, pos + 1))
             false -> tokenize(src, pos + 1)
 
 verify tokenizeDefault

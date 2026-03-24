@@ -31,9 +31,9 @@ fn loadModules(deps: List<String>, moduleRoot: String, acc: List<FnDef>, loaded:
             false -> loadOneModule(dep, rest, moduleRoot, acc, loaded)
 
 fn loadOneModule(dep: String, rest: List<String>, moduleRoot: String, acc: List<FnDef>, loaded: Map<String, Bool>) -> Result<(List<FnDef>, Map<String, Bool>), String>
-    ? "Load one module, add its functions, continue with rest."
+    ? "Load one module. Tries moduleRoot, then parent dirs up to 3 levels."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
-    path = modulePathFromName(dep, moduleRoot)
+    path = findModulePath(dep, moduleRoot, 0)
     source = Disk.readText(path)?
     tokens = Domain.Lexer.lex(source)
     prog = Domain.Parser.parse(tokens)?
@@ -42,6 +42,16 @@ fn loadOneModule(dep: String, rest: List<String>, moduleRoot: String, acc: List<
     innerResult = loadModules(prog.deps, moduleRoot, [], loaded2)?
     match innerResult
         (innerFns, loaded3) -> loadModules(rest, moduleRoot, List.concat(acc, List.concat(innerFns, qualifiedFns)), loaded3)
+
+fn findModulePath(dep: String, root: String, depth: Int) -> String
+    ? "Find module file, trying root then parent dirs."
+    ! [Disk]
+    path = modulePathFromName(dep, root)
+    match Disk.exists(path)
+        true -> path
+        false -> match depth >= 3
+            true -> path
+            false -> findModulePath(dep, root + "/..", depth + 1)
 
 fn modulePathFromName(name: String, moduleRoot: String) -> String
     ? "Convert Module.Name to file path: Domain.Foo -> domain/foo.av"

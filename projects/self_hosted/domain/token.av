@@ -39,6 +39,8 @@ type Token
     TkFatArrow
     TkIndent
     TkDedent
+    TkLBrace
+    TkRBrace
     TkFn
     TkMatch
     TkEof
@@ -80,6 +82,8 @@ fn tokenRepr(t: Token) -> String
         Token.TkFatArrow -> "FatArrow"
         Token.TkIndent -> "Indent"
         Token.TkDedent -> "Dedent"
+        Token.TkLBrace -> "LBrace"
+        Token.TkRBrace -> "RBrace"
         Token.TkFn -> "Fn"
         Token.TkMatch -> "Match"
         Token.TkEof -> "Eof"
