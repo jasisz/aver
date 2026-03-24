@@ -17,28 +17,31 @@ fn runWithModules(source: String, moduleRoot: String) -> Result<Val, String>
     ! [Args.get, Console.print, Disk.readText]
     tokens = Domain.Lexer.lex(source)
     prog = Domain.Parser.parse(tokens)?
-    moduleFns = loadModules(prog.deps, moduleRoot, [])?
-    Domain.Eval.evalProgramWithFns(prog, moduleFns)
+    r = loadModules(prog.deps, moduleRoot, [], Map.empty())?
+    match r
+        (moduleFns, _) -> Domain.Eval.evalProgramWithFns(prog, moduleFns)
 
-fn loadModules(deps: List<String>, moduleRoot: String, acc: List<FnDef>) -> Result<List<FnDef>, String>
-    ? "Load all module dependencies and collect their functions."
+fn loadModules(deps: List<String>, moduleRoot: String, acc: List<FnDef>, loaded: Map<String, Bool>) -> Result<(List<FnDef>, Map<String, Bool>), String>
+    ? "Load all module dependencies, skipping already-loaded modules."
     ! [Args.get, Console.print, Disk.readText]
     match deps
-        [] -> Result.Ok(acc)
-        [dep, ..rest] -> loadOneModule(dep, rest, moduleRoot, acc)
+        [] -> Result.Ok((acc, loaded))
+        [dep, ..rest] -> match Map.has(loaded, dep)
+            true -> loadModules(rest, moduleRoot, acc, loaded)
+            false -> loadOneModule(dep, rest, moduleRoot, acc, loaded)
 
-fn loadOneModule(dep: String, rest: List<String>, moduleRoot: String, acc: List<FnDef>) -> Result<List<FnDef>, String>
+fn loadOneModule(dep: String, rest: List<String>, moduleRoot: String, acc: List<FnDef>, loaded: Map<String, Bool>) -> Result<(List<FnDef>, Map<String, Bool>), String>
     ? "Load one module, add its functions, continue with rest."
     ! [Args.get, Console.print, Disk.readText]
     path = modulePathFromName(dep, moduleRoot)
     source = Disk.readText(path)?
     tokens = Domain.Lexer.lex(source)
     prog = Domain.Parser.parse(tokens)?
-    // Qualify function names with module prefix
     qualifiedFns = qualifyFns(prog.fns, dep, [])
-    // Recursively load this module's dependencies too
-    innerFns = loadModules(prog.deps, moduleRoot, [])?
-    loadModules(rest, moduleRoot, List.concat(acc, List.concat(innerFns, qualifiedFns)))
+    loaded2 = Map.set(loaded, dep, true)
+    innerResult = loadModules(prog.deps, moduleRoot, [], loaded2)?
+    match innerResult
+        (innerFns, loaded3) -> loadModules(rest, moduleRoot, List.concat(acc, List.concat(innerFns, qualifiedFns)), loaded3)
 
 fn modulePathFromName(name: String, moduleRoot: String) -> String
     ? "Convert Module.Name to file path: Domain.Foo -> domain/foo.av"
@@ -117,7 +120,7 @@ fn printIfNotUnit(s: String) -> Unit
 
 fn runDemo() -> Unit
     ? "Show built-in demo programs."
-    ! [Console.print]
+    ! [Args.get, Console.print, Disk.readText]
     Console.print("=== Self-Hosted Mini Aver ===")
     Console.print("")
     Console.print("Usage: aver run main.av --module-root . -- <file.av>")
