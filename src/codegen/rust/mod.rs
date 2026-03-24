@@ -127,7 +127,8 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
 fn render_root_main(main_fn: Option<&FnDef>, has_policy: bool, has_verify: bool) -> String {
     let mut sections = vec![
         "#![allow(unused_variables, unused_mut, dead_code, unused_imports, unused_parens, non_snake_case, non_camel_case_types, unreachable_patterns)]".to_string(),
-        "pub use std::collections::HashMap;".to_string(),
+        "#[macro_use] extern crate aver_rt;".to_string(),
+        "pub use ::aver_rt::ImHashMap as HashMap;".to_string(),
         String::new(),
         "mod runtime_support;".to_string(),
         "pub use runtime_support::*;".to_string(),
@@ -148,14 +149,14 @@ fn render_root_main(main_fn: Option<&FnDef>, has_policy: bool, has_verify: bool)
         sections.push("mod verify;".to_string());
     }
 
-    // Spawn main on a thread with 64 MB stack to avoid overflow in deep recursion.
+    // Spawn main on a thread with 256 MB stack to avoid overflow in deep recursion.
     sections.push(String::new());
     let returns_result = main_fn.is_some_and(|fd| fd.return_type.starts_with("Result<"));
     if returns_result {
         let ret_type = types::type_annotation_to_rust(&main_fn.unwrap().return_type);
         sections.push(format!("fn main() -> {} {{", ret_type));
         sections.push("    let child = std::thread::Builder::new()".to_string());
-        sections.push("        .stack_size(64 * 1024 * 1024)".to_string());
+        sections.push("        .stack_size(256 * 1024 * 1024)".to_string());
         sections.push("        .spawn(aver_generated::entry::main)".to_string());
         sections.push("        .expect(\"thread spawn\");".to_string());
         sections.push("    child.join().expect(\"thread join\")".to_string());
@@ -163,7 +164,7 @@ fn render_root_main(main_fn: Option<&FnDef>, has_policy: bool, has_verify: bool)
         sections.push("fn main() {".to_string());
         if main_fn.is_some() {
             sections.push("    let child = std::thread::Builder::new()".to_string());
-            sections.push("        .stack_size(64 * 1024 * 1024)".to_string());
+            sections.push("        .stack_size(256 * 1024 * 1024)".to_string());
             sections.push("        .spawn(|| aver_generated::entry::main())".to_string());
             sections.push("        .expect(\"thread spawn\");".to_string());
             sections.push("    child.join().expect(\"thread join\");".to_string());
@@ -243,8 +244,26 @@ fn entry_module_sections(
         sections.push(toplevel::emit_public_type_def(td, ctx));
     }
 
+    // Detect mutual TCO groups among non-main functions.
+    let non_main_fns: Vec<&FnDef> = ctx.fn_defs.iter().filter(|fd| fd.name != "main").collect();
+    let mutual_groups = toplevel::find_mutual_tco_groups(&non_main_fns);
+    let mut mutual_tco_members: HashSet<String> = HashSet::new();
+
+    for (group_id, group_indices) in mutual_groups.iter().enumerate() {
+        let group_fns: Vec<&FnDef> = group_indices.iter().map(|&idx| non_main_fns[idx]).collect();
+        for fd in &group_fns {
+            mutual_tco_members.insert(fd.name.clone());
+        }
+        sections.push(toplevel::emit_mutual_tco_block(
+            group_id + 1,
+            &group_fns,
+            ctx,
+            "pub ",
+        ));
+    }
+
     for fd in &ctx.fn_defs {
-        if fd.name == "main" {
+        if fd.name == "main" || mutual_tco_members.contains(&fd.name) {
             continue;
         }
         let is_memo = ctx.memo_fns.contains(&fd.name);
@@ -268,7 +287,28 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
         sections.push(toplevel::emit_public_type_def(td, ctx));
     }
 
+    // Detect mutual TCO groups among module functions.
+    let fn_refs: Vec<&FnDef> = module.fn_defs.iter().collect();
+    let mutual_groups = toplevel::find_mutual_tco_groups(&fn_refs);
+    let mut mutual_tco_members: HashSet<String> = HashSet::new();
+
+    for (group_id, group_indices) in mutual_groups.iter().enumerate() {
+        let group_fns: Vec<&FnDef> = group_indices.iter().map(|&idx| fn_refs[idx]).collect();
+        for fd in &group_fns {
+            mutual_tco_members.insert(fd.name.clone());
+        }
+        sections.push(toplevel::emit_mutual_tco_block(
+            group_id + 1,
+            &group_fns,
+            ctx,
+            "pub ",
+        ));
+    }
+
     for fd in &module.fn_defs {
+        if mutual_tco_members.contains(&fd.name) {
+            continue;
+        }
         let is_memo = ctx.memo_fns.contains(&fd.name);
         sections.push(toplevel::emit_public_fn_def(fd, is_memo, ctx));
     }
@@ -463,7 +503,8 @@ fn headPlusTailLen(xs: List<Int>) -> Int
         let out = transpile(&ctx);
         let entry = generated_rust_entry_file(&out);
 
-        assert!(entry.contains("aver_rt::list_uncons_cloned(&"));
+        // The common []/[h,..t] pattern uses aver_list_match! macro
+        assert!(entry.contains("aver_list_match!"));
     }
 
     #[test]
@@ -510,5 +551,41 @@ fn touch(state: PaymentState) -> String
         let entry = generated_rust_entry_file(&out);
 
         assert!(entry.contains("..state.clone()"));
+    }
+
+    #[test]
+    fn mutual_tco_generates_trampoline_instead_of_regular_calls() {
+        let ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn isEven(n: Int) -> Bool
+    match n == 0
+        true -> true
+        false -> isOdd(n - 1)
+
+fn isOdd(n: Int) -> Bool
+    match n == 0
+        true -> false
+        false -> isEven(n - 1)
+"#,
+            "demo",
+        );
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        // Should generate trampoline enum and dispatch
+        assert!(entry.contains("enum __MutualTco1"));
+        assert!(entry.contains("fn __mutual_tco_trampoline_1"));
+        assert!(entry.contains("loop {"));
+
+        // Wrapper functions delegate to trampoline
+        assert!(entry.contains("pub fn isEven"));
+        assert!(entry.contains("pub fn isOdd"));
+        assert!(entry.contains("__mutual_tco_trampoline_1("));
+
+        // Should NOT contain direct recursive calls between the two
+        assert!(!entry.contains("isOdd((n - 1i64))"));
     }
 }

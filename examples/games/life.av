@@ -9,7 +9,7 @@ module Main
 record FpsState
     frames: Int
     lastMs: Int
-    display: Int
+    display: String
 
 // ─── Helpers ────────────────────────────────────────────────
 
@@ -133,19 +133,26 @@ fn drawOneRow(grid: List<Int>, s: Int, w: Int, h: Int, row: Int) -> Unit
     Terminal.print(buildRow(grid, s, row, 1, w, ""))
     drawRows(grid, s, w, h, row + 1)
 
-fn drawHud(fps: Int, gen: Int) -> Unit
+fn drawHud(fps: String, gen: Int) -> Unit
     ! [Terminal.moveTo, Terminal.print, Terminal.setColor, Terminal.resetColor]
     Terminal.moveTo(0, 0)
     Terminal.setColor("green")
-    Terminal.print("  FPS: {Int.toString(fps)}  Gen: {Int.toString(gen)}  [q]uit [r]estart          ")
+    Terminal.print("  FPS: {fps}  Gen: {Int.toString(gen)}  [q]uit [r]estart          ")
     Terminal.resetColor()
 
 // ─── FPS tracking ───────────────────────────────────────────
 
+fn formatFps(frames: Int, elapsed: Int) -> String
+    ? "Format FPS with 1 decimal place, e.g. '2.3' or '0.5'."
+    tenths = frames * 10000 / elapsed
+    whole = tenths / 10
+    frac = Result.withDefault(Int.mod(tenths, 10), 0)
+    Int.toString(whole) + "." + Int.toString(frac)
+
 fn tickFps(state: FpsState, nowMs: Int) -> FpsState
     elapsed = nowMs - state.lastMs
     match elapsed >= 1000
-        true -> FpsState(frames = 1, lastMs = nowMs, display = state.frames * 1000 / elapsed)
+        true -> FpsState(frames = 1, lastMs = nowMs, display = formatFps(state.frames, elapsed))
         false -> FpsState(frames = state.frames + 1, lastMs = state.lastMs, display = state.display)
 
 // ─── Game loop ──────────────────────────────────────────────
@@ -202,7 +209,7 @@ fn run() -> Result<String, String>
     s = w + 2
     now = Time.unixMs()
     grid = seed(s, w, h)
-    result = gameLoop(grid, s, w, h, FpsState(frames = 0, lastMs = now, display = 0), 0)
+    result = gameLoop(grid, s, w, h, FpsState(frames = 0, lastMs = now, display = "0.0"), 0)
     Terminal.showCursor()
     Terminal.disableRawMode()
     Terminal.clear()

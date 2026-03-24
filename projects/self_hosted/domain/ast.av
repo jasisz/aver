@@ -27,6 +27,7 @@ type Expr
     ExprRecord(String, List<(String, Expr)>)
     ExprFieldAccess(Expr, String)
     ExprCall(String, List<Expr>)
+    ExprCallDirect(FnDef, List<Expr>)
     ExprMatch(Expr, List<MatchArm>)
     ExprPropagate(Expr)
 

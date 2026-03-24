@@ -132,6 +132,30 @@ impl<K: AverDisplay + Eq + std::hash::Hash + Ord, V: AverDisplay> AverDisplay
     }
 }
 
+impl<K: AverDisplay + Clone + Eq + std::hash::Hash + Ord, V: AverDisplay + Clone> AverDisplay
+    for im::HashMap<K, V>
+{
+    fn aver_display(&self) -> String {
+        let mut keys: Vec<&K> = self.keys().collect();
+        keys.sort();
+        let parts: Vec<String> = keys
+            .iter()
+            .map(|k| {
+                format!(
+                    "{}: {}",
+                    k.aver_display_inner(),
+                    self[*k].aver_display_inner()
+                )
+            })
+            .collect();
+        format!("{{{}}}", parts.join(", "))
+    }
+
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
 impl<A: AverDisplay, B: AverDisplay> AverDisplay for (A, B) {
     fn aver_display(&self) -> String {
         format!(

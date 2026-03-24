@@ -1,6 +1,6 @@
 [workspace]
 members = [".", "aver-lsp", "aver-rt"]
-exclude = ["out/self_hosted"]
+exclude = []
 
 [package]
 name = "aver-lang"
@@ -58,3 +58,7 @@ harness = false
 [[bench]]
 name = "vm_bench"
 harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1

@@ -7,8 +7,11 @@ module Resolver
     exposes [resolveProgram]
 
 fn resolveProgram(prog: Program) -> Program
-    ? "Resolve all functions in a program, leaving top-level stmts unresolved."
-    Program(deps = prog.deps, fns = resolveFns(prog.fns, []), stmts = prog.stmts)
+    ? "Resolve all functions: pass 1 = variable slots, pass 2 = direct function calls."
+    resolvedFns = resolveFns(prog.fns, [])
+    fnMap = buildFnMap(resolvedFns, Map.empty())
+    finalFns = resolveCallsInFns(resolvedFns, fnMap, [])
+    Program(deps = prog.deps, fns = finalFns, stmts = prog.stmts)
 
 fn resolveFns(fns: List<FnDef>, acc: List<FnDef>) -> List<FnDef>
     ? "Resolve each function definition."
@@ -67,6 +70,7 @@ fn maxSlotInExpr(expr: Expr, acc: Int) -> Int
         Expr.ExprLte(a, b) -> maxSlotInExpr(b, maxSlotInExpr(a, acc))
         Expr.ExprGte(a, b) -> maxSlotInExpr(b, maxSlotInExpr(a, acc))
         Expr.ExprCall(_, args) -> maxSlotInExprs(args, acc)
+        Expr.ExprCallDirect(_, args) -> maxSlotInExprs(args, acc)
         Expr.ExprMatch(subj, arms) -> maxSlotInArms(arms, maxSlotInExpr(subj, acc))
         Expr.ExprPropagate(inner) -> maxSlotInExpr(inner, acc)
         Expr.ExprConcat(parts) -> maxSlotInExprs(parts, acc)
@@ -149,6 +153,7 @@ fn resolveExpr(expr: Expr, slots: Map<String, Int>) -> (Expr, Map<String, Int>)
         Expr.ExprLte(a, b) -> resolveBinExpr(a, b, slots, "lte")
         Expr.ExprGte(a, b) -> resolveBinExpr(a, b, slots, "gte")
         Expr.ExprCall(name, args) -> resolveCallExpr(name, args, slots)
+        Expr.ExprCallDirect(fd, args) -> (Expr.ExprCallDirect(fd, resolveExprs(args, slots, [])), slots)
         Expr.ExprMatch(subj, arms) -> resolveMatchExpr(subj, arms, slots)
         Expr.ExprPropagate(inner) -> resolvePropExpr(inner, slots)
         Expr.ExprConcat(parts) -> resolveConcatExpr(parts, slots)
@@ -299,6 +304,81 @@ fn addTuplePatternSlots(pats: List<Pattern>, slots: Map<String, Int>, next: Int)
         [] -> (slots, next)
         [p, ..rest] -> match addPatternSlotsInner(p, slots, next)
             (newSlots, newNext) -> addTuplePatternSlots(rest, newSlots, newNext)
+
+// ─── Pass 2: pre-resolve function calls ─────────────────
+
+fn buildFnMap(fns: List<FnDef>, acc: Map<String, FnDef>) -> Map<String, FnDef>
+    ? "Build name→FnDef map from resolved function list."
+    match fns
+        [] -> acc
+        [f, ..rest] -> buildFnMap(rest, Map.set(acc, f.name, f))
+
+fn resolveCallsInFns(fns: List<FnDef>, fnMap: Map<String, FnDef>, acc: List<FnDef>) -> List<FnDef>
+    ? "Transform ExprCall→ExprCallDirect for known functions in all fn bodies."
+    match fns
+        [] -> List.reverse(acc)
+        [f, ..rest] -> resolveCallsInFns(rest, fnMap, List.prepend(resolveCallsInFn(f, fnMap), acc))
+
+fn resolveCallsInFn(fd: FnDef, fnMap: Map<String, FnDef>) -> FnDef
+    ? "Transform calls in one function body."
+    FnDef(name = fd.name, params = fd.params, body = resolveCallsInStmts(fd.body, fnMap, []), slotCount = fd.slotCount, slotMap = fd.slotMap)
+
+fn resolveCallsInStmts(stmts: List<Stmt>, fnMap: Map<String, FnDef>, acc: List<Stmt>) -> List<Stmt>
+    match stmts
+        [] -> List.reverse(acc)
+        [s, ..rest] -> resolveCallsInStmts(rest, fnMap, List.prepend(resolveCallsInStmt(s, fnMap), acc))
+
+fn resolveCallsInStmt(s: Stmt, fnMap: Map<String, FnDef>) -> Stmt
+    match s
+        Stmt.StmtBind(name, expr) -> Stmt.StmtBind(name, resolveCallsInExpr(expr, fnMap))
+        Stmt.StmtBindSlot(slot, expr) -> Stmt.StmtBindSlot(slot, resolveCallsInExpr(expr, fnMap))
+        Stmt.StmtExpr(expr) -> Stmt.StmtExpr(resolveCallsInExpr(expr, fnMap))
+
+fn resolveCallsInExpr(expr: Expr, fnMap: Map<String, FnDef>) -> Expr
+    ? "Replace ExprCall with ExprCallDirect for known user functions."
+    match expr
+        Expr.ExprCall(name, args) -> resolveOneCall(name, args, fnMap)
+        Expr.ExprAdd(a, b) -> Expr.ExprAdd(resolveCallsInExpr(a, fnMap), resolveCallsInExpr(b, fnMap))
+        Expr.ExprSub(a, b) -> Expr.ExprSub(resolveCallsInExpr(a, fnMap), resolveCallsInExpr(b, fnMap))
+        Expr.ExprMul(a, b) -> Expr.ExprMul(resolveCallsInExpr(a, fnMap), resolveCallsInExpr(b, fnMap))
+        Expr.ExprDiv(a, b) -> Expr.ExprDiv(resolveCallsInExpr(a, fnMap), resolveCallsInExpr(b, fnMap))
+        Expr.ExprEq(a, b) -> Expr.ExprEq(resolveCallsInExpr(a, fnMap), resolveCallsInExpr(b, fnMap))
+        Expr.ExprNeq(a, b) -> Expr.ExprNeq(resolveCallsInExpr(a, fnMap), resolveCallsInExpr(b, fnMap))
+        Expr.ExprLt(a, b) -> Expr.ExprLt(resolveCallsInExpr(a, fnMap), resolveCallsInExpr(b, fnMap))
+        Expr.ExprGt(a, b) -> Expr.ExprGt(resolveCallsInExpr(a, fnMap), resolveCallsInExpr(b, fnMap))
+        Expr.ExprLte(a, b) -> Expr.ExprLte(resolveCallsInExpr(a, fnMap), resolveCallsInExpr(b, fnMap))
+        Expr.ExprGte(a, b) -> Expr.ExprGte(resolveCallsInExpr(a, fnMap), resolveCallsInExpr(b, fnMap))
+        Expr.ExprMatch(subj, arms) -> Expr.ExprMatch(resolveCallsInExpr(subj, fnMap), resolveCallsInArms(arms, fnMap, []))
+        Expr.ExprPropagate(inner) -> Expr.ExprPropagate(resolveCallsInExpr(inner, fnMap))
+        Expr.ExprConcat(parts) -> Expr.ExprConcat(resolveCallsInExprs(parts, fnMap, []))
+        Expr.ExprTuple(exprs) -> Expr.ExprTuple(resolveCallsInExprs(exprs, fnMap, []))
+        Expr.ExprList(exprs) -> Expr.ExprList(resolveCallsInExprs(exprs, fnMap, []))
+        Expr.ExprRecord(name, fields) -> Expr.ExprRecord(name, resolveCallsInFields(fields, fnMap, []))
+        Expr.ExprFieldAccess(obj, field) -> Expr.ExprFieldAccess(resolveCallsInExpr(obj, fnMap), field)
+        _ -> expr
+
+fn resolveOneCall(name: String, args: List<Expr>, fnMap: Map<String, FnDef>) -> Expr
+    ? "If name is a known function, embed FnDef directly. Otherwise keep ExprCall."
+    resolvedArgs = resolveCallsInExprs(args, fnMap, [])
+    match Map.get(fnMap, name)
+        Option.Some(fd) -> Expr.ExprCallDirect(fd, resolvedArgs)
+        Option.None -> Expr.ExprCall(name, resolvedArgs)
+
+fn resolveCallsInExprs(exprs: List<Expr>, fnMap: Map<String, FnDef>, acc: List<Expr>) -> List<Expr>
+    match exprs
+        [] -> List.reverse(acc)
+        [e, ..rest] -> resolveCallsInExprs(rest, fnMap, List.prepend(resolveCallsInExpr(e, fnMap), acc))
+
+fn resolveCallsInArms(arms: List<MatchArm>, fnMap: Map<String, FnDef>, acc: List<MatchArm>) -> List<MatchArm>
+    match arms
+        [] -> List.reverse(acc)
+        [arm, ..rest] -> resolveCallsInArms(rest, fnMap, List.prepend(MatchArm(pattern = arm.pattern, body = resolveCallsInExpr(arm.body, fnMap)), acc))
+
+fn resolveCallsInFields(fields: List<(String, Expr)>, fnMap: Map<String, FnDef>, acc: List<(String, Expr)>) -> List<(String, Expr)>
+    match fields
+        [] -> List.reverse(acc)
+        [pair, ..rest] -> match pair
+            (name, expr) -> resolveCallsInFields(rest, fnMap, List.prepend((name, resolveCallsInExpr(expr, fnMap)), acc))
 
 verify resolveProgram
     resolveProgram(Program(deps = [], fns = [], stmts = [Stmt.StmtExpr(Expr.ExprInt(1))])) => Program(deps = [], fns = [], stmts = [Stmt.StmtExpr(Expr.ExprInt(1))])

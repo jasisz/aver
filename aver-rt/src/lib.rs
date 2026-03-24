@@ -30,6 +30,8 @@ pub use terminal::{
     show_cursor as terminal_show_cursor, size as terminal_size,
 };
 
+pub use im::HashMap as ImHashMap;
+
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::iter::FusedIterator;
@@ -553,6 +555,23 @@ pub fn list_uncons<T>(list: &AverList<T>) -> Option<(&T, AverList<T>)> {
 
 pub fn list_uncons_cloned<T: Clone>(list: &AverList<T>) -> Option<(T, AverList<T>)> {
     list.uncons_cloned()
+}
+
+/// Pattern-match on an AverList: empty and cons (head, tail) arms.
+#[macro_export]
+macro_rules! aver_list_match {
+    ($list:expr, [] => $empty:expr, [$head:ident, $tail:ident] => $cons:expr) => {{
+        let __aver_list = $list;
+        if __aver_list.is_empty() {
+            $empty
+        } else if let ::core::option::Option::Some(($head, $tail)) =
+            $crate::list_uncons_cloned(&__aver_list)
+        {
+            $cons
+        } else {
+            panic!("Aver: non-exhaustive list match")
+        }
+    }};
 }
 
 pub fn string_join<S: AsRef<str>>(parts: &AverList<S>, sep: &str) -> String {

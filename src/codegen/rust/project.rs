@@ -106,6 +106,11 @@ pub fn generate_cargo_toml(
         lines.extend(deps);
     }
 
+    lines.push(String::new());
+    lines.push("[profile.release]".to_string());
+    lines.push("lto = true".to_string());
+    lines.push("codegen-units = 1".to_string());
+
     lines.join("\n")
 }
 

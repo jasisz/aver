@@ -241,18 +241,18 @@ fn emit_builtin_call_inner(
         }
         "String.contains" => {
             let s = emit_arg(0);
-            let sub = emit_arg(1);
-            Some(format!("{}.contains(&*{})", s, sub))
+            let sub = emit_str_arg_or_deref(&args[1], &arg_ctxs[1], ctx);
+            Some(format!("{}.contains({})", s, sub))
         }
         "String.startsWith" => {
             let s = emit_arg(0);
-            let prefix = emit_arg(1);
-            Some(format!("{}.starts_with(&*{})", s, prefix))
+            let prefix = emit_str_arg_or_deref(&args[1], &arg_ctxs[1], ctx);
+            Some(format!("{}.starts_with({})", s, prefix))
         }
         "String.endsWith" => {
             let s = emit_arg(0);
-            let suffix = emit_arg(1);
-            Some(format!("{}.ends_with(&*{})", s, suffix))
+            let suffix = emit_str_arg_or_deref(&args[1], &arg_ctxs[1], ctx);
+            Some(format!("{}.ends_with({})", s, suffix))
         }
         "String.trim" => {
             let arg = emit_arg(0);
@@ -379,10 +379,7 @@ fn emit_builtin_call_inner(
             let map = emit_arg(0);
             let key = emit_arg(1);
             let val = emit_arg(2);
-            Some(format!(
-                "{{ let mut m = {}.clone(); m.insert({}, {}); m }}",
-                map, key, val
-            ))
+            Some(format!("{}.update({}, {})", map, key, val))
         }
         "Map.has" => {
             let map = emit_arg(0);
@@ -392,10 +389,7 @@ fn emit_builtin_call_inner(
         "Map.remove" => {
             let map = emit_arg(0);
             let key = emit_arg(1);
-            Some(format!(
-                "{{ let mut m = {}.clone(); m.remove(&{}); m }}",
-                map, key
-            ))
+            Some(format!("{}.without(&{})", map, key))
         }
         "Map.keys" => {
             let map = emit_arg(0);
@@ -738,5 +732,16 @@ mod tests {
 
         assert!(emitted.contains("queryUrl(config.clone())"));
         assert!(emitted.contains("authHeader(config)"));
+    }
+}
+
+/// For string-accepting methods (starts_with, contains, ends_with),
+/// emit a string literal as `"foo"` (no allocation) or variable as `arg.as_str()`.
+fn emit_str_arg_or_deref(expr: &Expr, ectx: &EmitCtx, ctx: &CodegenContext) -> String {
+    if let Expr::Literal(crate::ast::Literal::Str(s)) = expr {
+        format!("{:?}", s)
+    } else {
+        let code = emit_expr(expr, ctx, ectx);
+        format!("{}.as_str()", code)
     }
 }

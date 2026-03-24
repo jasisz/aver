@@ -496,6 +496,31 @@ fn emit_tco_body(
     lines.join("\n")
 }
 
+fn try_emit_tco_bool_if_else(
+    subj: &str,
+    arms: &[MatchArm],
+    self_name: &str,
+    params: &[(String, String)],
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> Option<String> {
+    if arms.len() != 2 {
+        return None;
+    }
+    let (true_body, false_body) = match (&arms[0].pattern, &arms[1].pattern) {
+        (Pattern::Literal(Literal::Bool(true)), Pattern::Literal(Literal::Bool(false))) => {
+            (&arms[0].body, &arms[1].body)
+        }
+        (Pattern::Literal(Literal::Bool(false)), Pattern::Literal(Literal::Bool(true))) => {
+            (&arms[1].body, &arms[0].body)
+        }
+        _ => return None,
+    };
+    let t = emit_tco_expr(true_body, self_name, params, ctx, ectx);
+    let f = emit_tco_expr(false_body, self_name, params, ctx, ectx);
+    Some(format!("if {} {{ {} }} else {{ {} }}", subj, t, f))
+}
+
 fn emit_tco_expr(
     expr: &Expr,
     self_name: &str,
@@ -550,6 +575,13 @@ fn emit_tco_expr(
             }
             let subj_ectx = ectx.with_used_after(&arms_vars);
             let subj = clone_arg(subject, ctx, &subj_ectx);
+
+            // Bool match → if/else in TCO context
+            if let Some(code) = try_emit_tco_bool_if_else(&subj, arms, self_name, params, ctx, ectx)
+            {
+                return code;
+            }
+
             let needs_as_str = super::expr::has_string_literal_patterns(arms);
             if super::expr::has_list_patterns(arms) {
                 return super::expr::emit_list_match(subj, arms, ctx, |arm| {
@@ -576,14 +608,7 @@ fn emit_tco_expr(
                     let _ = tail;
                 }
                 if let Pattern::Constructor(name, bindings) = &arm.pattern {
-                    if matches!(name.as_str(), "Result.Ok" | "Result.Err" | "Option.Some") {
-                        for b in bindings {
-                            if b != "_" {
-                                let b = aver_name_to_rust(b);
-                                rebinding_lines.push(format!("let {} = {}.clone();", b, b));
-                            }
-                        }
-                    }
+                    // Ok/Err/Some bindings are moved, no clone. Only Box-wrapped fields need deref.
                     for b in super::expr::constructor_boxed_bindings(name, bindings, ctx) {
                         let b = aver_name_to_rust(&b);
                         rebinding_lines.push(format!("let {} = (*{}).clone();", b, b));
@@ -605,6 +630,371 @@ fn emit_tco_expr(
         }
         _ => emit_expr(expr, ctx, ectx),
     }
+}
+
+// --- Mutual TCO (trampoline) support ---
+
+/// Collect all TailCall target names from a function body.
+fn collect_tailcall_targets(body: &FnBody) -> Vec<String> {
+    let mut targets = Vec::new();
+    for stmt in body.stmts() {
+        match stmt {
+            Stmt::Expr(e) | Stmt::Binding(_, _, e) => {
+                collect_expr_tailcall_targets(e, &mut targets)
+            }
+        }
+    }
+    targets
+}
+
+fn collect_expr_tailcall_targets(expr: &Expr, targets: &mut Vec<String>) {
+    match expr {
+        Expr::TailCall(boxed) => targets.push(boxed.0.clone()),
+        Expr::Match { arms, .. } => {
+            for arm in arms {
+                collect_expr_tailcall_targets(&arm.body, targets);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Find groups of mutually tail-calling functions (connected components of size > 1).
+/// Returns indices into `fn_defs`.
+pub fn find_mutual_tco_groups(fn_defs: &[&FnDef]) -> Vec<Vec<usize>> {
+    let name_to_idx: HashMap<&str, usize> = fn_defs
+        .iter()
+        .enumerate()
+        .map(|(i, fd)| (fd.name.as_str(), i))
+        .collect();
+
+    // Build undirected adjacency from mutual (non-self) TailCall edges.
+    let mut adj: Vec<HashSet<usize>> = vec![HashSet::new(); fn_defs.len()];
+    for (i, fd) in fn_defs.iter().enumerate() {
+        for target in collect_tailcall_targets(&fd.body) {
+            if target != fd.name {
+                if let Some(&j) = name_to_idx.get(target.as_str()) {
+                    adj[i].insert(j);
+                    adj[j].insert(i);
+                }
+            }
+        }
+    }
+
+    // Connected components via BFS.
+    let mut visited = vec![false; fn_defs.len()];
+    let mut groups = Vec::new();
+    for start in 0..fn_defs.len() {
+        if visited[start] || adj[start].is_empty() {
+            continue;
+        }
+        let mut group = Vec::new();
+        let mut queue = vec![start];
+        while let Some(node) = queue.pop() {
+            if visited[node] {
+                continue;
+            }
+            visited[node] = true;
+            group.push(node);
+            for &neighbor in &adj[node] {
+                if !visited[neighbor] {
+                    queue.push(neighbor);
+                }
+            }
+        }
+        if group.len() > 1 {
+            group.sort();
+            groups.push(group);
+        }
+    }
+    groups
+}
+
+/// Convert an Aver function name to a PascalCase enum variant name.
+fn fn_name_to_variant(name: &str) -> String {
+    let rust_name = aver_name_to_rust(name);
+    let mut chars = rust_name.chars();
+    match chars.next() {
+        Some(c) => {
+            let upper: String = c.to_uppercase().collect();
+            format!("{}{}", upper, chars.as_str())
+        }
+        None => rust_name,
+    }
+}
+
+/// Emit a mutual TCO block: enum + trampoline dispatch loop + thin wrapper functions.
+pub fn emit_mutual_tco_block(
+    group_id: usize,
+    group_fns: &[&FnDef],
+    ctx: &CodegenContext,
+    visibility: &str,
+) -> String {
+    let enum_name = format!("__MutualTco{}", group_id);
+    let trampoline_name = format!("__mutual_tco_trampoline_{}", group_id);
+    let ret_type = if group_fns[0].return_type.is_empty() {
+        "()".to_string()
+    } else {
+        type_annotation_to_rust(&group_fns[0].return_type)
+    };
+
+    let member_names: HashSet<String> = group_fns.iter().map(|fd| fd.name.clone()).collect();
+    let mut sections = Vec::new();
+
+    // 1. Enum definition
+    let mut enum_lines = Vec::new();
+    enum_lines.push("#[allow(non_camel_case_types)]".to_string());
+    enum_lines.push(format!("enum {} {{", enum_name));
+    for fd in group_fns {
+        let variant = fn_name_to_variant(&fd.name);
+        let param_types: Vec<String> = fd
+            .params
+            .iter()
+            .map(|(_, ty)| type_annotation_to_rust(ty))
+            .collect();
+        if param_types.is_empty() {
+            enum_lines.push(format!("    {},", variant));
+        } else {
+            enum_lines.push(format!("    {}({}),", variant, param_types.join(", ")));
+        }
+    }
+    enum_lines.push("}".to_string());
+    sections.push(enum_lines.join("\n"));
+
+    // 2. Trampoline function
+    let mut tramp_lines = Vec::new();
+    tramp_lines.push(format!(
+        "fn {}(mut __state: {}) -> {} {{",
+        trampoline_name, enum_name, ret_type
+    ));
+    tramp_lines.push("    loop {".to_string());
+    tramp_lines.push("        __state = match __state {".to_string());
+
+    for fd in group_fns {
+        let variant = fn_name_to_variant(&fd.name);
+        let param_bindings: Vec<String> = fd
+            .params
+            .iter()
+            .map(|(name, _)| format!("mut {}", aver_name_to_rust(name)))
+            .collect();
+        let binding = if param_bindings.is_empty() {
+            format!("{}::{}", enum_name, variant)
+        } else {
+            format!("{}::{}({})", enum_name, variant, param_bindings.join(", "))
+        };
+        tramp_lines.push(format!("            {} => {{", binding));
+
+        let ectx = build_fn_ectx(fd, ctx);
+        let body_code = emit_trampoline_arm_body(fd, &enum_name, &member_names, ctx, &ectx);
+        tramp_lines.push(body_code);
+
+        tramp_lines.push("            }".to_string());
+    }
+
+    tramp_lines.push("        };".to_string());
+    tramp_lines.push("    }".to_string());
+    tramp_lines.push("}".to_string());
+    sections.push(tramp_lines.join("\n"));
+
+    // 3. Wrapper functions
+    for fd in group_fns {
+        let fn_name = aver_name_to_rust(&fd.name);
+        let variant = fn_name_to_variant(&fd.name);
+        let params = emit_fn_params(&fd.params, false);
+        let arg_names: Vec<String> = fd
+            .params
+            .iter()
+            .map(|(name, _)| aver_name_to_rust(name))
+            .collect();
+        let variant_call = if arg_names.is_empty() {
+            format!("{}::{}", enum_name, variant)
+        } else {
+            format!("{}::{}({})", enum_name, variant, arg_names.join(", "))
+        };
+
+        let mut wrapper = Vec::new();
+        if let Some(desc) = &fd.desc {
+            wrapper.push(format!("/// {}", desc));
+        }
+        wrapper.push(format!(
+            "{}fn {}({}) -> {} {{",
+            visibility, fn_name, params, ret_type
+        ));
+        wrapper.push(format!("    {}({})", trampoline_name, variant_call));
+        wrapper.push("}".to_string());
+        sections.push(wrapper.join("\n"));
+    }
+
+    sections.join("\n\n")
+}
+
+fn emit_trampoline_arm_body(
+    fd: &FnDef,
+    enum_name: &str,
+    member_names: &HashSet<String>,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> String {
+    let stmts = fd.body.stmts();
+    let stmt_ctxs = compute_block_used_after(stmts, &ectx.used_after, &ectx.local_types);
+    let mut lines = Vec::new();
+    for (i, stmt) in stmts.iter().enumerate() {
+        let is_last = i == stmts.len() - 1;
+        let sctx = &stmt_ctxs[i];
+        match stmt {
+            Stmt::Binding(name, _, expr) => {
+                lines.push(format!(
+                    "                let {} = {};",
+                    aver_name_to_rust(name),
+                    emit_expr(expr, ctx, sctx)
+                ));
+            }
+            Stmt::Expr(expr) => {
+                if is_last {
+                    lines.push(format!(
+                        "                {}",
+                        emit_trampoline_expr(expr, enum_name, member_names, ctx, sctx)
+                    ));
+                } else {
+                    lines.push(format!("                {};", emit_expr(expr, ctx, sctx)));
+                }
+            }
+        }
+    }
+    lines.join("\n")
+}
+
+/// Emit an expression in the trampoline context.
+///
+/// Tail calls to group members produce enum variants (bounce).
+/// Non-tail expressions use `return` to exit the trampoline.
+fn emit_trampoline_expr(
+    expr: &Expr,
+    enum_name: &str,
+    member_names: &HashSet<String>,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> String {
+    match expr {
+        Expr::TailCall(boxed) => {
+            let (target, args) = boxed.as_ref();
+            if member_names.contains(target) {
+                // Bounce → produce enum variant
+                let variant = fn_name_to_variant(target);
+                let arg_ctxs = compute_args_used_after(args, &ectx.used_after, &ectx.local_types);
+                let arg_strs: Vec<String> = args
+                    .iter()
+                    .zip(arg_ctxs.iter())
+                    .map(|(a, ac)| clone_arg(a, ctx, ac))
+                    .collect();
+                if arg_strs.is_empty() {
+                    format!("{}::{}", enum_name, variant)
+                } else {
+                    format!("{}::{}({})", enum_name, variant, arg_strs.join(", "))
+                }
+            } else {
+                // External tail call → regular call + return
+                format!("return {}", emit_expr(expr, ctx, ectx))
+            }
+        }
+        Expr::Match { subject, arms, .. } => {
+            // Compute used_after for subject
+            let mut arms_vars = HashSet::new();
+            for arm in arms {
+                let mut arm_vars = collect_vars(&arm.body);
+                let bindings = super::liveness::pattern_bindings(&arm.pattern);
+                for b in &bindings {
+                    arm_vars.remove(b);
+                }
+                arms_vars.extend(arm_vars);
+            }
+            let subj_ectx = ectx.with_used_after(&arms_vars);
+            let subj = clone_arg(subject, ctx, &subj_ectx);
+
+            // Bool match → if/else
+            if let Some(code) =
+                try_emit_trampoline_bool_if_else(&subj, arms, enum_name, member_names, ctx, ectx)
+            {
+                return code;
+            }
+
+            // List match
+            if super::expr::has_list_patterns(arms) {
+                return super::expr::emit_list_match(subj, arms, ctx, |arm| {
+                    emit_trampoline_expr(&arm.body, enum_name, member_names, ctx, ectx)
+                });
+            }
+
+            let needs_as_str = super::expr::has_string_literal_patterns(arms);
+            let match_expr = if needs_as_str {
+                format!("{}.as_str()", subj)
+            } else {
+                subj
+            };
+
+            let mut arm_strs = Vec::new();
+            for arm in arms {
+                let pat = super::pattern::emit_pattern(&arm.pattern, needs_as_str, ctx);
+                let body = emit_trampoline_expr(&arm.body, enum_name, member_names, ctx, ectx);
+
+                let mut rebinding_lines: Vec<String> = Vec::new();
+                if let Pattern::Cons(head, _) = &arm.pattern {
+                    if head != "_" {
+                        let h = aver_name_to_rust(head);
+                        rebinding_lines.push(format!("let {} = {}.clone();", h, h));
+                    }
+                }
+                if let Pattern::Constructor(name, bindings) = &arm.pattern {
+                    for b in super::expr::constructor_boxed_bindings(name, bindings, ctx) {
+                        let b = aver_name_to_rust(&b);
+                        rebinding_lines.push(format!("let {} = (*{}).clone();", b, b));
+                    }
+                }
+
+                let rebindings = if rebinding_lines.is_empty() {
+                    body
+                } else {
+                    format!("{{ {} {} }}", rebinding_lines.join(" "), body)
+                };
+                arm_strs.push(format!("                {} => {}", pat, rebindings));
+            }
+
+            format!(
+                "match {} {{\n{}\n                }}",
+                match_expr,
+                arm_strs.join(",\n")
+            )
+        }
+        _ => {
+            // Non-tail expression → return to exit trampoline
+            format!("return {}", emit_expr(expr, ctx, ectx))
+        }
+    }
+}
+
+fn try_emit_trampoline_bool_if_else(
+    subj: &str,
+    arms: &[MatchArm],
+    enum_name: &str,
+    member_names: &HashSet<String>,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> Option<String> {
+    if arms.len() != 2 {
+        return None;
+    }
+    let (true_body, false_body) = match (&arms[0].pattern, &arms[1].pattern) {
+        (Pattern::Literal(Literal::Bool(true)), Pattern::Literal(Literal::Bool(false))) => {
+            (&arms[0].body, &arms[1].body)
+        }
+        (Pattern::Literal(Literal::Bool(false)), Pattern::Literal(Literal::Bool(true))) => {
+            (&arms[1].body, &arms[0].body)
+        }
+        _ => return None,
+    };
+    let t = emit_trampoline_expr(true_body, enum_name, member_names, ctx, ectx);
+    let f = emit_trampoline_expr(false_body, enum_name, member_names, ctx, ectx);
+    Some(format!("if {} {{ {} }} else {{ {} }}", subj, t, f))
 }
 
 /// Emit a memoized function with thread_local cache.
@@ -1063,5 +1453,166 @@ mod tests {
         assert!(emitted.contains("let __memo_key = t.clone();"));
         assert!(emitted.contains("get(&__memo_key)"));
         assert!(emitted.contains("insert(__memo_key, __result.clone())"));
+    }
+
+    #[test]
+    fn mutual_tco_generates_trampoline_for_two_functions() {
+        let is_even = FnDef {
+            name: "isEven".to_string(),
+            line: 1,
+            params: vec![("n".to_string(), "Int".to_string())],
+            return_type: "Bool".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(Expr::Match {
+                subject: Box::new(Expr::BinOp(
+                    BinOp::Eq,
+                    Box::new(Expr::Ident("n".to_string())),
+                    Box::new(Expr::Literal(Literal::Int(0))),
+                )),
+                arms: vec![
+                    MatchArm {
+                        pattern: Pattern::Literal(Literal::Bool(true)),
+                        body: Box::new(Expr::Literal(Literal::Bool(true))),
+                    },
+                    MatchArm {
+                        pattern: Pattern::Literal(Literal::Bool(false)),
+                        body: Box::new(Expr::TailCall(Box::new((
+                            "isOdd".to_string(),
+                            vec![Expr::BinOp(
+                                BinOp::Sub,
+                                Box::new(Expr::Ident("n".to_string())),
+                                Box::new(Expr::Literal(Literal::Int(1))),
+                            )],
+                        )))),
+                    },
+                ],
+                line: 0,
+            })),
+            resolution: None,
+        };
+
+        let is_odd = FnDef {
+            name: "isOdd".to_string(),
+            line: 5,
+            params: vec![("n".to_string(), "Int".to_string())],
+            return_type: "Bool".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(Expr::Match {
+                subject: Box::new(Expr::BinOp(
+                    BinOp::Eq,
+                    Box::new(Expr::Ident("n".to_string())),
+                    Box::new(Expr::Literal(Literal::Int(0))),
+                )),
+                arms: vec![
+                    MatchArm {
+                        pattern: Pattern::Literal(Literal::Bool(true)),
+                        body: Box::new(Expr::Literal(Literal::Bool(false))),
+                    },
+                    MatchArm {
+                        pattern: Pattern::Literal(Literal::Bool(false)),
+                        body: Box::new(Expr::TailCall(Box::new((
+                            "isEven".to_string(),
+                            vec![Expr::BinOp(
+                                BinOp::Sub,
+                                Box::new(Expr::Ident("n".to_string())),
+                                Box::new(Expr::Literal(Literal::Int(1))),
+                            )],
+                        )))),
+                    },
+                ],
+                line: 0,
+            })),
+            resolution: None,
+        };
+
+        let fn_defs: Vec<&FnDef> = vec![&is_even, &is_odd];
+        let groups = find_mutual_tco_groups(&fn_defs);
+        assert_eq!(groups.len(), 1, "should find one mutual TCO group");
+        assert_eq!(groups[0], vec![0, 1]);
+
+        let ctx = empty_ctx();
+        let block = emit_mutual_tco_block(1, &fn_defs, &ctx, "pub ");
+
+        // Enum with variants for both functions
+        assert!(block.contains("enum __MutualTco1"));
+        assert!(block.contains("IsEven(i64)"));
+        assert!(block.contains("IsOdd(i64)"));
+
+        // Trampoline dispatch loop
+        assert!(block.contains("fn __mutual_tco_trampoline_1"));
+        assert!(block.contains("loop {"));
+        assert!(block.contains("__state = match __state"));
+
+        // Bounce: TailCall becomes enum variant (not a regular call)
+        assert!(block.contains("__MutualTco1::IsOdd("));
+        assert!(block.contains("__MutualTco1::IsEven("));
+
+        // Non-tail returns exit the trampoline
+        assert!(block.contains("return true"));
+        assert!(block.contains("return false"));
+
+        // Thin wrappers
+        assert!(block.contains("pub fn isEven(n: i64) -> bool"));
+        assert!(block.contains("pub fn isOdd(n: i64) -> bool"));
+        assert!(block.contains("__mutual_tco_trampoline_1(__MutualTco1::IsEven(n))"));
+        assert!(block.contains("__mutual_tco_trampoline_1(__MutualTco1::IsOdd(n))"));
+    }
+
+    #[test]
+    fn mutual_tco_three_functions_single_group() {
+        let make_fn = |name: &str, target: &str| FnDef {
+            name: name.to_string(),
+            line: 1,
+            params: vec![("n".to_string(), "Int".to_string())],
+            return_type: "String".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(Expr::TailCall(Box::new((
+                target.to_string(),
+                vec![Expr::Ident("n".to_string())],
+            ))))),
+            resolution: None,
+        };
+
+        let a = make_fn("stateA", "stateB");
+        let b = make_fn("stateB", "stateC");
+        let c = make_fn("stateC", "stateA");
+
+        let fn_defs: Vec<&FnDef> = vec![&a, &b, &c];
+        let groups = find_mutual_tco_groups(&fn_defs);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0], vec![0, 1, 2]);
+
+        let ctx = empty_ctx();
+        let block = emit_mutual_tco_block(1, &fn_defs, &ctx, "pub ");
+        assert!(block.contains("StateA(i64)"));
+        assert!(block.contains("StateB(i64)"));
+        assert!(block.contains("StateC(i64)"));
+    }
+
+    #[test]
+    fn self_only_tco_not_included_in_mutual_groups() {
+        let self_rec = FnDef {
+            name: "factorial".to_string(),
+            line: 1,
+            params: vec![("n".to_string(), "Int".to_string())],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(Expr::TailCall(Box::new((
+                "factorial".to_string(),
+                vec![Expr::Ident("n".to_string())],
+            ))))),
+            resolution: None,
+        };
+
+        let fn_defs: Vec<&FnDef> = vec![&self_rec];
+        let groups = find_mutual_tco_groups(&fn_defs);
+        assert!(
+            groups.is_empty(),
+            "self-only TCO should not create a mutual group"
+        );
     }
 }

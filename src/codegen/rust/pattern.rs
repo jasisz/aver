@@ -89,7 +89,7 @@ fn emit_constructor_pattern(name: &str, bindings: &[String]) -> String {
                 if b == "_" {
                     "_".to_string()
                 } else {
-                    format!("ref {}", super::expr::aver_name_to_rust(b))
+                    super::expr::aver_name_to_rust(b)
                 }
             })
             .collect();

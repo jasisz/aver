@@ -77,6 +77,7 @@ fn evalExpr(expr: Expr, env: Map<String, Val>, fns: Map<String, FnDef>) -> Resul
         Expr.ExprRecord(name, fieldExprs) -> evalRecordExpr(name, fieldExprs, env, fns)
         Expr.ExprFieldAccess(obj, field) -> evalFieldAccess(obj, field, env, fns)
         Expr.ExprCall(name, argExprs) -> evalCall(name, argExprs, env, fns)
+        Expr.ExprCallDirect(fd, argExprs) -> evalCallDirect(fd, argExprs, env, fns)
         Expr.ExprMatch(scrutinee, arms) -> evalMatchExpr(scrutinee, arms, env, fns)
         Expr.ExprPropagate(inner) -> evalPropagate(inner, env, fns)
 
@@ -481,6 +482,13 @@ fn evalCall(name: String, argExprs: List<Expr>, env: Map<String, Val>, fns: Map<
         Result.Err(e) -> Result.Err(e)
         Result.Ok(args) -> callWithArgs(args, name, fns)
 
+fn evalCallDirect(fd: FnDef, argExprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Call a pre-resolved function directly, skipping name lookup."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match evalArgs(argExprs, env, fns)
+        Result.Err(e) -> Result.Err(e)
+        Result.Ok(args) -> callResolved(fd, args, fns)
+
 fn evalMatch(v: Val, arms: List<MatchArm>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Try each match arm until one matches. Self-recursive for codegen TCO."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
@@ -606,6 +614,7 @@ fn evalExprSlot(expr: Expr, env: Map<Int, Val>, slotMap: Map<String, Int>, fns: 
         Expr.ExprRecord(name, fieldExprs) -> evalRecordSlot(name, fieldExprs, env, slotMap, fns)
         Expr.ExprFieldAccess(obj, field) -> evalFieldAccessSlot(obj, field, env, slotMap, fns)
         Expr.ExprCall(name, argExprs) -> evalCallSlot(name, argExprs, env, slotMap, fns)
+        Expr.ExprCallDirect(fd, argExprs) -> evalCallDirectSlot(fd, argExprs, env, slotMap, fns)
         Expr.ExprMatch(scrutinee, arms) -> evalMatchExprSlot(scrutinee, arms, env, slotMap, fns)
         Expr.ExprPropagate(inner) -> evalPropagateSlot(inner, env, slotMap, fns)
 
@@ -700,6 +709,12 @@ fn evalCallSlot(name: String, argExprs: List<Expr>, env: Map<Int, Val>, slotMap:
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     args = evalArgsSlot(argExprs, env, slotMap, fns)?
     callWithArgs(args, name, fns)
+
+fn evalCallDirectSlot(fd: FnDef, argExprs: List<Expr>, env: Map<Int, Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Call a pre-resolved function directly (slot-based path)."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    args = evalArgsSlot(argExprs, env, slotMap, fns)?
+    callResolved(fd, args, fns)
 
 fn evalArgsSlot(exprs: List<Expr>, env: Map<Int, Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<List<Val>, String>
     ? "Evaluate argument expressions in slot path."

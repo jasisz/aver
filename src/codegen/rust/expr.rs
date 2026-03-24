@@ -91,6 +91,16 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
                         BinOp::Lte => "<=",
                         BinOp::Gte => ">=",
                     };
+                    // For Eq/Neq with a string literal on either side, use &str to avoid allocation.
+                    // String == &str is supported via PartialEq in Rust.
+                    if matches!(op, BinOp::Eq | BinOp::Neq) {
+                        if let Expr::Literal(Literal::Str(s)) = right.as_ref() {
+                            return format!("({} {} {:?})", l, op_str, s);
+                        }
+                        if let Expr::Literal(Literal::Str(s)) = left.as_ref() {
+                            return format!("({:?} {} {})", s, op_str, r);
+                        }
+                    }
                     format!("({} {} {})", l, op_str, r)
                 }
             }
@@ -363,6 +373,40 @@ pub(super) fn clone_arg(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> St
     maybe_clone(code, expr, ectx)
 }
 
+enum DisplayKind {
+    /// Rust's Display trait matches aver_display (String, i64, f64, bool)
+    Native,
+}
+
+/// Check if an expression's type can use Rust's native Display instead of aver_display.
+fn expr_display_type(expr: &Expr, ectx: &EmitCtx) -> Option<DisplayKind> {
+    match expr {
+        Expr::Literal(Literal::Int(_) | Literal::Float(_) | Literal::Bool(_) | Literal::Str(_)) => {
+            Some(DisplayKind::Native)
+        }
+        Expr::Ident(name) => {
+            let ty = ectx.local_types.get(name)?;
+            if matches!(ty, Type::Str | Type::Int | Type::Float | Type::Bool) {
+                Some(DisplayKind::Native)
+            } else {
+                None
+            }
+        }
+        Expr::BinOp(op, _, _) => {
+            // Comparison ops return bool, arithmetic returns the same type (unknown here)
+            if matches!(
+                op,
+                BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte
+            ) {
+                Some(DisplayKind::Native)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 fn is_builtin_namespace(name: &str) -> bool {
     matches!(
         name,
@@ -440,10 +484,14 @@ fn emit_interpolated_str(parts: &[StrPart], ctx: &CodegenContext, ectx: &EmitCtx
             }
             StrPart::Parsed(expr) => {
                 fmt_str.push_str("{}");
-                fmt_args.push(format!(
-                    "aver_rt::aver_display(&{})",
-                    emit_expr(expr, ctx, ectx)
-                ));
+                let emitted = emit_expr(expr, ctx, ectx);
+                // Skip aver_display when the expression type is known to be displayable natively.
+                // String, Int (i64), Float (f64), Bool all have Display impls matching aver_display.
+                let arg = match expr_display_type(expr, ectx) {
+                    Some(DisplayKind::Native) => emitted,
+                    _ => format!("aver_rt::aver_display(&{})", emitted),
+                };
+                fmt_args.push(arg);
             }
         }
     }
@@ -468,6 +516,11 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
     }
     let subj_ectx = ectx.with_used_after(&arms_vars);
     let subj = clone_arg(subject, ctx, &subj_ectx);
+
+    // Bool match → if/else: match expr { true => A, false => B } → if expr { A } else { B }
+    if let Some(code) = try_emit_bool_if_else(&subj, arms, ctx, ectx) {
+        return code;
+    }
 
     // Determine if subject needs special treatment
     let needs_as_str = subject_might_be_string(subject, ctx);
@@ -499,6 +552,31 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
     format!("match {} {{\n{}\n    }}", match_expr, arm_strs.join(",\n"))
 }
 
+/// If match has exactly two arms with `true` and `false` bool literal patterns,
+/// emit `if subject { true_body } else { false_body }` instead of a match.
+fn try_emit_bool_if_else(
+    subj: &str,
+    arms: &[MatchArm],
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> Option<String> {
+    if arms.len() != 2 {
+        return None;
+    }
+    let (true_body, false_body) = match (&arms[0].pattern, &arms[1].pattern) {
+        (Pattern::Literal(Literal::Bool(true)), Pattern::Literal(Literal::Bool(false))) => {
+            (&arms[0].body, &arms[1].body)
+        }
+        (Pattern::Literal(Literal::Bool(false)), Pattern::Literal(Literal::Bool(true))) => {
+            (&arms[1].body, &arms[0].body)
+        }
+        _ => return None,
+    };
+    let t = maybe_clone(emit_expr(true_body, ctx, ectx), true_body, ectx);
+    let f = maybe_clone(emit_expr(false_body, ctx, ectx), false_body, ectx);
+    Some(format!("if {} {{ {} }} else {{ {} }}", subj, t, f))
+}
+
 fn subject_might_be_string(_subject: &Expr, _ctx: &CodegenContext) -> bool {
     // Heuristic: if subject is an ident, we can't tell at codegen time
     // We'll rely on the patterns to decide
@@ -518,9 +596,49 @@ pub(super) fn emit_list_match<F>(
 where
     F: Fn(&MatchArm) -> String,
 {
+    // Fast path: exactly [] and [h, ..t] → use aver_list_match! macro
+    if let Some(code) = try_emit_list_match_macro(&subject, arms, ctx, &body_for_arm) {
+        return code;
+    }
     let subject_name = "__list_subject";
     let arms_code = emit_list_match_arms(subject_name, arms, ctx, &body_for_arm);
     format!("{{ let {} = {}; {} }}", subject_name, subject, arms_code)
+}
+
+/// Emit the aver_list_match! macro for the common []/[h,..t] two-arm pattern.
+fn try_emit_list_match_macro<F>(
+    subject: &str,
+    arms: &[MatchArm],
+    ctx: &CodegenContext,
+    body_for_arm: &F,
+) -> Option<String>
+where
+    F: Fn(&MatchArm) -> String,
+{
+    if arms.len() != 2 {
+        return None;
+    }
+    // Detect: arm0 = EmptyList, arm1 = Cons (or vice versa)
+    let (empty_arm, cons_arm) = match (&arms[0].pattern, &arms[1].pattern) {
+        (Pattern::EmptyList, Pattern::Cons(_, _)) => (&arms[0], &arms[1]),
+        (Pattern::Cons(_, _), Pattern::EmptyList) => (&arms[1], &arms[0]),
+        _ => return None,
+    };
+    let Pattern::Cons(head, tail) = &cons_arm.pattern else {
+        return None;
+    };
+    // Both names must be real idents (not _) for the macro binding
+    if head == "_" || tail == "_" {
+        return None;
+    }
+    let head_name = aver_name_to_rust(head);
+    let tail_name = aver_name_to_rust(tail);
+    let empty_body = emit_list_arm_body(empty_arm, ctx, body_for_arm(empty_arm));
+    let cons_body = emit_list_arm_body(cons_arm, ctx, body_for_arm(cons_arm));
+    Some(format!(
+        "aver_list_match!({}, [] => {{ {} }}, [{}, {}] => {{ {} }})",
+        subject, empty_body, head_name, tail_name, cons_body
+    ))
 }
 
 fn emit_list_match_arms<F>(
@@ -647,14 +765,8 @@ pub(super) fn constructor_boxed_bindings(
 fn emit_pattern_rebindings(pattern: &Pattern, ctx: &CodegenContext) -> String {
     let mut lines = Vec::new();
     if let Pattern::Constructor(name, bindings) = pattern {
-        if matches!(name.as_str(), "Result.Ok" | "Result.Err" | "Option.Some") {
-            for b in bindings {
-                if b != "_" {
-                    let b = aver_name_to_rust(b);
-                    lines.push(format!("let {} = {}.clone();", b, b));
-                }
-            }
-        }
+        // Ok/Err/Some bindings are now moved (not ref), so no clone needed.
+        // Only Box-wrapped fields (recursive types) need deref.
         for b in constructor_boxed_bindings(name, bindings, ctx) {
             let b = aver_name_to_rust(&b);
             lines.push(format!("let {} = (*{}).clone();", b, b));

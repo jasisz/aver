@@ -27,5 +27,6 @@ all-features = true
 
 [dependencies]
 crossterm = { version = "0.28", optional = true }
+im = "15"
 rand = { version = "0.9", optional = true }
 ureq = { version = "2", optional = true }
