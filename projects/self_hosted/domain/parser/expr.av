@@ -277,9 +277,15 @@ verify parseTupleRestTail
 fn parseIdentOrCall(tokens: List<Token>, pos: Int, name: String) -> Result<(Expr, Int), String>
     ? "After reading an identifier: call, record constructor, field access, or variable?"
     match Domain.ParserMatch.tokenAt(tokens, pos)
-        Token.TkLParen -> parseCallOrRecord(tokens, pos + 1, name)
+        Token.TkLParen -> chainFieldAccess(tokens, pos + 1, name)
         Token.TkDot -> parseFieldAccess(tokens, pos + 1, Expr.ExprVar(name))
         _ -> Result.Ok((Expr.ExprVar(name), pos))
+
+fn chainFieldAccess(tokens: List<Token>, pos: Int, name: String) -> Result<(Expr, Int), String>
+    ? "Parse call/record then chain .field access if present."
+    r = parseCallOrRecord(tokens, pos, name)?
+    match r
+        (expr, pos2) -> parseFieldAccessTail(tokens, pos2, expr)
 
 verify parseIdentOrCall
     parseIdentOrCall([Token.TkEof], 0, "x") => Result.Ok((Expr.ExprVar("x"), 0))
