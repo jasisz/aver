@@ -344,8 +344,8 @@ fn drawEnemyChar(e: Enemy, screenCol: Int, eDist: Float, enemies: List<Enemy>, z
     ! [
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
-    spriteH = Math.clampInt(Float.floor(2.0 / eDist * Int.toFloat(screenH())), 1, 8)
-    spriteW = Math.clampInt(Float.floor(1.5 / eDist * Int.toFloat(screenW()) / 10.0), 1, 5)
+    spriteH = Math.clampInt(Float.floor(2.5 / eDist * Int.toFloat(screenH())), 1, 10)
+    spriteW = Math.clampInt(Float.floor(3.0 / eDist * Int.toFloat(screenW()) / 10.0), 3, 9)
     topRow = screenH() / 2 - spriteH / 2
     leftCol = screenCol - spriteW / 2
     drawBlockGrid(e, leftCol, topRow, spriteH, spriteW, 0, 0, zbuf)
@@ -391,10 +391,7 @@ fn drawBlockPrint(e: Enemy, sx: Int, sy: Int, ch: String, colFrac: Int, leftCol:
     ! [
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
-    color = match colFrac
-        1 -> "white"
-        _ -> Types.enemyColor(e.kind)
-    Terminal.setColor(color)
+    Terminal.setColor(Types.enemyColor(e.kind))
     Terminal.moveTo(sx, sy)
     Terminal.print(ch)
     drawBlockGrid(e, leftCol, topRow, spriteH, spriteW, row, col + 1, zbuf)
@@ -432,59 +429,45 @@ fn spriteBlock(kind: EnemyKind, section: Int, colFrac: Int) -> String
         EnemyKind.Ghost -> ghostBlock(section, colFrac)
 
 fn impBlock(section: Int, colFrac: Int) -> String
-    ? "Imp: thin humanoid — head, arms out, split legs"
+    ? "Imp: humanoid silhouette — narrow head, wide body, split legs"
     match section
         0 -> match colFrac
-            1 -> lowerHalf()
-            _ -> " "
-        1 -> match colFrac
-            0 -> upperHalf()
             1 -> fullBlock()
-            _ -> upperHalf()
+            _ -> " "
+        1 -> fullBlock()
         _ -> match colFrac
-            0 -> fullBlock()
             1 -> " "
             _ -> fullBlock()
 
 verify impBlock
     impBlock(1, 1) => fullBlock()
     impBlock(0, 0) => " "
+    impBlock(2, 1) => " "
 
 fn demonBlock(section: Int, colFrac: Int) -> String
-    ? "Demon: wide horned brute with gap legs"
+    ? "Demon: massive — all filled, wide stance legs"
     match section
-        0 -> match colFrac
-            0 -> fullBlock()
-            1 -> lowerHalf()
-            _ -> fullBlock()
-        1 -> match colFrac
-            0 -> lowerHalf()
-            1 -> fullBlock()
-            _ -> lowerHalf()
+        0 -> fullBlock()
+        1 -> fullBlock()
         _ -> match colFrac
-            0 -> fullBlock()
-            1 -> " "
+            1 -> upperHalf()
             _ -> fullBlock()
 
 verify demonBlock
-    demonBlock(1, 1) => fullBlock()
     demonBlock(0, 0) => fullBlock()
+    demonBlock(1, 1) => fullBlock()
+    demonBlock(2, 1) => upperHalf()
 
 // ─── Full frame ────────────────────────────────────────────────────────────
 
 fn ghostBlock(section: Int, colFrac: Int) -> String
-    ? "Ghost: floating sphere"
+    ? "Ghost: round sphere — narrow top/bottom, wide middle"
     match section
         0 -> match colFrac
-            0 -> " "
             1 -> lowerHalf()
             _ -> " "
-        1 -> match colFrac
-            0 -> lowerHalf()
-            1 -> fullBlock()
-            _ -> lowerHalf()
+        1 -> fullBlock()
         _ -> match colFrac
-            0 -> " "
             1 -> upperHalf()
             _ -> " "
 
