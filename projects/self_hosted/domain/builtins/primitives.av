@@ -1,0 +1,253 @@
+module Primitives
+    depends [Domain.Value, Domain.Builtins.Helpers]
+    intent = "Int, String, and Char namespace builtins."
+    exposes [callInt, callString, callChar]
+
+fn callInt(name: String, args: List<Val>) -> Result<Val, String>
+    ? "Dispatch Int.* builtins."
+    match name
+        "Int.toString" -> builtinIntToString(args)
+        "Int.toFloat" -> builtinIntToFloat(args)
+        "Int.abs" -> builtinIntAbs(args)
+        "Int.mod" -> builtinIntMod(args)
+        _ -> Result.Err("unknown int builtin: {name}")
+
+verify callInt
+    callInt("Int.abs", [Val.ValInt(5)]) => Result.Ok(Val.ValInt(5))
+    callInt("Int.toString", [Val.ValInt(42)]) => Result.Ok(Val.ValStr("42"))
+
+fn callString(name: String, args: List<Val>) -> Result<Val, String>
+    ? "Dispatch String.* builtins."
+    match name
+        "String.len" -> builtinStringLen(args)
+        "String.charAt" -> builtinStringCharAt(args)
+        "String.join" -> builtinStringJoin(args)
+        "String.slice" -> builtinStringSlice(args)
+        "String.fromBool" -> builtinStringFromBool(args)
+        "String.fromInt" -> builtinStringFromInt(args)
+        "String.contains" -> builtinStringContains(args)
+        "String.startsWith" -> builtinStringStartsWith(args)
+        "String.toLower" -> builtinStringToLower(args)
+        _ -> Result.Err("unknown string builtin: {name}")
+
+verify callString
+    callString("String.len", [Val.ValStr("hello")]) => Result.Ok(Val.ValInt(5))
+
+fn callChar(name: String, args: List<Val>) -> Result<Val, String>
+    ? "Dispatch Char.* builtins."
+    match name
+        "Char.fromCode" -> builtinCharFromCode(args)
+        _ -> Result.Err("unknown char builtin: {name}")
+
+verify callChar
+    callChar("Char.fromCode", [Val.ValInt(65)]) => Result.Ok(Val.ValSome(Val.ValStr("A")))
+
+fn builtinIntToFloat(args: List<Val>) -> Result<Val, String>
+    ? "Int.toFloat(n) -> float."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    n = Domain.Builtins.Helpers.expectInt(v)?
+    Result.Ok(Val.ValStr(Int.toString(n) + ".0"))
+
+verify builtinIntToFloat
+    builtinIntToFloat([Val.ValInt(3)]) => Result.Ok(Val.ValStr("3.0"))
+
+fn builtinIntToString(args: List<Val>) -> Result<Val, String>
+    ? "Int.toString(n) -> string representation."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    n = Domain.Builtins.Helpers.expectInt(v)?
+    Result.Ok(Val.ValStr(Int.toString(n)))
+
+verify builtinIntToString
+    builtinIntToString([Val.ValInt(42)]) => Result.Ok(Val.ValStr("42"))
+
+fn builtinIntAbs(args: List<Val>) -> Result<Val, String>
+    ? "Int.abs(n) -> absolute value."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    n = Domain.Builtins.Helpers.expectInt(v)?
+    Result.Ok(Val.ValInt(Int.abs(n)))
+
+verify builtinIntAbs
+    builtinIntAbs([Val.ValInt(5)]) => Result.Ok(Val.ValInt(5))
+
+fn builtinIntMod(args: List<Val>) -> Result<Val, String>
+    ? "Int.mod(a, b) -> a mod b as Result."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (aV, bV) -> builtinIntModInner(aV, bV)
+
+verify builtinIntMod
+    builtinIntMod([Val.ValInt(7), Val.ValInt(3)]) => Result.Ok(Val.ValOk(Val.ValInt(1)))
+
+fn builtinIntModInner(aV: Val, bV: Val) -> Result<Val, String>
+    ? "Inner impl of Int.mod."
+    a = Domain.Builtins.Helpers.expectInt(aV)?
+    b = Domain.Builtins.Helpers.expectInt(bV)?
+    match b == 0
+        true -> Result.Ok(Val.ValErr(Val.ValStr("modulo by zero")))
+        false -> Result.Ok(Val.ValOk(Val.ValInt(Result.withDefault(Int.mod(a, b), 0))))
+
+verify builtinIntModInner
+    builtinIntModInner(Val.ValInt(7), Val.ValInt(3)) => Result.Ok(Val.ValOk(Val.ValInt(1)))
+    builtinIntModInner(Val.ValInt(5), Val.ValInt(0)) => Result.Ok(Val.ValErr(Val.ValStr("modulo by zero")))
+
+fn builtinStringLen(args: List<Val>) -> Result<Val, String>
+    ? "String.len(s) -> length as Int."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    s = Domain.Builtins.Helpers.expectStr(v)?
+    Result.Ok(Val.ValInt(String.len(s)))
+
+verify builtinStringLen
+    builtinStringLen([Val.ValStr("hello")]) => Result.Ok(Val.ValInt(5))
+
+fn builtinStringCharAt(args: List<Val>) -> Result<Val, String>
+    ? "String.charAt(s, index) -> single character string or error."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (sV, idxV) -> builtinStringCharAtInner(sV, idxV)
+
+verify builtinStringCharAt
+    builtinStringCharAt([Val.ValStr("abc"), Val.ValInt(1)]) => Result.Ok(Val.ValStr("b"))
+
+fn builtinStringCharAtInner(sV: Val, idxV: Val) -> Result<Val, String>
+    ? "Inner impl of String.charAt."
+    s = Domain.Builtins.Helpers.expectStr(sV)?
+    idx = Domain.Builtins.Helpers.expectInt(idxV)?
+    match String.charAt(s, idx)
+        Option.Some(c) -> Result.Ok(Val.ValStr(c))
+        Option.None -> Result.Err("charAt index out of bounds")
+
+verify builtinStringCharAtInner
+    builtinStringCharAtInner(Val.ValStr("abc"), Val.ValInt(0)) => Result.Ok(Val.ValStr("a"))
+
+fn builtinStringJoin(args: List<Val>) -> Result<Val, String>
+    ? "String.join(list, separator) -> joined string."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (lstV, sepV) -> builtinStringJoinInner(lstV, sepV)
+
+verify builtinStringJoin
+    builtinStringJoin([Val.ValList([Val.ValStr("a"), Val.ValStr("b")]), Val.ValStr(",")]) => Result.Ok(Val.ValStr("a,b"))
+
+fn builtinStringJoinInner(lstV: Val, sepV: Val) -> Result<Val, String>
+    ? "Inner impl of String.join."
+    items = Domain.Builtins.Helpers.expectList(lstV)?
+    sep = Domain.Builtins.Helpers.expectStr(sepV)?
+    strs = extractStrings(items, [])?
+    Result.Ok(Val.ValStr(String.join(strs, sep)))
+
+verify builtinStringJoinInner
+    builtinStringJoinInner(Val.ValList([Val.ValStr("x"), Val.ValStr("y")]), Val.ValStr("-")) => Result.Ok(Val.ValStr("x-y"))
+
+fn extractStrings(items: List<Val>, acc: List<String>) -> Result<List<String>, String>
+    ? "Convert list of ValStr to list of String."
+    match items
+        [] -> Result.Ok(List.reverse(acc))
+        [v, ..rest] -> match v
+            Val.ValStr(s) -> extractStrings(rest, List.prepend(s, acc))
+            _ -> Result.Err("String.join requires list of strings")
+
+verify extractStrings
+    extractStrings([Val.ValStr("a"), Val.ValStr("b")], []) => Result.Ok(["a", "b"])
+    extractStrings([], []) => Result.Ok([])
+
+fn builtinStringSlice(args: List<Val>) -> Result<Val, String>
+    ? "String.slice(s, start, end) -> substring."
+    match args
+        [sV, ..rest] -> match rest
+            [startV, ..rest2] -> match rest2
+                [endV, ..rest3] -> match rest3
+                    [] -> builtinStringSliceInner(sV, startV, endV)
+                    _ -> Result.Err("String.slice takes 3 arguments")
+                _ -> Result.Err("String.slice takes 3 arguments")
+            _ -> Result.Err("String.slice takes 3 arguments")
+        _ -> Result.Err("String.slice takes 3 arguments")
+
+verify builtinStringSlice
+    builtinStringSlice([Val.ValStr("hello"), Val.ValInt(1), Val.ValInt(3)]) => Result.Ok(Val.ValStr("el"))
+
+fn builtinStringSliceInner(sV: Val, startV: Val, endV: Val) -> Result<Val, String>
+    ? "Inner impl of String.slice."
+    s = Domain.Builtins.Helpers.expectStr(sV)?
+    start = Domain.Builtins.Helpers.expectInt(startV)?
+    end = Domain.Builtins.Helpers.expectInt(endV)?
+    Result.Ok(Val.ValStr(String.slice(s, start, end)))
+
+verify builtinStringSliceInner
+    builtinStringSliceInner(Val.ValStr("hello"), Val.ValInt(0), Val.ValInt(2)) => Result.Ok(Val.ValStr("he"))
+
+fn builtinStringFromBool(args: List<Val>) -> Result<Val, String>
+    ? "String.fromBool(b) -> string."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    match v
+        Val.ValBool(b) -> Result.Ok(Val.ValStr(String.fromBool(b)))
+        _ -> Result.Err("String.fromBool requires Bool")
+
+verify builtinStringFromBool
+    builtinStringFromBool([Val.ValBool(true)]) => Result.Ok(Val.ValStr("true"))
+
+fn builtinStringFromInt(args: List<Val>) -> Result<Val, String>
+    ? "String.fromInt(n) -> string (alias for Int.toString)."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    n = Domain.Builtins.Helpers.expectInt(v)?
+    Result.Ok(Val.ValStr(Int.toString(n)))
+
+verify builtinStringFromInt
+    builtinStringFromInt([Val.ValInt(99)]) => Result.Ok(Val.ValStr("99"))
+
+fn builtinStringContains(args: List<Val>) -> Result<Val, String>
+    ? "String.contains(haystack, needle) -> Bool."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (hV, nV) -> builtinStringContainsInner(hV, nV)
+
+verify builtinStringContains
+    builtinStringContains([Val.ValStr("hello world"), Val.ValStr("world")]) => Result.Ok(Val.ValBool(true))
+
+fn builtinStringContainsInner(hV: Val, nV: Val) -> Result<Val, String>
+    ? "Inner impl of String.contains."
+    h = Domain.Builtins.Helpers.expectStr(hV)?
+    n = Domain.Builtins.Helpers.expectStr(nV)?
+    Result.Ok(Val.ValBool(String.contains(h, n)))
+
+verify builtinStringContainsInner
+    builtinStringContainsInner(Val.ValStr("abc"), Val.ValStr("b")) => Result.Ok(Val.ValBool(true))
+    builtinStringContainsInner(Val.ValStr("abc"), Val.ValStr("z")) => Result.Ok(Val.ValBool(false))
+
+fn builtinStringStartsWith(args: List<Val>) -> Result<Val, String>
+    ? "String.startsWith(s, prefix) -> Bool."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (sV, pV) -> builtinStringStartsWithInner(sV, pV)
+
+verify builtinStringStartsWith
+    builtinStringStartsWith([Val.ValStr("hello"), Val.ValStr("he")]) => Result.Ok(Val.ValBool(true))
+
+fn builtinStringStartsWithInner(sV: Val, pV: Val) -> Result<Val, String>
+    ? "Inner impl of String.startsWith."
+    s = Domain.Builtins.Helpers.expectStr(sV)?
+    p = Domain.Builtins.Helpers.expectStr(pV)?
+    Result.Ok(Val.ValBool(String.startsWith(s, p)))
+
+verify builtinStringStartsWithInner
+    builtinStringStartsWithInner(Val.ValStr("hello"), Val.ValStr("he")) => Result.Ok(Val.ValBool(true))
+    builtinStringStartsWithInner(Val.ValStr("hello"), Val.ValStr("xx")) => Result.Ok(Val.ValBool(false))
+
+fn builtinStringToLower(args: List<Val>) -> Result<Val, String>
+    ? "String.toLower(s) -> lowercase string."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    s = Domain.Builtins.Helpers.expectStr(v)?
+    Result.Ok(Val.ValStr(String.toLower(s)))
+
+verify builtinStringToLower
+    builtinStringToLower([Val.ValStr("HELLO")]) => Result.Ok(Val.ValStr("hello"))
+
+fn builtinCharFromCode(args: List<Val>) -> Result<Val, String>
+    ? "Char.fromCode(n) -> single character string."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    n = Domain.Builtins.Helpers.expectInt(v)?
+    match Char.fromCode(n)
+        Option.Some(c) -> Result.Ok(Val.ValSome(Val.ValStr(c)))
+        Option.None -> Result.Ok(Val.ValNone)
+
+verify builtinCharFromCode
+    builtinCharFromCode([Val.ValInt(65)]) => Result.Ok(Val.ValSome(Val.ValStr("A")))

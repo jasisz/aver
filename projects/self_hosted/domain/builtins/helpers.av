@@ -1,0 +1,59 @@
+module Helpers
+    depends [Domain.Value]
+    intent = "Shared argument extraction helpers for builtin implementations."
+    exposes [oneArg, twoArgs, expectList, expectInt, expectStr]
+
+fn oneArg(args: List<Val>) -> Result<Val, String>
+    ? "Extract single argument from args list."
+    match args
+        [a, ..rest] -> match rest
+            [] -> Result.Ok(a)
+            _ -> Result.Err("expected 1 argument")
+        _ -> Result.Err("expected 1 argument")
+
+verify oneArg
+    oneArg([Val.ValInt(1)]) => Result.Ok(Val.ValInt(1))
+    oneArg([]) => Result.Err("expected 1 argument")
+
+fn twoArgs(args: List<Val>) -> Result<(Val, Val), String>
+    ? "Extract two arguments from args list."
+    match args
+        [a, ..rest] -> match rest
+            [b, ..rest2] -> match rest2
+                [] -> Result.Ok((a, b))
+                _ -> Result.Err("expected 2 arguments")
+            _ -> Result.Err("expected 2 arguments")
+        _ -> Result.Err("expected 2 arguments")
+
+verify twoArgs
+    twoArgs([Val.ValInt(1), Val.ValInt(2)]) => Result.Ok((Val.ValInt(1), Val.ValInt(2)))
+
+fn expectList(v: Val) -> Result<List<Val>, String>
+    ? "Extract list from Val or error."
+    match v
+        Val.ValList(items) -> Result.Ok(items)
+        _ -> Result.Err("expected list argument")
+
+verify expectList
+    expectList(Val.ValList([Val.ValInt(1)])) => Result.Ok([Val.ValInt(1)])
+    expectList(Val.ValInt(1)) => Result.Err("expected list argument")
+
+fn expectInt(v: Val) -> Result<Int, String>
+    ? "Extract int from Val or error."
+    match v
+        Val.ValInt(n) -> Result.Ok(n)
+        _ -> Result.Err("expected int argument")
+
+verify expectInt
+    expectInt(Val.ValInt(5)) => Result.Ok(5)
+    expectInt(Val.ValStr("x")) => Result.Err("expected int argument")
+
+fn expectStr(v: Val) -> Result<String, String>
+    ? "Extract string from Val or error."
+    match v
+        Val.ValStr(s) -> Result.Ok(s)
+        _ -> Result.Err("expected string argument")
+
+verify expectStr
+    expectStr(Val.ValStr("hi")) => Result.Ok("hi")
+    expectStr(Val.ValInt(1)) => Result.Err("expected string argument")

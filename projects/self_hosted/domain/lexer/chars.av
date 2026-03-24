@@ -1,0 +1,192 @@
+module Chars
+    depends [Domain.Token]
+    intent = "Character classification and identifier reading for the lexer."
+    exposes [isDigit, isLower, isUpper, isLetterOrUnderscore, isAlpha, isAlphaNum, digitVal, readNumber, isIdentCharDotted, isIdentCharPlain, readIdentLoopDotted, readIdentLoopPlain, readIdent, keywordOrIdent]
+
+fn isDigit(c: String) -> Bool
+    ? "Check if a single character is a digit."
+    match c
+        "0" -> true
+        "1" -> true
+        "2" -> true
+        "3" -> true
+        "4" -> true
+        "5" -> true
+        "6" -> true
+        "7" -> true
+        "8" -> true
+        "9" -> true
+        _ -> false
+
+verify isDigit
+    isDigit("0") => true
+    isDigit("9") => true
+    isDigit("a") => false
+
+fn isLower(c: String) -> Bool
+    ? "Check if a character is a lowercase letter."
+    match c >= "a"
+        true -> c <= "z"
+        false -> false
+
+verify isLower
+    isLower("a") => true
+    isLower("A") => false
+
+fn isUpper(c: String) -> Bool
+    ? "Check if a character is an uppercase letter."
+    match c >= "A"
+        true -> c <= "Z"
+        false -> false
+
+verify isUpper
+    isUpper("A") => true
+    isUpper("a") => false
+
+fn isLetterOrUnderscore(c: String) -> Bool
+    ? "Check if a character is a letter or underscore."
+    match isLower(c)
+        true -> true
+        false -> match isUpper(c)
+            true -> true
+            false -> c == "_"
+
+verify isLetterOrUnderscore
+    isLetterOrUnderscore("a") => true
+    isLetterOrUnderscore("_") => true
+    isLetterOrUnderscore("0") => false
+
+fn isAlpha(c: String) -> Bool
+    ? "Check if a single character is a letter or underscore."
+    match String.len(c) == 1
+        true -> isLetterOrUnderscore(c)
+        false -> false
+
+verify isAlpha
+    isAlpha("a") => true
+    isAlpha("Z") => true
+    isAlpha("_") => true
+    isAlpha("0") => false
+
+fn isAlphaNum(c: String) -> Bool
+    ? "Check if a character is alphanumeric or underscore."
+    match isAlpha(c)
+        true -> true
+        false -> isDigit(c)
+
+verify isAlphaNum
+    isAlphaNum("a") => true
+    isAlphaNum("5") => true
+    isAlphaNum(" ") => false
+
+fn digitVal(c: String) -> Int
+    ? "Convert a digit character to its integer value."
+    match c
+        "0" -> 0
+        "1" -> 1
+        "2" -> 2
+        "3" -> 3
+        "4" -> 4
+        "5" -> 5
+        "6" -> 6
+        "7" -> 7
+        "8" -> 8
+        "9" -> 9
+        _ -> 0
+
+verify digitVal
+    digitVal("0") => 0
+    digitVal("5") => 5
+    digitVal("9") => 9
+
+fn readNumberLoop(src: String, pos: Int, acc: Int) -> (Int, Int)
+    ? "Read consecutive digits from pos, return (number, newPos)."
+    match pos < String.len(src)
+        true -> match String.charAt(src, pos)
+            Option.Some(c) -> match isDigit(c)
+                true -> readNumberLoop(src, pos + 1, acc * 10 + digitVal(c))
+                false -> (acc, pos)
+            Option.None -> (acc, pos)
+        false -> (acc, pos)
+
+verify readNumberLoop
+    readNumberLoop("123abc", 0, 0) => (123, 3)
+    readNumberLoop("abc", 0, 0) => (0, 0)
+
+fn readNumber(src: String, pos: Int, acc: Int) -> (Int, Int)
+    ? "Read consecutive digits from pos, return (number, newPos)."
+    readNumberLoop(src, pos, acc)
+
+fn isIdentCharDotted(c: String) -> Bool
+    ? "Check if character can continue a dotted identifier (alphanumeric, underscore, or dot)."
+    match isAlphaNum(c)
+        true -> true
+        false -> c == "."
+
+verify isIdentCharDotted
+    isIdentCharDotted("a") => true
+    isIdentCharDotted(".") => true
+    isIdentCharDotted(" ") => false
+
+fn isIdentCharPlain(c: String) -> Bool
+    ? "Check if character can continue a plain identifier (alphanumeric, underscore only)."
+    isAlphaNum(c)
+
+fn readIdentLoopDotted(src: String, pos: Int, acc: String) -> (String, Int)
+    ? "Read identifier including dots (for qualified names like List.prepend)."
+    match pos < String.len(src)
+        true -> match String.charAt(src, pos)
+            Option.Some(c) -> match isIdentCharDotted(c)
+                true -> readIdentLoopDotted(src, pos + 1, acc + c)
+                false -> (acc, pos)
+            Option.None -> (acc, pos)
+        false -> (acc, pos)
+
+verify readIdentLoopDotted
+    readIdentLoopDotted("List.len x", 0, "") => ("List.len", 8)
+
+fn readIdentLoopPlain(src: String, pos: Int, acc: String) -> (String, Int)
+    ? "Read identifier without dots (for local variables)."
+    match pos < String.len(src)
+        true -> match String.charAt(src, pos)
+            Option.Some(c) -> match isIdentCharPlain(c)
+                true -> readIdentLoopPlain(src, pos + 1, acc + c)
+                false -> (acc, pos)
+            Option.None -> (acc, pos)
+        false -> (acc, pos)
+
+verify readIdentLoopPlain
+    readIdentLoopPlain("foo x", 0, "") => ("foo", 3)
+
+fn readIdent(src: String, pos: Int, acc: String, dotted: Bool) -> (String, Int)
+    ? "Read identifier, dotted if starts with uppercase."
+    match dotted
+        true -> readIdentLoopDotted(src, pos, acc)
+        false -> readIdentLoopPlain(src, pos, acc)
+
+verify readIdent
+    readIdent("List.len x", 0, "", true) => ("List.len", 8)
+    readIdent("foo.bar x", 0, "", false) => ("foo", 3)
+
+fn keywordOrIdent(s: String) -> Token
+    ? "Classify an identifier as keyword or plain ident."
+    match s
+        "fn" -> Token.TkFn
+        "match" -> Token.TkMatch
+        "true" -> Token.TkTrue
+        "false" -> Token.TkFalse
+        "module" -> Token.TkIdent("module")
+        "type" -> Token.TkIdent("type")
+        "record" -> Token.TkIdent("record")
+        "verify" -> Token.TkIdent("verify")
+        "depends" -> Token.TkIdent("depends")
+        "exposes" -> Token.TkIdent("exposes")
+        "intent" -> Token.TkIdent("intent")
+        "decision" -> Token.TkIdent("decision")
+        _ -> Token.TkIdent(s)
+
+verify keywordOrIdent
+    keywordOrIdent("fn") => Token.TkFn
+    keywordOrIdent("match") => Token.TkMatch
+    keywordOrIdent("true") => Token.TkTrue
+    keywordOrIdent("foo") => Token.TkIdent("foo")

@@ -1,392 +1,57 @@
 module Builtins
-    depends [Domain.Ast, Domain.Value]
+    depends [Domain.Ast, Domain.Value, Domain.Builtins.Helpers, Domain.Builtins.List, Domain.Builtins.Primitives, Domain.Builtins.Wrappers]
     intent =
         "Builtin function implementations for the self-hosted evaluator."
-        "Dispatches qualified names like List.len, String.charAt, Console.print to host."
+        "Dispatches qualified names like List.len, String.charAt, Console.print to sub-modules."
     exposes [callBuiltin, splitDotted, tryVariantConstructor]
 
 fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
-    ? "Dispatch qualified builtin calls to host implementations."
+    ? "Dispatch qualified builtin calls to sub-module implementations."
     ! [Args.get, Console.print, Disk.readText]
-    match name
-        "List.prepend" -> builtinListPrepend(args)
-        "List.len" -> builtinListLen(args)
-        "List.reverse" -> builtinListReverse(args)
-        "List.append" -> builtinListAppend(args)
-        "List.get" -> builtinListGet(args)
-        "List.concat" -> builtinListConcat(args)
-        "List.contains" -> builtinListContains(args)
-        "List.zip" -> builtinListZip(args)
-        "List.head" -> builtinListHead(args)
-        "List.tail" -> builtinListTail(args)
-        "Int.toString" -> builtinIntToString(args)
-        "Int.toFloat" -> builtinIntToFloat(args)
-        "Int.abs" -> builtinIntAbs(args)
-        "String.len" -> builtinStringLen(args)
-        "String.charAt" -> builtinStringCharAt(args)
-        "String.join" -> builtinStringJoin(args)
-        "Result.Ok" -> builtinResultOk(args)
-        "Result.Err" -> builtinResultErr(args)
-        "Result.withDefault" -> builtinResultWithDefault(args)
-        "Option.Some" -> builtinOptionSome(args)
-        "Option.None" -> Result.Ok(Val.ValNone)
-        "Option.withDefault" -> builtinOptionWithDefault(args)
-        "Int.mod" -> builtinIntMod(args)
-        "String.slice" -> builtinStringSlice(args)
-        "String.fromBool" -> builtinStringFromBool(args)
-        "String.fromInt" -> builtinStringFromInt(args)
-        "String.contains" -> builtinStringContains(args)
-        "String.startsWith" -> builtinStringStartsWith(args)
-        "String.toLower" -> builtinStringToLower(args)
-        "Char.fromCode" -> builtinCharFromCode(args)
-        "Console.print" -> builtinConsolePrint(args)
-        "Disk.readText" -> builtinDiskReadText(args)
-        "Args.get" -> builtinArgsGet(args)
-        _ -> tryVariantConstructor(name, args)
+    match String.startsWith(name, "List.")
+        true -> Domain.Builtins.List.call(name, args)
+        false -> match String.startsWith(name, "Int.")
+            true -> Domain.Builtins.Primitives.callInt(name, args)
+            false -> match String.startsWith(name, "String.")
+                true -> Domain.Builtins.Primitives.callString(name, args)
+                false -> callBuiltinOther(name, args)
 
 verify callBuiltin
     callBuiltin("List.len", [Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Result.Ok(Val.ValInt(2))
     callBuiltin("Result.Ok", [Val.ValInt(5)]) => Result.Ok(Val.ValOk(Val.ValInt(5)))
 
-fn oneArg(args: List<Val>) -> Result<Val, String>
-    ? "Extract single argument from args list."
-    match args
-        [a, ..rest] -> match rest
-            [] -> Result.Ok(a)
-            _ -> Result.Err("expected 1 argument")
-        _ -> Result.Err("expected 1 argument")
+fn callBuiltinOther(name: String, args: List<Val>) -> Result<Val, String>
+    ? "Handle non-prefixed builtins: Result.*, Option.*, IO, Char, variant constructors."
+    ! [Args.get, Console.print, Disk.readText]
+    match name
+        "Char.fromCode" -> Domain.Builtins.Primitives.callChar(name, args)
+        "Console.print" -> builtinConsolePrint(args)
+        "Disk.readText" -> builtinDiskReadText(args)
+        "Args.get" -> builtinArgsGet(args)
+        "Result.Ok" -> Domain.Builtins.Wrappers.call(name, args)
+        "Result.Err" -> Domain.Builtins.Wrappers.call(name, args)
+        "Result.withDefault" -> Domain.Builtins.Wrappers.call(name, args)
+        "Option.Some" -> Domain.Builtins.Wrappers.call(name, args)
+        "Option.None" -> Result.Ok(Val.ValNone)
+        "Option.withDefault" -> Domain.Builtins.Wrappers.call(name, args)
+        _ -> tryVariantConstructor(name, args)
 
-verify oneArg
-    oneArg([Val.ValInt(1)]) => Result.Ok(Val.ValInt(1))
-    oneArg([]) => Result.Err("expected 1 argument")
-
-fn twoArgs(args: List<Val>) -> Result<(Val, Val), String>
-    ? "Extract two arguments from args list."
-    match args
-        [a, ..rest] -> match rest
-            [b, ..rest2] -> match rest2
-                [] -> Result.Ok((a, b))
-                _ -> Result.Err("expected 2 arguments")
-            _ -> Result.Err("expected 2 arguments")
-        _ -> Result.Err("expected 2 arguments")
-
-verify twoArgs
-    twoArgs([Val.ValInt(1), Val.ValInt(2)]) => Result.Ok((Val.ValInt(1), Val.ValInt(2)))
-
-fn expectList(v: Val) -> Result<List<Val>, String>
-    ? "Extract list from Val or error."
-    match v
-        Val.ValList(items) -> Result.Ok(items)
-        _ -> Result.Err("expected list argument")
-
-fn expectInt(v: Val) -> Result<Int, String>
-    ? "Extract int from Val or error."
-    match v
-        Val.ValInt(n) -> Result.Ok(n)
-        _ -> Result.Err("expected int argument")
-
-fn expectStr(v: Val) -> Result<String, String>
-    ? "Extract string from Val or error."
-    match v
-        Val.ValStr(s) -> Result.Ok(s)
-        _ -> Result.Err("expected string argument")
-
-fn builtinListPrepend(args: List<Val>) -> Result<Val, String>
-    ? "List.prepend(value, list) -> list with value at front."
-    pair = twoArgs(args)?
-    match pair
-        (v, lstV) -> builtinListPrependInner(v, lstV)
-
-verify builtinListPrepend
-    builtinListPrepend([Val.ValInt(1), Val.ValList([Val.ValInt(2)])]) => Result.Ok(Val.ValList([Val.ValInt(1), Val.ValInt(2)]))
-
-fn builtinListPrependInner(v: Val, lstV: Val) -> Result<Val, String>
-    ? "Inner impl of List.prepend."
-    items = expectList(lstV)?
-    Result.Ok(Val.ValList(List.prepend(v, items)))
-
-fn builtinListLen(args: List<Val>) -> Result<Val, String>
-    ? "List.len(list) -> length as Int."
-    v = oneArg(args)?
-    items = expectList(v)?
-    Result.Ok(Val.ValInt(List.len(items)))
-
-verify builtinListLen
-    builtinListLen([Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Result.Ok(Val.ValInt(2))
-    builtinListLen([Val.ValList([])]) => Result.Ok(Val.ValInt(0))
-
-fn builtinListReverse(args: List<Val>) -> Result<Val, String>
-    ? "List.reverse(list) -> reversed list."
-    v = oneArg(args)?
-    items = expectList(v)?
-    Result.Ok(Val.ValList(List.reverse(items)))
-
-verify builtinListReverse
-    builtinListReverse([Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Result.Ok(Val.ValList([Val.ValInt(2), Val.ValInt(1)]))
-
-fn builtinListAppend(args: List<Val>) -> Result<Val, String>
-    ? "List.append(list, val) -> list with val at end."
-    pair = twoArgs(args)?
-    match pair
-        (lstV, v) -> builtinListAppendInner(lstV, v)
-
-fn builtinListAppendInner(lstV: Val, v: Val) -> Result<Val, String>
-    ? "Inner impl of List.append."
-    items = expectList(lstV)?
-    Result.Ok(Val.ValList(List.append(items, v)))
-
-fn builtinListGet(args: List<Val>) -> Result<Val, String>
-    ? "List.get(list, index) -> element or error."
-    pair = twoArgs(args)?
-    match pair
-        (lstV, idxV) -> builtinListGetInner(lstV, idxV)
-
-fn builtinListGetInner(lstV: Val, idxV: Val) -> Result<Val, String>
-    ? "Inner impl of List.get. Returns Option (ValSome/ValNone)."
-    items = expectList(lstV)?
-    idx = expectInt(idxV)?
-    match List.get(items, idx)
-        Option.Some(v) -> Result.Ok(Val.ValSome(v))
-        Option.None -> Result.Ok(Val.ValNone)
-
-fn builtinListConcat(args: List<Val>) -> Result<Val, String>
-    ? "List.concat(a, b) -> concatenated list."
-    pair = twoArgs(args)?
-    match pair
-        (aV, bV) -> builtinListConcatInner(aV, bV)
-
-fn builtinListConcatInner(aV: Val, bV: Val) -> Result<Val, String>
-    ? "Inner impl of List.concat."
-    aItems = expectList(aV)?
-    bItems = expectList(bV)?
-    Result.Ok(Val.ValList(List.concat(aItems, bItems)))
-
-fn builtinListContains(args: List<Val>) -> Result<Val, String>
-    ? "List.contains(list, value) -> Bool."
-    pair = twoArgs(args)?
-    match pair
-        (lstV, needle) -> builtinListContainsInner(lstV, needle)
-
-fn builtinListContainsInner(lstV: Val, needle: Val) -> Result<Val, String>
-    ? "Inner impl of List.contains."
-    items = expectList(lstV)?
-    Result.Ok(Val.ValBool(listContainsVal(items, needle)))
-
-fn listContainsVal(items: List<Val>, needle: Val) -> Bool
-    ? "Check if a value is in a list by repr comparison."
-    match items
-        [] -> false
-        [v, ..rest] -> match Domain.Value.valRepr(v) == Domain.Value.valRepr(needle)
-            true -> true
-            false -> listContainsVal(rest, needle)
-
-fn builtinListZip(args: List<Val>) -> Result<Val, String>
-    ? "List.zip(a, b) -> list of tuples."
-    pair = twoArgs(args)?
-    match pair
-        (aV, bV) -> builtinListZipInner(aV, bV)
-
-fn builtinListZipInner(aV: Val, bV: Val) -> Result<Val, String>
-    ? "Inner impl of List.zip."
-    aItems = expectList(aV)?
-    bItems = expectList(bV)?
-    Result.Ok(Val.ValList(zipLists(aItems, bItems)))
-
-fn zipLists(a: List<Val>, b: List<Val>) -> List<Val>
-    ? "Zip two lists into list of ValTuple."
-    match a
-        [] -> []
-        [x, ..xs] -> match b
-            [] -> []
-            [y, ..ys] -> List.prepend(Val.ValTuple([x, y]), zipLists(xs, ys))
-
-fn builtinListHead(args: List<Val>) -> Result<Val, String>
-    ? "List.head(list) -> Option of first element."
-    v = oneArg(args)?
-    items = expectList(v)?
-    match items
-        [] -> Result.Ok(Val.ValNone)
-        [h, ..rest] -> Result.Ok(Val.ValSome(h))
-
-verify builtinListHead
-    builtinListHead([Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Result.Ok(Val.ValSome(Val.ValInt(1)))
-    builtinListHead([Val.ValList([])]) => Result.Ok(Val.ValNone)
-
-fn builtinListTail(args: List<Val>) -> Result<Val, String>
-    ? "List.tail(list) -> Option of rest."
-    v = oneArg(args)?
-    items = expectList(v)?
-    match items
-        [] -> Result.Ok(Val.ValNone)
-        [h, ..rest] -> Result.Ok(Val.ValSome(Val.ValList(rest)))
-
-verify builtinListTail
-    builtinListTail([Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Result.Ok(Val.ValSome(Val.ValList([Val.ValInt(2)])))
-
-fn builtinIntToFloat(args: List<Val>) -> Result<Val, String>
-    ? "Int.toFloat(n) -> float."
-    v = oneArg(args)?
-    n = expectInt(v)?
-    Result.Ok(Val.ValStr(Int.toString(n) + ".0"))
-
-fn builtinIntToString(args: List<Val>) -> Result<Val, String>
-    ? "Int.toString(n) -> string representation."
-    v = oneArg(args)?
-    n = expectInt(v)?
-    Result.Ok(Val.ValStr(Int.toString(n)))
-
-verify builtinIntToString
-    builtinIntToString([Val.ValInt(42)]) => Result.Ok(Val.ValStr("42"))
-
-fn builtinIntAbs(args: List<Val>) -> Result<Val, String>
-    ? "Int.abs(n) -> absolute value."
-    v = oneArg(args)?
-    n = expectInt(v)?
-    Result.Ok(Val.ValInt(Int.abs(n)))
-
-verify builtinIntAbs
-    builtinIntAbs([Val.ValInt(5)]) => Result.Ok(Val.ValInt(5))
-
-fn builtinIntMod(args: List<Val>) -> Result<Val, String>
-    ? "Int.mod(a, b) -> a mod b as Result."
-    pair = twoArgs(args)?
-    match pair
-        (aV, bV) -> builtinIntModInner(aV, bV)
-
-fn builtinIntModInner(aV: Val, bV: Val) -> Result<Val, String>
-    ? "Inner impl of Int.mod."
-    a = expectInt(aV)?
-    b = expectInt(bV)?
-    match b == 0
-        true -> Result.Ok(Val.ValErr(Val.ValStr("modulo by zero")))
-        false -> Result.Ok(Val.ValOk(Val.ValInt(Result.withDefault(Int.mod(a, b), 0))))
-
-fn builtinStringLen(args: List<Val>) -> Result<Val, String>
-    ? "String.len(s) -> length as Int."
-    v = oneArg(args)?
-    s = expectStr(v)?
-    Result.Ok(Val.ValInt(String.len(s)))
-
-verify builtinStringLen
-    builtinStringLen([Val.ValStr("hello")]) => Result.Ok(Val.ValInt(5))
-
-fn builtinStringCharAt(args: List<Val>) -> Result<Val, String>
-    ? "String.charAt(s, index) -> single character string or error."
-    pair = twoArgs(args)?
-    match pair
-        (sV, idxV) -> builtinStringCharAtInner(sV, idxV)
-
-fn builtinStringCharAtInner(sV: Val, idxV: Val) -> Result<Val, String>
-    ? "Inner impl of String.charAt."
-    s = expectStr(sV)?
-    idx = expectInt(idxV)?
-    match String.charAt(s, idx)
-        Option.Some(c) -> Result.Ok(Val.ValStr(c))
-        Option.None -> Result.Err("charAt index out of bounds")
-
-fn builtinStringJoin(args: List<Val>) -> Result<Val, String>
-    ? "String.join(list, separator) -> joined string."
-    pair = twoArgs(args)?
-    match pair
-        (lstV, sepV) -> builtinStringJoinInner(lstV, sepV)
-
-fn builtinStringJoinInner(lstV: Val, sepV: Val) -> Result<Val, String>
-    ? "Inner impl of String.join."
-    items = expectList(lstV)?
-    sep = expectStr(sepV)?
-    strs = extractStrings(items, [])?
-    Result.Ok(Val.ValStr(String.join(strs, sep)))
-
-fn extractStrings(items: List<Val>, acc: List<String>) -> Result<List<String>, String>
-    ? "Convert list of ValStr to list of String."
-    match items
-        [] -> Result.Ok(List.reverse(acc))
-        [v, ..rest] -> match v
-            Val.ValStr(s) -> extractStrings(rest, List.prepend(s, acc))
-            _ -> Result.Err("String.join requires list of strings")
-
-fn builtinStringSlice(args: List<Val>) -> Result<Val, String>
-    ? "String.slice(s, start, end) -> substring."
-    match args
-        [sV, ..rest] -> match rest
-            [startV, ..rest2] -> match rest2
-                [endV, ..rest3] -> match rest3
-                    [] -> builtinStringSliceInner(sV, startV, endV)
-                    _ -> Result.Err("String.slice takes 3 arguments")
-                _ -> Result.Err("String.slice takes 3 arguments")
-            _ -> Result.Err("String.slice takes 3 arguments")
-        _ -> Result.Err("String.slice takes 3 arguments")
-
-fn builtinStringSliceInner(sV: Val, startV: Val, endV: Val) -> Result<Val, String>
-    ? "Inner impl of String.slice."
-    s = expectStr(sV)?
-    start = expectInt(startV)?
-    end = expectInt(endV)?
-    Result.Ok(Val.ValStr(String.slice(s, start, end)))
-
-fn builtinStringFromBool(args: List<Val>) -> Result<Val, String>
-    ? "String.fromBool(b) -> string."
-    v = oneArg(args)?
-    match v
-        Val.ValBool(b) -> Result.Ok(Val.ValStr(String.fromBool(b)))
-        _ -> Result.Err("String.fromBool requires Bool")
-
-fn builtinStringFromInt(args: List<Val>) -> Result<Val, String>
-    ? "String.fromInt(n) -> string (alias for Int.toString)."
-    v = oneArg(args)?
-    n = expectInt(v)?
-    Result.Ok(Val.ValStr(Int.toString(n)))
-
-fn builtinStringContains(args: List<Val>) -> Result<Val, String>
-    ? "String.contains(haystack, needle) -> Bool."
-    pair = twoArgs(args)?
-    match pair
-        (hV, nV) -> builtinStringContainsInner(hV, nV)
-
-fn builtinStringContainsInner(hV: Val, nV: Val) -> Result<Val, String>
-    ? "Inner impl of String.contains."
-    h = expectStr(hV)?
-    n = expectStr(nV)?
-    Result.Ok(Val.ValBool(String.contains(h, n)))
-
-fn builtinStringStartsWith(args: List<Val>) -> Result<Val, String>
-    ? "String.startsWith(s, prefix) -> Bool."
-    pair = twoArgs(args)?
-    match pair
-        (sV, pV) -> builtinStringStartsWithInner(sV, pV)
-
-fn builtinStringStartsWithInner(sV: Val, pV: Val) -> Result<Val, String>
-    ? "Inner impl of String.startsWith."
-    s = expectStr(sV)?
-    p = expectStr(pV)?
-    Result.Ok(Val.ValBool(String.startsWith(s, p)))
-
-fn builtinStringToLower(args: List<Val>) -> Result<Val, String>
-    ? "String.toLower(s) -> lowercase string."
-    v = oneArg(args)?
-    s = expectStr(v)?
-    Result.Ok(Val.ValStr(String.toLower(s)))
-
-fn builtinCharFromCode(args: List<Val>) -> Result<Val, String>
-    ? "Char.fromCode(n) -> single character string."
-    v = oneArg(args)?
-    n = expectInt(v)?
-    match Char.fromCode(n)
-        Option.Some(c) -> Result.Ok(Val.ValSome(Val.ValStr(c)))
-        Option.None -> Result.Ok(Val.ValNone)
+verify callBuiltinOther
+    callBuiltinOther("Result.Ok", [Val.ValInt(1)]) => Result.Ok(Val.ValOk(Val.ValInt(1)))
+    callBuiltinOther("Option.None", []) => Result.Ok(Val.ValNone)
 
 fn builtinConsolePrint(args: List<Val>) -> Result<Val, String>
     ? "Console.print(v) -> print any value and return Unit."
     ! [Console.print]
-    v = oneArg(args)?
+    v = Domain.Builtins.Helpers.oneArg(args)?
     Console.print(Domain.Value.valRepr(v))
     Result.Ok(Val.ValUnit)
 
 fn builtinDiskReadText(args: List<Val>) -> Result<Val, String>
     ? "Disk.readText(path) -> Result string."
     ! [Disk.readText]
-    v = oneArg(args)?
-    path = expectStr(v)?
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    path = Domain.Builtins.Helpers.expectStr(v)?
     match Disk.readText(path)
         Result.Ok(content) -> Result.Ok(Val.ValOk(Val.ValStr(content)))
         Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
@@ -403,12 +68,20 @@ fn stringsToVals(strs: List<String>, acc: List<Val>) -> List<Val>
         [] -> List.reverse(acc)
         [s, ..rest] -> stringsToVals(rest, List.prepend(Val.ValStr(s), acc))
 
+verify stringsToVals
+    stringsToVals(["a", "b"], []) => [Val.ValStr("a"), Val.ValStr("b")]
+    stringsToVals([], []) => []
+
 fn tryVariantConstructor(name: String, args: List<Val>) -> Result<Val, String>
     ? "Try to construct a variant value from a dotted name like Type.Ctor."
     match splitDotted(name)
         Option.Some(pair) -> match pair
             (typeName, ctorName) -> Result.Ok(Val.ValVariant(typeName, ctorName, args))
         Option.None -> Result.Err("undefined function: {name}")
+
+verify tryVariantConstructor
+    tryVariantConstructor("Shape.Circle", [Val.ValInt(5)]) => Result.Ok(Val.ValVariant("Shape", "Circle", [Val.ValInt(5)]))
+    tryVariantConstructor("noDot", []) => Result.Err("undefined function: noDot")
 
 fn splitDotted(name: String) -> Option<(String, String)>
     ? "Split 'Type.Ctor' into (Type, Ctor). Returns None if no dot."
@@ -428,52 +101,6 @@ fn splitDottedLoop(name: String, pos: Int, total: Int) -> Option<(String, String
                 false -> splitDottedLoop(name, pos + 1, total)
             Option.None -> Option.None
 
-fn builtinResultOk(args: List<Val>) -> Result<Val, String>
-    ? "Result.Ok(value) -> wrapped Ok value."
-    v = oneArg(args)?
-    Result.Ok(Val.ValOk(v))
-
-verify builtinResultOk
-    builtinResultOk([Val.ValInt(1)]) => Result.Ok(Val.ValOk(Val.ValInt(1)))
-
-fn builtinResultErr(args: List<Val>) -> Result<Val, String>
-    ? "Result.Err(value) -> wrapped Err value."
-    v = oneArg(args)?
-    Result.Ok(Val.ValErr(v))
-
-verify builtinResultErr
-    builtinResultErr([Val.ValStr("fail")]) => Result.Ok(Val.ValErr(Val.ValStr("fail")))
-
-fn builtinOptionSome(args: List<Val>) -> Result<Val, String>
-    ? "Option.Some(value) -> wrapped Some value."
-    v = oneArg(args)?
-    Result.Ok(Val.ValSome(v))
-
-verify builtinOptionSome
-    builtinOptionSome([Val.ValInt(7)]) => Result.Ok(Val.ValSome(Val.ValInt(7)))
-
-fn builtinOptionWithDefault(args: List<Val>) -> Result<Val, String>
-    ? "Option.withDefault(option, default) -> unwrap Some or return default."
-    pair = twoArgs(args)?
-    match pair
-        (optV, defV) -> match optV
-            Val.ValSome(inner) -> Result.Ok(inner)
-            Val.ValNone -> Result.Ok(defV)
-            _ -> Result.Err("Option.withDefault requires Option value")
-
-verify builtinOptionWithDefault
-    builtinOptionWithDefault([Val.ValSome(Val.ValInt(3)), Val.ValInt(0)]) => Result.Ok(Val.ValInt(3))
-    builtinOptionWithDefault([Val.ValNone, Val.ValInt(0)]) => Result.Ok(Val.ValInt(0))
-
-fn builtinResultWithDefault(args: List<Val>) -> Result<Val, String>
-    ? "Result.withDefault(result, default) -> unwrap Ok or return default."
-    pair = twoArgs(args)?
-    match pair
-        (resV, defV) -> match resV
-            Val.ValOk(inner) -> Result.Ok(inner)
-            Val.ValErr(_) -> Result.Ok(defV)
-            _ -> Result.Err("Result.withDefault requires Result value")
-
-verify builtinResultWithDefault
-    builtinResultWithDefault([Val.ValOk(Val.ValInt(3)), Val.ValInt(0)]) => Result.Ok(Val.ValInt(3))
-    builtinResultWithDefault([Val.ValErr(Val.ValStr("x")), Val.ValInt(0)]) => Result.Ok(Val.ValInt(0))
+verify splitDottedLoop
+    splitDottedLoop("A.B", 0, 3) => Option.Some(("A", "B"))
+    splitDottedLoop("abc", 0, 3) => Option.None

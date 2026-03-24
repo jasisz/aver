@@ -12,6 +12,10 @@ fn checkVarMatch(k: String, v: Val, name: String, rest: List<(String, Val)>) -> 
         true -> Result.Ok(v)
         false -> lookupVar(rest, name)
 
+verify checkVarMatch
+    checkVarMatch("x", Val.ValInt(1), "x", []) => Result.Ok(Val.ValInt(1))
+    checkVarMatch("y", Val.ValInt(2), "x", [("x", Val.ValInt(1))]) => Result.Ok(Val.ValInt(1))
+
 fn lookupVar(env: List<(String, Val)>, name: String) -> Result<Val, String>
     ? "Look up a variable in the environment."
     match env
@@ -30,6 +34,10 @@ fn lookupFn(fns: List<FnDef>, name: String) -> Result<FnDef, String>
         [f, ..rest] -> match f.name == name
             true -> Result.Ok(f)
             false -> lookupFn(rest, name)
+
+verify lookupFn
+    lookupFn([FnDef(name = "foo", params = [], body = [])], "foo") => Result.Ok(FnDef(name = "foo", params = [], body = []))
+    lookupFn([], "foo") => Result.Err("undefined function: foo")
 
 fn zipArgs(params: List<String>, args: List<Val>) -> List<(String, Val)>
     ? "Pair parameter names with argument values."
@@ -77,12 +85,20 @@ fn evalVar(name: String, env: List<(String, Val)>) -> Result<Val, String>
             Result.Ok(v) -> Result.Ok(v)
             Result.Err(_) -> evalVarFallback(name)
 
+verify evalVar
+    evalVar("x", [("x", Val.ValInt(5))]) => Result.Ok(Val.ValInt(5))
+    evalVar("Option.None", []) => Result.Ok(Val.ValNone)
+
 fn evalVarFallback(name: String) -> Result<Val, String>
     ? "If variable not in env, try as nullary variant (e.g. Token.TkPlus)."
     match Domain.Builtins.splitDotted(name)
         Option.Some(pair) -> match pair
             (typeName, ctorName) -> Result.Ok(Val.ValVariant(typeName, ctorName, []))
         Option.None -> Result.Err("undefined variable: {name}")
+
+verify evalVarFallback
+    evalVarFallback("Token.TkPlus") => Result.Ok(Val.ValVariant("Token", "TkPlus", []))
+    evalVarFallback("xyz") => Result.Err("undefined variable: xyz")
 
 fn evalPropagate(inner: Expr, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate ? operator: unwrap Ok or propagate Err."
@@ -113,6 +129,13 @@ fn applyBinop(x: Int, y: Int, op: String) -> Result<Val, String>
             false -> Result.Ok(Val.ValInt(x / y))
         _ -> Result.Err("unknown op: " + op)
 
+verify applyBinop
+    applyBinop(3, 4, "add") => Result.Ok(Val.ValInt(7))
+    applyBinop(10, 3, "sub") => Result.Ok(Val.ValInt(7))
+    applyBinop(3, 4, "mul") => Result.Ok(Val.ValInt(12))
+    applyBinop(10, 2, "div") => Result.Ok(Val.ValInt(5))
+    applyBinop(10, 0, "div") => Result.Err("division by zero")
+
 fn applyCmp(x: Int, y: Int, op: String) -> Result<Val, String>
     ? "Apply a comparison operation to two integers."
     match op
@@ -124,6 +147,11 @@ fn applyCmp(x: Int, y: Int, op: String) -> Result<Val, String>
         "gte" -> Result.Ok(Val.ValBool(x >= y))
         _ -> Result.Err("unknown cmp: " + op)
 
+verify applyCmp
+    applyCmp(1, 1, "eq") => Result.Ok(Val.ValBool(true))
+    applyCmp(1, 2, "eq") => Result.Ok(Val.ValBool(false))
+    applyCmp(1, 2, "lt") => Result.Ok(Val.ValBool(true))
+
 fn evalBinopVals(va: Val, vb: Val, op: String) -> Result<Val, String>
     ? "Apply binary op to two evaluated values."
     match (va, vb)
@@ -133,6 +161,10 @@ fn evalBinopVals(va: Val, vb: Val, op: String) -> Result<Val, String>
             false -> Result.Err("strings only support +")
         _ -> Result.Err("binop type mismatch")
 
+verify evalBinopVals
+    evalBinopVals(Val.ValInt(2), Val.ValInt(3), "add") => Result.Ok(Val.ValInt(5))
+    evalBinopVals(Val.ValStr("a"), Val.ValStr("b"), "add") => Result.Ok(Val.ValStr("ab"))
+
 fn evalCmpVals(va: Val, vb: Val, op: String) -> Result<Val, String>
     ? "Apply comparison to two evaluated values (Int or String)."
     match (va, vb)
@@ -141,12 +173,21 @@ fn evalCmpVals(va: Val, vb: Val, op: String) -> Result<Val, String>
         (Val.ValBool(x), Val.ValBool(y)) -> applyBoolCmp(x, y, op)
         _ -> evalCmpRepr(va, vb, op)
 
+verify evalCmpVals
+    evalCmpVals(Val.ValInt(1), Val.ValInt(1), "eq") => Result.Ok(Val.ValBool(true))
+    evalCmpVals(Val.ValStr("a"), Val.ValStr("a"), "eq") => Result.Ok(Val.ValBool(true))
+    evalCmpVals(Val.ValBool(true), Val.ValBool(false), "eq") => Result.Ok(Val.ValBool(false))
+
 fn applyStrCmp(x: String, y: String, op: String) -> Result<Val, String>
     ? "String comparison: only eq and neq supported."
     match op
         "eq" -> Result.Ok(Val.ValBool(x == y))
         "neq" -> Result.Ok(Val.ValBool(x != y))
         _ -> Result.Err("strings only support == and !=")
+
+verify applyStrCmp
+    applyStrCmp("a", "a", "eq") => Result.Ok(Val.ValBool(true))
+    applyStrCmp("a", "b", "neq") => Result.Ok(Val.ValBool(true))
 
 fn applyBoolCmp(x: Bool, y: Bool, op: String) -> Result<Val, String>
     ? "Bool comparison: eq and neq."
@@ -155,12 +196,19 @@ fn applyBoolCmp(x: Bool, y: Bool, op: String) -> Result<Val, String>
         "neq" -> Result.Ok(Val.ValBool(x != y))
         _ -> Result.Err("bools only support == and !=")
 
+verify applyBoolCmp
+    applyBoolCmp(true, true, "eq") => Result.Ok(Val.ValBool(true))
+    applyBoolCmp(true, false, "neq") => Result.Ok(Val.ValBool(true))
+
 fn evalCmpRepr(va: Val, vb: Val, op: String) -> Result<Val, String>
     ? "Fallback comparison using repr (for variants, lists, etc)."
     match op
         "eq" -> Result.Ok(Val.ValBool(Domain.Value.valRepr(va) == Domain.Value.valRepr(vb)))
         "neq" -> Result.Ok(Val.ValBool(Domain.Value.valRepr(va) != Domain.Value.valRepr(vb)))
         _ -> Result.Err("comparison requires ints")
+
+verify evalCmpRepr
+    evalCmpRepr(Val.ValNone, Val.ValNone, "eq") => Result.Ok(Val.ValBool(true))
 
 fn evalBinopRight(va: Val, b: Expr, env: List<(String, Val)>, fns: List<FnDef>, op: String) -> Result<Val, String>
     ? "Evaluate right side of binop and apply."
@@ -251,6 +299,10 @@ fn lookupField(fields: List<(String, Val)>, name: String) -> Result<Val, String>
             (k, v) -> match k == name
                 true -> Result.Ok(v)
                 false -> lookupField(rest, name)
+
+verify lookupField
+    lookupField([("x", Val.ValInt(1)), ("y", Val.ValInt(2))], "x") => Result.Ok(Val.ValInt(1))
+    lookupField([("x", Val.ValInt(1))], "z") => Result.Err("unknown field: z")
 
 fn evalListExpr(exprs: List<Expr>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate a list literal."
@@ -365,6 +417,7 @@ fn evalProgram(prog: Program) -> Result<Val, String>
 
 fn evalStmtsPure(stmts: List<Stmt>, env: List<(String, Val)>, fns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate statements without IO effect declarations."
+    ! [Args.get, Console.print, Disk.readText]
     match stmts
         [] -> Result.Ok(Val.ValUnit)
         [s, ..rest] -> match evalStmt(s, env, fns)
@@ -373,6 +426,7 @@ fn evalStmtsPure(stmts: List<Stmt>, env: List<(String, Val)>, fns: List<FnDef>) 
 
 fn evalStmtsContinuePure(pair: (Val, List<(String, Val)>), rest: List<Stmt>, fns: List<FnDef>) -> Result<Val, String>
     ? "Continue pure evaluation."
+    ! [Args.get, Console.print, Disk.readText]
     match pair
         (v, newEnv) -> match rest
             [] -> Result.Ok(v)

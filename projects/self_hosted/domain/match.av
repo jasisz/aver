@@ -34,6 +34,11 @@ fn matchPatInt(n: Int, v: Val) -> Result<List<(String, Val)>, String>
             false -> Result.Err("no match")
         _ -> Result.Err("no match")
 
+verify matchPatInt
+    matchPatInt(5, Val.ValInt(5)) => Result.Ok([])
+    matchPatInt(5, Val.ValInt(6)) => Result.Err("no match")
+    matchPatInt(3, Val.ValBool(true)) => Result.Err("no match")
+
 fn matchPatBool(b: Bool, v: Val) -> Result<List<(String, Val)>, String>
     ? "Match a PatBool pattern against a value."
     match v
@@ -41,6 +46,11 @@ fn matchPatBool(b: Bool, v: Val) -> Result<List<(String, Val)>, String>
             true -> Result.Ok([])
             false -> Result.Err("no match")
         _ -> Result.Err("no match")
+
+verify matchPatBool
+    matchPatBool(true, Val.ValBool(true)) => Result.Ok([])
+    matchPatBool(true, Val.ValBool(false)) => Result.Err("no match")
+    matchPatBool(false, Val.ValInt(0)) => Result.Err("no match")
 
 fn matchPatStr(s: String, v: Val) -> Result<List<(String, Val)>, String>
     ? "Match a string literal pattern."
@@ -87,11 +97,23 @@ fn matchPatConstructor(ctorName: String, bindings: List<String>, v: Val) -> Resu
         "Option.None" -> matchNonePat(v)
         _ -> matchGenericConstructor(ctorName, bindings, v)
 
+verify matchPatConstructor
+    matchPatConstructor("Result.Ok", ["x"], Val.ValOk(Val.ValInt(1))) => Result.Ok([("x", Val.ValInt(1))])
+    matchPatConstructor("Result.Err", ["e"], Val.ValErr(Val.ValStr("fail"))) => Result.Ok([("e", Val.ValStr("fail"))])
+    matchPatConstructor("Option.Some", ["v"], Val.ValSome(Val.ValInt(7))) => Result.Ok([("v", Val.ValInt(7))])
+    matchPatConstructor("Option.None", [], Val.ValNone) => Result.Ok([])
+    matchPatConstructor("Result.Ok", ["x"], Val.ValInt(5)) => Result.Err("no match")
+
 fn matchPatTuple(pats: List<Pattern>, v: Val) -> Result<List<(String, Val)>, String>
     ? "Match tuple pattern with nested patterns."
     match v
         Val.ValTuple(items) -> matchPatTupleItems(pats, items)
         _ -> Result.Err("no match")
+
+verify matchPatTuple
+    matchPatTuple([Pattern.PatVar("a"), Pattern.PatVar("b")], Val.ValTuple([Val.ValInt(1), Val.ValInt(2)])) => Result.Ok([("a", Val.ValInt(1)), ("b", Val.ValInt(2))])
+    matchPatTuple([Pattern.PatVar("x")], Val.ValInt(5)) => Result.Err("no match")
+    matchPatTuple([], Val.ValTuple([])) => Result.Ok([])
 
 fn matchPatTupleItems(pats: List<Pattern>, items: List<Val>) -> Result<List<(String, Val)>, String>
     ? "Match each pattern against corresponding tuple item."
@@ -101,11 +123,21 @@ fn matchPatTupleItems(pats: List<Pattern>, items: List<Val>) -> Result<List<(Str
             [] -> Result.Err("no match")
             [item, ..restItems] -> matchPatTupleOne(pat, item, restPats, restItems)
 
+verify matchPatTupleItems
+    matchPatTupleItems([Pattern.PatVar("a")], [Val.ValInt(1)]) => Result.Ok([("a", Val.ValInt(1))])
+    matchPatTupleItems([], []) => Result.Ok([])
+    matchPatTupleItems([Pattern.PatVar("a")], []) => Result.Err("no match")
+
 fn matchPatTupleOne(pat: Pattern, item: Val, restPats: List<Pattern>, restItems: List<Val>) -> Result<List<(String, Val)>, String>
     ? "Match one tuple element and continue."
     bindings = matchPattern(pat, item)?
     restBindings = matchPatTupleItems(restPats, restItems)?
     Result.Ok(List.concat(bindings, restBindings))
+
+verify matchPatTupleOne
+    matchPatTupleOne(Pattern.PatVar("a"), Val.ValInt(1), [], []) => Result.Ok([("a", Val.ValInt(1))])
+    matchPatTupleOne(Pattern.PatVar("a"), Val.ValInt(1), [Pattern.PatVar("b")], [Val.ValInt(2)]) => Result.Ok([("a", Val.ValInt(1)), ("b", Val.ValInt(2))])
+    matchPatTupleOne(Pattern.PatInt(5), Val.ValInt(6), [], []) => Result.Err("no match")
 
 fn matchGenericConstructor(ctorName: String, bindings: List<String>, v: Val) -> Result<List<(String, Val)>, String>
     ? "Match a generic variant constructor pattern."
@@ -113,12 +145,22 @@ fn matchGenericConstructor(ctorName: String, bindings: List<String>, v: Val) -> 
         Val.ValVariant(typeName, varName, fields) -> matchGenericCtorCheck(ctorName, typeName, varName, bindings, fields)
         _ -> Result.Err("no match")
 
+verify matchGenericConstructor
+    matchGenericConstructor("Shape.Circle", ["r"], Val.ValVariant("Shape", "Circle", [Val.ValInt(5)])) => Result.Ok([("r", Val.ValInt(5))])
+    matchGenericConstructor("Shape.Circle", ["r"], Val.ValVariant("Shape", "Rect", [Val.ValInt(3)])) => Result.Err("no match")
+    matchGenericConstructor("Shape.Circle", ["r"], Val.ValInt(5)) => Result.Err("no match")
+
 fn matchGenericCtorCheck(ctorName: String, typeName: String, varName: String, bindings: List<String>, fields: List<Val>) -> Result<List<(String, Val)>, String>
     ? "Check if variant matches constructor name."
     fullName = typeName + "." + varName
     match fullName == ctorName
         true -> zipBindings(bindings, fields)
         false -> Result.Err("no match")
+
+verify matchGenericCtorCheck
+    matchGenericCtorCheck("Shape.Circle", "Shape", "Circle", ["r"], [Val.ValInt(5)]) => Result.Ok([("r", Val.ValInt(5))])
+    matchGenericCtorCheck("Shape.Circle", "Shape", "Rect", ["r"], [Val.ValInt(5)]) => Result.Err("no match")
+    matchGenericCtorCheck("Color.Red", "Color", "Red", [], []) => Result.Ok([])
 
 fn matchNonePat(v: Val) -> Result<List<(String, Val)>, String>
     ? "Match Option.None pattern."
@@ -143,6 +185,13 @@ fn matchWrapperPat(v: Val, tag: String, bindings: List<String>) -> Result<List<(
             Val.ValSome(inner) -> zipBindings(bindings, [inner])
             _ -> Result.Err("no match")
         _ -> Result.Err("no match")
+
+verify matchWrapperPat
+    matchWrapperPat(Val.ValOk(Val.ValInt(1)), "Ok", ["x"]) => Result.Ok([("x", Val.ValInt(1))])
+    matchWrapperPat(Val.ValErr(Val.ValStr("fail")), "Err", ["e"]) => Result.Ok([("e", Val.ValStr("fail"))])
+    matchWrapperPat(Val.ValSome(Val.ValInt(7)), "Some", ["v"]) => Result.Ok([("v", Val.ValInt(7))])
+    matchWrapperPat(Val.ValInt(5), "Ok", ["x"]) => Result.Err("no match")
+    matchWrapperPat(Val.ValOk(Val.ValInt(1)), "Err", ["x"]) => Result.Err("no match")
 
 fn zipBindings(names: List<String>, vals: List<Val>) -> Result<List<(String, Val)>, String>
     ? "Pair binding names with values."

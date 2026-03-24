@@ -1,0 +1,198 @@
+module List
+    depends [Domain.Value, Domain.Builtins.Helpers]
+    intent = "List namespace builtins for the self-hosted evaluator."
+    exposes [call]
+
+fn call(name: String, args: List<Val>) -> Result<Val, String>
+    ? "Dispatch List.* builtins."
+    match name
+        "List.prepend" -> builtinListPrepend(args)
+        "List.len" -> builtinListLen(args)
+        "List.reverse" -> builtinListReverse(args)
+        "List.append" -> builtinListAppend(args)
+        "List.get" -> builtinListGet(args)
+        "List.concat" -> builtinListConcat(args)
+        "List.contains" -> builtinListContains(args)
+        "List.zip" -> builtinListZip(args)
+        "List.head" -> builtinListHead(args)
+        "List.tail" -> builtinListTail(args)
+        _ -> Result.Err("unknown list builtin: {name}")
+
+verify call
+    call("List.len", [Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Result.Ok(Val.ValInt(2))
+    call("List.head", [Val.ValList([Val.ValInt(1)])]) => Result.Ok(Val.ValSome(Val.ValInt(1)))
+
+fn builtinListPrepend(args: List<Val>) -> Result<Val, String>
+    ? "List.prepend(value, list) -> list with value at front."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (v, lstV) -> builtinListPrependInner(v, lstV)
+
+verify builtinListPrepend
+    builtinListPrepend([Val.ValInt(1), Val.ValList([Val.ValInt(2)])]) => Result.Ok(Val.ValList([Val.ValInt(1), Val.ValInt(2)]))
+
+fn builtinListPrependInner(v: Val, lstV: Val) -> Result<Val, String>
+    ? "Inner impl of List.prepend."
+    items = Domain.Builtins.Helpers.expectList(lstV)?
+    Result.Ok(Val.ValList(List.prepend(v, items)))
+
+verify builtinListPrependInner
+    builtinListPrependInner(Val.ValInt(0), Val.ValList([Val.ValInt(1)])) => Result.Ok(Val.ValList([Val.ValInt(0), Val.ValInt(1)]))
+
+fn builtinListLen(args: List<Val>) -> Result<Val, String>
+    ? "List.len(list) -> length as Int."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    items = Domain.Builtins.Helpers.expectList(v)?
+    Result.Ok(Val.ValInt(List.len(items)))
+
+verify builtinListLen
+    builtinListLen([Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Result.Ok(Val.ValInt(2))
+    builtinListLen([Val.ValList([])]) => Result.Ok(Val.ValInt(0))
+
+fn builtinListReverse(args: List<Val>) -> Result<Val, String>
+    ? "List.reverse(list) -> reversed list."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    items = Domain.Builtins.Helpers.expectList(v)?
+    Result.Ok(Val.ValList(List.reverse(items)))
+
+verify builtinListReverse
+    builtinListReverse([Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Result.Ok(Val.ValList([Val.ValInt(2), Val.ValInt(1)]))
+
+fn builtinListAppend(args: List<Val>) -> Result<Val, String>
+    ? "List.append(list, val) -> list with val at end."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (lstV, v) -> builtinListAppendInner(lstV, v)
+
+verify builtinListAppend
+    builtinListAppend([Val.ValList([Val.ValInt(1)]), Val.ValInt(2)]) => Result.Ok(Val.ValList([Val.ValInt(1), Val.ValInt(2)]))
+
+fn builtinListAppendInner(lstV: Val, v: Val) -> Result<Val, String>
+    ? "Inner impl of List.append."
+    items = Domain.Builtins.Helpers.expectList(lstV)?
+    Result.Ok(Val.ValList(List.append(items, v)))
+
+verify builtinListAppendInner
+    builtinListAppendInner(Val.ValList([Val.ValInt(1)]), Val.ValInt(2)) => Result.Ok(Val.ValList([Val.ValInt(1), Val.ValInt(2)]))
+
+fn builtinListGet(args: List<Val>) -> Result<Val, String>
+    ? "List.get(list, index) -> element or error."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (lstV, idxV) -> builtinListGetInner(lstV, idxV)
+
+verify builtinListGet
+    builtinListGet([Val.ValList([Val.ValInt(10), Val.ValInt(20)]), Val.ValInt(0)]) => Result.Ok(Val.ValSome(Val.ValInt(10)))
+
+fn builtinListGetInner(lstV: Val, idxV: Val) -> Result<Val, String>
+    ? "Inner impl of List.get. Returns Option (ValSome/ValNone)."
+    items = Domain.Builtins.Helpers.expectList(lstV)?
+    idx = Domain.Builtins.Helpers.expectInt(idxV)?
+    match List.get(items, idx)
+        Option.Some(v) -> Result.Ok(Val.ValSome(v))
+        Option.None -> Result.Ok(Val.ValNone)
+
+verify builtinListGetInner
+    builtinListGetInner(Val.ValList([Val.ValInt(10)]), Val.ValInt(0)) => Result.Ok(Val.ValSome(Val.ValInt(10)))
+    builtinListGetInner(Val.ValList([]), Val.ValInt(0)) => Result.Ok(Val.ValNone)
+
+fn builtinListConcat(args: List<Val>) -> Result<Val, String>
+    ? "List.concat(a, b) -> concatenated list."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (aV, bV) -> builtinListConcatInner(aV, bV)
+
+verify builtinListConcat
+    builtinListConcat([Val.ValList([Val.ValInt(1)]), Val.ValList([Val.ValInt(2)])]) => Result.Ok(Val.ValList([Val.ValInt(1), Val.ValInt(2)]))
+
+fn builtinListConcatInner(aV: Val, bV: Val) -> Result<Val, String>
+    ? "Inner impl of List.concat."
+    aItems = Domain.Builtins.Helpers.expectList(aV)?
+    bItems = Domain.Builtins.Helpers.expectList(bV)?
+    Result.Ok(Val.ValList(List.concat(aItems, bItems)))
+
+verify builtinListConcatInner
+    builtinListConcatInner(Val.ValList([Val.ValInt(1)]), Val.ValList([Val.ValInt(2)])) => Result.Ok(Val.ValList([Val.ValInt(1), Val.ValInt(2)]))
+
+fn builtinListContains(args: List<Val>) -> Result<Val, String>
+    ? "List.contains(list, value) -> Bool."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (lstV, needle) -> builtinListContainsInner(lstV, needle)
+
+verify builtinListContains
+    builtinListContains([Val.ValList([Val.ValInt(1), Val.ValInt(2)]), Val.ValInt(2)]) => Result.Ok(Val.ValBool(true))
+    builtinListContains([Val.ValList([Val.ValInt(1)]), Val.ValInt(3)]) => Result.Ok(Val.ValBool(false))
+
+fn builtinListContainsInner(lstV: Val, needle: Val) -> Result<Val, String>
+    ? "Inner impl of List.contains."
+    items = Domain.Builtins.Helpers.expectList(lstV)?
+    Result.Ok(Val.ValBool(listContainsVal(items, needle)))
+
+verify builtinListContainsInner
+    builtinListContainsInner(Val.ValList([Val.ValInt(1)]), Val.ValInt(1)) => Result.Ok(Val.ValBool(true))
+
+fn listContainsVal(items: List<Val>, needle: Val) -> Bool
+    ? "Check if a value is in a list by repr comparison."
+    match items
+        [] -> false
+        [v, ..rest] -> match Domain.Value.valRepr(v) == Domain.Value.valRepr(needle)
+            true -> true
+            false -> listContainsVal(rest, needle)
+
+verify listContainsVal
+    listContainsVal([Val.ValInt(1), Val.ValInt(2)], Val.ValInt(2)) => true
+    listContainsVal([], Val.ValInt(1)) => false
+
+fn builtinListZip(args: List<Val>) -> Result<Val, String>
+    ? "List.zip(a, b) -> list of tuples."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (aV, bV) -> builtinListZipInner(aV, bV)
+
+verify builtinListZip
+    builtinListZip([Val.ValList([Val.ValInt(1)]), Val.ValList([Val.ValInt(2)])]) => Result.Ok(Val.ValList([Val.ValTuple([Val.ValInt(1), Val.ValInt(2)])]))
+
+fn builtinListZipInner(aV: Val, bV: Val) -> Result<Val, String>
+    ? "Inner impl of List.zip."
+    aItems = Domain.Builtins.Helpers.expectList(aV)?
+    bItems = Domain.Builtins.Helpers.expectList(bV)?
+    Result.Ok(Val.ValList(zipLists(aItems, bItems)))
+
+verify builtinListZipInner
+    builtinListZipInner(Val.ValList([Val.ValInt(1)]), Val.ValList([Val.ValStr("a")])) => Result.Ok(Val.ValList([Val.ValTuple([Val.ValInt(1), Val.ValStr("a")])]))
+
+fn zipLists(a: List<Val>, b: List<Val>) -> List<Val>
+    ? "Zip two lists into list of ValTuple."
+    match a
+        [] -> []
+        [x, ..xs] -> match b
+            [] -> []
+            [y, ..ys] -> List.prepend(Val.ValTuple([x, y]), zipLists(xs, ys))
+
+verify zipLists
+    zipLists([Val.ValInt(1), Val.ValInt(2)], [Val.ValStr("a"), Val.ValStr("b")]) => [Val.ValTuple([Val.ValInt(1), Val.ValStr("a")]), Val.ValTuple([Val.ValInt(2), Val.ValStr("b")])]
+    zipLists([], [Val.ValInt(1)]) => []
+
+fn builtinListHead(args: List<Val>) -> Result<Val, String>
+    ? "List.head(list) -> Option of first element."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    items = Domain.Builtins.Helpers.expectList(v)?
+    match items
+        [] -> Result.Ok(Val.ValNone)
+        [h, ..rest] -> Result.Ok(Val.ValSome(h))
+
+verify builtinListHead
+    builtinListHead([Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Result.Ok(Val.ValSome(Val.ValInt(1)))
+    builtinListHead([Val.ValList([])]) => Result.Ok(Val.ValNone)
+
+fn builtinListTail(args: List<Val>) -> Result<Val, String>
+    ? "List.tail(list) -> Option of rest."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    items = Domain.Builtins.Helpers.expectList(v)?
+    match items
+        [] -> Result.Ok(Val.ValNone)
+        [h, ..rest] -> Result.Ok(Val.ValSome(Val.ValList(rest)))
+
+verify builtinListTail
+    builtinListTail([Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Result.Ok(Val.ValSome(Val.ValList([Val.ValInt(2)])))

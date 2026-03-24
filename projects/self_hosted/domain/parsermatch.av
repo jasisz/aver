@@ -6,15 +6,21 @@ module ParserMatch
     depends [Domain.Token, Domain.Ast]
     exposes [parsePattern, tokenAt, isToken, expect, skipNewlines, skipNewlinesAndDedents, skipTypeAnnotation, skipReturnType, skipDescAndEffects, skipBlock, parseModuleHeader, parseParamList, isBodyEndFlat, isArmStart]
 
-// ─── Token access helpers ───────────────────────────────────
-
 fn tokenAt(tokens: List<Token>, pos: Int) -> Token
     ? "Token at position, or TkEof if past end."
     Option.withDefault(List.get(tokens, pos), Token.TkEof)
 
+verify tokenAt
+    tokenAt([Token.TkPlus, Token.TkEof], 0) => Token.TkPlus
+    tokenAt([Token.TkEof], 5) => Token.TkEof
+
 fn isToken(t: Token, expected: Token) -> Bool
     ? "Check if token matches expected (structural equality via repr)."
     Domain.Token.tokenRepr(t) == Domain.Token.tokenRepr(expected)
+
+verify isToken
+    isToken(Token.TkPlus, Token.TkPlus) => true
+    isToken(Token.TkPlus, Token.TkMinus) => false
 
 fn expect(tokens: List<Token>, pos: Int, expected: Token) -> Result<Int, String>
     ? "Consume expected token, return new position."
@@ -44,7 +50,8 @@ fn skipNewlinesAndDedents(tokens: List<Token>, pos: Int) -> Int
         Token.TkDedent -> skipNewlinesAndDedents(tokens, pos + 1)
         _ -> pos
 
-// ─── Pattern parsing ────────────────────────────────────────
+verify skipNewlinesAndDedents
+    skipNewlinesAndDedents([Token.TkNewline, Token.TkDedent, Token.TkInt(1), Token.TkEof], 0) => 2
 
 fn parsePattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), String>
     ? "Parse a match pattern: INT literal, _ (wildcard), or variable."
@@ -71,6 +78,10 @@ fn parseIdentPattern(tokens: List<Token>, pos: Int, name: String) -> Result<(Pat
         true -> Result.Ok((Pattern.PatWild, pos))
         false -> parseIdentPatternMaybeConstructor(tokens, pos, name)
 
+verify parseIdentPattern
+    parseIdentPattern([Token.TkEof], 0, "_") => Result.Ok((Pattern.PatWild, 0))
+    parseIdentPattern([Token.TkEof], 0, "x") => Result.Ok((Pattern.PatVar("x"), 0))
+
 fn parseIdentPatternMaybeConstructor(tokens: List<Token>, pos: Int, name: String) -> Result<(Pattern, Int), String>
     ? "Check for dot-qualified name, constructor pattern, or plain variable."
     match tokenAt(tokens, pos)
@@ -78,11 +89,17 @@ fn parseIdentPatternMaybeConstructor(tokens: List<Token>, pos: Int, name: String
         Token.TkLParen -> parseConstructorPatternBindings(tokens, pos + 1, name, [])
         _ -> Result.Ok((Pattern.PatVar(name), pos))
 
+verify parseIdentPatternMaybeConstructor
+    parseIdentPatternMaybeConstructor([Token.TkEof], 0, "x") => Result.Ok((Pattern.PatVar("x"), 0))
+
 fn parseIdentPatternDotted(tokens: List<Token>, pos: Int, prefix: String) -> Result<(Pattern, Int), String>
     ? "After dot: read next ident and check for ( or another dot."
     match tokenAt(tokens, pos)
         Token.TkIdent(s) -> parseIdentPatternMaybeConstructor(tokens, pos + 1, prefix + "." + s)
         _ -> Result.Err("Expected identifier after '.' in pattern")
+
+verify parseIdentPatternDotted
+    parseIdentPatternDotted([Token.TkIdent("Ok"), Token.TkLParen, Token.TkIdent("x"), Token.TkRParen, Token.TkEof], 0, "Result") => Result.Ok((Pattern.PatConstructor("Result.Ok", ["x"]), 4))
 
 fn parseConstructorPatternBindings(tokens: List<Token>, pos: Int, name: String, acc: List<String>) -> Result<(Pattern, Int), String>
     ? "Parse bindings inside constructor pattern: Ctor(a, b) or Ctor()."
@@ -91,6 +108,9 @@ fn parseConstructorPatternBindings(tokens: List<Token>, pos: Int, name: String, 
         Token.TkIdent(binding) -> parseConstructorPatternTail(tokens, pos + 1, name, List.append(acc, binding))
         _ -> Result.Err("Expected binding or ')' in constructor pattern")
 
+verify parseConstructorPatternBindings
+    parseConstructorPatternBindings([Token.TkRParen, Token.TkEof], 0, "Foo", []) => Result.Ok((Pattern.PatConstructor("Foo", []), 1))
+
 fn parseConstructorPatternTail(tokens: List<Token>, pos: Int, name: String, acc: List<String>) -> Result<(Pattern, Int), String>
     ? "After binding: ',' for more or ')' to end."
     match tokenAt(tokens, pos)
@@ -98,9 +118,15 @@ fn parseConstructorPatternTail(tokens: List<Token>, pos: Int, name: String, acc:
         Token.TkRParen -> Result.Ok((Pattern.PatConstructor(name, acc), pos + 1))
         _ -> Result.Err("Expected ',' or ')' in constructor pattern")
 
+verify parseConstructorPatternTail
+    parseConstructorPatternTail([Token.TkRParen, Token.TkEof], 0, "Foo", ["x"]) => Result.Ok((Pattern.PatConstructor("Foo", ["x"]), 1))
+
 fn parseTuplePattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), String>
     ? "Parse tuple pattern: (pat, pat, ...)."
     parseTuplePatternElements(tokens, pos, [])
+
+verify parseTuplePattern
+    parseTuplePattern([Token.TkRParen, Token.TkEof], 0) => Result.Ok((Pattern.PatTuple([]), 1))
 
 fn parseTuplePatternElements(tokens: List<Token>, pos: Int, acc: List<Pattern>) -> Result<(Pattern, Int), String>
     ? "Parse elements of a tuple pattern."
@@ -108,11 +134,17 @@ fn parseTuplePatternElements(tokens: List<Token>, pos: Int, acc: List<Pattern>) 
         Token.TkRParen -> Result.Ok((Pattern.PatTuple(acc), pos + 1))
         _ -> parseTuplePatternElement(tokens, pos, acc)
 
+verify parseTuplePatternElements
+    parseTuplePatternElements([Token.TkRParen, Token.TkEof], 0, []) => Result.Ok((Pattern.PatTuple([]), 1))
+
 fn parseTuplePatternElement(tokens: List<Token>, pos: Int, acc: List<Pattern>) -> Result<(Pattern, Int), String>
     ? "Parse one pattern element and continue."
     pr = parsePattern(tokens, pos)?
     match pr
         (pat, pos2) -> parseTuplePatternElementTail(tokens, pos2, List.append(acc, pat))
+
+verify parseTuplePatternElement
+    parseTuplePatternElement([Token.TkInt(1), Token.TkRParen, Token.TkEof], 0, []) => Result.Ok((Pattern.PatTuple([Pattern.PatInt(1)]), 2))
 
 fn parseTuplePatternElementTail(tokens: List<Token>, pos: Int, acc: List<Pattern>) -> Result<(Pattern, Int), String>
     ? "After element: ',' for more or ')' to end."
@@ -121,12 +153,18 @@ fn parseTuplePatternElementTail(tokens: List<Token>, pos: Int, acc: List<Pattern
         Token.TkRParen -> Result.Ok((Pattern.PatTuple(acc), pos + 1))
         _ -> Result.Err("Expected ',' or ')' in tuple pattern")
 
+verify parseTuplePatternElementTail
+    parseTuplePatternElementTail([Token.TkRParen, Token.TkEof], 0, [Pattern.PatInt(1)]) => Result.Ok((Pattern.PatTuple([Pattern.PatInt(1)]), 1))
+
 fn parseListPattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), String>
     ? "Parse [] or [h, ..t] list pattern."
     match tokenAt(tokens, pos)
         Token.TkRBracket -> Result.Ok((Pattern.PatEmpty, pos + 1))
         Token.TkIdent(head) -> parseConsPattern(tokens, pos + 1, head)
         _ -> Result.Err("Expected identifier or ']' in list pattern")
+
+verify parseListPattern
+    parseListPattern([Token.TkRBracket, Token.TkEof], 0) => Result.Ok((Pattern.PatEmpty, 1))
 
 fn parseConsPattern(tokens: List<Token>, pos: Int, head: String) -> Result<(Pattern, Int), String>
     ? "Parse [h, ..t] after reading head ident."
@@ -137,7 +175,8 @@ fn parseConsPattern(tokens: List<Token>, pos: Int, head: String) -> Result<(Patt
         Token.TkIdent(tail) -> Result.Ok((Pattern.PatCons(head, tail), expect(tokens, pos3 + 1, Token.TkRBracket)?))
         _ -> Result.Err("Expected tail identifier in cons pattern")
 
-// ─── Skip helpers ───────────────────────────────────────────
+verify parseConsPattern
+    parseConsPattern([Token.TkComma, Token.TkDotDot, Token.TkIdent("rest"), Token.TkRBracket, Token.TkEof], 0, "h") => Result.Ok((Pattern.PatCons("h", "rest"), 4))
 
 fn skipTypeAnnotation(tokens: List<Token>, pos: Int) -> Int
     ? "Skip optional : Type annotation."
@@ -145,12 +184,19 @@ fn skipTypeAnnotation(tokens: List<Token>, pos: Int) -> Int
         Token.TkColon -> skipTypeExpr(tokens, pos + 1)
         _ -> pos
 
+verify skipTypeAnnotation
+    skipTypeAnnotation([Token.TkColon, Token.TkIdent("Int"), Token.TkEof], 0) => 2
+    skipTypeAnnotation([Token.TkEq, Token.TkEof], 0) => 0
+
 fn skipTypeExpr(tokens: List<Token>, pos: Int) -> Int
     ? "Skip a type expression (ident, possibly with generics)."
     match tokenAt(tokens, pos)
         Token.TkIdent(_) -> skipTypeExprTail(tokens, pos + 1)
         Token.TkLParen -> skipUntilClose(tokens, pos + 1, 1)
         _ -> pos
+
+verify skipTypeExpr
+    skipTypeExpr([Token.TkIdent("Int"), Token.TkEof], 0) => 1
 
 fn skipTypeExprTail(tokens: List<Token>, pos: Int) -> Int
     ? "After type ident: possibly <...> generics or .Qualified."
@@ -160,6 +206,9 @@ fn skipTypeExprTail(tokens: List<Token>, pos: Int) -> Int
             Token.TkIdent(_) -> skipTypeExprTail(tokens, pos + 2)
             _ -> pos
         _ -> pos
+
+verify skipTypeExprTail
+    skipTypeExprTail([Token.TkEof], 0) => 0
 
 fn skipUntilGt(tokens: List<Token>, pos: Int, depth: Int) -> Int
     ? "Skip until matching > for generic type params."
@@ -171,6 +220,9 @@ fn skipUntilGt(tokens: List<Token>, pos: Int, depth: Int) -> Int
             Token.TkGt -> skipUntilGt(tokens, pos + 1, depth - 1)
             _ -> skipUntilGt(tokens, pos + 1, depth)
 
+verify skipUntilGt
+    skipUntilGt([Token.TkIdent("Int"), Token.TkGt, Token.TkEof], 0, 1) => 2
+
 fn skipUntilClose(tokens: List<Token>, pos: Int, depth: Int) -> Int
     ? "Skip until matching ) for tuple types."
     match depth == 0
@@ -181,11 +233,18 @@ fn skipUntilClose(tokens: List<Token>, pos: Int, depth: Int) -> Int
             Token.TkRParen -> skipUntilClose(tokens, pos + 1, depth - 1)
             _ -> skipUntilClose(tokens, pos + 1, depth)
 
+verify skipUntilClose
+    skipUntilClose([Token.TkIdent("Int"), Token.TkRParen, Token.TkEof], 0, 1) => 2
+
 fn skipReturnType(tokens: List<Token>, pos: Int) -> Int
     ? "Skip optional -> ReturnType annotation."
     match tokenAt(tokens, pos)
         Token.TkArrow -> skipTypeExpr(tokens, pos + 1)
         _ -> pos
+
+verify skipReturnType
+    skipReturnType([Token.TkArrow, Token.TkIdent("Int"), Token.TkEof], 0) => 2
+    skipReturnType([Token.TkEof], 0) => 0
 
 fn skipDescAndEffects(tokens: List<Token>, pos: Int) -> Int
     ? "Skip optional ? description and ! [effects] lines."
@@ -194,12 +253,18 @@ fn skipDescAndEffects(tokens: List<Token>, pos: Int) -> Int
         Token.TkBang -> skipDescAndEffects(tokens, skipToNextLine(tokens, pos + 1))
         _ -> pos
 
+verify skipDescAndEffects
+    skipDescAndEffects([Token.TkEof], 0) => 0
+
 fn skipToNextLine(tokens: List<Token>, pos: Int) -> Int
     ? "Skip tokens until newline, then past it."
     match tokenAt(tokens, pos)
         Token.TkEof -> pos
         Token.TkNewline -> pos + 1
         _ -> skipToNextLine(tokens, pos + 1)
+
+verify skipToNextLine
+    skipToNextLine([Token.TkIdent("desc"), Token.TkNewline, Token.TkEof], 0) => 2
 
 fn skipBlock(tokens: List<Token>, pos: Int) -> Int
     ? "Skip tokens until matching DEDENT, or fall back to heuristic for flat streams."
@@ -208,6 +273,9 @@ fn skipBlock(tokens: List<Token>, pos: Int) -> Int
         Token.TkIndent -> skipIndentBlock(tokens, pos2 + 1, 1)
         Token.TkEof -> pos2
         _ -> skipBlockFlat(tokens, pos2)
+
+verify skipBlock
+    skipBlock([Token.TkEof], 0) => 0
 
 fn skipIndentBlock(tokens: List<Token>, pos: Int, depth: Int) -> Int
     ? "Skip until matching DEDENT."
@@ -219,12 +287,18 @@ fn skipIndentBlock(tokens: List<Token>, pos: Int, depth: Int) -> Int
             false -> skipIndentBlock(tokens, pos + 1, depth - 1)
         _ -> skipIndentBlock(tokens, pos + 1, depth)
 
+verify skipIndentBlock
+    skipIndentBlock([Token.TkIdent("x"), Token.TkDedent, Token.TkEof], 0, 1) => 2
+
 fn skipBlockFlat(tokens: List<Token>, pos: Int) -> Int
     ? "Fallback: skip until blank line, fn, or EOF."
     match tokenAt(tokens, pos)
         Token.TkEof -> pos
         Token.TkNewline -> skipBlockFlatAfterNewline(tokens, pos + 1)
         _ -> skipBlockFlat(tokens, pos + 1)
+
+verify skipBlockFlat
+    skipBlockFlat([Token.TkEof], 0) => 0
 
 fn skipBlockFlatAfterNewline(tokens: List<Token>, pos: Int) -> Int
     ? "After newline: another newline or fn/type/record/verify/EOF = end of block."
@@ -241,13 +315,17 @@ fn skipBlockFlatAfterNewline(tokens: List<Token>, pos: Int) -> Int
             _ -> skipBlockFlat(tokens, pos)
         _ -> skipBlockFlat(tokens, pos)
 
-// ─── Module header parsing ──────────────────────────────────
+verify skipBlockFlatAfterNewline
+    skipBlockFlatAfterNewline([Token.TkEof], 0) => 0
 
 fn parseModuleHeader(tokens: List<Token>, pos: Int) -> (List<String>, Int)
     ? "Parse module header: find depends list, skip everything else. Returns (deps, endPos)."
     endPos = skipBlock(tokens, pos)
     depList = findDependsInRange(tokens, pos, endPos)
     (depList, endPos)
+
+verify parseModuleHeader
+    parseModuleHeader([Token.TkEof], 0) => ([], 0)
 
 fn findDependsInRange(tokens: List<Token>, pos: Int, endPos: Int) -> List<String>
     ? "Scan token range for depends [...] and extract module names."
@@ -259,11 +337,17 @@ fn findDependsInRange(tokens: List<Token>, pos: Int, endPos: Int) -> List<String
                 false -> findDependsInRange(tokens, pos + 1, endPos)
             _ -> findDependsInRange(tokens, pos + 1, endPos)
 
+verify findDependsInRange
+    findDependsInRange([Token.TkEof], 0, 0) => []
+
 fn findDependsListAt(tokens: List<Token>, pos: Int, endPos: Int) -> List<String>
     ? "Parse [Name, Name] after depends keyword."
     match tokenAt(tokens, pos)
         Token.TkLBracket -> collectDependsNames(tokens, pos + 1, endPos, [])
         _ -> []
+
+verify findDependsListAt
+    findDependsListAt([Token.TkLBracket, Token.TkIdent("Foo"), Token.TkRBracket, Token.TkEof], 0, 4) => ["Foo"]
 
 fn collectDependsNames(tokens: List<Token>, pos: Int, endPos: Int, acc: List<String>) -> List<String>
     ? "Collect module names until ]."
@@ -274,7 +358,8 @@ fn collectDependsNames(tokens: List<Token>, pos: Int, endPos: Int, acc: List<Str
             Token.TkIdent(name) -> collectDependsNames(tokens, pos + 1, endPos, List.append(acc, name))
             _ -> collectDependsNames(tokens, pos + 1, endPos, acc)
 
-// ─── Param list parsing ─────────────────────────────────────
+verify collectDependsNames
+    collectDependsNames([Token.TkIdent("Foo"), Token.TkComma, Token.TkIdent("Bar"), Token.TkRBracket, Token.TkEof], 0, 5, []) => ["Foo", "Bar"]
 
 fn parseParamList(tokens: List<Token>, pos: Int, acc: List<String>) -> Result<(List<String>, Int), String>
     ? "Parse comma-separated parameter names until ')'."
@@ -283,6 +368,9 @@ fn parseParamList(tokens: List<Token>, pos: Int, acc: List<String>) -> Result<(L
         Token.TkIdent(name) -> parseParamListTail(tokens, skipTypeAnnotation(tokens, pos + 1), List.append(acc, name))
         _ -> Result.Err("Expected parameter name or ')'")
 
+verify parseParamList
+    parseParamList([Token.TkRParen, Token.TkEof], 0, []) => Result.Ok(([], 1))
+
 fn parseParamListTail(tokens: List<Token>, pos: Int, acc: List<String>) -> Result<(List<String>, Int), String>
     ? "After a param name: ',' for more or ')' to end."
     match tokenAt(tokens, pos)
@@ -290,7 +378,8 @@ fn parseParamListTail(tokens: List<Token>, pos: Int, acc: List<String>) -> Resul
         Token.TkComma -> parseParamList(tokens, pos + 1, acc)
         _ -> Result.Err("Expected ',' or ')' in parameter list")
 
-// ─── Utility predicates ─────────────────────────────────────
+verify parseParamListTail
+    parseParamListTail([Token.TkRParen, Token.TkEof], 0, ["x"]) => Result.Ok((["x"], 1))
 
 fn isBodyEndFlat(tokens: List<Token>, pos: Int) -> Bool
     ? "Check if we've reached the end of a function body (flat mode)."
@@ -301,6 +390,10 @@ fn isBodyEndFlat(tokens: List<Token>, pos: Int) -> Bool
         Token.TkNewline -> true
         Token.TkDedent -> true
         _ -> false
+
+verify isBodyEndFlat
+    isBodyEndFlat([Token.TkEof], 0) => true
+    isBodyEndFlat([Token.TkInt(1), Token.TkEof], 0) => false
 
 fn isArmStart(tokens: List<Token>, pos: Int) -> Bool
     ? "Check if position looks like a match arm start."
@@ -315,4 +408,6 @@ fn isArmStart(tokens: List<Token>, pos: Int) -> Bool
         Token.TkIdent(_) -> true
         _ -> false
 
-// ─── Verify ─────────────────────────────────────────────────
+verify isArmStart
+    isArmStart([Token.TkInt(1), Token.TkEof], 0) => true
+    isArmStart([Token.TkEof], 0) => false

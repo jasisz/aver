@@ -25,6 +25,11 @@ fn valListRepr(items: List<Val>, acc: String, first: Bool) -> String
             true -> valListRepr(rest, valRepr(v), false)
             false -> valListRepr(rest, acc + ", " + valRepr(v), false)
 
+verify valListRepr
+    valListRepr([], "", true) => "[]"
+    valListRepr([Val.ValInt(1), Val.ValInt(2)], "", true) => "[1, 2]"
+    valListRepr([Val.ValStr("a")], "", true) => "[a]"
+
 fn valRepr(v: Val) -> String
     ? "Display representation of a runtime value."
     match v
@@ -46,12 +51,24 @@ verify valRepr
     valRepr(Val.ValStr("hello")) => "hello"
     valRepr(Val.ValBool(true)) => "true"
     valRepr(Val.ValUnit) => "()"
+    valRepr(Val.ValList([Val.ValInt(1)])) => "[1]"
+    valRepr(Val.ValOk(Val.ValInt(5))) => "Result.Ok(5)"
+    valRepr(Val.ValErr(Val.ValStr("e"))) => "Result.Err(e)"
+    valRepr(Val.ValNone) => "Option.None"
+    valRepr(Val.ValSome(Val.ValInt(3))) => "Option.Some(3)"
+    valRepr(Val.ValTuple([Val.ValInt(1), Val.ValInt(2)])) => "(1, 2)"
+    valRepr(Val.ValRecord("User", [("name", Val.ValStr("Alice"))])) => "User(...)"
+    valRepr(Val.ValVariant("Token", "TkPlus", [])) => "Token.TkPlus"
 
 fn valVariantRepr(typeName: String, ctorName: String, fields: List<Val>) -> String
     ? "Display a variant value."
     match fields
         [] -> "{typeName}.{ctorName}"
         _ -> "{typeName}.{ctorName}({valFieldsRepr(fields, "", true)})"
+
+verify valVariantRepr
+    valVariantRepr("Token", "TkPlus", []) => "Token.TkPlus"
+    valVariantRepr("Expr", "ExprInt", [Val.ValInt(5)]) => "Expr.ExprInt(5)"
 
 fn valFieldsRepr(items: List<Val>, acc: String, first: Bool) -> String
     ? "Build comma-separated repr of variant fields."
@@ -60,3 +77,7 @@ fn valFieldsRepr(items: List<Val>, acc: String, first: Bool) -> String
         [v, ..rest] -> match first
             true -> valFieldsRepr(rest, valRepr(v), false)
             false -> valFieldsRepr(rest, acc + ", " + valRepr(v), false)
+
+verify valFieldsRepr
+    valFieldsRepr([], "", true) => ""
+    valFieldsRepr([Val.ValInt(1), Val.ValStr("hi")], "", true) => "1, hi"

@@ -1,0 +1,68 @@
+module Wrappers
+    depends [Domain.Value, Domain.Builtins.Helpers]
+    intent = "Result and Option constructor and combinator builtins."
+    exposes [call]
+
+fn call(name: String, args: List<Val>) -> Result<Val, String>
+    ? "Dispatch Result.* and Option.* builtins."
+    match name
+        "Result.Ok" -> builtinResultOk(args)
+        "Result.Err" -> builtinResultErr(args)
+        "Result.withDefault" -> builtinResultWithDefault(args)
+        "Option.Some" -> builtinOptionSome(args)
+        "Option.withDefault" -> builtinOptionWithDefault(args)
+        _ -> Result.Err("unknown wrapper builtin: {name}")
+
+verify call
+    call("Result.Ok", [Val.ValInt(5)]) => Result.Ok(Val.ValOk(Val.ValInt(5)))
+    call("Option.Some", [Val.ValInt(7)]) => Result.Ok(Val.ValSome(Val.ValInt(7)))
+
+fn builtinResultOk(args: List<Val>) -> Result<Val, String>
+    ? "Result.Ok(value) -> wrapped Ok value."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    Result.Ok(Val.ValOk(v))
+
+verify builtinResultOk
+    builtinResultOk([Val.ValInt(1)]) => Result.Ok(Val.ValOk(Val.ValInt(1)))
+
+fn builtinResultErr(args: List<Val>) -> Result<Val, String>
+    ? "Result.Err(value) -> wrapped Err value."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    Result.Ok(Val.ValErr(v))
+
+verify builtinResultErr
+    builtinResultErr([Val.ValStr("fail")]) => Result.Ok(Val.ValErr(Val.ValStr("fail")))
+
+fn builtinResultWithDefault(args: List<Val>) -> Result<Val, String>
+    ? "Result.withDefault(result, default) -> unwrap Ok or return default."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (resV, defV) -> match resV
+            Val.ValOk(inner) -> Result.Ok(inner)
+            Val.ValErr(_) -> Result.Ok(defV)
+            _ -> Result.Err("Result.withDefault requires Result value")
+
+verify builtinResultWithDefault
+    builtinResultWithDefault([Val.ValOk(Val.ValInt(3)), Val.ValInt(0)]) => Result.Ok(Val.ValInt(3))
+    builtinResultWithDefault([Val.ValErr(Val.ValStr("x")), Val.ValInt(0)]) => Result.Ok(Val.ValInt(0))
+
+fn builtinOptionSome(args: List<Val>) -> Result<Val, String>
+    ? "Option.Some(value) -> wrapped Some value."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    Result.Ok(Val.ValSome(v))
+
+verify builtinOptionSome
+    builtinOptionSome([Val.ValInt(7)]) => Result.Ok(Val.ValSome(Val.ValInt(7)))
+
+fn builtinOptionWithDefault(args: List<Val>) -> Result<Val, String>
+    ? "Option.withDefault(option, default) -> unwrap Some or return default."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (optV, defV) -> match optV
+            Val.ValSome(inner) -> Result.Ok(inner)
+            Val.ValNone -> Result.Ok(defV)
+            _ -> Result.Err("Option.withDefault requires Option value")
+
+verify builtinOptionWithDefault
+    builtinOptionWithDefault([Val.ValSome(Val.ValInt(3)), Val.ValInt(0)]) => Result.Ok(Val.ValInt(3))
+    builtinOptionWithDefault([Val.ValNone, Val.ValInt(0)]) => Result.Ok(Val.ValInt(0))
