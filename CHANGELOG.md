@@ -2,6 +2,11 @@
 
 All notable changes to Aver are documented here.
 
+## Unreleased
+
+### Added
+- **Namespace effect shorthand**: `! [Disk]` covers all `Disk.*` effects (`Disk.readText`, `Disk.writeText`, etc.). Granular effects still work: `! [Disk.readText]`. `aver check` suggests narrowing when a namespace shorthand could be more specific.
+
 ## 0.6.1
 
 Highlights:

@@ -1791,13 +1791,14 @@ fn valid_granular_effect_http_get() {
 }
 
 #[test]
-fn parent_effect_does_not_cover_child() {
+fn parent_effect_covers_child() {
+    // Namespace shorthand: ! [Http] covers Http.get
     let src = concat!(
         "fn fetch(url: String) -> Result<HttpResponse, String>\n",
         "    ! [Http]\n",
         "    Http.get(url)\n",
     );
-    assert_error_containing(src, "has effect 'Http.get'");
+    assert_no_errors(src);
 }
 
 #[test]

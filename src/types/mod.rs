@@ -553,7 +553,9 @@ mod tests {
             Box::new(Type::Int),
             vec!["Http".to_string()],
         );
-        assert!(!child.compatible(&parent));
+        // Http.get fits where Http is expected (subset of namespace)
+        assert!(child.compatible(&parent));
+        // Http does NOT fit where Http.get is expected (might use Http.post)
         assert!(!parent.compatible(&child));
     }
 
