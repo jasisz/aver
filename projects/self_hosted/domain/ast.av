@@ -6,6 +6,7 @@ module Ast
 
 type Expr
     ExprInt(Int)
+    ExprFloat(Float)
     ExprStr(String)
     ExprBool(Bool)
     ExprVar(String)
@@ -34,6 +35,7 @@ record MatchArm
 
 type Pattern
     PatInt(Int)
+    PatFloat(Float)
     PatBool(Bool)
     PatStr(String)
     PatEmpty

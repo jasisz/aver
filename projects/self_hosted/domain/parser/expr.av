@@ -139,6 +139,7 @@ fn parseAtom(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
     match t
         Token.TkMinus -> parseNegAtom(tokens, pos + 1)
         Token.TkInt(n) -> Result.Ok((Expr.ExprInt(n), pos + 1))
+        Token.TkFloat(f) -> Result.Ok((Expr.ExprFloat(f), pos + 1))
         Token.TkStr(s) -> parseStringOrInterp(tokens, pos + 1, s)
         Token.TkTrue -> Result.Ok((Expr.ExprBool(true), pos + 1))
         Token.TkFalse -> Result.Ok((Expr.ExprBool(false), pos + 1))
@@ -150,6 +151,7 @@ fn parseAtom(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
 
 verify parseAtom
     parseAtom([Token.TkInt(42), Token.TkEof], 0) => Result.Ok((Expr.ExprInt(42), 1))
+    parseAtom([Token.TkFloat(3.14), Token.TkEof], 0) => Result.Ok((Expr.ExprFloat(3.14), 1))
     parseAtom([Token.TkTrue, Token.TkEof], 0) => Result.Ok((Expr.ExprBool(true), 1))
     parseAtom([Token.TkStr("hi"), Token.TkEof], 0) => Result.Ok((Expr.ExprStr("hi"), 1))
 

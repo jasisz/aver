@@ -5,6 +5,7 @@ module Value
 
 type Val
     ValInt(Int)
+    ValFloat(Float)
     ValStr(String)
     ValBool(Bool)
     ValList(List<Val>)
@@ -34,6 +35,7 @@ fn valRepr(v: Val) -> String
     ? "Display representation of a runtime value."
     match v
         Val.ValInt(n) -> Int.toString(n)
+        Val.ValFloat(f) -> Float.toString(f)
         Val.ValStr(s) -> s
         Val.ValBool(b) -> String.fromBool(b)
         Val.ValList(items) -> valListRepr(items, "", true)
@@ -57,6 +59,7 @@ verify valRepr
     valRepr(Val.ValNone) => "Option.None"
     valRepr(Val.ValSome(Val.ValInt(3))) => "Option.Some(3)"
     valRepr(Val.ValTuple([Val.ValInt(1), Val.ValInt(2)])) => "(1, 2)"
+    valRepr(Val.ValFloat(3.14)) => "3.14"
     valRepr(Val.ValRecord("User", [("name", Val.ValStr("Alice"))])) => "User(...)"
     valRepr(Val.ValVariant("Token", "TkPlus", [])) => "Token.TkPlus"
 

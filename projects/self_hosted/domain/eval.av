@@ -56,6 +56,7 @@ fn evalExpr(expr: Expr, env: Map<String, Val>, fns: Map<String, FnDef>) -> Resul
     ! [Args.get, Console.print, Disk.readText]
     match expr
         Expr.ExprInt(n) -> Result.Ok(Val.ValInt(n))
+        Expr.ExprFloat(f) -> Result.Ok(Val.ValFloat(f))
         Expr.ExprStr(s) -> Result.Ok(Val.ValStr(s))
         Expr.ExprBool(b) -> Result.Ok(Val.ValBool(b))
         Expr.ExprVar(name) -> evalVar(name, env)
@@ -137,6 +138,21 @@ verify applyBinop
     applyBinop(10, 2, "div") => Result.Ok(Val.ValInt(5))
     applyBinop(10, 0, "div") => Result.Err("division by zero")
 
+fn applyBinopFloat(x: Float, y: Float, op: String) -> Result<Val, String>
+    ? "Apply a binary operation to two floats."
+    match op
+        "add" -> Result.Ok(Val.ValFloat(x + y))
+        "sub" -> Result.Ok(Val.ValFloat(x - y))
+        "mul" -> Result.Ok(Val.ValFloat(x * y))
+        "div" -> Result.Ok(Val.ValFloat(x / y))
+        _ -> Result.Err("unknown op: " + op)
+
+verify applyBinopFloat
+    applyBinopFloat(1.5, 2.5, "add") => Result.Ok(Val.ValFloat(4.0))
+    applyBinopFloat(5.0, 3.0, "sub") => Result.Ok(Val.ValFloat(2.0))
+    applyBinopFloat(2.0, 3.0, "mul") => Result.Ok(Val.ValFloat(6.0))
+    applyBinopFloat(10.0, 4.0, "div") => Result.Ok(Val.ValFloat(2.5))
+
 fn applyCmp(x: Int, y: Int, op: String) -> Result<Val, String>
     ? "Apply a comparison operation to two integers."
     match op
@@ -153,10 +169,31 @@ verify applyCmp
     applyCmp(1, 2, "eq") => Result.Ok(Val.ValBool(false))
     applyCmp(1, 2, "lt") => Result.Ok(Val.ValBool(true))
 
+fn applyCmpFloat(x: Float, y: Float, op: String) -> Result<Val, String>
+    ? "Apply a comparison to two floats."
+    match op
+        "eq" -> Result.Ok(Val.ValBool(x == y))
+        "neq" -> Result.Ok(Val.ValBool(x != y))
+        "lt" -> Result.Ok(Val.ValBool(x < y))
+        "gt" -> Result.Ok(Val.ValBool(x > y))
+        "lte" -> Result.Ok(Val.ValBool(x <= y))
+        "gte" -> Result.Ok(Val.ValBool(x >= y))
+        _ -> Result.Err("unknown cmp: " + op)
+
+verify applyCmpFloat
+    applyCmpFloat(1.0, 1.0, "eq") => Result.Ok(Val.ValBool(true))
+    applyCmpFloat(1.0, 2.0, "lt") => Result.Ok(Val.ValBool(true))
+    applyCmpFloat(3.0, 2.0, "gt") => Result.Ok(Val.ValBool(true))
+    applyCmpFloat(1.0, 1.0, "lte") => Result.Ok(Val.ValBool(true))
+    applyCmpFloat(1.0, 2.0, "neq") => Result.Ok(Val.ValBool(true))
+
 fn evalBinopVals(va: Val, vb: Val, op: String) -> Result<Val, String>
     ? "Apply binary op to two evaluated values."
     match (va, vb)
         (Val.ValInt(x), Val.ValInt(y)) -> applyBinop(x, y, op)
+        (Val.ValFloat(x), Val.ValFloat(y)) -> applyBinopFloat(x, y, op)
+        (Val.ValInt(x), Val.ValFloat(y)) -> applyBinopFloat(Int.toFloat(x), y, op)
+        (Val.ValFloat(x), Val.ValInt(y)) -> applyBinopFloat(x, Int.toFloat(y), op)
         (Val.ValStr(x), Val.ValStr(y)) -> match op == "add"
             true -> Result.Ok(Val.ValStr(x + y))
             false -> Result.Err("strings only support +")
@@ -164,18 +201,27 @@ fn evalBinopVals(va: Val, vb: Val, op: String) -> Result<Val, String>
 
 verify evalBinopVals
     evalBinopVals(Val.ValInt(2), Val.ValInt(3), "add") => Result.Ok(Val.ValInt(5))
+    evalBinopVals(Val.ValFloat(1.5), Val.ValFloat(2.5), "add") => Result.Ok(Val.ValFloat(4.0))
+    evalBinopVals(Val.ValInt(1), Val.ValFloat(2.5), "add") => Result.Ok(Val.ValFloat(3.5))
+    evalBinopVals(Val.ValFloat(3.0), Val.ValInt(2), "mul") => Result.Ok(Val.ValFloat(6.0))
     evalBinopVals(Val.ValStr("a"), Val.ValStr("b"), "add") => Result.Ok(Val.ValStr("ab"))
 
 fn evalCmpVals(va: Val, vb: Val, op: String) -> Result<Val, String>
-    ? "Apply comparison to two evaluated values (Int or String)."
+    ? "Apply comparison to two evaluated values (Int, Float, or String)."
     match (va, vb)
         (Val.ValInt(x), Val.ValInt(y)) -> applyCmp(x, y, op)
+        (Val.ValFloat(x), Val.ValFloat(y)) -> applyCmpFloat(x, y, op)
+        (Val.ValInt(x), Val.ValFloat(y)) -> applyCmpFloat(Int.toFloat(x), y, op)
+        (Val.ValFloat(x), Val.ValInt(y)) -> applyCmpFloat(x, Int.toFloat(y), op)
         (Val.ValStr(x), Val.ValStr(y)) -> applyStrCmp(x, y, op)
         (Val.ValBool(x), Val.ValBool(y)) -> applyBoolCmp(x, y, op)
         _ -> evalCmpRepr(va, vb, op)
 
 verify evalCmpVals
     evalCmpVals(Val.ValInt(1), Val.ValInt(1), "eq") => Result.Ok(Val.ValBool(true))
+    evalCmpVals(Val.ValFloat(1.5), Val.ValFloat(1.5), "eq") => Result.Ok(Val.ValBool(true))
+    evalCmpVals(Val.ValFloat(1.0), Val.ValFloat(2.0), "lt") => Result.Ok(Val.ValBool(true))
+    evalCmpVals(Val.ValInt(1), Val.ValFloat(1.0), "eq") => Result.Ok(Val.ValBool(true))
     evalCmpVals(Val.ValStr("a"), Val.ValStr("a"), "eq") => Result.Ok(Val.ValBool(true))
     evalCmpVals(Val.ValBool(true), Val.ValBool(false), "eq") => Result.Ok(Val.ValBool(false))
 

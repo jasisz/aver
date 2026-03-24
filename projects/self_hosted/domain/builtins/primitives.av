@@ -1,13 +1,14 @@
 module Primitives
     depends [Domain.Value, Domain.Builtins.Helpers]
-    intent = "Int, String, and Char namespace builtins."
-    exposes [callInt, callString, callChar]
+    intent = "Int, String, Float, and Char namespace builtins."
+    exposes [callInt, callString, callFloat, callChar]
 
 fn callInt(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch Int.* builtins."
     match name
         "Int.toString" -> builtinIntToString(args)
         "Int.toFloat" -> builtinIntToFloat(args)
+        "Int.fromString" -> builtinIntFromString(args)
         "Int.abs" -> builtinIntAbs(args)
         "Int.mod" -> builtinIntMod(args)
         _ -> Result.Err("unknown int builtin: {name}")
@@ -21,6 +22,7 @@ fn callString(name: String, args: List<Val>) -> Result<Val, String>
     match name
         "String.len" -> builtinStringLen(args)
         "String.charAt" -> builtinStringCharAt(args)
+        "String.chars" -> builtinStringChars(args)
         "String.join" -> builtinStringJoin(args)
         "String.slice" -> builtinStringSlice(args)
         "String.fromBool" -> builtinStringFromBool(args)
@@ -43,13 +45,13 @@ verify callChar
     callChar("Char.fromCode", [Val.ValInt(65)]) => Result.Ok(Val.ValSome(Val.ValStr("A")))
 
 fn builtinIntToFloat(args: List<Val>) -> Result<Val, String>
-    ? "Int.toFloat(n) -> float."
+    ? "Int.toFloat(n) -> Float value."
     v = Domain.Builtins.Helpers.oneArg(args)?
     n = Domain.Builtins.Helpers.expectInt(v)?
-    Result.Ok(Val.ValStr(Int.toString(n) + ".0"))
+    Result.Ok(Val.ValFloat(Int.toFloat(n)))
 
 verify builtinIntToFloat
-    builtinIntToFloat([Val.ValInt(3)]) => Result.Ok(Val.ValStr("3.0"))
+    builtinIntToFloat([Val.ValInt(3)]) => Result.Ok(Val.ValFloat(3.0))
 
 fn builtinIntToString(args: List<Val>) -> Result<Val, String>
     ? "Int.toString(n) -> string representation."
@@ -251,3 +253,55 @@ fn builtinCharFromCode(args: List<Val>) -> Result<Val, String>
 
 verify builtinCharFromCode
     builtinCharFromCode([Val.ValInt(65)]) => Result.Ok(Val.ValSome(Val.ValStr("A")))
+
+fn builtinIntFromString(args: List<Val>) -> Result<Val, String>
+    ? "Int.fromString(s) -> Result<Int, String>."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    s = Domain.Builtins.Helpers.expectStr(v)?
+    match Int.fromString(s)
+        Result.Ok(n) -> Result.Ok(Val.ValOk(Val.ValInt(n)))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
+
+verify builtinIntFromString
+    builtinIntFromString([Val.ValStr("42")]) => Result.Ok(Val.ValOk(Val.ValInt(42)))
+
+fn builtinStringChars(args: List<Val>) -> Result<Val, String>
+    ? "String.chars(s) -> list of single-character strings."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    s = Domain.Builtins.Helpers.expectStr(v)?
+    Result.Ok(Val.ValList(stringToCharList(s, 0, String.len(s), [])))
+
+verify builtinStringChars
+    builtinStringChars([Val.ValStr("hi")]) => Result.Ok(Val.ValList([Val.ValStr("h"), Val.ValStr("i")]))
+    builtinStringChars([Val.ValStr("")]) => Result.Ok(Val.ValList([]))
+
+fn stringToCharList(s: String, pos: Int, total: Int, acc: List<Val>) -> List<Val>
+    ? "Split string into list of ValStr chars."
+    match pos >= total
+        true -> List.reverse(acc)
+        false -> match String.charAt(s, pos)
+            Option.Some(c) -> stringToCharList(s, pos + 1, total, List.prepend(Val.ValStr(c), acc))
+            Option.None -> List.reverse(acc)
+
+verify stringToCharList
+    stringToCharList("ab", 0, 2, []) => [Val.ValStr("a"), Val.ValStr("b")]
+    stringToCharList("", 0, 0, []) => []
+
+fn callFloat(name: String, args: List<Val>) -> Result<Val, String>
+    ? "Dispatch Float.* builtins."
+    match name
+        "Float.toString" -> builtinFloatToString(args)
+        _ -> Result.Err("unknown float builtin: {name}")
+
+verify callFloat
+    callFloat("Float.toString", [Val.ValFloat(3.14)]) => Result.Ok(Val.ValStr("3.14"))
+
+fn builtinFloatToString(args: List<Val>) -> Result<Val, String>
+    ? "Float.toString(f) -> string representation."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    match v
+        Val.ValFloat(f) -> Result.Ok(Val.ValStr(Float.toString(f)))
+        _ -> Result.Err("Float.toString requires Float")
+
+verify builtinFloatToString
+    builtinFloatToString([Val.ValFloat(3.14)]) => Result.Ok(Val.ValStr("3.14"))

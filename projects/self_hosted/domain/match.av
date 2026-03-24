@@ -10,6 +10,7 @@ fn matchPattern(pat: Pattern, v: Val) -> Result<List<(String, Val)>, String>
     match pat
         Pattern.PatWild -> Result.Ok([])
         Pattern.PatInt(n) -> matchPatInt(n, v)
+        Pattern.PatFloat(f) -> matchPatFloat(f, v)
         Pattern.PatBool(b) -> matchPatBool(b, v)
         Pattern.PatStr(s) -> matchPatStr(s, v)
         Pattern.PatEmpty -> matchPatEmpty(v)
@@ -22,6 +23,8 @@ verify matchPattern
     matchPattern(Pattern.PatWild, Val.ValInt(42)) => Result.Ok([])
     matchPattern(Pattern.PatInt(5), Val.ValInt(5)) => Result.Ok([])
     matchPattern(Pattern.PatInt(5), Val.ValInt(6)) => Result.Err("no match")
+    matchPattern(Pattern.PatFloat(3.14), Val.ValFloat(3.14)) => Result.Ok([])
+    matchPattern(Pattern.PatFloat(3.14), Val.ValFloat(2.0)) => Result.Err("no match")
     matchPattern(Pattern.PatBool(true), Val.ValBool(true)) => Result.Ok([])
     matchPattern(Pattern.PatBool(true), Val.ValBool(false)) => Result.Err("no match")
     matchPattern(Pattern.PatVar("x"), Val.ValInt(42)) => Result.Ok([("x", Val.ValInt(42))])
@@ -38,6 +41,19 @@ verify matchPatInt
     matchPatInt(5, Val.ValInt(5)) => Result.Ok([])
     matchPatInt(5, Val.ValInt(6)) => Result.Err("no match")
     matchPatInt(3, Val.ValBool(true)) => Result.Err("no match")
+
+fn matchPatFloat(f: Float, v: Val) -> Result<List<(String, Val)>, String>
+    ? "Match a PatFloat pattern against a value."
+    match v
+        Val.ValFloat(vf) -> match f == vf
+            true -> Result.Ok([])
+            false -> Result.Err("no match")
+        _ -> Result.Err("no match")
+
+verify matchPatFloat
+    matchPatFloat(3.14, Val.ValFloat(3.14)) => Result.Ok([])
+    matchPatFloat(3.14, Val.ValFloat(2.0)) => Result.Err("no match")
+    matchPatFloat(1.0, Val.ValInt(1)) => Result.Err("no match")
 
 fn matchPatBool(b: Bool, v: Val) -> Result<List<(String, Val)>, String>
     ? "Match a PatBool pattern against a value."

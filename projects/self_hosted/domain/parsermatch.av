@@ -58,6 +58,7 @@ fn parsePattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), String>
     t = tokenAt(tokens, pos)
     match t
         Token.TkInt(n) -> Result.Ok((Pattern.PatInt(n), pos + 1))
+        Token.TkFloat(f) -> Result.Ok((Pattern.PatFloat(f), pos + 1))
         Token.TkStr(s) -> Result.Ok((Pattern.PatStr(s), pos + 1))
         Token.TkTrue -> Result.Ok((Pattern.PatBool(true), pos + 1))
         Token.TkFalse -> Result.Ok((Pattern.PatBool(false), pos + 1))
@@ -400,6 +401,7 @@ fn isArmStart(tokens: List<Token>, pos: Int) -> Bool
     t = tokenAt(tokens, pos)
     match t
         Token.TkInt(_) -> true
+        Token.TkFloat(_) -> true
         Token.TkStr(_) -> true
         Token.TkTrue -> true
         Token.TkFalse -> true

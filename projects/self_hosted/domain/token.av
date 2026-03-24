@@ -6,6 +6,7 @@ module Token
 
 type Token
     TkInt(Int)
+    TkFloat(Float)
     TkStr(String)
     TkIdent(String)
     TkTrue
@@ -46,6 +47,7 @@ fn tokenRepr(t: Token) -> String
     ? "Debug representation of a token."
     match t
         Token.TkInt(n) -> "Int({n})"
+        Token.TkFloat(f) -> "Float"
         Token.TkStr(s) -> "Str({s})"
         Token.TkIdent(s) -> "Ident({s})"
         Token.TkTrue -> "True"
@@ -120,3 +122,4 @@ verify tokenRepr
     tokenRepr(Token.TkMatch) => "Match"
     tokenRepr(Token.TkPlus) => "Plus"
     tokenRepr(Token.TkInt(0)) => "Int(0)"
+    tokenRepr(Token.TkFloat(3.14)) => "Float"

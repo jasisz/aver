@@ -8,10 +8,65 @@ module Lexer
 fn tokenizeDigit(src: String, pos: Int) -> List<Token>
     ? "Tokenize starting from a digit character."
     match Domain.Lexer.Chars.readNumber(src, pos, 0)
-        (n, newPos) -> List.prepend(Token.TkInt(n), tokenize(src, newPos))
+        (n, newPos) -> tokenizeAfterInt(src, newPos, n)
 
 verify tokenizeDigit
     tokenizeDigit("42", 0) => [Token.TkInt(42), Token.TkEof]
+    tokenizeDigit("3.14", 0) => [Token.TkFloat(3.14), Token.TkEof]
+
+fn tokenizeAfterInt(src: String, pos: Int, n: Int) -> List<Token>
+    ? "After reading integer part, check for decimal point to form a float."
+    match String.charAt(src, pos)
+        Option.Some(c) -> match c == "."
+            true -> tokenizeAfterIntDot(src, pos, n)
+            false -> List.prepend(Token.TkInt(n), tokenize(src, pos))
+        Option.None -> List.prepend(Token.TkInt(n), tokenize(src, pos))
+
+verify tokenizeAfterInt
+    tokenizeAfterInt("", 0, 42) => [Token.TkInt(42), Token.TkEof]
+    tokenizeAfterInt(".5", 0, 3) => [Token.TkFloat(3.5), Token.TkEof]
+    tokenizeAfterInt(".x", 0, 3) => [Token.TkInt(3), Token.TkDot, Token.TkIdent("x"), Token.TkEof]
+
+fn tokenizeAfterIntDot(src: String, pos: Int, n: Int) -> List<Token>
+    ? "After integer and dot, check if next char is digit (float) or not (int + dot)."
+    match String.charAt(src, pos + 1)
+        Option.Some(d) -> match Domain.Lexer.Chars.isDigit(d)
+            true -> tokenizeFloat(src, pos + 1, n)
+            false -> List.prepend(Token.TkInt(n), tokenize(src, pos))
+        Option.None -> List.prepend(Token.TkInt(n), tokenize(src, pos))
+
+verify tokenizeAfterIntDot
+    tokenizeAfterIntDot(".5x", 0, 3) => [Token.TkFloat(3.5), Token.TkIdent("x"), Token.TkEof]
+    tokenizeAfterIntDot(".x", 0, 3) => [Token.TkInt(3), Token.TkDot, Token.TkIdent("x"), Token.TkEof]
+
+fn tokenizeFloat(src: String, pos: Int, intPart: Int) -> List<Token>
+    ? "Read decimal digits and build float token."
+    match Domain.Lexer.Chars.readNumber(src, pos, 0)
+        (decPart, newPos) -> buildFloat(src, newPos, intPart, decPart, newPos - pos)
+
+verify tokenizeFloat
+    tokenizeFloat("14", 0, 3) => [Token.TkFloat(3.14), Token.TkEof]
+    tokenizeFloat("0", 0, 1) => [Token.TkFloat(1.0), Token.TkEof]
+
+fn buildFloat(src: String, pos: Int, intPart: Int, decPart: Int, decDigits: Int) -> List<Token>
+    ? "Construct float from integer and decimal parts."
+    f = Int.toFloat(intPart) + Int.toFloat(decPart) / pow10(decDigits)
+    List.prepend(Token.TkFloat(f), tokenize(src, pos))
+
+verify buildFloat
+    buildFloat("", 0, 3, 14, 2) => [Token.TkFloat(3.14), Token.TkEof]
+
+fn pow10(n: Int) -> Float
+    ? "Compute 10^n as Float."
+    match n <= 0
+        true -> 1.0
+        false -> 10.0 * pow10(n - 1)
+
+verify pow10
+    pow10(0) => 1.0
+    pow10(1) => 10.0
+    pow10(2) => 100.0
+    pow10(3) => 1000.0
 
 fn tokenizeAlpha(src: String, pos: Int) -> List<Token>
     ? "Tokenize starting from an alpha character."
@@ -401,6 +456,8 @@ verify lex
     lex("fn") => [Token.TkFn, Token.TkEof]
     lex("match") => [Token.TkMatch, Token.TkEof]
     lex("") => [Token.TkEof]
+    lex("3.14") => [Token.TkFloat(3.14), Token.TkEof]
+    lex("0.5") => [Token.TkFloat(0.5), Token.TkEof]
 
 fn processIndentation(tokens: List<Token>, stack: List<Int>) -> List<Token>
     ? "Convert raw indent markers (negative TkInt after TkNewline) into INDENT/DEDENT tokens."

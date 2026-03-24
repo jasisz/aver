@@ -14,7 +14,9 @@ fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
             true -> Domain.Builtins.Primitives.callInt(name, args)
             false -> match String.startsWith(name, "String.")
                 true -> Domain.Builtins.Primitives.callString(name, args)
-                false -> callBuiltinOther(name, args)
+                false -> match String.startsWith(name, "Float.")
+                    true -> Domain.Builtins.Primitives.callFloat(name, args)
+                    false -> callBuiltinOther(name, args)
 
 verify callBuiltin
     callBuiltin("List.len", [Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Result.Ok(Val.ValInt(2))
