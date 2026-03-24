@@ -88,10 +88,14 @@ fn parseIdentPatternMaybeConstructor(tokens: List<Token>, pos: Int, name: String
     match tokenAt(tokens, pos)
         Token.TkDot -> parseIdentPatternDotted(tokens, pos + 1, name)
         Token.TkLParen -> parseConstructorPatternBindings(tokens, pos + 1, name, [])
-        _ -> Result.Ok((Pattern.PatVar(name), pos))
+        _ -> match String.contains(name, ".")
+            true -> Result.Ok((Pattern.PatConstructor(name, []), pos))
+            false -> Result.Ok((Pattern.PatVar(name), pos))
 
 verify parseIdentPatternMaybeConstructor
     parseIdentPatternMaybeConstructor([Token.TkEof], 0, "x") => Result.Ok((Pattern.PatVar("x"), 0))
+    parseIdentPatternMaybeConstructor([Token.TkEof], 0, "Option.None") => Result.Ok((Pattern.PatConstructor("Option.None", []), 0))
+    parseIdentPatternMaybeConstructor([Token.TkEof], 0, "Token.TkEof") => Result.Ok((Pattern.PatConstructor("Token.TkEof", []), 0))
 
 fn parseIdentPatternDotted(tokens: List<Token>, pos: Int, prefix: String) -> Result<(Pattern, Int), String>
     ? "After dot: read next ident and check for ( or another dot."

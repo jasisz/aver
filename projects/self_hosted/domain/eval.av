@@ -226,15 +226,20 @@ verify evalCmpVals
     evalCmpVals(Val.ValBool(true), Val.ValBool(false), "eq") => Result.Ok(Val.ValBool(false))
 
 fn applyStrCmp(x: String, y: String, op: String) -> Result<Val, String>
-    ? "String comparison: only eq and neq supported."
+    ? "String comparison: all operators supported."
     match op
         "eq" -> Result.Ok(Val.ValBool(x == y))
         "neq" -> Result.Ok(Val.ValBool(x != y))
-        _ -> Result.Err("strings only support == and !=")
+        "lt" -> Result.Ok(Val.ValBool(x < y))
+        "gt" -> Result.Ok(Val.ValBool(x > y))
+        "lte" -> Result.Ok(Val.ValBool(x <= y))
+        "gte" -> Result.Ok(Val.ValBool(x >= y))
+        _ -> Result.Err("unknown cmp: " + op)
 
 verify applyStrCmp
     applyStrCmp("a", "a", "eq") => Result.Ok(Val.ValBool(true))
-    applyStrCmp("a", "b", "neq") => Result.Ok(Val.ValBool(true))
+    applyStrCmp("a", "b", "lt") => Result.Ok(Val.ValBool(true))
+    applyStrCmp("b", "a", "gt") => Result.Ok(Val.ValBool(true))
 
 fn applyBoolCmp(x: Bool, y: Bool, op: String) -> Result<Val, String>
     ? "Bool comparison: eq and neq."
