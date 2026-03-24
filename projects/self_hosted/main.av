@@ -7,14 +7,14 @@ module SelfHosted
 
 fn run(source: String) -> Result<Val, String>
     ? "Lex, parse, and evaluate an Aver source string (no module loading)."
-    ! [Args, Console, Disk, Random, Terminal, Time]
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     tokens = Domain.Lexer.lex(source)
     prog = Domain.Parser.parse(tokens)?
     Domain.Eval.evalProgram(prog)
 
 fn runWithModules(source: String, moduleRoot: String) -> Result<Val, String>
     ? "Lex, parse, load modules, and evaluate."
-    ! [Args, Console, Disk, Random, Terminal, Time]
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     tokens = Domain.Lexer.lex(source)
     prog = Domain.Parser.parse(tokens)?
     r = loadModules(prog.deps, moduleRoot, [], Map.empty())?
@@ -23,7 +23,7 @@ fn runWithModules(source: String, moduleRoot: String) -> Result<Val, String>
 
 fn loadModules(deps: List<String>, moduleRoot: String, acc: List<FnDef>, loaded: Map<String, Bool>) -> Result<(List<FnDef>, Map<String, Bool>), String>
     ? "Load all module dependencies, skipping already-loaded modules."
-    ! [Args, Console, Disk, Random, Terminal, Time]
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     match deps
         [] -> Result.Ok((acc, loaded))
         [dep, ..rest] -> match Map.has(loaded, dep)
@@ -32,7 +32,7 @@ fn loadModules(deps: List<String>, moduleRoot: String, acc: List<FnDef>, loaded:
 
 fn loadOneModule(dep: String, rest: List<String>, moduleRoot: String, acc: List<FnDef>, loaded: Map<String, Bool>) -> Result<(List<FnDef>, Map<String, Bool>), String>
     ? "Load one module, add its functions, continue with rest."
-    ! [Args, Console, Disk, Random, Terminal, Time]
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     path = modulePathFromName(dep, moduleRoot)
     source = Disk.readText(path)?
     tokens = Domain.Lexer.lex(source)
@@ -84,21 +84,21 @@ verify qualifyFnsOne
 
 fn runRepr(source: String) -> String
     ? "Run source and return result representation or error."
-    ! [Args, Console, Disk, Random, Terminal, Time]
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     match run(source)
         Result.Ok(val) -> Domain.Value.valRepr(val)
         Result.Err(e) -> "ERROR: {e}"
 
 fn runFile(path: String, moduleRoot: String) -> Result<String, String>
     ? "Read a file and run it through the self-hosted pipeline with module loading."
-    ! [Args, Console, Disk, Random, Terminal, Time]
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     source = Disk.readText(path)?
     match runWithModules(source, moduleRoot)
         Result.Ok(val) -> Result.Ok(Domain.Value.valRepr(val))
         Result.Err(e) -> Result.Err(e)
 
 fn main() -> Unit
-    ! [Args, Console, Disk, Random, Terminal, Time]
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     args = Args.get()
     match List.get(args, 0)
         Option.Some(path) -> runFromFile(path, Option.withDefault(List.get(args, 1), "."))
@@ -106,7 +106,7 @@ fn main() -> Unit
 
 fn runFromFile(path: String, moduleRoot: String) -> Unit
     ? "Read and execute a file through the self-hosted pipeline."
-    ! [Args, Console, Disk, Random, Terminal, Time]
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     match runFile(path, moduleRoot)
         Result.Ok(result) -> printIfNotUnit(result)
         Result.Err(e) -> Console.print("Error: {e}")
@@ -120,7 +120,7 @@ fn printIfNotUnit(s: String) -> Unit
 
 fn runDemo() -> Unit
     ? "Show built-in demo programs."
-    ! [Args, Console, Disk, Random, Terminal, Time]
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     Console.print("=== Self-Hosted Mini Aver ===")
     Console.print("")
     Console.print("Usage: aver run main.av --module-root . -- <file.av>")

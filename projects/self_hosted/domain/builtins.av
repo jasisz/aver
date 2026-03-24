@@ -7,7 +7,7 @@ module Builtins
 
 fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch qualified builtin calls to sub-module implementations."
-    ! [Args, Console, Disk, Random, Terminal, Time]
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     match String.startsWith(name, "List.")
         true -> Domain.Builtins.List.call(name, args)
         false -> match String.startsWith(name, "Int.")
@@ -24,7 +24,7 @@ verify callBuiltin
 
 fn callBuiltinOther(name: String, args: List<Val>) -> Result<Val, String>
     ? "Handle non-prefixed builtins: Result.*, Option.*, Bool.*, Map.*, services, Char, variant constructors."
-    ! [Args, Console, Disk, Random, Terminal, Time]
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     match name
         "Char.fromCode" -> Domain.Builtins.Primitives.callChar(name, args)
         "Console.print" -> builtinConsolePrint(args)
@@ -212,12 +212,21 @@ fn removeMapField(fields: List<(String, Val)>, key: String, acc: List<(String, V
                 false -> removeMapField(rest, key, List.prepend((k, v), acc))
 
 fn callBuiltinServices(name: String, args: List<Val>) -> Result<Val, String>
-    ? "Dispatch Terminal.*, Time.*, Random.* service builtins."
-    ! [Random, Terminal, Time]
+    ? "Dispatch Terminal.*, Time.*, Random.*, Http.*, Tcp.* service builtins."
+    ! [Http, Random, Tcp, Terminal, Time]
     match name
         "Random.int" -> builtinRandomInt(args)
+        "Time.now" -> builtinTimeNow(args)
         "Time.sleep" -> builtinTimeSleep(args)
         "Time.unixMs" -> builtinTimeUnixMs(args)
+        "Http.get" -> builtinHttpSimple(args, "get")
+        "Http.head" -> builtinHttpSimple(args, "head")
+        "Http.delete" -> builtinHttpSimple(args, "delete")
+        "Http.post" -> builtinHttpBody(args, "post")
+        "Http.put" -> builtinHttpBody(args, "put")
+        "Http.patch" -> builtinHttpBody(args, "patch")
+        "Tcp.send" -> builtinTcpSend(args)
+        "Tcp.ping" -> builtinTcpPing(args)
         "Terminal.clear" -> builtinTerminalNoArg(name, args)
         "Terminal.flush" -> builtinTerminalNoArg(name, args)
         "Terminal.enableRawMode" -> builtinTerminalNoArg(name, args)
@@ -591,3 +600,91 @@ fn mapHasKey(fields: List<(String, Val)>, key: String) -> Result<Val, String>
             (k, _) -> match k == key
                 true -> Result.Ok(Val.ValBool(true))
                 false -> mapHasKey(rest, key)
+
+fn builtinTimeNow(args: List<Val>) -> Result<Val, String>
+    ? "Time.now() -> ISO timestamp string."
+    ! [Time.now]
+    Result.Ok(Val.ValStr(Time.now()))
+
+fn builtinHttpSimple(args: List<Val>, method: String) -> Result<Val, String>
+    ? "Http.get/head/delete(url) -> Result<HttpResponse, String> forwarded to host."
+    ! [Http]
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    url = Domain.Builtins.Helpers.expectStr(v)?
+    match method
+        "get" -> httpResponseToVal(Http.get(url))
+        "head" -> httpResponseToVal(Http.head(url))
+        _ -> httpResponseToVal(Http.delete(url))
+
+fn builtinHttpBody(args: List<Val>, method: String) -> Result<Val, String>
+    ? "Http.post/put/patch(url, body, contentType, headers) forwarded to host."
+    ! [Http]
+    match args
+        [urlV, ..r1] -> match r1
+            [bodyV, ..r2] -> match r2
+                [ctV, ..r3] -> match r3
+                    [hdrsV, ..r4] -> builtinHttpBodyInner(urlV, bodyV, ctV, hdrsV, method)
+                    _ -> Result.Err("Http method takes 4 arguments")
+                _ -> Result.Err("Http method takes 4 arguments")
+            _ -> Result.Err("Http method takes 4 arguments")
+        _ -> Result.Err("Http method takes 4 arguments")
+
+fn builtinHttpBodyInner(urlV: Val, bodyV: Val, ctV: Val, hdrsV: Val, method: String) -> Result<Val, String>
+    ? "Inner Http body method."
+    ! [Http]
+    url = Domain.Builtins.Helpers.expectStr(urlV)?
+    body = Domain.Builtins.Helpers.expectStr(bodyV)?
+    ct = Domain.Builtins.Helpers.expectStr(ctV)?
+    match method
+        "post" -> httpResponseToVal(Http.post(url, body, ct, []))
+        "put" -> httpResponseToVal(Http.put(url, body, ct, []))
+        _ -> httpResponseToVal(Http.patch(url, body, ct, []))
+
+fn httpResponseToVal(result: Result<HttpResponse, String>) -> Result<Val, String>
+    ? "Convert host HttpResponse to Val."
+    match result
+        Result.Ok(resp) -> Result.Ok(Val.ValOk(Val.ValRecord("HttpResponse", [("status", Val.ValInt(resp.status)), ("body", Val.ValStr(resp.body)), ("headers", headersToVal(resp.headers, []))])))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
+
+fn headersToVal(headers: List<Header>, acc: List<Val>) -> Val
+    ? "Convert host Header list to Val list."
+    match headers
+        [] -> Val.ValList(List.reverse(acc))
+        [h, ..rest] -> headersToVal(rest, List.prepend(Val.ValRecord("Header", [("name", Val.ValStr(h.name)), ("value", Val.ValStr(h.value))]), acc))
+
+fn builtinTcpSend(args: List<Val>) -> Result<Val, String>
+    ? "Tcp.send(host, port, message) -> Result<String, String>."
+    ! [Tcp.send]
+    match args
+        [hostV, ..r1] -> match r1
+            [portV, ..r2] -> match r2
+                [msgV, ..r3] -> builtinTcpSendInner(hostV, portV, msgV)
+                _ -> Result.Err("Tcp.send takes 3 arguments")
+            _ -> Result.Err("Tcp.send takes 3 arguments")
+        _ -> Result.Err("Tcp.send takes 3 arguments")
+
+fn builtinTcpSendInner(hostV: Val, portV: Val, msgV: Val) -> Result<Val, String>
+    ? "Inner Tcp.send."
+    ! [Tcp.send]
+    host = Domain.Builtins.Helpers.expectStr(hostV)?
+    port = Domain.Builtins.Helpers.expectInt(portV)?
+    msg = Domain.Builtins.Helpers.expectStr(msgV)?
+    match Tcp.send(host, port, msg)
+        Result.Ok(resp) -> Result.Ok(Val.ValOk(Val.ValStr(resp)))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
+
+fn builtinTcpPing(args: List<Val>) -> Result<Val, String>
+    ? "Tcp.ping(host, port) -> Result<Unit, String>."
+    ! [Tcp.ping]
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (hostV, portV) -> builtinTcpPingInner(hostV, portV)
+
+fn builtinTcpPingInner(hostV: Val, portV: Val) -> Result<Val, String>
+    ? "Inner Tcp.ping."
+    ! [Tcp.ping]
+    host = Domain.Builtins.Helpers.expectStr(hostV)?
+    port = Domain.Builtins.Helpers.expectInt(portV)?
+    match Tcp.ping(host, port)
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
