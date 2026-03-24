@@ -370,65 +370,64 @@ fn spriteBits(kind: EnemyKind, section: Int, colFrac: Int) -> Int
         EnemyKind.Ghost -> ghostBits(section, colFrac)
 
 fn impBits(section: Int, colFrac: Int) -> Int
-    ? "Imp: small humanoid figure"
+    ? "Imp: humanoid — rounded head, body with arms, spread legs"
     match section
         0 -> match colFrac
-            0 -> 0
-            1 -> 244
-            _ -> 0
+            0 -> 112
+            1 -> 255
+            _ -> 134
         1 -> match colFrac
-            0 -> 8
+            0 -> 184
             1 -> 255
-            _ -> 1
-        _ -> match colFrac
-            0 -> 0
-            1 -> 27
-            _ -> 0
-
-verify impBits
-    impBits(0, 1) => 244
-    impBits(1, 1) => 255
-
-fn demonBits(section: Int, colFrac: Int) -> Int
-    ? "Demon: massive horned brute"
-    match section
-        0 -> match colFrac
-            0 -> 160
-            1 -> 255
-            _ -> 68
-        1 -> match colFrac
-            0 -> 255
-            1 -> 255
-            _ -> 255
+            _ -> 71
         _ -> match colFrac
             0 -> 24
             1 -> 27
             _ -> 3
 
+verify impBits
+    impBits(0, 1) => 255
+    impBits(1, 0) => 184
+
+fn demonBits(section: Int, colFrac: Int) -> Int
+    ? "Demon: massive — wide horned head, full body, thick legs"
+    match section
+        0 -> match colFrac
+            0 -> 228
+            1 -> 255
+            _ -> 228
+        1 -> match colFrac
+            0 -> 255
+            1 -> 255
+            _ -> 255
+        _ -> match colFrac
+            0 -> 63
+            1 -> 255
+            _ -> 63
+
 verify demonBits
-    demonBits(1, 0) => 255
     demonBits(1, 1) => 255
-    demonBits(1, 2) => 255
+    demonBits(0, 0) => 228
 
 fn ghostBits(section: Int, colFrac: Int) -> Int
-    ? "Ghost: floating sphere with wisps"
+    ? "Ghost: sphere — curved top, round middle, wispy bottom"
     match section
         0 -> match colFrac
             0 -> 128
-            1 -> 246
+            1 -> 244
             _ -> 64
         1 -> match colFrac
-            0 -> 8
+            0 -> 184
             1 -> 255
-            _ -> 1
+            _ -> 71
         _ -> match colFrac
-            0 -> 0
-            1 -> 26
-            _ -> 0
+            0 -> 8
+            1 -> 27
+            _ -> 1
 
 verify ghostBits
-    ghostBits(0, 1) => 246
-    ghostBits(2, 1) => 26
+    ghostBits(0, 1) => 244
+    ghostBits(1, 1) => 255
 
 // ─── Full frame ────────────────────────────────────────────────────────────
 
