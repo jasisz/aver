@@ -167,12 +167,36 @@ fn cellBitsTextured(wallTop: Int, wallBot: Int, pixY: Int, i: Int, acc: Int, wt:
         false -> cellBitsOneRow(wallTop, wallBot, pixY + i, i, acc, wt, side, col)
 
 fn cellBitsOneRow(wallTop: Int, wallBot: Int, y: Int, i: Int, acc: Int, wt: WallType, side: Int, col: Int) -> Int
-    ? "Add texture bits for one pixel row if in wall region"
+    ? "Add wall texture, floor or ceiling bits for one pixel row"
     isWallPx = Bool.and(y >= wallTop, y < wallBot)
     newAcc = match isWallPx
         true -> acc + textureBits(wt, side, i, col)
-        false -> acc
+        false -> acc + floorCeilBit(y, i, wallTop, wallBot, col)
     cellBitsTextured(wallTop, wallBot, y - i + i, i + 1, newAcc, wt, side, col)
+
+fn floorCeilBit(y: Int, i: Int, wallTop: Int, wallBot: Int, col: Int) -> Int
+    ? "Sparse dots for floor/ceiling gradient"
+    match y < wallTop
+        true -> ceilBit(y, i, col)
+        false -> match y >= wallBot
+            true -> floorBit(y, i, col)
+            false -> 0
+
+fn ceilBit(y: Int, i: Int, col: Int) -> Int
+    ? "Ceiling: sparse dots near horizon, denser at top"
+    match y < 8
+        true -> dotBit(i)
+        false -> match Result.withDefault(Int.mod(y + col, 4), 1) == 0
+            true -> dotBit(i)
+            false -> 0
+
+fn floorBit(y: Int, i: Int, col: Int) -> Int
+    ? "Floor: sparse dots near horizon, denser at bottom"
+    match y > 72
+        true -> dotBitRight(i)
+        false -> match Result.withDefault(Int.mod(y + col, 3), 1) == 0
+            true -> dotBitRight(i)
+            false -> 0
 
 fn columnBraille(wallTop: Int, wallBot: Int, row: Int, wt: WallType, side: Int, col: Int) -> String
     ? "Compute one textured Braille character"
@@ -229,37 +253,51 @@ fn renderWalls(zbuf: List<RayHit>, col: Int) -> Unit
             Option.None -> renderWalls(zbuf, col + 1)
 
 fn renderWallCol(zbuf: List<RayHit>, col: Int, hit: RayHit) -> Unit
-    ? "Render one wall column"
+    ? "Render one wall column with ceiling, wall, floor colors"
     ! [
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
     wh = wallHeight(hit.dist)
     wTop = (pixelH() - wh) / 2
     wBot = wTop + wh
-    color = shadeColor(hit.dist, hit.side)
-    Terminal.setColor(color)
-    renderWallRows(col, wTop, wBot, hit.wallType, hit.side, 0)
-    Terminal.resetColor()
+    wallColor = shadeColor(hit.dist, hit.side)
+    renderWallRows(col, wTop, wBot, hit.wallType, hit.side, 0, wallColor)
     renderWalls(zbuf, col + 1)
 
-fn renderWallRows(col: Int, wallTop: Int, wallBot: Int, wt: WallType, side: Int, row: Int) -> Unit
+fn renderWallRows(col: Int, wallTop: Int, wallBot: Int, wt: WallType, side: Int, row: Int, wallColor: String) -> Unit
     ? "Render all rows for a single wall column"
     ! [
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
     match row == screenH()
         true -> Terminal.print("")
-        false -> renderOneWallRow(col, wallTop, wallBot, wt, side, row)
+        false -> renderOneWallRow(col, wallTop, wallBot, wt, side, row, wallColor)
 
-fn renderOneWallRow(col: Int, wallTop: Int, wallBot: Int, wt: WallType, side: Int, row: Int) -> Unit
-    ? "Render one braille cell and continue"
+fn rowZone(row: Int, wallTop: Int, wallBot: Int) -> Int
+    ? "0=ceiling, 1=wall, 2=floor based on pixel position"
+    midPx = row * 4 + 2
+    match midPx < wallTop
+        true -> 0
+        false -> match midPx >= wallBot
+            true -> 2
+            false -> 1
+
+fn renderOneWallRow(col: Int, wallTop: Int, wallBot: Int, wt: WallType, side: Int, row: Int, wallColor: String) -> Unit
+    ? "Render one braille cell with zone-based coloring"
     ! [
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
     ch = columnBraille(wallTop, wallBot, row, wt, side, col)
+    zone = rowZone(row, wallTop, wallBot)
+    color = match zone
+        0 -> "blue"
+        2 -> "green"
+        _ -> wallColor
+    Terminal.setColor(color)
     Terminal.moveTo(col, row)
     Terminal.print(ch)
-    renderWallRows(col, wallTop, wallBot, wt, side, row + 1)
+    Terminal.resetColor()
+    renderWallRows(col, wallTop, wallBot, wt, side, row + 1, wallColor)
 
 // ─── Enemy sprite rendering ───────────────────────────────────────────────
 
