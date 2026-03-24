@@ -310,7 +310,6 @@ fn drawEnemyChar(e: Enemy, screenCol: Int, eDist: Float, enemies: List<Enemy>, z
     spriteW = Math.clampInt(Float.floor(2.5 / eDist * Int.toFloat(screenW()) / 10.0), 1, 5)
     topRow = screenH() / 2 - spriteH / 2
     leftCol = screenCol - spriteW / 2
-    Terminal.setColor(Types.enemyColor(e.kind))
     drawSpriteGrid(e, leftCol, topRow, spriteH, spriteW, 0, 0, zbuf)
     Terminal.resetColor()
     renderEnemies(enemies, zbuf, px, py, pAngle, i + 1)
@@ -349,11 +348,19 @@ fn drawSpriteCell(e: Enemy, sx: Int, sy: Int, row: Int, col: Int, spriteH: Int, 
         true -> drawSpriteGrid(e, leftCol, topRow, spriteH, spriteW, row, col + 1, zbuf)
         false -> drawSpriteCellPrint(e, sx, sy, bits, leftCol, topRow, spriteH, spriteW, row, col, zbuf)
 
+fn spriteColColor(kind: EnemyKind, colFrac: Int) -> String
+    ? "Sprite color: bright center, enemy color on sides"
+    match colFrac
+        1 -> "white"
+        _ -> Types.enemyColor(kind)
+
 fn drawSpriteCellPrint(e: Enemy, sx: Int, sy: Int, bits: Int, leftCol: Int, topRow: Int, spriteH: Int, spriteW: Int, row: Int, col: Int, zbuf: List<RayHit>) -> Unit
-    ? "Print sprite braille char at position"
+    ? "Print sprite braille char with 3D shading"
     ! [
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
+    colFrac = col * 3 / spriteW
+    Terminal.setColor(spriteColColor(e.kind, colFrac))
     Terminal.moveTo(sx, sy)
     Terminal.print(brailleChar(bits))
     drawSpriteGrid(e, leftCol, topRow, spriteH, spriteW, row, col + 1, zbuf)
