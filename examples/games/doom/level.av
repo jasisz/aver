@@ -70,16 +70,16 @@ fn setCharAt(s: String, idx: Int, ch: String, i: Int, acc: String) -> String
             true -> setCharAt(s, idx, ch, i + 1, acc + ch)
             false -> setCharCopy(s, idx, ch, i, acc)
 
+verify setCharAt
+    setCharAt("####", 1, ".", 0, "") => "#.##"
+    setCharAt("####", 0, ".", 0, "") => ".###"
+    setCharAt("####", 3, ".", 0, "") => "###."
+
 fn setCharCopy(s: String, idx: Int, ch: String, i: Int, acc: String) -> String
     ? "Copy character at position i and continue"
     match String.charAt(s, i)
         Option.Some(c) -> setCharAt(s, idx, ch, i + 1, acc + c)
         Option.None -> acc
-
-verify setCharAt
-    setCharAt("####", 1, ".", 0, "") => "#.##"
-    setCharAt("####", 0, ".", 0, "") => ".###"
-    setCharAt("####", 3, ".", 0, "") => "###."
 
 fn setTile(levelMap: List<String>, x: Int, y: Int, ch: String, row: Int, acc: List<String>) -> List<String>
     ? "Set one tile in the map"

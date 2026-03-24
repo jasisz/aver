@@ -107,4 +107,3 @@ fn dirArrow(angle: Float) -> String
 
 verify dirArrow
     dirArrow(0.0) => ">"
-
