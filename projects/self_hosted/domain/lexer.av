@@ -135,13 +135,16 @@ verify tokenizeStringAt
     tokenizeStringAt("a\"", 0, "") => [Token.TkStr("a"), Token.TkEof]
 
 fn tokenizeStringEscape(src: String, pos: Int, acc: String) -> List<Token>
-    ? "Handle escape sequence in string."
+    ? "Handle escape sequence in string: \\n -> newline, \\t -> tab, etc."
     match String.charAt(src, pos)
-        Option.Some(c) -> tokenizeString(src, pos + 1, acc + c)
+        Option.Some(c) -> match c
+            "n" -> tokenizeString(src, pos + 1, acc + "\n")
+            "t" -> tokenizeString(src, pos + 1, acc + "\t")
+            _ -> tokenizeString(src, pos + 1, acc + c)
         Option.None -> [Token.TkStr(acc), Token.TkEof]
 
 verify tokenizeStringEscape
-    tokenizeStringEscape("n\"", 0, "") => [Token.TkStr("n"), Token.TkEof]
+    tokenizeStringEscape("n\"", 0, "") => [Token.TkStr("\n"), Token.TkEof]
 
 fn openBrace() -> String
     ? "Return the opening brace character."
@@ -160,10 +163,28 @@ verify tokenizeStringChar
     tokenizeStringChar("\" ", 0, "hi", "\"") => [Token.TkStr("hi"), Token.TkEof]
 
 fn tokenizeStringCharInner(src: String, pos: Int, acc: String, c: String) -> List<Token>
-    ? "Check for interpolation start or continue string."
+    ? "Check for interpolation start, {{ escape, or continue string."
     match c == openBrace()
-        true -> tokenizeInterp(src, pos, acc)
-        false -> tokenizeString(src, pos + 1, acc + c)
+        true -> tokenizeStringMaybeEscapedBrace(src, pos, acc)
+        false -> match c == closeBrace()
+            true -> tokenizeStringMaybeEscapedClose(src, pos, acc)
+            false -> tokenizeString(src, pos + 1, acc + c)
+
+fn tokenizeStringMaybeEscapedBrace(src: String, pos: Int, acc: String) -> List<Token>
+    ? "Check for {{ (escaped brace) or start interpolation."
+    match String.charAt(src, pos + 1)
+        Option.Some(next) -> match next == openBrace()
+            true -> tokenizeString(src, pos + 2, acc + openBrace())
+            false -> tokenizeInterp(src, pos, acc)
+        Option.None -> tokenizeInterp(src, pos, acc)
+
+fn tokenizeStringMaybeEscapedClose(src: String, pos: Int, acc: String) -> List<Token>
+    ? "Check for }} (escaped close brace) or continue."
+    match String.charAt(src, pos + 1)
+        Option.Some(next) -> match next == closeBrace()
+            true -> tokenizeString(src, pos + 2, acc + closeBrace())
+            false -> tokenizeString(src, pos + 1, acc + closeBrace())
+        Option.None -> tokenizeString(src, pos + 1, acc + closeBrace())
 
 verify tokenizeStringCharInner
     tokenizeStringCharInner("x\"", 0, "", "x") => [Token.TkStr("x"), Token.TkEof]

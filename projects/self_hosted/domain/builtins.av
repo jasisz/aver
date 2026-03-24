@@ -7,7 +7,7 @@ module Builtins
 
 fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch qualified builtin calls to sub-module implementations."
-    ! [Args.get, Console.print, Disk.readText]
+    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
     match String.startsWith(name, "List.")
         true -> Domain.Builtins.List.call(name, args)
         false -> match String.startsWith(name, "Int.")
@@ -23,12 +23,22 @@ verify callBuiltin
     callBuiltin("Result.Ok", [Val.ValInt(5)]) => Result.Ok(Val.ValOk(Val.ValInt(5)))
 
 fn callBuiltinOther(name: String, args: List<Val>) -> Result<Val, String>
-    ? "Handle non-prefixed builtins: Result.*, Option.*, IO, Char, variant constructors."
-    ! [Args.get, Console.print, Disk.readText]
+    ? "Handle non-prefixed builtins: Result.*, Option.*, Bool.*, Map.*, services, Char, variant constructors."
+    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
     match name
         "Char.fromCode" -> Domain.Builtins.Primitives.callChar(name, args)
         "Console.print" -> builtinConsolePrint(args)
+        "Console.readLine" -> builtinConsoleReadLine(args)
+        "Console.error" -> builtinConsoleError(args)
+        "Console.warn" -> builtinConsoleWarn(args)
         "Disk.readText" -> builtinDiskReadText(args)
+        "Disk.writeText" -> builtinDiskWriteText(args)
+        "Disk.exists" -> builtinDiskExists(args)
+        "Disk.listDir" -> builtinDiskListDir(args)
+        "Disk.appendText" -> builtinDiskAppendText(args)
+        "Disk.delete" -> builtinDiskDelete(args)
+        "Disk.deleteDir" -> builtinDiskDeleteDir(args)
+        "Disk.makeDir" -> builtinDiskMakeDir(args)
         "Args.get" -> builtinArgsGet(args)
         "Result.Ok" -> Domain.Builtins.Wrappers.call(name, args)
         "Result.Err" -> Domain.Builtins.Wrappers.call(name, args)
@@ -36,7 +46,21 @@ fn callBuiltinOther(name: String, args: List<Val>) -> Result<Val, String>
         "Option.Some" -> Domain.Builtins.Wrappers.call(name, args)
         "Option.None" -> Result.Ok(Val.ValNone)
         "Option.withDefault" -> Domain.Builtins.Wrappers.call(name, args)
-        _ -> tryVariantConstructor(name, args)
+        "Option.toResult" -> Domain.Builtins.Wrappers.callOptionToResult(args)
+        "Bool.or" -> builtinBoolOr(args)
+        "Bool.and" -> builtinBoolAnd(args)
+        "Bool.not" -> builtinBoolNot(args)
+        "Map.empty" -> builtinMapEmpty(args)
+        "Map.set" -> builtinMapSet(args)
+        "Map.get" -> builtinMapGet(args)
+        "Map.has" -> builtinMapHas(args)
+        "Map.entries" -> builtinMapEntries(args)
+        "Map.keys" -> builtinMapKeys(args)
+        "Map.values" -> builtinMapValues(args)
+        "Map.fromList" -> builtinMapFromList(args)
+        "Map.size" -> builtinMapSize(args)
+        "Map.remove" -> builtinMapRemove(args)
+        _ -> callBuiltinServices(name, args)
 
 verify callBuiltinOther
     callBuiltinOther("Result.Ok", [Val.ValInt(1)]) => Result.Ok(Val.ValOk(Val.ValInt(1)))
@@ -48,6 +72,27 @@ fn builtinConsolePrint(args: List<Val>) -> Result<Val, String>
     v = Domain.Builtins.Helpers.oneArg(args)?
     Console.print(Domain.Value.valRepr(v))
     Result.Ok(Val.ValUnit)
+
+fn builtinConsoleError(args: List<Val>) -> Result<Val, String>
+    ? "Console.error(v) -> print to stderr."
+    ! [Console.print]
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    Console.print(Domain.Value.valRepr(v))
+    Result.Ok(Val.ValUnit)
+
+fn builtinConsoleWarn(args: List<Val>) -> Result<Val, String>
+    ? "Console.warn(v) -> print warning."
+    ! [Console.print]
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    Console.print(Domain.Value.valRepr(v))
+    Result.Ok(Val.ValUnit)
+
+fn builtinConsoleReadLine(args: List<Val>) -> Result<Val, String>
+    ? "Console.readLine() -> Result<String, String>."
+    ! [Console.readLine]
+    match Console.readLine()
+        Result.Ok(line) -> Result.Ok(Val.ValOk(Val.ValStr(line)))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn builtinDiskReadText(args: List<Val>) -> Result<Val, String>
     ? "Disk.readText(path) -> Result string."
@@ -73,6 +118,318 @@ fn stringsToVals(strs: List<String>, acc: List<Val>) -> List<Val>
 verify stringsToVals
     stringsToVals(["a", "b"], []) => [Val.ValStr("a"), Val.ValStr("b")]
     stringsToVals([], []) => []
+
+fn builtinMapEntries(args: List<Val>) -> Result<Val, String>
+    ? "Map.entries(map) -> List of tuples."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    match v
+        Val.ValRecord(_, fields) -> Result.Ok(Val.ValList(mapFieldsToTuples(fields, [])))
+        _ -> Result.Err("Map.entries requires a Map")
+
+fn mapFieldsToTuples(fields: List<(String, Val)>, acc: List<Val>) -> List<Val>
+    ? "Convert map fields to list of (key, value) tuples."
+    match fields
+        [] -> List.reverse(acc)
+        [pair, ..rest] -> match pair
+            (k, v) -> mapFieldsToTuples(rest, List.prepend(Val.ValTuple([Val.ValStr(k), v]), acc))
+
+fn builtinMapKeys(args: List<Val>) -> Result<Val, String>
+    ? "Map.keys(map) -> List of keys."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    match v
+        Val.ValRecord(_, fields) -> Result.Ok(Val.ValList(mapFieldsToKeys(fields, [])))
+        _ -> Result.Err("Map.keys requires a Map")
+
+fn mapFieldsToKeys(fields: List<(String, Val)>, acc: List<Val>) -> List<Val>
+    ? "Extract keys from map fields."
+    match fields
+        [] -> List.reverse(acc)
+        [pair, ..rest] -> match pair
+            (k, _) -> mapFieldsToKeys(rest, List.prepend(Val.ValStr(k), acc))
+
+fn builtinMapValues(args: List<Val>) -> Result<Val, String>
+    ? "Map.values(map) -> List of values."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    match v
+        Val.ValRecord(_, fields) -> Result.Ok(Val.ValList(mapFieldsToValues(fields, [])))
+        _ -> Result.Err("Map.values requires a Map")
+
+fn mapFieldsToValues(fields: List<(String, Val)>, acc: List<Val>) -> List<Val>
+    ? "Extract values from map fields."
+    match fields
+        [] -> List.reverse(acc)
+        [pair, ..rest] -> match pair
+            (_, v) -> mapFieldsToValues(rest, List.prepend(v, acc))
+
+fn builtinMapFromList(args: List<Val>) -> Result<Val, String>
+    ? "Map.fromList(entries) -> Map."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    items = Domain.Builtins.Helpers.expectList(v)?
+    Result.Ok(Val.ValRecord("Map", tuplesToMapFields(items, [])))
+
+fn tuplesToMapFields(items: List<Val>, acc: List<(String, Val)>) -> List<(String, Val)>
+    ? "Convert list of (key, value) tuples to map fields."
+    match items
+        [] -> List.reverse(acc)
+        [item, ..rest] -> match item
+            Val.ValTuple(parts) -> tuplesToMapFieldsOne(parts, rest, acc)
+            _ -> tuplesToMapFields(rest, acc)
+
+fn tuplesToMapFieldsOne(parts: List<Val>, rest: List<Val>, acc: List<(String, Val)>) -> List<(String, Val)>
+    ? "Extract key-value from tuple parts."
+    match List.get(parts, 0)
+        Option.Some(kV) -> match List.get(parts, 1)
+            Option.Some(vV) -> tuplesToMapFields(rest, List.prepend((Domain.Value.valRepr(kV), vV), acc))
+            Option.None -> tuplesToMapFields(rest, acc)
+        Option.None -> tuplesToMapFields(rest, acc)
+
+fn builtinMapSize(args: List<Val>) -> Result<Val, String>
+    ? "Map.size(map) -> Int."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    match v
+        Val.ValRecord(_, fields) -> Result.Ok(Val.ValInt(List.len(fields)))
+        _ -> Result.Err("Map.size requires a Map")
+
+fn builtinMapRemove(args: List<Val>) -> Result<Val, String>
+    ? "Map.remove(map, key) -> Map."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (mapV, keyV) -> builtinMapRemoveInner(mapV, keyV)
+
+fn builtinMapRemoveInner(mapV: Val, keyV: Val) -> Result<Val, String>
+    ? "Inner Map.remove."
+    match mapV
+        Val.ValRecord(_, fields) -> Result.Ok(Val.ValRecord("Map", removeMapField(fields, Domain.Value.valRepr(keyV), [])))
+        _ -> Result.Err("Map.remove requires a Map")
+
+fn removeMapField(fields: List<(String, Val)>, key: String, acc: List<(String, Val)>) -> List<(String, Val)>
+    ? "Remove field with given key."
+    match fields
+        [] -> List.reverse(acc)
+        [pair, ..rest] -> match pair
+            (k, v) -> match k == key
+                true -> List.concat(List.reverse(acc), rest)
+                false -> removeMapField(rest, key, List.prepend((k, v), acc))
+
+fn callBuiltinServices(name: String, args: List<Val>) -> Result<Val, String>
+    ? "Dispatch Terminal.*, Time.*, Random.* service builtins."
+    ! [Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    match name
+        "Random.int" -> builtinRandomInt(args)
+        "Time.sleep" -> builtinTimeSleep(args)
+        "Time.unixMs" -> builtinTimeUnixMs(args)
+        "Terminal.clear" -> builtinTerminalNoArg(name, args)
+        "Terminal.flush" -> builtinTerminalNoArg(name, args)
+        "Terminal.enableRawMode" -> builtinTerminalNoArg(name, args)
+        "Terminal.disableRawMode" -> builtinTerminalNoArg(name, args)
+        "Terminal.hideCursor" -> builtinTerminalNoArg(name, args)
+        "Terminal.showCursor" -> builtinTerminalNoArg(name, args)
+        "Terminal.resetColor" -> builtinTerminalNoArg(name, args)
+        "Terminal.readKey" -> builtinTerminalReadKey(args)
+        "Terminal.size" -> builtinTerminalSize(args)
+        "Terminal.print" -> builtinTerminalPrint(args)
+        "Terminal.setColor" -> builtinTerminalSetColor(args)
+        "Terminal.moveTo" -> builtinTerminalMoveTo(args)
+        _ -> tryVariantConstructor(name, args)
+
+fn builtinRandomInt(args: List<Val>) -> Result<Val, String>
+    ? "Random.int(min, max) -> random integer."
+    ! [Random.int]
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (minV, maxV) -> builtinRandomIntInner(minV, maxV)
+
+fn builtinRandomIntInner(minV: Val, maxV: Val) -> Result<Val, String>
+    ? "Inner Random.int."
+    ! [Random.int]
+    minN = Domain.Builtins.Helpers.expectInt(minV)?
+    maxN = Domain.Builtins.Helpers.expectInt(maxV)?
+    Result.Ok(Val.ValInt(Random.int(minN, maxN)))
+
+fn builtinTimeSleep(args: List<Val>) -> Result<Val, String>
+    ? "Time.sleep(ms) -> Unit."
+    ! [Time.sleep]
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    ms = Domain.Builtins.Helpers.expectInt(v)?
+    Time.sleep(ms)
+    Result.Ok(Val.ValUnit)
+
+fn builtinTimeUnixMs(args: List<Val>) -> Result<Val, String>
+    ? "Time.unixMs() -> Int."
+    ! [Time.unixMs]
+    Result.Ok(Val.ValInt(Time.unixMs()))
+
+fn builtinTerminalNoArg(name: String, args: List<Val>) -> Result<Val, String>
+    ? "Terminal no-arg commands: clear, flush, enableRawMode, etc."
+    ! [Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.showCursor, Terminal.resetColor]
+    match name
+        "Terminal.clear" -> termClear()
+        "Terminal.flush" -> termFlush()
+        "Terminal.enableRawMode" -> termEnableRawMode()
+        "Terminal.disableRawMode" -> termDisableRawMode()
+        "Terminal.hideCursor" -> termHideCursor()
+        "Terminal.showCursor" -> termShowCursor()
+        "Terminal.resetColor" -> termResetColor()
+        _ -> Result.Err("unknown terminal command: {name}")
+
+fn termClear() -> Result<Val, String>
+    ! [Terminal.clear]
+    Terminal.clear()
+    Result.Ok(Val.ValUnit)
+
+fn termFlush() -> Result<Val, String>
+    ! [Terminal.flush]
+    Terminal.flush()
+    Result.Ok(Val.ValUnit)
+
+fn termEnableRawMode() -> Result<Val, String>
+    ! [Terminal.enableRawMode]
+    Terminal.enableRawMode()
+    Result.Ok(Val.ValUnit)
+
+fn termDisableRawMode() -> Result<Val, String>
+    ! [Terminal.disableRawMode]
+    Terminal.disableRawMode()
+    Result.Ok(Val.ValUnit)
+
+fn termHideCursor() -> Result<Val, String>
+    ! [Terminal.hideCursor]
+    Terminal.hideCursor()
+    Result.Ok(Val.ValUnit)
+
+fn termShowCursor() -> Result<Val, String>
+    ! [Terminal.showCursor]
+    Terminal.showCursor()
+    Result.Ok(Val.ValUnit)
+
+fn termResetColor() -> Result<Val, String>
+    ! [Terminal.resetColor]
+    Terminal.resetColor()
+    Result.Ok(Val.ValUnit)
+
+fn builtinTerminalReadKey(args: List<Val>) -> Result<Val, String>
+    ? "Terminal.readKey() -> Option<String>."
+    ! [Terminal.readKey]
+    match Terminal.readKey()
+        Option.Some(k) -> Result.Ok(Val.ValSome(Val.ValStr(k)))
+        Option.None -> Result.Ok(Val.ValNone)
+
+fn builtinTerminalSize(args: List<Val>) -> Result<Val, String>
+    ? "Terminal.size() -> Record with width and height."
+    ! [Terminal.size]
+    sz = Terminal.size()
+    Result.Ok(Val.ValRecord("TerminalSize", [("width", Val.ValInt(sz.width)), ("height", Val.ValInt(sz.height))]))
+
+fn builtinTerminalPrint(args: List<Val>) -> Result<Val, String>
+    ? "Terminal.print(s) -> print string to terminal."
+    ! [Terminal.print]
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    match v
+        Val.ValStr(s) -> termPrintStr(s)
+        _ -> termPrintStr(Domain.Value.valRepr(v))
+
+fn termPrintStr(s: String) -> Result<Val, String>
+    ! [Terminal.print]
+    Terminal.print(s)
+    Result.Ok(Val.ValUnit)
+
+fn builtinTerminalSetColor(args: List<Val>) -> Result<Val, String>
+    ? "Terminal.setColor(color) -> Unit."
+    ! [Terminal.setColor]
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    s = Domain.Builtins.Helpers.expectStr(v)?
+    Terminal.setColor(s)
+    Result.Ok(Val.ValUnit)
+
+fn builtinTerminalMoveTo(args: List<Val>) -> Result<Val, String>
+    ? "Terminal.moveTo(x, y) -> Unit."
+    ! [Terminal.moveTo]
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (xV, yV) -> builtinTerminalMoveToInner(xV, yV)
+
+fn builtinTerminalMoveToInner(xV: Val, yV: Val) -> Result<Val, String>
+    ? "Inner Terminal.moveTo."
+    ! [Terminal.moveTo]
+    x = Domain.Builtins.Helpers.expectInt(xV)?
+    y = Domain.Builtins.Helpers.expectInt(yV)?
+    Terminal.moveTo(x, y)
+    Result.Ok(Val.ValUnit)
+
+fn builtinDiskWriteText(args: List<Val>) -> Result<Val, String>
+    ? "Disk.writeText(path, content) -> Result."
+    ! [Disk.writeText]
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (pathV, contentV) -> builtinDiskWriteTextInner(pathV, contentV)
+
+fn builtinDiskWriteTextInner(pathV: Val, contentV: Val) -> Result<Val, String>
+    ? "Inner Disk.writeText."
+    ! [Disk.writeText]
+    path = Domain.Builtins.Helpers.expectStr(pathV)?
+    content = Domain.Builtins.Helpers.expectStr(contentV)?
+    match Disk.writeText(path, content)
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
+
+fn builtinDiskAppendText(args: List<Val>) -> Result<Val, String>
+    ? "Disk.appendText(path, content) -> Result."
+    ! [Disk.appendText]
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (pathV, contentV) -> builtinDiskAppendTextInner(pathV, contentV)
+
+fn builtinDiskAppendTextInner(pathV: Val, contentV: Val) -> Result<Val, String>
+    ? "Inner Disk.appendText."
+    ! [Disk.appendText]
+    path = Domain.Builtins.Helpers.expectStr(pathV)?
+    content = Domain.Builtins.Helpers.expectStr(contentV)?
+    match Disk.appendText(path, content)
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
+
+fn builtinDiskDelete(args: List<Val>) -> Result<Val, String>
+    ? "Disk.delete(path) -> Result."
+    ! [Disk.delete]
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    path = Domain.Builtins.Helpers.expectStr(v)?
+    match Disk.delete(path)
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
+
+fn builtinDiskDeleteDir(args: List<Val>) -> Result<Val, String>
+    ? "Disk.deleteDir(path) -> Result."
+    ! [Disk.deleteDir]
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    path = Domain.Builtins.Helpers.expectStr(v)?
+    match Disk.deleteDir(path)
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
+
+fn builtinDiskMakeDir(args: List<Val>) -> Result<Val, String>
+    ? "Disk.makeDir(path) -> Result."
+    ! [Disk.makeDir]
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    path = Domain.Builtins.Helpers.expectStr(v)?
+    match Disk.makeDir(path)
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
+
+fn builtinDiskExists(args: List<Val>) -> Result<Val, String>
+    ? "Disk.exists(path) -> Bool."
+    ! [Disk.exists]
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    path = Domain.Builtins.Helpers.expectStr(v)?
+    Result.Ok(Val.ValBool(Disk.exists(path)))
+
+fn builtinDiskListDir(args: List<Val>) -> Result<Val, String>
+    ? "Disk.listDir(path) -> Result<List<String>, String>."
+    ! [Disk.listDir]
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    path = Domain.Builtins.Helpers.expectStr(v)?
+    match Disk.listDir(path)
+        Result.Ok(entries) -> Result.Ok(Val.ValOk(Val.ValList(stringsToVals(entries, []))))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn tryVariantConstructor(name: String, args: List<Val>) -> Result<Val, String>
     ? "Try to construct a variant value from a dotted name like Type.Ctor."
@@ -106,3 +463,131 @@ fn splitDottedLoop(name: String, pos: Int, total: Int) -> Option<(String, String
 verify splitDottedLoop
     splitDottedLoop("A.B", 0, 3) => Option.Some(("A", "B"))
     splitDottedLoop("abc", 0, 3) => Option.None
+
+fn builtinBoolOr(args: List<Val>) -> Result<Val, String>
+    ? "Bool.or(a, b) -> a || b."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (aV, bV) -> builtinBoolOrInner(aV, bV)
+
+fn builtinBoolOrInner(aV: Val, bV: Val) -> Result<Val, String>
+    ? "Inner Bool.or."
+    match aV
+        Val.ValBool(a) -> match bV
+            Val.ValBool(b) -> match a
+                true -> Result.Ok(Val.ValBool(true))
+                false -> Result.Ok(Val.ValBool(b))
+            _ -> Result.Err("Bool.or requires Bool arguments")
+        _ -> Result.Err("Bool.or requires Bool arguments")
+
+verify builtinBoolOr
+    builtinBoolOr([Val.ValBool(true), Val.ValBool(false)]) => Result.Ok(Val.ValBool(true))
+    builtinBoolOr([Val.ValBool(false), Val.ValBool(false)]) => Result.Ok(Val.ValBool(false))
+    builtinBoolOr([Val.ValBool(false), Val.ValBool(true)]) => Result.Ok(Val.ValBool(true))
+
+fn builtinBoolAnd(args: List<Val>) -> Result<Val, String>
+    ? "Bool.and(a, b) -> a && b."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (aV, bV) -> builtinBoolAndInner(aV, bV)
+
+fn builtinBoolAndInner(aV: Val, bV: Val) -> Result<Val, String>
+    ? "Inner Bool.and."
+    match aV
+        Val.ValBool(a) -> match bV
+            Val.ValBool(b) -> match a
+                true -> Result.Ok(Val.ValBool(b))
+                false -> Result.Ok(Val.ValBool(false))
+            _ -> Result.Err("Bool.and requires Bool arguments")
+        _ -> Result.Err("Bool.and requires Bool arguments")
+
+verify builtinBoolAnd
+    builtinBoolAnd([Val.ValBool(true), Val.ValBool(true)]) => Result.Ok(Val.ValBool(true))
+    builtinBoolAnd([Val.ValBool(true), Val.ValBool(false)]) => Result.Ok(Val.ValBool(false))
+
+fn builtinBoolNot(args: List<Val>) -> Result<Val, String>
+    ? "Bool.not(a) -> negation."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    match v
+        Val.ValBool(b) -> match b
+            true -> Result.Ok(Val.ValBool(false))
+            false -> Result.Ok(Val.ValBool(true))
+        _ -> Result.Err("Bool.not requires Bool argument")
+
+verify builtinBoolNot
+    builtinBoolNot([Val.ValBool(true)]) => Result.Ok(Val.ValBool(false))
+    builtinBoolNot([Val.ValBool(false)]) => Result.Ok(Val.ValBool(true))
+
+fn builtinMapEmpty(args: List<Val>) -> Result<Val, String>
+    ? "Map.empty() -> empty map as record."
+    Result.Ok(Val.ValRecord("Map", []))
+
+fn builtinMapSet(args: List<Val>) -> Result<Val, String>
+    ? "Map.set(map, key, value) -> updated map."
+    match List.len(args) == 3
+        true -> builtinMapSetExtract(args)
+        false -> Result.Err("Map.set takes 3 arguments")
+
+fn builtinMapSetExtract(args: List<Val>) -> Result<Val, String>
+    ? "Extract 3 args for Map.set."
+    mapV = Option.withDefault(List.get(args, 0), Val.ValUnit)
+    keyV = Option.withDefault(List.get(args, 1), Val.ValUnit)
+    valV = Option.withDefault(List.get(args, 2), Val.ValUnit)
+    builtinMapSetInner(mapV, keyV, valV)
+
+fn builtinMapSetInner(mapV: Val, keyV: Val, valV: Val) -> Result<Val, String>
+    ? "Set a key in the map record."
+    match mapV
+        Val.ValRecord(_, fields) -> Result.Ok(Val.ValRecord("Map", mapSetField(fields, Domain.Value.valRepr(keyV), valV, [])))
+        _ -> Result.Err("Map.set requires a Map")
+
+fn mapSetField(fields: List<(String, Val)>, key: String, val: Val, acc: List<(String, Val)>) -> List<(String, Val)>
+    ? "Replace or append a key in field list."
+    match fields
+        [] -> List.reverse(List.prepend((key, val), acc))
+        [pair, ..rest] -> match pair
+            (k, v) -> match k == key
+                true -> List.concat(List.reverse(List.prepend((key, val), acc)), rest)
+                false -> mapSetField(rest, key, val, List.prepend((k, v), acc))
+
+fn builtinMapGet(args: List<Val>) -> Result<Val, String>
+    ? "Map.get(map, key) -> Option<Val>."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (mapV, keyV) -> builtinMapGetInner(mapV, keyV)
+
+fn builtinMapGetInner(mapV: Val, keyV: Val) -> Result<Val, String>
+    ? "Look up key in map record."
+    match mapV
+        Val.ValRecord(_, fields) -> mapLookup(fields, Domain.Value.valRepr(keyV))
+        _ -> Result.Err("Map.get requires a Map")
+
+fn mapLookup(fields: List<(String, Val)>, key: String) -> Result<Val, String>
+    ? "Find key in map fields."
+    match fields
+        [] -> Result.Ok(Val.ValNone)
+        [pair, ..rest] -> match pair
+            (k, v) -> match k == key
+                true -> Result.Ok(Val.ValSome(v))
+                false -> mapLookup(rest, key)
+
+fn builtinMapHas(args: List<Val>) -> Result<Val, String>
+    ? "Map.has(map, key) -> Bool."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (mapV, keyV) -> builtinMapHasInner(mapV, keyV)
+
+fn builtinMapHasInner(mapV: Val, keyV: Val) -> Result<Val, String>
+    ? "Check if key exists in map."
+    match mapV
+        Val.ValRecord(_, fields) -> mapHasKey(fields, Domain.Value.valRepr(keyV))
+        _ -> Result.Err("Map.has requires a Map")
+
+fn mapHasKey(fields: List<(String, Val)>, key: String) -> Result<Val, String>
+    ? "Check if key exists in field list."
+    match fields
+        [] -> Result.Ok(Val.ValBool(false))
+        [pair, ..rest] -> match pair
+            (k, _) -> match k == key
+                true -> Result.Ok(Val.ValBool(true))
+                false -> mapHasKey(rest, key)

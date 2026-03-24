@@ -36,10 +36,34 @@ verify skipTypeAnnotationAndEq
     skipTypeAnnotationAndEq([Token.TkColon, Token.TkIdent("Int"), Token.TkEq, Token.TkEof], 0) => 3
 
 fn parseBinding(tokens: List<Token>, pos: Int, name: String) -> Result<(Stmt, Int), String>
-    ? "Parse: name = expr"
+    ? "Parse: name = expr. Skips leading NL+INDENT and trailing DEDENT for multi-line exprs."
     r = Domain.Parser.Expr.parseExpr(tokens, pos)?
     match r
-        (expr, pos2) -> Result.Ok((Stmt.StmtBind(name, expr), pos2))
+        (expr, pos2) -> Result.Ok((Stmt.StmtBind(name, expr), skipTrailingDedent(tokens, pos2, pos)))
+
+fn skipTrailingDedent(tokens: List<Token>, pos: Int, startPos: Int) -> Int
+    ? "If expression consumed an INDENT (multi-line), skip the trailing DEDENT."
+    match countIndentsInRange(tokens, startPos, pos, 0)
+        0 -> pos
+        n -> skipNDedents(tokens, pos, n)
+
+fn countIndentsInRange(tokens: List<Token>, pos: Int, endPos: Int, count: Int) -> Int
+    ? "Count net indent/dedent balance in a token range."
+    match pos >= endPos
+        true -> count
+        false -> match Domain.ParserMatch.tokenAt(tokens, pos)
+            Token.TkIndent -> countIndentsInRange(tokens, pos + 1, endPos, count + 1)
+            Token.TkDedent -> countIndentsInRange(tokens, pos + 1, endPos, count - 1)
+            _ -> countIndentsInRange(tokens, pos + 1, endPos, count)
+
+fn skipNDedents(tokens: List<Token>, pos: Int, n: Int) -> Int
+    ? "Skip n DEDENT tokens (and interleaved newlines) after multi-line expression."
+    match n <= 0
+        true -> pos
+        false -> match Domain.ParserMatch.tokenAt(tokens, pos)
+            Token.TkNewline -> skipNDedents(tokens, pos + 1, n)
+            Token.TkDedent -> skipNDedents(tokens, pos + 1, n - 1)
+            _ -> pos
 
 verify parseBinding
     parseBinding([Token.TkInt(5), Token.TkEof], 0, "x") => Result.Ok((Stmt.StmtBind("x", Expr.ExprInt(5)), 1))
@@ -48,7 +72,7 @@ fn parseStmtExpr(tokens: List<Token>, pos: Int) -> Result<(Stmt, Int), String>
     ? "Parse an expression statement."
     r = Domain.Parser.Expr.parseExpr(tokens, pos)?
     match r
-        (expr, pos2) -> Result.Ok((Stmt.StmtExpr(expr), pos2))
+        (expr, pos2) -> Result.Ok((Stmt.StmtExpr(expr), skipTrailingDedent(tokens, pos2, pos)))
 
 verify parseStmtExpr
     parseStmtExpr([Token.TkInt(1), Token.TkEof], 0) => Result.Ok((Stmt.StmtExpr(Expr.ExprInt(1)), 1))

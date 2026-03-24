@@ -11,7 +11,37 @@ fn callInt(name: String, args: List<Val>) -> Result<Val, String>
         "Int.fromString" -> builtinIntFromString(args)
         "Int.abs" -> builtinIntAbs(args)
         "Int.mod" -> builtinIntMod(args)
+        "Int.max" -> builtinIntMax(args)
+        "Int.min" -> builtinIntMin(args)
         _ -> Result.Err("unknown int builtin: {name}")
+
+fn builtinIntMax(args: List<Val>) -> Result<Val, String>
+    ? "Int.max(a, b) -> larger of a and b."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (aV, bV) -> builtinIntMaxInner(aV, bV)
+
+fn builtinIntMaxInner(aV: Val, bV: Val) -> Result<Val, String>
+    ? "Inner Int.max."
+    a = Domain.Builtins.Helpers.expectInt(aV)?
+    b = Domain.Builtins.Helpers.expectInt(bV)?
+    match a > b
+        true -> Result.Ok(Val.ValInt(a))
+        false -> Result.Ok(Val.ValInt(b))
+
+fn builtinIntMin(args: List<Val>) -> Result<Val, String>
+    ? "Int.min(a, b) -> smaller of a and b."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (aV, bV) -> builtinIntMinInner(aV, bV)
+
+fn builtinIntMinInner(aV: Val, bV: Val) -> Result<Val, String>
+    ? "Inner Int.min."
+    a = Domain.Builtins.Helpers.expectInt(aV)?
+    b = Domain.Builtins.Helpers.expectInt(bV)?
+    match a < b
+        true -> Result.Ok(Val.ValInt(a))
+        false -> Result.Ok(Val.ValInt(b))
 
 verify callInt
     callInt("Int.abs", [Val.ValInt(5)]) => Result.Ok(Val.ValInt(5))
@@ -30,6 +60,12 @@ fn callString(name: String, args: List<Val>) -> Result<Val, String>
         "String.contains" -> builtinStringContains(args)
         "String.startsWith" -> builtinStringStartsWith(args)
         "String.toLower" -> builtinStringToLower(args)
+        "String.toUpper" -> builtinStringToUpper(args)
+        "String.trim" -> builtinStringTrim(args)
+        "String.endsWith" -> builtinStringEndsWith(args)
+        "String.split" -> builtinStringSplit(args)
+        "String.repeat" -> builtinStringRepeat(args)
+        "String.replaceAll" -> builtinStringReplaceAll(args)
         _ -> Result.Err("unknown string builtin: {name}")
 
 verify callString
@@ -291,7 +327,22 @@ fn callFloat(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch Float.* builtins."
     match name
         "Float.toString" -> builtinFloatToString(args)
+        "Float.fromInt" -> builtinFloatFromInt(args)
+        "Float.round" -> builtinFloatRound(args)
         _ -> Result.Err("unknown float builtin: {name}")
+
+fn builtinFloatFromInt(args: List<Val>) -> Result<Val, String>
+    ? "Float.fromInt(n) -> Float."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    n = Domain.Builtins.Helpers.expectInt(v)?
+    Result.Ok(Val.ValFloat(Int.toFloat(n)))
+
+fn builtinFloatRound(args: List<Val>) -> Result<Val, String>
+    ? "Float.round(f) -> Int."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    match v
+        Val.ValFloat(f) -> Result.Ok(Val.ValInt(Float.round(f)))
+        _ -> Result.Err("Float.round requires Float")
 
 verify callFloat
     callFloat("Float.toString", [Val.ValFloat(3.14)]) => Result.Ok(Val.ValStr("3.14"))
@@ -305,3 +356,80 @@ fn builtinFloatToString(args: List<Val>) -> Result<Val, String>
 
 verify builtinFloatToString
     builtinFloatToString([Val.ValFloat(3.14)]) => Result.Ok(Val.ValStr("3.14"))
+
+fn builtinStringToUpper(args: List<Val>) -> Result<Val, String>
+    ? "String.toUpper(s) -> uppercase string."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    s = Domain.Builtins.Helpers.expectStr(v)?
+    Result.Ok(Val.ValStr(String.toUpper(s)))
+
+fn builtinStringTrim(args: List<Val>) -> Result<Val, String>
+    ? "String.trim(s) -> trimmed string."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    s = Domain.Builtins.Helpers.expectStr(v)?
+    Result.Ok(Val.ValStr(String.trim(s)))
+
+fn builtinStringEndsWith(args: List<Val>) -> Result<Val, String>
+    ? "String.endsWith(s, suffix) -> Bool."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (sV, pV) -> builtinStringEndsWithInner(sV, pV)
+
+fn builtinStringEndsWithInner(sV: Val, pV: Val) -> Result<Val, String>
+    ? "Inner String.endsWith."
+    s = Domain.Builtins.Helpers.expectStr(sV)?
+    p = Domain.Builtins.Helpers.expectStr(pV)?
+    Result.Ok(Val.ValBool(String.endsWith(s, p)))
+
+fn builtinStringSplit(args: List<Val>) -> Result<Val, String>
+    ? "String.split(s, sep) -> List<String>."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (sV, sepV) -> builtinStringSplitInner(sV, sepV)
+
+fn builtinStringSplitInner(sV: Val, sepV: Val) -> Result<Val, String>
+    ? "Inner String.split."
+    s = Domain.Builtins.Helpers.expectStr(sV)?
+    sep = Domain.Builtins.Helpers.expectStr(sepV)?
+    parts = String.split(s, sep)
+    Result.Ok(Val.ValList(strPartsToVals(parts, [])))
+
+fn strPartsToVals(parts: List<String>, acc: List<Val>) -> List<Val>
+    ? "Convert string list to ValStr list."
+    match parts
+        [] -> List.reverse(acc)
+        [s, ..rest] -> strPartsToVals(rest, List.prepend(Val.ValStr(s), acc))
+
+fn builtinStringRepeat(args: List<Val>) -> Result<Val, String>
+    ? "String.repeat(s, n) -> repeated string."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (sV, nV) -> builtinStringRepeatInner(sV, nV)
+
+fn builtinStringRepeatInner(sV: Val, nV: Val) -> Result<Val, String>
+    ? "Inner String.repeat."
+    s = Domain.Builtins.Helpers.expectStr(sV)?
+    n = Domain.Builtins.Helpers.expectInt(nV)?
+    Result.Ok(Val.ValStr(repeatStr(s, n, "")))
+
+fn repeatStr(s: String, n: Int, acc: String) -> String
+    ? "Repeat string n times."
+    match n <= 0
+        true -> acc
+        false -> repeatStr(s, n - 1, acc + s)
+
+fn builtinStringReplaceAll(args: List<Val>) -> Result<Val, String>
+    ? "String.replaceAll(s, from, to) -> String with all occurrences replaced."
+    match List.len(args) == 3
+        true -> builtinStringReplaceAllExtract(args)
+        false -> Result.Err("String.replaceAll takes 3 arguments")
+
+fn builtinStringReplaceAllExtract(args: List<Val>) -> Result<Val, String>
+    ? "Extract args for String.replaceAll."
+    sV = Option.withDefault(List.get(args, 0), Val.ValUnit)
+    fromV = Option.withDefault(List.get(args, 1), Val.ValUnit)
+    toV = Option.withDefault(List.get(args, 2), Val.ValUnit)
+    s = Domain.Builtins.Helpers.expectStr(sV)?
+    from = Domain.Builtins.Helpers.expectStr(fromV)?
+    to = Domain.Builtins.Helpers.expectStr(toV)?
+    Result.Ok(Val.ValStr(String.replaceAll(s, from, to)))

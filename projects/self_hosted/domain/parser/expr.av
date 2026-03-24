@@ -211,8 +211,9 @@ fn parseInterpAfterStr(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result
 verify parseInterpAfterStr
     parseInterpAfterStr([Token.TkEof], 0, [Expr.ExprStr("a"), Expr.ExprStr("b")]) => Result.Ok((Expr.ExprConcat([Expr.ExprStr("a"), Expr.ExprStr("b")]), 0))
 
-fn parseListExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
+fn parseListExpr(tokens: List<Token>, pos0: Int) -> Result<(Expr, Int), String>
     ? "Parse list literal: [expr, expr, ...] or []."
+    pos = skipNl(tokens, pos0)
     match Domain.ParserMatch.tokenAt(tokens, pos)
         Token.TkRBracket -> Result.Ok((Expr.ExprList([]), pos + 1))
         _ -> parseListItems(tokens, pos, [])
@@ -229,10 +230,11 @@ fn parseListItems(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(Exp
 verify parseListItems
     parseListItems([Token.TkInt(1), Token.TkRBracket, Token.TkEof], 0, []) => Result.Ok((Expr.ExprList([Expr.ExprInt(1)]), 2))
 
-fn parseListItemsTail(tokens: List<Token>, pos: Int, items: List<Expr>) -> Result<(Expr, Int), String>
+fn parseListItemsTail(tokens: List<Token>, pos0: Int, items: List<Expr>) -> Result<(Expr, Int), String>
     ? "After a list item: ',' for more or ']' to end."
+    pos = skipNl(tokens, pos0)
     match Domain.ParserMatch.tokenAt(tokens, pos)
-        Token.TkComma -> parseListItems(tokens, pos + 1, items)
+        Token.TkComma -> parseListItems(tokens, skipNl(tokens, pos + 1), items)
         Token.TkRBracket -> Result.Ok((Expr.ExprList(items), pos + 1))
         _ -> Result.Err("Expected ',' or ']' in list literal")
 
@@ -261,10 +263,11 @@ fn parseTupleRest(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(Exp
 verify parseTupleRest
     parseTupleRest([Token.TkInt(2), Token.TkRParen, Token.TkEof], 0, [Expr.ExprInt(1)]) => Result.Ok((Expr.ExprTuple([Expr.ExprInt(1), Expr.ExprInt(2)]), 2))
 
-fn parseTupleRestTail(tokens: List<Token>, pos: Int, items: List<Expr>) -> Result<(Expr, Int), String>
+fn parseTupleRestTail(tokens: List<Token>, pos0: Int, items: List<Expr>) -> Result<(Expr, Int), String>
     ? "After tuple element: ',' for more or ')' to end."
+    pos = skipNl(tokens, pos0)
     match Domain.ParserMatch.tokenAt(tokens, pos)
-        Token.TkComma -> parseTupleRest(tokens, pos + 1, items)
+        Token.TkComma -> parseTupleRest(tokens, skipNl(tokens, pos + 1), items)
         Token.TkRParen -> Result.Ok((Expr.ExprTuple(items), pos + 1))
         _ -> Result.Err("Expected ')' or ',' in tuple")
 
@@ -368,15 +371,49 @@ verify parseCallArgsList
     parseCallArgsList([Token.TkInt(1), Token.TkRParen, Token.TkEof], 0, "f", []) => Result.Ok((Expr.ExprCall("f", [Expr.ExprInt(1)]), 2))
 
 fn parseCallArgsListTail(tokens: List<Token>, pos0: Int, name: String, args: List<Expr>) -> Result<(Expr, Int), String>
-    ? "After an argument: ',' for more or ')' to end."
+    ? "After an argument: ',' for more or ')' to end. Detects named args (field = expr)."
     pos = skipNl(tokens, pos0)
     match Domain.ParserMatch.tokenAt(tokens, pos)
-        Token.TkComma -> parseCallArgsList(tokens, skipNl(tokens, pos + 1), name, args)
+        Token.TkComma -> parseCallArgsAfterComma(tokens, skipNl(tokens, pos + 1), name, args)
         Token.TkRParen -> Result.Ok((Expr.ExprCall(name, args), pos + 1))
         _ -> Result.Err("Expected ',' or ')' in argument list")
 
 verify parseCallArgsListTail
     parseCallArgsListTail([Token.TkRParen, Token.TkEof], 0, "f", [Expr.ExprInt(1)]) => Result.Ok((Expr.ExprCall("f", [Expr.ExprInt(1)]), 1))
+
+fn parseCallArgsAfterComma(tokens: List<Token>, pos: Int, name: String, args: List<Expr>) -> Result<(Expr, Int), String>
+    ? "After comma in call args: check if next is ident = (named arg) or regular expr."
+    match Domain.ParserMatch.tokenAt(tokens, pos)
+        Token.TkIdent(field) -> parseCallArgsCheckNamed(tokens, pos, name, args, field)
+        _ -> parseCallArgsList(tokens, pos, name, args)
+
+fn parseCallArgsCheckNamed(tokens: List<Token>, pos: Int, name: String, args: List<Expr>, field: String) -> Result<(Expr, Int), String>
+    ? "Lookahead: if next token after ident is =, switch to named args mode."
+    match Domain.ParserMatch.tokenAt(tokens, pos + 1)
+        Token.TkEq -> parseNamedArgs(tokens, pos, name, args, [])
+        _ -> parseCallArgsList(tokens, pos, name, args)
+
+fn parseNamedArgs(tokens: List<Token>, pos: Int, name: String, positionalArgs: List<Expr>, namedAcc: List<(String, Expr)>) -> Result<(Expr, Int), String>
+    ? "Parse field = expr pairs for named/record-update args."
+    match Domain.ParserMatch.tokenAt(tokens, pos)
+        Token.TkIdent(field) -> parseNamedArgField(tokens, pos + 1, name, positionalArgs, namedAcc, field)
+        Token.TkRParen -> Result.Ok((Expr.ExprCall(name, List.append(positionalArgs, Expr.ExprRecord("_named", namedAcc))), pos + 1))
+        _ -> Result.Err("Expected field name or ')' in named arguments")
+
+fn parseNamedArgField(tokens: List<Token>, pos: Int, name: String, positionalArgs: List<Expr>, namedAcc: List<(String, Expr)>, field: String) -> Result<(Expr, Int), String>
+    ? "Parse = expr after field name in named args."
+    pos2 = Domain.ParserMatch.expect(tokens, pos, Token.TkEq)?
+    r = parseExpr(tokens, pos2)?
+    match r
+        (expr, pos3) -> parseNamedArgsTail(tokens, pos3, name, positionalArgs, List.append(namedAcc, (field, expr)))
+
+fn parseNamedArgsTail(tokens: List<Token>, pos0: Int, name: String, positionalArgs: List<Expr>, namedAcc: List<(String, Expr)>) -> Result<(Expr, Int), String>
+    ? "After named arg: ',' for more or ')' to end."
+    pos = skipNl(tokens, pos0)
+    match Domain.ParserMatch.tokenAt(tokens, pos)
+        Token.TkComma -> parseNamedArgs(tokens, skipNl(tokens, pos + 1), name, positionalArgs, namedAcc)
+        Token.TkRParen -> Result.Ok((Expr.ExprCall(name, List.append(positionalArgs, Expr.ExprRecord("_named", namedAcc))), pos + 1))
+        _ -> Result.Err("Expected ',' or ')' in named arguments")
 
 fn parseMatchExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
     ? "Parse: match expr NEWLINE INDENT arms DEDENT. Called after TkMatch is consumed."

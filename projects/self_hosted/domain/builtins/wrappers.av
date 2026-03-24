@@ -1,7 +1,7 @@
 module Wrappers
     depends [Domain.Value, Domain.Builtins.Helpers]
     intent = "Result and Option constructor and combinator builtins."
-    exposes [call]
+    exposes [call, callOptionToResult]
 
 fn call(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch Result.* and Option.* builtins."
@@ -66,3 +66,16 @@ fn builtinOptionWithDefault(args: List<Val>) -> Result<Val, String>
 verify builtinOptionWithDefault
     builtinOptionWithDefault([Val.ValSome(Val.ValInt(3)), Val.ValInt(0)]) => Result.Ok(Val.ValInt(3))
     builtinOptionWithDefault([Val.ValNone, Val.ValInt(0)]) => Result.Ok(Val.ValInt(0))
+
+fn callOptionToResult(args: List<Val>) -> Result<Val, String>
+    ? "Option.toResult(option, errMsg) -> Result."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (optV, errV) -> match optV
+            Val.ValSome(inner) -> Result.Ok(Val.ValOk(inner))
+            Val.ValNone -> Result.Ok(Val.ValErr(errV))
+            _ -> Result.Err("Option.toResult requires Option value")
+
+verify callOptionToResult
+    callOptionToResult([Val.ValSome(Val.ValInt(3)), Val.ValStr("err")]) => Result.Ok(Val.ValOk(Val.ValInt(3)))
+    callOptionToResult([Val.ValNone, Val.ValStr("err")]) => Result.Ok(Val.ValErr(Val.ValStr("err")))

@@ -414,7 +414,7 @@ pub fn check_module_intent_with_sigs_in(
                         let used = if used_effects.is_empty() {
                             "none".to_string()
                         } else {
-                            used_effects.into_iter().collect::<Vec<_>>().join(", ")
+                            used_effects.iter().cloned().collect::<Vec<_>>().join(", ")
                         };
                         warnings.push(CheckFinding {
                             line: f.line,
@@ -427,6 +427,32 @@ pub fn check_module_intent_with_sigs_in(
                                 used
                             ),
                         });
+                    }
+                    // Suggest granular effects when namespace shorthand could be narrowed
+                    for declared in declared_effects {
+                        if !declared.contains('.') {
+                            let prefix = format!("{}.", declared);
+                            let mut matching: Vec<&str> = used_effects
+                                .iter()
+                                .filter(|u| u.starts_with(&prefix))
+                                .map(|s| s.as_str())
+                                .collect();
+                            matching.sort();
+                            if !matching.is_empty() {
+                                errors.push(CheckFinding {
+                                    line: f.line,
+                                    module: module_name.clone(),
+                                    file: source_file.map(|s| s.to_string()),
+                                    message: format!(
+                                        "Function '{}' declares '{}' — only uses {}; consider granular `! [{}]`",
+                                        f.name,
+                                        declared,
+                                        matching.join(", "),
+                                        matching.join(", ")
+                                    ),
+                                });
+                            }
+                        }
                     }
                 }
                 if fn_needs_verify(f)

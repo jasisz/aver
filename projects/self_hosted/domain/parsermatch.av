@@ -248,14 +248,33 @@ verify skipReturnType
     skipReturnType([Token.TkEof], 0) => 0
 
 fn skipDescAndEffects(tokens: List<Token>, pos: Int) -> Int
-    ? "Skip optional ? description and ! [effects] lines."
+    ? "Skip optional ? description and ! [effects] lines (including multi-line effects)."
     match tokenAt(tokens, pos)
         Token.TkQuestion -> skipDescAndEffects(tokens, skipToNextLine(tokens, pos + 1))
-        Token.TkBang -> skipDescAndEffects(tokens, skipToNextLine(tokens, pos + 1))
+        Token.TkBang -> skipDescAndEffects(tokens, skipEffectsBlock(tokens, pos + 1))
         _ -> pos
 
 verify skipDescAndEffects
     skipDescAndEffects([Token.TkEof], 0) => 0
+
+fn skipEffectsBlock(tokens: List<Token>, pos: Int) -> Int
+    ? "Skip ! [effects] block — may span multiple lines with INDENT/DEDENT."
+    match tokenAt(tokens, pos)
+        Token.TkLBracket -> skipUntilRBracket(tokens, pos + 1)
+        _ -> skipToNextLine(tokens, pos)
+
+verify skipEffectsBlock
+    skipEffectsBlock([Token.TkLBracket, Token.TkIdent("Console.print"), Token.TkRBracket, Token.TkNewline, Token.TkEof], 0) => 4
+
+fn skipUntilRBracket(tokens: List<Token>, pos: Int) -> Int
+    ? "Skip tokens until ] then past any trailing newline."
+    match tokenAt(tokens, pos)
+        Token.TkEof -> pos
+        Token.TkRBracket -> skipNewlines(tokens, pos + 1)
+        _ -> skipUntilRBracket(tokens, pos + 1)
+
+verify skipUntilRBracket
+    skipUntilRBracket([Token.TkIdent("X"), Token.TkRBracket, Token.TkNewline, Token.TkEof], 0) => 3
 
 fn skipToNextLine(tokens: List<Token>, pos: Int) -> Int
     ? "Skip tokens until newline, then past it."
