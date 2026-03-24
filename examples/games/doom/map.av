@@ -1,0 +1,55 @@
+module Level
+    intent =
+        "Level map data and collision detection for the raycaster."
+        "Map stored as List<String> where '#' is wall and '.' is floor."
+    depends []
+
+fn demoMap() -> List<String>
+    ? "A 16x16 demo level"
+    [ "################"
+    , "#..............#"
+    , "#..............#"
+    , "#..####........#"
+    , "#..#...........#"
+    , "#..#...........#"
+    , "#..............#"
+    , "#..........#...#"
+    , "#..........#...#"
+    , "#..........#...#"
+    , "#..............#"
+    , "#.......####...#"
+    , "#..............#"
+    , "#...####.......#"
+    , "#..............#"
+    , "################"
+    ]
+
+fn mapWidth() -> Int
+    ? "Width of the demo map"
+    16
+
+fn mapHeight() -> Int
+    ? "Height of the demo map"
+    16
+
+fn isWall(levelMap: List<String>, mx: Int, my: Int) -> Bool
+    ? "Check if tile (mx, my) is a wall"
+    match mx < 0
+        true -> true
+        false -> match my < 0
+            true -> true
+            false -> match mx >= mapWidth()
+                true -> true
+                false -> match my >= mapHeight()
+                    true -> true
+                    false -> match List.get(levelMap, my)
+                        Option.None -> true
+                        Option.Some(row) -> match String.charAt(row, mx)
+                            Option.None -> true
+                            Option.Some(ch) -> ch == "#"
+
+verify isWall
+    isWall(demoMap(), 0, 0) => true
+    isWall(demoMap(), 1, 1) => false
+    isWall(demoMap(), 0 - 1, 0) => true
+    isWall(demoMap(), 99, 0) => true

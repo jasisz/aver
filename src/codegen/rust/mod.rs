@@ -148,16 +148,25 @@ fn render_root_main(main_fn: Option<&FnDef>, has_policy: bool, has_verify: bool)
         sections.push("mod verify;".to_string());
     }
 
+    // Spawn main on a thread with 64 MB stack to avoid overflow in deep recursion.
     sections.push(String::new());
     let returns_result = main_fn.is_some_and(|fd| fd.return_type.starts_with("Result<"));
     if returns_result {
         let ret_type = types::type_annotation_to_rust(&main_fn.unwrap().return_type);
         sections.push(format!("fn main() -> {} {{", ret_type));
-        sections.push("    aver_generated::entry::main()".to_string());
+        sections.push("    let child = std::thread::Builder::new()".to_string());
+        sections.push("        .stack_size(64 * 1024 * 1024)".to_string());
+        sections.push("        .spawn(aver_generated::entry::main)".to_string());
+        sections.push("        .expect(\"thread spawn\");".to_string());
+        sections.push("    child.join().expect(\"thread join\")".to_string());
     } else {
         sections.push("fn main() {".to_string());
         if main_fn.is_some() {
-            sections.push("    aver_generated::entry::main()".to_string());
+            sections.push("    let child = std::thread::Builder::new()".to_string());
+            sections.push("        .stack_size(64 * 1024 * 1024)".to_string());
+            sections.push("        .spawn(|| aver_generated::entry::main())".to_string());
+            sections.push("        .expect(\"thread spawn\");".to_string());
+            sections.push("    child.join().expect(\"thread join\");".to_string());
         }
     }
     sections.push("}".to_string());

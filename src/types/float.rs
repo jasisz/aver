@@ -181,6 +181,66 @@ fn max(args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::Float(f64::max(*x, *y)))
 }
 
+fn sin(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [val] = one_arg("Float.sin", args)?;
+    let Value::Float(f) = val else {
+        return Err(RuntimeError::Error(
+            "Float.sin: argument must be a Float".to_string(),
+        ));
+    };
+    Ok(Value::Float(f.sin()))
+}
+
+fn cos(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [val] = one_arg("Float.cos", args)?;
+    let Value::Float(f) = val else {
+        return Err(RuntimeError::Error(
+            "Float.cos: argument must be a Float".to_string(),
+        ));
+    };
+    Ok(Value::Float(f.cos()))
+}
+
+fn sqrt(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [val] = one_arg("Float.sqrt", args)?;
+    let Value::Float(f) = val else {
+        return Err(RuntimeError::Error(
+            "Float.sqrt: argument must be a Float".to_string(),
+        ));
+    };
+    Ok(Value::Float(f.sqrt()))
+}
+
+fn pow(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [a, b] = two_args("Float.pow", args)?;
+    let (Value::Float(base), Value::Float(exp)) = (a, b) else {
+        return Err(RuntimeError::Error(
+            "Float.pow: both arguments must be Float".to_string(),
+        ));
+    };
+    Ok(Value::Float(base.powf(*exp)))
+}
+
+fn atan2(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [a, b] = two_args("Float.atan2", args)?;
+    let (Value::Float(y), Value::Float(x)) = (a, b) else {
+        return Err(RuntimeError::Error(
+            "Float.atan2: both arguments must be Float".to_string(),
+        ));
+    };
+    Ok(Value::Float(y.atan2(*x)))
+}
+
+fn pi(args: &[Value]) -> Result<Value, RuntimeError> {
+    if !args.is_empty() {
+        return Err(RuntimeError::Error(format!(
+            "Float.pi() takes 0 arguments, got {}",
+            args.len()
+        )));
+    }
+    Ok(Value::Float(std::f64::consts::PI))
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 fn one_arg<'a>(name: &str, args: &'a [Value]) -> Result<[&'a Value; 1], RuntimeError> {
@@ -218,6 +278,12 @@ pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
         "round",
         "min",
         "max",
+        "sin",
+        "cos",
+        "sqrt",
+        "pow",
+        "atan2",
+        "pi",
     ];
     let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
     for method in methods {
@@ -246,6 +312,12 @@ pub fn call_nv(
         "Float.round" => Some(round_nv(args, arena)),
         "Float.min" => Some(min_nv(args, arena)),
         "Float.max" => Some(max_nv(args, arena)),
+        "Float.sin" => Some(sin_nv(args, arena)),
+        "Float.cos" => Some(cos_nv(args, arena)),
+        "Float.sqrt" => Some(sqrt_nv(args, arena)),
+        "Float.pow" => Some(pow_nv(args, arena)),
+        "Float.atan2" => Some(atan2_nv(args, arena)),
+        "Float.pi" => Some(pi_nv(args)),
         _ => None,
     }
 }
@@ -372,4 +444,64 @@ fn max_nv(args: &[NanValue], _arena: &mut Arena) -> Result<NanValue, RuntimeErro
         ));
     }
     Ok(NanValue::new_float(f64::max(a.as_float(), b.as_float())))
+}
+
+fn sin_nv(args: &[NanValue], _arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    let v = nv_check1("Float.sin", args)?;
+    if !v.is_float() {
+        return Err(RuntimeError::Error(
+            "Float.sin: argument must be a Float".to_string(),
+        ));
+    }
+    Ok(NanValue::new_float(v.as_float().sin()))
+}
+
+fn cos_nv(args: &[NanValue], _arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    let v = nv_check1("Float.cos", args)?;
+    if !v.is_float() {
+        return Err(RuntimeError::Error(
+            "Float.cos: argument must be a Float".to_string(),
+        ));
+    }
+    Ok(NanValue::new_float(v.as_float().cos()))
+}
+
+fn sqrt_nv(args: &[NanValue], _arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    let v = nv_check1("Float.sqrt", args)?;
+    if !v.is_float() {
+        return Err(RuntimeError::Error(
+            "Float.sqrt: argument must be a Float".to_string(),
+        ));
+    }
+    Ok(NanValue::new_float(v.as_float().sqrt()))
+}
+
+fn pow_nv(args: &[NanValue], _arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    let (a, b) = nv_check2("Float.pow", args)?;
+    if !a.is_float() || !b.is_float() {
+        return Err(RuntimeError::Error(
+            "Float.pow: both arguments must be Float".to_string(),
+        ));
+    }
+    Ok(NanValue::new_float(a.as_float().powf(b.as_float())))
+}
+
+fn atan2_nv(args: &[NanValue], _arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    let (a, b) = nv_check2("Float.atan2", args)?;
+    if !a.is_float() || !b.is_float() {
+        return Err(RuntimeError::Error(
+            "Float.atan2: both arguments must be Float".to_string(),
+        ));
+    }
+    Ok(NanValue::new_float(a.as_float().atan2(b.as_float())))
+}
+
+fn pi_nv(args: &[NanValue]) -> Result<NanValue, RuntimeError> {
+    if !args.is_empty() {
+        return Err(RuntimeError::Error(format!(
+            "Float.pi() takes 0 arguments, got {}",
+            args.len()
+        )));
+    }
+    Ok(NanValue::new_float(std::f64::consts::PI))
 }

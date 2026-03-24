@@ -1,0 +1,29 @@
+module Math
+    intent =
+        "Trigonometry and vector helpers for the raycaster engine."
+        "Wraps Float.sin/cos/sqrt/pi and adds convenience functions."
+    depends []
+
+fn pi() -> Float
+    ? "The constant pi"
+    Float.pi()
+
+fn degToRad(deg: Float) -> Float
+    ? "Convert degrees to radians"
+    deg * Float.pi() / 180.0
+
+fn radToDeg(rad: Float) -> Float
+    ? "Convert radians to degrees"
+    rad * 180.0 / Float.pi()
+
+fn normalizeAngle(a: Float) -> Float
+    ? "Wrap angle to [0, 2*pi)"
+    twoPi = Float.pi() * 2.0
+    rem = a - Int.toFloat(Float.floor(a / twoPi)) * twoPi
+    match rem < 0.0
+        true -> rem + twoPi
+        false -> rem
+
+verify normalizeAngle
+    Float.round(normalizeAngle(0.0) * 1000.0) => 0
+    Float.round(normalizeAngle(Float.pi() * 3.0) * 1000.0) => Float.round(Float.pi() * 1000.0)
