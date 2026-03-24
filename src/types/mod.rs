@@ -66,7 +66,9 @@ impl Type {
                             .any(|expected| crate::effects::effect_satisfies(expected, actual))
                     })
             }
-            (Type::Named(a), Type::Named(b)) => a == b,
+            (Type::Named(a), Type::Named(b)) => {
+                a == b || a.ends_with(&format!(".{}", b)) || b.ends_with(&format!(".{}", a))
+            }
             _ => false,
         }
     }

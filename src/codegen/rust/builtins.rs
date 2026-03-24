@@ -188,6 +188,25 @@ fn emit_builtin_call_inner(
             let exp = emit_arg(1);
             Some(format!("{}.powf({})", base, exp))
         }
+        "Float.min" => {
+            let a = emit_arg(0);
+            let b = emit_arg(1);
+            Some(format!("{}.min({})", a, b))
+        }
+        "Float.max" => {
+            let a = emit_arg(0);
+            let b = emit_arg(1);
+            Some(format!("{}.max({})", a, b))
+        }
+        "Float.sin" => Some(format!("{}.sin()", emit_arg(0))),
+        "Float.cos" => Some(format!("{}.cos()", emit_arg(0))),
+        "Float.atan2" => {
+            let y = emit_arg(0);
+            let x = emit_arg(1);
+            Some(format!("{}.atan2({})", y, x))
+        }
+        "Float.pi" => Some("std::f64::consts::PI".to_string()),
+        "Float.fromInt" => Some(format!("{} as f64", emit_arg(0))),
 
         // ---- String ----
         "String.fromInt" => {

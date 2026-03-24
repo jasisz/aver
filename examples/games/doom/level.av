@@ -1,36 +1,107 @@
 module Level
     intent =
-        "Level map data and collision detection for the raycaster."
-        "Map stored as List<String> where '#' is wall and '.' is floor."
-    depends []
+        "Procedural level generation for the raycaster."
+        "Map stored as List<String> where '#' is wall, '.' is floor."
+        "Wall type map uses 'S'=Stone, 'B'=Brick, 'M'=Metal."
+    depends [Random, Types]
 
-fn demoMap() -> List<String>
-    ? "A 16x16 demo level"
-    [ "################"
-    , "#..............#"
-    , "#..............#"
-    , "#..####........#"
-    , "#..#...........#"
-    , "#..#...........#"
-    , "#..............#"
-    , "#..........#...#"
-    , "#..........#...#"
-    , "#..........#...#"
-    , "#..............#"
-    , "#.......####...#"
-    , "#..............#"
-    , "#...####.......#"
-    , "#..............#"
-    , "################"
-    ]
+record Room
+    x: Int
+    y: Int
+    w: Int
+    h: Int
 
 fn mapWidth() -> Int
-    ? "Width of the demo map"
-    16
+    ? "Width of the level"
+    32
+
+verify mapWidth
+    mapWidth() => 32
 
 fn mapHeight() -> Int
-    ? "Height of the demo map"
-    16
+    ? "Height of the level"
+    32
+
+verify mapHeight
+    mapHeight() => 32
+
+// ─── String map helpers ────────────────────────────────────────────────────
+
+fn repeatChar(ch: String, n: Int, acc: String) -> String
+    ? "Build a string of n copies of ch"
+    match n == 0
+        true -> acc
+        false -> repeatChar(ch, n - 1, acc + ch)
+
+verify repeatChar
+    repeatChar("#", 3, "") => "###"
+    repeatChar(".", 0, "") => ""
+    String.len(repeatChar("#", 32, "")) => 32
+
+fn wallRow() -> String
+    ? "A full row of wall characters"
+    repeatChar("#", mapWidth(), "")
+
+verify wallRow
+    String.len(wallRow()) => 32
+
+fn wallTypeRow() -> String
+    ? "A full row of Stone wall type markers"
+    repeatChar("S", mapWidth(), "")
+
+verify wallTypeRow
+    String.len(wallTypeRow()) => 32
+
+fn buildMap(n: Int, row: String, acc: List<String>) -> List<String>
+    ? "Build n identical rows"
+    match n == 0
+        true -> acc
+        false -> buildMap(n - 1, row, List.prepend(row, acc))
+
+verify buildMap
+    List.len(buildMap(32, wallRow(), [])) => 32
+    List.len(buildMap(0, wallRow(), [])) => 0
+
+fn setCharAt(s: String, idx: Int, ch: String, i: Int, acc: String) -> String
+    ? "Replace character at idx in string s"
+    match i == String.len(s)
+        true -> acc
+        false -> match i == idx
+            true -> setCharAt(s, idx, ch, i + 1, acc + ch)
+            false -> setCharCopy(s, idx, ch, i, acc)
+
+fn setCharCopy(s: String, idx: Int, ch: String, i: Int, acc: String) -> String
+    ? "Copy character at position i and continue"
+    match String.charAt(s, i)
+        Option.Some(c) -> setCharAt(s, idx, ch, i + 1, acc + c)
+        Option.None -> acc
+
+verify setCharAt
+    setCharAt("####", 1, ".", 0, "") => "#.##"
+    setCharAt("####", 0, ".", 0, "") => ".###"
+    setCharAt("####", 3, ".", 0, "") => "###."
+
+fn setTile(levelMap: List<String>, x: Int, y: Int, ch: String, row: Int, acc: List<String>) -> List<String>
+    ? "Set one tile in the map"
+    match row == List.len(levelMap)
+        true -> acc
+        false -> match List.get(levelMap, row)
+            Option.Some(r) -> match row == y
+                true -> setTile(levelMap, x, y, ch, row + 1, List.append(acc, setCharAt(r, x, ch, 0, "")))
+                false -> setTile(levelMap, x, y, ch, row + 1, List.append(acc, r))
+            Option.None -> acc
+
+fn charAt(levelMap: List<String>, x: Int, y: Int) -> String
+    ? "Get character at (x, y) in the map"
+    match List.get(levelMap, y)
+        Option.Some(row) -> match String.charAt(row, x)
+            Option.Some(ch) -> ch
+            Option.None -> "#"
+        Option.None -> "#"
+
+verify charAt
+    charAt(["####", "#..#", "####"], 1, 1) => "."
+    charAt(["####", "#..#", "####"], 0, 0) => "#"
 
 fn isWall(levelMap: List<String>, mx: Int, my: Int) -> Bool
     ? "Check if tile (mx, my) is a wall"
@@ -42,14 +113,200 @@ fn isWall(levelMap: List<String>, mx: Int, my: Int) -> Bool
                 true -> true
                 false -> match my >= mapHeight()
                     true -> true
-                    false -> match List.get(levelMap, my)
-                        Option.None -> true
-                        Option.Some(row) -> match String.charAt(row, mx)
-                            Option.None -> true
-                            Option.Some(ch) -> ch == "#"
+                    false -> charAt(levelMap, mx, my) == "#"
 
 verify isWall
-    isWall(demoMap(), 0, 0) => true
-    isWall(demoMap(), 1, 1) => false
-    isWall(demoMap(), 0 - 1, 0) => true
-    isWall(demoMap(), 99, 0) => true
+    isWall(buildMap(4, "##.#", []), 2, 0) => false
+    isWall(buildMap(4, "####", []), 0, 0) => true
+    isWall(buildMap(4, "####", []), 0 - 1, 0) => true
+
+fn wallTypeAt(wallMap: List<String>, mx: Int, my: Int) -> WallType
+    ? "Get wall type at position"
+    ch = charAt(wallMap, mx, my)
+    match ch
+        "B" -> WallType.Brick
+        "M" -> WallType.Metal
+        _ -> WallType.Stone
+
+verify wallTypeAt
+    wallTypeAt(["SSS", "SBS", "SSS"], 1, 1) => WallType.Brick
+    wallTypeAt(["SSS", "SMS", "SSS"], 1, 1) => WallType.Metal
+    wallTypeAt(["SSS", "SSS", "SSS"], 1, 1) => WallType.Stone
+
+// ─── Room carving ──────────────────────────────────────────────────────────
+
+fn carveRow(levelMap: List<String>, x: Int, endX: Int, y: Int) -> List<String>
+    ? "Set tiles from x to endX-1 on row y to floor"
+    match x == endX
+        true -> levelMap
+        false -> carveRow(setTile(levelMap, x, y, ".", 0, []), x + 1, endX, y)
+
+fn carveRect(levelMap: List<String>, x: Int, y: Int, endX: Int, endY: Int) -> List<String>
+    ? "Carve a rectangle of floor tiles"
+    match y == endY
+        true -> levelMap
+        false -> carveRect(carveRow(levelMap, x, endX, y), x, y + 1, endX, endY)
+
+fn carveRoom(levelMap: List<String>, room: Room) -> List<String>
+    ? "Carve a room into the map"
+    carveRect(levelMap, room.x, room.y, Int.min(room.x + room.w, mapWidth() - 1), Int.min(room.y + room.h, mapHeight() - 1))
+
+fn markRect(wallMap: List<String>, x: Int, y: Int, endX: Int, endY: Int, ch: String) -> List<String>
+    ? "Mark a rectangular region with wall type ch"
+    match y == endY
+        true -> wallMap
+        false -> markRect(markRectRow(wallMap, x, endX, y, ch), x, y + 1, endX, endY, ch)
+
+fn markRectRow(wallMap: List<String>, x: Int, endX: Int, y: Int, ch: String) -> List<String>
+    ? "Mark one row of a rectangle with wall type"
+    match x == endX
+        true -> wallMap
+        false -> markRectRow(setTile(wallMap, x, y, ch, 0, []), x + 1, endX, y, ch)
+
+// ─── Corridors ─────────────────────────────────────────────────────────────
+
+fn carveH(levelMap: List<String>, x1: Int, x2: Int, y: Int) -> List<String>
+    ? "Horizontal corridor"
+    carveRow(levelMap, Int.min(x1, x2), Int.max(x1, x2) + 1, y)
+
+fn carveV(levelMap: List<String>, x: Int, y1: Int, y2: Int) -> List<String>
+    ? "Vertical corridor"
+    carveVStep(levelMap, x, Int.min(y1, y2), Int.max(y1, y2) + 1)
+
+fn carveVStep(levelMap: List<String>, x: Int, y: Int, endY: Int) -> List<String>
+    ? "Carve vertical corridor one row at a time"
+    match y == endY
+        true -> levelMap
+        false -> carveVStep(setTile(levelMap, x, y, ".", 0, []), x, y + 1, endY)
+
+fn markHCorridor(wallMap: List<String>, x1: Int, x2: Int, y: Int) -> List<String>
+    ? "Mark horizontal corridor as Metal"
+    markRectRow(wallMap, Int.min(x1, x2), Int.max(x1, x2) + 1, y, "M")
+
+fn markVCorridor(wallMap: List<String>, x: Int, y1: Int, y2: Int) -> List<String>
+    ? "Mark vertical corridor as Metal"
+    markVCorridorStep(wallMap, x, Int.min(y1, y2), Int.max(y1, y2) + 1)
+
+fn markVCorridorStep(wallMap: List<String>, x: Int, y: Int, endY: Int) -> List<String>
+    ? "Mark vertical corridor step"
+    match y == endY
+        true -> wallMap
+        false -> markVCorridorStep(setTile(wallMap, x, y, "M", 0, []), x, y + 1, endY)
+
+fn connectRooms(levelMap: List<String>, r1: Room, r2: Room) -> List<String>
+    ? "Connect two rooms with an L-shaped corridor"
+    cx1 = r1.x + r1.w / 2
+    cy1 = r1.y + r1.h / 2
+    cx2 = r2.x + r2.w / 2
+    cy2 = r2.y + r2.h / 2
+    carveV(carveH(levelMap, cx1, cx2, cy1), cx2, cy1, cy2)
+
+fn connectWalls(wallMap: List<String>, r1: Room, r2: Room) -> List<String>
+    ? "Mark corridor wall types between two rooms"
+    cx1 = r1.x + r1.w / 2
+    cy1 = r1.y + r1.h / 2
+    cx2 = r2.x + r2.w / 2
+    cy2 = r2.y + r2.h / 2
+    markVCorridor(markHCorridor(wallMap, cx1, cx2, cy1), cx2, cy1, cy2)
+
+// ─── Room generation ───────────────────────────────────────────────────────
+
+fn roomFromSeed(s: Int) -> Room
+    ? "Generate a room from a seed value"
+    s1 = Random.nextSeed(s)
+    s2 = Random.nextSeed(s1)
+    s3 = Random.nextSeed(s2)
+    s4 = Random.nextSeed(s3)
+    Room(x = Random.seedToRange(s1, 2, 24), y = Random.seedToRange(s2, 2, 24), w = Random.seedToRange(s3, 4, 8), h = Random.seedToRange(s4, 4, 8))
+
+verify roomFromSeed
+    roomFromSeed(42).w >= 4 => true
+    roomFromSeed(42).w <= 8 => true
+    roomFromSeed(42).x >= 2 => true
+
+fn roomCenter(room: Room) -> (Float, Float)
+    ? "Center of a room as float coordinates"
+    (Int.toFloat(room.x + room.w / 2) + 0.5, Int.toFloat(room.y + room.h / 2) + 0.5)
+
+verify roomCenter
+    roomCenter(Room(x = 4, y = 4, w = 6, h = 6)) => (7.5, 7.5)
+
+fn genRooms(seed: Int, n: Int, i: Int, acc: List<Room>) -> List<Room>
+    ? "Generate n rooms from seed"
+    match i == n
+        true -> acc
+        false -> genRooms(Random.advanceSeed(seed, 5), n, i + 1, List.append(acc, roomFromSeed(Random.advanceSeed(seed, i))))
+
+verify genRooms
+    List.len(genRooms(42, 6, 0, [])) => 6
+
+fn carveRooms(levelMap: List<String>, rooms: List<Room>, i: Int) -> List<String>
+    ? "Carve all rooms into the map"
+    match i == List.len(rooms)
+        true -> levelMap
+        false -> match List.get(rooms, i)
+            Option.Some(room) -> carveRooms(carveRoom(levelMap, room), rooms, i + 1)
+            Option.None -> levelMap
+
+fn markRoomTypes(wallMap: List<String>, rooms: List<Room>, i: Int) -> List<String>
+    ? "Mark wall types for all rooms as Brick"
+    match i == List.len(rooms)
+        true -> wallMap
+        false -> match List.get(rooms, i)
+            Option.Some(room) -> markRoomTypes(markRect(wallMap, room.x, room.y, Int.min(room.x + room.w, mapWidth() - 1), Int.min(room.y + room.h, mapHeight() - 1), "B"), rooms, i + 1)
+            Option.None -> wallMap
+
+fn connectAll(levelMap: List<String>, rooms: List<Room>, i: Int) -> List<String>
+    ? "Connect consecutive rooms with corridors"
+    match i + 1 == List.len(rooms)
+        true -> levelMap
+        false -> match List.get(rooms, i)
+            Option.Some(r1) -> connectNext(levelMap, rooms, i, r1)
+            Option.None -> levelMap
+
+fn connectNext(levelMap: List<String>, rooms: List<Room>, i: Int, r1: Room) -> List<String>
+    ? "Connect room i with room i+1"
+    match List.get(rooms, i + 1)
+        Option.Some(r2) -> connectAll(connectRooms(levelMap, r1, r2), rooms, i + 1)
+        Option.None -> levelMap
+
+fn connectAllWalls(wallMap: List<String>, rooms: List<Room>, i: Int) -> List<String>
+    ? "Mark corridor wall types for all connections"
+    match i + 1 == List.len(rooms)
+        true -> wallMap
+        false -> match List.get(rooms, i)
+            Option.Some(r1) -> connectWallsNext(wallMap, rooms, i, r1)
+            Option.None -> wallMap
+
+fn connectWallsNext(wallMap: List<String>, rooms: List<Room>, i: Int, r1: Room) -> List<String>
+    ? "Mark wall type for corridor between rooms i and i+1"
+    match List.get(rooms, i + 1)
+        Option.Some(r2) -> connectAllWalls(connectWalls(wallMap, r1, r2), rooms, i + 1)
+        Option.None -> wallMap
+
+// ─── Full level generation ─────────────────────────────────────────────────
+
+fn generateLevel(seed: Int) -> List<String>
+    ? "Generate a full level with 6 rooms and corridors"
+    rooms = genRooms(seed, 6, 0, [])
+    carved = carveRooms(buildMap(mapHeight(), wallRow(), []), rooms, 0)
+    connectAll(carved, rooms, 0)
+
+fn generateWallTypes(seed: Int) -> List<String>
+    ? "Generate wall type map matching the level"
+    rooms = genRooms(seed, 6, 0, [])
+    marked = markRoomTypes(buildMap(mapHeight(), wallTypeRow(), []), rooms, 0)
+    connectAllWalls(marked, rooms, 0)
+
+fn getRooms(seed: Int) -> List<Room>
+    ? "Get the rooms list for a seed (for spawn points)"
+    genRooms(seed, 6, 0, [])
+
+fn startPos(seed: Int) -> (Float, Float)
+    ? "Player start position: center of first room"
+    match List.get(getRooms(seed), 0)
+        Option.Some(room) -> roomCenter(room)
+        Option.None -> (16.0, 16.0)
+
+verify startPos
+    startPos(42) => startPos(42)

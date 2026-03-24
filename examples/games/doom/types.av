@@ -1,0 +1,110 @@
+module Types
+    intent =
+        "Shared data types for Braille Doom: player, enemies, game state,"
+        "wall types, and helper functions."
+    depends []
+
+type WallType
+    Stone
+    Brick
+    Metal
+
+type EnemyKind
+    Imp
+    Demon
+    Ghost
+
+record Enemy
+    x: Float
+    y: Float
+    kind: EnemyKind
+    hp: Int
+    cooldown: Int
+
+record Player
+    x: Float
+    y: Float
+    angle: Float
+    hp: Int
+
+record GameState
+    levelMap: List<String>
+    wallMap: List<String>
+    player: Player
+    enemies: List<Enemy>
+    seed: Int
+    messages: List<String>
+    gameOver: Bool
+    turnCount: Int
+
+record RayHit
+    dist: Float
+    side: Int
+    wallType: WallType
+
+fn mkPlayer(px: Float, py: Float) -> Player
+    ? "Create a player at position with default HP"
+    Player(x = px, y = py, angle = 0.0, hp = 20)
+
+verify mkPlayer
+    mkPlayer(5.0, 5.0).hp => 20
+    mkPlayer(3.0, 4.0).x => 3.0
+
+fn mkEnemy(ex: Float, ey: Float, kind: EnemyKind, hp: Int) -> Enemy
+    ? "Create an enemy at position with given kind and HP"
+    Enemy(x = ex, y = ey, kind = kind, hp = hp, cooldown = 0)
+
+verify mkEnemy
+    mkEnemy(2.0, 3.0, EnemyKind.Imp, 3).hp => 3
+    mkEnemy(2.0, 3.0, EnemyKind.Demon, 8).kind => EnemyKind.Demon
+
+fn enemyGlyph(kind: EnemyKind) -> String
+    ? "Display character for enemy kind"
+    match kind
+        EnemyKind.Imp -> "!"
+        EnemyKind.Demon -> "D"
+        EnemyKind.Ghost -> "G"
+
+verify enemyGlyph
+    enemyGlyph(EnemyKind.Imp) => "!"
+    enemyGlyph(EnemyKind.Demon) => "D"
+    enemyGlyph(EnemyKind.Ghost) => "G"
+
+fn enemyColor(kind: EnemyKind) -> String
+    ? "Terminal color for enemy kind"
+    match kind
+        EnemyKind.Imp -> "red"
+        EnemyKind.Demon -> "magenta"
+        EnemyKind.Ghost -> "cyan"
+
+verify enemyColor
+    enemyColor(EnemyKind.Imp) => "red"
+
+fn enemyMaxHp(kind: EnemyKind) -> Int
+    ? "Default HP for enemy kind"
+    match kind
+        EnemyKind.Imp -> 3
+        EnemyKind.Demon -> 8
+        EnemyKind.Ghost -> 4
+
+verify enemyMaxHp
+    enemyMaxHp(EnemyKind.Imp) => 3
+    enemyMaxHp(EnemyKind.Demon) => 8
+
+fn dirArrow(angle: Float) -> String
+    ? "Direction arrow for minimap based on player angle (8 sectors)"
+    n = Result.withDefault(Int.mod(Float.floor(angle * 4.0 / Float.pi() + 0.5), 8), 0)
+    match n
+        0 -> ">"
+        1 -> "v"
+        2 -> "v"
+        3 -> "<"
+        4 -> "<"
+        5 -> "^"
+        6 -> "^"
+        7 -> ">"
+        _ -> ">"
+
+verify dirArrow
+    dirArrow(0.0) => ">"
+

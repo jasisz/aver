@@ -1,20 +1,29 @@
 module Math
     intent =
-        "Trigonometry and vector helpers for the raycaster engine."
-        "Wraps Float.sin/cos/sqrt/pi and adds convenience functions."
+        "Trigonometry, vector helpers, and numeric utilities"
+        "for the raycaster engine."
     depends []
 
 fn pi() -> Float
     ? "The constant pi"
     Float.pi()
 
+verify pi
+    Float.round(pi() * 1000.0) => 3142
+
 fn degToRad(deg: Float) -> Float
     ? "Convert degrees to radians"
     deg * Float.pi() / 180.0
 
+verify degToRad
+    Float.round(degToRad(180.0) * 1000.0) => Float.round(Float.pi() * 1000.0)
+
 fn radToDeg(rad: Float) -> Float
     ? "Convert radians to degrees"
     rad * 180.0 / Float.pi()
+
+verify radToDeg
+    Float.round(radToDeg(Float.pi())) => 180
 
 fn normalizeAngle(a: Float) -> Float
     ? "Wrap angle to [0, 2*pi)"
@@ -27,3 +36,38 @@ fn normalizeAngle(a: Float) -> Float
 verify normalizeAngle
     Float.round(normalizeAngle(0.0) * 1000.0) => 0
     Float.round(normalizeAngle(Float.pi() * 3.0) * 1000.0) => Float.round(Float.pi() * 1000.0)
+
+fn clampInt(val: Int, lo: Int, hi: Int) -> Int
+    ? "Clamp integer to [lo, hi]"
+    Int.max(lo, Int.min(val, hi))
+
+verify clampInt
+    clampInt(5, 0, 10) => 5
+    clampInt(0 - 1, 0, 10) => 0
+    clampInt(15, 0, 10) => 10
+
+fn clampFloat(val: Float, lo: Float, hi: Float) -> Float
+    ? "Clamp float to [lo, hi]"
+    Float.max(lo, Float.min(val, hi))
+
+verify clampFloat
+    clampFloat(0.5, 0.0, 1.0) => 0.5
+    clampFloat(2.0, 0.0, 1.0) => 1.0
+
+fn dist(x1: Float, y1: Float, x2: Float, y2: Float) -> Float
+    ? "Euclidean distance between two points"
+    dx = x2 - x1
+    dy = y2 - y1
+    Float.sqrt(dx * dx + dy * dy)
+
+verify dist
+    dist(0.0, 0.0, 3.0, 4.0) => 5.0
+    dist(1.0, 1.0, 1.0, 1.0) => 0.0
+
+fn absInt(n: Int) -> Int
+    ? "Absolute value of integer"
+    Int.abs(n)
+
+verify absInt
+    absInt(5) => 5
+    absInt(0 - 3) => 3
