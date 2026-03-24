@@ -345,7 +345,7 @@ fn drawEnemyChar(e: Enemy, screenCol: Int, eDist: Float, enemies: List<Enemy>, z
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
     spriteH = Math.clampInt(Float.floor(2.5 / eDist * Int.toFloat(screenH())), 1, 10)
-    spriteW = Math.clampInt(Float.floor(3.0 / eDist * Int.toFloat(screenW()) / 10.0), 3, 9)
+    spriteW = Math.clampInt(Float.floor(5.0 / eDist * Int.toFloat(screenW()) / 10.0), 3, 13)
     topRow = screenH() / 2 - spriteH / 2
     leftCol = screenCol - spriteW / 2
     drawBlockGrid(e, leftCol, topRow, spriteH, spriteW, 0, 0, zbuf)

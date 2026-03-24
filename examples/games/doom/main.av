@@ -23,11 +23,11 @@ verify moveSpeed
     moveSpeed() => 0.15
 
 fn turnSpeed() -> Float
-    ? "Player turn speed per tick in radians (~15 degrees)"
-    0.26
+    ? "Player turn speed per tick in radians (~8 degrees)"
+    0.14
 
 verify turnSpeed
-    turnSpeed() => 0.26
+    turnSpeed() => 0.14
 
 fn spawnInRoom(room: Level.Room, seed: Int) -> Enemy
     ? "Spawn an enemy at the center of a room"
