@@ -10,6 +10,7 @@ type Expr
     ExprStr(String)
     ExprBool(Bool)
     ExprVar(String)
+    ExprSlot(Int)
     ExprAdd(Expr, Expr)
     ExprSub(Expr, Expr)
     ExprMul(Expr, Expr)
@@ -47,12 +48,15 @@ type Pattern
 
 type Stmt
     StmtBind(String, Expr)
+    StmtBindSlot(Int, Expr)
     StmtExpr(Expr)
 
 record FnDef
     name: String
     params: List<String>
     body: List<Stmt>
+    slotCount: Int
+    slotMap: Map<String, Int>
 
 record Program
     deps: List<String>

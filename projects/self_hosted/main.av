@@ -1,25 +1,27 @@
 module SelfHosted
-    depends [Domain.Token, Domain.Lexer, Domain.Ast, Domain.Value, Domain.Eval, Domain.Parser]
+    depends [Domain.Token, Domain.Lexer, Domain.Ast, Domain.Value, Domain.Eval, Domain.Parser, Domain.Resolver]
     intent =
         "Mini Aver interpreter written in Aver."
         "Demonstrates self-hosting: Aver source parsed and evaluated by Aver running on its own VM."
         "Usage: aver run projects/self_hosted/main.av --module-root projects/self_hosted -- <file.av>"
 
 fn run(source: String) -> Result<Val, String>
-    ? "Lex, parse, and evaluate an Aver source string (no module loading)."
+    ? "Lex, parse, resolve, and evaluate an Aver source string (no module loading)."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     tokens = Domain.Lexer.lex(source)
     prog = Domain.Parser.parse(tokens)?
-    Domain.Eval.evalProgram(prog)
+    resolved = Domain.Resolver.resolveProgram(prog)
+    Domain.Eval.evalProgram(resolved)
 
 fn runWithModules(source: String, moduleRoot: String) -> Result<Val, String>
-    ? "Lex, parse, load modules, and evaluate."
+    ? "Lex, parse, resolve, load modules, and evaluate."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     tokens = Domain.Lexer.lex(source)
     prog = Domain.Parser.parse(tokens)?
-    r = loadModules(prog.deps, moduleRoot, [], Map.empty())?
+    resolved = Domain.Resolver.resolveProgram(prog)
+    r = loadModules(resolved.deps, moduleRoot, [], Map.empty())?
     match r
-        (moduleFns, _) -> Domain.Eval.evalProgramWithFns(prog, moduleFns)
+        (moduleFns, _) -> Domain.Eval.evalProgramWithFns(resolved, moduleFns)
 
 fn loadModules(deps: List<String>, moduleRoot: String, acc: List<FnDef>, loaded: Map<String, Bool>) -> Result<(List<FnDef>, Map<String, Bool>), String>
     ? "Load all module dependencies, skipping already-loaded modules."
@@ -37,9 +39,10 @@ fn loadOneModule(dep: String, rest: List<String>, moduleRoot: String, acc: List<
     source = Disk.readText(path)?
     tokens = Domain.Lexer.lex(source)
     prog = Domain.Parser.parse(tokens)?
-    qualifiedFns = qualifyFns(prog.fns, dep, [])
+    resolved = Domain.Resolver.resolveProgram(prog)
+    qualifiedFns = qualifyFns(resolved.fns, dep, [])
     loaded2 = Map.set(loaded, dep, true)
-    innerResult = loadModules(prog.deps, moduleRoot, [], loaded2)?
+    innerResult = loadModules(resolved.deps, moduleRoot, [], loaded2)?
     match innerResult
         (innerFns, loaded3) -> loadModules(rest, moduleRoot, List.concat(acc, List.concat(innerFns, qualifiedFns)), loaded3)
 
@@ -86,11 +89,11 @@ verify qualifyFns
 
 fn qualifyFnsOne(f: FnDef, rest: List<FnDef>, prefix: String, acc: List<FnDef>) -> List<FnDef>
     ? "Add both qualified and unqualified versions."
-    qualified = FnDef(name = prefix + "." + f.name, params = f.params, body = f.body)
+    qualified = FnDef(name = prefix + "." + f.name, params = f.params, body = f.body, slotCount = f.slotCount, slotMap = f.slotMap)
     qualifyFns(rest, prefix, List.prepend(f, List.prepend(qualified, acc)))
 
 verify qualifyFnsOne
-    qualifyFnsOne(FnDef(name = "f", params = [], body = []), [], "M", []) => [FnDef(name = "M.f", params = [], body = []), FnDef(name = "f", params = [], body = [])]
+    qualifyFnsOne(FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty()), [], "M", []) => [FnDef(name = "M.f", params = [], body = [], slotCount = 0, slotMap = Map.empty()), FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty())]
 
 fn runRepr(source: String) -> String
     ? "Run source and return result representation or error."

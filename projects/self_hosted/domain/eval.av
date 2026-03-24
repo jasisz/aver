@@ -2,7 +2,7 @@ module Eval
     depends [Domain.Ast, Domain.Value, Domain.Builtins, Domain.Match]
     intent =
         "Tree-walking evaluator for the mini Aver AST."
-        "Uses Map<String, Val> for env and Map<String, FnDef> for fns — O(1) lookups."
+        "Two eval paths: Map-based for unresolved top-level stmts, slot-based (List<Val>) for resolved fns."
         "Delegates builtins to Domain.Builtins and pattern matching to Domain.Match."
     exposes [evalProgram, evalProgramWithFns]
 
@@ -23,7 +23,7 @@ fn lookupFn(fns: Map<String, FnDef>, name: String) -> Result<FnDef, String>
         Option.None -> Result.Err("undefined function: " + name)
 
 verify lookupFn
-    lookupFn(Map.set(Map.empty(), "foo", FnDef(name = "foo", params = [], body = [])), "foo") => Result.Ok(FnDef(name = "foo", params = [], body = []))
+    lookupFn(Map.set(Map.empty(), "foo", FnDef(name = "foo", params = [], body = [], slotCount = 0, slotMap = Map.empty())), "foo") => Result.Ok(FnDef(name = "foo", params = [], body = [], slotCount = 0, slotMap = Map.empty()))
     lookupFn(Map.empty(), "foo") => Result.Err("undefined function: foo")
 
 fn zipArgs(params: List<String>, args: List<Val>, acc: Map<String, Val>) -> Map<String, Val>
@@ -60,6 +60,7 @@ fn evalExpr(expr: Expr, env: Map<String, Val>, fns: Map<String, FnDef>) -> Resul
         Expr.ExprStr(s) -> Result.Ok(Val.ValStr(s))
         Expr.ExprBool(b) -> Result.Ok(Val.ValBool(b))
         Expr.ExprVar(name) -> evalVar(name, env)
+        Expr.ExprSlot(_) -> Result.Err("ExprSlot in map-based eval path")
         Expr.ExprAdd(a, b) -> evalBinop(a, b, env, fns, "add")
         Expr.ExprSub(a, b) -> evalBinop(a, b, env, fns, "sub")
         Expr.ExprMul(a, b) -> evalBinop(a, b, env, fns, "mul")
@@ -389,11 +390,18 @@ fn callWithArgs(args: List<Val>, name: String, fns: Map<String, FnDef>) -> Resul
         false -> callWithArgsNormal(args, name, fns)
 
 fn callWithArgsNormal(args: List<Val>, name: String, fns: Map<String, FnDef>) -> Result<Val, String>
-    ? "Normal function call dispatch."
+    ? "Normal function call dispatch. Uses slot-based eval for resolved fns."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     match lookupFn(fns, name)
-        Result.Ok(fd) -> evalStmts(fd.body, zipArgs(fd.params, args, Map.empty()), fns)
+        Result.Ok(fd) -> callResolved(fd, args, fns)
         Result.Err(_) -> Domain.Builtins.callBuiltin(name, args)
+
+fn callResolved(fd: FnDef, args: List<Val>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Call a function: slot-based if resolved, map-based otherwise."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match fd.slotCount > 0
+        true -> evalStmtsSlot(fd.body, buildSlotEnv(args, fd.slotCount), fd.slotMap, fns)
+        false -> evalStmts(fd.body, zipArgs(fd.params, args, Map.empty()), fns)
 
 fn isRecordUpdate(name: String, args: List<Val>) -> Bool
     ? "Check if this is a Type.update(record, _named(...)) call."
@@ -502,6 +510,7 @@ fn evalStmt(stmt: Stmt, env: Map<String, Val>, fns: Map<String, FnDef>) -> Resul
     match stmt
         Stmt.StmtExpr(e) -> evalStmtExpr(e, env, fns)
         Stmt.StmtBind(name, e) -> evalStmtBind(name, e, env, fns)
+        Stmt.StmtBindSlot(_, e) -> evalStmtExpr(e, env, fns)
 
 fn evalStmts(stmts: List<Stmt>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Evaluate statements, threading env. Self-recursive for codegen TCO."
@@ -534,5 +543,257 @@ fn maybeCallMain(fns: Map<String, FnDef>, fallback: Val) -> Result<Val, String>
     ? "If a main() function exists, call it. Otherwise return fallback value."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     match lookupFn(fns, "main")
-        Result.Ok(fd) -> evalStmts(fd.body, Map.empty(), fns)
+        Result.Ok(fd) -> callResolved(fd, [], fns)
         Result.Err(_) -> Result.Ok(fallback)
+
+// --- Slot-based eval path for resolved functions ---
+
+fn buildSlotEnv(args: List<Val>, slotCount: Int) -> List<Val>
+    ? "Create a List<Val> of slotCount entries: args at 0..n-1, rest ValUnit."
+    padList(args, slotCount - List.len(args))
+
+fn padList(base: List<Val>, count: Int) -> List<Val>
+    ? "Pad a list with ValUnit entries."
+    match count <= 0
+        true -> base
+        false -> padList(List.append(base, Val.ValUnit), count - 1)
+
+fn lookupSlot(env: List<Val>, slot: Int) -> Result<Val, String>
+    ? "Look up a variable by slot index."
+    match List.get(env, slot)
+        Option.Some(v) -> Result.Ok(v)
+        Option.None -> Result.Err("slot out of bounds: {Int.toString(slot)}")
+
+fn setSlot(env: List<Val>, slot: Int, v: Val) -> List<Val>
+    ? "Set slot at given index to a new value."
+    setSlotLoop(env, slot, v, 0, [])
+
+fn setSlotLoop(env: List<Val>, slot: Int, v: Val, idx: Int, acc: List<Val>) -> List<Val>
+    ? "Walk the list, replacing element at slot index."
+    match env
+        [] -> List.reverse(acc)
+        [e, ..rest] -> match idx == slot
+            true -> setSlotLoop(rest, slot, v, idx + 1, List.prepend(v, acc))
+            false -> setSlotLoop(rest, slot, v, idx + 1, List.prepend(e, acc))
+
+verify lookupSlot
+    lookupSlot([Val.ValInt(10), Val.ValInt(20)], 0) => Result.Ok(Val.ValInt(10))
+    lookupSlot([Val.ValInt(10), Val.ValInt(20)], 1) => Result.Ok(Val.ValInt(20))
+    lookupSlot([], 0) => Result.Err("slot out of bounds: 0")
+
+verify setSlot
+    setSlot([Val.ValUnit, Val.ValUnit], 0, Val.ValInt(5)) => [Val.ValInt(5), Val.ValUnit]
+    setSlot([Val.ValUnit, Val.ValUnit], 1, Val.ValInt(7)) => [Val.ValUnit, Val.ValInt(7)]
+
+verify buildSlotEnv
+    buildSlotEnv([Val.ValInt(1)], 3) => [Val.ValInt(1), Val.ValUnit, Val.ValUnit]
+    buildSlotEnv([Val.ValInt(1), Val.ValInt(2)], 2) => [Val.ValInt(1), Val.ValInt(2)]
+
+fn evalExprSlot(expr: Expr, env: List<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Evaluate an expression using slot-based environment."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match expr
+        Expr.ExprSlot(slot) -> lookupSlot(env, slot)
+        Expr.ExprInt(n) -> Result.Ok(Val.ValInt(n))
+        Expr.ExprFloat(f) -> Result.Ok(Val.ValFloat(f))
+        Expr.ExprStr(s) -> Result.Ok(Val.ValStr(s))
+        Expr.ExprBool(b) -> Result.Ok(Val.ValBool(b))
+        Expr.ExprVar(name) -> evalVarSlot(name)
+        Expr.ExprAdd(a, b) -> evalBinopSlot(a, b, env, slotMap, fns, "add")
+        Expr.ExprSub(a, b) -> evalBinopSlot(a, b, env, slotMap, fns, "sub")
+        Expr.ExprMul(a, b) -> evalBinopSlot(a, b, env, slotMap, fns, "mul")
+        Expr.ExprDiv(a, b) -> evalBinopSlot(a, b, env, slotMap, fns, "div")
+        Expr.ExprEq(a, b) -> evalCmpSlot(a, b, env, slotMap, fns, "eq")
+        Expr.ExprNeq(a, b) -> evalCmpSlot(a, b, env, slotMap, fns, "neq")
+        Expr.ExprLt(a, b) -> evalCmpSlot(a, b, env, slotMap, fns, "lt")
+        Expr.ExprGt(a, b) -> evalCmpSlot(a, b, env, slotMap, fns, "gt")
+        Expr.ExprLte(a, b) -> evalCmpSlot(a, b, env, slotMap, fns, "lte")
+        Expr.ExprGte(a, b) -> evalCmpSlot(a, b, env, slotMap, fns, "gte")
+        Expr.ExprConcat(parts) -> evalConcatSlot(parts, env, slotMap, fns)
+        Expr.ExprTuple(exprs) -> evalTupleSlot(exprs, env, slotMap, fns)
+        Expr.ExprList(exprs) -> evalListSlot(exprs, env, slotMap, fns)
+        Expr.ExprRecord(name, fieldExprs) -> evalRecordSlot(name, fieldExprs, env, slotMap, fns)
+        Expr.ExprFieldAccess(obj, field) -> evalFieldAccessSlot(obj, field, env, slotMap, fns)
+        Expr.ExprCall(name, argExprs) -> evalCallSlot(name, argExprs, env, slotMap, fns)
+        Expr.ExprMatch(scrutinee, arms) -> evalMatchExprSlot(scrutinee, arms, env, slotMap, fns)
+        Expr.ExprPropagate(inner) -> evalPropagateSlot(inner, env, slotMap, fns)
+
+fn evalVarSlot(name: String) -> Result<Val, String>
+    ? "Resolve unresolved var in slot path: builtins and constructors only."
+    match name
+        "Option.None" -> Result.Ok(Val.ValNone)
+        _ -> evalVarFallback(name)
+
+fn evalBinopSlot(a: Expr, b: Expr, env: List<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>, op: String) -> Result<Val, String>
+    ? "Binary op in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    va = evalExprSlot(a, env, slotMap, fns)?
+    vb = evalExprSlot(b, env, slotMap, fns)?
+    evalBinopVals(va, vb, op)
+
+fn evalCmpSlot(a: Expr, b: Expr, env: List<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>, op: String) -> Result<Val, String>
+    ? "Comparison in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    va = evalExprSlot(a, env, slotMap, fns)?
+    vb = evalExprSlot(b, env, slotMap, fns)?
+    evalCmpVals(va, vb, op)
+
+fn evalConcatSlot(parts: List<Expr>, env: List<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "String interpolation in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    evalConcatPartsSlot(parts, env, slotMap, fns, "")
+
+fn evalConcatPartsSlot(parts: List<Expr>, env: List<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>, acc: String) -> Result<Val, String>
+    ? "Concatenate interpolation parts in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match parts
+        [] -> Result.Ok(Val.ValStr(acc))
+        [p, ..rest] -> match evalExprSlot(p, env, slotMap, fns)
+            Result.Err(e) -> Result.Err(e)
+            Result.Ok(v) -> evalConcatPartsSlot(rest, env, slotMap, fns, acc + Domain.Value.valRepr(v))
+
+fn evalTupleSlot(exprs: List<Expr>, env: List<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Tuple literal in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    items = evalListItemsSlot(exprs, env, slotMap, fns)?
+    Result.Ok(Val.ValTuple(items))
+
+fn evalListSlot(exprs: List<Expr>, env: List<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "List literal in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    items = evalListItemsSlot(exprs, env, slotMap, fns)?
+    Result.Ok(Val.ValList(items))
+
+fn evalListItemsSlot(exprs: List<Expr>, env: List<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<List<Val>, String>
+    ? "Evaluate list of expressions in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match exprs
+        [] -> Result.Ok([])
+        [e, ..rest] -> match evalExprSlot(e, env, slotMap, fns)
+            Result.Err(err) -> Result.Err(err)
+            Result.Ok(v) -> match evalListItemsSlot(rest, env, slotMap, fns)
+                Result.Err(err) -> Result.Err(err)
+                Result.Ok(vs) -> Result.Ok(List.prepend(v, vs))
+
+fn evalRecordSlot(name: String, fieldExprs: List<(String, Expr)>, env: List<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Record constructor in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    fields = evalRecordFieldsSlot(fieldExprs, env, slotMap, fns)?
+    Result.Ok(Val.ValRecord(name, fields))
+
+fn evalRecordFieldsSlot(fieldExprs: List<(String, Expr)>, env: List<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<List<(String, Val)>, String>
+    ? "Evaluate record fields in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match fieldExprs
+        [] -> Result.Ok([])
+        [pair, ..rest] -> match pair
+            (fname, expr) -> evalRecordFieldOneSlot(fname, expr, rest, env, slotMap, fns)
+
+fn evalRecordFieldOneSlot(fname: String, expr: Expr, rest: List<(String, Expr)>, env: List<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<List<(String, Val)>, String>
+    ? "Evaluate one record field in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    v = evalExprSlot(expr, env, slotMap, fns)?
+    restFields = evalRecordFieldsSlot(rest, env, slotMap, fns)?
+    Result.Ok(List.prepend((fname, v), restFields))
+
+fn evalFieldAccessSlot(obj: Expr, field: String, env: List<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Field access in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    v = evalExprSlot(obj, env, slotMap, fns)?
+    match v
+        Val.ValRecord(_, fields) -> lookupField(fields, field)
+        _ -> Result.Err("field access on non-record")
+
+fn evalCallSlot(name: String, argExprs: List<Expr>, env: List<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Function call in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    args = evalArgsSlot(argExprs, env, slotMap, fns)?
+    callWithArgs(args, name, fns)
+
+fn evalArgsSlot(exprs: List<Expr>, env: List<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<List<Val>, String>
+    ? "Evaluate argument expressions in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match exprs
+        [] -> Result.Ok([])
+        [e, ..rest] -> match evalExprSlot(e, env, slotMap, fns)
+            Result.Err(err) -> Result.Err(err)
+            Result.Ok(v) -> match evalArgsSlot(rest, env, slotMap, fns)
+                Result.Err(err) -> Result.Err(err)
+                Result.Ok(vs) -> Result.Ok(List.prepend(v, vs))
+
+fn evalMatchExprSlot(scrutinee: Expr, arms: List<MatchArm>, env: List<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Match expression in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    v = evalExprSlot(scrutinee, env, slotMap, fns)?
+    evalMatchSlot(v, arms, env, slotMap, fns)
+
+fn evalMatchSlot(v: Val, arms: List<MatchArm>, env: List<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Try each match arm in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match arms
+        [] -> Result.Err("no matching arm")
+        [arm, ..rest] -> match Domain.Match.matchPattern(arm.pattern, v)
+            Result.Ok(bindings) -> evalExprSlot(arm.body, mergeBindingsSlot(bindings, slotMap, env), slotMap, fns)
+            Result.Err(_) -> evalMatchSlot(v, rest, env, slotMap, fns)
+
+fn mergeBindingsSlot(bindings: List<(String, Val)>, slotMap: Map<String, Int>, env: List<Val>) -> List<Val>
+    ? "Merge pattern bindings into slot env using slotMap for name-to-slot lookup."
+    match bindings
+        [] -> env
+        [pair, ..rest] -> match pair
+            (name, val) -> mergeOneBindingSlot(name, val, rest, slotMap, env)
+
+fn mergeOneBindingSlot(name: String, val: Val, rest: List<(String, Val)>, slotMap: Map<String, Int>, env: List<Val>) -> List<Val>
+    ? "Merge one pattern binding into slot env."
+    match Map.get(slotMap, name)
+        Option.Some(slot) -> mergeBindingsSlot(rest, slotMap, setSlot(env, slot, val))
+        Option.None -> mergeBindingsSlot(rest, slotMap, env)
+
+fn evalPropagateSlot(inner: Expr, env: List<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Evaluate ? operator in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    v = evalExprSlot(inner, env, slotMap, fns)?
+    match v
+        Val.ValOk(x) -> Result.Ok(x)
+        Val.ValErr(e) -> match e
+            Val.ValStr(msg) -> Result.Err(msg)
+            _ -> Result.Err("propagated error")
+        _ -> Result.Err("? operator requires Result value")
+
+fn evalStmtSlot(stmt: Stmt, env: List<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<(Val, List<Val>), String>
+    ? "Evaluate a statement in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match stmt
+        Stmt.StmtBindSlot(slot, e) -> evalStmtBindSlot(slot, e, env, slotMap, fns)
+        Stmt.StmtExpr(e) -> evalStmtExprSlot(e, env, slotMap, fns)
+        Stmt.StmtBind(name, e) -> evalStmtBindFallbackSlot(name, e, env, slotMap, fns)
+
+fn evalStmtBindSlot(slot: Int, e: Expr, env: List<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<(Val, List<Val>), String>
+    ? "Evaluate a slot binding: eval expr, set slot."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    v = evalExprSlot(e, env, slotMap, fns)?
+    Result.Ok((v, setSlot(env, slot, v)))
+
+fn evalStmtExprSlot(e: Expr, env: List<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<(Val, List<Val>), String>
+    ? "Evaluate an expression statement in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    v = evalExprSlot(e, env, slotMap, fns)?
+    Result.Ok((v, env))
+
+fn evalStmtBindFallbackSlot(name: String, e: Expr, env: List<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<(Val, List<Val>), String>
+    ? "Fallback for unresolved StmtBind in slot path (should not happen after resolver)."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    v = evalExprSlot(e, env, slotMap, fns)?
+    Result.Ok((v, env))
+
+fn evalStmtsSlot(stmts: List<Stmt>, env: List<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Evaluate statements in slot path, threading env."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match stmts
+        [] -> Result.Ok(Val.ValUnit)
+        [s, ..rest] -> match evalStmtSlot(s, env, slotMap, fns)
+            Result.Err(e) -> Result.Err(e)
+            Result.Ok(pair) -> match pair
+                (v, newEnv) -> match rest
+                    [] -> Result.Ok(v)
+                    _ -> evalStmtsSlot(rest, newEnv, slotMap, fns)
