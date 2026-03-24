@@ -1222,19 +1222,11 @@ fn parse_fails_on_any_type_annotation() {
 }
 
 #[test]
-fn parse_tcp_connection_manual_constructor_shows_actionable_error() {
+fn parse_tcp_connection_as_record_constructor() {
+    // Tcp.Connection is no longer opaque — dotted record construction is allowed.
     let src = "c = Tcp.Connection(id = \"x\", host = \"127.0.0.1\", port = 6379)\n";
-    let msg = parse_error(src);
-    assert!(
-        msg.contains("Cannot construct 'Tcp.Connection' directly"),
-        "unexpected parse error: {}",
-        msg
-    );
-    assert!(
-        msg.contains("Tcp.connect(host, port)"),
-        "unexpected parse error: {}",
-        msg
-    );
+    let items = parse(src);
+    assert!(!items.is_empty());
 }
 
 #[test]
