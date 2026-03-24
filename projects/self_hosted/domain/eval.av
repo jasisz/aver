@@ -296,17 +296,13 @@ fn evalConcatExpr(parts: List<Expr>, env: Map<String, Val>, fns: Map<String, FnD
     evalConcatParts(parts, env, fns, "")
 
 fn evalConcatParts(parts: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>, acc: String) -> Result<Val, String>
-    ? "Concatenate interpolation parts into a string."
+    ? "Concatenate interpolation parts. Self-recursive for codegen TCO."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     match parts
         [] -> Result.Ok(Val.ValStr(acc))
-        [p, ..rest] -> evalConcatOnePart(p, rest, env, fns, acc)
-
-fn evalConcatOnePart(part: Expr, rest: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>, acc: String) -> Result<Val, String>
-    ? "Evaluate one interpolation part and continue."
-    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
-    v = evalExpr(part, env, fns)?
-    evalConcatParts(rest, env, fns, acc + Domain.Value.valRepr(v))
+        [p, ..rest] -> match evalExpr(p, env, fns)
+            Result.Err(e) -> Result.Err(e)
+            Result.Ok(v) -> evalConcatParts(rest, env, fns, acc + Domain.Value.valRepr(v))
 
 fn evalTupleExpr(exprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Evaluate tuple literal."
@@ -374,13 +370,6 @@ fn evalListItems(exprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDe
                 Result.Err(err) -> Result.Err(err)
                 Result.Ok(vs) -> Result.Ok(List.prepend(v, vs))
 
-fn evalArgsRest(v: Val, rest: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<List<Val>, String>
-    ? "Evaluate remaining args and prepend v."
-    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
-    match evalArgs(rest, env, fns)
-        Result.Err(err) -> Result.Err(err)
-        Result.Ok(vs) -> Result.Ok(List.prepend(v, vs))
-
 fn evalArgs(exprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<List<Val>, String>
     ? "Evaluate a list of argument expressions."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
@@ -388,7 +377,9 @@ fn evalArgs(exprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -
         [] -> Result.Ok([])
         [e, ..rest] -> match evalExpr(e, env, fns)
             Result.Err(err) -> Result.Err(err)
-            Result.Ok(v) -> evalArgsRest(v, rest, env, fns)
+            Result.Ok(v) -> match evalArgs(rest, env, fns)
+                Result.Err(err) -> Result.Err(err)
+                Result.Ok(vs) -> Result.Ok(List.prepend(v, vs))
 
 fn callWithArgs(args: List<Val>, name: String, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Dispatch call: record update if Type.update, else normal call."
@@ -483,18 +474,13 @@ fn evalCall(name: String, argExprs: List<Expr>, env: Map<String, Val>, fns: Map<
         Result.Ok(args) -> callWithArgs(args, name, fns)
 
 fn evalMatch(v: Val, arms: List<MatchArm>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
-    ? "Try each match arm until one matches."
+    ? "Try each match arm until one matches. Self-recursive for codegen TCO."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     match arms
         [] -> Result.Err("no matching arm")
-        [arm, ..rest] -> tryArm(arm, v, rest, env, fns)
-
-fn tryArm(arm: MatchArm, v: Val, rest: List<MatchArm>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
-    ? "Try a single match arm, fall through to rest on failure."
-    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
-    match Domain.Match.matchPattern(arm.pattern, v)
-        Result.Ok(bindings) -> evalExpr(arm.body, mergeBindings(bindings, env), fns)
-        Result.Err(_) -> evalMatch(v, rest, env, fns)
+        [arm, ..rest] -> match Domain.Match.matchPattern(arm.pattern, v)
+            Result.Ok(bindings) -> evalExpr(arm.body, mergeBindings(bindings, env), fns)
+            Result.Err(_) -> evalMatch(v, rest, env, fns)
 
 fn evalStmtExpr(e: Expr, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<(Val, Map<String, Val>), String>
     ? "Evaluate a statement expression."
@@ -517,27 +503,17 @@ fn evalStmt(stmt: Stmt, env: Map<String, Val>, fns: Map<String, FnDef>) -> Resul
         Stmt.StmtExpr(e) -> evalStmtExpr(e, env, fns)
         Stmt.StmtBind(name, e) -> evalStmtBind(name, e, env, fns)
 
-fn evalStmtsRest(v: Val, newEnv: Map<String, Val>, rest: List<Stmt>, fns: Map<String, FnDef>) -> Result<Val, String>
-    ? "Continue evaluating remaining statements."
-    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
-    match rest
-        [] -> Result.Ok(v)
-        _ -> evalStmts(rest, newEnv, fns)
-
-fn evalStmtsContinue(pair: (Val, Map<String, Val>), rest: List<Stmt>, fns: Map<String, FnDef>) -> Result<Val, String>
-    ? "Unpack stmt result and continue."
-    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
-    match pair
-        (v, newEnv) -> evalStmtsRest(v, newEnv, rest, fns)
-
 fn evalStmts(stmts: List<Stmt>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
-    ? "Evaluate a list of statements, threading the environment."
+    ? "Evaluate statements, threading env. Self-recursive for codegen TCO."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     match stmts
         [] -> Result.Ok(Val.ValUnit)
         [s, ..rest] -> match evalStmt(s, env, fns)
             Result.Err(e) -> Result.Err(e)
-            Result.Ok(pair) -> evalStmtsContinue(pair, rest, fns)
+            Result.Ok(pair) -> match pair
+                (v, newEnv) -> match rest
+                    [] -> Result.Ok(v)
+                    _ -> evalStmts(rest, newEnv, fns)
 
 fn evalProgram(prog: Program) -> Result<Val, String>
     ? "Evaluate a complete program: run top-level stmts, then call main() if it exists."

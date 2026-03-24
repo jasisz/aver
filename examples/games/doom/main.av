@@ -1,0 +1,163 @@
+module Main
+    intent =
+        "Doom-like raycasting FPS rendered with Unicode Braille characters."
+        "Demonstrates: trig builtins, immutable state threading, TCO game loop,"
+        "Terminal service, and Braille-based pseudo-pixel rendering."
+    depends [Math, Level, Render]
+
+decision BrailleRendering
+    date = "2026-03-24"
+    author = "szymon"
+    reason =
+        "Unicode Braille characters encode a 2x4 dot matrix in a single glyph,"
+        "giving 4x vertical resolution compared to plain ASCII. This produces"
+        "smooth wall edges without needing a graphics library."
+    chosen = "BrailleEncoding"
+    rejected = ["AsciiShading", "AnsiBlockChars"]
+    impacts = [renderFrame, columnBraille, cellBits]
+
+record Player
+    x: Float
+    y: Float
+    angle: Float
+
+fn moveSpeed() -> Float
+    ? "Player movement speed per tick"
+    0.15
+
+fn turnSpeed() -> Float
+    ? "Player turn speed per tick in radians"
+    0.08
+
+fn startPlayer() -> Player
+    ? "Initial player position and facing angle"
+    Player(x = 8.0, y = 8.0, angle = 0.0)
+
+fn tryMove(levelMap: List<String>, player: Player, dx: Float, dy: Float) -> Player
+    ? "Attempt to move the player; slide along walls if blocked"
+    nx = player.x + dx
+    ny = player.y + dy
+    canX = Bool.not(Level.isWall(levelMap, Float.floor(nx), Float.floor(player.y)))
+    canY = Bool.not(Level.isWall(levelMap, Float.floor(player.x), Float.floor(ny)))
+    slideMove(player, nx, ny, canX, canY)
+
+fn slideMove(player: Player, nx: Float, ny: Float, canX: Bool, canY: Bool) -> Player
+    ? "Apply wall-sliding movement based on axis availability"
+    match canX
+        true -> match canY
+            true -> Player.update(player, x = nx, y = ny)
+            false -> Player.update(player, x = nx)
+        false -> match canY
+            true -> Player.update(player, y = ny)
+            false -> player
+
+fn moveForward(levelMap: List<String>, player: Player) -> Player
+    ? "Move player forward along facing direction"
+    tryMove(levelMap, player, Float.cos(player.angle) * moveSpeed(), Float.sin(player.angle) * moveSpeed())
+
+fn moveBackward(levelMap: List<String>, player: Player) -> Player
+    ? "Move player backward"
+    tryMove(levelMap, player, 0.0 - Float.cos(player.angle) * moveSpeed(), 0.0 - Float.sin(player.angle) * moveSpeed())
+
+fn strafeLeft(levelMap: List<String>, player: Player) -> Player
+    ? "Strafe left"
+    tryMove(levelMap, player, Float.cos(player.angle - Float.pi() / 2.0) * moveSpeed(), Float.sin(player.angle - Float.pi() / 2.0) * moveSpeed())
+
+fn strafeRight(levelMap: List<String>, player: Player) -> Player
+    ? "Strafe right"
+    tryMove(levelMap, player, Float.cos(player.angle + Float.pi() / 2.0) * moveSpeed(), Float.sin(player.angle + Float.pi() / 2.0) * moveSpeed())
+
+fn turnLeft(player: Player) -> Player
+    ? "Turn player left"
+    Player.update(player, angle = Math.normalizeAngle(player.angle - turnSpeed()))
+
+fn turnRight(player: Player) -> Player
+    ? "Turn player right"
+    Player.update(player, angle = Math.normalizeAngle(player.angle + turnSpeed()))
+
+fn handleInput(levelMap: List<String>, player: Player, key: String) -> Player
+    ? "Update player state based on a key press"
+    match key
+        "w" -> moveForward(levelMap, player)
+        "s" -> moveBackward(levelMap, player)
+        "a" -> strafeLeft(levelMap, player)
+        "d" -> strafeRight(levelMap, player)
+        "left" -> turnLeft(player)
+        "right" -> turnRight(player)
+        "," -> turnLeft(player)
+        "." -> turnRight(player)
+        _ -> player
+
+verify handleInput
+    handleInput(Level.demoMap(), Player(x = 8.0, y = 8.0, angle = 0.0), "x").x => 8.0
+
+fn gameLoop(levelMap: List<String>, player: Player) -> Unit
+    ? "Main game loop: render, read input, update state, repeat"
+    ! [Terminal.enableRawMode, Terminal.disableRawMode, Terminal.clear,
+       Terminal.moveTo, Terminal.print, Terminal.setColor, Terminal.resetColor,
+       Terminal.readKey, Terminal.hideCursor, Terminal.showCursor, Terminal.flush,
+       Terminal.size, Time.sleep]
+    Terminal.clear()
+    Render.renderFrame(levelMap, player.x, player.y, player.angle)
+    Render.renderMinimap(levelMap, player.x, player.y, player.angle)
+    Terminal.flush()
+    key = waitForKey()
+    processInput(levelMap, player, key)
+
+fn processInput(levelMap: List<String>, player: Player, key: String) -> Unit
+    ? "Handle input: quit or update and loop"
+    ! [Terminal.enableRawMode, Terminal.disableRawMode, Terminal.clear,
+       Terminal.moveTo, Terminal.print, Terminal.setColor, Terminal.resetColor,
+       Terminal.readKey, Terminal.hideCursor, Terminal.showCursor, Terminal.flush,
+       Terminal.size, Time.sleep]
+    match key
+        "q" -> cleanup()
+        _ -> gameLoop(levelMap, handleInput(levelMap, player, key))
+
+fn waitForKey() -> String
+    ? "Poll for a key press"
+    ! [Terminal.readKey, Time.sleep]
+    match Terminal.readKey()
+        Option.Some(k) -> k
+        Option.None -> waitAfterNone()
+
+fn waitAfterNone() -> String
+    ? "Sleep briefly then poll again"
+    ! [Terminal.readKey, Time.sleep]
+    Time.sleep(16)
+    waitForKey()
+
+fn cleanup() -> Unit
+    ? "Restore terminal state before exit"
+    ! [Terminal.disableRawMode, Terminal.showCursor, Terminal.clear,
+       Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.flush]
+    Terminal.disableRawMode()
+    Terminal.showCursor()
+    Terminal.clear()
+    Terminal.moveTo(0, 0)
+    Terminal.resetColor()
+    Terminal.print("Thanks for playing Braille Doom!\n")
+    Terminal.flush()
+
+fn run() -> Result<String, String>
+    ? "Entry point — set up terminal and start the game loop"
+    ! [Terminal.enableRawMode, Terminal.disableRawMode, Terminal.clear,
+       Terminal.moveTo, Terminal.print, Terminal.setColor, Terminal.resetColor,
+       Terminal.readKey, Terminal.hideCursor, Terminal.showCursor, Terminal.flush,
+       Terminal.size, Time.sleep]
+    Terminal.enableRawMode()
+    Terminal.hideCursor()
+    Terminal.clear()
+    levelMap = Level.demoMap()
+    player = startPlayer()
+    gameLoop(levelMap, player)
+    Result.Ok("done")
+
+fn main() -> Unit
+    ! [Terminal.enableRawMode, Terminal.disableRawMode, Terminal.clear,
+       Terminal.moveTo, Terminal.print, Terminal.setColor, Terminal.resetColor,
+       Terminal.readKey, Terminal.hideCursor, Terminal.showCursor, Terminal.flush,
+       Terminal.size, Time.sleep, Console.print]
+    match run()
+        Result.Ok(_) -> Console.print("")
+        Result.Err(e) -> Console.print("Error: {e}")

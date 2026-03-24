@@ -72,45 +72,50 @@ fn castRay(levelMap: List<String>, px: Float, py: Float, angle: Float) -> Float
     ? "March a ray from (px,py) at angle, return distance to first wall"
     marchRay(levelMap, px, py, Float.cos(angle), Float.sin(angle), 0.0)
 
+fn marchStep(levelMap: List<String>, px: Float, py: Float, dx: Float, dy: Float, dist: Float) -> Float
+    ? "Check current position and either return distance or keep marching"
+    mx = Float.floor(px + dx * dist)
+    my = Float.floor(py + dy * dist)
+    match Level.isWall(levelMap, mx, my)
+        true -> dist
+        false -> marchRay(levelMap, px, py, dx, dy, dist + 0.05)
+
 fn marchRay(levelMap: List<String>, px: Float, py: Float, dx: Float, dy: Float, dist: Float) -> Float
     ? "Step along the ray until hitting a wall or max distance"
     match dist > 16.0
         true -> 16.0
-        false ->
-            mx = Float.floor(px + dx * dist)
-            my = Float.floor(py + dy * dist)
-            match Level.isWall(levelMap, mx, my)
-                true -> dist
-                false -> marchRay(levelMap, px, py, dx, dy, dist + 0.05)
+        false -> marchStep(levelMap, px, py, dx, dy, dist)
 
 // ─── Column rendering ──────────────────────────────────────────────────────
+
+fn clampWallH(h: Int) -> Int
+    ? "Clamp wall height to pixel height"
+    match h > pixelH()
+        true -> pixelH()
+        false -> h
 
 fn wallHeight(distance: Float) -> Int
     ? "Pixel height of the wall strip for a given corrected distance"
     match distance < 0.1
         true -> pixelH()
-        false ->
-            h = Float.floor(Int.toFloat(pixelH()) / distance)
-            match h > pixelH()
-                true -> pixelH()
-                false -> h
+        false -> clampWallH(Float.floor(Int.toFloat(pixelH()) / distance))
 
 fn columnBraille(wallTop: Int, wallBot: Int, row: Int) -> String
     ? "Compute one Braille character for a column at terminal row"
     bits = cellBits(wallTop, wallBot, row * 4, 0, 0)
     brailleChar(bits)
 
+fn addDotIfWall(wallTop: Int, wallBot: Int, y: Int, i: Int, acc: Int) -> Int
+    ? "Add dot bits if pixel y is in wall region"
+    match Bool.and(y >= wallTop, y < wallBot)
+        true -> acc + dotBit(i) + dotBitRight(i)
+        false -> acc
+
 fn cellBits(wallTop: Int, wallBot: Int, pixY: Int, i: Int, acc: Int) -> Int
     ? "Accumulate 4 dot rows (both columns) into a braille bit pattern"
     match i == 4
         true -> acc
-        false ->
-            y = pixY + i
-            isWallPixel = Bool.and(y >= wallTop, y < wallBot)
-            newBits = match isWallPixel
-                true -> acc + dotBit(i) + dotBitRight(i)
-                false -> acc
-            cellBits(wallTop, wallBot, pixY, i + 1, newBits)
+        false -> cellBits(wallTop, wallBot, pixY, i + 1, addDotIfWall(wallTop, wallBot, pixY + i, i, acc))
 
 verify cellBits
     cellBits(0, 80, 0, 0, 0) => 255
@@ -136,34 +141,47 @@ fn renderFrame(levelMap: List<String>, px: Float, py: Float, angle: Float) -> Un
     renderColumns(levelMap, px, py, angle, 0)
     Terminal.flush()
 
+fn renderOneColumn(levelMap: List<String>, px: Float, py: Float, angle: Float, col: Int) -> Unit
+    ? "Render a single column: cast ray, draw braille strip"
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor, Terminal.resetColor, Terminal.flush]
+    rayAngle = angle - fov() / 2.0 + Int.toFloat(col) * fov() / Int.toFloat(screenW())
+    rawDist = castRay(levelMap, px, py, rayAngle)
+    dist = rawDist * Float.cos(rayAngle - angle)
+    wh = wallHeight(dist)
+    wTop = (pixelH() - wh) / 2
+    wBot = wTop + wh
+    color = shadeColor(dist)
+    Terminal.setColor(color)
+    renderColumnRows(col, wTop, wBot, 0)
+    Terminal.resetColor()
+
 fn renderColumns(levelMap: List<String>, px: Float, py: Float, angle: Float, col: Int) -> Unit
     ? "Render one column and recurse to the next"
     ! [Terminal.moveTo, Terminal.print, Terminal.setColor, Terminal.resetColor, Terminal.flush]
     match col == screenW()
         true -> renderHud(px, py, angle)
-        false ->
-            rayAngle = angle - fov() / 2.0 + Int.toFloat(col) * fov() / Int.toFloat(screenW())
-            rawDist = castRay(levelMap, px, py, rayAngle)
-            dist = rawDist * Float.cos(rayAngle - angle)
-            wh = wallHeight(dist)
-            wTop = (pixelH() - wh) / 2
-            wBot = wTop + wh
-            color = shadeColor(dist)
-            Terminal.setColor(color)
-            renderColumnRows(col, wTop, wBot, 0)
-            Terminal.resetColor()
-            renderColumns(levelMap, px, py, angle, col + 1)
+        false -> renderOneColumnAndContinue(levelMap, px, py, angle, col)
+
+fn renderOneColumnAndContinue(levelMap: List<String>, px: Float, py: Float, angle: Float, col: Int) -> Unit
+    ? "Render one column then continue"
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor, Terminal.resetColor, Terminal.flush]
+    renderOneColumn(levelMap, px, py, angle, col)
+    renderColumns(levelMap, px, py, angle, col + 1)
 
 fn renderColumnRows(col: Int, wallTop: Int, wallBot: Int, row: Int) -> Unit
     ? "Render all rows for a single column"
     ! [Terminal.moveTo, Terminal.print, Terminal.setColor, Terminal.resetColor, Terminal.flush]
     match row == screenH()
         true -> Terminal.print("")
-        false ->
-            ch = columnBraille(wallTop, wallBot, row)
-            Terminal.moveTo(col, row)
-            Terminal.print(ch)
-            renderColumnRows(col, wallTop, wallBot, row + 1)
+        false -> renderOneRow(col, wallTop, wallBot, row)
+
+fn renderOneRow(col: Int, wallTop: Int, wallBot: Int, row: Int) -> Unit
+    ? "Render one braille cell and continue"
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor, Terminal.resetColor, Terminal.flush]
+    ch = columnBraille(wallTop, wallBot, row)
+    Terminal.moveTo(col, row)
+    Terminal.print(ch)
+    renderColumnRows(col, wallTop, wallBot, row + 1)
 
 // ─── HUD ───────────────────────────────────────────────────────────────────
 
@@ -194,7 +212,7 @@ fn renderHud(px: Float, py: Float, angle: Float) -> Unit
 // ─── Minimap ───────────────────────────────────────────────────────────────
 
 fn renderMinimap(levelMap: List<String>, px: Float, py: Float, angle: Float) -> Unit
-    ? "Draw a small ASCII minimap below the 3D view"
+    ? "Draw a small ASCII minimap below the viewport"
     ! [Terminal.moveTo, Terminal.print, Terminal.setColor, Terminal.resetColor, Terminal.flush]
     Terminal.setColor("green")
     renderMinimapRows(levelMap, px, py, 0)
@@ -205,24 +223,42 @@ fn renderMinimapRows(levelMap: List<String>, px: Float, py: Float, row: Int) -> 
     ! [Terminal.moveTo, Terminal.print, Terminal.setColor, Terminal.resetColor, Terminal.flush]
     match row == Level.mapHeight()
         true -> Terminal.print("")
-        false ->
-            Terminal.moveTo(screenW() + 2, screenH() + 2 + row)
-            renderMinimapCols(levelMap, px, py, row, 0)
-            renderMinimapRows(levelMap, px, py, row + 1)
+        false -> renderMinimapRow(levelMap, px, py, row)
+
+fn renderMinimapRow(levelMap: List<String>, px: Float, py: Float, row: Int) -> Unit
+    ? "Render one row and continue"
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor, Terminal.resetColor, Terminal.flush]
+    Terminal.moveTo(screenW() + 2, 11 + row)
+    renderMinimapCols(levelMap, px, py, row, 0)
+    renderMinimapRows(levelMap, px, py, row + 1)
 
 fn renderMinimapCols(levelMap: List<String>, px: Float, py: Float, row: Int, col: Int) -> Unit
     ? "Render one minimap cell"
     ! [Terminal.moveTo, Terminal.print, Terminal.setColor, Terminal.resetColor, Terminal.flush]
     match col == Level.mapWidth()
         true -> Terminal.print("")
-        false ->
-            isPlayer = Bool.and(Float.floor(px) == col, Float.floor(py) == row)
-            match isPlayer
-                true ->
-                    Terminal.setColor("yellow")
-                    Terminal.print("@")
-                    Terminal.setColor("green")
-                false -> match Level.isWall(levelMap, col, row)
-                    true -> Terminal.print("#")
-                    false -> Terminal.print(".")
-            renderMinimapCols(levelMap, px, py, row, col + 1)
+        false -> renderMinimapCell(levelMap, px, py, row, col)
+
+fn renderMinimapCell(levelMap: List<String>, px: Float, py: Float, row: Int, col: Int) -> Unit
+    ? "Render a single minimap cell and continue"
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor, Terminal.resetColor, Terminal.flush]
+    isPlayer = Bool.and(Float.floor(px) == col, Float.floor(py) == row)
+    match isPlayer
+        true -> renderPlayerDot(levelMap, px, py, row, col)
+        false -> renderMapDot(levelMap, px, py, row, col)
+
+fn renderPlayerDot(levelMap: List<String>, px: Float, py: Float, row: Int, col: Int) -> Unit
+    ? "Draw player marker on minimap"
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor, Terminal.resetColor, Terminal.flush]
+    Terminal.setColor("yellow")
+    Terminal.print("@")
+    Terminal.setColor("green")
+    renderMinimapCols(levelMap, px, py, row, col + 1)
+
+fn renderMapDot(levelMap: List<String>, px: Float, py: Float, row: Int, col: Int) -> Unit
+    ? "Draw wall or floor on minimap"
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor, Terminal.resetColor, Terminal.flush]
+    match Level.isWall(levelMap, col, row)
+        true -> Terminal.print("#")
+        false -> Terminal.print(".")
+    renderMinimapCols(levelMap, px, py, row, col + 1)
