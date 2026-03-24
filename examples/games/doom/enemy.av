@@ -116,3 +116,79 @@ fn applyDamageOne(enemies: List<Enemy>, player: Player, i: Int, e: Enemy) -> Pla
     match enemyTouchingPlayer(e, player.x, player.y)
         true -> applyEnemyDamage(enemies, Player.update(player, hp = player.hp - enemyDamage(e.kind)), i + 1)
         false -> applyEnemyDamage(enemies, player, i + 1)
+
+// ─── Shooting ──────────────────────────────────────────────────────────────
+
+fn shootRay(enemies: List<Enemy>, px: Float, py: Float, angle: Float, levelMap: List<String>) -> (List<Enemy>, String)
+    ? "Cast a ray from player, hit first enemy in path. Returns updated enemies and message."
+    dx = Float.cos(angle)
+    dy = Float.sin(angle)
+    shootMarch(enemies, px, py, dx, dy, 0.0, levelMap)
+
+fn shootMarch(enemies: List<Enemy>, px: Float, py: Float, dx: Float, dy: Float, dist: Float, levelMap: List<String>) -> (List<Enemy>, String)
+    ? "March along shot ray checking for enemy hits"
+    match dist > 12.0
+        true -> (enemies, "Shot missed!")
+        false -> shootCheck(enemies, px, py, dx, dy, dist, levelMap)
+
+fn shootCheck(enemies: List<Enemy>, px: Float, py: Float, dx: Float, dy: Float, dist: Float, levelMap: List<String>) -> (List<Enemy>, String)
+    ? "Check current ray position for wall or enemy"
+    cx = px + dx * dist
+    cy = py + dy * dist
+    mx = Float.floor(cx)
+    my = Float.floor(cy)
+    match Level.isWall(levelMap, mx, my)
+        true -> (enemies, "Shot hit wall")
+        false -> shootCheckEnemies(enemies, px, py, dx, dy, dist, levelMap, cx, cy)
+
+fn shootCheckEnemies(enemies: List<Enemy>, px: Float, py: Float, dx: Float, dy: Float, dist: Float, levelMap: List<String>, cx: Float, cy: Float) -> (List<Enemy>, String)
+    ? "Check if any enemy is at the ray position"
+    match findEnemyAt(enemies, cx, cy, 0)
+        Option.Some(idx) -> applyShot(enemies, idx)
+        Option.None -> shootMarch(enemies, px, py, dx, dy, dist + 0.2, levelMap)
+
+fn findEnemyAt(enemies: List<Enemy>, cx: Float, cy: Float, i: Int) -> Option<Int>
+    ? "Find enemy near position, return index"
+    match i == List.len(enemies)
+        true -> Option.None
+        false -> match List.get(enemies, i)
+            Option.Some(e) -> match Math.dist(e.x, e.y, cx, cy) < 0.6
+                true -> Option.Some(i)
+                false -> findEnemyAt(enemies, cx, cy, i + 1)
+            Option.None -> Option.None
+
+fn applyShot(enemies: List<Enemy>, idx: Int) -> (List<Enemy>, String)
+    ? "Apply 5 damage to enemy at index, remove if dead"
+    match List.get(enemies, idx)
+        Option.Some(e) -> applyDamageToEnemy(enemies, idx, e)
+        Option.None -> (enemies, "Shot missed!")
+
+fn applyDamageToEnemy(enemies: List<Enemy>, idx: Int, e: Enemy) -> (List<Enemy>, String)
+    ? "Reduce enemy HP, remove if dead"
+    newHp = e.hp - 5
+    match newHp < 1
+        true -> (removeEnemy(enemies, idx, 0, []), "Killed {Types.enemyGlyph(e.kind)}!")
+        false -> (replaceEnemy(enemies, idx, Enemy.update(e, hp = newHp), 0, []), "Hit {Types.enemyGlyph(e.kind)}! ({Int.toString(newHp)} HP)")
+
+fn removeEnemy(enemies: List<Enemy>, idx: Int, i: Int, acc: List<Enemy>) -> List<Enemy>
+    ? "Remove enemy at index from list"
+    match i == List.len(enemies)
+        true -> acc
+        false -> match List.get(enemies, i)
+            Option.Some(e) -> match i == idx
+                true -> removeEnemy(enemies, idx, i + 1, acc)
+                false -> removeEnemy(enemies, idx, i + 1, List.append(acc, e))
+            Option.None -> acc
+
+verify removeEnemy
+    List.len(removeEnemy([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8)], 0, 0, [])) => 1
+
+fn replaceEnemy(enemies: List<Enemy>, idx: Int, newE: Enemy, i: Int, acc: List<Enemy>) -> List<Enemy>
+    ? "Replace enemy at index in list"
+    match i == List.len(enemies)
+        true -> acc
+        false -> match List.get(enemies, i)
+            Option.Some(e) -> match i == idx
+                true -> replaceEnemy(enemies, idx, newE, i + 1, List.append(acc, newE))
+                false -> replaceEnemy(enemies, idx, newE, i + 1, List.append(acc, e))
+            Option.None -> acc

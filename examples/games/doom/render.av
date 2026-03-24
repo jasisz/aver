@@ -302,17 +302,65 @@ fn isEnemyVisible(screenCol: Int, eDist: Float, zbuf: List<RayHit>) -> Bool
                     Option.None -> false
 
 fn drawEnemyChar(e: Enemy, screenCol: Int, eDist: Float, enemies: List<Enemy>, zbuf: List<RayHit>, px: Float, py: Float, pAngle: Float, i: Int) -> Unit
-    ? "Draw the enemy glyph at the correct screen position"
+    ? "Draw an enemy sprite: braille body scaled by distance"
     ! [
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
-    spriteH = Math.clampInt(Float.floor(3.0 / eDist * Int.toFloat(screenH())), 1, screenH())
-    screenRow = screenH() / 2 - spriteH / 2 + spriteH / 2
+    spriteH = Math.clampInt(Float.floor(4.0 / eDist * Int.toFloat(screenH())), 1, screenH())
+    topRow = screenH() / 2 - spriteH / 2
     Terminal.setColor(Types.enemyColor(e.kind))
-    Terminal.moveTo(screenCol, Math.clampInt(screenRow, 0, screenH() - 1))
-    Terminal.print(Types.enemyGlyph(e.kind))
+    drawSpriteRows(e, screenCol, topRow, spriteH, 0)
     Terminal.resetColor()
     renderEnemies(enemies, zbuf, px, py, pAngle, i + 1)
+
+fn drawSpriteRows(e: Enemy, col: Int, topRow: Int, spriteH: Int, row: Int) -> Unit
+    ? "Draw sprite rows from top to bottom"
+    ! [
+        Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+    ]
+    match row == spriteH
+        true -> Terminal.print("")
+        false -> drawOneSpriteRow(e, col, topRow, spriteH, row)
+
+fn drawOneSpriteRow(e: Enemy, col: Int, topRow: Int, spriteH: Int, row: Int) -> Unit
+    ? "Draw one row of the enemy sprite"
+    ! [
+        Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+    ]
+    screenRow = Math.clampInt(topRow + row, 0, screenH() - 1)
+    ch = spriteChar(e.kind, row, spriteH)
+    Terminal.moveTo(col, screenRow)
+    Terminal.print(ch)
+    drawSpriteRows(e, col, topRow, spriteH, row + 1)
+
+fn spriteChar(kind: EnemyKind, row: Int, spriteH: Int) -> String
+    ? "Braille character for enemy sprite at given row"
+    frac = row * 3 / spriteH
+    match frac
+        0 -> spriteHead(kind)
+        1 -> spriteBody(kind)
+        _ -> spriteLegs(kind)
+
+fn spriteHead(kind: EnemyKind) -> String
+    ? "Head portion of sprite"
+    match kind
+        EnemyKind.Imp -> brailleChar(54)
+        EnemyKind.Demon -> brailleChar(219)
+        EnemyKind.Ghost -> brailleChar(126)
+
+fn spriteBody(kind: EnemyKind) -> String
+    ? "Body portion of sprite"
+    match kind
+        EnemyKind.Imp -> brailleChar(255)
+        EnemyKind.Demon -> brailleChar(255)
+        EnemyKind.Ghost -> brailleChar(231)
+
+fn spriteLegs(kind: EnemyKind) -> String
+    ? "Legs portion of sprite"
+    match kind
+        EnemyKind.Imp -> brailleChar(192)
+        EnemyKind.Demon -> brailleChar(219)
+        EnemyKind.Ghost -> brailleChar(36)
 
 // ─── Full frame ────────────────────────────────────────────────────────────
 
@@ -324,9 +372,20 @@ fn renderFrame(state: GameState) -> Unit
     zbuf = buildZBuffer(state.levelMap, state.wallMap, state.player.x, state.player.y, state.player.angle, 0, [])
     renderWalls(zbuf, 0)
     renderEnemies(state.enemies, zbuf, state.player.x, state.player.y, state.player.angle, 0)
+    renderCrosshair()
     renderHud(state)
     renderMinimap(state)
     Terminal.flush()
+
+fn renderCrosshair() -> Unit
+    ? "Draw a crosshair at screen center"
+    ! [
+        Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+    ]
+    Terminal.setColor("white")
+    Terminal.moveTo(screenW() / 2, screenH() / 2)
+    Terminal.print("+")
+    Terminal.resetColor()
 
 // ─── HUD ───────────────────────────────────────────────────────────────────
 
@@ -356,7 +415,9 @@ fn renderHud(state: GameState) -> Unit
     Terminal.moveTo(hudX, 9)
     Terminal.print(",/.  rotate")
     Terminal.moveTo(hudX, 10)
-    Terminal.print("q    quit")
+    Terminal.print("SPACE shoot")
+    Terminal.moveTo(hudX, 11)
+    Terminal.print("q     quit")
     Terminal.resetColor()
     renderMessages(state.messages, hudX, 0)
 

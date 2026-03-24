@@ -113,17 +113,23 @@ fn turnRight(state: GameState) -> Player
 
 fn handleInput(state: GameState, key: String) -> GameState
     ? "Update game state based on a key press"
-    newPlayer = match key
-        "w" -> moveForward(state)
-        "s" -> moveBackward(state)
-        "a" -> strafeLeft(state)
-        "d" -> strafeRight(state)
-        "left" -> turnLeft(state)
-        "right" -> turnRight(state)
-        "," -> turnLeft(state)
-        "." -> turnRight(state)
-        _ -> state.player
-    GameState.update(state, player = newPlayer)
+    match key
+        " " -> handleShoot(state)
+        "w" -> GameState.update(state, player = moveForward(state))
+        "s" -> GameState.update(state, player = moveBackward(state))
+        "a" -> GameState.update(state, player = strafeLeft(state))
+        "d" -> GameState.update(state, player = strafeRight(state))
+        "left" -> GameState.update(state, player = turnLeft(state))
+        "right" -> GameState.update(state, player = turnRight(state))
+        "," -> GameState.update(state, player = turnLeft(state))
+        "." -> GameState.update(state, player = turnRight(state))
+        _ -> state
+
+fn handleShoot(state: GameState) -> GameState
+    ? "Fire a shot along the player's facing direction"
+    result = Enemy.shootRay(state.enemies, state.player.x, state.player.y, state.player.angle, state.levelMap)
+    match result
+        (newEnemies, msg) -> GameState.update(state, enemies = newEnemies, messages = List.append(state.messages, msg))
 
 fn updateTurn(state: GameState) -> GameState
     ? "Run enemy AI and apply damage after player moves"

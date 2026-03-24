@@ -442,7 +442,7 @@ They are grouped by role:
 - `modules/` for import and module-root examples
 - `services/` for effectful adapter demos
 - `apps/` for small multi-file applications under the shared examples root
-- `games/` for interactive terminal games (Snake, Tetris)
+- `games/` for interactive terminal games (Snake, Tetris, Braille Doom)
 Standalone multi-file showcase projects live under `projects/` and use their own local module roots.
 
 Repository layout rule:
@@ -477,6 +477,7 @@ Curated shared examples:
 | `games/snake.av` | Terminal Snake: immutable state, TCO game loop, Terminal service |
 | `games/tetris/main.av` | Modular Tetris: sum types, 2D grid, collision, line clearing (4 modules, 66 verify cases) |
 | `games/checkers/main.av` | Checkers with alpha-beta AI: cursor UI, forced capture, decision trace (5 modules, 144 verify cases) |
+| `games/doom/main.av` | Braille Doom: raycasting FPS with Unicode Braille rendering, procedural levels, 3 enemy types with AI, shooting, wall textures (7 modules) |
 | `core/test_errors.av` | Intentional `aver check` failures: type errors + verify/decision/effect diagnostics |
 
 Standalone projects:

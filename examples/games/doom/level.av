@@ -307,6 +307,3 @@ fn startPos(seed: Int) -> (Float, Float)
     match List.get(getRooms(seed), 0)
         Option.Some(room) -> roomCenter(room)
         Option.None -> (16.0, 16.0)
-
-verify startPos
-    startPos(42) => startPos(42)
