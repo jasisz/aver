@@ -10,6 +10,12 @@
 ///   Float.round(f)       → Int                    — round to int
 ///   Float.min(a, b)      → Float                  — minimum of two floats
 ///   Float.max(a, b)      → Float                  — maximum of two floats
+///   Float.sin(f)         → Float                  — sine (radians)
+///   Float.cos(f)         → Float                  — cosine (radians)
+///   Float.sqrt(f)        → Float                  — square root
+///   Float.pow(base, exp) → Float                  — exponentiation
+///   Float.atan2(y, x)    → Float                  — two-argument arctangent
+///   Float.pi()           → Float                  — π constant
 ///
 /// No effects required.
 use std::collections::HashMap;
@@ -30,6 +36,12 @@ pub fn register(global: &mut HashMap<String, Value>) {
         "round",
         "min",
         "max",
+        "sin",
+        "cos",
+        "sqrt",
+        "pow",
+        "atan2",
+        "pi",
     ] {
         members.insert(
             method.to_string(),
@@ -61,6 +73,12 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
         "Float.round" => Some(round(args)),
         "Float.min" => Some(min(args)),
         "Float.max" => Some(max(args)),
+        "Float.sin" => Some(sin(args)),
+        "Float.cos" => Some(cos(args)),
+        "Float.sqrt" => Some(sqrt(args)),
+        "Float.pow" => Some(pow(args)),
+        "Float.atan2" => Some(atan2(args)),
+        "Float.pi" => Some(pi(args)),
         _ => None,
     }
 }

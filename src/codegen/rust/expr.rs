@@ -74,6 +74,8 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
                 BinOp::Add => {
                     // String + String doesn't compile in Rust; use (l + &r) which works
                     // for both String + &String (→ &str via Deref) and i64 + &i64.
+                    // Left operand is consumed by String +, so clone if used later.
+                    let l = maybe_clone(l, left, &left_ectx);
                     format!("({} + &{})", l, r)
                 }
                 _ => {
