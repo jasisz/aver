@@ -23,11 +23,11 @@ verify moveSpeed
     moveSpeed() => 0.15
 
 fn turnSpeed() -> Float
-    ? "Player turn speed per tick in radians"
-    0.08
+    ? "Player turn speed per tick in radians (~15 degrees)"
+    0.26
 
 verify turnSpeed
-    turnSpeed() => 0.08
+    turnSpeed() => 0.26
 
 fn spawnInRoom(room: Level.Room, seed: Int) -> Enemy
     ? "Spawn an enemy at the center of a room"
@@ -111,6 +111,11 @@ fn turnRight(state: GameState) -> Player
     ? "Turn player right"
     Player.update(state.player, angle = Math.normalizeAngle(state.player.angle + turnSpeed()))
 
+fn turnAndMove(state: GameState, turned: Player) -> Player
+    ? "Apply turn, then move forward in new direction"
+    movedState = GameState.update(state, player = turned)
+    moveForward(movedState)
+
 fn handleInput(state: GameState, key: String) -> GameState
     ? "Update game state based on a key press"
     match key
@@ -119,6 +124,8 @@ fn handleInput(state: GameState, key: String) -> GameState
         "s" -> GameState.update(state, player = moveBackward(state))
         "a" -> GameState.update(state, player = strafeLeft(state))
         "d" -> GameState.update(state, player = strafeRight(state))
+        "e" -> GameState.update(state, player = turnAndMove(state, turnRight(state)))
+        "q" -> GameState.update(state, player = turnAndMove(state, turnLeft(state)))
         "left" -> GameState.update(state, player = turnLeft(state))
         "right" -> GameState.update(state, player = turnRight(state))
         "," -> GameState.update(state, player = turnLeft(state))
@@ -207,7 +214,8 @@ fn waitForQuit() -> Unit
     ]
     match Terminal.readKey()
         Option.Some(k) -> match k
-            "q" -> cleanup()
+            "escape" -> cleanup()
+            "x" -> cleanup()
             _ -> waitForQuit()
         Option.None -> waitForQuitSleep()
 
@@ -254,7 +262,8 @@ fn dispatch(state: GameState, key: String) -> Unit
         Time.sleep,
     ]
     match key
-        "q" -> cleanup()
+        "escape" -> cleanup()
+        "x" -> cleanup()
         _ -> gameLoop(updateTurn(handleInput(state, key)))
 
 fn cleanup() -> Unit
