@@ -300,12 +300,21 @@ fn parseFieldAccessTail(tokens: List<Token>, pos: Int, expr: Expr) -> Result<(Ex
 verify parseFieldAccessTail
     parseFieldAccessTail([Token.TkEof], 0, Expr.ExprFieldAccess(Expr.ExprVar("a"), "x")) => Result.Ok((Expr.ExprFieldAccess(Expr.ExprVar("a"), "x"), 0))
 
+fn skipNl(tokens: List<Token>, pos: Int) -> Int
+    ? "Skip newlines and indents inside parenthesized expressions."
+    match Domain.ParserMatch.tokenAt(tokens, pos)
+        Token.TkNewline -> skipNl(tokens, pos + 1)
+        Token.TkIndent -> skipNl(tokens, pos + 1)
+        Token.TkDedent -> skipNl(tokens, pos + 1)
+        _ -> pos
+
 fn parseCallOrRecord(tokens: List<Token>, pos: Int, name: String) -> Result<(Expr, Int), String>
     ? "After '(': is this a function call f(args) or record Foo(field = val)?"
-    match Domain.ParserMatch.tokenAt(tokens, pos)
-        Token.TkRParen -> Result.Ok((Expr.ExprCall(name, []), pos + 1))
-        Token.TkIdent(first) -> parseCallOrRecordLookahead(tokens, pos, name, first)
-        _ -> parseCallArgsList(tokens, pos, name, [])
+    pos2 = skipNl(tokens, pos)
+    match Domain.ParserMatch.tokenAt(tokens, pos2)
+        Token.TkRParen -> Result.Ok((Expr.ExprCall(name, []), pos2 + 1))
+        Token.TkIdent(first) -> parseCallOrRecordLookahead(tokens, pos2, name, first)
+        _ -> parseCallArgsList(tokens, pos2, name, [])
 
 verify parseCallOrRecord
     parseCallOrRecord([Token.TkRParen, Token.TkEof], 0, "f") => Result.Ok((Expr.ExprCall("f", []), 1))
@@ -340,9 +349,10 @@ verify parseRecordField
 
 fn parseRecordFieldsTail(tokens: List<Token>, pos: Int, name: String, fields: List<(String, Expr)>) -> Result<(Expr, Int), String>
     ? "After a field: ',' for more or ')' to end."
-    match Domain.ParserMatch.tokenAt(tokens, pos)
-        Token.TkComma -> parseRecordFields(tokens, pos + 1, name, fields)
-        Token.TkRParen -> Result.Ok((Expr.ExprRecord(name, fields), pos + 1))
+    pos2 = skipNl(tokens, pos)
+    match Domain.ParserMatch.tokenAt(tokens, pos2)
+        Token.TkComma -> parseRecordFields(tokens, skipNl(tokens, pos2 + 1), name, fields)
+        Token.TkRParen -> Result.Ok((Expr.ExprRecord(name, fields), pos2 + 1))
         _ -> Result.Err("Expected ',' or ')' in record constructor")
 
 verify parseRecordFieldsTail
@@ -357,10 +367,11 @@ fn parseCallArgsList(tokens: List<Token>, pos: Int, name: String, acc: List<Expr
 verify parseCallArgsList
     parseCallArgsList([Token.TkInt(1), Token.TkRParen, Token.TkEof], 0, "f", []) => Result.Ok((Expr.ExprCall("f", [Expr.ExprInt(1)]), 2))
 
-fn parseCallArgsListTail(tokens: List<Token>, pos: Int, name: String, args: List<Expr>) -> Result<(Expr, Int), String>
+fn parseCallArgsListTail(tokens: List<Token>, pos0: Int, name: String, args: List<Expr>) -> Result<(Expr, Int), String>
     ? "After an argument: ',' for more or ')' to end."
+    pos = skipNl(tokens, pos0)
     match Domain.ParserMatch.tokenAt(tokens, pos)
-        Token.TkComma -> parseCallArgsList(tokens, pos + 1, name, args)
+        Token.TkComma -> parseCallArgsList(tokens, skipNl(tokens, pos + 1), name, args)
         Token.TkRParen -> Result.Ok((Expr.ExprCall(name, args), pos + 1))
         _ -> Result.Err("Expected ',' or ')' in argument list")
 
