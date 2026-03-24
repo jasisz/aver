@@ -144,21 +144,20 @@ impl Parser {
                     let named_arg_start = matches!(&self.peek(1).kind, TokenKind::Ident(_))
                         && self.peek(2).kind == TokenKind::Assign;
                     if named_arg_start && let Some(path) = Self::dotted_name(&expr) {
-                        if path == "Tcp.Connection" {
-                            return Err(self.error(
-                                    "Cannot construct 'Tcp.Connection' directly. Use Tcp.connect(host, port)."
-                                        .to_string(),
-                                ));
-                        }
-                        return Err(self.error(format!(
-                                "Named-field call syntax is only valid for direct record constructors like User(...), not '{}(...)'",
-                                path
-                            )));
+                        // Dotted record constructor: Tcp.Connection(id = ..., host = ...)
+                        self.advance();
+                        let fields = self.parse_record_create_fields()?;
+                        self.expect_exact(&TokenKind::RParen)?;
+                        expr = Expr::RecordCreate {
+                            type_name: path,
+                            fields,
+                        };
+                    } else {
+                        self.advance();
+                        let args = self.parse_args()?;
+                        self.expect_exact(&TokenKind::RParen)?;
+                        expr = Expr::FnCall(Box::new(expr), args);
                     }
-                    self.advance();
-                    let args = self.parse_args()?;
-                    self.expect_exact(&TokenKind::RParen)?;
-                    expr = Expr::FnCall(Box::new(expr), args);
                 }
             } else {
                 break;
@@ -209,17 +208,15 @@ impl Parser {
                 return Ok(Expr::RecordCreate { type_name, fields });
             }
 
+            // Dotted record constructor: Tcp.Connection(id = ..., host = ...)
             if named_arg_start && let Some(path) = Self::dotted_name(&atom) {
-                if path == "Tcp.Connection" {
-                    return Err(self.error(
-                        "Cannot construct 'Tcp.Connection' directly. Use Tcp.connect(host, port)."
-                            .to_string(),
-                    ));
-                }
-                return Err(self.error(format!(
-                        "Named-field call syntax is only valid for direct record constructors like User(...), not '{}(...)'",
-                        path
-                    )));
+                self.advance();
+                let fields = self.parse_record_create_fields()?;
+                self.expect_exact(&TokenKind::RParen)?;
+                return Ok(Expr::RecordCreate {
+                    type_name: path,
+                    fields,
+                });
             }
 
             self.advance();

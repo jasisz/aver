@@ -93,6 +93,12 @@ pub struct TcpConnection {
     pub port: i64,
 }
 
+impl TcpConnection {
+    pub fn from_parts(id: String, host: String, port: i64) -> Self {
+        Self { id, host, port }
+    }
+}
+
 impl AverDisplay for TcpConnection {
     fn aver_display(&self) -> String {
         format!(

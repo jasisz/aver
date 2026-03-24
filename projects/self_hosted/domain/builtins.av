@@ -4,12 +4,6 @@ module Builtins
         "Builtin function implementations for the self-hosted evaluator."
         "Dispatches qualified names like List.len, String.charAt, Console.print to sub-modules."
     exposes [callBuiltin, splitDotted, tryVariantConstructor]
-    exposes opaque [TcpConn]
-
-record TcpConn
-    id: String
-    host: String
-    port: Int
 
 fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch qualified builtin calls to sub-module implementations."
@@ -717,27 +711,27 @@ fn builtinTcpConnectInner(hostV: Val, portV: Val) -> Result<Val, String>
         Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn tcpConnToVal(conn: Tcp.Connection) -> Val
-    ? "Convert host Tcp.Connection record to Val using own TcpConn type."
-    Val.ValRecord("TcpConn", [("id", Val.ValStr(conn.id)), ("host", Val.ValStr(conn.host)), ("port", Val.ValInt(conn.port))])
+    ? "Convert host Tcp.Connection record to Val."
+    Val.ValRecord("Tcp.Connection", [("id", Val.ValStr(conn.id)), ("host", Val.ValStr(conn.host)), ("port", Val.ValInt(conn.port))])
 
-fn valToTcpConn(v: Val) -> Result<TcpConn, String>
-    ? "Extract TcpConn fields from ValRecord."
+fn valToTcpConn(v: Val) -> Result<Tcp.Connection, String>
+    ? "Extract Tcp.Connection fields from ValRecord."
     match v
         Val.ValRecord(_, fields) -> valToTcpConnFields(fields)
-        _ -> Result.Err("expected TcpConn record")
+        _ -> Result.Err("expected Tcp.Connection record")
 
-fn valToTcpConnFields(fields: List<(String, Val)>) -> Result<TcpConn, String>
-    ? "Build TcpConn from field list."
+fn valToTcpConnFields(fields: List<(String, Val)>) -> Result<Tcp.Connection, String>
+    ? "Build Tcp.Connection from field list."
     idVal = lookupFieldVal(fields, "id")
     hostVal = lookupFieldVal(fields, "host")
     portVal = lookupFieldVal(fields, "port")
     match idVal
         Val.ValStr(id) -> match hostVal
             Val.ValStr(host) -> match portVal
-                Val.ValInt(port) -> Result.Ok(TcpConn(id = id, host = host, port = port))
-                _ -> Result.Err("bad TcpConn port")
-            _ -> Result.Err("bad TcpConn host")
-        _ -> Result.Err("bad TcpConn id")
+                Val.ValInt(port) -> Result.Ok(Tcp.Connection(id = id, host = host, port = port))
+                _ -> Result.Err("bad Tcp.Connection port")
+            _ -> Result.Err("bad Tcp.Connection host")
+        _ -> Result.Err("bad Tcp.Connection id")
 
 fn lookupFieldVal(fields: List<(String, Val)>, name: String) -> Val
     ? "Find field value by name, return ValUnit if missing."

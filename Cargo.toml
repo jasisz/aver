@@ -1,5 +1,6 @@
 [workspace]
 members = [".", "aver-lsp", "aver-rt"]
+exclude = ["out/self_hosted"]
 
 [package]
 name = "aver-lang"
