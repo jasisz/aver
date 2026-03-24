@@ -53,7 +53,7 @@ fn fnsToMap(fns: List<FnDef>, acc: Map<String, FnDef>) -> Map<String, FnDef>
 
 fn evalExpr(expr: Expr, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Evaluate an expression in the given environment."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match expr
         Expr.ExprInt(n) -> Result.Ok(Val.ValInt(n))
         Expr.ExprFloat(f) -> Result.Ok(Val.ValFloat(f))
@@ -104,7 +104,7 @@ verify evalVarFallback
 
 fn evalPropagate(inner: Expr, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Evaluate ? operator: unwrap Ok or propagate Err."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     v = evalExpr(inner, env, fns)?
     match v
         Val.ValOk(x) -> Result.Ok(x)
@@ -115,7 +115,7 @@ fn evalPropagate(inner: Expr, env: Map<String, Val>, fns: Map<String, FnDef>) ->
 
 fn evalMatchExpr(scrutinee: Expr, arms: List<MatchArm>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Evaluate a match expression."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match evalExpr(scrutinee, env, fns)
         Result.Ok(v) -> evalMatch(v, arms, env, fns)
         Result.Err(e) -> Result.Err(e)
@@ -259,65 +259,65 @@ verify evalCmpRepr
 
 fn evalBinopRight(va: Val, b: Expr, env: Map<String, Val>, fns: Map<String, FnDef>, op: String) -> Result<Val, String>
     ? "Evaluate right side of binop and apply."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match evalExpr(b, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(vb) -> evalBinopVals(va, vb, op)
 
 fn evalBinop(a: Expr, b: Expr, env: Map<String, Val>, fns: Map<String, FnDef>, op: String) -> Result<Val, String>
     ? "Evaluate a binary operation on two expressions."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match evalExpr(a, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(va) -> evalBinopRight(va, b, env, fns, op)
 
 fn evalCmpRight(va: Val, b: Expr, env: Map<String, Val>, fns: Map<String, FnDef>, op: String) -> Result<Val, String>
     ? "Evaluate right side of comparison and apply."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match evalExpr(b, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(vb) -> evalCmpVals(va, vb, op)
 
 fn evalCmp(a: Expr, b: Expr, env: Map<String, Val>, fns: Map<String, FnDef>, op: String) -> Result<Val, String>
     ? "Evaluate a comparison expression."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match evalExpr(a, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(va) -> evalCmpRight(va, b, env, fns, op)
 
 fn evalConcatExpr(parts: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Evaluate string interpolation: concat all parts as strings."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     evalConcatParts(parts, env, fns, "")
 
 fn evalConcatParts(parts: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>, acc: String) -> Result<Val, String>
     ? "Concatenate interpolation parts into a string."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match parts
         [] -> Result.Ok(Val.ValStr(acc))
         [p, ..rest] -> evalConcatOnePart(p, rest, env, fns, acc)
 
 fn evalConcatOnePart(part: Expr, rest: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>, acc: String) -> Result<Val, String>
     ? "Evaluate one interpolation part and continue."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     v = evalExpr(part, env, fns)?
     evalConcatParts(rest, env, fns, acc + Domain.Value.valRepr(v))
 
 fn evalTupleExpr(exprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Evaluate tuple literal."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     items = evalListItems(exprs, env, fns)?
     Result.Ok(Val.ValTuple(items))
 
 fn evalRecordExpr(name: String, fieldExprs: List<(String, Expr)>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Evaluate record constructor."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     fields = evalRecordFields(fieldExprs, env, fns)?
     Result.Ok(Val.ValRecord(name, fields))
 
 fn evalRecordFields(fieldExprs: List<(String, Expr)>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<List<(String, Val)>, String>
     ? "Evaluate record field expressions."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match fieldExprs
         [] -> Result.Ok([])
         [pair, ..rest] -> match pair
@@ -325,14 +325,14 @@ fn evalRecordFields(fieldExprs: List<(String, Expr)>, env: Map<String, Val>, fns
 
 fn evalRecordFieldOne(fname: String, expr: Expr, rest: List<(String, Expr)>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<List<(String, Val)>, String>
     ? "Evaluate one record field and continue."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     v = evalExpr(expr, env, fns)?
     restFields = evalRecordFields(rest, env, fns)?
     Result.Ok(List.prepend((fname, v), restFields))
 
 fn evalFieldAccess(obj: Expr, field: String, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Evaluate field access: obj.field."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     v = evalExpr(obj, env, fns)?
     match v
         Val.ValRecord(_, fields) -> lookupField(fields, field)
@@ -353,14 +353,14 @@ verify lookupField
 
 fn evalListExpr(exprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Evaluate a list literal."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match evalListItems(exprs, env, fns)
         Result.Ok(items) -> Result.Ok(Val.ValList(items))
         Result.Err(e) -> Result.Err(e)
 
 fn evalListItems(exprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<List<Val>, String>
     ? "Evaluate list of expressions into list of values."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match exprs
         [] -> Result.Ok([])
         [e, ..rest] -> match evalExpr(e, env, fns)
@@ -371,14 +371,14 @@ fn evalListItems(exprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDe
 
 fn evalArgsRest(v: Val, rest: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<List<Val>, String>
     ? "Evaluate remaining args and prepend v."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match evalArgs(rest, env, fns)
         Result.Err(err) -> Result.Err(err)
         Result.Ok(vs) -> Result.Ok(List.prepend(v, vs))
 
 fn evalArgs(exprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<List<Val>, String>
     ? "Evaluate a list of argument expressions."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match exprs
         [] -> Result.Ok([])
         [e, ..rest] -> match evalExpr(e, env, fns)
@@ -387,14 +387,14 @@ fn evalArgs(exprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -
 
 fn callWithArgs(args: List<Val>, name: String, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Dispatch call: record update if Type.update, else normal call."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match isRecordUpdate(name, args)
         true -> doRecordUpdate(args)
         false -> callWithArgsNormal(args, name, fns)
 
 fn callWithArgsNormal(args: List<Val>, name: String, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Normal function call dispatch."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match lookupFn(fns, name)
         Result.Ok(fd) -> evalStmts(fd.body, zipArgs(fd.params, args, Map.empty()), fns)
         Result.Err(_) -> Domain.Builtins.callBuiltin(name, args)
@@ -472,62 +472,62 @@ fn removeOverride(k: String, overrides: List<(String, Val)>) -> List<(String, Va
 
 fn evalCall(name: String, argExprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Evaluate a function call."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match evalArgs(argExprs, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(args) -> callWithArgs(args, name, fns)
 
 fn evalMatch(v: Val, arms: List<MatchArm>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Try each match arm until one matches."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match arms
         [] -> Result.Err("no matching arm")
         [arm, ..rest] -> tryArm(arm, v, rest, env, fns)
 
 fn tryArm(arm: MatchArm, v: Val, rest: List<MatchArm>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Try a single match arm, fall through to rest on failure."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match Domain.Match.matchPattern(arm.pattern, v)
         Result.Ok(bindings) -> evalExpr(arm.body, mergeBindings(bindings, env), fns)
         Result.Err(_) -> evalMatch(v, rest, env, fns)
 
 fn evalStmtExpr(e: Expr, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<(Val, Map<String, Val>), String>
     ? "Evaluate a statement expression."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match evalExpr(e, env, fns)
         Result.Ok(v) -> Result.Ok((v, env))
         Result.Err(e) -> Result.Err(e)
 
 fn evalStmtBind(name: String, e: Expr, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<(Val, Map<String, Val>), String>
     ? "Evaluate a binding statement."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match evalExpr(e, env, fns)
         Result.Ok(v) -> Result.Ok((v, Map.set(env, name, v)))
         Result.Err(e) -> Result.Err(e)
 
 fn evalStmt(stmt: Stmt, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<(Val, Map<String, Val>), String>
     ? "Evaluate a statement, returning the result and updated environment."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match stmt
         Stmt.StmtExpr(e) -> evalStmtExpr(e, env, fns)
         Stmt.StmtBind(name, e) -> evalStmtBind(name, e, env, fns)
 
 fn evalStmtsRest(v: Val, newEnv: Map<String, Val>, rest: List<Stmt>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Continue evaluating remaining statements."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match rest
         [] -> Result.Ok(v)
         _ -> evalStmts(rest, newEnv, fns)
 
 fn evalStmtsContinue(pair: (Val, Map<String, Val>), rest: List<Stmt>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Unpack stmt result and continue."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match pair
         (v, newEnv) -> evalStmtsRest(v, newEnv, rest, fns)
 
 fn evalStmts(stmts: List<Stmt>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Evaluate a list of statements, threading the environment."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match stmts
         [] -> Result.Ok(Val.ValUnit)
         [s, ..rest] -> match evalStmt(s, env, fns)
@@ -536,14 +536,14 @@ fn evalStmts(stmts: List<Stmt>, env: Map<String, Val>, fns: Map<String, FnDef>) 
 
 fn evalProgram(prog: Program) -> Result<Val, String>
     ? "Evaluate a complete program: run top-level stmts, then call main() if it exists."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     fnsMap = fnsToMap(prog.fns, Map.empty())
     v = evalStmts(prog.stmts, Map.empty(), fnsMap)?
     maybeCallMain(fnsMap, v)
 
 fn evalProgramWithFns(prog: Program, extraFns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate a program with additional functions from loaded modules."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     baseFns = fnsToMap(extraFns, Map.empty())
     allFns = fnsToMap(prog.fns, baseFns)
     v = evalStmts(prog.stmts, Map.empty(), allFns)?
@@ -551,7 +551,7 @@ fn evalProgramWithFns(prog: Program, extraFns: List<FnDef>) -> Result<Val, Strin
 
 fn maybeCallMain(fns: Map<String, FnDef>, fallback: Val) -> Result<Val, String>
     ? "If a main() function exists, call it. Otherwise return fallback value."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match lookupFn(fns, "main")
         Result.Ok(fd) -> evalStmts(fd.body, Map.empty(), fns)
         Result.Err(_) -> Result.Ok(fallback)

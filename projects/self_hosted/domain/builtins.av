@@ -7,7 +7,7 @@ module Builtins
 
 fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch qualified builtin calls to sub-module implementations."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match String.startsWith(name, "List.")
         true -> Domain.Builtins.List.call(name, args)
         false -> match String.startsWith(name, "Int.")
@@ -24,7 +24,7 @@ verify callBuiltin
 
 fn callBuiltinOther(name: String, args: List<Val>) -> Result<Val, String>
     ? "Handle non-prefixed builtins: Result.*, Option.*, Bool.*, Map.*, services, Char, variant constructors."
-    ! [Args.get, Console.print, Console.readLine, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Args, Console, Disk, Random, Terminal, Time]
     match name
         "Char.fromCode" -> Domain.Builtins.Primitives.callChar(name, args)
         "Console.print" -> builtinConsolePrint(args)
@@ -213,7 +213,7 @@ fn removeMapField(fields: List<(String, Val)>, key: String, acc: List<(String, V
 
 fn callBuiltinServices(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch Terminal.*, Time.*, Random.* service builtins."
-    ! [Random.int, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.sleep, Time.unixMs]
+    ! [Random, Terminal, Time]
     match name
         "Random.int" -> builtinRandomInt(args)
         "Time.sleep" -> builtinTimeSleep(args)
@@ -261,7 +261,7 @@ fn builtinTimeUnixMs(args: List<Val>) -> Result<Val, String>
 
 fn builtinTerminalNoArg(name: String, args: List<Val>) -> Result<Val, String>
     ? "Terminal no-arg commands: clear, flush, enableRawMode, etc."
-    ! [Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.showCursor, Terminal.resetColor]
+    ! [Terminal]
     match name
         "Terminal.clear" -> termClear()
         "Terminal.flush" -> termFlush()
