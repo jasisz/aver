@@ -340,141 +340,151 @@ fn isEnemyVisible(screenCol: Int, eDist: Float, zbuf: List<RayHit>) -> Bool
                     Option.None -> false
 
 fn drawEnemyChar(e: Enemy, screenCol: Int, eDist: Float, enemies: List<Enemy>, zbuf: List<RayHit>, px: Float, py: Float, pAngle: Float, i: Int) -> Unit
-    ? "Draw a multi-column braille sprite scaled by distance"
+    ? "Draw enemy using solid Unicode block characters"
     ! [
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
-    spriteH = Math.clampInt(Float.floor(4.0 / eDist * Int.toFloat(screenH())), 1, screenH())
-    spriteW = Math.clampInt(Float.floor(2.5 / eDist * Int.toFloat(screenW()) / 10.0), 1, 5)
+    spriteH = Math.clampInt(Float.floor(5.0 / eDist * Int.toFloat(screenH())), 1, screenH())
+    spriteW = Math.clampInt(Float.floor(3.0 / eDist * Int.toFloat(screenW()) / 10.0), 1, 7)
     topRow = screenH() / 2 - spriteH / 2
     leftCol = screenCol - spriteW / 2
-    drawSpriteGrid(e, leftCol, topRow, spriteH, spriteW, 0, 0, zbuf)
+    drawBlockGrid(e, leftCol, topRow, spriteH, spriteW, 0, 0, zbuf)
     Terminal.resetColor()
     renderEnemies(enemies, zbuf, px, py, pAngle, i + 1)
 
-fn drawSpriteGrid(e: Enemy, leftCol: Int, topRow: Int, spriteH: Int, spriteW: Int, row: Int, col: Int, zbuf: List<RayHit>) -> Unit
-    ? "Draw sprite grid row by row, column by column"
+fn drawBlockGrid(e: Enemy, leftCol: Int, topRow: Int, spriteH: Int, spriteW: Int, row: Int, col: Int, zbuf: List<RayHit>) -> Unit
+    ? "Iterate sprite grid"
     ! [
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
     match row == spriteH
         true -> Terminal.print("")
         false -> match col == spriteW
-            true -> drawSpriteGrid(e, leftCol, topRow, spriteH, spriteW, row + 1, 0, zbuf)
-            false -> drawSpritePixel(e, leftCol, topRow, spriteH, spriteW, row, col, zbuf)
+            true -> drawBlockGrid(e, leftCol, topRow, spriteH, spriteW, row + 1, 0, zbuf)
+            false -> drawBlockPixel(e, leftCol, topRow, spriteH, spriteW, row, col, zbuf)
 
-fn drawSpritePixel(e: Enemy, leftCol: Int, topRow: Int, spriteH: Int, spriteW: Int, row: Int, col: Int, zbuf: List<RayHit>) -> Unit
-    ? "Draw one braille cell of the sprite if on screen"
+fn drawBlockPixel(e: Enemy, leftCol: Int, topRow: Int, spriteH: Int, spriteW: Int, row: Int, col: Int, zbuf: List<RayHit>) -> Unit
+    ? "Draw one block character if on screen"
     ! [
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
     sx = leftCol + col
     sy = Math.clampInt(topRow + row, 0, screenH() - 1)
     match Bool.and(sx >= 0, sx < screenW())
-        true -> drawSpriteCell(e, sx, sy, row, col, spriteH, spriteW, leftCol, topRow, zbuf)
-        false -> drawSpriteGrid(e, leftCol, topRow, spriteH, spriteW, row, col + 1, zbuf)
+        true -> drawBlockCell(e, sx, sy, row, col, spriteH, spriteW, leftCol, topRow, zbuf)
+        false -> drawBlockGrid(e, leftCol, topRow, spriteH, spriteW, row, col + 1, zbuf)
 
-fn drawSpriteCell(e: Enemy, sx: Int, sy: Int, row: Int, col: Int, spriteH: Int, spriteW: Int, leftCol: Int, topRow: Int, zbuf: List<RayHit>) -> Unit
-    ? "Render one sprite cell"
+fn drawBlockCell(e: Enemy, sx: Int, sy: Int, row: Int, col: Int, spriteH: Int, spriteW: Int, leftCol: Int, topRow: Int, zbuf: List<RayHit>) -> Unit
+    ? "Render one sprite cell with block character"
     ! [
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
     section = row * 3 / spriteH
     colFrac = col * 3 / spriteW
-    bits = spriteBits(e.kind, section, colFrac)
-    match bits == 0
-        true -> drawSpriteGrid(e, leftCol, topRow, spriteH, spriteW, row, col + 1, zbuf)
-        false -> drawSpriteCellPrint(e, sx, sy, bits, leftCol, topRow, spriteH, spriteW, row, col, zbuf)
+    ch = spriteBlock(e.kind, section, colFrac)
+    match ch == " "
+        true -> drawBlockGrid(e, leftCol, topRow, spriteH, spriteW, row, col + 1, zbuf)
+        false -> drawBlockPrint(e, sx, sy, ch, colFrac, leftCol, topRow, spriteH, spriteW, row, col, zbuf)
 
-fn spriteColColor(kind: EnemyKind, colFrac: Int) -> String
-    ? "Sprite color: bright center, enemy color on sides"
-    match colFrac
-        1 -> "white"
-        _ -> Types.enemyColor(kind)
-
-fn drawSpriteCellPrint(e: Enemy, sx: Int, sy: Int, bits: Int, leftCol: Int, topRow: Int, spriteH: Int, spriteW: Int, row: Int, col: Int, zbuf: List<RayHit>) -> Unit
-    ? "Print sprite braille char with 3D shading"
+fn drawBlockPrint(e: Enemy, sx: Int, sy: Int, ch: String, colFrac: Int, leftCol: Int, topRow: Int, spriteH: Int, spriteW: Int, row: Int, col: Int, zbuf: List<RayHit>) -> Unit
+    ? "Print a block character with 3D color"
     ! [
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
-    colFrac = col * 3 / spriteW
-    Terminal.setColor(spriteColColor(e.kind, colFrac))
+    color = match colFrac
+        1 -> "white"
+        _ -> Types.enemyColor(e.kind)
+    Terminal.setColor(color)
     Terminal.moveTo(sx, sy)
-    Terminal.print(brailleChar(bits))
-    drawSpriteGrid(e, leftCol, topRow, spriteH, spriteW, row, col + 1, zbuf)
+    Terminal.print(ch)
+    drawBlockGrid(e, leftCol, topRow, spriteH, spriteW, row, col + 1, zbuf)
 
-// ─── Sprite art ────────────────────────────────────────────────────────────
-// section: 0=head, 1=body, 2=legs
-// colFrac: 0=left, 1=center, 2=right
+// ─── Sprite shapes (Unicode blocks) ───────────────────────────────────────
+// section: 0=head, 1=body, 2=legs — colFrac: 0=left, 1=center, 2=right
+// Characters: █ (full), ▄ (lower half), ▀ (upper half)
 
-fn spriteBits(kind: EnemyKind, section: Int, colFrac: Int) -> Int
-    ? "Braille bit pattern for sprite cell"
+fn fullBlock() -> String
+    ? "Full block character U+2588"
+    match Char.fromCode(9608)
+        Option.Some(c) -> c
+        Option.None -> "#"
+
+verify fullBlock
+    String.len(fullBlock()) => 1
+
+fn lowerHalf() -> String
+    ? "Lower half block U+2584"
+    match Char.fromCode(9604)
+        Option.Some(c) -> c
+        Option.None -> "_"
+
+fn upperHalf() -> String
+    ? "Upper half block U+2580"
+    match Char.fromCode(9600)
+        Option.Some(c) -> c
+        Option.None -> "~"
+
+fn spriteBlock(kind: EnemyKind, section: Int, colFrac: Int) -> String
+    ? "Block character for sprite cell"
     match kind
-        EnemyKind.Imp -> impBits(section, colFrac)
-        EnemyKind.Demon -> demonBits(section, colFrac)
-        EnemyKind.Ghost -> ghostBits(section, colFrac)
+        EnemyKind.Imp -> impBlock(section, colFrac)
+        EnemyKind.Demon -> demonBlock(section, colFrac)
+        EnemyKind.Ghost -> ghostBlock(section, colFrac)
 
-fn impBits(section: Int, colFrac: Int) -> Int
-    ? "Imp: humanoid — rounded head, body with arms, spread legs"
+fn impBlock(section: Int, colFrac: Int) -> String
+    ? "Imp: humanoid — round head, body, legs"
     match section
         0 -> match colFrac
-            0 -> 112
-            1 -> 255
-            _ -> 134
+            0 -> " "
+            1 -> lowerHalf()
+            _ -> " "
         1 -> match colFrac
-            0 -> 184
-            1 -> 255
-            _ -> 71
+            0 -> " "
+            1 -> fullBlock()
+            _ -> " "
         _ -> match colFrac
-            0 -> 24
-            1 -> 27
-            _ -> 3
+            0 -> " "
+            1 -> upperHalf()
+            _ -> " "
 
-verify impBits
-    impBits(0, 1) => 255
-    impBits(1, 0) => 184
+verify impBlock
+    impBlock(1, 1) => fullBlock()
+    impBlock(0, 0) => " "
 
-fn demonBits(section: Int, colFrac: Int) -> Int
-    ? "Demon: massive — wide horned head, full body, thick legs"
+fn demonBlock(section: Int, colFrac: Int) -> String
+    ? "Demon: massive filled brute"
     match section
         0 -> match colFrac
-            0 -> 228
-            1 -> 255
-            _ -> 228
-        1 -> match colFrac
-            0 -> 255
-            1 -> 255
-            _ -> 255
+            0 -> lowerHalf()
+            1 -> fullBlock()
+            _ -> lowerHalf()
+        1 -> fullBlock()
         _ -> match colFrac
-            0 -> 63
-            1 -> 255
-            _ -> 63
+            0 -> upperHalf()
+            1 -> fullBlock()
+            _ -> upperHalf()
 
-verify demonBits
-    demonBits(1, 1) => 255
-    demonBits(0, 0) => 228
-
-fn ghostBits(section: Int, colFrac: Int) -> Int
-    ? "Ghost: sphere — curved top, round middle, wispy bottom"
-    match section
-        0 -> match colFrac
-            0 -> 128
-            1 -> 244
-            _ -> 64
-        1 -> match colFrac
-            0 -> 184
-            1 -> 255
-            _ -> 71
-        _ -> match colFrac
-            0 -> 8
-            1 -> 27
-            _ -> 1
-
-verify ghostBits
-    ghostBits(0, 1) => 244
-    ghostBits(1, 1) => 255
+verify demonBlock
+    demonBlock(1, 1) => fullBlock()
+    demonBlock(1, 0) => fullBlock()
 
 // ─── Full frame ────────────────────────────────────────────────────────────
+
+fn ghostBlock(section: Int, colFrac: Int) -> String
+    ? "Ghost: floating sphere"
+    match section
+        0 -> match colFrac
+            0 -> " "
+            1 -> lowerHalf()
+            _ -> " "
+        1 -> match colFrac
+            0 -> lowerHalf()
+            1 -> fullBlock()
+            _ -> lowerHalf()
+        _ -> match colFrac
+            0 -> " "
+            1 -> upperHalf()
+            _ -> " "
 
 fn renderFrame(state: GameState) -> Unit
     ? "Render the full 3D viewport, enemies, HUD, and minimap"
