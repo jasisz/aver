@@ -9,10 +9,10 @@ pub fn effect_satisfies(declared: &str, required: &str) -> bool {
         return true;
     }
     // Namespace shorthand: "Disk" covers "Disk.readText"
-    if !declared.contains('.') {
-        if let Some(prefix) = required.split('.').next() {
-            return declared == prefix;
-        }
+    if !declared.contains('.')
+        && let Some(prefix) = required.split('.').next()
+    {
+        return declared == prefix;
     }
     false
 }

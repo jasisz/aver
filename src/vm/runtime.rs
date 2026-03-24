@@ -69,10 +69,10 @@ impl VmRuntime {
             None => return false,
         };
         for allowed_id in &self.allowed_effects {
-            if let Some(info) = symbols.get(*allowed_id) {
-                if crate::effects::effect_satisfies(&info.name, required_name) {
-                    return true;
-                }
+            if let Some(info) = symbols.get(*allowed_id)
+                && crate::effects::effect_satisfies(&info.name, required_name)
+            {
+                return true;
             }
         }
         false
