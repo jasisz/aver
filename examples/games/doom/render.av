@@ -375,30 +375,25 @@ fn drawBlockPixel(e: Enemy, leftCol: Int, topRow: Int, spriteH: Int, spriteW: In
         false -> drawBlockGrid(e, leftCol, topRow, spriteH, spriteW, row, col + 1, zbuf)
 
 fn drawBlockCell(e: Enemy, sx: Int, sy: Int, row: Int, col: Int, spriteH: Int, spriteW: Int, leftCol: Int, topRow: Int, zbuf: List<RayHit>) -> Unit
-    ? "Render one sprite cell with block character"
+    ? "Render one sprite cell using silhouette test"
     ! [
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
-    section = row * 3 / spriteH
-    colFrac = col * 3 / spriteW
-    ch = spriteBlock(e.kind, section, colFrac)
-    match ch == " "
-        true -> drawBlockGrid(e, leftCol, topRow, spriteH, spriteW, row, col + 1, zbuf)
-        false -> drawBlockPrint(e, sx, sy, ch, colFrac, leftCol, topRow, spriteH, spriteW, row, col, zbuf)
+    match isInsideShape(e.kind, col, row, spriteW, spriteH)
+        true -> drawBlockPrint(e, sx, sy, leftCol, topRow, spriteH, spriteW, row, col, zbuf)
+        false -> drawBlockGrid(e, leftCol, topRow, spriteH, spriteW, row, col + 1, zbuf)
 
-fn drawBlockPrint(e: Enemy, sx: Int, sy: Int, ch: String, colFrac: Int, leftCol: Int, topRow: Int, spriteH: Int, spriteW: Int, row: Int, col: Int, zbuf: List<RayHit>) -> Unit
-    ? "Print a block character with 3D color"
+fn drawBlockPrint(e: Enemy, sx: Int, sy: Int, leftCol: Int, topRow: Int, spriteH: Int, spriteW: Int, row: Int, col: Int, zbuf: List<RayHit>) -> Unit
+    ? "Print a full block at sprite position"
     ! [
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
     Terminal.setColor(Types.enemyColor(e.kind))
     Terminal.moveTo(sx, sy)
-    Terminal.print(ch)
+    Terminal.print(fullBlock())
     drawBlockGrid(e, leftCol, topRow, spriteH, spriteW, row, col + 1, zbuf)
 
-// ─── Sprite shapes (Unicode blocks) ───────────────────────────────────────
-// section: 0=head, 1=body, 2=legs — colFrac: 0=left, 1=center, 2=right
-// Characters: █ (full), ▄ (lower half), ▀ (upper half)
+// ─── Silhouette shapes ─────────────────────────────────────────────────────
 
 fn fullBlock() -> String
     ? "Full block character U+2588"
@@ -409,67 +404,60 @@ fn fullBlock() -> String
 verify fullBlock
     String.len(fullBlock()) => 1
 
-fn lowerHalf() -> String
-    ? "Lower half block U+2584"
-    match Char.fromCode(9604)
-        Option.Some(c) -> c
-        Option.None -> "_"
+fn isInsideShape(kind: EnemyKind, col: Int, row: Int, spriteW: Int, spriteH: Int) -> Bool
+    ? "Check if (col, row) is inside the enemy silhouette"
+    halfW = Int.toFloat(spriteW) / 2.0
+    cx = Float.abs(Int.toFloat(col) - halfW + 0.5) / halfW
+    cy = Int.toFloat(row) / Int.toFloat(spriteH)
+    maxW = shapeWidth(kind, cy)
+    cx < maxW
 
-fn upperHalf() -> String
-    ? "Upper half block U+2580"
-    match Char.fromCode(9600)
-        Option.Some(c) -> c
-        Option.None -> "~"
-
-fn spriteBlock(kind: EnemyKind, section: Int, colFrac: Int) -> String
-    ? "Block character for sprite cell"
+fn shapeWidth(kind: EnemyKind, cy: Float) -> Float
+    ? "Silhouette width at normalized Y (0=top, 1=bottom)"
     match kind
-        EnemyKind.Imp -> impBlock(section, colFrac)
-        EnemyKind.Demon -> demonBlock(section, colFrac)
-        EnemyKind.Ghost -> ghostBlock(section, colFrac)
+        EnemyKind.Imp -> impWidth(cy)
+        EnemyKind.Demon -> demonWidth(cy)
+        EnemyKind.Ghost -> ghostWidth(cy)
 
-fn impBlock(section: Int, colFrac: Int) -> String
-    ? "Imp: humanoid silhouette — narrow head, wide body, split legs"
-    match section
-        0 -> match colFrac
-            1 -> fullBlock()
-            _ -> " "
-        1 -> fullBlock()
-        _ -> match colFrac
-            1 -> " "
-            _ -> fullBlock()
+fn impWidth(cy: Float) -> Float
+    ? "Imp: humanoid — small head, neck, wide torso, legs with gap"
+    match cy < 0.2
+        true -> 0.35
+        false -> match cy < 0.3
+            true -> 0.2
+            false -> match cy < 0.65
+                true -> 0.55
+                false -> match cy < 0.72
+                    true -> 0.3
+                    false -> 0.55
 
-verify impBlock
-    impBlock(1, 1) => fullBlock()
-    impBlock(0, 0) => " "
-    impBlock(2, 1) => " "
+verify impWidth
+    impWidth(0.1) => 0.35
+    impWidth(0.5) => 0.55
 
-fn demonBlock(section: Int, colFrac: Int) -> String
-    ? "Demon: massive — all filled, wide stance legs"
-    match section
-        0 -> fullBlock()
-        1 -> fullBlock()
-        _ -> match colFrac
-            1 -> upperHalf()
-            _ -> fullBlock()
+fn demonWidth(cy: Float) -> Float
+    ? "Demon: massive — wide head, huge body, thick legs"
+    match cy < 0.15
+        true -> 0.7
+        false -> match cy < 0.75
+            true -> 0.95
+            false -> 0.75
 
-verify demonBlock
-    demonBlock(0, 0) => fullBlock()
-    demonBlock(1, 1) => fullBlock()
-    demonBlock(2, 1) => upperHalf()
+verify demonWidth
+    demonWidth(0.5) => 0.95
+
+fn ghostWidth(cy: Float) -> Float
+    ? "Ghost: smooth oval sphere"
+    t = cy * 2.0 - 1.0
+    sq = 1.0 - t * t
+    match sq < 0.01
+        true -> 0.0
+        false -> Float.sqrt(sq) * 0.85
+
+verify ghostWidth
+    ghostWidth(0.5) => 0.85
 
 // ─── Full frame ────────────────────────────────────────────────────────────
-
-fn ghostBlock(section: Int, colFrac: Int) -> String
-    ? "Ghost: round sphere — narrow top/bottom, wide middle"
-    match section
-        0 -> match colFrac
-            1 -> lowerHalf()
-            _ -> " "
-        1 -> fullBlock()
-        _ -> match colFrac
-            1 -> upperHalf()
-            _ -> " "
 
 fn renderFrame(state: GameState) -> Unit
     ? "Render the full 3D viewport, enemies, HUD, and minimap"
