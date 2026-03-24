@@ -66,7 +66,7 @@ fn callString(name: String, args: List<Val>) -> Result<Val, String>
         "String.endsWith" -> builtinStringEndsWith(args)
         "String.split" -> builtinStringSplit(args)
         "String.repeat" -> builtinStringRepeat(args)
-        "String.replaceAll" -> builtinStringReplaceAll(args)
+        "String.replace" -> builtinStringReplaceAll(args)
         _ -> Result.Err("unknown string builtin: {name}")
 
 verify callString
@@ -447,17 +447,17 @@ fn repeatStr(s: String, n: Int, acc: String) -> String
         false -> repeatStr(s, n - 1, acc + s)
 
 fn builtinStringReplaceAll(args: List<Val>) -> Result<Val, String>
-    ? "String.replaceAll(s, from, to) -> String with all occurrences replaced."
+    ? "String.replace(s, from, to) -> String with all occurrences replaced."
     match List.len(args) == 3
         true -> builtinStringReplaceAllExtract(args)
-        false -> Result.Err("String.replaceAll takes 3 arguments")
+        false -> Result.Err("String.replace takes 3 arguments")
 
 fn builtinStringReplaceAllExtract(args: List<Val>) -> Result<Val, String>
-    ? "Extract args for String.replaceAll."
+    ? "Extract args for String.replace."
     sV = Option.withDefault(List.get(args, 0), Val.ValUnit)
     fromV = Option.withDefault(List.get(args, 1), Val.ValUnit)
     toV = Option.withDefault(List.get(args, 2), Val.ValUnit)
     s = Domain.Builtins.Helpers.expectStr(sV)?
     from = Domain.Builtins.Helpers.expectStr(fromV)?
     to = Domain.Builtins.Helpers.expectStr(toV)?
-    Result.Ok(Val.ValStr(String.replaceAll(s, from, to)))
+    Result.Ok(Val.ValStr(String.replace(s, from, to)))

@@ -57,6 +57,27 @@ impl VmRuntime {
         std::mem::replace(&mut self.allowed_effects, effects)
     }
 
+    /// Check if a required effect is allowed, supporting namespace shorthand.
+    /// E.g., allowed "Disk" (id=X) covers required "Disk.readText" (id=Y).
+    fn vm_effect_allowed(&self, required_id: u32, symbols: &VmSymbolTable) -> bool {
+        if self.allowed_effects.contains(&required_id) {
+            return true;
+        }
+        // Namespace shorthand: check if any allowed effect is a prefix
+        let required_name = match symbols.get(required_id) {
+            Some(info) => &info.name,
+            None => return false,
+        };
+        for allowed_id in &self.allowed_effects {
+            if let Some(info) = symbols.get(*allowed_id) {
+                if crate::effects::effect_satisfies(&info.name, required_name) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     pub(super) fn set_cli_args(&mut self, args: Vec<String>) {
         self.cli_args = args;
     }
@@ -210,7 +231,7 @@ impl VmRuntime {
             return Ok(());
         }
         for effect_id in required_effects {
-            if !self.allowed_effects.contains(effect_id) {
+            if !self.vm_effect_allowed(*effect_id, symbols) {
                 let effect_name = symbols
                     .get(*effect_id)
                     .map(|info| info.name.as_str())
