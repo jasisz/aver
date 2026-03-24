@@ -5,7 +5,14 @@ All notable changes to Aver are documented here.
 ## Unreleased
 
 ### Added
-- **Namespace effect shorthand**: `! [Disk]` covers all `Disk.*` effects (`Disk.readText`, `Disk.writeText`, etc.). Granular effects still work: `! [Disk.readText]`. `aver check` suggests narrowing when a namespace shorthand could be more specific.
+- **Namespace effect shorthand**: `! [Disk]` covers all `Disk.*` effects (`Disk.readText`, `Disk.writeText`, etc.). Granular effects still work: `! [Disk.readText]`. `aver check` reports when a namespace shorthand could be narrowed.
+- **Dotted record constructors**: `Tcp.Connection(id = ..., host = ..., port = ...)` now parses as a record constructor (was blocked).
+- **Self-hosted interpreter**: full Aver interpreter written in Aver — 55/55 examples pass. Compile-time variable resolver, slot-based eval, all services forwarded, native compilation via `aver compile`.
+
+### Changed
+- `Tcp.Connection` is no longer opaque — runtime ID lookup provides the same safety.
+- Codegen generates 64MB stack thread to prevent overflow in deep recursion.
+- Codegen clones String left operand in `+` when used later (fixes use-after-move).
 
 ## 0.6.1
 
@@ -17,7 +24,7 @@ Highlights:
 ### Added
 - `aver run --profile` — VM execution profile with opcode counts, function stats, and opcode-pair analysis.
 - Game of Life example (`examples/games/life.av`) with terminal visualization and FPS counter.
-- Experimental self-hosted mini interpreter project in Aver (`projects/self_hosted/`).
+- Self-hosted interpreter project in Aver (`projects/self_hosted/`).
 
 ### Changed
 - Added specialized VM handling for common unwrap/default, boolean branch, and fused-load patterns.
