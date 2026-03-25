@@ -2,50 +2,23 @@
 
 All notable changes to Aver are documented here.
 
-## 0.7.0 (unreleased) — Vector, AverMap, AverStr, performance
+## 0.7.0 (unreleased)
 
-**Breaking changes:**
-- `List.get` and `List.push`/`List.append` removed — use `Vector` for indexed access.
-- `im` crate dependency removed; all maps use COW `std::HashMap`.
+**Breaking:** `List.get` and `List.append` removed. Use `Vector` for indexed access.
 
 ### Added
-- **`Vector<T>`** — persistent indexed sequence (`Rc<Vec<T>>` with COW). API: `Vector.new`, `Vector.get`, `Vector.set`, `Vector.len`, `Vector.fromList`, `Vector.toList`.
-- **`AverMap<K, V>`** — COW HashMap replacing `im::HashMap`. O(1) amortized insert when single-owner.
-- **`AverStr`** — `Rc<str>` newtype with native `+` operator. O(1) clone.
-- **Zero-copy `List`↔`Vector`** — `Vector.fromList` on Flat list shares `Rc<Vec>` (O(1)).
-- **Mutual TCO trampolines** in codegen — recursive SCC → enum dispatch loop.
-- **VM `VECTOR_GET`/`VECTOR_SET`/`VECTOR_GET_OR`** dedicated opcodes with fused get+withDefault.
-- **`opcode_operand_width()`** — single source of truth for opcode byte widths.
-- **Self-hosted `ExprCallDirect`/`ExprCallBuiltin`** — skip Map lookup at call sites.
-- **Self-hosted Vector builtins** — `Vector.*` in self-hosted interpreter.
-- **Comparison benchmark** — 7 programs × 4 modes (interpreter, VM, codegen, self-hosted).
+- **`Vector<T>`** — indexed sequence with O(1) get/set. API: `Vector.new`, `Vector.get`, `Vector.set`, `Vector.len`, `Vector.fromList`, `Vector.toList`. `Vector.set` returns `Option<Vector<T>>`.
+- **Mutual TCO** in codegen — mutually recursive functions compiled to trampoline dispatch loops.
+- **Namespace effect shorthand** — `! [Disk]` covers all `Disk.*` effects.
 
 ### Changed
-- Codegen: LTO + `codegen-units = 1` in generated projects, 256MB stack, `AverStr` for strings.
-- NanValue: Vector = tag 9 (sequential next to List = 8), Tuple = tag 13.
-- VM compiler: classifiers extracted to `compiler/classify.rs` (-325 lines from mod.rs).
-- life.av: grid as `Vector<Int>`, idiomatic List prepend → reverse → `Vector.fromList`.
-- Self-hosted: slot env as `Vector<Val>` instead of `Map<Int, Val>`.
-
-### Performance
-- Self-hosted fib(25): 321ms → 206ms (1.56× faster).
-- AverMap: ~25% on map-heavy workloads.
-- AverStr: ~15% on string-heavy workloads.
+- **`List` is now purely recursive** — `prepend`, `head`, `tail`, `concat`, `reverse`, `contains`, `find`, `any`, `zip`. No indexed access.
+- Idiomatic pattern: build with `List.prepend` → `List.reverse` → `Vector.fromList` (zero-copy on Flat lists).
+- Compiled projects use LTO + `codegen-units = 1` for faster release builds.
+- Self-hosted interpreter ~1.5× faster (COW maps, `Rc<str>` strings, Vector env).
 
 ### Removed
-- `im` crate, `List.get`, `List.append`, old VM `LIST_GET`/`LIST_APPEND` opcodes.
-
-## Unreleased (pre-0.7.0)
-
-### Added
-- **Namespace effect shorthand**: `! [Disk]` covers all `Disk.*` effects.
-- **Dotted record constructors**: `Tcp.Connection(id = ..., host = ..., port = ...)`.
-- **Self-hosted interpreter**: full Aver interpreter written in Aver.
-
-### Changed
-- `Tcp.Connection` is no longer opaque.
-- Codegen generates 64MB stack thread to prevent overflow in deep recursion.
-- Codegen clones String left operand in `+` when used later (fixes use-after-move).
+- `List.get`, `List.append`.
 
 ## 0.6.1
 

@@ -324,6 +324,20 @@ fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> Str
         ListAny => format!("ListAny({}, {})", a[0], a[1]),
         ListZip => format!("ListZip({}, {})", a[0], a[1]),
 
+        // Vector (maps to seq in Dafny — same as List but with indexed access)
+        VectorNew => format!("seq({}, _ => {})", a[0], a[1]),
+        VectorGet => format!(
+            "if 0 <= {} < |{}| then Some({}[{}]) else None",
+            a[1], a[0], a[0], a[1]
+        ),
+        VectorSet => format!(
+            "if 0 <= {} < |{}| then Some({}[{} := {}]) else None",
+            a[1], a[0], a[0], a[1], a[2]
+        ),
+        VectorLen => format!("|{}|", a[0]),
+        VectorFromList => a[0].clone(),
+        VectorToList => a[0].clone(),
+
         // Map
         MapEmpty => "map[]".to_string(),
         MapGet => format!("MapGet({}, {})", a[0], a[1]),

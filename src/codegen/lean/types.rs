@@ -52,7 +52,12 @@ pub fn type_to_lean(ty: &Type) -> String {
 /// Like type_to_lean but wraps compound types in parens for use as type arguments.
 fn type_to_lean_atom(ty: &Type) -> String {
     match ty {
-        Type::Result(..) | Type::Option(_) | Type::List(_) | Type::Fn(..) | Type::Map(..) => {
+        Type::Result(..)
+        | Type::Option(_)
+        | Type::List(_)
+        | Type::Vector(_)
+        | Type::Fn(..)
+        | Type::Map(..) => {
             format!("({})", type_to_lean(ty))
         }
         _ => type_to_lean(ty),

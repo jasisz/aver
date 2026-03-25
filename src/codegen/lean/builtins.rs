@@ -268,6 +268,51 @@ pub fn emit_builtin_call(name: &str, args: &[Expr], ctx: &CodegenContext) -> Opt
             ))
         }
 
+        // ---- Vector (Lean Array) ----
+        "Vector.new" => {
+            let size = super::expr::emit_expr(&args[0], ctx);
+            let default = super::expr::emit_expr(&args[1], ctx);
+            Some(format!(
+                "Array.mkArray {} {}",
+                paren_if_complex(&size),
+                paren_if_complex(&default)
+            ))
+        }
+        "Vector.get" => {
+            let vec = super::expr::emit_expr(&args[0], ctx);
+            let idx = super::expr::emit_expr(&args[1], ctx);
+            Some(format!(
+                "{}.get? {}",
+                paren_if_complex(&vec),
+                paren_if_complex(&idx)
+            ))
+        }
+        "Vector.set" => {
+            let vec = super::expr::emit_expr(&args[0], ctx);
+            let idx = super::expr::emit_expr(&args[1], ctx);
+            let val = super::expr::emit_expr(&args[2], ctx);
+            Some(format!(
+                "if {} < {}.size then some ({}.set! {} {}) else none",
+                paren_if_complex(&idx),
+                paren_if_complex(&vec),
+                paren_if_complex(&vec),
+                paren_if_complex(&idx),
+                paren_if_complex(&val)
+            ))
+        }
+        "Vector.len" => {
+            let vec = super::expr::emit_expr(&args[0], ctx);
+            Some(format!("{}.size", paren_if_complex(&vec)))
+        }
+        "Vector.fromList" => {
+            let list = super::expr::emit_expr(&args[0], ctx);
+            Some(format!("{}.toArray", paren_if_complex(&list)))
+        }
+        "Vector.toList" => {
+            let vec = super::expr::emit_expr(&args[0], ctx);
+            Some(format!("{}.toList", paren_if_complex(&vec)))
+        }
+
         // ---- Map ----
         "Map.empty" => Some("AverMap.empty".to_string()),
         "Map.get" => {
