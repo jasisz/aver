@@ -85,6 +85,14 @@ pub(crate) enum Builtin {
     ListAny,
     ListZip,
 
+    // --- Vector ---
+    VectorNew,
+    VectorGet,
+    VectorSet,
+    VectorLen,
+    VectorFromList,
+    VectorToList,
+
     // --- Map ---
     MapEmpty,
     MapGet,
@@ -183,6 +191,14 @@ pub(crate) fn recognize_builtin(name: &str) -> Option<Builtin> {
         "List.find" => Builtin::ListFind,
         "List.any" => Builtin::ListAny,
         "List.zip" => Builtin::ListZip,
+
+        // Vector
+        "Vector.new" => Builtin::VectorNew,
+        "Vector.get" => Builtin::VectorGet,
+        "Vector.set" => Builtin::VectorSet,
+        "Vector.len" => Builtin::VectorLen,
+        "Vector.fromList" => Builtin::VectorFromList,
+        "Vector.toList" => Builtin::VectorToList,
 
         // Map
         "Map.empty" => Builtin::MapEmpty,
