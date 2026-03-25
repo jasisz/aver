@@ -968,9 +968,10 @@ impl VM {
                 }
 
                 VECTOR_GET_OR => {
-                    let default = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let const_idx = read_u16!(code, ip) as usize;
                     let index = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let vec = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let default = self.code.functions[fn_id as usize].constants[const_idx];
                     if vec.is_empty_vector_immediate() {
                         self.stack.push(default);
                     } else {

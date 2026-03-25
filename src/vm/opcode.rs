@@ -331,3 +331,52 @@ pub fn opcode_name(op: u8) -> &'static str {
         _ => "UNKNOWN",
     }
 }
+
+/// Operand byte width after the opcode byte. Single source of truth —
+/// all bytecode traversal functions must use this.
+pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
+    match op {
+        // 0-byte (stack-only)
+        POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
+        | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | LIST_NIL | LIST_CONS
+        | LIST_LEN | LIST_PREPEND | UNWRAP_OR | UNWRAP_RESULT_OR | CONCAT | VECTOR_GET
+        | VECTOR_SET | NOP => 0,
+
+        // 1-byte
+        LOAD_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD | EXTRACT_TUPLE_ITEM
+        | LIST_NEW | WRAP | TUPLE_NEW | TAIL_CALL_SELF | TAIL_CALL_SELF_THIN => 1,
+
+        // 2-byte (u16)
+        LOAD_CONST | LOAD_GLOBAL | STORE_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL | MATCH_NIL
+        | MATCH_CONS | LOAD_LOCAL_2 | VECTOR_GET_OR => 2,
+
+        // 3-byte
+        CALL_KNOWN | CALL_LEAF | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE | RECORD_NEW
+        | LOAD_LOCAL_CONST => 3,
+
+        // 4-byte
+        MATCH_VARIANT | RECORD_GET_NAMED => 4,
+
+        // 5-byte
+        CALL_BUILTIN | VARIANT_NEW => 5,
+
+        // Variable-length
+        MATCH_DISPATCH | MATCH_DISPATCH_CONST => {
+            if ip < code.len() {
+                let count = code[ip] as usize;
+                let entry_size = if op == MATCH_DISPATCH { 11 } else { 17 };
+                3 + count * entry_size
+            } else {
+                0
+            }
+        }
+        RECORD_UPDATE => {
+            if ip + 2 < code.len() {
+                3 + code[ip + 2] as usize
+            } else {
+                0
+            }
+        }
+        _ => 0,
+    }
+}

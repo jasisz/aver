@@ -733,53 +733,19 @@ fn base_parent_thin_chunk(code_store: &CodeStore, chunk: &FnChunk) -> Result<boo
         ip += 1;
         match op {
             STORE_GLOBAL | TAIL_CALL_SELF | TAIL_CALL_KNOWN | CALL_VALUE | MATCH_CONS
-            | LIST_HEAD_TAIL => {
+            | LIST_HEAD_TAIL | CONCAT | LIST_CONS | LIST_PREPEND | RECORD_UPDATE | LIST_NEW
+            | WRAP | TUPLE_NEW | RECORD_NEW | TAIL_CALL_SELF_THIN => {
                 return Ok(false);
-            }
-
-            CONCAT | LIST_CONS | LIST_PREPEND | RECORD_UPDATE => {
-                return Ok(false);
-            }
-
-            POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
-            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_LEN | LIST_NIL | UNWRAP_OR
-            | UNWRAP_RESULT_OR | NOP => {}
-
-            LIST_NEW | WRAP | TUPLE_NEW | RECORD_NEW => {
-                return Ok(false);
-            }
-
-            LOAD_LOCAL | STORE_LOCAL | RECORD_GET | EXTRACT_FIELD | EXTRACT_TUPLE_ITEM => {
-                ip = advance_opcode_ip(chunk, ip, 1)?;
-            }
-
-            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL | LOAD_LOCAL_2 => {
-                ip = advance_opcode_ip(chunk, ip, 2)?;
-            }
-
-            RECORD_GET_NAMED => {
-                ip = advance_opcode_ip(chunk, ip, 4)?;
             }
 
             CALL_BUILTIN => {
                 if !parent_thin_builtin_is_allowed(code_store, chunk, ip)? {
                     return Ok(false);
                 }
-                ip = advance_opcode_ip(chunk, ip, 5)?;
+                ip += opcode_operand_width(op, code, ip);
             }
 
-            CALL_KNOWN | CALL_LEAF | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE | LOAD_LOCAL_CONST => {
-                ip = advance_opcode_ip(chunk, ip, 3)?;
-            }
-
-            MATCH_VARIANT => {
-                ip = advance_opcode_ip(chunk, ip, 4)?;
-            }
-
-            MATCH_NIL => {
-                ip = advance_opcode_ip(chunk, ip, 2)?;
-            }
-
+            // VARIANT_NEW: only nullary variants (field_count == 0) are parent-thin-safe.
             VARIANT_NEW => {
                 if ip + 5 > code.len() {
                     return Err(CompileError {
@@ -790,33 +756,11 @@ fn base_parent_thin_chunk(code_store: &CodeStore, chunk: &FnChunk) -> Result<boo
                 if field_count != 0 {
                     return Ok(false);
                 }
-                ip = advance_opcode_ip(chunk, ip, 5)?;
-            }
-
-            MATCH_DISPATCH | MATCH_DISPATCH_CONST => {
-                if ip >= code.len() {
-                    return Err(CompileError {
-                        msg: format!("truncated MATCH_DISPATCH in {}", chunk.name),
-                    });
-                }
-                let count = code[ip] as usize;
-                let entry_size = if op == MATCH_DISPATCH { 11 } else { 17 };
-                ip = advance_opcode_ip(chunk, ip, 3 + count * entry_size)?;
-            }
-
-            TAIL_CALL_SELF_THIN => {
-                return Ok(false);
+                ip += opcode_operand_width(op, code, ip);
             }
 
             _ => {
-                return Err(CompileError {
-                    msg: format!(
-                        "unknown opcode 0x{op:02X} in {} at ip={} (code={:?})",
-                        chunk.name,
-                        ip - 1,
-                        chunk.code
-                    ),
-                });
+                ip += opcode_operand_width(op, code, ip);
             }
         }
     }
@@ -849,63 +793,11 @@ fn parent_thin_calls_are_safe(
                 if !code.functions[target_fn_id].effects.is_empty() {
                     return Ok(false);
                 }
-                ip = advance_opcode_ip(chunk, ip, 3)?;
+                ip += opcode_operand_width(op, bytes, ip);
             }
-
-            LOAD_LOCAL | STORE_LOCAL | RECORD_GET | EXTRACT_FIELD | EXTRACT_TUPLE_ITEM => {
-                ip = advance_opcode_ip(chunk, ip, 1)?;
+            _ => {
+                ip += opcode_operand_width(op, bytes, ip);
             }
-
-            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL | LOAD_LOCAL_2 => {
-                ip = advance_opcode_ip(chunk, ip, 2)?;
-            }
-
-            RECORD_GET_NAMED => {
-                ip = advance_opcode_ip(chunk, ip, 4)?;
-            }
-
-            CALL_BUILTIN => {
-                ip = advance_opcode_ip(chunk, ip, 5)?;
-            }
-
-            MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE | LOAD_LOCAL_CONST => {
-                ip = advance_opcode_ip(chunk, ip, 3)?;
-            }
-
-            MATCH_VARIANT => {
-                ip = advance_opcode_ip(chunk, ip, 4)?;
-            }
-
-            MATCH_NIL | MATCH_CONS => {
-                ip = advance_opcode_ip(chunk, ip, 2)?;
-            }
-
-            LIST_NEW | WRAP | TUPLE_NEW => {
-                ip = advance_opcode_ip(chunk, ip, 1)?;
-            }
-
-            RECORD_NEW => {
-                ip = advance_opcode_ip(chunk, ip, 3)?;
-            }
-
-            VARIANT_NEW => {
-                ip = advance_opcode_ip(chunk, ip, 5)?;
-            }
-
-            MATCH_DISPATCH | MATCH_DISPATCH_CONST => {
-                if ip >= bytes.len() {
-                    break;
-                }
-                let count = bytes[ip] as usize;
-                let entry_size = if op == MATCH_DISPATCH { 11 } else { 17 };
-                ip = advance_opcode_ip(chunk, ip, 3 + count * entry_size)?;
-            }
-
-            TAIL_CALL_SELF_THIN => {
-                ip = advance_opcode_ip(chunk, ip, 1)?;
-            }
-
-            _ => {}
         }
     }
     Ok(true)
@@ -923,57 +815,9 @@ fn classify_leaf_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
             CALL_KNOWN | CALL_VALUE | TAIL_CALL_SELF | TAIL_CALL_KNOWN | TAIL_CALL_SELF_THIN => {
                 return Ok(false);
             }
-
-            // 0-operand opcodes
-            POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
-            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | LIST_NIL
-            | LIST_CONS | LIST_LEN | LIST_PREPEND | UNWRAP_OR | UNWRAP_RESULT_OR | CONCAT | NOP => {
-            }
-
-            // 1-byte operand
-            LOAD_LOCAL | STORE_LOCAL | RECORD_GET | EXTRACT_FIELD | EXTRACT_TUPLE_ITEM
-            | LIST_NEW | WRAP | TUPLE_NEW => {
-                ip += 1;
-            }
-
-            // 2-byte operand
-            LOAD_CONST | LOAD_GLOBAL | STORE_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL
-            | MATCH_NIL | MATCH_CONS | LOAD_LOCAL_2 => {
-                ip += 2;
-            }
-
-            // 3-byte operand
-            MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE | RECORD_NEW | LOAD_LOCAL_CONST => {
-                ip += 3;
-            }
-
-            // 4-byte operand
-            MATCH_VARIANT | RECORD_GET_NAMED => {
-                ip += 4;
-            }
-
-            // 5-byte operand
-            CALL_BUILTIN | VARIANT_NEW => {
-                ip += 5;
-            }
-
-            // Variable-length
-            MATCH_DISPATCH | MATCH_DISPATCH_CONST => {
-                if ip < code.len() {
-                    let count = code[ip] as usize;
-                    let entry_size = if op == MATCH_DISPATCH { 11 } else { 17 };
-                    ip += 3 + count * entry_size;
-                }
-            }
-            RECORD_UPDATE => {
-                if ip + 3 <= code.len() {
-                    let count = code[ip + 2] as usize;
-                    ip += 3 + count;
-                }
-            }
-
             _ => {}
         }
+        ip += opcode_operand_width(op, code, ip);
     }
     Ok(true)
 }
@@ -988,43 +832,11 @@ fn classify_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
         match op {
             STORE_GLOBAL | TAIL_CALL_SELF | TAIL_CALL_KNOWN | CONCAT | LIST_NIL | LIST_CONS
             | LIST_NEW | RECORD_NEW | WRAP | TUPLE_NEW | RECORD_UPDATE | LIST_LEN
-            | LIST_PREPEND | VECTOR_GET | VECTOR_GET_OR | VECTOR_SET => {
+            | LIST_PREPEND | VECTOR_GET | VECTOR_GET_OR | VECTOR_SET | TAIL_CALL_SELF_THIN => {
                 return Ok(false);
             }
 
-            POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
-            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | UNWRAP_OR
-            | UNWRAP_RESULT_OR | NOP => {}
-
-            LOAD_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD
-            | EXTRACT_TUPLE_ITEM => {
-                ip = advance_opcode_ip(chunk, ip, 1)?;
-            }
-
-            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL | LOAD_LOCAL_2 => {
-                ip = advance_opcode_ip(chunk, ip, 2)?;
-            }
-
-            RECORD_GET_NAMED => {
-                ip = advance_opcode_ip(chunk, ip, 4)?;
-            }
-
-            CALL_BUILTIN => {
-                ip = advance_opcode_ip(chunk, ip, 5)?;
-            }
-
-            CALL_KNOWN | CALL_LEAF | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE | LOAD_LOCAL_CONST => {
-                ip = advance_opcode_ip(chunk, ip, 3)?;
-            }
-
-            MATCH_VARIANT => {
-                ip = advance_opcode_ip(chunk, ip, 4)?;
-            }
-
-            MATCH_NIL | MATCH_CONS => {
-                ip = advance_opcode_ip(chunk, ip, 2)?;
-            }
-
+            // VARIANT_NEW: only nullary variants (field_count == 0) are thin-safe.
             VARIANT_NEW => {
                 if ip + 5 > code.len() {
                     return Err(CompileError {
@@ -1035,33 +847,11 @@ fn classify_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
                 if field_count != 0 {
                     return Ok(false);
                 }
-                ip = advance_opcode_ip(chunk, ip, 5)?;
-            }
-
-            MATCH_DISPATCH | MATCH_DISPATCH_CONST => {
-                if ip >= code.len() {
-                    return Err(CompileError {
-                        msg: format!("truncated MATCH_DISPATCH in {}", chunk.name),
-                    });
-                }
-                let count = code[ip] as usize;
-                let entry_size = if op == MATCH_DISPATCH { 11 } else { 17 };
-                ip = advance_opcode_ip(chunk, ip, 3 + count * entry_size)?;
-            }
-
-            TAIL_CALL_SELF_THIN => {
-                return Ok(false);
+                ip += opcode_operand_width(op, code, ip);
             }
 
             _ => {
-                return Err(CompileError {
-                    msg: format!(
-                        "unknown opcode 0x{op:02X} in {} at ip={} (code={:?})",
-                        chunk.name,
-                        ip - 1,
-                        chunk.code
-                    ),
-                });
+                ip += opcode_operand_width(op, code, ip);
             }
         }
     }
@@ -1085,35 +875,7 @@ fn classify_thin_ignoring_self_tco(chunk: &FnChunk) -> Result<bool, CompileError
                 return Ok(false);
             }
 
-            POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
-            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | UNWRAP_OR
-            | UNWRAP_RESULT_OR | NOP => {}
-
-            // TAIL_CALL_SELF accepted — will become TAIL_CALL_SELF_THIN.
-            LOAD_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD
-            | EXTRACT_TUPLE_ITEM | TAIL_CALL_SELF => {
-                ip = advance_opcode_ip(chunk, ip, 1)?;
-            }
-
-            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL | LOAD_LOCAL_2 => {
-                ip = advance_opcode_ip(chunk, ip, 2)?;
-            }
-            RECORD_GET_NAMED => {
-                ip = advance_opcode_ip(chunk, ip, 4)?;
-            }
-            CALL_BUILTIN => {
-                ip = advance_opcode_ip(chunk, ip, 5)?;
-            }
-            CALL_KNOWN | CALL_LEAF | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE | LOAD_LOCAL_CONST => {
-                ip = advance_opcode_ip(chunk, ip, 3)?;
-            }
-            MATCH_VARIANT => {
-                ip = advance_opcode_ip(chunk, ip, 4)?;
-            }
-            MATCH_NIL | MATCH_CONS => {
-                ip = advance_opcode_ip(chunk, ip, 2)?;
-            }
-
+            // VARIANT_NEW: only nullary variants (field_count == 0) are thin-safe.
             VARIANT_NEW => {
                 if ip + 5 > code.len() {
                     return Err(CompileError {
@@ -1124,29 +886,11 @@ fn classify_thin_ignoring_self_tco(chunk: &FnChunk) -> Result<bool, CompileError
                 if field_count != 0 {
                     return Ok(false);
                 }
-                ip = advance_opcode_ip(chunk, ip, 5)?;
-            }
-
-            MATCH_DISPATCH | MATCH_DISPATCH_CONST => {
-                if ip >= code.len() {
-                    return Err(CompileError {
-                        msg: format!("truncated MATCH_DISPATCH in {}", chunk.name),
-                    });
-                }
-                let count = code[ip] as usize;
-                let entry_size = if op == MATCH_DISPATCH { 11 } else { 17 };
-                ip = advance_opcode_ip(chunk, ip, 3 + count * entry_size)?;
+                ip += opcode_operand_width(op, code, ip);
             }
 
             _ => {
-                return Err(CompileError {
-                    msg: format!(
-                        "unknown opcode 0x{op:02X} in {} at ip={} (code={:?})",
-                        chunk.name,
-                        ip - 1,
-                        chunk.code
-                    ),
-                });
+                ip += opcode_operand_width(op, code, ip);
             }
         }
     }
@@ -1164,49 +908,9 @@ fn find_opcode_positions(chunk: &FnChunk, target_op: u8) -> Vec<usize> {
             positions.push(ip);
         }
         ip += 1;
-        // Skip operand bytes (same width table as classify_thin_chunk).
-        let width = match op {
-            LOAD_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD
-            | EXTRACT_TUPLE_ITEM | LIST_NEW | WRAP | TUPLE_NEW | TAIL_CALL_SELF
-            | TAIL_CALL_SELF_THIN => 1,
-            LOAD_CONST | LOAD_GLOBAL | STORE_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL
-            | MATCH_NIL | MATCH_CONS | LOAD_LOCAL_2 => 2,
-            CALL_KNOWN | CALL_LEAF | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE | RECORD_NEW
-            | LOAD_LOCAL_CONST => 3,
-            MATCH_VARIANT | RECORD_GET_NAMED => 4,
-            CALL_BUILTIN | VARIANT_NEW => 5,
-            MATCH_DISPATCH | MATCH_DISPATCH_CONST => {
-                if ip < code.len() {
-                    let count = code[ip] as usize;
-                    let entry_size = if op == MATCH_DISPATCH { 11 } else { 17 };
-                    3 + count * entry_size
-                } else {
-                    0
-                }
-            }
-            RECORD_UPDATE => {
-                if ip + 3 <= code.len() {
-                    let count = code[ip + 2] as usize;
-                    3 + count
-                } else {
-                    0
-                }
-            }
-            _ => 0, // POP, DUP, LOAD_UNIT/TRUE/FALSE, ADD, SUB, etc.
-        };
-        ip += width;
+        ip += opcode_operand_width(op, code, ip);
     }
     positions
-}
-
-fn advance_opcode_ip(chunk: &FnChunk, ip: usize, width: usize) -> Result<usize, CompileError> {
-    let new_ip = ip + width;
-    if new_ip > chunk.code.len() {
-        return Err(CompileError {
-            msg: format!("truncated bytecode in {}", chunk.name),
-        });
-    }
-    Ok(new_ip)
 }
 
 /// What a function expression resolves to at compile time.
@@ -1309,16 +1013,19 @@ impl<'a> FnCompiler<'a> {
             // slot at prev_pos+1, const_idx (u16) emitted next via emit_u16
             return;
         }
-        // VECTOR_GET ... LOAD_CONST ... UNWRAP_OR → VECTOR_GET_OR
-        // Pattern: [VECTOR_GET at prev_pos] then later [LOAD_CONST idx] [UNWRAP_OR]
-        // We fuse when UNWRAP_OR is emitted and prev is LOAD_CONST and before that is VECTOR_GET.
-        if op == UNWRAP_OR && prev_op == LOAD_CONST && prev_pos >= 1 {
-            let before_const = self.code[prev_pos - 1];
-            if before_const == VECTOR_GET {
-                // Rewrite: VECTOR_GET → VECTOR_GET_OR, keep LOAD_CONST operand, skip UNWRAP_OR
-                self.code[prev_pos - 1] = VECTOR_GET_OR;
-                // LOAD_CONST u16 already at prev_pos..prev_pos+2, serves as default constant idx
-                // VECTOR_GET_OR pops [vec, idx, default] — compiler already pushed default via LOAD_CONST
+        // VECTOR_GET + LOAD_CONST(hi,lo) + UNWRAP_OR → VECTOR_GET_OR(hi,lo)
+        // Before: [..., VECTOR_GET, LOAD_CONST, hi, lo] + about to emit UNWRAP_OR
+        // After:  [..., VECTOR_GET_OR, hi, lo]
+        if op == UNWRAP_OR && self.code.len() >= 4 {
+            let len = self.code.len();
+            if self.code[len - 4] == VECTOR_GET && self.code[len - 3] == LOAD_CONST {
+                let hi = self.code[len - 2];
+                let lo = self.code[len - 1];
+                self.code[len - 4] = VECTOR_GET_OR;
+                self.code[len - 3] = hi;
+                self.code[len - 2] = lo;
+                self.code.pop(); // remove extra byte
+                self.last_op_pos = len - 4;
                 return;
             }
         }
