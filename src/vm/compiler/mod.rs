@@ -10,7 +10,7 @@ use crate::nan_value::{Arena, NanValue};
 use crate::source::find_module_file;
 use crate::types::{option, result};
 
-use super::builtin::{VmBuiltin, VmBuiltinParentThinClass};
+use super::builtin::VmBuiltin;
 use super::opcode::*;
 use super::symbol::{VmSymbolTable, VmVariantCtor};
 use super::types::{CodeStore, FnChunk};
