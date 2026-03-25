@@ -215,18 +215,6 @@ impl<'a> FnCompiler<'a> {
         arms: &[MatchArm],
         line: usize,
     ) -> Result<(), CompileError> {
-        if let Some((list_expr, index_expr, some_binding, some_body, none_body)) =
-            self.try_match_list_get_arms(subject, arms)
-        {
-            return self.compile_list_get_match(
-                list_expr,
-                index_expr,
-                some_binding,
-                some_body,
-                none_body,
-            );
-        }
-
         // --- Try bool match → JUMP_IF_FALSE optimization ---
         if let Some(result) = self.try_compile_bool_match(subject, arms)? {
             return Ok(result);
@@ -544,81 +532,6 @@ impl<'a> FnCompiler<'a> {
         }
 
         Ok(Some(()))
-    }
-
-    fn try_match_list_get_arms<'b>(
-        &self,
-        subject: &'b Expr,
-        arms: &'b [MatchArm],
-    ) -> Option<(&'b Expr, &'b Expr, Option<&'b str>, &'b Expr, &'b Expr)> {
-        if arms.len() != 2 {
-            return None;
-        }
-        let Expr::FnCall(fn_expr, args) = subject else {
-            return None;
-        };
-        if args.len() != 2 {
-            return None;
-        }
-        let Some(super::CallTarget::Builtin(crate::vm::builtin::VmBuiltin::ListGet)) =
-            self.resolve_call_target(fn_expr)
-        else {
-            return None;
-        };
-
-        let mut some_binding = None;
-        let mut some_body = None;
-        let mut none_body = None;
-
-        for arm in arms {
-            match &arm.pattern {
-                Pattern::Constructor(name, bindings) if name == "Option.Some" => {
-                    if some_body.is_some() || bindings.len() > 1 {
-                        return None;
-                    }
-                    some_binding = bindings.first().map(|s| s.as_str());
-                    some_body = Some(arm.body.as_ref());
-                }
-                Pattern::Constructor(name, bindings)
-                    if name == "Option.None" && bindings.is_empty() =>
-                {
-                    if none_body.is_some() {
-                        return None;
-                    }
-                    none_body = Some(arm.body.as_ref());
-                }
-                _ => return None,
-            }
-        }
-
-        Some((&args[0], &args[1], some_binding, some_body?, none_body?))
-    }
-
-    fn compile_list_get_match(
-        &mut self,
-        list_expr: &Expr,
-        index_expr: &Expr,
-        some_binding: Option<&str>,
-        some_body: &Expr,
-        none_body: &Expr,
-    ) -> Result<(), CompileError> {
-        self.compile_expr(list_expr)?;
-        self.compile_expr(index_expr)?;
-        self.emit_op(LIST_GET_MATCH);
-
-        let none_jump = self.emit_jump(JUMP_IF_FALSE);
-
-        if let Some(binding) = some_binding {
-            self.dup_and_bind_top_to_local(binding);
-        }
-        self.emit_op(POP);
-        self.compile_expr(some_body)?;
-        let end_jump = self.emit_jump(JUMP);
-
-        self.patch_jump(none_jump);
-        self.compile_expr(none_body)?;
-        self.patch_jump(end_jump);
-        Ok(())
     }
 
     /// Compile a pattern. Subject is on top of stack (peeked, not consumed).

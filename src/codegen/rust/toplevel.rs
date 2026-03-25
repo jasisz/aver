@@ -62,7 +62,7 @@ fn rust_hash_eq_safe_type(
             rust_hash_eq_safe_type(ok, ctx, visiting) && rust_hash_eq_safe_type(err, ctx, visiting)
         }
         Type::Option(inner) => rust_hash_eq_safe_type(inner, ctx, visiting),
-        Type::List(_) => false,
+        Type::List(_) | Type::Vector(_) => false,
         Type::Tuple(items) => items
             .iter()
             .all(|item| rust_hash_eq_safe_type(item, ctx, visiting)),

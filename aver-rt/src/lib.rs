@@ -172,6 +172,92 @@ where
     }
 }
 
+// ── AverVector: COW indexed sequence ─────────────────────────────────────────
+
+pub struct AverVector<T> {
+    inner: Rc<Vec<T>>,
+}
+
+impl<T> Clone for AverVector<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Rc::clone(&self.inner),
+        }
+    }
+}
+
+impl<T: Clone> AverVector<T> {
+    pub fn new(size: usize, default: T) -> Self {
+        Self {
+            inner: Rc::new(vec![default; size]),
+        }
+    }
+
+    pub fn get(&self, index: usize) -> Option<&T> {
+        self.inner.get(index)
+    }
+
+    /// O(1) amortized if unique owner, O(n) clone if shared. None if out of bounds.
+    pub fn set(&self, index: usize, value: T) -> Option<Self> {
+        if index >= self.inner.len() {
+            return None;
+        }
+        let mut vec = Rc::unwrap_or_clone(self.inner.clone());
+        vec[index] = value;
+        Some(Self {
+            inner: Rc::new(vec),
+        })
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    pub fn from_vec(v: Vec<T>) -> Self {
+        Self { inner: Rc::new(v) }
+    }
+
+    pub fn to_vec(&self) -> Vec<T> {
+        self.inner.as_ref().clone()
+    }
+
+    pub fn to_list(&self) -> AverList<T> {
+        AverList::from_vec(self.to_vec())
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, T> {
+        self.inner.iter()
+    }
+}
+
+impl<T: PartialEq> PartialEq for AverVector<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+}
+
+impl<T: Eq> Eq for AverVector<T> {}
+
+impl<T: Hash> Hash for AverVector<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        9u8.hash(state);
+        self.inner.hash(state);
+    }
+}
+
+impl<T: fmt::Debug> fmt::Debug for AverVector<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Vector")?;
+        f.debug_list().entries(self.inner.iter()).finish()
+    }
+}
+
+// ── AverList ─────────────────────────────────────────────────────────────────
+
 const LIST_APPEND_CHUNK_LIMIT: usize = 128;
 
 pub struct AverList<T> {

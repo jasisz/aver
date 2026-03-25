@@ -264,6 +264,12 @@ impl Interpreter {
                             name
                         )))
                     }),
+                    Some("Vector") => vector::call(name, args).unwrap_or_else(|| {
+                        Err(RuntimeError::Error(format!(
+                            "Unknown builtin function: '{}'",
+                            name
+                        )))
+                    }),
                     Some("Char") => char::call(name, args).unwrap_or_else(|| {
                         Err(RuntimeError::Error(format!(
                             "Unknown builtin function: '{}'",
@@ -436,6 +442,9 @@ impl Interpreter {
                     }
                     Some("List") => list::call_nv(name, args, &mut self.arena).unwrap_or_else(err),
                     Some("Map") => map::call_nv(name, args, &mut self.arena).unwrap_or_else(err),
+                    Some("Vector") => {
+                        vector::call_nv(name, args, &mut self.arena).unwrap_or_else(err)
+                    }
                     Some("Char") => char::call_nv(name, args, &mut self.arena).unwrap_or_else(err),
                     Some("Byte") => byte::call_nv(name, args, &mut self.arena).unwrap_or_else(err),
                     Some("Result") => {

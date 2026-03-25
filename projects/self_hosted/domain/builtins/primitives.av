@@ -547,9 +547,16 @@ fn builtinStringReplaceAll(args: List<Val>) -> Result<Val, String>
 
 fn builtinStringReplaceAllExtract(args: List<Val>) -> Result<Val, String>
     ? "Extract args for String.replace."
-    sV = Option.withDefault(List.get(args, 0), Val.ValUnit)
-    fromV = Option.withDefault(List.get(args, 1), Val.ValUnit)
-    toV = Option.withDefault(List.get(args, 2), Val.ValUnit)
+    match args
+        [sV, ..r1] -> match r1
+            [fromV, ..r2] -> match r2
+                [toV, ..r3] -> builtinStringReplaceAllDo(sV, fromV, toV)
+                [] -> Result.Err("String.replace takes 3 arguments")
+            [] -> Result.Err("String.replace takes 3 arguments")
+        [] -> Result.Err("String.replace takes 3 arguments")
+
+fn builtinStringReplaceAllDo(sV: Val, fromV: Val, toV: Val) -> Result<Val, String>
+    ? "Inner impl of String.replace."
     s = Domain.Builtins.Helpers.expectStr(sV)?
     from = Domain.Builtins.Helpers.expectStr(fromV)?
     to = Domain.Builtins.Helpers.expectStr(toV)?

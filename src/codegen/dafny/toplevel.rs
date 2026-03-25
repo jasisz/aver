@@ -20,6 +20,7 @@ fn type_to_dafny(ty: &Type) -> String {
         Type::Bool => "bool".to_string(),
         Type::Unit => "()".to_string(),
         Type::List(inner) => format!("seq<{}>", type_to_dafny(inner)),
+        Type::Vector(inner) => format!("seq<{}>", type_to_dafny(inner)),
         Type::Map(k, v) => format!("map<{}, {}>", type_to_dafny(k), type_to_dafny(v)),
         Type::Result(ok, err) => format!("Result<{}, {}>", type_to_dafny(ok), type_to_dafny(err)),
         Type::Option(inner) => format!("Option<{}>", type_to_dafny(inner)),

@@ -144,17 +144,12 @@ pub const PROPAGATE_ERR: u8 = 0x6A;
 /// Pop list, push its length as Int.
 pub const LIST_LEN: u8 = 0x6B;
 
-/// Pop index, pop list, push Option.Some(value) or Option.None.
-pub const LIST_GET: u8 = 0x6C;
-
-/// Pop value, pop list, push appended list.
-pub const LIST_APPEND: u8 = 0x6D;
+// 0x6C and 0x6D were LIST_GET and LIST_APPEND — removed.
 
 /// Pop list, pop value, push prepended list.
 pub const LIST_PREPEND: u8 = 0x6E;
 
-/// Pop index, pop list. If found, push value then true; otherwise push false.
-pub const LIST_GET_MATCH: u8 = 0x6F;
+// 0x6F was LIST_GET_MATCH — removed.
 
 // -- Pattern matching --------------------------------------------------------
 
@@ -253,10 +248,7 @@ pub const LOAD_LOCAL_2: u8 = 0x80;
 /// Push one local + one constant in one dispatch. Format: slot:u8, const_idx:u16.
 pub const LOAD_LOCAL_CONST: u8 = 0x81;
 
-/// LIST_GET + UNWRAP_OR fused: pop index, pop list, push value or default.
-/// Format: const_idx:u16 (default value from constants pool).
-/// Equivalent to: LIST_GET, LOAD_CONST idx, UNWRAP_OR.
-pub const LIST_GET_OR: u8 = 0x82;
+// 0x82 was LIST_GET_OR — removed.
 
 /// Opcode name for debug/disassembly.
 pub fn opcode_name(op: u8) -> &'static str {
@@ -302,10 +294,7 @@ pub fn opcode_name(op: u8) -> &'static str {
         RECORD_UPDATE => "RECORD_UPDATE",
         PROPAGATE_ERR => "PROPAGATE_ERR",
         LIST_LEN => "LIST_LEN",
-        LIST_GET => "LIST_GET",
-        LIST_APPEND => "LIST_APPEND",
         LIST_PREPEND => "LIST_PREPEND",
-        LIST_GET_MATCH => "LIST_GET_MATCH",
         MATCH_TAG => "MATCH_TAG",
         MATCH_VARIANT => "MATCH_VARIANT",
         MATCH_UNWRAP => "MATCH_UNWRAP",
@@ -324,7 +313,6 @@ pub fn opcode_name(op: u8) -> &'static str {
         CALL_LEAF => "CALL_LEAF",
         LOAD_LOCAL_2 => "LOAD_LOCAL_2",
         LOAD_LOCAL_CONST => "LOAD_LOCAL_CONST",
-        LIST_GET_OR => "LIST_GET_OR",
         NOP => "NOP",
         _ => "UNKNOWN",
     }

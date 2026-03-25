@@ -409,7 +409,9 @@ fn type_contains_named(ty: &Type, wanted: &str) -> bool {
         Type::Result(ok, err) => {
             type_contains_named(ok, wanted) || type_contains_named(err, wanted)
         }
-        Type::Option(inner) | Type::List(inner) => type_contains_named(inner, wanted),
+        Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
+            type_contains_named(inner, wanted)
+        }
         Type::Tuple(items) => items.iter().any(|t| type_contains_named(t, wanted)),
         Type::Map(k, v) => type_contains_named(k, wanted) || type_contains_named(v, wanted),
         Type::Fn(params, ret, _effects) => {

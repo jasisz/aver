@@ -314,12 +314,9 @@ fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> Str
 
         // List
         ListLen => format!("|{}|", a[0]),
-        ListGet => format!("ListGet({}, {})", a[0], a[1]),
         ListHead => format!("ListHead({})", a[0]),
         ListTail => format!("ListTail({})", a[0]),
         ListPrepend => format!("[{}] + {}", a[0], a[1]),
-        ListPush => format!("{} + [{}]", a[0], a[1]),
-        ListAppend => format!("({} + [{}])", a[0], a[1]),
         ListConcat => format!("({} + {})", a[0], a[1]),
         ListReverse => format!("ListReverse({})", a[0]),
         ListContains => format!("({} in {})", a[1], a[0]),

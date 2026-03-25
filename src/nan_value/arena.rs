@@ -250,6 +250,9 @@ impl Arena {
     pub fn push_tuple(&mut self, items: Vec<NanValue>) -> u32 {
         self.push(ArenaEntry::Tuple(items))
     }
+    pub fn push_vector(&mut self, items: Vec<NanValue>) -> u32 {
+        self.push(ArenaEntry::Vector(items))
+    }
     pub fn push_fn(&mut self, f: Rc<FunctionValue>) -> u32 {
         self.push_symbol(ArenaSymbol::Fn(f))
     }
@@ -313,6 +316,25 @@ impl Arena {
         match self.get(index) {
             ArenaEntry::Tuple(items) => items,
             _ => panic!("Arena: expected Tuple at {}", index),
+        }
+    }
+    pub fn get_vector(&self, index: u32) -> &[NanValue] {
+        match self.get(index) {
+            ArenaEntry::Vector(items) => items,
+            _ => panic!("Arena: expected Vector at {}", index),
+        }
+    }
+    pub fn vector_ref_value(&self, value: NanValue) -> &[NanValue] {
+        if value.is_empty_vector_immediate() {
+            return &[];
+        }
+        self.get_vector(value.arena_index())
+    }
+    pub fn clone_vector_value(&self, value: NanValue) -> Vec<NanValue> {
+        if value.is_empty_vector_immediate() {
+            Vec::new()
+        } else {
+            self.get_vector(value.arena_index()).to_vec()
         }
     }
     pub fn get_map(&self, index: u32) -> &PersistentMap {

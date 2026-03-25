@@ -22,27 +22,19 @@ fn minInt(a: Int, b: Int) -> Int
 // Grid is (w+2)×(h+2) with a zero border.  stride = w+2.
 // Interior cells at row 1..h, col 1..w.  Border always 0.
 
-fn makeGrid(n: Int, acc: List<Int>) -> List<Int>
-    match n == 0
-        true -> acc
-        false -> makeGrid(n - 1, List.prepend(0, acc))
+fn makeGrid(total: Int) -> Vector<Int>
+    ? "Create a zero-filled grid of the given total size."
+    Vector.new(total, 0)
 
-fn setCell(grid: List<Int>, target: Int, idx: Int, acc: List<Int>) -> List<Int>
-    match grid
-        [] -> List.reverse(acc)
-        [h, ..t] -> match idx == target
-            true -> setCell(t, target, idx + 1, List.prepend(1, acc))
-            false -> setCell(t, target, idx + 1, List.prepend(h, acc))
-
-fn place(grid: List<Int>, stride: Int, x: Int, y: Int) -> List<Int>
+fn place(grid: Vector<Int>, stride: Int, x: Int, y: Int) -> Vector<Int>
     ? "Set interior cell (x,y) to alive. Maps to padded index."
-    setCell(grid, (y + 1) * stride + (x + 1), 0, [])
+    Option.withDefault(Vector.set(grid, (y + 1) * stride + (x + 1), 1), grid)
 
-fn cellAt(grid: List<Int>, idx: Int) -> Int
+fn cellAt(grid: Vector<Int>, idx: Int) -> Int
     ? "Cell value at padded index. Border is always 0."
-    Option.withDefault(List.get(grid, idx), 0)
+    Option.withDefault(Vector.get(grid, idx), 0)
 
-fn neighbors(grid: List<Int>, s: Int, idx: Int) -> Int
+fn neighbors(grid: Vector<Int>, s: Int, idx: Int) -> Int
     ? "Count 8 neighbors. s = stride. No bounds checks needed."
     cellAt(grid, idx - s - 1) + cellAt(grid, idx - s) + cellAt(grid, idx - s + 1) + cellAt(grid, idx - 1) + cellAt(grid, idx + 1) + cellAt(grid, idx + s - 1) + cellAt(grid, idx + s) + cellAt(grid, idx + s + 1)
 
@@ -60,50 +52,50 @@ fn evolve(alive: Int, n: Int) -> Int
 // Step walks the full padded grid linearly. Border cells emit 0.
 // Interior cells compute the next generation.
 
-fn stepLoop(old: List<Int>, s: Int, w: Int, h: Int, total: Int, idx: Int, acc: List<Int>) -> List<Int>
+fn stepLoop(old: Vector<Int>, s: Int, w: Int, h: Int, total: Int, idx: Int, acc: Vector<Int>) -> Vector<Int>
     match idx == total
-        true -> List.reverse(acc)
+        true -> acc
         false -> stepOne(old, s, w, h, total, idx, acc)
 
-fn stepOne(old: List<Int>, s: Int, w: Int, h: Int, total: Int, idx: Int, acc: List<Int>) -> List<Int>
+fn stepOne(old: Vector<Int>, s: Int, w: Int, h: Int, total: Int, idx: Int, acc: Vector<Int>) -> Vector<Int>
     row = idx / s
     col = Result.withDefault(Int.mod(idx, s), 0)
     match row == 0
-        true -> stepLoop(old, s, w, h, total, idx + 1, List.prepend(0, acc))
+        true -> stepLoop(old, s, w, h, total, idx + 1, acc)
         false -> match row > h
-            true -> stepLoop(old, s, w, h, total, idx + 1, List.prepend(0, acc))
+            true -> stepLoop(old, s, w, h, total, idx + 1, acc)
             false -> match col == 0
-                true -> stepLoop(old, s, w, h, total, idx + 1, List.prepend(0, acc))
+                true -> stepLoop(old, s, w, h, total, idx + 1, acc)
                 false -> match col > w
-                    true -> stepLoop(old, s, w, h, total, idx + 1, List.prepend(0, acc))
+                    true -> stepLoop(old, s, w, h, total, idx + 1, acc)
                     false -> stepInterior(old, s, w, h, total, idx, acc)
 
-fn stepInterior(old: List<Int>, s: Int, w: Int, h: Int, total: Int, idx: Int, acc: List<Int>) -> List<Int>
+fn stepInterior(old: Vector<Int>, s: Int, w: Int, h: Int, total: Int, idx: Int, acc: Vector<Int>) -> Vector<Int>
     alive = cellAt(old, idx)
     n = neighbors(old, s, idx)
-    stepLoop(old, s, w, h, total, idx + 1, List.prepend(evolve(alive, n), acc))
+    stepLoop(old, s, w, h, total, idx + 1, Option.withDefault(Vector.set(acc, idx, evolve(alive, n)), acc))
 
-fn step(grid: List<Int>, s: Int, w: Int, h: Int) -> List<Int>
-    stepLoop(grid, s, w, h, s * (h + 2), 0, [])
+fn step(grid: Vector<Int>, s: Int, w: Int, h: Int) -> Vector<Int>
+    stepLoop(grid, s, w, h, s * (h + 2), 0, Vector.new(s * (h + 2), 0))
 
 // ─── Seed patterns ──────────────────────────────────────────
 
-fn placeRPentomino(grid: List<Int>, s: Int, cx: Int, cy: Int) -> List<Int>
+fn placeRPentomino(grid: Vector<Int>, s: Int, cx: Int, cy: Int) -> Vector<Int>
     g1 = place(grid, s, cx + 1, cy)
     g2 = place(g1, s, cx + 2, cy)
     g3 = place(g2, s, cx, cy + 1)
     g4 = place(g3, s, cx + 1, cy + 1)
     place(g4, s, cx + 1, cy + 2)
 
-fn placeGlider(grid: List<Int>, s: Int, cx: Int, cy: Int) -> List<Int>
+fn placeGlider(grid: Vector<Int>, s: Int, cx: Int, cy: Int) -> Vector<Int>
     g1 = place(grid, s, cx + 1, cy)
     g2 = place(g1, s, cx + 2, cy + 1)
     g3 = place(g2, s, cx, cy + 2)
     g4 = place(g3, s, cx + 1, cy + 2)
     place(g4, s, cx + 2, cy + 2)
 
-fn seed(s: Int, w: Int, h: Int) -> List<Int>
-    empty = makeGrid(s * (h + 2), [])
+fn seed(s: Int, w: Int, h: Int) -> Vector<Int>
+    empty = makeGrid(s * (h + 2))
     g1 = placeRPentomino(empty, s, w / 2 - 1, h / 2 - 1)
     g2 = placeGlider(g1, s, 2, 2)
     g3 = placeGlider(g2, s, w - 6, 2)
@@ -116,18 +108,18 @@ fn cellChar(v: Int) -> String
         true -> "█"
         false -> " "
 
-fn buildRow(grid: List<Int>, s: Int, row: Int, col: Int, w: Int, acc: String) -> String
+fn buildRow(grid: Vector<Int>, s: Int, row: Int, col: Int, w: Int, acc: String) -> String
     match col > w
         true -> acc
         false -> buildRow(grid, s, row, col + 1, w, acc + cellChar(cellAt(grid, row * s + col)))
 
-fn drawRows(grid: List<Int>, s: Int, w: Int, h: Int, row: Int) -> Unit
+fn drawRows(grid: Vector<Int>, s: Int, w: Int, h: Int, row: Int) -> Unit
     ! [Terminal.moveTo, Terminal.print]
     match row > h
         true -> Terminal.print("")
         false -> drawOneRow(grid, s, w, h, row)
 
-fn drawOneRow(grid: List<Int>, s: Int, w: Int, h: Int, row: Int) -> Unit
+fn drawOneRow(grid: Vector<Int>, s: Int, w: Int, h: Int, row: Int) -> Unit
     ! [Terminal.moveTo, Terminal.print]
     Terminal.moveTo(0, row)
     Terminal.print(buildRow(grid, s, row, 1, w, ""))
@@ -157,7 +149,7 @@ fn tickFps(state: FpsState, nowMs: Int) -> FpsState
 
 // ─── Game loop ──────────────────────────────────────────────
 
-fn gameLoop(grid: List<Int>, s: Int, w: Int, h: Int, fps: FpsState, gen: Int) -> Result<String, String>
+fn gameLoop(grid: Vector<Int>, s: Int, w: Int, h: Int, fps: FpsState, gen: Int) -> Result<String, String>
     ! [
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
         Time.unixMs,
@@ -171,7 +163,7 @@ fn gameLoop(grid: List<Int>, s: Int, w: Int, h: Int, fps: FpsState, gen: Int) ->
     key = Terminal.readKey()
     onKey(key, nextGrid, s, w, h, newFps, gen + 1)
 
-fn onKey(key: Option<String>, grid: List<Int>, s: Int, w: Int, h: Int, fps: FpsState, gen: Int) -> Result<String, String>
+fn onKey(key: Option<String>, grid: Vector<Int>, s: Int, w: Int, h: Int, fps: FpsState, gen: Int) -> Result<String, String>
     ! [
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
         Time.unixMs,
@@ -180,7 +172,7 @@ fn onKey(key: Option<String>, grid: List<Int>, s: Int, w: Int, h: Int, fps: FpsS
         Option.Some(k) -> onKeyChar(k, grid, s, w, h, fps, gen)
         Option.None -> gameLoop(grid, s, w, h, fps, gen)
 
-fn onKeyChar(k: String, grid: List<Int>, s: Int, w: Int, h: Int, fps: FpsState, gen: Int) -> Result<String, String>
+fn onKeyChar(k: String, grid: Vector<Int>, s: Int, w: Int, h: Int, fps: FpsState, gen: Int) -> Result<String, String>
     ! [
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
         Time.unixMs,

@@ -737,13 +737,13 @@ fn base_parent_thin_chunk(code_store: &CodeStore, chunk: &FnChunk) -> Result<boo
                 return Ok(false);
             }
 
-            CONCAT | LIST_CONS | LIST_GET | LIST_APPEND | LIST_PREPEND | RECORD_UPDATE => {
+            CONCAT | LIST_CONS | LIST_PREPEND | RECORD_UPDATE => {
                 return Ok(false);
             }
 
             POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
-            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_LEN | LIST_GET_MATCH
-            | LIST_NIL | UNWRAP_OR | UNWRAP_RESULT_OR | NOP => {}
+            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_LEN | LIST_NIL | UNWRAP_OR
+            | UNWRAP_RESULT_OR | NOP => {}
 
             LIST_NEW | WRAP | TUPLE_NEW | RECORD_NEW => {
                 return Ok(false);
@@ -753,8 +753,7 @@ fn base_parent_thin_chunk(code_store: &CodeStore, chunk: &FnChunk) -> Result<boo
                 ip = advance_opcode_ip(chunk, ip, 1)?;
             }
 
-            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL | LOAD_LOCAL_2
-            | LIST_GET_OR => {
+            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL | LOAD_LOCAL_2 => {
                 ip = advance_opcode_ip(chunk, ip, 2)?;
             }
 
@@ -857,8 +856,7 @@ fn parent_thin_calls_are_safe(
                 ip = advance_opcode_ip(chunk, ip, 1)?;
             }
 
-            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL | LOAD_LOCAL_2
-            | LIST_GET_OR => {
+            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL | LOAD_LOCAL_2 => {
                 ip = advance_opcode_ip(chunk, ip, 2)?;
             }
 
@@ -928,9 +926,9 @@ fn classify_leaf_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
 
             // 0-operand opcodes
             POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
-            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | LIST_GET_MATCH
-            | LIST_NIL | LIST_CONS | LIST_LEN | LIST_GET | LIST_APPEND | LIST_PREPEND
-            | UNWRAP_OR | UNWRAP_RESULT_OR | CONCAT | NOP => {}
+            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | LIST_NIL
+            | LIST_CONS | LIST_LEN | LIST_PREPEND | UNWRAP_OR | UNWRAP_RESULT_OR | CONCAT | NOP => {
+            }
 
             // 1-byte operand
             LOAD_LOCAL | STORE_LOCAL | RECORD_GET | EXTRACT_FIELD | EXTRACT_TUPLE_ITEM
@@ -940,7 +938,7 @@ fn classify_leaf_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
 
             // 2-byte operand
             LOAD_CONST | LOAD_GLOBAL | STORE_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL
-            | MATCH_NIL | MATCH_CONS | LOAD_LOCAL_2 | LIST_GET_OR => {
+            | MATCH_NIL | MATCH_CONS | LOAD_LOCAL_2 => {
                 ip += 2;
             }
 
@@ -989,22 +987,21 @@ fn classify_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
         ip += 1;
         match op {
             STORE_GLOBAL | TAIL_CALL_SELF | TAIL_CALL_KNOWN | CONCAT | LIST_NIL | LIST_CONS
-            | LIST_NEW | RECORD_NEW | WRAP | TUPLE_NEW | RECORD_UPDATE | LIST_LEN | LIST_GET
-            | LIST_APPEND | LIST_PREPEND => {
+            | LIST_NEW | RECORD_NEW | WRAP | TUPLE_NEW | RECORD_UPDATE | LIST_LEN
+            | LIST_PREPEND => {
                 return Ok(false);
             }
 
             POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
-            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | LIST_GET_MATCH
-            | UNWRAP_OR | UNWRAP_RESULT_OR | NOP => {}
+            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | UNWRAP_OR
+            | UNWRAP_RESULT_OR | NOP => {}
 
             LOAD_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD
             | EXTRACT_TUPLE_ITEM => {
                 ip = advance_opcode_ip(chunk, ip, 1)?;
             }
 
-            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL | LOAD_LOCAL_2
-            | LIST_GET_OR => {
+            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL | LOAD_LOCAL_2 => {
                 ip = advance_opcode_ip(chunk, ip, 2)?;
             }
 
@@ -1083,14 +1080,13 @@ fn classify_thin_ignoring_self_tco(chunk: &FnChunk) -> Result<bool, CompileError
         match op {
             // Same as classify_thin_chunk BUT without TAIL_CALL_SELF in reject list.
             STORE_GLOBAL | TAIL_CALL_KNOWN | CONCAT | LIST_NIL | LIST_CONS | LIST_NEW
-            | RECORD_NEW | WRAP | TUPLE_NEW | RECORD_UPDATE | LIST_LEN | LIST_GET | LIST_APPEND
-            | LIST_PREPEND => {
+            | RECORD_NEW | WRAP | TUPLE_NEW | RECORD_UPDATE | LIST_LEN | LIST_PREPEND => {
                 return Ok(false);
             }
 
             POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
-            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | LIST_GET_MATCH
-            | UNWRAP_OR | UNWRAP_RESULT_OR | NOP => {}
+            | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | UNWRAP_OR
+            | UNWRAP_RESULT_OR | NOP => {}
 
             // TAIL_CALL_SELF accepted — will become TAIL_CALL_SELF_THIN.
             LOAD_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD
@@ -1098,8 +1094,7 @@ fn classify_thin_ignoring_self_tco(chunk: &FnChunk) -> Result<bool, CompileError
                 ip = advance_opcode_ip(chunk, ip, 1)?;
             }
 
-            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL | LOAD_LOCAL_2
-            | LIST_GET_OR => {
+            LOAD_CONST | LOAD_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL | LOAD_LOCAL_2 => {
                 ip = advance_opcode_ip(chunk, ip, 2)?;
             }
             RECORD_GET_NAMED => {
@@ -1174,7 +1169,7 @@ fn find_opcode_positions(chunk: &FnChunk, target_op: u8) -> Vec<usize> {
             | EXTRACT_TUPLE_ITEM | LIST_NEW | WRAP | TUPLE_NEW | TAIL_CALL_SELF
             | TAIL_CALL_SELF_THIN => 1,
             LOAD_CONST | LOAD_GLOBAL | STORE_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL
-            | MATCH_NIL | MATCH_CONS | LOAD_LOCAL_2 | LIST_GET_OR => 2,
+            | MATCH_NIL | MATCH_CONS | LOAD_LOCAL_2 => 2,
             CALL_KNOWN | CALL_LEAF | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE | RECORD_NEW
             | LOAD_LOCAL_CONST => 3,
             MATCH_VARIANT | RECORD_GET_NAMED => 4,
@@ -1313,24 +1308,6 @@ impl<'a> FnCompiler<'a> {
             // slot at prev_pos+1, const_idx (u16) emitted next via emit_u16
             return;
         }
-        // LIST_GET ... LOAD_CONST ... UNWRAP_OR → LIST_GET_OR
-        // At this point code ends with [..., LIST_GET, LOAD_CONST, hi, lo]
-        // and we're about to emit UNWRAP_OR.
-        if op == UNWRAP_OR && self.code.len() >= 4 {
-            let len = self.code.len();
-            // LOAD_CONST is 3 bytes back (opcode + u16), LIST_GET is 4 bytes back
-            if self.code[len - 4] == LIST_GET && self.code[len - 3] == LOAD_CONST {
-                let hi = self.code[len - 2];
-                let lo = self.code[len - 1];
-                self.code[len - 4] = LIST_GET_OR;
-                self.code[len - 3] = hi;
-                self.code[len - 2] = lo;
-                self.code.pop();
-                self.last_op_pos = len - 4;
-                return;
-            }
-        }
-
         self.last_op_pos = self.code.len();
         self.code.push(op);
     }

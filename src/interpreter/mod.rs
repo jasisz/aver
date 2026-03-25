@@ -14,7 +14,7 @@ use crate::services::{args, console, disk, env, http, http_server, random, tcp, 
 use crate::source::{
     canonicalize_path, find_module_file, parse_source, require_module_declaration,
 };
-use crate::types::{bool, byte, char, float, int, list, map, option, result, string};
+use crate::types::{bool, byte, char, float, int, list, map, option, result, string, vector};
 // Re-export value types so existing `use aver::interpreter::Value` imports keep working.
 pub use crate::value::{Env, EnvFrame, RuntimeError, Value, aver_display, aver_repr};
 use crate::value::{list_len, list_view};

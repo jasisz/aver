@@ -3,7 +3,7 @@
 /// Lives in its own module so both the interpreter and the service
 /// implementations (`services::*`) can import it without circular
 /// dependencies.
-use aver_rt::AverList;
+use aver_rt::{AverList, AverVector};
 use std::collections::HashMap;
 use std::rc::Rc;
 use thiserror::Error;
@@ -92,6 +92,7 @@ pub enum Value {
     Some(Box<Value>),
     None,
     List(AverList<Value>),
+    Vector(AverVector<Value>),
     Tuple(Vec<Value>),
     Map(HashMap<Value, Value>),
     Fn(Rc<FunctionValue>),
@@ -138,6 +139,7 @@ impl PartialEq for Value {
             (Value::Err(a), Value::Err(b)) => a == b,
             (Value::Some(a), Value::Some(b)) => a == b,
             (Value::None, Value::None) => true,
+            (Value::Vector(a), Value::Vector(b)) => a == b,
             (Value::Tuple(a), Value::Tuple(b)) => a == b,
             (Value::Map(a), Value::Map(b)) => a == b,
             (Value::Fn(a), Value::Fn(b)) => {
@@ -247,6 +249,10 @@ impl std::hash::Hash for Value {
                     v.hash(state);
                 }
             }
+            Value::Vector(vec) => {
+                17u8.hash(state);
+                vec.hash(state);
+            }
             Value::Tuple(items) => {
                 16u8.hash(state);
                 items.hash(state);
@@ -339,16 +345,8 @@ pub fn list_len(value: &Value) -> Option<usize> {
     list_view(value).map(AverList::len)
 }
 
-pub(crate) fn list_get(value: &Value, index: usize) -> Option<Value> {
-    list_view(value).and_then(|items| items.get(index).cloned())
-}
-
 pub fn list_head(value: &Value) -> Option<Value> {
     list_view(value).and_then(|items| items.first().cloned())
-}
-
-pub(crate) fn list_append(list: &Value, item: Value) -> Option<Value> {
-    list_view(list).map(|items| Value::List(AverList::append(items, item)))
 }
 
 pub(crate) fn list_prepend(item: Value, list: &Value) -> Option<Value> {
@@ -389,6 +387,10 @@ pub fn aver_repr(val: &Value) -> String {
         Value::Tuple(items) => {
             let parts: Vec<String> = items.iter().map(aver_repr_inner).collect();
             format!("({})", parts.join(", "))
+        }
+        Value::Vector(vec) => {
+            let parts: Vec<String> = vec.iter().map(aver_repr_inner).collect();
+            format!("Vector[{}]", parts.join(", "))
         }
         Value::List(_) => unreachable!("handled via list_view above"),
         Value::Map(entries) => {
@@ -438,6 +440,10 @@ fn aver_repr_inner(val: &Value) -> String {
         Value::Tuple(items) => {
             let parts: Vec<String> = items.iter().map(aver_repr_inner).collect();
             format!("({})", parts.join(", "))
+        }
+        Value::Vector(vec) => {
+            let parts: Vec<String> = vec.iter().map(aver_repr_inner).collect();
+            format!("Vector[{}]", parts.join(", "))
         }
         Value::List(_) => unreachable!("handled via list_view above"),
         other => aver_repr(other),

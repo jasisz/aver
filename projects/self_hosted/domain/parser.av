@@ -189,7 +189,7 @@ fn parseFnBodyOneStmtIndented(tokens: List<Token>, pos: Int, acc: List<Stmt>) ->
     ? "Parse one statement and continue with indented body."
     r = parseStmt(tokens, pos)?
     match r
-        (stmt, pos2) -> parseFnBodyStmtsIndented(tokens, pos2, List.append(acc, stmt))
+        (stmt, pos2) -> parseFnBodyStmtsIndented(tokens, pos2, List.concat(acc, [stmt]))
 
 verify parseFnBodyOneStmtIndented
     parseFnBodyOneStmtIndented([Token.TkInt(1), Token.TkNewline, Token.TkDedent, Token.TkEof], 0, []) => Result.Ok(([Stmt.StmtExpr(Expr.ExprInt(1))], 3))
@@ -208,7 +208,7 @@ fn parseFnBodyOneStmtFlat(tokens: List<Token>, pos: Int, acc: List<Stmt>) -> Res
     ? "Parse one statement in function body and continue (flat mode)."
     r = parseStmt(tokens, pos)?
     match r
-        (stmt, pos2) -> parseFnBodyAfterStmtFlat(tokens, pos2, List.append(acc, stmt))
+        (stmt, pos2) -> parseFnBodyAfterStmtFlat(tokens, pos2, List.concat(acc, [stmt]))
 
 verify parseFnBodyOneStmtFlat
     parseFnBodyOneStmtFlat([Token.TkInt(1), Token.TkEof], 0, []) => Result.Ok(([Stmt.StmtExpr(Expr.ExprInt(1))], 1))
@@ -261,7 +261,7 @@ fn parseProgramFn(tokens: List<Token>, pos: Int, deps: List<String>, fns: List<F
     ? "Parse a function definition and continue."
     r = parseFnDef(tokens, pos)?
     match r
-        (fd, pos2) -> parseProgram(tokens, Domain.ParserMatch.skipNewlines(tokens, pos2), deps, List.append(fns, fd), stmts)
+        (fd, pos2) -> parseProgram(tokens, Domain.ParserMatch.skipNewlines(tokens, pos2), deps, List.concat(fns, [fd]), stmts)
 
 verify parseProgramFn
     parseProgramFn([Token.TkIdent("f"), Token.TkLParen, Token.TkRParen, Token.TkNewline, Token.TkInt(1), Token.TkEof], 0, [], [], []) => Result.Ok(Program(deps = [], fns = [FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = Map.empty())], stmts = []))
@@ -270,7 +270,7 @@ fn parseProgramStmt(tokens: List<Token>, pos: Int, deps: List<String>, fns: List
     ? "Parse a statement and continue."
     r = parseStmt(tokens, pos)?
     match r
-        (st, pos2) -> parseProgram(tokens, Domain.ParserMatch.skipNewlines(tokens, pos2), deps, fns, List.append(stmts, st))
+        (st, pos2) -> parseProgram(tokens, Domain.ParserMatch.skipNewlines(tokens, pos2), deps, fns, List.concat(stmts, [st]))
 
 verify parseProgramStmt
     parseProgramStmt([Token.TkInt(1), Token.TkEof], 0, [], [], []) => Result.Ok(Program(deps = [], fns = [], stmts = [Stmt.StmtExpr(Expr.ExprInt(1))]))

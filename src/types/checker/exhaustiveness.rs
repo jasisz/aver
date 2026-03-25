@@ -223,6 +223,7 @@ impl TypeChecker {
                 tag: CtorTag::Tuple,
                 arg_types: items.clone(),
             }]),
+            Type::Vector(_) => None, // Vector is not exhaustively matchable
             Type::Named(name) => {
                 let variants = self.type_variants.get(name)?;
                 let mut out = Vec::new();

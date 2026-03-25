@@ -8,10 +8,6 @@ fn main() -> Unit
     numbers = [1, 2, 3]
     Console.print("len:")
     Console.print(List.len(numbers))
-    Console.print("get 0:")
-    Console.print(List.get(numbers, 0))
-    Console.print("append 4:")
-    Console.print(List.append(numbers, 4))
     Console.print("prepend 0:")
     Console.print(List.prepend(0, numbers))
     Console.print("concat:")

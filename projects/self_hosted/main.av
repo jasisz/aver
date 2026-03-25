@@ -113,9 +113,16 @@ fn runFile(path: String, moduleRoot: String) -> Result<String, String>
 fn main() -> Unit
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     args = Args.get()
-    match List.get(args, 0)
-        Option.Some(path) -> runFromFile(path, Option.withDefault(List.get(args, 1), "."))
-        Option.None -> runDemo()
+    match args
+        [] -> runDemo()
+        [path, ..rest] -> runFromFileWithRest(path, rest)
+
+fn runFromFileWithRest(path: String, rest: List<String>) -> Unit
+    ? "Dispatch: use module root from rest if present, else '.'."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match rest
+        [moduleRoot, ..ignored] -> runFromFile(path, moduleRoot)
+        [] -> runFromFile(path, ".")
 
 fn runFromFile(path: String, moduleRoot: String) -> Unit
     ? "Read and execute a file through the self-hosted pipeline."

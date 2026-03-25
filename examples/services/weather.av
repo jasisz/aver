@@ -104,10 +104,11 @@ verify extractCity
 
 fn extractCityFromParts(parts: List<String>) -> Result<String, String>
     ? "Validates endpoint segment and extracts city from already split path parts."
-    section = Option.toResult(List.get(parts, 1), "Missing path segment")?
+    v = Vector.fromList(parts)
+    section = Option.toResult(Vector.get(v, 1), "Missing path segment")?
     match section == "weather"
         false -> Result.Err("Not a weather endpoint")
-        true  -> Option.toResult(List.get(parts, 2), "Missing city")
+        true  -> Option.toResult(Vector.get(v, 2), "Missing city")
 
 verify extractCityFromParts
     extractCityFromParts(["", "weather", "Warsaw"]) => Result.Ok("Warsaw")

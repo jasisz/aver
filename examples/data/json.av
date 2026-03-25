@@ -490,7 +490,7 @@ verify parseStringChunk
 fn finishString(s: String, nextPos: Int, segmentStart: Int, chunks: List<String>) -> ParseResult
     ? "JSON helper: finishString."
     segment = String.slice(s, segmentStart, nextPos - 1)
-    all = String.join(List.append(chunks, segment), "")
+    all = String.join(List.concat(chunks, [segment]), "")
     ParseResult.Ok(Json.JsonString(all), nextPos)
 
 verify finishString
@@ -517,18 +517,18 @@ verify validateChar law printableCharRoundtrip
 fn parseEscape(s: String, pos: Int, slashPos: Int, segmentStart: Int, chunks: List<String>) -> ParseResult
     ? "JSON helper: parseEscape."
     segment = String.slice(s, segmentStart, slashPos)
-    base = List.append(chunks, segment)
+    base = List.concat(chunks, [segment])
     match String.charAt(s, pos)
         Option.None -> ParseResult.Err("Unterminated escape", pos)
         Option.Some(c) -> match c
-            "\"" -> parseStringChunk(s, pos + 1, pos + 1, List.append(base, "\""))
-            "\\" -> parseStringChunk(s, pos + 1, pos + 1, List.append(base, "\\"))
-            "/" -> parseStringChunk(s, pos + 1, pos + 1, List.append(base, "/"))
-            "n" -> parseStringChunk(s, pos + 1, pos + 1, List.append(base, "\n"))
-            "t" -> parseStringChunk(s, pos + 1, pos + 1, List.append(base, "\t"))
-            "r" -> parseStringChunk(s, pos + 1, pos + 1, List.append(base, "\r"))
-            "b" -> parseStringChunk(s, pos + 1, pos + 1, List.append(base, "\b"))
-            "f" -> parseStringChunk(s, pos + 1, pos + 1, List.append(base, "\f"))
+            "\"" -> parseStringChunk(s, pos + 1, pos + 1, List.concat(base, ["\""]))
+            "\\" -> parseStringChunk(s, pos + 1, pos + 1, List.concat(base, ["\\"]))
+            "/" -> parseStringChunk(s, pos + 1, pos + 1, List.concat(base, ["/"]))
+            "n" -> parseStringChunk(s, pos + 1, pos + 1, List.concat(base, ["\n"]))
+            "t" -> parseStringChunk(s, pos + 1, pos + 1, List.concat(base, ["\t"]))
+            "r" -> parseStringChunk(s, pos + 1, pos + 1, List.concat(base, ["\r"]))
+            "b" -> parseStringChunk(s, pos + 1, pos + 1, List.concat(base, ["\b"]))
+            "f" -> parseStringChunk(s, pos + 1, pos + 1, List.concat(base, ["\f"]))
             "u" -> parseUnicode(s, pos + 1, pos + 1, base)
             _ -> ParseResult.Err("Unknown escape: \\" + c, pos)
 
@@ -670,7 +670,7 @@ fn applyCodePoint(s: String, pos: Int, escapePos: Int, chunks: List<String>, cp:
     ? "JSON helper: applyCodePoint."
     match Char.fromCode(cp)
         Option.None -> ParseResult.Err("Invalid Unicode code point", escapePos)
-        Option.Some(ch) -> parseStringChunk(s, pos, pos, List.append(chunks, ch))
+        Option.Some(ch) -> parseStringChunk(s, pos, pos, List.concat(chunks, [ch]))
 
 verify applyCodePoint
     applyCodePoint("\"", 0, 0, [], 65) => ParseResult.Ok(Json.JsonString("A"), 1)
@@ -915,7 +915,7 @@ fn parseArrayElems(s: String, pos: Int, acc: List<Json>) -> ParseResult
     ? "JSON helper: parseArrayElems."
     match parseValue(s, pos)
         ParseResult.Err(msg, p) -> ParseResult.Err(msg, p)
-        ParseResult.Ok(val, p) -> parseArrayNext(s, skipWs(s, p), List.append(acc, val))
+        ParseResult.Ok(val, p) -> parseArrayNext(s, skipWs(s, p), List.concat(acc, [val]))
 
 verify parseArrayElems
     parseArrayElems("x]", 0, []) => ParseResult.Err("Unexpected character: x", 0)

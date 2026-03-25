@@ -152,6 +152,13 @@ pub fn value_to_json(value: &Value) -> Result<JsonValue, String> {
             payload.insert("fields".to_string(), JsonValue::Array(field_vals));
             Ok(wrap_marker("$variant", JsonValue::Object(payload)))
         }
+        Value::Vector(vec) => {
+            let mut arr = Vec::with_capacity(vec.len());
+            for item in vec.iter() {
+                arr.push(value_to_json(item)?);
+            }
+            Ok(wrap_marker("$vector", JsonValue::Array(arr)))
+        }
         Value::Fn(_) | Value::Builtin(_) | Value::Namespace { .. } => Err(format!(
             "cannot serialize non-replay-safe value: {}",
             aver_repr(value)

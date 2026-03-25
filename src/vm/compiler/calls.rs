@@ -153,8 +153,6 @@ impl<'a> FnCompiler<'a> {
                 }
                 match builtin {
                     VmBuiltin::ListLen => self.emit_op(LIST_LEN),
-                    VmBuiltin::ListGet => self.emit_op(LIST_GET),
-                    VmBuiltin::ListAppend => self.emit_op(LIST_APPEND),
                     VmBuiltin::ListPrepend => self.emit_op(LIST_PREPEND),
                     VmBuiltin::OptionWithDefault => self.emit_op(UNWRAP_OR),
                     VmBuiltin::ResultWithDefault => self.emit_op(UNWRAP_RESULT_OR),

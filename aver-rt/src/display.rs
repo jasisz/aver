@@ -166,6 +166,17 @@ impl<K: AverDisplay + Clone + Eq + std::hash::Hash + Ord, V: AverDisplay + Clone
     }
 }
 
+impl<T: AverDisplay + Clone> AverDisplay for crate::AverVector<T> {
+    fn aver_display(&self) -> String {
+        let parts: Vec<String> = self.iter().map(|v| v.aver_display_inner()).collect();
+        format!("Vector[{}]", parts.join(", "))
+    }
+
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
 impl<A: AverDisplay, B: AverDisplay> AverDisplay for (A, B) {
     fn aver_display(&self) -> String {
         format!(

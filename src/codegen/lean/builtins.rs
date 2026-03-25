@@ -231,11 +231,6 @@ pub fn emit_builtin_call(name: &str, args: &[Expr], ctx: &CodegenContext) -> Opt
             "{}.length",
             emit_list_length_subject(&args[0], ctx)
         )),
-        "List.append" => {
-            let list = super::expr::emit_expr(&args[0], ctx);
-            let item = super::expr::emit_expr(&args[1], ctx);
-            Some(format!("{} ++ [{}]", paren_if_complex(&list), item))
-        }
         "List.prepend" => {
             let item = super::expr::emit_expr(&args[0], ctx);
             let list = super::expr::emit_expr(&args[1], ctx);
@@ -248,15 +243,6 @@ pub fn emit_builtin_call(name: &str, args: &[Expr], ctx: &CodegenContext) -> Opt
                 "{} ++ {}",
                 paren_if_complex(&a),
                 paren_if_complex(&b)
-            ))
-        }
-        "List.get" => {
-            let list = super::expr::emit_expr(&args[0], ctx);
-            let idx = super::expr::emit_expr(&args[1], ctx);
-            Some(format!(
-                "AverList.get {} {}",
-                paren_if_complex(&list),
-                paren_if_complex(&idx)
             ))
         }
         "List.contains" => {

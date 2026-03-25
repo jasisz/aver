@@ -29,6 +29,7 @@ impl Interpreter {
         string::register_nv(&mut global, &mut arena);
         list::register_nv(&mut global, &mut arena);
         map::register_nv(&mut global, &mut arena);
+        vector::register_nv(&mut global, &mut arena);
         char::register_nv(&mut global, &mut arena);
         byte::register_nv(&mut global, &mut arena);
 

@@ -4419,11 +4419,11 @@ verify mirror law involutive
     }
 
     #[test]
-    fn transpile_injects_builtin_network_types_and_int_list_get_support() {
+    fn transpile_injects_builtin_network_types_and_vector_get_support() {
         let ctx = ctx_from_source(
             r#"
-fn firstOrMissing(xs: List<String>) -> Result<String, String>
-    Option.toResult(List.get(xs, -1), "missing")
+fn firstOrMissing(xs: Vector<String>) -> Result<String, String>
+    Option.toResult(Vector.get(xs, 0), "missing")
 
 fn defaultHeader() -> Header
     Header(name = "Content-Type", value = "application/json")
@@ -4447,8 +4447,6 @@ fn connPort(conn: Tcp.Connection) -> Int
         assert!(lean.contains("structure HttpRequest where"));
         assert!(lean.contains("structure Tcp_Connection where"));
         assert!(lean.contains("port : Int"));
-        assert!(lean.contains("def get (xs : List α) (i : Int) : Option α :="));
-        assert!(lean.contains("AverList.get xs (-1)"));
     }
 
     #[test]
@@ -4829,7 +4827,7 @@ verify weird law weirdSpec
 
         let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
-        assert!(lean.contains("def deserializeLine (line : String) : Except String Note :=\n  do"));
+        assert!(lean.contains("def deserializeLine (line : String) : Except String Note :="));
         assert!(lean.contains("Except String (List Note)"));
         assert!(!lean.contains("partial def deserializeLine"));
         assert!(lean.contains("-- when noteRoundtripSafe note"));

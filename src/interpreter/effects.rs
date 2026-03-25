@@ -24,6 +24,7 @@ impl Interpreter {
             Some("String") => string::effects(name),
             Some("List") => list::effects(name),
             Some("Map") => map::effects(name),
+            Some("Vector") => vector::effects(name),
             Some("Char") => char::effects(name),
             Some("Byte") => byte::effects(name),
             Some("Result") => result::effects(name),

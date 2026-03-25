@@ -162,12 +162,6 @@ fn valid_option_to_result_infers_type() {
 }
 
 #[test]
-fn valid_list_get_preserves_inner_type() {
-    let src = "fn first(xs: List<Int>) -> Option<Int>\n    List.get(xs, 0)\n";
-    assert_no_errors(src);
-}
-
-#[test]
 fn valid_list_pattern_matching() {
     let src = "fn score(xs: List<Int>) -> Int\n    match xs\n        [] -> 0\n        [h, ..t] -> h + List.len(t)\n";
     assert_no_errors(src);
@@ -546,12 +540,6 @@ fn error_arg_type_mismatch_string_for_int() {
 }
 
 #[test]
-fn error_list_get_wrong_declared_inner_type() {
-    let src = "fn first(xs: List<Int>) -> Option<String>\n    List.get(xs, 0)\n";
-    assert_error_containing(src, "body returns Option<Int>");
-}
-
-#[test]
 fn error_unknown_does_not_satisfy_declared_return_type() {
     let src = concat!(
         "fn bad() -> Int\n",
@@ -574,12 +562,6 @@ fn error_unknown_does_not_satisfy_call_argument_type() {
         "    takesInt(n)\n",
     );
     assert_error_containing(src, "Argument 1 of 'takesInt': expected Int, got Unknown");
-}
-
-#[test]
-fn error_list_append_mismatched_element_type() {
-    let src = "fn bad(xs: List<Int>) -> List<Int>\n    List.append(xs, \"x\")\n";
-    assert_error_containing(src, "Argument 2 of 'List.append': expected Int, got String");
 }
 
 #[test]

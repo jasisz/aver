@@ -44,6 +44,14 @@ impl NanValue {
                     NanValue::new_list(arena.push_list(items))
                 }
             }
+            Value::Vector(vec) => {
+                let items: Vec<_> = vec.iter().map(|v| NanValue::from_value(v, arena)).collect();
+                if items.is_empty() {
+                    NanValue::EMPTY_VECTOR
+                } else {
+                    NanValue::new_vector(arena.push_vector(items))
+                }
+            }
             Value::Map(map) => {
                 if map.is_empty() {
                     return NanValue::EMPTY_MAP;
@@ -151,6 +159,11 @@ impl NanValue {
                     .map(|v| v.to_value(arena))
                     .collect();
                 Value::List(aver_rt::AverList::from_vec(vals))
+            }
+            TAG_VECTOR => {
+                let items = arena.vector_ref_value(self);
+                let vals: Vec<Value> = items.iter().map(|v| v.to_value(arena)).collect();
+                Value::Vector(aver_rt::AverVector::from_vec(vals))
             }
             TAG_TUPLE => {
                 let items = arena.get_tuple(self.arena_index());

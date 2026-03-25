@@ -8,7 +8,15 @@ module ParserMatch
 
 fn tokenAt(tokens: List<Token>, pos: Int) -> Token
     ? "Token at position, or TkEof if past end."
-    Option.withDefault(List.get(tokens, pos), Token.TkEof)
+    tokenAtWalk(tokens, pos, 0)
+
+fn tokenAtWalk(tokens: List<Token>, target: Int, idx: Int) -> Token
+    ? "Walk the list to find token at target index."
+    match tokens
+        [] -> Token.TkEof
+        [t, ..rest] -> match idx == target
+            true -> t
+            false -> tokenAtWalk(rest, target, idx + 1)
 
 verify tokenAt
     tokenAt([Token.TkPlus, Token.TkEof], 0) => Token.TkPlus
@@ -110,7 +118,7 @@ fn parseConstructorPatternBindings(tokens: List<Token>, pos: Int, name: String, 
     ? "Parse bindings inside constructor pattern: Ctor(a, b) or Ctor()."
     match tokenAt(tokens, pos)
         Token.TkRParen -> Result.Ok((Pattern.PatConstructor(name, acc), pos + 1))
-        Token.TkIdent(binding) -> parseConstructorPatternTail(tokens, pos + 1, name, List.append(acc, binding))
+        Token.TkIdent(binding) -> parseConstructorPatternTail(tokens, pos + 1, name, List.concat(acc, [binding]))
         _ -> Result.Err("Expected binding or ')' in constructor pattern")
 
 verify parseConstructorPatternBindings
@@ -146,7 +154,7 @@ fn parseTuplePatternElement(tokens: List<Token>, pos: Int, acc: List<Pattern>) -
     ? "Parse one pattern element and continue."
     pr = parsePattern(tokens, pos)?
     match pr
-        (pat, pos2) -> parseTuplePatternElementTail(tokens, pos2, List.append(acc, pat))
+        (pat, pos2) -> parseTuplePatternElementTail(tokens, pos2, List.concat(acc, [pat]))
 
 verify parseTuplePatternElement
     parseTuplePatternElement([Token.TkInt(1), Token.TkRParen, Token.TkEof], 0, []) => Result.Ok((Pattern.PatTuple([Pattern.PatInt(1)]), 2))
@@ -379,7 +387,7 @@ fn collectDependsNames(tokens: List<Token>, pos: Int, endPos: Int, acc: List<Str
         true -> acc
         false -> match tokenAt(tokens, pos)
             Token.TkRBracket -> acc
-            Token.TkIdent(name) -> collectDependsNames(tokens, pos + 1, endPos, List.append(acc, name))
+            Token.TkIdent(name) -> collectDependsNames(tokens, pos + 1, endPos, List.concat(acc, [name]))
             _ -> collectDependsNames(tokens, pos + 1, endPos, acc)
 
 verify collectDependsNames
@@ -389,7 +397,7 @@ fn parseParamList(tokens: List<Token>, pos: Int, acc: List<String>) -> Result<(L
     ? "Parse comma-separated parameter names until ')'."
     match tokenAt(tokens, pos)
         Token.TkRParen -> Result.Ok((acc, pos + 1))
-        Token.TkIdent(name) -> parseParamListTail(tokens, skipTypeAnnotation(tokens, pos + 1), List.append(acc, name))
+        Token.TkIdent(name) -> parseParamListTail(tokens, skipTypeAnnotation(tokens, pos + 1), List.concat(acc, [name]))
         _ -> Result.Err("Expected parameter name or ')'")
 
 verify parseParamList

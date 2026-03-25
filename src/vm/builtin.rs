@@ -132,8 +132,6 @@ vm_builtins! {
     StringToUpper => "String.toUpper",
 
     ListLen => "List.len",
-    ListGet => "List.get",
-    ListAppend => "List.append",
     ListPrepend => "List.prepend",
     ListConcat => "List.concat",
     ListReverse => "List.reverse",
@@ -150,6 +148,13 @@ vm_builtins! {
     MapEntries => "Map.entries",
     MapLen => "Map.len",
     MapFromList => "Map.fromList",
+
+    VectorNew => "Vector.new",
+    VectorGet => "Vector.get",
+    VectorSet => "Vector.set",
+    VectorLen => "Vector.len",
+    VectorFromList => "Vector.fromList",
+    VectorToList => "Vector.toList",
 
     OptionWithDefault => "Option.withDefault",
     OptionToResult => "Option.toResult",
@@ -205,11 +210,12 @@ impl VmBuiltin {
             | Self::MapEmpty
             | Self::MapLen
             | Self::MapHas
+            | Self::VectorLen
             | Self::OptionWithDefault
             | Self::ResultWithDefault
             | Self::CharToCode => VmBuiltinParentThinClass::Heapless,
 
-            Self::ListGet | Self::MapGet => VmBuiltinParentThinClass::Cheap,
+            Self::MapGet | Self::VectorGet => VmBuiltinParentThinClass::Cheap,
 
             _ => VmBuiltinParentThinClass::AllocHeavy,
         }
@@ -384,8 +390,6 @@ impl VmBuiltin {
             | Self::StringToUpper => string::call_nv(self.name(), args, arena),
 
             Self::ListLen
-            | Self::ListGet
-            | Self::ListAppend
             | Self::ListPrepend
             | Self::ListConcat
             | Self::ListReverse
@@ -402,6 +406,13 @@ impl VmBuiltin {
             | Self::MapEntries
             | Self::MapLen
             | Self::MapFromList => map::call_nv(self.name(), args, arena),
+
+            Self::VectorNew
+            | Self::VectorGet
+            | Self::VectorSet
+            | Self::VectorLen
+            | Self::VectorFromList
+            | Self::VectorToList => crate::types::vector::call_nv(self.name(), args, arena),
 
             Self::OptionWithDefault | Self::OptionToResult => {
                 option::call_nv(self.name(), args, arena)

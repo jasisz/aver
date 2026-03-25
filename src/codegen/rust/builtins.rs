@@ -381,16 +381,6 @@ fn emit_builtin_call_inner(
                 Some(format!("({}.len() as i64)", arg))
             }
         }
-        "List.get" => {
-            let list = emit_arg(0);
-            let idx = emit_arg(1);
-            Some(format!("{}.get({} as usize).cloned()", list, idx))
-        }
-        "List.append" => {
-            let list = clone_arg(&args[0], ctx, &arg_ctxs[0]);
-            let item = clone_arg(&args[1], ctx, &arg_ctxs[1]);
-            Some(format!("aver_rt::AverList::append(&{}, {})", list, item))
-        }
         "List.prepend" => {
             let item = clone_arg(&args[0], ctx, &arg_ctxs[0]);
             let list = clone_arg(&args[1], ctx, &arg_ctxs[1]);
@@ -526,6 +516,39 @@ fn emit_builtin_call_inner(
         "String.byteLength" => {
             let arg = emit_arg(0);
             Some(format!("({}.len() as i64)", arg))
+        }
+
+        // ---- Vector ----
+        "Vector.new" => {
+            let size = emit_arg(0);
+            let default = clone_arg(&args[1], ctx, &arg_ctxs[1]);
+            Some(format!(
+                "aver_rt::AverVector::new({} as usize, {})",
+                size, default
+            ))
+        }
+        "Vector.get" => {
+            let vec = emit_arg(0);
+            let idx = emit_arg(1);
+            Some(format!("{}.get({} as usize).cloned()", vec, idx))
+        }
+        "Vector.set" => {
+            let vec = emit_arg(0);
+            let idx = emit_arg(1);
+            let val = clone_arg(&args[2], ctx, &arg_ctxs[2]);
+            Some(format!("{}.set({} as usize, {})", vec, idx, val))
+        }
+        "Vector.len" => {
+            let vec = emit_arg(0);
+            Some(format!("({}.len() as i64)", vec))
+        }
+        "Vector.fromList" => {
+            let list = emit_arg(0);
+            Some(format!("aver_rt::AverVector::from_vec({}.to_vec())", list))
+        }
+        "Vector.toList" => {
+            let vec = emit_arg(0);
+            Some(format!("{}.to_list()", vec))
         }
 
         // ---- Tcp ----

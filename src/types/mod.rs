@@ -18,6 +18,7 @@ pub mod map;
 pub mod option;
 pub mod result;
 pub mod string;
+pub mod vector;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
@@ -31,6 +32,7 @@ pub enum Type {
     List(Box<Type>),
     Tuple(Vec<Type>),
     Map(Box<Type>, Box<Type>),
+    Vector(Box<Type>),
     Fn(Vec<Type>, Box<Type>, Vec<String>),
     Unknown,       // internal fallback when checker cannot infer a precise type
     Named(String), // user-defined type: Shape, User, etc.
@@ -57,6 +59,7 @@ impl Type {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.compatible(y))
             }
             (Type::Map(k1, v1), Type::Map(k2, v2)) => k1.compatible(k2) && v1.compatible(v2),
+            (Type::Vector(a), Type::Vector(b)) => a.compatible(b),
             (Type::Fn(p1, r1, e1), Type::Fn(p2, r2, e2)) => {
                 p1.len() == p2.len()
                     && p1.iter().zip(p2.iter()).all(|(a, b)| a.compatible(b))
@@ -92,6 +95,7 @@ impl Type {
                     .join(", ")
             ),
             Type::Map(key, value) => format!("Map<{}, {}>", key.display(), value.display()),
+            Type::Vector(inner) => format!("Vector<{}>", inner.display()),
             Type::Fn(params, ret, effects) => {
                 let ps: Vec<String> = params.iter().map(|p| p.display()).collect();
                 if effects.is_empty() {
@@ -171,6 +175,10 @@ pub fn parse_type_str_strict(s: &str) -> Result<Type, String> {
                 }
                 return Err(s.to_string());
             }
+            if let Some(inner) = strip_wrapper(s, "Vector<", ">") {
+                let inner_ty = parse_type_str_strict(inner)?;
+                return Ok(Type::Vector(Box::new(inner_ty)));
+            }
 
             // Capitalized identifier with only alphanumeric/_ and dot chars = user-defined type name
             // Supports dotted names like "Tcp.Connection"
@@ -237,6 +245,9 @@ pub fn parse_type_str(s: &str) -> Type {
                     Box::new(parse_type_str(key_str)),
                     Box::new(parse_type_str(value_str)),
                 );
+            }
+            if let Some(inner) = strip_wrapper(s, "Vector<", ">") {
+                return Type::Vector(Box::new(parse_type_str(inner)));
             }
             // Capitalized identifier with only alphanumeric/_ and dot chars = user-defined type
             // Supports dotted names like "Tcp.Connection"

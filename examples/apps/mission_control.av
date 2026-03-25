@@ -396,7 +396,7 @@ verify normalizeAnglePositive
 
 fn addHistory(state: ShipState, entry: String) -> ShipState
     ? "Append one command marker to mission history."
-    ShipState.update(state, history = List.append(state.history, entry))
+    ShipState.update(state, history = List.concat(state.history, [entry]))
 
 verify addHistory
     addHistory(initialState(), "x") => ShipState(name = "Odyssey-1", fuel = 120, velocity = 0, orientation = 0, power = 20, solarDeployed = false, alive = true, status = "CRUISE", history = ["x"])

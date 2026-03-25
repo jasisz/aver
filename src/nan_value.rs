@@ -30,7 +30,8 @@
 //!   10 = Map             payload bit45: 0=empty map, 1=arena index
 //!   11 = Record          payload bit45: 1=arena index
 //!   12 = Variant         payload bit45: 1=arena index
-//!   13-15 = (reserved)
+//!   13 = Vector         payload bit45: 0=empty vector, 1=arena index
+//!   14-15 = (reserved)
 
 use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
@@ -65,6 +66,7 @@ const TAG_TUPLE: u64 = 9;
 const TAG_MAP: u64 = 10;
 const TAG_RECORD: u64 = 11;
 const TAG_VARIANT: u64 = 12;
+const TAG_VECTOR: u64 = 13;
 
 const SYMBOL_FN: u64 = 0;
 const SYMBOL_BUILTIN: u64 = 1;
@@ -293,6 +295,7 @@ impl NanValue {
     pub const NONE: NanValue = NanValue(QNAN | (TAG_NONE << TAG_SHIFT));
     pub const EMPTY_LIST: NanValue = NanValue(QNAN | (TAG_LIST << TAG_SHIFT));
     pub const EMPTY_MAP: NanValue = NanValue(QNAN | (TAG_MAP << TAG_SHIFT));
+    pub const EMPTY_VECTOR: NanValue = NanValue(QNAN | (TAG_VECTOR << TAG_SHIFT));
     pub const EMPTY_STRING: NanValue = NanValue(QNAN | (TAG_STRING << TAG_SHIFT));
 
     #[inline]
@@ -549,6 +552,11 @@ impl NanValue {
     }
 
     #[inline]
+    pub fn new_vector(arena_index: u32) -> Self {
+        Self::encode(TAG_VECTOR, ARENA_REF_BIT | (arena_index as u64))
+    }
+
+    #[inline]
     pub fn new_record(arena_index: u32) -> Self {
         Self::encode(TAG_RECORD, ARENA_REF_BIT | (arena_index as u64))
     }
@@ -615,7 +623,7 @@ impl NanValue {
                 }
             }
             TAG_STRING | TAG_SOME | TAG_OK | TAG_ERR | TAG_LIST | TAG_TUPLE | TAG_MAP
-            | TAG_RECORD | TAG_VARIANT => {
+            | TAG_RECORD | TAG_VARIANT | TAG_VECTOR => {
                 (self.payload() & ARENA_REF_BIT != 0).then_some(self.arena_index())
             }
             _ => None,
@@ -639,6 +647,7 @@ impl NanValue {
             TAG_LIST => Self::new_list(index),
             TAG_TUPLE => Self::new_tuple(index),
             TAG_MAP => Self::new_map(index),
+            TAG_VECTOR => Self::new_vector(index),
             TAG_RECORD => Self::new_record(index),
             TAG_VARIANT => Self::new_variant(index),
             _ => self,
@@ -734,6 +743,16 @@ impl NanValue {
     }
 
     #[inline]
+    pub fn is_vector(self) -> bool {
+        self.is_nan_boxed() && self.tag() == TAG_VECTOR
+    }
+
+    #[inline]
+    pub fn is_empty_vector_immediate(self) -> bool {
+        self.is_nan_boxed() && self.tag() == TAG_VECTOR && self.payload() & ARENA_REF_BIT == 0
+    }
+
+    #[inline]
     pub fn is_tuple(self) -> bool {
         self.is_nan_boxed() && self.tag() == TAG_TUPLE
     }
@@ -777,6 +796,7 @@ impl NanValue {
             TAG_LIST => "List",
             TAG_TUPLE => "Tuple",
             TAG_MAP => "Map",
+            TAG_VECTOR => "Vector",
             TAG_RECORD => "Record",
             TAG_VARIANT => "Variant",
             TAG_SYMBOL => match self.symbol_kind() {
@@ -913,6 +933,7 @@ impl std::fmt::Debug for NanValue {
             }
             TAG_LIST if self.is_empty_list_immediate() => write!(f, "EmptyList"),
             TAG_MAP if self.is_empty_map_immediate() => write!(f, "EmptyMap"),
+            TAG_VECTOR if self.is_empty_vector_immediate() => write!(f, "EmptyVector"),
             _ => write!(f, "{}(arena:{})", self.type_name(), self.arena_index()),
         }
     }
@@ -949,6 +970,7 @@ pub enum ArenaEntry {
     List(ArenaList),
     Tuple(Vec<NanValue>),
     Map(PersistentMap),
+    Vector(Vec<NanValue>),
     Record {
         type_id: u32,
         fields: Vec<NanValue>,

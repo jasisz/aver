@@ -93,15 +93,30 @@ verify serializeLine law lineRoundtrip
 fn deserializeLine(line: String) -> Result<Note, String>
     ? "Decodes a tab-separated line into a Note record."
     parts = String.split(line, "\t")
-    rawId = Option.toResult(List.get(parts, 0), "corrupt note: missing id")?
+    match parts
+        [rawId, ..rest1] -> deserializeLinePart2(rawId, rest1)
+        _ -> Result.Err("corrupt note: expected 3 tab-separated fields")
+
+fn deserializeLinePart2(rawId: String, rest1: List<String>) -> Result<Note, String>
+    ? "Extract title and body from remaining parts."
+    match rest1
+        [title, ..rest2] -> deserializeLinePart3(rawId, title, rest2)
+        _ -> Result.Err("corrupt note: missing title")
+
+fn deserializeLinePart3(rawId: String, title: String, rest2: List<String>) -> Result<Note, String>
+    ? "Extract body from remaining parts."
+    match rest2
+        [body, ..rest3] -> deserializeLineInner(rawId, title, body)
+        _ -> Result.Err("corrupt note: missing body")
+
+fn deserializeLineInner(rawId: String, title: String, body: String) -> Result<Note, String>
+    ? "Inner deserialization after field extraction."
     id = Int.fromString(rawId)?
-    title = Option.toResult(List.get(parts, 1), "corrupt note: missing title")?
-    body = Option.toResult(List.get(parts, 2), "corrupt note: missing body")?
     Result.Ok(Note(id = id, title = title, body = body))
 
 verify deserializeLine
     deserializeLine("1\tHello\tWorld") => Result.Ok(Note(id = 1, title = "Hello", body = "World"))
-    deserializeLine("bad") => Result.Err("Cannot parse 'bad' as Int")
+    deserializeLine("bad") => Result.Err("corrupt note: missing title")
 
 fn lineSafeChars(chars: List<String>) -> Bool
     ? "True when a line fragment contains no tab or newline separators."
@@ -142,7 +157,7 @@ fn foldNote(acc: Result<List<Note>, String>, line: String) -> Result<List<Note>,
         Result.Err(e) -> Result.Err(e)
         Result.Ok(notes) -> match deserializeLine(line)
             Result.Err(e) -> Result.Err(e)
-            Result.Ok(note) -> Result.Ok(List.append(notes, note))
+            Result.Ok(note) -> Result.Ok(List.concat(notes, [note]))
 
 verify foldNote
     foldNote(Result.Err("x"), "1\tA\tB") => Result.Err("x")

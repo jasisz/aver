@@ -15,6 +15,7 @@ fn display_type_for_expected(ty: &Type) -> String {
         ),
         Type::Option(inner) => format!("Option<{}>", display_type_for_expected(inner)),
         Type::List(inner) => format!("List<{}>", display_type_for_expected(inner)),
+        Type::Vector(inner) => format!("Vector<{}>", display_type_for_expected(inner)),
         Type::Tuple(items) => format!(
             "({})",
             items
@@ -171,6 +172,9 @@ impl TypeChecker {
                         return ty;
                     }
                     if let Some(ty) = self.infer_map_call_type(&display_name, &arg_types) {
+                        return ty;
+                    }
+                    if let Some(ty) = self.infer_vector_call_type(&display_name, &arg_types) {
                         return ty;
                     }
 

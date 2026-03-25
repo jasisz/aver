@@ -85,27 +85,7 @@ impl VM {
                         .push(self.code.functions[fn_id as usize].constants[const_idx]);
                 }
 
-                LIST_GET_OR => {
-                    let const_idx = read_u16!(code, ip) as usize;
-                    let index = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let list = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let default = self.code.functions[fn_id as usize].constants[const_idx];
-                    if list.is_list() {
-                        let idx = index.as_int(&self.arena);
-                        if idx >= 0 {
-                            if let Some(value) = self.arena.list_get_value(list, idx as usize) {
-                                self.stack.push(value);
-                            } else {
-                                self.stack.push(default);
-                            }
-                        } else {
-                            self.stack.push(default);
-                        }
-                    } else {
-                        self.stack.push(default);
-                    }
-                }
-
+                // LIST_GET_OR was removed (List.get removed from language).
                 STORE_LOCAL => {
                     let slot = read_u8!(code, ip) as usize;
                     let val = self.stack.pop().ok_or(VmError::StackUnderflow)?;
@@ -644,70 +624,8 @@ impl VM {
                     ));
                 }
 
-                LIST_GET => {
-                    let index = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let list = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    if !list.is_list() {
-                        return Err(VmError::Runtime(
-                            "List.get() first argument must be a List".into(),
-                        ));
-                    }
-                    if !index.is_int() {
-                        return Err(VmError::Runtime("List.get() index must be an Int".into()));
-                    }
-                    let idx = index.as_int(&self.arena);
-                    if idx < 0 {
-                        self.stack.push(NanValue::NONE);
-                    } else if let Some(value) = self.arena.list_get_value(list, idx as usize) {
-                        let wrapped = self
-                            .arena
-                            .with_alloc_space(self.next_value_alloc_space(code, ip), |arena| {
-                                NanValue::new_some_value(value, arena)
-                            });
-                        self.stack.push(wrapped);
-                    } else {
-                        self.stack.push(NanValue::NONE);
-                    }
-                }
-
-                LIST_GET_MATCH => {
-                    let index = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let list = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    if !list.is_list() {
-                        return Err(VmError::Runtime(
-                            "List.get() first argument must be a List".into(),
-                        ));
-                    }
-                    if !index.is_int() {
-                        return Err(VmError::Runtime("List.get() index must be an Int".into()));
-                    }
-                    let idx = index.as_int(&self.arena);
-                    if idx < 0 {
-                        self.stack.push(NanValue::FALSE);
-                    } else if let Some(value) = self.arena.list_get_value(list, idx as usize) {
-                        self.stack.push(value);
-                        self.stack.push(NanValue::TRUE);
-                    } else {
-                        self.stack.push(NanValue::FALSE);
-                    }
-                }
-
-                LIST_APPEND => {
-                    let value = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let list = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    if !list.is_list() {
-                        return Err(VmError::Runtime(
-                            "List.append() first argument must be a List".into(),
-                        ));
-                    }
-                    let idx = self
-                        .arena
-                        .with_alloc_space(self.next_value_alloc_space(code, ip), |arena| {
-                            arena.push_list_append(list, value)
-                        });
-                    self.stack.push(NanValue::new_list(idx));
-                }
-
+                // LIST_GET, LIST_GET_MATCH, LIST_APPEND handlers removed
+                // (List.get and List.append removed from language).
                 LIST_PREPEND => {
                     let list = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let value = self.stack.pop().ok_or(VmError::StackUnderflow)?;

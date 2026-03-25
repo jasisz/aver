@@ -160,11 +160,6 @@ function ListReverse<T>(xs: seq<T>): seq<T>
   else ListReverse(xs[1..]) + [xs[0]]
 }
 
-function ListGet<T>(xs: seq<T>, i: int): Option<T> {
-  if 0 <= i < |xs| then Some(xs[i])
-  else None
-}
-
 function ListHead<T>(xs: seq<T>): Option<T> {
   if |xs| == 0 then None
   else Some(xs[0])

@@ -549,27 +549,6 @@ fn list_string_literal() {
 }
 
 #[test]
-fn get_first_element() {
-    assert_eq!(
-        eval("List.get([10, 20, 30], 0)"),
-        Value::Some(Box::new(Value::Int(10)))
-    );
-}
-
-#[test]
-fn get_middle_element() {
-    assert_eq!(
-        eval("List.get([10, 20, 30], 1)"),
-        Value::Some(Box::new(Value::Int(20)))
-    );
-}
-
-#[test]
-fn get_out_of_bounds_returns_none() {
-    assert_eq!(eval("List.get([1, 2], 5)"), Value::None);
-}
-
-#[test]
 fn prepend_adds_element_to_front() {
     assert_eq!(
         eval("List.prepend(1, [2, 3])"),
@@ -765,22 +744,6 @@ fn map_literal_rejects_non_scalar_key() {
     } else {
         panic!("expected expression");
     }
-}
-
-#[test]
-fn append_adds_element_to_end() {
-    assert_eq!(
-        eval("List.append([1, 2], 3)"),
-        list_from_vec(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
-    );
-}
-
-#[test]
-fn append_to_empty_list() {
-    assert_eq!(
-        eval("List.append([], 1)"),
-        list_from_vec(vec![Value::Int(1)])
-    );
 }
 
 // ---------------------------------------------------------------------------

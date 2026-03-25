@@ -29,7 +29,7 @@ fn sortWithPivot(pivot: Int, rest: List<Int>) -> List<Int>
     ? "Sorts both partitions around one pivot and joins them back together."
     smaller = sort(smallerOrEqual(rest, pivot))
     greater = sort(greaterThan(rest, pivot))
-    List.concat(List.append(smaller, pivot), greater)
+    List.concat(List.concat(smaller, [pivot]), greater)
 
 verify sortWithPivot
     sortWithPivot(3, []) => [3]

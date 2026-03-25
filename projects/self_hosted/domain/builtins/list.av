@@ -9,8 +9,6 @@ fn call(name: String, args: List<Val>) -> Result<Val, String>
         "List.prepend" -> builtinListPrepend(args)
         "List.len" -> builtinListLen(args)
         "List.reverse" -> builtinListReverse(args)
-        "List.append" -> builtinListAppend(args)
-        "List.get" -> builtinListGet(args)
         "List.concat" -> builtinListConcat(args)
         "List.contains" -> builtinListContains(args)
         "List.zip" -> builtinListZip(args)
@@ -57,44 +55,6 @@ fn builtinListReverse(args: List<Val>) -> Result<Val, String>
 
 verify builtinListReverse
     builtinListReverse([Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Result.Ok(Val.ValList([Val.ValInt(2), Val.ValInt(1)]))
-
-fn builtinListAppend(args: List<Val>) -> Result<Val, String>
-    ? "List.append(list, val) -> list with val at end."
-    pair = Domain.Builtins.Helpers.twoArgs(args)?
-    match pair
-        (lstV, v) -> builtinListAppendInner(lstV, v)
-
-verify builtinListAppend
-    builtinListAppend([Val.ValList([Val.ValInt(1)]), Val.ValInt(2)]) => Result.Ok(Val.ValList([Val.ValInt(1), Val.ValInt(2)]))
-
-fn builtinListAppendInner(lstV: Val, v: Val) -> Result<Val, String>
-    ? "Inner impl of List.append."
-    items = Domain.Builtins.Helpers.expectList(lstV)?
-    Result.Ok(Val.ValList(List.append(items, v)))
-
-verify builtinListAppendInner
-    builtinListAppendInner(Val.ValList([Val.ValInt(1)]), Val.ValInt(2)) => Result.Ok(Val.ValList([Val.ValInt(1), Val.ValInt(2)]))
-
-fn builtinListGet(args: List<Val>) -> Result<Val, String>
-    ? "List.get(list, index) -> element or error."
-    pair = Domain.Builtins.Helpers.twoArgs(args)?
-    match pair
-        (lstV, idxV) -> builtinListGetInner(lstV, idxV)
-
-verify builtinListGet
-    builtinListGet([Val.ValList([Val.ValInt(10), Val.ValInt(20)]), Val.ValInt(0)]) => Result.Ok(Val.ValSome(Val.ValInt(10)))
-
-fn builtinListGetInner(lstV: Val, idxV: Val) -> Result<Val, String>
-    ? "Inner impl of List.get. Returns Option (ValSome/ValNone)."
-    items = Domain.Builtins.Helpers.expectList(lstV)?
-    idx = Domain.Builtins.Helpers.expectInt(idxV)?
-    match List.get(items, idx)
-        Option.Some(v) -> Result.Ok(Val.ValSome(v))
-        Option.None -> Result.Ok(Val.ValNone)
-
-verify builtinListGetInner
-    builtinListGetInner(Val.ValList([Val.ValInt(10)]), Val.ValInt(0)) => Result.Ok(Val.ValSome(Val.ValInt(10)))
-    builtinListGetInner(Val.ValList([]), Val.ValInt(0)) => Result.Ok(Val.ValNone)
 
 fn builtinListConcat(args: List<Val>) -> Result<Val, String>
     ? "List.concat(a, b) -> concatenated list."

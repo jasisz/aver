@@ -19,6 +19,7 @@ pub fn type_to_lean(ty: &Type) -> String {
         }
         Type::Option(inner) => format!("Option {}", type_to_lean_atom(inner)),
         Type::List(inner) => format!("List {}", type_to_lean_atom(inner)),
+        Type::Vector(inner) => format!("Array {}", type_to_lean_atom(inner)),
         Type::Tuple(items) => {
             let parts: Vec<String> = items.iter().map(type_to_lean).collect();
             format!("({})", parts.join(" × "))

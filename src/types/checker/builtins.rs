@@ -443,18 +443,6 @@ impl TypeChecker {
         let list_sigs: &[(&str, &[Type], Type, &[&str])] = &[
             ("List.len", &[Type::List(Box::new(any()))], Type::Int, &[]),
             (
-                "List.get",
-                &[Type::Unknown, Type::Int],
-                Type::Option(Box::new(any())),
-                &[],
-            ),
-            (
-                "List.append",
-                &[Type::Unknown, Type::Unknown],
-                Type::List(Box::new(any())),
-                &[],
-            ),
-            (
                 "List.prepend",
                 &[Type::Unknown, Type::Unknown],
                 Type::List(Box::new(any())),
@@ -543,6 +531,44 @@ impl TypeChecker {
             ),
         ];
         for (name, params, ret, effects) in map_sigs {
+            self.insert_sig(name, params, ret.clone(), effects);
+        }
+
+        // Vector namespace
+        let vector_sigs: &[(&str, &[Type], Type, &[&str])] = &[
+            (
+                "Vector.new",
+                &[Type::Int, Type::Unknown],
+                Type::Vector(Box::new(any())),
+                &[],
+            ),
+            (
+                "Vector.get",
+                &[Type::Unknown, Type::Int],
+                Type::Option(Box::new(any())),
+                &[],
+            ),
+            (
+                "Vector.set",
+                &[Type::Unknown, Type::Int, Type::Unknown],
+                Type::Option(Box::new(Type::Vector(Box::new(any())))),
+                &[],
+            ),
+            ("Vector.len", &[Type::Unknown], Type::Int, &[]),
+            (
+                "Vector.fromList",
+                &[Type::Unknown],
+                Type::Vector(Box::new(any())),
+                &[],
+            ),
+            (
+                "Vector.toList",
+                &[Type::Unknown],
+                Type::List(Box::new(any())),
+                &[],
+            ),
+        ];
+        for (name, params, ret, effects) in vector_sigs {
             self.insert_sig(name, params, ret.clone(), effects);
         }
 

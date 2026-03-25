@@ -278,7 +278,9 @@ fn collect_named_type_refs(ty: &Type, out: &mut Vec<String>) {
             collect_named_type_refs(ok, out);
             collect_named_type_refs(err, out);
         }
-        Type::Option(inner) | Type::List(inner) => collect_named_type_refs(inner, out),
+        Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
+            collect_named_type_refs(inner, out)
+        }
         Type::Tuple(items) => {
             for item in items {
                 collect_named_type_refs(item, out);

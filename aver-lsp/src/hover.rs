@@ -346,7 +346,7 @@ fn is_memo_safe_type(ty: &Type, safe_named: &std::collections::HashSet<String>) 
         Type::Int | Type::Float | Type::Bool | Type::Unit => true,
         Type::Str => false,
         Type::Tuple(items) => items.iter().all(|item| is_memo_safe_type(item, safe_named)),
-        Type::List(_) | Type::Map(_, _) | Type::Fn(_, _, _) | Type::Unknown => false,
+        Type::List(_) | Type::Vector(_) | Type::Map(_, _) | Type::Fn(_, _, _) | Type::Unknown => false,
         Type::Result(_, _) | Type::Option(_) => false,
         Type::Named(name) => safe_named.contains(name),
     }

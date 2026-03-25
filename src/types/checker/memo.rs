@@ -36,7 +36,11 @@ impl TypeChecker {
             Type::Int | Type::Float | Type::Bool | Type::Unit => true,
             Type::Str => false,
             Type::Tuple(items) => items.iter().all(|item| self.is_memo_safe(item, visiting)),
-            Type::List(_) | Type::Map(_, _) | Type::Fn(_, _, _) | Type::Unknown => false,
+            Type::List(_)
+            | Type::Vector(_)
+            | Type::Map(_, _)
+            | Type::Fn(_, _, _)
+            | Type::Unknown => false,
             Type::Result(_, _) | Type::Option(_) => false,
             Type::Named(name) => {
                 // Prevent infinite recursion for cyclic type defs

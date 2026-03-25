@@ -244,6 +244,7 @@ fn format_type_for_source(ty: &Type) -> String {
         ),
         Type::Option(inner) => format!("Option<{}>", format_type_for_source(inner)),
         Type::List(inner) => format!("List<{}>", format_type_for_source(inner)),
+        Type::Vector(inner) => format!("Vector<{}>", format_type_for_source(inner)),
         Type::Tuple(items) => format!(
             "({})",
             items

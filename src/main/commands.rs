@@ -327,7 +327,7 @@ fn mark_type_uses(
             mark_type_uses(ok, dep_targets, unique_type_owner, used_by_target);
             mark_type_uses(err, dep_targets, unique_type_owner, used_by_target);
         }
-        Type::Option(inner) | Type::List(inner) => {
+        Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
             mark_type_uses(inner, dep_targets, unique_type_owner, used_by_target);
         }
         Type::Tuple(items) => {

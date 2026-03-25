@@ -6,8 +6,6 @@ impl TypeChecker {
         name: &str,
         arg_types: &[Type],
     ) -> Option<Type> {
-        let list_option = |inner: Type| Type::Option(Box::new(inner));
-
         let list_inner = |tc: &mut Self, arg_ty: &Type, arg_idx: usize| -> Type {
             match arg_ty {
                 Type::List(inner) => *inner.clone(),
@@ -45,38 +43,6 @@ impl TypeChecker {
                 }
                 let _ = list_inner(self, &arg_types[0], 1);
                 Some(Type::Int)
-            }
-            "List.get" => {
-                if let Err(fallback) = expect_arity(self, 2, list_option(Type::Unknown)) {
-                    return Some(fallback);
-                }
-                let elem_ty = list_inner(self, &arg_types[0], 1);
-                if !Self::constraint_compatible(&arg_types[1], &Type::Int) {
-                    self.error(format!(
-                        "Argument 2 of '{}': expected Int, got {}",
-                        name,
-                        arg_types[1].display()
-                    ));
-                }
-                Some(list_option(elem_ty))
-            }
-            "List.append" => {
-                if let Err(fallback) = expect_arity(self, 2, Type::List(Box::new(Type::Unknown))) {
-                    return Some(fallback);
-                }
-                let mut elem_ty = list_inner(self, &arg_types[0], 1);
-                let val_ty = arg_types[1].clone();
-                if matches!(elem_ty, Type::Unknown) {
-                    elem_ty = val_ty;
-                } else if !Self::constraint_compatible(&val_ty, &elem_ty) {
-                    self.error(format!(
-                        "Argument 2 of '{}': expected {}, got {}",
-                        name,
-                        elem_ty.display(),
-                        val_ty.display()
-                    ));
-                }
-                Some(Type::List(Box::new(elem_ty)))
             }
             "List.prepend" => {
                 if let Err(fallback) = expect_arity(self, 2, Type::List(Box::new(Type::Unknown))) {

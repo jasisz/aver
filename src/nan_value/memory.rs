@@ -174,6 +174,12 @@ impl Arena {
                 }
                 ArenaEntry::Tuple(items)
             }
+            ArenaEntry::Vector(mut items) => {
+                for value in &mut items {
+                    *value = rewrite(self, *value);
+                }
+                ArenaEntry::Vector(items)
+            }
             ArenaEntry::Map(map) => {
                 let mut out = PersistentMap::new();
                 for (&hash, &(key, value)) in map.iter() {

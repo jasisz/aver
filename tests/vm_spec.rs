@@ -287,7 +287,7 @@ fn vm_helper_return_err_string_survives_ordinary_return() {
 
 #[test]
 fn vm_list_get_and_option_to_result_keep_strings_alive() {
-    let src = "fn extract(parts: List<String>) -> Result<String, String>\n    section = Option.toResult(List.get(parts, 1), \"Missing path segment\")?\n    match section == \"weather\"\n        false -> Result.Err(\"Not a weather endpoint\")\n        true  -> Option.toResult(List.get(parts, 2), \"Missing city\")\n\nfn main() -> Result<String, String>\n    extract([\"\", \"other\", \"Warsaw\"])\n";
+    let src = "fn extract(parts: List<String>) -> Result<String, String>\n    v = Vector.fromList(parts)\n    section = Option.toResult(Vector.get(v, 1), \"Missing path segment\")?\n    match section == \"weather\"\n        false -> Result.Err(\"Not a weather endpoint\")\n        true  -> Option.toResult(Vector.get(v, 2), \"Missing city\")\n\nfn main() -> Result<String, String>\n    extract([\"\", \"other\", \"Warsaw\"])\n";
     let (result, arena) = vm_run_with_arena(src);
     assert_eq!(
         result.to_value(&arena),
@@ -349,7 +349,7 @@ fn vm_nested_result_wrappers_keep_strings_alive_across_calls() {
 
 #[test]
 fn vm_repeated_extract_calls_keep_string_roots_valid() {
-    let src = "fn extract(parts: List<String>) -> Result<String, String>\n    section = Option.toResult(List.get(parts, 1), \"Missing path segment\")?\n    match section == \"weather\"\n        false -> Result.Err(\"Not a weather endpoint\")\n        true  -> Option.toResult(List.get(parts, 2), \"Missing city\")\n\nfn okCase() -> Result<Result<String, String>, String>\n    Result.Ok(extract([\"\", \"weather\", \"Warsaw\"]))\n\nfn errCase() -> Result<Result<String, String>, String>\n    Result.Ok(extract([\"\", \"other\", \"Warsaw\"]))\n";
+    let src = "fn extract(parts: List<String>) -> Result<String, String>\n    v = Vector.fromList(parts)\n    section = Option.toResult(Vector.get(v, 1), \"Missing path segment\")?\n    match section == \"weather\"\n        false -> Result.Err(\"Not a weather endpoint\")\n        true  -> Option.toResult(Vector.get(v, 2), \"Missing city\")\n\nfn okCase() -> Result<Result<String, String>, String>\n    Result.Ok(extract([\"\", \"weather\", \"Warsaw\"]))\n\nfn errCase() -> Result<Result<String, String>, String>\n    Result.Ok(extract([\"\", \"other\", \"Warsaw\"]))\n";
     let mut machine = vm_machine(src);
 
     let ok = machine
@@ -375,7 +375,7 @@ fn vm_repeated_extract_calls_keep_string_roots_valid() {
 
 #[test]
 fn vm_verify_style_helper_sequence_keeps_string_roots_valid() {
-    let src = "fn extract(parts: List<String>) -> Result<String, String>\n    section = Option.toResult(List.get(parts, 1), \"Missing path segment\")?\n    match section == \"weather\"\n        false -> Result.Err(\"Not a weather endpoint\")\n        true  -> Option.toResult(List.get(parts, 2), \"Missing city\")\n\nfn left0() -> Unit\n    Result.Ok(extract([\"\", \"weather\", \"Warsaw\"]))\n\nfn right0() -> Unit\n    Result.Ok(Result.Ok(\"Warsaw\"))\n\nfn left1() -> Unit\n    Result.Ok(extract([\"\", \"other\", \"Warsaw\"]))\n\nfn right1() -> Unit\n    Result.Ok(Result.Err(\"Not a weather endpoint\"))\n";
+    let src = "fn extract(parts: List<String>) -> Result<String, String>\n    v = Vector.fromList(parts)\n    section = Option.toResult(Vector.get(v, 1), \"Missing path segment\")?\n    match section == \"weather\"\n        false -> Result.Err(\"Not a weather endpoint\")\n        true  -> Option.toResult(Vector.get(v, 2), \"Missing city\")\n\nfn left0() -> Unit\n    Result.Ok(extract([\"\", \"weather\", \"Warsaw\"]))\n\nfn right0() -> Unit\n    Result.Ok(Result.Ok(\"Warsaw\"))\n\nfn left1() -> Unit\n    Result.Ok(extract([\"\", \"other\", \"Warsaw\"]))\n\nfn right1() -> Unit\n    Result.Ok(Result.Err(\"Not a weather endpoint\"))\n";
     let mut machine = vm_machine(src);
 
     for (name, expected) in [
@@ -1207,7 +1207,7 @@ fn vm_list_len() {
 
 #[test]
 fn vm_list_head() {
-    let src = "fn main() -> Option<Int>\n    List.get([10, 20, 30], 0)\n";
+    let src = "fn main() -> Option<Int>\n    Vector.get(Vector.fromList([10, 20, 30]), 0)\n";
     let (result, arena) = vm_run_with_arena(src);
     assert!(result.is_some());
     let inner = result.wrapper_inner(&arena);

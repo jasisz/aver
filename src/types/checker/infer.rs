@@ -6,3 +6,4 @@ mod list_calls;
 mod map_calls;
 mod patterns;
 mod records;
+mod vector_calls;

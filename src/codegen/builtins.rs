@@ -75,12 +75,9 @@ pub(crate) enum Builtin {
 
     // --- List ---
     ListLen,
-    ListGet,
     ListHead,
     ListTail,
     ListPrepend,
-    ListPush,
-    ListAppend,
     ListConcat,
     ListReverse,
     ListContains,
@@ -177,12 +174,9 @@ pub(crate) fn recognize_builtin(name: &str) -> Option<Builtin> {
 
         // List
         "List.len" => Builtin::ListLen,
-        "List.get" => Builtin::ListGet,
         "List.head" => Builtin::ListHead,
         "List.tail" => Builtin::ListTail,
         "List.prepend" => Builtin::ListPrepend,
-        "List.push" => Builtin::ListPush,
-        "List.append" => Builtin::ListAppend,
         "List.concat" => Builtin::ListConcat,
         "List.reverse" => Builtin::ListReverse,
         "List.contains" => Builtin::ListContains,

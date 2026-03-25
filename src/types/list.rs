@@ -2,8 +2,6 @@
 ///
 /// Methods:
 ///   List.len(list)           → Int                    — number of elements
-///   List.get(list, index)    → Option<T>              — element at index
-///   List.append(list, val)    → List<T>                — append element (returns new list)
 ///   List.prepend(val, list)  → List<T>                — prepend element
 ///   List.concat(a, b)        → List<T>                — concatenate two lists
 ///   List.reverse(list)       → List<T>                — reverse elements
@@ -16,15 +14,12 @@ use std::rc::Rc;
 
 use crate::nan_value::{Arena, NanValue};
 use crate::value::{
-    RuntimeError, Value, list_append, list_concat, list_get, list_len, list_prepend, list_reverse,
-    list_view,
+    RuntimeError, Value, list_concat, list_len, list_prepend, list_reverse, list_view,
 };
 
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
-    for method in &[
-        "len", "get", "append", "prepend", "concat", "reverse", "contains", "zip",
-    ] {
+    for method in &["len", "prepend", "concat", "reverse", "contains", "zip"] {
         members.insert(
             method.to_string(),
             Value::Builtin(format!("List.{}", method)),
@@ -47,8 +42,6 @@ pub fn effects(_name: &str) -> &'static [&'static str] {
 pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
         "List.len" => Some(len(args)),
-        "List.get" => Some(get(args)),
-        "List.append" => Some(append(args)),
         "List.prepend" => Some(prepend(args)),
         "List.concat" => Some(concat(args)),
         "List.reverse" => Some(reverse(args)),
@@ -70,46 +63,6 @@ fn len(args: &[Value]) -> Result<Value, RuntimeError> {
     list_len(&args[0])
         .map(|n| Value::Int(n as i64))
         .ok_or_else(|| RuntimeError::Error("List.len() argument must be a List".to_string()))
-}
-
-fn get(args: &[Value]) -> Result<Value, RuntimeError> {
-    if args.len() != 2 {
-        return Err(RuntimeError::Error(format!(
-            "List.get() takes 2 arguments (list, index), got {}",
-            args.len()
-        )));
-    }
-    list_view(&args[0]).ok_or_else(|| {
-        RuntimeError::Error("List.get() first argument must be a List".to_string())
-    })?;
-    let index = match &args[1] {
-        Value::Int(i) => *i,
-        _ => {
-            return Err(RuntimeError::Error(
-                "List.get() index must be an Int".to_string(),
-            ));
-        }
-    };
-    if index < 0 {
-        Ok(Value::None)
-    } else {
-        Ok(match list_get(&args[0], index as usize) {
-            Some(value) => Value::Some(Box::new(value)),
-            None => Value::None,
-        })
-    }
-}
-
-fn append(args: &[Value]) -> Result<Value, RuntimeError> {
-    if args.len() != 2 {
-        return Err(RuntimeError::Error(format!(
-            "List.append() takes 2 arguments (list, val), got {}",
-            args.len()
-        )));
-    }
-    list_append(&args[0], args[1].clone()).ok_or_else(|| {
-        RuntimeError::Error("List.append() first argument must be a List".to_string())
-    })
 }
 
 fn prepend(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -189,9 +142,7 @@ fn zip(args: &[Value]) -> Result<Value, RuntimeError> {
 // ─── NanValue-native API ─────────────────────────────────────────────────────
 
 pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
-    let methods = &[
-        "len", "get", "append", "prepend", "concat", "reverse", "contains", "zip",
-    ];
+    let methods = &["len", "prepend", "concat", "reverse", "contains", "zip"];
     let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
     for method in methods {
         let idx = arena.push_builtin(&format!("List.{}", method));
@@ -211,8 +162,6 @@ pub fn call_nv(
 ) -> Option<Result<NanValue, RuntimeError>> {
     match name {
         "List.len" => Some(len_nv(args, arena)),
-        "List.get" => Some(get_nv(args, arena)),
-        "List.append" => Some(append_nv(args, arena)),
         "List.prepend" => Some(prepend_nv(args, arena)),
         "List.concat" => Some(concat_nv(args, arena)),
         "List.reverse" => Some(reverse_nv(args, arena)),
@@ -238,51 +187,6 @@ fn len_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
         arena.list_len_value(args[0]) as i64,
         arena,
     ))
-}
-
-fn get_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    if args.len() != 2 {
-        return Err(RuntimeError::Error(format!(
-            "List.get() takes 2 arguments (list, index), got {}",
-            args.len()
-        )));
-    }
-    if !args[0].is_list() {
-        return Err(RuntimeError::Error(
-            "List.get() first argument must be a List".to_string(),
-        ));
-    }
-    if !args[1].is_int() {
-        return Err(RuntimeError::Error(
-            "List.get() index must be an Int".to_string(),
-        ));
-    }
-    let index = args[1].as_int(arena);
-    if index < 0 {
-        return Ok(NanValue::NONE);
-    }
-    let idx = index as usize;
-    if let Some(val) = arena.list_get_value(args[0], idx) {
-        Ok(NanValue::new_some_value(val, arena))
-    } else {
-        Ok(NanValue::NONE)
-    }
-}
-
-fn append_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    if args.len() != 2 {
-        return Err(RuntimeError::Error(format!(
-            "List.append() takes 2 arguments (list, val), got {}",
-            args.len()
-        )));
-    }
-    if !args[0].is_list() {
-        return Err(RuntimeError::Error(
-            "List.append() first argument must be a List".to_string(),
-        ));
-    }
-    let list_idx = arena.push_list_append(args[0], args[1]);
-    Ok(NanValue::new_list(list_idx))
 }
 
 fn prepend_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {

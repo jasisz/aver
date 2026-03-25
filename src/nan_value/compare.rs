@@ -56,6 +56,11 @@ impl NanValue {
                 let b = arena.get_tuple(other.arena_index());
                 a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.eq_in(*y, arena))
             }
+            TAG_VECTOR => {
+                let a = arena.vector_ref_value(self);
+                let b = arena.vector_ref_value(other);
+                a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.eq_in(*y, arena))
+            }
             TAG_MAP => {
                 let a = arena.map_ref_value(self);
                 let b = arena.map_ref_value(other);
@@ -135,6 +140,13 @@ impl NanValue {
                     item.hash_in(state, arena);
                 }
             }
+            TAG_VECTOR => {
+                let items = arena.vector_ref_value(self);
+                items.len().hash(state);
+                for item in items {
+                    item.hash_in(state, arena);
+                }
+            }
             TAG_RECORD => {
                 let (tid, fields) = arena.get_record(self.arena_index());
                 tid.hash(state);
@@ -197,6 +209,11 @@ impl NanValue {
                 let items = arena.get_tuple(self.arena_index());
                 let parts: Vec<_> = items.iter().map(|v| v.repr_inner(arena)).collect();
                 format!("({})", parts.join(", "))
+            }
+            TAG_VECTOR => {
+                let items = arena.vector_ref_value(self);
+                let parts: Vec<_> = items.iter().map(|v| v.repr_inner(arena)).collect();
+                format!("Vector[{}]", parts.join(", "))
             }
             TAG_MAP => {
                 let map = arena.map_ref_value(self);

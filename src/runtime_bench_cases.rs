@@ -74,13 +74,13 @@ const LIST_BUILTINS: &str = "\
 fn buildAndMeasure(n: Int, acc: List<Int>) -> Int\n    match n == 0\n        true -> List.len(acc)\n        false -> buildAndMeasure(n - 1, List.prepend(n, acc))\n\nfn main() -> Int\n    buildAndMeasure(400000, [])\n";
 
 const LIST_APPEND_SCAN: &str = "\
-fn build(n: Int, acc: List<Int>) -> List<Int>\n    match n == 0\n        true -> acc\n        false -> build(n - 1, List.append(acc, n))\n\nfn sum(xs: List<Int>, i: Int, acc: Int) -> Int\n    match List.get(xs, i)\n        Option.None -> acc\n        Option.Some(v) -> sum(xs, i + 1, acc + v)\n\nfn main() -> Int\n    sum(build(12000, []), 0, 0)\n";
+fn build(n: Int, acc: List<Int>) -> List<Int>\n    match n == 0\n        true -> acc\n        false -> build(n - 1, List.prepend(n, acc))\n\nfn sum(v: Vector<Int>, size: Int, i: Int, acc: Int) -> Int\n    match i == size\n        true -> acc\n        false -> sum(v, size, i + 1, acc + Option.withDefault(Vector.get(v, i), 0))\n\nfn main() -> Int\n    xs = List.reverse(build(12000, []))\n    v = Vector.fromList(xs)\n    sum(v, Vector.len(v), 0, 0)\n";
 
 const MIXED_REAL: &str = "\
 record Order\n    id: Int\n    amount: Int\n    valid: Bool\n\nfn processOrder(o: Order) -> Result<Int, String>\n    match o.valid\n        true -> Result.Ok(o.amount * 2)\n        false -> Result.Err(\"invalid\")\n\nfn processAll(n: Int, acc: Int) -> Int\n    match n == 0\n        true -> acc\n        false -> processAll(n - 1, acc + Result.withDefault(processOrder(Order(id = n, amount = n * 10, valid = true)), 0))\n\nfn main() -> Int\n    processAll(200000, 0)\n";
 
 const LIST_GET_OR: &str = "\
-fn build(n: Int, acc: List<Int>) -> List<Int>\n    match n == 0\n        true -> List.reverse(acc)\n        false -> build(n - 1, List.prepend(n, acc))\n\nfn scan(xs: List<Int>, size: Int, i: Int, acc: Int) -> Int\n    match i == size\n        true -> acc\n        false -> scan(xs, size, i + 1, acc + Option.withDefault(List.get(xs, i), 0))\n\nfn main() -> Int\n    xs = build(10000, [])\n    scan(xs, 10000, 0, 0) + scan(xs, 10000, 0, 0) + scan(xs, 10000, 0, 0)\n";
+fn build(n: Int, acc: List<Int>) -> List<Int>\n    match n == 0\n        true -> List.reverse(acc)\n        false -> build(n - 1, List.prepend(n, acc))\n\nfn scan(v: Vector<Int>, size: Int, i: Int, acc: Int) -> Int\n    match i == size\n        true -> acc\n        false -> scan(v, size, i + 1, acc + Option.withDefault(Vector.get(v, i), 0))\n\nfn main() -> Int\n    xs = build(10000, [])\n    v = Vector.fromList(xs)\n    scan(v, 10000, 0, 0) + scan(v, 10000, 0, 0) + scan(v, 10000, 0, 0)\n";
 
 pub const CORE_BENCH_CASES: &[CoreBenchCase] = &[
     CoreBenchCase {
