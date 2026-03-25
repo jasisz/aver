@@ -591,4 +591,62 @@ fn isOdd(n: Int) -> Bool
         // Should NOT contain direct recursive calls between the two
         assert!(!entry.contains("isOdd((n - 1i64))"));
     }
+
+    #[test]
+    fn field_access_does_not_double_clone() {
+        let ctx = ctx_from_source(
+            r#"
+module Demo
+
+record User
+    name: String
+    age: Int
+
+fn greet(u: User) -> String
+    u.name
+"#,
+            "demo",
+        );
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        // Field access should produce exactly one .clone(), never .clone().clone()
+        assert!(
+            !entry.contains(".clone().clone()"),
+            "double clone detected in generated code:\n{}",
+            entry
+        );
+    }
+
+    #[test]
+    fn single_field_variant_display_avoids_vec_join() {
+        let ctx = ctx_from_source(
+            r#"
+module Demo
+
+type Wrapper
+    Wrap(Int)
+    Pair(Int, Int)
+    Empty
+"#,
+            "demo",
+        );
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        // Single-field variant Wrap(Int): should NOT use vec![].join()
+        assert!(
+            !entry.contains("vec![f0.aver_display_inner()].join"),
+            "single-field variant should use direct format, not vec join:\n{}",
+            entry
+        );
+        // Multi-field variant Pair(Int, Int): SHOULD still use vec![].join()
+        assert!(
+            entry.contains("vec![f0.aver_display_inner(), f1.aver_display_inner()].join(\", \")"),
+            "multi-field variant should use vec join:\n{}",
+            entry
+        );
+    }
 }

@@ -353,14 +353,10 @@ pub(super) fn maybe_clone(code: String, expr: &Expr, ectx: &EmitCtx) -> String {
         }
         // `emit_expr` already encodes this as a compile_error! expression.
         Expr::Resolved(_) => code,
-        Expr::Attr(obj, _) => {
-            // Record field access — clone it (partial moves too complex)
-            if !matches!(obj.as_ref(), Expr::Ident(n) if is_builtin_namespace(n)) {
-                format!("{}.clone()", code)
-            } else {
-                code
-            }
-        }
+        // emit_expr already adds .clone() for non-builtin field access (line 56),
+        // and returns bare paths for user-type constructors / module refs.
+        // Adding another .clone() here would produce obj.field.clone().clone().
+        Expr::Attr(_, _) => code,
         _ => code,
     }
 }

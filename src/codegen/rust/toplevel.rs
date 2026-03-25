@@ -181,16 +181,26 @@ fn emit_sum_type(
                 .iter()
                 .map(|b| format!("{}.aver_display_inner()", b))
                 .collect();
-            writeln!(
-                out,
-                "            {}::{}({}) => format!(\"{}({{}})\", vec![{}].join(\", \")),",
-                name,
-                v.name,
-                bindings.join(", "),
-                v.name,
-                display_parts.join(", ")
-            )
-            .unwrap();
+            if v.fields.len() == 1 {
+                // Single field: direct format without vec![].join() allocation
+                writeln!(
+                    out,
+                    "            {}::{}({}) => format!(\"{}({{}})\", {}),",
+                    name, v.name, bindings[0], v.name, display_parts[0]
+                )
+                .unwrap();
+            } else {
+                writeln!(
+                    out,
+                    "            {}::{}({}) => format!(\"{}({{}})\", vec![{}].join(\", \")),",
+                    name,
+                    v.name,
+                    bindings.join(", "),
+                    v.name,
+                    display_parts.join(", ")
+                )
+                .unwrap();
+            }
         }
     }
     writeln!(out, "        }}").unwrap();
@@ -253,13 +263,18 @@ fn emit_product_type(
             )
         })
         .collect();
-    writeln!(
-        out,
-        "        format!(\"{}({{}})\", vec![{}].join(\", \"))",
-        name,
-        parts.join(", ")
-    )
-    .unwrap();
+    if fields.len() == 1 {
+        // Single field: direct format without vec![].join() allocation
+        writeln!(out, "        format!(\"{}({{}})\", {})", name, parts[0]).unwrap();
+    } else {
+        writeln!(
+            out,
+            "        format!(\"{}({{}})\", vec![{}].join(\", \"))",
+            name,
+            parts.join(", ")
+        )
+        .unwrap();
+    }
     writeln!(out, "    }}").unwrap();
     writeln!(
         out,
