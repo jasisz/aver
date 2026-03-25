@@ -192,6 +192,23 @@ fn main() -> String
     buildString(5000, "start")
 "#;
 
+const VECTOR_SRC: &str = r#"module Bench
+
+fn fillVector(v: Vector<Int>, n: Int, i: Int) -> Vector<Int>
+    match i == n
+        true -> v
+        false -> fillVector(Option.withDefault(Vector.set(v, i, i * i), v), n, i + 1)
+
+fn sumVector(v: Vector<Int>, n: Int, i: Int, acc: Int) -> Int
+    match i == n
+        true -> acc
+        false -> sumVector(v, n, i + 1, acc + Option.withDefault(Vector.get(v, i), 0))
+
+fn main() -> Int
+    v = fillVector(Vector.new(5000, 0), 5000, 0)
+    sumVector(v, 5000, 0, 0)
+"#;
+
 // ── Benchmark groups ─────────────────────────────────────────────────────────
 
 fn bench_all_modes(
@@ -224,6 +241,7 @@ fn comparison_benches(c: &mut Criterion) {
         ("map build 5k", "bench_map", MAP_BUILD_SRC),
         ("pattern match 30k", "bench_match", MATCH_SRC),
         ("string interp 5k", "bench_string", STRING_SRC),
+        ("vector get/set 5k", "bench_vector", VECTOR_SRC),
     ];
 
     // Pre-compile all native binaries

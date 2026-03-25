@@ -52,31 +52,32 @@ fn evolve(alive: Int, n: Int) -> Int
 // Step walks the full padded grid linearly. Border cells emit 0.
 // Interior cells compute the next generation.
 
-fn stepLoop(old: Vector<Int>, s: Int, w: Int, h: Int, total: Int, idx: Int, acc: Vector<Int>) -> Vector<Int>
+fn stepLoop(old: Vector<Int>, s: Int, w: Int, h: Int, total: Int, idx: Int, acc: List<Int>) -> List<Int>
     match idx == total
         true -> acc
         false -> stepOne(old, s, w, h, total, idx, acc)
 
-fn stepOne(old: Vector<Int>, s: Int, w: Int, h: Int, total: Int, idx: Int, acc: Vector<Int>) -> Vector<Int>
+fn stepOne(old: Vector<Int>, s: Int, w: Int, h: Int, total: Int, idx: Int, acc: List<Int>) -> List<Int>
     row = idx / s
     col = Result.withDefault(Int.mod(idx, s), 0)
     match row == 0
-        true -> stepLoop(old, s, w, h, total, idx + 1, acc)
+        true -> stepLoop(old, s, w, h, total, idx + 1, List.prepend(0, acc))
         false -> match row > h
-            true -> stepLoop(old, s, w, h, total, idx + 1, acc)
+            true -> stepLoop(old, s, w, h, total, idx + 1, List.prepend(0, acc))
             false -> match col == 0
-                true -> stepLoop(old, s, w, h, total, idx + 1, acc)
+                true -> stepLoop(old, s, w, h, total, idx + 1, List.prepend(0, acc))
                 false -> match col > w
-                    true -> stepLoop(old, s, w, h, total, idx + 1, acc)
+                    true -> stepLoop(old, s, w, h, total, idx + 1, List.prepend(0, acc))
                     false -> stepInterior(old, s, w, h, total, idx, acc)
 
-fn stepInterior(old: Vector<Int>, s: Int, w: Int, h: Int, total: Int, idx: Int, acc: Vector<Int>) -> Vector<Int>
+fn stepInterior(old: Vector<Int>, s: Int, w: Int, h: Int, total: Int, idx: Int, acc: List<Int>) -> List<Int>
     alive = cellAt(old, idx)
     n = neighbors(old, s, idx)
-    stepLoop(old, s, w, h, total, idx + 1, Option.withDefault(Vector.set(acc, idx, evolve(alive, n)), acc))
+    stepLoop(old, s, w, h, total, idx + 1, List.prepend(evolve(alive, n), acc))
 
 fn step(grid: Vector<Int>, s: Int, w: Int, h: Int) -> Vector<Int>
-    stepLoop(grid, s, w, h, s * (h + 2), 0, Vector.new(s * (h + 2), 0))
+    ? "Build new grid: prepend cells to List → reverse → fromList (zero-copy)."
+    Vector.fromList(List.reverse(stepLoop(grid, s, w, h, s * (h + 2), 0, [])))
 
 // ─── Seed patterns ──────────────────────────────────────────
 

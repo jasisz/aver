@@ -294,8 +294,19 @@ impl<T: Clone> AverVector<T> {
         self.inner.as_ref().clone()
     }
 
+    /// O(1) — shares Rc<Vec<T>> with the resulting Flat AverList.
     pub fn to_list(&self) -> AverList<T> {
-        AverList::from_vec(self.to_vec())
+        AverList::from_rc_vec(Rc::clone(&self.inner))
+    }
+
+    /// O(1) if list is Flat with start=0 (e.g. after List.reverse), O(n) otherwise.
+    pub fn from_list(list: &AverList<T>) -> Self
+    where
+        T: Clone,
+    {
+        Self {
+            inner: list.into_rc_vec(),
+        }
     }
 
     pub fn iter(&self) -> std::slice::Iter<'_, T> {
@@ -554,6 +565,24 @@ impl<T> AverList<T> {
                 items: Rc::new(items),
                 start: 0,
             }),
+        }
+    }
+
+    /// O(1) if Flat with start=0, wraps existing Rc<Vec<T>> directly.
+    pub fn from_rc_vec(items: Rc<Vec<T>>) -> Self {
+        Self {
+            inner: Rc::new(AverListInner::Flat { items, start: 0 }),
+        }
+    }
+
+    /// Extract the backing Rc<Vec<T>> — O(1) if Flat with start=0, O(n) otherwise.
+    pub fn into_rc_vec(&self) -> Rc<Vec<T>>
+    where
+        T: Clone,
+    {
+        match self.inner.as_ref() {
+            AverListInner::Flat { items, start } if *start == 0 => Rc::clone(items),
+            _ => Rc::new(self.to_vec()),
         }
     }
 

@@ -150,7 +150,7 @@ fn vec_from_list(args: &[Value]) -> Result<Value, RuntimeError> {
     let items = list_view(&args[0]).ok_or_else(|| {
         RuntimeError::Error("Vector.fromList: argument must be a List".to_string())
     })?;
-    Ok(Value::Vector(AverVector::from_vec(items.to_vec())))
+    Ok(Value::Vector(AverVector::from_list(items)))
 }
 
 fn vec_to_list(args: &[Value]) -> Result<Value, RuntimeError> {
