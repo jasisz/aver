@@ -672,11 +672,11 @@ pub fn find_mutual_tco_groups(fn_defs: &[&FnDef]) -> Vec<Vec<usize>> {
     let mut adj: Vec<HashSet<usize>> = vec![HashSet::new(); fn_defs.len()];
     for (i, fd) in fn_defs.iter().enumerate() {
         for target in collect_tailcall_targets(&fd.body) {
-            if target != fd.name {
-                if let Some(&j) = name_to_idx.get(target.as_str()) {
-                    adj[i].insert(j);
-                    adj[j].insert(i);
-                }
+            if target != fd.name
+                && let Some(&j) = name_to_idx.get(target.as_str())
+            {
+                adj[i].insert(j);
+                adj[j].insert(i);
             }
         }
     }
@@ -938,11 +938,11 @@ fn emit_trampoline_expr(
                 let body = emit_trampoline_expr(&arm.body, enum_name, member_names, ctx, ectx);
 
                 let mut rebinding_lines: Vec<String> = Vec::new();
-                if let Pattern::Cons(head, _) = &arm.pattern {
-                    if head != "_" {
-                        let h = aver_name_to_rust(head);
-                        rebinding_lines.push(format!("let {} = {}.clone();", h, h));
-                    }
+                if let Pattern::Cons(head, _) = &arm.pattern
+                    && head != "_"
+                {
+                    let h = aver_name_to_rust(head);
+                    rebinding_lines.push(format!("let {} = {}.clone();", h, h));
                 }
                 if let Pattern::Constructor(name, bindings) = &arm.pattern {
                     for b in super::expr::constructor_boxed_bindings(name, bindings, ctx) {

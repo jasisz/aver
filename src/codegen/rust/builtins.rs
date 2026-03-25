@@ -664,6 +664,17 @@ fn emit_builtin_call_inner(
     }
 }
 
+/// For string-accepting methods (starts_with, contains, ends_with),
+/// emit a string literal as `"foo"` (no allocation) or variable as `arg.as_str()`.
+fn emit_str_arg_or_deref(expr: &Expr, ectx: &EmitCtx, ctx: &CodegenContext) -> String {
+    if let Expr::Literal(crate::ast::Literal::Str(s)) = expr {
+        format!("{:?}", s)
+    } else {
+        let code = emit_expr(expr, ctx, ectx);
+        format!("{}.as_str()", code)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::emit_builtin_call;
@@ -732,16 +743,5 @@ mod tests {
 
         assert!(emitted.contains("queryUrl(config.clone())"));
         assert!(emitted.contains("authHeader(config)"));
-    }
-}
-
-/// For string-accepting methods (starts_with, contains, ends_with),
-/// emit a string literal as `"foo"` (no allocation) or variable as `arg.as_str()`.
-fn emit_str_arg_or_deref(expr: &Expr, ectx: &EmitCtx, ctx: &CodegenContext) -> String {
-    if let Expr::Literal(crate::ast::Literal::Str(s)) = expr {
-        format!("{:?}", s)
-    } else {
-        let code = emit_expr(expr, ctx, ectx);
-        format!("{}.as_str()", code)
     }
 }

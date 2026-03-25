@@ -71,6 +71,7 @@ fn maxSlotInExpr(expr: Expr, acc: Int) -> Int
         Expr.ExprGte(a, b) -> maxSlotInExpr(b, maxSlotInExpr(a, acc))
         Expr.ExprCall(_, args) -> maxSlotInExprs(args, acc)
         Expr.ExprCallDirect(_, args) -> maxSlotInExprs(args, acc)
+        Expr.ExprCallBuiltin(_, args) -> maxSlotInExprs(args, acc)
         Expr.ExprMatch(subj, arms) -> maxSlotInArms(arms, maxSlotInExpr(subj, acc))
         Expr.ExprPropagate(inner) -> maxSlotInExpr(inner, acc)
         Expr.ExprConcat(parts) -> maxSlotInExprs(parts, acc)
@@ -154,6 +155,7 @@ fn resolveExpr(expr: Expr, slots: Map<String, Int>) -> (Expr, Map<String, Int>)
         Expr.ExprGte(a, b) -> resolveBinExpr(a, b, slots, "gte")
         Expr.ExprCall(name, args) -> resolveCallExpr(name, args, slots)
         Expr.ExprCallDirect(fd, args) -> (Expr.ExprCallDirect(fd, resolveExprs(args, slots, [])), slots)
+        Expr.ExprCallBuiltin(name, args) -> (Expr.ExprCallBuiltin(name, resolveExprs(args, slots, [])), slots)
         Expr.ExprMatch(subj, arms) -> resolveMatchExpr(subj, arms, slots)
         Expr.ExprPropagate(inner) -> resolvePropExpr(inner, slots)
         Expr.ExprConcat(parts) -> resolveConcatExpr(parts, slots)
@@ -358,11 +360,13 @@ fn resolveCallsInExpr(expr: Expr, fnMap: Map<String, FnDef>) -> Expr
         _ -> expr
 
 fn resolveOneCall(name: String, args: List<Expr>, fnMap: Map<String, FnDef>) -> Expr
-    ? "If name is a known function, embed FnDef directly. Otherwise keep ExprCall."
+    ? "User fn → ExprCallDirect, builtin → ExprCallBuiltin, record update → ExprCall."
     resolvedArgs = resolveCallsInExprs(args, fnMap, [])
     match Map.get(fnMap, name)
         Option.Some(fd) -> Expr.ExprCallDirect(fd, resolvedArgs)
-        Option.None -> Expr.ExprCall(name, resolvedArgs)
+        Option.None -> match String.endsWith(name, ".update")
+            true -> Expr.ExprCall(name, resolvedArgs)
+            false -> Expr.ExprCallBuiltin(name, resolvedArgs)
 
 fn resolveCallsInExprs(exprs: List<Expr>, fnMap: Map<String, FnDef>, acc: List<Expr>) -> List<Expr>
     match exprs
