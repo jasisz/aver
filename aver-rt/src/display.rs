@@ -34,7 +34,7 @@ impl AverDisplay for String {
     }
 }
 
-impl AverDisplay for std::rc::Rc<str> {
+impl AverDisplay for crate::AverStr {
     fn aver_display(&self) -> String {
         self.to_string()
     }

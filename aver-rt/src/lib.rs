@@ -35,8 +35,77 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::iter::FusedIterator;
 
-/// Aver string type: Rc<str> for O(1) clone in immutable functional pipelines.
-pub type AverStr = std::rc::Rc<str>;
+/// Aver string type: newtype over Rc<str> for O(1) clone and native `+` operator.
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct AverStr(Rc<str>);
+
+impl AverStr {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl std::ops::Deref for AverStr {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for AverStr {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::borrow::Borrow<str> for AverStr {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for AverStr {
+    fn from(s: String) -> Self {
+        Self(Rc::from(s.as_str()))
+    }
+}
+
+impl From<&str> for AverStr {
+    fn from(s: &str) -> Self {
+        Self(Rc::from(s))
+    }
+}
+
+impl From<Rc<str>> for AverStr {
+    fn from(s: Rc<str>) -> Self {
+        Self(s)
+    }
+}
+
+impl fmt::Display for AverStr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl fmt::Debug for AverStr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", &*self.0)
+    }
+}
+
+impl std::ops::Add<&AverStr> for AverStr {
+    type Output = AverStr;
+    fn add(self, other: &AverStr) -> AverStr {
+        let mut s = String::with_capacity(self.len() + other.len());
+        s.push_str(&self);
+        s.push_str(other);
+        AverStr::from(s)
+    }
+}
 
 /// Concatenate two AverStr values.
 #[inline]

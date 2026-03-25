@@ -72,14 +72,10 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
             let r = emit_expr(right, ctx, ectx);
             match op {
                 BinOp::Add => {
-                    // For strings: use aver_str_concat (Rc<str> has no Add impl).
-                    // For numbers: (l + &r). Default to numeric (most Add is on numbers).
-                    if expr_is_string_typed(left, ectx) || expr_is_string_typed(right, ectx) {
-                        format!("aver_rt::aver_str_concat(&{}, &{})", l, r)
-                    } else {
-                        let l = maybe_clone(l, left, &left_ectx);
-                        format!("({} + &{})", l, r)
-                    }
+                    // AverStr newtype implements Add<&AverStr>, so (l + &r) works
+                    // for both numeric types and strings.
+                    let l = maybe_clone(l, left, &left_ectx);
+                    format!("({} + &{})", l, r)
                 }
                 _ => {
                     let op_str = match op {
@@ -346,20 +342,6 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &Emit
 
 /// Clone a value if it's a variable reference (to avoid move issues in generated Rust).
 /// Literals and complex expressions don't need cloning.
-/// Check if an expression is known to be String-typed (for string concat dispatch).
-fn expr_is_string_typed(expr: &Expr, ectx: &EmitCtx) -> bool {
-    match expr {
-        Expr::Literal(Literal::Str(_)) => true,
-        Expr::InterpolatedStr(_) => true,
-        Expr::Ident(name) => ectx
-            .local_types
-            .get(name)
-            .is_some_and(|ty| matches!(ty, Type::Str)),
-        Expr::BinOp(BinOp::Add, left, _) => expr_is_string_typed(left, ectx),
-        _ => false,
-    }
-}
-
 pub(super) fn maybe_clone(code: String, expr: &Expr, ectx: &EmitCtx) -> String {
     match expr {
         Expr::Ident(name) => {
