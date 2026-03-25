@@ -948,6 +948,64 @@ impl VM {
                     }
                 }
 
+                VECTOR_GET => {
+                    let index = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let vec = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    if vec.is_empty_vector_immediate() {
+                        self.stack.push(NanValue::NONE);
+                    } else {
+                        let items = self.arena.vector_ref_value(vec);
+                        let idx = index.as_int(&self.arena);
+                        if idx >= 0 && (idx as usize) < items.len() {
+                            self.stack.push(NanValue::new_some_value(
+                                items[idx as usize],
+                                &mut self.arena,
+                            ));
+                        } else {
+                            self.stack.push(NanValue::NONE);
+                        }
+                    }
+                }
+
+                VECTOR_GET_OR => {
+                    let default = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let index = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let vec = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    if vec.is_empty_vector_immediate() {
+                        self.stack.push(default);
+                    } else {
+                        let items = self.arena.vector_ref_value(vec);
+                        let idx = index.as_int(&self.arena);
+                        if idx >= 0 && (idx as usize) < items.len() {
+                            self.stack.push(items[idx as usize]);
+                        } else {
+                            self.stack.push(default);
+                        }
+                    }
+                }
+
+                VECTOR_SET => {
+                    let value = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let index = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let vec = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let idx = index.as_int(&self.arena);
+                    if vec.is_empty_vector_immediate() || idx < 0 {
+                        self.stack.push(NanValue::NONE);
+                    } else {
+                        let mut items = self.arena.clone_vector_value(vec);
+                        let i = idx as usize;
+                        if i < items.len() {
+                            items[i] = value;
+                            let new_idx = self.arena.push_vector(items);
+                            let new_vec = NanValue::new_vector(new_idx);
+                            self.stack
+                                .push(NanValue::new_some_value(new_vec, &mut self.arena));
+                        } else {
+                            self.stack.push(NanValue::NONE);
+                        }
+                    }
+                }
+
                 UNWRAP_RESULT_OR => {
                     let default = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let result = self.stack.pop().ok_or(VmError::StackUnderflow)?;

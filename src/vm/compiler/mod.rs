@@ -988,7 +988,7 @@ fn classify_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
         match op {
             STORE_GLOBAL | TAIL_CALL_SELF | TAIL_CALL_KNOWN | CONCAT | LIST_NIL | LIST_CONS
             | LIST_NEW | RECORD_NEW | WRAP | TUPLE_NEW | RECORD_UPDATE | LIST_LEN
-            | LIST_PREPEND => {
+            | LIST_PREPEND | VECTOR_GET | VECTOR_GET_OR | VECTOR_SET => {
                 return Ok(false);
             }
 
@@ -1080,7 +1080,8 @@ fn classify_thin_ignoring_self_tco(chunk: &FnChunk) -> Result<bool, CompileError
         match op {
             // Same as classify_thin_chunk BUT without TAIL_CALL_SELF in reject list.
             STORE_GLOBAL | TAIL_CALL_KNOWN | CONCAT | LIST_NIL | LIST_CONS | LIST_NEW
-            | RECORD_NEW | WRAP | TUPLE_NEW | RECORD_UPDATE | LIST_LEN | LIST_PREPEND => {
+            | RECORD_NEW | WRAP | TUPLE_NEW | RECORD_UPDATE | LIST_LEN | LIST_PREPEND
+            | VECTOR_GET | VECTOR_GET_OR | VECTOR_SET => {
                 return Ok(false);
             }
 
@@ -1307,6 +1308,19 @@ impl<'a> FnCompiler<'a> {
             self.code[prev_pos] = LOAD_LOCAL_CONST;
             // slot at prev_pos+1, const_idx (u16) emitted next via emit_u16
             return;
+        }
+        // VECTOR_GET ... LOAD_CONST ... UNWRAP_OR → VECTOR_GET_OR
+        // Pattern: [VECTOR_GET at prev_pos] then later [LOAD_CONST idx] [UNWRAP_OR]
+        // We fuse when UNWRAP_OR is emitted and prev is LOAD_CONST and before that is VECTOR_GET.
+        if op == UNWRAP_OR && prev_op == LOAD_CONST && prev_pos >= 1 {
+            let before_const = self.code[prev_pos - 1];
+            if before_const == VECTOR_GET {
+                // Rewrite: VECTOR_GET → VECTOR_GET_OR, keep LOAD_CONST operand, skip UNWRAP_OR
+                self.code[prev_pos - 1] = VECTOR_GET_OR;
+                // LOAD_CONST u16 already at prev_pos..prev_pos+2, serves as default constant idx
+                // VECTOR_GET_OR pops [vec, idx, default] — compiler already pushed default via LOAD_CONST
+                return;
+            }
         }
         self.last_op_pos = self.code.len();
         self.code.push(op);

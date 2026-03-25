@@ -154,6 +154,8 @@ impl<'a> FnCompiler<'a> {
                 match builtin {
                     VmBuiltin::ListLen => self.emit_op(LIST_LEN),
                     VmBuiltin::ListPrepend => self.emit_op(LIST_PREPEND),
+                    VmBuiltin::VectorGet => self.emit_op(VECTOR_GET),
+                    VmBuiltin::VectorSet => self.emit_op(VECTOR_SET),
                     VmBuiltin::OptionWithDefault => self.emit_op(UNWRAP_OR),
                     VmBuiltin::ResultWithDefault => self.emit_op(UNWRAP_RESULT_OR),
                     _ => {

@@ -248,7 +248,18 @@ pub const LOAD_LOCAL_2: u8 = 0x80;
 /// Push one local + one constant in one dispatch. Format: slot:u8, const_idx:u16.
 pub const LOAD_LOCAL_CONST: u8 = 0x81;
 
-// 0x82 was LIST_GET_OR — removed.
+/// Inline Vector.get: pop index, pop vector → push Option (Some/None).
+/// Stack: [vector, index] → [option]
+pub const VECTOR_GET: u8 = 0x82;
+
+/// Fused Vector.get + Option.withDefault: pop default, pop index, pop vector → push value.
+/// Stack: [vector, index, default] → [value]
+/// Combines CALL_BUILTIN(Vector.get) + LOAD_CONST + UNWRAP_OR into one opcode.
+pub const VECTOR_GET_OR: u8 = 0x83;
+
+/// Inline Vector.set: pop value, pop index, pop vector → push Option<Vector>.
+/// Stack: [vector, index, value] → [option_vector]
+pub const VECTOR_SET: u8 = 0x84;
 
 /// Opcode name for debug/disassembly.
 pub fn opcode_name(op: u8) -> &'static str {
@@ -313,6 +324,9 @@ pub fn opcode_name(op: u8) -> &'static str {
         CALL_LEAF => "CALL_LEAF",
         LOAD_LOCAL_2 => "LOAD_LOCAL_2",
         LOAD_LOCAL_CONST => "LOAD_LOCAL_CONST",
+        VECTOR_GET => "VECTOR_GET",
+        VECTOR_GET_OR => "VECTOR_GET_OR",
+        VECTOR_SET => "VECTOR_SET",
         NOP => "NOP",
         _ => "UNKNOWN",
     }
