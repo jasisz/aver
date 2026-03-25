@@ -176,8 +176,8 @@ impl Arena {
             }
             ArenaEntry::Map(map) => {
                 let mut out = PersistentMap::new();
-                for (hash, (key, value)) in map {
-                    out.insert(hash, (rewrite(self, key), rewrite(self, value)));
+                for (&hash, &(key, value)) in map.iter() {
+                    out = out.insert(hash, (rewrite(self, key), rewrite(self, value)));
                 }
                 ArenaEntry::Map(out)
             }

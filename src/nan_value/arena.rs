@@ -322,9 +322,13 @@ impl Arena {
         }
     }
     pub fn map_ref_value(&self, map: NanValue) -> &PersistentMap {
-        static EMPTY_MAP: std::sync::OnceLock<PersistentMap> = std::sync::OnceLock::new();
+        thread_local! {
+            static EMPTY_MAP: PersistentMap = PersistentMap::new();
+        }
         if map.is_empty_map_immediate() {
-            return EMPTY_MAP.get_or_init(PersistentMap::new);
+            // SAFETY: thread_local guarantees single-thread; reference is valid
+            // for the lifetime of the thread (longer than any Arena borrow).
+            return EMPTY_MAP.with(|m| unsafe { &*(m as *const PersistentMap) });
         }
         self.get_map(map.arena_index())
     }

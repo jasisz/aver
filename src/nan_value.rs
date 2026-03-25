@@ -39,8 +39,8 @@ use std::rc::Rc;
 
 use crate::value::FunctionValue;
 
-/// Persistent immutable map -> O(1) clone via structural sharing.
-pub type PersistentMap = im::HashMap<u64, (NanValue, NanValue)>;
+/// COW map: O(1) amortized insert when single-owner, O(n) clone when shared.
+pub type PersistentMap = aver_rt::AverMap<u64, (NanValue, NanValue)>;
 
 // ---------------------------------------------------------------------------
 // Bit layout constants

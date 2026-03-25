@@ -1050,7 +1050,7 @@ fn emit_memo_fn(
     writeln!(out, "thread_local! {{").unwrap();
     writeln!(
         out,
-        "    static {}: std::cell::RefCell<HashMap<{}, {}>> = std::cell::RefCell::new(HashMap::new());",
+        "    static {}: std::cell::RefCell<std::collections::HashMap<{}, {}>> = std::cell::RefCell::new(std::collections::HashMap::new());",
         cache_name, key_type, ret_type
     )
     .unwrap();

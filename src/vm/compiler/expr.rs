@@ -278,7 +278,7 @@ impl<'a> FnCompiler<'a> {
     }
 
     fn compile_map(&mut self, entries: &[(Expr, Expr)]) -> Result<(), CompileError> {
-        let empty_map = self.arena.push_map(im::HashMap::new());
+        let empty_map = self.arena.push_map(crate::nan_value::PersistentMap::new());
         let nv = NanValue::new_map(empty_map);
         let idx = self.add_constant(nv);
         self.emit_op(LOAD_CONST);

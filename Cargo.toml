@@ -39,24 +39,20 @@ clap = { version = "4", features = ["derive"] }
 colored = "2"
 thiserror = "1"
 toml = "0.8"
-im = "15"
 url = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
-
-[[bench]]
-name = "interpreter_bench"
-harness = false
+tempfile = "3"
 
 [[bench]]
 name = "nan_value_bench"
 harness = false
 
 [[bench]]
-name = "vm_bench"
+name = "comparison_bench"
 harness = false
 
 [profile.release]

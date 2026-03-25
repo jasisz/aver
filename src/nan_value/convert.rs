@@ -52,7 +52,7 @@ impl NanValue {
                 for (k, v) in map {
                     let nk = NanValue::from_value(k, arena);
                     let nv = NanValue::from_value(v, arena);
-                    nv_map.insert(nk.map_key_hash(arena), (nk, nv));
+                    nv_map = nv_map.insert(nk.map_key_hash(arena), (nk, nv));
                 }
                 let idx = arena.push(ArenaEntry::Map(nv_map));
                 NanValue::new_map(idx)

@@ -133,7 +133,7 @@ impl<K: AverDisplay + Eq + std::hash::Hash + Ord, V: AverDisplay> AverDisplay
 }
 
 impl<K: AverDisplay + Clone + Eq + std::hash::Hash + Ord, V: AverDisplay + Clone> AverDisplay
-    for im::HashMap<K, V>
+    for crate::AverMap<K, V>
 {
     fn aver_display(&self) -> String {
         let mut keys: Vec<&K> = self.keys().collect();
@@ -144,7 +144,7 @@ impl<K: AverDisplay + Clone + Eq + std::hash::Hash + Ord, V: AverDisplay + Clone
                 format!(
                     "{}: {}",
                     k.aver_display_inner(),
-                    self[*k].aver_display_inner()
+                    self[k].aver_display_inner()
                 )
             })
             .collect();

@@ -359,7 +359,7 @@ fn emit_builtin_call_inner(
         "Map.fromList" => {
             let list = clone_arg(&args[0], ctx, &arg_ctxs[0]);
             Some(format!(
-                "{}.iter().cloned().collect::<HashMap<_, _>>()",
+                "{{ let mut m = HashMap::new(); for (k, v) in {}.iter().cloned() {{ m = m.insert(k, v); }} m }}",
                 list
             ))
         }
@@ -379,7 +379,7 @@ fn emit_builtin_call_inner(
             let map = emit_arg(0);
             let key = emit_arg(1);
             let val = emit_arg(2);
-            Some(format!("{}.update({}, {})", map, key, val))
+            Some(format!("{}.insert({}, {})", map, key, val))
         }
         "Map.has" => {
             let map = emit_arg(0);
@@ -389,7 +389,7 @@ fn emit_builtin_call_inner(
         "Map.remove" => {
             let map = emit_arg(0);
             let key = emit_arg(1);
-            Some(format!("{}.without(&{})", map, key))
+            Some(format!("{}.remove(&{})", map, key))
         }
         "Map.keys" => {
             let map = emit_arg(0);

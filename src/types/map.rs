@@ -355,9 +355,8 @@ fn set_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
     }
     ensure_hashable_nv("Map.set", args[1])?;
     let old_map = arena.clone_map_value(args[0]);
-    let mut new_map = old_map;
     let key_hash = nv_key_bits(args[1], arena);
-    new_map.insert(key_hash, (args[1], args[2]));
+    let new_map = old_map.insert(key_hash, (args[1], args[2]));
     let map_idx = arena.push_map(new_map);
     Ok(NanValue::new_map(map_idx))
 }
@@ -397,9 +396,8 @@ fn remove_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeEr
     }
     ensure_hashable_nv("Map.remove", args[1])?;
     let old_map = arena.clone_map_value(args[0]);
-    let mut new_map = old_map;
     let key_hash = nv_key_bits(args[1], arena);
-    new_map.remove(&key_hash);
+    let new_map = old_map.remove(&key_hash);
     if new_map.is_empty() {
         Ok(NanValue::EMPTY_MAP)
     } else {
@@ -548,7 +546,7 @@ fn from_list_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtim
         let value = parts[1];
         ensure_hashable_nv("Map.fromList", key)?;
         let key_hash = nv_key_bits(key, arena);
-        out.insert(key_hash, (key, value));
+        out = out.insert(key_hash, (key, value));
     }
     if out.is_empty() {
         Ok(NanValue::EMPTY_MAP)

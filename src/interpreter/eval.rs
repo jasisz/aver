@@ -579,12 +579,12 @@ impl Interpreter {
                 lowered,
                 entries,
                 idx,
-                mut map,
+                map,
                 key,
             } => match result {
                 Ok(value) => {
                     let hash = key.map_key_hash(&self.arena);
-                    map.insert(hash, (key, value));
+                    let map = map.insert(hash, (key, value));
                     self.resume_map(lowered, entries, idx + 1, map, conts)
                 }
                 Err(err) => EvalState::Apply(Err(err)),

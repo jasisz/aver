@@ -30,12 +30,135 @@ pub use terminal::{
     show_cursor as terminal_show_cursor, size as terminal_size,
 };
 
-pub use im::HashMap as ImHashMap;
-
+use std::collections::HashMap as StdHashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::iter::FusedIterator;
 use std::rc::Rc;
+
+// ── AverMap: Copy-on-Write HashMap ──────────────────────────────────────────
+//
+// Semantically immutable (like im::HashMap), but when the Rc has a single
+// owner we mutate in place — turning O(log n) persistent-set into O(1)
+// amortized insert.
+
+pub struct AverMap<K, V> {
+    inner: Rc<StdHashMap<K, V>>,
+}
+
+impl<K, V> Clone for AverMap<K, V> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Rc::clone(&self.inner),
+        }
+    }
+}
+
+impl<K, V> AverMap<K, V>
+where
+    K: Eq + Hash + Clone,
+    V: Clone,
+{
+    pub fn new() -> Self {
+        Self {
+            inner: Rc::new(StdHashMap::new()),
+        }
+    }
+
+    pub fn get(&self, key: &K) -> Option<&V> {
+        self.inner.get(key)
+    }
+
+    pub fn contains_key(&self, key: &K) -> bool {
+        self.inner.contains_key(key)
+    }
+
+    /// O(1) amortized if unique owner, O(n) clone if shared.
+    pub fn insert(&self, key: K, value: V) -> Self {
+        let mut inner = Rc::unwrap_or_clone(self.inner.clone());
+        inner.insert(key, value);
+        Self {
+            inner: Rc::new(inner),
+        }
+    }
+
+    /// O(1) amortized if unique owner, O(n) clone if shared.
+    pub fn remove(&self, key: &K) -> Self {
+        let mut inner = Rc::unwrap_or_clone(self.inner.clone());
+        inner.remove(key);
+        Self {
+            inner: Rc::new(inner),
+        }
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &K> {
+        self.inner.keys()
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &V> {
+        self.inner.values()
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> {
+        self.inner.iter()
+    }
+}
+
+impl<K, V> Default for AverMap<K, V>
+where
+    K: Eq + Hash + Clone,
+    V: Clone,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<K: Eq + Hash + Clone + PartialEq, V: PartialEq + Clone> PartialEq for AverMap<K, V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+}
+
+impl<K: Eq + Hash + Clone, V: Eq + Clone> Eq for AverMap<K, V> {}
+
+impl<K: Eq + Hash + Clone + Hash + Ord, V: Hash + Clone> Hash for AverMap<K, V> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // Deterministic: sort keys for stable hash
+        let mut keys: Vec<&K> = self.inner.keys().collect();
+        keys.sort();
+        keys.len().hash(state);
+        for k in keys {
+            k.hash(state);
+            self.inner[k].hash(state);
+        }
+    }
+}
+
+impl<K: fmt::Debug + Eq + Hash + Clone, V: fmt::Debug + Clone> fmt::Debug for AverMap<K, V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.inner.fmt(f)
+    }
+}
+
+impl<K, V> std::ops::Index<&K> for AverMap<K, V>
+where
+    K: Eq + Hash + Clone,
+    V: Clone,
+{
+    type Output = V;
+    fn index(&self, key: &K) -> &V {
+        &self.inner[key]
+    }
+}
 
 const LIST_APPEND_CHUNK_LIMIT: usize = 128;
 
