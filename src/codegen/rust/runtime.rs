@@ -5,6 +5,66 @@
 pub fn generate_runtime() -> String {
     r##"pub mod aver_rt {
     pub use ::aver_rt::*;
+}
+
+use ::aver_rt::AverStr;
+
+/// Convert String results from aver_rt to AverStr for generated code.
+pub trait IntoAverStr {
+    type Output;
+    fn into_aver(self) -> Self::Output;
+}
+impl IntoAverStr for String {
+    type Output = AverStr;
+    fn into_aver(self) -> AverStr { AverStr::from(self) }
+}
+impl IntoAverStr for Result<String, String> {
+    type Output = Result<AverStr, AverStr>;
+    fn into_aver(self) -> Result<AverStr, AverStr> { self.map(AverStr::from).map_err(AverStr::from) }
+}
+impl IntoAverStr for Result<(), String> {
+    type Output = Result<(), AverStr>;
+    fn into_aver(self) -> Result<(), AverStr> { self.map_err(AverStr::from) }
+}
+impl IntoAverStr for Option<String> {
+    type Output = Option<AverStr>;
+    fn into_aver(self) -> Option<AverStr> { self.map(AverStr::from) }
+}
+impl IntoAverStr for aver_rt::AverList<String> {
+    type Output = aver_rt::AverList<AverStr>;
+    fn into_aver(self) -> aver_rt::AverList<AverStr> {
+        aver_rt::AverList::from_vec(self.to_vec().into_iter().map(AverStr::from).collect())
+    }
+}
+impl IntoAverStr for Result<aver_rt::AverList<String>, String> {
+    type Output = Result<aver_rt::AverList<AverStr>, AverStr>;
+    fn into_aver(self) -> Result<aver_rt::AverList<AverStr>, AverStr> {
+        self.map(|l| l.into_aver()).map_err(AverStr::from)
+    }
+}
+impl IntoAverStr for Result<aver_rt::HttpResponse, String> {
+    type Output = Result<aver_rt::HttpResponse, AverStr>;
+    fn into_aver(self) -> Result<aver_rt::HttpResponse, AverStr> {
+        self.map_err(AverStr::from)
+    }
+}
+impl IntoAverStr for Result<aver_rt::TcpConnection, String> {
+    type Output = Result<aver_rt::TcpConnection, AverStr>;
+    fn into_aver(self) -> Result<aver_rt::TcpConnection, AverStr> {
+        self.map_err(AverStr::from)
+    }
+}
+impl IntoAverStr for Result<i64, String> {
+    type Output = Result<i64, AverStr>;
+    fn into_aver(self) -> Result<i64, AverStr> {
+        self.map_err(AverStr::from)
+    }
+}
+impl IntoAverStr for Result<f64, String> {
+    type Output = Result<f64, AverStr>;
+    fn into_aver(self) -> Result<f64, AverStr> {
+        self.map_err(AverStr::from)
+    }
 }"##
     .to_string()
 }

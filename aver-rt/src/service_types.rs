@@ -1,4 +1,4 @@
-use crate::{AverDisplay, AverList};
+use crate::{AverDisplay, AverList, AverStr};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct TerminalSize {
@@ -22,8 +22,18 @@ impl AverDisplay for TerminalSize {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct Header {
-    pub name: String,
-    pub value: String,
+    pub name: AverStr,
+    pub value: AverStr,
+}
+
+impl Header {
+    /// Convenience constructor from owned Strings (used by interpreter/aver-rt internals).
+    pub fn from_strings(name: String, value: String) -> Self {
+        Self {
+            name: AverStr::from(name),
+            value: AverStr::from(value),
+        }
+    }
 }
 
 impl AverDisplay for Header {
@@ -43,7 +53,7 @@ impl AverDisplay for Header {
 #[derive(Clone, Debug, PartialEq)]
 pub struct HttpResponse {
     pub status: i64,
-    pub body: String,
+    pub body: AverStr,
     pub headers: AverList<Header>,
 }
 
@@ -64,9 +74,9 @@ impl AverDisplay for HttpResponse {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct HttpRequest {
-    pub method: String,
-    pub path: String,
-    pub body: String,
+    pub method: AverStr,
+    pub path: AverStr,
+    pub body: AverStr,
     pub headers: AverList<Header>,
 }
 
@@ -88,14 +98,18 @@ impl AverDisplay for HttpRequest {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct TcpConnection {
-    pub id: String,
-    pub host: String,
+    pub id: AverStr,
+    pub host: AverStr,
     pub port: i64,
 }
 
 impl TcpConnection {
     pub fn from_parts(id: String, host: String, port: i64) -> Self {
-        Self { id, host, port }
+        Self {
+            id: AverStr::from(id),
+            host: AverStr::from(host),
+            port,
+        }
     }
 }
 

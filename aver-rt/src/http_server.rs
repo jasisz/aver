@@ -1,4 +1,4 @@
-use crate::{AverList, Header, HttpRequest, HttpResponse};
+use crate::{AverList, AverStr, Header, HttpRequest, HttpResponse};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
@@ -45,7 +45,7 @@ where
             stream,
             &HttpResponse {
                 status: 500,
-                body: format!("HttpServer: failed to set read timeout: {}", e),
+                body: AverStr::from(format!("HttpServer: failed to set read timeout: {}", e)),
                 headers: AverList::empty(),
             },
         );
@@ -56,7 +56,7 @@ where
             stream,
             &HttpResponse {
                 status: 500,
-                body: format!("HttpServer: failed to set write timeout: {}", e),
+                body: AverStr::from(format!("HttpServer: failed to set write timeout: {}", e)),
                 headers: AverList::empty(),
             },
         );
@@ -70,7 +70,7 @@ where
                 stream,
                 &HttpResponse {
                     status: 400,
-                    body: format!("Bad Request: {}", msg),
+                    body: AverStr::from(format!("Bad Request: {}", msg)),
                     headers: AverList::empty(),
                 },
             );
@@ -144,7 +144,7 @@ fn parse_http_request(stream: &mut TcpStream) -> Result<HttpRequest, String> {
             }
         }
 
-        headers.push(Header { name, value });
+        headers.push(Header::from_strings(name, value));
     }
 
     let mut body_bytes = vec![0_u8; content_length];
@@ -156,9 +156,9 @@ fn parse_http_request(stream: &mut TcpStream) -> Result<HttpRequest, String> {
     let body = String::from_utf8_lossy(&body_bytes).into_owned();
 
     Ok(HttpRequest {
-        method,
-        path,
-        body,
+        method: AverStr::from(method),
+        path: AverStr::from(path),
+        body: AverStr::from(body),
         headers: AverList::from_vec(headers),
     })
 }
@@ -195,7 +195,7 @@ fn write_http_response(stream: &mut TcpStream, response: &HttpResponse) -> std::
             !h.name.eq_ignore_ascii_case("Content-Length")
                 && !h.name.eq_ignore_ascii_case("Connection")
         })
-        .map(|h| (h.name.clone(), h.value.clone()))
+        .map(|h| (h.name.to_string(), h.value.to_string()))
         .collect::<Vec<_>>();
 
     if !headers

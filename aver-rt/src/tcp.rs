@@ -1,4 +1,4 @@
-use crate::TcpConnection;
+use crate::{AverStr, TcpConnection};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -39,8 +39,8 @@ pub fn connect(host: &str, port: i64) -> Result<TcpConnection, String> {
     });
 
     Ok(TcpConnection {
-        id,
-        host: host.to_string(),
+        id: AverStr::from(id),
+        host: AverStr::from(host),
         port,
     })
 }
@@ -48,7 +48,8 @@ pub fn connect(host: &str, port: i64) -> Result<TcpConnection, String> {
 pub fn write_line(conn: &TcpConnection, line: &str) -> Result<(), String> {
     CONNECTIONS.with(|map| {
         let mut borrow = map.borrow_mut();
-        match borrow.get_mut(&conn.id) {
+        let id: &str = &conn.id;
+        match borrow.get_mut(id) {
             None => Err(format!("Tcp.writeLine: unknown connection '{}'", conn.id)),
             Some(reader) => {
                 let msg = format!("{}\r\n", line);
@@ -64,7 +65,8 @@ pub fn write_line(conn: &TcpConnection, line: &str) -> Result<(), String> {
 pub fn read_line(conn: &TcpConnection) -> Result<String, String> {
     CONNECTIONS.with(|map| {
         let mut borrow = map.borrow_mut();
-        match borrow.get_mut(&conn.id) {
+        let id: &str = &conn.id;
+        match borrow.get_mut(id) {
             None => Err(format!("Tcp.readLine: unknown connection '{}'", conn.id)),
             Some(reader) => {
                 let mut line = String::new();
@@ -82,7 +84,8 @@ pub fn read_line(conn: &TcpConnection) -> Result<String, String> {
 }
 
 pub fn close(conn: &TcpConnection) -> Result<(), String> {
-    let removed = CONNECTIONS.with(|map| map.borrow_mut().remove(&conn.id));
+    let id: &str = &conn.id;
+    let removed = CONNECTIONS.with(|map| map.borrow_mut().remove(id));
     match removed {
         Some(_) => Ok(()),
         None => Err(format!("Tcp.close: unknown connection '{}'", conn.id)),

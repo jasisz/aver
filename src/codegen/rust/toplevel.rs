@@ -590,7 +590,7 @@ fn emit_tco_expr(
             }
 
             let match_expr = if needs_as_str {
-                format!("{}.as_str()", subj)
+                format!("&*{}", subj)
             } else {
                 subj
             };
@@ -927,7 +927,7 @@ fn emit_trampoline_expr(
 
             let needs_as_str = super::expr::has_string_literal_patterns(arms);
             let match_expr = if needs_as_str {
-                format!("{}.as_str()", subj)
+                format!("&*{}", subj)
             } else {
                 subj
             };

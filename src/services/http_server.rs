@@ -138,7 +138,7 @@ fn dispatch_handler<F>(
 where
     F: FnMut(Value, Vec<Value>, String) -> Result<Value, RuntimeError>,
 {
-    let callback_entry = format!("<HttpServer {} {}>", request.method, request.path);
+    let callback_entry = format!("<HttpServer {} {}>", &*request.method, &*request.path);
     let mut callback_args = Vec::new();
     if let Some(ctx) = context {
         callback_args.push(ctx);
@@ -151,13 +151,13 @@ where
             Ok(resp) => resp,
             Err(e) => HttpResponse {
                 status: 500,
-                body: format!("HttpServer handler return error: {}", e),
+                body: aver_rt::AverStr::from(format!("HttpServer handler return error: {}", e)),
                 headers: AverList::empty(),
             },
         },
         Err(e) => HttpResponse {
             status: 500,
-            body: format!("HttpServer handler execution error: {}", e),
+            body: aver_rt::AverStr::from(format!("HttpServer handler execution error: {}", e)),
             headers: AverList::empty(),
         },
     }
@@ -170,8 +170,8 @@ fn http_request_to_value(req: HttpRequest) -> Value {
         .map(|header| Value::Record {
             type_name: "Header".to_string(),
             fields: vec![
-                ("name".to_string(), Value::Str(header.name)),
-                ("value".to_string(), Value::Str(header.value)),
+                ("name".to_string(), Value::Str(header.name.to_string())),
+                ("value".to_string(), Value::Str(header.value.to_string())),
             ]
             .into(),
         })
@@ -180,9 +180,9 @@ fn http_request_to_value(req: HttpRequest) -> Value {
     Value::Record {
         type_name: "HttpRequest".to_string(),
         fields: vec![
-            ("method".to_string(), Value::Str(req.method)),
-            ("path".to_string(), Value::Str(req.path)),
-            ("body".to_string(), Value::Str(req.body)),
+            ("method".to_string(), Value::Str(req.method.to_string())),
+            ("path".to_string(), Value::Str(req.path.to_string())),
+            ("body".to_string(), Value::Str(req.body.to_string())),
             ("headers".to_string(), list_from_vec(headers)),
         ]
         .into(),
@@ -223,7 +223,7 @@ fn http_response_from_value(val: Value) -> Result<HttpResponse, RuntimeError> {
             }
             "body" => {
                 if let Value::Str(s) = value {
-                    body = Some(s.clone());
+                    body = Some(aver_rt::AverStr::from(s.as_str()));
                 } else {
                     return Err(RuntimeError::Error(
                         "HttpResponse.body must be String".to_string(),
@@ -266,8 +266,8 @@ fn parse_http_response_headers(val: Value) -> Result<AverList<Header>, RuntimeEr
         let mut value = None;
         for (field_name, field_val) in fields.iter() {
             match (field_name.as_str(), field_val) {
-                ("name", Value::Str(s)) => name = Some(s.clone()),
-                ("value", Value::Str(s)) => value = Some(s.clone()),
+                ("name", Value::Str(s)) => name = Some(aver_rt::AverStr::from(s.as_str())),
+                ("value", Value::Str(s)) => value = Some(aver_rt::AverStr::from(s.as_str())),
                 _ => {}
             }
         }

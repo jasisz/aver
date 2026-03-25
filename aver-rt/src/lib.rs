@@ -34,6 +34,18 @@ use std::collections::HashMap as StdHashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::iter::FusedIterator;
+
+/// Aver string type: Rc<str> for O(1) clone in immutable functional pipelines.
+pub type AverStr = std::rc::Rc<str>;
+
+/// Concatenate two AverStr values.
+#[inline]
+pub fn aver_str_concat(a: &AverStr, b: &AverStr) -> AverStr {
+    let mut s = String::with_capacity(a.len() + b.len());
+    s.push_str(a);
+    s.push_str(b);
+    AverStr::from(s)
+}
 use std::rc::Rc;
 
 // ── AverMap: Copy-on-Write HashMap ──────────────────────────────────────────

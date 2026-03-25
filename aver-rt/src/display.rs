@@ -34,6 +34,16 @@ impl AverDisplay for String {
     }
 }
 
+impl AverDisplay for std::rc::Rc<str> {
+    fn aver_display(&self) -> String {
+        self.to_string()
+    }
+
+    fn aver_display_inner(&self) -> String {
+        format!("\"{}\"", self)
+    }
+}
+
 impl AverDisplay for bool {
     fn aver_display(&self) -> String {
         if *self {

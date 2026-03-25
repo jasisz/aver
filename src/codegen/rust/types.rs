@@ -6,7 +6,7 @@ pub fn type_to_rust(ty: &Type) -> String {
     match ty {
         Type::Int => "i64".to_string(),
         Type::Float => "f64".to_string(),
-        Type::Str => "String".to_string(),
+        Type::Str => "AverStr".to_string(),
         Type::Bool => "bool".to_string(),
         Type::Unit => "()".to_string(),
         Type::Result(ok, err) => {

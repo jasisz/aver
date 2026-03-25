@@ -72,11 +72,14 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
             let r = emit_expr(right, ctx, ectx);
             match op {
                 BinOp::Add => {
-                    // String + String doesn't compile in Rust; use (l + &r) which works
-                    // for both String + &String (→ &str via Deref) and i64 + &i64.
-                    // Left operand is consumed by String +, so clone if used later.
-                    let l = maybe_clone(l, left, &left_ectx);
-                    format!("({} + &{})", l, r)
+                    // For strings: use aver_str_concat (Rc<str> has no Add impl).
+                    // For numbers: (l + &r). Default to numeric (most Add is on numbers).
+                    if expr_is_string_typed(left, ectx) || expr_is_string_typed(right, ectx) {
+                        format!("aver_rt::aver_str_concat(&{}, &{})", l, r)
+                    } else {
+                        let l = maybe_clone(l, left, &left_ectx);
+                        format!("({} + &{})", l, r)
+                    }
                 }
                 _ => {
                     let op_str = match op {
@@ -91,14 +94,14 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
                         BinOp::Lte => "<=",
                         BinOp::Gte => ">=",
                     };
-                    // For Eq/Neq with a string literal on either side, use &str to avoid allocation.
-                    // String == &str is supported via PartialEq in Rust.
+                    // For Eq/Neq with a string literal on either side, deref AverStr (Rc<str>)
+                    // to &str for comparison since Rc<str> doesn't impl PartialEq<&str>.
                     if matches!(op, BinOp::Eq | BinOp::Neq) {
                         if let Expr::Literal(Literal::Str(s)) = right.as_ref() {
-                            return format!("({} {} {:?})", l, op_str, s);
+                            return format!("(&*{} {} {:?})", l, op_str, s);
                         }
                         if let Expr::Literal(Literal::Str(s)) = left.as_ref() {
-                            return format!("({:?} {} {})", s, op_str, r);
+                            return format!("({:?} {} &*{})", s, op_str, r);
                         }
                     }
                     format!("({} {} {})", l, op_str, r)
@@ -235,7 +238,7 @@ fn emit_literal(lit: &Literal) -> String {
                 format!("{}.0f64", s)
             }
         }
-        Literal::Str(s) => format!("{:?}.to_string()", s),
+        Literal::Str(s) => format!("AverStr::from({:?})", s),
         Literal::Bool(b) => if *b { "true" } else { "false" }.to_string(),
         Literal::Unit => "()".to_string(),
     }
@@ -343,7 +346,20 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &Emit
 
 /// Clone a value if it's a variable reference (to avoid move issues in generated Rust).
 /// Literals and complex expressions don't need cloning.
-/// Uses EmitCtx to skip cloning for last-use or Copy-type variables.
+/// Check if an expression is known to be String-typed (for string concat dispatch).
+fn expr_is_string_typed(expr: &Expr, ectx: &EmitCtx) -> bool {
+    match expr {
+        Expr::Literal(Literal::Str(_)) => true,
+        Expr::InterpolatedStr(_) => true,
+        Expr::Ident(name) => ectx
+            .local_types
+            .get(name)
+            .is_some_and(|ty| matches!(ty, Type::Str)),
+        Expr::BinOp(BinOp::Add, left, _) => expr_is_string_typed(left, ectx),
+        _ => false,
+    }
+}
+
 pub(super) fn maybe_clone(code: String, expr: &Expr, ectx: &EmitCtx) -> String {
     match expr {
         Expr::Ident(name) => {
@@ -469,7 +485,7 @@ fn emit_constructor(
 
 fn emit_interpolated_str(parts: &[StrPart], ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     if parts.is_empty() {
-        return "String::new()".to_string();
+        return "AverStr::from(\"\")".to_string();
     }
 
     let mut fmt_str = String::new();
@@ -497,9 +513,13 @@ fn emit_interpolated_str(parts: &[StrPart], ctx: &CodegenContext, ectx: &EmitCtx
     }
 
     if fmt_args.is_empty() {
-        format!("{:?}.to_string()", fmt_str)
+        format!("AverStr::from({:?})", fmt_str)
     } else {
-        format!("format!({:?}, {})", fmt_str, fmt_args.join(", "))
+        format!(
+            "AverStr::from(format!({:?}, {}))",
+            fmt_str,
+            fmt_args.join(", ")
+        )
     }
 }
 
@@ -531,7 +551,7 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
     }
 
     let match_expr = if needs_as_str && has_string_literal_patterns(arms) {
-        format!("{}.as_str()", subj)
+        format!("&*{}", subj)
     } else {
         subj
     };

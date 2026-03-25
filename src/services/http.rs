@@ -132,10 +132,7 @@ fn parse_request_headers(val: &Value) -> Result<AverList<Header>, RuntimeError> 
                     ))
                 })
         };
-        out.push(Header {
-            name: get("name")?,
-            value: get("value")?,
-        });
+        out.push(Header::from_strings(get("name")?, get("value")?));
     }
     Ok(AverList::from_vec(out))
 }
@@ -186,8 +183,8 @@ fn http_response_to_value(resp: HttpResponse) -> Value {
         .map(|header| Value::Record {
             type_name: "Header".to_string(),
             fields: vec![
-                ("name".to_string(), Value::Str(header.name)),
-                ("value".to_string(), Value::Str(header.value)),
+                ("name".to_string(), Value::Str(header.name.to_string())),
+                ("value".to_string(), Value::Str(header.value.to_string())),
             ]
             .into(),
         })
@@ -197,7 +194,7 @@ fn http_response_to_value(resp: HttpResponse) -> Value {
         type_name: "HttpResponse".to_string(),
         fields: vec![
             ("status".to_string(), Value::Int(resp.status)),
-            ("body".to_string(), Value::Str(resp.body)),
+            ("body".to_string(), Value::Str(resp.body.to_string())),
             ("headers".to_string(), list_from_vec(headers)),
         ]
         .into(),

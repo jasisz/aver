@@ -1,4 +1,4 @@
-use crate::{AverList, Header, HttpResponse};
+use crate::{AverList, AverStr, Header, HttpResponse};
 
 pub fn get(url: &str) -> Result<HttpResponse, String> {
     simple_request("GET", url)
@@ -80,8 +80,8 @@ fn build_response(resp: ureq::Response) -> Result<HttpResponse, String> {
     let headers: Vec<Header> = header_names
         .iter()
         .map(|name| Header {
-            name: name.clone(),
-            value: resp.header(name).unwrap_or("").to_string(),
+            name: AverStr::from(name.as_str()),
+            value: AverStr::from(resp.header(name).unwrap_or("")),
         })
         .collect();
 
@@ -94,7 +94,7 @@ fn build_response(resp: ureq::Response) -> Result<HttpResponse, String> {
     if bytes_read as u64 > BODY_LIMIT {
         return Err("Http: response body exceeds 10 MB limit".to_string());
     }
-    let body = String::from_utf8_lossy(&buf).into_owned();
+    let body = AverStr::from(String::from_utf8_lossy(&buf).into_owned());
     Ok(HttpResponse {
         status,
         body,

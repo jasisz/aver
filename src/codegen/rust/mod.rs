@@ -129,6 +129,7 @@ fn render_root_main(main_fn: Option<&FnDef>, has_policy: bool, has_verify: bool)
         "#![allow(unused_variables, unused_mut, dead_code, unused_imports, unused_parens, non_snake_case, non_camel_case_types, unreachable_patterns)]".to_string(),
         "#[macro_use] extern crate aver_rt;".to_string(),
         "pub use ::aver_rt::AverMap as HashMap;".to_string(),
+        "pub use ::aver_rt::AverStr;".to_string(),
         String::new(),
         "mod runtime_support;".to_string(),
         "pub use runtime_support::*;".to_string(),

@@ -160,8 +160,8 @@ fn tcp_connection_to_value(conn: TcpConnection) -> Value {
     Value::Record {
         type_name: "Tcp.Connection".to_string(),
         fields: vec![
-            ("id".to_string(), Value::Str(conn.id)),
-            ("host".to_string(), Value::Str(conn.host)),
+            ("id".to_string(), Value::Str(conn.id.to_string())),
+            ("host".to_string(), Value::Str(conn.host.to_string())),
             ("port".to_string(), Value::Int(conn.port)),
         ]
         .into(),
@@ -200,7 +200,7 @@ fn tcp_connection_arg(val: &Value, method: &str) -> Result<TcpConnection, Runtim
                     method
                 ))
             })?;
-            Ok(TcpConnection { id, host, port })
+            Ok(TcpConnection::from_parts(id, host, port))
         }
         _ => Err(RuntimeError::Error(format!(
             "{}: first argument must be a Tcp.Connection, got {:?}",

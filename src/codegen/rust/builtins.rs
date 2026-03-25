@@ -6,6 +6,65 @@ use crate::codegen::CodegenContext;
 
 /// Try to emit a builtin call as Rust code.
 /// Returns `None` if the name is not a builtin (i.e. it's a user function).
+/// Builtins whose return type includes String and needs .into_aver() conversion.
+fn builtin_needs_str_conversion(name: &str) -> bool {
+    matches!(
+        name,
+        "Console.readLine"
+            | "Time.now"
+            | "Args.get"
+            | "Int.toString"
+            | "Float.toString"
+            | "Int.parse"
+            | "Float.parse"
+            | "Int.fromString"
+            | "Float.fromString"
+            | "String.slice"
+            | "String.charAt"
+            | "String.toLower"
+            | "String.toUpper"
+            | "String.trim"
+            | "String.trimStart"
+            | "String.trimEnd"
+            | "String.split"
+            | "String.replace"
+            | "String.replaceFirst"
+            | "String.join"
+            | "String.repeat"
+            | "String.reverse"
+            | "String.fromInt"
+            | "String.fromFloat"
+            | "String.fromBool"
+            | "String.chars"
+            | "Char.fromCode"
+            | "Byte.toHex"
+            | "Byte.fromHex"
+            | "Disk.readText"
+            | "Disk.writeText"
+            | "Disk.appendText"
+            | "Disk.delete"
+            | "Disk.deleteDir"
+            | "Disk.listDir"
+            | "Disk.makeDir"
+            | "Env.get"
+            | "Env.set"
+            | "Terminal.readKey"
+            | "Http.get"
+            | "Http.head"
+            | "Http.delete"
+            | "Http.post"
+            | "Http.put"
+            | "Http.patch"
+            | "Tcp.send"
+            | "Tcp.ping"
+            | "Tcp.connect"
+            | "Tcp.writeLine"
+            | "Tcp.readLine"
+            | "Tcp.close"
+            | "Int.mod"
+    )
+}
+
 pub fn emit_builtin_call(
     name: &str,
     args: &[Expr],
@@ -15,9 +74,14 @@ pub fn emit_builtin_call(
     let result = emit_builtin_call_inner(name, args, ctx, ectx)?;
     let arg_ctxs = compute_args_used_after(args, &ectx.used_after, &ectx.local_types);
 
+    // Convert String-returning builtins to AverStr.
+    let result = if builtin_needs_str_conversion(name) {
+        format!("({}).into_aver()", result)
+    } else {
+        result
+    };
+
     // Wrap Http/Disk/Env calls with policy checks when aver.toml policy is present.
-    // Use .expect() instead of ? because the call may occur in a non-Result context
-    // (e.g. Disk.exists returns Bool). Policy violations are fatal.
     if ctx.policy.is_some() {
         if name.starts_with("Http.") && !args.is_empty() {
             let url_arg = emit_expr(&args[0], ctx, &arg_ctxs[0]);
@@ -671,7 +735,7 @@ fn emit_str_arg_or_deref(expr: &Expr, ectx: &EmitCtx, ctx: &CodegenContext) -> S
         format!("{:?}", s)
     } else {
         let code = emit_expr(expr, ctx, ectx);
-        format!("{}.as_str()", code)
+        format!("&*{}", code)
     }
 }
 
