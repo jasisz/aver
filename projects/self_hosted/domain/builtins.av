@@ -1,5 +1,5 @@
 module Builtins
-    depends [Domain.Ast, Domain.Value, Domain.Builtins.Helpers, Domain.Builtins.List, Domain.Builtins.Primitives, Domain.Builtins.Wrappers]
+    depends [Domain.Ast, Domain.Value, Domain.Builtins.Helpers, Domain.Builtins.List, Domain.Builtins.Vector, Domain.Builtins.Primitives, Domain.Builtins.Wrappers]
     intent =
         "Builtin function implementations for the self-hosted evaluator."
         "Dispatches qualified names like List.len, String.charAt, Console.print to sub-modules."
@@ -10,6 +10,13 @@ fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     match String.startsWith(name, "List.")
         true -> Domain.Builtins.List.call(name, args)
+        false -> callBuiltinAfterList(name, args)
+
+fn callBuiltinAfterList(name: String, args: List<Val>) -> Result<Val, String>
+    ? "Continue dispatch after List."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match String.startsWith(name, "Vector.")
+        true -> Domain.Builtins.Vector.call(name, args)
         false -> match String.startsWith(name, "Int.")
             true -> Domain.Builtins.Primitives.callInt(name, args)
             false -> match String.startsWith(name, "String.")

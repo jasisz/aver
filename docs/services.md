@@ -18,16 +18,35 @@ Source: `src/types/bool.rs`
 
 Source: `src/types/list.rs`
 
+List is a recursive structure — use it for sequential processing with `prepend`, `head`, `tail`, `match [h, ..t]`. For indexed access, use `Vector`.
+
 | Function | Signature | Notes |
 |---|---|---|
 | `List.len` | `List<T> -> Int` | |
-| `List.get` | `(List<T>, Int) -> Option<T>` | Returns `Option.None` on out-of-bounds |
-| `List.append` | `(List<T>, T) -> List<T>` | Appends element, returns new list |
-| `List.prepend` | `(T, List<T>) -> List<T>` | Prepends element, returns new list |
+| `List.prepend` | `(T, List<T>) -> List<T>` | O(1) prepend |
+| `List.head` | `List<T> -> Option<T>` | First element |
+| `List.tail` | `List<T> -> Option<List<T>>` | All but first |
 | `List.concat` | `(List<T>, List<T>) -> List<T>` | Concatenates two lists |
 | `List.reverse` | `List<T> -> List<T>` | Returns a reversed copy |
 | `List.contains` | `(List<T>, T) -> Bool` | Membership check via `==` |
+| `List.find` | `(List<T>, T) -> Option<T>` | Find first matching element |
+| `List.any` | `(List<T>, T) -> Bool` | True if any element matches |
 | `List.zip` | `(List<A>, List<B>) -> List<(A, B)>` | Pairs elements, truncates to shorter list |
+
+### `Vector` namespace
+
+Source: `src/types/vector.rs`
+
+Vector is a persistent indexed sequence — use it for grids, buffers, lookup tables, and anywhere you need O(1) access by index. Backed by `Rc<Vec<T>>` with copy-on-write: `set` mutates in place when the vector has a single owner, clones otherwise.
+
+| Function | Signature | Notes |
+|---|---|---|
+| `Vector.new` | `(Int, T) -> Vector<T>` | Create vector of N elements, all set to default |
+| `Vector.get` | `(Vector<T>, Int) -> Option<T>` | O(1) indexed access |
+| `Vector.set` | `(Vector<T>, Int, T) -> Option<Vector<T>>` | O(1) COW update; `None` if out of bounds |
+| `Vector.len` | `Vector<T> -> Int` | |
+| `Vector.fromList` | `List<T> -> Vector<T>` | Convert list to vector |
+| `Vector.toList` | `Vector<T> -> List<T>` | Convert vector to list |
 
 ### `Result` namespace
 

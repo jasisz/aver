@@ -34,7 +34,7 @@ Below: implementation details relevant to development only.
 ### Implementation notes
 
 - **Constructor routing**: `Result.Ok(v)`, `Result.Err(v)`, `Option.Some(v)` route through `call_builtin` (`__ctor:Result.Ok` etc.). `Result` and `Option` registered as `Value::Namespace`. Match patterns use qualified names.
-- **No flat builtins** (decision: `FullNamespaceEverywhere`). Namespace helpers live under their owning modules (`List`, `Map`, `String`, etc.), with pure list operations implemented in `src/types/list.rs`.
+- **No flat builtins** (decision: `FullNamespaceEverywhere`). Namespace helpers live under their owning modules (`List`, `Vector`, `Map`, `String`, etc.), with pure list operations in `src/types/list.rs` and vector operations in `src/types/vector.rs`.
 - **`Type::Named(String)`** in the type system: capitalized identifiers (including dotted names like `Tcp.Connection`) in type annotations resolve to named types. Compatible only with the same name or internal `Unknown` fallback.
 - **`Tcp.Connection` record**: fields `id: String`, `host: String`, `port: Int`. No longer opaque — constructable via `Tcp.Connection(id = ..., host = ..., port = ...)`. Actual socket in thread-local `HashMap` keyed by `id`. `NEXT_ID: AtomicU64` generates "tcp-1", "tcp-2", etc.
 - **Static type checker** (`src/types/checker/`): internal `Type::Unknown` recovery after earlier errors so analysis can continue. Bare `Unknown` does **not** satisfy concrete types in constraints — only nested `Unknown` is tolerated (gradual typing). Match pattern bindings are typed: `Result.Ok(x)` on `Result<Int, String>` gives `x: Int`.
@@ -100,7 +100,8 @@ src/
     int.rs            — Int.* (pure)
     float.rs          — Float.* (pure)
     string.rs         — String.* (pure)
-    list.rs           — List.len/get/push/head/tail (pure)
+    list.rs           — List.len/head/tail/prepend/concat/reverse/contains/find/any/zip (pure, recursive)
+    vector.rs         — Vector.new/get/set/len/fromList/toList (pure, indexed O(1) COW)
     map.rs            — Map.* (pure)
     char.rs           — Char.toCode/fromCode (pure, not a type)
     bool.rs           — Bool.or/and/not (pure)

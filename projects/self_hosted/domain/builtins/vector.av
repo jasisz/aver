@@ -1,0 +1,71 @@
+module Vector
+    depends [Domain.Value, Domain.Builtins.Helpers]
+    intent = "Vector namespace builtins for the self-hosted evaluator."
+    exposes [call]
+
+fn call(name: String, args: List<Val>) -> Result<Val, String>
+    ? "Dispatch Vector.* builtins."
+    match name
+        "Vector.new" -> builtinVectorNew(args)
+        "Vector.get" -> builtinVectorGet(args)
+        "Vector.set" -> builtinVectorSet(args)
+        "Vector.len" -> builtinVectorLen(args)
+        "Vector.fromList" -> builtinVectorFromList(args)
+        "Vector.toList" -> builtinVectorToList(args)
+        _ -> Result.Err("unknown vector builtin: {name}")
+
+fn builtinVectorNew(args: List<Val>) -> Result<Val, String>
+    ? "Vector.new(size, default) -> Vector<T>."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (Val.ValInt(size), defaultVal) -> Result.Ok(Val.ValVector(Vector.new(size, defaultVal)))
+        _ -> Result.Err("Vector.new: first arg must be Int")
+
+fn builtinVectorGet(args: List<Val>) -> Result<Val, String>
+    ? "Vector.get(vec, idx) -> Option<T>."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (Val.ValVector(vec), Val.ValInt(idx)) -> match Vector.get(vec, idx)
+            Option.Some(v) -> Result.Ok(Val.ValSome(v))
+            Option.None -> Result.Ok(Val.ValNone)
+        _ -> Result.Err("Vector.get: expected (Vector, Int)")
+
+fn builtinVectorSet(args: List<Val>) -> Result<Val, String>
+    ? "Vector.set(vec, idx, val) -> Option<Vector<T>>."
+    match args
+        [vecV, ..rest] -> match rest
+            [idxV, ..rest2] -> match rest2
+                [valV, ..ignored] -> builtinVectorSetInner(vecV, idxV, valV)
+                _ -> Result.Err("Vector.set: expected 3 args")
+            _ -> Result.Err("Vector.set: expected 3 args")
+        _ -> Result.Err("Vector.set: expected 3 args")
+
+fn builtinVectorSetInner(vecV: Val, idxV: Val, valV: Val) -> Result<Val, String>
+    match vecV
+        Val.ValVector(vec) -> match idxV
+            Val.ValInt(idx) -> match Vector.set(vec, idx, valV)
+                Option.Some(newVec) -> Result.Ok(Val.ValSome(Val.ValVector(newVec)))
+                Option.None -> Result.Ok(Val.ValNone)
+            _ -> Result.Err("Vector.set: second arg must be Int")
+        _ -> Result.Err("Vector.set: first arg must be Vector")
+
+fn builtinVectorLen(args: List<Val>) -> Result<Val, String>
+    ? "Vector.len(vec) -> Int."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    match v
+        Val.ValVector(vec) -> Result.Ok(Val.ValInt(Vector.len(vec)))
+        _ -> Result.Err("Vector.len: expected Vector")
+
+fn builtinVectorFromList(args: List<Val>) -> Result<Val, String>
+    ? "Vector.fromList(list) -> Vector<T>."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    match v
+        Val.ValList(items) -> Result.Ok(Val.ValVector(Vector.fromList(items)))
+        _ -> Result.Err("Vector.fromList: expected List")
+
+fn builtinVectorToList(args: List<Val>) -> Result<Val, String>
+    ? "Vector.toList(vec) -> List<T>."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    match v
+        Val.ValVector(vec) -> Result.Ok(Val.ValList(Vector.toList(vec)))
+        _ -> Result.Err("Vector.toList: expected Vector")

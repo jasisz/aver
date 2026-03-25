@@ -26,11 +26,11 @@
 //!   6  = Ok              payload bit45: 0=inline inner, 1=arena index
 //!   7  = Err             payload bit45: 0=inline inner, 1=arena index
 //!   8  = List            payload bit45: 0=empty list, 1=arena index
-//!   9  = Tuple           payload bit45: 1=arena index
+//!   9  = Vector          payload bit45: 0=empty vector, 1=arena index
 //!   10 = Map             payload bit45: 0=empty map, 1=arena index
 //!   11 = Record          payload bit45: 1=arena index
 //!   12 = Variant         payload bit45: 1=arena index
-//!   13 = Vector         payload bit45: 0=empty vector, 1=arena index
+//!   13 = Tuple           payload bit45: 1=arena index
 //!   14-15 = (reserved)
 
 use std::cmp::Ordering;
@@ -62,11 +62,11 @@ const TAG_NONE: u64 = 5;
 const TAG_OK: u64 = 6;
 const TAG_ERR: u64 = 7;
 const TAG_LIST: u64 = 8;
-const TAG_TUPLE: u64 = 9;
+const TAG_VECTOR: u64 = 9; // sequential: List(8) + Vector(9) → tag & 0b1110 == 0b1000
 const TAG_MAP: u64 = 10;
 const TAG_RECORD: u64 = 11;
 const TAG_VARIANT: u64 = 12;
-const TAG_VECTOR: u64 = 13;
+const TAG_TUPLE: u64 = 13;
 
 const SYMBOL_FN: u64 = 0;
 const SYMBOL_BUILTIN: u64 = 1;

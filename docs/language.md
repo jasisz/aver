@@ -9,7 +9,7 @@ For namespaces, services, and standard library APIs, see [services.md](services.
 ## Types
 
 Primitive: `Int`, `Float`, `String`, `Bool`, `Unit`
-Compound: `Result<T, E>`, `Option<T>`, `List<T>`, `Map<K, V>`, `(A, B, ...)`, `Fn(A) -> B`, `Fn(A) -> B ! [Effect]`
+Compound: `Result<T, E>`, `Option<T>`, `List<T>`, `Vector<T>`, `Map<K, V>`, `(A, B, ...)`, `Fn(A) -> B`, `Fn(A) -> B ! [Effect]`
 User-defined sum types: `type Shape` → `Shape.Circle(Float)`, `Shape.Rect(Float, Float)`
 User-defined product types: `record User` → `User(name = "Alice", age = 30)`, `u.name`
 
@@ -228,6 +228,13 @@ hasAlice = List.contains(["alice", "bob"], "alice")
 ```aver
 ages = Map.fromList([("alice", 30), ("bob", 25)])
 maybe_age = Map.get(ages, "alice")
+```
+
+```aver
+// Vector: indexed dense data (grids, buffers, lookup tables)
+grid = Vector.new(100, 0)          // 100 zeros
+updated = Vector.set(grid, 42, 1)  // Option<Vector<Int>>
+value = Vector.get(grid, 42)       // Option<Int>
 ```
 
 ## Auto-memoization

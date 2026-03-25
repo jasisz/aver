@@ -9,6 +9,7 @@ type Val
     ValStr(String)
     ValBool(Bool)
     ValList(List<Val>)
+    ValVector(Vector<Val>)
     ValOk(Val)
     ValErr(Val)
     ValSome(Val)
@@ -39,6 +40,7 @@ fn valRepr(v: Val) -> String
         Val.ValStr(s) -> s
         Val.ValBool(b) -> String.fromBool(b)
         Val.ValList(items) -> valListRepr(items, "", true)
+        Val.ValVector(vec) -> "Vector" + valListRepr(Vector.toList(vec), "", true)
         Val.ValOk(inner) -> "Result.Ok({valRepr(inner)})"
         Val.ValErr(inner) -> "Result.Err({valRepr(inner)})"
         Val.ValTuple(items) -> "({valFieldsRepr(items, "", true)})"
