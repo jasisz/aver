@@ -94,8 +94,12 @@ fn evalExpr(expr: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Val, Stri
         Expr.ExprBoolBranch(cond, thenExpr, elseExpr) -> evalBoolBranch(cond, thenExpr, elseExpr, env, fns)
         Expr.ExprVar(name) -> evalVar(name, env)
         Expr.ExprSlot(_) -> Result.Err("ExprSlot in map-based eval path")
+        Expr.ExprBinopSlotInt(_, _, _) -> Result.Err("ExprBinopSlotInt in map-based eval path")
+        Expr.ExprBinopSlots(_, _, _) -> Result.Err("ExprBinopSlots in map-based eval path")
         Expr.ExprCmpSlotInt(_, _, _) -> Result.Err("ExprCmpSlotInt in map-based eval path")
         Expr.ExprCmpSlots(_, _, _) -> Result.Err("ExprCmpSlots in map-based eval path")
+        Expr.ExprVectorGetOrInt(vecExpr, idxExpr, defaultValue) -> evalVectorGetOrIntExpr(vecExpr, idxExpr, defaultValue, env, fns)
+        Expr.ExprIntModOrInt(a, b, defaultValue) -> evalIntModOrIntExpr(a, b, defaultValue, env, fns)
         Expr.ExprAdd(a, b) -> evalBinop(a, b, env, fns, BinOp.OpAdd)
         Expr.ExprSub(a, b) -> evalBinop(a, b, env, fns, BinOp.OpSub)
         Expr.ExprMul(a, b) -> evalBinop(a, b, env, fns, BinOp.OpMul)
@@ -138,6 +142,20 @@ fn evalBoolBranch(cond: Expr, thenExpr: Expr, elseExpr: Expr, env: Map<String, V
             true -> evalExpr(thenExpr, env, fns)
             false -> evalExpr(elseExpr, env, fns)
         _ -> Result.Err("bool branch condition must evaluate to Bool")
+
+fn evalVectorGetOrIntExpr(vecExpr: Expr, idxExpr: Expr, defaultValue: Int, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
+    ? "Evaluate a fused Vector.get + Option.withDefault in map path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    vecV = evalExpr(vecExpr, env, fns)?
+    idxV = evalExpr(idxExpr, env, fns)?
+    evalVectorGetOrIntVals(vecV, idxV, defaultValue)
+
+fn evalIntModOrIntExpr(a: Expr, b: Expr, defaultValue: Int, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
+    ? "Evaluate a fused Int.mod + Result.withDefault in map path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    aV = evalExpr(a, env, fns)?
+    bV = evalExpr(b, env, fns)?
+    evalIntModOrIntVals(aV, bV, defaultValue)
 
 fn evalVarFallback(name: String) -> Result<Val, String>
     ? "If variable not in env, try as nullary variant (e.g. Token.TkPlus)."
@@ -892,8 +910,12 @@ fn evalExprSlot(expr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: Fn
         Expr.ExprBool(b) -> Result.Ok(Val.ValBool(b))
         Expr.ExprBoolBranch(cond, thenExpr, elseExpr) -> evalBoolBranchSlot(cond, thenExpr, elseExpr, env, slotMap, fns)
         Expr.ExprVar(name) -> evalVarSlot(name)
+        Expr.ExprBinopSlotInt(op, slot, rhs) -> evalBinopSlotInt(op, slot, rhs, env)
+        Expr.ExprBinopSlots(op, lhs, rhs) -> evalBinopSlots(op, lhs, rhs, env)
         Expr.ExprCmpSlotInt(op, slot, rhs) -> evalCmpSlotInt(op, slot, rhs, env)
         Expr.ExprCmpSlots(op, lhs, rhs) -> evalCmpSlots(op, lhs, rhs, env)
+        Expr.ExprVectorGetOrInt(vecExpr, idxExpr, defaultValue) -> evalVectorGetOrIntExprSlot(vecExpr, idxExpr, defaultValue, env, slotMap, fns)
+        Expr.ExprIntModOrInt(a, b, defaultValue) -> evalIntModOrIntExprSlot(a, b, defaultValue, env, slotMap, fns)
         Expr.ExprAdd(a, b) -> evalBinopSlot(a, b, env, slotMap, fns, BinOp.OpAdd)
         Expr.ExprSub(a, b) -> evalBinopSlot(a, b, env, slotMap, fns, BinOp.OpSub)
         Expr.ExprMul(a, b) -> evalBinopSlot(a, b, env, slotMap, fns, BinOp.OpMul)
@@ -931,6 +953,17 @@ fn evalBoolBranchSlot(cond: Expr, thenExpr: Expr, elseExpr: Expr, env: Vector<Va
             false -> evalExprSlot(elseExpr, env, slotMap, fns)
         _ -> Result.Err("bool branch condition must evaluate to Bool")
 
+fn evalBinopSlotInt(op: BinOp, slot: Int, rhs: Int, env: Vector<Val>) -> Result<Val, String>
+    ? "Evaluate a specialized slot-vs-int arithmetic expression."
+    left = lookupSlot(env, slot)?
+    evalBinopVals(left, Val.ValInt(rhs), op)
+
+fn evalBinopSlots(op: BinOp, lhs: Int, rhs: Int, env: Vector<Val>) -> Result<Val, String>
+    ? "Evaluate a specialized slot-vs-slot arithmetic expression."
+    left = lookupSlot(env, lhs)?
+    right = lookupSlot(env, rhs)?
+    evalBinopVals(left, right, op)
+
 fn evalCmpSlotInt(op: CmpOp, slot: Int, rhs: Int, env: Vector<Val>) -> Result<Val, String>
     ? "Evaluate a specialized slot-vs-int comparison."
     left = lookupSlot(env, slot)?
@@ -941,6 +974,38 @@ fn evalCmpSlots(op: CmpOp, lhs: Int, rhs: Int, env: Vector<Val>) -> Result<Val, 
     left = lookupSlot(env, lhs)?
     right = lookupSlot(env, rhs)?
     evalCmpVals(left, right, op)
+
+fn evalVectorGetOrIntExprSlot(vecExpr: Expr, idxExpr: Expr, defaultValue: Int, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
+    ? "Evaluate a fused Vector.get + Option.withDefault in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    vecV = evalExprSlot(vecExpr, env, slotMap, fns)?
+    idxV = evalExprSlot(idxExpr, env, slotMap, fns)?
+    evalVectorGetOrIntVals(vecV, idxV, defaultValue)
+
+fn evalIntModOrIntExprSlot(a: Expr, b: Expr, defaultValue: Int, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
+    ? "Evaluate a fused Int.mod + Result.withDefault in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    aV = evalExprSlot(a, env, slotMap, fns)?
+    bV = evalExprSlot(b, env, slotMap, fns)?
+    evalIntModOrIntVals(aV, bV, defaultValue)
+
+fn evalVectorGetOrIntVals(vecV: Val, idxV: Val, defaultValue: Int) -> Result<Val, String>
+    ? "Read a vector cell and return an integer fallback when the index misses."
+    match evalVectorGetMaybeDefault(vecV, idxV)
+        Result.Ok(maybeV) -> match maybeV
+            Option.Some(v) -> Result.Ok(v)
+            Option.None -> Result.Ok(Val.ValInt(defaultValue))
+        Result.Err(err) -> Result.Err(err)
+
+fn evalIntModOrIntVals(aV: Val, bV: Val, defaultValue: Int) -> Result<Val, String>
+    ? "Apply Int.mod and return an integer fallback when the result would be Err."
+    match aV
+        Val.ValInt(a) -> match bV
+            Val.ValInt(b) -> match b == 0
+                true -> Result.Ok(Val.ValInt(defaultValue))
+                false -> Result.Ok(Val.ValInt(Result.withDefault(Int.mod(a, b), defaultValue)))
+            _ -> Result.Err("expected int argument")
+        _ -> Result.Err("expected int argument")
 
 fn evalBinopSlot(a: Expr, b: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore, op: BinOp) -> Result<Val, String>
     ? "Binary op in slot path."
