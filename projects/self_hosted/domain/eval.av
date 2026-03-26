@@ -78,7 +78,7 @@ fn evalExpr(expr: Expr, env: Map<String, Val>, fns: Map<String, FnDef>) -> Resul
         Expr.ExprFieldAccess(obj, field) -> evalFieldAccess(obj, field, env, fns)
         Expr.ExprCall(name, argExprs) -> evalCall(name, argExprs, env, fns)
         Expr.ExprCallDirect(fd, argExprs) -> evalCallDirect(fd, argExprs, env, fns)
-        Expr.ExprCallBuiltin(name, argExprs) -> evalCallBuiltin(name, argExprs, env, fns)
+        Expr.ExprCallBuiltin(name, argExprs) -> evalCallBuiltinMaybeSpecial(name, argExprs, env, fns)
         Expr.ExprMatch(scrutinee, arms) -> evalMatchExpr(scrutinee, arms, env, fns)
         Expr.ExprPropagate(inner) -> evalPropagate(inner, env, fns)
 
@@ -496,9 +496,21 @@ fn evalCall(name: String, argExprs: List<Expr>, env: Map<String, Val>, fns: Map<
 fn evalCallDirect(fd: FnDef, argExprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Call a pre-resolved function directly, skipping name lookup."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
-    match evalArgs(argExprs, env, fns)
-        Result.Err(e) -> Result.Err(e)
-        Result.Ok(args) -> callResolved(fd, args, fns)
+    match fd.slotCount > 0
+        true -> evalCallDirectMapToSlot(fd, argExprs, env, fns)
+        false -> evalCallDirectMapToNamed(fd, argExprs, env, fns)
+
+fn evalCallDirectMapToSlot(fd: FnDef, argExprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Call resolved function by evaluating args directly into the callee slot env."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    calleeEnv = evalArgsMapToSlotEnv(argExprs, env, fns, Vector.new(fd.slotCount, Val.ValUnit), 0)?
+    evalStmtsSlot(fd.body, calleeEnv, fd.slotMap, fns)
+
+fn evalCallDirectMapToNamed(fd: FnDef, argExprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Call resolved function by evaluating args directly into the callee named env."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    calleeEnv = evalArgsMapToNamedEnv(argExprs, fd.params, env, fns, Map.empty())?
+    evalStmts(fd.body, calleeEnv, fns)
 
 fn evalCallBuiltin(name: String, argExprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Call a builtin directly, skipping fns lookup."
@@ -506,6 +518,85 @@ fn evalCallBuiltin(name: String, argExprs: List<Expr>, env: Map<String, Val>, fn
     match evalArgs(argExprs, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(args) -> Domain.Builtins.callBuiltin(name, args)
+
+fn evalCallBuiltinMaybeSpecial(name: String, argExprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Builtin dispatch with fast-path peepholes for hot patterns."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match name
+        "Option.withDefault" -> evalOptionWithDefaultExpr(argExprs, env, fns)
+        _ -> evalCallBuiltin(name, argExprs, env, fns)
+
+fn evalOptionWithDefaultExpr(argExprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Specialize hot Option.withDefault(Vector.get/Vector.set, default) patterns in map path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match argExprs
+        [optionExpr, ..rest] -> match rest
+            [defaultExpr, ..ignored] -> evalOptionWithDefaultExprInner(optionExpr, defaultExpr, env, fns)
+            _ -> evalCallBuiltin("Option.withDefault", argExprs, env, fns)
+        _ -> evalCallBuiltin("Option.withDefault", argExprs, env, fns)
+
+fn evalOptionWithDefaultExprInner(optionExpr: Expr, defaultExpr: Expr, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Dispatch specialized Option.withDefault cases in map path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match optionExpr
+        Expr.ExprCallBuiltin(name, vecArgs) -> match name
+            "Vector.set" -> evalVectorSetWithDefaultExpr(vecArgs, defaultExpr, env, fns)
+            "Vector.get" -> evalVectorGetWithDefaultExpr(vecArgs, defaultExpr, env, fns)
+            _ -> evalCallBuiltin("Option.withDefault", [optionExpr, defaultExpr], env, fns)
+        _ -> evalCallBuiltin("Option.withDefault", [optionExpr, defaultExpr], env, fns)
+
+fn evalVectorSetWithDefaultExpr(vecArgs: List<Expr>, defaultExpr: Expr, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Specialized Vector.set + Option.withDefault in map path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match vecArgs
+        [vecExpr, ..r1] -> match r1
+            [idxExpr, ..r2] -> match r2
+                [valueExpr, ..ignored] -> evalVectorSetWithDefaultExprValues(vecExpr, idxExpr, valueExpr, defaultExpr, env, fns)
+                _ -> evalCallBuiltin("Option.withDefault", [Expr.ExprCallBuiltin("Vector.set", vecArgs), defaultExpr], env, fns)
+            _ -> evalCallBuiltin("Option.withDefault", [Expr.ExprCallBuiltin("Vector.set", vecArgs), defaultExpr], env, fns)
+        _ -> evalCallBuiltin("Option.withDefault", [Expr.ExprCallBuiltin("Vector.set", vecArgs), defaultExpr], env, fns)
+
+fn evalVectorSetWithDefaultExprValues(vecExpr: Expr, idxExpr: Expr, valueExpr: Expr, defaultExpr: Expr, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Evaluate Vector.set operands in map path and defer the default expression until needed."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    vecV = evalExpr(vecExpr, env, fns)?
+    idxV = evalExpr(idxExpr, env, fns)?
+    valueV = evalExpr(valueExpr, env, fns)?
+    evalVectorSetWithDefaultExprResult(vecV, idxV, valueV, defaultExpr, env, fns)
+
+fn evalVectorSetWithDefaultExprResult(vecV: Val, idxV: Val, valueV: Val, defaultExpr: Expr, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Finish specialized Vector.set + Option.withDefault in map path with lazy default evaluation."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match evalVectorSetMaybeDefault(vecV, idxV, valueV)
+        Result.Ok(maybeV) -> match maybeV
+            Option.Some(v) -> Result.Ok(v)
+            Option.None -> evalExpr(defaultExpr, env, fns)
+        Result.Err(err) -> Result.Err(err)
+
+fn evalVectorGetWithDefaultExpr(vecArgs: List<Expr>, defaultExpr: Expr, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Specialized Vector.get + Option.withDefault in map path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match vecArgs
+        [vecExpr, ..r1] -> match r1
+            [idxExpr, ..ignored] -> evalVectorGetWithDefaultExprValues(vecExpr, idxExpr, defaultExpr, env, fns)
+            _ -> evalCallBuiltin("Option.withDefault", [Expr.ExprCallBuiltin("Vector.get", vecArgs), defaultExpr], env, fns)
+        _ -> evalCallBuiltin("Option.withDefault", [Expr.ExprCallBuiltin("Vector.get", vecArgs), defaultExpr], env, fns)
+
+fn evalVectorGetWithDefaultExprValues(vecExpr: Expr, idxExpr: Expr, defaultExpr: Expr, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Evaluate Vector.get operands in map path and defer the default expression until needed."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    vecV = evalExpr(vecExpr, env, fns)?
+    idxV = evalExpr(idxExpr, env, fns)?
+    evalVectorGetWithDefaultExprResult(vecV, idxV, defaultExpr, env, fns)
+
+fn evalVectorGetWithDefaultExprResult(vecV: Val, idxV: Val, defaultExpr: Expr, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Finish specialized Vector.get + Option.withDefault in map path with lazy default evaluation."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match evalVectorGetMaybeDefault(vecV, idxV)
+        Result.Ok(maybeV) -> match maybeV
+            Option.Some(v) -> Result.Ok(v)
+            Option.None -> evalExpr(defaultExpr, env, fns)
+        Result.Err(err) -> Result.Err(err)
 
 fn evalMatch(v: Val, arms: List<MatchArm>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Try each match arm until one matches. Self-recursive for codegen TCO."
@@ -633,7 +724,7 @@ fn evalExprSlot(expr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: Ma
         Expr.ExprFieldAccess(obj, field) -> evalFieldAccessSlot(obj, field, env, slotMap, fns)
         Expr.ExprCall(name, argExprs) -> evalCallSlot(name, argExprs, env, slotMap, fns)
         Expr.ExprCallDirect(fd, argExprs) -> evalCallDirectSlot(fd, argExprs, env, slotMap, fns)
-        Expr.ExprCallBuiltin(name, argExprs) -> evalCallBuiltinSlot(name, argExprs, env, slotMap, fns)
+        Expr.ExprCallBuiltin(name, argExprs) -> evalCallBuiltinSlotMaybeSpecial(name, argExprs, env, slotMap, fns)
         Expr.ExprMatch(scrutinee, arms) -> evalMatchExprSlot(scrutinee, arms, env, slotMap, fns)
         Expr.ExprPropagate(inner) -> evalPropagateSlot(inner, env, slotMap, fns)
 
@@ -686,13 +777,16 @@ fn evalListSlot(exprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, 
 fn evalListItemsSlot(exprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<List<Val>, String>
     ? "Evaluate list of expressions in slot path."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    evalListItemsSlotRev(exprs, env, slotMap, fns, [])
+
+fn evalListItemsSlotRev(exprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>, acc: List<Val>) -> Result<List<Val>, String>
+    ? "Tail-recursive worker for evalListItemsSlot. Accumulates in reverse."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     match exprs
-        [] -> Result.Ok([])
+        [] -> Result.Ok(List.reverse(acc))
         [e, ..rest] -> match evalExprSlot(e, env, slotMap, fns)
             Result.Err(err) -> Result.Err(err)
-            Result.Ok(v) -> match evalListItemsSlot(rest, env, slotMap, fns)
-                Result.Err(err) -> Result.Err(err)
-                Result.Ok(vs) -> Result.Ok(List.prepend(v, vs))
+            Result.Ok(v) -> evalListItemsSlotRev(rest, env, slotMap, fns, List.prepend(v, acc))
 
 fn evalRecordSlot(name: String, fieldExprs: List<(String, Expr)>, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Record constructor in slot path."
@@ -732,14 +826,34 @@ fn evalCallSlot(name: String, argExprs: List<Expr>, env: Vector<Val>, slotMap: M
 fn evalCallDirectSlot(fd: FnDef, argExprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Call a pre-resolved function directly (slot-based path)."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
-    args = evalArgsSlot(argExprs, env, slotMap, fns)?
-    callResolved(fd, args, fns)
+    match fd.slotCount > 0
+        true -> evalCallDirectSlotToSlot(fd, argExprs, env, slotMap, fns)
+        false -> evalCallDirectSlotToNamed(fd, argExprs, env, slotMap, fns)
+
+fn evalCallDirectSlotToSlot(fd: FnDef, argExprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Call resolved function by evaluating args directly into a callee slot env from slot caller state."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    calleeEnv = evalArgsSlotToSlotEnv(argExprs, env, slotMap, fns, Vector.new(fd.slotCount, Val.ValUnit), 0)?
+    evalStmtsSlot(fd.body, calleeEnv, fd.slotMap, fns)
+
+fn evalCallDirectSlotToNamed(fd: FnDef, argExprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Call resolved function by evaluating args directly into a named env from slot caller state."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    calleeEnv = evalArgsSlotToNamedEnv(argExprs, fd.params, env, slotMap, fns, Map.empty())?
+    evalStmts(fd.body, calleeEnv, fns)
 
 fn evalCallBuiltinSlot(name: String, argExprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Call a builtin directly, skipping fns lookup (slot-based path)."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     args = evalArgsSlot(argExprs, env, slotMap, fns)?
     Domain.Builtins.callBuiltin(name, args)
+
+fn evalCallBuiltinSlotMaybeSpecial(name: String, argExprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Builtin dispatch with fast-path peepholes for hot patterns in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match name
+        "Option.withDefault" -> evalOptionWithDefaultExprSlot(argExprs, env, slotMap, fns)
+        _ -> evalCallBuiltinSlot(name, argExprs, env, slotMap, fns)
 
 fn evalArgsSlot(exprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<List<Val>, String>
     ? "Evaluate argument expressions in slot path."
@@ -754,6 +868,150 @@ fn evalArgsSlotRev(exprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int
         [e, ..rest] -> match evalExprSlot(e, env, slotMap, fns)
             Result.Err(err) -> Result.Err(err)
             Result.Ok(v) -> evalArgsSlotRev(rest, env, slotMap, fns, List.prepend(v, acc))
+
+fn evalOptionWithDefaultExprSlot(argExprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Specialize hot Option.withDefault(Vector.get/Vector.set, default) patterns in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match argExprs
+        [optionExpr, ..rest] -> match rest
+            [defaultExpr, ..ignored] -> evalOptionWithDefaultExprSlotInner(optionExpr, defaultExpr, env, slotMap, fns)
+            _ -> evalCallBuiltinSlot("Option.withDefault", argExprs, env, slotMap, fns)
+        _ -> evalCallBuiltinSlot("Option.withDefault", argExprs, env, slotMap, fns)
+
+fn evalOptionWithDefaultExprSlotInner(optionExpr: Expr, defaultExpr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Dispatch specialized Option.withDefault cases in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match optionExpr
+        Expr.ExprCallBuiltin(name, vecArgs) -> match name
+            "Vector.set" -> evalVectorSetWithDefaultExprSlot(vecArgs, defaultExpr, env, slotMap, fns)
+            "Vector.get" -> evalVectorGetWithDefaultExprSlot(vecArgs, defaultExpr, env, slotMap, fns)
+            _ -> evalCallBuiltinSlot("Option.withDefault", [optionExpr, defaultExpr], env, slotMap, fns)
+        _ -> evalCallBuiltinSlot("Option.withDefault", [optionExpr, defaultExpr], env, slotMap, fns)
+
+fn evalVectorSetWithDefaultExprSlot(vecArgs: List<Expr>, defaultExpr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Specialized Vector.set + Option.withDefault in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match vecArgs
+        [vecExpr, ..r1] -> match r1
+            [idxExpr, ..r2] -> match r2
+                [valueExpr, ..ignored] -> evalVectorSetWithDefaultExprSlotValues(vecExpr, idxExpr, valueExpr, defaultExpr, env, slotMap, fns)
+                _ -> evalCallBuiltinSlot("Option.withDefault", [Expr.ExprCallBuiltin("Vector.set", vecArgs), defaultExpr], env, slotMap, fns)
+            _ -> evalCallBuiltinSlot("Option.withDefault", [Expr.ExprCallBuiltin("Vector.set", vecArgs), defaultExpr], env, slotMap, fns)
+        _ -> evalCallBuiltinSlot("Option.withDefault", [Expr.ExprCallBuiltin("Vector.set", vecArgs), defaultExpr], env, slotMap, fns)
+
+fn evalVectorSetWithDefaultExprSlotValues(vecExpr: Expr, idxExpr: Expr, valueExpr: Expr, defaultExpr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Evaluate Vector.set operands in slot path and defer the default expression until needed."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    vecV = evalExprSlot(vecExpr, env, slotMap, fns)?
+    idxV = evalExprSlot(idxExpr, env, slotMap, fns)?
+    valueV = evalExprSlot(valueExpr, env, slotMap, fns)?
+    evalVectorSetWithDefaultExprSlotResult(vecV, idxV, valueV, defaultExpr, env, slotMap, fns)
+
+fn evalVectorSetWithDefaultExprSlotResult(vecV: Val, idxV: Val, valueV: Val, defaultExpr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Finish specialized Vector.set + Option.withDefault in slot path with lazy default evaluation."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match evalVectorSetMaybeDefault(vecV, idxV, valueV)
+        Result.Ok(maybeV) -> match maybeV
+            Option.Some(v) -> Result.Ok(v)
+            Option.None -> evalExprSlot(defaultExpr, env, slotMap, fns)
+        Result.Err(err) -> Result.Err(err)
+
+fn evalVectorGetWithDefaultExprSlot(vecArgs: List<Expr>, defaultExpr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Specialized Vector.get + Option.withDefault in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match vecArgs
+        [vecExpr, ..r1] -> match r1
+            [idxExpr, ..ignored] -> evalVectorGetWithDefaultExprSlotValues(vecExpr, idxExpr, defaultExpr, env, slotMap, fns)
+            _ -> evalCallBuiltinSlot("Option.withDefault", [Expr.ExprCallBuiltin("Vector.get", vecArgs), defaultExpr], env, slotMap, fns)
+        _ -> evalCallBuiltinSlot("Option.withDefault", [Expr.ExprCallBuiltin("Vector.get", vecArgs), defaultExpr], env, slotMap, fns)
+
+fn evalVectorGetWithDefaultExprSlotValues(vecExpr: Expr, idxExpr: Expr, defaultExpr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Evaluate Vector.get operands in slot path and defer the default expression until needed."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    vecV = evalExprSlot(vecExpr, env, slotMap, fns)?
+    idxV = evalExprSlot(idxExpr, env, slotMap, fns)?
+    evalVectorGetWithDefaultExprSlotResult(vecV, idxV, defaultExpr, env, slotMap, fns)
+
+fn evalVectorGetWithDefaultExprSlotResult(vecV: Val, idxV: Val, defaultExpr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Finish specialized Vector.get + Option.withDefault in slot path with lazy default evaluation."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match evalVectorGetMaybeDefault(vecV, idxV)
+        Result.Ok(maybeV) -> match maybeV
+            Option.Some(v) -> Result.Ok(v)
+            Option.None -> evalExprSlot(defaultExpr, env, slotMap, fns)
+        Result.Err(err) -> Result.Err(err)
+
+fn evalVectorSetMaybeDefault(vecV: Val, idxV: Val, valueV: Val) -> Result<Option<Val>, String>
+    ? "Apply Vector.set and return None when the caller should fall back to its default expression."
+    match vecV
+        Val.ValVector(vec) -> match idxV
+            Val.ValInt(idx) -> match idx < 0
+                true -> Result.Ok(Option.None)
+                false -> match idx < Vector.len(vec)
+                    true -> Result.Ok(Option.Some(Val.ValVector(Option.withDefault(Vector.set(vec, idx, valueV), vec))))
+                    false -> Result.Ok(Option.None)
+            _ -> Result.Err("Vector.set: second arg must be Int")
+        _ -> Result.Err("Vector.set: first arg must be Vector")
+
+fn evalVectorGetMaybeDefault(vecV: Val, idxV: Val) -> Result<Option<Val>, String>
+    ? "Apply Vector.get and return None when the caller should fall back to its default expression."
+    match vecV
+        Val.ValVector(vec) -> match idxV
+            Val.ValInt(idx) -> match Vector.get(vec, idx)
+                Option.Some(v) -> Result.Ok(Option.Some(v))
+                Option.None -> Result.Ok(Option.None)
+            _ -> Result.Err("Vector.get: expected (Vector, Int)")
+        _ -> Result.Err("Vector.get: expected (Vector, Int)")
+
+fn evalArgsMapToSlotEnv(exprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>, acc: Vector<Val>, idx: Int) -> Result<Vector<Val>, String>
+    ? "Evaluate arg expressions directly into a callee slot env from map caller state."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match exprs
+        [] -> Result.Ok(acc)
+        [e, ..rest] -> match evalExpr(e, env, fns)
+            Result.Err(err) -> Result.Err(err)
+            Result.Ok(v) -> evalArgsMapToSlotEnv(rest, env, fns, setSlot(acc, idx, v), idx + 1)
+
+fn evalArgsMapToNamedEnv(exprs: List<Expr>, params: List<String>, env: Map<String, Val>, fns: Map<String, FnDef>, acc: Map<String, Val>) -> Result<Map<String, Val>, String>
+    ? "Evaluate arg expressions directly into a callee named env from map caller state."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match exprs
+        [] -> Result.Ok(acc)
+        [e, ..restExprs] -> match evalExpr(e, env, fns)
+            Result.Err(err) -> Result.Err(err)
+            Result.Ok(v) -> evalArgsMapToNamedEnvBind(restExprs, params, env, fns, acc, v)
+
+fn evalArgsMapToNamedEnvBind(restExprs: List<Expr>, params: List<String>, env: Map<String, Val>, fns: Map<String, FnDef>, acc: Map<String, Val>, v: Val) -> Result<Map<String, Val>, String>
+    ? "Bind one evaluated arg into the callee named env when a parameter exists."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match params
+        [param, ..restParams] -> evalArgsMapToNamedEnv(restExprs, restParams, env, fns, Map.set(acc, param, v))
+        [] -> evalArgsMapToNamedEnv(restExprs, [], env, fns, acc)
+
+fn evalArgsSlotToSlotEnv(exprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>, acc: Vector<Val>, idx: Int) -> Result<Vector<Val>, String>
+    ? "Evaluate arg expressions directly into a callee slot env from slot caller state."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match exprs
+        [] -> Result.Ok(acc)
+        [e, ..rest] -> match evalExprSlot(e, env, slotMap, fns)
+            Result.Err(err) -> Result.Err(err)
+            Result.Ok(v) -> evalArgsSlotToSlotEnv(rest, env, slotMap, fns, setSlot(acc, idx, v), idx + 1)
+
+fn evalArgsSlotToNamedEnv(exprs: List<Expr>, params: List<String>, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>, acc: Map<String, Val>) -> Result<Map<String, Val>, String>
+    ? "Evaluate arg expressions directly into a callee named env from slot caller state."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match exprs
+        [] -> Result.Ok(acc)
+        [e, ..restExprs] -> match evalExprSlot(e, env, slotMap, fns)
+            Result.Err(err) -> Result.Err(err)
+            Result.Ok(v) -> evalArgsSlotToNamedEnvBind(restExprs, params, env, slotMap, fns, acc, v)
+
+fn evalArgsSlotToNamedEnvBind(restExprs: List<Expr>, params: List<String>, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>, acc: Map<String, Val>, v: Val) -> Result<Map<String, Val>, String>
+    ? "Bind one evaluated arg into the callee named env when a parameter exists."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match params
+        [param, ..restParams] -> evalArgsSlotToNamedEnv(restExprs, restParams, env, slotMap, fns, Map.set(acc, param, v))
+        [] -> evalArgsSlotToNamedEnv(restExprs, [], env, slotMap, fns, acc)
 
 verify evalArgsSlot
     evalArgsSlot([Expr.ExprInt(1), Expr.ExprInt(2)], Vector.new(0, Val.ValUnit), Map.empty(), Map.empty()) => Result.Ok([Val.ValInt(1), Val.ValInt(2)])

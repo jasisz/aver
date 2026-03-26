@@ -8,9 +8,36 @@ module Builtins
 fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch qualified builtin calls to sub-module implementations."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
-    match String.startsWith(name, "List.")
-        true -> Domain.Builtins.List.call(name, args)
-        false -> callBuiltinAfterList(name, args)
+    match callBuiltinFast(name, args)
+        Option.Some(result) -> result
+        Option.None -> match String.startsWith(name, "List.")
+            true -> Domain.Builtins.List.call(name, args)
+            false -> callBuiltinAfterList(name, args)
+
+fn callBuiltinFast(name: String, args: List<Val>) -> Option<Result<Val, String>>
+    ? "Fast exact-match dispatch for the hottest builtins."
+    match name
+        "Map.empty" -> Option.Some(builtinMapEmpty(args))
+        "Map.set" -> Option.Some(builtinMapSet(args))
+        "Map.get" -> Option.Some(builtinMapGet(args))
+        "Map.has" -> Option.Some(builtinMapHas(args))
+        "Map.fromList" -> Option.Some(builtinMapFromList(args))
+        "Map.entries" -> Option.Some(builtinMapEntries(args))
+        "Map.remove" -> Option.Some(builtinMapRemove(args))
+        "Vector.new" -> Option.Some(Domain.Builtins.Vector.call(name, args))
+        "Vector.get" -> Option.Some(Domain.Builtins.Vector.call(name, args))
+        "Vector.set" -> Option.Some(Domain.Builtins.Vector.call(name, args))
+        "Vector.len" -> Option.Some(Domain.Builtins.Vector.call(name, args))
+        "Vector.fromList" -> Option.Some(Domain.Builtins.Vector.call(name, args))
+        "Vector.toList" -> Option.Some(Domain.Builtins.Vector.call(name, args))
+        "Option.None" -> Option.Some(Result.Ok(Val.ValNone))
+        "Option.Some" -> Option.Some(Domain.Builtins.Wrappers.call(name, args))
+        "Option.withDefault" -> Option.Some(Domain.Builtins.Wrappers.call(name, args))
+        "Result.Ok" -> Option.Some(Domain.Builtins.Wrappers.call(name, args))
+        "Result.Err" -> Option.Some(Domain.Builtins.Wrappers.call(name, args))
+        "Result.withDefault" -> Option.Some(Domain.Builtins.Wrappers.call(name, args))
+        "Int.toString" -> Option.Some(Domain.Builtins.Primitives.callInt(name, args))
+        _ -> Option.None
 
 fn callBuiltinAfterList(name: String, args: List<Val>) -> Result<Val, String>
     ? "Continue dispatch after List."
@@ -173,7 +200,7 @@ fn tuplesToMapOne(parts: List<Val>, rest: List<Val>, acc: Map<String, Val>) -> M
     ? "Extract key-value from tuple parts."
     match parts
         [kV, ..tail] -> match tail
-            [vV, ..ignored] -> tuplesToMap(rest, Map.set(acc, Domain.Value.valRepr(kV), vV))
+            [vV, ..ignored] -> tuplesToMap(rest, Map.set(acc, Domain.Value.mapKeyRepr(kV), vV))
             [] -> tuplesToMap(rest, acc)
         [] -> tuplesToMap(rest, acc)
 
@@ -193,7 +220,7 @@ fn builtinMapRemove(args: List<Val>) -> Result<Val, String>
 fn builtinMapRemoveInner(mapV: Val, keyV: Val) -> Result<Val, String>
     ? "Inner Map.remove."
     match mapV
-        Val.ValMap(m) -> Result.Ok(Val.ValMap(Map.remove(m, Domain.Value.valRepr(keyV))))
+        Val.ValMap(m) -> Result.Ok(Val.ValMap(Map.remove(m, Domain.Value.mapKeyRepr(keyV))))
         _ -> Result.Err("Map.remove requires a Map")
 
 fn callBuiltinServices(name: String, args: List<Val>) -> Result<Val, String>
@@ -522,24 +549,18 @@ fn builtinMapEmpty(args: List<Val>) -> Result<Val, String>
 
 fn builtinMapSet(args: List<Val>) -> Result<Val, String>
     ? "Map.set(map, key, value) -> updated map."
-    match List.len(args) == 3
-        true -> builtinMapSetExtract(args)
-        false -> Result.Err("Map.set takes 3 arguments")
-
-fn builtinMapSetExtract(args: List<Val>) -> Result<Val, String>
-    ? "Extract 3 args for Map.set."
     match args
         [mapV, ..r1] -> match r1
             [keyV, ..r2] -> match r2
                 [valV, ..r3] -> builtinMapSetInner(mapV, keyV, valV)
-                [] -> Result.Err("Map.set takes 3 arguments")
-            [] -> Result.Err("Map.set takes 3 arguments")
-        [] -> Result.Err("Map.set takes 3 arguments")
+                _ -> Result.Err("Map.set takes 3 arguments")
+            _ -> Result.Err("Map.set takes 3 arguments")
+        _ -> Result.Err("Map.set takes 3 arguments")
 
 fn builtinMapSetInner(mapV: Val, keyV: Val, valV: Val) -> Result<Val, String>
     ? "Set a key in the map. O(1)."
     match mapV
-        Val.ValMap(m) -> Result.Ok(Val.ValMap(Map.set(m, Domain.Value.valRepr(keyV), valV)))
+        Val.ValMap(m) -> Result.Ok(Val.ValMap(Map.set(m, Domain.Value.mapKeyRepr(keyV), valV)))
         _ -> Result.Err("Map.set requires a Map")
 
 fn builtinMapGet(args: List<Val>) -> Result<Val, String>
@@ -551,7 +572,7 @@ fn builtinMapGet(args: List<Val>) -> Result<Val, String>
 fn builtinMapGetInner(mapV: Val, keyV: Val) -> Result<Val, String>
     ? "Look up key in map. O(1)."
     match mapV
-        Val.ValMap(m) -> match Map.get(m, Domain.Value.valRepr(keyV))
+        Val.ValMap(m) -> match Map.get(m, Domain.Value.mapKeyRepr(keyV))
             Option.Some(v) -> Result.Ok(Val.ValSome(v))
             Option.None -> Result.Ok(Val.ValNone)
         _ -> Result.Err("Map.get requires a Map")
@@ -565,7 +586,7 @@ fn builtinMapHas(args: List<Val>) -> Result<Val, String>
 fn builtinMapHasInner(mapV: Val, keyV: Val) -> Result<Val, String>
     ? "Check if key exists in map. O(1)."
     match mapV
-        Val.ValMap(m) -> Result.Ok(Val.ValBool(Map.has(m, Domain.Value.valRepr(keyV))))
+        Val.ValMap(m) -> Result.Ok(Val.ValBool(Map.has(m, Domain.Value.mapKeyRepr(keyV))))
         _ -> Result.Err("Map.has requires a Map")
 
 fn builtinTimeNow(args: List<Val>) -> Result<Val, String>

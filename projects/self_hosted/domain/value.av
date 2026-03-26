@@ -1,7 +1,7 @@
 module Value
     intent =
         "Runtime values for the mini interpreter."
-    exposes [Val, valRepr]
+    exposes [Val, valRepr, mapKeyRepr]
 
 type Val
     ValInt(Int)
@@ -66,6 +66,20 @@ verify valRepr
     valRepr(Val.ValFloat(3.14)) => "3.14"
     valRepr(Val.ValRecord("User", [("name", Val.ValStr("Alice"))])) => "User(...)"
     valRepr(Val.ValVariant("Token", "TkPlus", [])) => "Token.TkPlus"
+
+fn mapKeyRepr(v: Val) -> String
+    ? "Stable repr for map keys. Keeps common scalar keys off the general valRepr path."
+    match v
+        Val.ValInt(n) -> Int.toString(n)
+        Val.ValFloat(f) -> Float.toString(f)
+        Val.ValStr(s) -> s
+        Val.ValBool(b) -> String.fromBool(b)
+        _ -> valRepr(v)
+
+verify mapKeyRepr
+    mapKeyRepr(Val.ValInt(42)) => "42"
+    mapKeyRepr(Val.ValStr("hello")) => "hello"
+    mapKeyRepr(Val.ValBool(true)) => "true"
 
 fn valVariantRepr(typeName: String, ctorName: String, fields: List<Val>) -> String
     ? "Display a variant value."

@@ -68,15 +68,24 @@ fn stepOne(old: Vector<Int>, s: Int, w: Int, h: Int, total: Int, idx: Int, acc: 
                 true -> stepLoop(old, s, w, h, total, idx + 1, List.prepend(0, acc))
                 false -> match col > w
                     true -> stepLoop(old, s, w, h, total, idx + 1, List.prepend(0, acc))
-                    false -> stepInterior(old, s, w, h, total, idx, acc)
+                    false -> stepInteriorInline(old, s, w, h, total, idx, acc)
 
-fn stepInterior(old: Vector<Int>, s: Int, w: Int, h: Int, total: Int, idx: Int, acc: List<Int>) -> List<Int>
-    alive = cellAt(old, idx)
-    n = neighbors(old, s, idx)
-    stepLoop(old, s, w, h, total, idx + 1, List.prepend(evolve(alive, n), acc))
+fn stepInteriorInline(old: Vector<Int>, s: Int, w: Int, h: Int, total: Int, idx: Int, acc: List<Int>) -> List<Int>
+    alive = Option.withDefault(Vector.get(old, idx), 0)
+    n = Option.withDefault(Vector.get(old, idx - s - 1), 0) + Option.withDefault(Vector.get(old, idx - s), 0) + Option.withDefault(Vector.get(old, idx - s + 1), 0) + Option.withDefault(Vector.get(old, idx - 1), 0) + Option.withDefault(Vector.get(old, idx + 1), 0) + Option.withDefault(Vector.get(old, idx + s - 1), 0) + Option.withDefault(Vector.get(old, idx + s), 0) + Option.withDefault(Vector.get(old, idx + s + 1), 0)
+    next = match alive == 1
+        true -> match n == 2
+            true -> 1
+            false -> match n == 3
+                true -> 1
+                false -> 0
+        false -> match n == 3
+            true -> 1
+            false -> 0
+    stepLoop(old, s, w, h, total, idx + 1, List.prepend(next, acc))
 
 fn step(grid: Vector<Int>, s: Int, w: Int, h: Int) -> Vector<Int>
-    ? "Build new grid: prepend cells to List → reverse → fromList (zero-copy)."
+    ? "Build new grid: prepend cells to List -> reverse -> fromList."
     Vector.fromList(List.reverse(stepLoop(grid, s, w, h, s * (h + 2), 0, [])))
 
 // ─── Seed patterns ──────────────────────────────────────────
