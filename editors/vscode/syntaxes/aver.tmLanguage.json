@@ -10,7 +10,6 @@
     { "include": "#function-definition" },
     { "include": "#type-definition" },
     { "include": "#record-definition" },
-    { "include": "#effects-declaration" },
     { "include": "#effect-annotation" },
     { "include": "#description" },
     { "include": "#string" },
@@ -36,14 +35,14 @@
       }
     },
     "type-definition": {
-      "match": "^\\s*(type)\\s+([A-Z][a-zA-Z0-9_]*)\\s*:",
+      "match": "^\\s*(type)\\s+([A-Z][a-zA-Z0-9_]*)",
       "captures": {
         "1": { "name": "keyword.other.type.aver" },
         "2": { "name": "entity.name.type.aver" }
       }
     },
     "record-definition": {
-      "match": "^\\s*(record)\\s+([A-Z][a-zA-Z0-9_]*)\\s*:",
+      "match": "^\\s*(record)\\s+([A-Z][a-zA-Z0-9_]*)",
       "captures": {
         "1": { "name": "keyword.other.record.aver" },
         "2": { "name": "entity.name.type.aver" }
@@ -64,21 +63,14 @@
       }
     },
     "verify": {
-      "match": "^\\s*(verify)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*:",
+      "match": "^\\s*(verify)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
       "captures": {
         "1": { "name": "keyword.other.verify.aver" },
         "2": { "name": "entity.name.function.aver" }
       }
     },
-    "effects-declaration": {
-      "match": "^\\s*(effects)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*=",
-      "captures": {
-        "1": { "name": "keyword.other.effects.aver" },
-        "2": { "name": "entity.name.type.aver" }
-      }
-    },
     "keywords": {
-      "match": "\\b(fn|match|module|depends|exposes|opaque|intent|verify|decision|type|record|effects|date|author|chosen|rejected|impacts|reason|service|needs)\\b",
+      "match": "\\b(fn|match|module|depends|exposes|opaque|intent|verify|decision|type|record|law|given|when|date|author|chosen|rejected|impacts|reason)\\b",
       "name": "keyword.other.aver"
     },
     "effect-annotation": {
@@ -141,7 +133,7 @@
       "name": "support.function.constructor.aver"
     },
     "namespace-access": {
-      "match": "\\b(Int|Float|String|List|Map|Char|Byte|Result|Option|Console|Http|HttpServer|Disk|Tcp)\\.([a-zA-Z_][a-zA-Z0-9_]*)",
+      "match": "\\b(Int|Float|String|Bool|List|Vector|Map|Char|Byte|Result|Option|Args|Console|Http|HttpServer|Disk|Tcp|Time|Env|Random|Terminal)\\.([a-zA-Z_][a-zA-Z0-9_]*)",
       "captures": {
         "1": { "name": "support.class.namespace.aver" },
         "2": { "name": "support.function.member.aver" }
@@ -180,7 +172,7 @@
       ]
     },
     "type-names": {
-      "match": "\\b(Int|Float|String|Bool|Unit|List|Result|Option|Map|Fn)\\b",
+      "match": "\\b(Int|Float|String|Bool|Unit|List|Vector|Result|Option|Map|Fn)\\b",
       "name": "support.type.aver"
     },
     "identifier": {

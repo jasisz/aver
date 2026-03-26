@@ -89,10 +89,9 @@ contexts:
         2: entity.name.function.aver
 
   keywords:
-    # val/var produce parse errors but are reserved words
-    - match: '\b(val|var|type|record|module|effects|depends|exposes|opaque)\b'
+    - match: '\b(type|record|module|depends|exposes|opaque)\b'
       scope: keyword.declaration.aver
-    - match: '\b(match|verify|decision)\b'
+    - match: '\b(fn|match|verify|decision|law|given|when)\b'
       scope: keyword.control.aver
     - match: '^(\s*)(intent|reason|date|chosen|rejected|impacts|author|needs)(:)'
       captures:
@@ -101,7 +100,7 @@ contexts:
 
   namespaces:
     # Namespace.method calls: Console.print, String.len, Char.toCode, etc.
-    - match: '\b(Console|Http|HttpServer|Disk|Tcp|Int|Float|String|List|Map|Char|Byte|Result|Option)(\.)'
+    - match: '\b(Console|Http|HttpServer|Disk|Tcp|Int|Float|String|Bool|List|Vector|Map|Char|Byte|Result|Option|Args|Time|Env|Random|Terminal)(\.)'
       captures:
         1: support.class.namespace.aver
         2: punctuation.accessor.aver
@@ -113,7 +112,7 @@ contexts:
           pop: true
 
   builtin-types:
-    - match: '\b(Int|Float|String|Bool|Unit|Result|Option|List|Map|Fn|HttpResponse|HttpRequest|Header)\b'
+    - match: '\b(Int|Float|String|Bool|Unit|Result|Option|List|Vector|Map|Fn|HttpResponse|HttpRequest|Header)\b'
       scope: support.type.aver
 
   builtin-values:
