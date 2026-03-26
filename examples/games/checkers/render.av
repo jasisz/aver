@@ -22,7 +22,7 @@ fn containsPoint(pts: List<Point>, target: Point, i: Int) -> Bool
     ? "True if target exists in pts"
     match i == List.len(pts)
         true -> false
-        false -> match List.get(pts, i)
+        false -> match Vector.get(Vector.fromList(pts), i)
             Option.Some(p) -> match pointEq(p, target)
                 true -> true
                 false -> containsPoint(pts, target, i + 1)

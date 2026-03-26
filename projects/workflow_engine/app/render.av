@@ -70,7 +70,7 @@ fn renderTaskDetails(details: TaskDetails) -> List<String>
     ], List.concat(renderHistory(details.history), List.concat(renderNotifications(details.notifications), renderAudits(details.audits))))
 
 verify renderTaskDetails
-    List.get(renderTaskDetails(sampleTaskDetails()), 0) => Option.Some("task: t1")
+    Vector.get(Vector.fromList(renderTaskDetails(sampleTaskDetails())), 0) => Option.Some("task: t1")
     List.contains(renderTaskDetails(sampleTaskDetails()), "derived urgent=true overdue=false stalled=false needs_review=false") => true
 
 fn deadlineText(deadline: Option<String>) -> String

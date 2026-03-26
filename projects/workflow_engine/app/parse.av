@@ -67,7 +67,7 @@ verify trimParts
 
 fn firstPart(parts: List<String>) -> Result<String, String>
     ? "Reads the first command field."
-    Option.toResult(List.get(parts, 0), "Command line was empty")
+    Option.toResult(Vector.get(Vector.fromList(parts), 0), "Command line was empty")
 
 verify firstPart
     firstPart(["help"]) => Result.Ok("help")
@@ -75,7 +75,7 @@ verify firstPart
 
 fn field(parts: List<String>, index: Int, label: String) -> Result<String, String>
     ? "Reads one required field."
-    Option.toResult(List.get(parts, index), "Missing field: " + label)
+    Option.toResult(Vector.get(Vector.fromList(parts), index), "Missing field: " + label)
 
 verify field
     field(["a", "b"], 1, "x") => Result.Ok("b")
@@ -83,7 +83,7 @@ verify field
 
 fn optionalField(parts: List<String>, index: Int) -> Option<String>
     ? "Reads an optional field and treats blank or '-' as missing."
-    match List.get(parts, index)
+    match Vector.get(Vector.fromList(parts), index)
         Option.Some(value) -> match blankOrDash(value)
             true -> Option.None
             false -> Option.Some(value)
@@ -152,7 +152,7 @@ fn parseCreateTask(parts: List<String>) -> Result<Input, String>
     taskId = field(parts, 2, "task_id")?
     title = field(parts, 3, "title")?
     priorityRaw = field(parts, 4, "priority")?
-    tagsRaw = Option.withDefault(List.get(parts, 5), "-")
+    tagsRaw = Option.withDefault(Vector.get(Vector.fromList(parts), 5), "-")
     deadline = optionalField(parts, 6)
     priority = parsePriority(priorityRaw)?
     Result.Ok(Input.RunCommand(Command.CreateTask(projectId, taskId, title, priority, parseTags(tagsRaw), deadline)))

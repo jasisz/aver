@@ -17,7 +17,7 @@ verify caveMap
 
 fn neighbors(room: Int) -> List<Int>
     ? "Three adjacent rooms for a given room (1-20)."
-    match List.get(caveMap(), room - 1)
+    match Vector.get(Vector.fromList(caveMap()), room - 1)
         Option.Some(ns) -> ns
         Option.None -> []
 
@@ -88,7 +88,7 @@ fn pickDistinct(n: Int, taken: List<Int>) -> List<Int>
     r = randRoom()
     match containsInt(taken, r)
         true -> pickDistinct(n, taken)
-        false -> distinctRooms(n - 1, List.append(taken, r))
+        false -> distinctRooms(n - 1, List.concat(taken, [r]))
 
 record Game
     player: Int
@@ -107,7 +107,7 @@ type Outcome
 
 fn nthRoom(rooms: List<Int>, index: Int) -> Int
     ? "Extract room at index; crash-safe via Option.withDefault."
-    Option.withDefault(List.get(rooms, index), 1)
+    Option.withDefault(Vector.get(Vector.fromList(rooms), index), 1)
 
 verify nthRoom
     nthRoom([5, 10, 15], 0) => 5

@@ -44,7 +44,7 @@ fn helpLines() -> List<String>
     ]
 
 verify helpLines
-    List.get(helpLines(), 0) => Option.Some("Workflow Engine CLI")
+    Vector.get(Vector.fromList(helpLines()), 0) => Option.Some("Workflow Engine CLI")
     List.contains(helpLines(), "  show_task task_id") => true
 
 fn initCli() -> Result<Unit, String>
@@ -105,7 +105,7 @@ fn errorLines(msg: String) -> List<String>
     List.concat(["ERROR: " + msg, ""], helpLines())
 
 verify errorLines
-    List.get(errorLines("bad"), 0) => Option.Some("ERROR: bad")
+    Vector.get(Vector.fromList(errorLines("bad")), 0) => Option.Some("ERROR: bad")
     List.contains(errorLines("bad"), "Workflow Engine CLI") => true
 
 fn printLines(lines: List<String>) -> Unit

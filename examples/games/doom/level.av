@@ -85,15 +85,15 @@ fn setTile(levelMap: List<String>, x: Int, y: Int, ch: String, row: Int, acc: Li
     ? "Set one tile in the map"
     match row == List.len(levelMap)
         true -> acc
-        false -> match List.get(levelMap, row)
+        false -> match Vector.get(Vector.fromList(levelMap), row)
             Option.Some(r) -> match row == y
-                true -> setTile(levelMap, x, y, ch, row + 1, List.append(acc, setCharAt(r, x, ch, 0, "")))
-                false -> setTile(levelMap, x, y, ch, row + 1, List.append(acc, r))
+                true -> setTile(levelMap, x, y, ch, row + 1, List.concat(acc, [setCharAt(r, x, ch, 0, "")]))
+                false -> setTile(levelMap, x, y, ch, row + 1, List.concat(acc, [r]))
             Option.None -> acc
 
 fn charAt(levelMap: List<String>, x: Int, y: Int) -> String
     ? "Get character at (x, y) in the map"
-    match List.get(levelMap, y)
+    match Vector.get(Vector.fromList(levelMap), y)
         Option.Some(row) -> match String.charAt(row, x)
             Option.Some(ch) -> ch
             Option.None -> "#"
@@ -235,7 +235,7 @@ fn genRooms(seed: Int, n: Int, i: Int, acc: List<Room>) -> List<Room>
     ? "Generate n rooms from seed"
     match i == n
         true -> acc
-        false -> genRooms(Rng.advanceSeed(seed, 5), n, i + 1, List.append(acc, roomFromSeed(Rng.advanceSeed(seed, i))))
+        false -> genRooms(Rng.advanceSeed(seed, 5), n, i + 1, List.concat(acc, [roomFromSeed(Rng.advanceSeed(seed, i))]))
 
 verify genRooms
     List.len(genRooms(42, 6, 0, [])) => 6
@@ -244,7 +244,7 @@ fn carveRooms(levelMap: List<String>, rooms: List<Room>, i: Int) -> List<String>
     ? "Carve all rooms into the map"
     match i == List.len(rooms)
         true -> levelMap
-        false -> match List.get(rooms, i)
+        false -> match Vector.get(Vector.fromList(rooms), i)
             Option.Some(room) -> carveRooms(carveRoom(levelMap, room), rooms, i + 1)
             Option.None -> levelMap
 
@@ -252,7 +252,7 @@ fn markRoomTypes(wallMap: List<String>, rooms: List<Room>, i: Int) -> List<Strin
     ? "Mark wall types for all rooms as Brick"
     match i == List.len(rooms)
         true -> wallMap
-        false -> match List.get(rooms, i)
+        false -> match Vector.get(Vector.fromList(rooms), i)
             Option.Some(room) -> markRoomTypes(markRect(wallMap, room.x, room.y, Int.min(room.x + room.w, mapWidth() - 1), Int.min(room.y + room.h, mapHeight() - 1), "B"), rooms, i + 1)
             Option.None -> wallMap
 
@@ -260,13 +260,13 @@ fn connectAll(levelMap: List<String>, rooms: List<Room>, i: Int) -> List<String>
     ? "Connect consecutive rooms with corridors"
     match i + 1 == List.len(rooms)
         true -> levelMap
-        false -> match List.get(rooms, i)
+        false -> match Vector.get(Vector.fromList(rooms), i)
             Option.Some(r1) -> connectNext(levelMap, rooms, i, r1)
             Option.None -> levelMap
 
 fn connectNext(levelMap: List<String>, rooms: List<Room>, i: Int, r1: Room) -> List<String>
     ? "Connect room i with room i+1"
-    match List.get(rooms, i + 1)
+    match Vector.get(Vector.fromList(rooms), i + 1)
         Option.Some(r2) -> connectAll(connectRooms(levelMap, r1, r2), rooms, i + 1)
         Option.None -> levelMap
 
@@ -274,13 +274,13 @@ fn connectAllWalls(wallMap: List<String>, rooms: List<Room>, i: Int) -> List<Str
     ? "Mark corridor wall types for all connections"
     match i + 1 == List.len(rooms)
         true -> wallMap
-        false -> match List.get(rooms, i)
+        false -> match Vector.get(Vector.fromList(rooms), i)
             Option.Some(r1) -> connectWallsNext(wallMap, rooms, i, r1)
             Option.None -> wallMap
 
 fn connectWallsNext(wallMap: List<String>, rooms: List<Room>, i: Int, r1: Room) -> List<String>
     ? "Mark wall type for corridor between rooms i and i+1"
-    match List.get(rooms, i + 1)
+    match Vector.get(Vector.fromList(rooms), i + 1)
         Option.Some(r2) -> connectAllWalls(connectWalls(wallMap, r1, r2), rooms, i + 1)
         Option.None -> wallMap
 
@@ -304,6 +304,6 @@ fn getRooms(seed: Int) -> List<Room>
 
 fn startPos(seed: Int) -> (Float, Float)
     ? "Player start position: center of first room"
-    match List.get(getRooms(seed), 0)
+    match Vector.get(Vector.fromList(getRooms(seed)), 0)
         Option.Some(room) -> roomCenter(room)
         Option.None -> (16.0, 16.0)

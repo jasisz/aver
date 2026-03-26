@@ -104,25 +104,23 @@ fn renderPieceCell(p: Point, color: String) -> Unit
     drawAt(p.x + 1, p.y + 1, "██")
     Terminal.resetColor()
 
-fn renderPieceCells(points: List<Point>, color: String, i: Int) -> Unit
+fn renderPieceCells(points: List<Point>, color: String) -> Unit
     ? "Draw all piece cells"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    match i == List.len(points)
-        true -> drawAt(0, 0, "")
-        false -> match List.get(points, i)
-            Option.Some(p) -> renderPieceCellNext(points, p, color, i)
-            Option.None -> drawAt(0, 0, "")
+    match points
+        [] -> drawAt(0, 0, "")
+        [p, ..rest] -> renderPieceCellNext(rest, p, color)
 
-fn renderPieceCellNext(points: List<Point>, p: Point, color: String, i: Int) -> Unit
+fn renderPieceCellNext(rest: List<Point>, p: Point, color: String) -> Unit
     ? "Draw one piece cell and continue"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     renderPieceCell(p, color)
-    renderPieceCells(points, color, i + 1)
+    renderPieceCells(rest, color)
 
 fn renderPiece(state: GameState) -> Unit
     ? "Draw the current falling piece"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderPieceCells(Pieces.absolutePoints(state.piece, state.px, state.py), Pieces.pieceColor(state.piece.kind), 0)
+    renderPieceCells(Pieces.absolutePoints(state.piece, state.px, state.py), Pieces.pieceColor(state.piece.kind))
 
 fn renderInfo(state: GameState) -> Unit
     ? "Draw score, level, lines info"

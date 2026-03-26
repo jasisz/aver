@@ -30,10 +30,7 @@ record SettlementImportResult
 
 fn execute(command: Command) -> Result<CommandReport, String>
     ? "Executes one payment_ops command."
-    ! [
-        Disk.appendText, Disk.readText, Disk.writeText,
-        Time.now,
-    ]
+    ! [Disk.appendText, Disk.readText, Disk.writeText, Time.now]
     match command
         Command.IngestWebhooks(provider, path) -> runIngestWebhooks(provider, path)
         Command.ImportSettlement(provider, path) -> runImportSettlement(provider, path)
@@ -42,10 +39,7 @@ fn execute(command: Command) -> Result<CommandReport, String>
 
 fn runIngestWebhooks(provider: String, path: String) -> Result<CommandReport, String>
     ? "Loads one webhook import file, deduplicates rows, and appends canonical events."
-    ! [
-        Disk.appendText, Disk.readText, Disk.writeText,
-        Time.now,
-    ]
+    ! [Disk.appendText, Disk.readText, Disk.writeText, Time.now]
     canonicalProvider = App.Shared.normalizeProviderInput(provider)?
     rawContent = Disk.readText(path)?
     raws = Infra.Imports.parseWebhookFile(rawContent)?
@@ -63,10 +57,7 @@ fn runIngestWebhooks(provider: String, path: String) -> Result<CommandReport, St
 
 fn runImportSettlement(provider: String, path: String) -> Result<CommandReport, String>
     ? "Loads one settlement import file and appends deduplicated settlement rows."
-    ! [
-        Disk.appendText, Disk.readText,
-        Time.now,
-    ]
+    ! [Disk.appendText, Disk.readText, Time.now]
     canonicalProvider = App.Shared.normalizeProviderInput(provider)?
     rawContent = Disk.readText(path)?
     raws = Infra.Imports.parseSettlementFile(rawContent)?
@@ -79,10 +70,7 @@ fn runImportSettlement(provider: String, path: String) -> Result<CommandReport, 
 
 fn runReconcile(provider: String) -> Result<CommandReport, String>
     ? "Compares replayed realtime state with imported settlements and opens review cases."
-    ! [
-        Disk.appendText, Disk.readText, Disk.writeText,
-        Time.now,
-    ]
+    ! [Disk.appendText, Disk.readText, Disk.writeText, Time.now]
     canonicalProvider = App.Shared.normalizeProviderInput(provider)?
     events = Infra.Store.loadEvents()?
     settlements = Infra.Store.loadSettlements()?
@@ -98,10 +86,7 @@ fn runReconcile(provider: String) -> Result<CommandReport, String>
 
 fn runResolveCase(caseId: String, resolution: String) -> Result<CommandReport, String>
     ? "Marks one manual-review case as resolved."
-    ! [
-        Disk.readText, Disk.writeText, Disk.appendText,
-        Time.now,
-    ]
+    ! [Disk.appendText, Disk.readText, Disk.writeText, Time.now]
     existingCases = Infra.Store.loadCases()?
     now = Time.now()
     updatedCases = Domain.Cases.resolveCase(existingCases, caseId, resolution, now)?
@@ -153,7 +138,7 @@ fn ingestNewWebhook(provider: String, raw: RawWebhook, rest: List<RawWebhook>, k
     ? "Normalizes one fresh webhook row and continues the import."
     seq = Domain.Ledger.nextSeq(knownEvents, provider, raw.paymentId)
     event = Domain.Normalize.normalizeWebhook(provider, seq, raw)?
-    ingestWebhookRows(provider, rest, List.append(knownEvents, event), WebhookImportResult(events = List.prepend(event, acc.events), audits = acc.audits), auditedAt)
+    ingestWebhookRows(provider, rest, List.concat(knownEvents, [event]), WebhookImportResult(events = List.prepend(event, acc.events), audits = acc.audits), auditedAt)
 
 verify ingestNewWebhook
     ingestNewWebhook("stripe", RawWebhook(sourceId = "evt-1", paymentId = "pay-1", kind = "charge.captured", amount = 1000, currency = "USD", occurredAt = "2026-03-10T09:05:00Z"), [], [], WebhookImportResult(events = [], audits = []), "2026-03-10T12:00:00Z") => Result.Ok(WebhookImportResult(events = [PaymentEventRecord(provider = "stripe", sourceId = "evt-1", paymentId = "pay-1", seq = 1, event = PaymentEvent.Captured(1000, "USD", "2026-03-10T09:05:00Z"))], audits = []))
@@ -162,7 +147,7 @@ verify ingestNewWebhook
 fn ingestNewSettlement(provider: String, raw: RawSettlement, rest: List<RawSettlement>, knownRows: List<SettlementRow>, acc: SettlementImportResult, auditedAt: String) -> Result<SettlementImportResult, String>
     ? "Normalizes one fresh settlement row and continues the import."
     row = Domain.Normalize.normalizeSettlement(provider, raw)?
-    ingestSettlementRows(provider, rest, List.append(knownRows, row), SettlementImportResult(rows = List.prepend(row, acc.rows), audits = acc.audits), auditedAt)
+    ingestSettlementRows(provider, rest, List.concat(knownRows, [row]), SettlementImportResult(rows = List.prepend(row, acc.rows), audits = acc.audits), auditedAt)
 
 verify ingestNewSettlement
     ingestNewSettlement("stripe", RawSettlement(rowId = "row-1", paymentId = "pay-1", kind = "charge", amount = 1000, currency = "USD", settledOn = "2026-03-10"), [], [], SettlementImportResult(rows = [], audits = []), "2026-03-10T12:00:00Z") => Result.Ok(SettlementImportResult(rows = [SettlementRow(provider = "stripe", rowId = "row-1", paymentId = "pay-1", kind = SettlementKind.Capture, amount = 1000, currency = "USD", settledOn = "2026-03-10")], audits = []))

@@ -150,20 +150,20 @@ fn expandChains(board: List<List<CellContent>>, jumps: List<List<Point>>, color:
     ? "Expand each jump continuation into chains"
     match i == List.len(jumps)
         true -> []
-        false -> match List.get(jumps, i)
+        false -> match Vector.get(Vector.fromList(jumps), i)
             Option.Some(jump) -> expandOneChain(board, jumps, jump, color, path, i)
             Option.None -> []
 
 fn expandOneChain(board: List<List<CellContent>>, jumps: List<List<Point>>, jump: List<Point>, color: Color, path: List<Point>, i: Int) -> List<List<Point>>
     ? "Expand one jump into chain and concat with rest"
-    match List.get(jump, 1)
+    match Vector.get(Vector.fromList(jump), 1)
         Option.Some(to) -> List.concat(jumpAfterLand(board, jump, to, color, path), expandChains(board, jumps, color, path, i + 1))
         Option.None -> expandChains(board, jumps, color, path, i + 1)
 
 fn jumpAfterLand(board: List<List<CellContent>>, jump: List<Point>, to: Point, color: Color, path: List<Point>) -> List<List<Point>>
     ? "After landing, continue chain or return path"
-    match List.get(jump, 0)
-        Option.Some(from) -> jumpChains(applyJump(board, from.x, from.y, to.x, to.y), to.x, to.y, color, List.append(path, to))
+    match Vector.get(Vector.fromList(jump), 0)
+        Option.Some(from) -> jumpChains(applyJump(board, from.x, from.y, to.x, to.y), to.x, to.y, color, List.concat(path, [to]))
         Option.None -> []
 
 fn allJumpsForPiece(board: List<List<CellContent>>, x: Int, y: Int, color: Color) -> List<List<Point>>
@@ -203,7 +203,7 @@ fn maxLen(turns: List<List<Point>>, i: Int, best: Int) -> Int
     ? "Find the maximum path length among turns"
     match i == List.len(turns)
         true -> best
-        false -> match List.get(turns, i)
+        false -> match Vector.get(Vector.fromList(turns), i)
             Option.Some(turn) -> maxLen(turns, i + 1, Int.max(best, List.len(turn)))
             Option.None -> maxLen(turns, i + 1, best)
 
@@ -214,7 +214,7 @@ fn filterByLen(turns: List<List<Point>>, targetLen: Int, i: Int) -> List<List<Po
     ? "Keep only turns with the given length"
     match i == List.len(turns)
         true -> []
-        false -> match List.get(turns, i)
+        false -> match Vector.get(Vector.fromList(turns), i)
             Option.Some(turn) -> match List.len(turn) == targetLen
                 true -> List.prepend(turn, filterByLen(turns, targetLen, i + 1))
                 false -> filterByLen(turns, targetLen, i + 1)
@@ -268,8 +268,8 @@ fn applyTurnMoves(board: List<List<CellContent>>, turn: List<Point>, i: Int) -> 
 
 fn applyTurnMove(board: List<List<CellContent>>, turn: List<Point>, i: Int) -> List<List<CellContent>>
     ? "Apply one move in path and continue"
-    match List.get(turn, i)
-        Option.Some(from) -> match List.get(turn, i + 1)
+    match Vector.get(Vector.fromList(turn), i)
+        Option.Some(from) -> match Vector.get(Vector.fromList(turn), i + 1)
             Option.Some(to) -> applyTurnMoveStep(board, turn, from, to, i)
             Option.None -> board
         Option.None -> board

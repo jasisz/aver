@@ -112,20 +112,18 @@ verify pieceOffsets
     List.len(pieceOffsets(PieceKind.O, 0)) => 4
     pieceOffsets(PieceKind.O, 0) => [Board.pt(0, 0), Board.pt(1, 0), Board.pt(0, 1), Board.pt(1, 1)]
 
-fn offsetToAbs(offsets: List<Point>, px: Int, py: Int, i: Int) -> List<Point>
+fn offsetToAbs(offsets: List<Point>, px: Int, py: Int) -> List<Point>
     ? "Map offsets to absolute positions"
-    match i == List.len(offsets)
-        true -> []
-        false -> match List.get(offsets, i)
-            Option.Some(o) -> List.prepend(Board.pt(o.x + px, o.y + py), offsetToAbs(offsets, px, py, i + 1))
-            Option.None -> []
+    match offsets
+        [] -> []
+        [o, ..rest] -> List.prepend(Board.pt(o.x + px, o.y + py), offsetToAbs(rest, px, py))
 
 verify offsetToAbs
-    List.len(offsetToAbs([Board.pt(0, 0), Board.pt(1, 0)], 3, 5, 0)) => 2
+    List.len(offsetToAbs([Board.pt(0, 0), Board.pt(1, 0)], 3, 5)) => 2
 
 fn absolutePoints(piece: Piece, px: Int, py: Int) -> List<Point>
     ? "Convert piece offsets to board coordinates"
-    offsetToAbs(pieceOffsets(piece.kind, piece.rotation), px, py, 0)
+    offsetToAbs(pieceOffsets(piece.kind, piece.rotation), px, py)
 
 verify absolutePoints
     List.len(absolutePoints(Piece(kind = PieceKind.I, rotation = 0), 3, 0)) => 4

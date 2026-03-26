@@ -78,8 +78,8 @@ fn updateEnemies(enemies: List<Enemy>, px: Float, py: Float, levelMap: List<Stri
     ? "Update all enemies one tick"
     match i == List.len(enemies)
         true -> acc
-        false -> match List.get(enemies, i)
-            Option.Some(e) -> updateEnemies(enemies, px, py, levelMap, Rng.nextSeed(seed), turn, i + 1, List.append(acc, stepEnemy(e, px, py, levelMap, seed, turn)))
+        false -> match Vector.get(Vector.fromList(enemies), i)
+            Option.Some(e) -> updateEnemies(enemies, px, py, levelMap, Rng.nextSeed(seed), turn, i + 1, List.concat(acc, [stepEnemy(e, px, py, levelMap, seed, turn)]))
             Option.None -> acc
 
 // ─── Combat ────────────────────────────────────────────────────────────────
@@ -107,7 +107,7 @@ fn applyEnemyDamage(enemies: List<Enemy>, player: Player, i: Int) -> Player
     ? "Apply damage from all touching enemies to player"
     match i == List.len(enemies)
         true -> player
-        false -> match List.get(enemies, i)
+        false -> match Vector.get(Vector.fromList(enemies), i)
             Option.Some(e) -> applyDamageOne(enemies, player, i, e)
             Option.None -> player
 
@@ -151,7 +151,7 @@ fn findEnemyAt(enemies: List<Enemy>, cx: Float, cy: Float, i: Int) -> Option<Int
     ? "Find enemy near position, return index"
     match i == List.len(enemies)
         true -> Option.None
-        false -> match List.get(enemies, i)
+        false -> match Vector.get(Vector.fromList(enemies), i)
             Option.Some(e) -> match Math.dist(e.x, e.y, cx, cy) < 0.6
                 true -> Option.Some(i)
                 false -> findEnemyAt(enemies, cx, cy, i + 1)
@@ -159,7 +159,7 @@ fn findEnemyAt(enemies: List<Enemy>, cx: Float, cy: Float, i: Int) -> Option<Int
 
 fn applyShot(enemies: List<Enemy>, idx: Int) -> (List<Enemy>, String)
     ? "Apply 5 damage to enemy at index, remove if dead"
-    match List.get(enemies, idx)
+    match Vector.get(Vector.fromList(enemies), idx)
         Option.Some(e) -> applyDamageToEnemy(enemies, idx, e)
         Option.None -> (enemies, "Shot missed!")
 
@@ -174,10 +174,10 @@ fn removeEnemy(enemies: List<Enemy>, idx: Int, i: Int, acc: List<Enemy>) -> List
     ? "Remove enemy at index from list"
     match i == List.len(enemies)
         true -> acc
-        false -> match List.get(enemies, i)
+        false -> match Vector.get(Vector.fromList(enemies), i)
             Option.Some(e) -> match i == idx
                 true -> removeEnemy(enemies, idx, i + 1, acc)
-                false -> removeEnemy(enemies, idx, i + 1, List.append(acc, e))
+                false -> removeEnemy(enemies, idx, i + 1, List.concat(acc, [e]))
             Option.None -> acc
 
 verify removeEnemy
@@ -187,8 +187,8 @@ fn replaceEnemy(enemies: List<Enemy>, idx: Int, newE: Enemy, i: Int, acc: List<E
     ? "Replace enemy at index in list"
     match i == List.len(enemies)
         true -> acc
-        false -> match List.get(enemies, i)
+        false -> match Vector.get(Vector.fromList(enemies), i)
             Option.Some(e) -> match i == idx
-                true -> replaceEnemy(enemies, idx, newE, i + 1, List.append(acc, newE))
-                false -> replaceEnemy(enemies, idx, newE, i + 1, List.append(acc, e))
+                true -> replaceEnemy(enemies, idx, newE, i + 1, List.concat(acc, [newE]))
+                false -> replaceEnemy(enemies, idx, newE, i + 1, List.concat(acc, [e]))
             Option.None -> acc

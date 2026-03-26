@@ -57,7 +57,7 @@ fn draftsFromPairsInto(state: PaymentState, keys: List<String>, notes: List<Stri
     ? "Tail-recursive anomaly zip for review drafts."
     match keys
         [] -> acc
-        [key, ..restKeys] -> draftsFromPairsInto(state, restKeys, tail(notes), List.prepend(draftFromPair(state, key, Option.withDefault(List.get(notes, 0), "Suspicious payment history")), acc))
+        [key, ..restKeys] -> draftsFromPairsInto(state, restKeys, tail(notes), List.prepend(draftFromPair(state, key, Option.withDefault(Vector.get(Vector.fromList(notes), 0), "Suspicious payment history")), acc))
 
 verify draftsFromPairsInto
     draftsFromPairsInto(PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 0, capturedAmount = 0, refundedAmount = 100, latestAt = "2026-03-10T10:00:00Z", anomalyKeys = [], anomalyNotes = []), [], [], [makeCaseDraft("stripe", "pay-1", "x", "d", "k")]) => [makeCaseDraft("stripe", "pay-1", "x", "d", "k")]

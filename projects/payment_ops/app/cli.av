@@ -31,7 +31,7 @@ fn helpLines() -> List<String>
     ]
 
 verify helpLines
-    List.get(helpLines(), 0) => Option.Some("Payment Ops CLI")
+    Vector.get(Vector.fromList(helpLines()), 0) => Option.Some("Payment Ops CLI")
     List.contains(helpLines(), "  reconcile provider") => true
 
 fn initCli() -> Result<Unit, String>
@@ -66,19 +66,13 @@ fn runArgs(args: List<String>) -> Unit
 
 fn executeArgs(args: List<String>) -> Result<List<String>, String>
     ? "Runs one argv-style command and returns rendered output lines."
-    ! [
-        Disk.appendText, Disk.readText, Disk.writeText,
-        Time.now,
-    ]
+    ! [Disk.appendText, Disk.readText, Disk.writeText, Time.now]
     input = App.Parse.parseArgs(args)?
     executeInput(input)
 
 fn executeInput(input: Input) -> Result<List<String>, String>
     ? "Thin adapter from parsed CLI input to app entrypoints."
-    ! [
-        Disk.appendText, Disk.readText, Disk.writeText,
-        Time.now,
-    ]
+    ! [Disk.appendText, Disk.readText, Disk.writeText, Time.now]
     match input
         Input.ShowHelp -> Result.Ok(helpLines())
         Input.RunCommand(command) -> App.Render.renderCommand(App.Commands.execute(command))
@@ -89,7 +83,7 @@ fn errorLines(msg: String) -> List<String>
     List.concat(["ERROR: " + msg, ""], helpLines())
 
 verify errorLines
-    List.get(errorLines("bad"), 0) => Option.Some("ERROR: bad")
+    Vector.get(Vector.fromList(errorLines("bad")), 0) => Option.Some("ERROR: bad")
     List.contains(errorLines("bad"), "Payment Ops CLI") => true
 
 fn printLines(lines: List<String>) -> Unit

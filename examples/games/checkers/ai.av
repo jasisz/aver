@@ -162,7 +162,7 @@ fn abSearch(board: List<List<CellContent>>, depth: Int, alpha: Int, beta: Int, i
         true -> best
         false -> match alpha > beta
             true -> best
-            false -> match List.get(moves, i)
+            false -> match Vector.get(Vector.fromList(moves), i)
                 Option.Some(move) -> abEvalMove(board, depth, alpha, beta, isMax, color, aiColor, moves, move, i, best)
                 Option.None -> best
 
@@ -192,7 +192,7 @@ fn scoreAllMoves(board: List<List<CellContent>>, color: Color, depth: Int, moves
     ? "Score candidates with progressive alpha tightening for better pruning"
     match i == List.len(moves)
         true -> []
-        false -> match List.get(moves, i)
+        false -> match Vector.get(Vector.fromList(moves), i)
             Option.Some(move) -> scoreOneMove(board, color, depth, moves, move, i, alpha)
             Option.None -> []
 
@@ -208,7 +208,7 @@ fn findBest(scored: List<ScoredMove>, i: Int, bestScore: Int, bestIdx: Int) -> I
     ? "Find index of highest-scored move"
     match i == List.len(scored)
         true -> bestIdx
-        false -> match List.get(scored, i)
+        false -> match Vector.get(Vector.fromList(scored), i)
             Option.Some(sm) -> match sm.score > bestScore
                 true -> findBest(scored, i + 1, sm.score, i)
                 false -> findBest(scored, i + 1, bestScore, bestIdx)
@@ -225,19 +225,19 @@ fn sortScoredRec(scored: List<ScoredMove>, i: Int, acc: List<ScoredMove>) -> Lis
     ? "Insert each element into sorted accumulator"
     match i == List.len(scored)
         true -> acc
-        false -> match List.get(scored, i)
+        false -> match Vector.get(Vector.fromList(scored), i)
             Option.Some(sm) -> sortScoredRec(scored, i + 1, insertSorted(acc, sm, 0))
             Option.None -> acc
 
 fn insertSorted(sorted: List<ScoredMove>, item: ScoredMove, i: Int) -> List<ScoredMove>
     ? "Insert item into descending-sorted list"
     match i == List.len(sorted)
-        true -> List.append(sorted, item)
-        false -> match List.get(sorted, i)
+        true -> List.concat(sorted, [item])
+        false -> match Vector.get(Vector.fromList(sorted), i)
             Option.Some(cur) -> match item.score > cur.score
                 true -> List.concat(List.concat(takeN(sorted, i), [item]), dropN(sorted, i))
                 false -> insertSorted(sorted, item, i + 1)
-            Option.None -> List.append(sorted, item)
+            Option.None -> List.concat(sorted, [item])
 
 fn takeN(xs: List<ScoredMove>, n: Int) -> List<ScoredMove>
     ? "Take first n elements"
@@ -247,7 +247,7 @@ fn takeNRec(xs: List<ScoredMove>, n: Int, i: Int) -> List<ScoredMove>
     ? "Take helper"
     match i == n
         true -> []
-        false -> match List.get(xs, i)
+        false -> match Vector.get(Vector.fromList(xs), i)
             Option.Some(x) -> List.prepend(x, takeNRec(xs, n, i + 1))
             Option.None -> []
 
@@ -261,7 +261,7 @@ fn dropNRec(xs: List<ScoredMove>, n: Int, i: Int) -> List<ScoredMove>
         true -> []
         false -> match i < n
             true -> dropNRec(xs, n, i + 1)
-            false -> match List.get(xs, i)
+            false -> match Vector.get(Vector.fromList(xs), i)
                 Option.Some(x) -> List.prepend(x, dropNRec(xs, n, i + 1))
                 Option.None -> []
 
@@ -275,7 +275,7 @@ fn bestMoveResult(board: List<List<CellContent>>, color: Color, depth: Int) -> O
 fn buildResult(board: List<List<CellContent>>, color: Color, depth: Int, moves: List<List<Point>>) -> Option<AiResult>
     ? "Score all moves and build result"
     scored = sortScored(scoreAllMoves(board, color, depth, moves, 0, 0 - 9999))
-    match List.get(scored, 0)
+    match Vector.get(Vector.fromList(scored), 0)
         Option.Some(best) -> Option.Some(AiResult(move = best.move, score = best.score, candidates = scored, depth = depth, thinkMs = 0))
         Option.None -> Option.None
 

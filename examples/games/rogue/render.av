@@ -45,8 +45,8 @@ fn renderPlayer(player: Player) -> Unit
 
 fn isVisible(visGrid: List<List<Bool>>, x: Int, y: Int) -> Bool
     ? "O(1) visibility check from precomputed grid"
-    match List.get(visGrid, y)
-        Option.Some(row) -> match List.get(row, x)
+    match Vector.get(Vector.fromList(visGrid), y)
+        Option.Some(row) -> match Vector.get(Vector.fromList(row), x)
             Option.Some(v) -> v
             Option.None -> false
         Option.None -> false
@@ -66,14 +66,14 @@ fn renderEntity(entity: Entity, visGrid: List<List<Bool>>) -> Unit
 fn renderEntities(entities: List<Entity>, visGrid: List<List<Bool>>, i: Int) -> Unit
     ? "Draw all entities that are visible"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    match List.get(entities, i)
+    match Vector.get(Vector.fromList(entities), i)
         Option.None -> drawChar(0, 0, "", "black")
         Option.Some(e) -> renderEntity(e, visGrid)
 
 fn renderEntitiesNext(entities: List<Entity>, visGrid: List<List<Bool>>, i: Int) -> Unit
     ? "Render entity at index i then continue to the rest"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    match List.get(entities, i)
+    match Vector.get(Vector.fromList(entities), i)
         Option.None -> drawChar(0, 0, "", "black")
         Option.Some(e) -> renderEntityAndContinue(e, entities, visGrid, i)
 
@@ -93,7 +93,7 @@ fn renderItem(item: Item, visGrid: List<List<Bool>>) -> Unit
 fn renderItemsNext(items: List<Item>, visGrid: List<List<Bool>>, i: Int) -> Unit
     ? "Render item at index i then continue to the rest"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    match List.get(items, i)
+    match Vector.get(Vector.fromList(items), i)
         Option.None -> drawChar(0, 0, "", "black")
         Option.Some(item) -> renderItemAndContinue(item, items, visGrid, i)
 
@@ -105,8 +105,8 @@ fn renderItemAndContinue(item: Item, items: List<Item>, visGrid: List<List<Bool>
 
 fn getRemembered(remembered: List<List<Bool>>, x: Int, y: Int) -> Bool
     ? "Get whether tile at (x,y) has been seen before"
-    match List.get(remembered, y)
-        Option.Some(row) -> match List.get(row, x)
+    match Vector.get(Vector.fromList(remembered), y)
+        Option.Some(row) -> match Vector.get(Vector.fromList(row), x)
             Option.Some(v) -> v
             Option.None -> false
         Option.None -> false
@@ -191,7 +191,7 @@ fn renderHud(player: Player, messages: List<String>) -> Unit
 fn renderMessages(messages: List<String>, i: Int) -> Unit
     ? "Render up to 3 messages at the bottom of the screen (rows 31-33)"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    match List.get(messages, i)
+    match Vector.get(Vector.fromList(messages), i)
         Option.None -> drawChar(0, 0, "", "black")
         Option.Some(msg) -> renderMessageAndNext(msg, messages, i)
 

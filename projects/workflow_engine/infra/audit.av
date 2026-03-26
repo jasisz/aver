@@ -140,7 +140,7 @@ fn newEntriesInto(existing: List<AuditEntry>, candidates: List<AuditEntry>, fres
             true -> newEntriesInto(existing, rest, fresh)
             false -> match containsKey(fresh, entry.key)
                 true -> newEntriesInto(existing, rest, fresh)
-                false -> newEntriesInto(existing, rest, List.append(fresh, entry))
+                false -> newEntriesInto(existing, rest, List.concat(fresh, [entry]))
 
 verify newEntriesInto
     newEntriesInto([AuditEntry(key = "k1", taskId = "t1", action = "task.completed", message = "x", createdAt = "2026-03-08T12:00:00Z")], [AuditEntry(key = "k1", taskId = "t1", action = "task.completed", message = "x", createdAt = "2026-03-08T12:00:00Z"), AuditEntry(key = "k2", taskId = "t2", action = "task.created", message = "y", createdAt = "2026-03-08T12:01:00Z")], []) => [AuditEntry(key = "k2", taskId = "t2", action = "task.created", message = "y", createdAt = "2026-03-08T12:01:00Z")]

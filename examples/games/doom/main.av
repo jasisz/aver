@@ -48,7 +48,7 @@ fn spawnEnemies(rooms: List<Level.Room>, seed: Int, i: Int, acc: List<Enemy>) ->
     ? "Spawn one enemy per room, skipping room 0 (player start)"
     match i == List.len(rooms)
         true -> acc
-        false -> match List.get(rooms, i)
+        false -> match Vector.get(Vector.fromList(rooms), i)
             Option.Some(room) -> spawnSkipFirst(rooms, seed, i, acc, room)
             Option.None -> acc
 
@@ -56,7 +56,7 @@ fn spawnSkipFirst(rooms: List<Level.Room>, seed: Int, i: Int, acc: List<Enemy>, 
     ? "Skip first room, spawn in rest"
     match i == 0
         true -> spawnEnemies(rooms, Rng.nextSeed(seed), i + 1, acc)
-        false -> spawnEnemies(rooms, Rng.nextSeed(seed), i + 1, List.append(acc, spawnInRoom(room, seed)))
+        false -> spawnEnemies(rooms, Rng.nextSeed(seed), i + 1, List.concat(acc, [spawnInRoom(room, seed)]))
 
 fn initGame(seed: Int) -> GameState
     ? "Create initial game state from seed"
@@ -136,7 +136,7 @@ fn handleShoot(state: GameState) -> GameState
     ? "Fire a shot along the player's facing direction"
     result = Enemy.shootRay(state.enemies, state.player.x, state.player.y, state.player.angle, state.levelMap)
     match result
-        (newEnemies, msg) -> GameState.update(state, enemies = newEnemies, messages = List.append(state.messages, msg))
+        (newEnemies, msg) -> GameState.update(state, enemies = newEnemies, messages = List.concat(state.messages, [msg]))
 
 fn updateTurn(state: GameState) -> GameState
     ? "Run enemy AI and apply damage after player moves"
@@ -146,7 +146,7 @@ fn updateTurn(state: GameState) -> GameState
     msgs = match isOver
         true -> ["You died!"]
         false -> match damaged.hp < state.player.hp
-            true -> List.append(state.messages, "Ouch! HP: {Int.toString(damaged.hp)}")
+            true -> List.concat(state.messages, ["Ouch! HP: {Int.toString(damaged.hp)}"])
             false -> state.messages
     trimmedMsgs = trimMessages(msgs)
     GameState.update(state, enemies = newEnemies, player = damaged, turnCount = state.turnCount + 1, gameOver = isOver, messages = trimmedMsgs)

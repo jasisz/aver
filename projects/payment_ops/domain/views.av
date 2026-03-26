@@ -170,7 +170,7 @@ fn appendUnique(values: List<String>, value: String) -> List<String>
     ? "Appends only when a payment ID is new."
     match List.contains(values, value)
         true -> values
-        false -> List.append(values, value)
+        false -> List.concat(values, [value])
 
 verify appendUnique
     appendUnique(["a"], "a") => ["a"]

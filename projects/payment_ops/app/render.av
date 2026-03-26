@@ -35,7 +35,7 @@ fn renderCommandReport(report: CommandReport) -> List<String>
     ], List.concat(renderCases(report.addedCases), renderAudits(report.audits)))
 
 verify renderCommandReport
-    List.get(renderCommandReport(sampleReport()), 0) => Option.Some("Imported 1 settlement rows for stripe")
+    Vector.get(Vector.fromList(renderCommandReport(sampleReport())), 0) => Option.Some("Imported 1 settlement rows for stripe")
 
 fn renderQueryOutput(output: QueryOutput) -> List<String>
     ? "Renders one query result."

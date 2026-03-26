@@ -22,24 +22,22 @@ fn mkState(board: List<List<Option<PieceKind>>>, piece: Piece, px: Int, py: Int)
 verify mkState
     mkState(Board.emptyBoard(), Piece(kind = PieceKind.I, rotation = 0), 3, 0).px => 3
 
-fn checkPoints(board: List<List<Option<PieceKind>>>, points: List<Point>, i: Int) -> Bool
+fn checkPoints(board: List<List<Option<PieceKind>>>, points: List<Point>) -> Bool
     ? "Check each point for collision"
-    match i == List.len(points)
-        true -> false
-        false -> match List.get(points, i)
-            Option.Some(p) -> match Bool.or(Bool.or(p.x < 0, p.x > 9), Bool.or(p.y < 0, p.y > 19))
-                true -> true
-                false -> match Board.getCell(board, p.x, p.y)
-                    Option.None -> checkPoints(board, points, i + 1)
-                    Option.Some(_) -> true
-            Option.None -> false
+    match points
+        [] -> false
+        [p, ..rest] -> match Bool.or(Bool.or(p.x < 0, p.x > 9), Bool.or(p.y < 0, p.y > 19))
+            true -> true
+            false -> match Board.getCell(board, p.x, p.y)
+                Option.None -> checkPoints(board, rest)
+                Option.Some(_) -> true
 
 verify checkPoints
-    checkPoints(Board.emptyBoard(), [Board.pt(5, 5)], 0) => false
+    checkPoints(Board.emptyBoard(), [Board.pt(5, 5)]) => false
 
 fn checkCollision(board: List<List<Option<PieceKind>>>, piece: Piece, px: Int, py: Int) -> Bool
     ? "True if piece at (px,py) collides with walls or cells"
-    checkPoints(board, Pieces.absolutePoints(piece, px, py), 0)
+    checkPoints(board, Pieces.absolutePoints(piece, px, py))
 
 verify checkCollision
     checkCollision(Board.emptyBoard(), Piece(kind = PieceKind.I, rotation = 0), 3, 0) => false
@@ -87,20 +85,18 @@ verify moveDown
     moveDown(mkState(Board.emptyBoard(), Piece(kind = PieceKind.O, rotation = 0), 5, 5)).py => 6
     moveDown(mkState(Board.emptyBoard(), Piece(kind = PieceKind.O, rotation = 0), 5, 18)).py => 18
 
-fn placePoints(board: List<List<Option<PieceKind>>>, points: List<Point>, kind: PieceKind, i: Int) -> List<List<Option<PieceKind>>>
+fn placePoints(board: List<List<Option<PieceKind>>>, points: List<Point>, kind: PieceKind) -> List<List<Option<PieceKind>>>
     ? "Set each point on the board"
-    match i == List.len(points)
-        true -> board
-        false -> match List.get(points, i)
-            Option.Some(p) -> placePoints(Board.setCell(board, p.x, p.y, kind), points, kind, i + 1)
-            Option.None -> board
+    match points
+        [] -> board
+        [p, ..rest] -> placePoints(Board.setCell(board, p.x, p.y, kind), rest, kind)
 
 verify placePoints
-    Board.getCell(placePoints(Board.emptyBoard(), [Board.pt(3, 3)], PieceKind.Z, 0), 3, 3) => Option.Some(PieceKind.Z)
+    Board.getCell(placePoints(Board.emptyBoard(), [Board.pt(3, 3)], PieceKind.Z), 3, 3) => Option.Some(PieceKind.Z)
 
 fn placePiece(board: List<List<Option<PieceKind>>>, piece: Piece, px: Int, py: Int) -> List<List<Option<PieceKind>>>
     ? "Place piece cells on board"
-    placePoints(board, Pieces.absolutePoints(piece, px, py), piece.kind, 0)
+    placePoints(board, Pieces.absolutePoints(piece, px, py), piece.kind)
 
 verify placePiece
     Board.getCell(placePiece(Board.emptyBoard(), Piece(kind = PieceKind.O, rotation = 0), 4, 4), 4, 4) => Option.Some(PieceKind.O)

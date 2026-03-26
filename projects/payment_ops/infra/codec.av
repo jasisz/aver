@@ -31,7 +31,7 @@ verify unescapeField law escapedRoundtrip
 
 fn fieldAt(parts: List<String>, index: Int, label: String) -> Result<String, String>
     ? "Reads and unescapes one required field."
-    raw = Option.toResult(List.get(parts, index), "Corrupt {label}: missing field {Int.toString(index)}")?
+    raw = Option.toResult(Vector.get(Vector.fromList(parts), index), "Corrupt {label}: missing field {Int.toString(index)}")?
     Result.Ok(unescapeField(raw))
 
 verify fieldAt
@@ -40,7 +40,7 @@ verify fieldAt
 
 fn optionalFieldAt(parts: List<String>, index: Int) -> String
     ? "Returns one optional raw field or '-' when it is missing."
-    match List.get(parts, index)
+    match Vector.get(Vector.fromList(parts), index)
         Option.Some(raw) -> raw
         Option.None -> "-"
 

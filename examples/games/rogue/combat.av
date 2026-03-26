@@ -77,7 +77,7 @@ fn entityAtPos(entities: List<Entity>, target: Point, i: Int) -> Option<Int>
     ? "Find index of entity at target position"
     match i == List.len(entities)
         true -> Option.None
-        false -> match List.get(entities, i)
+        false -> match Vector.get(Vector.fromList(entities), i)
             Option.Some(e) -> match Types.ptEq(e.pos, target)
                 true -> Option.Some(i)
                 false -> entityAtPos(entities, target, i + 1)
@@ -91,7 +91,7 @@ fn itemAtPos(items: List<Item>, target: Point, i: Int) -> Option<Int>
     ? "Find index of item at target position"
     match i == List.len(items)
         true -> Option.None
-        false -> match List.get(items, i)
+        false -> match Vector.get(Vector.fromList(items), i)
             Option.Some(item) -> match Types.ptEq(item.pos, target)
                 true -> Option.Some(i)
                 false -> itemAtPos(items, target, i + 1)
@@ -105,7 +105,7 @@ fn removeAt(entities: List<Entity>, idx: Int, i: Int) -> List<Entity>
     ? "Remove entity at index"
     match i == List.len(entities)
         true -> []
-        false -> match List.get(entities, i)
+        false -> match Vector.get(Vector.fromList(entities), i)
             Option.Some(e) -> match i == idx
                 true -> removeAt(entities, idx, i + 1)
                 false -> List.prepend(e, removeAt(entities, idx, i + 1))
@@ -118,7 +118,7 @@ fn removeItemAt(items: List<Item>, idx: Int, i: Int) -> List<Item>
     ? "Remove item at index"
     match i == List.len(items)
         true -> []
-        false -> match List.get(items, i)
+        false -> match Vector.get(Vector.fromList(items), i)
             Option.Some(item) -> match i == idx
                 true -> removeItemAt(items, idx, i + 1)
                 false -> List.prepend(item, removeItemAt(items, idx, i + 1))
@@ -131,14 +131,14 @@ fn replaceEntity(entities: List<Entity>, idx: Int, newEntity: Entity, i: Int) ->
     ? "Replace entity at index"
     match i == List.len(entities)
         true -> []
-        false -> match List.get(entities, i)
+        false -> match Vector.get(Vector.fromList(entities), i)
             Option.Some(e) -> match i == idx
                 true -> List.prepend(newEntity, replaceEntity(entities, idx, newEntity, i + 1))
                 false -> List.prepend(e, replaceEntity(entities, idx, newEntity, i + 1))
             Option.None -> []
 
 verify replaceEntity
-    List.get(replaceEntity([Types.makeIfElse(0, 0)], 0, Types.makeLoop(1, 1), 0), 0) => Option.Some(Types.makeLoop(1, 1))
+    Vector.get(Vector.fromList(replaceEntity([Types.makeIfElse(0, 0)], 0, Types.makeLoop(1, 1), 0)), 0) => Option.Some(Types.makeLoop(1, 1))
 
 fn signOf(n: Int) -> Int
     ? "Sign of integer: -1, 0, or 1"

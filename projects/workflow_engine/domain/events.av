@@ -262,7 +262,7 @@ fn applyExistingEvent(task: Task, entry: TaskEventRecord) -> Result<Task, String
         TaskEvent.PriorityChanged(priority, at) -> Result.Ok(Task.update(task, priority = priority, updatedAt = at))
         TaskEvent.TagAdded(tag, at) -> Result.Ok(Task.update(task, tags = appendTag(task.tags, tag), updatedAt = at))
         TaskEvent.TagRemoved(tag, at) -> Result.Ok(Task.update(task, tags = removeTag(task.tags, tag), updatedAt = at))
-        TaskEvent.CommentAdded(comment) -> Result.Ok(Task.update(task, comments = List.append(task.comments, comment), updatedAt = comment.createdAt))
+        TaskEvent.CommentAdded(comment) -> Result.Ok(Task.update(task, comments = List.concat(task.comments, [comment]), updatedAt = comment.createdAt))
         TaskEvent.DeadlineSet(deadline, at) -> Result.Ok(Task.update(task, deadline = Option.Some(deadline), updatedAt = at))
         TaskEvent.DeadlineCleared(at) -> Result.Ok(Task.update(task, deadline = Option.None, updatedAt = at))
         TaskEvent.TaskArchived(at) -> applyStatusChange(task, Domain.Types.TaskStatus.Archived, at)
@@ -306,7 +306,7 @@ fn appendTag(tags: List<String>, tag: String) -> List<String>
     ? "Replay treats repeated tag-add events as idempotent."
     match List.contains(tags, tag)
         true -> tags
-        false -> List.append(tags, tag)
+        false -> List.concat(tags, [tag])
 
 verify appendTag
     appendTag([], "waiting") => ["waiting"]

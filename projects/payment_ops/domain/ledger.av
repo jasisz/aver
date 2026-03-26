@@ -260,7 +260,7 @@ verify withCurrencyCheck
 
 fn addAnomaly(state: PaymentState, key: String, note: String) -> PaymentState
     ? "Appends a new anomaly marker in replay order."
-    PaymentState.update(state, anomalyKeys = List.append(state.anomalyKeys, key), anomalyNotes = List.append(state.anomalyNotes, note))
+    PaymentState.update(state, anomalyKeys = List.concat(state.anomalyKeys, [key]), anomalyNotes = List.concat(state.anomalyNotes, [note]))
 
 verify addAnomaly
     addAnomaly(emptyState(sampleAuthorized()), "k", "n") => PaymentState(paymentId = "pay-1", provider = "stripe", currency = "USD", authorizedAmount = 0, capturedAmount = 0, refundedAmount = 0, latestAt = "2026-03-10T09:00:00Z", anomalyKeys = ["k"], anomalyNotes = ["n"])

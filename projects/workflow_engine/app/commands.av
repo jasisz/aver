@@ -298,7 +298,7 @@ verify planTaskCommand
 
 fn deriveRuleEffectsAfterPrimaryEvent(project: Project, persistedEvents: List<TaskEventRecord>, primaryEvent: TaskEventRecord, now: String) -> Result<RuleResult, String>
     ? "Replays post-primary state before one rule pass so follow-ups stay explainable."
-    postCommandEvents = List.append(persistedEvents, primaryEvent)
+    postCommandEvents = List.concat(persistedEvents, [primaryEvent])
     postCommandTask = Domain.Events.replayTask(postCommandEvents)?
     Domain.Rules.runRules(project, postCommandTask, Option.Some(primaryEvent), now, Domain.Tasks.nextSeq(postCommandEvents))
 

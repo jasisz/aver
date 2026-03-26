@@ -51,77 +51,77 @@ verify emptyBoard
 
 fn getCell(board: List<List<Option<PieceKind>>>, x: Int, y: Int) -> Option<PieceKind>
     ? "Get cell value at (x,y), Option.None if out of bounds"
-    match List.get(board, y)
-        Option.Some(row) -> match List.get(row, x)
-            Option.Some(v) -> v
-            Option.None -> Option.None
-        Option.None -> Option.None
+    match board
+        [] -> Option.None
+        [row, ..rest] -> match y == 0
+            true -> getCellInRow(row, x)
+            false -> getCell(rest, x, y - 1)
 
 verify getCell
     getCell(emptyBoard(), 0, 0) => Option.None
     getCell(emptyBoard(), 9, 19) => Option.None
 
-fn setCellCols(r: List<Option<PieceKind>>, x: Int, val: Option<PieceKind>, col: Int) -> List<Option<PieceKind>>
+fn getCellInRow(row: List<Option<PieceKind>>, x: Int) -> Option<PieceKind>
+    ? "Get cell value from one row, Option.None if out of bounds or empty."
+    match row
+        [] -> Option.None
+        [cell, ..rest] -> match x == 0
+            true -> cell
+            false -> getCellInRow(rest, x - 1)
+
+fn setCellCols(r: List<Option<PieceKind>>, x: Int, val: Option<PieceKind>) -> List<Option<PieceKind>>
     ? "Rebuild a row replacing column x"
-    match col == 10
-        true -> []
-        false -> match List.get(r, col)
-            Option.Some(v) -> match col == x
-                true -> List.prepend(val, setCellCols(r, x, val, col + 1))
-                false -> List.prepend(v, setCellCols(r, x, val, col + 1))
-            Option.None -> []
+    match r
+        [] -> []
+        [cell, ..rest] -> match x == 0
+            true -> List.prepend(val, rest)
+            false -> List.prepend(cell, setCellCols(rest, x - 1, val))
 
 verify setCellCols
-    List.len(setCellCols(emptyRow(), 3, Option.Some(PieceKind.T), 0)) => 10
+    List.len(setCellCols(emptyRow(), 3, Option.Some(PieceKind.T))) => 10
 
-fn setCellRows(board: List<List<Option<PieceKind>>>, x: Int, y: Int, val: Option<PieceKind>, row: Int) -> List<List<Option<PieceKind>>>
+fn setCellRows(board: List<List<Option<PieceKind>>>, x: Int, y: Int, val: Option<PieceKind>) -> List<List<Option<PieceKind>>>
     ? "Rebuild rows replacing cell at (x,y)"
-    match row == 20
-        true -> []
-        false -> match List.get(board, row)
-            Option.Some(r) -> match row == y
-                true -> List.prepend(setCellCols(r, x, val, 0), setCellRows(board, x, y, val, row + 1))
-                false -> List.prepend(r, setCellRows(board, x, y, val, row + 1))
-            Option.None -> []
+    match board
+        [] -> []
+        [row, ..rest] -> match y == 0
+            true -> List.prepend(setCellCols(row, x, val), rest)
+            false -> List.prepend(row, setCellRows(rest, x, y - 1, val))
 
 verify setCellRows
-    List.len(setCellRows(emptyBoard(), 3, 5, Option.Some(PieceKind.T), 0)) => 20
+    List.len(setCellRows(emptyBoard(), 3, 5, Option.Some(PieceKind.T))) => 20
 
 fn setCell(board: List<List<Option<PieceKind>>>, x: Int, y: Int, val: PieceKind) -> List<List<Option<PieceKind>>>
     ? "Return board with cell (x,y) set to Option.Some(val)"
-    setCellRows(board, x, y, Option.Some(val), 0)
+    setCellRows(board, x, y, Option.Some(val))
 
 verify setCell
     getCell(setCell(emptyBoard(), 3, 5, PieceKind.T), 3, 5) => Option.Some(PieceKind.T)
     getCell(setCell(emptyBoard(), 3, 5, PieceKind.T), 4, 5) => Option.None
 
-fn isFullRow(row: List<Option<PieceKind>>, i: Int) -> Bool
+fn isFullRow(row: List<Option<PieceKind>>) -> Bool
     ? "True if row has no empty cells"
-    match i == List.len(row)
-        true -> true
-        false -> match List.get(row, i)
-            Option.Some(v) -> match v
-                Option.None -> false
-                Option.Some(_) -> isFullRow(row, i + 1)
-            Option.None -> true
+    match row
+        [] -> true
+        [cell, ..rest] -> match cell
+            Option.None -> false
+            Option.Some(_) -> isFullRow(rest)
 
 verify isFullRow
-    isFullRow([Option.Some(PieceKind.I), Option.Some(PieceKind.O), Option.Some(PieceKind.T), Option.Some(PieceKind.S), Option.Some(PieceKind.Z), Option.Some(PieceKind.J), Option.Some(PieceKind.L), Option.Some(PieceKind.I), Option.Some(PieceKind.O), Option.Some(PieceKind.T)], 0) => true
-    isFullRow([Option.Some(PieceKind.I), Option.None, Option.Some(PieceKind.T), Option.Some(PieceKind.S), Option.Some(PieceKind.Z), Option.Some(PieceKind.J), Option.Some(PieceKind.L), Option.Some(PieceKind.I), Option.Some(PieceKind.O), Option.Some(PieceKind.T)], 0) => false
-    isFullRow(emptyRow(), 0) => false
+    isFullRow([Option.Some(PieceKind.I), Option.Some(PieceKind.O), Option.Some(PieceKind.T), Option.Some(PieceKind.S), Option.Some(PieceKind.Z), Option.Some(PieceKind.J), Option.Some(PieceKind.L), Option.Some(PieceKind.I), Option.Some(PieceKind.O), Option.Some(PieceKind.T)]) => true
+    isFullRow([Option.Some(PieceKind.I), Option.None, Option.Some(PieceKind.T), Option.Some(PieceKind.S), Option.Some(PieceKind.Z), Option.Some(PieceKind.J), Option.Some(PieceKind.L), Option.Some(PieceKind.I), Option.Some(PieceKind.O), Option.Some(PieceKind.T)]) => false
+    isFullRow(emptyRow()) => false
 
-fn filterRows(board: List<List<Option<PieceKind>>>, i: Int) -> List<List<Option<PieceKind>>>
+fn filterRows(board: List<List<Option<PieceKind>>>) -> List<List<Option<PieceKind>>>
     ? "Keep only non-full rows"
-    match i == List.len(board)
-        true -> []
-        false -> match List.get(board, i)
-            Option.Some(row) -> match isFullRow(row, 0)
-                true -> filterRows(board, i + 1)
-                false -> List.prepend(row, filterRows(board, i + 1))
-            Option.None -> []
+    match board
+        [] -> []
+        [row, ..rest] -> match isFullRow(row)
+            true -> filterRows(rest)
+            false -> List.prepend(row, filterRows(rest))
 
 verify filterRows
-    List.len(filterRows(emptyBoard(), 0)) => 20
+    List.len(filterRows(emptyBoard())) => 20
 
 fn prependEmpty(board: List<List<Option<PieceKind>>>, n: Int) -> List<List<Option<PieceKind>>>
     ? "Prepend n empty rows"
@@ -134,27 +134,26 @@ verify prependEmpty
 
 fn clearLines(board: List<List<Option<PieceKind>>>) -> List<List<Option<PieceKind>>>
     ? "Remove full rows and prepend empty rows at top"
-    prependEmpty(filterRows(board, 0), 20 - List.len(filterRows(board, 0)))
+    filtered = filterRows(board)
+    prependEmpty(filtered, 20 - List.len(filtered))
 
 verify clearLines
     List.len(clearLines(emptyBoard())) => 20
 
-fn countFullRows(board: List<List<Option<PieceKind>>>, i: Int) -> Int
-    ? "Count full rows from index i"
-    match i == List.len(board)
-        true -> 0
-        false -> match List.get(board, i)
-            Option.Some(row) -> match isFullRow(row, 0)
-                true -> 1 + countFullRows(board, i + 1)
-                false -> countFullRows(board, i + 1)
-            Option.None -> 0
+fn countFullRows(board: List<List<Option<PieceKind>>>) -> Int
+    ? "Count full rows in board"
+    match board
+        [] -> 0
+        [row, ..rest] -> match isFullRow(row)
+            true -> 1 + countFullRows(rest)
+            false -> countFullRows(rest)
 
 verify countFullRows
-    countFullRows(emptyBoard(), 0) => 0
+    countFullRows(emptyBoard()) => 0
 
 fn countCleared(board: List<List<Option<PieceKind>>>) -> Int
     ? "Count full rows in board"
-    countFullRows(board, 0)
+    countFullRows(board)
 
 verify countCleared
     countCleared(emptyBoard()) => 0
@@ -164,4 +163,4 @@ fn fullRow() -> List<Option<PieceKind>>
     [Option.Some(PieceKind.I), Option.Some(PieceKind.I), Option.Some(PieceKind.I), Option.Some(PieceKind.I), Option.Some(PieceKind.I), Option.Some(PieceKind.I), Option.Some(PieceKind.I), Option.Some(PieceKind.I), Option.Some(PieceKind.I), Option.Some(PieceKind.I)]
 
 verify fullRow
-    isFullRow(fullRow(), 0) => true
+    isFullRow(fullRow()) => true

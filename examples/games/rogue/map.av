@@ -81,8 +81,8 @@ verify inMap
 
 fn getT(map: List<List<Tile>>, x: Int, y: Int) -> Tile
     ? "Get tile at (x,y), Wall if out of bounds"
-    match List.get(map, y)
-        Option.Some(row) -> match List.get(row, x)
+    match Vector.get(Vector.fromList(map), y)
+        Option.Some(row) -> match Vector.get(Vector.fromList(row), x)
             Option.Some(tile) -> tile
             Option.None -> Tile.Wall
         Option.None -> Tile.Wall
@@ -95,7 +95,7 @@ fn setCol(row: List<Tile>, x: Int, tile: Tile, col: Int) -> List<Tile>
     ? "Rebuild a row replacing column x with tile"
     match col == mapW()
         true -> []
-        false -> match List.get(row, col)
+        false -> match Vector.get(Vector.fromList(row), col)
             Option.Some(v) -> match col == x
                 true -> List.prepend(tile, setCol(row, x, tile, col + 1))
                 false -> List.prepend(v, setCol(row, x, tile, col + 1))
@@ -108,7 +108,7 @@ fn setRow(map: List<List<Tile>>, x: Int, y: Int, tile: Tile, row: Int) -> List<L
     ? "Rebuild rows replacing cell at (x,y)"
     match row == mapH()
         true -> []
-        false -> match List.get(map, row)
+        false -> match Vector.get(Vector.fromList(map), row)
             Option.Some(r) -> match row == y
                 true -> List.prepend(setCol(r, x, tile, 0), setRow(map, x, y, tile, row + 1))
                 false -> List.prepend(r, setRow(map, x, y, tile, row + 1))

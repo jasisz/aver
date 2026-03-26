@@ -97,6 +97,10 @@ fn deserializeLine(line: String) -> Result<Note, String>
         [rawId, ..rest1] -> deserializeLinePart2(rawId, rest1)
         _ -> Result.Err("corrupt note: expected 3 tab-separated fields")
 
+verify deserializeLine
+    deserializeLine("1\tHello\tWorld") => Result.Ok(Note(id = 1, title = "Hello", body = "World"))
+    deserializeLine("bad") => Result.Err("corrupt note: missing title")
+
 fn deserializeLinePart2(rawId: String, rest1: List<String>) -> Result<Note, String>
     ? "Extract title and body from remaining parts."
     match rest1
@@ -113,10 +117,6 @@ fn deserializeLineInner(rawId: String, title: String, body: String) -> Result<No
     ? "Inner deserialization after field extraction."
     id = Int.fromString(rawId)?
     Result.Ok(Note(id = id, title = title, body = body))
-
-verify deserializeLine
-    deserializeLine("1\tHello\tWorld") => Result.Ok(Note(id = 1, title = "Hello", body = "World"))
-    deserializeLine("bad") => Result.Err("corrupt note: missing title")
 
 fn lineSafeChars(chars: List<String>) -> Bool
     ? "True when a line fragment contains no tab or newline separators."

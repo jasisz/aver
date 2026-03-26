@@ -62,20 +62,20 @@ verify advanceHead
 
 fn moveSnake(state: GameState) -> GameState
     ? "Advance the snake by one cell"
-    match List.get(state.snake, 0)
-        Option.Some(h) -> advanceHead(state, h)
-        Option.None -> state
+    match state.snake
+        [h, ..rest] -> advanceHead(state, h)
+        [] -> state
 
 verify moveSnake
     moveSnake(gs([pt(5, 5), pt(4, 5), pt(3, 5)], 1, 0, pt(0, 0))).snake => [pt(6, 5), pt(5, 5), pt(4, 5)]
 
 fn dropLast(xs: List<Point>) -> List<Point>
     ? "Remove the last element"
-    match List.len(xs) < 2
-        true -> []
-        false -> match List.get(xs, 0)
-            Option.Some(h) -> List.prepend(h, dropLast(tail(xs)))
-            Option.None -> []
+    match xs
+        [] -> []
+        [head, ..rest] -> match rest
+            [] -> []
+            _ -> List.prepend(head, dropLast(rest))
 
 verify dropLast
     dropLast([pt(1, 1), pt(2, 2), pt(3, 3)]) => [pt(1, 1), pt(2, 2)]
@@ -84,26 +84,14 @@ verify dropLast
 
 fn tail(xs: List<Point>) -> List<Point>
     ? "All elements except the first"
-    match List.len(xs) < 2
-        true -> []
-        false -> tailRec(xs, 1)
+    match xs
+        [] -> []
+        [head, ..rest] -> rest
 
 verify tail
     tail([pt(1, 1), pt(2, 2), pt(3, 3)]) => [pt(2, 2), pt(3, 3)]
     tail([pt(1, 1)]) => []
     tail([]) => []
-
-fn tailRec(xs: List<Point>, i: Int) -> List<Point>
-    ? "Collect elements from index i"
-    match i == List.len(xs)
-        true -> []
-        false -> match List.get(xs, i)
-            Option.Some(el) -> List.prepend(el, tailRec(xs, i + 1))
-            Option.None -> []
-
-verify tailRec
-    tailRec([pt(1, 1), pt(2, 2), pt(3, 3)], 1) => [pt(2, 2), pt(3, 3)]
-    tailRec([pt(1, 1)], 1) => []
 
 fn checkWall(head: Point, w: Int, h: Int) -> Bool
     ? "True if head is on or past the border"
@@ -117,11 +105,11 @@ verify checkWall
 
 fn checkCollision(state: GameState) -> Bool
     ? "True if the snake hit a wall or itself"
-    match List.get(state.snake, 0)
-        Option.Some(head) -> match checkWall(head, state.width, state.height)
+    match state.snake
+        [head, ..rest] -> match checkWall(head, state.width, state.height)
             true -> true
             false -> bodyContains(state.snake, head, 1)
-        Option.None -> true
+        [] -> true
 
 verify checkCollision
     checkCollision(gs([pt(5, 5)], 1, 0, pt(0, 0))) => false
@@ -130,15 +118,15 @@ verify checkCollision
 
 fn bodyContains(snake: List<Point>, target: Point, i: Int) -> Bool
     ? "True if target exists in snake from index i"
-    match i == List.len(snake)
-        true -> false
-        false -> match List.get(snake, i)
-            Option.Some(p) -> match p.x == target.x
+    match snake
+        [] -> false
+        [p, ..rest] -> match i == 0
+            true -> match p.x == target.x
                 true -> match p.y == target.y
                     true -> true
-                    false -> bodyContains(snake, target, i + 1)
-                false -> bodyContains(snake, target, i + 1)
-            Option.None -> false
+                    false -> bodyContains(rest, target, 0)
+                false -> bodyContains(rest, target, 0)
+            false -> bodyContains(rest, target, i - 1)
 
 verify bodyContains
     bodyContains([pt(5, 5), pt(6, 5), pt(5, 5)], pt(5, 5), 1) => true
@@ -146,19 +134,29 @@ verify bodyContains
 
 fn didEatFood(state: GameState) -> Bool
     ? "True if the snake head is on the food"
-    match List.get(state.snake, 0)
-        Option.Some(head) -> match head.x == state.food.x
+    match state.snake
+        [head, ..rest] -> match head.x == state.food.x
             true -> head.y == state.food.y
             false -> false
-        Option.None -> false
+        [] -> false
 
 verify didEatFood
     didEatFood(gs([pt(10, 10)], 1, 0, pt(10, 10))) => true
     didEatFood(gs([pt(10, 10)], 1, 0, pt(20, 10))) => false
 
+fn appendPoint(xs: List<Point>, point: Point) -> List<Point>
+    ? "Append one point to the end of the snake body."
+    match xs
+        [] -> [point]
+        [head, ..rest] -> List.prepend(head, appendPoint(rest, point))
+
+verify appendPoint
+    appendPoint([pt(1, 1), pt(2, 2)], pt(3, 3)) => [pt(1, 1), pt(2, 2), pt(3, 3)]
+    appendPoint([], pt(3, 3)) => [pt(3, 3)]
+
 fn growSnake(state: GameState) -> GameState
     ? "Append food position to snake, increment score"
-    GameState.update(state, snake = List.append(state.snake, state.food), score = state.score + 1)
+    GameState.update(state, snake = appendPoint(state.snake, state.food), score = state.score + 1)
 
 verify growSnake
     growSnake(gs([pt(5, 5)], 1, 0, pt(10, 10))).score => 1
@@ -226,17 +224,15 @@ fn renderSegment(p: Point, i: Int) -> Unit
 fn renderSnake(snake: List<Point>, i: Int) -> Unit
     ? "Draw each segment of the snake"
     ! [Terminal.moveTo, Terminal.print, Terminal.setColor]
-    match i == List.len(snake)
-        true -> drawAt(0, 0, "")
-        false -> match List.get(snake, i)
-            Option.Some(p) -> renderSnakeNext(snake, p, i)
-            Option.None -> drawAt(0, 0, "")
+    match snake
+        [] -> drawAt(0, 0, "")
+        [p, ..rest] -> renderSnakeNext(rest, p, i)
 
-fn renderSnakeNext(snake: List<Point>, p: Point, i: Int) -> Unit
+fn renderSnakeNext(rest: List<Point>, p: Point, i: Int) -> Unit
     ? "Render one segment and continue"
     ! [Terminal.moveTo, Terminal.print, Terminal.setColor]
     renderSegment(p, i)
-    renderSnake(snake, i + 1)
+    renderSnake(rest, i + 1)
 
 fn render(state: GameState) -> Unit
     ? "Draw one frame"

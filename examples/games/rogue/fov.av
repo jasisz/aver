@@ -8,8 +8,8 @@ record Visibility
 
 fn getT(map: List<List<Tile>>, x: Int, y: Int) -> Tile
     ? "Get tile at (x, y), defaulting to Wall if out of bounds"
-    match List.get(map, y)
-        Option.Some(row) -> match List.get(row, x)
+    match Vector.get(Vector.fromList(map), y)
+        Option.Some(row) -> match Vector.get(Vector.fromList(row), x)
             Option.Some(t) -> t
             Option.None -> Tile.Wall
         Option.None -> Tile.Wall
@@ -32,7 +32,7 @@ verify isWall
 
 fn containsPt(pts: List<Point>, target: Point, i: Int) -> Bool
     ? "Check if target point is in pts starting from index i"
-    match List.get(pts, i)
+    match Vector.get(Vector.fromList(pts), i)
         Option.None -> false
         Option.Some(p) -> match Types.ptEq(p, target)
             true -> true
@@ -114,7 +114,7 @@ fn onWallFromFloor(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant:
     ? "Handle transition from floor to wall: recurse deeper then continue row"
     newEnd = cellStartSlope(col, row)
     deeper = scanOctant(map, ox, oy, radius, octant, row + 1, startSlope, newEnd, acc)
-    scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, startSlope, endSlope, true, List.append(deeper, Types.pt(cx, cy)))
+    scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, startSlope, endSlope, true, List.concat(deeper, [Types.pt(cx, cy)]))
 
 verify onWallFromFloor
     List.len(onWallFromFloor([[Tile.Wall]], 0, 0, 1, 2, 1, 0, 0, 0, 1000, [], 0, 0)) => 1
@@ -122,7 +122,7 @@ verify onWallFromFloor
 fn onFloorFromWall(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, acc: List<Point>, cx: Int, cy: Int) -> List<Point>
     ? "Handle transition from wall to floor: update startSlope and continue"
     newStart = cellEndSlope(col, row)
-    scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, newStart, endSlope, false, List.append(acc, Types.pt(cx, cy)))
+    scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, newStart, endSlope, false, List.concat(acc, [Types.pt(cx, cy)]))
 
 verify onFloorFromWall
     List.len(onFloorFromWall([[Tile.Floor, Tile.Floor]], 0, 0, 2, 2, 1, 0, 1, 0, 1000, [], 0, 0)) => 2
@@ -130,7 +130,7 @@ verify onFloorFromWall
 fn scanRowWall(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, prevWall: Bool, acc: List<Point>, cx: Int, cy: Int) -> List<Point>
     ? "Handle a wall cell during row scan"
     match prevWall
-        true -> scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, startSlope, endSlope, true, List.append(acc, Types.pt(cx, cy)))
+        true -> scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, startSlope, endSlope, true, List.concat(acc, [Types.pt(cx, cy)]))
         false -> onWallFromFloor(map, ox, oy, radius, octant, row, col, maxC, startSlope, endSlope, acc, cx, cy)
 
 verify scanRowWall
@@ -140,7 +140,7 @@ fn scanRowFloor(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: In
     ? "Handle a floor cell during row scan"
     match prevWall
         true -> onFloorFromWall(map, ox, oy, radius, octant, row, col, maxC, startSlope, endSlope, acc, cx, cy)
-        false -> scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, startSlope, endSlope, false, List.append(acc, Types.pt(cx, cy)))
+        false -> scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, startSlope, endSlope, false, List.concat(acc, [Types.pt(cx, cy)]))
 
 verify scanRowFloor
     List.len(scanRowFloor([[Tile.Floor]], 0, 0, 1, 2, 1, 0, 0, 0, 1000, false, [], 0, 0)) => 1
@@ -200,11 +200,11 @@ verify scanAllOctants
 
 fn dedup(pts: List<Point>, i: Int, acc: List<Point>) -> List<Point>
     ? "Remove duplicate points from the list"
-    match List.get(pts, i)
+    match Vector.get(Vector.fromList(pts), i)
         Option.None -> acc
         Option.Some(p) -> match containsPt(acc, p, 0)
             true -> dedup(pts, i + 1, acc)
-            false -> dedup(pts, i + 1, List.append(acc, p))
+            false -> dedup(pts, i + 1, List.concat(acc, [p]))
 
 verify dedup
     List.len(dedup([Types.pt(1, 1), Types.pt(1, 1), Types.pt(2, 2)], 0, [])) => 2

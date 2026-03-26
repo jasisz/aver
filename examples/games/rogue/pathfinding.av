@@ -58,7 +58,7 @@ verify neighbors
 
 fn containsPos(nodes: List<BfsNode>, pos: Point, i: Int) -> Bool
     ? "Check if any node in the list has the given position"
-    match List.get(nodes, i)
+    match Vector.get(Vector.fromList(nodes), i)
         Option.None -> false
         Option.Some(n) -> match Types.ptEq(n.pos, pos)
             true -> true
@@ -70,7 +70,7 @@ verify containsPos
 
 fn entityAtPos(entities: List<Entity>, pos: Point, i: Int) -> Bool
     ? "Check if any entity occupies the given position"
-    match List.get(entities, i)
+    match Vector.get(Vector.fromList(entities), i)
         Option.None -> false
         Option.Some(e) -> match Types.ptEq(e.pos, pos)
             true -> true
@@ -95,16 +95,16 @@ verify isWalkable
 
 fn filterNewNeighbors(map: List<List<Tile>>, nbrs: List<Point>, to: Point, entities: List<Entity>, open: List<BfsNode>, closed: List<BfsNode>, parent: Point, parentDist: Int, i: Int, acc: List<BfsNode>) -> List<BfsNode>
     ? "Filter neighbor points to walkable ones not in open or closed, or the target even if occupied"
-    match List.get(nbrs, i)
+    match Vector.get(Vector.fromList(nbrs), i)
         Option.None -> acc
         Option.Some(p) -> match containsPos(open, p, 0)
             true -> filterNewNeighbors(map, nbrs, to, entities, open, closed, parent, parentDist, i + 1, acc)
             false -> match containsPos(closed, p, 0)
                 true -> filterNewNeighbors(map, nbrs, to, entities, open, closed, parent, parentDist, i + 1, acc)
                 false -> match Types.ptEq(p, to)
-                    true -> filterNewNeighbors(map, nbrs, to, entities, open, closed, parent, parentDist, i + 1, List.append(acc, BfsNode(pos = p, parentX = parent.x, parentY = parent.y, hasParent = true, dist = parentDist + 1)))
+                    true -> filterNewNeighbors(map, nbrs, to, entities, open, closed, parent, parentDist, i + 1, List.concat(acc, [BfsNode(pos = p, parentX = parent.x, parentY = parent.y, hasParent = true, dist = parentDist + 1)]))
                     false -> match isWalkable(map, p, entities)
-                        true -> filterNewNeighbors(map, nbrs, to, entities, open, closed, parent, parentDist, i + 1, List.append(acc, BfsNode(pos = p, parentX = parent.x, parentY = parent.y, hasParent = true, dist = parentDist + 1)))
+                        true -> filterNewNeighbors(map, nbrs, to, entities, open, closed, parent, parentDist, i + 1, List.concat(acc, [BfsNode(pos = p, parentX = parent.x, parentY = parent.y, hasParent = true, dist = parentDist + 1)]))
                         false -> filterNewNeighbors(map, nbrs, to, entities, open, closed, parent, parentDist, i + 1, acc)
 
 verify filterNewNeighbors
@@ -120,16 +120,16 @@ verify expandNode
 
 fn appendAll(base: List<BfsNode>, extra: List<BfsNode>, i: Int) -> List<BfsNode>
     ? "Append all elements from extra to base"
-    match List.get(extra, i)
+    match Vector.get(Vector.fromList(extra), i)
         Option.None -> base
-        Option.Some(n) -> appendAll(List.append(base, n), extra, i + 1)
+        Option.Some(n) -> appendAll(List.concat(base, [n]), extra, i + 1)
 
 verify appendAll
     List.len(appendAll([mkStart(0, 0)], [mkStart(1, 1)], 0)) => 2
 
 fn nodeAtPos(nodes: List<BfsNode>, pos: Point, i: Int) -> Option<BfsNode>
     ? "Find a node by position in the list"
-    match List.get(nodes, i)
+    match Vector.get(Vector.fromList(nodes), i)
         Option.None -> Option.None
         Option.Some(n) -> match Types.ptEq(n.pos, pos)
             true -> Option.Some(n)
@@ -158,22 +158,22 @@ verify tracePath
 
 fn restOfQueue(open: List<BfsNode>, i: Int, acc: List<BfsNode>) -> List<BfsNode>
     ? "Return all elements of open except the first, starting collection from index i"
-    match List.get(open, i)
+    match Vector.get(Vector.fromList(open), i)
         Option.None -> acc
-        Option.Some(n) -> restOfQueue(open, i + 1, List.append(acc, n))
+        Option.Some(n) -> restOfQueue(open, i + 1, List.concat(acc, [n]))
 
 verify restOfQueue
     List.len(restOfQueue([mkStart(0, 0), mkStart(1, 1)], 1, [mkStart(9, 9)])) => 2
 
 fn bfsSearch(map: List<List<Tile>>, from: Point, to: Point, entities: List<Entity>, open: List<BfsNode>, closed: List<BfsNode>, maxDepth: Int) -> Option<Point>
     ? "BFS loop: expand front of open queue, stop when target found or depth exceeded"
-    match List.get(open, 0)
+    match Vector.get(Vector.fromList(open), 0)
         Option.None -> Option.None
         Option.Some(current) -> match current.dist > maxDepth
             true -> Option.None
             false -> match Types.ptEq(current.pos, to)
-                true -> tracePath(List.append(closed, current), to, from)
-                false -> bfsSearch(map, from, to, entities, appendAll(restOfQueue(open, 1, []), expandNode(map, current, to, entities, open, closed), 0), List.append(closed, current), maxDepth)
+                true -> tracePath(List.concat(closed, [current]), to, from)
+                false -> bfsSearch(map, from, to, entities, appendAll(restOfQueue(open, 1, []), expandNode(map, current, to, entities, open, closed), 0), List.concat(closed, [current]), maxDepth)
 
 verify bfsSearch
     bfsSearch(testMap3(), Types.pt(5, 5), Types.pt(7, 5), emptyEnts(), [mkStart(5, 5)], emptyNodes(), 15) => Option.Some(Types.pt(6, 5))

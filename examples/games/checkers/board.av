@@ -147,8 +147,8 @@ verify buildEmptyBoard
 
 fn getCell(board: List<List<CellContent>>, x: Int, y: Int) -> CellContent
     ? "Get cell at (x,y), Empty if out of bounds"
-    match List.get(board, y)
-        Option.Some(row) -> match List.get(row, x)
+    match Vector.get(Vector.fromList(board), y)
+        Option.Some(row) -> match Vector.get(Vector.fromList(row), x)
             Option.Some(cell) -> cell
             Option.None -> CellContent.Empty
         Option.None -> CellContent.Empty
@@ -160,7 +160,7 @@ fn setCellCol(row: List<CellContent>, x: Int, val: CellContent, col: Int) -> Lis
     ? "Rebuild a row replacing column x"
     match col == 8
         true -> []
-        false -> match List.get(row, col)
+        false -> match Vector.get(Vector.fromList(row), col)
             Option.Some(v) -> match col == x
                 true -> List.prepend(val, setCellCol(row, x, val, col + 1))
                 false -> List.prepend(v, setCellCol(row, x, val, col + 1))
@@ -173,7 +173,7 @@ fn setCellRow(board: List<List<CellContent>>, x: Int, y: Int, val: CellContent, 
     ? "Rebuild rows replacing cell at (x,y)"
     match row == 8
         true -> []
-        false -> match List.get(board, row)
+        false -> match Vector.get(Vector.fromList(board), row)
             Option.Some(r) -> match row == y
                 true -> List.prepend(setCellCol(r, x, val, 0), setCellRow(board, x, y, val, row + 1))
                 false -> List.prepend(r, setCellRow(board, x, y, val, row + 1))

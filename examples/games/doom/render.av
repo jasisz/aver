@@ -237,7 +237,7 @@ fn buildZBufferCol(levelMap: List<String>, wallMap: List<String>, px: Float, py:
     rayAngle = angle - fov() / 2.0 + Int.toFloat(col) * fov() / Int.toFloat(screenW())
     hit = castRay(levelMap, wallMap, px, py, rayAngle)
     corrected = RayHit.update(hit, dist = hit.dist * Float.cos(rayAngle - angle))
-    buildZBuffer(levelMap, wallMap, px, py, angle, col + 1, List.append(acc, corrected))
+    buildZBuffer(levelMap, wallMap, px, py, angle, col + 1, List.concat(acc, [corrected]))
 
 // ─── Wall rendering ────────────────────────────────────────────────────────
 
@@ -248,7 +248,7 @@ fn renderWalls(zbuf: List<RayHit>, col: Int) -> Unit
     ]
     match col == screenW()
         true -> Terminal.print("")
-        false -> match List.get(zbuf, col)
+        false -> match Vector.get(Vector.fromList(zbuf), col)
             Option.Some(hit) -> renderWallCol(zbuf, col, hit)
             Option.None -> renderWalls(zbuf, col + 1)
 
@@ -308,7 +308,7 @@ fn renderEnemies(enemies: List<Enemy>, zbuf: List<RayHit>, px: Float, py: Float,
     ]
     match i == List.len(enemies)
         true -> Terminal.print("")
-        false -> match List.get(enemies, i)
+        false -> match Vector.get(Vector.fromList(enemies), i)
             Option.Some(e) -> renderEnemySprite(enemies, zbuf, px, py, pAngle, i, e)
             Option.None -> renderEnemies(enemies, zbuf, px, py, pAngle, i + 1)
 
@@ -335,7 +335,7 @@ fn isEnemyVisible(screenCol: Int, eDist: Float, zbuf: List<RayHit>) -> Bool
             true -> false
             false -> match eDist < 0.3
                 true -> false
-                false -> match List.get(zbuf, screenCol)
+                false -> match Vector.get(Vector.fromList(zbuf), screenCol)
                     Option.Some(hit) -> eDist < hit.dist
                     Option.None -> false
 
@@ -525,7 +525,7 @@ fn renderMessages(msgs: List<String>, hudX: Int, i: Int) -> Unit
     ]
     match i == List.len(msgs)
         true -> Terminal.print("")
-        false -> match List.get(msgs, i)
+        false -> match Vector.get(Vector.fromList(msgs), i)
             Option.Some(msg) -> renderOneMessage(msgs, hudX, i, msg)
             Option.None -> Terminal.print("")
 
@@ -633,7 +633,7 @@ fn enemyAt(enemies: List<Enemy>, mx: Int, my: Int, i: Int) -> Bool
     ? "Check if any enemy is at map tile (mx, my)"
     match i == List.len(enemies)
         true -> false
-        false -> match List.get(enemies, i)
+        false -> match Vector.get(Vector.fromList(enemies), i)
             Option.Some(e) -> match Bool.and(Float.floor(e.x) == mx, Float.floor(e.y) == my)
                 true -> true
                 false -> enemyAt(enemies, mx, my, i + 1)
