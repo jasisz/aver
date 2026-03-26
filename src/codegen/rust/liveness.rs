@@ -259,7 +259,6 @@ pub fn compute_block_used_after_with_rc(
     result
 }
 
-
 /// Like `compute_args_used_after` but propagates `rc_wrapped` to child contexts.
 pub fn compute_args_used_after_with_rc(
     args: &[Expr],

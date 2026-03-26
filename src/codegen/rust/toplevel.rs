@@ -586,12 +586,7 @@ fn compute_rc_params_by_name(group_fns: &[&FnDef]) -> HashSet<usize> {
         .iter()
         .filter(|(param_name, _)| {
             group_fns.iter().all(|fd| {
-                check_param_passthrough_by_name(
-                    &fd.body,
-                    &member_names,
-                    param_name,
-                    &fn_param_map,
-                )
+                check_param_passthrough_by_name(&fd.body, &member_names, param_name, &fn_param_map)
             })
         })
         .map(|(name, _)| *name)
@@ -622,12 +617,7 @@ fn check_param_passthrough_by_name(
     for stmt in body.stmts() {
         match stmt {
             Stmt::Expr(e) | Stmt::Binding(_, _, e) => {
-                if !check_expr_passthrough_by_name(
-                    e,
-                    member_names,
-                    param_name,
-                    fn_param_map,
-                ) {
+                if !check_expr_passthrough_by_name(e, member_names, param_name, fn_param_map) {
                     return false;
                 }
             }
@@ -660,12 +650,7 @@ fn check_expr_passthrough_by_name(
             }
         }
         Expr::Match { arms, .. } => arms.iter().all(|arm| {
-            check_expr_passthrough_by_name(
-                &arm.body,
-                member_names,
-                param_name,
-                fn_param_map,
-            )
+            check_expr_passthrough_by_name(&arm.body, member_names, param_name, fn_param_map)
         }),
         _ => true,
     }
