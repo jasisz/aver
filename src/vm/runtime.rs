@@ -1,6 +1,10 @@
 use crate::nan_value::{Arena, NanValue};
-use crate::replay::session::{EffectRecord, RecordedOutcome};
-use crate::replay::{json_to_value, value_to_json, values_to_json_lossy};
+use crate::replay::session::RecordedOutcome;
+use crate::replay::{
+    EffectRecord, EffectReplayMode, EffectReplayState, ReplayFailure, json_to_value, value_to_json,
+    values_to_json_lossy,
+};
+use crate::value::Value;
 
 use super::builtin::VmBuiltin;
 use super::symbol::VmSymbolTable;
@@ -22,11 +26,8 @@ pub(super) struct VmRuntime {
     allowed_effects: Vec<u32>,
     cli_args: Vec<String>,
     silent_console: bool,
-    execution_mode: VmExecutionMode,
-    recorded_effects: Vec<EffectRecord>,
-    replay_effects: Vec<EffectRecord>,
-    replay_pos: usize,
-    validate_replay_args: bool,
+    replay_state: EffectReplayState,
+    runtime_policy: Option<crate::config::ProjectConfig>,
 }
 
 impl Default for VmRuntime {
@@ -41,11 +42,8 @@ impl VmRuntime {
             allowed_effects: Vec::new(),
             cli_args: Vec::new(),
             silent_console: false,
-            execution_mode: VmExecutionMode::Normal,
-            recorded_effects: Vec::new(),
-            replay_effects: Vec::new(),
-            replay_pos: 0,
-            validate_replay_args: false,
+            replay_state: EffectReplayState::default(),
+            runtime_policy: None,
         }
     }
 
@@ -86,41 +84,44 @@ impl VmRuntime {
         self.silent_console = silent;
     }
 
+    pub(super) fn set_runtime_policy(&mut self, config: crate::config::ProjectConfig) {
+        self.runtime_policy = Some(config);
+    }
+
     pub(super) fn start_recording(&mut self) {
-        self.execution_mode = VmExecutionMode::Record;
-        self.recorded_effects.clear();
+        self.replay_state.start_recording();
     }
 
     pub(super) fn start_replay(&mut self, effects: Vec<EffectRecord>, validate_args: bool) {
-        self.execution_mode = VmExecutionMode::Replay;
-        self.replay_effects = effects;
-        self.replay_pos = 0;
-        self.validate_replay_args = validate_args;
+        self.replay_state.start_replay(effects, validate_args);
     }
 
     pub(super) fn execution_mode(&self) -> VmExecutionMode {
-        self.execution_mode
+        match self.replay_state.mode() {
+            EffectReplayMode::Normal => VmExecutionMode::Normal,
+            EffectReplayMode::Record => VmExecutionMode::Record,
+            EffectReplayMode::Replay => VmExecutionMode::Replay,
+        }
     }
 
     pub fn recorded_effects(&self) -> &[EffectRecord] {
-        &self.recorded_effects
+        self.replay_state.recorded_effects()
     }
 
     pub(super) fn replay_progress(&self) -> (usize, usize) {
-        (self.replay_pos, self.replay_effects.len())
+        self.replay_state.replay_progress()
     }
 
     pub(super) fn ensure_replay_consumed(&self) -> Result<(), VmError> {
-        if self.execution_mode == VmExecutionMode::Replay
-            && self.replay_pos < self.replay_effects.len()
-        {
-            let remaining = self.replay_effects.len() - self.replay_pos;
-            return Err(VmError::Runtime(format!(
-                "Replay finished with {} unconsumed recorded effect(s)",
-                remaining
-            )));
-        }
-        Ok(())
+        self.replay_state
+            .ensure_replay_consumed()
+            .map_err(|err| match err {
+                ReplayFailure::Unconsumed { remaining } => VmError::Runtime(format!(
+                    "Replay finished with {} unconsumed recorded effect(s)",
+                    remaining
+                )),
+                other => VmError::Runtime(format!("invalid replay state: {:?}", other)),
+            })
     }
 
     pub(super) fn invoke_builtin(
@@ -135,6 +136,7 @@ impl VmRuntime {
             "HttpServer builtins require VM callback handling outside VmRuntime"
         );
         self.ensure_builtin_effects_allowed(symbols, builtin)?;
+        self.check_runtime_policy(builtin.name(), args, arena)?;
 
         let builtin_name = builtin.name();
         let required_effects = symbols
@@ -143,7 +145,7 @@ impl VmRuntime {
             .map(|info| info.required_effects.as_slice())
             .unwrap_or(&[]);
         let is_effectful = !required_effects.is_empty();
-        match (is_effectful, self.execution_mode) {
+        match (is_effectful, self.execution_mode()) {
             (_, VmExecutionMode::Normal) | (false, _) => builtin
                 .invoke_nv(args, arena, &self.cli_args, self.silent_console)
                 .map_err(|err| match err {
@@ -166,13 +168,8 @@ impl VmRuntime {
                     Ok(json) => RecordedOutcome::Value(json),
                     Err(e) => RecordedOutcome::RuntimeError(e),
                 };
-                let seq = self.recorded_effects.len() as u32 + 1;
-                self.recorded_effects.push(EffectRecord {
-                    seq,
-                    effect_type: builtin_name.to_string(),
-                    args: args_json,
-                    outcome,
-                });
+                self.replay_state
+                    .record_effect(builtin_name, args_json, outcome);
                 Ok(nv_result)
             }
             (true, VmExecutionMode::Replay) => self.replay_builtin(builtin_name, args, arena),
@@ -185,39 +182,40 @@ impl VmRuntime {
         args: &[NanValue],
         arena: &mut Arena,
     ) -> Result<NanValue, VmError> {
-        if self.replay_pos >= self.replay_effects.len() {
-            return Err(VmError::Runtime(format!(
-                "Replay exhausted: no more recorded effects for '{}'",
-                builtin_name
-            )));
-        }
-        let record = &self.replay_effects[self.replay_pos];
-        if record.effect_type != builtin_name {
-            return Err(VmError::Runtime(format!(
-                "Replay mismatch at #{}: expected '{}', got '{}'",
-                record.seq, record.effect_type, builtin_name
-            )));
-        }
-        if self.validate_replay_args {
-            let got_args = {
-                let vals: Vec<_> = args.iter().map(|a| a.to_value(arena)).collect();
-                values_to_json_lossy(&vals)
-            };
-            if got_args != record.args {
-                return Err(VmError::Runtime(format!(
+        let got_args = {
+            let vals: Vec<_> = args.iter().map(|a| a.to_value(arena)).collect();
+            values_to_json_lossy(&vals)
+        };
+        let record = self
+            .replay_state
+            .replay_effect(builtin_name, Some(got_args))
+            .map_err(|err| match err {
+                ReplayFailure::Exhausted { effect_type, .. } => VmError::Runtime(format!(
+                    "Replay exhausted: no more recorded effects for '{}'",
+                    effect_type
+                )),
+                ReplayFailure::Mismatch { seq, expected, got } => VmError::Runtime(format!(
+                    "Replay mismatch at #{}: expected '{}', got '{}'",
+                    seq, expected, got
+                )),
+                ReplayFailure::ArgsMismatch {
+                    seq, effect_type, ..
+                } => VmError::Runtime(format!(
                     "Replay args mismatch at #{} for '{}'",
-                    record.seq, builtin_name
-                )));
-            }
-        }
-        let result = match &record.outcome {
+                    seq, effect_type
+                )),
+                ReplayFailure::Unconsumed { remaining } => VmError::Runtime(format!(
+                    "Replay finished with {} unconsumed recorded effect(s)",
+                    remaining
+                )),
+            })?;
+        let result = match &record {
             RecordedOutcome::Value(json) => {
                 let val = json_to_value(json).map_err(VmError::Runtime)?;
                 NanValue::from_value(&val, arena)
             }
             RecordedOutcome::RuntimeError(msg) => return Err(VmError::Runtime(msg.clone())),
         };
-        self.replay_pos += 1;
         Ok(result)
     }
 
@@ -257,5 +255,46 @@ impl VmRuntime {
             .map(|info| info.required_effects.as_slice())
             .unwrap_or(&[]);
         self.ensure_effects_allowed(symbols, builtin_name, required_effects)
+    }
+
+    fn check_runtime_policy(
+        &self,
+        builtin_name: &str,
+        args: &[NanValue],
+        arena: &Arena,
+    ) -> Result<(), VmError> {
+        if self.execution_mode() == VmExecutionMode::Replay {
+            return Ok(());
+        }
+        let Some(policy) = &self.runtime_policy else {
+            return Ok(());
+        };
+
+        match (builtin_name.split('.').next(), args.first()) {
+            (Some("Http"), Some(arg)) => {
+                if let Value::Str(url) = arg.to_value(arena) {
+                    policy
+                        .check_http_host(builtin_name, &url)
+                        .map_err(VmError::Runtime)?;
+                }
+            }
+            (Some("Disk"), Some(arg)) => {
+                if let Value::Str(path) = arg.to_value(arena) {
+                    policy
+                        .check_disk_path(builtin_name, &path)
+                        .map_err(VmError::Runtime)?;
+                }
+            }
+            (Some("Env"), Some(arg)) => {
+                if let Value::Str(key) = arg.to_value(arena) {
+                    policy
+                        .check_env_key(builtin_name, &key)
+                        .map_err(VmError::Runtime)?;
+                }
+            }
+            _ => {}
+        }
+
+        Ok(())
     }
 }

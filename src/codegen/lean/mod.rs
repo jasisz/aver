@@ -2233,6 +2233,8 @@ mod tests {
             modules: vec![],
             module_prefixes: HashSet::new(),
             policy: None,
+            emit_replay_runtime: false,
+            guest_entry: None,
         }
     }
 

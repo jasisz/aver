@@ -75,6 +75,11 @@ impl VM {
         self.runtime.set_silent_console(silent);
     }
 
+    /// Set the runtime policy loaded from `aver.toml`.
+    pub fn set_runtime_policy(&mut self, config: crate::config::ProjectConfig) {
+        self.runtime.set_runtime_policy(config);
+    }
+
     /// Start recording effectful calls.
     pub fn start_recording(&mut self) {
         self.runtime.start_recording();

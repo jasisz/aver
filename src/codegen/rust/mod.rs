@@ -7,6 +7,7 @@ mod liveness;
 mod pattern;
 mod policy;
 mod project;
+mod replay;
 mod runtime;
 mod syntax;
 mod toplevel;
@@ -32,14 +33,17 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
         || needs_named_type(ctx, "HttpResponse")
         || needs_named_type(ctx, "HttpRequest");
     let needs_tcp_types = needs_named_type(ctx, "Tcp.Connection");
+    let needs_terminal_types = needs_named_type(ctx, "Terminal.Size");
 
     let has_tcp_runtime = used_services.contains("Tcp");
     let has_http_runtime = used_services.contains("Http");
     let has_http_server_runtime = used_services.contains("HttpServer");
+    let has_terminal_runtime = used_services.contains("Terminal");
 
     let has_tcp_types = has_tcp_runtime || needs_tcp_types;
     let has_http_types = has_http_runtime || has_http_server_runtime || needs_http_types;
     let has_http_server_types = has_http_server_runtime || needs_named_type(ctx, "HttpRequest");
+    let has_terminal_types = has_terminal_runtime || needs_terminal_types;
 
     let main_fn = ctx.fn_defs.iter().find(|fd| fd.name == "main");
     let top_level_stmts: Vec<_> = ctx
@@ -72,12 +76,19 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
                 &ctx.project_name,
                 &used_services,
                 ctx.policy.is_some(),
+                ctx.emit_replay_runtime,
                 &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("aver-rt"),
             ),
         ),
         (
             "src/main.rs".to_string(),
-            render_root_main(main_fn, ctx.policy.is_some(), !verify_blocks.is_empty()),
+            render_root_main(
+                main_fn,
+                ctx.policy.is_some(),
+                ctx.emit_replay_runtime,
+                ctx.guest_entry.as_deref(),
+                !verify_blocks.is_empty(),
+            ),
         ),
         (
             "src/runtime_support.rs".to_string(),
@@ -89,6 +100,19 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
         files.push((
             "src/policy_support.rs".to_string(),
             format!("{}\n", policy::generate_policy_runtime(config)),
+        ));
+    }
+
+    if ctx.emit_replay_runtime {
+        files.push((
+            "src/replay_support.rs".to_string(),
+            replay::generate_replay_runtime(
+                ctx.policy.is_some(),
+                has_terminal_types,
+                has_tcp_types,
+                has_http_types,
+                has_http_server_types,
+            ),
         ));
     }
 
@@ -124,7 +148,13 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
     ProjectOutput { files }
 }
 
-fn render_root_main(main_fn: Option<&FnDef>, has_policy: bool, has_verify: bool) -> String {
+fn render_root_main(
+    main_fn: Option<&FnDef>,
+    has_policy: bool,
+    has_replay: bool,
+    guest_entry: Option<&str>,
+    has_verify: bool,
+) -> String {
     let mut sections = vec![
         "#![allow(unused_variables, unused_mut, dead_code, unused_imports, unused_parens, non_snake_case, non_camel_case_types, unreachable_patterns)]".to_string(),
         "#[macro_use] extern crate aver_rt;".to_string(),
@@ -139,6 +169,12 @@ fn render_root_main(main_fn: Option<&FnDef>, has_policy: bool, has_verify: bool)
         sections.push(String::new());
         sections.push("mod policy_support;".to_string());
         sections.push("pub use policy_support::*;".to_string());
+    }
+
+    if has_replay {
+        sections.push(String::new());
+        sections.push("mod replay_support;".to_string());
+        sections.push("pub use replay_support::*;".to_string());
     }
 
     sections.push(String::new());
@@ -158,7 +194,11 @@ fn render_root_main(main_fn: Option<&FnDef>, has_policy: bool, has_verify: bool)
         sections.push(format!("fn main() -> {} {{", ret_type));
         sections.push("    let child = std::thread::Builder::new()".to_string());
         sections.push("        .stack_size(256 * 1024 * 1024)".to_string());
-        sections.push("        .spawn(aver_generated::entry::main)".to_string());
+        if has_replay && guest_entry.is_none() {
+            sections.push("        .spawn(|| aver_replay::with_guest_scope(\"main\", serde_json::Value::Null, aver_generated::entry::main))".to_string());
+        } else {
+            sections.push("        .spawn(aver_generated::entry::main)".to_string());
+        }
         sections.push("        .expect(\"thread spawn\");".to_string());
         sections.push("    child.join().expect(\"thread join\")".to_string());
     } else {
@@ -166,7 +206,11 @@ fn render_root_main(main_fn: Option<&FnDef>, has_policy: bool, has_verify: bool)
         if main_fn.is_some() {
             sections.push("    let child = std::thread::Builder::new()".to_string());
             sections.push("        .stack_size(256 * 1024 * 1024)".to_string());
-            sections.push("        .spawn(|| aver_generated::entry::main())".to_string());
+            if has_replay && guest_entry.is_none() {
+                sections.push("        .spawn(|| aver_replay::with_guest_scope(\"main\", serde_json::Value::Null, || aver_generated::entry::main()))".to_string());
+            } else {
+                sections.push("        .spawn(|| aver_generated::entry::main())".to_string());
+            }
             sections.push("        .expect(\"thread spawn\");".to_string());
             sections.push("    child.join().expect(\"thread join\");".to_string());
         }
@@ -243,6 +287,9 @@ fn entry_module_sections(
             continue;
         }
         sections.push(toplevel::emit_public_type_def(td, ctx));
+        if ctx.emit_replay_runtime {
+            sections.push(replay::emit_replay_value_impl(td));
+        }
     }
 
     // Detect mutual TCO groups among non-main functions.
@@ -286,6 +333,9 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
             continue;
         }
         sections.push(toplevel::emit_public_type_def(td, ctx));
+        if ctx.emit_replay_runtime {
+            sections.push(replay::emit_replay_value_impl(td));
+        }
     }
 
     // Detect mutual TCO groups among module functions.
@@ -453,6 +503,13 @@ mod tests {
                 (name == "src/aver_generated/entry/mod.rs").then_some(content.as_str())
             })
             .expect("expected generated Rust entry module")
+    }
+
+    fn generated_file<'a>(out: &'a crate::codegen::ProjectOutput, path: &str) -> &'a str {
+        out.files
+            .iter()
+            .find_map(|(name, content)| (name == path).then_some(content.as_str()))
+            .unwrap_or_else(|| panic!("expected generated file '{}'", path))
     }
 
     #[test]
@@ -647,6 +704,53 @@ type Wrapper
             entry.contains("vec![f0.aver_display_inner(), f1.aver_display_inner()].join(\", \")"),
             "multi-field variant should use vec join:\n{}",
             entry
+        );
+    }
+
+    #[test]
+    fn replay_codegen_wraps_guest_entry_in_scoped_runtime() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn runGuestProgram(path: String) -> Result<String, String>
+    ! [Disk.readText]
+    Disk.readText(path)
+"#,
+            "demo",
+        );
+        ctx.emit_replay_runtime = true;
+        ctx.guest_entry = Some("runGuestProgram".to_string());
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+        let replay_support = generated_file(&out, "src/replay_support.rs");
+        let cargo_toml = generated_file(&out, "Cargo.toml");
+
+        assert!(entry.contains("aver_replay::with_guest_scope(\"runGuestProgram\""));
+        assert!(replay_support.contains("pub mod aver_replay"));
+        assert!(cargo_toml.contains("serde_json = \"1\""));
+    }
+
+    #[test]
+    fn replay_codegen_wraps_root_main_when_no_guest_entry_is_set() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn main() -> Result<String, String>
+    ! [Disk.readText]
+    Disk.readText("demo.av")
+"#,
+            "demo",
+        );
+        ctx.emit_replay_runtime = true;
+
+        let out = transpile(&ctx);
+        let root_main = generated_file(&out, "src/main.rs");
+
+        assert!(
+            root_main.contains("aver_replay::with_guest_scope(\"main\", serde_json::Value::Null")
         );
     }
 }

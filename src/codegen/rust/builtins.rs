@@ -78,12 +78,190 @@ fn builtin_needs_str_conversion(name: &str) -> bool {
     )
 }
 
+fn builtin_is_effectful(name: &str) -> bool {
+    matches!(
+        name.split('.').next(),
+        Some(
+            "Args"
+                | "Console"
+                | "Http"
+                | "HttpServer"
+                | "Disk"
+                | "Env"
+                | "Random"
+                | "Tcp"
+                | "Terminal"
+                | "Time"
+        )
+    )
+}
+
+fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option<String> {
+    match name {
+        "Console.print" => Some(format!("aver_rt::console_print(&{})", args[0])),
+        "Console.error" => Some(format!("aver_rt::console_error(&{})", args[0])),
+        "Console.warn" => Some(format!("aver_rt::console_warn(&{})", args[0])),
+        "Console.readLine" => Some("aver_rt::read_line()".to_string()),
+        "Http.get" => Some(format!("aver_rt::http::get(&{})", args[0])),
+        "Http.head" => Some(format!("aver_rt::http::head(&{})", args[0])),
+        "Http.delete" => Some(format!("aver_rt::http::delete(&{})", args[0])),
+        "Http.post" => Some(format!(
+            "aver_rt::http::post(&{}, &{}, &{}, &{})",
+            args[0], args[1], args[2], args[3]
+        )),
+        "Http.put" => Some(format!(
+            "aver_rt::http::put(&{}, &{}, &{}, &{})",
+            args[0], args[1], args[2], args[3]
+        )),
+        "Http.patch" => Some(format!(
+            "aver_rt::http::patch(&{}, &{}, &{}, &{})",
+            args[0], args[1], args[2], args[3]
+        )),
+        "HttpServer.listen" => Some(format!(
+            "{{ if let Err(e) = aver_rt::http_server::listen({}, {}) {{ panic!(\"{{}}\", e); }} }}",
+            args[0], args[1]
+        )),
+        "HttpServer.listenWith" => Some(format!(
+            "{{ if let Err(e) = aver_rt::http_server::listen_with({}, {}.clone(), {}) {{ panic!(\"{{}}\", e); }} }}",
+            args[0], args[1], args[2]
+        )),
+        "Disk.readText" => Some(format!("aver_rt::read_text(&{})", args[0])),
+        "Disk.writeText" => Some(format!("aver_rt::write_text(&{}, &{})", args[0], args[1])),
+        "Disk.appendText" => Some(format!("aver_rt::append_text(&{}, &{})", args[0], args[1])),
+        "Disk.exists" => Some(format!("aver_rt::path_exists(&{})", args[0])),
+        "Disk.delete" => Some(format!("aver_rt::delete_file(&{})", args[0])),
+        "Disk.deleteDir" => Some(format!("aver_rt::delete_dir(&{})", args[0])),
+        "Disk.listDir" => Some(format!("aver_rt::list_dir(&{})", args[0])),
+        "Disk.makeDir" => Some(format!("aver_rt::make_dir(&{})", args[0])),
+        "Env.get" => Some(format!("aver_rt::env_get(&{})", args[0])),
+        "Env.set" => Some(format!(
+            "aver_rt::env_set(&{}, &{}).expect(\"Env.set failed\")",
+            args[0], args[1]
+        )),
+        "Args.get" => Some("aver_rt::cli_args()".to_string()),
+        "Time.now" => Some("aver_rt::time_now()".to_string()),
+        "Time.unixMs" => Some("aver_rt::time_unix_ms()".to_string()),
+        "Time.sleep" => Some(format!("aver_rt::time_sleep({})", args[0])),
+        "Random.int" => Some(format!(
+            "aver_rt::random::random_int({}, {}).unwrap()",
+            args[0], args[1]
+        )),
+        "Random.float" => Some("aver_rt::random::random_float()".to_string()),
+        "Tcp.send" => Some(format!(
+            "aver_rt::tcp::send(&{}, {}, &{})",
+            args[0], args[1], args[2]
+        )),
+        "Tcp.ping" => Some(format!("aver_rt::tcp::ping(&{}, {})", args[0], args[1])),
+        "Tcp.connect" => Some(format!("aver_rt::tcp::connect(&{}, {})", args[0], args[1])),
+        "Tcp.writeLine" => Some(format!("aver_rt::tcp::write_line(&{}, &{})", args[0], args[1])),
+        "Tcp.readLine" => Some(format!("aver_rt::tcp::read_line(&{})", args[0])),
+        "Tcp.close" => Some(format!("aver_rt::tcp::close(&{})", args[0])),
+        "Terminal.enableRawMode" => Some("aver_rt::terminal_enable_raw_mode().unwrap()".to_string()),
+        "Terminal.disableRawMode" => {
+            Some("aver_rt::terminal_disable_raw_mode().unwrap()".to_string())
+        }
+        "Terminal.clear" => Some("aver_rt::terminal_clear().unwrap()".to_string()),
+        "Terminal.moveTo" => Some(format!(
+            "aver_rt::terminal_move_to({}, {}).unwrap()",
+            args[0], args[1]
+        )),
+        "Terminal.print" => Some(format!(
+            "{{ let __s = format!(\"{{}}\", {}); aver_rt::terminal_print(&__s).unwrap() }}",
+            args[0]
+        )),
+        "Terminal.setColor" => {
+            Some(format!("aver_rt::terminal_set_color(&{}).unwrap()", args[0]))
+        }
+        "Terminal.resetColor" => Some("aver_rt::terminal_reset_color().unwrap()".to_string()),
+        "Terminal.readKey" => Some("aver_rt::terminal_read_key()".to_string()),
+        "Terminal.size" => Some(
+            "{ let (w, h) = aver_rt::terminal_size().unwrap(); aver_rt::TerminalSize { width: w, height: h } }".to_string(),
+        ),
+        "Terminal.hideCursor" => Some("aver_rt::terminal_hide_cursor().unwrap()".to_string()),
+        "Terminal.showCursor" => Some("aver_rt::terminal_show_cursor().unwrap()".to_string()),
+        "Terminal.flush" => Some("aver_rt::terminal_flush().unwrap()".to_string()),
+        _ => None,
+    }
+}
+
+fn emit_replay_effect_call(
+    name: &str,
+    args: &[Expr],
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> Option<String> {
+    let arg_ctxs = compute_args_used_after_with_rc(
+        args,
+        &ectx.used_after,
+        &ectx.local_types,
+        &ectx.rc_wrapped,
+    );
+    let temp_names = (0..args.len())
+        .map(|idx| format!("__effect_arg{}", idx))
+        .collect::<Vec<_>>();
+    let raw = emit_effectful_builtin_call_with_temps(name, &temp_names)?;
+    let final_result = if builtin_needs_str_conversion(name) {
+        format!("({}).into_aver()", raw)
+    } else {
+        raw
+    };
+
+    let mut lines = Vec::new();
+    lines.push("{".to_string());
+    for (idx, arg) in args.iter().enumerate() {
+        let emitted = clone_arg(arg, ctx, &arg_ctxs[idx]);
+        lines.push(format!("    let {} = {};", temp_names[idx], emitted));
+    }
+    let json_args = emit_replay_effect_arg_json(name, &temp_names).join(", ");
+    lines.push(format!(
+        "    aver_replay::invoke_effect({:?}, vec![{}], || {})",
+        name, json_args, final_result
+    ));
+    lines.push("}".to_string());
+    Some(lines.join("\n"))
+}
+
+fn emit_replay_effect_arg_json(name: &str, temp_names: &[String]) -> Vec<String> {
+    match name {
+        "Console.print" | "Console.error" | "Console.warn" | "Terminal.print" => vec![format!(
+            "serde_json::Value::String(format!(\"{{}}\", {}))",
+            temp_names[0]
+        )],
+        "HttpServer.listen" => vec![
+            format!(
+                "aver_replay::ReplayValue::to_replay_json(&{})",
+                temp_names[0]
+            ),
+            "serde_json::Value::String(\"<handler>\".to_string())".to_string(),
+        ],
+        "HttpServer.listenWith" => vec![
+            format!(
+                "aver_replay::ReplayValue::to_replay_json(&{})",
+                temp_names[0]
+            ),
+            format!(
+                "aver_replay::ReplayValue::to_replay_json(&{})",
+                temp_names[1]
+            ),
+            "serde_json::Value::String(\"<handler>\".to_string())".to_string(),
+        ],
+        _ => temp_names
+            .iter()
+            .map(|name| format!("aver_replay::ReplayValue::to_replay_json(&{})", name))
+            .collect(),
+    }
+}
+
 pub fn emit_builtin_call(
     name: &str,
     args: &[Expr],
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> Option<String> {
+    if ctx.emit_replay_runtime && builtin_is_effectful(name) {
+        return emit_replay_effect_call(name, args, ctx, ectx);
+    }
+
     let result = emit_builtin_call_inner(name, args, ctx, ectx)?;
     let arg_ctxs = compute_args_used_after_with_rc(
         args,
@@ -100,7 +278,7 @@ pub fn emit_builtin_call(
     };
 
     // Wrap Http/Disk/Env calls with policy checks when aver.toml policy is present.
-    if ctx.policy.is_some() {
+    if ctx.policy.is_some() && !ctx.emit_replay_runtime {
         if name.starts_with("Http.") && !args.is_empty() {
             let url_arg = emit_expr(&args[0], ctx, &arg_ctxs[0]);
             return Some(format!(
@@ -825,6 +1003,8 @@ mod tests {
             modules: vec![],
             module_prefixes: HashSet::new(),
             policy: None,
+            emit_replay_runtime: false,
+            guest_entry: None,
         }
     }
 

@@ -47,6 +47,10 @@ pub struct CodegenContext {
     pub module_prefixes: HashSet<String>,
     /// Runtime policy from `aver.toml` (baked into generated code).
     pub policy: Option<crate::config::ProjectConfig>,
+    /// Emit optional generated replay runtime support.
+    pub emit_replay_runtime: bool,
+    /// Explicit guest entry boundary for scoped replay/policy.
+    pub guest_entry: Option<String>,
 }
 
 /// Output files from a codegen backend.
@@ -98,5 +102,7 @@ pub fn build_context(
         modules,
         module_prefixes,
         policy: None,
+        emit_replay_runtime: false,
+        guest_entry: None,
     }
 }

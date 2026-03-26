@@ -255,6 +255,11 @@ fn run_vm_command(
     let (code, globals) = vm::compile_program_with_modules(&items, &mut arena, Some(module_root))
         .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = VM::new(code, globals, arena);
+    if let Some(config) = aver::config::ProjectConfig::load_from_dir(Path::new(module_root))
+        .map_err(|e| format!("aver.toml: {}", e))?
+    {
+        machine.set_runtime_policy(config);
+    }
     machine.set_cli_args(args.to_vec());
     machine.set_silent_console(true);
     if profile {

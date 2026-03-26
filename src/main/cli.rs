@@ -192,6 +192,12 @@ pub(super) enum Commands {
         /// Resolve `depends [...]` from this root (default: current working directory)
         #[arg(long)]
         module_root: Option<String>,
+        /// Emit optional record/replay runtime support into the generated project
+        #[arg(long)]
+        with_replay: bool,
+        /// Explicit guest execution boundary for scoped replay/policy (self-host style)
+        #[arg(long, requires = "with_replay")]
+        guest_entry: Option<String>,
     },
     /// Export pure Aver code to a proof/verification project
     Proof {
@@ -246,6 +252,29 @@ mod tests {
         match cli.command {
             Commands::Replay { vm, .. } => assert!(vm),
             _ => panic!("expected replay command"),
+        }
+    }
+
+    #[test]
+    fn compile_accepts_with_replay_and_guest_entry() {
+        let cli = Cli::parse_from([
+            "aver",
+            "compile",
+            "examples/modules/app.av",
+            "--with-replay",
+            "--guest-entry",
+            "runGuestProgram",
+        ]);
+        match cli.command {
+            Commands::Compile {
+                with_replay,
+                guest_entry,
+                ..
+            } => {
+                assert!(with_replay);
+                assert_eq!(guest_entry.as_deref(), Some("runGuestProgram"));
+            }
+            _ => panic!("expected compile command"),
         }
     }
 

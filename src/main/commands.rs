@@ -33,9 +33,9 @@ use aver::verify_law::{
 use aver::vm;
 
 use crate::shared::{
-    compile_program_for_exec, compute_memo_fns, format_type_errors, load_dep_modules, parse_file,
-    print_type_errors, read_file, resolve_module_root, run_entry_function,
-    run_top_level_statements,
+    apply_runtime_policy_to_vm, compile_program_for_exec, compute_memo_fns, format_type_errors,
+    load_dep_modules, load_runtime_policy, parse_file, print_type_errors, read_file,
+    resolve_module_root, run_entry_function, run_top_level_statements,
 };
 
 pub(super) fn generate_request_id() -> String {
@@ -853,6 +853,10 @@ pub(super) fn cmd_run_vm(
 
     // Execute
     let mut machine = vm::VM::new(code, globals, arena);
+    if let Err(e) = apply_runtime_policy_to_vm(&mut machine, &module_root) {
+        eprintln!("{}", e.red());
+        process::exit(1);
+    }
 
     machine.set_cli_args(program_args);
 
@@ -1713,6 +1717,7 @@ fn run_verify_for_items_vm(
     let (code, globals) = vm::compile_program_with_modules(&items, &mut arena, Some(module_root))
         .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
+    apply_runtime_policy_to_vm(&mut machine, module_root)?;
 
     let mut total_passed = 0;
     let mut total_failed = 0;
@@ -1855,6 +1860,8 @@ fn build_codegen_context(
     file: &str,
     project_name: Option<&str>,
     module_root_override: Option<&str>,
+    with_replay: bool,
+    guest_entry: Option<&str>,
 ) -> (codegen::CodegenContext, String) {
     let module_root = resolve_module_root(module_root_override);
     let source = match read_file(file) {
@@ -1903,18 +1910,25 @@ fn build_codegen_context(
     let modules = load_compile_deps(&items, &module_root);
 
     // Load aver.toml runtime policy for codegen
-    let policy =
-        match aver::config::ProjectConfig::load_from_dir(std::path::Path::new(&module_root)) {
-            Ok(config) => config,
-            Err(e) => {
-                eprintln!("{}", format!("aver.toml: {}", e).red());
-                process::exit(1);
-            }
-        };
+    let policy = match load_runtime_policy(&module_root) {
+        Ok(policy) => policy,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
 
     // Build codegen context
     let mut ctx = codegen::build_context(items, &tc_result, memo_fns, name, modules);
     ctx.policy = policy;
+    ctx.emit_replay_runtime = with_replay;
+    ctx.guest_entry = guest_entry.map(str::to_string);
+    if let Some(entry) = guest_entry
+        && !ctx.fn_defs.iter().any(|fd| fd.name == entry)
+    {
+        eprintln!("{}", format!("Guest entry '{}' not found", entry).red());
+        process::exit(1);
+    }
     (ctx, module_root)
 }
 
@@ -1959,8 +1973,16 @@ pub(super) fn cmd_compile(
     output_dir: &str,
     project_name: Option<&str>,
     module_root_override: Option<&str>,
+    with_replay: bool,
+    guest_entry: Option<&str>,
 ) {
-    let (ctx, _module_root) = build_codegen_context(file, project_name, module_root_override);
+    let (ctx, _module_root) = build_codegen_context(
+        file,
+        project_name,
+        module_root_override,
+        with_replay,
+        guest_entry,
+    );
     let output = rust_codegen::transpile(&ctx);
     let build_hint = format!("cd {} && cargo build && cargo run", output_dir);
     write_codegen_output(file, output_dir, "Rust", &build_hint, &output);
@@ -1974,7 +1996,8 @@ pub(super) fn cmd_proof(
     backend: &super::cli::ProofBackend,
     verify_mode: &super::cli::ProofVerifyMode,
 ) {
-    let (ctx, _module_root) = build_codegen_context(file, project_name, module_root_override);
+    let (ctx, _module_root) =
+        build_codegen_context(file, project_name, module_root_override, false, None);
 
     match backend {
         super::cli::ProofBackend::Lean => {

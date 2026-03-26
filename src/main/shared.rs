@@ -11,6 +11,7 @@ use aver::source::{parse_source, require_module_declaration};
 use aver::tco;
 use aver::types;
 use aver::types::checker::{TypeCheckResult, TypeError, run_type_check_full};
+use aver::vm;
 
 pub(super) fn read_file(path: &str) -> Result<String, String> {
     fs::read_to_string(path).map_err(|e| format!("Cannot open file '{}': {}", path, e))
@@ -28,6 +29,23 @@ pub(super) fn resolve_module_root(module_root: Option<&str>) -> String {
         .ok()
         .and_then(|p| p.into_os_string().into_string().ok())
         .unwrap_or_else(|| ".".to_string())
+}
+
+pub(super) fn load_runtime_policy(
+    module_root: &str,
+) -> Result<Option<aver::config::ProjectConfig>, String> {
+    aver::config::ProjectConfig::load_from_dir(std::path::Path::new(module_root))
+        .map_err(|e| format!("aver.toml: {}", e))
+}
+
+pub(super) fn apply_runtime_policy_to_vm(
+    machine: &mut vm::VM,
+    module_root: &str,
+) -> Result<(), String> {
+    if let Some(config) = load_runtime_policy(module_root)? {
+        machine.set_runtime_policy(config);
+    }
+    Ok(())
 }
 
 pub(super) fn load_dep_modules(
@@ -148,10 +166,8 @@ pub(super) fn compile_program_for_exec(
     interp.enable_memo(memo_fns);
 
     // Load aver.toml runtime policy if present
-    match aver::config::ProjectConfig::load_from_dir(std::path::Path::new(&module_root)) {
-        Ok(Some(config)) => interp.set_runtime_policy(config),
-        Ok(None) => {}
-        Err(e) => return Err(format!("aver.toml: {}", e)),
+    if let Some(config) = load_runtime_policy(&module_root)? {
+        interp.set_runtime_policy(config);
     }
 
     load_dep_modules(&mut interp, &items, &module_root)?;

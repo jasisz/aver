@@ -346,6 +346,37 @@ fn emit_fn_def_with_visibility(
 
     let ectx = build_fn_ectx(fd, ctx);
     let use_memo = is_memo && fn_supports_rust_memo(fd, ctx);
+    let is_guest_entry = ctx.guest_entry.as_deref() == Some(fd.name.as_str());
+
+    if ctx.emit_replay_runtime && is_guest_entry {
+        let input_args = fd
+            .params
+            .iter()
+            .map(|(name, _)| {
+                format!(
+                    "aver_replay::ReplayValue::to_replay_json(&{})",
+                    aver_name_to_rust(name)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!(
+            "{}fn {}({}) -> {} {{",
+            visibility, fn_name, params, ret_type
+        ));
+        lines.push(format!(
+            "    let __replay_input = aver_replay::entry_input(vec![{}]);",
+            input_args
+        ));
+        lines.push(format!(
+            "    aver_replay::with_guest_scope({:?}, __replay_input, || {{",
+            fd.name
+        ));
+        lines.push(emit_fn_body(&fd.body, ctx, &ectx));
+        lines.push("    })".to_string());
+        lines.push("}".to_string());
+        return lines.join("\n");
+    }
 
     if use_memo {
         lines.push(emit_memo_fn(
@@ -1520,9 +1551,19 @@ fn emit_main_with_visibility(
         writeln!(out, "{}fn main() {{", visibility).unwrap();
     }
 
+    let guest_wrap_main = ctx.emit_replay_runtime && ctx.guest_entry.as_deref() == Some("main");
+    if guest_wrap_main {
+        writeln!(
+            out,
+            "    aver_replay::with_guest_scope(\"main\", serde_json::Value::Null, || {{"
+        )
+        .unwrap();
+    }
+
     // Top-level statements first
     for stmt in top_stmts {
-        writeln!(out, "    {}", emit_stmt(stmt, ctx, &ectx)).unwrap();
+        let indent = if guest_wrap_main { "        " } else { "    " };
+        writeln!(out, "{}{}", indent, emit_stmt(stmt, ctx, &ectx)).unwrap();
     }
 
     // Main function body
@@ -1537,16 +1578,23 @@ fn emit_main_with_visibility(
             if is_last && returns_result {
                 match stmt {
                     Stmt::Binding(_, _, _) => {
-                        writeln!(out, "    {}", emit_stmt(stmt, ctx, sctx)).unwrap();
+                        let indent = if guest_wrap_main { "        " } else { "    " };
+                        writeln!(out, "{}{}", indent, emit_stmt(stmt, ctx, sctx)).unwrap();
                     }
                     Stmt::Expr(expr) => {
-                        writeln!(out, "    {}", emit_expr(expr, ctx, sctx)).unwrap();
+                        let indent = if guest_wrap_main { "        " } else { "    " };
+                        writeln!(out, "{}{}", indent, emit_expr(expr, ctx, sctx)).unwrap();
                     }
                 }
             } else {
-                writeln!(out, "    {}", emit_stmt(stmt, ctx, sctx)).unwrap();
+                let indent = if guest_wrap_main { "        " } else { "    " };
+                writeln!(out, "{}{}", indent, emit_stmt(stmt, ctx, sctx)).unwrap();
             }
         }
+    }
+
+    if guest_wrap_main {
+        writeln!(out, "    }})").unwrap();
     }
 
     writeln!(out, "}}").unwrap();
@@ -1619,6 +1667,8 @@ mod tests {
             modules: vec![],
             module_prefixes: HashSet::new(),
             policy: None,
+            emit_replay_runtime: false,
+            guest_entry: None,
         }
     }
 

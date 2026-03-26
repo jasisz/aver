@@ -19,7 +19,7 @@ impl Interpreter {
         effect_type: &str,
         args: &[Value],
     ) -> Result<Value, RuntimeError> {
-        match self.execution_mode {
+        match self.execution_mode() {
             ExecutionMode::Normal => self.dispatch_builtin(effect_type, args),
             ExecutionMode::Record => {
                 let args_json = values_to_json_lossy(args);
@@ -30,51 +30,44 @@ impl Interpreter {
                     ),
                     Err(err) => RecordedOutcome::RuntimeError(err.to_string()),
                 };
-                let seq = self.recorded_effects.len() as u32 + 1;
-                self.recorded_effects.push(EffectRecord {
-                    seq,
-                    effect_type: effect_type.to_string(),
-                    args: args_json,
-                    outcome,
-                });
+                self.replay_state
+                    .record_effect(effect_type, args_json, outcome);
                 // Autosave snapshots on every recorded effect so long-running
                 // processes (like HttpServer) still persist replay data.
                 self.persist_recording_snapshot(RecordedOutcome::Value(JsonValue::Null))?;
                 result
             }
             ExecutionMode::Replay => {
-                if self.replay_pos >= self.replay_effects.len() {
-                    return Err(RuntimeError::ReplayExhausted {
-                        effect_type: effect_type.to_string(),
-                        position: self.replay_pos + 1,
-                    });
-                }
-
-                let record = self.replay_effects[self.replay_pos].clone();
-                if record.effect_type != effect_type {
-                    return Err(RuntimeError::ReplayMismatch {
-                        seq: record.seq,
-                        expected: record.effect_type,
-                        got: effect_type.to_string(),
-                    });
-                }
-
-                if self.validate_replay_args {
-                    let got_args = values_to_json_lossy(args);
-                    if got_args != record.args {
-                        let expected = json_to_string(&JsonValue::Array(record.args.clone()));
-                        let got = json_to_string(&JsonValue::Array(got_args));
-                        return Err(RuntimeError::ReplayArgsMismatch {
-                            seq: record.seq,
-                            effect_type: effect_type.to_string(),
+                let record = self
+                    .replay_state
+                    .replay_effect(effect_type, Some(values_to_json_lossy(args)))
+                    .map_err(|err| match err {
+                        crate::replay::ReplayFailure::Exhausted {
+                            effect_type,
+                            position,
+                        } => RuntimeError::ReplayExhausted {
+                            effect_type,
+                            position,
+                        },
+                        crate::replay::ReplayFailure::Mismatch { seq, expected, got } => {
+                            RuntimeError::ReplayMismatch { seq, expected, got }
+                        }
+                        crate::replay::ReplayFailure::ArgsMismatch {
+                            seq,
+                            effect_type,
                             expected,
                             got,
-                        });
-                    }
-                }
-
-                self.replay_pos += 1;
-                match record.outcome {
+                        } => RuntimeError::ReplayArgsMismatch {
+                            seq,
+                            effect_type,
+                            expected,
+                            got,
+                        },
+                        crate::replay::ReplayFailure::Unconsumed { remaining } => {
+                            RuntimeError::ReplayUnconsumed { remaining }
+                        }
+                    })?;
+                match record {
                     RecordedOutcome::Value(value_json) => crate::replay::json_to_value(&value_json)
                         .map_err(RuntimeError::ReplaySerialization),
                     RecordedOutcome::RuntimeError(msg) => Err(RuntimeError::Error(msg)),
@@ -151,7 +144,7 @@ impl Interpreter {
             }
 
             _ => {
-                let skip_server = matches!(self.execution_mode, ExecutionMode::Record);
+                let skip_server = matches!(self.execution_mode(), ExecutionMode::Record);
                 match Self::builtin_namespace(name) {
                     Some("HttpServer") => http_server::call_with_runtime(
                         name,
@@ -323,7 +316,7 @@ impl Interpreter {
         effect_type: &str,
         nv_args: &[NanValue],
     ) -> Result<NanValue, RuntimeError> {
-        match self.execution_mode {
+        match self.execution_mode() {
             ExecutionMode::Normal => self.dispatch_builtin_nv(effect_type, nv_args),
             ExecutionMode::Record | ExecutionMode::Replay => {
                 // For record/replay, fall back to Value-based path (JSON serialization needs Value)
@@ -387,7 +380,7 @@ impl Interpreter {
                         name
                     )))
                 };
-                let skip_server = matches!(self.execution_mode, ExecutionMode::Record);
+                let skip_server = matches!(self.execution_mode(), ExecutionMode::Record);
                 match Self::builtin_namespace(name) {
                     Some("HttpServer") => {
                         // HttpServer needs callback support — bridge through Value

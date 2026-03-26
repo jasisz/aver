@@ -17,7 +17,7 @@ use aver::types::checker::run_type_check_full;
 use aver::value::{RuntimeError, list_to_vec};
 use aver::vm;
 
-use crate::shared::{compile_program_for_exec, parse_file, read_file};
+use crate::shared::{apply_runtime_policy_to_vm, compile_program_for_exec, parse_file, read_file};
 
 fn collect_recording_files_from_dir(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
     let entries = fs::read_dir(dir)
@@ -360,6 +360,7 @@ fn replay_recording_file_vm(path: &Path, diff: bool, check_args: bool) -> Result
         vm::compile_program_with_modules(&items, &mut arena, Some(&replay_module_root))
             .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
+    apply_runtime_policy_to_vm(&mut machine, &replay_module_root)?;
     machine.start_replay(recording.effects.clone(), check_args);
 
     machine.run_top_level().map_err(|e| {

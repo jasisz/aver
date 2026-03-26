@@ -5,8 +5,8 @@ use std::rc::Rc;
 
 use crate::ast::*;
 use crate::replay::{
-    EffectRecord, JsonValue, RecordedOutcome, SessionRecording, json_to_string,
-    session_recording_to_string_pretty, value_to_json, values_to_json_lossy,
+    EffectRecord, EffectReplayMode, EffectReplayState, JsonValue, RecordedOutcome,
+    SessionRecording, session_recording_to_string_pretty, value_to_json, values_to_json_lossy,
 };
 #[cfg(feature = "terminal")]
 use crate::services::terminal;
@@ -261,11 +261,7 @@ pub struct Interpreter {
     memo_fns: HashSet<String>,
     /// Per-function memo cache with collision-safe entries and LRU eviction.
     memo_cache: HashMap<String, FnMemoCache>,
-    execution_mode: ExecutionMode,
-    recorded_effects: Vec<EffectRecord>,
-    replay_effects: Vec<EffectRecord>,
-    replay_pos: usize,
-    validate_replay_args: bool,
+    replay_state: EffectReplayState,
     recording_sink: Option<RecordingSink>,
     verify_match_coverage: Option<VerifyMatchCoverageTracker>,
     /// Runtime policy from `aver.toml` — constrains Http hosts, Disk paths, etc.

@@ -111,11 +111,7 @@ impl Interpreter {
             active_local_slots: None,
             memo_fns: HashSet::new(),
             memo_cache: HashMap::new(),
-            execution_mode: ExecutionMode::Normal,
-            recorded_effects: Vec::new(),
-            replay_effects: Vec::new(),
-            replay_pos: 0,
-            validate_replay_args: false,
+            replay_state: EffectReplayState::default(),
             recording_sink: None,
             verify_match_coverage: None,
             runtime_policy: None,
@@ -124,50 +120,42 @@ impl Interpreter {
     }
 
     pub fn execution_mode(&self) -> ExecutionMode {
-        self.execution_mode
+        match self.replay_state.mode() {
+            EffectReplayMode::Normal => ExecutionMode::Normal,
+            EffectReplayMode::Record => ExecutionMode::Record,
+            EffectReplayMode::Replay => ExecutionMode::Replay,
+        }
     }
 
     pub fn set_execution_mode_normal(&mut self) {
-        self.execution_mode = ExecutionMode::Normal;
-        self.recorded_effects.clear();
-        self.replay_effects.clear();
-        self.replay_pos = 0;
-        self.validate_replay_args = false;
+        self.replay_state.set_normal();
     }
 
     pub fn start_recording(&mut self) {
-        self.execution_mode = ExecutionMode::Record;
-        self.recorded_effects.clear();
-        self.replay_effects.clear();
-        self.replay_pos = 0;
-        self.validate_replay_args = false;
+        self.replay_state.start_recording();
     }
 
     pub fn start_replay(&mut self, effects: Vec<EffectRecord>, validate_args: bool) {
-        self.execution_mode = ExecutionMode::Replay;
-        self.replay_effects = effects;
-        self.replay_pos = 0;
-        self.validate_replay_args = validate_args;
-        self.recorded_effects.clear();
+        self.replay_state.start_replay(effects, validate_args);
     }
 
     pub fn take_recorded_effects(&mut self) -> Vec<EffectRecord> {
-        std::mem::take(&mut self.recorded_effects)
+        self.replay_state.take_recorded_effects()
     }
 
     pub fn replay_progress(&self) -> (usize, usize) {
-        (self.replay_pos, self.replay_effects.len())
+        self.replay_state.replay_progress()
     }
 
     pub fn ensure_replay_consumed(&self) -> Result<(), RuntimeError> {
-        if self.execution_mode == ExecutionMode::Replay
-            && self.replay_pos < self.replay_effects.len()
-        {
-            return Err(RuntimeError::ReplayUnconsumed {
-                remaining: self.replay_effects.len() - self.replay_pos,
-            });
-        }
-        Ok(())
+        self.replay_state
+            .ensure_replay_consumed()
+            .map_err(|err| match err {
+                crate::replay::ReplayFailure::Unconsumed { remaining } => {
+                    RuntimeError::ReplayUnconsumed { remaining }
+                }
+                other => RuntimeError::Error(format!("invalid replay state: {:?}", other)),
+            })
     }
 
     pub fn configure_recording_sink(&mut self, cfg: RecordingConfig) {
@@ -199,7 +187,7 @@ impl Interpreter {
             module_root: sink.module_root.clone(),
             entry_fn: sink.entry_fn.clone(),
             input: sink.input.clone(),
-            effects: self.recorded_effects.clone(),
+            effects: self.replay_state.recorded_effects().to_vec(),
             output,
         };
 
@@ -237,7 +225,7 @@ impl Interpreter {
         name: &str,
         args: &[Value],
     ) -> Result<(), RuntimeError> {
-        if self.execution_mode == ExecutionMode::Replay {
+        if self.execution_mode() == ExecutionMode::Replay {
             return Ok(());
         }
         let Some(policy) = &self.runtime_policy else {

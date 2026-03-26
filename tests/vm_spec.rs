@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use aver::ast::TopLevel;
+use aver::config::ProjectConfig;
 use aver::lexer::Lexer;
 use aver::nan_value::{Arena, NanValue};
 use aver::parser::Parser;
@@ -1307,6 +1308,46 @@ fn vm_effect_violation() {
     assert!(
         msg.contains("effect violation"),
         "error should mention effect violation, got: {}",
+        msg
+    );
+}
+
+#[test]
+fn vm_respects_aver_toml_runtime_policy() {
+    let module_root = temp_module_root("runtime_policy");
+    std::fs::write(
+        module_root.join("aver.toml"),
+        "[effects.Disk]\npaths = [\"./allowed/**\"]\n",
+    )
+    .expect("write aver.toml");
+
+    let src = "fn main() -> Bool\n    ! [Disk.exists]\n    Disk.exists(\"./blocked.txt\")\n";
+    let mut items = parse(src);
+    tco::transform_program(&mut items);
+    resolver::resolve_program(&mut items);
+
+    let mut arena = Arena::new();
+    let (code, globals) = vm::compile_program_with_modules(
+        &items,
+        &mut arena,
+        Some(
+            module_root
+                .to_str()
+                .expect("module root must be valid UTF-8"),
+        ),
+    )
+    .expect("compile failed");
+    let mut machine = vm::VM::new(code, globals, arena);
+    let config = ProjectConfig::load_from_dir(&module_root)
+        .expect("load aver.toml")
+        .expect("aver.toml should exist");
+    machine.set_runtime_policy(config);
+
+    let err = machine.run().expect_err("policy should deny Disk.exists");
+    let msg = format!("{}", err);
+    assert!(
+        msg.contains("denied by aver.toml policy"),
+        "error should mention aver.toml policy, got: {}",
         msg
     );
 }

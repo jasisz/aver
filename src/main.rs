@@ -109,8 +109,17 @@ fn main() {
             output,
             name,
             module_root,
+            with_replay,
+            guest_entry,
         } => {
-            commands::cmd_compile(file, output, name.as_deref(), module_root.as_deref());
+            commands::cmd_compile(
+                file,
+                output,
+                name.as_deref(),
+                module_root.as_deref(),
+                *with_replay,
+                guest_entry.as_deref(),
+            );
         }
         Commands::Proof {
             file,

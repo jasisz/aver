@@ -67,6 +67,7 @@ pub fn generate_cargo_toml(
     name: &str,
     services: &HashSet<String>,
     has_policy: bool,
+    has_replay: bool,
     runtime_path: &Path,
 ) -> String {
     let mut lines = Vec::new();
@@ -99,6 +100,10 @@ pub fn generate_cargo_toml(
     ));
     if has_policy {
         deps.push("url = \"2\"".to_string());
+    }
+    if has_replay {
+        deps.push("serde = { version = \"1\", features = [\"derive\"] }".to_string());
+        deps.push("serde_json = \"1\"".to_string());
     }
 
     if !deps.is_empty() {
