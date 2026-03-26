@@ -524,7 +524,7 @@ fn collect_used_exposes_for_importer(
 
     for item in items {
         match item {
-            TopLevel::Module(_) | TopLevel::Decision(_) | TopLevel::EffectSet { .. } => {}
+            TopLevel::Module(_) | TopLevel::Decision(_) => {}
             TopLevel::FnDef(fd) => {
                 for (_, type_name) in &fd.params {
                     mark_type_annotation(

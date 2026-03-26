@@ -35,7 +35,6 @@ pub(super) struct FileContext {
     pub(super) fn_specs: HashMap<String, Vec<String>>,
     pub(super) fn_direct_calls: HashMap<String, Vec<String>>,
     pub(super) type_defs: Vec<TypeDef>,
-    pub(super) effect_sets: Vec<(String, Vec<String>)>,
     pub(super) verify_blocks: Vec<VerifyBlock>,
     pub(super) verify_counts: HashMap<String, usize>,
     pub(super) verify_samples: HashMap<String, Vec<String>>,
@@ -420,7 +419,6 @@ pub(super) fn collect_contexts(
         fn_specs: HashMap::new(),
         fn_direct_calls: HashMap::new(),
         type_defs: vec![],
-        effect_sets: vec![],
         verify_blocks: vec![],
         verify_counts: HashMap::new(),
         verify_samples: HashMap::new(),
@@ -448,9 +446,6 @@ pub(super) fn collect_contexts(
                 ctx.all_fn_defs.push(fd.clone());
             }
             TopLevel::TypeDef(td) => ctx.type_defs.push(td.clone()),
-            TopLevel::EffectSet { name, effects, .. } => {
-                ctx.effect_sets.push((name.clone(), effects.clone()))
-            }
             TopLevel::Verify(vb) => ctx.verify_blocks.push(vb.clone()),
             TopLevel::Decision(db) => ctx.decisions.push(db.clone()),
             _ => {}

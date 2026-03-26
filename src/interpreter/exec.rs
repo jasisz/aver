@@ -9,7 +9,6 @@ impl Interpreter {
                 TopLevel::Verify(_) => {}
                 TopLevel::Decision(_) => {}
                 TopLevel::TypeDef(td) => self.register_type_def(td),
-                TopLevel::EffectSet { .. } => {}
                 TopLevel::Stmt(s) => {
                     self.exec_stmt(s)?;
                 }

@@ -55,12 +55,6 @@ struct JsonSelection<'a> {
 }
 
 #[derive(Serialize)]
-struct JsonEffectSet<'a> {
-    name: &'a str,
-    effects: Vec<&'a str>,
-}
-
-#[derive(Serialize)]
 #[serde(untagged)]
 enum JsonVariant<'a> {
     Nullary(&'a str),
@@ -130,8 +124,6 @@ struct JsonModule<'a> {
     module_effects: Option<Vec<&'a str>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     main_effects: Option<Vec<&'a str>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    effect_sets: Option<Vec<JsonEffectSet<'a>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     types: Option<Vec<JsonType<'a>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -217,16 +209,6 @@ fn decision_to_json(decision: &DecisionBlock) -> JsonDecision<'_> {
 }
 
 fn module_to_json(ctx: &FileContext) -> JsonModule<'_> {
-    let effect_sets = (!ctx.effect_sets.is_empty()).then(|| {
-        ctx.effect_sets
-            .iter()
-            .map(|(name, effects)| JsonEffectSet {
-                name,
-                effects: vec_refs(effects),
-            })
-            .collect()
-    });
-
     let types = {
         let items = ctx
             .type_defs
@@ -334,7 +316,6 @@ fn module_to_json(ctx: &FileContext) -> JsonModule<'_> {
         api_effects,
         module_effects,
         main_effects: ctx.main_effects.as_ref().map(|effects| vec_refs(effects)),
-        effect_sets,
         types,
         records,
         functions,
@@ -433,8 +414,7 @@ pub(super) fn format_context_md(
         contexts.iter().flat_map(|c| c.decisions.iter()).collect();
 
     for ctx in contexts {
-        let has_content =
-            !ctx.fn_defs.is_empty() || !ctx.type_defs.is_empty() || !ctx.effect_sets.is_empty();
+        let has_content = !ctx.fn_defs.is_empty() || !ctx.type_defs.is_empty();
 
         if !has_content && ctx.module_name.is_none() {
             continue;
@@ -475,15 +455,6 @@ pub(super) fn format_context_md(
             out.push_str(&format!("main_effects: `[{}]`\n", main_effects.join(", ")));
         }
         out.push('\n');
-
-        // Effect set aliases
-        for (name, effects) in &ctx.effect_sets {
-            out.push_str(&format!(
-                "**effects** `{}` = `[{}]`\n\n",
-                name,
-                effects.join(", ")
-            ));
-        }
 
         // Types
         for td in &ctx.type_defs {
@@ -734,7 +705,6 @@ mod tests {
             fn_specs: HashMap::from([("fib".to_string(), vec!["fibSpec".to_string()])]),
             fn_direct_calls: HashMap::new(),
             type_defs: vec![],
-            effect_sets: vec![],
             verify_blocks: vec![aver::ast::VerifyBlock {
                 fn_name: "fib".to_string(),
                 line: 2,
@@ -829,7 +799,6 @@ mod tests {
             fn_specs: HashMap::new(),
             fn_direct_calls: HashMap::new(),
             type_defs: vec![],
-            effect_sets: vec![],
             verify_blocks: vec![],
             verify_counts: HashMap::new(),
             verify_samples: HashMap::new(),

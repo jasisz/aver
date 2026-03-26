@@ -275,10 +275,4 @@ pub enum TopLevel {
     Decision(DecisionBlock),
     Stmt(Stmt),
     TypeDef(TypeDef),
-    /// Legacy placeholder for removed `effects X = [...]` syntax.
-    EffectSet {
-        name: String,
-        effects: Vec<String>,
-        line: usize,
-    },
 }

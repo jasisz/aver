@@ -37,7 +37,6 @@ enum CandidateKey {
     Module { ctx_idx: usize },
     Function { ctx_idx: usize, name: String },
     Type { ctx_idx: usize, name: String },
-    EffectSet { ctx_idx: usize, name: String },
     Decision { ctx_idx: usize, index: usize },
 }
 
@@ -87,7 +86,6 @@ fn estimate_candidate_cost(candidate: &Candidate, contexts: &[FileContext]) -> u
                 })
                 .unwrap_or(30)
         }
-        CandidateKey::EffectSet { .. } => 40,
         CandidateKey::Decision { ctx_idx, index } => {
             let ctx = &contexts[*ctx_idx];
             ctx.decisions
@@ -103,7 +101,6 @@ struct SelectionState {
     modules: HashSet<usize>,
     functions: HashMap<usize, HashSet<String>>,
     types: HashMap<usize, HashSet<String>>,
-    effect_sets: HashMap<usize, HashSet<String>>,
     decisions: HashMap<usize, HashSet<usize>>,
 }
 
@@ -619,13 +616,6 @@ fn apply_candidate(
             next.modules.insert(*ctx_idx);
             next.types.entry(*ctx_idx).or_default().insert(name.clone());
         }
-        CandidateKey::EffectSet { ctx_idx, name } => {
-            next.modules.insert(*ctx_idx);
-            next.effect_sets
-                .entry(*ctx_idx)
-                .or_default()
-                .insert(name.clone());
-        }
         CandidateKey::Decision { ctx_idx, index } => {
             next.modules.insert(*ctx_idx);
             next.decisions.entry(*ctx_idx).or_default().insert(*index);
@@ -643,13 +633,11 @@ fn materialize_selection(contexts: &[FileContext], state: &SelectionState) -> Ve
         let module_selected = state.modules.contains(&ctx_idx);
         let selected_fns = state.functions.get(&ctx_idx);
         let selected_types = state.types.get(&ctx_idx);
-        let selected_effect_sets = state.effect_sets.get(&ctx_idx);
         let selected_decisions = state.decisions.get(&ctx_idx);
 
         if !module_selected
             && selected_fns.is_none()
             && selected_types.is_none()
-            && selected_effect_sets.is_none()
             && selected_decisions.is_none()
         {
             continue;
@@ -704,13 +692,6 @@ fn materialize_selection(contexts: &[FileContext], state: &SelectionState) -> Ve
             });
         } else {
             next.type_defs.clear();
-        }
-
-        if let Some(selected_effect_sets) = selected_effect_sets {
-            next.effect_sets
-                .retain(|(name, _)| selected_effect_sets.contains(name));
-        } else {
-            next.effect_sets.clear();
         }
 
         if let Some(selected_decisions) = selected_decisions {
@@ -854,23 +835,6 @@ fn score_type(
     }
 }
 
-fn score_effect_set(ctx_idx: usize, name: &str, scoring: &ScoringContext) -> Candidate {
-    let depth = scoring.module_depths[ctx_idx];
-    let mut score = 45;
-    if ctx_idx == 0 {
-        score += 20;
-    }
-    score -= (depth as i32) * 8;
-    Candidate {
-        key: CandidateKey::EffectSet {
-            ctx_idx,
-            name: name.to_string(),
-        },
-        score,
-        depth,
-    }
-}
-
 fn decision_impacts_focus(
     decision: &DecisionBlock,
     focus_symbol: &str,
@@ -934,9 +898,6 @@ fn build_candidates(
             for td in &ctx.type_defs {
                 candidates.push(score_type(ctx_idx, ctx, td, scoring));
             }
-            for (name, _) in &ctx.effect_sets {
-                candidates.push(score_effect_set(ctx_idx, name, scoring));
-            }
         }
         for (index, decision) in ctx.decisions.iter().enumerate() {
             candidates.push(score_decision(ctx_idx, ctx, decision, index, scoring));
@@ -954,10 +915,6 @@ fn candidate_selected(state: &SelectionState, candidate: &CandidateKey) -> bool 
             .is_some_and(|names| names.contains(name)),
         CandidateKey::Type { ctx_idx, name } => state
             .types
-            .get(ctx_idx)
-            .is_some_and(|names| names.contains(name)),
-        CandidateKey::EffectSet { ctx_idx, name } => state
-            .effect_sets
             .get(ctx_idx)
             .is_some_and(|names| names.contains(name)),
         CandidateKey::Decision { ctx_idx, index } => state
@@ -1471,7 +1428,6 @@ fn filter_contexts_to_focus(
 
         if next.fn_defs.is_empty() {
             next.type_defs.clear();
-            next.effect_sets.clear();
         }
 
         filtered.push(next);
@@ -1730,7 +1686,6 @@ mod tests {
             fn_specs: HashMap::new(),
             fn_direct_calls: HashMap::new(),
             type_defs: vec![],
-            effect_sets: vec![],
             verify_blocks: vec![VerifyBlock {
                 fn_name: "entry".to_string(),
                 line: 2,

@@ -163,7 +163,6 @@ fn collect_declared_symbols(items: &[TopLevel]) -> std::collections::HashSet<Str
             TopLevel::Decision(d) => {
                 out.insert(d.name.clone());
             }
-            TopLevel::EffectSet { .. } => {}
             TopLevel::Verify(_) | TopLevel::Stmt(_) => {}
         }
     }
