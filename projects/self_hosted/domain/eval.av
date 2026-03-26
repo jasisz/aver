@@ -91,8 +91,11 @@ fn evalExpr(expr: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Val, Stri
         Expr.ExprFloat(f) -> Result.Ok(Val.ValFloat(f))
         Expr.ExprStr(s) -> Result.Ok(Val.ValStr(s))
         Expr.ExprBool(b) -> Result.Ok(Val.ValBool(b))
+        Expr.ExprBoolBranch(cond, thenExpr, elseExpr) -> evalBoolBranch(cond, thenExpr, elseExpr, env, fns)
         Expr.ExprVar(name) -> evalVar(name, env)
         Expr.ExprSlot(_) -> Result.Err("ExprSlot in map-based eval path")
+        Expr.ExprCmpSlotInt(_, _, _) -> Result.Err("ExprCmpSlotInt in map-based eval path")
+        Expr.ExprCmpSlots(_, _, _) -> Result.Err("ExprCmpSlots in map-based eval path")
         Expr.ExprAdd(a, b) -> evalBinop(a, b, env, fns, BinOp.OpAdd)
         Expr.ExprSub(a, b) -> evalBinop(a, b, env, fns, BinOp.OpSub)
         Expr.ExprMul(a, b) -> evalBinop(a, b, env, fns, BinOp.OpMul)
@@ -125,6 +128,16 @@ fn evalVar(name: String, env: Map<String, Val>) -> Result<Val, String>
 verify evalVar
     evalVar("x", Map.set(Map.empty(), "x", Val.ValInt(5))) => Result.Ok(Val.ValInt(5))
     evalVar("Option.None", Map.empty()) => Result.Ok(Val.ValNone)
+
+fn evalBoolBranch(cond: Expr, thenExpr: Expr, elseExpr: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
+    ? "Evaluate a direct bool branch in map path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    condV = evalExpr(cond, env, fns)?
+    match condV
+        Val.ValBool(flag) -> match flag
+            true -> evalExpr(thenExpr, env, fns)
+            false -> evalExpr(elseExpr, env, fns)
+        _ -> Result.Err("bool branch condition must evaluate to Bool")
 
 fn evalVarFallback(name: String) -> Result<Val, String>
     ? "If variable not in env, try as nullary variant (e.g. Token.TkPlus)."
@@ -877,7 +890,10 @@ fn evalExprSlot(expr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: Fn
         Expr.ExprFloat(f) -> Result.Ok(Val.ValFloat(f))
         Expr.ExprStr(s) -> Result.Ok(Val.ValStr(s))
         Expr.ExprBool(b) -> Result.Ok(Val.ValBool(b))
+        Expr.ExprBoolBranch(cond, thenExpr, elseExpr) -> evalBoolBranchSlot(cond, thenExpr, elseExpr, env, slotMap, fns)
         Expr.ExprVar(name) -> evalVarSlot(name)
+        Expr.ExprCmpSlotInt(op, slot, rhs) -> evalCmpSlotInt(op, slot, rhs, env)
+        Expr.ExprCmpSlots(op, lhs, rhs) -> evalCmpSlots(op, lhs, rhs, env)
         Expr.ExprAdd(a, b) -> evalBinopSlot(a, b, env, slotMap, fns, BinOp.OpAdd)
         Expr.ExprSub(a, b) -> evalBinopSlot(a, b, env, slotMap, fns, BinOp.OpSub)
         Expr.ExprMul(a, b) -> evalBinopSlot(a, b, env, slotMap, fns, BinOp.OpMul)
@@ -904,6 +920,27 @@ fn evalVarSlot(name: String) -> Result<Val, String>
     match name
         "Option.None" -> Result.Ok(Val.ValNone)
         _ -> evalVarFallback(name)
+
+fn evalBoolBranchSlot(cond: Expr, thenExpr: Expr, elseExpr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
+    ? "Evaluate a direct bool branch in slot path."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    condV = evalExprSlot(cond, env, slotMap, fns)?
+    match condV
+        Val.ValBool(flag) -> match flag
+            true -> evalExprSlot(thenExpr, env, slotMap, fns)
+            false -> evalExprSlot(elseExpr, env, slotMap, fns)
+        _ -> Result.Err("bool branch condition must evaluate to Bool")
+
+fn evalCmpSlotInt(op: CmpOp, slot: Int, rhs: Int, env: Vector<Val>) -> Result<Val, String>
+    ? "Evaluate a specialized slot-vs-int comparison."
+    left = lookupSlot(env, slot)?
+    evalCmpVals(left, Val.ValInt(rhs), op)
+
+fn evalCmpSlots(op: CmpOp, lhs: Int, rhs: Int, env: Vector<Val>) -> Result<Val, String>
+    ? "Evaluate a specialized slot-vs-slot comparison."
+    left = lookupSlot(env, lhs)?
+    right = lookupSlot(env, rhs)?
+    evalCmpVals(left, right, op)
 
 fn evalBinopSlot(a: Expr, b: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore, op: BinOp) -> Result<Val, String>
     ? "Binary op in slot path."
