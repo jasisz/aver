@@ -4,6 +4,19 @@ use super::liveness::{EmitCtx, compute_args_used_after_with_rc};
 use crate::ast::Expr;
 use crate::codegen::CodegenContext;
 
+fn match_namespace_call<'a>(expr: &'a Expr, ns: &str, method: &str) -> Option<&'a [Expr]> {
+    match expr {
+        Expr::FnCall(callee, args) => match &**callee {
+            Expr::Attr(target, name) => match &**target {
+                Expr::Ident(target_ns) if target_ns == ns && name == method => Some(args),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// Try to emit a builtin call as Rust code.
 /// Returns `None` if the name is not a builtin (i.e. it's a user function).
 /// Builtins whose return type includes String and needs .into_aver() conversion.
@@ -166,6 +179,25 @@ fn emit_builtin_call_inner(
             Some(format!("Some({})", arg))
         }
         "Option.withDefault" => {
+            if let Some([vec_expr, idx_expr, val_expr]) =
+                match_namespace_call(&args[0], "Vector", "set")
+                && &args[1] == vec_expr
+            {
+                let inner_args = [vec_expr.clone(), idx_expr.clone(), val_expr.clone()];
+                let inner_arg_ctxs = compute_args_used_after_with_rc(
+                    &inner_args,
+                    &ectx.used_after,
+                    &ectx.local_types,
+                    &ectx.rc_wrapped,
+                );
+                let vec = clone_arg(&inner_args[0], ctx, &inner_arg_ctxs[0]);
+                let idx = emit_expr(&inner_args[1], ctx, &inner_arg_ctxs[1]);
+                let val = clone_arg(&inner_args[2], ctx, &inner_arg_ctxs[2]);
+                return Some(format!(
+                    "{{ let __vec = {}; let __idx = {} as usize; if __idx < __vec.len() {{ __vec.set_unchecked(__idx, {}) }} else {{ __vec }} }}",
+                    vec, idx, val
+                ));
+            }
             let opt = clone_arg(&args[0], ctx, &arg_ctxs[0]);
             let default = clone_arg(&args[1], ctx, &arg_ctxs[1]);
             Some(format!("{}.unwrap_or({})", opt, default))
@@ -423,7 +455,7 @@ fn emit_builtin_call_inner(
         "Map.fromList" => {
             let list = clone_arg(&args[0], ctx, &arg_ctxs[0]);
             Some(format!(
-                "{{ let mut m = HashMap::new(); for (k, v) in {}.iter().cloned() {{ m = m.insert(k, v); }} m }}",
+                "{{ let mut m = HashMap::new(); for (k, v) in {}.iter().cloned() {{ m = m.insert_owned(k, v); }} m }}",
                 list
             ))
         }
@@ -440,10 +472,10 @@ fn emit_builtin_call_inner(
             Some(format!("{}.get(&{}).cloned()", map, key))
         }
         "Map.set" => {
-            let map = emit_arg(0);
-            let key = emit_arg(1);
-            let val = emit_arg(2);
-            Some(format!("{}.insert({}, {})", map, key, val))
+            let map = clone_arg(&args[0], ctx, &arg_ctxs[0]);
+            let key = clone_arg(&args[1], ctx, &arg_ctxs[1]);
+            let val = clone_arg(&args[2], ctx, &arg_ctxs[2]);
+            Some(format!("{}.insert_owned({}, {})", map, key, val))
         }
         "Map.has" => {
             let map = emit_arg(0);

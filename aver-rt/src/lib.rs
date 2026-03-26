@@ -154,22 +154,26 @@ where
         self.inner.contains_key(key)
     }
 
-    /// O(1) amortized if unique owner, O(n) clone if shared.
+    /// O(n) because `&self` preserves the original map.
     pub fn insert(&self, key: K, value: V) -> Self {
-        let mut inner = Rc::unwrap_or_clone(self.inner.clone());
-        inner.insert(key, value);
-        Self {
-            inner: Rc::new(inner),
-        }
+        self.clone().insert_owned(key, value)
     }
 
     /// O(1) amortized if unique owner, O(n) clone if shared.
+    pub fn insert_owned(mut self, key: K, value: V) -> Self {
+        Rc::make_mut(&mut self.inner).insert(key, value);
+        self
+    }
+
+    /// O(n) because `&self` preserves the original map.
     pub fn remove(&self, key: &K) -> Self {
-        let mut inner = Rc::unwrap_or_clone(self.inner.clone());
-        inner.remove(key);
-        Self {
-            inner: Rc::new(inner),
-        }
+        self.clone().remove_owned(key)
+    }
+
+    /// O(1) amortized if unique owner, O(n) clone if shared.
+    pub fn remove_owned(mut self, key: &K) -> Self {
+        Rc::make_mut(&mut self.inner).remove(key);
+        self
     }
 
     pub fn keys(&self) -> impl Iterator<Item = &K> {
@@ -266,16 +270,26 @@ impl<T: Clone> AverVector<T> {
         self.inner.get(index)
     }
 
+    /// O(1) amortized if unique owner, O(n) clone if shared.
+    ///
+    /// Caller must ensure `index < len()`.
+    pub fn set_unchecked(mut self, index: usize, value: T) -> Self {
+        debug_assert!(index < self.inner.len());
+        Rc::make_mut(&mut self.inner)[index] = value;
+        self
+    }
+
     /// O(1) amortized if unique owner, O(n) clone if shared. None if out of bounds.
-    pub fn set(&self, index: usize, value: T) -> Option<Self> {
+    pub fn set_owned(self, index: usize, value: T) -> Option<Self> {
         if index >= self.inner.len() {
             return None;
         }
-        let mut vec = Rc::unwrap_or_clone(self.inner.clone());
-        vec[index] = value;
-        Some(Self {
-            inner: Rc::new(vec),
-        })
+        Some(self.set_unchecked(index, value))
+    }
+
+    /// O(n) because `&self` preserves the original vector.
+    pub fn set(&self, index: usize, value: T) -> Option<Self> {
+        self.clone().set_owned(index, value)
     }
 
     pub fn len(&self) -> usize {
