@@ -967,32 +967,7 @@ fn emit_tco_expr(
 
 // --- Mutual TCO (trampoline) support ---
 
-/// Collect all TailCall target names from a function body.
-fn collect_tailcall_targets(body: &FnBody) -> Vec<String> {
-    let mut targets = Vec::new();
-    for stmt in body.stmts() {
-        match stmt {
-            Stmt::Expr(e) | Stmt::Binding(_, _, e) => {
-                collect_expr_tailcall_targets(e, &mut targets)
-            }
-        }
-    }
-    targets
-}
-
-fn collect_expr_tailcall_targets(expr: &Expr, targets: &mut Vec<String>) {
-    match expr {
-        Expr::TailCall(boxed) => targets.push(boxed.0.clone()),
-        Expr::Match { arms, .. } => {
-            for arm in arms {
-                collect_expr_tailcall_targets(&arm.body, targets);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Find groups of mutually tail-calling functions (connected components of size > 1).
+/// Find groups of mutually tail-calling functions (SCCs of size > 1).
 /// Returns indices into `fn_defs`.
 pub fn find_mutual_tco_groups(fn_defs: &[&FnDef]) -> Vec<Vec<usize>> {
     let name_to_idx: HashMap<&str, usize> = fn_defs
@@ -1000,47 +975,17 @@ pub fn find_mutual_tco_groups(fn_defs: &[&FnDef]) -> Vec<Vec<usize>> {
         .enumerate()
         .map(|(i, fd)| (fd.name.as_str(), i))
         .collect();
-
-    // Build undirected adjacency from mutual (non-self) TailCall edges.
-    let mut adj: Vec<HashSet<usize>> = vec![HashSet::new(); fn_defs.len()];
-    for (i, fd) in fn_defs.iter().enumerate() {
-        for target in collect_tailcall_targets(&fd.body) {
-            if target != fd.name
-                && let Some(&j) = name_to_idx.get(target.as_str())
-            {
-                adj[i].insert(j);
-                adj[j].insert(i);
-            }
-        }
-    }
-
-    // Connected components via BFS.
-    let mut visited = vec![false; fn_defs.len()];
-    let mut groups = Vec::new();
-    for start in 0..fn_defs.len() {
-        if visited[start] || adj[start].is_empty() {
-            continue;
-        }
-        let mut group = Vec::new();
-        let mut queue = vec![start];
-        while let Some(node) = queue.pop() {
-            if visited[node] {
-                continue;
-            }
-            visited[node] = true;
-            group.push(node);
-            for &neighbor in &adj[node] {
-                if !visited[neighbor] {
-                    queue.push(neighbor);
-                }
-            }
-        }
-        if group.len() > 1 {
-            group.sort();
-            groups.push(group);
-        }
-    }
-    groups
+    crate::call_graph::tailcall_scc_components(fn_defs)
+        .into_iter()
+        .map(|group| {
+            let mut indices: Vec<usize> = group
+                .iter()
+                .filter_map(|fd| name_to_idx.get(fd.name.as_str()).copied())
+                .collect();
+            indices.sort();
+            indices
+        })
+        .collect()
 }
 
 /// Convert an Aver function name to a PascalCase enum variant name.
@@ -2021,6 +1966,45 @@ mod tests {
         assert!(block.contains("StateA(i64)"));
         assert!(block.contains("StateB(i64)"));
         assert!(block.contains("StateC(i64)"));
+    }
+
+    #[test]
+    fn one_way_tailcall_chain_is_not_a_mutual_group() {
+        let make_tail_fn = |name: &str, target: &str| FnDef {
+            name: name.to_string(),
+            line: 1,
+            params: vec![("n".to_string(), "Int".to_string())],
+            return_type: "String".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(Expr::TailCall(Box::new((
+                target.to_string(),
+                vec![Expr::Ident("n".to_string())],
+            ))))),
+            resolution: None,
+        };
+
+        let a = make_tail_fn("stateA", "stateB");
+        let b = make_tail_fn("stateB", "stateC");
+        let c = FnDef {
+            name: "stateC".to_string(),
+            line: 3,
+            params: vec![("n".to_string(), "Int".to_string())],
+            return_type: "String".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(Expr::Literal(Literal::Str(
+                "done".to_string(),
+            )))),
+            resolution: None,
+        };
+
+        let fn_defs: Vec<&FnDef> = vec![&a, &b, &c];
+        let groups = find_mutual_tco_groups(&fn_defs);
+        assert!(
+            groups.is_empty(),
+            "one-way tailcall chain should not create a mutual trampoline group"
+        );
     }
 
     #[test]

@@ -360,24 +360,33 @@ fn evalListExpr(exprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef
 fn evalListItems(exprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<List<Val>, String>
     ? "Evaluate list of expressions into list of values."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    evalListItemsRev(exprs, env, fns, [])
+
+fn evalListItemsRev(exprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>, acc: List<Val>) -> Result<List<Val>, String>
+    ? "Tail-recursive worker for evalListItems. Accumulates in reverse."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     match exprs
-        [] -> Result.Ok([])
+        [] -> Result.Ok(List.reverse(acc))
         [e, ..rest] -> match evalExpr(e, env, fns)
             Result.Err(err) -> Result.Err(err)
-            Result.Ok(v) -> match evalListItems(rest, env, fns)
-                Result.Err(err) -> Result.Err(err)
-                Result.Ok(vs) -> Result.Ok(List.prepend(v, vs))
+            Result.Ok(v) -> evalListItemsRev(rest, env, fns, List.prepend(v, acc))
 
 fn evalArgs(exprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<List<Val>, String>
     ? "Evaluate a list of argument expressions."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    evalArgsRev(exprs, env, fns, [])
+
+fn evalArgsRev(exprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>, acc: List<Val>) -> Result<List<Val>, String>
+    ? "Tail-recursive worker for evalArgs. Accumulates in reverse."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     match exprs
-        [] -> Result.Ok([])
+        [] -> Result.Ok(List.reverse(acc))
         [e, ..rest] -> match evalExpr(e, env, fns)
             Result.Err(err) -> Result.Err(err)
-            Result.Ok(v) -> match evalArgs(rest, env, fns)
-                Result.Err(err) -> Result.Err(err)
-                Result.Ok(vs) -> Result.Ok(List.prepend(v, vs))
+            Result.Ok(v) -> evalArgsRev(rest, env, fns, List.prepend(v, acc))
+
+verify evalArgs
+    evalArgs([Expr.ExprInt(1), Expr.ExprInt(2)], Map.empty(), Map.empty()) => Result.Ok([Val.ValInt(1), Val.ValInt(2)])
 
 fn callWithArgs(args: List<Val>, name: String, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Dispatch call: record update if Type.update, else normal call."
@@ -735,13 +744,19 @@ fn evalCallBuiltinSlot(name: String, argExprs: List<Expr>, env: Vector<Val>, slo
 fn evalArgsSlot(exprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<List<Val>, String>
     ? "Evaluate argument expressions in slot path."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    evalArgsSlotRev(exprs, env, slotMap, fns, [])
+
+fn evalArgsSlotRev(exprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>, acc: List<Val>) -> Result<List<Val>, String>
+    ? "Tail-recursive worker for evalArgsSlot. Accumulates in reverse."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     match exprs
-        [] -> Result.Ok([])
+        [] -> Result.Ok(List.reverse(acc))
         [e, ..rest] -> match evalExprSlot(e, env, slotMap, fns)
             Result.Err(err) -> Result.Err(err)
-            Result.Ok(v) -> match evalArgsSlot(rest, env, slotMap, fns)
-                Result.Err(err) -> Result.Err(err)
-                Result.Ok(vs) -> Result.Ok(List.prepend(v, vs))
+            Result.Ok(v) -> evalArgsSlotRev(rest, env, slotMap, fns, List.prepend(v, acc))
+
+verify evalArgsSlot
+    evalArgsSlot([Expr.ExprInt(1), Expr.ExprInt(2)], Vector.new(0, Val.ValUnit), Map.empty(), Map.empty()) => Result.Ok([Val.ValInt(1), Val.ValInt(2)])
 
 fn evalMatchExprSlot(scrutinee: Expr, arms: List<MatchArm>, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Match expression in slot path."

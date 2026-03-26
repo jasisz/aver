@@ -11,7 +11,7 @@ use crate::ast::{Expr, FnBody, Stmt, StrPart, TopLevel};
 mod codegen;
 mod scc;
 
-pub use codegen::ordered_fn_components;
+pub use codegen::{ordered_fn_components, tailcall_scc_components};
 
 // ---------------------------------------------------------------------------
 // Public API

@@ -265,6 +265,7 @@ fn run_vm_benchmark() {
 }
 
 #[test]
+#[ignore = "performance benchmark; run manually when profiling VM vs interpreter"]
 fn vm_benchmark() {
     std::thread::Builder::new()
         .name("vm_benchmark".to_string())

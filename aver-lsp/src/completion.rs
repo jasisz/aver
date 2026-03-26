@@ -825,14 +825,29 @@ mod tests {
             .map(|item| item.label)
             .collect();
 
-        assert!(labels.contains(&"append".to_string()));
         assert!(labels.contains(&"prepend".to_string()));
         assert!(labels.contains(&"concat".to_string()));
         assert!(labels.contains(&"reverse".to_string()));
         assert!(labels.contains(&"zip".to_string()));
+        assert!(!labels.contains(&"append".to_string()));
+        assert!(!labels.contains(&"get".to_string()));
         assert!(!labels.contains(&"filter".to_string()));
         assert!(!labels.contains(&"map".to_string()));
         assert!(!labels.contains(&"push".to_string()));
+    }
+
+    #[test]
+    fn vector_completions_match_current_api() {
+        let labels: Vec<String> = namespace_completions("Vector")
+            .into_iter()
+            .map(|item| item.label)
+            .collect();
+
+        assert!(labels.contains(&"new".to_string()));
+        assert!(labels.contains(&"get".to_string()));
+        assert!(labels.contains(&"set".to_string()));
+        assert!(labels.contains(&"fromList".to_string()));
+        assert!(labels.contains(&"toList".to_string()));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::FnDef;
+use crate::ast::{Expr, FnBody, FnDef, Stmt};
 
 use super::collect_codegen_deps_body;
 use super::scc::{tarjan_sccs, topo_components};
@@ -63,4 +63,71 @@ pub fn ordered_fn_components<'a>(
             group
         })
         .collect()
+}
+
+/// Tail-call SCCs for mutual-trampoline codegen.
+///
+/// Returns only components with more than one function, sorted deterministically
+/// by the first function name in each SCC.
+pub fn tailcall_scc_components<'a>(fns: &[&'a FnDef]) -> Vec<Vec<&'a FnDef>> {
+    if fns.is_empty() {
+        return vec![];
+    }
+
+    let fn_map: HashMap<String, &FnDef> = fns.iter().map(|fd| (fd.name.clone(), *fd)).collect();
+    let names: Vec<String> = fn_map.keys().cloned().collect();
+    let name_set: HashSet<String> = names.iter().cloned().collect();
+
+    let mut graph: HashMap<String, Vec<String>> = HashMap::new();
+    for fd in fns {
+        let mut deps = HashSet::new();
+        collect_tailcall_deps_body(&fd.body, &name_set, &mut deps);
+        let mut sorted = deps.into_iter().collect::<Vec<_>>();
+        sorted.sort();
+        graph.insert(fd.name.clone(), sorted);
+    }
+
+    tarjan_sccs(&names, &graph)
+        .into_iter()
+        .filter(|comp| comp.len() > 1)
+        .map(|comp| {
+            let mut group: Vec<&FnDef> = comp
+                .iter()
+                .filter_map(|name| fn_map.get(name).copied())
+                .collect();
+            group.sort_by(|a, b| a.name.cmp(&b.name));
+            group
+        })
+        .collect()
+}
+
+fn collect_tailcall_deps_body(
+    body: &FnBody,
+    fn_names: &HashSet<String>,
+    out: &mut HashSet<String>,
+) {
+    for stmt in body.stmts() {
+        match stmt {
+            Stmt::Expr(expr) | Stmt::Binding(_, _, expr) => {
+                collect_tailcall_deps_expr(expr, fn_names, out);
+            }
+        }
+    }
+}
+
+fn collect_tailcall_deps_expr(expr: &Expr, fn_names: &HashSet<String>, out: &mut HashSet<String>) {
+    match expr {
+        Expr::TailCall(boxed) => {
+            let (target, _) = boxed.as_ref();
+            if fn_names.contains(target) {
+                out.insert(target.clone());
+            }
+        }
+        Expr::Match { arms, .. } => {
+            for arm in arms {
+                collect_tailcall_deps_expr(&arm.body, fn_names, out);
+            }
+        }
+        _ => {}
+    }
 }

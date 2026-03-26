@@ -43,11 +43,22 @@ fn builtinVectorSet(args: List<Val>) -> Result<Val, String>
 fn builtinVectorSetInner(vecV: Val, idxV: Val, valV: Val) -> Result<Val, String>
     match vecV
         Val.ValVector(vec) -> match idxV
-            Val.ValInt(idx) -> match Vector.set(vec, idx, valV)
-                Option.Some(newVec) -> Result.Ok(Val.ValSome(Val.ValVector(newVec)))
-                Option.None -> Result.Ok(Val.ValNone)
+            Val.ValInt(idx) -> match idx < 0
+                true -> Result.Ok(Val.ValNone)
+                false -> match idx < Vector.len(vec)
+                    true -> builtinVectorSetInBounds(vec, idx, valV)
+                    false -> Result.Ok(Val.ValNone)
             _ -> Result.Err("Vector.set: second arg must be Int")
         _ -> Result.Err("Vector.set: first arg must be Vector")
+
+fn builtinVectorSetInBounds(vec: Vector<Val>, idx: Int, valV: Val) -> Result<Val, String>
+    ? "Set a vector element when bounds have already been checked."
+    newVec = Option.withDefault(Vector.set(vec, idx, valV), vec)
+    Result.Ok(Val.ValSome(Val.ValVector(newVec)))
+
+verify builtinVectorSetInner
+    builtinVectorSetInner(Val.ValVector(Vector.fromList([Val.ValInt(1), Val.ValInt(2)])), Val.ValInt(1), Val.ValInt(9)) => Result.Ok(Val.ValSome(Val.ValVector(Vector.fromList([Val.ValInt(1), Val.ValInt(9)]))))
+    builtinVectorSetInner(Val.ValVector(Vector.fromList([Val.ValInt(1), Val.ValInt(2)])), Val.ValInt(5), Val.ValInt(9)) => Result.Ok(Val.ValNone)
 
 fn builtinVectorLen(args: List<Val>) -> Result<Val, String>
     ? "Vector.len(vec) -> Int."
