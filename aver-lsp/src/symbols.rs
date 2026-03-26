@@ -15,16 +15,15 @@ pub fn document_symbols(source: &str) -> Option<DocumentSymbolResponse> {
 
     let exposed = items.iter().find_map(|item| {
         if let TopLevel::Module(module) = item {
-            if module.exposes.is_empty() {
+            if module.exposes.is_empty() && module.exposes_opaque.is_empty() {
                 None
             } else {
-                Some(
-                    module
-                        .exposes
-                        .iter()
-                        .map(|name| name.as_str())
-                        .collect::<std::collections::HashSet<_>>(),
-                )
+                let mut set: std::collections::HashSet<&str> =
+                    module.exposes.iter().map(|name| name.as_str()).collect();
+                for name in &module.exposes_opaque {
+                    set.insert(name.as_str());
+                }
+                Some(set)
             }
         } else {
             None

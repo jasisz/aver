@@ -161,12 +161,12 @@ pub fn namespace_completions(namespace: &str) -> Vec<CompletionItem> {
                 detail: "fn(List<a>) -> Int",
             },
             Member {
-                name: "get",
-                detail: "fn(List<a>, Int) -> Option<a>",
+                name: "head",
+                detail: "fn(List<a>) -> Option<a>",
             },
             Member {
-                name: "append",
-                detail: "fn(List<a>, a) -> List<a>",
+                name: "tail",
+                detail: "fn(List<a>) -> Option<List<a>>",
             },
             Member {
                 name: "prepend",
@@ -185,8 +185,42 @@ pub fn namespace_completions(namespace: &str) -> Vec<CompletionItem> {
                 detail: "fn(List<a>, a) -> Bool",
             },
             Member {
+                name: "find",
+                detail: "fn(List<a>, a) -> Option<a>",
+            },
+            Member {
+                name: "any",
+                detail: "fn(List<a>, a) -> Bool",
+            },
+            Member {
                 name: "zip",
                 detail: "fn(List<a>, List<b>) -> List<(a, b)>",
+            },
+        ],
+        "Vector" => &[
+            Member {
+                name: "new",
+                detail: "fn(Int, a) -> Vector<a>",
+            },
+            Member {
+                name: "get",
+                detail: "fn(Vector<a>, Int) -> Option<a>",
+            },
+            Member {
+                name: "set",
+                detail: "fn(Vector<a>, Int, a) -> Option<Vector<a>>",
+            },
+            Member {
+                name: "len",
+                detail: "fn(Vector<a>) -> Int",
+            },
+            Member {
+                name: "fromList",
+                detail: "fn(List<a>) -> Vector<a>",
+            },
+            Member {
+                name: "toList",
+                detail: "fn(Vector<a>) -> List<a>",
             },
         ],
         "Map" => &[
@@ -525,6 +559,7 @@ pub fn all_namespaces() -> Vec<CompletionItem> {
         ("Float", "Floating-point operations"),
         ("String", "String operations"),
         ("List", "List operations"),
+        ("Vector", "Indexed dense collection (O(1) get/set)"),
         ("Map", "Map operations"),
         ("Char", "Character operations"),
         ("Byte", "Byte operations"),
