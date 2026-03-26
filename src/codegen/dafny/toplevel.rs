@@ -21,6 +21,9 @@ fn type_to_dafny(ty: &Type) -> String {
         Type::Unit => "()".to_string(),
         Type::List(inner) => format!("seq<{}>", type_to_dafny(inner)),
         Type::Vector(inner) => format!("seq<{}>", type_to_dafny(inner)),
+        Type::Map(k, v) if crate::codegen::common::is_set_type(ty) => {
+            format!("set<{}>", type_to_dafny(k))
+        }
         Type::Map(k, v) => format!("map<{}, {}>", type_to_dafny(k), type_to_dafny(v)),
         Type::Result(ok, err) => format!("Result<{}, {}>", type_to_dafny(ok), type_to_dafny(err)),
         Type::Option(inner) => format!("Option<{}>", type_to_dafny(inner)),
@@ -153,8 +156,15 @@ fn emit_block_as_expr(stmts: &[Stmt], ctx: &CodegenContext) -> String {
 
     for (i, stmt) in stmts.iter().enumerate() {
         match stmt {
-            Stmt::Binding(name, _type_ann, expr) => {
-                let val = emit_expr(expr, ctx);
+            Stmt::Binding(name, type_ann, expr) => {
+                let mut val = emit_expr(expr, ctx);
+                // Map<T, Unit> binding initialized with Map.empty → set literal
+                if let Some(ann) = type_ann
+                    && crate::codegen::common::is_set_annotation(ann)
+                    && val == "map[]"
+                {
+                    val = "{}".to_string();
+                }
                 parts.push((aver_name_to_dafny(name), val));
             }
             Stmt::Expr(expr) => {

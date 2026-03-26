@@ -1,6 +1,7 @@
 use super::expr::{aver_name_to_rust, clone_arg, emit_expr, emit_stmt};
 use super::liveness::{
-    EmitCtx, collect_vars, compute_args_used_after, compute_block_used_after, is_copy_type,
+    EmitCtx, collect_vars, compute_args_used_after_with_rc, compute_block_used_after,
+    compute_block_used_after_with_rc, is_copy_type,
 };
 use super::types::type_annotation_to_rust;
 use crate::ast::*;
@@ -151,7 +152,8 @@ fn emit_sum_type(
                 .map(|f| {
                     let rust_ty = type_annotation_to_rust(f);
                     if f == name {
-                        format!("Box<{}>", rust_ty)
+                        // Recursive field: Rc<T> instead of Box<T> — clone is O(1) refcount bump
+                        format!("std::rc::Rc<{}>", rust_ty)
                     } else {
                         rust_ty
                     }
@@ -364,12 +366,44 @@ fn emit_fn_def_with_visibility(
 }
 
 fn emit_fn_params(params: &[(String, String)], mutable: bool) -> String {
+    emit_fn_params_with_rc(params, mutable, &HashSet::new())
+}
+
+/// Emit function params for self-TCO: non-Rc params are `mut`, Rc params are not
+/// (they'll be shadowed by `let x = Rc::new(x)` before the loop).
+fn emit_fn_params_tco(params: &[(String, String)], rc_indices: &HashSet<usize>) -> String {
     params
         .iter()
-        .map(|(name, type_ann)| {
+        .enumerate()
+        .map(|(i, (name, type_ann))| {
             let rust_type = type_annotation_to_rust(type_ann);
             let rust_name = aver_name_to_rust(name);
-            if mutable {
+            if rc_indices.contains(&i) {
+                // Rc-wrapped: no `mut` needed (will be shadowed by Rc::new)
+                format!("{}: {}", rust_name, rust_type)
+            } else {
+                format!("mut {}: {}", rust_name, rust_type)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn emit_fn_params_with_rc(
+    params: &[(String, String)],
+    mutable: bool,
+    rc_indices: &HashSet<usize>,
+) -> String {
+    params
+        .iter()
+        .enumerate()
+        .map(|(i, (name, type_ann))| {
+            let rust_type = type_annotation_to_rust(type_ann);
+            let rust_name = aver_name_to_rust(name);
+            if rc_indices.contains(&i) {
+                // Rc-wrapped param: not mutable (it's shared via Rc)
+                format!("{}: std::rc::Rc<{}>", rust_name, rust_type)
+            } else if mutable {
                 format!("mut {}: {}", rust_name, rust_type)
             } else {
                 format!("{}: {}", rust_name, rust_type)
@@ -449,6 +483,253 @@ fn expr_has_self_tailcall(expr: &Expr, fn_name: &str) -> bool {
     }
 }
 
+/// Is this Aver type expensive to clone (i.e. not Copy and not AverStr which is Rc<str>)?
+fn is_expensive_clone_type(ty: &crate::types::Type) -> bool {
+    use crate::types::Type;
+    match ty {
+        Type::Int | Type::Float | Type::Bool | Type::Unit => false, // Copy
+        Type::Str => false, // AverStr is Rc<str>, clone is O(1)
+        _ => true,
+    }
+}
+
+/// For a group of mutually-recursive functions (or a single self-recursive fn),
+/// find param indices that are "pass-through" — never rebound in tail calls.
+/// These can safely be wrapped in Rc<T> to avoid deep cloning.
+fn compute_rc_params(group_fns: &[&FnDef], _ctx: &CodegenContext) -> HashSet<usize> {
+    if group_fns.is_empty() {
+        return HashSet::new();
+    }
+
+    // Try index-based first (works when all fns have same arity)
+    let arity = group_fns[0].params.len();
+    if group_fns.iter().all(|fd| fd.params.len() == arity) {
+        return compute_rc_params_by_index(group_fns);
+    }
+
+    // Different arities: use name+type-based detection.
+    // Find params (name, type) that appear in ALL functions and are pass-through.
+    compute_rc_params_by_name(group_fns)
+}
+
+/// Index-based Rc detection: all fns have same arity, check same position.
+fn compute_rc_params_by_index(group_fns: &[&FnDef]) -> HashSet<usize> {
+    let arity = group_fns[0].params.len();
+    let member_names: HashSet<&str> = group_fns.iter().map(|fd| fd.name.as_str()).collect();
+
+    let mut candidates: HashSet<usize> = (0..arity)
+        .filter(|&i| {
+            let type_ann = &group_fns[0].params[i].1;
+            let ty = crate::types::parse_type_str(type_ann);
+            group_fns.iter().all(|fd| fd.params[i].1 == *type_ann) && is_expensive_clone_type(&ty)
+        })
+        .collect();
+
+    if candidates.is_empty() {
+        return candidates;
+    }
+
+    for fd in group_fns {
+        check_tailcalls_for_rc(&fd.body, &member_names, &fd.params, &mut candidates);
+        if candidates.is_empty() {
+            break;
+        }
+    }
+    candidates
+}
+
+/// Name+type-based Rc detection for groups with varying arities.
+/// Finds params that share the same name AND type across all functions,
+/// and are always passed through unchanged in tail calls.
+/// Returns indices into the FIRST function's param list.
+fn compute_rc_params_by_name(group_fns: &[&FnDef]) -> HashSet<usize> {
+    // Build a map: fn_name → {param_name → (index, type)}
+    let fn_param_map: HashMap<&str, HashMap<&str, (usize, &str)>> = group_fns
+        .iter()
+        .map(|fd| {
+            let params: HashMap<&str, (usize, &str)> = fd
+                .params
+                .iter()
+                .enumerate()
+                .map(|(i, (name, ty))| (name.as_str(), (i, ty.as_str())))
+                .collect();
+            (fd.name.as_str(), params)
+        })
+        .collect();
+
+    let member_names: HashSet<&str> = group_fns.iter().map(|fd| fd.name.as_str()).collect();
+
+    // Find param names that exist in ALL functions with same type and expensive to clone
+    let mut shared_params: Vec<(&str, &str)> = Vec::new(); // (name, type)
+    if let Some(first) = group_fns.first() {
+        for (name, ty) in &first.params {
+            let parsed = crate::types::parse_type_str(ty);
+            if !is_expensive_clone_type(&parsed) {
+                continue;
+            }
+            // Check if ALL other fns have a param with same name and type
+            let all_have_it = group_fns
+                .iter()
+                .all(|fd| fd.params.iter().any(|(n, t)| n == name && t == ty));
+            if all_have_it {
+                shared_params.push((name.as_str(), ty.as_str()));
+            }
+        }
+    }
+
+    if shared_params.is_empty() {
+        return HashSet::new();
+    }
+
+    // For each shared param, check pass-through in ALL tail calls across ALL fns
+    let valid_params: HashSet<&str> = shared_params
+        .iter()
+        .filter(|(param_name, _)| {
+            group_fns.iter().all(|fd| {
+                check_param_passthrough_by_name(
+                    &fd.body,
+                    &member_names,
+                    param_name,
+                    &fn_param_map,
+                )
+            })
+        })
+        .map(|(name, _)| *name)
+        .collect();
+
+    // Convert back to indices into the first function's param list
+    if let Some(first) = group_fns.first() {
+        first
+            .params
+            .iter()
+            .enumerate()
+            .filter(|(_, (name, _))| valid_params.contains(name.as_str()))
+            .map(|(i, _)| i)
+            .collect()
+    } else {
+        HashSet::new()
+    }
+}
+
+/// Check that every TailCall in `body` to a group member passes `param_name`
+/// at the correct position in the TARGET function's param list.
+fn check_param_passthrough_by_name(
+    body: &FnBody,
+    member_names: &HashSet<&str>,
+    param_name: &str,
+    fn_param_map: &HashMap<&str, HashMap<&str, (usize, &str)>>,
+) -> bool {
+    for stmt in body.stmts() {
+        match stmt {
+            Stmt::Expr(e) | Stmt::Binding(_, _, e) => {
+                if !check_expr_passthrough_by_name(
+                    e,
+                    member_names,
+                    param_name,
+                    fn_param_map,
+                ) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+fn check_expr_passthrough_by_name(
+    expr: &Expr,
+    member_names: &HashSet<&str>,
+    param_name: &str,
+    fn_param_map: &HashMap<&str, HashMap<&str, (usize, &str)>>,
+) -> bool {
+    match expr {
+        Expr::TailCall(boxed) => {
+            let (target, args) = boxed.as_ref();
+            if !member_names.contains(target.as_str()) {
+                return true; // call to non-member, irrelevant
+            }
+            // Find the index of param_name in the TARGET function
+            if let Some(target_params) = fn_param_map.get(target.as_str())
+                && let Some(&(target_idx, _)) = target_params.get(param_name)
+            {
+                // arg at target_idx must be Ident(param_name) from the caller
+                target_idx < args.len()
+                    && matches!(&args[target_idx], Expr::Ident(name) if name == param_name)
+            } else {
+                false
+            }
+        }
+        Expr::Match { arms, .. } => arms.iter().all(|arm| {
+            check_expr_passthrough_by_name(
+                &arm.body,
+                member_names,
+                param_name,
+                fn_param_map,
+            )
+        }),
+        _ => true,
+    }
+}
+
+/// Walk the AST and verify that every TailCall to a group member passes
+/// param[i] as Ident(param_name[i]) for all candidate indices.
+/// Removes candidates that fail the check.
+fn check_tailcalls_for_rc(
+    body: &FnBody,
+    member_names: &HashSet<&str>,
+    params: &[(String, String)],
+    candidates: &mut HashSet<usize>,
+) {
+    for stmt in body.stmts() {
+        match stmt {
+            Stmt::Expr(e) | Stmt::Binding(_, _, e) => {
+                check_expr_tailcalls_for_rc(e, member_names, params, candidates);
+            }
+        }
+    }
+}
+
+fn check_expr_tailcalls_for_rc(
+    expr: &Expr,
+    member_names: &HashSet<&str>,
+    params: &[(String, String)],
+    candidates: &mut HashSet<usize>,
+) {
+    if candidates.is_empty() {
+        return;
+    }
+    match expr {
+        Expr::TailCall(boxed) => {
+            let (target, args) = boxed.as_ref();
+            if member_names.contains(target.as_str()) && args.len() == params.len() {
+                // For each candidate index, check if arg[i] == Ident(param_name[i])
+                let to_remove: Vec<usize> = candidates
+                    .iter()
+                    .copied()
+                    .filter(|&i| !matches!(&args[i], Expr::Ident(name) if *name == params[i].0))
+                    .collect();
+                for idx in to_remove {
+                    candidates.remove(&idx);
+                }
+            }
+        }
+        Expr::Match { arms, .. } => {
+            for arm in arms {
+                check_expr_tailcalls_for_rc(&arm.body, member_names, params, candidates);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Build a set of param names that should be Rc-wrapped, given rc_indices.
+fn rc_param_names(params: &[(String, String)], rc_indices: &HashSet<usize>) -> HashSet<String> {
+    rc_indices
+        .iter()
+        .filter_map(|&i| params.get(i).map(|(name, _)| name.clone()))
+        .collect()
+}
+
 /// Emit a function with TCO → loop rewrite.
 fn emit_tco_fn(
     fd: &FnDef,
@@ -458,16 +739,41 @@ fn emit_tco_fn(
     ectx: &EmitCtx,
     visibility: &str,
 ) -> String {
-    let params = emit_fn_params(&fd.params, true);
+    // Compute pass-through Rc params for self-TCO
+    let rc_indices = compute_rc_params(&[fd], ctx);
+    let rc_names = rc_param_names(&fd.params, &rc_indices);
+    let ectx = if rc_names.is_empty() {
+        ectx.clone()
+    } else {
+        ectx.with_rc_wrapped(rc_names)
+    };
+
+    // All params keep their original types in the public signature.
+    // Non-Rc params are mutable (for rebinding in tail calls); Rc params don't need mut
+    // since they'll be shadowed by Rc-wrapped `let` bindings before the loop.
+    let params = emit_fn_params_tco(&fd.params, &rc_indices);
     let mut lines = Vec::new();
     lines.push(format!(
         "{}fn {}({}) -> {} {{",
         visibility, fn_name, params, ret_type
     ));
+
+    // Wrap pass-through params in Rc before the loop (shadowing the original binding)
+    for &i in &rc_indices {
+        let (name, ty) = &fd.params[i];
+        let rust_name = aver_name_to_rust(name);
+        let rust_type = type_annotation_to_rust(ty);
+        lines.push(format!(
+            "    let {} = std::rc::Rc::new({});",
+            rust_name, rust_name
+        ));
+        let _ = rust_type;
+    }
+
     lines.push("    loop {".to_string());
 
     // Emit body with TailCall → { reassign; continue }
-    let body_code = emit_tco_body(&fd.body, &fd.name, &fd.params, ctx, ectx);
+    let body_code = emit_tco_body(&fd.body, &fd.name, &fd.params, ctx, &ectx, &rc_indices);
     lines.push(body_code);
 
     lines.push("    }".to_string());
@@ -481,9 +787,15 @@ fn emit_tco_body(
     params: &[(String, String)],
     ctx: &CodegenContext,
     ectx: &EmitCtx,
+    rc_indices: &HashSet<usize>,
 ) -> String {
     let stmts = body.stmts();
-    let stmt_ctxs = compute_block_used_after(stmts, &ectx.used_after, &ectx.local_types);
+    let stmt_ctxs = compute_block_used_after_with_rc(
+        stmts,
+        &ectx.used_after,
+        &ectx.local_types,
+        &ectx.rc_wrapped,
+    );
     let mut lines = Vec::new();
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last = i == stmts.len() - 1;
@@ -500,7 +812,7 @@ fn emit_tco_body(
                 if is_last {
                     lines.push(format!(
                         "        return {};",
-                        emit_tco_expr(expr, self_name, params, ctx, sctx)
+                        emit_tco_expr(expr, self_name, params, ctx, sctx, rc_indices)
                     ));
                 } else {
                     lines.push(format!("        {};", emit_expr(expr, ctx, sctx)));
@@ -518,6 +830,7 @@ fn try_emit_tco_bool_if_else(
     params: &[(String, String)],
     ctx: &CodegenContext,
     ectx: &EmitCtx,
+    rc_indices: &HashSet<usize>,
 ) -> Option<String> {
     if arms.len() != 2 {
         return None;
@@ -531,8 +844,8 @@ fn try_emit_tco_bool_if_else(
         }
         _ => return None,
     };
-    let t = emit_tco_expr(true_body, self_name, params, ctx, ectx);
-    let f = emit_tco_expr(false_body, self_name, params, ctx, ectx);
+    let t = emit_tco_expr(true_body, self_name, params, ctx, ectx, rc_indices);
+    let f = emit_tco_expr(false_body, self_name, params, ctx, ectx, rc_indices);
     Some(format!("if {} {{ {} }} else {{ {} }}", subj, t, f))
 }
 
@@ -542,6 +855,7 @@ fn emit_tco_expr(
     params: &[(String, String)],
     ctx: &CodegenContext,
     ectx: &EmitCtx,
+    rc_indices: &HashSet<usize>,
 ) -> String {
     match expr {
         Expr::TailCall(boxed) => {
@@ -550,11 +864,14 @@ fn emit_tco_expr(
                 return emit_expr(expr, ctx, ectx);
             }
 
-            // Self TCO — create temp vars, then reassign
-            // For TailCall args: parameters will be overwritten, so they're NOT in used_after.
-            // Only other args (to the right) contribute to used_after.
-            let arg_ctxs =
-                compute_args_used_after(args, &std::collections::HashSet::new(), &ectx.local_types);
+            // Self TCO — create temp vars, then reassign.
+            // Skip Rc-wrapped params (they're pass-through, never rebound).
+            let arg_ctxs = compute_args_used_after_with_rc(
+                args,
+                &std::collections::HashSet::new(),
+                &ectx.local_types,
+                &ectx.rc_wrapped,
+            );
             let arg_strs: Vec<String> = args
                 .iter()
                 .zip(arg_ctxs.iter())
@@ -564,9 +881,15 @@ fn emit_tco_expr(
             let mut lines = Vec::new();
             lines.push("{".to_string());
             for (i, arg_str) in arg_strs.iter().enumerate() {
+                if rc_indices.contains(&i) {
+                    continue; // pass-through Rc param — no rebinding needed
+                }
                 lines.push(format!("            let __tmp{} = {};", i, arg_str));
             }
             for (i, (name, _)) in params.iter().enumerate() {
+                if rc_indices.contains(&i) {
+                    continue; // pass-through Rc param — no rebinding needed
+                }
                 lines.push(format!(
                     "            {} = __tmp{};",
                     aver_name_to_rust(name),
@@ -592,7 +915,8 @@ fn emit_tco_expr(
             let subj = clone_arg(subject, ctx, &subj_ectx);
 
             // Bool match → if/else in TCO context
-            if let Some(code) = try_emit_tco_bool_if_else(&subj, arms, self_name, params, ctx, ectx)
+            if let Some(code) =
+                try_emit_tco_bool_if_else(&subj, arms, self_name, params, ctx, ectx, rc_indices)
             {
                 return code;
             }
@@ -600,7 +924,7 @@ fn emit_tco_expr(
             let needs_as_str = super::expr::has_string_literal_patterns(arms);
             if super::expr::has_list_patterns(arms) {
                 return super::expr::emit_list_match(subj, arms, ctx, |arm| {
-                    emit_tco_expr(&arm.body, self_name, params, ctx, ectx)
+                    emit_tco_expr(&arm.body, self_name, params, ctx, ectx, rc_indices)
                 });
             }
 
@@ -613,7 +937,7 @@ fn emit_tco_expr(
             let mut arm_strs = Vec::new();
             for arm in arms {
                 let pat = super::pattern::emit_pattern(&arm.pattern, needs_as_str, ctx);
-                let body = emit_tco_expr(&arm.body, self_name, params, ctx, ectx);
+                let body = emit_tco_expr(&arm.body, self_name, params, ctx, ectx, rc_indices);
                 let mut rebinding_lines: Vec<String> = Vec::new();
                 if let Pattern::Cons(head, tail) = &arm.pattern {
                     if head != "_" {
@@ -643,7 +967,16 @@ fn emit_tco_expr(
                 arm_strs.join(",\n")
             )
         }
-        _ => emit_expr(expr, ctx, ectx),
+        _ => {
+            // If this is a bare Rc-wrapped ident being returned, deref+clone to get T
+            if let Expr::Ident(name) = expr
+                && ectx.is_rc_wrapped(name)
+            {
+                let code = emit_expr(expr, ctx, ectx);
+                return format!("(*{}).clone()", code);
+            }
+            emit_expr(expr, ctx, ectx)
+        }
     }
 }
 
@@ -754,9 +1087,16 @@ pub fn emit_mutual_tco_block(
     };
 
     let member_names: HashSet<String> = group_fns.iter().map(|fd| fd.name.clone()).collect();
+    let rc_indices = compute_rc_params(group_fns, ctx);
+    let rc_names = if !group_fns.is_empty() {
+        rc_param_names(&group_fns[0].params, &rc_indices)
+    } else {
+        HashSet::new()
+    };
+
     let mut sections = Vec::new();
 
-    // 1. Enum definition
+    // 1. Enum definition — exclude Rc-wrapped params (they're shared across iterations)
     let mut enum_lines = Vec::new();
     enum_lines.push("#[allow(non_camel_case_types)]".to_string());
     enum_lines.push(format!("enum {} {{", enum_name));
@@ -765,6 +1105,7 @@ pub fn emit_mutual_tco_block(
         let param_types: Vec<String> = fd
             .params
             .iter()
+            .filter(|(name, _)| !rc_names.contains(name))
             .map(|(_, ty)| type_annotation_to_rust(ty))
             .collect();
         if param_types.is_empty() {
@@ -776,11 +1117,36 @@ pub fn emit_mutual_tco_block(
     enum_lines.push("}".to_string());
     sections.push(enum_lines.join("\n"));
 
-    // 2. Trampoline function
+    // 2. Trampoline function — Rc-wrapped params are extra parameters
     let mut tramp_lines = Vec::new();
+
+    // Build the Rc extra params for the trampoline signature (owned Rc<T>)
+    // Use first fn that has them (all fns have same name+type for Rc params)
+    let rc_extra_params: String = if !rc_names.is_empty() && !group_fns.is_empty() {
+        let parts: Vec<String> = group_fns[0]
+            .params
+            .iter()
+            .filter(|(name, _)| rc_names.contains(name))
+            .map(|(name, ty)| {
+                format!(
+                    "{}: std::rc::Rc<{}>",
+                    aver_name_to_rust(name),
+                    type_annotation_to_rust(ty)
+                )
+            })
+            .collect();
+        if parts.is_empty() {
+            String::new()
+        } else {
+            format!(", {}", parts.join(", "))
+        }
+    } else {
+        String::new()
+    };
+
     tramp_lines.push(format!(
-        "fn {}(mut __state: {}) -> {} {{",
-        trampoline_name, enum_name, ret_type
+        "fn {}(mut __state: {}{}) -> {} {{",
+        trampoline_name, enum_name, rc_extra_params, ret_type
     ));
     tramp_lines.push("    loop {".to_string());
     tramp_lines.push("        __state = match __state {".to_string());
@@ -790,6 +1156,7 @@ pub fn emit_mutual_tco_block(
         let param_bindings: Vec<String> = fd
             .params
             .iter()
+            .filter(|(name, _)| !rc_names.contains(name))
             .map(|(name, _)| format!("mut {}", aver_name_to_rust(name)))
             .collect();
         let binding = if param_bindings.is_empty() {
@@ -800,7 +1167,13 @@ pub fn emit_mutual_tco_block(
         tramp_lines.push(format!("            {} => {{", binding));
 
         let ectx = build_fn_ectx(fd, ctx);
-        let body_code = emit_trampoline_arm_body(fd, &enum_name, &member_names, ctx, &ectx);
+        let ectx = if rc_names.is_empty() {
+            ectx
+        } else {
+            ectx.with_rc_wrapped(rc_names.clone())
+        };
+        let body_code =
+            emit_trampoline_arm_body(fd, &enum_name, &member_names, ctx, &ectx, &rc_indices);
         tramp_lines.push(body_code);
 
         tramp_lines.push("            }".to_string());
@@ -811,20 +1184,44 @@ pub fn emit_mutual_tco_block(
     tramp_lines.push("}".to_string());
     sections.push(tramp_lines.join("\n"));
 
-    // 3. Wrapper functions
+    // 3. Wrapper functions — accept plain T, wrap Rc params in Rc::new(), call trampoline
     for fd in group_fns {
         let fn_name = aver_name_to_rust(&fd.name);
         let variant = fn_name_to_variant(&fd.name);
         let params = emit_fn_params(&fd.params, false);
-        let arg_names: Vec<String> = fd
+        // Enum variant args: only non-Rc params
+        let variant_arg_names: Vec<String> = fd
             .params
             .iter()
+            .filter(|(name, _)| !rc_names.contains(name))
             .map(|(name, _)| aver_name_to_rust(name))
             .collect();
-        let variant_call = if arg_names.is_empty() {
+        let variant_call = if variant_arg_names.is_empty() {
             format!("{}::{}", enum_name, variant)
         } else {
-            format!("{}::{}({})", enum_name, variant, arg_names.join(", "))
+            format!(
+                "{}::{}({})",
+                enum_name,
+                variant,
+                variant_arg_names.join(", ")
+            )
+        };
+
+        // Build the Rc extra args for the trampoline call (owned Rc<T>)
+        let rc_extra_args: String = if !rc_names.is_empty() {
+            let parts: Vec<String> = fd
+                .params
+                .iter()
+                .filter(|(name, _)| rc_names.contains(name))
+                .map(|(name, _)| format!("std::rc::Rc::new({})", aver_name_to_rust(name)))
+                .collect();
+            if parts.is_empty() {
+                String::new()
+            } else {
+                format!(", {}", parts.join(", "))
+            }
+        } else {
+            String::new()
         };
 
         let mut wrapper = Vec::new();
@@ -835,7 +1232,10 @@ pub fn emit_mutual_tco_block(
             "{}fn {}({}) -> {} {{",
             visibility, fn_name, params, ret_type
         ));
-        wrapper.push(format!("    {}({})", trampoline_name, variant_call));
+        wrapper.push(format!(
+            "    {}({}{})",
+            trampoline_name, variant_call, rc_extra_args
+        ));
         wrapper.push("}".to_string());
         sections.push(wrapper.join("\n"));
     }
@@ -849,9 +1249,15 @@ fn emit_trampoline_arm_body(
     member_names: &HashSet<String>,
     ctx: &CodegenContext,
     ectx: &EmitCtx,
+    rc_indices: &HashSet<usize>,
 ) -> String {
     let stmts = fd.body.stmts();
-    let stmt_ctxs = compute_block_used_after(stmts, &ectx.used_after, &ectx.local_types);
+    let stmt_ctxs = compute_block_used_after_with_rc(
+        stmts,
+        &ectx.used_after,
+        &ectx.local_types,
+        &ectx.rc_wrapped,
+    );
     let mut lines = Vec::new();
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last = i == stmts.len() - 1;
@@ -868,7 +1274,7 @@ fn emit_trampoline_arm_body(
                 if is_last {
                     lines.push(format!(
                         "                {}",
-                        emit_trampoline_expr(expr, enum_name, member_names, ctx, sctx)
+                        emit_trampoline_expr(expr, enum_name, member_names, ctx, sctx, rc_indices,)
                     ));
                 } else {
                     lines.push(format!("                {};", emit_expr(expr, ctx, sctx)));
@@ -889,17 +1295,27 @@ fn emit_trampoline_expr(
     member_names: &HashSet<String>,
     ctx: &CodegenContext,
     ectx: &EmitCtx,
+    rc_indices: &HashSet<usize>,
 ) -> String {
     match expr {
         Expr::TailCall(boxed) => {
             let (target, args) = boxed.as_ref();
             if member_names.contains(target) {
-                // Bounce → produce enum variant
+                // Bounce → produce enum variant (excluding Rc-wrapped args)
                 let variant = fn_name_to_variant(target);
-                let arg_ctxs = compute_args_used_after(args, &ectx.used_after, &ectx.local_types);
+                let arg_ctxs = compute_args_used_after_with_rc(
+                    args,
+                    &ectx.used_after,
+                    &ectx.local_types,
+                    &ectx.rc_wrapped,
+                );
                 let arg_strs: Vec<String> = args
                     .iter()
                     .zip(arg_ctxs.iter())
+                    .filter(|(a, _)| {
+                        // Skip args that are pass-through Rc params (Ident matching an rc_wrapped name)
+                        !matches!(a, Expr::Ident(name) if ectx.is_rc_wrapped(name))
+                    })
                     .map(|(a, ac)| clone_arg(a, ctx, ac))
                     .collect();
                 if arg_strs.is_empty() {
@@ -927,16 +1343,22 @@ fn emit_trampoline_expr(
             let subj = clone_arg(subject, ctx, &subj_ectx);
 
             // Bool match → if/else
-            if let Some(code) =
-                try_emit_trampoline_bool_if_else(&subj, arms, enum_name, member_names, ctx, ectx)
-            {
+            if let Some(code) = try_emit_trampoline_bool_if_else(
+                &subj,
+                arms,
+                enum_name,
+                member_names,
+                ctx,
+                ectx,
+                rc_indices,
+            ) {
                 return code;
             }
 
             // List match
             if super::expr::has_list_patterns(arms) {
                 return super::expr::emit_list_match(subj, arms, ctx, |arm| {
-                    emit_trampoline_expr(&arm.body, enum_name, member_names, ctx, ectx)
+                    emit_trampoline_expr(&arm.body, enum_name, member_names, ctx, ectx, rc_indices)
                 });
             }
 
@@ -950,7 +1372,8 @@ fn emit_trampoline_expr(
             let mut arm_strs = Vec::new();
             for arm in arms {
                 let pat = super::pattern::emit_pattern(&arm.pattern, needs_as_str, ctx);
-                let body = emit_trampoline_expr(&arm.body, enum_name, member_names, ctx, ectx);
+                let body =
+                    emit_trampoline_expr(&arm.body, enum_name, member_names, ctx, ectx, rc_indices);
 
                 let mut rebinding_lines: Vec<String> = Vec::new();
                 if let Pattern::Cons(head, _) = &arm.pattern
@@ -981,7 +1404,14 @@ fn emit_trampoline_expr(
             )
         }
         _ => {
-            // Non-tail expression → return to exit trampoline
+            // Non-tail expression → return to exit trampoline.
+            // If this is a bare Rc-wrapped ident, deref+clone to get T.
+            if let Expr::Ident(name) = expr
+                && ectx.is_rc_wrapped(name)
+            {
+                let code = emit_expr(expr, ctx, ectx);
+                return format!("return (*{}).clone()", code);
+            }
             format!("return {}", emit_expr(expr, ctx, ectx))
         }
     }
@@ -994,6 +1424,7 @@ fn try_emit_trampoline_bool_if_else(
     member_names: &HashSet<String>,
     ctx: &CodegenContext,
     ectx: &EmitCtx,
+    rc_indices: &HashSet<usize>,
 ) -> Option<String> {
     if arms.len() != 2 {
         return None;
@@ -1007,8 +1438,8 @@ fn try_emit_trampoline_bool_if_else(
         }
         _ => return None,
     };
-    let t = emit_trampoline_expr(true_body, enum_name, member_names, ctx, ectx);
-    let f = emit_trampoline_expr(false_body, enum_name, member_names, ctx, ectx);
+    let t = emit_trampoline_expr(true_body, enum_name, member_names, ctx, ectx, rc_indices);
+    let f = emit_trampoline_expr(false_body, enum_name, member_names, ctx, ectx, rc_indices);
     Some(format!("if {} {{ {} }} else {{ {} }}", subj, t, f))
 }
 
@@ -1310,7 +1741,7 @@ mod tests {
             ],
         )));
 
-        let code = emit_tco_expr(&expr, &fd.name, &fd.params, &ctx, &ectx);
+        let code = emit_tco_expr(&expr, &fd.name, &fd.params, &ctx, &ectx, &HashSet::new());
         assert!(code.contains("let __tmp0 = xs.clone();"));
         assert!(code.contains("let __tmp1 = (remaining - 1i64);"));
         assert!(code.contains("let __tmp2 = (sink + &sumList(xs, 0i64));"));
@@ -1353,7 +1784,7 @@ mod tests {
             ],
         )));
 
-        let code = emit_tco_expr(&expr, &fd.name, &fd.params, &ctx, &ectx);
+        let code = emit_tco_expr(&expr, &fd.name, &fd.params, &ctx, &ectx, &HashSet::new());
         assert!(code.contains("let __tmp0 = a.clone();"));
         assert!(code.contains("let __tmp1 = b.clone();"));
         assert!(code.contains("let __tmp3 = (sink + &(appendLists(a, b).len() as i64));"));
@@ -1369,7 +1800,7 @@ mod tests {
             vec![Expr::Ident("e".to_string())],
         )));
 
-        let code = emit_tco_expr(&expr, &fd.name, &fd.params, &ctx, &ectx);
+        let code = emit_tco_expr(&expr, &fd.name, &fd.params, &ctx, &ectx, &HashSet::new());
         assert_eq!(code, "validSymbolList(e)");
         assert!(!code.contains("continue"));
     }

@@ -1,5 +1,5 @@
 use super::expr::{clone_arg, emit_expr};
-use super::liveness::{EmitCtx, compute_args_used_after};
+use super::liveness::{EmitCtx, compute_args_used_after_with_rc};
 /// Mapping of Aver builtin/namespace functions to Rust equivalents.
 use crate::ast::Expr;
 use crate::codegen::CodegenContext;
@@ -72,7 +72,12 @@ pub fn emit_builtin_call(
     ectx: &EmitCtx,
 ) -> Option<String> {
     let result = emit_builtin_call_inner(name, args, ctx, ectx)?;
-    let arg_ctxs = compute_args_used_after(args, &ectx.used_after, &ectx.local_types);
+    let arg_ctxs = compute_args_used_after_with_rc(
+        args,
+        &ectx.used_after,
+        &ectx.local_types,
+        &ectx.rc_wrapped,
+    );
 
     // Convert String-returning builtins to AverStr.
     let result = if builtin_needs_str_conversion(name) {
@@ -115,7 +120,12 @@ fn emit_builtin_call_inner(
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> Option<String> {
-    let arg_ctxs = compute_args_used_after(args, &ectx.used_after, &ectx.local_types);
+    let arg_ctxs = compute_args_used_after_with_rc(
+        args,
+        &ectx.used_after,
+        &ectx.local_types,
+        &ectx.rc_wrapped,
+    );
     let emit_arg = |idx: usize| emit_expr(&args[idx], ctx, &arg_ctxs[idx]);
 
     match name {

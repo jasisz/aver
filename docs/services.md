@@ -147,6 +147,8 @@ Source: `src/types/map.rs`
 | `Map.entries` | `Map<K, V> -> List<(K, V)>` | |
 | `Map.len` | `Map<K, V> -> Int` | |
 
+**Sets**: `Map<T, Unit>` is the Aver way to have a set — see [language.md](language.md#sets) for usage and codegen lowering.
+
 ### `Char` namespace
 
 Source: `src/types/char.rs` — not a type, operates on `String`/`Int`.

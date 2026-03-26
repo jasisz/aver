@@ -192,6 +192,25 @@ pub(crate) fn parse_type_annotation(ann: &str) -> Type {
     crate::types::parse_type_str(ann)
 }
 
+/// Check if a `Type` represents a set pattern: `Map<T, Unit>`.
+///
+/// Aver has no dedicated `Set` type — the idiomatic way to express a set
+/// is `Map<T, Unit>`. Codegen backends can lower this to the target
+/// language's native set type (Dafny `set<T>`, Lean `Finset T`, etc.).
+pub(crate) fn is_set_type(ty: &Type) -> bool {
+    matches!(ty, Type::Map(_, v) if matches!(v.as_ref(), Type::Unit))
+}
+
+/// Check if a type annotation string represents a set (`Map<T, Unit>`).
+pub(crate) fn is_set_annotation(ann: &str) -> bool {
+    is_set_type(&parse_type_annotation(ann))
+}
+
+/// Check if an expression is a compile-time Unit literal.
+pub(crate) fn is_unit_expr(expr: &crate::ast::Expr) -> bool {
+    matches!(expr, crate::ast::Expr::Literal(crate::ast::Literal::Unit))
+}
+
 /// Escape an Aver identifier if it collides with a target language reserved word.
 ///
 /// `affix` is appended as a suffix (e.g. `"_"` for Dafny, `"'"` for Lean).

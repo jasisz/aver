@@ -24,6 +24,9 @@ pub fn type_to_lean(ty: &Type) -> String {
             let parts: Vec<String> = items.iter().map(type_to_lean).collect();
             format!("({})", parts.join(" × "))
         }
+        Type::Map(key, value) if crate::codegen::common::is_set_type(ty) => {
+            format!("Finset {}", type_to_lean_atom(key))
+        }
         Type::Map(key, value) => {
             // No direct Map in Lean core; use a list of pairs as approximation
             format!("List ({} × {})", type_to_lean(key), type_to_lean(value))

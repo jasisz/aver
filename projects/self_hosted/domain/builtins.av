@@ -83,16 +83,16 @@ fn builtinConsolePrint(args: List<Val>) -> Result<Val, String>
 
 fn builtinConsoleError(args: List<Val>) -> Result<Val, String>
     ? "Console.error(v) -> print to stderr."
-    ! [Console.print]
+    ! [Console.error]
     v = Domain.Builtins.Helpers.oneArg(args)?
-    Console.print(Domain.Value.valRepr(v))
+    Console.error(Domain.Value.valRepr(v))
     Result.Ok(Val.ValUnit)
 
 fn builtinConsoleWarn(args: List<Val>) -> Result<Val, String>
     ? "Console.warn(v) -> print warning."
-    ! [Console.print]
+    ! [Console.warn]
     v = Domain.Builtins.Helpers.oneArg(args)?
-    Console.print(Domain.Value.valRepr(v))
+    Console.warn(Domain.Value.valRepr(v))
     Result.Ok(Val.ValUnit)
 
 fn builtinConsoleReadLine(args: List<Val>) -> Result<Val, String>
@@ -131,75 +131,57 @@ fn builtinMapEntries(args: List<Val>) -> Result<Val, String>
     ? "Map.entries(map) -> List of tuples."
     v = Domain.Builtins.Helpers.oneArg(args)?
     match v
-        Val.ValRecord(_, fields) -> Result.Ok(Val.ValList(mapFieldsToTuples(fields, [])))
+        Val.ValMap(m) -> Result.Ok(Val.ValList(mapEntriesToTuples(Map.entries(m), [])))
         _ -> Result.Err("Map.entries requires a Map")
 
-fn mapFieldsToTuples(fields: List<(String, Val)>, acc: List<Val>) -> List<Val>
-    ? "Convert map fields to list of (key, value) tuples."
-    match fields
+fn mapEntriesToTuples(entries: List<(String, Val)>, acc: List<Val>) -> List<Val>
+    ? "Convert entries to list of (key, value) tuples."
+    match entries
         [] -> List.reverse(acc)
         [pair, ..rest] -> match pair
-            (k, v) -> mapFieldsToTuples(rest, List.prepend(Val.ValTuple([Val.ValStr(k), v]), acc))
+            (k, v) -> mapEntriesToTuples(rest, List.prepend(Val.ValTuple([Val.ValStr(k), v]), acc))
 
 fn builtinMapKeys(args: List<Val>) -> Result<Val, String>
     ? "Map.keys(map) -> List of keys."
     v = Domain.Builtins.Helpers.oneArg(args)?
     match v
-        Val.ValRecord(_, fields) -> Result.Ok(Val.ValList(mapFieldsToKeys(fields, [])))
+        Val.ValMap(m) -> Result.Ok(Val.ValList(stringsToVals(Map.keys(m), [])))
         _ -> Result.Err("Map.keys requires a Map")
-
-fn mapFieldsToKeys(fields: List<(String, Val)>, acc: List<Val>) -> List<Val>
-    ? "Extract keys from map fields."
-    match fields
-        [] -> List.reverse(acc)
-        [pair, ..rest] -> match pair
-            (k, _) -> mapFieldsToKeys(rest, List.prepend(Val.ValStr(k), acc))
 
 fn builtinMapValues(args: List<Val>) -> Result<Val, String>
     ? "Map.values(map) -> List of values."
     v = Domain.Builtins.Helpers.oneArg(args)?
     match v
-        Val.ValRecord(_, fields) -> Result.Ok(Val.ValList(mapFieldsToValues(fields, [])))
+        Val.ValMap(m) -> Result.Ok(Val.ValList(Map.values(m)))
         _ -> Result.Err("Map.values requires a Map")
-
-fn mapFieldsToValues(fields: List<(String, Val)>, acc: List<Val>) -> List<Val>
-    ? "Extract values from map fields."
-    match fields
-        [] -> List.reverse(acc)
-        [pair, ..rest] -> match pair
-            (_, v) -> mapFieldsToValues(rest, List.prepend(v, acc))
 
 fn builtinMapFromList(args: List<Val>) -> Result<Val, String>
     ? "Map.fromList(entries) -> Map."
     v = Domain.Builtins.Helpers.oneArg(args)?
     items = Domain.Builtins.Helpers.expectList(v)?
-    Result.Ok(Val.ValRecord("Map", tuplesToMapFields(items, [])))
+    Result.Ok(Val.ValMap(tuplesToMap(items, Map.empty())))
 
-fn tuplesToMapFields(items: List<Val>, acc: List<(String, Val)>) -> List<(String, Val)>
-    ? "Convert list of (key, value) tuples to map fields."
+fn tuplesToMap(items: List<Val>, acc: Map<String, Val>) -> Map<String, Val>
+    ? "Convert list of (key, value) tuples to a Map."
     match items
-        [] -> List.reverse(acc)
+        [] -> acc
         [item, ..rest] -> match item
-            Val.ValTuple(parts) -> tuplesToMapFieldsOne(parts, rest, acc)
-            _ -> tuplesToMapFields(rest, acc)
+            Val.ValTuple(parts) -> tuplesToMapOne(parts, rest, acc)
+            _ -> tuplesToMap(rest, acc)
 
-fn tuplesToMapFieldsOne(parts: List<Val>, rest: List<Val>, acc: List<(String, Val)>) -> List<(String, Val)>
+fn tuplesToMapOne(parts: List<Val>, rest: List<Val>, acc: Map<String, Val>) -> Map<String, Val>
     ? "Extract key-value from tuple parts."
     match parts
-        [kV, ..tail] -> tuplesToMapFieldsExtract(kV, tail, rest, acc)
-        [] -> tuplesToMapFields(rest, acc)
-
-fn tuplesToMapFieldsExtract(kV: Val, tail: List<Val>, rest: List<Val>, acc: List<(String, Val)>) -> List<(String, Val)>
-    ? "Extract value from remaining parts after key."
-    match tail
-        [vV, ..ignored] -> tuplesToMapFields(rest, List.prepend((Domain.Value.valRepr(kV), vV), acc))
-        [] -> tuplesToMapFields(rest, acc)
+        [kV, ..tail] -> match tail
+            [vV, ..ignored] -> tuplesToMap(rest, Map.set(acc, Domain.Value.valRepr(kV), vV))
+            [] -> tuplesToMap(rest, acc)
+        [] -> tuplesToMap(rest, acc)
 
 fn builtinMapSize(args: List<Val>) -> Result<Val, String>
     ? "Map.size(map) -> Int."
     v = Domain.Builtins.Helpers.oneArg(args)?
     match v
-        Val.ValRecord(_, fields) -> Result.Ok(Val.ValInt(List.len(fields)))
+        Val.ValMap(m) -> Result.Ok(Val.ValInt(Map.len(m)))
         _ -> Result.Err("Map.size requires a Map")
 
 fn builtinMapRemove(args: List<Val>) -> Result<Val, String>
@@ -211,17 +193,8 @@ fn builtinMapRemove(args: List<Val>) -> Result<Val, String>
 fn builtinMapRemoveInner(mapV: Val, keyV: Val) -> Result<Val, String>
     ? "Inner Map.remove."
     match mapV
-        Val.ValRecord(_, fields) -> Result.Ok(Val.ValRecord("Map", removeMapField(fields, Domain.Value.valRepr(keyV), [])))
+        Val.ValMap(m) -> Result.Ok(Val.ValMap(Map.remove(m, Domain.Value.valRepr(keyV))))
         _ -> Result.Err("Map.remove requires a Map")
-
-fn removeMapField(fields: List<(String, Val)>, key: String, acc: List<(String, Val)>) -> List<(String, Val)>
-    ? "Remove field with given key."
-    match fields
-        [] -> List.reverse(acc)
-        [pair, ..rest] -> match pair
-            (k, v) -> match k == key
-                true -> List.concat(List.reverse(acc), rest)
-                false -> removeMapField(rest, key, List.prepend((k, v), acc))
 
 fn callBuiltinServices(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch Terminal.*, Time.*, Random.*, Http.*, Tcp.* service builtins."
@@ -544,8 +517,8 @@ verify builtinBoolNot
     builtinBoolNot([Val.ValBool(false)]) => Result.Ok(Val.ValBool(true))
 
 fn builtinMapEmpty(args: List<Val>) -> Result<Val, String>
-    ? "Map.empty() -> empty map as record."
-    Result.Ok(Val.ValRecord("Map", []))
+    ? "Map.empty() -> empty map."
+    Result.Ok(Val.ValMap(Map.empty()))
 
 fn builtinMapSet(args: List<Val>) -> Result<Val, String>
     ? "Map.set(map, key, value) -> updated map."
@@ -564,61 +537,36 @@ fn builtinMapSetExtract(args: List<Val>) -> Result<Val, String>
         [] -> Result.Err("Map.set takes 3 arguments")
 
 fn builtinMapSetInner(mapV: Val, keyV: Val, valV: Val) -> Result<Val, String>
-    ? "Set a key in the map record."
+    ? "Set a key in the map. O(1)."
     match mapV
-        Val.ValRecord(_, fields) -> Result.Ok(Val.ValRecord("Map", mapSetField(fields, Domain.Value.valRepr(keyV), valV, [])))
+        Val.ValMap(m) -> Result.Ok(Val.ValMap(Map.set(m, Domain.Value.valRepr(keyV), valV)))
         _ -> Result.Err("Map.set requires a Map")
 
-fn mapSetField(fields: List<(String, Val)>, key: String, val: Val, acc: List<(String, Val)>) -> List<(String, Val)>
-    ? "Replace or append a key in field list."
-    match fields
-        [] -> List.reverse(List.prepend((key, val), acc))
-        [pair, ..rest] -> match pair
-            (k, v) -> match k == key
-                true -> List.concat(List.reverse(List.prepend((key, val), acc)), rest)
-                false -> mapSetField(rest, key, val, List.prepend((k, v), acc))
-
 fn builtinMapGet(args: List<Val>) -> Result<Val, String>
-    ? "Map.get(map, key) -> Option<Val>."
+    ? "Map.get(map, key) -> Option<Val>. O(1)."
     pair = Domain.Builtins.Helpers.twoArgs(args)?
     match pair
         (mapV, keyV) -> builtinMapGetInner(mapV, keyV)
 
 fn builtinMapGetInner(mapV: Val, keyV: Val) -> Result<Val, String>
-    ? "Look up key in map record."
+    ? "Look up key in map. O(1)."
     match mapV
-        Val.ValRecord(_, fields) -> mapLookup(fields, Domain.Value.valRepr(keyV))
+        Val.ValMap(m) -> match Map.get(m, Domain.Value.valRepr(keyV))
+            Option.Some(v) -> Result.Ok(Val.ValSome(v))
+            Option.None -> Result.Ok(Val.ValNone)
         _ -> Result.Err("Map.get requires a Map")
 
-fn mapLookup(fields: List<(String, Val)>, key: String) -> Result<Val, String>
-    ? "Find key in map fields."
-    match fields
-        [] -> Result.Ok(Val.ValNone)
-        [pair, ..rest] -> match pair
-            (k, v) -> match k == key
-                true -> Result.Ok(Val.ValSome(v))
-                false -> mapLookup(rest, key)
-
 fn builtinMapHas(args: List<Val>) -> Result<Val, String>
-    ? "Map.has(map, key) -> Bool."
+    ? "Map.has(map, key) -> Bool. O(1)."
     pair = Domain.Builtins.Helpers.twoArgs(args)?
     match pair
         (mapV, keyV) -> builtinMapHasInner(mapV, keyV)
 
 fn builtinMapHasInner(mapV: Val, keyV: Val) -> Result<Val, String>
-    ? "Check if key exists in map."
+    ? "Check if key exists in map. O(1)."
     match mapV
-        Val.ValRecord(_, fields) -> mapHasKey(fields, Domain.Value.valRepr(keyV))
+        Val.ValMap(m) -> Result.Ok(Val.ValBool(Map.has(m, Domain.Value.valRepr(keyV))))
         _ -> Result.Err("Map.has requires a Map")
-
-fn mapHasKey(fields: List<(String, Val)>, key: String) -> Result<Val, String>
-    ? "Check if key exists in field list."
-    match fields
-        [] -> Result.Ok(Val.ValBool(false))
-        [pair, ..rest] -> match pair
-            (k, _) -> match k == key
-                true -> Result.Ok(Val.ValBool(true))
-                false -> mapHasKey(rest, key)
 
 fn builtinTimeNow(args: List<Val>) -> Result<Val, String>
     ? "Time.now() -> ISO timestamp string."

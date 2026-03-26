@@ -100,6 +100,13 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
         Expr::MapLiteral(entries) => {
             if entries.is_empty() {
                 "[]".to_string()
+            } else if entries
+                .iter()
+                .all(|(_, v)| crate::codegen::common::is_unit_expr(v))
+            {
+                // Map<T, Unit> literal → set literal
+                let parts: Vec<String> = entries.iter().map(|(k, _)| emit_expr(k, ctx)).collect();
+                format!("AverSet.ofList [{}]", parts.join(", "))
             } else {
                 let parts: Vec<String> = entries
                     .iter()
@@ -357,8 +364,15 @@ fn extract_bool_arms(arms: &[MatchArm]) -> Option<(&Expr, &Expr)> {
 /// Emit a statement as Lean 4 code.
 pub fn emit_stmt(stmt: &Stmt, ctx: &CodegenContext) -> String {
     match stmt {
-        Stmt::Binding(name, _type_ann, expr) => {
-            let val = emit_expr(expr, ctx);
+        Stmt::Binding(name, type_ann, expr) => {
+            let mut val = emit_expr(expr, ctx);
+            // Map<T, Unit> binding initialized with Map.empty → set empty
+            if let Some(ann) = type_ann
+                && crate::codegen::common::is_set_annotation(ann)
+                && val == "AverMap.empty"
+            {
+                val = "AverSet.empty".to_string();
+            }
             format!("let {} := {}", aver_name_to_lean(name), val)
         }
         Stmt::Expr(expr) => emit_expr(expr, ctx),

@@ -10,6 +10,8 @@ For namespaces, services, and standard library APIs, see [services.md](services.
 
 Primitive: `Int`, `Float`, `String`, `Bool`, `Unit`
 Compound: `Result<T, E>`, `Option<T>`, `List<T>`, `Vector<T>`, `Map<K, V>`, `(A, B, ...)`, `Fn(A) -> B`, `Fn(A) -> B ! [Effect]`
+
+There is no dedicated `Set` type — use `Map<T, Unit>` (see [Sets](#sets) below).
 User-defined sum types: `type Shape` → `Shape.Circle(Float)`, `Shape.Rect(Float, Float)`
 User-defined product types: `record User` → `User(name = "Alice", age = 30)`, `u.name`
 
@@ -211,6 +213,27 @@ fn inc(n: Int) -> Int
 ```
 
 Most application code in Aver stays first-order and explicit. Use function parameters when they make an API cleaner, not as a default abstraction tool.
+
+## Sets
+
+Aver has no dedicated `Set` type. The idiomatic way to express a set is `Map<T, Unit>` — a map whose values carry no information. All `Map.*` operations work on sets:
+
+```aver
+seen: Map<String, Unit> = Map.empty()
+seen2 = Map.set(seen, "alice", Unit)
+Map.has(seen2, "alice")   // true
+Map.len(seen2)            // 1
+seen3 = Map.remove(seen2, "alice")
+```
+
+`Map.set(s, k, Unit)` adds an element, `Map.has(s, k)` checks membership, `Map.remove(s, k)` removes an element, and `Map.len(s)` returns cardinality. Map literals with `Unit` values work as set literals: `{"alice" => Unit, "bob" => Unit}`.
+
+When targeting formal verification backends, the codegen automatically lowers `Map<T, Unit>` to the native set type:
+
+| Backend | Aver type | Target type | `Map.set(s, k, Unit)` |
+|---------|-----------|-------------|----------------------|
+| Dafny | `Map<T, Unit>` | `set<T>` | `s + {k}` |
+| Lean | `Map<T, Unit>` | `Finset T` | `AverSet.add s k` |
 
 ## Common patterns
 

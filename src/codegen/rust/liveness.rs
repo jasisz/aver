@@ -14,6 +14,8 @@ pub struct EmitCtx {
     pub used_after: HashSet<String>,
     /// Local variable types (from fn params) for copy-type elision.
     pub local_types: HashMap<String, Type>,
+    /// Parameters wrapped in Rc<T> for pass-through TCO optimization.
+    pub rc_wrapped: HashSet<String>,
 }
 
 impl EmitCtx {
@@ -22,6 +24,7 @@ impl EmitCtx {
         EmitCtx {
             used_after: HashSet::new(),
             local_types: HashMap::new(),
+            rc_wrapped: HashSet::new(),
         }
     }
 
@@ -30,6 +33,7 @@ impl EmitCtx {
         EmitCtx {
             used_after: HashSet::new(),
             local_types: param_types,
+            rc_wrapped: HashSet::new(),
         }
     }
 
@@ -46,8 +50,17 @@ impl EmitCtx {
 
     /// Should `.clone()` be skipped for this variable?
     /// True if it's Copy OR if it's last-use (can move).
+    /// Rc-wrapped params always need `(*param).clone()` to produce T, never skip.
     pub fn skip_clone(&self, name: &str) -> bool {
+        if self.rc_wrapped.contains(name) {
+            return false;
+        }
         self.is_copy(name) || self.can_move(name)
+    }
+
+    /// Is this variable wrapped in Rc<T> for pass-through TCO optimization?
+    pub fn is_rc_wrapped(&self, name: &str) -> bool {
+        self.rc_wrapped.contains(name)
     }
 
     /// Create a child context with additional used_after variables.
@@ -57,6 +70,16 @@ impl EmitCtx {
         EmitCtx {
             used_after: ua,
             local_types: self.local_types.clone(),
+            rc_wrapped: self.rc_wrapped.clone(),
+        }
+    }
+
+    /// Create a context with specified Rc-wrapped parameters.
+    pub fn with_rc_wrapped(&self, rc: HashSet<String>) -> Self {
+        EmitCtx {
+            used_after: self.used_after.clone(),
+            local_types: self.local_types.clone(),
+            rc_wrapped: rc,
         }
     }
 }
@@ -202,6 +225,16 @@ pub fn compute_block_used_after(
     parent_used_after: &HashSet<String>,
     local_types: &HashMap<String, Type>,
 ) -> Vec<EmitCtx> {
+    compute_block_used_after_with_rc(stmts, parent_used_after, local_types, &HashSet::new())
+}
+
+/// Like `compute_block_used_after` but propagates `rc_wrapped` to child contexts.
+pub fn compute_block_used_after_with_rc(
+    stmts: &[Stmt],
+    parent_used_after: &HashSet<String>,
+    local_types: &HashMap<String, Type>,
+    rc_wrapped: &HashSet<String>,
+) -> Vec<EmitCtx> {
     let n = stmts.len();
     let mut result = vec![EmitCtx::empty(); n];
 
@@ -211,6 +244,7 @@ pub fn compute_block_used_after(
         result[i] = EmitCtx {
             used_after: suffix_vars.clone(),
             local_types: local_types.clone(),
+            rc_wrapped: rc_wrapped.clone(),
         };
         // Add vars from this statement to suffix for the next one (going backwards)
         let stmt_vars = collect_vars_stmt(&stmts[i]);
@@ -225,12 +259,13 @@ pub fn compute_block_used_after(
     result
 }
 
-/// Compute `used_after` sets for function call arguments (left-to-right).
-/// For arg[i], used_after = vars_in(arg[i+1..]) ∪ parent_used_after.
-pub fn compute_args_used_after(
+
+/// Like `compute_args_used_after` but propagates `rc_wrapped` to child contexts.
+pub fn compute_args_used_after_with_rc(
     args: &[Expr],
     parent_used_after: &HashSet<String>,
     local_types: &HashMap<String, Type>,
+    rc_wrapped: &HashSet<String>,
 ) -> Vec<EmitCtx> {
     let n = args.len();
     let mut result = vec![EmitCtx::empty(); n];
@@ -240,6 +275,7 @@ pub fn compute_args_used_after(
         result[i] = EmitCtx {
             used_after: suffix_vars.clone(),
             local_types: local_types.clone(),
+            rc_wrapped: rc_wrapped.clone(),
         };
         let arg_vars = collect_vars(&args[i]);
         suffix_vars.extend(arg_vars);
@@ -323,6 +359,7 @@ mod tests {
         let ectx = EmitCtx {
             used_after: HashSet::from(["n".to_string(), "s".to_string()]),
             local_types: lt,
+            rc_wrapped: HashSet::new(),
         };
         // n is i64 (Copy) — skip clone even though it's used after
         assert!(ectx.skip_clone("n"));
@@ -337,6 +374,7 @@ mod tests {
         let ectx = EmitCtx {
             used_after: HashSet::new(), // s NOT in used_after
             local_types: lt,
+            rc_wrapped: HashSet::new(),
         };
         // s is last use — skip clone
         assert!(ectx.skip_clone("s"));
@@ -371,7 +409,7 @@ mod tests {
         ];
         let parent = HashSet::new();
         let lt = HashMap::new();
-        let ctxs = compute_args_used_after(&args, &parent, &lt);
+        let ctxs = compute_args_used_after_with_rc(&args, &parent, &lt, &HashSet::new());
         // arg[0]: used_after = vars_in(arg[1..]) = {y, x}
         assert!(ctxs[0].used_after.contains("x"));
         assert!(ctxs[0].used_after.contains("y"));

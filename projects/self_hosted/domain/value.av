@@ -17,6 +17,7 @@ type Val
     ValTuple(List<Val>)
     ValRecord(String, List<(String, Val)>)
     ValVariant(String, String, List<Val>)
+    ValMap(Map<String, Val>)
     ValUnit
 
 fn valListRepr(items: List<Val>, acc: String, first: Bool) -> String
@@ -47,6 +48,7 @@ fn valRepr(v: Val) -> String
         Val.ValSome(inner) -> "Option.Some({valRepr(inner)})"
         Val.ValNone -> "Option.None"
         Val.ValRecord(name, _) -> "{name}(...)"
+        Val.ValMap(_) -> "Map(...)"
         Val.ValVariant(typeName, ctorName, fields) -> valVariantRepr(typeName, ctorName, fields)
         Val.ValUnit -> "()"
 

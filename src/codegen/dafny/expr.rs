@@ -172,6 +172,13 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
         Expr::MapLiteral(entries) => {
             if entries.is_empty() {
                 "map[]".to_string()
+            } else if entries
+                .iter()
+                .all(|(_, v)| crate::codegen::common::is_unit_expr(v))
+            {
+                // Map<T, Unit> literal → set literal
+                let items: Vec<String> = entries.iter().map(|(k, _)| emit_expr(k, ctx)).collect();
+                format!("{{{}}}", items.join(", "))
             } else {
                 let items: Vec<String> = entries
                     .iter()
@@ -231,8 +238,20 @@ fn emit_literal(lit: &Literal) -> String {
 
 fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext) -> String {
     use crate::codegen::builtins::recognize_builtin;
+    use crate::codegen::common::is_unit_expr;
 
     let dotted = expr_to_dotted_name(fn_expr);
+
+    // Map<T, Unit> set operations: intercept before generic builtin path
+    if let Some(name) = dotted.as_deref()
+        && name == "Map.set"
+        && args.len() == 3
+        && is_unit_expr(&args[2])
+    {
+        let m = emit_expr(&args[0], ctx);
+        let k = emit_expr(&args[1], ctx);
+        return format!("({} + {{{}}})", m, k);
+    }
 
     if let Some(builtin) = dotted.as_deref().and_then(recognize_builtin) {
         let a: Vec<String> = args.iter().map(|e| emit_expr(e, ctx)).collect();
@@ -343,11 +362,11 @@ fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> Str
         MapGet => format!("MapGet({}, {})", a[0], a[1]),
         MapSet => format!("{}[{} := {}]", a[0], a[1], a[2]),
         MapHas => format!("({} in {})", a[1], a[0]),
-        MapRemove => format!("MapRemove({}, {})", a[0], a[1]),
+        MapRemove => format!("({} - {{{}}})", a[0], a[1]),
         MapKeys => format!("MapKeys({})", a[0]),
         MapValues => format!("MapValues({})", a[0]),
         MapEntries => format!("MapEntries({})", a[0]),
-        MapLen => format!("MapLen({})", a[0]),
+        MapLen => format!("|{}|", a[0]),
         MapFromList => format!("MapFromList({})", a[0]),
     }
 }

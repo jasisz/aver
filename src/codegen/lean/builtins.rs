@@ -9,6 +9,15 @@ use crate::codegen::builtins::{Builtin, recognize_builtin};
 /// Try to emit a builtin call as Lean 4 code.
 /// Returns `None` if the name is not a pure builtin.
 pub fn emit_builtin_call(name: &str, args: &[Expr], ctx: &CodegenContext) -> Option<String> {
+    use crate::codegen::common::is_unit_expr;
+
+    // Map<T, Unit> set operations: intercept before generic builtin path
+    if name == "Map.set" && args.len() == 3 && is_unit_expr(&args[2]) {
+        let m = p(&super::expr::emit_expr(&args[0], ctx));
+        let k = p(&super::expr::emit_expr(&args[1], ctx));
+        return Some(format!("AverSet.add {} {}", m, k));
+    }
+
     let builtin = recognize_builtin(name)?;
     let a: Vec<String> = args
         .iter()

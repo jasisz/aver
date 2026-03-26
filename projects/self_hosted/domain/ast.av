@@ -2,7 +2,7 @@ module Ast
     intent =
         "AST node types for the mini Aver interpreter."
         "Covers: literals, binops, comparisons, variables, bindings, function defs/calls, match."
-    exposes [Expr, MatchArm, Pattern, Stmt, FnDef, Program]
+    exposes [Expr, MatchArm, Pattern, Stmt, FnDef, Program, BinOp, CmpOp]
 
 type Expr
     ExprInt(Int)
@@ -64,3 +64,17 @@ record Program
     deps: List<String>
     fns: List<FnDef>
     stmts: List<Stmt>
+
+type BinOp
+    OpAdd
+    OpSub
+    OpMul
+    OpDiv
+
+type CmpOp
+    CmpEq
+    CmpNeq
+    CmpLt
+    CmpGt
+    CmpLte
+    CmpGte

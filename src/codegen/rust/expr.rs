@@ -1,5 +1,5 @@
 use super::builtins;
-use super::liveness::{EmitCtx, collect_vars, compute_args_used_after};
+use super::liveness::{EmitCtx, collect_vars, compute_args_used_after_with_rc};
 use super::pattern::emit_pattern;
 use crate::ast::*;
 use crate::codegen::CodegenContext;
@@ -115,8 +115,12 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
             if elements.is_empty() {
                 "aver_rt::AverList::empty()".to_string()
             } else {
-                let elem_ctxs =
-                    compute_args_used_after(elements, &ectx.used_after, &ectx.local_types);
+                let elem_ctxs = compute_args_used_after_with_rc(
+                    elements,
+                    &ectx.used_after,
+                    &ectx.local_types,
+                    &ectx.rc_wrapped,
+                );
                 let parts: Vec<String> = elements
                     .iter()
                     .zip(elem_ctxs.iter())
@@ -126,7 +130,12 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
             }
         }
         Expr::Tuple(items) => {
-            let item_ctxs = compute_args_used_after(items, &ectx.used_after, &ectx.local_types);
+            let item_ctxs = compute_args_used_after_with_rc(
+                items,
+                &ectx.used_after,
+                &ectx.local_types,
+                &ectx.rc_wrapped,
+            );
             let parts: Vec<String> = items
                 .iter()
                 .zip(item_ctxs.iter())
@@ -142,8 +151,12 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
                     .iter()
                     .flat_map(|(k, v)| [k.clone(), v.clone()])
                     .collect();
-                let flat_ctxs =
-                    compute_args_used_after(&flat_exprs, &ectx.used_after, &ectx.local_types);
+                let flat_ctxs = compute_args_used_after_with_rc(
+                    &flat_exprs,
+                    &ectx.used_after,
+                    &ectx.local_types,
+                    &ectx.rc_wrapped,
+                );
                 let mut parts = Vec::new();
                 for (idx, (k, v)) in entries.iter().enumerate() {
                     let key_ctx = &flat_ctxs[idx * 2];
@@ -167,8 +180,12 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
                 type_name
             };
             let field_exprs: Vec<Expr> = fields.iter().map(|(_, e)| e.clone()).collect();
-            let field_ctxs =
-                compute_args_used_after(&field_exprs, &ectx.used_after, &ectx.local_types);
+            let field_ctxs = compute_args_used_after_with_rc(
+                &field_exprs,
+                &ectx.used_after,
+                &ectx.local_types,
+                &ectx.rc_wrapped,
+            );
             let parts: Vec<String> = fields
                 .iter()
                 .enumerate()
@@ -194,8 +211,12 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
             };
             let base_str = clone_arg(base, ctx, ectx);
             let update_exprs: Vec<Expr> = updates.iter().map(|(_, e)| e.clone()).collect();
-            let update_ctxs =
-                compute_args_used_after(&update_exprs, &ectx.used_after, &ectx.local_types);
+            let update_ctxs = compute_args_used_after_with_rc(
+                &update_exprs,
+                &ectx.used_after,
+                &ectx.local_types,
+                &ectx.rc_wrapped,
+            );
             let parts: Vec<String> = updates
                 .iter()
                 .zip(update_ctxs.iter())
@@ -212,7 +233,12 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
         Expr::TailCall(boxed) => {
             // TailCall outside of a TCO loop → emit as regular function call
             let (target, args) = boxed.as_ref();
-            let arg_ctxs = compute_args_used_after(args, &ectx.used_after, &ectx.local_types);
+            let arg_ctxs = compute_args_used_after_with_rc(
+                args,
+                &ectx.used_after,
+                &ectx.local_types,
+                &ectx.rc_wrapped,
+            );
             let parts: Vec<String> = args
                 .iter()
                 .zip(arg_ctxs.iter())
@@ -265,8 +291,12 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &Emit
                 let type_name = &bare[..dot_pos];
                 let variant_name = &bare[dot_pos + 1..];
                 if is_user_type(type_name, ctx) {
-                    let arg_ctxs =
-                        compute_args_used_after(args, &ectx.used_after, &ectx.local_types);
+                    let arg_ctxs = compute_args_used_after_with_rc(
+                        args,
+                        &ectx.used_after,
+                        &ectx.local_types,
+                        &ectx.rc_wrapped,
+                    );
                     let boxed_positions = constructor_boxed_positions(bare, ctx);
                     let arg_strs: Vec<String> = args
                         .iter()
@@ -275,7 +305,7 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &Emit
                         .map(|((idx, a), ac)| {
                             let arg = clone_arg(a, ctx, ac);
                             if boxed_positions.contains(&idx) {
-                                format!("Box::new({})", arg)
+                                format!("std::rc::Rc::new({})", arg)
                             } else {
                                 arg
                             }
@@ -290,7 +320,12 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &Emit
                     );
                 }
             }
-            let arg_ctxs = compute_args_used_after(args, &ectx.used_after, &ectx.local_types);
+            let arg_ctxs = compute_args_used_after_with_rc(
+                args,
+                &ectx.used_after,
+                &ectx.local_types,
+                &ectx.rc_wrapped,
+            );
             let arg_strs: Vec<String> = args
                 .iter()
                 .zip(arg_ctxs.iter())
@@ -309,7 +344,12 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &Emit
             let type_name = &name[..dot_pos];
             let variant_name = &name[dot_pos + 1..];
             if is_user_type(type_name, ctx) {
-                let arg_ctxs = compute_args_used_after(args, &ectx.used_after, &ectx.local_types);
+                let arg_ctxs = compute_args_used_after_with_rc(
+                    args,
+                    &ectx.used_after,
+                    &ectx.local_types,
+                    &ectx.rc_wrapped,
+                );
                 let boxed_positions = constructor_boxed_positions(name, ctx);
                 let arg_strs: Vec<String> = args
                     .iter()
@@ -318,7 +358,7 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &Emit
                     .map(|((idx, a), ac)| {
                         let arg = clone_arg(a, ctx, ac);
                         if boxed_positions.contains(&idx) {
-                            format!("Box::new({})", arg)
+                            format!("std::rc::Rc::new({})", arg)
                         } else {
                             arg
                         }
@@ -331,7 +371,12 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &Emit
 
     // Regular function call — compute per-arg used_after
     let func = emit_expr(fn_expr, ctx, ectx);
-    let arg_ctxs = compute_args_used_after(args, &ectx.used_after, &ectx.local_types);
+    let arg_ctxs = compute_args_used_after_with_rc(
+        args,
+        &ectx.used_after,
+        &ectx.local_types,
+        &ectx.rc_wrapped,
+    );
     let arg_strs: Vec<String> = args
         .iter()
         .zip(arg_ctxs.iter())
@@ -347,6 +392,10 @@ pub(super) fn maybe_clone(code: String, expr: &Expr, ectx: &EmitCtx) -> String {
         Expr::Ident(name) => {
             if ectx.skip_clone(name) {
                 code
+            } else if ectx.is_rc_wrapped(name) {
+                // Rc-wrapped pass-through param: deref then clone to get the inner T.
+                // `(*param).clone()` produces T, not Rc<T>.
+                format!("(*{}).clone()", code)
             } else {
                 format!("{}.clone()", code)
             }
