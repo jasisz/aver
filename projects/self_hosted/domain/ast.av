@@ -2,7 +2,7 @@ module Ast
     intent =
         "AST node types for the mini Aver interpreter."
         "Covers: literals, binops, comparisons, variables, bindings, function defs/calls, match."
-    exposes [Expr, MatchArm, Pattern, Stmt, FnDef, Program, BinOp, CmpOp]
+    exposes [Expr, MatchArm, Pattern, Stmt, FnDef, Program, BinOp, CmpOp, FnFastPath, FastLeaf]
 
 type Expr
     ExprInt(Int)
@@ -27,7 +27,7 @@ type Expr
     ExprRecord(String, List<(String, Expr)>)
     ExprFieldAccess(Expr, String)
     ExprCall(String, List<Expr>)
-    ExprCallDirect(FnDef, List<Expr>)
+    ExprCallDirect(String, List<Expr>)
     ExprCallBuiltin(String, List<Expr>)
     ExprMatch(Expr, List<MatchArm>)
     ExprPropagate(Expr)
@@ -53,12 +53,31 @@ type Stmt
     StmtBindSlot(Int, Expr)
     StmtExpr(Expr)
 
+type FastLeaf
+    LeafConstInt(Int)
+    LeafConstFloat(Float)
+    LeafConstStr(String)
+    LeafConstBool(Bool)
+    LeafSlot(Int)
+    LeafVectorNew(Int, Int)
+    LeafVectorGetOrInt(Int, Int, Int)
+
+type FnFastPath
+    FastNone
+    FastSingleExpr
+    FastLeaf(FastLeaf)
+    FastBoolSlotBranch(Int, FastLeaf, FastLeaf)
+    FastEqIntBranch(Int, Int, FastLeaf, FastLeaf)
+    FastEqStringBranch(Int, String, FastLeaf, FastLeaf)
+    FastLtIntSlotsBranch(Int, Int, FastLeaf, FastLeaf)
+
 record FnDef
     name: String
     params: List<String>
     body: List<Stmt>
     slotCount: Int
     slotMap: Map<String, Int>
+    fastPath: FnFastPath
 
 record Program
     deps: List<String>

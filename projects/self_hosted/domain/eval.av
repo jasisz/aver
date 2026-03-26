@@ -23,7 +23,7 @@ fn lookupFn(fns: Map<String, FnDef>, name: String) -> Result<FnDef, String>
         Option.None -> Result.Err("undefined function: " + name)
 
 verify lookupFn
-    lookupFn(Map.set(Map.empty(), "foo", FnDef(name = "foo", params = [], body = [], slotCount = 0, slotMap = Map.empty())), "foo") => Result.Ok(FnDef(name = "foo", params = [], body = [], slotCount = 0, slotMap = Map.empty()))
+    lookupFn(Map.set(Map.empty(), "foo", FnDef(name = "foo", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone)), "foo") => Result.Ok(FnDef(name = "foo", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone))
     lookupFn(Map.empty(), "foo") => Result.Err("undefined function: foo")
 
 fn zipArgs(params: List<String>, args: List<Val>, acc: Map<String, Val>) -> Map<String, Val>
@@ -77,7 +77,7 @@ fn evalExpr(expr: Expr, env: Map<String, Val>, fns: Map<String, FnDef>) -> Resul
         Expr.ExprRecord(name, fieldExprs) -> evalRecordExpr(name, fieldExprs, env, fns)
         Expr.ExprFieldAccess(obj, field) -> evalFieldAccess(obj, field, env, fns)
         Expr.ExprCall(name, argExprs) -> evalCall(name, argExprs, env, fns)
-        Expr.ExprCallDirect(fd, argExprs) -> evalCallDirect(fd, argExprs, env, fns)
+        Expr.ExprCallDirect(name, argExprs) -> evalCallDirect(name, argExprs, env, fns)
         Expr.ExprCallBuiltin(name, argExprs) -> evalCallBuiltinMaybeSpecial(name, argExprs, env, fns)
         Expr.ExprMatch(scrutinee, arms) -> evalMatchExpr(scrutinee, arms, env, fns)
         Expr.ExprPropagate(inner) -> evalPropagate(inner, env, fns)
@@ -406,8 +406,146 @@ fn callResolved(fd: FnDef, args: List<Val>, fns: Map<String, FnDef>) -> Result<V
     ? "Call a function: slot-based if resolved, map-based otherwise."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     match fd.slotCount > 0
-        true -> evalStmtsSlot(fd.body, buildSlotEnv(args, fd.slotCount), fd.slotMap, fns)
-        false -> evalStmts(fd.body, zipArgs(fd.params, args, Map.empty()), fns)
+        true -> evalResolvedSlotFn(fd, buildSlotEnv(args, fd.slotCount), fns)
+        false -> evalResolvedNamedFn(fd, zipArgs(fd.params, args, Map.empty()), fns)
+
+fn evalResolvedSlotFn(fd: FnDef, calleeEnv: Vector<Val>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Evaluate a resolved function body in slot mode, using a fast expr tag when available."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match fd.fastPath
+        FnFastPath.FastLeaf(leaf) -> runFastLeafSlot(leaf, calleeEnv)
+        FnFastPath.FastBoolSlotBranch(slot, thenLeaf, elseLeaf) -> fastBoolSlotBranch(calleeEnv, slot, thenLeaf, elseLeaf)
+        FnFastPath.FastEqIntBranch(slot, expected, thenLeaf, elseLeaf) -> fastEqIntBranch(calleeEnv, slot, expected, thenLeaf, elseLeaf)
+        FnFastPath.FastEqStringBranch(slot, expected, thenLeaf, elseLeaf) -> fastEqStringBranch(calleeEnv, slot, expected, thenLeaf, elseLeaf)
+        FnFastPath.FastLtIntSlotsBranch(lhsSlot, rhsSlot, thenLeaf, elseLeaf) -> fastLtIntSlotsBranch(calleeEnv, lhsSlot, rhsSlot, thenLeaf, elseLeaf)
+        FnFastPath.FastSingleExpr -> evalResolvedSingleExprSlot(fd.body, calleeEnv, fd.slotMap, fns)
+        FnFastPath.FastNone -> evalStmtsSlot(fd.body, calleeEnv, fd.slotMap, fns)
+
+fn evalResolvedNamedFn(fd: FnDef, calleeEnv: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Evaluate a resolved function body in named-env mode, using a fast expr tag when available."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match fd.fastPath
+        FnFastPath.FastLeaf(leaf) -> runFastLeafNamed(leaf, fd.body, calleeEnv, fns)
+        FnFastPath.FastSingleExpr -> evalResolvedSingleExprNamed(fd.body, calleeEnv, fns)
+        FnFastPath.FastNone -> evalStmts(fd.body, calleeEnv, fns)
+        _ -> evalResolvedSingleExprNamed(fd.body, calleeEnv, fns)
+
+fn evalResolvedSingleExprSlot(body: List<Stmt>, calleeEnv: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Fast path for a single expression body in slot mode."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match body
+        [stmt, ..rest] -> match rest == []
+            true -> evalResolvedSingleStmtSlot(stmt, calleeEnv, slotMap, fns)
+            false -> evalStmtsSlot(body, calleeEnv, slotMap, fns)
+        _ -> evalStmtsSlot(body, calleeEnv, slotMap, fns)
+
+fn evalResolvedSingleStmtSlot(stmt: Stmt, calleeEnv: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Run the single expression stmt fast path in slot mode."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match stmt
+        Stmt.StmtExpr(expr) -> evalExprSlot(expr, calleeEnv, slotMap, fns)
+        _ -> evalStmtsSlot([stmt], calleeEnv, slotMap, fns)
+
+fn evalResolvedSingleExprNamed(body: List<Stmt>, calleeEnv: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Fast path for a single expression body in named-env mode."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match body
+        [stmt, ..rest] -> match rest == []
+            true -> evalResolvedSingleStmtNamed(stmt, calleeEnv, fns)
+            false -> evalStmts(body, calleeEnv, fns)
+        _ -> evalStmts(body, calleeEnv, fns)
+
+fn evalResolvedSingleStmtNamed(stmt: Stmt, calleeEnv: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Run the single expression stmt fast path in named-env mode."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match stmt
+        Stmt.StmtExpr(expr) -> evalExpr(expr, calleeEnv, fns)
+        _ -> evalStmts([stmt], calleeEnv, fns)
+
+fn runFastLeafSlot(leaf: FastLeaf, calleeEnv: Vector<Val>) -> Result<Val, String>
+    ? "Execute a leaf-like fast path directly from slots."
+    match leaf
+        FastLeaf.LeafConstInt(n) -> Result.Ok(Val.ValInt(n))
+        FastLeaf.LeafConstFloat(f) -> Result.Ok(Val.ValFloat(f))
+        FastLeaf.LeafConstStr(s) -> Result.Ok(Val.ValStr(s))
+        FastLeaf.LeafConstBool(b) -> Result.Ok(Val.ValBool(b))
+        FastLeaf.LeafSlot(slot) -> lookupSlot(calleeEnv, slot)
+        FastLeaf.LeafVectorNew(sizeSlot, fill) -> fastVectorNewSlot(calleeEnv, sizeSlot, fill)
+        FastLeaf.LeafVectorGetOrInt(vecSlot, idxSlot, defaultValue) -> fastVectorGetOrIntSlot(calleeEnv, vecSlot, idxSlot, defaultValue)
+
+fn runFastLeafNamed(leaf: FastLeaf, body: List<Stmt>, calleeEnv: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Execute named-env leaves directly when they are pure constants; otherwise fall back."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match leaf
+        FastLeaf.LeafConstInt(n) -> Result.Ok(Val.ValInt(n))
+        FastLeaf.LeafConstFloat(f) -> Result.Ok(Val.ValFloat(f))
+        FastLeaf.LeafConstStr(s) -> Result.Ok(Val.ValStr(s))
+        FastLeaf.LeafConstBool(b) -> Result.Ok(Val.ValBool(b))
+        _ -> evalResolvedSingleExprNamed(body, calleeEnv, fns)
+
+fn fastBoolSlotBranch(calleeEnv: Vector<Val>, slot: Int, thenLeaf: FastLeaf, elseLeaf: FastLeaf) -> Result<Val, String>
+    ? "Execute a bool-slot branch with precomputed leaf results."
+    slotV = lookupSlot(calleeEnv, slot)?
+    match slotV
+        Val.ValBool(cond) -> selectFastLeaf(cond, thenLeaf, elseLeaf, calleeEnv)
+        _ -> Result.Err("fast bool branch expects Bool slot")
+
+fn fastEqIntBranch(calleeEnv: Vector<Val>, slot: Int, expected: Int, thenLeaf: FastLeaf, elseLeaf: FastLeaf) -> Result<Val, String>
+    ? "Execute an int equality branch with precomputed leaf results."
+    slotV = lookupSlot(calleeEnv, slot)?
+    match slotV
+        Val.ValInt(actual) -> selectFastLeaf(actual == expected, thenLeaf, elseLeaf, calleeEnv)
+        _ -> Result.Err("fast int branch expects Int slot")
+
+fn fastEqStringBranch(calleeEnv: Vector<Val>, slot: Int, expected: String, thenLeaf: FastLeaf, elseLeaf: FastLeaf) -> Result<Val, String>
+    ? "Execute a string equality branch with precomputed leaf results."
+    slotV = lookupSlot(calleeEnv, slot)?
+    match slotV
+        Val.ValStr(actual) -> selectFastLeaf(actual == expected, thenLeaf, elseLeaf, calleeEnv)
+        _ -> Result.Err("fast string branch expects String slot")
+
+fn fastLtIntSlotsBranch(calleeEnv: Vector<Val>, lhsSlot: Int, rhsSlot: Int, thenLeaf: FastLeaf, elseLeaf: FastLeaf) -> Result<Val, String>
+    ? "Execute an int less-than branch with precomputed leaf results."
+    lhsV = lookupSlot(calleeEnv, lhsSlot)?
+    rhsV = lookupSlot(calleeEnv, rhsSlot)?
+    match lhsV
+        Val.ValInt(lhs) -> match rhsV
+            Val.ValInt(rhs) -> selectFastLeaf(lhs < rhs, thenLeaf, elseLeaf, calleeEnv)
+            _ -> Result.Err("fast lt branch expects Int rhs slot")
+        _ -> Result.Err("fast lt branch expects Int lhs slot")
+
+fn selectFastLeaf(cond: Bool, thenLeaf: FastLeaf, elseLeaf: FastLeaf, calleeEnv: Vector<Val>) -> Result<Val, String>
+    ? "Choose and execute one of two leaf results."
+    match cond
+        true -> runFastLeafSlot(thenLeaf, calleeEnv)
+        false -> runFastLeafSlot(elseLeaf, calleeEnv)
+
+fn fastVectorNewSlot(calleeEnv: Vector<Val>, sizeSlot: Int, fill: Int) -> Result<Val, String>
+    ? "Fast path for Vector.new(slot, int) wrappers."
+    sizeV = lookupSlot(calleeEnv, sizeSlot)?
+    fastVectorNewSlotInner(sizeV, fill)
+
+fn fastVectorNewSlotInner(sizeV: Val, fill: Int) -> Result<Val, String>
+    ? "Allocate a vector when the wrapper shape is known in advance."
+    match sizeV
+        Val.ValInt(size) -> Result.Ok(Val.ValVector(Vector.new(size, Val.ValInt(fill))))
+        _ -> Result.Err("Vector.new size must be Int")
+
+fn fastVectorGetOrIntSlot(calleeEnv: Vector<Val>, vecSlot: Int, idxSlot: Int, defaultValue: Int) -> Result<Val, String>
+    ? "Fast path for Option.withDefault(Vector.get(slotVec, slotIdx), int)."
+    vecV = lookupSlot(calleeEnv, vecSlot)?
+    idxV = lookupSlot(calleeEnv, idxSlot)?
+    fastVectorGetOrIntSlotInner(vecV, idxV, defaultValue)
+
+fn fastVectorGetOrIntSlotInner(vecV: Val, idxV: Val, defaultValue: Int) -> Result<Val, String>
+    ? "Read a vector cell with an integer default without going through builtin dispatch."
+    match vecV
+        Val.ValVector(vec) -> match idxV
+            Val.ValInt(idx) -> match Vector.get(vec, idx)
+                Option.Some(v) -> Result.Ok(v)
+                Option.None -> Result.Ok(Val.ValInt(defaultValue))
+            _ -> Result.Err("Vector.get index must be Int")
+        _ -> Result.Err("Vector.get expects a Vector")
 
 fn isRecordUpdate(name: String, args: List<Val>) -> Bool
     ? "Check if this is a Type.update(record, _named(...)) call."
@@ -493,9 +631,10 @@ fn evalCall(name: String, argExprs: List<Expr>, env: Map<String, Val>, fns: Map<
         Result.Err(e) -> Result.Err(e)
         Result.Ok(args) -> callWithArgs(args, name, fns)
 
-fn evalCallDirect(fd: FnDef, argExprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
-    ? "Call a pre-resolved function directly, skipping name lookup."
+fn evalCallDirect(name: String, argExprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Call a pre-resolved function directly using a lightweight target reference."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    fd = lookupFn(fns, name)?
     match fd.slotCount > 0
         true -> evalCallDirectMapToSlot(fd, argExprs, env, fns)
         false -> evalCallDirectMapToNamed(fd, argExprs, env, fns)
@@ -504,13 +643,13 @@ fn evalCallDirectMapToSlot(fd: FnDef, argExprs: List<Expr>, env: Map<String, Val
     ? "Call resolved function by evaluating args directly into the callee slot env."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     calleeEnv = evalArgsMapToSlotEnv(argExprs, env, fns, Vector.new(fd.slotCount, Val.ValUnit), 0)?
-    evalStmtsSlot(fd.body, calleeEnv, fd.slotMap, fns)
+    evalResolvedSlotFn(fd, calleeEnv, fns)
 
 fn evalCallDirectMapToNamed(fd: FnDef, argExprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Call resolved function by evaluating args directly into the callee named env."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     calleeEnv = evalArgsMapToNamedEnv(argExprs, fd.params, env, fns, Map.empty())?
-    evalStmts(fd.body, calleeEnv, fns)
+    evalResolvedNamedFn(fd, calleeEnv, fns)
 
 fn evalCallBuiltin(name: String, argExprs: List<Expr>, env: Map<String, Val>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Call a builtin directly, skipping fns lookup."
@@ -723,7 +862,7 @@ fn evalExprSlot(expr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: Ma
         Expr.ExprRecord(name, fieldExprs) -> evalRecordSlot(name, fieldExprs, env, slotMap, fns)
         Expr.ExprFieldAccess(obj, field) -> evalFieldAccessSlot(obj, field, env, slotMap, fns)
         Expr.ExprCall(name, argExprs) -> evalCallSlot(name, argExprs, env, slotMap, fns)
-        Expr.ExprCallDirect(fd, argExprs) -> evalCallDirectSlot(fd, argExprs, env, slotMap, fns)
+        Expr.ExprCallDirect(name, argExprs) -> evalCallDirectSlot(name, argExprs, env, slotMap, fns)
         Expr.ExprCallBuiltin(name, argExprs) -> evalCallBuiltinSlotMaybeSpecial(name, argExprs, env, slotMap, fns)
         Expr.ExprMatch(scrutinee, arms) -> evalMatchExprSlot(scrutinee, arms, env, slotMap, fns)
         Expr.ExprPropagate(inner) -> evalPropagateSlot(inner, env, slotMap, fns)
@@ -823,9 +962,10 @@ fn evalCallSlot(name: String, argExprs: List<Expr>, env: Vector<Val>, slotMap: M
     args = evalArgsSlot(argExprs, env, slotMap, fns)?
     callWithArgs(args, name, fns)
 
-fn evalCallDirectSlot(fd: FnDef, argExprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
-    ? "Call a pre-resolved function directly (slot-based path)."
+fn evalCallDirectSlot(name: String, argExprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
+    ? "Call a pre-resolved function directly from slot mode using a lightweight target reference."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    fd = lookupFn(fns, name)?
     match fd.slotCount > 0
         true -> evalCallDirectSlotToSlot(fd, argExprs, env, slotMap, fns)
         false -> evalCallDirectSlotToNamed(fd, argExprs, env, slotMap, fns)
@@ -834,13 +974,13 @@ fn evalCallDirectSlotToSlot(fd: FnDef, argExprs: List<Expr>, env: Vector<Val>, s
     ? "Call resolved function by evaluating args directly into a callee slot env from slot caller state."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     calleeEnv = evalArgsSlotToSlotEnv(argExprs, env, slotMap, fns, Vector.new(fd.slotCount, Val.ValUnit), 0)?
-    evalStmtsSlot(fd.body, calleeEnv, fd.slotMap, fns)
+    evalResolvedSlotFn(fd, calleeEnv, fns)
 
 fn evalCallDirectSlotToNamed(fd: FnDef, argExprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Call resolved function by evaluating args directly into a named env from slot caller state."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     calleeEnv = evalArgsSlotToNamedEnv(argExprs, fd.params, env, slotMap, fns, Map.empty())?
-    evalStmts(fd.body, calleeEnv, fns)
+    evalResolvedNamedFn(fd, calleeEnv, fns)
 
 fn evalCallBuiltinSlot(name: String, argExprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: Map<String, FnDef>) -> Result<Val, String>
     ? "Call a builtin directly, skipping fns lookup (slot-based path)."
