@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here.
 
-## 0.7.0 (unreleased)
+## 0.7.0 (2026-03-26)
 
 **Breaking:** `List.get` and `List.append` removed. Use `Vector` for indexed access.
 

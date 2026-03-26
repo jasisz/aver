@@ -4,7 +4,7 @@ exclude = []
 
 [package]
 name = "aver-lang"
-version = "0.6.1"
+version = "0.7.0"
 edition = "2024"
 default-run = "aver"
 description = "Interpreter and transpiler for Aver, a statically-typed language designed for AI-assisted development"
@@ -35,7 +35,7 @@ default = ["terminal"]
 terminal = ["aver-rt/terminal"]
 
 [dependencies]
-aver-rt = { path = "aver-rt", version = "=0.3.1", features = ["http", "random"] }
+aver-rt = { path = "aver-rt", version = "=0.3.2", features = ["http", "random"] }
 clap = { version = "4", features = ["derive"] }
 colored = "2"
 thiserror = "1"
