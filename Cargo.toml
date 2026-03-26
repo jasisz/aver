@@ -17,6 +17,7 @@ keywords = ["language", "interpreter", "transpiler", "programming-language"]
 categories = ["compilers"]
 include = [
     "/src/**",
+    "/self_hosted/**",
     "!/src/bin/**",
     "/README.md",
     "/LICENSE",

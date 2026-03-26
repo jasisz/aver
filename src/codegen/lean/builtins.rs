@@ -172,6 +172,7 @@ mod tests {
             policy: None,
             emit_replay_runtime: false,
             guest_entry: None,
+            emit_self_host_runtime: false,
         }
     }
 

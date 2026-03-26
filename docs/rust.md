@@ -40,6 +40,7 @@ out/
 The generated project includes:
 - `src/main.rs` with the runtime prelude and final entrypoint
 - `src/runtime_support.rs` for the shared `aver-rt` bridge and shared runtime types
+- `src/replay_support.rs` when `--with-replay` is enabled
 - `src/aver_generated/.../mod.rs` files that preserve the Aver module graph as Rust modules
 - `src/verify.rs` when the entry module has `verify` blocks
 
@@ -55,6 +56,8 @@ The generated Rust keeps:
 - shared runtime type imports for built-in service records when needed
 - the root `aver_generated` module tree
 - the final `fn main()` entry point
+
+Generated Cargo projects now target Rust edition 2024.
 
 ## Runtime dependency
 
@@ -72,6 +75,32 @@ For local runtime development from the Aver repository, set `AVER_RUNTIME_PATH` 
 ```bash
 AVER_RUNTIME_PATH="$(pwd)/aver-rt" aver compile examples/core/hello.av -o /tmp/hello-rs
 ```
+
+## Scoped replay runtime
+
+Use `--with-replay` when the generated binary should understand deterministic record/replay:
+
+```bash
+aver compile self_hosted/main.av \
+  --module-root self_hosted \
+  --with-replay \
+  --guest-entry runGuestProgram \
+  -o /tmp/aver-self
+```
+
+This emits `src/replay_support.rs` and adds the `serde` / `serde_json` dependencies needed for recording files. Without `--with-replay`, generated projects stay smaller and do not carry replay support.
+
+`--guest-entry` matters for meta-runtimes such as the self-hosted interpreter:
+
+- bootstrap/tooling work stays outside record/replay and policy scope
+- only the chosen guest entry runs inside the scoped runtime
+- `aver.toml` policy and replay interception start at that boundary
+
+When the guest entry has a parameter named `guestArgs: List<String>`, generated replay support treats that parameter as the guest CLI input:
+
+- `Args.get()` inside the scoped guest run returns `guestArgs`
+- replay `input` records only `guestArgs`, not the outer wrapper arguments
+- self-host bootstrap args such as `program_file` and `module_root` stay outside the guest trace
 
 ## Supported features
 

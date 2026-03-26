@@ -10,12 +10,18 @@ All notable changes to Aver are documented here.
 - **`Vector<T>`** — indexed sequence with O(1) get/set. API: `Vector.new`, `Vector.get`, `Vector.set`, `Vector.len`, `Vector.fromList`, `Vector.toList`. `Vector.set` returns `Option<Vector<T>>`.
 - **Mutual TCO** in codegen — mutually recursive functions compiled to trampoline dispatch loops.
 - **Namespace effect shorthand** — `! [Disk]` covers all `Disk.*` effects.
+- **Self-host CLI path** — `aver run --self-host` and `aver replay --self-host` now run through the Aver-in-Aver interpreter compiled to a cached Rust binary per module root.
+- **Scoped generated replay runtime** — `aver compile --with-replay --guest-entry <fn>` emits replay support that starts record/replay and `aver.toml` policy at an explicit guest boundary instead of the process boundary.
 
 ### Changed
 - **`List` is now purely recursive** — `prepend`, `head`, `tail`, `concat`, `reverse`, `contains`, `find`, `any`, `zip`. No indexed access.
 - Idiomatic pattern: build with `List.prepend` → `List.reverse` → `Vector.fromList` (zero-copy on Flat lists).
 - Compiled projects use LTO + `codegen-units = 1` for faster release builds.
 - Self-hosted interpreter ~1.5× faster (COW maps, `Rc<str>` strings, Vector env).
+- Installed `aver` now bundles the `self_hosted/` sources directly, so `aver run --self-host` bootstraps its cached helper binary automatically without a separate self-host install step.
+- Generated Rust projects now target Rust 2024.
+- `aver check` no longer suggests granular namespace effects on wrappers that also require the broad namespace transitively through a callee.
+- `benches/comparison_bench.rs` now measures the real `aver run --self-host` CLI path instead of a stale standalone `aver-self` binary from `$HOME/.cargo/bin`.
 
 ### Removed
 - `List.get`, `List.append`.
@@ -30,7 +36,7 @@ Highlights:
 ### Added
 - `aver run --profile` — VM execution profile with opcode counts, function stats, and opcode-pair analysis.
 - Game of Life example (`examples/games/life.av`) with terminal visualization and FPS counter.
-- Self-hosted interpreter project in Aver (`projects/self_hosted/`).
+- Self-hosted interpreter project in Aver (`self_hosted/`).
 
 ### Changed
 - Added specialized VM handling for common unwrap/default, boolean branch, and fused-load patterns.

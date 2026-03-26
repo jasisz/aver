@@ -42,6 +42,7 @@ type Expr
 record MatchArm
     pattern: Pattern
     body: Expr
+    bindingSlots: Map<String, Int>
 
 type Pattern
     PatInt(Int)

@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process;
+use std::process::{self, Command};
 
 use colored::Colorize;
 
@@ -17,6 +17,7 @@ use aver::types::checker::run_type_check_full;
 use aver::value::{RuntimeError, list_to_vec};
 use aver::vm;
 
+use crate::commands::build_self_host_binary;
 use crate::shared::{apply_runtime_policy_to_vm, compile_program_for_exec, parse_file, read_file};
 
 fn collect_recording_files_from_dir(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
@@ -74,6 +75,21 @@ pub(super) fn decode_entry_args(input: &JsonValue) -> Result<Vec<Value>, String>
     } else {
         Ok(vec![val])
     }
+}
+
+fn decode_self_host_guest_args(input: &JsonValue) -> Result<Vec<String>, String> {
+    decode_entry_args(input)?
+        .into_iter()
+        .enumerate()
+        .map(|(idx, value)| match value {
+            Value::Str(s) => Ok(s),
+            other => Err(format!(
+                "Self-host replay expects guest input as List<String>; item {} was {}",
+                idx,
+                aver_repr(&other)
+            )),
+        })
+        .collect()
 }
 
 fn run_top_level_statements_runtime(
@@ -455,12 +471,79 @@ fn replay_recording_file_vm(path: &Path, diff: bool, check_args: bool) -> Result
     Ok(matched)
 }
 
+fn replay_recording_file_self_host(
+    path: &Path,
+    _diff: bool,
+    check_args: bool,
+) -> Result<bool, String> {
+    let raw = fs::read_to_string(path)
+        .map_err(|e| format!("Cannot read recording '{}': {}", path.display(), e))?;
+    let recording: SessionRecording = parse_session_recording(&raw)
+        .map_err(|e| format!("Invalid recording JSON '{}': {}", path.display(), e))?;
+
+    let replay_module_root = resolve_replay_module_root(path, &recording);
+    let replay_program_file = resolve_replay_program_file(&recording, &replay_module_root);
+    let binary_path = build_self_host_binary(&replay_module_root)?;
+    let guest_args = decode_self_host_guest_args(&recording.input)?;
+
+    let mut command = Command::new(&binary_path);
+    command
+        .arg(&replay_program_file)
+        .arg(&replay_module_root)
+        .args(&guest_args)
+        .env("AVER_REPLAY_ENTRY_FN", "main")
+        .env("AVER_REPLAY_REPLAY", path)
+        .env_remove("AVER_REPLAY_RECORD")
+        .env_remove("AVER_REPLAY_REQUEST_ID")
+        .env_remove("AVER_REPLAY_TIMESTAMP")
+        .env_remove("AVER_REPLAY_PROGRAM_FILE")
+        .env_remove("AVER_REPLAY_MODULE_ROOT");
+    if check_args {
+        command.env("AVER_REPLAY_CHECK_ARGS", "1");
+    } else {
+        command.env_remove("AVER_REPLAY_CHECK_ARGS");
+    }
+
+    let output = command.output().map_err(|e| {
+        format!(
+            "Failed to run cached self-host replay binary '{}': {}",
+            binary_path.display(),
+            e
+        )
+    })?;
+
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let mut msg = format!("Replay: {}\nSelf-host replay failed", path.display());
+        if !stdout.is_empty() {
+            msg.push_str(&format!("\nstdout:\n{}", stdout));
+        }
+        if !stderr.is_empty() {
+            msg.push_str(&format!("\nstderr:\n{}", stderr));
+        }
+        return Err(msg);
+    }
+
+    println!();
+    println!("Replay: {}", path.display());
+    println!(
+        "Effects: {} replayed ({} matched)",
+        recording.effects.len(),
+        recording.effects.len()
+    );
+    println!("Output:  {}", "MATCH".green());
+
+    Ok(true)
+}
+
 pub(super) fn cmd_replay(
     recording: &str,
     diff: bool,
     test_mode: bool,
     check_args: bool,
     vm_mode: bool,
+    self_host_mode: bool,
 ) {
     let files = match collect_recording_files(recording) {
         Ok(f) => f,
@@ -472,7 +555,9 @@ pub(super) fn cmd_replay(
 
     let mut all_match = true;
     for file in files {
-        let result = if vm_mode {
+        let result = if self_host_mode {
+            replay_recording_file_self_host(&file, diff, check_args)
+        } else if vm_mode {
             replay_recording_file_vm(&file, diff, check_args)
         } else {
             replay_recording_file(&file, diff, check_args)
@@ -497,7 +582,8 @@ pub(super) fn cmd_replay(
 
 #[cfg(test)]
 mod tests {
-    use super::collect_recording_files;
+    use super::{collect_recording_files, decode_self_host_guest_args};
+    use aver::replay::JsonValue;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -529,5 +615,15 @@ mod tests {
         assert_eq!(files, vec![nested_json, top]);
 
         fs::remove_dir_all(&root).expect("remove temp recording tree");
+    }
+
+    #[test]
+    fn decode_self_host_guest_args_accepts_string_arrays() {
+        let args = decode_self_host_guest_args(&JsonValue::Array(vec![
+            JsonValue::String("a".to_string()),
+            JsonValue::String("b".to_string()),
+        ]))
+        .expect("decode guest args");
+        assert_eq!(args, vec!["a".to_string(), "b".to_string()]);
     }
 }

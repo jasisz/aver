@@ -1,9 +1,10 @@
 #![allow(clippy::approx_constant)]
 //! Benchmark comparing all four execution modes on the same programs:
-//!   interpreter (tree-walk), VM (bytecode), codegen (native Rust), self-hosted (aver-self).
+//!   interpreter (tree-walk), VM (bytecode), codegen (native Rust), self-hosted (`aver run --self-host`).
 //!
-//! Codegen and self-hosted run as external processes (`aver-life`-style compiled binaries
-//! and `aver-self` binary). Pre-compile before running:
+//! Codegen runs as an external compiled binary. Self-hosted runs through the real CLI path,
+//! which builds and reuses the cached Aver-in-Aver binary behind `aver run --self-host`.
+//! Pre-compile before running:
 //!
 //!   cargo bench --bench comparison_bench
 
@@ -94,11 +95,12 @@ fn compile_to_native(source: &str, name: &str) -> std::path::PathBuf {
 }
 
 /// Write source to a temp file, return its path (kept alive by caller).
-fn write_temp_source(source: &str) -> tempfile::NamedTempFile {
-    let mut tmp = tempfile::NamedTempFile::new().expect("create temp file");
-    tmp.write_all(source.as_bytes()).expect("write");
-    tmp.flush().expect("flush");
-    tmp
+fn write_temp_source(dir: &std::path::Path, name: &str, source: &str) -> std::path::PathBuf {
+    let path = dir.join(format!("{name}.av"));
+    let mut file = std::fs::File::create(&path).expect("create temp source");
+    file.write_all(source.as_bytes()).expect("write");
+    file.flush().expect("flush");
+    path
 }
 
 // ── Test programs ────────────────────────────────────────────────────────────
@@ -216,7 +218,8 @@ fn bench_all_modes(
     label: &str,
     source: &str,
     native_bin: &std::path::Path,
-    self_hosted_bin: &str,
+    aver_bin: &str,
+    module_root: &std::path::Path,
     source_file: &std::path::Path,
 ) {
     group.bench_with_input(BenchmarkId::new("interpreter", label), source, |b, src| {
@@ -229,7 +232,18 @@ fn bench_all_modes(
         b.iter(|| run_external(native_bin.to_str().unwrap(), &[]));
     });
     group.bench_function(BenchmarkId::new("self-hosted", label), |b| {
-        b.iter(|| run_external(self_hosted_bin, &[source_file.to_str().unwrap()]));
+        b.iter(|| {
+            run_external(
+                aver_bin,
+                &[
+                    "run",
+                    source_file.to_str().unwrap(),
+                    "--module-root",
+                    module_root.to_str().unwrap(),
+                    "--self-host",
+                ],
+            )
+        });
     });
 }
 
@@ -253,13 +267,26 @@ fn comparison_benches(c: &mut Criterion) {
         })
         .collect();
 
-    // Write source files for self-hosted
-    let source_files: Vec<tempfile::NamedTempFile> = tests
+    // Write source files for the real `aver run --self-host` path under one shared module root
+    let self_host_root = tempfile::tempdir().expect("create self-host bench root");
+    let source_files: Vec<std::path::PathBuf> = tests
         .iter()
-        .map(|(_, _, src)| write_temp_source(src))
+        .map(|(_, name, src)| write_temp_source(self_host_root.path(), name, src))
         .collect();
 
-    let self_hosted = format!("{}/.cargo/bin/aver-self", std::env::var("HOME").unwrap());
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    // Warm the cached self-host binary once before measuring.
+    run_external(
+        aver_bin,
+        &[
+            "run",
+            source_files[0].to_str().unwrap(),
+            "--module-root",
+            self_host_root.path().to_str().unwrap(),
+            "--self-host",
+        ],
+    );
 
     for (i, (label, _, src)) in tests.iter().enumerate() {
         let mut group = c.benchmark_group(*label);
@@ -268,8 +295,9 @@ fn comparison_benches(c: &mut Criterion) {
             label,
             src,
             &natives[i],
-            &self_hosted,
-            source_files[i].path(),
+            aver_bin,
+            self_host_root.path(),
+            &source_files[i],
         );
         group.finish();
     }

@@ -14,6 +14,9 @@ fn resolveProgram(prog: Program) -> Program
     annotatedFns = annotateFastFns(calledFns, [])
     Program(deps = prog.deps, fns = rewriteInternalFns(annotatedFns, []), stmts = rewriteInternalStmts(prog.stmts, []))
 
+verify resolveProgram
+    resolveProgram(Program(deps = [], fns = [], stmts = [Stmt.StmtExpr(Expr.ExprInt(1))])) => Program(deps = [], fns = [], stmts = [Stmt.StmtExpr(Expr.ExprInt(1))])
+
 fn resolveFns(fns: List<FnDef>, acc: List<FnDef>) -> List<FnDef>
     ? "Resolve each function definition."
     match fns
@@ -31,6 +34,10 @@ fn buildParamSlots(params: List<String>, slots: Map<String, Int>, next: Int) -> 
     match params
         [] -> (slots, next)
         [p, ..rest] -> buildParamSlots(rest, Map.set(slots, p, next), next + 1)
+
+verify buildParamSlots
+    buildParamSlots([], Map.empty(), 0) => (Map.empty(), 0)
+    buildParamSlots(["a", "b"], Map.empty(), 0) => (Map.set(Map.set(Map.empty(), "a", 0), "b", 1), 2)
 
 fn resolveBody(fd: FnDef, slots: Map<String, Int>, nextSlot: Int) -> FnDef
     ? "Walk body stmts, resolve vars, track new bindings. slotCount = max slot + 1 from body scan."
@@ -242,6 +249,11 @@ fn resolveVar(name: String, slots: Map<String, Int>) -> Expr
         Option.Some(slot) -> Expr.ExprSlot(slot)
         Option.None -> Expr.ExprVar(name)
 
+verify resolveVar
+    resolveVar("x", Map.set(Map.empty(), "x", 0)) => Expr.ExprSlot(0)
+    resolveVar("Option.None", Map.empty()) => Expr.ExprVar("Option.None")
+    resolveVar("y", Map.empty()) => Expr.ExprVar("y")
+
 fn resolveExprs(exprs: List<Expr>, slots: Map<String, Int>, acc: List<Expr>) -> List<Expr>
     ? "Resolve a list of expressions."
     match exprs
@@ -270,12 +282,45 @@ fn resolveArm(arm: MatchArm, slots: Map<String, Int>) -> (MatchArm, Map<String, 
     ? "Resolve a match arm: extend slots with pattern bindings, then resolve body."
     armSlotResult = addPatternSlots(arm.pattern, slots)
     match armSlotResult
-        (newSlots, _) -> resolveArmBody(arm, newSlots)
+        (newSlots, _) -> resolveArmBody(arm, newSlots, patternBindingSlots(arm.pattern, slots))
 
-fn resolveArmBody(arm: MatchArm, newSlots: Map<String, Int>) -> (MatchArm, Map<String, Int>)
+fn resolveArmBody(arm: MatchArm, newSlots: Map<String, Int>, bindingSlots: Map<String, Int>) -> (MatchArm, Map<String, Int>)
     ? "Resolve arm body with extended slots."
     match resolveExpr(arm.body, newSlots)
-        (re, finalSlots) -> (MatchArm(pattern = arm.pattern, body = re), finalSlots)
+        (re, finalSlots) -> (MatchArm(pattern = arm.pattern, body = re, bindingSlots = bindingSlots), finalSlots)
+
+fn patternBindingSlots(pat: Pattern, slots: Map<String, Int>) -> Map<String, Int>
+    ? "Compute only the slots introduced by one pattern, using the same numbering as addPatternSlots."
+    nextSlot = mapMaxVal(slots) + 1
+    match patternBindingSlotsInner(pat, Map.empty(), nextSlot)
+        (bindingSlots, _) -> bindingSlots
+
+fn patternBindingSlotsInner(pat: Pattern, bindingSlots: Map<String, Int>, next: Int) -> (Map<String, Int>, Int)
+    ? "Assign slots to pattern binders without carrying the outer slot map."
+    match pat
+        Pattern.PatVar(name) -> (Map.set(bindingSlots, name, next), next + 1)
+        Pattern.PatCons(h, t) -> patternBindingSlotsCons(h, t, bindingSlots, next)
+        Pattern.PatConstructor(_, bindings) -> patternBindingSlotsConstructor(bindings, bindingSlots, next)
+        Pattern.PatTuple(pats) -> patternBindingSlotsTuple(pats, bindingSlots, next)
+        _ -> (bindingSlots, next)
+
+fn patternBindingSlotsCons(h: String, t: String, bindingSlots: Map<String, Int>, next: Int) -> (Map<String, Int>, Int)
+    ? "Assign slots for cons-pattern binders."
+    bindingSlots2 = Map.set(bindingSlots, h, next)
+    (Map.set(bindingSlots2, t, next + 1), next + 2)
+
+fn patternBindingSlotsConstructor(bindings: List<String>, bindingSlots: Map<String, Int>, next: Int) -> (Map<String, Int>, Int)
+    ? "Assign slots for constructor-pattern binders."
+    match bindings
+        [] -> (bindingSlots, next)
+        [name, ..rest] -> patternBindingSlotsConstructor(rest, Map.set(bindingSlots, name, next), next + 1)
+
+fn patternBindingSlotsTuple(pats: List<Pattern>, bindingSlots: Map<String, Int>, next: Int) -> (Map<String, Int>, Int)
+    ? "Assign slots for tuple sub-patterns."
+    match pats
+        [] -> (bindingSlots, next)
+        [p, ..rest] -> match patternBindingSlotsInner(p, bindingSlots, next)
+            (newBindingSlots, newNext) -> patternBindingSlotsTuple(rest, newBindingSlots, newNext)
 
 fn addPatternSlots(pat: Pattern, slots: Map<String, Int>) -> (Map<String, Int>, Int)
     ? "Find the next available slot and add pattern bindings."
@@ -294,6 +339,11 @@ fn maxInList(vals: List<Int>, acc: Int) -> Int
         [v, ..rest] -> match v > acc
             true -> maxInList(rest, v)
             false -> maxInList(rest, acc)
+
+verify maxInList
+    maxInList([], 0 - 1) => 0 - 1
+    maxInList([0, 2, 1], 0 - 1) => 2
+    maxInList([5], 0 - 1) => 5
 
 fn addPatternSlotsInner(pat: Pattern, slots: Map<String, Int>, next: Int) -> (Map<String, Int>, Int)
     ? "Add slots for pattern bindings."
@@ -389,7 +439,43 @@ fn resolveOneCall(name: String, args: List<Expr>, fnMap: Map<String, FnDef>) -> 
         Option.Some(fd) -> Expr.ExprCallDirect(fd.name, resolvedArgs)
         Option.None -> match String.endsWith(name, ".update")
             true -> Expr.ExprCall(name, resolvedArgs)
-            false -> Expr.ExprCallBuiltin(name, resolvedArgs)
+            false -> match isBuiltinCallName(name)
+                true -> Expr.ExprCallBuiltin(name, resolvedArgs)
+                false -> Expr.ExprCall(name, resolvedArgs)
+
+fn isBuiltinCallName(name: String) -> Bool
+    ? "Return whether a dotted call name belongs to the builtin/service namespaces rather than a loaded user module."
+    isBuiltinCallNameFrom(name, [
+        "Args.",
+        "Bool.",
+        "Byte.",
+        "Char.",
+        "Console.",
+        "Disk.",
+        "Env.",
+        "Float.",
+        "Http.",
+        "HttpServer.",
+        "Int.",
+        "List.",
+        "Map.",
+        "Option.",
+        "Random.",
+        "Result.",
+        "String.",
+        "Tcp.",
+        "Terminal.",
+        "Time.",
+        "Vector.",
+    ])
+
+fn isBuiltinCallNameFrom(name: String, prefixes: List<String>) -> Bool
+    ? "Check builtin/service namespace prefixes recursively."
+    match prefixes
+        [] -> false
+        [prefix, ..rest] -> match String.startsWith(name, prefix)
+            true -> true
+            false -> isBuiltinCallNameFrom(name, rest)
 
 fn resolveCallsInExprs(exprs: List<Expr>, fnMap: Map<String, FnDef>, acc: List<Expr>) -> List<Expr>
     match exprs
@@ -399,7 +485,7 @@ fn resolveCallsInExprs(exprs: List<Expr>, fnMap: Map<String, FnDef>, acc: List<E
 fn resolveCallsInArms(arms: List<MatchArm>, fnMap: Map<String, FnDef>, acc: List<MatchArm>) -> List<MatchArm>
     match arms
         [] -> List.reverse(acc)
-        [arm, ..rest] -> resolveCallsInArms(rest, fnMap, List.prepend(MatchArm(pattern = arm.pattern, body = resolveCallsInExpr(arm.body, fnMap)), acc))
+        [arm, ..rest] -> resolveCallsInArms(rest, fnMap, List.prepend(MatchArm(pattern = arm.pattern, body = resolveCallsInExpr(arm.body, fnMap), bindingSlots = arm.bindingSlots), acc))
 
 fn resolveCallsInFields(fields: List<(String, Expr)>, fnMap: Map<String, FnDef>, acc: List<(String, Expr)>) -> List<(String, Expr)>
     match fields
@@ -489,7 +575,7 @@ fn rewriteInternalArms(arms: List<MatchArm>, acc: List<MatchArm>) -> List<MatchA
     ? "Rewrite match arm bodies recursively."
     match arms
         [] -> List.reverse(acc)
-        [arm, ..rest] -> rewriteInternalArms(rest, List.prepend(MatchArm(pattern = arm.pattern, body = rewriteInternalExpr(arm.body)), acc))
+        [arm, ..rest] -> rewriteInternalArms(rest, List.prepend(MatchArm(pattern = arm.pattern, body = rewriteInternalExpr(arm.body), bindingSlots = arm.bindingSlots), acc))
 
 fn rewriteInternalBinop(op: BinOp, left: Expr, right: Expr) -> Expr
     ? "Compress simple resolved arithmetic into slot-based internal nodes."
@@ -873,20 +959,3 @@ fn classifyFastLtScrutinee(a: Expr, b: Expr, thenLeaf: FastLeaf, elseLeaf: FastL
             Expr.ExprSlot(rhs) -> FnFastPath.FastLtIntSlotsBranch(lhs, rhs, thenLeaf, elseLeaf)
             _ -> FnFastPath.FastSingleExpr
         _ -> FnFastPath.FastSingleExpr
-
-verify resolveProgram
-    resolveProgram(Program(deps = [], fns = [], stmts = [Stmt.StmtExpr(Expr.ExprInt(1))])) => Program(deps = [], fns = [], stmts = [Stmt.StmtExpr(Expr.ExprInt(1))])
-
-verify resolveVar
-    resolveVar("x", Map.set(Map.empty(), "x", 0)) => Expr.ExprSlot(0)
-    resolveVar("Option.None", Map.empty()) => Expr.ExprVar("Option.None")
-    resolveVar("y", Map.empty()) => Expr.ExprVar("y")
-
-verify buildParamSlots
-    buildParamSlots([], Map.empty(), 0) => (Map.empty(), 0)
-    buildParamSlots(["a", "b"], Map.empty(), 0) => (Map.set(Map.set(Map.empty(), "a", 0), "b", 1), 2)
-
-verify maxInList
-    maxInList([], 0 - 1) => 0 - 1
-    maxInList([0, 2, 1], 0 - 1) => 2
-    maxInList([5], 0 - 1) => 5

@@ -55,6 +55,7 @@ EOF
 
 aver run      hello.av
 aver run      hello.av --vm
+aver run      hello.av --self-host
 aver verify   hello.av
 aver verify   hello.av --vm
 aver check    hello.av
@@ -74,6 +75,7 @@ cargo install --path . --force
 
 aver run      examples/core/calculator.av
 aver run      examples/core/calculator.av --vm
+aver run      examples/core/calculator.av --self-host
 aver verify   examples/core/calculator.av
 aver verify   examples/core/calculator.av --vm
 aver check    examples/core/calculator.av
@@ -85,6 +87,7 @@ aver proof    examples/formal/law_auto.av -o proof/
 aver run      examples/services/console_demo.av --record recordings/
 aver replay   recordings/ --test --diff
 aver replay   recordings/ --test --diff --vm
+aver replay   recordings/ --test --diff --self-host
 ```
 
 Requires: Rust stable toolchain.
@@ -174,6 +177,24 @@ aver replay recordings/ --vm
 
 For the VM internals and design rationale, see [docs/vm.md](docs/vm.md).
 
+### Self-hosted interpreter
+
+```bash
+aver run hello.av --self-host
+aver replay recordings/ --self-host
+```
+
+`--self-host` executes the program through the Aver interpreter written in Aver itself, compiled to Rust and cached on demand. There is no separate "aver-self" install step: `cargo install aver-lang` already ships the `self_hosted/` sources inside the crate, and the first `aver run ... --self-host` builds a cached helper binary automatically. The helper cache is per module root, so cold start is slower but subsequent runs reuse the compiled binary.
+
+Most users should never run `self_hosted/main.av` directly. That entry exists mainly for hacking on the self-host inside this repository; the normal installed interface is still just:
+
+```bash
+aver run hello.av --self-host
+aver replay recordings/ --self-host
+```
+
+For `--record` and `aver replay --self-host`, replay and `aver.toml` policy are scoped to the guest program boundary only: the self-host's own bootstrap reads and module loading stay outside the recording.
+
 ---
 
 ## What Aver makes explicit
@@ -219,6 +240,8 @@ Think of this as two separate controls:
 
 - code answers: what kind of I/O is allowed?
 - policy answers: which concrete destinations are allowed?
+
+Generated Rust can use the same scoped runtime machinery when you compile with `--with-replay`; see [docs/rust.md](docs/rust.md).
 
 ### Decisions
 
@@ -486,7 +509,7 @@ Standalone projects:
 |------|-------------|
 | `projects/workflow_engine/main.av` | Explicit app/domain/infra flow, event replay, derived events, verify-driven orchestration |
 | `projects/payment_ops/main.av` | Dirty payment backoffice flow: provider normalization, replay, settlement reconcile, manual-review cases, audit trail |
-| `projects/self_hosted/main.av` | Full self-hosted interpreter: lexer, parser, resolver, evaluator — all 55 examples pass. Compiles to native via `aver compile`. |
+| `self_hosted/main.av` | Full self-hosted interpreter: lexer, parser, resolver, evaluator — all 55 examples pass. Compiles to native via `aver compile` and powers `aver run --self-host`. |
 
 See `examples/` and `projects/` for the full set.
 For repository self-documentation via decision exports, see `decisions/architecture.av`.

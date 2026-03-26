@@ -92,7 +92,13 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
         ),
         (
             "src/runtime_support.rs".to_string(),
-            render_runtime_support(has_tcp_types, has_http_types, has_http_server_types),
+            render_runtime_support(
+                has_tcp_types,
+                has_http_types,
+                has_http_server_types,
+                ctx.emit_replay_runtime,
+                ctx.emit_self_host_runtime,
+            ),
         ),
     ];
 
@@ -189,18 +195,45 @@ fn render_root_main(
     // Spawn main on a thread with 256 MB stack to avoid overflow in deep recursion.
     sections.push(String::new());
     let returns_result = main_fn.is_some_and(|fd| fd.return_type.starts_with("Result<"));
+    let result_unit_string =
+        main_fn.is_some_and(|fd| fd.return_type.replace(' ', "") == "Result<Unit,String>");
     if returns_result {
-        let ret_type = types::type_annotation_to_rust(&main_fn.unwrap().return_type);
-        sections.push(format!("fn main() -> {} {{", ret_type));
-        sections.push("    let child = std::thread::Builder::new()".to_string());
-        sections.push("        .stack_size(256 * 1024 * 1024)".to_string());
-        if has_replay && guest_entry.is_none() {
-            sections.push("        .spawn(|| aver_replay::with_guest_scope(\"main\", serde_json::Value::Null, aver_generated::entry::main))".to_string());
+        if result_unit_string {
+            sections.push("fn main() {".to_string());
+            sections.push("    let child = std::thread::Builder::new()".to_string());
+            sections.push("        .stack_size(256 * 1024 * 1024)".to_string());
+            if has_replay && guest_entry.is_none() {
+                sections.push("        .spawn(|| {".to_string());
+                sections.push("            let __result = aver_replay::with_guest_scope(\"main\", serde_json::Value::Null, aver_generated::entry::main);".to_string());
+                sections.push("            __result.map_err(|e| e.to_string())".to_string());
+                sections.push("        })".to_string());
+            } else {
+                sections.push("        .spawn(|| {".to_string());
+                sections
+                    .push("            let __result = aver_generated::entry::main();".to_string());
+                sections.push("            __result.map_err(|e| e.to_string())".to_string());
+                sections.push("        })".to_string());
+            }
+            sections.push("        .expect(\"thread spawn\");".to_string());
+            sections.push("    match child.join().expect(\"thread join\") {".to_string());
+            sections.push("        Ok(()) => {}".to_string());
+            sections.push("        Err(e) => {".to_string());
+            sections.push("            eprintln!(\"{}\", e);".to_string());
+            sections.push("            std::process::exit(1);".to_string());
+            sections.push("        }".to_string());
+            sections.push("    }".to_string());
         } else {
-            sections.push("        .spawn(aver_generated::entry::main)".to_string());
+            let ret_type = types::type_annotation_to_rust(&main_fn.unwrap().return_type);
+            sections.push(format!("fn main() -> {} {{", ret_type));
+            if has_replay && guest_entry.is_none() {
+                sections.push(
+                    "    aver_replay::with_guest_scope(\"main\", serde_json::Value::Null, aver_generated::entry::main)"
+                        .to_string(),
+                );
+            } else {
+                sections.push("    aver_generated::entry::main()".to_string());
+            }
         }
-        sections.push("        .expect(\"thread spawn\");".to_string());
-        sections.push("    child.join().expect(\"thread join\")".to_string());
     } else {
         sections.push("fn main() {".to_string());
         if main_fn.is_some() {
@@ -225,8 +258,14 @@ fn render_runtime_support(
     has_tcp_types: bool,
     has_http_types: bool,
     has_http_server_types: bool,
+    has_replay: bool,
+    emit_self_host_runtime: bool,
 ) -> String {
-    let mut sections = vec![runtime::generate_runtime()];
+    let mut sections = vec![runtime::generate_runtime(
+        has_replay,
+        has_http_server_types,
+        emit_self_host_runtime,
+    )];
     if has_tcp_types {
         sections.push(runtime::generate_tcp_types());
     }
@@ -727,9 +766,33 @@ fn runGuestProgram(path: String) -> Result<String, String>
         let replay_support = generated_file(&out, "src/replay_support.rs");
         let cargo_toml = generated_file(&out, "Cargo.toml");
 
-        assert!(entry.contains("aver_replay::with_guest_scope(\"runGuestProgram\""));
+        assert!(entry.contains("aver_replay::with_guest_scope_result(\"runGuestProgram\""));
         assert!(replay_support.contains("pub mod aver_replay"));
         assert!(cargo_toml.contains("serde_json = \"1\""));
+    }
+
+    #[test]
+    fn replay_codegen_uses_guest_args_param_override_when_present() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, String>
+    ! [Args.get]
+    Result.Ok(String.join(Args.get(), ","))
+"#,
+            "demo",
+        );
+        ctx.emit_replay_runtime = true;
+        ctx.guest_entry = Some("runGuestProgram".to_string());
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+        let cargo_toml = generated_file(&out, "Cargo.toml");
+
+        assert!(entry.contains("aver_replay::with_guest_scope_args_result(\"runGuestProgram\""));
+        assert!(entry.contains("guestArgs.clone()"));
+        assert!(cargo_toml.contains("edition = \"2024\""));
     }
 
     #[test]

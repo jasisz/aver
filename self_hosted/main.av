@@ -1,0 +1,320 @@
+module SelfHosted
+    depends [Domain.Token, Domain.Lexer, Domain.Ast, Domain.Value, Domain.Eval, Domain.Parser, Domain.Resolver]
+    intent =
+        "Mini Aver interpreter written in Aver."
+        "Demonstrates self-hosting: Aver source parsed and evaluated by Aver running on its own VM."
+        "Usage: aver run self_hosted/main.av --module-root self_hosted -- <file.av> <module-root> [guest args...]"
+
+fn run(source: String) -> Result<Val, String>
+    ? "Lex, parse, resolve, and evaluate an Aver source string (no module loading)."
+    ! [
+        Args,
+        Console,
+        Disk,
+        Http,
+        Random,
+        Tcp,
+        Terminal,
+        Time,
+    ]
+    tokens = Domain.Lexer.lex(source)
+    prog = Domain.Parser.parse(tokens)?
+    resolved = Domain.Resolver.resolveProgram(prog)
+    runGuestProgram(resolved, [], [])
+
+fn runWithModules(source: String, moduleRoot: String) -> Result<Val, String>
+    ? "Lex, parse, resolve, load modules, and evaluate."
+    ! [
+        Args,
+        Console,
+        Disk,
+        Http,
+        Random,
+        Tcp,
+        Terminal,
+        Time,
+    ]
+    prepared = prepareProgramWithModules(source, moduleRoot)?
+    match prepared
+        (prog, moduleFns) -> runGuestProgram(prog, moduleFns, [])
+
+fn prepareProgramWithModules(source: String, moduleRoot: String) -> Result<(Program, List<FnDef>), String>
+    ? "Lex, parse, resolve, load modules, and return a guest program ready for execution."
+    ! [Disk.exists, Disk.readText]
+    tokens = Domain.Lexer.lex(source)
+    prog = Domain.Parser.parse(tokens)?
+    resolved = Domain.Resolver.resolveProgram(prog)
+    r = loadModules(resolved.deps, moduleRoot, [], Map.empty())?
+    match r
+        (moduleFns, _) -> Result.Ok((resolved, moduleFns))
+
+fn runGuestProgram(prog: Program, moduleFns: List<FnDef>, guestArgs: List<String>) -> Result<Val, String>
+    ? "Execute an already-loaded guest program. guestArgs marks the guest input boundary for scoped replay and policy in generated Rust."
+    ! [
+        Args,
+        Console,
+        Disk,
+        Http,
+        Random,
+        Tcp,
+        Terminal,
+        Time,
+    ]
+    Domain.Eval.evalProgramWithFns(prog, moduleFns)
+
+fn runGuestCliProgram(prog: Program, moduleFns: List<FnDef>, localFns: List<FnDef>, guestArgs: List<String>) -> Result<Unit, String>
+    ? "Execute a loaded guest program with CLI-compatible main semantics inside the guest boundary."
+    ! [
+        Args,
+        Console,
+        Disk,
+        Http,
+        Random,
+        Tcp,
+        Terminal,
+        Time,
+    ]
+    match runGuestProgram(prog, moduleFns, guestArgs)
+        Result.Ok(result) -> finishCliRun(localFns, result)
+        Result.Err(e) -> Result.Err("Runtime error: " + e)
+
+fn loadModules(deps: List<String>, moduleRoot: String, acc: List<FnDef>, loaded: Map<String, Bool>) -> Result<(List<FnDef>, Map<String, Bool>), String>
+    ? "Load all module dependencies, skipping already-loaded modules."
+    ! [Disk.exists, Disk.readText]
+    match deps
+        [] -> Result.Ok((acc, loaded))
+        [dep, ..rest] -> match Map.has(loaded, dep)
+            true -> loadModules(rest, moduleRoot, acc, loaded)
+            false -> loadOneModule(dep, rest, moduleRoot, acc, loaded)
+
+fn loadOneModule(dep: String, rest: List<String>, moduleRoot: String, acc: List<FnDef>, loaded: Map<String, Bool>) -> Result<(List<FnDef>, Map<String, Bool>), String>
+    ? "Load one module. Tries moduleRoot, then parent dirs up to 3 levels."
+    ! [Disk.exists, Disk.readText]
+    path = findModulePath(dep, moduleRoot, 0)
+    source = Disk.readText(path)?
+    tokens = Domain.Lexer.lex(source)
+    prog = Domain.Parser.parse(tokens)?
+    resolved = Domain.Resolver.resolveProgram(prog)
+    qualifiedFns = qualifyFns(resolved.fns, dep, [])
+    loaded2 = Map.set(loaded, dep, true)
+    innerResult = loadModules(resolved.deps, moduleRoot, [], loaded2)?
+    match innerResult
+        (innerFns, loaded3) -> loadModules(rest, moduleRoot, List.concat(acc, List.concat(innerFns, qualifiedFns)), loaded3)
+
+fn findModulePath(dep: String, root: String, depth: Int) -> String
+    ? "Find module file, trying root then parent dirs."
+    ! [Disk.exists]
+    path = modulePathFromName(dep, root)
+    match Disk.exists(path)
+        true -> path
+        false -> match depth >= 3
+            true -> path
+            false -> findModulePath(dep, root + "/..", depth + 1)
+
+fn modulePathFromName(name: String, moduleRoot: String) -> String
+    ? "Convert Module.Name to file path: Domain.Foo -> domain/foo.av"
+    // Simple: replace dots with / and lowercase
+    moduleRoot + "/" + dotToSlash(name, 0, String.len(name), "") + ".av"
+
+verify modulePathFromName
+    modulePathFromName("Domain.Foo", ".") => "./domain/foo.av"
+
+fn dotToSlash(name: String, pos: Int, total: Int, acc: String) -> String
+    ? "Replace dots with slashes and lowercase first char of each segment."
+    match pos >= total
+        true -> acc
+        false -> match String.charAt(name, pos)
+            Option.Some(c) -> match c == "."
+                true -> dotToSlash(name, pos + 1, total, acc + "/")
+                false -> dotToSlash(name, pos + 1, total, acc + String.toLower(c))
+            Option.None -> acc
+
+verify dotToSlash
+    dotToSlash("Domain.Foo", 0, 10, "") => "domain/foo"
+    dotToSlash("A.B.C", 0, 5, "") => "a/b/c"
+
+fn qualifyFns(fns: List<FnDef>, prefix: String, acc: List<FnDef>) -> List<FnDef>
+    ? "Register functions with both qualified (Domain.Foo.bar) and unqualified (bar) names."
+    match fns
+        [] -> List.reverse(acc)
+        [f, ..rest] -> qualifyFnsOne(f, rest, prefix, acc)
+
+verify qualifyFns
+    qualifyFns([], "M", []) => []
+    qualifyFns([FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone)], "M", []) => [FnDef(name = "M.f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone), FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone)]
+
+fn qualifyFnsOne(f: FnDef, rest: List<FnDef>, prefix: String, acc: List<FnDef>) -> List<FnDef>
+    ? "Add both qualified and unqualified versions."
+    qualified = FnDef(name = prefix + "." + f.name, params = f.params, body = f.body, slotCount = f.slotCount, slotMap = f.slotMap, fastPath = f.fastPath)
+    qualifyFns(rest, prefix, List.prepend(f, List.prepend(qualified, acc)))
+
+verify qualifyFnsOne
+    qualifyFnsOne(FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone), [], "M", []) => [FnDef(name = "M.f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone), FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone)]
+
+fn runRepr(source: String) -> String
+    ? "Run source and return result representation or error."
+    ! [
+        Args,
+        Console,
+        Disk,
+        Http,
+        Random,
+        Tcp,
+        Terminal,
+        Time,
+    ]
+    match run(source)
+        Result.Ok(val) -> Domain.Value.valRepr(val)
+        Result.Err(e) -> "ERROR: {e}"
+
+fn runFile(path: String, moduleRoot: String) -> Result<String, String>
+    ? "Read a file and run it through the self-hosted pipeline with module loading."
+    ! [
+        Args,
+        Console,
+        Disk,
+        Http,
+        Random,
+        Tcp,
+        Terminal,
+        Time,
+    ]
+    match loadProgramFromFile(path, moduleRoot)
+        Result.Ok(pair) -> match pair
+            (prog, moduleFns) -> runFileLoaded(prog, moduleFns)
+        Result.Err(e) -> Result.Err(e)
+
+fn runFileLoaded(prog: Program, moduleFns: List<FnDef>) -> Result<String, String>
+    ? "Turn a loaded guest program into a representation string."
+    ! [
+        Args,
+        Console,
+        Disk,
+        Http,
+        Random,
+        Tcp,
+        Terminal,
+        Time,
+    ]
+    match runGuestProgram(prog, moduleFns, [])
+        Result.Ok(val) -> Result.Ok(Domain.Value.valRepr(val))
+        Result.Err(e) -> Result.Err(e)
+
+fn loadProgramFromFile(path: String, moduleRoot: String) -> Result<(Program, List<FnDef>), String>
+    ? "Read a file and prepare the guest program plus loaded modules."
+    ! [Disk.exists, Disk.readText]
+    source = Disk.readText(path)?
+    prepareProgramWithModules(source, moduleRoot)
+
+fn main() -> Result<Unit, String>
+    ! [
+        Args, Args.get,
+        Console, Console.print,
+        Disk,
+        Http,
+        Random,
+        Tcp,
+        Terminal,
+        Time,
+    ]
+    args = Args.get()
+    match args
+        [] -> runDemo()
+        [path, ..rest] -> runFromFileWithRest(path, rest)
+
+fn runFromFileWithRest(path: String, rest: List<String>) -> Result<Unit, String>
+    ? "Dispatch normalized CLI args: path, module root, then guest args."
+    ! [
+        Args,
+        Console,
+        Disk,
+        Http,
+        Random,
+        Tcp,
+        Terminal,
+        Time,
+    ]
+    match rest
+        [moduleRoot, ..guestArgs] -> runCliFile(path, moduleRoot, guestArgs)
+        [] -> runCliFile(path, ".", [])
+
+fn runCliFile(path: String, moduleRoot: String, guestArgs: List<String>) -> Result<Unit, String>
+    ? "Load a guest file outside scope, then execute the guest program inside the guest boundary."
+    ! [
+        Args,
+        Console,
+        Disk,
+        Http,
+        Random,
+        Tcp,
+        Terminal,
+        Time,
+    ]
+    prepared = loadProgramFromFile(path, moduleRoot)?
+    match prepared
+        (prog, moduleFns) -> runGuestCliProgram(prog, moduleFns, prog.fns, guestArgs)
+
+fn finishCliRun(localFns: List<FnDef>, result: Val) -> Result<Unit, String>
+    ? "Mirror host CLI semantics: ignore successful return values, but surface main() Result.Err as process failure."
+    match hasLocalMain(localFns)
+        true -> finishCliMainResult(result)
+        false -> Result.Ok(Unit)
+
+verify finishCliRun
+    finishCliRun([], Val.ValInt(7)) => Result.Ok(Unit)
+    finishCliRun([FnDef(name = "main", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone)], Val.ValErr(Val.ValInt(9))) => Result.Err("Main returned error: 9")
+
+fn finishCliMainResult(result: Val) -> Result<Unit, String>
+    ? "Convert a guest main() return value into CLI success or failure."
+    match result
+        Val.ValErr(err) -> Result.Err("Main returned error: " + Domain.Value.valRepr(err))
+        _ -> Result.Ok(Unit)
+
+verify finishCliMainResult
+    finishCliMainResult(Val.ValErr(Val.ValInt(5))) => Result.Err("Main returned error: 5")
+    finishCliMainResult(Val.ValUnit) => Result.Ok(Unit)
+
+fn hasLocalMain(fns: List<FnDef>) -> Bool
+    ? "Check whether the entry program defines its own main()."
+    match fns
+        [] -> false
+        [f, ..rest] -> match f.name == "main"
+            true -> true
+            false -> hasLocalMain(rest)
+
+verify hasLocalMain
+    hasLocalMain([]) => false
+    hasLocalMain([FnDef(name = "helper", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone)]) => false
+    hasLocalMain([FnDef(name = "helper", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone), FnDef(name = "main", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone)]) => true
+
+fn printIfNotUnit(s: String) -> Unit
+    ? "Print unless the result is Unit."
+    ! [Console.print]
+    match s == "()"
+        true -> Console.print("")
+        false -> Console.print(s)
+
+fn runDemo() -> Result<Unit, String>
+    ? "Show built-in demo programs."
+    ! [
+        Args,
+        Console, Console.print,
+        Disk,
+        Http,
+        Random,
+        Tcp,
+        Terminal,
+        Time,
+    ]
+    demoArithmetic = runRepr("x = 3 + 4\nx * 2")
+    demoDouble = runRepr("fn double(n)\n    n + n\n\ndouble(21)")
+    demoFib = runRepr("fn fib(n)\n    match n\n        0 -> 0\n        1 -> 1\n        _ -> fib(n - 1) + fib(n - 2)\n\nfib(10)")
+    Console.print("=== Self-Hosted Mini Aver ===")
+    Console.print("")
+    Console.print("Usage: aver run self_hosted/main.av --module-root self_hosted -- <file.av> <module-root> [guest args...]")
+    Console.print("")
+    Console.print("Built-in demos:")
+    Console.print("  x=3+4; x*2 = {demoArithmetic}")
+    Console.print("  double(21) = {demoDouble}")
+    Console.print("  fib(10) = {demoFib}")
+    Result.Ok(Unit)

@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::rc::Rc;
@@ -164,6 +165,189 @@ fn recording_paths(file: &str, module_root: &str) -> (String, String) {
     };
 
     (rec_program_file, rec_module_root)
+}
+
+fn materialize_codegen_output(
+    output_dir: &Path,
+    output: &codegen::ProjectOutput,
+) -> Result<(), String> {
+    for (rel_path, content) in &output.files {
+        let full_path = output_dir.join(rel_path);
+        if let Some(parent) = full_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Cannot create dir '{}': {}", parent.display(), e))?;
+        }
+        fs::write(&full_path, content)
+            .map_err(|e| format!("Cannot write '{}': {}", full_path.display(), e))?;
+    }
+    Ok(())
+}
+
+fn with_local_runtime_override<T>(run: impl FnOnce() -> T) -> T {
+    let key = "AVER_RUNTIME_PATH";
+    let previous = std::env::var_os(key);
+    let local_runtime = Path::new(env!("CARGO_MANIFEST_DIR")).join("aver-rt");
+    let use_local = local_runtime.exists();
+
+    if use_local {
+        // CLI is single-threaded here; we scope the override tightly around one transpile call.
+        unsafe {
+            std::env::set_var(key, &local_runtime);
+        }
+    }
+
+    let result = run();
+
+    match previous {
+        Some(value) => unsafe {
+            std::env::set_var(key, value);
+        },
+        None => unsafe {
+            std::env::remove_var(key);
+        },
+    }
+
+    result
+}
+
+fn hashed_cache_dir(label: &str, key: &str) -> PathBuf {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    label.hash(&mut hasher);
+    key.hash(&mut hasher);
+    let hash = hasher.finish();
+    std::env::temp_dir().join(format!("{label}-{hash:016x}"))
+}
+
+fn self_host_paths() -> (PathBuf, PathBuf) {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("self_hosted");
+    let file = root.join("main.av");
+    (file, root)
+}
+
+fn self_host_binary_path(cache_dir: &Path) -> PathBuf {
+    cache_dir.join("target").join("release").join(format!(
+        "aver_self_host_cli{}",
+        std::env::consts::EXE_SUFFIX
+    ))
+}
+
+fn self_host_build_fingerprint(guest_module_root: &str) -> Result<String, String> {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    env!("CARGO_PKG_VERSION").hash(&mut hasher);
+
+    if let Ok(exe) = std::env::current_exe() {
+        exe.to_string_lossy().hash(&mut hasher);
+        let meta = fs::metadata(&exe)
+            .map_err(|e| format!("Cannot stat current executable '{}': {}", exe.display(), e))?;
+        meta.len().hash(&mut hasher);
+        if let Ok(modified) = meta.modified()
+            && let Ok(delta) = modified.duration_since(UNIX_EPOCH)
+        {
+            delta.as_secs().hash(&mut hasher);
+            delta.subsec_nanos().hash(&mut hasher);
+        }
+    }
+
+    let (_self_host_file, self_host_root) = self_host_paths();
+    let mut sources = Vec::new();
+    collect_av_input_files(&self_host_root, &mut sources)?;
+    sources.sort();
+    for path in sources {
+        path.strip_prefix(&self_host_root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .hash(&mut hasher);
+        fs::read(&path)
+            .map_err(|e| format!("Cannot read self-host source '{}': {}", path.display(), e))?
+            .hash(&mut hasher);
+    }
+
+    let policy_path = Path::new(guest_module_root).join("aver.toml");
+    if policy_path.exists() {
+        "guest-policy".hash(&mut hasher);
+        fs::read(&policy_path)
+            .map_err(|e| format!("Cannot read '{}': {}", policy_path.display(), e))?
+            .hash(&mut hasher);
+    } else {
+        "guest-policy:none".hash(&mut hasher);
+    }
+
+    Ok(format!("{:016x}", hasher.finish()))
+}
+
+pub(super) fn build_self_host_binary(guest_module_root: &str) -> Result<PathBuf, String> {
+    let (self_host_file, self_host_root) = self_host_paths();
+    let cache_key = std::fs::canonicalize(guest_module_root)
+        .unwrap_or_else(|_| PathBuf::from(guest_module_root))
+        .to_string_lossy()
+        .into_owned();
+    let cache_dir = hashed_cache_dir("aver-self-host", &cache_key);
+    let binary_path = self_host_binary_path(&cache_dir);
+    let fingerprint_path = cache_dir.join(".fingerprint");
+    let expected_fingerprint = self_host_build_fingerprint(guest_module_root)?;
+
+    if binary_path.exists()
+        && fs::read_to_string(&fingerprint_path)
+            .ok()
+            .is_some_and(|stored| stored.trim() == expected_fingerprint)
+    {
+        return Ok(binary_path);
+    }
+
+    let self_host_file_str = path_to_string(&self_host_file);
+    let self_host_root_str = path_to_string(&self_host_root);
+    let (mut ctx, _) = build_codegen_context(
+        &self_host_file_str,
+        Some("aver_self_host_cli"),
+        Some(&self_host_root_str),
+        true,
+        Some("runGuestCliProgram"),
+    );
+    ctx.policy = load_runtime_policy(guest_module_root)?;
+    ctx.emit_self_host_runtime = true;
+
+    let output = with_local_runtime_override(|| rust_codegen::transpile(&ctx));
+    materialize_codegen_output(&cache_dir, &output)?;
+
+    let build = process::Command::new("cargo")
+        .arg("build")
+        .arg("--quiet")
+        .arg("--release")
+        .arg("--offline")
+        .current_dir(&cache_dir)
+        .output()
+        .map_err(|e| {
+            format!(
+                "Failed to build cached self-host binary in '{}': {}",
+                cache_dir.display(),
+                e
+            )
+        })?;
+    if !build.status.success() {
+        let stdout = String::from_utf8_lossy(&build.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&build.stderr).trim().to_string();
+        let mut msg = format!(
+            "Failed to build cached self-host binary in '{}'",
+            cache_dir.display()
+        );
+        if !stdout.is_empty() {
+            msg.push_str(&format!("\nstdout:\n{}", stdout));
+        }
+        if !stderr.is_empty() {
+            msg.push_str(&format!("\nstderr:\n{}", stderr));
+        }
+        return Err(msg);
+    }
+
+    fs::write(&fingerprint_path, format!("{expected_fingerprint}\n")).map_err(|e| {
+        format!(
+            "Cannot write self-host fingerprint '{}': {}",
+            fingerprint_path.display(),
+            e
+        )
+    })?;
+
+    Ok(binary_path)
 }
 
 fn module_name(items: &[TopLevel]) -> Option<String> {
@@ -1127,6 +1311,105 @@ pub(super) fn cmd_run(
     }
 }
 
+pub(super) fn cmd_run_self_hosted(
+    file: &str,
+    module_root_override: Option<&str>,
+    run_verify_blocks: bool,
+    record_dir: Option<&str>,
+    program_args: Vec<String>,
+) {
+    if run_verify_blocks && record_dir.is_some() {
+        eprintln!(
+            "{}",
+            "Cannot combine --verify and --record in one run; record should capture only main flow."
+                .red()
+        );
+        process::exit(1);
+    }
+
+    // Keep CLI parity with host `aver run` until the self-host carries its own
+    // full front-end pipeline (type checker + TCO + module diagnostics).
+    if let Err(e) = compile_program_for_exec(file, module_root_override) {
+        eprintln!("{}", e.red());
+        process::exit(1);
+    }
+
+    let module_root = resolve_module_root(module_root_override);
+    let binary_path = match build_self_host_binary(&module_root) {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+
+    let recording_target = if let Some(dir) = record_dir {
+        let request_id = generate_request_id();
+        let timestamp = generate_timestamp();
+        let (record_program_file, record_module_root) = recording_paths(file, &module_root);
+        let out_path = match prepare_recording_path(dir, &request_id) {
+            Ok(path) => path,
+            Err(e) => {
+                eprintln!("{}", e.red());
+                process::exit(1);
+            }
+        };
+        Some((
+            out_path,
+            request_id,
+            timestamp,
+            record_program_file,
+            record_module_root,
+        ))
+    } else {
+        None
+    };
+
+    let mut command = process::Command::new(&binary_path);
+    command.arg(file).arg(&module_root).args(&program_args);
+    command.env("AVER_REPLAY_ENTRY_FN", "main");
+
+    if let Some((path, request_id, timestamp, program_file, record_module_root)) = &recording_target
+    {
+        command.env("AVER_REPLAY_RECORD", path);
+        command.env("AVER_REPLAY_REQUEST_ID", request_id);
+        command.env("AVER_REPLAY_TIMESTAMP", timestamp);
+        command.env("AVER_REPLAY_PROGRAM_FILE", program_file);
+        command.env("AVER_REPLAY_MODULE_ROOT", record_module_root);
+    }
+
+    let status = match command.status() {
+        Ok(status) => status,
+        Err(e) => {
+            eprintln!(
+                "{}",
+                format!(
+                    "Failed to launch cached self-host binary '{}': {}",
+                    binary_path.display(),
+                    e
+                )
+                .red()
+            );
+            process::exit(1);
+        }
+    };
+
+    if let Some((path, ..)) = &recording_target
+        && path.exists()
+    {
+        println!("Recording saved: {}", path.display());
+    }
+
+    if !status.success() {
+        process::exit(status.code().unwrap_or(1));
+    }
+
+    if run_verify_blocks {
+        println!();
+        cmd_verify(file, module_root_override, false, false);
+    }
+}
+
 fn run_check_for_file(file: &str, module_root: &str, deps: bool) -> Result<bool, String> {
     let units = collect_check_units(file, module_root, deps)?;
     let entry_module = units.first().and_then(|(_, _, items)| module_name(items));
@@ -1939,26 +2222,10 @@ fn write_codegen_output(
     build_hint: &str,
     output: &codegen::ProjectOutput,
 ) {
-    // Write output files
     let out_path = Path::new(output_dir);
-    for (rel_path, content) in &output.files {
-        let full_path = out_path.join(rel_path);
-        if let Some(parent) = full_path.parent()
-            && let Err(e) = fs::create_dir_all(parent)
-        {
-            eprintln!(
-                "{}",
-                format!("Cannot create dir '{}': {}", parent.display(), e).red()
-            );
-            process::exit(1);
-        }
-        if let Err(e) = fs::write(&full_path, content) {
-            eprintln!(
-                "{}",
-                format!("Cannot write '{}': {}", full_path.display(), e).red()
-            );
-            process::exit(1);
-        }
+    if let Err(e) = materialize_codegen_output(out_path, output) {
+        eprintln!("{}", e.red());
+        process::exit(1);
     }
 
     println!(

@@ -437,7 +437,7 @@ pub fn check_module_intent_with_sigs_in(
                                 .map(|s| s.as_str())
                                 .collect();
                             matching.sort();
-                            if !matching.is_empty() {
+                            if !matching.is_empty() && !used_effects.contains(declared) {
                                 errors.push(CheckFinding {
                                     line: f.line,
                                     module: module_name.clone(),
@@ -645,6 +645,38 @@ fn log(x: Int) -> Unit
                 .iter()
                 .any(|w| w.message.contains("declares broad effect")),
             "did not expect broad-effect warning, got errors={:?}, warnings={:?}",
+            findings.errors,
+            findings.warnings
+        );
+    }
+
+    #[test]
+    fn no_granular_warning_when_namespace_effect_is_also_required_transitively() {
+        let items = parse_items(
+            r#"
+fn inner() -> Unit
+    ! [Console]
+    Unit
+
+fn outer() -> Unit
+    ! [Console]
+    Console.print("hi")
+    inner()
+"#,
+        );
+        let tc = crate::types::checker::run_type_check_full(&items, None);
+        assert!(
+            tc.errors.is_empty(),
+            "unexpected type errors: {:?}",
+            tc.errors
+        );
+        let findings = check_module_intent_with_sigs(&items, Some(&tc.fn_sigs));
+        assert!(
+            !findings
+                .errors
+                .iter()
+                .any(|e| e.message.contains("Function 'outer' declares 'Console'")),
+            "did not expect granular suggestion for outer, got errors={:?}, warnings={:?}",
             findings.errors,
             findings.warnings
         );

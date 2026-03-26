@@ -3,11 +3,16 @@ module Value
         "Runtime values for the mini interpreter."
     exposes [Val, valRepr, mapKeyRepr]
 
+fn quoteString(s: String) -> String
+    ? "Render a string key or nested string value with quotes."
+    "\"" + s + "\""
+
 type Val
     ValInt(Int)
     ValFloat(Float)
     ValStr(String)
     ValBool(Bool)
+    ValFnRef(String)
     ValList(List<Val>)
     ValVector(Vector<Val>)
     ValOk(Val)
@@ -25,13 +30,13 @@ fn valListRepr(items: List<Val>, acc: String, first: Bool) -> String
     match items
         [] -> "[{acc}]"
         [v, ..rest] -> match first
-            true -> valListRepr(rest, valRepr(v), false)
-            false -> valListRepr(rest, acc + ", " + valRepr(v), false)
+            true -> valListRepr(rest, valReprInner(v), false)
+            false -> valListRepr(rest, acc + ", " + valReprInner(v), false)
 
 verify valListRepr
     valListRepr([], "", true) => "[]"
     valListRepr([Val.ValInt(1), Val.ValInt(2)], "", true) => "[1, 2]"
-    valListRepr([Val.ValStr("a")], "", true) => "[a]"
+    valListRepr([Val.ValStr("a")], "", true) => "[\"a\"]"
 
 fn valRepr(v: Val) -> String
     ? "Display representation of a runtime value."
@@ -40,15 +45,16 @@ fn valRepr(v: Val) -> String
         Val.ValFloat(f) -> Float.toString(f)
         Val.ValStr(s) -> s
         Val.ValBool(b) -> String.fromBool(b)
+        Val.ValFnRef(name) -> "<fn {name}>"
         Val.ValList(items) -> valListRepr(items, "", true)
         Val.ValVector(vec) -> "Vector" + valListRepr(Vector.toList(vec), "", true)
-        Val.ValOk(inner) -> "Result.Ok({valRepr(inner)})"
-        Val.ValErr(inner) -> "Result.Err({valRepr(inner)})"
+        Val.ValOk(inner) -> "Result.Ok({valReprInner(inner)})"
+        Val.ValErr(inner) -> "Result.Err({valReprInner(inner)})"
         Val.ValTuple(items) -> "({valFieldsRepr(items, "", true)})"
-        Val.ValSome(inner) -> "Option.Some({valRepr(inner)})"
+        Val.ValSome(inner) -> "Option.Some({valReprInner(inner)})"
         Val.ValNone -> "Option.None"
         Val.ValRecord(name, _) -> "{name}(...)"
-        Val.ValMap(_) -> "Map(...)"
+        Val.ValMap(m) -> valMapRepr(Map.entries(m), "", true)
         Val.ValVariant(typeName, ctorName, fields) -> valVariantRepr(typeName, ctorName, fields)
         Val.ValUnit -> "()"
 
@@ -59,13 +65,36 @@ verify valRepr
     valRepr(Val.ValUnit) => "()"
     valRepr(Val.ValList([Val.ValInt(1)])) => "[1]"
     valRepr(Val.ValOk(Val.ValInt(5))) => "Result.Ok(5)"
-    valRepr(Val.ValErr(Val.ValStr("e"))) => "Result.Err(e)"
+    valRepr(Val.ValErr(Val.ValStr("e"))) => "Result.Err(\"e\")"
     valRepr(Val.ValNone) => "Option.None"
     valRepr(Val.ValSome(Val.ValInt(3))) => "Option.Some(3)"
     valRepr(Val.ValTuple([Val.ValInt(1), Val.ValInt(2)])) => "(1, 2)"
     valRepr(Val.ValFloat(3.14)) => "3.14"
     valRepr(Val.ValRecord("User", [("name", Val.ValStr("Alice"))])) => "User(...)"
     valRepr(Val.ValVariant("Token", "TkPlus", [])) => "Token.TkPlus"
+
+fn valReprInner(v: Val) -> String
+    ? "Display representation for nested values. Strings are quoted inside containers and wrappers."
+    match v
+        Val.ValStr(s) -> "\"" + s + "\""
+        Val.ValFnRef(name) -> "<fn {name}>"
+        Val.ValTuple(items) -> "({valFieldsRepr(items, "", true)})"
+        Val.ValVector(vec) -> "Vector" + valListRepr(Vector.toList(vec), "", true)
+        Val.ValList(items) -> valListRepr(items, "", true)
+        _ -> valRepr(v)
+
+fn valMapRepr(entries: List<(String, Val)>, acc: String, first: Bool) -> String
+    ? "Build a stable map repr close to the host interpreter output."
+    match entries
+        [] -> "{{{acc}}}"
+        [pair, ..rest] -> match pair
+            (k, v) -> match first
+                true -> valMapRepr(rest, quoteString(k) + ": " + valReprInner(v), false)
+                false -> valMapRepr(rest, acc + ", " + quoteString(k) + ": " + valReprInner(v), false)
+
+verify valMapRepr
+    valMapRepr([], "", true) => "{}"
+    valMapRepr([("alice", Val.ValInt(2))], "", true) => quoteString("alice") + ": 2"
 
 fn mapKeyRepr(v: Val) -> String
     ? "Stable repr for map keys. Keeps common scalar keys off the general valRepr path."
@@ -96,9 +125,9 @@ fn valFieldsRepr(items: List<Val>, acc: String, first: Bool) -> String
     match items
         [] -> acc
         [v, ..rest] -> match first
-            true -> valFieldsRepr(rest, valRepr(v), false)
-            false -> valFieldsRepr(rest, acc + ", " + valRepr(v), false)
+            true -> valFieldsRepr(rest, valReprInner(v), false)
+            false -> valFieldsRepr(rest, acc + ", " + valReprInner(v), false)
 
 verify valFieldsRepr
     valFieldsRepr([], "", true) => ""
-    valFieldsRepr([Val.ValInt(1), Val.ValStr("hi")], "", true) => "1, hi"
+    valFieldsRepr([Val.ValInt(1), Val.ValStr("hi")], "", true) => "1, \"hi\""

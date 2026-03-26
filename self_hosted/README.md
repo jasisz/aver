@@ -2,6 +2,8 @@
 
 Full Aver interpreter written in Aver. Parses, resolves, and evaluates all 55 example programs — including terminal games, HTTP services, JSON parser, Redis client, and more.
 
+This directory is the source for `aver run --self-host`. End users who install Aver with `cargo install aver-lang` do not need to run `self_hosted/main.av` manually: the CLI bundles these sources, transpiles them to Rust on first use, builds a cached helper binary, and then reuses that helper for later `--self-host` runs. Running `self_hosted/main.av` directly is mainly for development inside this repository.
+
 ## Features
 
 - Complete lexer with INDENT/DEDENT and string interpolation
@@ -46,8 +48,17 @@ verify.av           — Cross-module verify cases
 
 ## How to run
 
+For normal installed usage:
+
 ```bash
-cd projects/self_hosted
+aver run hello.av --self-host
+aver replay recordings/ --self-host
+```
+
+For direct development on the self-host itself:
+
+```bash
+cd self_hosted
 
 # Run any example through the self-hosted interpreter
 aver run main.av --module-root . -- ../../examples/core/hello.av .

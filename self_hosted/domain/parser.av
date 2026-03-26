@@ -41,6 +41,9 @@ fn parseBinding(tokens: List<Token>, pos: Int, name: String) -> Result<(Stmt, In
     match r
         (expr, pos2) -> Result.Ok((Stmt.StmtBind(name, expr), skipTrailingDedent(tokens, pos2, pos)))
 
+verify parseBinding
+    parseBinding([Token.TkInt(5), Token.TkEof], 0, "x") => Result.Ok((Stmt.StmtBind("x", Expr.ExprInt(5)), 1))
+
 fn skipTrailingDedent(tokens: List<Token>, pos: Int, startPos: Int) -> Int
     ? "If expression consumed an INDENT (multi-line), skip the trailing DEDENT."
     match countIndentsInRange(tokens, startPos, pos, 0)
@@ -64,9 +67,6 @@ fn skipNDedents(tokens: List<Token>, pos: Int, n: Int) -> Int
             Token.TkNewline -> skipNDedents(tokens, pos + 1, n)
             Token.TkDedent -> skipNDedents(tokens, pos + 1, n - 1)
             _ -> pos
-
-verify parseBinding
-    parseBinding([Token.TkInt(5), Token.TkEof], 0, "x") => Result.Ok((Stmt.StmtBind("x", Expr.ExprInt(5)), 1))
 
 fn parseStmtExpr(tokens: List<Token>, pos: Int) -> Result<(Stmt, Int), String>
     ? "Parse an expression statement."

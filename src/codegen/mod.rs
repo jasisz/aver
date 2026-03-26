@@ -51,6 +51,8 @@ pub struct CodegenContext {
     pub emit_replay_runtime: bool,
     /// Explicit guest entry boundary for scoped replay/policy.
     pub guest_entry: Option<String>,
+    /// Emit extra generated helpers needed by the cached self-host runtime.
+    pub emit_self_host_runtime: bool,
 }
 
 /// Output files from a codegen backend.
@@ -104,5 +106,6 @@ pub fn build_context(
         policy: None,
         emit_replay_runtime: false,
         guest_entry: None,
+        emit_self_host_runtime: false,
     }
 }

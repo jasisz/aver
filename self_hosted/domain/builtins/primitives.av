@@ -15,6 +15,10 @@ fn callInt(name: String, args: List<Val>) -> Result<Val, String>
         "Int.min" -> builtinIntMin(args)
         _ -> Result.Err("unknown int builtin: {name}")
 
+verify callInt
+    callInt("Int.abs", [Val.ValInt(5)]) => Result.Ok(Val.ValInt(5))
+    callInt("Int.toString", [Val.ValInt(42)]) => Result.Ok(Val.ValStr("42"))
+
 fn builtinIntMax(args: List<Val>) -> Result<Val, String>
     ? "Int.max(a, b) -> larger of a and b."
     pair = Domain.Builtins.Helpers.twoArgs(args)?
@@ -42,10 +46,6 @@ fn builtinIntMinInner(aV: Val, bV: Val) -> Result<Val, String>
     match a < b
         true -> Result.Ok(Val.ValInt(a))
         false -> Result.Ok(Val.ValInt(b))
-
-verify callInt
-    callInt("Int.abs", [Val.ValInt(5)]) => Result.Ok(Val.ValInt(5))
-    callInt("Int.toString", [Val.ValInt(42)]) => Result.Ok(Val.ValStr("42"))
 
 fn callString(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch String.* builtins."
@@ -362,6 +362,9 @@ fn callFloat(name: String, args: List<Val>) -> Result<Val, String>
         "Float.pi" -> builtinFloatPi(args)
         _ -> Result.Err("unknown float builtin: {name}")
 
+verify callFloat
+    callFloat("Float.toString", [Val.ValFloat(3.14)]) => Result.Ok(Val.ValStr("3.14"))
+
 fn builtinFloatFromString(args: List<Val>) -> Result<Val, String>
     ? "Float.fromString(s) -> Result<Float, String>."
     v = Domain.Builtins.Helpers.oneArg(args)?
@@ -382,9 +385,6 @@ fn builtinFloatRound(args: List<Val>) -> Result<Val, String>
     match v
         Val.ValFloat(f) -> Result.Ok(Val.ValInt(Float.round(f)))
         _ -> Result.Err("Float.round requires Float")
-
-verify callFloat
-    callFloat("Float.toString", [Val.ValFloat(3.14)]) => Result.Ok(Val.ValStr("3.14"))
 
 fn builtinFloatToString(args: List<Val>) -> Result<Val, String>
     ? "Float.toString(f) -> string representation."
@@ -438,6 +438,9 @@ fn builtinFloatSin(args: List<Val>) -> Result<Val, String>
         Val.ValFloat(f) -> Result.Ok(Val.ValFloat(Float.sin(f)))
         _ -> Result.Err("Float.sin requires Float")
 
+verify builtinFloatSin
+    builtinFloatSin([Val.ValFloat(0.0)]) => Result.Ok(Val.ValFloat(0.0))
+
 fn builtinFloatCos(args: List<Val>) -> Result<Val, String>
     ? "Float.cos(f) -> Float."
     v = Domain.Builtins.Helpers.oneArg(args)?
@@ -471,9 +474,6 @@ fn builtinFloatPi(args: List<Val>) -> Result<Val, String>
     match List.len(args) == 0
         true -> Result.Ok(Val.ValFloat(Float.pi()))
         false -> Result.Err("Float.pi takes 0 arguments")
-
-verify builtinFloatSin
-    builtinFloatSin([Val.ValFloat(0.0)]) => Result.Ok(Val.ValFloat(0.0))
 
 verify builtinFloatPi
     builtinFloatPi([]) => Result.Ok(Val.ValFloat(Float.pi()))

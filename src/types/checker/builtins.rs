@@ -81,7 +81,6 @@ impl TypeChecker {
                 "Disk.makeDir".to_string(),
                 "Env.get".to_string(),
                 "Env.set".to_string(),
-                "Env.remove".to_string(),
                 "Tcp.connect".to_string(),
                 "Tcp.send".to_string(),
                 "Tcp.ping".to_string(),
@@ -173,6 +172,18 @@ impl TypeChecker {
                 "HttpServer.listenWith",
                 &[Type::Int, Type::Unknown, http_handler_with_context()],
                 Type::Unit,
+                &["HttpServer.listenWith"],
+            ),
+            (
+                "SelfHostRuntime.httpServerListen",
+                &[Type::Int, Type::Unknown],
+                disk_unit(),
+                &["HttpServer.listen"],
+            ),
+            (
+                "SelfHostRuntime.httpServerListenWith",
+                &[Type::Int, Type::Unknown, Type::Unknown],
+                disk_unit(),
                 &["HttpServer.listenWith"],
             ),
             (

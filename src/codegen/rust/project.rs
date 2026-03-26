@@ -74,7 +74,7 @@ pub fn generate_cargo_toml(
     lines.push("[package]".to_string());
     lines.push(format!("name = \"{}\"", name));
     lines.push("version = \"0.1.0\"".to_string());
-    lines.push("edition = \"2021\"".to_string());
+    lines.push("edition = \"2024\"".to_string());
     lines.push(String::new());
 
     // Collect aver-rt feature flags based on which services the program uses.

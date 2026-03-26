@@ -7,12 +7,27 @@ module Builtins
 
 fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch qualified builtin calls to sub-module implementations."
-    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    ! [
+        Args,
+        Console,
+        Disk,
+        Env,
+        Http,
+        HttpServer,
+        Random,
+        Tcp,
+        Terminal,
+        Time,
+    ]
     match callBuiltinFast(name, args)
         Option.Some(result) -> result
         Option.None -> match String.startsWith(name, "List.")
             true -> Domain.Builtins.List.call(name, args)
             false -> callBuiltinAfterList(name, args)
+
+verify callBuiltin
+    callBuiltin("List.len", [Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Result.Ok(Val.ValInt(2))
+    callBuiltin("Result.Ok", [Val.ValInt(5)]) => Result.Ok(Val.ValOk(Val.ValInt(5)))
 
 fn callBuiltinFast(name: String, args: List<Val>) -> Option<Result<Val, String>>
     ? "Fast exact-match dispatch for the hottest builtins."
@@ -41,7 +56,18 @@ fn callBuiltinFast(name: String, args: List<Val>) -> Option<Result<Val, String>>
 
 fn callBuiltinAfterList(name: String, args: List<Val>) -> Result<Val, String>
     ? "Continue dispatch after List."
-    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    ! [
+        Args,
+        Console,
+        Disk,
+        Env,
+        Http,
+        HttpServer,
+        Random,
+        Tcp,
+        Terminal,
+        Time,
+    ]
     match String.startsWith(name, "Vector.")
         true -> Domain.Builtins.Vector.call(name, args)
         false -> match String.startsWith(name, "Int.")
@@ -52,13 +78,20 @@ fn callBuiltinAfterList(name: String, args: List<Val>) -> Result<Val, String>
                     true -> Domain.Builtins.Primitives.callFloat(name, args)
                     false -> callBuiltinOther(name, args)
 
-verify callBuiltin
-    callBuiltin("List.len", [Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Result.Ok(Val.ValInt(2))
-    callBuiltin("Result.Ok", [Val.ValInt(5)]) => Result.Ok(Val.ValOk(Val.ValInt(5)))
-
 fn callBuiltinOther(name: String, args: List<Val>) -> Result<Val, String>
     ? "Handle non-prefixed builtins: Result.*, Option.*, Bool.*, Map.*, services, Char, variant constructors."
-    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    ! [
+        Args,
+        Console,
+        Disk,
+        Env,
+        Http,
+        HttpServer,
+        Random,
+        Tcp,
+        Terminal,
+        Time,
+    ]
     match name
         "Char.fromCode" -> Domain.Builtins.Primitives.callChar(name, args)
         "Char.toCode" -> Domain.Builtins.Primitives.callChar(name, args)
@@ -74,6 +107,8 @@ fn callBuiltinOther(name: String, args: List<Val>) -> Result<Val, String>
         "Disk.delete" -> builtinDiskDelete(args)
         "Disk.deleteDir" -> builtinDiskDeleteDir(args)
         "Disk.makeDir" -> builtinDiskMakeDir(args)
+        "Env.get" -> builtinEnvGet(args)
+        "Env.set" -> builtinEnvSet(args)
         "Args.get" -> builtinArgsGet(args)
         "Result.Ok" -> Domain.Builtins.Wrappers.call(name, args)
         "Result.Err" -> Domain.Builtins.Wrappers.call(name, args)
@@ -143,6 +178,30 @@ fn builtinArgsGet(args: List<Val>) -> Result<Val, String>
     ! [Args.get]
     rawArgs = Args.get()
     Result.Ok(Val.ValList(stringsToVals(rawArgs, [])))
+
+fn builtinEnvGet(args: List<Val>) -> Result<Val, String>
+    ? "Env.get(key) -> Option<String>."
+    ! [Env.get]
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    key = Domain.Builtins.Helpers.expectStr(v)?
+    match Env.get(key)
+        Option.Some(value) -> Result.Ok(Val.ValSome(Val.ValStr(value)))
+        Option.None -> Result.Ok(Val.ValNone)
+
+fn builtinEnvSet(args: List<Val>) -> Result<Val, String>
+    ? "Env.set(key, value) -> Unit."
+    ! [Env.set]
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (keyV, valueV) -> builtinEnvSetInner(keyV, valueV)
+
+fn builtinEnvSetInner(keyV: Val, valueV: Val) -> Result<Val, String>
+    ? "Inner Env.set."
+    ! [Env.set]
+    key = Domain.Builtins.Helpers.expectStr(keyV)?
+    value = Domain.Builtins.Helpers.expectStr(valueV)?
+    Env.set(key, value)
+    Result.Ok(Val.ValUnit)
 
 fn stringsToVals(strs: List<String>, acc: List<Val>) -> List<Val>
     ? "Convert list of strings to list of ValStr."
@@ -225,7 +284,15 @@ fn builtinMapRemoveInner(mapV: Val, keyV: Val) -> Result<Val, String>
 
 fn callBuiltinServices(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch Terminal.*, Time.*, Random.*, Http.*, Tcp.* service builtins."
-    ! [Http, Random, Tcp, Terminal, Time]
+    ! [
+        Env,
+        Http,
+        HttpServer,
+        Random,
+        Tcp,
+        Terminal,
+        Time,
+    ]
     match name
         "Random.int" -> builtinRandomInt(args)
         "Time.now" -> builtinTimeNow(args)
@@ -237,6 +304,8 @@ fn callBuiltinServices(name: String, args: List<Val>) -> Result<Val, String>
         "Http.post" -> builtinHttpBody(args, "post")
         "Http.put" -> builtinHttpBody(args, "put")
         "Http.patch" -> builtinHttpBody(args, "patch")
+        "HttpServer.listen" -> builtinHttpServerListen(args)
+        "HttpServer.listenWith" -> builtinHttpServerListenWith(args)
         "Tcp.send" -> builtinTcpSend(args)
         "Tcp.ping" -> builtinTcpPing(args)
         "Tcp.connect" -> builtinTcpConnect(args)
@@ -256,6 +325,44 @@ fn callBuiltinServices(name: String, args: List<Val>) -> Result<Val, String>
         "Terminal.setColor" -> builtinTerminalSetColor(args)
         "Terminal.moveTo" -> builtinTerminalMoveTo(args)
         _ -> tryVariantConstructor(name, args)
+
+fn builtinUnsupportedHostService(name: String) -> Result<Val, String>
+    ? "Fail explicitly for host services that still need callback/runtime bridging in the self-host."
+    Result.Err("{name} is not supported in the self-hosted interpreter yet")
+
+fn builtinHttpServerListen(args: List<Val>) -> Result<Val, String>
+    ? "HttpServer.listen(port, handler) through the generated self-host runtime bridge."
+    ! [HttpServer.listen]
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (portV, handlerV) -> builtinHttpServerListenInner(portV, handlerV)
+
+fn builtinHttpServerListenInner(portV: Val, handlerV: Val) -> Result<Val, String>
+    ? "Inner HttpServer.listen bridge."
+    ! [HttpServer.listen]
+    port = Domain.Builtins.Helpers.expectInt(portV)?
+    match SelfHostRuntime.httpServerListen(port, handlerV)
+        Result.Ok(_) -> Result.Ok(Val.ValUnit)
+        Result.Err(e) -> Result.Err(e)
+
+fn builtinHttpServerListenWith(args: List<Val>) -> Result<Val, String>
+    ? "HttpServer.listenWith(port, context, handler) through the generated self-host runtime bridge."
+    ! [HttpServer.listenWith]
+    match args
+        [portV, ..rest1] -> match rest1
+            [contextV, ..rest2] -> match rest2
+                [handlerV, ..ignored] -> builtinHttpServerListenWithInner(portV, contextV, handlerV)
+                _ -> Result.Err("HttpServer.listenWith takes 3 arguments")
+            _ -> Result.Err("HttpServer.listenWith takes 3 arguments")
+        _ -> Result.Err("HttpServer.listenWith takes 3 arguments")
+
+fn builtinHttpServerListenWithInner(portV: Val, contextV: Val, handlerV: Val) -> Result<Val, String>
+    ? "Inner HttpServer.listenWith bridge."
+    ! [HttpServer.listenWith]
+    port = Domain.Builtins.Helpers.expectInt(portV)?
+    match SelfHostRuntime.httpServerListenWith(port, contextV, handlerV)
+        Result.Ok(_) -> Result.Ok(Val.ValUnit)
+        Result.Err(e) -> Result.Err(e)
 
 fn builtinRandomInt(args: List<Val>) -> Result<Val, String>
     ? "Random.int(min, max) -> random integer."
@@ -495,6 +602,11 @@ fn builtinBoolOr(args: List<Val>) -> Result<Val, String>
     match pair
         (aV, bV) -> builtinBoolOrInner(aV, bV)
 
+verify builtinBoolOr
+    builtinBoolOr([Val.ValBool(true), Val.ValBool(false)]) => Result.Ok(Val.ValBool(true))
+    builtinBoolOr([Val.ValBool(false), Val.ValBool(false)]) => Result.Ok(Val.ValBool(false))
+    builtinBoolOr([Val.ValBool(false), Val.ValBool(true)]) => Result.Ok(Val.ValBool(true))
+
 fn builtinBoolOrInner(aV: Val, bV: Val) -> Result<Val, String>
     ? "Inner Bool.or."
     match aV
@@ -505,16 +617,15 @@ fn builtinBoolOrInner(aV: Val, bV: Val) -> Result<Val, String>
             _ -> Result.Err("Bool.or requires Bool arguments")
         _ -> Result.Err("Bool.or requires Bool arguments")
 
-verify builtinBoolOr
-    builtinBoolOr([Val.ValBool(true), Val.ValBool(false)]) => Result.Ok(Val.ValBool(true))
-    builtinBoolOr([Val.ValBool(false), Val.ValBool(false)]) => Result.Ok(Val.ValBool(false))
-    builtinBoolOr([Val.ValBool(false), Val.ValBool(true)]) => Result.Ok(Val.ValBool(true))
-
 fn builtinBoolAnd(args: List<Val>) -> Result<Val, String>
     ? "Bool.and(a, b) -> a && b."
     pair = Domain.Builtins.Helpers.twoArgs(args)?
     match pair
         (aV, bV) -> builtinBoolAndInner(aV, bV)
+
+verify builtinBoolAnd
+    builtinBoolAnd([Val.ValBool(true), Val.ValBool(true)]) => Result.Ok(Val.ValBool(true))
+    builtinBoolAnd([Val.ValBool(true), Val.ValBool(false)]) => Result.Ok(Val.ValBool(false))
 
 fn builtinBoolAndInner(aV: Val, bV: Val) -> Result<Val, String>
     ? "Inner Bool.and."
@@ -525,10 +636,6 @@ fn builtinBoolAndInner(aV: Val, bV: Val) -> Result<Val, String>
                 false -> Result.Ok(Val.ValBool(false))
             _ -> Result.Err("Bool.and requires Bool arguments")
         _ -> Result.Err("Bool.and requires Bool arguments")
-
-verify builtinBoolAnd
-    builtinBoolAnd([Val.ValBool(true), Val.ValBool(true)]) => Result.Ok(Val.ValBool(true))
-    builtinBoolAnd([Val.ValBool(true), Val.ValBool(false)]) => Result.Ok(Val.ValBool(false))
 
 fn builtinBoolNot(args: List<Val>) -> Result<Val, String>
     ? "Bool.not(a) -> negation."

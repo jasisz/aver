@@ -31,10 +31,19 @@ fn main() {
             verify,
             record,
             vm,
+            self_host,
             profile,
             program_args,
         } => {
-            if *vm || *profile {
+            if *self_host {
+                commands::cmd_run_self_hosted(
+                    file,
+                    module_root.as_deref(),
+                    *verify,
+                    record.as_deref(),
+                    program_args.clone(),
+                );
+            } else if *vm || *profile {
                 commands::cmd_run_vm(
                     file,
                     module_root.as_deref(),
@@ -77,8 +86,9 @@ fn main() {
             test,
             check_args,
             vm,
+            self_host,
         } => {
-            replay_cmd::cmd_replay(recording, *diff, *test, *check_args, *vm);
+            replay_cmd::cmd_replay(recording, *diff, *test, *check_args, *vm, *self_host);
         }
         Commands::Repl => {
             repl::cmd_repl();

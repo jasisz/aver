@@ -17,6 +17,8 @@ Options:
   -o, --output <OUTPUT>            Output directory for the generated project
       --name <NAME>                Project name (default: derived from file name)
       --module-root <MODULE_ROOT>  Resolve `depends [...]` from this root (default: current working directory)
+      --with-replay                Emit optional record/replay runtime support
+      --guest-entry <GUEST_ENTRY>  Scope replay/policy to this generated guest entry (requires --with-replay)
 ```
 
 ## `aver proof`

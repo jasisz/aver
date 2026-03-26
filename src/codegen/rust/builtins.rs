@@ -25,7 +25,6 @@ fn builtin_needs_str_conversion(name: &str) -> bool {
         name,
         "Console.readLine"
             | "Time.now"
-            | "Args.get"
             | "Int.toString"
             | "Float.toString"
             | "Int.parse"
@@ -60,7 +59,6 @@ fn builtin_needs_str_conversion(name: &str) -> bool {
             | "Disk.listDir"
             | "Disk.makeDir"
             | "Env.get"
-            | "Env.set"
             | "Terminal.readKey"
             | "Http.get"
             | "Http.head"
@@ -78,9 +76,17 @@ fn builtin_needs_str_conversion(name: &str) -> bool {
     )
 }
 
+fn builtin_effect_name(name: &str) -> &str {
+    match name {
+        "SelfHostRuntime.httpServerListen" => "HttpServer.listen",
+        "SelfHostRuntime.httpServerListenWith" => "HttpServer.listenWith",
+        _ => name,
+    }
+}
+
 fn builtin_is_effectful(name: &str) -> bool {
     matches!(
-        name.split('.').next(),
+        builtin_effect_name(name).split('.').next(),
         Some(
             "Args"
                 | "Console"
@@ -89,6 +95,7 @@ fn builtin_is_effectful(name: &str) -> bool {
                 | "Disk"
                 | "Env"
                 | "Random"
+                | "SelfHostRuntime"
                 | "Tcp"
                 | "Terminal"
                 | "Time"
@@ -118,11 +125,19 @@ fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option
             args[0], args[1], args[2], args[3]
         )),
         "HttpServer.listen" => Some(format!(
-            "{{ if let Err(e) = aver_rt::http_server::listen({}, {}) {{ panic!(\"{{}}\", e); }} }}",
+            "{{ if let Err(e) = crate::http_server_listen({}, {}) {{ panic!(\"{{}}\", e); }} }}",
             args[0], args[1]
         )),
         "HttpServer.listenWith" => Some(format!(
-            "{{ if let Err(e) = aver_rt::http_server::listen_with({}, {}.clone(), {}) {{ panic!(\"{{}}\", e); }} }}",
+            "{{ if let Err(e) = crate::http_server_listen_with({}, {}.clone(), {}) {{ panic!(\"{{}}\", e); }} }}",
+            args[0], args[1], args[2]
+        )),
+        "SelfHostRuntime.httpServerListen" => Some(format!(
+            "crate::self_host_http_server_listen({}, {})",
+            args[0], args[1]
+        )),
+        "SelfHostRuntime.httpServerListenWith" => Some(format!(
+            "crate::self_host_http_server_listen_with({}, {}.clone(), {})",
             args[0], args[1], args[2]
         )),
         "Disk.readText" => Some(format!("aver_rt::read_text(&{})", args[0])),
@@ -138,7 +153,7 @@ fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option
             "aver_rt::env_set(&{}, &{}).expect(\"Env.set failed\")",
             args[0], args[1]
         )),
-        "Args.get" => Some("aver_rt::cli_args()".to_string()),
+        "Args.get" => Some("aver_replay::current_cli_args()".to_string()),
         "Time.now" => Some("aver_rt::time_now()".to_string()),
         "Time.unixMs" => Some("aver_rt::time_unix_ms()".to_string()),
         "Time.sleep" => Some(format!("aver_rt::time_sleep({})", args[0])),
@@ -190,6 +205,7 @@ fn emit_replay_effect_call(
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> Option<String> {
+    let effect_name = builtin_effect_name(name);
     let arg_ctxs = compute_args_used_after_with_rc(
         args,
         &ectx.used_after,
@@ -212,10 +228,10 @@ fn emit_replay_effect_call(
         let emitted = clone_arg(arg, ctx, &arg_ctxs[idx]);
         lines.push(format!("    let {} = {};", temp_names[idx], emitted));
     }
-    let json_args = emit_replay_effect_arg_json(name, &temp_names).join(", ");
+    let json_args = emit_replay_effect_arg_json(effect_name, &temp_names).join(", ");
     lines.push(format!(
         "    aver_replay::invoke_effect({:?}, vec![{}], || {})",
-        name, json_args, final_result
+        effect_name, json_args, final_result
     ));
     lines.push("}".to_string());
     Some(lines.join("\n"))
@@ -851,7 +867,7 @@ fn emit_builtin_call_inner(
             let port = emit_arg(0);
             let handler = emit_arg(1);
             Some(format!(
-                "{{ if let Err(e) = aver_rt::http_server::listen({}, {}) {{ panic!(\"{{}}\", e); }} }}",
+                "{{ if let Err(e) = crate::http_server_listen({}, {}) {{ panic!(\"{{}}\", e); }} }}",
                 port, handler
             ))
         }
@@ -860,7 +876,24 @@ fn emit_builtin_call_inner(
             let context = emit_arg(1);
             let handler = emit_arg(2);
             Some(format!(
-                "{{ if let Err(e) = aver_rt::http_server::listen_with({}, {}.clone(), {}) {{ panic!(\"{{}}\", e); }} }}",
+                "{{ if let Err(e) = crate::http_server_listen_with({}, {}.clone(), {}) {{ panic!(\"{{}}\", e); }} }}",
+                port, context, handler
+            ))
+        }
+        "SelfHostRuntime.httpServerListen" => {
+            let port = emit_arg(0);
+            let handler = emit_arg(1);
+            Some(format!(
+                "crate::self_host_http_server_listen({}, {})",
+                port, handler
+            ))
+        }
+        "SelfHostRuntime.httpServerListenWith" => {
+            let port = emit_arg(0);
+            let context = emit_arg(1);
+            let handler = emit_arg(2);
+            Some(format!(
+                "crate::self_host_http_server_listen_with({}, {}.clone(), {})",
                 port, context, handler
             ))
         }
@@ -914,7 +947,7 @@ fn emit_builtin_call_inner(
                 key, value
             ))
         }
-        "Args.get" => Some("aver_rt::cli_args()".to_string()),
+        "Args.get" => Some("aver_rt::cli_args().into_aver()".to_string()),
 
         // ---- Time ----
         "Time.now" => Some("aver_rt::time_now()".to_string()),
@@ -1005,6 +1038,7 @@ mod tests {
             policy: None,
             emit_replay_runtime: false,
             guest_entry: None,
+            emit_self_host_runtime: false,
         }
     }
 

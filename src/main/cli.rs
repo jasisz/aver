@@ -96,6 +96,9 @@ pub(super) enum Commands {
         /// Execute using the bytecode VM instead of the tree-walking interpreter
         #[arg(long)]
         vm: bool,
+        /// Execute using the self-hosted Aver interpreter compiled to Rust
+        #[arg(long, conflicts_with_all = ["vm", "profile"])]
+        self_host: bool,
         /// Print VM opcode/function profile after execution (implies --vm)
         #[arg(long)]
         profile: bool,
@@ -152,6 +155,9 @@ pub(super) enum Commands {
         /// Replay using the bytecode VM instead of the tree-walking interpreter
         #[arg(long)]
         vm: bool,
+        /// Replay using the self-hosted Aver interpreter compiled to Rust
+        #[arg(long, conflicts_with = "vm")]
+        self_host: bool,
     },
     /// Interactive REPL
     Repl,
@@ -247,10 +253,37 @@ mod tests {
     }
 
     #[test]
+    fn run_accepts_self_host_flag() {
+        let cli = Cli::parse_from(["aver", "run", "examples/modules/app.av", "--self-host"]);
+        match cli.command {
+            Commands::Run { self_host, vm, .. } => {
+                assert!(self_host);
+                assert!(!vm);
+            }
+            _ => panic!("expected run command"),
+        }
+    }
+
+    #[test]
     fn replay_accepts_vm_flag() {
         let cli = Cli::parse_from(["aver", "replay", "recordings", "--vm"]);
         match cli.command {
-            Commands::Replay { vm, .. } => assert!(vm),
+            Commands::Replay { vm, self_host, .. } => {
+                assert!(vm);
+                assert!(!self_host);
+            }
+            _ => panic!("expected replay command"),
+        }
+    }
+
+    #[test]
+    fn replay_accepts_self_host_flag() {
+        let cli = Cli::parse_from(["aver", "replay", "recordings", "--self-host"]);
+        match cli.command {
+            Commands::Replay { self_host, vm, .. } => {
+                assert!(self_host);
+                assert!(!vm);
+            }
             _ => panic!("expected replay command"),
         }
     }

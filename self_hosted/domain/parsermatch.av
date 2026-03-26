@@ -10,6 +10,10 @@ fn tokenAt(tokens: List<Token>, pos: Int) -> Token
     ? "Token at position, or TkEof if past end."
     tokenAtWalk(tokens, pos, 0)
 
+verify tokenAt
+    tokenAt([Token.TkPlus, Token.TkEof], 0) => Token.TkPlus
+    tokenAt([Token.TkEof], 5) => Token.TkEof
+
 fn tokenAtWalk(tokens: List<Token>, target: Int, idx: Int) -> Token
     ? "Walk the list to find token at target index."
     match tokens
@@ -17,10 +21,6 @@ fn tokenAtWalk(tokens: List<Token>, target: Int, idx: Int) -> Token
         [t, ..rest] -> match idx == target
             true -> t
             false -> tokenAtWalk(rest, target, idx + 1)
-
-verify tokenAt
-    tokenAt([Token.TkPlus, Token.TkEof], 0) => Token.TkPlus
-    tokenAt([Token.TkEof], 5) => Token.TkEof
 
 fn isToken(t: Token, expected: Token) -> Bool
     ? "Check if token matches expected (structural equality via repr)."

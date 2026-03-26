@@ -412,6 +412,7 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
     use std::hash::Hash;
     use std::path::PathBuf;
 
+    use crate::IntoAverStr;
     use serde::{Deserialize, Serialize};
     use serde_json::Value as ReplayJson;
 
@@ -703,9 +704,15 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
     }
 
     #[derive(Clone)]
+    struct ActiveScope {
+        mode: ScopeMode,
+        guest_args: Option<aver_rt::AverList<crate::AverStr>>,
+    }
+
+    #[derive(Clone)]
     enum ScopeState {
         Inactive,
-        Active(ScopeMode),
+        Active(ActiveScope),
     }
 
     thread_local! {
@@ -725,12 +732,61 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
         T: ReplayValue,
         F: FnOnce() -> T,
     {
+        with_guest_scope_args_inner(entry_fn, input, None, run)
+    }
+
+    pub fn with_guest_scope_result<T, E, F>(entry_fn: &str, input: ReplayJson, run: F) -> Result<T, E>
+    where
+        T: ReplayValue,
+        E: aver_rt::AverDisplay,
+        F: FnOnce() -> Result<T, E>,
+    {
+        with_guest_scope_result_args_inner(entry_fn, input, None, run)
+    }
+
+    pub fn with_guest_scope_args<T, F>(
+        entry_fn: &str,
+        input: ReplayJson,
+        guest_args: aver_rt::AverList<crate::AverStr>,
+        run: F,
+    ) -> T
+    where
+        T: ReplayValue,
+        F: FnOnce() -> T,
+    {
+        with_guest_scope_args_inner(entry_fn, input, Some(guest_args), run)
+    }
+
+    pub fn with_guest_scope_args_result<T, E, F>(
+        entry_fn: &str,
+        input: ReplayJson,
+        guest_args: aver_rt::AverList<crate::AverStr>,
+        run: F,
+    ) -> Result<T, E>
+    where
+        T: ReplayValue,
+        E: aver_rt::AverDisplay,
+        F: FnOnce() -> Result<T, E>,
+    {
+        with_guest_scope_result_args_inner(entry_fn, input, Some(guest_args), run)
+    }
+
+    fn with_guest_scope_args_inner<T, F>(
+        entry_fn: &str,
+        input: ReplayJson,
+        guest_args: Option<aver_rt::AverList<crate::AverStr>>,
+        run: F,
+    ) -> T
+    where
+        T: ReplayValue,
+        F: FnOnce() -> T,
+    {
         if scope_is_active() {
             return run();
         }
 
         let mode = load_scope_mode(entry_fn, input.clone());
-        activate_scope(mode.clone());
+        activate_scope(mode.clone(), guest_args);
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
         match result {
@@ -746,6 +802,59 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
                 std::panic::resume_unwind(payload);
             }
         }
+    }
+
+    fn with_guest_scope_result_args_inner<T, E, F>(
+        entry_fn: &str,
+        input: ReplayJson,
+        guest_args: Option<aver_rt::AverList<crate::AverStr>>,
+        run: F,
+    ) -> Result<T, E>
+    where
+        T: ReplayValue,
+        E: aver_rt::AverDisplay,
+        F: FnOnce() -> Result<T, E>,
+    {
+        if scope_is_active() {
+            return run();
+        }
+
+        let mode = load_scope_mode(entry_fn, input.clone());
+        activate_scope(mode.clone(), guest_args);
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
+        match result {
+            Ok(Ok(value)) => {
+                finish_scope_success(&value);
+                clear_scope();
+                Ok(value)
+            }
+            Ok(Err(err)) => {
+                finish_scope_error(entry_fn, &err);
+                clear_scope();
+                Err(err)
+            }
+            Err(payload) => {
+                let panic_message = panic_payload_to_string(&payload);
+                finish_scope_panic(&panic_message);
+                clear_scope();
+                std::panic::resume_unwind(payload);
+            }
+        }
+    }
+
+    pub fn current_cli_args() -> aver_rt::AverList<crate::AverStr> {
+        SCOPE_STATE.with(|cell| match &*cell.borrow() {
+            ScopeState::Inactive => aver_rt::cli_args().into_aver(),
+            ScopeState::Active(scope) => match &scope.guest_args {
+                Some(args) => args.clone(),
+                None => aver_rt::cli_args().into_aver(),
+            },
+        })
+    }
+
+    pub fn is_record_mode() -> bool {
+        matches!(current_scope_mode(), Some(ScopeMode::Record { .. }))
     }
 
     pub fn invoke_effect<T, F>(effect_type: &str, args: Vec<ReplayJson>, call: F) -> T
@@ -767,16 +876,16 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
                     value: result.to_replay_json(),
                 };
                 SCOPE_STATE.with(|cell| {
-                    if let ScopeState::Active(ScopeMode::Record { session, .. }) =
-                        &mut *cell.borrow_mut()
-                    {
-                        let seq = session.effects.len() as u32 + 1;
-                        session.effects.push(EffectRecord {
-                            seq,
-                            effect_type: effect_type.to_string(),
-                            args,
-                            outcome,
-                        });
+                    if let ScopeState::Active(scope) = &mut *cell.borrow_mut() {
+                        if let ScopeMode::Record { session, .. } = &mut scope.mode {
+                            let seq = session.effects.len() as u32 + 1;
+                            session.effects.push(EffectRecord {
+                                seq,
+                                effect_type: effect_type.to_string(),
+                                args,
+                                outcome,
+                            });
+                        }
                     }
                 });
                 result
@@ -835,13 +944,13 @@ __POLICY_CHECK__
     fn current_scope_mode() -> Option<ScopeMode> {
         SCOPE_STATE.with(|cell| match &*cell.borrow() {
             ScopeState::Inactive => None,
-            ScopeState::Active(mode) => Some(mode.clone()),
+            ScopeState::Active(scope) => Some(scope.mode.clone()),
         })
     }
 
-    fn activate_scope(mode: ScopeMode) {
+    fn activate_scope(mode: ScopeMode, guest_args: Option<aver_rt::AverList<crate::AverStr>>) {
         SCOPE_STATE.with(|cell| {
-            *cell.borrow_mut() = ScopeState::Active(mode);
+            *cell.borrow_mut() = ScopeState::Active(ActiveScope { mode, guest_args });
         });
     }
 
@@ -851,7 +960,12 @@ __POLICY_CHECK__
         });
     }
 
+    fn replay_entry_name(entry_fn: &str) -> String {
+        env_var("AVER_REPLAY_ENTRY_FN").unwrap_or_else(|| entry_fn.to_string())
+    }
+
     fn load_scope_mode(entry_fn: &str, input: ReplayJson) -> ScopeMode {
+        let logical_entry_fn = replay_entry_name(entry_fn);
         let record_path = env_var("AVER_REPLAY_RECORD");
         let replay_path = env_var("AVER_REPLAY_REPLAY");
         if record_path.is_some() && replay_path.is_some() {
@@ -863,10 +977,10 @@ __POLICY_CHECK__
                 .unwrap_or_else(|e| panic!("Cannot read replay recording '{}': {}", path, e));
             let session: SessionRecording = serde_json::from_str(&raw)
                 .unwrap_or_else(|e| panic!("Invalid replay recording '{}': {}", path, e));
-            if session.entry_fn != entry_fn {
+            if session.entry_fn != logical_entry_fn {
                 panic!(
                     "Replay entry mismatch: recording expects '{}', generated guest scope is '{}'",
-                    session.entry_fn, entry_fn
+                    session.entry_fn, logical_entry_fn
                 );
             }
             return ScopeMode::Replay {
@@ -892,7 +1006,7 @@ __POLICY_CHECK__
                     timestamp,
                     program_file,
                     module_root,
-                    entry_fn: entry_fn.to_string(),
+                    entry_fn: logical_entry_fn,
                     input,
                     effects: Vec::new(),
                     output: RecordedOutcome::Value {
@@ -908,10 +1022,10 @@ __POLICY_CHECK__
     fn finish_scope_success<T: ReplayValue>(value: &T) {
         SCOPE_STATE.with(|cell| {
             let mut state = cell.borrow_mut();
-            let ScopeState::Active(mode) = &mut *state else {
+            let ScopeState::Active(scope) = &mut *state else {
                 return;
             };
-            match mode {
+            match &mut scope.mode {
                 ScopeMode::Normal => {}
                 ScopeMode::Record { path, session } => {
                     session.output = RecordedOutcome::Value {
@@ -944,13 +1058,62 @@ __POLICY_CHECK__
         });
     }
 
+    fn returned_error_message<E: aver_rt::AverDisplay>(entry_fn: &str, err: &E) -> String {
+        let logical_entry_fn = replay_entry_name(entry_fn);
+        if logical_entry_fn == "main" {
+            format!("Main returned error: {}", err.aver_display())
+        } else {
+            format!("{} returned error: {}", logical_entry_fn, err.aver_display())
+        }
+    }
+
+    fn finish_scope_error<E: aver_rt::AverDisplay>(entry_fn: &str, err: &E) {
+        let message = returned_error_message(entry_fn, err);
+        SCOPE_STATE.with(|cell| {
+            let mut state = cell.borrow_mut();
+            let ScopeState::Active(scope) = &mut *state else {
+                return;
+            };
+            match &mut scope.mode {
+                ScopeMode::Normal => {}
+                ScopeMode::Record { path, session } => {
+                    session.output = RecordedOutcome::RuntimeError {
+                        message: message.clone(),
+                    };
+                    write_recording(path, session);
+                }
+                ScopeMode::Replay {
+                    session,
+                    position,
+                    ..
+                } => {
+                    if *position != session.effects.len() {
+                        panic!(
+                            "Replay finished with {} unconsumed recorded effect(s)",
+                            session.effects.len().saturating_sub(*position)
+                        );
+                    }
+                    let actual = RecordedOutcome::RuntimeError {
+                        message: message.clone(),
+                    };
+                    if actual != session.output {
+                        panic!(
+                            "Replay output mismatch for '{}': expected {:?}, got {:?}",
+                            session.entry_fn, session.output, actual
+                        );
+                    }
+                }
+            }
+        });
+    }
+
     fn finish_scope_panic(message: &str) {
         SCOPE_STATE.with(|cell| {
             let mut state = cell.borrow_mut();
-            let ScopeState::Active(mode) = &mut *state else {
+            let ScopeState::Active(scope) = &mut *state else {
                 return;
             };
-            match mode {
+            match &mut scope.mode {
                 ScopeMode::Normal => {}
                 ScopeMode::Record { path, session } => {
                     session.output = RecordedOutcome::RuntimeError {
@@ -986,11 +1149,15 @@ __POLICY_CHECK__
     fn replay_effect<T: ReplayValue>(effect_type: &str, args: Vec<ReplayJson>) -> T {
         let record = SCOPE_STATE.with(|cell| {
             let mut state = cell.borrow_mut();
-            let ScopeState::Active(ScopeMode::Replay {
+            let ScopeState::Active(scope) = &mut *state
+            else {
+                panic!("replay scope is not active");
+            };
+            let ScopeMode::Replay {
                 session,
                 position,
                 check_args,
-            }) = &mut *state
+            } = &mut scope.mode
             else {
                 panic!("replay scope is not active");
             };

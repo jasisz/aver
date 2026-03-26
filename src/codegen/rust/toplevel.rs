@@ -6,12 +6,50 @@ use super::liveness::{
 use super::types::type_annotation_to_rust;
 use crate::ast::*;
 use crate::codegen::CodegenContext;
+use crate::types::{Type, parse_type_str};
 /// Top-level Aver items → Rust items (structs, enums, functions, tests).
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 fn visibility_prefix(public: bool) -> &'static str {
     if public { "pub " } else { "" }
+}
+
+fn indent_block(block: &str, levels: usize) -> String {
+    let indent = "    ".repeat(levels);
+    block
+        .lines()
+        .map(|line| {
+            if line.is_empty() {
+                String::new()
+            } else {
+                format!("{indent}{line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn guest_args_param(fd: &FnDef) -> Option<String> {
+    fd.params.iter().find_map(|(name, type_ann)| {
+        (name == "guestArgs" && parse_type_str(type_ann) == Type::List(Box::new(Type::Str)))
+            .then(|| aver_name_to_rust(name))
+    })
+}
+
+fn self_host_runtime_state(fd: &FnDef) -> Option<(String, String)> {
+    let prog = fd
+        .params
+        .iter()
+        .find_map(|(name, _)| (name == "prog").then(|| aver_name_to_rust(name)));
+    let module_fns = fd
+        .params
+        .iter()
+        .find_map(|(name, _)| (name == "moduleFns").then(|| aver_name_to_rust(name)));
+    match (prog, module_fns) {
+        (Some(prog), Some(module_fns)) => Some((prog, module_fns)),
+        _ => None,
+    }
 }
 
 /// Emit a Rust struct or enum from an Aver TypeDef.
@@ -347,32 +385,80 @@ fn emit_fn_def_with_visibility(
     let ectx = build_fn_ectx(fd, ctx);
     let use_memo = is_memo && fn_supports_rust_memo(fd, ctx);
     let is_guest_entry = ctx.guest_entry.as_deref() == Some(fd.name.as_str());
+    let guest_args_name = if is_guest_entry {
+        guest_args_param(fd)
+    } else {
+        None
+    };
+    let self_host_state = if is_guest_entry && ctx.emit_self_host_runtime {
+        self_host_runtime_state(fd)
+    } else {
+        None
+    };
 
     if ctx.emit_replay_runtime && is_guest_entry {
-        let input_args = fd
-            .params
-            .iter()
-            .map(|(name, _)| {
-                format!(
-                    "aver_replay::ReplayValue::to_replay_json(&{})",
-                    aver_name_to_rust(name)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
         lines.push(format!(
             "{}fn {}({}) -> {} {{",
             visibility, fn_name, params, ret_type
         ));
-        lines.push(format!(
-            "    let __replay_input = aver_replay::entry_input(vec![{}]);",
-            input_args
-        ));
-        lines.push(format!(
-            "    aver_replay::with_guest_scope({:?}, __replay_input, || {{",
-            fd.name
-        ));
-        lines.push(emit_fn_body(&fd.body, ctx, &ectx));
+        match &guest_args_name {
+            Some(guest_args) => {
+                lines.push(format!(
+                    "    let __replay_input = aver_replay::ReplayValue::to_replay_json(&{});",
+                    guest_args
+                ));
+                if fd.return_type.starts_with("Result<") {
+                    lines.push(format!(
+                        "    aver_replay::with_guest_scope_args_result({:?}, __replay_input, {}.clone(), || {{",
+                        fd.name, guest_args
+                    ));
+                } else {
+                    lines.push(format!(
+                        "    aver_replay::with_guest_scope_args({:?}, __replay_input, {}.clone(), || {{",
+                        fd.name, guest_args
+                    ));
+                }
+            }
+            None => {
+                let input_args = fd
+                    .params
+                    .iter()
+                    .map(|(name, _)| {
+                        format!(
+                            "aver_replay::ReplayValue::to_replay_json(&{})",
+                            aver_name_to_rust(name)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                lines.push(format!(
+                    "    let __replay_input = aver_replay::entry_input(vec![{}]);",
+                    input_args
+                ));
+                if fd.return_type.starts_with("Result<") {
+                    lines.push(format!(
+                        "    aver_replay::with_guest_scope_result({:?}, __replay_input, || {{",
+                        fd.name
+                    ));
+                } else {
+                    lines.push(format!(
+                        "    aver_replay::with_guest_scope({:?}, __replay_input, || {{",
+                        fd.name
+                    ));
+                }
+            }
+        }
+        if let Some((prog_name, module_fns_name)) = &self_host_state {
+            lines.push(format!(
+                "        let __self_host_fns = crate::aver_generated::domain::eval::fnsToStore(aver_rt::AverList::concat(&{}.clone(), &{}.fns.clone()));",
+                module_fns_name, prog_name
+            ));
+            lines.push("        crate::with_self_host_fn_store(__self_host_fns, || {".to_string());
+            lines.push(indent_block(&emit_fn_body(&fd.body, ctx, &ectx), 3));
+            lines.push("        })".to_string());
+        } else {
+            lines.push(emit_fn_body(&fd.body, ctx, &ectx));
+        }
         lines.push("    })".to_string());
         lines.push("}".to_string());
         return lines.join("\n");
@@ -1553,11 +1639,19 @@ fn emit_main_with_visibility(
 
     let guest_wrap_main = ctx.emit_replay_runtime && ctx.guest_entry.as_deref() == Some("main");
     if guest_wrap_main {
-        writeln!(
-            out,
-            "    aver_replay::with_guest_scope(\"main\", serde_json::Value::Null, || {{"
-        )
-        .unwrap();
+        if returns_result {
+            writeln!(
+                out,
+                "    aver_replay::with_guest_scope_result(\"main\", serde_json::Value::Null, || {{"
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                out,
+                "    aver_replay::with_guest_scope(\"main\", serde_json::Value::Null, || {{"
+            )
+            .unwrap();
+        }
     }
 
     // Top-level statements first
@@ -1669,6 +1763,7 @@ mod tests {
             policy: None,
             emit_replay_runtime: false,
             guest_entry: None,
+            emit_self_host_runtime: false,
         }
     }
 
