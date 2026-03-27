@@ -5,7 +5,7 @@ use super::liveness::{
 };
 use super::types::type_annotation_to_rust;
 use crate::ast::*;
-use crate::codegen::CodegenContext;
+use crate::codegen::{CodegenContext, EmissionStyle};
 use crate::types::{Type, parse_type_str};
 /// Top-level Aver items → Rust items (structs, enums, functions, tests).
 use std::collections::{HashMap, HashSet};
@@ -1020,17 +1020,23 @@ fn emit_tco_expr(
             let subj = clone_arg(subject, ctx, &subj_ectx);
 
             // Bool match → if/else in TCO context
-            if let Some(code) =
-                try_emit_tco_bool_if_else(&subj, arms, self_name, params, ctx, ectx, rc_indices)
+            if matches!(ctx.emission_style, EmissionStyle::Optimized)
+                && let Some(code) =
+                    try_emit_tco_bool_if_else(&subj, arms, self_name, params, ctx, ectx, rc_indices)
             {
                 return code;
             }
 
             let needs_as_str = super::expr::has_string_literal_patterns(arms);
             if super::expr::has_list_patterns(arms) {
-                return super::expr::emit_list_match(subj, arms, None, ctx, |arm| {
-                    emit_tco_expr(&arm.body, self_name, params, ctx, ectx, rc_indices)
-                });
+                return super::expr::emit_list_match(
+                    subj,
+                    arms,
+                    None,
+                    matches!(ctx.emission_style, EmissionStyle::Optimized),
+                    ctx,
+                    |arm| emit_tco_expr(&arm.body, self_name, params, ctx, ectx, rc_indices),
+                );
             }
 
             let match_expr = if needs_as_str {
@@ -1393,23 +1399,39 @@ fn emit_trampoline_expr(
             let subj = clone_arg(subject, ctx, &subj_ectx);
 
             // Bool match → if/else
-            if let Some(code) = try_emit_trampoline_bool_if_else(
-                &subj,
-                arms,
-                enum_name,
-                member_names,
-                ctx,
-                ectx,
-                rc_indices,
-            ) {
+            if matches!(ctx.emission_style, EmissionStyle::Optimized)
+                && let Some(code) = try_emit_trampoline_bool_if_else(
+                    &subj,
+                    arms,
+                    enum_name,
+                    member_names,
+                    ctx,
+                    ectx,
+                    rc_indices,
+                )
+            {
                 return code;
             }
 
             // List match
             if super::expr::has_list_patterns(arms) {
-                return super::expr::emit_list_match(subj, arms, None, ctx, |arm| {
-                    emit_trampoline_expr(&arm.body, enum_name, member_names, ctx, ectx, rc_indices)
-                });
+                return super::expr::emit_list_match(
+                    subj,
+                    arms,
+                    None,
+                    matches!(ctx.emission_style, EmissionStyle::Optimized),
+                    ctx,
+                    |arm| {
+                        emit_trampoline_expr(
+                            &arm.body,
+                            enum_name,
+                            member_names,
+                            ctx,
+                            ectx,
+                            rc_indices,
+                        )
+                    },
+                );
             }
 
             let needs_as_str = super::expr::has_string_literal_patterns(arms);
@@ -1747,7 +1769,7 @@ mod tests {
     use crate::ast::{
         BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, TypeDef, TypeVariant,
     };
-    use crate::codegen::CodegenContext;
+    use crate::codegen::{CodegenContext, EmissionStyle};
     use crate::types::Type;
     use std::collections::{HashMap, HashSet};
     use std::rc::Rc;
@@ -1768,6 +1790,7 @@ mod tests {
             runtime_policy_from_env: false,
             guest_entry: None,
             emit_self_host_support: false,
+            emission_style: EmissionStyle::Semantic,
         }
     }
 

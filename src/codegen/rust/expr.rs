@@ -2,10 +2,10 @@ use super::builtins;
 use super::liveness::{EmitCtx, collect_vars, compute_args_used_after_with_rc};
 use super::pattern::emit_pattern;
 use crate::ast::*;
-use crate::codegen::CodegenContext;
 use crate::codegen::common::{
     expr_to_dotted_name, is_user_type, module_prefix_to_rust_path, resolve_module_call,
 };
+use crate::codegen::{CodegenContext, EmissionStyle};
 use crate::ir::{
     BoolCompareOp, BoolSubjectPlan, CallLowerCtx, CallPlan, DispatchArmPlan, DispatchBindingPlan,
     DispatchDefaultPlan, DispatchLiteral, DispatchTableShape, LeafOp, ListMatchShape,
@@ -50,10 +50,16 @@ impl CallLowerCtx for RustCallCtx<'_, '_> {
     }
 }
 
+fn use_optimized_emission(ctx: &CodegenContext) -> bool {
+    matches!(ctx.emission_style, EmissionStyle::Optimized)
+}
+
 /// Emit a Rust expression from an Aver Expr.
 pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     let lower_ctx = RustCallCtx { ctx, ectx };
-    if let Some(leaf) = classify_leaf_op(expr, &lower_ctx) {
+    if use_optimized_emission(ctx)
+        && let Some(leaf) = classify_leaf_op(expr, &lower_ctx)
+    {
         return emit_leaf_op(leaf, ctx, ectx);
     }
 
@@ -666,10 +672,16 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
     let subj_ectx = ectx.with_used_after(&arms_vars);
     let subj = clone_arg(subject, ctx, &subj_ectx);
     let lower_ctx = RustCallCtx { ctx, ectx };
-    let dispatch_plan = classify_match_dispatch_plan(arms, &lower_ctx);
+    let optimized = use_optimized_emission(ctx);
+    let dispatch_plan = if optimized {
+        classify_match_dispatch_plan(arms, &lower_ctx)
+    } else {
+        None
+    };
 
     // Bool match → if/else: match expr { true => A, false => B } → if expr { A } else { B }
-    if let Some(MatchDispatchPlan::Bool(shape)) = dispatch_plan.as_ref()
+    if optimized
+        && let Some(MatchDispatchPlan::Bool(shape)) = dispatch_plan.as_ref()
         && let Some(code) =
             try_emit_bool_if_else(subject, &subj, arms, *shape, ctx, &subj_ectx, ectx)
     {
@@ -685,12 +697,12 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
             Some(MatchDispatchPlan::List(shape)) => Some(*shape),
             _ => None,
         };
-        return emit_list_match(subj, arms, list_shape, ctx, |arm| {
+        return emit_list_match(subj, arms, list_shape, optimized, ctx, |arm| {
             emit_expr(&arm.body, ctx, ectx)
         });
     }
 
-    if let Some(MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
+    if optimized && let Some(MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
         return emit_dispatch_table_match(subj, arms, shape, ctx, ectx);
     }
 
@@ -879,6 +891,7 @@ pub(super) fn emit_list_match<F>(
     subject: String,
     arms: &[MatchArm],
     list_shape: Option<ListMatchShape>,
+    allow_fast_macro: bool,
     ctx: &CodegenContext,
     body_for_arm: F,
 ) -> String
@@ -886,7 +899,10 @@ where
     F: Fn(&MatchArm) -> String,
 {
     // Fast path: exactly [] and [h, ..t] → use aver_list_match! macro
-    if let Some(code) = try_emit_list_match_macro(&subject, arms, list_shape, ctx, &body_for_arm) {
+    if allow_fast_macro
+        && let Some(code) =
+            try_emit_list_match_macro(&subject, arms, list_shape, ctx, &body_for_arm)
+    {
         return code;
     }
     let subject_name = "__list_subject";

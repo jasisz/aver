@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use crate::ast::{FnDef, TopLevel, TypeDef};
 use crate::codegen::common::module_prefix_to_rust_segments;
-use crate::codegen::{CodegenContext, ProjectOutput};
+use crate::codegen::{CodegenContext, EmissionStyle, ProjectOutput};
 use crate::types::Type;
 
 #[derive(Default)]
@@ -90,6 +90,7 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
                 main_fn,
                 has_embedded_policy,
                 ctx.emit_replay_runtime,
+                ctx.emission_style,
                 ctx.guest_entry.as_deref(),
                 !verify_blocks.is_empty(),
                 ctx.emit_self_host_support,
@@ -170,12 +171,20 @@ fn render_root_main(
     main_fn: Option<&FnDef>,
     has_policy: bool,
     has_replay: bool,
+    emission_style: EmissionStyle,
     guest_entry: Option<&str>,
     has_verify: bool,
     has_self_host_support: bool,
 ) -> String {
     let mut sections = vec![
         "#![allow(unused_variables, unused_mut, dead_code, unused_imports, unused_parens, non_snake_case, non_camel_case_types, unreachable_patterns, hidden_glob_reexports)]".to_string(),
+        format!(
+            "// Aver Rust emission style: {}",
+            match emission_style {
+                EmissionStyle::Semantic => "semantic",
+                EmissionStyle::Optimized => "optimized",
+            }
+        ),
         "#[macro_use] extern crate aver_rt;".to_string(),
         "pub use ::aver_rt::AverMap as HashMap;".to_string(),
         "pub use ::aver_rt::AverStr;".to_string(),
@@ -530,7 +539,7 @@ mod tests {
         ModuleTreeNode, emit_module_tree_files, insert_module_content, render_generated_module,
         transpile,
     };
-    use crate::codegen::build_context;
+    use crate::codegen::{EmissionStyle, build_context};
     use crate::source::parse_source;
     use crate::tco;
     use crate::types::checker::run_type_check_full;
@@ -562,6 +571,25 @@ mod tests {
             .iter()
             .find_map(|(name, content)| (name == path).then_some(content.as_str()))
             .unwrap_or_else(|| panic!("expected generated file '{}'", path))
+    }
+
+    #[test]
+    fn optimized_style_is_reported_in_root_main_banner() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn main() -> Int
+    1
+"#,
+            "demo",
+        );
+        ctx.emission_style = EmissionStyle::Optimized;
+
+        let out = transpile(&ctx);
+        let root_main = generated_file(&out, "src/main.rs");
+
+        assert!(root_main.contains("// Aver Rust emission style: optimized"));
     }
 
     #[test]
@@ -599,7 +627,29 @@ mod tests {
     }
 
     #[test]
-    fn list_cons_match_uses_cloned_uncons_fast_path() {
+    fn list_cons_match_uses_cloned_uncons_fast_path_when_optimized() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn headPlusTailLen(xs: List<Int>) -> Int
+    match xs
+        [] -> 0
+        [h, ..t] -> h + List.len(t)
+"#,
+            "demo",
+        );
+        ctx.emission_style = EmissionStyle::Optimized;
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        // The common []/[h,..t] pattern uses aver_list_match! macro
+        assert!(entry.contains("aver_list_match!"));
+    }
+
+    #[test]
+    fn list_cons_match_stays_structured_in_semantic_mode() {
         let ctx = ctx_from_source(
             r#"
 module Demo
@@ -615,8 +665,8 @@ fn headPlusTailLen(xs: List<Int>) -> Int
         let out = transpile(&ctx);
         let entry = generated_rust_entry_file(&out);
 
-        // The common []/[h,..t] pattern uses aver_list_match! macro
-        assert!(entry.contains("aver_list_match!"));
+        assert!(!entry.contains("aver_list_match!"));
+        assert!(entry.contains("list_uncons_cloned"));
     }
 
     #[test]
@@ -747,7 +797,28 @@ fn cellAt(grid: Vector<Int>, idx: Int) -> Int
     }
 
     #[test]
-    fn bool_match_on_gte_normalizes_to_base_comparison() {
+    fn bool_match_on_gte_normalizes_to_base_comparison_when_optimized() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn bucket(n: Int) -> Int
+    match n >= 10
+        true -> 7
+        false -> 3
+"#,
+            "demo",
+        );
+        ctx.emission_style = EmissionStyle::Optimized;
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("if (n < 10i64) { 3i64 } else { 7i64 }"));
+    }
+
+    #[test]
+    fn bool_match_stays_as_match_in_semantic_mode() {
         let ctx = ctx_from_source(
             r#"
 module Demo
@@ -763,7 +834,8 @@ fn bucket(n: Int) -> Int
         let out = transpile(&ctx);
         let entry = generated_rust_entry_file(&out);
 
-        assert!(entry.contains("if (n < 10i64) { 3i64 } else { 7i64 }"));
+        assert!(entry.contains("match (n >= 10i64)"));
+        assert!(!entry.contains("if (n < 10i64) { 3i64 } else { 7i64 }"));
     }
 
     #[test]

@@ -155,7 +155,7 @@ fn p(s: &str) -> String {
 mod tests {
     use super::*;
     use crate::ast::{Expr, Literal};
-    use crate::codegen::CodegenContext;
+    use crate::codegen::{CodegenContext, EmissionStyle};
     use std::collections::{HashMap, HashSet};
 
     fn empty_ctx() -> CodegenContext {
@@ -174,6 +174,7 @@ mod tests {
             runtime_policy_from_env: false,
             guest_entry: None,
             emit_self_host_support: false,
+            emission_style: EmissionStyle::Semantic,
         }
     }
 

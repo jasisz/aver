@@ -2214,7 +2214,7 @@ mod tests {
         BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Stmt, TopLevel, TypeDef,
         TypeVariant, VerifyBlock, VerifyGiven, VerifyGivenDomain, VerifyKind, VerifyLaw,
     };
-    use crate::codegen::{CodegenContext, build_context};
+    use crate::codegen::{CodegenContext, EmissionStyle, build_context};
     use crate::source::parse_source;
     use crate::tco;
     use crate::types::checker::run_type_check_full;
@@ -2237,6 +2237,7 @@ mod tests {
             runtime_policy_from_env: false,
             guest_entry: None,
             emit_self_host_support: false,
+            emission_style: EmissionStyle::Semantic,
         }
     }
 
