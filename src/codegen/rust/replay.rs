@@ -4,20 +4,13 @@ use super::syntax::aver_name_to_rust;
 use super::types::type_annotation_to_rust;
 
 pub fn generate_replay_runtime(
-    has_policy: bool,
     has_terminal_types: bool,
     has_tcp_types: bool,
     has_http_types: bool,
     has_http_server_types: bool,
 ) -> String {
-    let mut sections = vec![REPLAY_RUNTIME_TEMPLATE.replace(
-        "__POLICY_CHECK__",
-        if has_policy {
-            POLICY_CHECK_SNIPPET
-        } else {
-            "    fn check_policy(_effect_type: &str, _args: &[ReplayJson]) {}"
-        },
-    )];
+    let mut sections =
+        vec![REPLAY_RUNTIME_TEMPLATE.replace("__POLICY_CHECK__", POLICY_CHECK_SNIPPET)];
 
     if has_http_types {
         sections.push(http_type_impls());
@@ -388,21 +381,254 @@ fn tcp_type_impls() -> String {
     .to_string()
 }
 
-const POLICY_CHECK_SNIPPET: &str = r#"    fn check_policy(effect_type: &str, args: &[ReplayJson]) {
+const POLICY_CHECK_SNIPPET: &str = r#"    #[derive(Clone, Debug, Default)]
+    struct RuntimeEffectPolicy {
+        hosts: Vec<String>,
+        paths: Vec<String>,
+        keys: Vec<String>,
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct RuntimePolicy {
+        effect_policies: BTreeMap<String, RuntimeEffectPolicy>,
+    }
+
+    impl RuntimePolicy {
+        fn load_from_dir(dir: &Path) -> Result<Option<Self>, String> {
+            let path = dir.join("aver.toml");
+            let content = match std::fs::read_to_string(&path) {
+                Ok(content) => content,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(err) => return Err(format!("Failed to read {}: {}", path.display(), err)),
+            };
+            Self::parse(&content).map(Some)
+        }
+
+        fn parse(content: &str) -> Result<Self, String> {
+            let table: toml::Table = content
+                .parse()
+                .map_err(|err: toml::de::Error| format!("aver.toml parse error: {}", err))?;
+
+            let mut effect_policies = BTreeMap::new();
+            if let Some(toml::Value::Table(effects_table)) = table.get("effects") {
+                for (name, value) in effects_table {
+                    let section = value
+                        .as_table()
+                        .ok_or_else(|| format!("aver.toml: [effects.{}] must be a table", name))?;
+                    effect_policies.insert(
+                        name.clone(),
+                        RuntimeEffectPolicy {
+                            hosts: parse_policy_list(section, "hosts", name)?,
+                            paths: parse_policy_list(section, "paths", name)?,
+                            keys: parse_policy_list(section, "keys", name)?,
+                        },
+                    );
+                }
+            }
+
+            Ok(Self { effect_policies })
+        }
+
+        fn check_http(&self, method_name: &str, url_str: &str) -> Result<(), String> {
+            let Some(policy) = self.find_policy(method_name) else {
+                return Ok(());
+            };
+            if policy.hosts.is_empty() {
+                return Ok(());
+            }
+            let parsed = url::Url::parse(url_str).map_err(|err| {
+                format!(
+                    "{} denied by aver.toml: invalid URL '{}': {}",
+                    method_name, url_str, err
+                )
+            })?;
+            let host = parsed.host_str().unwrap_or("");
+            for allowed in &policy.hosts {
+                if host_matches(host, allowed) {
+                    return Ok(());
+                }
+            }
+            Err(format!(
+                "{} to '{}' denied by aver.toml policy (host '{}' not in allowed list)",
+                method_name, url_str, host
+            ))
+        }
+
+        fn check_disk(&self, method_name: &str, path_str: &str) -> Result<(), String> {
+            let Some(policy) = self.find_policy(method_name) else {
+                return Ok(());
+            };
+            if policy.paths.is_empty() {
+                return Ok(());
+            }
+            let normalized = normalize_path(path_str);
+            for allowed in &policy.paths {
+                if path_matches(&normalized, allowed) {
+                    return Ok(());
+                }
+            }
+            Err(format!(
+                "{} on '{}' denied by aver.toml policy (path not in allowed list)",
+                method_name, path_str
+            ))
+        }
+
+        fn check_env(&self, method_name: &str, key: &str) -> Result<(), String> {
+            let Some(policy) = self.find_policy(method_name) else {
+                return Ok(());
+            };
+            if policy.keys.is_empty() {
+                return Ok(());
+            }
+            for allowed in &policy.keys {
+                if env_key_matches(key, allowed) {
+                    return Ok(());
+                }
+            }
+            Err(format!(
+                "{} on '{}' denied by aver.toml policy (key not in allowed list)",
+                method_name, key
+            ))
+        }
+
+        fn find_policy(&self, method_name: &str) -> Option<&RuntimeEffectPolicy> {
+            let namespace = method_name.split('.').next().unwrap_or(method_name);
+            self.effect_policies
+                .get(method_name)
+                .or_else(|| self.effect_policies.get(namespace))
+        }
+    }
+
+    fn parse_policy_list(
+        section: &toml::Table,
+        key: &str,
+        name: &str,
+    ) -> Result<Vec<String>, String> {
+        let Some(value) = section.get(key) else {
+            return Ok(Vec::new());
+        };
+        let arr = value
+            .as_array()
+            .ok_or_else(|| format!("aver.toml: [effects.{}].{} must be an array", name, key))?;
+        arr.iter()
+            .enumerate()
+            .map(|(idx, value)| {
+                value.as_str().map(|item| item.to_string()).ok_or_else(|| {
+                    format!(
+                        "aver.toml: [effects.{}].{}[{}] must be a string",
+                        name, key, idx
+                    )
+                })
+            })
+            .collect()
+    }
+
+    fn check_policy(effect_type: &str, args: &[ReplayJson]) {
+        let policy = SCOPE_STATE.with(|cell| match &*cell.borrow() {
+            ScopeState::Inactive => None,
+            ScopeState::Active(scope) => scope.runtime_policy.as_ref().cloned(),
+        });
+        let Some(policy) = policy else {
+            return;
+        };
+
         match (effect_type.split('.').next(), args.first().and_then(|value| value.as_str())) {
             (Some("Http"), Some(url)) => {
-                aver_policy::check_http(effect_type, url)
+                policy
+                    .check_http(effect_type, url)
                     .expect("aver.toml policy violation");
             }
             (Some("Disk"), Some(path)) => {
-                aver_policy::check_disk(effect_type, path)
+                policy
+                    .check_disk(effect_type, path)
                     .expect("aver.toml policy violation");
             }
             (Some("Env"), Some(key)) => {
-                aver_policy::check_env(effect_type, key)
+                policy
+                    .check_env(effect_type, key)
                     .expect("aver.toml policy violation");
             }
             _ => {}
+        }
+    }
+
+    fn load_runtime_policy_from_env() -> Result<Option<RuntimePolicy>, String> {
+        let module_root = env_var("AVER_REPLAY_MODULE_ROOT").unwrap_or_else(|| ".".to_string());
+        RuntimePolicy::load_from_dir(Path::new(&module_root)).map_err(|err| format!("aver.toml: {}", err))
+    }
+
+    fn host_matches(host: &str, pattern: &str) -> bool {
+        if pattern == host {
+            return true;
+        }
+        if let Some(suffix) = pattern.strip_prefix("*.") {
+            host.ends_with(suffix)
+                && host.len() > suffix.len()
+                && host.as_bytes()[host.len() - suffix.len() - 1] == b'.'
+        } else {
+            false
+        }
+    }
+
+    fn normalize_path(path: &str) -> String {
+        use std::path::Component;
+
+        let mut components: Vec<String> = Vec::new();
+        let mut is_absolute = false;
+
+        for component in Path::new(path).components() {
+            match component {
+                Component::RootDir => {
+                    is_absolute = true;
+                    components.clear();
+                }
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    if components.last().is_some_and(|item| item != "..") {
+                        components.pop();
+                    } else if !is_absolute {
+                        components.push("..".to_string());
+                    }
+                }
+                Component::Normal(segment) => {
+                    components.push(segment.to_string_lossy().to_string());
+                }
+                Component::Prefix(prefix) => {
+                    components.push(prefix.as_os_str().to_string_lossy().to_string());
+                }
+            }
+        }
+
+        let joined = components.join("/");
+        if is_absolute {
+            format!("/{}", joined)
+        } else {
+            joined
+        }
+    }
+
+    fn path_matches(normalized: &str, pattern: &str) -> bool {
+        let clean_pattern = normalize_path(pattern.strip_suffix("/**").unwrap_or(pattern));
+        if normalized == clean_pattern {
+            return true;
+        }
+        if normalized.starts_with(&clean_pattern) {
+            let rest = &normalized[clean_pattern.len()..];
+            if rest.starts_with('/') {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn env_key_matches(key: &str, pattern: &str) -> bool {
+        if pattern == key {
+            return true;
+        }
+        if let Some(prefix) = pattern.strip_suffix('*') {
+            key.starts_with(prefix)
+        } else {
+            false
         }
     }"#;
 
@@ -410,7 +636,7 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
     use std::cell::RefCell;
     use std::collections::BTreeMap;
     use std::hash::Hash;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use crate::IntoAverStr;
     use serde::{Deserialize, Serialize};
@@ -707,6 +933,7 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
     struct ActiveScope {
         mode: ScopeMode,
         guest_args: Option<aver_rt::AverList<crate::AverStr>>,
+        runtime_policy: Option<RuntimePolicy>,
     }
 
     #[derive(Clone)]
@@ -949,8 +1176,17 @@ __POLICY_CHECK__
     }
 
     fn activate_scope(mode: ScopeMode, guest_args: Option<aver_rt::AverList<crate::AverStr>>) {
+        let runtime_policy = match &mode {
+            ScopeMode::Replay { .. } => None,
+            ScopeMode::Normal | ScopeMode::Record { .. } => load_runtime_policy_from_env()
+                .unwrap_or_else(|err| panic!("{}", err)),
+        };
         SCOPE_STATE.with(|cell| {
-            *cell.borrow_mut() = ScopeState::Active(ActiveScope { mode, guest_args });
+            *cell.borrow_mut() = ScopeState::Active(ActiveScope {
+                mode,
+                guest_args,
+                runtime_policy,
+            });
         });
     }
 

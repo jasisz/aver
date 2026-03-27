@@ -231,7 +231,7 @@ fn self_host_binary_path(cache_dir: &Path) -> PathBuf {
     ))
 }
 
-fn self_host_build_fingerprint(guest_module_root: &str) -> Result<String, String> {
+fn self_host_build_fingerprint() -> Result<String, String> {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     env!("CARGO_PKG_VERSION").hash(&mut hasher);
 
@@ -262,29 +262,15 @@ fn self_host_build_fingerprint(guest_module_root: &str) -> Result<String, String
             .hash(&mut hasher);
     }
 
-    let policy_path = Path::new(guest_module_root).join("aver.toml");
-    if policy_path.exists() {
-        "guest-policy".hash(&mut hasher);
-        fs::read(&policy_path)
-            .map_err(|e| format!("Cannot read '{}': {}", policy_path.display(), e))?
-            .hash(&mut hasher);
-    } else {
-        "guest-policy:none".hash(&mut hasher);
-    }
-
     Ok(format!("{:016x}", hasher.finish()))
 }
 
-pub(super) fn build_self_host_binary(guest_module_root: &str) -> Result<PathBuf, String> {
+pub(super) fn build_self_host_binary(show_progress: bool) -> Result<PathBuf, String> {
     let (self_host_file, self_host_root) = self_host_paths();
-    let cache_key = std::fs::canonicalize(guest_module_root)
-        .unwrap_or_else(|_| PathBuf::from(guest_module_root))
-        .to_string_lossy()
-        .into_owned();
-    let cache_dir = hashed_cache_dir("aver-self-host", &cache_key);
+    let expected_fingerprint = self_host_build_fingerprint()?;
+    let cache_dir = hashed_cache_dir("aver-self-host", &expected_fingerprint);
     let binary_path = self_host_binary_path(&cache_dir);
     let fingerprint_path = cache_dir.join(".fingerprint");
-    let expected_fingerprint = self_host_build_fingerprint(guest_module_root)?;
 
     if binary_path.exists()
         && fs::read_to_string(&fingerprint_path)
@@ -296,6 +282,9 @@ pub(super) fn build_self_host_binary(guest_module_root: &str) -> Result<PathBuf,
 
     let self_host_file_str = path_to_string(&self_host_file);
     let self_host_root_str = path_to_string(&self_host_root);
+    if show_progress {
+        eprintln!("Self-host: generating cached helper code...");
+    }
     let (mut ctx, _) = build_codegen_context(
         &self_host_file_str,
         Some("aver_self_host_cli"),
@@ -303,12 +292,17 @@ pub(super) fn build_self_host_binary(guest_module_root: &str) -> Result<PathBuf,
         true,
         Some("runGuestCliProgram"),
     );
-    ctx.policy = load_runtime_policy(guest_module_root)?;
     ctx.emit_self_host_runtime = true;
 
     let output = with_local_runtime_override(|| rust_codegen::transpile(&ctx));
+    if show_progress {
+        eprintln!("Self-host: materializing helper project...");
+    }
     materialize_codegen_output(&cache_dir, &output)?;
 
+    if show_progress {
+        eprintln!("Self-host: building cached helper binary...");
+    }
     let build = process::Command::new("cargo")
         .arg("build")
         .arg("--quiet")
@@ -346,6 +340,10 @@ pub(super) fn build_self_host_binary(guest_module_root: &str) -> Result<PathBuf,
             e
         )
     })?;
+
+    if show_progress {
+        eprintln!("Self-host: helper ready.");
+    }
 
     Ok(binary_path)
 }
@@ -1335,7 +1333,7 @@ pub(super) fn cmd_run_self_hosted(
     }
 
     let module_root = resolve_module_root(module_root_override);
-    let binary_path = match build_self_host_binary(&module_root) {
+    let binary_path = match build_self_host_binary(true) {
         Ok(path) => path,
         Err(e) => {
             eprintln!("{}", e.red());
@@ -1368,6 +1366,7 @@ pub(super) fn cmd_run_self_hosted(
     let mut command = process::Command::new(&binary_path);
     command.arg(file).arg(&module_root).args(&program_args);
     command.env("AVER_REPLAY_ENTRY_FN", "main");
+    command.env("AVER_REPLAY_MODULE_ROOT", &module_root);
 
     if let Some((path, request_id, timestamp, program_file, record_module_root)) = &recording_target
     {
@@ -2192,12 +2191,17 @@ fn build_codegen_context(
     // Load dependent modules for codegen
     let modules = load_compile_deps(&items, &module_root);
 
-    // Load aver.toml runtime policy for codegen
-    let policy = match load_runtime_policy(&module_root) {
-        Ok(policy) => policy,
-        Err(e) => {
-            eprintln!("{}", e.red());
-            process::exit(1);
+    // Replay-enabled generated runtimes load aver.toml lazily at the guest
+    // boundary, so the artifact stays reusable across guest module roots.
+    let policy = if with_replay {
+        None
+    } else {
+        match load_runtime_policy(&module_root) {
+            Ok(policy) => policy,
+            Err(e) => {
+                eprintln!("{}", e.red());
+                process::exit(1);
+            }
         }
     };
 

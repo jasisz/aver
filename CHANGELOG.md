@@ -2,6 +2,13 @@
 
 All notable changes to Aver are documented here.
 
+## 0.7.1 (unreleased)
+
+### Changed
+- `aver run --self-host` now caches its generated helper per installed Aver/self-host build instead of per guest `module_root`, so switching projects no longer forces a rebuild.
+- Self-hosted guest `aver.toml` policy is now loaded at runtime from the guest module root and starts only at the guest boundary, matching scoped replay behavior.
+- Cold `--self-host` runs now print short progress messages while Aver generates and builds the cached helper.
+
 ## 0.7.0 (2026-03-26)
 
 **Breaking:** `List.get` and `List.append` removed. Use `Vector` for indexed access.
@@ -10,7 +17,7 @@ All notable changes to Aver are documented here.
 - **`Vector<T>`** — indexed sequence with O(1) get/set. API: `Vector.new`, `Vector.get`, `Vector.set`, `Vector.len`, `Vector.fromList`, `Vector.toList`. `Vector.set` returns `Option<Vector<T>>`.
 - **Mutual TCO** in codegen — mutually recursive functions compiled to trampoline dispatch loops.
 - **Namespace effect shorthand** — `! [Disk]` covers all `Disk.*` effects.
-- **Self-host CLI path** — `aver run --self-host` and `aver replay --self-host` now run through the Aver-in-Aver interpreter compiled to a cached Rust binary per module root.
+- **Self-host CLI path** — `aver run --self-host` and `aver replay --self-host` now run through the Aver-in-Aver interpreter compiled to a cached Rust binary.
 - **Scoped generated replay runtime** — `aver compile --with-replay --guest-entry <fn>` emits replay support that starts record/replay and `aver.toml` policy at an explicit guest boundary instead of the process boundary.
 
 ### Changed

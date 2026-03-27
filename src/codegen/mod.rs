@@ -45,7 +45,7 @@ pub struct CodegenContext {
     pub modules: Vec<ModuleInfo>,
     /// Set of module prefixes for qualified name resolution (e.g. "Models.User").
     pub module_prefixes: HashSet<String>,
-    /// Runtime policy from `aver.toml` (baked into generated code).
+    /// Embedded runtime policy from `aver.toml` for non-replay generated code.
     pub policy: Option<crate::config::ProjectConfig>,
     /// Emit optional generated replay runtime support.
     pub emit_replay_runtime: bool,

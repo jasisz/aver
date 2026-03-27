@@ -66,7 +66,7 @@ fn runtime_dependency_line(
 pub fn generate_cargo_toml(
     name: &str,
     services: &HashSet<String>,
-    has_policy: bool,
+    has_embedded_policy: bool,
     has_replay: bool,
     runtime_path: &Path,
 ) -> String {
@@ -98,12 +98,13 @@ pub fn generate_cargo_toml(
         &rt_features,
         runtime_path.as_deref(),
     ));
-    if has_policy {
+    if has_embedded_policy || has_replay {
         deps.push("url = \"2\"".to_string());
     }
     if has_replay {
         deps.push("serde = { version = \"1\", features = [\"derive\"] }".to_string());
         deps.push("serde_json = \"1\"".to_string());
+        deps.push("toml = \"0.8\"".to_string());
     }
 
     if !deps.is_empty() {

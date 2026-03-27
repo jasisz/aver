@@ -88,13 +88,14 @@ aver compile self_hosted/main.av \
   -o /tmp/aver-self
 ```
 
-This emits `src/replay_support.rs` and adds the `serde` / `serde_json` dependencies needed for recording files. Without `--with-replay`, generated projects stay smaller and do not carry replay support.
+This emits `src/replay_support.rs` and adds the `serde` / `serde_json` / `toml` dependencies needed for recording files and guest-scoped runtime policy. Without `--with-replay`, generated projects stay smaller and do not carry replay support.
 
 `--guest-entry` matters for meta-runtimes such as the self-hosted interpreter:
 
 - bootstrap/tooling work stays outside record/replay and policy scope
 - only the chosen guest entry runs inside the scoped runtime
 - `aver.toml` policy and replay interception start at that boundary
+- policy is loaded at runtime from the guest module root instead of being baked into the binary
 
 When the guest entry has a parameter named `guestArgs: List<String>`, generated replay support treats that parameter as the guest CLI input:
 

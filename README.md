@@ -184,7 +184,7 @@ aver run hello.av --self-host
 aver replay recordings/ --self-host
 ```
 
-`--self-host` executes the program through the Aver interpreter written in Aver itself, compiled to Rust and cached on demand. There is no separate "aver-self" install step: `cargo install aver-lang` already ships the `self_hosted/` sources inside the crate, and the first `aver run ... --self-host` builds a cached helper binary automatically. The helper cache is per module root, so cold start is slower but subsequent runs reuse the compiled binary.
+`--self-host` executes the program through the Aver interpreter written in Aver itself, compiled to Rust and cached on demand. There is no separate "aver-self" install step: `cargo install aver-lang` already ships the `self_hosted/` sources inside the crate, and the first `aver run ... --self-host` builds a cached helper binary automatically. That helper cache is shared across guest projects for the same installed Aver build, so changing `--module-root` does not force a rebuild. On the first cold run Aver prints short progress messages while it generates and builds the helper.
 
 Most users should never run `self_hosted/main.av` directly. That entry exists mainly for hacking on the self-host inside this repository; the normal installed interface is still just:
 
@@ -193,7 +193,7 @@ aver run hello.av --self-host
 aver replay recordings/ --self-host
 ```
 
-For `--record` and `aver replay --self-host`, replay and `aver.toml` policy are scoped to the guest program boundary only: the self-host's own bootstrap reads and module loading stay outside the recording.
+For `--record` and `aver replay --self-host`, replay and `aver.toml` policy are scoped to the guest program boundary only: the self-host's own bootstrap reads and module loading stay outside the recording. `aver.toml` is loaded from the guest `--module-root` at runtime, so changing guest policy does not invalidate the cached helper.
 
 ---
 

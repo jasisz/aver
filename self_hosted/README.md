@@ -2,7 +2,7 @@
 
 Full Aver interpreter written in Aver. Parses, resolves, and evaluates all 55 example programs — including terminal games, HTTP services, JSON parser, Redis client, and more.
 
-This directory is the source for `aver run --self-host`. End users who install Aver with `cargo install aver-lang` do not need to run `self_hosted/main.av` manually: the CLI bundles these sources, transpiles them to Rust on first use, builds a cached helper binary, and then reuses that helper for later `--self-host` runs. Running `self_hosted/main.av` directly is mainly for development inside this repository.
+This directory is the source for `aver run --self-host`. End users who install Aver with `cargo install aver-lang` do not need to run `self_hosted/main.av` manually: the CLI bundles these sources, transpiles them to Rust on first use, builds a cached helper binary, and then reuses that helper for later `--self-host` runs. That helper cache is shared across guest projects for the same installed Aver build, while guest `aver.toml` is loaded at runtime from the requested module root. Running `self_hosted/main.av` directly is mainly for development inside this repository.
 
 ## Features
 

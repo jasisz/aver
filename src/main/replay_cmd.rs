@@ -483,7 +483,7 @@ fn replay_recording_file_self_host(
 
     let replay_module_root = resolve_replay_module_root(path, &recording);
     let replay_program_file = resolve_replay_program_file(&recording, &replay_module_root);
-    let binary_path = build_self_host_binary(&replay_module_root)?;
+    let binary_path = build_self_host_binary(false)?;
     let guest_args = decode_self_host_guest_args(&recording.input)?;
 
     let mut command = Command::new(&binary_path);
@@ -493,11 +493,11 @@ fn replay_recording_file_self_host(
         .args(&guest_args)
         .env("AVER_REPLAY_ENTRY_FN", "main")
         .env("AVER_REPLAY_REPLAY", path)
+        .env("AVER_REPLAY_MODULE_ROOT", &replay_module_root)
         .env_remove("AVER_REPLAY_RECORD")
         .env_remove("AVER_REPLAY_REQUEST_ID")
         .env_remove("AVER_REPLAY_TIMESTAMP")
-        .env_remove("AVER_REPLAY_PROGRAM_FILE")
-        .env_remove("AVER_REPLAY_MODULE_ROOT");
+        .env_remove("AVER_REPLAY_PROGRAM_FILE");
     if check_args {
         command.env("AVER_REPLAY_CHECK_ARGS", "1");
     } else {
