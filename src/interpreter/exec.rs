@@ -79,13 +79,14 @@ impl Interpreter {
     }
 
     pub fn exec_fn_def(&mut self, fd: &FnDef) -> Result<(), RuntimeError> {
+        let lower_ctx = super::ir_bridge::InterpreterLowerCtx::new(self);
         let val = Value::Fn(Rc::new(crate::value::FunctionValue {
             name: Rc::new(fd.name.clone()),
             params: Rc::new(fd.params.clone()),
             return_type: Rc::new(fd.return_type.clone()),
             effects: Rc::new(fd.effects.clone()),
             body: Rc::clone(&fd.body),
-            lowered_body: super::lowered::lower_fn_body(fd.body.as_ref()),
+            lowered_body: super::lowered::lower_fn_body(fd.body.as_ref(), &lower_ctx),
             resolution: fd.resolution.clone(),
             memo_eligible: self.memo_fns.contains(&fd.name),
             home_globals: None,

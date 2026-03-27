@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use crate::ast::{BinOp, Expr, FnBody, Literal, Pattern, Stmt, StrPart};
+use crate::ir::{CallLowerCtx, LeafOp, classify_leaf_op};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct ExprId(pub usize);
@@ -15,6 +16,65 @@ pub(crate) struct LoweredMatchArm {
 pub(crate) enum LoweredStrPart {
     Literal(String),
     Parsed(ExprId),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum LoweredLeafOp {
+    MapGet {
+        map: ExprId,
+        key: ExprId,
+    },
+    MapSet {
+        map: ExprId,
+        key: ExprId,
+        value: ExprId,
+    },
+    VectorNew {
+        size: ExprId,
+        fill: ExprId,
+    },
+    VectorGetOrDefaultLiteral {
+        vector: ExprId,
+        index: ExprId,
+        default_literal: Literal,
+    },
+}
+
+impl LoweredLeafOp {
+    pub(crate) fn arity(&self) -> usize {
+        match self {
+            Self::MapGet { .. } => 2,
+            Self::MapSet { .. } => 3,
+            Self::VectorNew { .. } => 2,
+            Self::VectorGetOrDefaultLiteral { .. } => 2,
+        }
+    }
+
+    pub(crate) fn arg_at(&self, idx: usize) -> Option<ExprId> {
+        match self {
+            Self::MapGet { map, key } => match idx {
+                0 => Some(*map),
+                1 => Some(*key),
+                _ => None,
+            },
+            Self::MapSet { map, key, value } => match idx {
+                0 => Some(*map),
+                1 => Some(*key),
+                2 => Some(*value),
+                _ => None,
+            },
+            Self::VectorNew { size, fill } => match idx {
+                0 => Some(*size),
+                1 => Some(*fill),
+                _ => None,
+            },
+            Self::VectorGetOrDefaultLiteral { vector, index, .. } => match idx {
+                0 => Some(*vector),
+                1 => Some(*index),
+                _ => None,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -39,6 +99,7 @@ pub(crate) enum LoweredExpr {
         arms: Rc<[LoweredMatchArm]>,
         line: usize,
     },
+    Leaf(LoweredLeafOp),
     Constructor {
         name: String,
         arg: Option<ExprId>,
@@ -88,12 +149,13 @@ impl LoweredFunctionBody {
     }
 }
 
-#[derive(Debug, Default)]
-struct LowerBuilder {
+#[derive(Debug)]
+struct LowerBuilder<'a, Ctx: CallLowerCtx> {
     exprs: Vec<LoweredExpr>,
+    ctx: &'a Ctx,
 }
 
-impl LowerBuilder {
+impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
     fn lower_expr(&mut self, expr: &Expr) -> ExprId {
         let lowered = match expr {
             Expr::Literal(lit) => LoweredExpr::Literal(lit.clone()),
@@ -103,16 +165,44 @@ impl LowerBuilder {
                 obj: self.lower_expr(obj),
                 field: field.clone(),
             },
-            Expr::FnCall(fn_expr, args) => {
-                let lowered_args = args
-                    .iter()
-                    .map(|arg| self.lower_expr(arg))
-                    .collect::<Vec<_>>();
-                LoweredExpr::FnCall {
-                    fn_expr: self.lower_expr(fn_expr),
-                    args: lowered_args.into(),
+            Expr::FnCall(fn_expr, args) => match classify_leaf_op(expr, self.ctx) {
+                Some(LeafOp::MapGet { map, key }) => LoweredExpr::Leaf(LoweredLeafOp::MapGet {
+                    map: self.lower_expr(map),
+                    key: self.lower_expr(key),
+                }),
+                Some(LeafOp::MapSet { map, key, value }) => {
+                    LoweredExpr::Leaf(LoweredLeafOp::MapSet {
+                        map: self.lower_expr(map),
+                        key: self.lower_expr(key),
+                        value: self.lower_expr(value),
+                    })
                 }
-            }
+                Some(LeafOp::VectorNew { size, fill }) => {
+                    LoweredExpr::Leaf(LoweredLeafOp::VectorNew {
+                        size: self.lower_expr(size),
+                        fill: self.lower_expr(fill),
+                    })
+                }
+                Some(LeafOp::VectorGetOrDefaultLiteral {
+                    vector,
+                    index,
+                    default_literal,
+                }) => LoweredExpr::Leaf(LoweredLeafOp::VectorGetOrDefaultLiteral {
+                    vector: self.lower_expr(vector),
+                    index: self.lower_expr(index),
+                    default_literal: default_literal.clone(),
+                }),
+                Some(LeafOp::FieldAccess { .. }) | None => {
+                    let lowered_args = args
+                        .iter()
+                        .map(|arg| self.lower_expr(arg))
+                        .collect::<Vec<_>>();
+                    LoweredExpr::FnCall {
+                        fn_expr: self.lower_expr(fn_expr),
+                        args: lowered_args.into(),
+                    }
+                }
+            },
             Expr::BinOp(op, left, right) => LoweredExpr::BinOp {
                 op: *op,
                 left: self.lower_expr(left),
@@ -234,8 +324,11 @@ impl LowerBuilder {
     }
 }
 
-pub(crate) fn lower_fn_body(body: &FnBody) -> Rc<LoweredFunctionBody> {
-    let mut builder = LowerBuilder::default();
+pub(crate) fn lower_fn_body(body: &FnBody, ctx: &impl CallLowerCtx) -> Rc<LoweredFunctionBody> {
+    let mut builder = LowerBuilder {
+        exprs: Vec::new(),
+        ctx,
+    };
     let stmts = body
         .stmts()
         .iter()
@@ -244,8 +337,14 @@ pub(crate) fn lower_fn_body(body: &FnBody) -> Rc<LoweredFunctionBody> {
     Rc::new(builder.finish(stmts))
 }
 
-pub(crate) fn lower_expr_root(expr: &Expr) -> (Rc<LoweredFunctionBody>, ExprId) {
-    let mut builder = LowerBuilder::default();
+pub(crate) fn lower_expr_root(
+    expr: &Expr,
+    ctx: &impl CallLowerCtx,
+) -> (Rc<LoweredFunctionBody>, ExprId) {
+    let mut builder = LowerBuilder {
+        exprs: Vec::new(),
+        ctx,
+    };
     let root = builder.lower_expr(expr);
     (Rc::new(builder.finish(Vec::new())), root)
 }

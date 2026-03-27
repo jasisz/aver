@@ -1,5 +1,6 @@
 use super::lowered::{
-    self, ExprId, LoweredExpr, LoweredFunctionBody, LoweredMatchArm, LoweredStmt, LoweredStrPart,
+    self, ExprId, LoweredExpr, LoweredFunctionBody, LoweredLeafOp, LoweredMatchArm, LoweredStmt,
+    LoweredStrPart,
 };
 use super::*;
 
@@ -47,6 +48,12 @@ enum EvalCont {
         lowered: Rc<LoweredFunctionBody>,
         arms: SharedMatchArms,
         line: usize,
+    },
+    Leaf {
+        lowered: Rc<LoweredFunctionBody>,
+        leaf: LoweredLeafOp,
+        idx: usize,
+        values: Vec<NanValue>,
     },
     Constructor(String),
     ErrorProp,
@@ -169,7 +176,8 @@ impl Interpreter {
 
     /// Internal eval_expr — returns NanValue natively.
     pub(super) fn eval_expr_nv(&mut self, expr: &Expr) -> Result<NanValue, RuntimeError> {
-        let (lowered, root) = lowered::lower_expr_root(expr);
+        let ctx = super::ir_bridge::InterpreterLowerCtx::new(self);
+        let (lowered, root) = lowered::lower_expr_root(expr, &ctx);
         self.eval_loop(
             EvalState::Expr {
                 lowered,
@@ -272,6 +280,16 @@ impl Interpreter {
                     lowered,
                     expr: subject,
                 }
+            }
+            LoweredExpr::Leaf(leaf) => {
+                let leaf = leaf.clone();
+                self.resume_leaf(
+                    Rc::clone(&lowered),
+                    leaf.clone(),
+                    0,
+                    Vec::with_capacity(leaf.arity()),
+                    conts,
+                )
             }
             LoweredExpr::Constructor { name, arg } => match arg {
                 Some(inner) => {
@@ -472,6 +490,18 @@ impl Interpreter {
                 line,
             } => match result {
                 Ok(subject) => self.dispatch_match(lowered, subject, arms, line, conts),
+                Err(err) => EvalState::Apply(Err(err)),
+            },
+            EvalCont::Leaf {
+                lowered,
+                leaf,
+                idx,
+                mut values,
+            } => match result {
+                Ok(value) => {
+                    values.push(value);
+                    self.resume_leaf(lowered, leaf, idx + 1, values, conts)
+                }
                 Err(err) => EvalState::Apply(Err(err)),
             },
             EvalCont::Constructor(name) => match result {
@@ -1048,6 +1078,27 @@ impl Interpreter {
         EvalState::Apply(Ok(NanValue::new_string_value(&result, &mut self.arena)))
     }
 
+    fn resume_leaf(
+        &mut self,
+        lowered: Rc<LoweredFunctionBody>,
+        leaf: LoweredLeafOp,
+        idx: usize,
+        values: Vec<NanValue>,
+        conts: &mut Vec<EvalCont>,
+    ) -> EvalState {
+        if let Some(expr) = leaf.arg_at(idx) {
+            conts.push(EvalCont::Leaf {
+                lowered: Rc::clone(&lowered),
+                leaf,
+                idx,
+                values,
+            });
+            EvalState::Expr { lowered, expr }
+        } else {
+            EvalState::Apply(self.apply_leaf_op_nv(&leaf, &values))
+        }
+    }
+
     fn resume_list(
         &mut self,
         lowered: Rc<LoweredFunctionBody>,
@@ -1245,6 +1296,38 @@ impl Interpreter {
         let nv_fields: Vec<NanValue> = field_vals.iter().map(|(_, v)| *v).collect();
         let rec_idx = self.arena.push_record(type_id, nv_fields);
         Ok(NanValue::new_record(rec_idx))
+    }
+
+    fn apply_leaf_op_nv(
+        &mut self,
+        leaf: &LoweredLeafOp,
+        args: &[NanValue],
+    ) -> Result<NanValue, RuntimeError> {
+        match leaf {
+            LoweredLeafOp::MapGet { .. } => {
+                map::call_nv("Map.get", args, &mut self.arena).expect("Map.get leaf owned by Map")
+            }
+            LoweredLeafOp::MapSet { .. } => {
+                map::call_nv("Map.set", args, &mut self.arena).expect("Map.set leaf owned by Map")
+            }
+            LoweredLeafOp::VectorNew { .. } => vector::call_nv("Vector.new", args, &mut self.arena)
+                .expect("Vector.new leaf owned by Vector"),
+            LoweredLeafOp::VectorGetOrDefaultLiteral {
+                default_literal, ..
+            } => {
+                let opt = vector::call_nv("Vector.get", args, &mut self.arena)
+                    .expect("Vector.get leaf owned by Vector")?;
+                if opt.is_some() {
+                    Ok(opt.wrapper_inner(&self.arena))
+                } else if opt.is_none() {
+                    Ok(self.eval_literal_nv(default_literal))
+                } else {
+                    Err(RuntimeError::Error(
+                        "Vector.get leaf expected Option result".to_string(),
+                    ))
+                }
+            }
+        }
     }
 
     fn build_record_update_nv(

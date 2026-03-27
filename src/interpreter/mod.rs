@@ -314,7 +314,10 @@ mod memo_cache_tests {
 
 #[cfg(test)]
 mod ir_bridge_tests {
-    use super::lowered::{ExprId, LoweredMatchArm};
+    use aver_rt::AverVector;
+
+    use super::ir_bridge::InterpreterLowerCtx;
+    use super::lowered::{self, ExprId, LoweredExpr, LoweredLeafOp, LoweredMatchArm};
     use super::*;
 
     fn register_task_event_type(interpreter: &mut Interpreter) {
@@ -489,5 +492,133 @@ mod ir_bridge_tests {
         assert_eq!(default_bindings.len(), 1);
         assert_eq!(default_bindings[0].0, "fallback");
         assert_eq!(default_bindings[0].1.bits(), NanValue::TRUE.bits());
+    }
+
+    #[test]
+    fn lowered_roots_classify_shared_builtin_leaf_ops() {
+        let interpreter = Interpreter::new();
+        let ctx = InterpreterLowerCtx::new(&interpreter);
+
+        let map_get = Expr::FnCall(
+            Box::new(Expr::Attr(
+                Box::new(Expr::Ident("Map".to_string())),
+                "get".to_string(),
+            )),
+            vec![
+                Expr::Ident("m".to_string()),
+                Expr::Literal(Literal::Str("k".to_string())),
+            ],
+        );
+        let (lowered_map_get, map_get_root) = lowered::lower_expr_root(&map_get, &ctx);
+        assert!(matches!(
+            lowered_map_get.expr(map_get_root),
+            LoweredExpr::Leaf(LoweredLeafOp::MapGet { .. })
+        ));
+
+        let vec_default = Expr::FnCall(
+            Box::new(Expr::Attr(
+                Box::new(Expr::Ident("Option".to_string())),
+                "withDefault".to_string(),
+            )),
+            vec![
+                Expr::FnCall(
+                    Box::new(Expr::Attr(
+                        Box::new(Expr::Ident("Vector".to_string())),
+                        "get".to_string(),
+                    )),
+                    vec![Expr::Ident("v".to_string()), Expr::Ident("idx".to_string())],
+                ),
+                Expr::Literal(Literal::Int(0)),
+            ],
+        );
+        let (lowered_vec_default, vec_default_root) = lowered::lower_expr_root(&vec_default, &ctx);
+        assert!(matches!(
+            lowered_vec_default.expr(vec_default_root),
+            LoweredExpr::Leaf(LoweredLeafOp::VectorGetOrDefaultLiteral {
+                default_literal: Literal::Int(0),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn runtime_executes_shared_leaf_ops_in_host_interpreter() {
+        let mut interpreter = Interpreter::new();
+
+        let mut map_value = HashMap::new();
+        map_value.insert(Value::Str("k".to_string()), Value::Int(7));
+        interpreter.define("m".to_string(), Value::Map(map_value));
+        interpreter.define(
+            "v".to_string(),
+            Value::Vector(AverVector::from_vec(vec![Value::Int(10), Value::Int(20)])),
+        );
+        interpreter.define("idx".to_string(), Value::Int(1));
+        interpreter.define("miss".to_string(), Value::Int(5));
+
+        let map_get = Expr::FnCall(
+            Box::new(Expr::Attr(
+                Box::new(Expr::Ident("Map".to_string())),
+                "get".to_string(),
+            )),
+            vec![
+                Expr::Ident("m".to_string()),
+                Expr::Literal(Literal::Str("k".to_string())),
+            ],
+        );
+        assert_eq!(
+            interpreter
+                .eval_expr(&map_get)
+                .expect("Map.get leaf should run"),
+            Value::Some(Box::new(Value::Int(7)))
+        );
+
+        let vec_hit = Expr::FnCall(
+            Box::new(Expr::Attr(
+                Box::new(Expr::Ident("Option".to_string())),
+                "withDefault".to_string(),
+            )),
+            vec![
+                Expr::FnCall(
+                    Box::new(Expr::Attr(
+                        Box::new(Expr::Ident("Vector".to_string())),
+                        "get".to_string(),
+                    )),
+                    vec![Expr::Ident("v".to_string()), Expr::Ident("idx".to_string())],
+                ),
+                Expr::Literal(Literal::Int(0)),
+            ],
+        );
+        assert_eq!(
+            interpreter
+                .eval_expr(&vec_hit)
+                .expect("Vector.get default leaf should return hit"),
+            Value::Int(20)
+        );
+
+        let vec_miss = Expr::FnCall(
+            Box::new(Expr::Attr(
+                Box::new(Expr::Ident("Option".to_string())),
+                "withDefault".to_string(),
+            )),
+            vec![
+                Expr::FnCall(
+                    Box::new(Expr::Attr(
+                        Box::new(Expr::Ident("Vector".to_string())),
+                        "get".to_string(),
+                    )),
+                    vec![
+                        Expr::Ident("v".to_string()),
+                        Expr::Ident("miss".to_string()),
+                    ],
+                ),
+                Expr::Literal(Literal::Int(0)),
+            ],
+        );
+        assert_eq!(
+            interpreter
+                .eval_expr(&vec_miss)
+                .expect("Vector.get default leaf should return fallback"),
+            Value::Int(0)
+        );
     }
 }
