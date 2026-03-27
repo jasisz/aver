@@ -2,13 +2,16 @@
 
 All notable changes to Aver are documented here.
 
-## 0.7.1 (unreleased)
+## 0.7.1 (2026-03-27)
 
 ### Changed
 - `aver run --self-host` now caches its generated helper per installed Aver/self-host build instead of per guest `module_root`, so switching projects no longer forces a rebuild.
 - Self-hosted guest `aver.toml` policy is now loaded at runtime from the guest module root and starts only at the guest boundary, matching scoped replay behavior.
 - Cold `--self-host` runs now print short progress messages while Aver generates and builds the cached helper.
 - `aver compile` now exposes runtime policy mode explicitly via `--policy embed|runtime`; plain codegen defaults to `embed`, while `--with-replay` defaults to `runtime`.
+
+### Fixed
+- `aver run --self-host` no longer misclassifies qualified user module calls like `Map.generateMap` or `Time.foo` as builtins just because they share a builtin namespace prefix. Self-hosted module programs such as `examples/games/rogue` now execute correctly again.
 
 ## 0.7.0 (2026-03-26)
 
