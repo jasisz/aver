@@ -471,6 +471,33 @@ impl Interpreter {
         .ok_or_else(|| RuntimeError::Error(format!("Undefined variable: '{}'", name)))
     }
 
+    pub(super) fn lookup_path_nv(&self, path: &str) -> Result<NanValue, RuntimeError> {
+        let mut parts = path.split('.').filter(|part| !part.is_empty());
+        let Some(first) = parts.next() else {
+            return Err(RuntimeError::Error("Empty path lookup".to_string()));
+        };
+
+        let mut current = self.lookup_nv(first)?;
+        for part in parts {
+            if !current.is_namespace() {
+                return Err(RuntimeError::Error(format!(
+                    "Cannot resolve '{}': '{}' is not a namespace",
+                    path, part
+                )));
+            }
+            let (_, members) = self.arena.get_namespace(current.symbol_index());
+            let Some((_, next)) = members.iter().find(|(name, _)| name.as_ref() == part) else {
+                return Err(RuntimeError::Error(format!(
+                    "Undefined variable: '{}'",
+                    path
+                )));
+            };
+            current = *next;
+        }
+
+        Ok(current)
+    }
+
     pub(super) fn global_scope_clone(&self) -> Result<HashMap<String, NanValue>, RuntimeError> {
         let frame = self
             .env

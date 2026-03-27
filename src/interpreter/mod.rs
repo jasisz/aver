@@ -317,7 +317,9 @@ mod ir_bridge_tests {
     use aver_rt::AverVector;
 
     use super::ir_bridge::InterpreterLowerCtx;
-    use super::lowered::{self, ExprId, LoweredExpr, LoweredLeafOp, LoweredMatchArm};
+    use super::lowered::{
+        self, ExprId, LoweredDirectCallTarget, LoweredExpr, LoweredLeafOp, LoweredMatchArm,
+    };
     use super::*;
 
     fn register_task_event_type(interpreter: &mut Interpreter) {
@@ -619,6 +621,91 @@ mod ir_bridge_tests {
                 .eval_expr(&vec_miss)
                 .expect("Vector.get default leaf should return fallback"),
             Value::Int(0)
+        );
+    }
+
+    #[test]
+    fn lowered_roots_classify_shared_call_plans_for_builtin_and_function_calls() {
+        let interpreter = Interpreter::new();
+        let ctx = InterpreterLowerCtx::new(&interpreter);
+
+        let list_len = Expr::FnCall(
+            Box::new(Expr::Attr(
+                Box::new(Expr::Ident("List".to_string())),
+                "len".to_string(),
+            )),
+            vec![Expr::Ident("xs".to_string())],
+        );
+        let (lowered_builtin, builtin_root) = lowered::lower_expr_root(&list_len, &ctx);
+        assert!(matches!(
+            lowered_builtin.expr(builtin_root),
+            LoweredExpr::DirectCall {
+                target: LoweredDirectCallTarget::Builtin(name),
+                ..
+            } if name == "List.len"
+        ));
+
+        let identity_call = Expr::FnCall(
+            Box::new(Expr::Ident("identity".to_string())),
+            vec![Expr::Literal(Literal::Int(7))],
+        );
+        let (lowered_fn, fn_root) = lowered::lower_expr_root(&identity_call, &ctx);
+        assert!(matches!(
+            lowered_fn.expr(fn_root),
+            LoweredExpr::DirectCall {
+                target: LoweredDirectCallTarget::Function(name),
+                ..
+            } if name == "identity"
+        ));
+    }
+
+    #[test]
+    fn runtime_executes_shared_direct_calls_in_host_interpreter() {
+        let mut interpreter = Interpreter::new();
+
+        let identity = FnDef {
+            name: "identity".to_string(),
+            line: 1,
+            params: vec![("x".to_string(), "Int".to_string())],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(Expr::Resolved(0))),
+            resolution: Some(FnResolution {
+                local_slots: Rc::new(HashMap::from([(String::from("x"), 0u16)])),
+                local_count: 1,
+            }),
+        };
+        interpreter
+            .exec_fn_def(&identity)
+            .expect("identity function should register");
+
+        let list_len = Expr::FnCall(
+            Box::new(Expr::Attr(
+                Box::new(Expr::Ident("List".to_string())),
+                "len".to_string(),
+            )),
+            vec![Expr::List(vec![
+                Expr::Literal(Literal::Int(1)),
+                Expr::Literal(Literal::Int(2)),
+            ])],
+        );
+        assert_eq!(
+            interpreter
+                .eval_expr(&list_len)
+                .expect("direct builtin call should run"),
+            Value::Int(2)
+        );
+
+        let identity_call = Expr::FnCall(
+            Box::new(Expr::Ident("identity".to_string())),
+            vec![Expr::Literal(Literal::Int(9))],
+        );
+        assert_eq!(
+            interpreter
+                .eval_expr(&identity_call)
+                .expect("direct function call should run"),
+            Value::Int(9)
         );
     }
 }

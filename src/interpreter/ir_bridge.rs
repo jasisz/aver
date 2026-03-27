@@ -70,24 +70,9 @@ impl Interpreter {
     }
 
     pub(super) fn namespace_path_exists(&self, path: &str) -> bool {
-        let mut parts = path.split('.').filter(|part| !part.is_empty());
-        let Some(first) = parts.next() else {
-            return false;
-        };
-        let Ok(mut current) = self.lookup_nv(first) else {
-            return false;
-        };
-        for part in parts {
-            if !current.is_namespace() {
-                return false;
-            }
-            let (_, members) = self.arena.get_namespace(current.symbol_index());
-            let Some((_, next)) = members.iter().find(|(name, _)| name.as_ref() == part) else {
-                return false;
-            };
-            current = *next;
-        }
-        current.is_namespace()
+        self.lookup_path_nv(path)
+            .map(|value| value.is_namespace())
+            .unwrap_or(false)
     }
 
     pub(super) fn apply_runtime_constructor_nv(

@@ -1,6 +1,6 @@
 use super::lowered::{
-    self, ExprId, LoweredExpr, LoweredFunctionBody, LoweredLeafOp, LoweredMatchArm, LoweredStmt,
-    LoweredStrPart,
+    self, ExprId, LoweredDirectCallTarget, LoweredExpr, LoweredFunctionBody, LoweredLeafOp,
+    LoweredMatchArm, LoweredStmt, LoweredStrPart,
 };
 use super::*;
 
@@ -48,6 +48,13 @@ enum EvalCont {
         lowered: Rc<LoweredFunctionBody>,
         arms: SharedMatchArms,
         line: usize,
+    },
+    DirectCall {
+        lowered: Rc<LoweredFunctionBody>,
+        target: LoweredDirectCallTarget,
+        idx: usize,
+        args: SharedExprs,
+        arg_vals: Vec<NanValue>,
     },
     Leaf {
         lowered: Rc<LoweredFunctionBody>,
@@ -253,6 +260,14 @@ impl Interpreter {
                     expr: fn_expr,
                 }
             }
+            LoweredExpr::DirectCall { target, args } => self.resume_direct_call(
+                Rc::clone(&lowered),
+                target.clone(),
+                Rc::clone(args),
+                0,
+                Vec::with_capacity(args.len()),
+                conts,
+            ),
             &LoweredExpr::BinOp { op, left, right } => {
                 conts.push(EvalCont::BinOpLeft {
                     lowered: Rc::clone(&lowered),
@@ -490,6 +505,19 @@ impl Interpreter {
                 line,
             } => match result {
                 Ok(subject) => self.dispatch_match(lowered, subject, arms, line, conts),
+                Err(err) => EvalState::Apply(Err(err)),
+            },
+            EvalCont::DirectCall {
+                lowered,
+                target,
+                idx,
+                args,
+                mut arg_vals,
+            } => match result {
+                Ok(value) => {
+                    arg_vals.push(value);
+                    self.resume_direct_call(lowered, target, args, idx + 1, arg_vals, conts)
+                }
                 Err(err) => EvalState::Apply(Err(err)),
             },
             EvalCont::Leaf {
@@ -1078,6 +1106,32 @@ impl Interpreter {
         EvalState::Apply(Ok(NanValue::new_string_value(&result, &mut self.arena)))
     }
 
+    fn resume_direct_call(
+        &mut self,
+        lowered: Rc<LoweredFunctionBody>,
+        target: LoweredDirectCallTarget,
+        args: SharedExprs,
+        idx: usize,
+        arg_vals: Vec<NanValue>,
+        conts: &mut Vec<EvalCont>,
+    ) -> EvalState {
+        if idx >= args.len() {
+            return self.dispatch_direct_call(target, arg_vals, conts);
+        }
+
+        conts.push(EvalCont::DirectCall {
+            lowered: Rc::clone(&lowered),
+            target,
+            idx,
+            args: Rc::clone(&args),
+            arg_vals,
+        });
+        EvalState::Expr {
+            lowered,
+            expr: args[idx],
+        }
+    }
+
     fn resume_leaf(
         &mut self,
         lowered: Rc<LoweredFunctionBody>,
@@ -1327,6 +1381,23 @@ impl Interpreter {
                     ))
                 }
             }
+        }
+    }
+
+    fn dispatch_direct_call(
+        &mut self,
+        target: LoweredDirectCallTarget,
+        args: Vec<NanValue>,
+        conts: &mut Vec<EvalCont>,
+    ) -> EvalState {
+        let name = match target {
+            LoweredDirectCallTarget::Builtin(name) | LoweredDirectCallTarget::Function(name) => {
+                name
+            }
+        };
+        match self.lookup_path_nv(&name) {
+            Ok(fn_val) => self.dispatch_call(fn_val, args, conts),
+            Err(err) => EvalState::Apply(Err(err)),
         }
     }
 

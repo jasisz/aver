@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use crate::ast::{BinOp, Expr, FnBody, Literal, Pattern, Stmt, StrPart};
-use crate::ir::{CallLowerCtx, LeafOp, classify_leaf_op};
+use crate::ir::{CallLowerCtx, CallPlan, LeafOp, classify_call_plan, classify_leaf_op};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct ExprId(pub usize);
@@ -78,6 +78,12 @@ impl LoweredLeafOp {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) enum LoweredDirectCallTarget {
+    Builtin(String),
+    Function(String),
+}
+
+#[derive(Debug, Clone)]
 pub(crate) enum LoweredExpr {
     Literal(Literal),
     Ident(String),
@@ -100,6 +106,10 @@ pub(crate) enum LoweredExpr {
         line: usize,
     },
     Leaf(LoweredLeafOp),
+    DirectCall {
+        target: LoweredDirectCallTarget,
+        args: Rc<[ExprId]>,
+    },
     Constructor {
         name: String,
         arg: Option<ExprId>,
@@ -193,13 +203,37 @@ impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
                     default_literal: default_literal.clone(),
                 }),
                 Some(LeafOp::FieldAccess { .. }) | None => {
-                    let lowered_args = args
-                        .iter()
-                        .map(|arg| self.lower_expr(arg))
-                        .collect::<Vec<_>>();
-                    LoweredExpr::FnCall {
-                        fn_expr: self.lower_expr(fn_expr),
-                        args: lowered_args.into(),
+                    match classify_call_plan(fn_expr, self.ctx) {
+                        CallPlan::Builtin(name) => {
+                            let lowered_args = args
+                                .iter()
+                                .map(|arg| self.lower_expr(arg))
+                                .collect::<Vec<_>>();
+                            LoweredExpr::DirectCall {
+                                target: LoweredDirectCallTarget::Builtin(name),
+                                args: lowered_args.into(),
+                            }
+                        }
+                        CallPlan::Function(name) => {
+                            let lowered_args = args
+                                .iter()
+                                .map(|arg| self.lower_expr(arg))
+                                .collect::<Vec<_>>();
+                            LoweredExpr::DirectCall {
+                                target: LoweredDirectCallTarget::Function(name),
+                                args: lowered_args.into(),
+                            }
+                        }
+                        _ => {
+                            let lowered_args = args
+                                .iter()
+                                .map(|arg| self.lower_expr(arg))
+                                .collect::<Vec<_>>();
+                            LoweredExpr::FnCall {
+                                fn_expr: self.lower_expr(fn_expr),
+                                args: lowered_args.into(),
+                            }
+                        }
                     }
                 }
             },
