@@ -725,6 +725,43 @@ impl Interpreter {
         line: usize,
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
+        if let Some((arm_idx, bindings)) = self.try_dispatch_match_plan_nv(subject, arms.as_ref()) {
+            let arm_count = arms.len();
+            let arm = &arms[arm_idx];
+            self.note_verify_match_arm(line, arm_count, arm_idx);
+            if bindings.is_empty() {
+                return EvalState::Expr {
+                    lowered,
+                    expr: arm.body,
+                };
+            }
+
+            if let Some(local_slots) = self.active_local_slots.clone() {
+                let all_slotted = bindings
+                    .iter()
+                    .all(|(name, _)| local_slots.contains_key(name));
+                if all_slotted {
+                    for (name, nv) in bindings {
+                        if let Some(&slot) = local_slots.get(&name) {
+                            self.define_slot(slot, nv);
+                        }
+                    }
+                    return EvalState::Expr {
+                        lowered,
+                        expr: arm.body,
+                    };
+                }
+            }
+
+            let scope: HashMap<String, NanValue> = bindings.into_iter().collect();
+            self.push_env(EnvFrame::Owned(scope));
+            conts.push(EvalCont::MatchScope);
+            return EvalState::Expr {
+                lowered,
+                expr: arm.body,
+            };
+        }
+
         let arm_count = arms.len();
         for (arm_idx, arm) in arms.iter().enumerate() {
             if let Some(bindings) = self.match_pattern_nv(&arm.pattern, subject) {

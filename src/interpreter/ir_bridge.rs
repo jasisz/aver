@@ -1,5 +1,10 @@
 use super::*;
-use crate::ir::{CallLowerCtx, SemanticConstructor, WrapperKind, classify_constructor_name};
+use crate::interpreter::lowered::LoweredMatchArm;
+use crate::ir::{
+    CallLowerCtx, DispatchLiteral, DispatchTableShape, MatchDispatchPlan, SemanticConstructor,
+    SemanticDispatchPattern, WrapperKind, classify_constructor_name,
+    classify_match_dispatch_plan_from_patterns,
+};
 
 pub(super) struct InterpreterLowerCtx<'a> {
     interpreter: &'a Interpreter,
@@ -156,6 +161,88 @@ impl Interpreter {
                 "Unknown constructor: {}",
                 name
             ))),
+        }
+    }
+
+    pub(super) fn try_dispatch_match_plan_nv(
+        &mut self,
+        subject: NanValue,
+        arms: &[LoweredMatchArm],
+    ) -> Option<(usize, Vec<(String, NanValue)>)> {
+        let patterns: Vec<&Pattern> = arms.iter().map(|arm| &arm.pattern).collect();
+        let plan =
+            classify_match_dispatch_plan_from_patterns(&patterns, &InterpreterLowerCtx::new(self))?;
+
+        let arm_index = match plan {
+            MatchDispatchPlan::Bool(shape) => {
+                if !subject.is_bool() {
+                    return None;
+                }
+                if subject.as_bool() {
+                    shape.true_arm_index
+                } else {
+                    shape.false_arm_index
+                }
+            }
+            MatchDispatchPlan::List(shape) => {
+                if !subject.is_list() {
+                    return None;
+                }
+                if self.arena.list_is_empty_value(subject) {
+                    shape.empty_arm_index
+                } else {
+                    shape.cons_arm_index
+                }
+            }
+            MatchDispatchPlan::Table(shape) => self.dispatch_table_match_arm(subject, &shape)?,
+        };
+
+        self.match_pattern_nv(&arms[arm_index].pattern, subject)
+            .map(|bindings| (arm_index, bindings))
+    }
+
+    fn dispatch_table_match_arm(
+        &self,
+        subject: NanValue,
+        shape: &DispatchTableShape,
+    ) -> Option<usize> {
+        for entry in &shape.entries {
+            if self.dispatch_pattern_matches_nv(subject, &entry.pattern) {
+                return Some(entry.arm_index);
+            }
+        }
+        shape.default_arm.as_ref().map(|default| default.arm_index)
+    }
+
+    fn dispatch_pattern_matches_nv(
+        &self,
+        subject: NanValue,
+        pattern: &SemanticDispatchPattern,
+    ) -> bool {
+        match pattern {
+            SemanticDispatchPattern::Literal(DispatchLiteral::Int(i)) => {
+                subject.is_int() && subject.as_int(&self.arena) == *i
+            }
+            SemanticDispatchPattern::Literal(DispatchLiteral::Float(f)) => {
+                subject.is_float()
+                    && f.parse::<f64>()
+                        .ok()
+                        .is_some_and(|expected| subject.as_float().to_bits() == expected.to_bits())
+            }
+            SemanticDispatchPattern::Literal(DispatchLiteral::Bool(b)) => {
+                subject.is_bool() && subject.as_bool() == *b
+            }
+            SemanticDispatchPattern::Literal(DispatchLiteral::Str(s)) => {
+                subject.is_string() && self.arena.get_string_value(subject).as_str() == s.as_str()
+            }
+            SemanticDispatchPattern::Literal(DispatchLiteral::Unit) => subject.is_unit(),
+            SemanticDispatchPattern::EmptyList => {
+                subject.is_list() && self.arena.list_is_empty_value(subject)
+            }
+            SemanticDispatchPattern::NoneValue => subject.is_none(),
+            SemanticDispatchPattern::WrapperTag(WrapperKind::ResultOk) => subject.is_ok(),
+            SemanticDispatchPattern::WrapperTag(WrapperKind::ResultErr) => subject.is_err(),
+            SemanticDispatchPattern::WrapperTag(WrapperKind::OptionSome) => subject.is_some(),
         }
     }
 }

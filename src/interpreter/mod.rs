@@ -314,6 +314,7 @@ mod memo_cache_tests {
 
 #[cfg(test)]
 mod ir_bridge_tests {
+    use super::lowered::{ExprId, LoweredMatchArm};
     use super::*;
 
     fn register_task_event_type(interpreter: &mut Interpreter) {
@@ -412,5 +413,81 @@ mod ir_bridge_tests {
             bindings[0].1.to_value(&interpreter.arena),
             Value::Str("now".to_string())
         );
+    }
+
+    #[test]
+    fn runtime_match_dispatch_plan_selects_bool_list_and_wrapper_arms() {
+        let mut interpreter = Interpreter::new();
+
+        let bool_arms = vec![
+            LoweredMatchArm {
+                pattern: Pattern::Literal(Literal::Bool(true)),
+                body: ExprId(0),
+            },
+            LoweredMatchArm {
+                pattern: Pattern::Ident("other".to_string()),
+                body: ExprId(1),
+            },
+        ];
+        let (bool_arm, bool_bindings) = interpreter
+            .try_dispatch_match_plan_nv(NanValue::FALSE, &bool_arms)
+            .expect("bool match plan should dispatch");
+        assert_eq!(bool_arm, 1);
+        assert_eq!(bool_bindings.len(), 1);
+        assert_eq!(bool_bindings[0].0, "other");
+        assert_eq!(bool_bindings[0].1.bits(), NanValue::FALSE.bits());
+
+        let non_empty_list = NanValue::new_list(interpreter.arena.push_list(vec![NanValue::TRUE]));
+        let list_arms = vec![
+            LoweredMatchArm {
+                pattern: Pattern::EmptyList,
+                body: ExprId(0),
+            },
+            LoweredMatchArm {
+                pattern: Pattern::Cons("head".to_string(), "tail".to_string()),
+                body: ExprId(1),
+            },
+        ];
+        let (list_arm, list_bindings) = interpreter
+            .try_dispatch_match_plan_nv(non_empty_list, &list_arms)
+            .expect("list match plan should dispatch");
+        assert_eq!(list_arm, 1);
+        assert_eq!(list_bindings.len(), 2);
+        assert_eq!(list_bindings[0].0, "head");
+        assert_eq!(list_bindings[0].1.bits(), NanValue::TRUE.bits());
+
+        let wrapper_arms = vec![
+            LoweredMatchArm {
+                pattern: Pattern::Constructor("Option.None".to_string(), vec![]),
+                body: ExprId(0),
+            },
+            LoweredMatchArm {
+                pattern: Pattern::Constructor("Option.Some".to_string(), vec!["x".to_string()]),
+                body: ExprId(1),
+            },
+            LoweredMatchArm {
+                pattern: Pattern::Ident("fallback".to_string()),
+                body: ExprId(2),
+            },
+        ];
+        let some_subject = NanValue::new_some_value(
+            NanValue::new_int(7, &mut interpreter.arena),
+            &mut interpreter.arena,
+        );
+        let (wrapper_arm, wrapper_bindings) = interpreter
+            .try_dispatch_match_plan_nv(some_subject, &wrapper_arms)
+            .expect("wrapper match plan should dispatch");
+        assert_eq!(wrapper_arm, 1);
+        assert_eq!(wrapper_bindings.len(), 1);
+        assert_eq!(wrapper_bindings[0].0, "x");
+        assert_eq!(wrapper_bindings[0].1.as_int(&interpreter.arena), 7);
+
+        let (default_arm, default_bindings) = interpreter
+            .try_dispatch_match_plan_nv(NanValue::TRUE, &wrapper_arms)
+            .expect("dispatch table default arm should match");
+        assert_eq!(default_arm, 2);
+        assert_eq!(default_bindings.len(), 1);
+        assert_eq!(default_bindings[0].0, "fallback");
+        assert_eq!(default_bindings[0].1.bits(), NanValue::TRUE.bits());
     }
 }

@@ -81,6 +81,103 @@ pub enum MatchDispatchPlan {
     Table(DispatchTableShape),
 }
 
+pub fn classify_bool_match_shape_from_patterns(patterns: &[&Pattern]) -> Option<BoolMatchShape> {
+    if patterns.len() != 2 {
+        return None;
+    }
+
+    match (patterns[0], patterns[1]) {
+        (Pattern::Literal(Literal::Bool(true)), Pattern::Literal(Literal::Bool(false))) => {
+            Some(BoolMatchShape {
+                true_arm_index: 0,
+                false_arm_index: 1,
+            })
+        }
+        (Pattern::Literal(Literal::Bool(false)), Pattern::Literal(Literal::Bool(true))) => {
+            Some(BoolMatchShape {
+                true_arm_index: 1,
+                false_arm_index: 0,
+            })
+        }
+        (Pattern::Literal(Literal::Bool(true)), Pattern::Wildcard | Pattern::Ident(_)) => {
+            Some(BoolMatchShape {
+                true_arm_index: 0,
+                false_arm_index: 1,
+            })
+        }
+        _ => None,
+    }
+}
+
+pub fn classify_list_match_shape_from_patterns(patterns: &[&Pattern]) -> Option<ListMatchShape> {
+    if patterns.len() != 2 {
+        return None;
+    }
+
+    match (patterns[0], patterns[1]) {
+        (Pattern::EmptyList, Pattern::Cons(_, _)) => Some(ListMatchShape {
+            empty_arm_index: 0,
+            cons_arm_index: 1,
+        }),
+        (Pattern::Cons(_, _), Pattern::EmptyList) => Some(ListMatchShape {
+            empty_arm_index: 1,
+            cons_arm_index: 0,
+        }),
+        _ => None,
+    }
+}
+
+pub fn classify_dispatch_table_shape_from_patterns(
+    patterns: &[&Pattern],
+    ctx: &impl CallLowerCtx,
+) -> Option<DispatchTableShape> {
+    if patterns.len() < 2 {
+        return None;
+    }
+
+    let has_default = matches!(patterns.last(), Some(Pattern::Wildcard | Pattern::Ident(_)));
+    let dispatchable_end = if has_default {
+        patterns.len() - 1
+    } else {
+        patterns.len()
+    };
+
+    let mut entries = Vec::new();
+    for (arm_index, pattern) in patterns[..dispatchable_end].iter().enumerate() {
+        let semantic = classify_dispatch_pattern(pattern, ctx)?;
+        entries.push(DispatchArmPlan {
+            binding: classify_dispatch_binding(pattern, &semantic),
+            pattern: semantic,
+            arm_index,
+        });
+    }
+
+    if entries.len() < 2 {
+        return None;
+    }
+
+    Some(DispatchTableShape {
+        entries,
+        default_arm: has_default
+            .then(|| classify_default_arm_plan(patterns[patterns.len() - 1], patterns.len() - 1)),
+    })
+}
+
+pub fn classify_match_dispatch_plan_from_patterns(
+    patterns: &[&Pattern],
+    ctx: &impl CallLowerCtx,
+) -> Option<MatchDispatchPlan> {
+    if let Some(shape) = classify_bool_match_shape_from_patterns(patterns) {
+        return Some(MatchDispatchPlan::Bool(shape));
+    }
+
+    if let Some(shape) = classify_list_match_shape_from_patterns(patterns) {
+        return Some(MatchDispatchPlan::List(shape));
+    }
+
+    classify_dispatch_table_shape_from_patterns(patterns, ctx).map(MatchDispatchPlan::Table)
+}
+
 pub fn classify_dispatch_pattern(
     pattern: &Pattern,
     ctx: &impl CallLowerCtx,
@@ -104,31 +201,8 @@ pub fn classify_dispatch_pattern(
 }
 
 pub fn classify_bool_match_shape(arms: &[MatchArm]) -> Option<BoolMatchShape> {
-    if arms.len() != 2 {
-        return None;
-    }
-
-    match (&arms[0].pattern, &arms[1].pattern) {
-        (Pattern::Literal(Literal::Bool(true)), Pattern::Literal(Literal::Bool(false))) => {
-            Some(BoolMatchShape {
-                true_arm_index: 0,
-                false_arm_index: 1,
-            })
-        }
-        (Pattern::Literal(Literal::Bool(false)), Pattern::Literal(Literal::Bool(true))) => {
-            Some(BoolMatchShape {
-                true_arm_index: 1,
-                false_arm_index: 0,
-            })
-        }
-        (Pattern::Literal(Literal::Bool(true)), Pattern::Wildcard | Pattern::Ident(_)) => {
-            Some(BoolMatchShape {
-                true_arm_index: 0,
-                false_arm_index: 1,
-            })
-        }
-        _ => None,
-    }
+    let patterns: Vec<&Pattern> = arms.iter().map(|arm| &arm.pattern).collect();
+    classify_bool_match_shape_from_patterns(&patterns)
 }
 
 pub fn classify_bool_subject_plan(subject: &Expr) -> BoolSubjectPlan<'_> {
@@ -178,75 +252,24 @@ pub fn classify_bool_subject_plan(subject: &Expr) -> BoolSubjectPlan<'_> {
 }
 
 pub fn classify_list_match_shape(arms: &[MatchArm]) -> Option<ListMatchShape> {
-    if arms.len() != 2 {
-        return None;
-    }
-
-    match (&arms[0].pattern, &arms[1].pattern) {
-        (Pattern::EmptyList, Pattern::Cons(_, _)) => Some(ListMatchShape {
-            empty_arm_index: 0,
-            cons_arm_index: 1,
-        }),
-        (Pattern::Cons(_, _), Pattern::EmptyList) => Some(ListMatchShape {
-            empty_arm_index: 1,
-            cons_arm_index: 0,
-        }),
-        _ => None,
-    }
+    let patterns: Vec<&Pattern> = arms.iter().map(|arm| &arm.pattern).collect();
+    classify_list_match_shape_from_patterns(&patterns)
 }
 
 pub fn classify_dispatch_table_shape(
     arms: &[MatchArm],
     ctx: &impl CallLowerCtx,
 ) -> Option<DispatchTableShape> {
-    if arms.len() < 2 {
-        return None;
-    }
-
-    let has_default = matches!(
-        arms.last().map(|a| &a.pattern),
-        Some(Pattern::Wildcard | Pattern::Ident(_))
-    );
-    let dispatchable_end = if has_default {
-        arms.len() - 1
-    } else {
-        arms.len()
-    };
-
-    let mut entries = Vec::new();
-    for (arm_index, arm) in arms[..dispatchable_end].iter().enumerate() {
-        let pattern = classify_dispatch_pattern(&arm.pattern, ctx)?;
-        entries.push(DispatchArmPlan {
-            binding: classify_dispatch_binding(&arm.pattern, &pattern),
-            pattern,
-            arm_index,
-        });
-    }
-
-    if entries.len() < 2 {
-        return None;
-    }
-
-    Some(DispatchTableShape {
-        entries,
-        default_arm: has_default
-            .then(|| classify_default_arm_plan(&arms[arms.len() - 1].pattern, arms.len() - 1)),
-    })
+    let patterns: Vec<&Pattern> = arms.iter().map(|arm| &arm.pattern).collect();
+    classify_dispatch_table_shape_from_patterns(&patterns, ctx)
 }
 
 pub fn classify_match_dispatch_plan(
     arms: &[MatchArm],
     ctx: &impl CallLowerCtx,
 ) -> Option<MatchDispatchPlan> {
-    if let Some(shape) = classify_bool_match_shape(arms) {
-        return Some(MatchDispatchPlan::Bool(shape));
-    }
-
-    if let Some(shape) = classify_list_match_shape(arms) {
-        return Some(MatchDispatchPlan::List(shape));
-    }
-
-    classify_dispatch_table_shape(arms, ctx).map(MatchDispatchPlan::Table)
+    let patterns: Vec<&Pattern> = arms.iter().map(|arm| &arm.pattern).collect();
+    classify_match_dispatch_plan_from_patterns(&patterns, ctx)
 }
 
 fn dispatch_literal_from_ast(lit: &Literal) -> DispatchLiteral {
