@@ -1,6 +1,6 @@
 use super::lowered::{
     self, ExprId, LoweredDirectCallTarget, LoweredExpr, LoweredFunctionBody, LoweredLeafOp,
-    LoweredMatchArm, LoweredStmt, LoweredStrPart,
+    LoweredMatchArm, LoweredStmt, LoweredStrPart, LoweredTailCallTarget,
 };
 use super::*;
 
@@ -104,7 +104,7 @@ enum EvalCont {
     RecordUpdateField(RecordUpdateProgress),
     TailCallArgs {
         lowered: Rc<LoweredFunctionBody>,
-        target: String,
+        target: LoweredTailCallTarget,
         args: SharedExprs,
         idx: usize,
         values: Vec<NanValue>,
@@ -1272,14 +1272,26 @@ impl Interpreter {
     fn resume_tail_call(
         &mut self,
         lowered: Rc<LoweredFunctionBody>,
-        target: String,
+        target: LoweredTailCallTarget,
         args: SharedExprs,
         idx: usize,
         values: Vec<NanValue>,
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
         if idx >= args.len() {
-            return EvalState::Apply(Err(RuntimeError::TailCall(Box::new((target, values)))));
+            let resolved_target = match target {
+                LoweredTailCallTarget::SelfCall => self
+                    .call_stack
+                    .last()
+                    .map(|frame| frame.name.as_ref().clone())
+                    .unwrap_or_default(),
+                LoweredTailCallTarget::KnownFunction(name)
+                | LoweredTailCallTarget::Unknown(name) => name,
+            };
+            return EvalState::Apply(Err(RuntimeError::TailCall(Box::new((
+                resolved_target,
+                values,
+            )))));
         }
 
         conts.push(EvalCont::TailCallArgs {

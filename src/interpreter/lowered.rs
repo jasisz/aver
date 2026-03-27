@@ -2,7 +2,8 @@ use std::rc::Rc;
 
 use crate::ast::{BinOp, Expr, FnBody, Literal, Pattern, Stmt, StrPart};
 use crate::ir::{
-    CallLowerCtx, CallPlan, LeafOp, WrapperKind, classify_call_plan, classify_leaf_op,
+    CallLowerCtx, CallPlan, LeafOp, TailCallPlan, WrapperKind, classify_call_plan,
+    classify_leaf_op, classify_tail_call_plan,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -92,6 +93,13 @@ pub(crate) enum LoweredDirectCallTarget {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) enum LoweredTailCallTarget {
+    SelfCall,
+    KnownFunction(String),
+    Unknown(String),
+}
+
+#[derive(Debug, Clone)]
 pub(crate) enum LoweredExpr {
     Literal(Literal),
     Ident(String),
@@ -139,7 +147,7 @@ pub(crate) enum LoweredExpr {
         updates: Rc<[(String, ExprId)]>,
     },
     TailCall {
-        target: String,
+        target: LoweredTailCallTarget,
         args: Rc<[ExprId]>,
     },
     Resolved(u16),
@@ -171,6 +179,7 @@ impl LoweredFunctionBody {
 struct LowerBuilder<'a, Ctx: CallLowerCtx> {
     exprs: Vec<LoweredExpr>,
     ctx: &'a Ctx,
+    current_fn: Option<&'a str>,
 }
 
 impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
@@ -373,8 +382,20 @@ impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
                     .iter()
                     .map(|arg| self.lower_expr(arg))
                     .collect::<Vec<_>>();
+                let target = match self.current_fn {
+                    Some(current_fn) => {
+                        match classify_tail_call_plan(&boxed.0, current_fn, self.ctx) {
+                            TailCallPlan::SelfCall => LoweredTailCallTarget::SelfCall,
+                            TailCallPlan::KnownFunction(name) => {
+                                LoweredTailCallTarget::KnownFunction(name)
+                            }
+                            TailCallPlan::Unknown(name) => LoweredTailCallTarget::Unknown(name),
+                        }
+                    }
+                    None => LoweredTailCallTarget::Unknown(boxed.0.clone()),
+                };
                 LoweredExpr::TailCall {
-                    target: boxed.0.clone(),
+                    target,
                     args: lowered_args.into(),
                 }
             }
@@ -402,10 +423,15 @@ impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
     }
 }
 
-pub(crate) fn lower_fn_body(body: &FnBody, ctx: &impl CallLowerCtx) -> Rc<LoweredFunctionBody> {
+pub(crate) fn lower_fn_body(
+    body: &FnBody,
+    ctx: &impl CallLowerCtx,
+    current_fn: &str,
+) -> Rc<LoweredFunctionBody> {
     let mut builder = LowerBuilder {
         exprs: Vec::new(),
         ctx,
+        current_fn: Some(current_fn),
     };
     let stmts = body
         .stmts()
@@ -422,6 +448,7 @@ pub(crate) fn lower_expr_root(
     let mut builder = LowerBuilder {
         exprs: Vec::new(),
         ctx,
+        current_fn: None,
     };
     let root = builder.lower_expr(expr);
     (Rc::new(builder.finish(Vec::new())), root)

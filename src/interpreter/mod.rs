@@ -319,6 +319,7 @@ mod ir_bridge_tests {
     use super::ir_bridge::InterpreterLowerCtx;
     use super::lowered::{
         self, ExprId, LoweredDirectCallTarget, LoweredExpr, LoweredLeafOp, LoweredMatchArm,
+        LoweredTailCallTarget,
     };
     use super::*;
 
@@ -823,5 +824,50 @@ mod ir_bridge_tests {
             }
             other => panic!("expected variant, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn lowered_fn_bodies_classify_tail_calls_through_shared_ir() {
+        let interpreter = Interpreter::new();
+        let ctx = InterpreterLowerCtx::new(&interpreter);
+
+        let self_body = FnBody::from_expr(Expr::TailCall(Box::new((
+            "loop".to_string(),
+            vec![Expr::Literal(Literal::Int(1))],
+        ))));
+        let lowered_self = lowered::lower_fn_body(&self_body, &ctx, "loop");
+        assert!(matches!(
+            lowered_self.expr(ExprId(1)),
+            LoweredExpr::TailCall {
+                target: LoweredTailCallTarget::SelfCall,
+                ..
+            }
+        ));
+
+        let known_body = FnBody::from_expr(Expr::TailCall(Box::new((
+            "other".to_string(),
+            vec![Expr::Literal(Literal::Int(2))],
+        ))));
+        let lowered_known = lowered::lower_fn_body(&known_body, &ctx, "loop");
+        assert!(matches!(
+            lowered_known.expr(ExprId(1)),
+            LoweredExpr::TailCall {
+                target: LoweredTailCallTarget::KnownFunction(name),
+                ..
+            } if name == "other"
+        ));
+
+        let unknown_body = FnBody::from_expr(Expr::TailCall(Box::new((
+            "Result.Ok".to_string(),
+            vec![Expr::Literal(Literal::Int(3))],
+        ))));
+        let lowered_unknown = lowered::lower_fn_body(&unknown_body, &ctx, "loop");
+        assert!(matches!(
+            lowered_unknown.expr(ExprId(1)),
+            LoweredExpr::TailCall {
+                target: LoweredTailCallTarget::Unknown(name),
+                ..
+            } if name == "Result.Ok"
+        ));
     }
 }
