@@ -160,8 +160,9 @@ fn sorted_effects(effects: &[String]) -> Vec<String> {
 
 fn format_block_effect_declaration(indent: &str, effects: &[String]) -> Vec<String> {
     let effects = sorted_effects(effects);
-    if effects.len() <= 4 {
-        return vec![format!("{}! [{}]", indent, effects.join(", "))];
+    let inline = format!("{}! [{}]", indent, effects.join(", "));
+    if inline.len() <= 100 {
+        return vec![inline];
     }
 
     let mut out = vec![format!("{}! [", indent)];
@@ -1031,6 +1032,22 @@ decision D
             r#"fn apply(f: Fn(Int) -> Int ! [Console.print, Console.warn], x: Int) -> Int
     ! [Console.print, Console.warn, Http.get, Http.post]
     f(x)
+"#
+        );
+    }
+
+    #[test]
+    fn keeps_medium_effect_lists_inline_when_they_fit() {
+        let src = r#"fn run() -> Unit
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    Unit
+"#;
+        let got = format_source(src);
+        assert_eq!(
+            got,
+            r#"fn run() -> Unit
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    Unit
 "#
         );
     }

@@ -204,6 +204,8 @@ aver replay recordings/ --self-host
 
 For `--record` and `aver replay --self-host`, replay and `aver.toml` policy are scoped to the guest program boundary only: the self-host's own bootstrap reads and module loading stay outside the recording. `aver.toml` is loaded from the guest `--module-root` at runtime, so changing guest policy does not invalidate the cached helper.
 
+If you generate self-host-like Rust binaries directly, see [docs/rust.md](docs/rust.md) for the explicit `--with-self-host-support` / `--guest-entry` contract used by `SelfHostRuntime.*`.
+
 ---
 
 ## What Aver makes explicit

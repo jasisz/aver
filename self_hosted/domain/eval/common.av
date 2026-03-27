@@ -1,0 +1,64 @@
+module Common
+    depends [Domain.Ast, Domain.Value, Domain.Builtins, Domain.Eval.Store]
+    intent =
+        "Shared evaluator helpers that are independent from the main map/slot execution loops."
+        "Includes function-reference fallback, ? propagation markers, and record field lookup."
+    exposes [evalVarFallback, wrapPropagatedError, unwrapPropagatedError, normalizeFnReturn, lookupField]
+
+fn evalVarFallback(name: String, fns: FnStore) -> Result<Val, String>
+    ? "If variable not in env, try as a named function reference before falling back to a nullary variant."
+    match Domain.Eval.Store.lookupFnOption(fns, name)
+        Option.Some(fd) -> Result.Ok(Val.ValFnRef(fd.name))
+        Option.None -> match Domain.Builtins.splitDotted(name)
+            Option.Some(pair) -> match pair
+                (typeName, ctorName) -> Result.Ok(Val.ValVariant(typeName, ctorName, []))
+            Option.None -> Result.Err("undefined variable: {name}")
+
+verify evalVarFallback
+    evalVarFallback("Token.TkPlus", Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValVariant("Token", "TkPlus", []))
+    evalVarFallback("xyz", Domain.Eval.Store.emptyFnStore()) => Result.Err("undefined variable: xyz")
+
+fn propagationPrefix() -> String
+    ? "Internal prefix used to distinguish ? propagation from evaluator runtime errors."
+    "__aver_prop__:"
+
+fn wrapPropagatedError(msg: String) -> String
+    ? "Mark a language-level Result.Err so function boundaries can convert it back into a value."
+    propagationPrefix() + msg
+
+fn unwrapPropagatedError(err: String) -> Option<String>
+    ? "Return the propagated payload when the evaluator error is an internal ? marker."
+    prefix = propagationPrefix()
+    match String.startsWith(err, prefix)
+        true -> Option.Some(String.slice(err, String.len(prefix), String.len(err)))
+        false -> Option.None
+
+verify unwrapPropagatedError
+    unwrapPropagatedError("__aver_prop__:boom") => Option.Some("boom")
+    unwrapPropagatedError("plain runtime error") => Option.None
+
+fn normalizeFnReturn(result: Result<Val, String>) -> Result<Val, String>
+    ? "Catch internal ? propagation at a function boundary and turn it back into Result.Err(value)."
+    match result
+        Result.Ok(v) -> Result.Ok(v)
+        Result.Err(err) -> match unwrapPropagatedError(err)
+            Option.Some(msg) -> Result.Ok(Val.ValErr(Val.ValStr(msg)))
+            Option.None -> Result.Err(err)
+
+verify normalizeFnReturn
+    normalizeFnReturn(Result.Ok(Val.ValInt(1))) => Result.Ok(Val.ValInt(1))
+    normalizeFnReturn(Result.Err("__aver_prop__:nope")) => Result.Ok(Val.ValErr(Val.ValStr("nope")))
+    normalizeFnReturn(Result.Err("boom")) => Result.Err("boom")
+
+fn lookupField(fields: List<(String, Val)>, name: String) -> Result<Val, String>
+    ? "Look up a record field by name."
+    match fields
+        [] -> Result.Err("unknown field: " + name)
+        [pair, ..rest] -> match pair
+            (k, v) -> match k == name
+                true -> Result.Ok(v)
+                false -> lookupField(rest, name)
+
+verify lookupField
+    lookupField([("x", Val.ValInt(1)), ("y", Val.ValInt(2))], "x") => Result.Ok(Val.ValInt(1))
+    lookupField([("x", Val.ValInt(1))], "z") => Result.Err("unknown field: z")

@@ -1,0 +1,83 @@
+module Records
+    depends [Domain.Value]
+    intent =
+        "Record-update helpers for the self-hosted evaluator."
+        "Keeps update-specific list munging out of the main call dispatch."
+    exposes [isRecordUpdate, doRecordUpdate]
+
+fn isRecordUpdate(name: String, args: List<Val>) -> Bool
+    ? "Check if this is a Type.update(record, _named(...)) call."
+    match String.contains(name, ".update")
+        true -> hasNamedRecord(args)
+        false -> false
+
+fn hasNamedRecord(args: List<Val>) -> Bool
+    ? "Check if last arg is a _named record sentinel."
+    match List.len(args) == 2
+        true -> isNamedSentinel(args)
+        false -> false
+
+fn isNamedSentinel(args: List<Val>) -> Bool
+    ? "Check second element is ValRecord with _named tag."
+    match args
+        [_, ..rest] -> isNamedSentinelInner(rest)
+        [] -> false
+
+fn isNamedSentinelInner(rest: List<Val>) -> Bool
+    ? "Check first element of rest is a _named record."
+    match rest
+        [v, ..ignored] -> match v
+            Val.ValRecord(typeName, _) -> typeName == "_named"
+            _ -> false
+        [] -> false
+
+fn doRecordUpdate(args: List<Val>) -> Result<Val, String>
+    ? "Perform record update: merge named fields into base record."
+    match args
+        [baseVal, ..rest] -> doRecordUpdateInner(baseVal, rest)
+        [] -> Result.Err("record update requires (record, named fields)")
+
+fn doRecordUpdateInner(baseVal: Val, rest: List<Val>) -> Result<Val, String>
+    ? "Extract named fields from rest and apply update."
+    match rest
+        [namedVal, ..ignored] -> match namedVal
+            Val.ValRecord(_, namedFields) -> applyRecordUpdate(baseVal, namedFields)
+            _ -> Result.Err("record update requires named fields")
+        [] -> Result.Err("record update requires named fields")
+
+fn applyRecordUpdate(baseVal: Val, namedFields: List<(String, Val)>) -> Result<Val, String>
+    ? "Override fields in a record value."
+    match baseVal
+        Val.ValRecord(typeName, existingFields) -> Result.Ok(Val.ValRecord(typeName, mergeRecordFields(existingFields, namedFields)))
+        _ -> Result.Err("update requires a record value")
+
+fn mergeRecordFields(existing: List<(String, Val)>, overrides: List<(String, Val)>) -> List<(String, Val)>
+    ? "For each field in existing: use override if present, otherwise keep."
+    match existing
+        [] -> overrides
+        [pair, ..rest] -> match pair
+            (k, v) -> mergeOneField(k, v, rest, overrides)
+
+fn mergeOneField(k: String, v: Val, rest: List<(String, Val)>, overrides: List<(String, Val)>) -> List<(String, Val)>
+    ? "Check if field k has an override."
+    match findOverride(k, overrides)
+        Option.Some(newV) -> List.prepend((k, newV), mergeRecordFields(rest, removeOverride(k, overrides)))
+        Option.None -> List.prepend((k, v), mergeRecordFields(rest, overrides))
+
+fn findOverride(k: String, overrides: List<(String, Val)>) -> Option<Val>
+    ? "Find a field value in the overrides list."
+    match overrides
+        [] -> Option.None
+        [pair, ..rest] -> match pair
+            (ok, ov) -> match ok == k
+                true -> Option.Some(ov)
+                false -> findOverride(k, rest)
+
+fn removeOverride(k: String, overrides: List<(String, Val)>) -> List<(String, Val)>
+    ? "Remove a field from overrides list."
+    match overrides
+        [] -> []
+        [pair, ..rest] -> match pair
+            (ok, ov) -> match ok == k
+                true -> rest
+                false -> List.prepend((ok, ov), removeOverride(k, rest))

@@ -34,14 +34,27 @@ domain/
     expr.av         — Expression parsing (precedence climbing)
   parser.av         — Statement, fn def, program parsing
   match.av          — Pattern matching engine
-  resolver.av       — Compile-time variable resolution (ExprVar→ExprSlot)
+  resolver.av       — Facade for the self-hosted resolver pipeline
+  resolver/
+    core.av         — Slot assignment for params and local bindings
+    calls.av        — Direct-call linking and builtin routing
+    fast.av         — Tiny function fast-path classification
+    rewrite.av      — Internal AST rewrites for hot expression shapes
   builtins.av       — Service dispatcher + IO builtins
   builtins/
     helpers.av      — Arg extraction (oneArg, twoArgs, expectList, etc.)
     list.av         — List.* builtins
     primitives.av   — Int.*, String.*, Float.*, Char.* builtins
     wrappers.av     — Result.*, Option.* constructors and combinators
-  eval.av           — Tree-walking evaluator (Map + slot dual path)
+  eval.av           — Facade for the self-hosted evaluator
+  eval/
+    core.av         — Main tree-walking eval logic
+    store.av        — FnStore and env helpers
+    slots.av        — Vector-backed slot environment primitives
+    fast.av         — Slot fast-path execution
+    ops.av          — Shared binop/cmp/vector helpers
+    records.av      — Record update helpers
+    common.av       — Shared error/lookup/normalization helpers
 main.av             — CLI entry, module loader, pipeline
 verify.av           — Cross-module verify cases
 ```
@@ -70,7 +83,14 @@ aver run main.av --module-root . -- ../../examples/games/life.av ../../examples/
 aver run --vm main.av --module-root . -- ../../examples/core/hello.av .
 
 # Compile to native binary (fastest)
-aver compile main.av --module-root . --output /tmp/aver-sh --name aver-sh
+aver compile main.av \
+  --module-root . \
+  --output /tmp/aver-sh \
+  --name aver-sh \
+  --with-replay \
+  --policy runtime \
+  --guest-entry runGuestCliProgram \
+  --with-self-host-support
 cd /tmp/aver-sh && cargo build --release
 ./target/release/aver-sh ~/path/to/example.av ~/path/to/module-root
 
@@ -98,4 +118,4 @@ source → lex → parse → resolve → eval
                   StmtBind("x", e) → StmtBindSlot(n, e)
 ```
 
-Resolver assigns slot indices to local variables. Evaluator uses `Map<Int, Val>` for O(1) slot access in resolved functions, `Map<String, Val>` for top-level statements.
+Resolver assigns slot indices to local variables, links direct calls, and tags narrow fast paths for tiny wrappers and fixed-shape matches. Evaluator uses `Vector<Val>` for resolved slot locals and `Map<String, Val>` for top-level / named-env execution.

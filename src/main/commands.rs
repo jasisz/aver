@@ -285,15 +285,15 @@ pub(super) fn build_self_host_binary(show_progress: bool) -> Result<PathBuf, Str
     if show_progress {
         eprintln!("Self-host: generating cached helper code...");
     }
-    let (mut ctx, _) = build_codegen_context(
+    let (ctx, _) = build_codegen_context(
         &self_host_file_str,
         Some("aver_self_host_cli"),
         Some(&self_host_root_str),
         true,
         &super::cli::CompilePolicyMode::Runtime,
         Some("runGuestCliProgram"),
+        true,
     );
-    ctx.emit_self_host_runtime = true;
 
     let output = with_local_runtime_override(|| rust_codegen::transpile(&ctx));
     if show_progress {
@@ -489,6 +489,117 @@ fn expr_path_parts(expr: &Expr) -> Option<Vec<String>> {
         Expr::Ident(_) => None,
         Expr::Constructor(name, _) => Some(name.split('.').map(|part| part.to_string()).collect()),
         _ => None,
+    }
+}
+
+fn expr_self_host_runtime_name(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Ident(name) => Some(name.clone()),
+        Expr::Attr(_, _) => expr_path_parts(expr).map(|parts| parts.join(".")),
+        Expr::Constructor(name, _) => Some(name.clone()),
+        _ => None,
+    }
+}
+
+fn expr_uses_self_host_runtime(expr: &Expr) -> bool {
+    if expr_self_host_runtime_name(expr).is_some_and(|name| name.starts_with("SelfHostRuntime.")) {
+        return true;
+    }
+
+    match expr {
+        Expr::Attr(inner, _) | Expr::Constructor(_, Some(inner)) | Expr::ErrorProp(inner) => {
+            expr_uses_self_host_runtime(inner)
+        }
+        Expr::FnCall(callee, args) => {
+            expr_uses_self_host_runtime(callee) || args.iter().any(expr_uses_self_host_runtime)
+        }
+        Expr::BinOp(_, left, right) => {
+            expr_uses_self_host_runtime(left) || expr_uses_self_host_runtime(right)
+        }
+        Expr::Match { subject, arms, .. } => {
+            expr_uses_self_host_runtime(subject)
+                || arms
+                    .iter()
+                    .any(|arm| expr_uses_self_host_runtime(&arm.body))
+        }
+        Expr::InterpolatedStr(parts) => parts.iter().any(|part| match part {
+            aver::ast::StrPart::Literal(_) => false,
+            aver::ast::StrPart::Parsed(inner) => expr_uses_self_host_runtime(inner),
+        }),
+        Expr::List(items) | Expr::Tuple(items) => items.iter().any(expr_uses_self_host_runtime),
+        Expr::MapLiteral(entries) => entries.iter().any(|(key, value)| {
+            expr_uses_self_host_runtime(key) || expr_uses_self_host_runtime(value)
+        }),
+        Expr::RecordCreate { fields, .. } => fields
+            .iter()
+            .any(|(_, value)| expr_uses_self_host_runtime(value)),
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_uses_self_host_runtime(base)
+                || updates
+                    .iter()
+                    .any(|(_, value)| expr_uses_self_host_runtime(value))
+        }
+        Expr::TailCall(inner) => inner.1.iter().any(expr_uses_self_host_runtime),
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, None) | Expr::Resolved(_) => false,
+    }
+}
+
+fn stmt_uses_self_host_runtime(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr_uses_self_host_runtime(expr),
+    }
+}
+
+fn fn_uses_self_host_runtime(fd: &FnDef) -> bool {
+    fd.body.stmts().iter().any(stmt_uses_self_host_runtime)
+}
+
+fn item_uses_self_host_runtime(item: &TopLevel) -> bool {
+    match item {
+        TopLevel::FnDef(fd) => fn_uses_self_host_runtime(fd),
+        TopLevel::Stmt(stmt) => stmt_uses_self_host_runtime(stmt),
+        _ => false,
+    }
+}
+
+fn codegen_uses_self_host_runtime(ctx: &codegen::CodegenContext) -> bool {
+    ctx.items.iter().any(item_uses_self_host_runtime)
+        || ctx
+            .modules
+            .iter()
+            .any(|module| module.fn_defs.iter().any(fn_uses_self_host_runtime))
+}
+
+fn validate_self_host_guest_entry_contract(ctx: &codegen::CodegenContext) -> Result<(), String> {
+    if !ctx.emit_self_host_support {
+        return Ok(());
+    }
+
+    let entry_name = ctx
+        .guest_entry
+        .as_deref()
+        .ok_or_else(|| "--with-self-host-support requires --guest-entry".to_string())?;
+    let fd = ctx
+        .fn_defs
+        .iter()
+        .find(|fd| fd.name == entry_name)
+        .ok_or_else(|| format!("guest entry '{entry_name}' was not found"))?;
+
+    let has_prog = fd.params.iter().any(|(name, type_ann)| {
+        name == "prog" && parse_type_str(type_ann) == Type::Named("Program".to_string())
+    });
+    let has_module_fns = fd.params.iter().any(|(name, type_ann)| {
+        name == "moduleFns"
+            && parse_type_str(type_ann) == Type::List(Box::new(Type::Named("FnDef".to_string())))
+    });
+
+    if has_prog && has_module_fns {
+        Ok(())
+    } else {
+        Err(format!(
+            "--with-self-host-support requires guest entry '{}' to declare `prog: Program` and `moduleFns: List<FnDef>`",
+            entry_name
+        ))
     }
 }
 
@@ -2146,6 +2257,7 @@ fn build_codegen_context(
     with_replay: bool,
     policy_mode: &super::cli::CompilePolicyMode,
     guest_entry: Option<&str>,
+    with_self_host_support: bool,
 ) -> (codegen::CodegenContext, String) {
     let module_root = resolve_module_root(module_root_override);
     let source = match read_file(file) {
@@ -2216,6 +2328,7 @@ fn build_codegen_context(
     ctx.emit_replay_runtime = use_scoped_runtime;
     ctx.runtime_policy_from_env = use_runtime_policy;
     ctx.guest_entry = guest_entry.map(str::to_string);
+    ctx.emit_self_host_support = with_self_host_support;
     if let Some(entry) = guest_entry
         && !ctx.fn_defs.iter().any(|fd| fd.name == entry)
     {
@@ -2245,15 +2358,17 @@ fn write_codegen_output(
     println!("  {}", build_hint.cyan());
 }
 
-pub(super) fn cmd_compile(
-    file: &str,
-    output_dir: &str,
-    project_name: Option<&str>,
-    module_root_override: Option<&str>,
-    with_replay: bool,
-    policy_mode: &super::cli::CompilePolicyMode,
-    guest_entry: Option<&str>,
-) {
+pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
+    let CompileOptions {
+        file,
+        output_dir,
+        project_name,
+        module_root_override,
+        with_replay,
+        policy_mode,
+        guest_entry,
+        with_self_host_support,
+    } = opts;
     if guest_entry.is_some()
         && !with_replay
         && !matches!(policy_mode, super::cli::CompilePolicyMode::Runtime)
@@ -2265,6 +2380,25 @@ pub(super) fn cmd_compile(
         process::exit(1);
     }
 
+    if with_self_host_support && guest_entry.is_none() {
+        eprintln!(
+            "{}",
+            "--with-self-host-support requires --guest-entry".red()
+        );
+        process::exit(1);
+    }
+
+    if with_self_host_support
+        && !with_replay
+        && !matches!(policy_mode, super::cli::CompilePolicyMode::Runtime)
+    {
+        eprintln!(
+            "{}",
+            "--with-self-host-support requires either --with-replay or --policy runtime".red()
+        );
+        process::exit(1);
+    }
+
     let (ctx, _module_root) = build_codegen_context(
         file,
         project_name,
@@ -2272,10 +2406,34 @@ pub(super) fn cmd_compile(
         with_replay,
         policy_mode,
         guest_entry,
+        with_self_host_support,
     );
+    if let Err(err) = validate_self_host_guest_entry_contract(&ctx) {
+        eprintln!("{}", err.red());
+        process::exit(1);
+    }
+    if codegen_uses_self_host_runtime(&ctx) && !with_self_host_support {
+        eprintln!(
+            "{}",
+            "This program uses SelfHostRuntime.* builtins; re-run with --with-self-host-support"
+                .red()
+        );
+        process::exit(1);
+    }
     let output = rust_codegen::transpile(&ctx);
     let build_hint = format!("cd {} && cargo build && cargo run", output_dir);
     write_codegen_output(file, output_dir, "Rust", &build_hint, &output);
+}
+
+pub(super) struct CompileOptions<'a> {
+    pub(super) file: &'a str,
+    pub(super) output_dir: &'a str,
+    pub(super) project_name: Option<&'a str>,
+    pub(super) module_root_override: Option<&'a str>,
+    pub(super) with_replay: bool,
+    pub(super) policy_mode: &'a super::cli::CompilePolicyMode,
+    pub(super) guest_entry: Option<&'a str>,
+    pub(super) with_self_host_support: bool,
 }
 
 pub(super) fn cmd_proof(
@@ -2293,6 +2451,7 @@ pub(super) fn cmd_proof(
         false,
         &super::cli::CompilePolicyMode::Embed,
         None,
+        false,
     );
 
     match backend {
@@ -2494,9 +2653,15 @@ fn load_module_recursive(
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_av_inputs;
+    use super::{
+        codegen_uses_self_host_runtime, resolve_av_inputs, validate_self_host_guest_entry_contract,
+    };
+    use aver::ast::{Expr, FnBody, FnDef, Literal, Stmt, TopLevel};
+    use aver::codegen::CodegenContext;
+    use std::collections::{HashMap, HashSet};
     use std::fs;
     use std::path::PathBuf;
+    use std::rc::Rc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_case_dir(tag: &str) -> PathBuf {
@@ -2505,6 +2670,38 @@ mod tests {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         std::env::temp_dir().join(format!("aver_commands_{tag}_{nanos}"))
+    }
+
+    fn empty_codegen_ctx() -> CodegenContext {
+        CodegenContext {
+            items: vec![],
+            fn_sigs: HashMap::new(),
+            memo_fns: HashSet::new(),
+            memo_safe_types: HashSet::new(),
+            type_defs: vec![],
+            fn_defs: vec![],
+            project_name: "test".to_string(),
+            modules: vec![],
+            module_prefixes: HashSet::new(),
+            policy: None,
+            emit_replay_runtime: false,
+            runtime_policy_from_env: false,
+            guest_entry: None,
+            emit_self_host_support: false,
+        }
+    }
+
+    fn test_fn(name: &str, params: Vec<(String, String)>) -> FnDef {
+        FnDef {
+            name: name.to_string(),
+            line: 1,
+            params,
+            return_type: "Unit".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(Expr::Literal(Literal::Unit))),
+            resolution: None,
+        }
     }
 
     #[test]
@@ -2542,5 +2739,40 @@ mod tests {
         );
 
         fs::remove_dir_all(&dir).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn detects_self_host_runtime_in_top_level_statement() {
+        let mut ctx = empty_codegen_ctx();
+        ctx.items = vec![TopLevel::Stmt(Stmt::Expr(Expr::FnCall(
+            Box::new(Expr::Attr(
+                Box::new(Expr::Ident("SelfHostRuntime".to_string())),
+                "httpServerListen".to_string(),
+            )),
+            vec![
+                Expr::Literal(Literal::Int(3000)),
+                Expr::Ident("handler".to_string()),
+            ],
+        )))];
+
+        assert!(codegen_uses_self_host_runtime(&ctx));
+    }
+
+    #[test]
+    fn self_host_support_requires_explicit_guest_entry_contract() {
+        let mut ctx = empty_codegen_ctx();
+        ctx.emit_self_host_support = true;
+        ctx.guest_entry = Some("runGuestCliProgram".to_string());
+        ctx.fn_defs = vec![test_fn(
+            "runGuestCliProgram",
+            vec![
+                ("program".to_string(), "Program".to_string()),
+                ("moduleFns".to_string(), "List<FnDef>".to_string()),
+            ],
+        )];
+
+        let err =
+            validate_self_host_guest_entry_contract(&ctx).expect_err("expected contract error");
+        assert!(err.contains("prog: Program"), "unexpected error: {err}");
     }
 }

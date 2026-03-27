@@ -7,18 +7,7 @@ module Builtins
 
 fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch qualified builtin calls to sub-module implementations."
-    ! [
-        Args,
-        Console,
-        Disk,
-        Env,
-        Http,
-        HttpServer,
-        Random,
-        Tcp,
-        Terminal,
-        Time,
-    ]
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match callBuiltinFast(name, args)
         Option.Some(result) -> result
         Option.None -> match String.startsWith(name, "List.")
@@ -56,18 +45,7 @@ fn callBuiltinFast(name: String, args: List<Val>) -> Option<Result<Val, String>>
 
 fn callBuiltinAfterList(name: String, args: List<Val>) -> Result<Val, String>
     ? "Continue dispatch after List."
-    ! [
-        Args,
-        Console,
-        Disk,
-        Env,
-        Http,
-        HttpServer,
-        Random,
-        Tcp,
-        Terminal,
-        Time,
-    ]
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match String.startsWith(name, "Vector.")
         true -> Domain.Builtins.Vector.call(name, args)
         false -> match String.startsWith(name, "Int.")
@@ -80,18 +58,7 @@ fn callBuiltinAfterList(name: String, args: List<Val>) -> Result<Val, String>
 
 fn callBuiltinOther(name: String, args: List<Val>) -> Result<Val, String>
     ? "Handle non-prefixed builtins: Result.*, Option.*, Bool.*, Map.*, services, Char, variant constructors."
-    ! [
-        Args,
-        Console,
-        Disk,
-        Env,
-        Http,
-        HttpServer,
-        Random,
-        Tcp,
-        Terminal,
-        Time,
-    ]
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match name
         "Char.fromCode" -> Domain.Builtins.Primitives.callChar(name, args)
         "Char.toCode" -> Domain.Builtins.Primitives.callChar(name, args)
@@ -284,15 +251,7 @@ fn builtinMapRemoveInner(mapV: Val, keyV: Val) -> Result<Val, String>
 
 fn callBuiltinServices(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch Terminal.*, Time.*, Random.*, Http.*, Tcp.* service builtins."
-    ! [
-        Env,
-        Http,
-        HttpServer,
-        Random,
-        Tcp,
-        Terminal,
-        Time,
-    ]
+    ! [Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match name
         "Random.int" -> builtinRandomInt(args)
         "Time.now" -> builtinTimeNow(args)

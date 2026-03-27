@@ -1,0 +1,38 @@
+module Slots
+    depends [Domain.Value]
+    intent =
+        "Slot-environment primitives for the self-hosted evaluator."
+        "Handles Vector-backed local variable storage for resolved functions."
+    exposes [buildSlotEnv, lookupSlot, setSlot]
+
+fn buildSlotEnv(args: List<Val>, slotCount: Int) -> Vector<Val>
+    ? "Create slot env: Vector<Val> of slotCount, args at 0..n-1."
+    buildSlotEnvLoop(args, Vector.new(slotCount, Val.ValUnit), 0)
+
+verify buildSlotEnv
+    buildSlotEnv([Val.ValInt(1)], 3) => Vector.fromList([Val.ValInt(1), Val.ValUnit, Val.ValUnit])
+    buildSlotEnv([Val.ValInt(1), Val.ValInt(2)], 2) => Vector.fromList([Val.ValInt(1), Val.ValInt(2)])
+
+fn buildSlotEnvLoop(args: List<Val>, acc: Vector<Val>, idx: Int) -> Vector<Val>
+    ? "Fill slot env from arg list."
+    match args
+        [] -> acc
+        [a, ..rest] -> buildSlotEnvLoop(rest, Option.withDefault(Vector.set(acc, idx, a), acc), idx + 1)
+
+fn lookupSlot(env: Vector<Val>, slot: Int) -> Result<Val, String>
+    ? "Look up a variable by slot index. O(1)."
+    match Vector.get(env, slot)
+        Option.Some(v) -> Result.Ok(v)
+        Option.None -> Result.Err("slot out of bounds: {Int.toString(slot)}")
+
+verify lookupSlot
+    lookupSlot(Vector.fromList([Val.ValInt(10), Val.ValInt(20)]), 0) => Result.Ok(Val.ValInt(10))
+    lookupSlot(Vector.new(0, Val.ValUnit), 0) => Result.Err("slot out of bounds: 0")
+
+fn setSlot(env: Vector<Val>, slot: Int, v: Val) -> Vector<Val>
+    ? "Set slot value. O(1)."
+    Option.withDefault(Vector.set(env, slot, v), env)
+
+verify setSlot
+    setSlot(Vector.fromList([Val.ValUnit, Val.ValUnit]), 0, Val.ValInt(5)) => Vector.fromList([Val.ValInt(5), Val.ValUnit])
+    setSlot(Vector.fromList([Val.ValUnit, Val.ValUnit]), 1, Val.ValInt(7)) => Vector.fromList([Val.ValUnit, Val.ValInt(7)])

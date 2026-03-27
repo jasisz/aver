@@ -133,11 +133,11 @@ fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option
             args[0], args[1], args[2]
         )),
         "SelfHostRuntime.httpServerListen" => Some(format!(
-            "crate::self_host_http_server_listen({}, {})",
+            "crate::self_host_support::http_server_listen({}, {})",
             args[0], args[1]
         )),
         "SelfHostRuntime.httpServerListenWith" => Some(format!(
-            "crate::self_host_http_server_listen_with({}, {}.clone(), {})",
+            "crate::self_host_support::http_server_listen_with({}, {}.clone(), {})",
             args[0], args[1], args[2]
         )),
         "Disk.readText" => Some(format!("aver_rt::read_text(&{})", args[0])),
@@ -884,7 +884,7 @@ fn emit_builtin_call_inner(
             let port = emit_arg(0);
             let handler = emit_arg(1);
             Some(format!(
-                "crate::self_host_http_server_listen({}, {})",
+                "crate::self_host_support::http_server_listen({}, {})",
                 port, handler
             ))
         }
@@ -893,7 +893,7 @@ fn emit_builtin_call_inner(
             let context = emit_arg(1);
             let handler = emit_arg(2);
             Some(format!(
-                "crate::self_host_http_server_listen_with({}, {}.clone(), {})",
+                "crate::self_host_support::http_server_listen_with({}, {}.clone(), {})",
                 port, context, handler
             ))
         }
@@ -1039,7 +1039,7 @@ mod tests {
             emit_replay_runtime: false,
             runtime_policy_from_env: false,
             guest_entry: None,
-            emit_self_host_runtime: false,
+            emit_self_host_support: false,
         }
     }
 

@@ -90,6 +90,20 @@ aver compile self_hosted/main.av \
 
 This emits `src/replay_support.rs` and adds the `serde` / `serde_json` / `toml` dependencies needed for recording files and guest-scoped runtime policy. Without `--with-replay`, generated projects stay smaller and do not carry replay support.
 
+Use `--with-self-host-support` only for generated programs that are themselves self-host-like meta-runtimes and need `SelfHostRuntime.*` builtins such as the self-hosted `HttpServer` bridge:
+
+```bash
+aver compile self_hosted/main.av \
+  --module-root self_hosted \
+  --with-replay \
+  --policy runtime \
+  --guest-entry runGuestCliProgram \
+  --with-self-host-support \
+  -o /tmp/aver-self
+```
+
+This emits a separate `src/self_host_support.rs` module. It is intentionally not part of the generic generated runtime.
+
 Generated Rust also exposes policy mode explicitly:
 
 ```bash
@@ -108,11 +122,23 @@ aver compile app.av --policy runtime
 - `aver.toml` policy and replay interception start at that boundary
 - policy is loaded at runtime from the guest module root instead of being baked into the binary
 
+For `--with-self-host-support`, the chosen `--guest-entry` has an additional explicit contract:
+
+- it must declare `prog: Program`
+- it must declare `moduleFns: List<FnDef>`
+
+Generated Rust uses those two parameters to install the temporary self-host callback store around the guest execution boundary. If the contract is not met, `aver compile` now fails early with a readable error instead of generating a broken project.
+
 When the guest entry has a parameter named `guestArgs: List<String>`, generated replay support treats that parameter as the guest CLI input:
 
 - `Args.get()` inside the scoped guest run returns `guestArgs`
 - replay `input` records only `guestArgs`, not the outer wrapper arguments
 - self-host bootstrap args such as `program_file` and `module_root` stay outside the guest trace
+
+`SelfHostRuntime.*` is also gated explicitly now:
+
+- if generated code uses `SelfHostRuntime.*`, `aver compile` requires `--with-self-host-support`
+- this detection includes top-level statements, not only function bodies
 
 ## Supported features
 

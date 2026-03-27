@@ -19,6 +19,8 @@ Options:
       --module-root <MODULE_ROOT>  Resolve `depends [...]` from this root (default: current working directory)
       --with-replay                Emit optional record/replay runtime support
       --guest-entry <GUEST_ENTRY>  Scope replay/policy to this generated guest entry (requires --with-replay)
+      --policy <POLICY>            Runtime policy mode: embed | runtime
+      --with-self-host-support     Emit extra self-host-only runtime support (requires --guest-entry and runtime policy)
 ```
 
 ## `aver proof`

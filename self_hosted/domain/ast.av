@@ -67,6 +67,9 @@ type FastLeaf
     LeafConstStr(String)
     LeafConstBool(Bool)
     LeafSlot(Int)
+    LeafFieldAccess(Int, String)
+    LeafMapGet(Int, Int)
+    LeafMapSet(Int, Int, Int)
     LeafVectorNew(Int, Int)
     LeafVectorGetOrInt(Int, Int, Int)
 
@@ -74,10 +77,12 @@ type FnFastPath
     FastNone
     FastSingleExpr
     FastLeaf(FastLeaf)
+    FastForwardCall(String, List<Int>)
     FastBoolSlotBranch(Int, FastLeaf, FastLeaf)
     FastEqIntBranch(Int, Int, FastLeaf, FastLeaf)
     FastEqStringBranch(Int, String, FastLeaf, FastLeaf)
     FastLtIntSlotsBranch(Int, Int, FastLeaf, FastLeaf)
+    FastListSlotBranch(Int, FastLeaf, Int, Int, FastLeaf)
 
 record FnDef
     name: String

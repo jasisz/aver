@@ -1,0 +1,289 @@
+module Rewrite
+    depends [Domain.Ast]
+    intent =
+        "Internal AST rewrites for the self-hosted resolver."
+        "Compresses common resolved shapes into lighter internal expression nodes."
+    exposes [rewriteInternalFns, rewriteInternalStmts]
+
+fn rewriteInternalFns(fns: List<FnDef>, acc: List<FnDef>) -> List<FnDef>
+    ? "Rewrite resolved AST into lighter internal expression shapes without changing semantics."
+    match fns
+        [] -> List.reverse(acc)
+        [f, ..rest] -> rewriteInternalFns(rest, List.prepend(rewriteInternalFn(f), acc))
+
+fn rewriteInternalFn(fd: FnDef) -> FnDef
+    ? "Rewrite the body of one resolved function into lighter internal expression shapes."
+    FnDef(name = fd.name, params = fd.params, body = rewriteInternalStmts(fd.body, []), slotCount = fd.slotCount, slotMap = fd.slotMap, fastPath = fd.fastPath)
+
+fn rewriteInternalStmts(stmts: List<Stmt>, acc: List<Stmt>) -> List<Stmt>
+    ? "Rewrite statements recursively into lighter internal expression shapes."
+    match stmts
+        [] -> List.reverse(acc)
+        [stmt, ..rest] -> rewriteInternalStmts(rest, List.prepend(rewriteInternalStmt(stmt), acc))
+
+fn rewriteInternalStmt(stmt: Stmt) -> Stmt
+    ? "Rewrite one statement recursively into lighter internal expression shapes."
+    match stmt
+        Stmt.StmtBind(name, expr) -> Stmt.StmtBind(name, rewriteInternalExpr(expr))
+        Stmt.StmtBindSlot(slot, expr) -> Stmt.StmtBindSlot(slot, rewriteInternalExpr(expr))
+        Stmt.StmtExpr(expr) -> Stmt.StmtExpr(rewriteInternalExpr(expr))
+
+fn rewriteInternalExpr(expr: Expr) -> Expr
+    ? "Rewrite one expression into lighter internal forms after resolve and direct-call linking."
+    match expr
+        Expr.ExprBoolBranch(cond, thenExpr, elseExpr) -> Expr.ExprBoolBranch(rewriteInternalExpr(cond), rewriteInternalExpr(thenExpr), rewriteInternalExpr(elseExpr))
+        Expr.ExprBinopSlotInt(_, _, _) -> expr
+        Expr.ExprBinopSlots(_, _, _) -> expr
+        Expr.ExprCmpSlotInt(_, _, _) -> expr
+        Expr.ExprCmpSlots(_, _, _) -> expr
+        Expr.ExprVectorGetOrInt(vecExpr, idxExpr, defaultValue) -> Expr.ExprVectorGetOrInt(rewriteInternalExpr(vecExpr), rewriteInternalExpr(idxExpr), defaultValue)
+        Expr.ExprIntModOrInt(a, b, defaultValue) -> Expr.ExprIntModOrInt(rewriteInternalExpr(a), rewriteInternalExpr(b), defaultValue)
+        Expr.ExprAdd(a, b) -> rewriteInternalBinop(BinOp.OpAdd, rewriteInternalExpr(a), rewriteInternalExpr(b))
+        Expr.ExprSub(a, b) -> rewriteInternalBinop(BinOp.OpSub, rewriteInternalExpr(a), rewriteInternalExpr(b))
+        Expr.ExprMul(a, b) -> rewriteInternalBinop(BinOp.OpMul, rewriteInternalExpr(a), rewriteInternalExpr(b))
+        Expr.ExprDiv(a, b) -> rewriteInternalBinop(BinOp.OpDiv, rewriteInternalExpr(a), rewriteInternalExpr(b))
+        Expr.ExprEq(a, b) -> rewriteInternalCmp(CmpOp.CmpEq, rewriteInternalExpr(a), rewriteInternalExpr(b))
+        Expr.ExprNeq(a, b) -> rewriteInternalCmp(CmpOp.CmpNeq, rewriteInternalExpr(a), rewriteInternalExpr(b))
+        Expr.ExprLt(a, b) -> rewriteInternalCmp(CmpOp.CmpLt, rewriteInternalExpr(a), rewriteInternalExpr(b))
+        Expr.ExprGt(a, b) -> rewriteInternalCmp(CmpOp.CmpGt, rewriteInternalExpr(a), rewriteInternalExpr(b))
+        Expr.ExprLte(a, b) -> rewriteInternalCmp(CmpOp.CmpLte, rewriteInternalExpr(a), rewriteInternalExpr(b))
+        Expr.ExprGte(a, b) -> rewriteInternalCmp(CmpOp.CmpGte, rewriteInternalExpr(a), rewriteInternalExpr(b))
+        Expr.ExprMatch(scrutinee, arms) -> rewriteInternalMatch(rewriteInternalExpr(scrutinee), rewriteInternalArms(arms, []))
+        Expr.ExprPropagate(inner) -> Expr.ExprPropagate(rewriteInternalExpr(inner))
+        Expr.ExprConcat(parts) -> Expr.ExprConcat(rewriteInternalExprs(parts, []))
+        Expr.ExprTuple(exprs) -> Expr.ExprTuple(rewriteInternalExprs(exprs, []))
+        Expr.ExprList(exprs) -> Expr.ExprList(rewriteInternalExprs(exprs, []))
+        Expr.ExprRecord(name, fields) -> Expr.ExprRecord(name, rewriteInternalFields(fields, []))
+        Expr.ExprFieldAccess(obj, field) -> Expr.ExprFieldAccess(rewriteInternalExpr(obj), field)
+        Expr.ExprCall(name, args) -> Expr.ExprCall(name, rewriteInternalExprs(args, []))
+        Expr.ExprCallDirect(name, args) -> Expr.ExprCallDirect(name, rewriteInternalExprs(args, []))
+        Expr.ExprCallBuiltin(name, args) -> rewriteInternalBuiltin(name, rewriteInternalExprs(args, []))
+        _ -> expr
+
+fn rewriteInternalExprs(exprs: List<Expr>, acc: List<Expr>) -> List<Expr>
+    ? "Rewrite a list of expressions recursively."
+    match exprs
+        [] -> List.reverse(acc)
+        [expr, ..rest] -> rewriteInternalExprs(rest, List.prepend(rewriteInternalExpr(expr), acc))
+
+fn rewriteInternalFields(fields: List<(String, Expr)>, acc: List<(String, Expr)>) -> List<(String, Expr)>
+    ? "Rewrite record field expressions recursively."
+    match fields
+        [] -> List.reverse(acc)
+        [pair, ..rest] -> match pair
+            (name, expr) -> rewriteInternalFields(rest, List.prepend((name, rewriteInternalExpr(expr)), acc))
+
+fn rewriteInternalArms(arms: List<MatchArm>, acc: List<MatchArm>) -> List<MatchArm>
+    ? "Rewrite match arm bodies recursively."
+    match arms
+        [] -> List.reverse(acc)
+        [arm, ..rest] -> rewriteInternalArms(rest, List.prepend(MatchArm(pattern = arm.pattern, body = rewriteInternalExpr(arm.body), bindingSlots = arm.bindingSlots), acc))
+
+fn rewriteInternalBinop(op: BinOp, left: Expr, right: Expr) -> Expr
+    ? "Compress simple resolved arithmetic into slot-based internal nodes."
+    match left
+        Expr.ExprSlot(slot) -> rewriteInternalBinopSlotLeft(op, slot, right)
+        _ -> match right
+            Expr.ExprSlot(slot) -> rewriteInternalBinopSlotRight(op, left, slot)
+            _ -> rebuildInternalBinop(op, left, right)
+
+fn rewriteInternalBinopSlotLeft(op: BinOp, slot: Int, right: Expr) -> Expr
+    ? "Rewrite arithmetic with a slot on the left when the right side is simple."
+    match right
+        Expr.ExprInt(n) -> Expr.ExprBinopSlotInt(op, slot, n)
+        Expr.ExprSlot(rhs) -> Expr.ExprBinopSlots(op, slot, rhs)
+        _ -> rebuildInternalBinop(op, Expr.ExprSlot(slot), right)
+
+fn rewriteInternalBinopSlotRight(op: BinOp, left: Expr, slot: Int) -> Expr
+    ? "Rewrite commutative arithmetic when the slot appears on the right."
+    match left
+        Expr.ExprSlot(lhs) -> Expr.ExprBinopSlots(op, lhs, slot)
+        Expr.ExprInt(n) -> match binopCanFlip(op)
+            true -> Expr.ExprBinopSlotInt(op, slot, n)
+            false -> rebuildInternalBinop(op, left, Expr.ExprSlot(slot))
+        _ -> rebuildInternalBinop(op, left, Expr.ExprSlot(slot))
+
+fn rebuildInternalBinop(op: BinOp, left: Expr, right: Expr) -> Expr
+    ? "Rebuild a generic arithmetic expression when no narrower internal form applies."
+    match op
+        BinOp.OpAdd -> Expr.ExprAdd(left, right)
+        BinOp.OpSub -> Expr.ExprSub(left, right)
+        BinOp.OpMul -> Expr.ExprMul(left, right)
+        BinOp.OpDiv -> Expr.ExprDiv(left, right)
+
+fn binopCanFlip(op: BinOp) -> Bool
+    ? "Return whether swapping operand order preserves arithmetic semantics."
+    match op
+        BinOp.OpAdd -> true
+        BinOp.OpMul -> true
+        _ -> false
+
+fn rewriteInternalBuiltin(name: String, args: List<Expr>) -> Expr
+    ? "Recognize fused builtin wrapper patterns after children have already been rewritten."
+    match name
+        "Option.withDefault" -> rewriteInternalOptionWithDefault(args)
+        "Result.withDefault" -> rewriteInternalResultWithDefault(args)
+        _ -> Expr.ExprCallBuiltin(name, args)
+
+fn rewriteInternalOptionWithDefault(args: List<Expr>) -> Expr
+    ? "Rewrite Option.withDefault(Vector.get(...), int) into one internal node."
+    match args
+        [optionExpr, ..rest] -> match rest
+            [defaultExpr, ..ignored] -> rewriteInternalOptionWithDefaultArgs(optionExpr, defaultExpr)
+            _ -> Expr.ExprCallBuiltin("Option.withDefault", args)
+        _ -> Expr.ExprCallBuiltin("Option.withDefault", args)
+
+fn rewriteInternalOptionWithDefaultArgs(optionExpr: Expr, defaultExpr: Expr) -> Expr
+    ? "Recognize a fused Vector.get-with-default shape."
+    match defaultExpr
+        Expr.ExprInt(defaultValue) -> match optionExpr
+            Expr.ExprCallBuiltin(name, innerArgs) -> match name == "Vector.get"
+                true -> rewriteInternalVectorGetOrInt(innerArgs, defaultValue)
+                false -> Expr.ExprCallBuiltin("Option.withDefault", [optionExpr, defaultExpr])
+            _ -> Expr.ExprCallBuiltin("Option.withDefault", [optionExpr, defaultExpr])
+        _ -> Expr.ExprCallBuiltin("Option.withDefault", [optionExpr, defaultExpr])
+
+fn rewriteInternalVectorGetOrInt(args: List<Expr>, defaultValue: Int) -> Expr
+    ? "Fuse Vector.get(vec, idx) with an integer fallback."
+    match args
+        [vecExpr, ..rest] -> match rest
+            [idxExpr, ..ignored] -> rewriteInternalVectorGetOrIntArgs(vecExpr, idxExpr, defaultValue)
+            _ -> Expr.ExprCallBuiltin("Option.withDefault", [Expr.ExprCallBuiltin("Vector.get", args), Expr.ExprInt(defaultValue)])
+        _ -> Expr.ExprCallBuiltin("Option.withDefault", [Expr.ExprCallBuiltin("Vector.get", args), Expr.ExprInt(defaultValue)])
+
+fn rewriteInternalVectorGetOrIntArgs(vecExpr: Expr, idxExpr: Expr, defaultValue: Int) -> Expr
+    ? "Only fuse Vector.get-with-default when at least one operand is already slot-shaped."
+    match exprHasSlotShape(vecExpr)
+        true -> Expr.ExprVectorGetOrInt(vecExpr, idxExpr, defaultValue)
+        false -> match exprHasSlotShape(idxExpr)
+            true -> Expr.ExprVectorGetOrInt(vecExpr, idxExpr, defaultValue)
+            false -> Expr.ExprCallBuiltin("Option.withDefault", [Expr.ExprCallBuiltin("Vector.get", [vecExpr, idxExpr]), Expr.ExprInt(defaultValue)])
+
+fn rewriteInternalResultWithDefault(args: List<Expr>) -> Expr
+    ? "Rewrite Result.withDefault(Int.mod(...), int) into one internal node."
+    match args
+        [resultExpr, ..rest] -> match rest
+            [defaultExpr, ..ignored] -> rewriteInternalResultWithDefaultArgs(resultExpr, defaultExpr)
+            _ -> Expr.ExprCallBuiltin("Result.withDefault", args)
+        _ -> Expr.ExprCallBuiltin("Result.withDefault", args)
+
+fn rewriteInternalResultWithDefaultArgs(resultExpr: Expr, defaultExpr: Expr) -> Expr
+    ? "Recognize a fused Int.mod-with-default shape."
+    match defaultExpr
+        Expr.ExprInt(defaultValue) -> match resultExpr
+            Expr.ExprCallBuiltin(name, innerArgs) -> match name == "Int.mod"
+                true -> rewriteInternalIntModOrInt(innerArgs, defaultValue)
+                false -> Expr.ExprCallBuiltin("Result.withDefault", [resultExpr, defaultExpr])
+            _ -> Expr.ExprCallBuiltin("Result.withDefault", [resultExpr, defaultExpr])
+        _ -> Expr.ExprCallBuiltin("Result.withDefault", [resultExpr, defaultExpr])
+
+fn rewriteInternalIntModOrInt(args: List<Expr>, defaultValue: Int) -> Expr
+    ? "Fuse Int.mod(a, b) with an integer fallback when the operands are slot-shaped."
+    match args
+        [a, ..rest] -> match rest
+            [b, ..ignored] -> rewriteInternalIntModOrIntArgs(a, b, defaultValue)
+            _ -> Expr.ExprCallBuiltin("Result.withDefault", [Expr.ExprCallBuiltin("Int.mod", args), Expr.ExprInt(defaultValue)])
+        _ -> Expr.ExprCallBuiltin("Result.withDefault", [Expr.ExprCallBuiltin("Int.mod", args), Expr.ExprInt(defaultValue)])
+
+fn rewriteInternalIntModOrIntArgs(a: Expr, b: Expr, defaultValue: Int) -> Expr
+    ? "Only fuse Int.mod-with-default when at least one operand is already slot-shaped."
+    match exprHasSlotShape(a)
+        true -> Expr.ExprIntModOrInt(a, b, defaultValue)
+        false -> match exprHasSlotShape(b)
+            true -> Expr.ExprIntModOrInt(a, b, defaultValue)
+            false -> Expr.ExprCallBuiltin("Result.withDefault", [Expr.ExprCallBuiltin("Int.mod", [a, b]), Expr.ExprInt(defaultValue)])
+
+fn exprHasSlotShape(expr: Expr) -> Bool
+    ? "Return whether an expression is already in a slot-based internal shape worth fusing around."
+    match expr
+        Expr.ExprSlot(_) -> true
+        Expr.ExprBinopSlotInt(_, _, _) -> true
+        Expr.ExprBinopSlots(_, _, _) -> true
+        Expr.ExprCmpSlotInt(_, _, _) -> true
+        Expr.ExprCmpSlots(_, _, _) -> true
+        Expr.ExprVectorGetOrInt(_, _, _) -> true
+        Expr.ExprIntModOrInt(_, _, _) -> true
+        _ -> false
+
+fn rewriteInternalCmp(op: CmpOp, left: Expr, right: Expr) -> Expr
+    ? "Compress simple resolved comparisons into slot-based internal nodes."
+    match left
+        Expr.ExprSlot(slot) -> rewriteInternalCmpSlotLeft(op, slot, right)
+        _ -> match right
+            Expr.ExprSlot(slot) -> rewriteInternalCmpSlotRight(op, left, slot)
+            _ -> rebuildInternalCmp(op, left, right)
+
+fn rewriteInternalCmpSlotLeft(op: CmpOp, slot: Int, right: Expr) -> Expr
+    ? "Rewrite comparisons with a slot on the left when the right side is simple."
+    match right
+        Expr.ExprInt(n) -> Expr.ExprCmpSlotInt(op, slot, n)
+        Expr.ExprSlot(rhs) -> Expr.ExprCmpSlots(op, slot, rhs)
+        _ -> rebuildInternalCmp(op, Expr.ExprSlot(slot), right)
+
+fn rewriteInternalCmpSlotRight(op: CmpOp, left: Expr, slot: Int) -> Expr
+    ? "Rewrite comparisons with a slot on the right when the left side is a simple integer."
+    match left
+        Expr.ExprInt(n) -> Expr.ExprCmpSlotInt(flipCmp(op), slot, n)
+        Expr.ExprSlot(lhs) -> Expr.ExprCmpSlots(op, lhs, slot)
+        _ -> rebuildInternalCmp(op, left, Expr.ExprSlot(slot))
+
+fn rebuildInternalCmp(op: CmpOp, left: Expr, right: Expr) -> Expr
+    ? "Rebuild a generic comparison expression when no narrower internal form applies."
+    match op
+        CmpOp.CmpEq -> Expr.ExprEq(left, right)
+        CmpOp.CmpNeq -> Expr.ExprNeq(left, right)
+        CmpOp.CmpLt -> Expr.ExprLt(left, right)
+        CmpOp.CmpGt -> Expr.ExprGt(left, right)
+        CmpOp.CmpLte -> Expr.ExprLte(left, right)
+        CmpOp.CmpGte -> Expr.ExprGte(left, right)
+
+fn flipCmp(op: CmpOp) -> CmpOp
+    ? "Flip a comparison when swapping operand order."
+    match op
+        CmpOp.CmpEq -> CmpOp.CmpEq
+        CmpOp.CmpNeq -> CmpOp.CmpNeq
+        CmpOp.CmpLt -> CmpOp.CmpGt
+        CmpOp.CmpGt -> CmpOp.CmpLt
+        CmpOp.CmpLte -> CmpOp.CmpGte
+        CmpOp.CmpGte -> CmpOp.CmpLte
+
+fn rewriteInternalMatch(scrutinee: Expr, arms: List<MatchArm>) -> Expr
+    ? "Rewrite simple bool matches into a direct branch node."
+    match rewriteBoolMatchArms(arms)
+        Option.Some(pair) -> match pair
+            (thenExpr, elseExpr) -> Expr.ExprBoolBranch(scrutinee, thenExpr, elseExpr)
+        Option.None -> Expr.ExprMatch(scrutinee, arms)
+
+fn rewriteBoolMatchArms(arms: List<MatchArm>) -> Option<(Expr, Expr)>
+    ? "Extract (thenExpr, elseExpr) from a two-arm bool match regardless of arm order."
+    match arms
+        [arm1, ..rest] -> match rest
+            [arm2, ..tail] -> match tail == []
+                true -> rewriteBoolMatchArmPair(arm1, arm2)
+                false -> Option.None
+            _ -> Option.None
+        _ -> Option.None
+
+fn rewriteBoolMatchArmPair(arm1: MatchArm, arm2: MatchArm) -> Option<(Expr, Expr)>
+    ? "Order two complementary bool arms into (trueExpr, falseExpr)."
+    match arm1.pattern
+        Pattern.PatBool(b1) -> rewriteBoolMatchArmPairInner(b1, arm1.body, arm2.pattern, arm2.body)
+        _ -> Option.None
+
+fn rewriteBoolMatchArmPairInner(b1: Bool, body1: Expr, p2: Pattern, body2: Expr) -> Option<(Expr, Expr)>
+    ? "Finish ordering bool arms once the first pattern bool is known."
+    match p2
+        Pattern.PatBool(b2) -> rewriteBoolMatchArmPairBools(b1, body1, b2, body2)
+        _ -> Option.None
+
+fn rewriteBoolMatchArmPairBools(b1: Bool, body1: Expr, b2: Bool, body2: Expr) -> Option<(Expr, Expr)>
+    ? "Return ordered bool branch bodies when the pair is exactly true/false or false/true."
+    match b1 == true
+        true -> match b2 == false
+            true -> Option.Some((body1, body2))
+            false -> Option.None
+        false -> match b1 == false
+            true -> match b2 == true
+                true -> Option.Some((body2, body1))
+                false -> Option.None
+            false -> Option.None

@@ -1,0 +1,131 @@
+module Fast
+    depends [Domain.Ast, Domain.Value, Domain.Eval.Common, Domain.Eval.Slots]
+    intent =
+        "Direct slot-based fast paths for the self-hosted evaluator."
+        "Executes tiny leaf wrappers and fixed-shape branches without descending the full AST."
+    exposes [runFastLeafSlot, fastBoolSlotBranch, fastEqIntBranch, fastEqStringBranch, fastLtIntSlotsBranch, fastListSlotBranch]
+
+fn runFastLeafSlot(leaf: FastLeaf, calleeEnv: Vector<Val>) -> Result<Val, String>
+    ? "Execute a leaf-like fast path directly from slots."
+    match leaf
+        FastLeaf.LeafConstInt(n) -> Result.Ok(Val.ValInt(n))
+        FastLeaf.LeafConstFloat(f) -> Result.Ok(Val.ValFloat(f))
+        FastLeaf.LeafConstStr(s) -> Result.Ok(Val.ValStr(s))
+        FastLeaf.LeafConstBool(b) -> Result.Ok(Val.ValBool(b))
+        FastLeaf.LeafSlot(slot) -> Domain.Eval.Slots.lookupSlot(calleeEnv, slot)
+        FastLeaf.LeafFieldAccess(slot, field) -> fastFieldAccessSlot(calleeEnv, slot, field)
+        FastLeaf.LeafMapGet(mapSlot, keySlot) -> fastMapGetSlot(calleeEnv, mapSlot, keySlot)
+        FastLeaf.LeafMapSet(mapSlot, keySlot, valueSlot) -> fastMapSetSlot(calleeEnv, mapSlot, keySlot, valueSlot)
+        FastLeaf.LeafVectorNew(sizeSlot, fill) -> fastVectorNewSlot(calleeEnv, sizeSlot, fill)
+        FastLeaf.LeafVectorGetOrInt(vecSlot, idxSlot, defaultValue) -> fastVectorGetOrIntSlot(calleeEnv, vecSlot, idxSlot, defaultValue)
+
+fn fastBoolSlotBranch(calleeEnv: Vector<Val>, slot: Int, thenLeaf: FastLeaf, elseLeaf: FastLeaf) -> Result<Val, String>
+    ? "Execute a bool-slot branch with precomputed leaf results."
+    slotV = Domain.Eval.Slots.lookupSlot(calleeEnv, slot)?
+    match slotV
+        Val.ValBool(cond) -> selectFastLeaf(cond, thenLeaf, elseLeaf, calleeEnv)
+        _ -> Result.Err("fast bool branch expects Bool slot")
+
+fn fastEqIntBranch(calleeEnv: Vector<Val>, slot: Int, expected: Int, thenLeaf: FastLeaf, elseLeaf: FastLeaf) -> Result<Val, String>
+    ? "Execute an int equality branch with precomputed leaf results."
+    slotV = Domain.Eval.Slots.lookupSlot(calleeEnv, slot)?
+    match slotV
+        Val.ValInt(actual) -> selectFastLeaf(actual == expected, thenLeaf, elseLeaf, calleeEnv)
+        _ -> Result.Err("fast int branch expects Int slot")
+
+fn fastEqStringBranch(calleeEnv: Vector<Val>, slot: Int, expected: String, thenLeaf: FastLeaf, elseLeaf: FastLeaf) -> Result<Val, String>
+    ? "Execute a string equality branch with precomputed leaf results."
+    slotV = Domain.Eval.Slots.lookupSlot(calleeEnv, slot)?
+    match slotV
+        Val.ValStr(actual) -> selectFastLeaf(actual == expected, thenLeaf, elseLeaf, calleeEnv)
+        _ -> Result.Err("fast string branch expects String slot")
+
+fn fastLtIntSlotsBranch(calleeEnv: Vector<Val>, lhsSlot: Int, rhsSlot: Int, thenLeaf: FastLeaf, elseLeaf: FastLeaf) -> Result<Val, String>
+    ? "Execute an int less-than branch with precomputed leaf results."
+    lhsV = Domain.Eval.Slots.lookupSlot(calleeEnv, lhsSlot)?
+    rhsV = Domain.Eval.Slots.lookupSlot(calleeEnv, rhsSlot)?
+    match lhsV
+        Val.ValInt(lhs) -> match rhsV
+            Val.ValInt(rhs) -> selectFastLeaf(lhs < rhs, thenLeaf, elseLeaf, calleeEnv)
+            _ -> Result.Err("fast lt branch expects Int rhs slot")
+        _ -> Result.Err("fast lt branch expects Int lhs slot")
+
+fn selectFastLeaf(cond: Bool, thenLeaf: FastLeaf, elseLeaf: FastLeaf, calleeEnv: Vector<Val>) -> Result<Val, String>
+    ? "Choose and execute one of two leaf results."
+    match cond
+        true -> runFastLeafSlot(thenLeaf, calleeEnv)
+        false -> runFastLeafSlot(elseLeaf, calleeEnv)
+
+fn fastListSlotBranch(calleeEnv: Vector<Val>, slot: Int, emptyLeaf: FastLeaf, headSlot: Int, tailSlot: Int, consLeaf: FastLeaf) -> Result<Val, String>
+    ? "Execute a two-arm [] / [h, ..t] list branch with precomputed leaf bodies."
+    listV = Domain.Eval.Slots.lookupSlot(calleeEnv, slot)?
+    match listV
+        Val.ValList(items) -> fastListSlotBranchItems(items, calleeEnv, emptyLeaf, headSlot, tailSlot, consLeaf)
+        _ -> Result.Err("no matching arm")
+
+fn fastListSlotBranchItems(items: List<Val>, calleeEnv: Vector<Val>, emptyLeaf: FastLeaf, headSlot: Int, tailSlot: Int, consLeaf: FastLeaf) -> Result<Val, String>
+    ? "Finish [] / [h, ..t] list branching once the list payload is extracted."
+    match items
+        [] -> runFastLeafSlot(emptyLeaf, calleeEnv)
+        [head, ..tail] -> runFastLeafSlot(consLeaf, Domain.Eval.Slots.setSlot(Domain.Eval.Slots.setSlot(calleeEnv, headSlot, head), tailSlot, Val.ValList(tail)))
+
+fn fastFieldAccessSlot(calleeEnv: Vector<Val>, slot: Int, field: String) -> Result<Val, String>
+    ? "Read a record field directly from a resolved slot."
+    recordV = Domain.Eval.Slots.lookupSlot(calleeEnv, slot)?
+    match recordV
+        Val.ValRecord(_, fields) -> Domain.Eval.Common.lookupField(fields, field)
+        _ -> Result.Err("field access on non-record")
+
+fn fastMapGetSlot(calleeEnv: Vector<Val>, mapSlot: Int, keySlot: Int) -> Result<Val, String>
+    ? "Read a map key directly from resolved slots."
+    mapV = Domain.Eval.Slots.lookupSlot(calleeEnv, mapSlot)?
+    keyV = Domain.Eval.Slots.lookupSlot(calleeEnv, keySlot)?
+    fastMapGetSlotInner(mapV, keyV)
+
+fn fastMapGetSlotInner(mapV: Val, keyV: Val) -> Result<Val, String>
+    ? "Look up a key in a ValMap without going through builtin dispatch."
+    match mapV
+        Val.ValMap(m) -> match Map.get(m, Domain.Value.mapKeyRepr(keyV))
+            Option.Some(v) -> Result.Ok(Val.ValSome(v))
+            Option.None -> Result.Ok(Val.ValNone)
+        _ -> Result.Err("Map.get requires a Map")
+
+fn fastMapSetSlot(calleeEnv: Vector<Val>, mapSlot: Int, keySlot: Int, valueSlot: Int) -> Result<Val, String>
+    ? "Update a map directly from resolved slots."
+    mapV = Domain.Eval.Slots.lookupSlot(calleeEnv, mapSlot)?
+    keyV = Domain.Eval.Slots.lookupSlot(calleeEnv, keySlot)?
+    valueV = Domain.Eval.Slots.lookupSlot(calleeEnv, valueSlot)?
+    fastMapSetSlotInner(mapV, keyV, valueV)
+
+fn fastMapSetSlotInner(mapV: Val, keyV: Val, valueV: Val) -> Result<Val, String>
+    ? "Set a key in a ValMap without going through builtin dispatch."
+    match mapV
+        Val.ValMap(m) -> Result.Ok(Val.ValMap(Map.set(m, Domain.Value.mapKeyRepr(keyV), valueV)))
+        _ -> Result.Err("Map.set requires a Map")
+
+fn fastVectorNewSlot(calleeEnv: Vector<Val>, sizeSlot: Int, fill: Int) -> Result<Val, String>
+    ? "Fast path for Vector.new(slot, int) wrappers."
+    sizeV = Domain.Eval.Slots.lookupSlot(calleeEnv, sizeSlot)?
+    fastVectorNewSlotInner(sizeV, fill)
+
+fn fastVectorNewSlotInner(sizeV: Val, fill: Int) -> Result<Val, String>
+    ? "Allocate a vector when the wrapper shape is known in advance."
+    match sizeV
+        Val.ValInt(size) -> Result.Ok(Val.ValVector(Vector.new(size, Val.ValInt(fill))))
+        _ -> Result.Err("Vector.new size must be Int")
+
+fn fastVectorGetOrIntSlot(calleeEnv: Vector<Val>, vecSlot: Int, idxSlot: Int, defaultValue: Int) -> Result<Val, String>
+    ? "Fast path for Option.withDefault(Vector.get(slotVec, slotIdx), int)."
+    vecV = Domain.Eval.Slots.lookupSlot(calleeEnv, vecSlot)?
+    idxV = Domain.Eval.Slots.lookupSlot(calleeEnv, idxSlot)?
+    fastVectorGetOrIntSlotInner(vecV, idxV, defaultValue)
+
+fn fastVectorGetOrIntSlotInner(vecV: Val, idxV: Val, defaultValue: Int) -> Result<Val, String>
+    ? "Read a vector cell with an integer default without going through builtin dispatch."
+    match vecV
+        Val.ValVector(vec) -> match idxV
+            Val.ValInt(idx) -> match Vector.get(vec, idx)
+                Option.Some(v) -> Result.Ok(v)
+                Option.None -> Result.Ok(Val.ValInt(defaultValue))
+            _ -> Result.Err("Vector.get index must be Int")
+        _ -> Result.Err("Vector.get expects a Vector")

@@ -122,21 +122,23 @@ fn main() {
             with_replay,
             policy,
             guest_entry,
+            with_self_host_support,
         } => {
             let policy_mode = (*policy).unwrap_or(if *with_replay {
                 CompilePolicyMode::Runtime
             } else {
                 CompilePolicyMode::Embed
             });
-            commands::cmd_compile(
+            commands::cmd_compile(commands::CompileOptions {
                 file,
-                output,
-                name.as_deref(),
-                module_root.as_deref(),
-                *with_replay,
-                &policy_mode,
-                guest_entry.as_deref(),
-            );
+                output_dir: output,
+                project_name: name.as_deref(),
+                module_root_override: module_root.as_deref(),
+                with_replay: *with_replay,
+                policy_mode: &policy_mode,
+                guest_entry: guest_entry.as_deref(),
+                with_self_host_support: *with_self_host_support,
+            });
         }
         Commands::Proof {
             file,

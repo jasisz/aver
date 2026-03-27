@@ -218,6 +218,9 @@ pub(super) enum Commands {
         /// Explicit guest execution boundary for scoped replay/policy (self-host style)
         #[arg(long)]
         guest_entry: Option<String>,
+        /// Emit extra self-host-only runtime glue (FnStore callbacks, HttpServer bridge)
+        #[arg(long)]
+        with_self_host_support: bool,
     },
     /// Export pure Aver code to a proof/verification project
     Proof {
@@ -317,11 +320,40 @@ mod tests {
                 with_replay,
                 policy,
                 guest_entry,
+                with_self_host_support,
                 ..
             } => {
                 assert!(with_replay);
                 assert_eq!(policy, None);
                 assert_eq!(guest_entry.as_deref(), Some("runGuestProgram"));
+                assert!(!with_self_host_support);
+            }
+            _ => panic!("expected compile command"),
+        }
+    }
+
+    #[test]
+    fn compile_accepts_explicit_self_host_support() {
+        let cli = Cli::parse_from([
+            "aver",
+            "compile",
+            "self_hosted/main.av",
+            "--with-self-host-support",
+            "--guest-entry",
+            "runGuestCliProgram",
+            "--policy",
+            "runtime",
+        ]);
+        match cli.command {
+            Commands::Compile {
+                policy,
+                guest_entry,
+                with_self_host_support,
+                ..
+            } => {
+                assert_eq!(policy, Some(CompilePolicyMode::Runtime));
+                assert_eq!(guest_entry.as_deref(), Some("runGuestCliProgram"));
+                assert!(with_self_host_support);
             }
             _ => panic!("expected compile command"),
         }

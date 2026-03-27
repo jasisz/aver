@@ -2,6 +2,19 @@
 
 All notable changes to Aver are documented here.
 
+## 0.7.2 (unreleased)
+
+### Added
+- `aver compile --with-self-host-support` now emits a separate self-host-only generated Rust support module for `SelfHostRuntime.*` builtins instead of mixing that glue into the general generated runtime.
+
+### Changed
+- Self-host callback/runtime glue is now emitted as `self_host_support` rather than piggybacking on the generic generated `runtime_support`.
+- Generated Rust code now rejects `SelfHostRuntime.*` usage unless `--with-self-host-support` is enabled, including top-level statement usage.
+
+### Fixed
+- `--with-self-host-support` now enforces the guest-entry contract explicitly: the chosen `--guest-entry` must declare `prog: Program` and `moduleFns: List<FnDef>` so self-host callback bridges cannot silently compile into a broken runtime shape.
+- Aver formatter keeps medium effect lists like `! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]` on one line when they fit the line budget.
+
 ## 0.7.1 (2026-03-27)
 
 ### Changed

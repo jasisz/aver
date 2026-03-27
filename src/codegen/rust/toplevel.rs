@@ -390,76 +390,79 @@ fn emit_fn_def_with_visibility(
     } else {
         None
     };
-    let self_host_state = if is_guest_entry && ctx.emit_self_host_runtime {
+    let self_host_state = if is_guest_entry && ctx.emit_self_host_support {
         self_host_runtime_state(fd)
     } else {
         None
     };
 
-    if ctx.emit_replay_runtime && is_guest_entry {
+    if is_guest_entry && (ctx.emit_replay_runtime || self_host_state.is_some()) {
         lines.push(format!(
             "{}fn {}({}) -> {} {{",
             visibility, fn_name, params, ret_type
         ));
-        match &guest_args_name {
-            Some(guest_args) => {
-                lines.push(format!(
-                    "    let __replay_input = aver_replay::ReplayValue::to_replay_json(&{});",
-                    guest_args
-                ));
-                if fd.return_type.starts_with("Result<") {
-                    lines.push(format!(
-                        "    aver_replay::with_guest_scope_args_result({:?}, __replay_input, {}.clone(), || {{",
-                        fd.name, guest_args
-                    ));
-                } else {
-                    lines.push(format!(
-                        "    aver_replay::with_guest_scope_args({:?}, __replay_input, {}.clone(), || {{",
-                        fd.name, guest_args
-                    ));
-                }
-            }
-            None => {
-                let input_args = fd
-                    .params
-                    .iter()
-                    .map(|(name, _)| {
-                        format!(
-                            "aver_replay::ReplayValue::to_replay_json(&{})",
-                            aver_name_to_rust(name)
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                lines.push(format!(
-                    "    let __replay_input = aver_replay::entry_input(vec![{}]);",
-                    input_args
-                ));
-                if fd.return_type.starts_with("Result<") {
-                    lines.push(format!(
-                        "    aver_replay::with_guest_scope_result({:?}, __replay_input, || {{",
-                        fd.name
-                    ));
-                } else {
-                    lines.push(format!(
-                        "    aver_replay::with_guest_scope({:?}, __replay_input, || {{",
-                        fd.name
-                    ));
-                }
-            }
-        }
+        let mut wrapped_body = emit_fn_body(&fd.body, ctx, &ectx);
         if let Some((prog_name, module_fns_name)) = &self_host_state {
-            lines.push(format!(
-                "        let __self_host_fns = crate::aver_generated::domain::eval::fnsToStore(aver_rt::AverList::concat(&{}.clone(), &{}.fns.clone()));",
-                module_fns_name, prog_name
-            ));
-            lines.push("        crate::with_self_host_fn_store(__self_host_fns, || {".to_string());
-            lines.push(indent_block(&emit_fn_body(&fd.body, ctx, &ectx), 3));
-            lines.push("        })".to_string());
-        } else {
-            lines.push(emit_fn_body(&fd.body, ctx, &ectx));
+            wrapped_body = format!(
+                "crate::self_host_support::with_program_fn_store({}.fns.clone(), {}.clone(), || {{\n{}\n}})",
+                prog_name,
+                module_fns_name,
+                indent_block(&wrapped_body, 1)
+            );
         }
-        lines.push("    })".to_string());
+        if ctx.emit_replay_runtime {
+            match &guest_args_name {
+                Some(guest_args) => {
+                    lines.push(format!(
+                        "    let __replay_input = aver_replay::ReplayValue::to_replay_json(&{});",
+                        guest_args
+                    ));
+                    if fd.return_type.starts_with("Result<") {
+                        lines.push(format!(
+                            "    aver_replay::with_guest_scope_args_result({:?}, __replay_input, {}.clone(), || {{",
+                            fd.name, guest_args
+                        ));
+                    } else {
+                        lines.push(format!(
+                            "    aver_replay::with_guest_scope_args({:?}, __replay_input, {}.clone(), || {{",
+                            fd.name, guest_args
+                        ));
+                    }
+                }
+                None => {
+                    let input_args = fd
+                        .params
+                        .iter()
+                        .map(|(name, _)| {
+                            format!(
+                                "aver_replay::ReplayValue::to_replay_json(&{})",
+                                aver_name_to_rust(name)
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    lines.push(format!(
+                        "    let __replay_input = aver_replay::entry_input(vec![{}]);",
+                        input_args
+                    ));
+                    if fd.return_type.starts_with("Result<") {
+                        lines.push(format!(
+                            "    aver_replay::with_guest_scope_result({:?}, __replay_input, || {{",
+                            fd.name
+                        ));
+                    } else {
+                        lines.push(format!(
+                            "    aver_replay::with_guest_scope({:?}, __replay_input, || {{",
+                            fd.name
+                        ));
+                    }
+                }
+            }
+            lines.push(indent_block(&wrapped_body, 2));
+            lines.push("    })".to_string());
+        } else {
+            lines.push(indent_block(&wrapped_body, 1));
+        }
         lines.push("}".to_string());
         return lines.join("\n");
     }
@@ -1764,7 +1767,7 @@ mod tests {
             emit_replay_runtime: false,
             runtime_policy_from_env: false,
             guest_entry: None,
-            emit_self_host_runtime: false,
+            emit_self_host_support: false,
         }
     }
 

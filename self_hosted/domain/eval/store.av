@@ -1,0 +1,82 @@
+module Store
+    depends [Domain.Ast, Domain.Value]
+    intent =
+        "Function-store and environment helpers for the self-hosted evaluator."
+        "Keeps name-to-id lookup separate from the main eval loop."
+    exposes [FnStore, lookupVar, emptyFnStore, lookupFnId, lookupFnById, lookupFnOption, lookupFn, zipArgs, mergeBindings, fnsToStore]
+
+record FnStore
+    nameToId: Map<String, Int>
+    byId: Vector<FnDef>
+
+fn lookupVar(env: Map<String, Val>, name: String) -> Result<Val, String>
+    ? "Look up a variable in the environment."
+    match Map.get(env, name)
+        Option.Some(v) -> Result.Ok(v)
+        Option.None -> Result.Err("undefined variable: " + name)
+
+verify lookupVar
+    lookupVar(Map.set(Map.empty(), "x", Val.ValInt(1)), "x") => Result.Ok(Val.ValInt(1))
+    lookupVar(Map.empty(), "x") => Result.Err("undefined variable: x")
+
+fn emptyFnStore() -> FnStore
+    ? "Create an empty function store."
+    FnStore(nameToId = Map.empty(), byId = Vector.fromList([]))
+
+fn lookupFnId(fns: FnStore, name: String) -> Result<Int, String>
+    ? "Look up a function id by name."
+    match Map.get(fns.nameToId, name)
+        Option.Some(id) -> Result.Ok(id)
+        Option.None -> Result.Err("undefined function: " + name)
+
+fn lookupFnById(fns: FnStore, id: Int) -> Result<FnDef, String>
+    ? "Look up a function definition by id."
+    match Vector.get(fns.byId, id)
+        Option.Some(fd) -> Result.Ok(fd)
+        Option.None -> Result.Err("undefined function id: {Int.toString(id)}")
+
+fn lookupFnOption(fns: FnStore, name: String) -> Option<FnDef>
+    ? "Look up a function definition by name without wrapping success in Result."
+    match Map.get(fns.nameToId, name)
+        Option.Some(id) -> Vector.get(fns.byId, id)
+        Option.None -> Option.None
+
+fn lookupFn(fns: FnStore, name: String) -> Result<FnDef, String>
+    ? "Look up a function definition by name through the function store."
+    match lookupFnOption(fns, name)
+        Option.Some(fd) -> Result.Ok(fd)
+        Option.None -> Result.Err("undefined function: " + name)
+
+verify lookupFn
+    lookupFn(fnsToStore([FnDef(name = "foo", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone)]), "foo") => Result.Ok(FnDef(name = "foo", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone))
+    lookupFn(emptyFnStore(), "foo") => Result.Err("undefined function: foo")
+
+fn zipArgs(params: List<String>, args: List<Val>, acc: Map<String, Val>) -> Map<String, Val>
+    ? "Build env map from parameter names and argument values."
+    match params
+        [] -> acc
+        [p, ..ps] -> match args
+            [] -> acc
+            [a, ..as_] -> zipArgs(ps, as_, Map.set(acc, p, a))
+
+fn mergeBindings(bindings: List<(String, Val)>, env: Map<String, Val>) -> Map<String, Val>
+    ? "Add pattern match bindings to an env map."
+    match bindings
+        [] -> env
+        [pair, ..rest] -> match pair
+            (k, v) -> mergeBindings(rest, Map.set(env, k, v))
+
+verify mergeBindings
+    mergeBindings([], Map.empty()) => Map.empty()
+    mergeBindings([("x", Val.ValInt(1))], Map.empty()) => Map.set(Map.empty(), "x", Val.ValInt(1))
+
+fn fnsToStore(fns: List<FnDef>) -> FnStore
+    ? "Build a function store with a name->id index and id->FnDef table."
+    nameToId = fnsToIdMap(fns, Map.empty(), 0)
+    FnStore(nameToId = nameToId, byId = Vector.fromList(fns))
+
+fn fnsToIdMap(fns: List<FnDef>, acc: Map<String, Int>, idx: Int) -> Map<String, Int>
+    ? "Convert a list of FnDefs to a name->id map. Later defs shadow earlier ones."
+    match fns
+        [] -> acc
+        [f, ..rest] -> fnsToIdMap(rest, Map.set(acc, f.name, idx), idx + 1)

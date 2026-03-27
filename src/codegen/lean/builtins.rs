@@ -173,7 +173,7 @@ mod tests {
             emit_replay_runtime: false,
             runtime_policy_from_env: false,
             guest_entry: None,
-            emit_self_host_runtime: false,
+            emit_self_host_support: false,
         }
     }
 

@@ -9,6 +9,7 @@ mod policy;
 mod project;
 mod replay;
 mod runtime;
+mod self_host;
 mod syntax;
 mod toplevel;
 mod types;
@@ -91,6 +92,7 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
                 ctx.emit_replay_runtime,
                 ctx.guest_entry.as_deref(),
                 !verify_blocks.is_empty(),
+                ctx.emit_self_host_support,
             ),
         ),
         (
@@ -100,10 +102,16 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
                 has_http_types,
                 has_http_server_types,
                 ctx.emit_replay_runtime,
-                ctx.emit_self_host_runtime,
             ),
         ),
     ];
+
+    if ctx.emit_self_host_support {
+        files.push((
+            "src/self_host_support.rs".to_string(),
+            self_host::generate_self_host_support(),
+        ));
+    }
 
     if has_embedded_policy && let Some(config) = &ctx.policy {
         files.push((
@@ -164,9 +172,10 @@ fn render_root_main(
     has_replay: bool,
     guest_entry: Option<&str>,
     has_verify: bool,
+    has_self_host_support: bool,
 ) -> String {
     let mut sections = vec![
-        "#![allow(unused_variables, unused_mut, dead_code, unused_imports, unused_parens, non_snake_case, non_camel_case_types, unreachable_patterns)]".to_string(),
+        "#![allow(unused_variables, unused_mut, dead_code, unused_imports, unused_parens, non_snake_case, non_camel_case_types, unreachable_patterns, hidden_glob_reexports)]".to_string(),
         "#[macro_use] extern crate aver_rt;".to_string(),
         "pub use ::aver_rt::AverMap as HashMap;".to_string(),
         "pub use ::aver_rt::AverStr;".to_string(),
@@ -185,6 +194,11 @@ fn render_root_main(
         sections.push(String::new());
         sections.push("mod replay_support;".to_string());
         sections.push("pub use replay_support::*;".to_string());
+    }
+
+    if has_self_host_support {
+        sections.push(String::new());
+        sections.push("mod self_host_support;".to_string());
     }
 
     sections.push(String::new());
@@ -263,13 +277,8 @@ fn render_runtime_support(
     has_http_types: bool,
     has_http_server_types: bool,
     has_replay: bool,
-    emit_self_host_runtime: bool,
 ) -> String {
-    let mut sections = vec![runtime::generate_runtime(
-        has_replay,
-        has_http_server_types,
-        emit_self_host_runtime,
-    )];
+    let mut sections = vec![runtime::generate_runtime(has_replay, has_http_server_types)];
     if has_tcp_types {
         sections.push(runtime::generate_tcp_types());
     }
@@ -871,5 +880,31 @@ fn main() -> Result<String, String>
         assert!(root_main.contains("mod policy_support;"));
         assert!(replay_support.contains("aver_policy::check_disk"));
         assert!(!replay_support.contains("RuntimeEffectPolicy"));
+    }
+
+    #[test]
+    fn self_host_support_is_emitted_as_separate_module() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn runGuestProgram(prog: Int, moduleFns: Int) -> Result<String, String>
+    Result.Ok("ok")
+"#,
+            "demo",
+        );
+        ctx.emit_self_host_support = true;
+        ctx.guest_entry = Some("runGuestProgram".to_string());
+
+        let out = transpile(&ctx);
+        let root_main = generated_file(&out, "src/main.rs");
+        let runtime_support = generated_file(&out, "src/runtime_support.rs");
+        let self_host_support = generated_file(&out, "src/self_host_support.rs");
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(root_main.contains("mod self_host_support;"));
+        assert!(!runtime_support.contains("with_fn_store"));
+        assert!(self_host_support.contains("pub fn with_program_fn_store"));
+        assert!(entry.contains("crate::self_host_support::with_program_fn_store("));
     }
 }
