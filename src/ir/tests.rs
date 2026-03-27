@@ -1,12 +1,13 @@
 use super::{
-    BoolMatchShape, CallLowerCtx, CallPlan, DispatchArmPlan, DispatchBindingPlan,
-    DispatchDefaultPlan, DispatchLiteral, DispatchTableShape, LeafOp, ListMatchShape,
-    MatchDispatchPlan, SemanticConstructor, SemanticDispatchPattern, TailCallPlan, WrapperKind,
-    classify_bool_match_shape, classify_call_plan, classify_constructor_name,
-    classify_dispatch_pattern, classify_leaf_op, classify_list_match_shape,
-    classify_match_dispatch_plan, classify_tail_call_plan, expr_to_dotted_name,
+    BoolCompareOp, BoolMatchShape, BoolSubjectPlan, CallLowerCtx, CallPlan, DispatchArmPlan,
+    DispatchBindingPlan, DispatchDefaultPlan, DispatchLiteral, DispatchTableShape, LeafOp,
+    ListMatchShape, MatchDispatchPlan, SemanticConstructor, SemanticDispatchPattern, TailCallPlan,
+    WrapperKind, classify_bool_match_shape, classify_bool_subject_plan, classify_call_plan,
+    classify_constructor_name, classify_dispatch_pattern, classify_leaf_op,
+    classify_list_match_shape, classify_match_dispatch_plan, classify_tail_call_plan,
+    expr_to_dotted_name,
 };
-use crate::ast::{Expr, Literal, MatchArm, Pattern};
+use crate::ast::{BinOp, Expr, Literal, MatchArm, Pattern};
 
 #[derive(Default)]
 struct DummyCtx;
@@ -337,4 +338,23 @@ fn uppercase_module_paths_are_not_field_leafs() {
         "fib".to_string(),
     );
     assert_eq!(classify_leaf_op(&expr, &ctx), None);
+}
+
+#[test]
+fn classify_bool_subject_normalizes_negated_comparisons() {
+    let subject = Expr::BinOp(
+        BinOp::Gte,
+        Box::new(Expr::Ident("n".to_string())),
+        Box::new(Expr::Literal(Literal::Int(10))),
+    );
+
+    assert!(matches!(
+        classify_bool_subject_plan(&subject),
+        BoolSubjectPlan::Compare {
+            lhs: Expr::Ident(name),
+            rhs: Expr::Literal(Literal::Int(10)),
+            op: BoolCompareOp::Lt,
+            invert: true,
+        } if name == "n"
+    ));
 }

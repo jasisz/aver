@@ -747,6 +747,26 @@ fn cellAt(grid: Vector<Int>, idx: Int) -> Int
     }
 
     #[test]
+    fn bool_match_on_gte_normalizes_to_base_comparison() {
+        let ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn bucket(n: Int) -> Int
+    match n >= 10
+        true -> 7
+        false -> 3
+"#,
+            "demo",
+        );
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("if (n < 10i64) { 3i64 } else { 7i64 }"));
+    }
+
+    #[test]
     fn single_field_variant_display_avoids_vec_join() {
         let ctx = ctx_from_source(
             r#"

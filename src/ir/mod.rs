@@ -9,10 +9,11 @@ pub use calls::{
 };
 pub use leaf::{LeafOp, classify_leaf_op};
 pub use matches::{
-    BoolMatchShape, DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan, DispatchLiteral,
-    DispatchTableShape, ListMatchShape, MatchDispatchPlan, SemanticDispatchPattern,
-    classify_bool_match_shape, classify_dispatch_pattern, classify_dispatch_table_shape,
-    classify_list_match_shape, classify_match_dispatch_plan,
+    BoolCompareOp, BoolMatchShape, BoolSubjectPlan, DispatchArmPlan, DispatchBindingPlan,
+    DispatchDefaultPlan, DispatchLiteral, DispatchTableShape, ListMatchShape, MatchDispatchPlan,
+    SemanticDispatchPattern, classify_bool_match_shape, classify_bool_subject_plan,
+    classify_dispatch_pattern, classify_dispatch_table_shape, classify_list_match_shape,
+    classify_match_dispatch_plan,
 };
 
 #[cfg(test)]

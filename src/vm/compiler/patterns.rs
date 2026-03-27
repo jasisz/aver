@@ -1,9 +1,10 @@
 use super::{CompileError, FnCompiler};
 use crate::ast::{Expr, Literal, MatchArm, Pattern};
 use crate::ir::{
-    BoolMatchShape, CallLowerCtx, DispatchArmPlan, DispatchBindingPlan, DispatchLiteral,
-    DispatchTableShape, MatchDispatchPlan, SemanticConstructor, SemanticDispatchPattern,
-    WrapperKind, classify_dispatch_pattern, classify_match_dispatch_plan,
+    BoolCompareOp, BoolMatchShape, BoolSubjectPlan, CallLowerCtx, DispatchArmPlan,
+    DispatchBindingPlan, DispatchLiteral, DispatchTableShape, MatchDispatchPlan,
+    SemanticConstructor, SemanticDispatchPattern, WrapperKind, classify_bool_subject_plan,
+    classify_dispatch_pattern, classify_match_dispatch_plan,
 };
 use crate::nan_value::NanValue;
 use crate::vm::opcode::*;
@@ -359,29 +360,37 @@ impl<'a> FnCompiler<'a> {
         let true_body = &arms[shape.true_arm_index].body;
         let false_body = &arms[shape.false_arm_index].body;
 
-        // Optimization: if subject is a negated comparison (>=, <=, !=),
-        // emit the base comparison and swap branches to eliminate NOT.
-        if let Expr::BinOp(op, lhs, rhs) = subject {
-            use crate::ast::BinOp;
-            let inverted_op = match op {
-                BinOp::Gte => Some(LT),
-                BinOp::Lte => Some(GT),
-                BinOp::Neq => Some(EQ),
-                _ => None,
-            };
-            if let Some(base_op) = inverted_op {
-                self.compile_expr(lhs)?;
-                self.compile_expr(rhs)?;
-                self.emit_op(base_op);
-                // Swapped: LT=true means NOT(>=), so jump to true_body (the >= case)
+        if let BoolSubjectPlan::Compare {
+            lhs,
+            rhs,
+            op,
+            invert,
+        } = classify_bool_subject_plan(subject)
+        {
+            self.compile_expr(lhs)?;
+            self.compile_expr(rhs)?;
+            self.emit_op(match op {
+                BoolCompareOp::Eq => EQ,
+                BoolCompareOp::Lt => LT,
+                BoolCompareOp::Gt => GT,
+            });
+
+            if invert {
                 let true_jump = self.emit_jump(JUMP_IF_FALSE);
                 self.compile_expr(false_body)?;
                 let end_jump = self.emit_jump(JUMP);
                 self.patch_jump(true_jump);
                 self.compile_expr(true_body)?;
                 self.patch_jump(end_jump);
-                return Ok(());
+            } else {
+                let false_jump = self.emit_jump(JUMP_IF_FALSE);
+                self.compile_expr(true_body)?;
+                let end_jump = self.emit_jump(JUMP);
+                self.patch_jump(false_jump);
+                self.compile_expr(false_body)?;
+                self.patch_jump(end_jump);
             }
+            return Ok(());
         }
 
         // Normal path: subject, JUMP_IF_FALSE → false_body, true_body, JUMP → end, false_body

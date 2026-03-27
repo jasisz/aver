@@ -1,4 +1,4 @@
-use crate::ast::{Literal, MatchArm, Pattern};
+use crate::ast::{BinOp, Expr, Literal, MatchArm, Pattern};
 
 use super::{CallLowerCtx, SemanticConstructor, WrapperKind, classify_constructor_name};
 
@@ -23,6 +23,24 @@ pub enum SemanticDispatchPattern {
 pub struct BoolMatchShape {
     pub true_arm_index: usize,
     pub false_arm_index: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoolCompareOp {
+    Eq,
+    Lt,
+    Gt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BoolSubjectPlan<'a> {
+    Expr(&'a Expr),
+    Compare {
+        lhs: &'a Expr,
+        rhs: &'a Expr,
+        op: BoolCompareOp,
+        invert: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,6 +128,52 @@ pub fn classify_bool_match_shape(arms: &[MatchArm]) -> Option<BoolMatchShape> {
             })
         }
         _ => None,
+    }
+}
+
+pub fn classify_bool_subject_plan(subject: &Expr) -> BoolSubjectPlan<'_> {
+    let Expr::BinOp(op, lhs, rhs) = subject else {
+        return BoolSubjectPlan::Expr(subject);
+    };
+
+    match op {
+        BinOp::Eq => BoolSubjectPlan::Compare {
+            lhs,
+            rhs,
+            op: BoolCompareOp::Eq,
+            invert: false,
+        },
+        BinOp::Lt => BoolSubjectPlan::Compare {
+            lhs,
+            rhs,
+            op: BoolCompareOp::Lt,
+            invert: false,
+        },
+        BinOp::Gt => BoolSubjectPlan::Compare {
+            lhs,
+            rhs,
+            op: BoolCompareOp::Gt,
+            invert: false,
+        },
+        BinOp::Neq => BoolSubjectPlan::Compare {
+            lhs,
+            rhs,
+            op: BoolCompareOp::Eq,
+            invert: true,
+        },
+        BinOp::Gte => BoolSubjectPlan::Compare {
+            lhs,
+            rhs,
+            op: BoolCompareOp::Lt,
+            invert: true,
+        },
+        BinOp::Lte => BoolSubjectPlan::Compare {
+            lhs,
+            rhs,
+            op: BoolCompareOp::Gt,
+            invert: true,
+        },
+        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => BoolSubjectPlan::Expr(subject),
     }
 }
 

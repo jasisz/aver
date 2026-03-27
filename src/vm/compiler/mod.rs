@@ -788,7 +788,7 @@ mod tests {
     use super::compile_program;
     use crate::nan_value::Arena;
     use crate::source::parse_source;
-    use crate::vm::opcode::VECTOR_GET_OR;
+    use crate::vm::opcode::{LT, NOT, VECTOR_GET_OR};
 
     #[test]
     fn vector_get_with_literal_default_lowers_to_vector_get_or() {
@@ -811,6 +811,38 @@ fn cellAt(grid: Vector<Int>, idx: Int) -> Int
         assert!(
             chunk.code.contains(&VECTOR_GET_OR),
             "expected VECTOR_GET_OR in bytecode, got {:?}",
+            chunk.code
+        );
+    }
+
+    #[test]
+    fn bool_match_on_gte_uses_base_compare_without_not() {
+        let source = r#"
+module Demo
+
+fn bucket(n: Int) -> Int
+    match n >= 10
+        true -> 7
+        false -> 3
+"#;
+
+        let mut items = parse_source(source).expect("source should parse");
+        crate::tco::transform_program(&mut items);
+        crate::resolver::resolve_program(&mut items);
+
+        let mut arena = Arena::new();
+        let (code, _globals) = compile_program(&items, &mut arena).expect("vm compile should pass");
+        let fn_id = code.find("bucket").expect("bucket should exist");
+        let chunk = code.get(fn_id);
+
+        assert!(
+            chunk.code.contains(&LT),
+            "expected LT in bytecode, got {:?}",
+            chunk.code
+        );
+        assert!(
+            !chunk.code.contains(&NOT),
+            "did not expect NOT in normalized bool-match bytecode, got {:?}",
             chunk.code
         );
     }

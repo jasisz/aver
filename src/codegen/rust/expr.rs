@@ -7,11 +7,12 @@ use crate::codegen::common::{
     expr_to_dotted_name, is_user_type, module_prefix_to_rust_path, resolve_module_call,
 };
 use crate::ir::{
-    CallLowerCtx, CallPlan, DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan,
-    DispatchLiteral, DispatchTableShape, LeafOp, ListMatchShape, MatchDispatchPlan,
-    SemanticConstructor, SemanticDispatchPattern, TailCallPlan, WrapperKind, classify_call_plan,
-    classify_constructor_name, classify_leaf_op, classify_list_match_shape,
-    classify_match_dispatch_plan, classify_tail_call_plan, is_builtin_namespace,
+    BoolCompareOp, BoolSubjectPlan, CallLowerCtx, CallPlan, DispatchArmPlan, DispatchBindingPlan,
+    DispatchDefaultPlan, DispatchLiteral, DispatchTableShape, LeafOp, ListMatchShape,
+    MatchDispatchPlan, SemanticConstructor, SemanticDispatchPattern, TailCallPlan, WrapperKind,
+    classify_bool_subject_plan, classify_call_plan, classify_constructor_name, classify_leaf_op,
+    classify_list_match_shape, classify_match_dispatch_plan, classify_tail_call_plan,
+    is_builtin_namespace,
 };
 use crate::types::Type;
 /// Aver expressions → Rust expression strings.
@@ -669,7 +670,8 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
 
     // Bool match → if/else: match expr { true => A, false => B } → if expr { A } else { B }
     if let Some(MatchDispatchPlan::Bool(shape)) = dispatch_plan.as_ref()
-        && let Some(code) = try_emit_bool_if_else(&subj, arms, *shape, ctx, ectx)
+        && let Some(code) =
+            try_emit_bool_if_else(subject, &subj, arms, *shape, ctx, &subj_ectx, ectx)
     {
         return code;
     }
@@ -717,17 +719,54 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
 /// If match has exactly two arms with `true` and `false` bool literal patterns,
 /// emit `if subject { true_body } else { false_body }` instead of a match.
 fn try_emit_bool_if_else(
+    subject: &Expr,
     subj: &str,
     arms: &[MatchArm],
     shape: crate::ir::BoolMatchShape,
     ctx: &CodegenContext,
+    subj_ectx: &EmitCtx,
     ectx: &EmitCtx,
 ) -> Option<String> {
-    let true_body = &arms[shape.true_arm_index].body;
-    let false_body = &arms[shape.false_arm_index].body;
+    let (true_body, false_body, cond) = match classify_bool_subject_plan(subject) {
+        BoolSubjectPlan::Expr(_) => (
+            &arms[shape.true_arm_index].body,
+            &arms[shape.false_arm_index].body,
+            subj.to_string(),
+        ),
+        BoolSubjectPlan::Compare {
+            lhs,
+            rhs,
+            op,
+            invert,
+        } => {
+            let rhs_vars = collect_vars(rhs);
+            let lhs_ectx = subj_ectx.with_used_after(&rhs_vars);
+            let lhs_code = emit_expr(lhs, ctx, &lhs_ectx);
+            let rhs_code = emit_expr(rhs, ctx, subj_ectx);
+            let op_code = match op {
+                BoolCompareOp::Eq => "==",
+                BoolCompareOp::Lt => "<",
+                BoolCompareOp::Gt => ">",
+            };
+            let cond = format!("({lhs_code} {op_code} {rhs_code})");
+            if invert {
+                (
+                    &arms[shape.false_arm_index].body,
+                    &arms[shape.true_arm_index].body,
+                    cond,
+                )
+            } else {
+                (
+                    &arms[shape.true_arm_index].body,
+                    &arms[shape.false_arm_index].body,
+                    cond,
+                )
+            }
+        }
+    };
     let t = maybe_clone(emit_expr(true_body, ctx, ectx), true_body, ectx);
     let f = maybe_clone(emit_expr(false_body, ctx, ectx), false_body, ectx);
-    Some(format!("if {} {{ {} }} else {{ {} }}", subj, t, f))
+    Some(format!("if {} {{ {} }} else {{ {} }}", cond, t, f))
 }
 
 fn subject_might_be_string(_subject: &Expr, _ctx: &CodegenContext) -> bool {
