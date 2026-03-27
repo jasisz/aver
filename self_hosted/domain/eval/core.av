@@ -6,6 +6,10 @@ module Core
         "Delegates builtins to Domain.Builtins and pattern matching to Domain.Match."
     exposes [evalProgram, evalProgramWithFns]
 
+type SlotTailStep
+    SlotTailDone(Val)
+    SlotTailRecurEnv(Vector<Val>)
+
 fn evalExpr(expr: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate an expression in the given environment."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
@@ -237,19 +241,40 @@ fn callResolved(fd: FnDef, args: List<Val>, fns: FnStore) -> Result<Val, String>
         false -> evalResolvedNamedFn(fd, Domain.Eval.Store.zipArgs(fd.params, args, Map.empty()), fns)
 
 fn evalResolvedSlotFn(fd: FnDef, calleeEnv: Vector<Val>, fns: FnStore) -> Result<Val, String>
-    ? "Evaluate a resolved function body in slot mode, using a fast expr tag when available."
+    ? "Evaluate a resolved function body in slot mode, looping self-tail-calls instead of recursing on the host stack."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
-    result = match fd.fastPath
-        FnFastPath.FastLeaf(leaf) -> Domain.Eval.Fast.runFastLeafSlot(leaf, calleeEnv)
-        FnFastPath.FastForwardCall(name, slotArgs) -> fastForwardCall(calleeEnv, name, slotArgs, fns)
-        FnFastPath.FastBoolSlotBranch(slot, thenLeaf, elseLeaf) -> Domain.Eval.Fast.fastBoolSlotBranch(calleeEnv, slot, thenLeaf, elseLeaf)
-        FnFastPath.FastEqIntBranch(slot, expected, thenLeaf, elseLeaf) -> Domain.Eval.Fast.fastEqIntBranch(calleeEnv, slot, expected, thenLeaf, elseLeaf)
-        FnFastPath.FastEqStringBranch(slot, expected, thenLeaf, elseLeaf) -> Domain.Eval.Fast.fastEqStringBranch(calleeEnv, slot, expected, thenLeaf, elseLeaf)
-        FnFastPath.FastLtIntSlotsBranch(lhsSlot, rhsSlot, thenLeaf, elseLeaf) -> Domain.Eval.Fast.fastLtIntSlotsBranch(calleeEnv, lhsSlot, rhsSlot, thenLeaf, elseLeaf)
-        FnFastPath.FastListSlotBranch(slot, emptyLeaf, headSlot, tailSlot, consLeaf) -> Domain.Eval.Fast.fastListSlotBranch(calleeEnv, slot, emptyLeaf, headSlot, tailSlot, consLeaf)
-        FnFastPath.FastSingleExpr -> evalResolvedSingleExprSlot(fd.body, calleeEnv, fd.slotMap, fns)
-        FnFastPath.FastNone -> evalStmtsSlot(fd.body, calleeEnv, fd.slotMap, fns)
-    Domain.Eval.Common.normalizeFnReturn(result)
+    step = evalResolvedSlotStep(fd, calleeEnv, fns)?
+    match step
+        SlotTailStep.SlotTailDone(v) -> Domain.Eval.Common.normalizeFnReturn(Result.Ok(v))
+        SlotTailStep.SlotTailRecurEnv(nextEnv) -> evalResolvedSlotFn(fd, nextEnv, fns)
+
+fn evalResolvedSlotStep(fd: FnDef, calleeEnv: Vector<Val>, fns: FnStore) -> Result<SlotTailStep, String>
+    ? "Run one slot-frame step and either finish with a value or request a self-tail-call re-entry."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match fd.fastPath
+        FnFastPath.FastLeaf(leaf) -> match Domain.Eval.Fast.runFastLeafSlot(leaf, calleeEnv)
+            Result.Ok(v) -> Result.Ok(SlotTailStep.SlotTailDone(v))
+            Result.Err(e) -> Result.Err(e)
+        FnFastPath.FastForwardCall(name, slotArgs) -> match fastForwardCall(calleeEnv, name, slotArgs, fns)
+            Result.Ok(v) -> Result.Ok(SlotTailStep.SlotTailDone(v))
+            Result.Err(e) -> Result.Err(e)
+        FnFastPath.FastBoolSlotBranch(slot, thenLeaf, elseLeaf) -> match Domain.Eval.Fast.fastBoolSlotBranch(calleeEnv, slot, thenLeaf, elseLeaf)
+            Result.Ok(v) -> Result.Ok(SlotTailStep.SlotTailDone(v))
+            Result.Err(e) -> Result.Err(e)
+        FnFastPath.FastEqIntBranch(slot, expected, thenLeaf, elseLeaf) -> match Domain.Eval.Fast.fastEqIntBranch(calleeEnv, slot, expected, thenLeaf, elseLeaf)
+            Result.Ok(v) -> Result.Ok(SlotTailStep.SlotTailDone(v))
+            Result.Err(e) -> Result.Err(e)
+        FnFastPath.FastEqStringBranch(slot, expected, thenLeaf, elseLeaf) -> match Domain.Eval.Fast.fastEqStringBranch(calleeEnv, slot, expected, thenLeaf, elseLeaf)
+            Result.Ok(v) -> Result.Ok(SlotTailStep.SlotTailDone(v))
+            Result.Err(e) -> Result.Err(e)
+        FnFastPath.FastLtIntSlotsBranch(lhsSlot, rhsSlot, thenLeaf, elseLeaf) -> match Domain.Eval.Fast.fastLtIntSlotsBranch(calleeEnv, lhsSlot, rhsSlot, thenLeaf, elseLeaf)
+            Result.Ok(v) -> Result.Ok(SlotTailStep.SlotTailDone(v))
+            Result.Err(e) -> Result.Err(e)
+        FnFastPath.FastListSlotBranch(slot, emptyLeaf, headSlot, tailSlot, consLeaf) -> match Domain.Eval.Fast.fastListSlotBranch(calleeEnv, slot, emptyLeaf, headSlot, tailSlot, consLeaf)
+            Result.Ok(v) -> Result.Ok(SlotTailStep.SlotTailDone(v))
+            Result.Err(e) -> Result.Err(e)
+        FnFastPath.FastSingleExpr -> evalResolvedSingleExprSlotTail(fd.name, fd.body, fd.slotCount, fd.slotMap, calleeEnv, fns)
+        FnFastPath.FastNone -> evalStmtsSlotTail(fd.name, fd.body, fd.slotCount, calleeEnv, fd.slotMap, fns)
 
 fn evalResolvedNamedFn(fd: FnDef, calleeEnv: Map<String, Val>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate a resolved function body in named-env mode, using a fast expr tag when available."
@@ -269,6 +294,70 @@ fn evalResolvedSingleExprSlot(body: List<Stmt>, calleeEnv: Vector<Val>, slotMap:
             true -> evalResolvedSingleStmtSlot(stmt, calleeEnv, slotMap, fns)
             false -> evalStmtsSlot(body, calleeEnv, slotMap, fns)
         _ -> evalStmtsSlot(body, calleeEnv, slotMap, fns)
+
+fn evalResolvedSingleExprSlotTail(selfName: String, body: List<Stmt>, slotCount: Int, slotMap: Map<String, Int>, calleeEnv: Vector<Val>, fns: FnStore) -> Result<SlotTailStep, String>
+    ? "Tail-aware version of the single-expression fast path for slot functions."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match body
+        [stmt, ..rest] -> match rest == []
+            true -> evalTailStmtSlot(selfName, stmt, slotCount, calleeEnv, slotMap, fns)
+            false -> match evalStmtsSlot(body, calleeEnv, slotMap, fns)
+                Result.Ok(v) -> Result.Ok(SlotTailStep.SlotTailDone(v))
+                Result.Err(e) -> Result.Err(e)
+        _ -> match evalStmtsSlot(body, calleeEnv, slotMap, fns)
+            Result.Ok(v) -> Result.Ok(SlotTailStep.SlotTailDone(v))
+            Result.Err(e) -> Result.Err(e)
+
+fn evalTailStmtSlot(selfName: String, stmt: Stmt, slotCount: Int, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<SlotTailStep, String>
+    ? "Evaluate a final statement in slot mode, capturing self-tail-calls as loop re-entry requests."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match stmt
+        Stmt.StmtExpr(expr) -> evalTailExprSlot(selfName, expr, slotCount, env, slotMap, fns)
+        _ -> match evalStmtsSlot([stmt], env, slotMap, fns)
+            Result.Ok(v) -> Result.Ok(SlotTailStep.SlotTailDone(v))
+            Result.Err(e) -> Result.Err(e)
+
+fn evalTailExprSlot(selfName: String, expr: Expr, slotCount: Int, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<SlotTailStep, String>
+    ? "Evaluate a tail-position expression in slot mode, converting self-recursive direct calls into loop re-entry."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match expr
+        Expr.ExprCallDirect(name, argExprs) -> match name == selfName
+            true -> match evalArgsSlotToSlotEnv(argExprs, env, slotMap, fns, Vector.new(slotCount, Val.ValUnit), 0)
+                Result.Ok(nextEnv) -> Result.Ok(SlotTailStep.SlotTailRecurEnv(nextEnv))
+                Result.Err(e) -> Result.Err(e)
+            false -> match evalCallDirectSlot(name, argExprs, env, slotMap, fns)
+                Result.Ok(v) -> Result.Ok(SlotTailStep.SlotTailDone(v))
+                Result.Err(e) -> Result.Err(e)
+        Expr.ExprBoolBranch(cond, thenExpr, elseExpr) -> evalTailBoolBranchSlot(selfName, cond, thenExpr, elseExpr, slotCount, env, slotMap, fns)
+        Expr.ExprMatch(scrutinee, arms) -> evalTailMatchExprSlot(selfName, scrutinee, arms, slotCount, env, slotMap, fns)
+        _ -> match evalExprSlot(expr, env, slotMap, fns)
+            Result.Ok(v) -> Result.Ok(SlotTailStep.SlotTailDone(v))
+            Result.Err(e) -> Result.Err(e)
+
+fn evalTailBoolBranchSlot(selfName: String, cond: Expr, thenExpr: Expr, elseExpr: Expr, slotCount: Int, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<SlotTailStep, String>
+    ? "Evaluate a tail-position bool branch in slot mode."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    condV = evalExprSlot(cond, env, slotMap, fns)?
+    match condV
+        Val.ValBool(flag) -> match flag
+            true -> evalTailExprSlot(selfName, thenExpr, slotCount, env, slotMap, fns)
+            false -> evalTailExprSlot(selfName, elseExpr, slotCount, env, slotMap, fns)
+        _ -> Result.Err("bool branch condition must evaluate to Bool")
+
+fn evalTailMatchExprSlot(selfName: String, scrutinee: Expr, arms: List<MatchArm>, slotCount: Int, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<SlotTailStep, String>
+    ? "Evaluate a tail-position match expression in slot mode."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    v = evalExprSlot(scrutinee, env, slotMap, fns)?
+    evalTailMatchSlot(selfName, v, arms, slotCount, env, slotMap, fns)
+
+fn evalTailMatchSlot(selfName: String, v: Val, arms: List<MatchArm>, slotCount: Int, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<SlotTailStep, String>
+    ? "Evaluate a tail-position match arm in slot mode, preserving binding slots."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match arms
+        [] -> Result.Err("no matching arm")
+        [arm, ..rest] -> match Domain.Match.matchPattern(arm.pattern, v)
+            Result.Ok(bindings) -> evalTailExprSlot(selfName, arm.body, slotCount, mergeBindingsSlot(bindings, arm.bindingSlots, env), slotMap, fns)
+            Result.Err(_) -> evalTailMatchSlot(selfName, v, rest, slotCount, env, slotMap, fns)
 
 fn evalResolvedSingleStmtSlot(stmt: Stmt, calleeEnv: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
     ? "Run the single expression stmt fast path in slot mode."
@@ -954,3 +1043,32 @@ fn evalStmtsSlot(stmts: List<Stmt>, env: Vector<Val>, slotMap: Map<String, Int>,
             Stmt.StmtBindSlot(slot, e) -> evalStmtBindSlotNext(slot, e, rest, env, slotMap, fns)
             Stmt.StmtExpr(e) -> evalStmtExprSlotNext(e, rest, env, slotMap, fns)
             Stmt.StmtBind(name, e) -> evalStmtBindFallbackSlotNext(name, e, rest, env, slotMap, fns)
+
+fn evalStmtsSlotTail(selfName: String, stmts: List<Stmt>, slotCount: Int, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<SlotTailStep, String>
+    ? "Evaluate slot statements when the final expression may self-tail-recur."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match stmts
+        [] -> Result.Ok(SlotTailStep.SlotTailDone(Val.ValUnit))
+        [stmt, ..rest] -> match rest
+            [] -> evalTailStmtSlot(selfName, stmt, slotCount, env, slotMap, fns)
+            _ -> evalStmtsSlotTailNext(selfName, stmt, rest, slotCount, env, slotMap, fns)
+
+fn evalStmtsSlotTailNext(selfName: String, stmt: Stmt, rest: List<Stmt>, slotCount: Int, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<SlotTailStep, String>
+    ? "Evaluate one non-final slot statement before continuing the tail-aware slot loop."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match stmt
+        Stmt.StmtBindSlot(slot, e) -> evalStmtsSlotTailBind(selfName, slot, e, rest, slotCount, env, slotMap, fns)
+        Stmt.StmtExpr(e) -> evalStmtsSlotTailExpr(selfName, e, rest, slotCount, env, slotMap, fns)
+        Stmt.StmtBind(_, e) -> evalStmtsSlotTailExpr(selfName, e, rest, slotCount, env, slotMap, fns)
+
+fn evalStmtsSlotTailBind(selfName: String, slot: Int, e: Expr, rest: List<Stmt>, slotCount: Int, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<SlotTailStep, String>
+    ? "Evaluate one slot binding before continuing the tail-aware slot loop."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    v = evalExprSlot(e, env, slotMap, fns)?
+    evalStmtsSlotTail(selfName, rest, slotCount, Domain.Eval.Slots.setSlot(env, slot, v), slotMap, fns)
+
+fn evalStmtsSlotTailExpr(selfName: String, e: Expr, rest: List<Stmt>, slotCount: Int, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<SlotTailStep, String>
+    ? "Evaluate one non-final expression statement before continuing the tail-aware slot loop."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    _ = evalExprSlot(e, env, slotMap, fns)?
+    evalStmtsSlotTail(selfName, rest, slotCount, env, slotMap, fns)
