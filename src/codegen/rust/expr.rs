@@ -8,10 +8,10 @@ use crate::codegen::common::{
 };
 use crate::ir::{
     CallLowerCtx, CallPlan, DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan,
-    DispatchLiteral, DispatchTableShape, ListMatchShape, MatchDispatchPlan, SemanticConstructor,
-    SemanticDispatchPattern, TailCallPlan, WrapperKind, classify_call_plan,
-    classify_constructor_name, classify_list_match_shape, classify_match_dispatch_plan,
-    classify_tail_call_plan, is_builtin_namespace,
+    DispatchLiteral, DispatchTableShape, LeafOp, ListMatchShape, MatchDispatchPlan,
+    SemanticConstructor, SemanticDispatchPattern, TailCallPlan, WrapperKind, classify_call_plan,
+    classify_constructor_name, classify_leaf_op, classify_list_match_shape,
+    classify_match_dispatch_plan, classify_tail_call_plan, is_builtin_namespace,
 };
 use crate::types::Type;
 /// Aver expressions → Rust expression strings.
@@ -51,6 +51,11 @@ impl CallLowerCtx for RustCallCtx<'_, '_> {
 
 /// Emit a Rust expression from an Aver Expr.
 pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
+    let lower_ctx = RustCallCtx { ctx, ectx };
+    if let Some(leaf) = classify_leaf_op(expr, &lower_ctx) {
+        return emit_leaf_op(leaf, ctx, ectx);
+    }
+
     match expr {
         Expr::Literal(lit) => emit_literal(lit),
         Expr::Ident(name) => aver_name_to_rust(name),
@@ -361,6 +366,57 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &Emit
             format!("{}({})", func, arg_strs.join(", "))
         }
     }
+}
+
+fn emit_leaf_op(leaf: LeafOp<'_>, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
+    match leaf {
+        LeafOp::FieldAccess { object, field_name } => {
+            let object = emit_expr(object, ctx, ectx);
+            format!("{}.{}.clone()", object, aver_name_to_rust(field_name))
+        }
+        LeafOp::MapGet { map, key } => emit_leaf_builtin_call("Map.get", &[map, key], ctx, ectx),
+        LeafOp::MapSet { map, key, value } => {
+            emit_leaf_builtin_call("Map.set", &[map, key, value], ctx, ectx)
+        }
+        LeafOp::VectorNew { size, fill } => {
+            emit_leaf_builtin_call("Vector.new", &[size, fill], ctx, ectx)
+        }
+        LeafOp::VectorGetOrDefaultLiteral {
+            vector,
+            index,
+            default_literal,
+        } => {
+            let inner_args = vec![vector.clone(), index.clone()];
+            let arg_ctxs = compute_args_used_after_with_rc(
+                &inner_args,
+                &ectx.used_after,
+                &ectx.local_types,
+                &ectx.rc_wrapped,
+            );
+            let vector = emit_expr(vector, ctx, &arg_ctxs[0]);
+            let index = emit_expr(index, ctx, &arg_ctxs[1]);
+            let default = emit_literal(default_literal);
+            format!(
+                "{}.get({} as usize).cloned().unwrap_or({})",
+                vector, index, default
+            )
+        }
+    }
+}
+
+fn emit_leaf_builtin_call(
+    name: &str,
+    args: &[&Expr],
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> String {
+    let owned_args = args.iter().map(|expr| (*expr).clone()).collect::<Vec<_>>();
+    builtins::emit_builtin_call(name, &owned_args, ctx, ectx).unwrap_or_else(|| {
+        emit_codegen_error_expr(format!(
+            "Rust codegen: missing leaf builtin lowering for {}",
+            name
+        ))
+    })
 }
 
 fn emit_named_function_call(

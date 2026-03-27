@@ -729,6 +729,24 @@ fn greet(u: User) -> String
     }
 
     #[test]
+    fn vector_get_with_literal_default_lowers_to_direct_unwrap_or_code() {
+        let ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn cellAt(grid: Vector<Int>, idx: Int) -> Int
+    Option.withDefault(Vector.get(grid, idx), 0)
+"#,
+            "demo",
+        );
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("grid.get(idx as usize).cloned().unwrap_or(0i64)"));
+    }
+
+    #[test]
     fn single_field_variant_display_avoids_vec_join() {
         let ctx = ctx_from_source(
             r#"

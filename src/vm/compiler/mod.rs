@@ -782,3 +782,36 @@ impl<'a> FnCompiler<'a> {
         self.bind_top_to_local(name);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::compile_program;
+    use crate::nan_value::Arena;
+    use crate::source::parse_source;
+    use crate::vm::opcode::VECTOR_GET_OR;
+
+    #[test]
+    fn vector_get_with_literal_default_lowers_to_vector_get_or() {
+        let source = r#"
+module Demo
+
+fn cellAt(grid: Vector<Int>, idx: Int) -> Int
+    Option.withDefault(Vector.get(grid, idx), 0)
+"#;
+
+        let mut items = parse_source(source).expect("source should parse");
+        crate::tco::transform_program(&mut items);
+        crate::resolver::resolve_program(&mut items);
+
+        let mut arena = Arena::new();
+        let (code, _globals) = compile_program(&items, &mut arena).expect("vm compile should pass");
+        let fn_id = code.find("cellAt").expect("cellAt should exist");
+        let chunk = code.get(fn_id);
+
+        assert!(
+            chunk.code.contains(&VECTOR_GET_OR),
+            "expected VECTOR_GET_OR in bytecode, got {:?}",
+            chunk.code
+        );
+    }
+}

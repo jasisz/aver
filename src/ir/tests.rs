@@ -1,10 +1,10 @@
 use super::{
     BoolMatchShape, CallLowerCtx, CallPlan, DispatchArmPlan, DispatchBindingPlan,
-    DispatchDefaultPlan, DispatchLiteral, DispatchTableShape, ListMatchShape, MatchDispatchPlan,
-    SemanticConstructor, SemanticDispatchPattern, TailCallPlan, WrapperKind,
+    DispatchDefaultPlan, DispatchLiteral, DispatchTableShape, LeafOp, ListMatchShape,
+    MatchDispatchPlan, SemanticConstructor, SemanticDispatchPattern, TailCallPlan, WrapperKind,
     classify_bool_match_shape, classify_call_plan, classify_constructor_name,
-    classify_dispatch_pattern, classify_list_match_shape, classify_match_dispatch_plan,
-    classify_tail_call_plan, expr_to_dotted_name,
+    classify_dispatch_pattern, classify_leaf_op, classify_list_match_shape,
+    classify_match_dispatch_plan, classify_tail_call_plan, expr_to_dotted_name,
 };
 use crate::ast::{Expr, Literal, MatchArm, Pattern};
 
@@ -261,4 +261,80 @@ fn classify_tail_call_self_known_and_unknown() {
         classify_tail_call_plan("Result.Ok", "loop", &ctx),
         TailCallPlan::Unknown("Result.Ok".to_string())
     );
+}
+
+#[test]
+fn classify_leaf_field_access_and_builtin_shapes() {
+    let ctx = DummyCtx;
+    let user_name = Expr::Attr(
+        Box::new(Expr::Ident("user".to_string())),
+        "name".to_string(),
+    );
+    assert!(matches!(
+        classify_leaf_op(&user_name, &ctx),
+        Some(LeafOp::FieldAccess {
+            field_name: "name",
+            ..
+        })
+    ));
+
+    let map_get = Expr::FnCall(
+        Box::new(Expr::Attr(
+            Box::new(Expr::Ident("Map".to_string())),
+            "get".to_string(),
+        )),
+        vec![
+            Expr::Ident("m".to_string()),
+            Expr::Literal(Literal::Str("k".to_string())),
+        ],
+    );
+    assert!(matches!(
+        classify_leaf_op(&map_get, &ctx),
+        Some(LeafOp::MapGet { .. })
+    ));
+}
+
+#[test]
+fn classify_vector_get_with_literal_default_leaf() {
+    let ctx = DummyCtx;
+    let expr = Expr::FnCall(
+        Box::new(Expr::Attr(
+            Box::new(Expr::Ident("Option".to_string())),
+            "withDefault".to_string(),
+        )),
+        vec![
+            Expr::FnCall(
+                Box::new(Expr::Attr(
+                    Box::new(Expr::Ident("Vector".to_string())),
+                    "get".to_string(),
+                )),
+                vec![
+                    Expr::Ident("vec".to_string()),
+                    Expr::Ident("idx".to_string()),
+                ],
+            ),
+            Expr::Literal(Literal::Int(42)),
+        ],
+    );
+
+    assert!(matches!(
+        classify_leaf_op(&expr, &ctx),
+        Some(LeafOp::VectorGetOrDefaultLiteral {
+            default_literal,
+            ..
+        }) if matches!(default_literal, Literal::Int(42))
+    ));
+}
+
+#[test]
+fn uppercase_module_paths_are_not_field_leafs() {
+    let ctx = DummyCtx;
+    let expr = Expr::Attr(
+        Box::new(Expr::Attr(
+            Box::new(Expr::Ident("Data".to_string())),
+            "Fib".to_string(),
+        )),
+        "fib".to_string(),
+    );
+    assert_eq!(classify_leaf_op(&expr, &ctx), None);
 }

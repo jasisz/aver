@@ -37,6 +37,10 @@ impl<'a> FnCompiler<'a> {
     }
 
     pub(super) fn compile_expr(&mut self, expr: &Expr) -> Result<(), CompileError> {
+        if self.try_compile_leaf_expr(expr)? {
+            return Ok(());
+        }
+
         match expr {
             Expr::Literal(lit) => self.compile_literal(lit),
             Expr::Resolved(slot) => {

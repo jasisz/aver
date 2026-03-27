@@ -1,8 +1,8 @@
 use super::{CallTarget, CompileError, FnCompiler};
-use crate::ast::Expr;
+use crate::ast::{Expr, Literal};
 use crate::ir::{
-    CallLowerCtx, CallPlan, SemanticConstructor, TailCallPlan, WrapperKind, classify_call_plan,
-    classify_constructor_name, classify_tail_call_plan,
+    CallLowerCtx, CallPlan, LeafOp, SemanticConstructor, TailCallPlan, WrapperKind,
+    classify_call_plan, classify_constructor_name, classify_leaf_op, classify_tail_call_plan,
 };
 use crate::nan_value::NanValue;
 use crate::vm::builtin::VmBuiltin;
@@ -57,6 +57,21 @@ impl CallLowerCtx for VmCallCtx<'_, '_> {
 }
 
 impl<'a> FnCompiler<'a> {
+    pub(super) fn try_compile_leaf_expr(&mut self, expr: &Expr) -> Result<bool, CompileError> {
+        let leaf = {
+            let call_ctx = VmCallCtx { compiler: self };
+            classify_leaf_op(expr, &call_ctx)
+        };
+
+        match leaf {
+            Some(leaf) => {
+                self.compile_leaf_op(leaf)?;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
     pub(super) fn classify_constructor_semantics(&self, name: &str) -> SemanticConstructor {
         let call_ctx = VmCallCtx { compiler: self };
         classify_constructor_name(name, &call_ctx)
@@ -195,20 +210,7 @@ impl<'a> FnCompiler<'a> {
                 for arg in args {
                     self.compile_expr(arg)?;
                 }
-                match builtin {
-                    VmBuiltin::ListLen => self.emit_op(LIST_LEN),
-                    VmBuiltin::ListPrepend => self.emit_op(LIST_PREPEND),
-                    VmBuiltin::VectorGet => self.emit_op(VECTOR_GET),
-                    VmBuiltin::VectorSet => self.emit_op(VECTOR_SET),
-                    VmBuiltin::OptionWithDefault => self.emit_op(UNWRAP_OR),
-                    VmBuiltin::ResultWithDefault => self.emit_op(UNWRAP_RESULT_OR),
-                    _ => {
-                        let symbol_id = self.symbols.intern_builtin(builtin);
-                        self.emit_op(CALL_BUILTIN);
-                        self.emit_u32(symbol_id);
-                        self.emit_u8(args.len() as u8);
-                    }
-                }
+                self.emit_builtin_after_args(builtin, args.len());
             }
             CallTarget::UnknownQualified(qualified) => {
                 return Err(CompileError {
@@ -320,6 +322,72 @@ impl<'a> FnCompiler<'a> {
         } else {
             self.emit_op(LOAD_UNIT);
             Ok(())
+        }
+    }
+
+    fn compile_leaf_op(&mut self, leaf: LeafOp<'_>) -> Result<(), CompileError> {
+        match leaf {
+            LeafOp::FieldAccess { object, field_name } => self.compile_attr(object, field_name),
+            LeafOp::MapGet { map, key } => {
+                self.compile_expr(map)?;
+                self.compile_expr(key)?;
+                self.emit_builtin_after_args(VmBuiltin::MapGet, 2);
+                Ok(())
+            }
+            LeafOp::MapSet { map, key, value } => {
+                self.compile_expr(map)?;
+                self.compile_expr(key)?;
+                self.compile_expr(value)?;
+                self.emit_builtin_after_args(VmBuiltin::MapSet, 3);
+                Ok(())
+            }
+            LeafOp::VectorNew { size, fill } => {
+                self.compile_expr(size)?;
+                self.compile_expr(fill)?;
+                self.emit_builtin_after_args(VmBuiltin::VectorNew, 2);
+                Ok(())
+            }
+            LeafOp::VectorGetOrDefaultLiteral {
+                vector,
+                index,
+                default_literal,
+            } => {
+                self.compile_expr(vector)?;
+                self.compile_expr(index)?;
+                let default_value = self.nan_literal(default_literal);
+                let const_idx = self.add_constant(default_value);
+                self.emit_op(VECTOR_GET_OR);
+                self.emit_u16(const_idx);
+                Ok(())
+            }
+        }
+    }
+
+    fn emit_builtin_after_args(&mut self, builtin: VmBuiltin, argc: usize) {
+        match builtin {
+            VmBuiltin::ListLen => self.emit_op(LIST_LEN),
+            VmBuiltin::ListPrepend => self.emit_op(LIST_PREPEND),
+            VmBuiltin::VectorGet => self.emit_op(VECTOR_GET),
+            VmBuiltin::VectorSet => self.emit_op(VECTOR_SET),
+            VmBuiltin::OptionWithDefault => self.emit_op(UNWRAP_OR),
+            VmBuiltin::ResultWithDefault => self.emit_op(UNWRAP_RESULT_OR),
+            _ => {
+                let symbol_id = self.symbols.intern_builtin(builtin);
+                self.emit_op(CALL_BUILTIN);
+                self.emit_u32(symbol_id);
+                self.emit_u8(argc as u8);
+            }
+        }
+    }
+
+    fn nan_literal(&mut self, lit: &Literal) -> NanValue {
+        match lit {
+            Literal::Int(i) => NanValue::new_int(*i, self.arena),
+            Literal::Float(f) => NanValue::new_float(*f),
+            Literal::Bool(true) => NanValue::TRUE,
+            Literal::Bool(false) => NanValue::FALSE,
+            Literal::Unit => NanValue::UNIT,
+            Literal::Str(s) => NanValue::new_string_value(s, self.arena),
         }
     }
 

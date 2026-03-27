@@ -1,4 +1,5 @@
 mod calls;
+mod leaf;
 mod matches;
 
 pub use calls::{
@@ -6,6 +7,7 @@ pub use calls::{
     classify_call_plan, classify_callee, classify_constructor_name, classify_tail_call_plan,
     expr_to_dotted_name, is_builtin_namespace,
 };
+pub use leaf::{LeafOp, classify_leaf_op};
 pub use matches::{
     BoolMatchShape, DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan, DispatchLiteral,
     DispatchTableShape, ListMatchShape, MatchDispatchPlan, SemanticDispatchPattern,
