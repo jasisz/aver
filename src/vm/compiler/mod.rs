@@ -788,7 +788,7 @@ mod tests {
     use super::compile_program;
     use crate::nan_value::Arena;
     use crate::source::parse_source;
-    use crate::vm::opcode::{LT, NOT, VECTOR_GET_OR};
+    use crate::vm::opcode::{LT, NOT, VECTOR_GET_OR, VECTOR_SET_OR_KEEP};
 
     #[test]
     fn vector_get_with_literal_default_lowers_to_vector_get_or() {
@@ -811,6 +811,33 @@ fn cellAt(grid: Vector<Int>, idx: Int) -> Int
         assert!(
             chunk.code.contains(&VECTOR_GET_OR),
             "expected VECTOR_GET_OR in bytecode, got {:?}",
+            chunk.code
+        );
+    }
+
+    #[test]
+    fn vector_set_with_same_default_lowers_to_vector_set_or_keep() {
+        let source = r#"
+module Demo
+
+fn updateOrKeep(vec: Vector<Int>, idx: Int, value: Int) -> Vector<Int>
+    Option.withDefault(Vector.set(vec, idx, value), vec)
+"#;
+
+        let mut items = parse_source(source).expect("source should parse");
+        crate::tco::transform_program(&mut items);
+        crate::resolver::resolve_program(&mut items);
+
+        let mut arena = Arena::new();
+        let (code, _globals) = compile_program(&items, &mut arena).expect("vm compile should pass");
+        let fn_id = code
+            .find("updateOrKeep")
+            .expect("updateOrKeep should exist");
+        let chunk = code.get(fn_id);
+
+        assert!(
+            chunk.code.contains(&VECTOR_SET_OR_KEEP),
+            "expected VECTOR_SET_OR_KEEP in bytecode, got {:?}",
             chunk.code
         );
     }

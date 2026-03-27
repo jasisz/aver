@@ -261,6 +261,10 @@ pub const VECTOR_GET_OR: u8 = 0x83;
 /// Stack: [vector, index, value] → [option_vector]
 pub const VECTOR_SET: u8 = 0x84;
 
+/// Fused Vector.set + Option.withDefault(vec): pop value, pop index, pop vector → push vector.
+/// Stack: [vector, index, value] → [vector]
+pub const VECTOR_SET_OR_KEEP: u8 = 0x85;
+
 /// Opcode name for debug/disassembly.
 pub fn opcode_name(op: u8) -> &'static str {
     match op {
@@ -327,6 +331,7 @@ pub fn opcode_name(op: u8) -> &'static str {
         VECTOR_GET => "VECTOR_GET",
         VECTOR_GET_OR => "VECTOR_GET_OR",
         VECTOR_SET => "VECTOR_SET",
+        VECTOR_SET_OR_KEEP => "VECTOR_SET_OR_KEEP",
         NOP => "NOP",
         _ => "UNKNOWN",
     }
@@ -340,7 +345,7 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
         | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | LIST_NIL | LIST_CONS
         | LIST_LEN | LIST_PREPEND | UNWRAP_OR | UNWRAP_RESULT_OR | CONCAT | VECTOR_GET
-        | VECTOR_SET | NOP => 0,
+        | VECTOR_SET | VECTOR_SET_OR_KEEP | NOP => 0,
 
         // 1-byte
         LOAD_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD | EXTRACT_TUPLE_ITEM

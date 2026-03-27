@@ -360,6 +360,17 @@ impl<'a> FnCompiler<'a> {
                 self.emit_u16(const_idx);
                 Ok(())
             }
+            LeafOp::VectorSetOrDefaultSameVector {
+                vector,
+                index,
+                value,
+            } => {
+                self.compile_expr(vector)?;
+                self.compile_expr(index)?;
+                self.compile_expr(value)?;
+                self.emit_op(VECTOR_SET_OR_KEEP);
+                Ok(())
+            }
         }
     }
 

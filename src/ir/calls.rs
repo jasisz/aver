@@ -158,10 +158,10 @@ pub fn classify_tail_call_plan(
 
 pub fn classify_constructor_name(name: &str, ctx: &impl CallLowerCtx) -> SemanticConstructor {
     match name {
-        "Option.None" => return SemanticConstructor::NoneValue,
-        "Result.Ok" => return SemanticConstructor::Wrapper(WrapperKind::ResultOk),
-        "Result.Err" => return SemanticConstructor::Wrapper(WrapperKind::ResultErr),
-        "Option.Some" => return SemanticConstructor::Wrapper(WrapperKind::OptionSome),
+        "None" | "Option.None" => return SemanticConstructor::NoneValue,
+        "Ok" | "Result.Ok" => return SemanticConstructor::Wrapper(WrapperKind::ResultOk),
+        "Err" | "Result.Err" => return SemanticConstructor::Wrapper(WrapperKind::ResultErr),
+        "Some" | "Option.Some" => return SemanticConstructor::Wrapper(WrapperKind::OptionSome),
         _ => {}
     }
 

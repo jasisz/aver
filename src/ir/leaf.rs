@@ -25,6 +25,11 @@ pub enum LeafOp<'a> {
         size: &'a Expr,
         fill: &'a Expr,
     },
+    VectorSetOrDefaultSameVector {
+        vector: &'a Expr,
+        index: &'a Expr,
+        value: &'a Expr,
+    },
     VectorGetOrDefaultLiteral {
         vector: &'a Expr,
         index: &'a Expr,
@@ -80,10 +85,35 @@ fn classify_leaf_call<'a>(
                 fill: &args[1],
             }),
             "Option.withDefault" if args.len() == 2 => {
-                classify_vector_get_or_default(&args[0], &args[1], ctx)
+                classify_vector_set_or_default(&args[0], &args[1], ctx)
+                    .or_else(|| classify_vector_get_or_default(&args[0], &args[1], ctx))
             }
             _ => None,
         },
+        _ => None,
+    }
+}
+
+fn classify_vector_set_or_default<'a>(
+    option_expr: &'a Expr,
+    default_expr: &'a Expr,
+    ctx: &impl CallLowerCtx,
+) -> Option<LeafOp<'a>> {
+    let Expr::FnCall(inner_callee, inner_args) = option_expr else {
+        return None;
+    };
+    if inner_args.len() != 3 {
+        return None;
+    }
+
+    match classify_call_plan(inner_callee, ctx) {
+        CallPlan::Builtin(name) if name == "Vector.set" && default_expr == &inner_args[0] => {
+            Some(LeafOp::VectorSetOrDefaultSameVector {
+                vector: &inner_args[0],
+                index: &inner_args[1],
+                value: &inner_args[2],
+            })
+        }
         _ => None,
     }
 }

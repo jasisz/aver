@@ -219,76 +219,76 @@ impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
                     index: self.lower_expr(index),
                     default_literal: default_literal.clone(),
                 }),
-                Some(LeafOp::FieldAccess { .. }) | None => {
-                    match classify_call_plan(fn_expr, self.ctx) {
-                        CallPlan::Builtin(name) => {
-                            let lowered_args = args
-                                .iter()
-                                .map(|arg| self.lower_expr(arg))
-                                .collect::<Vec<_>>();
-                            LoweredExpr::DirectCall {
-                                target: LoweredDirectCallTarget::Builtin(name),
-                                args: lowered_args.into(),
-                            }
-                        }
-                        CallPlan::Function(name) => {
-                            let lowered_args = args
-                                .iter()
-                                .map(|arg| self.lower_expr(arg))
-                                .collect::<Vec<_>>();
-                            LoweredExpr::DirectCall {
-                                target: LoweredDirectCallTarget::Function(name),
-                                args: lowered_args.into(),
-                            }
-                        }
-                        CallPlan::Wrapper(kind) => {
-                            let lowered_args = args
-                                .iter()
-                                .map(|arg| self.lower_expr(arg))
-                                .collect::<Vec<_>>();
-                            LoweredExpr::DirectCall {
-                                target: LoweredDirectCallTarget::Wrapper(kind),
-                                args: lowered_args.into(),
-                            }
-                        }
-                        CallPlan::NoneValue => {
-                            let lowered_args = args
-                                .iter()
-                                .map(|arg| self.lower_expr(arg))
-                                .collect::<Vec<_>>();
-                            LoweredExpr::DirectCall {
-                                target: LoweredDirectCallTarget::NoneValue,
-                                args: lowered_args.into(),
-                            }
-                        }
-                        CallPlan::TypeConstructor {
-                            qualified_type_name,
-                            variant_name,
-                        } => {
-                            let lowered_args = args
-                                .iter()
-                                .map(|arg| self.lower_expr(arg))
-                                .collect::<Vec<_>>();
-                            LoweredExpr::DirectCall {
-                                target: LoweredDirectCallTarget::TypeConstructor {
-                                    qualified_type_name,
-                                    variant_name,
-                                },
-                                args: lowered_args.into(),
-                            }
-                        }
-                        _ => {
-                            let lowered_args = args
-                                .iter()
-                                .map(|arg| self.lower_expr(arg))
-                                .collect::<Vec<_>>();
-                            LoweredExpr::FnCall {
-                                fn_expr: self.lower_expr(fn_expr),
-                                args: lowered_args.into(),
-                            }
+                Some(LeafOp::FieldAccess { .. })
+                | Some(LeafOp::VectorSetOrDefaultSameVector { .. })
+                | None => match classify_call_plan(fn_expr, self.ctx) {
+                    CallPlan::Builtin(name) => {
+                        let lowered_args = args
+                            .iter()
+                            .map(|arg| self.lower_expr(arg))
+                            .collect::<Vec<_>>();
+                        LoweredExpr::DirectCall {
+                            target: LoweredDirectCallTarget::Builtin(name),
+                            args: lowered_args.into(),
                         }
                     }
-                }
+                    CallPlan::Function(name) => {
+                        let lowered_args = args
+                            .iter()
+                            .map(|arg| self.lower_expr(arg))
+                            .collect::<Vec<_>>();
+                        LoweredExpr::DirectCall {
+                            target: LoweredDirectCallTarget::Function(name),
+                            args: lowered_args.into(),
+                        }
+                    }
+                    CallPlan::Wrapper(kind) => {
+                        let lowered_args = args
+                            .iter()
+                            .map(|arg| self.lower_expr(arg))
+                            .collect::<Vec<_>>();
+                        LoweredExpr::DirectCall {
+                            target: LoweredDirectCallTarget::Wrapper(kind),
+                            args: lowered_args.into(),
+                        }
+                    }
+                    CallPlan::NoneValue => {
+                        let lowered_args = args
+                            .iter()
+                            .map(|arg| self.lower_expr(arg))
+                            .collect::<Vec<_>>();
+                        LoweredExpr::DirectCall {
+                            target: LoweredDirectCallTarget::NoneValue,
+                            args: lowered_args.into(),
+                        }
+                    }
+                    CallPlan::TypeConstructor {
+                        qualified_type_name,
+                        variant_name,
+                    } => {
+                        let lowered_args = args
+                            .iter()
+                            .map(|arg| self.lower_expr(arg))
+                            .collect::<Vec<_>>();
+                        LoweredExpr::DirectCall {
+                            target: LoweredDirectCallTarget::TypeConstructor {
+                                qualified_type_name,
+                                variant_name,
+                            },
+                            args: lowered_args.into(),
+                        }
+                    }
+                    _ => {
+                        let lowered_args = args
+                            .iter()
+                            .map(|arg| self.lower_expr(arg))
+                            .collect::<Vec<_>>();
+                        LoweredExpr::FnCall {
+                            fn_expr: self.lower_expr(fn_expr),
+                            args: lowered_args.into(),
+                        }
+                    }
+                },
             },
             Expr::BinOp(op, left, right) => LoweredExpr::BinOp {
                 op: *op,

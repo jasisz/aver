@@ -54,6 +54,15 @@ fn use_optimized_emission(ctx: &CodegenContext) -> bool {
     matches!(ctx.emission_style, EmissionStyle::Optimized)
 }
 
+pub(super) fn classify_dispatch_plan_for_rust(
+    arms: &[MatchArm],
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> Option<MatchDispatchPlan> {
+    let lower_ctx = RustCallCtx { ctx, ectx };
+    classify_match_dispatch_plan(arms, &lower_ctx)
+}
+
 /// Emit a Rust expression from an Aver Expr.
 pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     let lower_ctx = RustCallCtx { ctx, ectx };
@@ -388,6 +397,26 @@ fn emit_leaf_op(leaf: LeafOp<'_>, ctx: &CodegenContext, ectx: &EmitCtx) -> Strin
         LeafOp::VectorNew { size, fill } => {
             emit_leaf_builtin_call("Vector.new", &[size, fill], ctx, ectx)
         }
+        LeafOp::VectorSetOrDefaultSameVector {
+            vector,
+            index,
+            value,
+        } => {
+            let inner_args = vec![vector.clone(), index.clone(), value.clone()];
+            let arg_ctxs = compute_args_used_after_with_rc(
+                &inner_args,
+                &ectx.used_after,
+                &ectx.local_types,
+                &ectx.rc_wrapped,
+            );
+            let vector = clone_arg(vector, ctx, &arg_ctxs[0]);
+            let index = emit_expr(index, ctx, &arg_ctxs[1]);
+            let value = clone_arg(value, ctx, &arg_ctxs[2]);
+            format!(
+                "{{ let __vec = {}; let __idx = {} as usize; if __idx < __vec.len() {{ __vec.set_unchecked(__idx, {}) }} else {{ __vec }} }}",
+                vector, index, value
+            )
+        }
         LeafOp::VectorGetOrDefaultLiteral {
             vector,
             index,
@@ -671,10 +700,9 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
     }
     let subj_ectx = ectx.with_used_after(&arms_vars);
     let subj = clone_arg(subject, ctx, &subj_ectx);
-    let lower_ctx = RustCallCtx { ctx, ectx };
     let optimized = use_optimized_emission(ctx);
     let dispatch_plan = if optimized {
-        classify_match_dispatch_plan(arms, &lower_ctx)
+        classify_dispatch_plan_for_rust(arms, ctx, ectx)
     } else {
         None
     };
@@ -703,7 +731,9 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
     }
 
     if optimized && let Some(MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
-        return emit_dispatch_table_match(subj, arms, shape, ctx, ectx);
+        return emit_dispatch_table_match(subj, arms, shape, |arm| {
+            maybe_clone(emit_expr(&arm.body, ctx, ectx), &arm.body, ectx)
+        });
     }
 
     let match_expr = if needs_as_str && has_string_literal_patterns(arms) {
@@ -791,21 +821,22 @@ fn subject_might_be_list(_subject: &Expr, _arms: &[MatchArm], _ctx: &CodegenCont
     true
 }
 
-fn emit_dispatch_table_match(
+pub(super) fn emit_dispatch_table_match<F>(
     subject: String,
     arms: &[MatchArm],
     shape: &DispatchTableShape,
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
-) -> String {
+    body_for_arm: F,
+) -> String
+where
+    F: Fn(&MatchArm) -> String,
+{
     let subject_name = "__dispatch_subject";
     let fallback = match &shape.default_arm {
         Some(default_arm) => emit_default_dispatch_arm(
             subject_name,
             &arms[default_arm.arm_index],
             default_arm,
-            ctx,
-            ectx,
+            &body_for_arm,
         ),
         None => "panic!(\"Aver Rust codegen: non-exhaustive dispatch match\")".to_string(),
     };
@@ -817,7 +848,7 @@ fn emit_dispatch_table_match(
         .fold(fallback, |else_branch, entry| {
             let arm = &arms[entry.arm_index];
             let cond = emit_dispatch_condition(subject_name, &entry.pattern);
-            let body = emit_dispatch_arm_body(subject_name, arm, entry, ctx, ectx);
+            let body = emit_dispatch_arm_body(subject_name, arm, entry, &body_for_arm);
             format!("if {} {{ {} }} else {{ {} }}", cond, body, else_branch)
         });
 
@@ -847,10 +878,9 @@ fn emit_dispatch_arm_body(
     subject_name: &str,
     arm: &MatchArm,
     entry: &DispatchArmPlan,
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
+    body_for_arm: &impl Fn(&MatchArm) -> String,
 ) -> String {
-    let body = maybe_clone(emit_expr(&arm.body, ctx, ectx), &arm.body, ectx);
+    let body = body_for_arm(arm);
     match (&entry.pattern, &entry.binding) {
         (
             SemanticDispatchPattern::WrapperTag(kind),
@@ -874,10 +904,9 @@ fn emit_default_dispatch_arm(
     subject_name: &str,
     arm: &MatchArm,
     default_arm: &DispatchDefaultPlan,
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
+    body_for_arm: &impl Fn(&MatchArm) -> String,
 ) -> String {
-    let body = maybe_clone(emit_expr(&arm.body, ctx, ectx), &arm.body, ectx);
+    let body = body_for_arm(arm);
     match &default_arm.binding_name {
         None => body,
         Some(name) => {

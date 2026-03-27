@@ -1007,6 +1007,27 @@ impl VM {
                     }
                 }
 
+                VECTOR_SET_OR_KEEP => {
+                    let value = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let index = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let vec = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let idx = index.as_int(&self.arena);
+                    if vec.is_empty_vector_immediate() || idx < 0 {
+                        self.stack.push(vec);
+                    } else {
+                        let items = self.arena.vector_ref_value(vec);
+                        let i = idx as usize;
+                        if i < items.len() {
+                            let mut updated = items.to_vec();
+                            updated[i] = value;
+                            let new_idx = self.arena.push_vector(updated);
+                            self.stack.push(NanValue::new_vector(new_idx));
+                        } else {
+                            self.stack.push(vec);
+                        }
+                    }
+                }
+
                 UNWRAP_RESULT_OR => {
                     let default = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let result = self.stack.pop().ok_or(VmError::StackUnderflow)?;

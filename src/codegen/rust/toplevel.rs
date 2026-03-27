@@ -1,4 +1,7 @@
-use super::expr::{aver_name_to_rust, clone_arg, emit_expr, emit_stmt};
+use super::expr::{
+    aver_name_to_rust, classify_dispatch_plan_for_rust, clone_arg, emit_dispatch_table_match,
+    emit_expr, emit_stmt,
+};
 use super::liveness::{
     EmitCtx, collect_vars, compute_args_used_after_with_rc, compute_block_used_after,
     compute_block_used_after_with_rc, is_copy_type,
@@ -1018,6 +1021,11 @@ fn emit_tco_expr(
             }
             let subj_ectx = ectx.with_used_after(&arms_vars);
             let subj = clone_arg(subject, ctx, &subj_ectx);
+            let dispatch_plan = if matches!(ctx.emission_style, EmissionStyle::Optimized) {
+                classify_dispatch_plan_for_rust(arms, ctx, ectx)
+            } else {
+                None
+            };
 
             // Bool match → if/else in TCO context
             if matches!(ctx.emission_style, EmissionStyle::Optimized)
@@ -1037,6 +1045,12 @@ fn emit_tco_expr(
                     ctx,
                     |arm| emit_tco_expr(&arm.body, self_name, params, ctx, ectx, rc_indices),
                 );
+            }
+
+            if let Some(crate::ir::MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
+                return emit_dispatch_table_match(subj, arms, shape, |arm| {
+                    emit_tco_expr(&arm.body, self_name, params, ctx, ectx, rc_indices)
+                });
             }
 
             let match_expr = if needs_as_str {
@@ -1397,6 +1411,11 @@ fn emit_trampoline_expr(
             }
             let subj_ectx = ectx.with_used_after(&arms_vars);
             let subj = clone_arg(subject, ctx, &subj_ectx);
+            let dispatch_plan = if matches!(ctx.emission_style, EmissionStyle::Optimized) {
+                classify_dispatch_plan_for_rust(arms, ctx, ectx)
+            } else {
+                None
+            };
 
             // Bool match → if/else
             if matches!(ctx.emission_style, EmissionStyle::Optimized)
@@ -1432,6 +1451,12 @@ fn emit_trampoline_expr(
                         )
                     },
                 );
+            }
+
+            if let Some(crate::ir::MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
+                return emit_dispatch_table_match(subj, arms, shape, |arm| {
+                    emit_trampoline_expr(&arm.body, enum_name, member_names, ctx, ectx, rc_indices)
+                });
             }
 
             let needs_as_str = super::expr::has_string_literal_patterns(arms);

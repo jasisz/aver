@@ -4,19 +4,6 @@ use super::liveness::{EmitCtx, compute_args_used_after_with_rc};
 use crate::ast::Expr;
 use crate::codegen::CodegenContext;
 
-fn match_namespace_call<'a>(expr: &'a Expr, ns: &str, method: &str) -> Option<&'a [Expr]> {
-    match expr {
-        Expr::FnCall(callee, args) => match &**callee {
-            Expr::Attr(target, name) => match &**target {
-                Expr::Ident(target_ns) if target_ns == ns && name == method => Some(args),
-                _ => None,
-            },
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
 /// Try to emit a builtin call as Rust code.
 /// Returns `None` if the name is not a builtin (i.e. it's a user function).
 /// Builtins whose return type includes String and needs .into_aver() conversion.
@@ -373,25 +360,6 @@ fn emit_builtin_call_inner(
             Some(format!("Some({})", arg))
         }
         "Option.withDefault" => {
-            if let Some([vec_expr, idx_expr, val_expr]) =
-                match_namespace_call(&args[0], "Vector", "set")
-                && &args[1] == vec_expr
-            {
-                let inner_args = [vec_expr.clone(), idx_expr.clone(), val_expr.clone()];
-                let inner_arg_ctxs = compute_args_used_after_with_rc(
-                    &inner_args,
-                    &ectx.used_after,
-                    &ectx.local_types,
-                    &ectx.rc_wrapped,
-                );
-                let vec = clone_arg(&inner_args[0], ctx, &inner_arg_ctxs[0]);
-                let idx = emit_expr(&inner_args[1], ctx, &inner_arg_ctxs[1]);
-                let val = clone_arg(&inner_args[2], ctx, &inner_arg_ctxs[2]);
-                return Some(format!(
-                    "{{ let __vec = {}; let __idx = {} as usize; if __idx < __vec.len() {{ __vec.set_unchecked(__idx, {}) }} else {{ __vec }} }}",
-                    vec, idx, val
-                ));
-            }
             let opt = clone_arg(&args[0], ctx, &arg_ctxs[0]);
             let default = clone_arg(&args[1], ctx, &arg_ctxs[1]);
             Some(format!("{}.unwrap_or({})", opt, default))

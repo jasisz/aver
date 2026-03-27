@@ -131,6 +131,14 @@ fn lowercase_attr_and_local_ident_remain_dynamic() {
 fn classify_constructor_wrapper_none_and_unknown() {
     let ctx = DummyCtx;
     assert_eq!(
+        classify_constructor_name("Ok", &ctx),
+        SemanticConstructor::Wrapper(WrapperKind::ResultOk)
+    );
+    assert_eq!(
+        classify_constructor_name("None", &ctx),
+        SemanticConstructor::NoneValue
+    );
+    assert_eq!(
         classify_constructor_name("Result.Ok", &ctx),
         SemanticConstructor::Wrapper(WrapperKind::ResultOk)
     );

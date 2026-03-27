@@ -797,6 +797,45 @@ fn cellAt(grid: Vector<Int>, idx: Int) -> Int
     }
 
     #[test]
+    fn vector_set_default_stays_structured_in_semantic_mode() {
+        let ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn updateOrKeep(vec: Vector<Int>, idx: Int, value: Int) -> Vector<Int>
+    Option.withDefault(Vector.set(vec, idx, value), vec)
+"#,
+            "demo",
+        );
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains(".unwrap_or("));
+        assert!(!entry.contains("set_unchecked"));
+    }
+
+    #[test]
+    fn vector_set_default_uses_ir_leaf_fast_path_when_optimized() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn updateOrKeep(vec: Vector<Int>, idx: Int, value: Int) -> Vector<Int>
+    Option.withDefault(Vector.set(vec, idx, value), vec)
+"#,
+            "demo",
+        );
+        ctx.emission_style = EmissionStyle::Optimized;
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("set_unchecked"));
+        assert!(!entry.contains(".unwrap_or("));
+    }
+
+    #[test]
     fn bool_match_on_gte_normalizes_to_base_comparison_when_optimized() {
         let mut ctx = ctx_from_source(
             r#"
@@ -836,6 +875,55 @@ fn bucket(n: Int) -> Int
 
         assert!(entry.contains("match (n >= 10i64)"));
         assert!(!entry.contains("if (n < 10i64) { 3i64 } else { 7i64 }"));
+    }
+
+    #[test]
+    fn optimized_self_tco_uses_dispatch_table_for_wrapper_match() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn loop(r: Result<Int, String>) -> Int
+    match r
+        Result.Ok(n) -> n
+        Result.Err(_) -> loop(Result.Ok(1))
+"#,
+            "demo",
+        );
+        ctx.emission_style = EmissionStyle::Optimized;
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("let __dispatch_subject = r;"));
+        assert!(entry.contains("__dispatch_subject.is_ok()"));
+    }
+
+    #[test]
+    fn optimized_mutual_tco_uses_dispatch_table_for_wrapper_match() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn left(r: Result<Int, String>) -> Int
+    match r
+        Result.Ok(n) -> n
+        Result.Err(_) -> right(Result.Ok(1))
+
+fn right(r: Result<Int, String>) -> Int
+    match r
+        Result.Ok(n) -> n
+        Result.Err(_) -> left(Result.Ok(1))
+"#,
+            "demo",
+        );
+        ctx.emission_style = EmissionStyle::Optimized;
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("let __dispatch_subject = r;"));
+        assert!(entry.contains("__dispatch_subject.is_ok()"));
     }
 
     #[test]

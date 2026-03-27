@@ -249,7 +249,8 @@ fn classify_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
         match op {
             STORE_GLOBAL | TAIL_CALL_SELF | TAIL_CALL_KNOWN | CONCAT | LIST_NIL | LIST_CONS
             | LIST_NEW | RECORD_NEW | WRAP | TUPLE_NEW | RECORD_UPDATE | LIST_LEN
-            | LIST_PREPEND | VECTOR_GET | VECTOR_GET_OR | VECTOR_SET | TAIL_CALL_SELF_THIN => {
+            | LIST_PREPEND | VECTOR_GET | VECTOR_GET_OR | VECTOR_SET | VECTOR_SET_OR_KEEP
+            | TAIL_CALL_SELF_THIN => {
                 return Ok(false);
             }
 
@@ -283,7 +284,7 @@ fn classify_thin_ignoring_self_tco(chunk: &FnChunk) -> Result<bool, CompileError
         match op {
             STORE_GLOBAL | TAIL_CALL_KNOWN | CONCAT | LIST_NIL | LIST_CONS | LIST_NEW
             | RECORD_NEW | WRAP | TUPLE_NEW | RECORD_UPDATE | LIST_LEN | LIST_PREPEND
-            | VECTOR_GET | VECTOR_GET_OR | VECTOR_SET => {
+            | VECTOR_GET | VECTOR_GET_OR | VECTOR_SET | VECTOR_SET_OR_KEEP => {
                 return Ok(false);
             }
 
