@@ -1,13 +1,7 @@
 use super::*;
+use crate::ir::{SemanticConstructor, WrapperKind};
 
 impl Interpreter {
-    fn ctor_type_and_variant(ctor_name: &str) -> Option<(&str, &str)> {
-        let mut parts = ctor_name.rsplit('.');
-        let variant = parts.next()?;
-        let type_name = parts.next()?;
-        Some((type_name, variant))
-    }
-
     #[allow(dead_code)]
     pub(super) fn match_pattern(
         &self,
@@ -66,9 +60,9 @@ impl Interpreter {
                 Some(all)
             }
             Pattern::Constructor(ctor_name, bindings) => {
-                match (ctor_name.as_str(), value) {
-                    ("Option.None", Value::None) => Some(Vec::new()),
-                    ("Result.Ok", Value::Ok(inner)) => {
+                match (self.classify_runtime_constructor_name(ctor_name), value) {
+                    (SemanticConstructor::NoneValue, Value::None) => Some(Vec::new()),
+                    (SemanticConstructor::Wrapper(WrapperKind::ResultOk), Value::Ok(inner)) => {
                         let mut result = Vec::with_capacity(1);
                         if let Some(name) = bindings.first()
                             && name != "_"
@@ -77,7 +71,7 @@ impl Interpreter {
                         }
                         Some(result)
                     }
-                    ("Result.Err", Value::Err(inner)) => {
+                    (SemanticConstructor::Wrapper(WrapperKind::ResultErr), Value::Err(inner)) => {
                         let mut result = Vec::with_capacity(1);
                         if let Some(name) = bindings.first()
                             && name != "_"
@@ -86,7 +80,7 @@ impl Interpreter {
                         }
                         Some(result)
                     }
-                    ("Option.Some", Value::Some(inner)) => {
+                    (SemanticConstructor::Wrapper(WrapperKind::OptionSome), Value::Some(inner)) => {
                         let mut result = Vec::with_capacity(1);
                         if let Some(name) = bindings.first()
                             && name != "_"
@@ -97,7 +91,10 @@ impl Interpreter {
                     }
                     // User-defined variant: match by fully-qualified constructor name.
                     (
-                        ctor,
+                        SemanticConstructor::TypeConstructor {
+                            qualified_type_name,
+                            variant_name,
+                        },
                         Value::Variant {
                             type_name,
                             variant,
@@ -105,12 +102,9 @@ impl Interpreter {
                             ..
                         },
                     ) => {
-                        let matches = Self::ctor_type_and_variant(ctor).is_some_and(
-                            |(ctor_type, ctor_variant)| {
-                                ctor_type == type_name && ctor_variant == variant
-                            },
-                        );
-                        if !matches {
+                        if !Self::ctor_type_matches_runtime(&qualified_type_name, type_name)
+                            || variant_name != *variant
+                        {
                             return None;
                         }
                         if !bindings.is_empty() && bindings.len() != fields.len() {
@@ -191,15 +185,15 @@ impl Interpreter {
                 Some(all)
             }
             Pattern::Constructor(ctor_name, bindings) => {
-                match ctor_name.as_str() {
-                    "Option.None" => {
+                match self.classify_runtime_constructor_name(ctor_name) {
+                    SemanticConstructor::NoneValue => {
                         if value.is_none() {
                             Some(Vec::new())
                         } else {
                             None
                         }
                     }
-                    "Result.Ok" => {
+                    SemanticConstructor::Wrapper(WrapperKind::ResultOk) => {
                         if !value.is_ok() {
                             return None;
                         }
@@ -212,7 +206,7 @@ impl Interpreter {
                         }
                         Some(result)
                     }
-                    "Result.Err" => {
+                    SemanticConstructor::Wrapper(WrapperKind::ResultErr) => {
                         if !value.is_err() {
                             return None;
                         }
@@ -225,7 +219,7 @@ impl Interpreter {
                         }
                         Some(result)
                     }
-                    "Option.Some" => {
+                    SemanticConstructor::Wrapper(WrapperKind::OptionSome) => {
                         if !value.is_some() {
                             return None;
                         }
@@ -238,21 +232,21 @@ impl Interpreter {
                         }
                         Some(result)
                     }
-                    ctor => {
+                    SemanticConstructor::TypeConstructor {
+                        qualified_type_name,
+                        variant_name,
+                    } => {
                         // User-defined variant
                         if !value.is_variant() {
                             return None;
                         }
                         let (type_id, variant_id, fields) = value.variant_parts(&self.arena)?;
                         let type_name = self.arena.get_type_name(type_id);
-                        let variant_name = self.arena.get_variant_name(type_id, variant_id);
+                        let runtime_variant_name = self.arena.get_variant_name(type_id, variant_id);
 
-                        let matches = Self::ctor_type_and_variant(ctor).is_some_and(
-                            |(ctor_type, ctor_variant)| {
-                                ctor_type == type_name && ctor_variant == variant_name
-                            },
-                        );
-                        if !matches {
+                        if !Self::ctor_type_matches_runtime(&qualified_type_name, type_name)
+                            || variant_name != runtime_variant_name
+                        {
                             return None;
                         }
                         if !bindings.is_empty() && bindings.len() != fields.len() {
@@ -267,6 +261,7 @@ impl Interpreter {
                         }
                         Some(result)
                     }
+                    SemanticConstructor::Unknown(_) => None,
                 }
             }
         }

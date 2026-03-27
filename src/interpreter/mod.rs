@@ -276,6 +276,7 @@ mod core;
 mod effects;
 mod eval;
 mod exec;
+mod ir_bridge;
 pub(crate) mod lowered;
 mod ops;
 mod patterns;
@@ -308,5 +309,108 @@ mod memo_cache_tests {
         assert_eq!(cache.get(11, &[Value::Int(1)]), Some(Value::Int(10)));
         assert_eq!(cache.get(22, &[Value::Int(2)]), None);
         assert_eq!(cache.get(33, &[Value::Int(3)]), Some(Value::Int(30)));
+    }
+}
+
+#[cfg(test)]
+mod ir_bridge_tests {
+    use super::*;
+
+    fn register_task_event_type(interpreter: &mut Interpreter) {
+        interpreter.register_type_def(&TypeDef::Sum {
+            name: "TaskEvent".to_string(),
+            variants: vec![TypeVariant {
+                name: "TaskCreated".to_string(),
+                fields: vec!["String".to_string()],
+            }],
+            line: 1,
+        });
+
+        let mut members = HashMap::new();
+        members.insert(
+            "TaskEvent".to_string(),
+            interpreter
+                .lookup("TaskEvent")
+                .expect("TaskEvent namespace should be defined"),
+        );
+        interpreter
+            .define_module_path(
+                "Domain.Types",
+                Value::Namespace {
+                    name: "Types".to_string(),
+                    members,
+                },
+            )
+            .expect("module path should be mountable");
+    }
+
+    #[test]
+    fn eval_constructor_uses_shared_semantics_for_wrappers_and_qualified_variants() {
+        let mut interpreter = Interpreter::new();
+        register_task_event_type(&mut interpreter);
+
+        let ok_expr = Expr::Constructor(
+            "Ok".to_string(),
+            Some(Box::new(Expr::Literal(Literal::Int(7)))),
+        );
+        let created_expr = Expr::Constructor(
+            "Domain.Types.TaskEvent.TaskCreated".to_string(),
+            Some(Box::new(Expr::Literal(Literal::Str("now".to_string())))),
+        );
+
+        assert_eq!(
+            interpreter
+                .eval_expr(&ok_expr)
+                .expect("Ok constructor should evaluate"),
+            Value::Ok(Box::new(Value::Int(7)))
+        );
+
+        match interpreter
+            .eval_expr(&created_expr)
+            .expect("qualified constructor should build a variant")
+        {
+            Value::Variant {
+                type_name,
+                variant,
+                fields,
+            } => {
+                assert_eq!(type_name, "TaskEvent");
+                assert_eq!(variant, "TaskCreated");
+                assert_eq!(fields.as_ref(), &[Value::Str("now".to_string())]);
+            }
+            other => panic!("expected variant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn qualified_constructor_patterns_use_shared_semantics_in_both_match_paths() {
+        let mut interpreter = Interpreter::new();
+        register_task_event_type(&mut interpreter);
+
+        let pattern = Pattern::Constructor(
+            "Domain.Types.TaskEvent.TaskCreated".to_string(),
+            vec!["at".to_string()],
+        );
+        let value = Value::Variant {
+            type_name: "TaskEvent".to_string(),
+            variant: "TaskCreated".to_string(),
+            fields: vec![Value::Str("now".to_string())].into(),
+        };
+
+        assert_eq!(
+            interpreter.match_pattern(&pattern, &value),
+            Some(vec![("at".to_string(), Value::Str("now".to_string()))])
+        );
+
+        let nv = NanValue::from_value(&value, &mut interpreter.arena);
+        let bindings = interpreter
+            .match_pattern_nv(&pattern, nv)
+            .expect("nan-value pattern path should match");
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].0, "at");
+        assert_eq!(
+            bindings[0].1.to_value(&interpreter.arena),
+            Value::Str("now".to_string())
+        );
     }
 }

@@ -282,17 +282,7 @@ impl Interpreter {
                         expr: inner,
                     }
                 }
-                None => EvalState::Apply(match name.as_str() {
-                    "None" => Ok(NanValue::NONE),
-                    "Ok" | "Err" | "Some" => Err(RuntimeError::Error(format!(
-                        "Constructor '{}' expects an argument",
-                        name
-                    ))),
-                    _ => Err(RuntimeError::Error(format!(
-                        "Unknown constructor: {}",
-                        name
-                    ))),
-                }),
+                None => EvalState::Apply(self.apply_runtime_constructor_nv(name, None)),
             },
             &LoweredExpr::ErrorProp { inner } => {
                 conts.push(EvalCont::ErrorProp);
@@ -485,18 +475,9 @@ impl Interpreter {
                 Err(err) => EvalState::Apply(Err(err)),
             },
             EvalCont::Constructor(name) => match result {
-                Ok(inner) => EvalState::Apply(match name.as_str() {
-                    "Ok" => Ok(NanValue::new_ok_value(inner, &mut self.arena)),
-                    "Err" => Ok(NanValue::new_err_value(inner, &mut self.arena)),
-                    "Some" => Ok(NanValue::new_some_value(inner, &mut self.arena)),
-                    "None" => Err(RuntimeError::Error(
-                        "Constructor 'None' does not take an argument".to_string(),
-                    )),
-                    _ => Err(RuntimeError::Error(format!(
-                        "Unknown constructor: {}",
-                        name
-                    ))),
-                }),
+                Ok(inner) => {
+                    EvalState::Apply(self.apply_runtime_constructor_nv(&name, Some(inner)))
+                }
                 Err(err) => EvalState::Apply(Err(err)),
             },
             EvalCont::ErrorProp => match result {

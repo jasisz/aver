@@ -25,6 +25,15 @@ impl Interpreter {
                 variants,
                 ..
             } => {
+                if self.arena.find_type_id(type_name).is_none() {
+                    self.arena.register_sum_type(
+                        type_name,
+                        variants
+                            .iter()
+                            .map(|variant| variant.name.clone())
+                            .collect(),
+                    );
+                }
                 let mut members = HashMap::new();
                 for variant in variants {
                     if variant.fields.is_empty() {
@@ -54,6 +63,12 @@ impl Interpreter {
                 );
             }
             TypeDef::Product { name, fields, .. } => {
+                if self.arena.find_type_id(name).is_none() {
+                    self.arena.register_record_type(
+                        name,
+                        fields.iter().map(|(field, _)| field.clone()).collect(),
+                    );
+                }
                 // Product types are constructed via Expr::RecordCreate.
                 // Keep declaration field order so runtime records are canonicalized
                 // and positional record matches stay stable.
