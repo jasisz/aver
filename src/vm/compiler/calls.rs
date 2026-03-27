@@ -1,63 +1,72 @@
 use super::{CallTarget, CompileError, FnCompiler};
 use crate::ast::Expr;
+use crate::ir::{
+    CallLowerCtx, CallPlan, SemanticConstructor, TailCallPlan, WrapperKind, classify_call_plan,
+    classify_constructor_name, classify_tail_call_plan,
+};
 use crate::nan_value::NanValue;
 use crate::vm::builtin::VmBuiltin;
 use crate::vm::opcode::*;
 use crate::vm::symbol::VmSymbolTable;
 
+struct VmCallCtx<'compiler, 'a> {
+    compiler: &'compiler FnCompiler<'a>,
+}
+
+impl CallLowerCtx for VmCallCtx<'_, '_> {
+    fn is_local_value(&self, name: &str) -> bool {
+        self.compiler.local_slots.contains_key(name)
+    }
+
+    fn is_user_type(&self, name: &str) -> bool {
+        self.compiler.resolve_type_id(name).is_some()
+    }
+
+    fn resolve_module_call<'a>(&self, dotted: &'a str) -> Option<(&'a str, &'a str)> {
+        let mut best = None;
+
+        for (dot_idx, _) in dotted.match_indices('.') {
+            let prefix = &dotted[..dot_idx];
+            let suffix = &dotted[dot_idx + 1..];
+            if suffix.is_empty()
+                || self
+                    .compiler
+                    .symbols
+                    .resolve_namespace_path(prefix)
+                    .is_none()
+            {
+                continue;
+            }
+
+            let is_module_function = self.compiler.resolve_fn_id(dotted).is_some();
+            let is_module_ctor = suffix.rsplit_once('.').is_some_and(|(type_name, _)| {
+                self.compiler.resolve_type_id(type_name).is_some()
+                    || self
+                        .compiler
+                        .resolve_type_id(&format!("{prefix}.{type_name}"))
+                        .is_some()
+            });
+
+            if is_module_function || is_module_ctor {
+                best = Some((prefix, suffix));
+            }
+        }
+
+        best
+    }
+}
+
 impl<'a> FnCompiler<'a> {
-    /// Resolve a dotted path (Ns, member) to what it means.
-    fn resolve_dotted_call(&self, ns: &str, method: &str) -> CallTarget {
-        let qualified = format!("{}.{}", ns, method);
-        if let Some(symbol_id) = self.symbols.find(&qualified) {
-            return self.resolve_symbol_call_target(symbol_id, qualified);
-        }
-
-        if let Some(namespace_symbol_id) = self.symbols.resolve_namespace_path(ns)
-            && let Some(member_symbol_id) = self.symbols.find(method)
-            && let Some(member) = self
-                .symbols
-                .resolve_member(namespace_symbol_id, member_symbol_id)
-        {
-            if let Some(symbol_id) = self.symbols.resolve_symbol_ref(member) {
-                return self.resolve_symbol_call_target(symbol_id, qualified);
-            }
-            if member.bits() == NanValue::NONE.bits() {
-                return CallTarget::None_;
-            }
-        }
-        CallTarget::UnknownQualified(qualified)
+    pub(super) fn classify_constructor_semantics(&self, name: &str) -> SemanticConstructor {
+        let call_ctx = VmCallCtx { compiler: self };
+        classify_constructor_name(name, &call_ctx)
     }
 
-    fn resolve_symbol_call_target(&self, symbol_id: u32, qualified: String) -> CallTarget {
-        if let Some(fn_id) = self.symbols.resolve_function(symbol_id) {
-            return CallTarget::KnownFn(fn_id);
-        }
-        if let Some(builtin) = self.symbols.resolve_builtin(symbol_id) {
-            return CallTarget::Builtin(builtin);
-        }
-        if let Some(kind) = self.symbols.resolve_wrapper(symbol_id) {
-            return CallTarget::Wrapper(kind);
-        }
-        if let Some(value) = self.symbols.resolve_constant(symbol_id)
-            && value.bits() == NanValue::NONE.bits()
-        {
-            return CallTarget::None_;
-        }
-        if let Some(ctor) = self.symbols.resolve_variant_ctor(symbol_id) {
-            return CallTarget::Variant(ctor.type_id, ctor.variant_id);
-        }
-        CallTarget::UnknownQualified(qualified)
-    }
-
-    fn extract_dotted_path(&self, expr: &Expr) -> Option<(String, String)> {
-        if let Expr::Attr(obj, method) = expr {
-            let path = self.flatten_path(obj)?;
-            if path.chars().next().is_some_and(|c| c.is_uppercase()) {
-                return Some((path, method.clone()));
-            }
-        }
-        Option::None
+    fn resolve_builtin_target(&self, name: &str) -> Option<CallTarget> {
+        let symbol_id = self.symbols.find(name)?;
+        self.symbols
+            .resolve_builtin(symbol_id)
+            .map(CallTarget::Builtin)
     }
 
     fn flatten_path(&self, expr: &Expr) -> Option<String> {
@@ -85,11 +94,46 @@ impl<'a> FnCompiler<'a> {
     }
 
     pub(super) fn resolve_call_target(&self, expr: &Expr) -> Option<CallTarget> {
-        match expr {
-            Expr::Ident(name) => self.resolve_fn_id(name).map(CallTarget::KnownFn),
-            _ => self
-                .extract_dotted_path(expr)
-                .map(|(ns, method)| self.resolve_dotted_call(&ns, &method)),
+        let call_ctx = VmCallCtx { compiler: self };
+        match classify_call_plan(expr, &call_ctx) {
+            CallPlan::Dynamic => None,
+            CallPlan::Function(name) => {
+                self.resolve_fn_id(&name)
+                    .map(CallTarget::KnownFn)
+                    .or_else(|| {
+                        if name.contains('.') {
+                            Some(CallTarget::UnknownQualified(name))
+                        } else {
+                            None
+                        }
+                    })
+            }
+            CallPlan::Builtin(name) => self
+                .resolve_builtin_target(&name)
+                .or_else(|| Some(CallTarget::UnknownQualified(name))),
+            CallPlan::Wrapper(kind) => {
+                let wrap_kind = match kind {
+                    WrapperKind::ResultOk => 0,
+                    WrapperKind::ResultErr => 1,
+                    WrapperKind::OptionSome => 2,
+                };
+                Some(CallTarget::Wrapper(wrap_kind))
+            }
+            CallPlan::NoneValue => Some(CallTarget::None_),
+            CallPlan::TypeConstructor {
+                qualified_type_name,
+                variant_name,
+            } => {
+                let type_id = self.resolve_type_id(&qualified_type_name)?;
+                if let Some(variant_id) = self.arena.find_variant_id(type_id, &variant_name) {
+                    Some(CallTarget::Variant(type_id, variant_id))
+                } else {
+                    Some(CallTarget::UnknownQualified(format!(
+                        "{}.{}",
+                        qualified_type_name, variant_name
+                    )))
+                }
+            }
         }
     }
 
@@ -184,17 +228,28 @@ impl<'a> FnCompiler<'a> {
             self.compile_expr(arg)?;
         }
 
-        if target == self.name {
-            self.emit_op(TAIL_CALL_SELF);
-            self.emit_u8(args.len() as u8);
-        } else if let Some(fn_id) = self.resolve_fn_id(target) {
-            self.emit_op(TAIL_CALL_KNOWN);
-            self.emit_u16(fn_id as u16);
-            self.emit_u8(args.len() as u8);
-        } else {
-            return Err(CompileError {
-                msg: format!("unknown tail call target: {}", target),
-            });
+        let call_ctx = VmCallCtx { compiler: self };
+        match classify_tail_call_plan(target, &self.name, &call_ctx) {
+            TailCallPlan::SelfCall => {
+                self.emit_op(TAIL_CALL_SELF);
+                self.emit_u8(args.len() as u8);
+            }
+            TailCallPlan::KnownFunction(name) => {
+                if let Some(fn_id) = self.resolve_fn_id(&name) {
+                    self.emit_op(TAIL_CALL_KNOWN);
+                    self.emit_u16(fn_id as u16);
+                    self.emit_u8(args.len() as u8);
+                } else {
+                    return Err(CompileError {
+                        msg: format!("unknown tail call target: {}", name),
+                    });
+                }
+            }
+            TailCallPlan::Unknown(name) => {
+                return Err(CompileError {
+                    msg: format!("unknown tail call target: {}", name),
+                });
+            }
         }
         Ok(())
     }
@@ -204,31 +259,35 @@ impl<'a> FnCompiler<'a> {
         name: &str,
         arg: Option<&Expr>,
     ) -> Result<(), CompileError> {
-        match name {
-            "Result.Ok" => {
+        let normalized_name = match name {
+            "Ok" => "Result.Ok",
+            "Err" => "Result.Err",
+            "Some" => "Option.Some",
+            "None" => "Option.None",
+            other => other,
+        };
+
+        match self.classify_constructor_semantics(normalized_name) {
+            SemanticConstructor::Wrapper(kind) => {
                 self.compile_constructor_arg(arg)?;
                 self.emit_op(WRAP);
-                self.emit_u8(0);
+                self.emit_u8(match kind {
+                    WrapperKind::ResultOk => 0,
+                    WrapperKind::ResultErr => 1,
+                    WrapperKind::OptionSome => 2,
+                });
             }
-            "Result.Err" => {
-                self.compile_constructor_arg(arg)?;
-                self.emit_op(WRAP);
-                self.emit_u8(1);
-            }
-            "Option.Some" => {
-                self.compile_constructor_arg(arg)?;
-                self.emit_op(WRAP);
-                self.emit_u8(2);
-            }
-            "Option.None" => {
+            SemanticConstructor::NoneValue => {
                 let idx = self.add_constant(NanValue::NONE);
                 self.emit_op(LOAD_CONST);
                 self.emit_u16(idx);
             }
-            _ => {
-                if let Some((type_name, variant_name)) = name.rsplit_once('.')
-                    && let Some(type_id) = self.resolve_type_id(type_name)
-                    && let Some(variant_id) = self.arena.find_variant_id(type_id, variant_name)
+            SemanticConstructor::TypeConstructor {
+                qualified_type_name,
+                variant_name,
+            } => {
+                if let Some(type_id) = self.resolve_type_id(&qualified_type_name)
+                    && let Some(variant_id) = self.arena.find_variant_id(type_id, &variant_name)
                 {
                     let field_count = if let Some(a) = arg {
                         self.compile_expr(a)?;
@@ -242,6 +301,11 @@ impl<'a> FnCompiler<'a> {
                     self.emit_u8(field_count);
                     return Ok(());
                 }
+                return Err(CompileError {
+                    msg: format!("unknown constructor: {}", name),
+                });
+            }
+            SemanticConstructor::Unknown(_) => {
                 return Err(CompileError {
                     msg: format!("unknown constructor: {}", name),
                 });

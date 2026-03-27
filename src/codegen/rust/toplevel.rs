@@ -1028,7 +1028,7 @@ fn emit_tco_expr(
 
             let needs_as_str = super::expr::has_string_literal_patterns(arms);
             if super::expr::has_list_patterns(arms) {
-                return super::expr::emit_list_match(subj, arms, ctx, |arm| {
+                return super::expr::emit_list_match(subj, arms, None, ctx, |arm| {
                     emit_tco_expr(&arm.body, self_name, params, ctx, ectx, rc_indices)
                 });
             }
@@ -1407,7 +1407,7 @@ fn emit_trampoline_expr(
 
             // List match
             if super::expr::has_list_patterns(arms) {
-                return super::expr::emit_list_match(subj, arms, ctx, |arm| {
+                return super::expr::emit_list_match(subj, arms, None, ctx, |arm| {
                     emit_trampoline_expr(&arm.body, enum_name, member_names, ctx, ectx, rc_indices)
                 });
             }

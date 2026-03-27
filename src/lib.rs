@@ -10,6 +10,7 @@ pub mod effects;
 #[path = "main/format_cmd.rs"]
 pub mod format;
 pub mod interpreter;
+pub mod ir;
 pub mod lexer;
 pub mod nan_value;
 pub mod parser;

@@ -6,12 +6,48 @@ use crate::codegen::CodegenContext;
 use crate::codegen::common::{
     expr_to_dotted_name, is_user_type, module_prefix_to_rust_path, resolve_module_call,
 };
+use crate::ir::{
+    CallLowerCtx, CallPlan, DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan,
+    DispatchLiteral, DispatchTableShape, ListMatchShape, MatchDispatchPlan, SemanticConstructor,
+    SemanticDispatchPattern, TailCallPlan, WrapperKind, classify_call_plan,
+    classify_constructor_name, classify_list_match_shape, classify_match_dispatch_plan,
+    classify_tail_call_plan, is_builtin_namespace,
+};
 use crate::types::Type;
 /// Aver expressions → Rust expression strings.
 use std::collections::HashSet;
 
 pub use super::syntax::{aver_name_to_rust, emit_stmt};
 pub(super) use super::syntax::{has_list_patterns, has_string_literal_patterns};
+
+struct RustCallCtx<'a, 'b> {
+    ctx: &'a CodegenContext,
+    ectx: &'b EmitCtx,
+}
+
+impl CallLowerCtx for RustCallCtx<'_, '_> {
+    fn is_local_value(&self, name: &str) -> bool {
+        self.ectx.local_types.contains_key(name)
+    }
+
+    fn is_user_type(&self, name: &str) -> bool {
+        is_user_type(name, self.ctx)
+    }
+
+    fn resolve_module_call<'a>(&self, dotted: &'a str) -> Option<(&'a str, &'a str)> {
+        let mut best = None;
+        for (dot_idx, _) in dotted.match_indices('.') {
+            let prefix = &dotted[..dot_idx];
+            let suffix = &dotted[dot_idx + 1..];
+            if self.ctx.module_prefixes.contains(prefix)
+                && best.is_none_or(|existing: (&str, &str)| prefix.len() > existing.0.len())
+            {
+                best = Some((prefix, suffix));
+            }
+        }
+        best
+    }
+}
 
 /// Emit a Rust expression from an Aver Expr.
 pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
@@ -233,18 +269,16 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
         Expr::TailCall(boxed) => {
             // TailCall outside of a TCO loop → emit as regular function call
             let (target, args) = boxed.as_ref();
-            let arg_ctxs = compute_args_used_after_with_rc(
-                args,
-                &ectx.used_after,
-                &ectx.local_types,
-                &ectx.rc_wrapped,
-            );
-            let parts: Vec<String> = args
-                .iter()
-                .zip(arg_ctxs.iter())
-                .map(|(a, ac)| clone_arg(a, ctx, ac))
-                .collect();
-            format!("{}({})", aver_name_to_rust(target), parts.join(", "))
+            let call_ctx = RustCallCtx { ctx, ectx };
+            match classify_tail_call_plan(target, "", &call_ctx) {
+                TailCallPlan::SelfCall | TailCallPlan::KnownFunction(_) => {
+                    emit_named_function_call(target, args, ctx, ectx)
+                }
+                TailCallPlan::Unknown(name) => emit_codegen_error_expr(format!(
+                    "Rust codegen: unknown tail call target {}",
+                    name
+                )),
+            }
         }
     }
 }
@@ -275,51 +309,44 @@ fn emit_codegen_error_expr(message: String) -> String {
 }
 
 fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &EmitCtx) -> String {
-    // Check if this is a builtin call like Console.print, List.map, etc.
-    let fn_name = expr_to_dotted_name(fn_expr);
-
-    if let Some(name) = &fn_name {
-        if let Some(rust_code) = builtins::emit_builtin_call(name, args, ctx, ectx) {
-            return rust_code;
+    let call_ctx = RustCallCtx { ctx, ectx };
+    match classify_call_plan(fn_expr, &call_ctx) {
+        CallPlan::Builtin(name) => builtins::emit_builtin_call(&name, args, ctx, ectx)
+            .unwrap_or_else(|| {
+                emit_codegen_error_expr(format!(
+                    "Rust codegen: unhandled builtin call lowering for {}",
+                    name
+                ))
+            }),
+        CallPlan::Wrapper(kind) => {
+            let wrapper_name = match kind {
+                WrapperKind::ResultOk => "Result.Ok",
+                WrapperKind::ResultErr => "Result.Err",
+                WrapperKind::OptionSome => "Option.Some",
+            };
+            builtins::emit_builtin_call(wrapper_name, args, ctx, ectx).unwrap_or_else(|| {
+                emit_codegen_error_expr(format!(
+                    "Rust codegen: missing wrapper lowering for {}",
+                    wrapper_name
+                ))
+            })
         }
-
-        // Check module-qualified call: Fibonacci.fib → fib
-        if let Some((prefix, bare)) = resolve_module_call(name, ctx) {
-            let module_path = module_prefix_to_rust_path(prefix);
-            // Could be a simple function or a type constructor (e.g. Shape.Circle)
-            if let Some(dot_pos) = bare.find('.') {
-                let type_name = &bare[..dot_pos];
-                let variant_name = &bare[dot_pos + 1..];
-                if is_user_type(type_name, ctx) {
-                    let arg_ctxs = compute_args_used_after_with_rc(
-                        args,
-                        &ectx.used_after,
-                        &ectx.local_types,
-                        &ectx.rc_wrapped,
-                    );
-                    let boxed_positions = constructor_boxed_positions(bare, ctx);
-                    let arg_strs: Vec<String> = args
-                        .iter()
-                        .enumerate()
-                        .zip(arg_ctxs.iter())
-                        .map(|((idx, a), ac)| {
-                            let arg = clone_arg(a, ctx, ac);
-                            if boxed_positions.contains(&idx) {
-                                format!("std::rc::Rc::new({})", arg)
-                            } else {
-                                arg
-                            }
-                        })
-                        .collect();
-                    return format!(
-                        "{}::{}::{}({})",
-                        module_path,
-                        type_name,
-                        variant_name,
-                        arg_strs.join(", ")
-                    );
-                }
+        CallPlan::NoneValue => {
+            if args.is_empty() {
+                "None".to_string()
+            } else {
+                emit_codegen_error_expr(
+                    "Rust codegen: Option.None cannot be called with arguments".to_string(),
+                )
             }
+        }
+        CallPlan::TypeConstructor {
+            qualified_type_name,
+            variant_name,
+        } => emit_type_constructor_call(&qualified_type_name, &variant_name, args, ctx, ectx),
+        CallPlan::Function(name) => emit_named_function_call(&name, args, ctx, ectx),
+        CallPlan::Dynamic => {
+            let func = emit_expr(fn_expr, ctx, ectx);
             let arg_ctxs = compute_args_used_after_with_rc(
                 args,
                 &ectx.used_after,
@@ -331,46 +358,17 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &Emit
                 .zip(arg_ctxs.iter())
                 .map(|(a, ac)| clone_arg(a, ctx, ac))
                 .collect();
-            return format!(
-                "{}::{}({})",
-                module_path,
-                aver_name_to_rust(bare),
-                arg_strs.join(", ")
-            );
-        }
-
-        // Check if this is a user-defined type constructor: Shape.Circle(r)
-        if let Some(dot_pos) = name.find('.') {
-            let type_name = &name[..dot_pos];
-            let variant_name = &name[dot_pos + 1..];
-            if is_user_type(type_name, ctx) {
-                let arg_ctxs = compute_args_used_after_with_rc(
-                    args,
-                    &ectx.used_after,
-                    &ectx.local_types,
-                    &ectx.rc_wrapped,
-                );
-                let boxed_positions = constructor_boxed_positions(name, ctx);
-                let arg_strs: Vec<String> = args
-                    .iter()
-                    .enumerate()
-                    .zip(arg_ctxs.iter())
-                    .map(|((idx, a), ac)| {
-                        let arg = clone_arg(a, ctx, ac);
-                        if boxed_positions.contains(&idx) {
-                            format!("std::rc::Rc::new({})", arg)
-                        } else {
-                            arg
-                        }
-                    })
-                    .collect();
-                return format!("{}::{}({})", type_name, variant_name, arg_strs.join(", "));
-            }
+            format!("{}({})", func, arg_strs.join(", "))
         }
     }
+}
 
-    // Regular function call — compute per-arg used_after
-    let func = emit_expr(fn_expr, ctx, ectx);
+fn emit_named_function_call(
+    name: &str,
+    args: &[Expr],
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> String {
     let arg_ctxs = compute_args_used_after_with_rc(
         args,
         &ectx.used_after,
@@ -382,7 +380,66 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &Emit
         .zip(arg_ctxs.iter())
         .map(|(a, ac)| clone_arg(a, ctx, ac))
         .collect();
-    format!("{}({})", func, arg_strs.join(", "))
+
+    if let Some((prefix, bare)) = resolve_module_call(name, ctx) {
+        let module_path = module_prefix_to_rust_path(prefix);
+        format!(
+            "{}::{}({})",
+            module_path,
+            aver_name_to_rust(bare),
+            arg_strs.join(", ")
+        )
+    } else {
+        format!("{}({})", aver_name_to_rust(name), arg_strs.join(", "))
+    }
+}
+
+fn emit_type_constructor_call(
+    qualified_type_name: &str,
+    variant_name: &str,
+    args: &[Expr],
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> String {
+    let arg_ctxs = compute_args_used_after_with_rc(
+        args,
+        &ectx.used_after,
+        &ectx.local_types,
+        &ectx.rc_wrapped,
+    );
+    let ctor_name = format!("{}.{}", qualified_type_name, variant_name);
+    let boxed_positions = constructor_boxed_positions(&ctor_name, ctx);
+    let arg_strs: Vec<String> = args
+        .iter()
+        .enumerate()
+        .zip(arg_ctxs.iter())
+        .map(|((idx, a), ac)| {
+            let arg = clone_arg(a, ctx, ac);
+            if boxed_positions.contains(&idx) {
+                format!("std::rc::Rc::new({})", arg)
+            } else {
+                arg
+            }
+        })
+        .collect();
+
+    if let Some((prefix, bare_type_name)) = resolve_module_call(qualified_type_name, ctx) {
+        let module_path = module_prefix_to_rust_path(prefix);
+        format!(
+            "{}::{}::{}({})",
+            module_path,
+            bare_type_name,
+            variant_name,
+            arg_strs.join(", ")
+        )
+    } else {
+        format!(
+            "{}::{}({})",
+            qualified_type_name,
+            variant_name,
+            arg_strs.join(", ")
+        )
+    }
 }
 
 /// Clone a value if it's a variable reference (to avoid move issues in generated Rust).
@@ -450,57 +507,45 @@ fn expr_display_type(expr: &Expr, ectx: &EmitCtx) -> Option<DisplayKind> {
     }
 }
 
-fn is_builtin_namespace(name: &str) -> bool {
-    matches!(
-        name,
-        "Console"
-            | "Disk"
-            | "Http"
-            | "HttpServer"
-            | "Tcp"
-            | "Int"
-            | "Float"
-            | "String"
-            | "List"
-            | "Map"
-            | "Char"
-            | "Byte"
-            | "Result"
-            | "Option"
-    )
-}
-
 fn emit_constructor(
     name: &str,
     arg: &Option<Box<Expr>>,
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> String {
-    match name {
-        "Ok" => {
-            let inner = arg
-                .as_ref()
-                .map(|a| clone_arg(a, ctx, ectx))
-                .unwrap_or_else(|| "()".to_string());
-            format!("Ok({})", inner)
+    let normalized_name = match name {
+        "Ok" => "Result.Ok",
+        "Err" => "Result.Err",
+        "Some" => "Option.Some",
+        "None" => "Option.None",
+        other => other,
+    };
+    let args: &[Expr] = match arg {
+        Some(inner) => std::slice::from_ref(inner.as_ref()),
+        None => &[],
+    };
+    let lower_ctx = RustCallCtx { ctx, ectx };
+
+    match classify_constructor_name(normalized_name, &lower_ctx) {
+        SemanticConstructor::Wrapper(kind) => {
+            let wrapper_name = match kind {
+                WrapperKind::ResultOk => "Result.Ok",
+                WrapperKind::ResultErr => "Result.Err",
+                WrapperKind::OptionSome => "Option.Some",
+            };
+            builtins::emit_builtin_call(wrapper_name, args, ctx, ectx).unwrap_or_else(|| {
+                emit_codegen_error_expr(format!(
+                    "Rust codegen: missing constructor wrapper lowering for {}",
+                    wrapper_name
+                ))
+            })
         }
-        "Err" => {
-            let inner = arg
-                .as_ref()
-                .map(|a| clone_arg(a, ctx, ectx))
-                .unwrap_or_else(|| "()".to_string());
-            format!("Err({})", inner)
-        }
-        "Some" => {
-            let inner = arg
-                .as_ref()
-                .map(|a| clone_arg(a, ctx, ectx))
-                .unwrap_or_else(|| "()".to_string());
-            format!("Some({})", inner)
-        }
-        "None" => "None".to_string(),
-        _ => {
-            // Should not happen — constructors are FnCall via namespace
+        SemanticConstructor::NoneValue => "None".to_string(),
+        SemanticConstructor::TypeConstructor {
+            qualified_type_name,
+            variant_name,
+        } => emit_type_constructor_call(&qualified_type_name, &variant_name, args, ctx, ectx),
+        SemanticConstructor::Unknown(_) => {
             let inner = arg
                 .as_ref()
                 .map(|a| clone_arg(a, ctx, ectx))
@@ -563,9 +608,13 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
     }
     let subj_ectx = ectx.with_used_after(&arms_vars);
     let subj = clone_arg(subject, ctx, &subj_ectx);
+    let lower_ctx = RustCallCtx { ctx, ectx };
+    let dispatch_plan = classify_match_dispatch_plan(arms, &lower_ctx);
 
     // Bool match → if/else: match expr { true => A, false => B } → if expr { A } else { B }
-    if let Some(code) = try_emit_bool_if_else(&subj, arms, ctx, ectx) {
+    if let Some(MatchDispatchPlan::Bool(shape)) = dispatch_plan.as_ref()
+        && let Some(code) = try_emit_bool_if_else(&subj, arms, *shape, ctx, ectx)
+    {
         return code;
     }
 
@@ -574,7 +623,17 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
     let _needs_as_slice = subject_might_be_list(subject, arms, ctx);
 
     if has_list_patterns(arms) {
-        return emit_list_match(subj, arms, ctx, |arm| emit_expr(&arm.body, ctx, ectx));
+        let list_shape = match dispatch_plan.as_ref() {
+            Some(MatchDispatchPlan::List(shape)) => Some(*shape),
+            _ => None,
+        };
+        return emit_list_match(subj, arms, list_shape, ctx, |arm| {
+            emit_expr(&arm.body, ctx, ectx)
+        });
+    }
+
+    if let Some(MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
+        return emit_dispatch_table_match(subj, arms, shape, ctx, ectx);
     }
 
     let match_expr = if needs_as_str && has_string_literal_patterns(arms) {
@@ -604,21 +663,12 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
 fn try_emit_bool_if_else(
     subj: &str,
     arms: &[MatchArm],
+    shape: crate::ir::BoolMatchShape,
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> Option<String> {
-    if arms.len() != 2 {
-        return None;
-    }
-    let (true_body, false_body) = match (&arms[0].pattern, &arms[1].pattern) {
-        (Pattern::Literal(Literal::Bool(true)), Pattern::Literal(Literal::Bool(false))) => {
-            (&arms[0].body, &arms[1].body)
-        }
-        (Pattern::Literal(Literal::Bool(false)), Pattern::Literal(Literal::Bool(true))) => {
-            (&arms[1].body, &arms[0].body)
-        }
-        _ => return None,
-    };
+    let true_body = &arms[shape.true_arm_index].body;
+    let false_body = &arms[shape.false_arm_index].body;
     let t = maybe_clone(emit_expr(true_body, ctx, ectx), true_body, ectx);
     let f = maybe_clone(emit_expr(false_body, ctx, ectx), false_body, ectx);
     Some(format!("if {} {{ {} }} else {{ {} }}", subj, t, f))
@@ -634,9 +684,106 @@ fn subject_might_be_list(_subject: &Expr, _arms: &[MatchArm], _ctx: &CodegenCont
     true
 }
 
+fn emit_dispatch_table_match(
+    subject: String,
+    arms: &[MatchArm],
+    shape: &DispatchTableShape,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> String {
+    let subject_name = "__dispatch_subject";
+    let fallback = match &shape.default_arm {
+        Some(default_arm) => emit_default_dispatch_arm(
+            subject_name,
+            &arms[default_arm.arm_index],
+            default_arm,
+            ctx,
+            ectx,
+        ),
+        None => "panic!(\"Aver Rust codegen: non-exhaustive dispatch match\")".to_string(),
+    };
+
+    let body = shape
+        .entries
+        .iter()
+        .rev()
+        .fold(fallback, |else_branch, entry| {
+            let arm = &arms[entry.arm_index];
+            let cond = emit_dispatch_condition(subject_name, &entry.pattern);
+            let body = emit_dispatch_arm_body(subject_name, arm, entry, ctx, ectx);
+            format!("if {} {{ {} }} else {{ {} }}", cond, body, else_branch)
+        });
+
+    format!("{{ let {} = {}; {} }}", subject_name, subject, body)
+}
+
+fn emit_dispatch_condition(subject_name: &str, pattern: &SemanticDispatchPattern) -> String {
+    match pattern {
+        SemanticDispatchPattern::Literal(lit) => match lit {
+            DispatchLiteral::Int(i) => format!("{subject_name} == {i}i64"),
+            DispatchLiteral::Float(f) => format!("{subject_name} == {f}f64"),
+            DispatchLiteral::Bool(b) => format!("{subject_name} == {b}"),
+            DispatchLiteral::Str(s) => format!("&*{subject_name} == {:?}", s),
+            DispatchLiteral::Unit => format!("{subject_name} == ()"),
+        },
+        SemanticDispatchPattern::EmptyList => format!("{subject_name}.is_empty()"),
+        SemanticDispatchPattern::NoneValue => format!("{subject_name}.is_none()"),
+        SemanticDispatchPattern::WrapperTag(kind) => match kind {
+            WrapperKind::ResultOk => format!("{subject_name}.is_ok()"),
+            WrapperKind::ResultErr => format!("{subject_name}.is_err()"),
+            WrapperKind::OptionSome => format!("{subject_name}.is_some()"),
+        },
+    }
+}
+
+fn emit_dispatch_arm_body(
+    subject_name: &str,
+    arm: &MatchArm,
+    entry: &DispatchArmPlan,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> String {
+    let body = maybe_clone(emit_expr(&arm.body, ctx, ectx), &arm.body, ectx);
+    match (&entry.pattern, &entry.binding) {
+        (
+            SemanticDispatchPattern::WrapperTag(kind),
+            DispatchBindingPlan::WrapperPayload(binding_name),
+        ) => {
+            let binding = aver_name_to_rust(binding_name);
+            let extractor = match kind {
+                WrapperKind::ResultOk => "Ok",
+                WrapperKind::ResultErr => "Err",
+                WrapperKind::OptionSome => "Some",
+            };
+            format!(
+                "{{ let {binding} = if let {extractor}({binding}) = &{subject_name} {{ {binding}.clone() }} else {{ unreachable!(\"Aver Rust codegen: dispatch tag mismatch\") }}; {body} }}"
+            )
+        }
+        _ => body,
+    }
+}
+
+fn emit_default_dispatch_arm(
+    subject_name: &str,
+    arm: &MatchArm,
+    default_arm: &DispatchDefaultPlan,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> String {
+    let body = maybe_clone(emit_expr(&arm.body, ctx, ectx), &arm.body, ectx);
+    match &default_arm.binding_name {
+        None => body,
+        Some(name) => {
+            let name = aver_name_to_rust(name);
+            format!("{{ let {} = {}.clone(); {} }}", name, subject_name, body)
+        }
+    }
+}
+
 pub(super) fn emit_list_match<F>(
     subject: String,
     arms: &[MatchArm],
+    list_shape: Option<ListMatchShape>,
     ctx: &CodegenContext,
     body_for_arm: F,
 ) -> String
@@ -644,7 +791,7 @@ where
     F: Fn(&MatchArm) -> String,
 {
     // Fast path: exactly [] and [h, ..t] → use aver_list_match! macro
-    if let Some(code) = try_emit_list_match_macro(&subject, arms, ctx, &body_for_arm) {
+    if let Some(code) = try_emit_list_match_macro(&subject, arms, list_shape, ctx, &body_for_arm) {
         return code;
     }
     let subject_name = "__list_subject";
@@ -656,21 +803,19 @@ where
 fn try_emit_list_match_macro<F>(
     subject: &str,
     arms: &[MatchArm],
+    list_shape: Option<ListMatchShape>,
     ctx: &CodegenContext,
     body_for_arm: &F,
 ) -> Option<String>
 where
     F: Fn(&MatchArm) -> String,
 {
-    if arms.len() != 2 {
-        return None;
-    }
-    // Detect: arm0 = EmptyList, arm1 = Cons (or vice versa)
-    let (empty_arm, cons_arm) = match (&arms[0].pattern, &arms[1].pattern) {
-        (Pattern::EmptyList, Pattern::Cons(_, _)) => (&arms[0], &arms[1]),
-        (Pattern::Cons(_, _), Pattern::EmptyList) => (&arms[1], &arms[0]),
-        _ => return None,
+    let shape = match list_shape {
+        Some(shape) => shape,
+        None => classify_list_match_shape(arms)?,
     };
+    let empty_arm = &arms[shape.empty_arm_index];
+    let cons_arm = &arms[shape.cons_arm_index];
     let Pattern::Cons(head, tail) = &cons_arm.pattern else {
         return None;
     };

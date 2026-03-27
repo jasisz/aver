@@ -1,5 +1,10 @@
 use super::{CompileError, FnCompiler};
 use crate::ast::{Expr, Literal, MatchArm, Pattern};
+use crate::ir::{
+    BoolMatchShape, CallLowerCtx, DispatchArmPlan, DispatchBindingPlan, DispatchLiteral,
+    DispatchTableShape, MatchDispatchPlan, SemanticConstructor, SemanticDispatchPattern,
+    WrapperKind, classify_dispatch_pattern, classify_match_dispatch_plan,
+};
 use crate::nan_value::NanValue;
 use crate::vm::opcode::*;
 
@@ -13,11 +18,74 @@ const DISPATCH_KIND_EXACT: u8 = 0;
 const DISPATCH_KIND_TAG: u8 = 1;
 const DISPATCH_KIND_STRING: u8 = 2;
 
+fn wrapper_tag_kind(kind: WrapperKind) -> u8 {
+    match kind {
+        WrapperKind::ResultOk => 0,
+        WrapperKind::ResultErr => 1,
+        WrapperKind::OptionSome => 2,
+    }
+}
+
+fn wrapper_tag_bits(kind: WrapperKind) -> u64 {
+    let tag = match kind {
+        WrapperKind::ResultOk => TAG_OK,
+        WrapperKind::ResultErr => TAG_ERR,
+        WrapperKind::OptionSome => TAG_SOME,
+    };
+    QNAN | (tag << TAG_SHIFT)
+}
+
 /// Info about a pattern that can be dispatched via MATCH_DISPATCH.
 struct DispatchableArm {
     kind: u8,      // DISPATCH_KIND_EXACT or DISPATCH_KIND_TAG
     expected: u64, // bits to compare
     arm_index: usize,
+}
+
+struct VmPatternCtx<'compiler, 'a> {
+    compiler: &'compiler FnCompiler<'a>,
+}
+
+impl CallLowerCtx for VmPatternCtx<'_, '_> {
+    fn is_local_value(&self, name: &str) -> bool {
+        self.compiler.local_slots.contains_key(name)
+    }
+
+    fn is_user_type(&self, name: &str) -> bool {
+        self.compiler.resolve_type_id(name).is_some()
+    }
+
+    fn resolve_module_call<'a>(&self, dotted: &'a str) -> Option<(&'a str, &'a str)> {
+        let mut best = None;
+
+        for (dot_idx, _) in dotted.match_indices('.') {
+            let prefix = &dotted[..dot_idx];
+            let suffix = &dotted[dot_idx + 1..];
+            if suffix.is_empty()
+                || self
+                    .compiler
+                    .symbols
+                    .resolve_namespace_path(prefix)
+                    .is_none()
+            {
+                continue;
+            }
+
+            let is_module_ctor = suffix.rsplit_once('.').is_some_and(|(type_name, _)| {
+                self.compiler.resolve_type_id(type_name).is_some()
+                    || self
+                        .compiler
+                        .resolve_type_id(&format!("{prefix}.{type_name}"))
+                        .is_some()
+            });
+
+            if is_module_ctor {
+                best = Some((prefix, suffix));
+            }
+        }
+
+        best
+    }
 }
 
 impl<'a> FnCompiler<'a> {
@@ -85,20 +153,23 @@ impl<'a> FnCompiler<'a> {
         pattern: &Pattern,
         arm_index: usize,
     ) -> Option<DispatchableArm> {
-        match pattern {
-            Pattern::Literal(lit) => {
+        let lower_ctx = VmPatternCtx { compiler: self };
+        match classify_dispatch_pattern(pattern, &lower_ctx)? {
+            SemanticDispatchPattern::Literal(lit) => {
                 let (kind, bits) = match lit {
-                    Literal::Int(i) => (
-                        DISPATCH_KIND_EXACT,
-                        NanValue::new_int(*i, self.arena).bits(),
-                    ),
-                    Literal::Float(f) => (DISPATCH_KIND_EXACT, NanValue::new_float(*f).bits()),
-                    Literal::Bool(b) => (DISPATCH_KIND_EXACT, NanValue::new_bool(*b).bits()),
-                    Literal::Unit => (DISPATCH_KIND_EXACT, NanValue::UNIT.bits()),
-                    Literal::Str(s) => (
+                    DispatchLiteral::Int(i) => {
+                        (DISPATCH_KIND_EXACT, NanValue::new_int(i, self.arena).bits())
+                    }
+                    DispatchLiteral::Float(f) => {
+                        let value = f.parse::<f64>().ok()?;
+                        (DISPATCH_KIND_EXACT, NanValue::new_float(value).bits())
+                    }
+                    DispatchLiteral::Bool(b) => (DISPATCH_KIND_EXACT, NanValue::new_bool(b).bits()),
+                    DispatchLiteral::Str(s) => (
                         DISPATCH_KIND_STRING,
-                        NanValue::new_string_value(s, self.arena).bits(),
+                        NanValue::new_string_value(&s, self.arena).bits(),
                     ),
+                    DispatchLiteral::Unit => (DISPATCH_KIND_EXACT, NanValue::UNIT.bits()),
                 };
                 Some(DispatchableArm {
                     kind,
@@ -106,56 +177,38 @@ impl<'a> FnCompiler<'a> {
                     arm_index,
                 })
             }
-            Pattern::EmptyList => Some(DispatchableArm {
+            SemanticDispatchPattern::EmptyList => Some(DispatchableArm {
                 kind: DISPATCH_KIND_EXACT,
                 expected: NanValue::EMPTY_LIST.bits(),
                 arm_index,
             }),
-            Pattern::Constructor(name, bindings) => match name.as_str() {
-                "Option.None" if bindings.is_empty() => Some(DispatchableArm {
-                    kind: DISPATCH_KIND_EXACT,
-                    expected: NanValue::NONE.bits(),
-                    arm_index,
-                }),
-                "Result.Ok" if bindings.len() <= 1 => Some(DispatchableArm {
-                    kind: DISPATCH_KIND_TAG,
-                    expected: QNAN | (TAG_OK << TAG_SHIFT),
-                    arm_index,
-                }),
-                "Result.Err" if bindings.len() <= 1 => Some(DispatchableArm {
-                    kind: DISPATCH_KIND_TAG,
-                    expected: QNAN | (TAG_ERR << TAG_SHIFT),
-                    arm_index,
-                }),
-                "Option.Some" if bindings.len() <= 1 => Some(DispatchableArm {
-                    kind: DISPATCH_KIND_TAG,
-                    expected: QNAN | (TAG_SOME << TAG_SHIFT),
-                    arm_index,
-                }),
-                _ => None,
-            },
-            _ => None,
+            SemanticDispatchPattern::NoneValue => Some(DispatchableArm {
+                kind: DISPATCH_KIND_EXACT,
+                expected: NanValue::NONE.bits(),
+                arm_index,
+            }),
+            SemanticDispatchPattern::WrapperTag(kind) => Some(DispatchableArm {
+                kind: DISPATCH_KIND_TAG,
+                expected: wrapper_tag_bits(kind),
+                arm_index,
+            }),
         }
     }
 
     /// Emit the arm-body prologue for a dispatched arm.
     /// Subject is on TOS. For tag-match arms with bindings,
     /// unwraps inner value and binds it. Then pops subject.
-    fn emit_dispatch_arm_prologue(&mut self, pattern: &Pattern) {
-        if let Pattern::Constructor(name, bindings) = pattern
-            && matches!(name.as_str(), "Result.Ok" | "Result.Err" | "Option.Some")
-            && !bindings.is_empty()
+    fn emit_dispatch_arm_prologue(&mut self, entry: &DispatchArmPlan) {
+        if let (
+            SemanticDispatchPattern::WrapperTag(kind),
+            DispatchBindingPlan::WrapperPayload(name),
+        ) = (&entry.pattern, &entry.binding)
         {
-            let kind = match name.as_str() {
-                "Result.Ok" => 0,
-                "Result.Err" => 1,
-                _ => 2,
-            };
             // MATCH_UNWRAP replaces TOS with inner; offset 0 = no-op (already matched).
             self.emit_op(MATCH_UNWRAP);
-            self.emit_u8(kind);
+            self.emit_u8(wrapper_tag_kind(*kind));
             self.emit_i16(0);
-            self.dup_and_bind_top_to_local(&bindings[0]);
+            self.dup_and_bind_top_to_local(name);
         }
     }
 
@@ -184,20 +237,16 @@ impl<'a> FnCompiler<'a> {
         name: &str,
         bindings: &[String],
     ) -> Result<(), CompileError> {
-        match name {
-            "Result.Ok" | "Result.Err" | "Option.Some" if !bindings.is_empty() => {
-                let kind = match name {
-                    "Result.Ok" => 0,
-                    "Result.Err" => 1,
-                    _ => 2,
-                };
+        match self.classify_constructor_semantics(name) {
+            SemanticConstructor::Wrapper(kind) if !bindings.is_empty() => {
                 self.emit_op(MATCH_UNWRAP);
-                self.emit_u8(kind);
+                self.emit_u8(wrapper_tag_kind(kind));
                 self.emit_i16(0); // no-fail (we know it matches)
                 self.dup_and_bind_top_to_local(&bindings[0]);
             }
-            "Option.None" => {} // no bindings to extract
-            _ => {
+            SemanticConstructor::Wrapper(_) => {}
+            SemanticConstructor::NoneValue => {} // no bindings to extract
+            SemanticConstructor::TypeConstructor { .. } | SemanticConstructor::Unknown(_) => {
                 // User variant: extract fields unconditionally.
                 for (i, b) in bindings.iter().enumerate() {
                     self.emit_op(EXTRACT_FIELD);
@@ -215,14 +264,22 @@ impl<'a> FnCompiler<'a> {
         arms: &[MatchArm],
         line: usize,
     ) -> Result<(), CompileError> {
-        // --- Try bool match → JUMP_IF_FALSE optimization ---
-        if let Some(result) = self.try_compile_bool_match(subject, arms)? {
-            return Ok(result);
-        }
-
-        // --- Try MATCH_DISPATCH optimization ---
-        if let Some(result) = self.try_compile_match_dispatch(subject, arms, line)? {
-            return Ok(result);
+        let lower_ctx = VmPatternCtx { compiler: self };
+        if let Some(plan) = classify_match_dispatch_plan(arms, &lower_ctx) {
+            match plan {
+                MatchDispatchPlan::Bool(shape) => {
+                    self.compile_bool_match_with_shape(subject, arms, shape)?;
+                    return Ok(());
+                }
+                MatchDispatchPlan::Table(shape) => {
+                    if let Some(result) =
+                        self.try_compile_match_dispatch_with_shape(subject, arms, &shape, line)?
+                    {
+                        return Ok(result);
+                    }
+                }
+                MatchDispatchPlan::List(_) => {}
+            }
         }
 
         // --- Fallback: original linear match compilation ---
@@ -293,28 +350,14 @@ impl<'a> FnCompiler<'a> {
 
     /// Compile `match <expr>: true → A, false → B` as JUMP_IF_FALSE.
     /// Avoids MATCH_DISPATCH overhead for the most common Aver branch pattern.
-    fn try_compile_bool_match(
+    fn compile_bool_match_with_shape(
         &mut self,
         subject: &Expr,
         arms: &[MatchArm],
-    ) -> Result<Option<()>, CompileError> {
-        if arms.len() != 2 {
-            return Ok(None);
-        }
-
-        let (true_body, false_body) = match (&arms[0].pattern, &arms[1].pattern) {
-            (Pattern::Literal(Literal::Bool(true)), Pattern::Literal(Literal::Bool(false))) => {
-                (&arms[0].body, &arms[1].body)
-            }
-            (Pattern::Literal(Literal::Bool(false)), Pattern::Literal(Literal::Bool(true))) => {
-                (&arms[1].body, &arms[0].body)
-            }
-            // Also handle `true -> A, _ -> B` (wildcard/ident as false).
-            (Pattern::Literal(Literal::Bool(true)), Pattern::Wildcard | Pattern::Ident(_)) => {
-                (&arms[0].body, &arms[1].body)
-            }
-            _ => return Ok(None),
-        };
+        shape: BoolMatchShape,
+    ) -> Result<(), CompileError> {
+        let true_body = &arms[shape.true_arm_index].body;
+        let false_body = &arms[shape.false_arm_index].body;
 
         // Optimization: if subject is a negated comparison (>=, <=, !=),
         // emit the base comparison and swap branches to eliminate NOT.
@@ -337,7 +380,7 @@ impl<'a> FnCompiler<'a> {
                 self.patch_jump(true_jump);
                 self.compile_expr(true_body)?;
                 self.patch_jump(end_jump);
-                return Ok(Some(()));
+                return Ok(());
             }
         }
 
@@ -350,50 +393,33 @@ impl<'a> FnCompiler<'a> {
         self.compile_expr(false_body)?;
         self.patch_jump(end_jump);
 
-        Ok(Some(()))
+        Ok(())
     }
 
-    /// Try to compile a match as a MATCH_DISPATCH table.
-    /// Returns Some(()) if successful, None if the match doesn't qualify.
-    fn try_compile_match_dispatch(
+    /// Try to compile a match as a MATCH_DISPATCH table from a shared IR shape.
+    fn try_compile_match_dispatch_with_shape(
         &mut self,
         subject: &Expr,
         arms: &[MatchArm],
+        shape: &DispatchTableShape,
         _line: usize,
     ) -> Result<Option<()>, CompileError> {
-        if arms.len() < 2 {
+        if shape.entries.len() > 255 {
             return Ok(None);
         }
 
-        // Classify arms. Last arm may be wildcard/ident (default).
-        let has_default = matches!(
-            arms.last().map(|a| &a.pattern),
-            Some(Pattern::Wildcard | Pattern::Ident(_))
-        );
-        let dispatchable_end = if has_default {
-            arms.len() - 1
-        } else {
-            arms.len()
-        };
-
         let mut entries = Vec::new();
-        for (i, arm) in arms[..dispatchable_end].iter().enumerate() {
-            if let Some(entry) = self.classify_dispatchable(&arm.pattern, i) {
-                entries.push(entry);
+        for entry in &shape.entries {
+            if let Some(lowered) =
+                self.classify_dispatchable(&arms[entry.arm_index].pattern, entry.arm_index)
+            {
+                entries.push(lowered);
             } else {
-                return Ok(None); // non-dispatchable arm found → bail
+                return Ok(None);
             }
         }
 
-        // Need at least 2 dispatchable arms to be worth it.
-        if entries.len() < 2 {
-            return Ok(None);
-        }
-
-        // Limit to 255 entries (count is u8).
-        if entries.len() > 255 {
-            return Ok(None);
-        }
+        let has_default = shape.default_arm.is_some();
 
         // --- Check if ALL dispatchable arms have const bodies (no bindings) ---
         let all_const = entries.iter().all(|e| {
@@ -404,7 +430,12 @@ impl<'a> FnCompiler<'a> {
         });
 
         if all_const {
-            return self.emit_match_dispatch_const(&entries, arms, subject, has_default);
+            return self.emit_match_dispatch_const(
+                &entries,
+                arms,
+                subject,
+                shape.default_arm.as_ref().map(|arm| arm.arm_index),
+            );
         }
 
         // --- Emit MATCH_DISPATCH (jump-based) ---
@@ -429,7 +460,8 @@ impl<'a> FnCompiler<'a> {
         // Emit arm bodies.
         let mut end_jumps = Vec::new();
 
-        for (table_idx, entry) in entries.iter().enumerate() {
+        for (table_idx, (entry, plan_entry)) in entries.iter().zip(shape.entries.iter()).enumerate()
+        {
             let arm = &arms[entry.arm_index];
 
             // Patch this entry's offset to point here.
@@ -440,7 +472,7 @@ impl<'a> FnCompiler<'a> {
             self.code[entry_offset_patches[table_idx] + 1] = bytes[1];
 
             // Prologue: unwrap/bind for tag-match arms.
-            self.emit_dispatch_arm_prologue(&arm.pattern);
+            self.emit_dispatch_arm_prologue(plan_entry);
 
             // Pop subject, compile body.
             self.emit_op(POP);
@@ -457,8 +489,9 @@ impl<'a> FnCompiler<'a> {
         self.code[default_offset_patch + 1] = default_bytes[1];
 
         if has_default {
-            let default_arm = arms.last().unwrap();
-            if let Pattern::Ident(name) = &default_arm.pattern {
+            let default_plan = shape.default_arm.as_ref().unwrap();
+            let default_arm = &arms[default_plan.arm_index];
+            if let Some(name) = &default_plan.binding_name {
                 self.dup_and_bind_top_to_local(name);
             }
             self.emit_op(POP);
@@ -480,9 +513,10 @@ impl<'a> FnCompiler<'a> {
         entries: &[DispatchableArm],
         arms: &[MatchArm],
         subject: &Expr,
-        has_default: bool,
+        default_arm_index: Option<usize>,
     ) -> Result<Option<()>, CompileError> {
         self.compile_expr(subject)?;
+        let has_default = default_arm_index.is_some();
 
         self.emit_op(MATCH_DISPATCH_CONST);
         self.emit_u8(entries.len() as u8);
@@ -518,7 +552,7 @@ impl<'a> FnCompiler<'a> {
         if has_default {
             // Default arm body — subject was popped by opcode on miss,
             // then pushed back. Compile normally.
-            let default_arm = arms.last().unwrap();
+            let default_arm = &arms[default_arm_index.unwrap()];
             if let Pattern::Ident(name) = &default_arm.pattern {
                 self.dup_and_bind_top_to_local(name);
             }
@@ -580,11 +614,11 @@ impl<'a> FnCompiler<'a> {
         name: &str,
         bindings: &[String],
     ) -> Result<Vec<usize>, CompileError> {
-        match name {
-            "Result.Ok" => Ok(self.compile_unwrap_pattern(0, bindings.first())),
-            "Result.Err" => Ok(self.compile_unwrap_pattern(1, bindings.first())),
-            "Option.Some" => Ok(self.compile_unwrap_pattern(2, bindings.first())),
-            "Option.None" => {
+        match self.classify_constructor_semantics(name) {
+            SemanticConstructor::Wrapper(kind) => {
+                Ok(self.compile_unwrap_pattern(wrapper_tag_kind(kind), bindings.first()))
+            }
+            SemanticConstructor::NoneValue => {
                 self.emit_op(DUP);
                 let none_const = self.add_constant(NanValue::NONE);
                 self.emit_op(LOAD_CONST);
@@ -593,10 +627,12 @@ impl<'a> FnCompiler<'a> {
                 let fail_patch = self.emit_jump(JUMP_IF_FALSE);
                 Ok(vec![fail_patch])
             }
-            _ => {
-                if let Some((type_name, variant_name)) = name.rsplit_once('.')
-                    && let Some(type_id) = self.resolve_type_id(type_name)
-                    && let Some(variant_id) = self.arena.find_variant_id(type_id, variant_name)
+            SemanticConstructor::TypeConstructor {
+                qualified_type_name,
+                variant_name,
+            } => {
+                if let Some(type_id) = self.resolve_type_id(&qualified_type_name)
+                    && let Some(variant_id) = self.arena.find_variant_id(type_id, &variant_name)
                     && let Some(ctor_id) = self.arena.find_ctor_id(type_id, variant_id)
                 {
                     if ctor_id > u16::MAX as u32 {
@@ -624,6 +660,9 @@ impl<'a> FnCompiler<'a> {
                     msg: format!("unknown constructor pattern: {}", name),
                 })
             }
+            SemanticConstructor::Unknown(_) => Err(CompileError {
+                msg: format!("unknown constructor pattern: {}", name),
+            }),
         }
     }
 }

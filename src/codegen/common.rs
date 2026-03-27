@@ -247,12 +247,5 @@ pub(crate) fn to_lower_first(s: &str) -> String {
 /// Convert an attribute chain into dotted name.
 /// Example: `Console.print` -> `Some("Console.print")`.
 pub(crate) fn expr_to_dotted_name(expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::Ident(name) => Some(name.clone()),
-        Expr::Attr(obj, field) => {
-            let head = expr_to_dotted_name(obj)?;
-            Some(format!("{}.{}", head, field))
-        }
-        _ => None,
-    }
+    crate::ir::expr_to_dotted_name(expr)
 }
