@@ -45,10 +45,12 @@ pub struct CodegenContext {
     pub modules: Vec<ModuleInfo>,
     /// Set of module prefixes for qualified name resolution (e.g. "Models.User").
     pub module_prefixes: HashSet<String>,
-    /// Embedded runtime policy from `aver.toml` for non-replay generated code.
+    /// Embedded runtime policy from `aver.toml` for generated code.
     pub policy: Option<crate::config::ProjectConfig>,
-    /// Emit optional generated replay runtime support.
+    /// Emit generated scoped runtime support (replay and/or runtime-loaded policy).
     pub emit_replay_runtime: bool,
+    /// Load runtime policy from the active module root instead of embedding it.
+    pub runtime_policy_from_env: bool,
     /// Explicit guest entry boundary for scoped replay/policy.
     pub guest_entry: Option<String>,
     /// Emit extra generated helpers needed by the cached self-host runtime.
@@ -105,6 +107,7 @@ pub fn build_context(
         module_prefixes,
         policy: None,
         emit_replay_runtime: false,
+        runtime_policy_from_env: false,
         guest_entry: None,
         emit_self_host_runtime: false,
     }

@@ -19,7 +19,7 @@ mod replay_cmd;
 #[path = "main/shared.rs"]
 mod shared;
 
-use cli::{Cli, Commands};
+use cli::{Cli, Commands, CompilePolicyMode};
 
 fn main() {
     let cli = Cli::parse();
@@ -120,14 +120,21 @@ fn main() {
             name,
             module_root,
             with_replay,
+            policy,
             guest_entry,
         } => {
+            let policy_mode = (*policy).unwrap_or(if *with_replay {
+                CompilePolicyMode::Runtime
+            } else {
+                CompilePolicyMode::Embed
+            });
             commands::cmd_compile(
                 file,
                 output,
                 name.as_deref(),
                 module_root.as_deref(),
                 *with_replay,
+                &policy_mode,
                 guest_entry.as_deref(),
             );
         }

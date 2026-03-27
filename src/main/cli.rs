@@ -35,6 +35,17 @@ pub(super) enum ProofVerifyMode {
     TheoremSkeleton,
 }
 
+/// Runtime policy handling for generated Rust projects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(super) enum CompilePolicyMode {
+    /// Bake aver.toml policy into the generated binary at compile time.
+    #[value(name = "embed")]
+    Embed,
+    /// Load aver.toml at runtime from the active module root / guest boundary.
+    #[value(name = "runtime")]
+    Runtime,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ContextDepth {
     Auto,
@@ -201,8 +212,11 @@ pub(super) enum Commands {
         /// Emit optional record/replay runtime support into the generated project
         #[arg(long)]
         with_replay: bool,
+        /// Runtime policy mode: embed aver.toml at compile time or load it at runtime
+        #[arg(long = "policy", value_enum)]
+        policy: Option<CompilePolicyMode>,
         /// Explicit guest execution boundary for scoped replay/policy (self-host style)
-        #[arg(long, requires = "with_replay")]
+        #[arg(long)]
         guest_entry: Option<String>,
     },
     /// Export pure Aver code to a proof/verification project
@@ -301,11 +315,30 @@ mod tests {
         match cli.command {
             Commands::Compile {
                 with_replay,
+                policy,
                 guest_entry,
                 ..
             } => {
                 assert!(with_replay);
+                assert_eq!(policy, None);
                 assert_eq!(guest_entry.as_deref(), Some("runGuestProgram"));
+            }
+            _ => panic!("expected compile command"),
+        }
+    }
+
+    #[test]
+    fn compile_accepts_explicit_runtime_policy() {
+        let cli = Cli::parse_from([
+            "aver",
+            "compile",
+            "examples/modules/app.av",
+            "--policy",
+            "runtime",
+        ]);
+        match cli.command {
+            Commands::Compile { policy, .. } => {
+                assert_eq!(policy, Some(CompilePolicyMode::Runtime));
             }
             _ => panic!("expected compile command"),
         }

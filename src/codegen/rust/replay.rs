@@ -4,13 +4,22 @@ use super::syntax::aver_name_to_rust;
 use super::types::type_annotation_to_rust;
 
 pub fn generate_replay_runtime(
+    has_embedded_policy: bool,
+    has_runtime_policy: bool,
     has_terminal_types: bool,
     has_tcp_types: bool,
     has_http_types: bool,
     has_http_server_types: bool,
 ) -> String {
-    let mut sections =
-        vec![REPLAY_RUNTIME_TEMPLATE.replace("__POLICY_CHECK__", POLICY_CHECK_SNIPPET)];
+    let policy_check = if has_runtime_policy {
+        RUNTIME_POLICY_CHECK_SNIPPET
+    } else if has_embedded_policy {
+        EMBEDDED_POLICY_CHECK_SNIPPET
+    } else {
+        "    #[derive(Clone, Debug, Default)]\n    struct RuntimePolicy;\n\n    fn load_runtime_policy_from_env() -> Result<Option<RuntimePolicy>, String> {\n        Ok(None)\n    }\n\n    fn check_policy(_effect_type: &str, _args: &[ReplayJson]) {}"
+    };
+
+    let mut sections = vec![REPLAY_RUNTIME_TEMPLATE.replace("__POLICY_CHECK__", policy_check)];
 
     if has_http_types {
         sections.push(http_type_impls());
@@ -381,7 +390,32 @@ fn tcp_type_impls() -> String {
     .to_string()
 }
 
-const POLICY_CHECK_SNIPPET: &str = r#"    #[derive(Clone, Debug, Default)]
+const EMBEDDED_POLICY_CHECK_SNIPPET: &str = r#"    #[derive(Clone, Debug, Default)]
+    struct RuntimePolicy;
+
+    fn load_runtime_policy_from_env() -> Result<Option<RuntimePolicy>, String> {
+        Ok(None)
+    }
+
+    fn check_policy(effect_type: &str, args: &[ReplayJson]) {
+        match (effect_type.split('.').next(), args.first().and_then(|value| value.as_str())) {
+            (Some("Http"), Some(url)) => {
+                aver_policy::check_http(effect_type, url)
+                    .expect("aver.toml policy violation");
+            }
+            (Some("Disk"), Some(path)) => {
+                aver_policy::check_disk(effect_type, path)
+                    .expect("aver.toml policy violation");
+            }
+            (Some("Env"), Some(key)) => {
+                aver_policy::check_env(effect_type, key)
+                    .expect("aver.toml policy violation");
+            }
+            _ => {}
+        }
+    }"#;
+
+const RUNTIME_POLICY_CHECK_SNIPPET: &str = r#"    #[derive(Clone, Debug, Default)]
     struct RuntimeEffectPolicy {
         hosts: Vec<String>,
         paths: Vec<String>,

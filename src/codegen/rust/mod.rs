@@ -28,7 +28,8 @@ struct ModuleTreeNode {
 
 /// Transpile an Aver program to a Rust project.
 pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
-    let has_embedded_policy = ctx.policy.is_some() && !ctx.emit_replay_runtime;
+    let has_embedded_policy = ctx.policy.is_some();
+    let has_runtime_policy = ctx.runtime_policy_from_env;
     let used_services = detect_used_services(ctx);
     let needs_http_types = needs_named_type(ctx, "Header")
         || needs_named_type(ctx, "HttpResponse")
@@ -77,6 +78,7 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
                 &ctx.project_name,
                 &used_services,
                 has_embedded_policy,
+                has_runtime_policy,
                 ctx.emit_replay_runtime,
                 &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("aver-rt"),
             ),
@@ -114,6 +116,8 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
         files.push((
             "src/replay_support.rs".to_string(),
             replay::generate_replay_runtime(
+                has_embedded_policy,
+                has_runtime_policy,
                 has_terminal_types,
                 has_tcp_types,
                 has_http_types,
@@ -818,7 +822,33 @@ fn main() -> Result<String, String>
     }
 
     #[test]
-    fn replay_codegen_uses_runtime_policy_loader_instead_of_embedded_policy() {
+    fn runtime_policy_codegen_uses_runtime_loader() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn main() -> Result<String, String>
+    ! [Disk.readText]
+    Disk.readText("demo.av")
+"#,
+            "demo",
+        );
+        ctx.emit_replay_runtime = true;
+        ctx.runtime_policy_from_env = true;
+
+        let out = transpile(&ctx);
+        let root_main = generated_file(&out, "src/main.rs");
+        let replay_support = generated_file(&out, "src/replay_support.rs");
+        let cargo_toml = generated_file(&out, "Cargo.toml");
+
+        assert!(!root_main.contains("mod policy_support;"));
+        assert!(replay_support.contains("load_runtime_policy_from_env"));
+        assert!(cargo_toml.contains("url = \"2\""));
+        assert!(cargo_toml.contains("toml = \"0.8\""));
+    }
+
+    #[test]
+    fn replay_codegen_can_keep_embedded_policy_when_requested() {
         let mut ctx = ctx_from_source(
             r#"
 module Demo
@@ -837,11 +867,9 @@ fn main() -> Result<String, String>
         let out = transpile(&ctx);
         let root_main = generated_file(&out, "src/main.rs");
         let replay_support = generated_file(&out, "src/replay_support.rs");
-        let cargo_toml = generated_file(&out, "Cargo.toml");
 
-        assert!(!root_main.contains("mod policy_support;"));
-        assert!(replay_support.contains("load_runtime_policy_from_env"));
-        assert!(cargo_toml.contains("url = \"2\""));
-        assert!(cargo_toml.contains("toml = \"0.8\""));
+        assert!(root_main.contains("mod policy_support;"));
+        assert!(replay_support.contains("aver_policy::check_disk"));
+        assert!(!replay_support.contains("RuntimeEffectPolicy"));
     }
 }

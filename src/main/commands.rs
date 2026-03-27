@@ -290,6 +290,7 @@ pub(super) fn build_self_host_binary(show_progress: bool) -> Result<PathBuf, Str
         Some("aver_self_host_cli"),
         Some(&self_host_root_str),
         true,
+        &super::cli::CompilePolicyMode::Runtime,
         Some("runGuestCliProgram"),
     );
     ctx.emit_self_host_runtime = true;
@@ -2143,6 +2144,7 @@ fn build_codegen_context(
     project_name: Option<&str>,
     module_root_override: Option<&str>,
     with_replay: bool,
+    policy_mode: &super::cli::CompilePolicyMode,
     guest_entry: Option<&str>,
 ) -> (codegen::CodegenContext, String) {
     let module_root = resolve_module_root(module_root_override);
@@ -2191,9 +2193,12 @@ fn build_codegen_context(
     // Load dependent modules for codegen
     let modules = load_compile_deps(&items, &module_root);
 
-    // Replay-enabled generated runtimes load aver.toml lazily at the guest
-    // boundary, so the artifact stays reusable across guest module roots.
-    let policy = if with_replay {
+    let use_runtime_policy = matches!(policy_mode, super::cli::CompilePolicyMode::Runtime);
+    let use_scoped_runtime = with_replay || use_runtime_policy;
+
+    // Runtime policy mode loads aver.toml lazily at execution time so one
+    // artifact can serve multiple guest module roots.
+    let policy = if use_runtime_policy {
         None
     } else {
         match load_runtime_policy(&module_root) {
@@ -2208,7 +2213,8 @@ fn build_codegen_context(
     // Build codegen context
     let mut ctx = codegen::build_context(items, &tc_result, memo_fns, name, modules);
     ctx.policy = policy;
-    ctx.emit_replay_runtime = with_replay;
+    ctx.emit_replay_runtime = use_scoped_runtime;
+    ctx.runtime_policy_from_env = use_runtime_policy;
     ctx.guest_entry = guest_entry.map(str::to_string);
     if let Some(entry) = guest_entry
         && !ctx.fn_defs.iter().any(|fd| fd.name == entry)
@@ -2245,13 +2251,26 @@ pub(super) fn cmd_compile(
     project_name: Option<&str>,
     module_root_override: Option<&str>,
     with_replay: bool,
+    policy_mode: &super::cli::CompilePolicyMode,
     guest_entry: Option<&str>,
 ) {
+    if guest_entry.is_some()
+        && !with_replay
+        && !matches!(policy_mode, super::cli::CompilePolicyMode::Runtime)
+    {
+        eprintln!(
+            "{}",
+            "--guest-entry requires either --with-replay or --policy runtime".red()
+        );
+        process::exit(1);
+    }
+
     let (ctx, _module_root) = build_codegen_context(
         file,
         project_name,
         module_root_override,
         with_replay,
+        policy_mode,
         guest_entry,
     );
     let output = rust_codegen::transpile(&ctx);
@@ -2267,8 +2286,14 @@ pub(super) fn cmd_proof(
     backend: &super::cli::ProofBackend,
     verify_mode: &super::cli::ProofVerifyMode,
 ) {
-    let (ctx, _module_root) =
-        build_codegen_context(file, project_name, module_root_override, false, None);
+    let (ctx, _module_root) = build_codegen_context(
+        file,
+        project_name,
+        module_root_override,
+        false,
+        &super::cli::CompilePolicyMode::Embed,
+        None,
+    );
 
     match backend {
         super::cli::ProofBackend::Lean => {

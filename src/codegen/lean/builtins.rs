@@ -171,6 +171,7 @@ mod tests {
             module_prefixes: HashSet::new(),
             policy: None,
             emit_replay_runtime: false,
+            runtime_policy_from_env: false,
             guest_entry: None,
             emit_self_host_runtime: false,
         }

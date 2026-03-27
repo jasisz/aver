@@ -90,6 +90,17 @@ aver compile self_hosted/main.av \
 
 This emits `src/replay_support.rs` and adds the `serde` / `serde_json` / `toml` dependencies needed for recording files and guest-scoped runtime policy. Without `--with-replay`, generated projects stay smaller and do not carry replay support.
 
+Generated Rust also exposes policy mode explicitly:
+
+```bash
+aver compile app.av --policy embed
+aver compile app.av --policy runtime
+```
+
+- `--policy embed` bakes the current `aver.toml` into the generated project
+- `--policy runtime` loads `aver.toml` from the active module root when the binary runs
+- default: `embed` for plain `compile`, `runtime` when `--with-replay` is enabled
+
 `--guest-entry` matters for meta-runtimes such as the self-hosted interpreter:
 
 - bootstrap/tooling work stays outside record/replay and policy scope

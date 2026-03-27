@@ -67,7 +67,8 @@ pub fn generate_cargo_toml(
     name: &str,
     services: &HashSet<String>,
     has_embedded_policy: bool,
-    has_replay: bool,
+    has_runtime_policy: bool,
+    has_scoped_runtime: bool,
     runtime_path: &Path,
 ) -> String {
     let mut lines = Vec::new();
@@ -98,12 +99,14 @@ pub fn generate_cargo_toml(
         &rt_features,
         runtime_path.as_deref(),
     ));
-    if has_embedded_policy || has_replay {
+    if has_embedded_policy || has_runtime_policy {
         deps.push("url = \"2\"".to_string());
     }
-    if has_replay {
+    if has_scoped_runtime {
         deps.push("serde = { version = \"1\", features = [\"derive\"] }".to_string());
         deps.push("serde_json = \"1\"".to_string());
+    }
+    if has_runtime_policy {
         deps.push("toml = \"0.8\"".to_string());
     }
 

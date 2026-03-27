@@ -186,6 +186,15 @@ aver replay recordings/ --self-host
 
 `--self-host` executes the program through the Aver interpreter written in Aver itself, compiled to Rust and cached on demand. There is no separate "aver-self" install step: `cargo install aver-lang` already ships the `self_hosted/` sources inside the crate, and the first `aver run ... --self-host` builds a cached helper binary automatically. That helper cache is shared across guest projects for the same installed Aver build, so changing `--module-root` does not force a rebuild. On the first cold run Aver prints short progress messages while it generates and builds the helper.
 
+For generated Rust projects, `aver compile` now exposes policy mode explicitly:
+
+```bash
+aver compile app.av --policy embed
+aver compile app.av --policy runtime
+```
+
+`embed` bakes the current `aver.toml` into the artifact. `runtime` loads `aver.toml` from the active module root when the binary runs.
+
 Most users should never run `self_hosted/main.av` directly. That entry exists mainly for hacking on the self-host inside this repository; the normal installed interface is still just:
 
 ```bash
