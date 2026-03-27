@@ -1390,14 +1390,55 @@ impl Interpreter {
         args: Vec<NanValue>,
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
-        let name = match target {
+        match target {
             LoweredDirectCallTarget::Builtin(name) | LoweredDirectCallTarget::Function(name) => {
-                name
+                match self.lookup_path_nv(&name) {
+                    Ok(fn_val) => self.dispatch_call(fn_val, args, conts),
+                    Err(err) => EvalState::Apply(Err(err)),
+                }
             }
-        };
-        match self.lookup_path_nv(&name) {
-            Ok(fn_val) => self.dispatch_call(fn_val, args, conts),
-            Err(err) => EvalState::Apply(Err(err)),
+            LoweredDirectCallTarget::Wrapper(kind) => match args.as_slice() {
+                [inner] => {
+                    let value = match kind {
+                        crate::ir::WrapperKind::ResultOk => {
+                            NanValue::new_ok_value(*inner, &mut self.arena)
+                        }
+                        crate::ir::WrapperKind::ResultErr => {
+                            NanValue::new_err_value(*inner, &mut self.arena)
+                        }
+                        crate::ir::WrapperKind::OptionSome => {
+                            NanValue::new_some_value(*inner, &mut self.arena)
+                        }
+                    };
+                    EvalState::Apply(Ok(value))
+                }
+                _ => EvalState::Apply(Err(RuntimeError::Error(
+                    "Wrapper constructor expects exactly 1 argument".to_string(),
+                ))),
+            },
+            LoweredDirectCallTarget::NoneValue => {
+                if args.is_empty() {
+                    EvalState::Apply(Ok(NanValue::NONE))
+                } else {
+                    EvalState::Apply(Err(RuntimeError::Error(
+                        "Option.None expects 0 arguments".to_string(),
+                    )))
+                }
+            }
+            LoweredDirectCallTarget::TypeConstructor {
+                qualified_type_name,
+                variant_name,
+            } => {
+                if args.len() > 1 {
+                    return EvalState::Apply(Err(RuntimeError::Error(format!(
+                        "{}.{} expects at most 1 argument",
+                        qualified_type_name, variant_name
+                    ))));
+                }
+
+                let name = format!("{qualified_type_name}.{variant_name}");
+                EvalState::Apply(self.apply_runtime_constructor_nv(&name, args.first().copied()))
+            }
         }
     }
 

@@ -626,7 +626,8 @@ mod ir_bridge_tests {
 
     #[test]
     fn lowered_roots_classify_shared_call_plans_for_builtin_and_function_calls() {
-        let interpreter = Interpreter::new();
+        let mut interpreter = Interpreter::new();
+        register_task_event_type(&mut interpreter);
         let ctx = InterpreterLowerCtx::new(&interpreter);
 
         let list_len = Expr::FnCall(
@@ -657,11 +658,69 @@ mod ir_bridge_tests {
                 ..
             } if name == "identity"
         ));
+
+        let wrapper_call = Expr::FnCall(
+            Box::new(Expr::Attr(
+                Box::new(Expr::Ident("Result".to_string())),
+                "Ok".to_string(),
+            )),
+            vec![Expr::Literal(Literal::Int(1))],
+        );
+        let (lowered_wrapper, wrapper_root) = lowered::lower_expr_root(&wrapper_call, &ctx);
+        assert!(matches!(
+            lowered_wrapper.expr(wrapper_root),
+            LoweredExpr::DirectCall {
+                target: LoweredDirectCallTarget::Wrapper(crate::ir::WrapperKind::ResultOk),
+                ..
+            }
+        ));
+
+        let none_call = Expr::FnCall(
+            Box::new(Expr::Attr(
+                Box::new(Expr::Ident("Option".to_string())),
+                "None".to_string(),
+            )),
+            vec![],
+        );
+        let (lowered_none, none_root) = lowered::lower_expr_root(&none_call, &ctx);
+        assert!(matches!(
+            lowered_none.expr(none_root),
+            LoweredExpr::DirectCall {
+                target: LoweredDirectCallTarget::NoneValue,
+                ..
+            }
+        ));
+
+        let ctor_call = Expr::FnCall(
+            Box::new(Expr::Attr(
+                Box::new(Expr::Attr(
+                    Box::new(Expr::Attr(
+                        Box::new(Expr::Ident("Domain".to_string())),
+                        "Types".to_string(),
+                    )),
+                    "TaskEvent".to_string(),
+                )),
+                "TaskCreated".to_string(),
+            )),
+            vec![Expr::Literal(Literal::Str("now".to_string()))],
+        );
+        let (lowered_ctor, ctor_root) = lowered::lower_expr_root(&ctor_call, &ctx);
+        assert!(matches!(
+            lowered_ctor.expr(ctor_root),
+            LoweredExpr::DirectCall {
+                target: LoweredDirectCallTarget::TypeConstructor {
+                    qualified_type_name,
+                    variant_name,
+                },
+                ..
+            } if qualified_type_name == "Domain.Types.TaskEvent" && variant_name == "TaskCreated"
+        ));
     }
 
     #[test]
     fn runtime_executes_shared_direct_calls_in_host_interpreter() {
         let mut interpreter = Interpreter::new();
+        register_task_event_type(&mut interpreter);
 
         let identity = FnDef {
             name: "identity".to_string(),
@@ -707,5 +766,62 @@ mod ir_bridge_tests {
                 .expect("direct function call should run"),
             Value::Int(9)
         );
+
+        let wrapper_call = Expr::FnCall(
+            Box::new(Expr::Attr(
+                Box::new(Expr::Ident("Result".to_string())),
+                "Ok".to_string(),
+            )),
+            vec![Expr::Literal(Literal::Int(5))],
+        );
+        assert_eq!(
+            interpreter
+                .eval_expr(&wrapper_call)
+                .expect("direct wrapper call should run"),
+            Value::Ok(Box::new(Value::Int(5)))
+        );
+
+        let none_call = Expr::FnCall(
+            Box::new(Expr::Attr(
+                Box::new(Expr::Ident("Option".to_string())),
+                "None".to_string(),
+            )),
+            vec![],
+        );
+        assert_eq!(
+            interpreter
+                .eval_expr(&none_call)
+                .expect("direct none call should run"),
+            Value::None
+        );
+
+        let ctor_call = Expr::FnCall(
+            Box::new(Expr::Attr(
+                Box::new(Expr::Attr(
+                    Box::new(Expr::Attr(
+                        Box::new(Expr::Ident("Domain".to_string())),
+                        "Types".to_string(),
+                    )),
+                    "TaskEvent".to_string(),
+                )),
+                "TaskCreated".to_string(),
+            )),
+            vec![Expr::Literal(Literal::Str("now".to_string()))],
+        );
+        match interpreter
+            .eval_expr(&ctor_call)
+            .expect("direct qualified ctor call should run")
+        {
+            Value::Variant {
+                type_name,
+                variant,
+                fields,
+            } => {
+                assert_eq!(type_name, "TaskEvent");
+                assert_eq!(variant, "TaskCreated");
+                assert_eq!(fields.as_ref(), &[Value::Str("now".to_string())]);
+            }
+            other => panic!("expected variant, got {other:?}"),
+        }
     }
 }
