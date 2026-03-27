@@ -107,16 +107,28 @@ fn deserializeLinePart2(rawId: String, rest1: List<String>) -> Result<Note, Stri
         [title, ..rest2] -> deserializeLinePart3(rawId, title, rest2)
         _ -> Result.Err("corrupt note: missing title")
 
+verify deserializeLinePart2
+    deserializeLinePart2("1", ["Hello", "World"]) => Result.Ok(Note(id = 1, title = "Hello", body = "World"))
+    deserializeLinePart2("1", []) => Result.Err("corrupt note: missing title")
+
 fn deserializeLinePart3(rawId: String, title: String, rest2: List<String>) -> Result<Note, String>
     ? "Extract body from remaining parts."
     match rest2
         [body, ..rest3] -> deserializeLineInner(rawId, title, body)
         _ -> Result.Err("corrupt note: missing body")
 
+verify deserializeLinePart3
+    deserializeLinePart3("1", "Hello", ["World"]) => Result.Ok(Note(id = 1, title = "Hello", body = "World"))
+    deserializeLinePart3("1", "Hello", []) => Result.Err("corrupt note: missing body")
+
 fn deserializeLineInner(rawId: String, title: String, body: String) -> Result<Note, String>
     ? "Inner deserialization after field extraction."
     id = Int.fromString(rawId)?
     Result.Ok(Note(id = id, title = title, body = body))
+
+verify deserializeLineInner
+    deserializeLineInner("1", "Hello", "World") => Result.Ok(Note(id = 1, title = "Hello", body = "World"))
+    deserializeLineInner("bad", "Hello", "World") => Result.Err("Cannot parse 'bad' as Int")
 
 fn lineSafeChars(chars: List<String>) -> Bool
     ? "True when a line fragment contains no tab or newline separators."
@@ -161,7 +173,7 @@ fn foldNote(acc: Result<List<Note>, String>, line: String) -> Result<List<Note>,
 
 verify foldNote
     foldNote(Result.Err("x"), "1\tA\tB") => Result.Err("x")
-    foldNote(Result.Ok([]), "bad") => Result.Err("Cannot parse 'bad' as Int")
+    foldNote(Result.Ok([]), "bad") => Result.Err("corrupt note: missing title")
     foldNote(Result.Ok([Note(id = 1, title = "A", body = "a")]), "2\tB\tb") => Result.Ok([Note(id = 1, title = "A", body = "a"), Note(id = 2, title = "B", body = "b")])
 
 fn isNonEmpty(s: String) -> Bool

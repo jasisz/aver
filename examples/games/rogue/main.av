@@ -36,6 +36,9 @@ fn buildVisGrid(visible: List<Point>, grid: List<List<Bool>>, i: Int) -> List<Li
             Option.Some(p) -> buildVisGrid(visible, setRemCell(grid, p.x, p.y), i + 1)
             Option.None -> grid
 
+verify buildVisGrid
+    List.len(buildVisGrid([Types.pt(1, 1)], emptyRemembered(0), 0)) => 30
+
 fn emptyRemembered(y: Int) -> List<List<Bool>>
     ? "Build 30 rows of 50 false values"
     match y == 30
@@ -331,11 +334,17 @@ fn processAlertedEntity(state: GameState, entity: Entity, i: Int) -> GameState
         Option.Some(target) -> moveToAlert(state, entity, i, target)
         Option.None -> decayAlert(state, entity, i)
 
+verify processAlertedEntity
+    processAlertedEntity(GameState(gameMap = Map.generateMap(42), player = Types.makePlayer(10, 10), entities = [Entity.update(Types.makeIfElse(12, 10), alertPos = Option.Some(Types.pt(10, 10)), alertTurns = 2)], items = [], visible = [], visGrid = emptyRemembered(0), remembered = emptyRemembered(0), messages = [], seed = 42, gameOver = false), Entity.update(Types.makeIfElse(12, 10), alertPos = Option.Some(Types.pt(10, 10)), alertTurns = 2), 0).entities => Combat.replaceEntity([Entity.update(Types.makeIfElse(12, 10), alertPos = Option.Some(Types.pt(10, 10)), alertTurns = 2)], 0, Entity.update(Types.makeIfElse(12, 10), alertPos = Option.Some(Types.pt(10, 10)), alertTurns = 1), 0)
+
 fn moveToAlert(state: GameState, entity: Entity, i: Int, target: Point) -> GameState
     ? "Entity investigates alert position"
     match entity.alertTurns < 1
         true -> GameState.update(state, entities = Combat.replaceEntity(state.entities, i, Entity.update(entity, alertPos = Option.None, alertTurns = 0), 0))
         false -> moveToAlertStep(state, entity, i, target)
+
+verify moveToAlert
+    moveToAlert(GameState(gameMap = Map.generateMap(42), player = Types.makePlayer(10, 10), entities = [Entity.update(Types.makeIfElse(12, 10), alertPos = Option.Some(Types.pt(10, 10)), alertTurns = 0)], items = [], visible = [], visGrid = emptyRemembered(0), remembered = emptyRemembered(0), messages = [], seed = 42, gameOver = false), Entity.update(Types.makeIfElse(12, 10), alertPos = Option.Some(Types.pt(10, 10)), alertTurns = 0), 0, Types.pt(10, 10)).entities => [Entity.update(Types.makeIfElse(12, 10), alertPos = Option.None, alertTurns = 0)]
 
 fn moveToAlertStep(state: GameState, entity: Entity, i: Int, target: Point) -> GameState
     ? "Take one step toward alert and decrement turns"
@@ -347,9 +356,15 @@ fn moveToAlertStep(state: GameState, entity: Entity, i: Int, target: Point) -> G
         false -> entity
     GameState.update(state, entities = Combat.replaceEntity(state.entities, i, Entity.update(moved, alertTurns = entity.alertTurns - 1), 0))
 
+verify moveToAlertStep
+    moveToAlertStep(GameState(gameMap = Map.generateMap(42), player = Types.makePlayer(10, 10), entities = [Entity.update(Types.makeIfElse(12, 10), alertPos = Option.Some(Types.pt(10, 10)), alertTurns = 2)], items = [], visible = [], visGrid = emptyRemembered(0), remembered = emptyRemembered(0), messages = [], seed = 42, gameOver = false), Entity.update(Types.makeIfElse(12, 10), alertPos = Option.Some(Types.pt(10, 10)), alertTurns = 2), 0, Types.pt(10, 10)).entities => [Entity.update(Types.makeIfElse(12, 10), alertPos = Option.Some(Types.pt(10, 10)), alertTurns = 1)]
+
 fn decayAlert(state: GameState, entity: Entity, i: Int) -> GameState
     ? "No alert — entity stays put"
     state
+
+verify decayAlert
+    decayAlert(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.makeIfElse(1, 1), 0).gameOver => false
 
 fn alertNearby(state: GameState, combatPos: Point, radius: Int, i: Int) -> GameState
     ? "Alert all entities within radius of combat (they heard the fight)"
@@ -359,6 +374,9 @@ fn alertNearby(state: GameState, combatPos: Point, radius: Int, i: Int) -> GameS
             Option.Some(entity) -> alertNearby(alertOneEntity(state, entity, combatPos, radius, i), combatPos, radius, i + 1)
             Option.None -> alertNearby(state, combatPos, radius, i + 1)
 
+verify alertNearby
+    alertNearby(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [Types.makeIfElse(2, 2)], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.pt(3, 3), 5, 0).entities => [Entity.update(Types.makeIfElse(2, 2), alertPos = Option.Some(Types.pt(3, 3)), alertTurns = 8)]
+
 fn alertOneEntity(state: GameState, entity: Entity, combatPos: Point, radius: Int, i: Int) -> GameState
     ? "Alert one entity if within radius and not already visible"
     match Types.dist(entity.pos, combatPos) < radius
@@ -366,6 +384,9 @@ fn alertOneEntity(state: GameState, entity: Entity, combatPos: Point, radius: In
             true -> GameState.update(state, entities = Combat.replaceEntity(state.entities, i, Entity.update(entity, alertPos = Option.Some(combatPos), alertTurns = 8), 0))
             false -> state
         false -> state
+
+verify alertOneEntity
+    alertOneEntity(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [Types.makeIfElse(2, 2)], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.makeIfElse(2, 2), Types.pt(3, 3), 5, 0).entities => [Entity.update(Types.makeIfElse(2, 2), alertPos = Option.Some(Types.pt(3, 3)), alertTurns = 8)]
 
 fn processActiveEntity(state: GameState, entity: Entity, i: Int) -> GameState
     ? "Active entity: attack if adjacent, otherwise move"
@@ -482,6 +503,9 @@ fn entityMoveToward(state: GameState, entity: Entity, i: Int, target: Point) -> 
             Option.Some(blocked) -> state
             Option.None -> GameState.update(state, entities = Combat.replaceEntity(state.entities, i, Entity.update(entity, pos = next), 0))
         Option.None -> state
+
+verify entityMoveToward
+    entityMoveToward(GameState(gameMap = Map.setT(Map.emptyMap(), 2, 1, Tile.Floor), player = Types.makePlayer(0, 0), entities = [Types.makeIfElse(1, 1)], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.makeIfElse(1, 1), 0, Types.pt(2, 1)).entities => [Entity.update(Types.makeIfElse(1, 1), pos = Types.pt(2, 1))]
 
 fn entityMoveRandom(state: GameState, entity: Entity, i: Int) -> GameState
     ? "Move entity in random direction"

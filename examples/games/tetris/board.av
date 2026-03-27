@@ -69,6 +69,10 @@ fn getCellInRow(row: List<Option<PieceKind>>, x: Int) -> Option<PieceKind>
             true -> cell
             false -> getCellInRow(rest, x - 1)
 
+verify getCellInRow
+    getCellInRow([Option.Some(PieceKind.I), Option.None], 0) => Option.Some(PieceKind.I)
+    getCellInRow([Option.Some(PieceKind.I), Option.None], 1) => Option.None
+
 fn setCellCols(r: List<Option<PieceKind>>, x: Int, val: Option<PieceKind>) -> List<Option<PieceKind>>
     ? "Rebuild a row replacing column x"
     match r

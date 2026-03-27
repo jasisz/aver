@@ -31,6 +31,9 @@ fn fov() -> Float
     ? "Horizontal field of view in radians (~60 degrees)"
     Float.pi() / 3.0
 
+verify fov
+    Float.round(fov() * 1000.0) => Float.round(Float.pi() / 3.0 * 1000.0)
+
 // ─── Braille encoding ──────────────────────────────────────────────────────
 
 fn brailleBase() -> Int
@@ -45,6 +48,9 @@ fn brailleChar(bits: Int) -> String
     match Char.fromCode(brailleBase() + bits)
         Option.Some(ch) -> ch
         Option.None -> " "
+
+verify brailleChar
+    String.len(brailleChar(0)) => 1
 
 fn dotBit(row: Int) -> Int
     ? "Bit value for left-column dot at vertical position 0..3"
@@ -82,11 +88,17 @@ fn castRay(levelMap: List<String>, wallMap: List<String>, px: Float, py: Float, 
     ? "March a ray, return distance + wall hit info"
     marchRay(levelMap, wallMap, px, py, Float.cos(angle), Float.sin(angle), 0.0, px, py)
 
+verify castRay
+    castRay(Level.buildMap(4, "####", []), Level.buildMap(4, "SSSS", []), 1.0, 1.0, 0.0).wallType => WallType.Stone
+
 fn marchRay(levelMap: List<String>, wallMap: List<String>, px: Float, py: Float, dx: Float, dy: Float, dist: Float, ox: Float, oy: Float) -> RayHit
     ? "Step along the ray until hitting a wall or max distance"
     match dist > 20.0
         true -> RayHit(dist = 20.0, side = 0, wallType = WallType.Stone)
         false -> marchCheck(levelMap, wallMap, px, py, dx, dy, dist, ox, oy)
+
+verify marchRay
+    marchRay(Level.buildMap(4, "....", []), Level.buildMap(4, "SSSS", []), 1.0, 1.0, 1.0, 0.0, 21.0, 1.0, 1.0).dist => 20.0
 
 fn marchCheck(levelMap: List<String>, wallMap: List<String>, px: Float, py: Float, dx: Float, dy: Float, dist: Float, ox: Float, oy: Float) -> RayHit
     ? "Check current ray position for wall hit"
@@ -98,6 +110,9 @@ fn marchCheck(levelMap: List<String>, wallMap: List<String>, px: Float, py: Floa
         true -> detectSide(wallMap, mx, my, ox, oy, dx, dy, dist)
         false -> marchRay(levelMap, wallMap, px, py, dx, dy, dist + 0.04, ox, oy)
 
+verify marchCheck
+    marchCheck(Level.buildMap(4, "####", []), Level.buildMap(4, "SSSS", []), 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0).wallType => WallType.Stone
+
 fn detectSide(wallMap: List<String>, mx: Int, my: Int, ox: Float, oy: Float, dx: Float, dy: Float, dist: Float) -> RayHit
     ? "Determine which side of the wall was hit (0=NS, 1=EW)"
     prevDist = dist - 0.04
@@ -108,6 +123,9 @@ fn detectSide(wallMap: List<String>, mx: Int, my: Int, ox: Float, oy: Float, dx:
         false -> 1
     wt = Level.wallTypeAt(wallMap, mx, my)
     RayHit(dist = dist, side = side, wallType = wt)
+
+verify detectSide
+    detectSide(Level.buildMap(4, "SSSS", []), 0, 0, 0.0, 0.0, 1.0, 0.0, 0.04).side => 0
 
 // ─── Wall height ───────────────────────────────────────────────────────────
 
@@ -129,6 +147,9 @@ fn textureBits(wt: WallType, side: Int, pixY: Int, col: Int) -> Int
         WallType.Stone -> stoneBits(side, pixY)
         WallType.Brick -> brickBits(side, pixY, col)
         WallType.Metal -> metalBits(side, pixY)
+
+verify textureBits
+    textureBits(WallType.Stone, 0, 0, 0) => 1
 
 fn stoneBits(side: Int, pixY: Int) -> Int
     ? "Stone: full fill, darker on EW side"
@@ -160,11 +181,17 @@ fn metalBits(side: Int, pixY: Int) -> Int
         1 -> dotBitRight(pixY)
         _ -> dotBit(pixY) + dotBitRight(pixY)
 
+verify metalBits
+    metalBits(1, 0) => 8
+
 fn cellBitsTextured(wallTop: Int, wallBot: Int, pixY: Int, i: Int, acc: Int, wt: WallType, side: Int, col: Int) -> Int
     ? "Accumulate 4 dot rows with texture pattern"
     match i == 4
         true -> acc
         false -> cellBitsOneRow(wallTop, wallBot, pixY + i, i, acc, wt, side, col)
+
+verify cellBitsTextured
+    cellBitsTextured(0, 4, 0, 0, 0, WallType.Stone, 0, 0) => 135
 
 fn cellBitsOneRow(wallTop: Int, wallBot: Int, y: Int, i: Int, acc: Int, wt: WallType, side: Int, col: Int) -> Int
     ? "Add wall texture, floor or ceiling bits for one pixel row"
@@ -174,6 +201,9 @@ fn cellBitsOneRow(wallTop: Int, wallBot: Int, y: Int, i: Int, acc: Int, wt: Wall
         false -> acc + floorCeilBit(y, i, wallTop, wallBot, col)
     cellBitsTextured(wallTop, wallBot, y - i + i, i + 1, newAcc, wt, side, col)
 
+verify cellBitsOneRow
+    cellBitsOneRow(0, 4, 0, 0, 0, WallType.Stone, 0, 0) => 135
+
 fn floorCeilBit(y: Int, i: Int, wallTop: Int, wallBot: Int, col: Int) -> Int
     ? "Sparse dots for floor/ceiling gradient"
     match y < wallTop
@@ -181,6 +211,9 @@ fn floorCeilBit(y: Int, i: Int, wallTop: Int, wallBot: Int, col: Int) -> Int
         false -> match y >= wallBot
             true -> floorBit(y, i, col)
             false -> 0
+
+verify floorCeilBit
+    floorCeilBit(0, 0, 4, 8, 0) => 1
 
 fn ceilBit(y: Int, i: Int, col: Int) -> Int
     ? "Ceiling: sparse dots near horizon, denser at top"
@@ -190,6 +223,9 @@ fn ceilBit(y: Int, i: Int, col: Int) -> Int
             true -> dotBit(i)
             false -> 0
 
+verify ceilBit
+    ceilBit(0, 0, 0) => 1
+
 fn floorBit(y: Int, i: Int, col: Int) -> Int
     ? "Floor: sparse dots near horizon, denser at bottom"
     match y > 72
@@ -198,10 +234,16 @@ fn floorBit(y: Int, i: Int, col: Int) -> Int
             true -> dotBitRight(i)
             false -> 0
 
+verify floorBit
+    floorBit(79, 0, 0) => 8
+
 fn columnBraille(wallTop: Int, wallBot: Int, row: Int, wt: WallType, side: Int, col: Int) -> String
     ? "Compute one textured Braille character"
     bits = cellBitsTextured(wallTop, wallBot, row * 4, 0, 0, wt, side, col)
     brailleChar(bits)
+
+verify columnBraille
+    String.len(columnBraille(0, 4, 0, WallType.Stone, 0, 0)) => 1
 
 // ─── Shading ───────────────────────────────────────────────────────────────
 
@@ -232,12 +274,18 @@ fn buildZBuffer(levelMap: List<String>, wallMap: List<String>, px: Float, py: Fl
         true -> acc
         false -> buildZBufferCol(levelMap, wallMap, px, py, angle, col, acc)
 
+verify buildZBuffer
+    List.len(buildZBuffer(Level.buildMap(4, "####", []), Level.buildMap(4, "SSSS", []), 1.0, 1.0, 0.0, 0, [])) => screenW()
+
 fn buildZBufferCol(levelMap: List<String>, wallMap: List<String>, px: Float, py: Float, angle: Float, col: Int, acc: List<RayHit>) -> List<RayHit>
     ? "Cast one ray and append to buffer"
     rayAngle = angle - fov() / 2.0 + Int.toFloat(col) * fov() / Int.toFloat(screenW())
     hit = castRay(levelMap, wallMap, px, py, rayAngle)
     corrected = RayHit.update(hit, dist = hit.dist * Float.cos(rayAngle - angle))
     buildZBuffer(levelMap, wallMap, px, py, angle, col + 1, List.concat(acc, [corrected]))
+
+verify buildZBufferCol
+    List.len(buildZBufferCol(Level.buildMap(4, "####", []), Level.buildMap(4, "SSSS", []), 1.0, 1.0, 0.0, 0, [])) => screenW()
 
 // ─── Wall rendering ────────────────────────────────────────────────────────
 
@@ -281,6 +329,10 @@ fn rowZone(row: Int, wallTop: Int, wallBot: Int) -> Int
         false -> match midPx >= wallBot
             true -> 2
             false -> 1
+
+verify rowZone
+    rowZone(0, 4, 8) => 0
+    rowZone(2, 4, 8) => 2
 
 fn renderOneWallRow(col: Int, wallTop: Int, wallBot: Int, wt: WallType, side: Int, row: Int, wallColor: String) -> Unit
     ? "Render one braille cell with zone-based coloring"
@@ -338,6 +390,9 @@ fn isEnemyVisible(screenCol: Int, eDist: Float, zbuf: List<RayHit>) -> Bool
                 false -> match Vector.get(Vector.fromList(zbuf), screenCol)
                     Option.Some(hit) -> eDist < hit.dist
                     Option.None -> false
+
+verify isEnemyVisible
+    isEnemyVisible(0, 1.0, [RayHit(dist = 10.0, side = 0, wallType = WallType.Stone)]) => true
 
 fn drawEnemyChar(e: Enemy, screenCol: Int, eDist: Float, enemies: List<Enemy>, zbuf: List<RayHit>, px: Float, py: Float, pAngle: Float, i: Int) -> Unit
     ? "Draw enemy using solid Unicode block characters"
@@ -412,12 +467,18 @@ fn isInsideShape(kind: EnemyKind, col: Int, row: Int, spriteW: Int, spriteH: Int
     maxW = shapeWidth(kind, cy)
     cx < maxW
 
+verify isInsideShape
+    isInsideShape(EnemyKind.Demon, 5, 5, 10, 10) => true
+
 fn shapeWidth(kind: EnemyKind, cy: Float) -> Float
     ? "Silhouette width at normalized Y (0=top, 1=bottom)"
     match kind
         EnemyKind.Imp -> impWidth(cy)
         EnemyKind.Demon -> demonWidth(cy)
         EnemyKind.Ghost -> ghostWidth(cy)
+
+verify shapeWidth
+    shapeWidth(EnemyKind.Ghost, 0.5) => 0.85
 
 fn impWidth(cy: Float) -> Float
     ? "Imp: humanoid — small head, neck, wide torso, legs with gap"
@@ -641,3 +702,4 @@ fn enemyAt(enemies: List<Enemy>, mx: Int, my: Int, i: Int) -> Bool
 
 verify enemyAt
     enemyAt([], 5, 5, 0) => false
+    enemyAt([Types.mkEnemy(5.0, 5.0, EnemyKind.Imp, 3)], 5, 5, 0) => true

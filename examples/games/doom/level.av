@@ -81,6 +81,9 @@ fn setCharCopy(s: String, idx: Int, ch: String, i: Int, acc: String) -> String
         Option.Some(c) -> setCharAt(s, idx, ch, i + 1, acc + c)
         Option.None -> acc
 
+verify setCharCopy
+    setCharCopy("####", 1, ".", 0, "") => "#.##"
+
 fn setTile(levelMap: List<String>, x: Int, y: Int, ch: String, row: Int, acc: List<String>) -> List<String>
     ? "Set one tile in the map"
     match row == List.len(levelMap)
@@ -90,6 +93,9 @@ fn setTile(levelMap: List<String>, x: Int, y: Int, ch: String, row: Int, acc: Li
                 true -> setTile(levelMap, x, y, ch, row + 1, List.concat(acc, [setCharAt(r, x, ch, 0, "")]))
                 false -> setTile(levelMap, x, y, ch, row + 1, List.concat(acc, [r]))
             Option.None -> acc
+
+verify setTile
+    charAt(setTile(["####", "####"], 1, 0, ".", 0, []), 1, 0) => "."
 
 fn charAt(levelMap: List<String>, x: Int, y: Int) -> String
     ? "Get character at (x, y) in the map"
@@ -141,15 +147,24 @@ fn carveRow(levelMap: List<String>, x: Int, endX: Int, y: Int) -> List<String>
         true -> levelMap
         false -> carveRow(setTile(levelMap, x, y, ".", 0, []), x + 1, endX, y)
 
+verify carveRow
+    charAt(carveRow(buildMap(4, "####", []), 1, 3, 0), 2, 0) => "."
+
 fn carveRect(levelMap: List<String>, x: Int, y: Int, endX: Int, endY: Int) -> List<String>
     ? "Carve a rectangle of floor tiles"
     match y == endY
         true -> levelMap
         false -> carveRect(carveRow(levelMap, x, endX, y), x, y + 1, endX, endY)
 
+verify carveRect
+    charAt(carveRect(buildMap(4, "####", []), 1, 1, 3, 3), 1, 1) => "."
+
 fn carveRoom(levelMap: List<String>, room: Room) -> List<String>
     ? "Carve a room into the map"
     carveRect(levelMap, room.x, room.y, Int.min(room.x + room.w, mapWidth() - 1), Int.min(room.y + room.h, mapHeight() - 1))
+
+verify carveRoom
+    charAt(carveRoom(buildMap(4, "####", []), Room(x = 1, y = 1, w = 2, h = 2)), 1, 1) => "."
 
 fn markRect(wallMap: List<String>, x: Int, y: Int, endX: Int, endY: Int, ch: String) -> List<String>
     ? "Mark a rectangular region with wall type ch"
@@ -157,11 +172,17 @@ fn markRect(wallMap: List<String>, x: Int, y: Int, endX: Int, endY: Int, ch: Str
         true -> wallMap
         false -> markRect(markRectRow(wallMap, x, endX, y, ch), x, y + 1, endX, endY, ch)
 
+verify markRect
+    charAt(markRect(buildMap(4, "SSSS", []), 1, 1, 3, 3, "B"), 1, 1) => "B"
+
 fn markRectRow(wallMap: List<String>, x: Int, endX: Int, y: Int, ch: String) -> List<String>
     ? "Mark one row of a rectangle with wall type"
     match x == endX
         true -> wallMap
         false -> markRectRow(setTile(wallMap, x, y, ch, 0, []), x + 1, endX, y, ch)
+
+verify markRectRow
+    charAt(markRectRow(buildMap(4, "SSSS", []), 1, 3, 0, "B"), 2, 0) => "B"
 
 // ─── Corridors ─────────────────────────────────────────────────────────────
 
@@ -169,9 +190,15 @@ fn carveH(levelMap: List<String>, x1: Int, x2: Int, y: Int) -> List<String>
     ? "Horizontal corridor"
     carveRow(levelMap, Int.min(x1, x2), Int.max(x1, x2) + 1, y)
 
+verify carveH
+    charAt(carveH(buildMap(4, "####", []), 1, 2, 0), 1, 0) => "."
+
 fn carveV(levelMap: List<String>, x: Int, y1: Int, y2: Int) -> List<String>
     ? "Vertical corridor"
     carveVStep(levelMap, x, Int.min(y1, y2), Int.max(y1, y2) + 1)
+
+verify carveV
+    charAt(carveV(buildMap(4, "####", []), 1, 0, 2), 1, 1) => "."
 
 fn carveVStep(levelMap: List<String>, x: Int, y: Int, endY: Int) -> List<String>
     ? "Carve vertical corridor one row at a time"
@@ -179,19 +206,31 @@ fn carveVStep(levelMap: List<String>, x: Int, y: Int, endY: Int) -> List<String>
         true -> levelMap
         false -> carveVStep(setTile(levelMap, x, y, ".", 0, []), x, y + 1, endY)
 
+verify carveVStep
+    charAt(carveVStep(buildMap(4, "####", []), 1, 0, 2), 1, 1) => "."
+
 fn markHCorridor(wallMap: List<String>, x1: Int, x2: Int, y: Int) -> List<String>
     ? "Mark horizontal corridor as Metal"
     markRectRow(wallMap, Int.min(x1, x2), Int.max(x1, x2) + 1, y, "M")
 
+verify markHCorridor
+    charAt(markHCorridor(buildMap(4, "SSSS", []), 1, 2, 0), 2, 0) => "M"
+
 fn markVCorridor(wallMap: List<String>, x: Int, y1: Int, y2: Int) -> List<String>
     ? "Mark vertical corridor as Metal"
     markVCorridorStep(wallMap, x, Int.min(y1, y2), Int.max(y1, y2) + 1)
+
+verify markVCorridor
+    charAt(markVCorridor(buildMap(4, "SSSS", []), 1, 0, 2), 1, 1) => "M"
 
 fn markVCorridorStep(wallMap: List<String>, x: Int, y: Int, endY: Int) -> List<String>
     ? "Mark vertical corridor step"
     match y == endY
         true -> wallMap
         false -> markVCorridorStep(setTile(wallMap, x, y, "M", 0, []), x, y + 1, endY)
+
+verify markVCorridorStep
+    charAt(markVCorridorStep(buildMap(4, "SSSS", []), 1, 0, 2), 1, 1) => "M"
 
 fn connectRooms(levelMap: List<String>, r1: Room, r2: Room) -> List<String>
     ? "Connect two rooms with an L-shaped corridor"
@@ -201,6 +240,9 @@ fn connectRooms(levelMap: List<String>, r1: Room, r2: Room) -> List<String>
     cy2 = r2.y + r2.h / 2
     carveV(carveH(levelMap, cx1, cx2, cy1), cx2, cy1, cy2)
 
+verify connectRooms
+    charAt(connectRooms(buildMap(8, "########", []), Room(x = 1, y = 1, w = 2, h = 2), Room(x = 5, y = 1, w = 2, h = 2)), 4, 2) => "."
+
 fn connectWalls(wallMap: List<String>, r1: Room, r2: Room) -> List<String>
     ? "Mark corridor wall types between two rooms"
     cx1 = r1.x + r1.w / 2
@@ -208,6 +250,9 @@ fn connectWalls(wallMap: List<String>, r1: Room, r2: Room) -> List<String>
     cx2 = r2.x + r2.w / 2
     cy2 = r2.y + r2.h / 2
     markVCorridor(markHCorridor(wallMap, cx1, cx2, cy1), cx2, cy1, cy2)
+
+verify connectWalls
+    charAt(connectWalls(buildMap(8, "SSSSSSSS", []), Room(x = 1, y = 1, w = 2, h = 2), Room(x = 5, y = 1, w = 2, h = 2)), 4, 2) => "M"
 
 // ─── Room generation ───────────────────────────────────────────────────────
 
@@ -248,6 +293,9 @@ fn carveRooms(levelMap: List<String>, rooms: List<Room>, i: Int) -> List<String>
             Option.Some(room) -> carveRooms(carveRoom(levelMap, room), rooms, i + 1)
             Option.None -> levelMap
 
+verify carveRooms
+    charAt(carveRooms(buildMap(4, "####", []), [Room(x = 1, y = 1, w = 2, h = 2)], 0), 1, 1) => "."
+
 fn markRoomTypes(wallMap: List<String>, rooms: List<Room>, i: Int) -> List<String>
     ? "Mark wall types for all rooms as Brick"
     match i == List.len(rooms)
@@ -255,6 +303,9 @@ fn markRoomTypes(wallMap: List<String>, rooms: List<Room>, i: Int) -> List<Strin
         false -> match Vector.get(Vector.fromList(rooms), i)
             Option.Some(room) -> markRoomTypes(markRect(wallMap, room.x, room.y, Int.min(room.x + room.w, mapWidth() - 1), Int.min(room.y + room.h, mapHeight() - 1), "B"), rooms, i + 1)
             Option.None -> wallMap
+
+verify markRoomTypes
+    charAt(markRoomTypes(buildMap(4, "SSSS", []), [Room(x = 1, y = 1, w = 2, h = 2)], 0), 1, 1) => "B"
 
 fn connectAll(levelMap: List<String>, rooms: List<Room>, i: Int) -> List<String>
     ? "Connect consecutive rooms with corridors"
@@ -264,11 +315,17 @@ fn connectAll(levelMap: List<String>, rooms: List<Room>, i: Int) -> List<String>
             Option.Some(r1) -> connectNext(levelMap, rooms, i, r1)
             Option.None -> levelMap
 
+verify connectAll
+    charAt(connectAll(buildMap(8, "########", []), [Room(x = 1, y = 1, w = 2, h = 2), Room(x = 5, y = 1, w = 2, h = 2)], 0), 4, 2) => "."
+
 fn connectNext(levelMap: List<String>, rooms: List<Room>, i: Int, r1: Room) -> List<String>
     ? "Connect room i with room i+1"
     match Vector.get(Vector.fromList(rooms), i + 1)
         Option.Some(r2) -> connectAll(connectRooms(levelMap, r1, r2), rooms, i + 1)
         Option.None -> levelMap
+
+verify connectNext
+    charAt(connectNext(buildMap(8, "########", []), [Room(x = 1, y = 1, w = 2, h = 2), Room(x = 5, y = 1, w = 2, h = 2)], 0, Room(x = 1, y = 1, w = 2, h = 2)), 4, 2) => "."
 
 fn connectAllWalls(wallMap: List<String>, rooms: List<Room>, i: Int) -> List<String>
     ? "Mark corridor wall types for all connections"
@@ -278,11 +335,17 @@ fn connectAllWalls(wallMap: List<String>, rooms: List<Room>, i: Int) -> List<Str
             Option.Some(r1) -> connectWallsNext(wallMap, rooms, i, r1)
             Option.None -> wallMap
 
+verify connectAllWalls
+    charAt(connectAllWalls(buildMap(8, "SSSSSSSS", []), [Room(x = 1, y = 1, w = 2, h = 2), Room(x = 5, y = 1, w = 2, h = 2)], 0), 4, 2) => "M"
+
 fn connectWallsNext(wallMap: List<String>, rooms: List<Room>, i: Int, r1: Room) -> List<String>
     ? "Mark wall type for corridor between rooms i and i+1"
     match Vector.get(Vector.fromList(rooms), i + 1)
         Option.Some(r2) -> connectAllWalls(connectWalls(wallMap, r1, r2), rooms, i + 1)
         Option.None -> wallMap
+
+verify connectWallsNext
+    charAt(connectWallsNext(buildMap(8, "SSSSSSSS", []), [Room(x = 1, y = 1, w = 2, h = 2), Room(x = 5, y = 1, w = 2, h = 2)], 0, Room(x = 1, y = 1, w = 2, h = 2)), 4, 2) => "M"
 
 // ─── Full level generation ─────────────────────────────────────────────────
 
@@ -292,18 +355,32 @@ fn generateLevel(seed: Int) -> List<String>
     carved = carveRooms(buildMap(mapHeight(), wallRow(), []), rooms, 0)
     connectAll(carved, rooms, 0)
 
+verify generateLevel
+    List.len(generateLevel(42)) => 32
+
 fn generateWallTypes(seed: Int) -> List<String>
     ? "Generate wall type map matching the level"
     rooms = genRooms(seed, 6, 0, [])
     marked = markRoomTypes(buildMap(mapHeight(), wallTypeRow(), []), rooms, 0)
     connectAllWalls(marked, rooms, 0)
 
+verify generateWallTypes
+    List.len(generateWallTypes(42)) => 32
+
 fn getRooms(seed: Int) -> List<Room>
     ? "Get the rooms list for a seed (for spawn points)"
     genRooms(seed, 6, 0, [])
+
+verify getRooms
+    List.len(getRooms(42)) => 6
 
 fn startPos(seed: Int) -> (Float, Float)
     ? "Player start position: center of first room"
     match Vector.get(Vector.fromList(getRooms(seed)), 0)
         Option.Some(room) -> roomCenter(room)
         Option.None -> (16.0, 16.0)
+
+verify startPos
+    match startPos(42)
+        (x, y) -> x > 0.0
+    => true

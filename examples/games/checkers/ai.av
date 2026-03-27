@@ -110,6 +110,9 @@ fn evalScanCell(board: List<List<CellContent>>, color: Color, x: Int, y: Int) ->
     cell = Board.getCell(board, x, y)
     pieceValue(cell, color) + centerBonus(cell, x, y, color) + evalScan(board, color, x + 1, y)
 
+verify evalScanCell
+    evalScanCell(Board.buildEmptyBoard(8), Color.Black, 0, 0) => 0
+
 fn evaluateBoard(board: List<List<CellContent>>, color: Color) -> Int
     ? "Static board evaluation: piece count + king bonus + center control"
     evalScan(board, color, 0, 0)
@@ -137,6 +140,9 @@ fn abAtDepth(board: List<List<CellContent>>, depth: Int, alpha: Int, beta: Int, 
         true -> abNoMoves(isMax)
         false -> abSearch(board, depth, alpha, beta, isMax, color, aiColor, moves, 0, abInit(isMax))
 
+verify abAtDepth
+    abAtDepth(Board.buildEmptyBoard(8), 1, 0 - 9999, 9999, true, Color.Black, Color.Black) => 0 - 9999
+
 fn abNoMoves(isMax: Bool) -> Int
     ? "No moves: worst score for current player"
     match isMax
@@ -155,6 +161,7 @@ fn abInit(isMax: Bool) -> Int
 
 verify abInit
     abInit(true) => 0 - 9999
+    abInit(false) => 9999
 
 fn abSearch(board: List<List<CellContent>>, depth: Int, alpha: Int, beta: Int, isMax: Bool, color: Color, aiColor: Color, moves: List<List<Point>>, i: Int, best: Int) -> Int
     ? "Iterate moves with alpha-beta pruning"
@@ -174,19 +181,31 @@ fn abEvalMove(board: List<List<CellContent>>, depth: Int, alpha: Int, beta: Int,
     score = alphaBeta(Rules.applyTurn(board, move), depth - 1, alpha, beta, Bool.not(isMax), Board.opponent(color), aiColor)
     abUpdateAndContinue(board, depth, alpha, beta, isMax, color, aiColor, moves, i, best, score)
 
+verify abEvalMove
+    abEvalMove(Board.buildEmptyBoard(8), 1, 0 - 9999, 9999, true, Color.Black, Color.Black, [[]], [], 0, 0 - 9999) => 0
+
 fn abUpdateAndContinue(board: List<List<CellContent>>, depth: Int, alpha: Int, beta: Int, isMax: Bool, color: Color, aiColor: Color, moves: List<List<Point>>, i: Int, best: Int, score: Int) -> Int
     ? "Update best/alpha/beta and continue search"
     match isMax
         true -> abUpdateMax(board, depth, alpha, beta, color, aiColor, moves, i, Int.max(best, score), Int.max(alpha, score))
         false -> abUpdateMin(board, depth, alpha, beta, color, aiColor, moves, i, Int.min(best, score), Int.min(beta, score))
 
+verify abUpdateAndContinue
+    abUpdateAndContinue(Board.buildEmptyBoard(8), 1, 0 - 9999, 9999, true, Color.Black, Color.Black, [[]], 0, 0 - 9999, 5) => 5
+
 fn abUpdateMax(board: List<List<CellContent>>, depth: Int, alpha: Int, beta: Int, color: Color, aiColor: Color, moves: List<List<Point>>, i: Int, newBest: Int, newAlpha: Int) -> Int
     ? "Continue maximizer search with updated alpha"
     abSearch(board, depth, newAlpha, beta, true, color, aiColor, moves, i + 1, newBest)
 
+verify abUpdateMax
+    abUpdateMax(Board.buildEmptyBoard(8), 1, 0 - 9999, 9999, Color.Black, Color.Black, [[]], 0, 5, 5) => 5
+
 fn abUpdateMin(board: List<List<CellContent>>, depth: Int, alpha: Int, beta: Int, color: Color, aiColor: Color, moves: List<List<Point>>, i: Int, newBest: Int, newBeta: Int) -> Int
     ? "Continue minimizer search with updated beta"
     abSearch(board, depth, alpha, newBeta, false, color, aiColor, moves, i + 1, newBest)
+
+verify abUpdateMin
+    abUpdateMin(Board.buildEmptyBoard(8), 1, 0 - 9999, 9999, Color.Black, Color.Black, [[]], 0, 0 - 5, 0 - 5) => 0 - 5
 
 fn scoreAllMoves(board: List<List<CellContent>>, color: Color, depth: Int, moves: List<List<Point>>, i: Int, alpha: Int) -> List<ScoredMove>
     ? "Score candidates with progressive alpha tightening for better pruning"
@@ -203,6 +222,9 @@ fn scoreOneMove(board: List<List<CellContent>>, color: Color, depth: Int, moves:
     ? "Score one move with current alpha, tighten for next moves"
     score = alphaBeta(Rules.applyTurn(board, move), depth - 1, alpha, 9999, false, Board.opponent(color), color)
     List.prepend(ScoredMove(move = move, score = score), scoreAllMoves(board, color, depth, moves, i + 1, Int.max(alpha, score)))
+
+verify scoreOneMove
+    scoreOneMove(Board.buildEmptyBoard(8), Color.Black, 1, [[]], [], 0, 0 - 9999) => [ScoredMove(move = [], score = 0)]
 
 fn findBest(scored: List<ScoredMove>, i: Int, bestScore: Int, bestIdx: Int) -> Int
     ? "Find index of highest-scored move"
@@ -221,6 +243,12 @@ fn sortScored(scored: List<ScoredMove>) -> List<ScoredMove>
     ? "Sort scored moves by score descending (insertion sort)"
     sortScoredRec(scored, 0, [])
 
+verify sortScored
+    match Vector.get(Vector.fromList(sortScored([ScoredMove(move = [Board.pt(0, 0)], score = 1), ScoredMove(move = [Board.pt(1, 1)], score = 5)])), 0)
+        Option.Some(sm) -> sm.score
+        Option.None -> 0
+    => 5
+
 fn sortScoredRec(scored: List<ScoredMove>, i: Int, acc: List<ScoredMove>) -> List<ScoredMove>
     ? "Insert each element into sorted accumulator"
     match i == List.len(scored)
@@ -228,6 +256,9 @@ fn sortScoredRec(scored: List<ScoredMove>, i: Int, acc: List<ScoredMove>) -> Lis
         false -> match Vector.get(Vector.fromList(scored), i)
             Option.Some(sm) -> sortScoredRec(scored, i + 1, insertSorted(acc, sm, 0))
             Option.None -> acc
+
+verify sortScoredRec
+    sortScoredRec([], 0, [ScoredMove(move = [], score = 1)]) => [ScoredMove(move = [], score = 1)]
 
 fn insertSorted(sorted: List<ScoredMove>, item: ScoredMove, i: Int) -> List<ScoredMove>
     ? "Insert item into descending-sorted list"
@@ -239,9 +270,15 @@ fn insertSorted(sorted: List<ScoredMove>, item: ScoredMove, i: Int) -> List<Scor
                 false -> insertSorted(sorted, item, i + 1)
             Option.None -> List.concat(sorted, [item])
 
+verify insertSorted
+    insertSorted([], ScoredMove(move = [Board.pt(0, 0)], score = 7), 0) => [ScoredMove(move = [Board.pt(0, 0)], score = 7)]
+
 fn takeN(xs: List<ScoredMove>, n: Int) -> List<ScoredMove>
     ? "Take first n elements"
     takeNRec(xs, n, 0)
+
+verify takeN
+    takeN([ScoredMove(move = [Board.pt(0, 0)], score = 1), ScoredMove(move = [Board.pt(1, 1)], score = 2)], 1) => [ScoredMove(move = [Board.pt(0, 0)], score = 1)]
 
 fn takeNRec(xs: List<ScoredMove>, n: Int, i: Int) -> List<ScoredMove>
     ? "Take helper"
@@ -251,9 +288,15 @@ fn takeNRec(xs: List<ScoredMove>, n: Int, i: Int) -> List<ScoredMove>
             Option.Some(x) -> List.prepend(x, takeNRec(xs, n, i + 1))
             Option.None -> []
 
+verify takeNRec
+    takeNRec([ScoredMove(move = [Board.pt(0, 0)], score = 1), ScoredMove(move = [Board.pt(1, 1)], score = 2)], 1, 0) => [ScoredMove(move = [Board.pt(0, 0)], score = 1)]
+
 fn dropN(xs: List<ScoredMove>, n: Int) -> List<ScoredMove>
     ? "Drop first n elements"
     dropNRec(xs, n, 0)
+
+verify dropN
+    dropN([ScoredMove(move = [Board.pt(0, 0)], score = 1), ScoredMove(move = [Board.pt(1, 1)], score = 2)], 1) => [ScoredMove(move = [Board.pt(1, 1)], score = 2)]
 
 fn dropNRec(xs: List<ScoredMove>, n: Int, i: Int) -> List<ScoredMove>
     ? "Drop helper"
@@ -265,6 +308,9 @@ fn dropNRec(xs: List<ScoredMove>, n: Int, i: Int) -> List<ScoredMove>
                 Option.Some(x) -> List.prepend(x, dropNRec(xs, n, i + 1))
                 Option.None -> []
 
+verify dropNRec
+    dropNRec([ScoredMove(move = [Board.pt(0, 0)], score = 1), ScoredMove(move = [Board.pt(1, 1)], score = 2)], 1, 0) => [ScoredMove(move = [Board.pt(1, 1)], score = 2)]
+
 fn bestMoveResult(board: List<List<CellContent>>, color: Color, depth: Int) -> Option<AiResult>
     ? "Full AI result with all scored candidates sorted"
     moves = Rules.legalMoves(board, color)
@@ -272,12 +318,21 @@ fn bestMoveResult(board: List<List<CellContent>>, color: Color, depth: Int) -> O
         true -> Option.None
         false -> buildResult(board, color, depth, moves)
 
+verify bestMoveResult
+    bestMoveResult(Board.buildEmptyBoard(8), Color.Black, 1) => Option.None
+
 fn buildResult(board: List<List<CellContent>>, color: Color, depth: Int, moves: List<List<Point>>) -> Option<AiResult>
     ? "Score all moves and build result"
     scored = sortScored(scoreAllMoves(board, color, depth, moves, 0, 0 - 9999))
     match Vector.get(Vector.fromList(scored), 0)
         Option.Some(best) -> Option.Some(AiResult(move = best.move, score = best.score, candidates = scored, depth = depth, thinkMs = 0))
         Option.None -> Option.None
+
+verify buildResult
+    match buildResult(Board.buildEmptyBoard(8), Color.Black, 1, [[]])
+        Option.Some(result) -> result.score
+        Option.None -> 0 - 1
+    => 0
 
 fn bestMove(board: List<List<CellContent>>, color: Color, depth: Int) -> Option<List<Point>>
     ? "Pick the best turn using alpha-beta search"
