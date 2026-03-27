@@ -91,6 +91,7 @@ record FnDef
     slotCount: Int
     slotMap: Map<String, Int>
     fastPath: FnFastPath
+    tailLoop: Bool
 
 record Program
     deps: List<String>

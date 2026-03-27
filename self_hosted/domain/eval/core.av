@@ -243,10 +243,32 @@ fn callResolved(fd: FnDef, args: List<Val>, fns: FnStore) -> Result<Val, String>
 fn evalResolvedSlotFn(fd: FnDef, calleeEnv: Vector<Val>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate a resolved function body in slot mode, looping self-tail-calls instead of recursing on the host stack."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match fd.tailLoop
+        true -> evalResolvedSlotLoop(fd, calleeEnv, fns)
+        false -> evalResolvedSlotDirect(fd, calleeEnv, fns)
+
+fn evalResolvedSlotLoop(fd: FnDef, calleeEnv: Vector<Val>, fns: FnStore) -> Result<Val, String>
+    ? "Run the tail-aware slot evaluator only for functions that actually end in self-tail-calls."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     step = evalResolvedSlotStep(fd, calleeEnv, fns)?
     match step
         SlotTailStep.SlotTailDone(v) -> Domain.Eval.Common.normalizeFnReturn(Result.Ok(v))
-        SlotTailStep.SlotTailRecurEnv(nextEnv) -> evalResolvedSlotFn(fd, nextEnv, fns)
+        SlotTailStep.SlotTailRecurEnv(nextEnv) -> evalResolvedSlotLoop(fd, nextEnv, fns)
+
+fn evalResolvedSlotDirect(fd: FnDef, calleeEnv: Vector<Val>, fns: FnStore) -> Result<Val, String>
+    ? "Evaluate a resolved function body in slot mode without the tail-loop machinery."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    result = match fd.fastPath
+        FnFastPath.FastLeaf(leaf) -> Domain.Eval.Fast.runFastLeafSlot(leaf, calleeEnv)
+        FnFastPath.FastForwardCall(name, slotArgs) -> fastForwardCall(calleeEnv, name, slotArgs, fns)
+        FnFastPath.FastBoolSlotBranch(slot, thenLeaf, elseLeaf) -> Domain.Eval.Fast.fastBoolSlotBranch(calleeEnv, slot, thenLeaf, elseLeaf)
+        FnFastPath.FastEqIntBranch(slot, expected, thenLeaf, elseLeaf) -> Domain.Eval.Fast.fastEqIntBranch(calleeEnv, slot, expected, thenLeaf, elseLeaf)
+        FnFastPath.FastEqStringBranch(slot, expected, thenLeaf, elseLeaf) -> Domain.Eval.Fast.fastEqStringBranch(calleeEnv, slot, expected, thenLeaf, elseLeaf)
+        FnFastPath.FastLtIntSlotsBranch(lhsSlot, rhsSlot, thenLeaf, elseLeaf) -> Domain.Eval.Fast.fastLtIntSlotsBranch(calleeEnv, lhsSlot, rhsSlot, thenLeaf, elseLeaf)
+        FnFastPath.FastListSlotBranch(slot, emptyLeaf, headSlot, tailSlot, consLeaf) -> Domain.Eval.Fast.fastListSlotBranch(calleeEnv, slot, emptyLeaf, headSlot, tailSlot, consLeaf)
+        FnFastPath.FastSingleExpr -> evalResolvedSingleExprSlot(fd.body, calleeEnv, fd.slotMap, fns)
+        FnFastPath.FastNone -> evalStmtsSlot(fd.body, calleeEnv, fd.slotMap, fns)
+    Domain.Eval.Common.normalizeFnReturn(result)
 
 fn evalResolvedSlotStep(fd: FnDef, calleeEnv: Vector<Val>, fns: FnStore) -> Result<SlotTailStep, String>
     ? "Run one slot-frame step and either finish with a value or request a self-tail-call re-entry."

@@ -19,7 +19,7 @@ fn resolveCallsInFns(fns: List<FnDef>, fnMap: Map<String, FnDef>, acc: List<FnDe
 
 fn resolveCallsInFn(fd: FnDef, fnMap: Map<String, FnDef>) -> FnDef
     ? "Transform calls in one function body."
-    FnDef(name = fd.name, params = fd.params, body = resolveCallsInStmts(fd.body, fnMap, []), slotCount = fd.slotCount, slotMap = fd.slotMap, fastPath = fd.fastPath)
+    FnDef(name = fd.name, params = fd.params, body = resolveCallsInStmts(fd.body, fnMap, []), slotCount = fd.slotCount, slotMap = fd.slotMap, fastPath = fd.fastPath, tailLoop = fd.tailLoop)
 
 fn resolveCallsInStmts(stmts: List<Stmt>, fnMap: Map<String, FnDef>, acc: List<Stmt>) -> List<Stmt>
     match stmts

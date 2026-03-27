@@ -36,7 +36,7 @@ fn resolveBody(fd: FnDef, slots: Map<String, Int>, nextSlot: Int) -> FnDef
 fn computeSlotCount(fd: FnDef, body: List<Stmt>, baseSlot: Int, slotMap: Map<String, Int>) -> FnDef
     ? "Compute slotCount as max slot index found in body + 1."
     maxFromBody = maxSlotInStmts(body, baseSlot - 1)
-    FnDef(name = fd.name, params = fd.params, body = body, slotCount = maxFromBody + 1, slotMap = slotMap, fastPath = FnFastPath.FastNone)
+    FnDef(name = fd.name, params = fd.params, body = body, slotCount = maxFromBody + 1, slotMap = slotMap, fastPath = FnFastPath.FastNone, tailLoop = false)
 
 fn maxSlotInStmts(stmts: List<Stmt>, acc: Int) -> Int
     ? "Find highest slot index in a list of statements."

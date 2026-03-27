@@ -13,7 +13,7 @@ fn rewriteInternalFns(fns: List<FnDef>, acc: List<FnDef>) -> List<FnDef>
 
 fn rewriteInternalFn(fd: FnDef) -> FnDef
     ? "Rewrite the body of one resolved function into lighter internal expression shapes."
-    FnDef(name = fd.name, params = fd.params, body = rewriteInternalStmts(fd.body, []), slotCount = fd.slotCount, slotMap = fd.slotMap, fastPath = fd.fastPath)
+    FnDef(name = fd.name, params = fd.params, body = rewriteInternalStmts(fd.body, []), slotCount = fd.slotCount, slotMap = fd.slotMap, fastPath = fd.fastPath, tailLoop = fd.tailLoop)
 
 fn rewriteInternalStmts(stmts: List<Stmt>, acc: List<Stmt>) -> List<Stmt>
     ? "Rewrite statements recursively into lighter internal expression shapes."

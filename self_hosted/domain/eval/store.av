@@ -48,7 +48,7 @@ fn lookupFn(fns: FnStore, name: String) -> Result<FnDef, String>
         Option.None -> Result.Err("undefined function: " + name)
 
 verify lookupFn
-    lookupFn(fnsToStore([FnDef(name = "foo", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone)]), "foo") => Result.Ok(FnDef(name = "foo", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone))
+    lookupFn(fnsToStore([FnDef(name = "foo", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)]), "foo") => Result.Ok(FnDef(name = "foo", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false))
     lookupFn(emptyFnStore(), "foo") => Result.Err("undefined function: foo")
 
 fn zipArgs(params: List<String>, args: List<Val>, acc: Map<String, Val>) -> Map<String, Val>

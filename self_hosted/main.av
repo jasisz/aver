@@ -105,15 +105,15 @@ fn qualifyFns(fns: List<FnDef>, prefix: String, acc: List<FnDef>) -> List<FnDef>
 
 verify qualifyFns
     qualifyFns([], "M", []) => []
-    qualifyFns([FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone)], "M", []) => [FnDef(name = "M.f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone), FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone)]
+    qualifyFns([FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)], "M", []) => [FnDef(name = "M.f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false), FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)]
 
 fn qualifyFnsOne(f: FnDef, rest: List<FnDef>, prefix: String, acc: List<FnDef>) -> List<FnDef>
     ? "Add both qualified and unqualified versions."
-    qualified = FnDef(name = prefix + "." + f.name, params = f.params, body = f.body, slotCount = f.slotCount, slotMap = f.slotMap, fastPath = f.fastPath)
+    qualified = FnDef(name = prefix + "." + f.name, params = f.params, body = f.body, slotCount = f.slotCount, slotMap = f.slotMap, fastPath = f.fastPath, tailLoop = f.tailLoop)
     qualifyFns(rest, prefix, List.prepend(f, List.prepend(qualified, acc)))
 
 verify qualifyFnsOne
-    qualifyFnsOne(FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone), [], "M", []) => [FnDef(name = "M.f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone), FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone)]
+    qualifyFnsOne(FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false), [], "M", []) => [FnDef(name = "M.f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false), FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)]
 
 fn runRepr(source: String) -> String
     ? "Run source and return result representation or error."
@@ -172,7 +172,7 @@ fn finishCliRun(localFns: List<FnDef>, result: Val) -> Result<Unit, String>
 
 verify finishCliRun
     finishCliRun([], Val.ValInt(7)) => Result.Ok(Unit)
-    finishCliRun([FnDef(name = "main", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone)], Val.ValErr(Val.ValInt(9))) => Result.Err("Main returned error: 9")
+    finishCliRun([FnDef(name = "main", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)], Val.ValErr(Val.ValInt(9))) => Result.Err("Main returned error: 9")
 
 fn finishCliMainResult(result: Val) -> Result<Unit, String>
     ? "Convert a guest main() return value into CLI success or failure."
@@ -194,8 +194,8 @@ fn hasLocalMain(fns: List<FnDef>) -> Bool
 
 verify hasLocalMain
     hasLocalMain([]) => false
-    hasLocalMain([FnDef(name = "helper", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone)]) => false
-    hasLocalMain([FnDef(name = "helper", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone), FnDef(name = "main", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone)]) => true
+    hasLocalMain([FnDef(name = "helper", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)]) => false
+    hasLocalMain([FnDef(name = "helper", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false), FnDef(name = "main", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)]) => true
 
 fn printIfNotUnit(s: String) -> Unit
     ? "Print unless the result is Unit."
