@@ -5,39 +5,39 @@ module Calls
         "Turns known user calls into ExprCallDirect and routes builtin namespaces to ExprCallBuiltin."
     exposes [buildFnMap, resolveCallsInFns]
 
-fn buildFnMap(fns: List<FnDef>, acc: Map<String, FnDef>) -> Map<String, FnDef>
-    ? "Build name→FnDef map from resolved function list."
+fn buildFnMap(fns: List<FnDef>, acc: Map<String, Int>, idx: Int) -> Map<String, Int>
+    ? "Build name→fnId map from resolved function list."
     match fns
         [] -> acc
-        [f, ..rest] -> buildFnMap(rest, Map.set(acc, f.name, f))
+        [f, ..rest] -> buildFnMap(rest, Map.set(acc, f.name, idx), idx + 1)
 
-fn resolveCallsInFns(fns: List<FnDef>, fnMap: Map<String, FnDef>, acc: List<FnDef>) -> List<FnDef>
+fn resolveCallsInFns(fns: List<FnDef>, fnMap: Map<String, Int>, acc: List<FnDef>) -> List<FnDef>
     ? "Transform ExprCall→ExprCallDirect for known functions in all fn bodies."
     match fns
         [] -> List.reverse(acc)
         [f, ..rest] -> resolveCallsInFns(rest, fnMap, List.prepend(resolveCallsInFn(f, fnMap), acc))
 
-fn resolveCallsInFn(fd: FnDef, fnMap: Map<String, FnDef>) -> FnDef
+fn resolveCallsInFn(fd: FnDef, fnMap: Map<String, Int>) -> FnDef
     ? "Transform calls in one function body."
     FnDef(name = fd.name, params = fd.params, body = resolveCallsInStmts(fd.body, fnMap, []), slotCount = fd.slotCount, slotMap = fd.slotMap, fastPath = fd.fastPath, tailLoop = fd.tailLoop)
 
-fn resolveCallsInStmts(stmts: List<Stmt>, fnMap: Map<String, FnDef>, acc: List<Stmt>) -> List<Stmt>
+fn resolveCallsInStmts(stmts: List<Stmt>, fnMap: Map<String, Int>, acc: List<Stmt>) -> List<Stmt>
     match stmts
         [] -> List.reverse(acc)
         [s, ..rest] -> resolveCallsInStmts(rest, fnMap, List.prepend(resolveCallsInStmt(s, fnMap), acc))
 
-fn resolveCallsInStmt(s: Stmt, fnMap: Map<String, FnDef>) -> Stmt
+fn resolveCallsInStmt(s: Stmt, fnMap: Map<String, Int>) -> Stmt
     match s
         Stmt.StmtBind(name, expr) -> Stmt.StmtBind(name, resolveCallsInExpr(expr, fnMap))
         Stmt.StmtBindSlot(slot, expr) -> Stmt.StmtBindSlot(slot, resolveCallsInExpr(expr, fnMap))
         Stmt.StmtExpr(expr) -> Stmt.StmtExpr(resolveCallsInExpr(expr, fnMap))
 
-fn resolveCallsInExpr(expr: Expr, fnMap: Map<String, FnDef>) -> Expr
+fn resolveCallsInExpr(expr: Expr, fnMap: Map<String, Int>) -> Expr
     ? "Replace ExprCall with ExprCallDirect for known user functions."
     match expr
         Expr.ExprBoolBranch(cond, thenExpr, elseExpr) -> Expr.ExprBoolBranch(resolveCallsInExpr(cond, fnMap), resolveCallsInExpr(thenExpr, fnMap), resolveCallsInExpr(elseExpr, fnMap))
         Expr.ExprCall(name, args) -> resolveOneCall(name, args, fnMap)
-        Expr.ExprCallDirect(name, args) -> Expr.ExprCallDirect(name, resolveCallsInExprs(args, fnMap, []))
+        Expr.ExprCallDirect(fnId, args) -> Expr.ExprCallDirect(fnId, resolveCallsInExprs(args, fnMap, []))
         Expr.ExprBinopSlotInt(_, _, _) -> expr
         Expr.ExprBinopSlots(_, _, _) -> expr
         Expr.ExprCmpSlotInt(_, _, _) -> expr
@@ -63,11 +63,11 @@ fn resolveCallsInExpr(expr: Expr, fnMap: Map<String, FnDef>) -> Expr
         Expr.ExprFieldAccess(obj, field) -> Expr.ExprFieldAccess(resolveCallsInExpr(obj, fnMap), field)
         _ -> expr
 
-fn resolveOneCall(name: String, args: List<Expr>, fnMap: Map<String, FnDef>) -> Expr
+fn resolveOneCall(name: String, args: List<Expr>, fnMap: Map<String, Int>) -> Expr
     ? "User fn → ExprCallDirect, builtin → ExprCallBuiltin, record update → ExprCall."
     resolvedArgs = resolveCallsInExprs(args, fnMap, [])
     match Map.get(fnMap, name)
-        Option.Some(fd) -> Expr.ExprCallDirect(fd.name, resolvedArgs)
+        Option.Some(fnId) -> Expr.ExprCallDirect(fnId, resolvedArgs)
         Option.None -> match String.endsWith(name, ".update")
             true -> Expr.ExprCall(name, resolvedArgs)
             false -> match isBuiltinCallName(name)
@@ -216,17 +216,17 @@ fn isBuiltinCallNameFrom(name: String, knownNames: List<String>) -> Bool
             true -> true
             false -> isBuiltinCallNameFrom(name, rest)
 
-fn resolveCallsInExprs(exprs: List<Expr>, fnMap: Map<String, FnDef>, acc: List<Expr>) -> List<Expr>
+fn resolveCallsInExprs(exprs: List<Expr>, fnMap: Map<String, Int>, acc: List<Expr>) -> List<Expr>
     match exprs
         [] -> List.reverse(acc)
         [e, ..rest] -> resolveCallsInExprs(rest, fnMap, List.prepend(resolveCallsInExpr(e, fnMap), acc))
 
-fn resolveCallsInArms(arms: List<MatchArm>, fnMap: Map<String, FnDef>, acc: List<MatchArm>) -> List<MatchArm>
+fn resolveCallsInArms(arms: List<MatchArm>, fnMap: Map<String, Int>, acc: List<MatchArm>) -> List<MatchArm>
     match arms
         [] -> List.reverse(acc)
         [arm, ..rest] -> resolveCallsInArms(rest, fnMap, List.prepend(MatchArm(pattern = arm.pattern, body = resolveCallsInExpr(arm.body, fnMap), bindingSlots = arm.bindingSlots), acc))
 
-fn resolveCallsInFields(fields: List<(String, Expr)>, fnMap: Map<String, FnDef>, acc: List<(String, Expr)>) -> List<(String, Expr)>
+fn resolveCallsInFields(fields: List<(String, Expr)>, fnMap: Map<String, Int>, acc: List<(String, Expr)>) -> List<(String, Expr)>
     match fields
         [] -> List.reverse(acc)
         [pair, ..rest] -> match pair

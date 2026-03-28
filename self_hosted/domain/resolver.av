@@ -9,9 +9,9 @@ module Resolver
 fn resolveProgram(prog: Program) -> Program
     ? "Resolve all functions: slots, direct calls, then attach narrow fast-path tags."
     resolvedFns = Domain.Resolver.Core.resolveFns(prog.fns, [])
-    fnMap = Domain.Resolver.Calls.buildFnMap(resolvedFns, Map.empty())
+    fnMap = Domain.Resolver.Calls.buildFnMap(resolvedFns, Map.empty(), 0)
     calledFns = Domain.Resolver.Calls.resolveCallsInFns(resolvedFns, fnMap, [])
-    annotatedFns = Domain.Resolver.Fast.annotateFastFns(calledFns, [])
+    annotatedFns = Domain.Resolver.Fast.annotateFastFns(calledFns, fnMap, [])
     Program(
         deps = prog.deps,
         fns = Domain.Resolver.Rewrite.rewriteInternalFns(annotatedFns, []),

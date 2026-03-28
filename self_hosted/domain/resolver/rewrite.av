@@ -56,7 +56,7 @@ fn rewriteInternalExpr(expr: Expr) -> Expr
         Expr.ExprRecord(name, fields) -> Expr.ExprRecord(name, rewriteInternalFields(fields, []))
         Expr.ExprFieldAccess(obj, field) -> Expr.ExprFieldAccess(rewriteInternalExpr(obj), field)
         Expr.ExprCall(name, args) -> Expr.ExprCall(name, rewriteInternalExprs(args, []))
-        Expr.ExprCallDirect(name, args) -> Expr.ExprCallDirect(name, rewriteInternalExprs(args, []))
+        Expr.ExprCallDirect(fnId, args) -> Expr.ExprCallDirect(fnId, rewriteInternalExprs(args, []))
         Expr.ExprCallBuiltin(name, args) -> rewriteInternalBuiltin(name, rewriteInternalExprs(args, []))
         _ -> expr
 

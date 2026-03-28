@@ -5,47 +5,48 @@ module Fast
         "Tags tiny wrappers and small fixed-shape matches so eval can bypass the full stmt walker."
     exposes [annotateFastFns]
 
-fn annotateFastFns(fns: List<FnDef>, acc: List<FnDef>) -> List<FnDef>
+fn annotateFastFns(fns: List<FnDef>, fnMap: Map<String, Int>, acc: List<FnDef>) -> List<FnDef>
     ? "Tag simple single-expression functions so eval can skip the stmt walker."
     match fns
         [] -> List.reverse(acc)
-        [f, ..rest] -> annotateFastFns(rest, List.prepend(annotateFastFn(f), acc))
+        [f, ..rest] -> annotateFastFns(rest, fnMap, List.prepend(annotateFastFn(f, fnMap), acc))
 
-fn annotateFastFn(fd: FnDef) -> FnDef
+fn annotateFastFn(fd: FnDef, fnMap: Map<String, Int>) -> FnDef
     ? "Attach a narrow fast-path tag to a function definition."
-    FnDef(name = fd.name, params = fd.params, body = fd.body, slotCount = fd.slotCount, slotMap = fd.slotMap, fastPath = classifyFastPath(fd.body), tailLoop = classifyTailLoop(fd.name, fd.body))
+    selfId = Option.withDefault(Map.get(fnMap, fd.name), -1)
+    FnDef(name = fd.name, params = fd.params, body = fd.body, slotCount = fd.slotCount, slotMap = fd.slotMap, fastPath = classifyFastPath(fd.body), tailLoop = classifyTailLoop(selfId, fd.body))
 
-fn classifyTailLoop(selfName: String, body: List<Stmt>) -> Bool
+fn classifyTailLoop(selfId: Int, body: List<Stmt>) -> Bool
     ? "Precompute whether the final expression position can self-tail-call directly."
     match body
         [] -> false
         [stmt, ..rest] -> match rest
-            [] -> stmtNeedsTailLoop(selfName, stmt)
-            _ -> classifyTailLoop(selfName, rest)
+            [] -> stmtNeedsTailLoop(selfId, stmt)
+            _ -> classifyTailLoop(selfId, rest)
 
-fn stmtNeedsTailLoop(selfName: String, stmt: Stmt) -> Bool
+fn stmtNeedsTailLoop(selfId: Int, stmt: Stmt) -> Bool
     ? "Only the final expression statement can trigger the tail-loop slot evaluator."
     match stmt
-        Stmt.StmtExpr(expr) -> exprNeedsTailLoop(selfName, expr)
+        Stmt.StmtExpr(expr) -> exprNeedsTailLoop(selfId, expr)
         _ -> false
 
-fn exprNeedsTailLoop(selfName: String, expr: Expr) -> Bool
+fn exprNeedsTailLoop(selfId: Int, expr: Expr) -> Bool
     ? "Recognize direct self-calls in tail position, including bool branches and matches."
     match expr
-        Expr.ExprCallDirect(name, _) -> name == selfName
-        Expr.ExprBoolBranch(_, thenExpr, elseExpr) -> match exprNeedsTailLoop(selfName, thenExpr)
+        Expr.ExprCallDirect(fnId, _) -> fnId == selfId
+        Expr.ExprBoolBranch(_, thenExpr, elseExpr) -> match exprNeedsTailLoop(selfId, thenExpr)
             true -> true
-            false -> exprNeedsTailLoop(selfName, elseExpr)
-        Expr.ExprMatch(_, arms) -> armsNeedTailLoop(selfName, arms)
+            false -> exprNeedsTailLoop(selfId, elseExpr)
+        Expr.ExprMatch(_, arms) -> armsNeedTailLoop(selfId, arms)
         _ -> false
 
-fn armsNeedTailLoop(selfName: String, arms: List<MatchArm>) -> Bool
+fn armsNeedTailLoop(selfId: Int, arms: List<MatchArm>) -> Bool
     ? "Return true when any match arm ends in a direct self-tail-call."
     match arms
         [] -> false
-        [arm, ..rest] -> match exprNeedsTailLoop(selfName, arm.body)
+        [arm, ..rest] -> match exprNeedsTailLoop(selfId, arm.body)
             true -> true
-            false -> armsNeedTailLoop(selfName, rest)
+            false -> armsNeedTailLoop(selfId, rest)
 
 fn classifyFastPath(body: List<Stmt>) -> FnFastPath
     ? "Single expression bodies can bypass evalStmts* and evaluate the expr directly."
@@ -66,7 +67,7 @@ fn classifyFastExpr(expr: Expr) -> FnFastPath
     match classifyFastLeafExpr(expr)
         Option.Some(leaf) -> FnFastPath.FastLeaf(leaf)
         Option.None -> match expr
-            Expr.ExprCallDirect(name, args) -> classifyFastForwardCall(name, args)
+            Expr.ExprCallDirect(fnId, args) -> classifyFastForwardCall(fnId, args)
             Expr.ExprMatch(scrutinee, arms) -> classifyFastMatch(scrutinee, arms)
             _ -> FnFastPath.FastSingleExpr
 
@@ -246,10 +247,10 @@ fn classifyFastListCons(slot: Int, emptyLeaf: FastLeaf, head: String, tail: Stri
             Option.None -> FnFastPath.FastSingleExpr
         Option.None -> FnFastPath.FastSingleExpr
 
-fn classifyFastForwardCall(name: String, args: List<Expr>) -> FnFastPath
+fn classifyFastForwardCall(fnId: Int, args: List<Expr>) -> FnFastPath
     ? "Recognize tiny direct-call wrappers that only forward slot arguments."
     match classifyFastForwardSlots(args, [])
-        Option.Some(slotArgs) -> FnFastPath.FastForwardCall(name, slotArgs)
+        Option.Some(slotArgs) -> FnFastPath.FastForwardCall(fnId, slotArgs)
         Option.None -> FnFastPath.FastSingleExpr
 
 fn classifyFastForwardSlots(args: List<Expr>, acc: List<Int>) -> Option<List<Int>>

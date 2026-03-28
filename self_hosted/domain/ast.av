@@ -34,7 +34,7 @@ type Expr
     ExprRecord(String, List<(String, Expr)>)
     ExprFieldAccess(Expr, String)
     ExprCall(String, List<Expr>)
-    ExprCallDirect(String, List<Expr>)
+    ExprCallDirect(Int, List<Expr>)
     ExprCallBuiltin(String, List<Expr>)
     ExprMatch(Expr, List<MatchArm>)
     ExprPropagate(Expr)
@@ -77,7 +77,7 @@ type FnFastPath
     FastNone
     FastSingleExpr
     FastLeaf(FastLeaf)
-    FastForwardCall(String, List<Int>)
+    FastForwardCall(Int, List<Int>)
     FastBoolSlotBranch(Int, FastLeaf, FastLeaf)
     FastEqIntBranch(Int, Int, FastLeaf, FastLeaf)
     FastEqStringBranch(Int, String, FastLeaf, FastLeaf)
