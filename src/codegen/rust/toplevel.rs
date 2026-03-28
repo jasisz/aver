@@ -1,7 +1,8 @@
 use super::expr::{
-    aver_name_to_rust, classify_body_plan_for_rust, classify_dispatch_plan_for_rust,
-    classify_thin_fn_def_for_rust, clone_arg, emit_body_plan_for_rust, emit_dispatch_table_match,
-    emit_expr, emit_stmt, thin_body_plan_is_parent_thin_candidate,
+    aver_name_to_rust, classify_body_expr_plan_for_rust, classify_body_plan_for_rust,
+    classify_dispatch_plan_for_rust, classify_thin_fn_def_for_rust, clone_arg,
+    emit_body_plan_for_rust, emit_dispatch_table_match, emit_expr, emit_stmt,
+    thin_body_plan_is_parent_thin_candidate,
 };
 use super::liveness::{
     EmitCtx, collect_vars, compute_args_used_after_with_rc, compute_block_used_after,
@@ -10,6 +11,7 @@ use super::liveness::{
 use super::types::type_annotation_to_rust;
 use crate::ast::*;
 use crate::codegen::{CodegenContext, EmissionStyle};
+use crate::ir::{BodyExprPlan, CallPlan};
 use crate::types::{Type, parse_type_str};
 /// Top-level Aver items → Rust items (structs, enums, functions, tests).
 use std::collections::{HashMap, HashSet};
@@ -858,6 +860,717 @@ fn rc_param_names(params: &[(String, String)], rc_indices: &HashSet<usize>) -> H
         .collect()
 }
 
+#[derive(Debug)]
+struct TcoInvariantHoist<'a> {
+    ptr: usize,
+    temp_name: String,
+    expr: &'a Expr,
+}
+
+fn expr_ptr(expr: &Expr) -> usize {
+    expr as *const Expr as usize
+}
+
+fn passthrough_param_names(
+    params: &[(String, String)],
+    passthrough_indices: &HashSet<usize>,
+) -> HashSet<String> {
+    passthrough_indices
+        .iter()
+        .filter_map(|&i| params.get(i).map(|(name, _)| name.clone()))
+        .collect()
+}
+
+fn lookup_call_effects<'a>(name: &str, ctx: &'a CodegenContext) -> Option<&'a Vec<String>> {
+    if let Some((_, _, effects)) = ctx.fn_sigs.get(name) {
+        return Some(effects);
+    }
+
+    let bare = name.rsplit('.').next().unwrap_or(name);
+    let suffix = format!(".{}", bare);
+    let mut matches = ctx
+        .fn_sigs
+        .iter()
+        .filter_map(|(candidate, (_, _, effects))| {
+            (candidate == name || candidate == bare || candidate.ends_with(&suffix))
+                .then_some(effects)
+        })
+        .collect::<Vec<_>>();
+    if matches.len() == 1 {
+        matches.pop()
+    } else {
+        None
+    }
+}
+
+fn call_plan_is_effect_free(plan: &CallPlan, ctx: &CodegenContext) -> bool {
+    match plan {
+        CallPlan::Dynamic => false,
+        CallPlan::Function(name) | CallPlan::Builtin(name) => {
+            lookup_call_effects(name, ctx).is_some_and(|effects| effects.is_empty())
+        }
+        CallPlan::Wrapper(_) | CallPlan::NoneValue | CallPlan::TypeConstructor { .. } => true,
+    }
+}
+
+fn expr_is_loop_invariant(
+    expr: &Expr,
+    stable_names: &HashSet<String>,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> bool {
+    match expr {
+        Expr::Literal(_) => true,
+        Expr::Ident(name) => stable_names.contains(name),
+        Expr::Resolved(_) | Expr::ErrorProp(_) | Expr::TailCall(_) => false,
+        Expr::Attr(obj, _) => {
+            crate::ir::expr_to_dotted_name(expr)
+                .is_some_and(|dotted| dotted.chars().next().is_some_and(|c| c.is_uppercase()))
+                || expr_is_loop_invariant(obj, stable_names, ctx, ectx)
+        }
+        Expr::FnCall(_, args) => match classify_body_expr_plan_for_rust(expr, ctx, ectx) {
+            BodyExprPlan::Leaf(_) => args
+                .iter()
+                .all(|arg| expr_is_loop_invariant(arg, stable_names, ctx, ectx)),
+            BodyExprPlan::Call { target, args } => {
+                call_plan_is_effect_free(&target, ctx)
+                    && args
+                        .iter()
+                        .all(|arg| expr_is_loop_invariant(arg, stable_names, ctx, ectx))
+            }
+            BodyExprPlan::ForwardCall(plan) => {
+                call_plan_is_effect_free(&plan.target, ctx)
+                    && args
+                        .iter()
+                        .all(|arg| expr_is_loop_invariant(arg, stable_names, ctx, ectx))
+            }
+            BodyExprPlan::Expr(_) => false,
+        },
+        Expr::BinOp(_, left, right) => {
+            expr_is_loop_invariant(left, stable_names, ctx, ectx)
+                && expr_is_loop_invariant(right, stable_names, ctx, ectx)
+        }
+        Expr::Match { subject, arms, .. } => {
+            expr_is_loop_invariant(subject, stable_names, ctx, ectx)
+                && arms
+                    .iter()
+                    .all(|arm| expr_is_loop_invariant(&arm.body, stable_names, ctx, ectx))
+        }
+        Expr::Constructor(_, Some(inner)) => expr_is_loop_invariant(inner, stable_names, ctx, ectx),
+        Expr::Constructor(_, None) => true,
+        Expr::InterpolatedStr(parts) => parts.iter().all(|part| match part {
+            StrPart::Literal(_) => true,
+            StrPart::Parsed(expr) => expr_is_loop_invariant(expr, stable_names, ctx, ectx),
+        }),
+        Expr::List(items) | Expr::Tuple(items) => items
+            .iter()
+            .all(|item| expr_is_loop_invariant(item, stable_names, ctx, ectx)),
+        Expr::MapLiteral(entries) => entries.iter().all(|(key, value)| {
+            expr_is_loop_invariant(key, stable_names, ctx, ectx)
+                && expr_is_loop_invariant(value, stable_names, ctx, ectx)
+        }),
+        Expr::RecordCreate { fields, .. } => fields
+            .iter()
+            .all(|(_, value)| expr_is_loop_invariant(value, stable_names, ctx, ectx)),
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_is_loop_invariant(base, stable_names, ctx, ectx)
+                && updates
+                    .iter()
+                    .all(|(_, value)| expr_is_loop_invariant(value, stable_names, ctx, ectx))
+        }
+    }
+}
+
+fn expr_is_hoistable_invariant(
+    expr: &Expr,
+    stable_names: &HashSet<String>,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> bool {
+    if !expr_is_loop_invariant(expr, stable_names, ctx, ectx) {
+        return false;
+    }
+
+    match classify_body_expr_plan_for_rust(expr, ctx, ectx) {
+        BodyExprPlan::Leaf(_) => true,
+        BodyExprPlan::Call { target, .. } => call_plan_is_effect_free(&target, ctx),
+        BodyExprPlan::ForwardCall(plan) => call_plan_is_effect_free(&plan.target, ctx),
+        BodyExprPlan::Expr(_) => false,
+    }
+}
+
+fn collect_hoistable_invariant_subexprs<'a>(
+    expr: &'a Expr,
+    stable_names: &HashSet<String>,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+    hoists: &mut Vec<TcoInvariantHoist<'a>>,
+    seen: &mut HashSet<usize>,
+    next_idx: &mut usize,
+) {
+    if expr_is_hoistable_invariant(expr, stable_names, ctx, ectx) {
+        let ptr = expr_ptr(expr);
+        if seen.insert(ptr) {
+            hoists.push(TcoInvariantHoist {
+                ptr,
+                temp_name: format!("__aver_inv{}", *next_idx),
+                expr,
+            });
+            *next_idx += 1;
+        }
+        return;
+    }
+
+    match expr {
+        Expr::Attr(obj, _) => collect_hoistable_invariant_subexprs(
+            obj,
+            stable_names,
+            ctx,
+            ectx,
+            hoists,
+            seen,
+            next_idx,
+        ),
+        Expr::FnCall(fn_expr, args) => {
+            collect_hoistable_invariant_subexprs(
+                fn_expr,
+                stable_names,
+                ctx,
+                ectx,
+                hoists,
+                seen,
+                next_idx,
+            );
+            for arg in args {
+                collect_hoistable_invariant_subexprs(
+                    arg,
+                    stable_names,
+                    ctx,
+                    ectx,
+                    hoists,
+                    seen,
+                    next_idx,
+                );
+            }
+        }
+        Expr::BinOp(_, left, right) => {
+            collect_hoistable_invariant_subexprs(
+                left,
+                stable_names,
+                ctx,
+                ectx,
+                hoists,
+                seen,
+                next_idx,
+            );
+            collect_hoistable_invariant_subexprs(
+                right,
+                stable_names,
+                ctx,
+                ectx,
+                hoists,
+                seen,
+                next_idx,
+            );
+        }
+        Expr::Match { subject, arms, .. } => {
+            collect_hoistable_invariant_subexprs(
+                subject,
+                stable_names,
+                ctx,
+                ectx,
+                hoists,
+                seen,
+                next_idx,
+            );
+            for arm in arms {
+                collect_hoistable_invariant_subexprs(
+                    &arm.body,
+                    stable_names,
+                    ctx,
+                    ectx,
+                    hoists,
+                    seen,
+                    next_idx,
+                );
+            }
+        }
+        Expr::Constructor(_, Some(inner)) | Expr::ErrorProp(inner) => {
+            collect_hoistable_invariant_subexprs(
+                inner,
+                stable_names,
+                ctx,
+                ectx,
+                hoists,
+                seen,
+                next_idx,
+            )
+        }
+        Expr::InterpolatedStr(parts) => {
+            for part in parts {
+                if let StrPart::Parsed(expr) = part {
+                    collect_hoistable_invariant_subexprs(
+                        expr,
+                        stable_names,
+                        ctx,
+                        ectx,
+                        hoists,
+                        seen,
+                        next_idx,
+                    );
+                }
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) => {
+            for item in items {
+                collect_hoistable_invariant_subexprs(
+                    item,
+                    stable_names,
+                    ctx,
+                    ectx,
+                    hoists,
+                    seen,
+                    next_idx,
+                );
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (key, value) in entries {
+                collect_hoistable_invariant_subexprs(
+                    key,
+                    stable_names,
+                    ctx,
+                    ectx,
+                    hoists,
+                    seen,
+                    next_idx,
+                );
+                collect_hoistable_invariant_subexprs(
+                    value,
+                    stable_names,
+                    ctx,
+                    ectx,
+                    hoists,
+                    seen,
+                    next_idx,
+                );
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, value) in fields {
+                collect_hoistable_invariant_subexprs(
+                    value,
+                    stable_names,
+                    ctx,
+                    ectx,
+                    hoists,
+                    seen,
+                    next_idx,
+                );
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            collect_hoistable_invariant_subexprs(
+                base,
+                stable_names,
+                ctx,
+                ectx,
+                hoists,
+                seen,
+                next_idx,
+            );
+            for (_, value) in updates {
+                collect_hoistable_invariant_subexprs(
+                    value,
+                    stable_names,
+                    ctx,
+                    ectx,
+                    hoists,
+                    seen,
+                    next_idx,
+                );
+            }
+        }
+        Expr::Literal(_)
+        | Expr::Ident(_)
+        | Expr::Resolved(_)
+        | Expr::Constructor(_, None)
+        | Expr::TailCall(_) => {}
+    }
+}
+
+fn collect_self_tailcall_hoists_in_expr<'a>(
+    expr: &'a Expr,
+    self_name: &str,
+    stable_names: &HashSet<String>,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+    hoists: &mut Vec<TcoInvariantHoist<'a>>,
+    seen: &mut HashSet<usize>,
+    next_idx: &mut usize,
+) {
+    match expr {
+        Expr::TailCall(boxed) => {
+            let (target, args) = boxed.as_ref();
+            if target == self_name {
+                for arg in args {
+                    collect_hoistable_invariant_subexprs(
+                        arg,
+                        stable_names,
+                        ctx,
+                        ectx,
+                        hoists,
+                        seen,
+                        next_idx,
+                    );
+                }
+            } else {
+                for arg in args {
+                    collect_self_tailcall_hoists_in_expr(
+                        arg,
+                        self_name,
+                        stable_names,
+                        ctx,
+                        ectx,
+                        hoists,
+                        seen,
+                        next_idx,
+                    );
+                }
+            }
+        }
+        Expr::Match { subject, arms, .. } => {
+            collect_self_tailcall_hoists_in_expr(
+                subject,
+                self_name,
+                stable_names,
+                ctx,
+                ectx,
+                hoists,
+                seen,
+                next_idx,
+            );
+            for arm in arms {
+                collect_self_tailcall_hoists_in_expr(
+                    &arm.body,
+                    self_name,
+                    stable_names,
+                    ctx,
+                    ectx,
+                    hoists,
+                    seen,
+                    next_idx,
+                );
+            }
+        }
+        Expr::Attr(obj, _) => collect_self_tailcall_hoists_in_expr(
+            obj,
+            self_name,
+            stable_names,
+            ctx,
+            ectx,
+            hoists,
+            seen,
+            next_idx,
+        ),
+        Expr::FnCall(fn_expr, args) => {
+            collect_self_tailcall_hoists_in_expr(
+                fn_expr,
+                self_name,
+                stable_names,
+                ctx,
+                ectx,
+                hoists,
+                seen,
+                next_idx,
+            );
+            for arg in args {
+                collect_self_tailcall_hoists_in_expr(
+                    arg,
+                    self_name,
+                    stable_names,
+                    ctx,
+                    ectx,
+                    hoists,
+                    seen,
+                    next_idx,
+                );
+            }
+        }
+        Expr::BinOp(_, left, right) => {
+            collect_self_tailcall_hoists_in_expr(
+                left,
+                self_name,
+                stable_names,
+                ctx,
+                ectx,
+                hoists,
+                seen,
+                next_idx,
+            );
+            collect_self_tailcall_hoists_in_expr(
+                right,
+                self_name,
+                stable_names,
+                ctx,
+                ectx,
+                hoists,
+                seen,
+                next_idx,
+            );
+        }
+        Expr::Constructor(_, Some(inner)) | Expr::ErrorProp(inner) => {
+            collect_self_tailcall_hoists_in_expr(
+                inner,
+                self_name,
+                stable_names,
+                ctx,
+                ectx,
+                hoists,
+                seen,
+                next_idx,
+            )
+        }
+        Expr::InterpolatedStr(parts) => {
+            for part in parts {
+                if let StrPart::Parsed(expr) = part {
+                    collect_self_tailcall_hoists_in_expr(
+                        expr,
+                        self_name,
+                        stable_names,
+                        ctx,
+                        ectx,
+                        hoists,
+                        seen,
+                        next_idx,
+                    );
+                }
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) => {
+            for item in items {
+                collect_self_tailcall_hoists_in_expr(
+                    item,
+                    self_name,
+                    stable_names,
+                    ctx,
+                    ectx,
+                    hoists,
+                    seen,
+                    next_idx,
+                );
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (key, value) in entries {
+                collect_self_tailcall_hoists_in_expr(
+                    key,
+                    self_name,
+                    stable_names,
+                    ctx,
+                    ectx,
+                    hoists,
+                    seen,
+                    next_idx,
+                );
+                collect_self_tailcall_hoists_in_expr(
+                    value,
+                    self_name,
+                    stable_names,
+                    ctx,
+                    ectx,
+                    hoists,
+                    seen,
+                    next_idx,
+                );
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, value) in fields {
+                collect_self_tailcall_hoists_in_expr(
+                    value,
+                    self_name,
+                    stable_names,
+                    ctx,
+                    ectx,
+                    hoists,
+                    seen,
+                    next_idx,
+                );
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            collect_self_tailcall_hoists_in_expr(
+                base,
+                self_name,
+                stable_names,
+                ctx,
+                ectx,
+                hoists,
+                seen,
+                next_idx,
+            );
+            for (_, value) in updates {
+                collect_self_tailcall_hoists_in_expr(
+                    value,
+                    self_name,
+                    stable_names,
+                    ctx,
+                    ectx,
+                    hoists,
+                    seen,
+                    next_idx,
+                );
+            }
+        }
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) | Expr::Constructor(_, None) => {}
+    }
+}
+
+fn collect_self_tailcall_invariant_hoists<'a>(
+    body: &'a FnBody,
+    self_name: &str,
+    params: &[(String, String)],
+    passthrough_indices: &HashSet<usize>,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> Vec<TcoInvariantHoist<'a>> {
+    let stable_names = passthrough_param_names(params, passthrough_indices);
+    let mut hoists = Vec::new();
+    let mut seen = HashSet::new();
+    let mut next_idx = 0usize;
+
+    for stmt in body.stmts() {
+        match stmt {
+            Stmt::Expr(expr) | Stmt::Binding(_, _, expr) => collect_self_tailcall_hoists_in_expr(
+                expr,
+                self_name,
+                &stable_names,
+                ctx,
+                ectx,
+                &mut hoists,
+                &mut seen,
+                &mut next_idx,
+            ),
+        }
+    }
+
+    hoists
+}
+
+fn rewrite_expr_with_hoists(expr: &Expr, hoisted_exprs: &HashMap<usize, String>) -> Expr {
+    if let Some(name) = hoisted_exprs.get(&expr_ptr(expr)) {
+        return Expr::Ident(name.clone());
+    }
+
+    match expr {
+        Expr::Literal(lit) => Expr::Literal(lit.clone()),
+        Expr::Ident(name) => Expr::Ident(name.clone()),
+        Expr::Resolved(slot) => Expr::Resolved(*slot),
+        Expr::Attr(obj, field) => Expr::Attr(
+            Box::new(rewrite_expr_with_hoists(obj, hoisted_exprs)),
+            field.clone(),
+        ),
+        Expr::FnCall(fn_expr, args) => Expr::FnCall(
+            Box::new(rewrite_expr_with_hoists(fn_expr, hoisted_exprs)),
+            args.iter()
+                .map(|arg| rewrite_expr_with_hoists(arg, hoisted_exprs))
+                .collect(),
+        ),
+        Expr::BinOp(op, left, right) => Expr::BinOp(
+            *op,
+            Box::new(rewrite_expr_with_hoists(left, hoisted_exprs)),
+            Box::new(rewrite_expr_with_hoists(right, hoisted_exprs)),
+        ),
+        Expr::Match {
+            subject,
+            arms,
+            line,
+        } => Expr::Match {
+            subject: Box::new(rewrite_expr_with_hoists(subject, hoisted_exprs)),
+            arms: arms
+                .iter()
+                .map(|arm| MatchArm {
+                    pattern: arm.pattern.clone(),
+                    body: Box::new(rewrite_expr_with_hoists(&arm.body, hoisted_exprs)),
+                })
+                .collect(),
+            line: *line,
+        },
+        Expr::Constructor(name, inner) => Expr::Constructor(
+            name.clone(),
+            inner
+                .as_ref()
+                .map(|expr| Box::new(rewrite_expr_with_hoists(expr, hoisted_exprs))),
+        ),
+        Expr::ErrorProp(inner) => {
+            Expr::ErrorProp(Box::new(rewrite_expr_with_hoists(inner, hoisted_exprs)))
+        }
+        Expr::InterpolatedStr(parts) => Expr::InterpolatedStr(
+            parts
+                .iter()
+                .map(|part| match part {
+                    StrPart::Literal(text) => StrPart::Literal(text.clone()),
+                    StrPart::Parsed(expr) => {
+                        StrPart::Parsed(Box::new(rewrite_expr_with_hoists(expr, hoisted_exprs)))
+                    }
+                })
+                .collect(),
+        ),
+        Expr::List(items) => Expr::List(
+            items
+                .iter()
+                .map(|item| rewrite_expr_with_hoists(item, hoisted_exprs))
+                .collect(),
+        ),
+        Expr::Tuple(items) => Expr::Tuple(
+            items
+                .iter()
+                .map(|item| rewrite_expr_with_hoists(item, hoisted_exprs))
+                .collect(),
+        ),
+        Expr::MapLiteral(entries) => Expr::MapLiteral(
+            entries
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        rewrite_expr_with_hoists(key, hoisted_exprs),
+                        rewrite_expr_with_hoists(value, hoisted_exprs),
+                    )
+                })
+                .collect(),
+        ),
+        Expr::RecordCreate { type_name, fields } => Expr::RecordCreate {
+            type_name: type_name.clone(),
+            fields: fields
+                .iter()
+                .map(|(name, value)| (name.clone(), rewrite_expr_with_hoists(value, hoisted_exprs)))
+                .collect(),
+        },
+        Expr::RecordUpdate {
+            type_name,
+            base,
+            updates,
+        } => Expr::RecordUpdate {
+            type_name: type_name.clone(),
+            base: Box::new(rewrite_expr_with_hoists(base, hoisted_exprs)),
+            updates: updates
+                .iter()
+                .map(|(name, value)| (name.clone(), rewrite_expr_with_hoists(value, hoisted_exprs)))
+                .collect(),
+        },
+        Expr::TailCall(boxed) => {
+            let (target, args) = boxed.as_ref();
+            Expr::TailCall(Box::new((
+                target.clone(),
+                args.iter()
+                    .map(|arg| rewrite_expr_with_hoists(arg, hoisted_exprs))
+                    .collect(),
+            )))
+        }
+    }
+}
+
 /// Emit a function with TCO → loop rewrite.
 fn emit_tco_fn(
     fd: &FnDef,
@@ -876,6 +1589,18 @@ fn emit_tco_fn(
     } else {
         ectx.with_rc_wrapped(rc_names)
     };
+    let invariant_hoists = collect_self_tailcall_invariant_hoists(
+        &fd.body,
+        &fd.name,
+        &fd.params,
+        &passthrough_indices,
+        ctx,
+        &ectx,
+    );
+    let hoisted_exprs: HashMap<usize, String> = invariant_hoists
+        .iter()
+        .map(|hoist| (hoist.ptr, hoist.temp_name.clone()))
+        .collect();
 
     // All params keep their original types in the public signature.
     // Non-Rc params are mutable (for rebinding in tail calls); Rc params don't need mut
@@ -899,6 +1624,14 @@ fn emit_tco_fn(
         let _ = rust_type;
     }
 
+    for hoist in &invariant_hoists {
+        lines.push(format!(
+            "    let {} = {};",
+            hoist.temp_name,
+            emit_expr(hoist.expr, ctx, &ectx)
+        ));
+    }
+
     lines.push("    loop {".to_string());
 
     // Emit body with TailCall → { reassign; continue }
@@ -910,6 +1643,7 @@ fn emit_tco_fn(
         &ectx,
         &rc_indices,
         &passthrough_indices,
+        &hoisted_exprs,
     );
     lines.push(body_code);
 
@@ -926,6 +1660,7 @@ fn emit_tco_body(
     ectx: &EmitCtx,
     rc_indices: &HashSet<usize>,
     passthrough_indices: &HashSet<usize>,
+    hoisted_exprs: &HashMap<usize, String>,
 ) -> String {
     let stmts = body.stmts();
     let stmt_ctxs = compute_block_used_after_with_rc(
@@ -958,6 +1693,7 @@ fn emit_tco_body(
                             sctx,
                             rc_indices,
                             passthrough_indices,
+                            hoisted_exprs,
                         )
                     ));
                 } else {
@@ -978,6 +1714,7 @@ fn try_emit_tco_bool_if_else(
     ectx: &EmitCtx,
     rc_indices: &HashSet<usize>,
     passthrough_indices: &HashSet<usize>,
+    hoisted_exprs: &HashMap<usize, String>,
 ) -> Option<String> {
     if arms.len() != 2 {
         return None;
@@ -999,6 +1736,7 @@ fn try_emit_tco_bool_if_else(
         ectx,
         rc_indices,
         passthrough_indices,
+        hoisted_exprs,
     );
     let f = emit_tco_expr(
         false_body,
@@ -1008,6 +1746,7 @@ fn try_emit_tco_bool_if_else(
         ectx,
         rc_indices,
         passthrough_indices,
+        hoisted_exprs,
     );
     Some(format!("if {} {{ {} }} else {{ {} }}", subj, t, f))
 }
@@ -1020,6 +1759,7 @@ fn emit_tco_expr(
     ectx: &EmitCtx,
     rc_indices: &HashSet<usize>,
     passthrough_indices: &HashSet<usize>,
+    hoisted_exprs: &HashMap<usize, String>,
 ) -> String {
     match expr {
         Expr::TailCall(boxed) => {
@@ -1030,13 +1770,18 @@ fn emit_tco_expr(
 
             // Self TCO — create temp vars, then reassign.
             // Skip Rc-wrapped params (they're pass-through, never rebound).
+            let rewritten_args = args
+                .iter()
+                .map(|arg| rewrite_expr_with_hoists(arg, hoisted_exprs))
+                .collect::<Vec<_>>();
+            let hoisted_names = hoisted_exprs.values().cloned().collect::<HashSet<_>>();
             let arg_ctxs = compute_args_used_after_with_rc(
-                args,
-                &std::collections::HashSet::new(),
+                &rewritten_args,
+                &hoisted_names,
                 &ectx.local_types,
                 &ectx.rc_wrapped,
             );
-            let arg_strs: Vec<String> = args
+            let arg_strs: Vec<String> = rewritten_args
                 .iter()
                 .zip(arg_ctxs.iter())
                 .map(|(a, ac)| clone_arg(a, ctx, ac))
@@ -1094,6 +1839,7 @@ fn emit_tco_expr(
                     ectx,
                     rc_indices,
                     passthrough_indices,
+                    hoisted_exprs,
                 )
             {
                 return code;
@@ -1116,6 +1862,7 @@ fn emit_tco_expr(
                             ectx,
                             rc_indices,
                             passthrough_indices,
+                            hoisted_exprs,
                         )
                     },
                 );
@@ -1131,6 +1878,7 @@ fn emit_tco_expr(
                         ectx,
                         rc_indices,
                         passthrough_indices,
+                        hoisted_exprs,
                     )
                 });
             }
@@ -1152,6 +1900,7 @@ fn emit_tco_expr(
                     ectx,
                     rc_indices,
                     passthrough_indices,
+                    hoisted_exprs,
                 );
                 let mut rebinding_lines: Vec<String> = Vec::new();
                 if let Pattern::Cons(head, tail) = &arm.pattern {
@@ -1974,6 +2723,7 @@ mod tests {
             &ectx,
             &HashSet::new(),
             &passthrough,
+            &HashMap::new(),
         );
         assert!(!code.contains("let __tmp0 = xs.clone();"));
         assert!(code.contains("let __tmp1 = (remaining - 1i64);"));
@@ -2026,6 +2776,7 @@ mod tests {
             &ectx,
             &HashSet::new(),
             &passthrough,
+            &HashMap::new(),
         );
         assert!(!code.contains("let __tmp0 = a.clone();"));
         assert!(!code.contains("let __tmp1 = b.clone();"));
@@ -2051,6 +2802,7 @@ mod tests {
             &ectx,
             &HashSet::new(),
             &passthrough,
+            &HashMap::new(),
         );
         assert_eq!(code, "validSymbolList(e)");
         assert!(!code.contains("continue"));
@@ -2090,10 +2842,117 @@ mod tests {
             &ectx,
             &HashSet::new(),
             &passthrough,
+            &HashMap::new(),
         );
         assert!(!code.contains("let __tmp2 = pick;"));
         assert!(!code.contains("pick = __tmp2;"));
         assert!(code.contains("continue;"));
+    }
+
+    #[test]
+    fn optimized_tco_hoists_invariant_pure_call_chain_over_passthrough_param() {
+        let helper_tag = FnDef {
+            name: "tag".to_string(),
+            line: 1,
+            params: vec![("pick".to_string(), "Int".to_string())],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(Expr::Match {
+                subject: Box::new(Expr::Ident("pick".to_string())),
+                arms: vec![
+                    MatchArm {
+                        pattern: Pattern::Literal(Literal::Int(1)),
+                        body: Box::new(Expr::Literal(Literal::Int(10))),
+                    },
+                    MatchArm {
+                        pattern: Pattern::Wildcard,
+                        body: Box::new(Expr::Literal(Literal::Int(20))),
+                    },
+                ],
+                line: 1,
+            })),
+            resolution: None,
+        };
+        let helper_score = FnDef {
+            name: "score".to_string(),
+            line: 1,
+            params: vec![("x".to_string(), "Int".to_string())],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(Expr::BinOp(
+                BinOp::Add,
+                Box::new(Expr::Ident("x".to_string())),
+                Box::new(Expr::Literal(Literal::Int(1))),
+            ))),
+            resolution: None,
+        };
+        let fd = FnDef {
+            name: "sumAreas".to_string(),
+            line: 1,
+            params: vec![
+                ("n".to_string(), "Int".to_string()),
+                ("acc".to_string(), "Int".to_string()),
+                ("pick".to_string(), "Int".to_string()),
+            ],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(Expr::Match {
+                subject: Box::new(Expr::Ident("n".to_string())),
+                arms: vec![
+                    MatchArm {
+                        pattern: Pattern::Literal(Literal::Int(0)),
+                        body: Box::new(Expr::Ident("acc".to_string())),
+                    },
+                    MatchArm {
+                        pattern: Pattern::Wildcard,
+                        body: Box::new(Expr::TailCall(Box::new((
+                            "sumAreas".to_string(),
+                            vec![
+                                Expr::BinOp(
+                                    BinOp::Sub,
+                                    Box::new(Expr::Ident("n".to_string())),
+                                    Box::new(Expr::Literal(Literal::Int(1))),
+                                ),
+                                Expr::BinOp(
+                                    BinOp::Add,
+                                    Box::new(Expr::Ident("acc".to_string())),
+                                    Box::new(Expr::FnCall(
+                                        Box::new(Expr::Ident("score".to_string())),
+                                        vec![Expr::FnCall(
+                                            Box::new(Expr::Ident("tag".to_string())),
+                                            vec![Expr::Ident("pick".to_string())],
+                                        )],
+                                    )),
+                                ),
+                                Expr::Ident("pick".to_string()),
+                            ],
+                        )))),
+                    },
+                ],
+                line: 1,
+            })),
+            resolution: None,
+        };
+
+        let mut ctx = empty_ctx();
+        ctx.emission_style = EmissionStyle::Optimized;
+        ctx.fn_defs = vec![helper_tag.clone(), helper_score.clone(), fd.clone()];
+        ctx.fn_sigs
+            .insert("tag".to_string(), (vec![Type::Int], Type::Int, vec![]));
+        ctx.fn_sigs
+            .insert("score".to_string(), (vec![Type::Int], Type::Int, vec![]));
+        ctx.fn_sigs.insert(
+            "sumAreas".to_string(),
+            (vec![Type::Int, Type::Int, Type::Int], Type::Int, vec![]),
+        );
+
+        let emitted = emit_public_fn_def(&fd, false, &ctx);
+        assert!(emitted.contains("let __aver_inv0 = score(tag(pick));"));
+        assert!(emitted.contains("let __tmp1 = (acc + &__aver_inv0);"));
+        assert!(!emitted.contains("pick = __tmp2;"));
     }
 
     #[test]

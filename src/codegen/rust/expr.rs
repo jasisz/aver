@@ -11,9 +11,10 @@ use crate::ir::{
     DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan, DispatchLiteral, DispatchTableShape,
     ForwardArg, ForwardCallPlan, LeafOp, ListMatchShape, MatchDispatchPlan, SemanticConstructor,
     SemanticDispatchPattern, TailCallPlan, ThinBodyCtx, ThinBodyPlan, ThinKind, WrapperKind,
-    classify_body_plan, classify_bool_subject_plan, classify_call_plan, classify_constructor_name,
-    classify_leaf_op, classify_list_match_shape, classify_match_dispatch_plan,
-    classify_tail_call_plan, classify_thin_fn_def, is_builtin_namespace,
+    classify_body_expr_plan, classify_body_plan, classify_bool_subject_plan, classify_call_plan,
+    classify_constructor_name, classify_leaf_op, classify_list_match_shape,
+    classify_match_dispatch_plan, classify_tail_call_plan, classify_thin_fn_def,
+    is_builtin_namespace,
 };
 use crate::types::Type;
 /// Aver expressions → Rust expression strings.
@@ -86,6 +87,15 @@ pub(super) fn classify_body_plan_for_rust<'a>(
 ) -> Option<BodyPlan<'a>> {
     let lower_ctx = RustCallCtx { ctx, ectx };
     classify_body_plan(body, &lower_ctx)
+}
+
+pub(super) fn classify_body_expr_plan_for_rust<'a>(
+    expr: &'a Expr,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> BodyExprPlan<'a> {
+    let lower_ctx = RustCallCtx { ctx, ectx };
+    classify_body_expr_plan(expr, &lower_ctx)
 }
 
 pub(super) fn classify_thin_fn_def_for_rust<'a>(
