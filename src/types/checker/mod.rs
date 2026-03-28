@@ -47,6 +47,8 @@ pub struct TypeCheckResult {
     pub fn_sigs: HashMap<String, (Vec<Type>, Type, Vec<String>)>,
     /// Set of type names whose values are memo-safe (hashable scalars / records of scalars).
     pub memo_safe_types: HashSet<String>,
+    /// Unused binding warnings: (binding_name, fn_name, line).
+    pub unused_bindings: Vec<(String, String, usize)>,
 }
 
 pub fn run_type_check(items: &[TopLevel]) -> Vec<TypeError> {
@@ -80,6 +82,7 @@ pub fn run_type_check_full(items: &[TopLevel], base_dir: Option<&str>) -> TypeCh
         errors: checker.errors,
         fn_sigs,
         memo_safe_types,
+        unused_bindings: checker.unused_warnings,
     }
 }
 
@@ -125,6 +128,12 @@ struct TypeChecker {
     current_fn_line: Option<usize>,
     /// Type names that are opaque in this module's context (imported via `exposes opaque`).
     opaque_types: HashSet<String>,
+    /// Names referenced during type checking of current function body (for unused detection).
+    used_names: HashSet<String>,
+    /// Bindings defined in the current function body: (name, line).
+    fn_bindings: Vec<(String, usize)>,
+    /// Unused binding warnings collected during checking: (binding_name, fn_name, line).
+    unused_warnings: Vec<(String, String, usize)>,
 }
 
 impl TypeChecker {
@@ -151,6 +160,9 @@ impl TypeChecker {
             current_fn_ret: None,
             current_fn_line: None,
             opaque_types: HashSet::new(),
+            used_names: HashSet::new(),
+            fn_bindings: Vec::new(),
+            unused_warnings: Vec::new(),
         };
         tc.register_builtins();
         tc

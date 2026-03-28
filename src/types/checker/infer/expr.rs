@@ -92,6 +92,7 @@ impl TypeChecker {
             }
 
             Expr::Ident(name) => {
+                self.used_names.insert(name.clone());
                 if let Some(ty) = self.locals.get(name) {
                     ty.clone()
                 } else if let Some(sig) = self.fn_sigs.get(name) {

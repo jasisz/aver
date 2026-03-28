@@ -1557,6 +1557,18 @@ fn run_check_for_file(file: &str, module_root: &str, deps: bool) -> Result<bool,
             println!("  {}", format!("error[{}]: {}", te.line, te.message).red());
         }
 
+        // --- Unused binding warnings ---
+        for (binding_name, fn_name, line) in &tc_result.unused_bindings {
+            println!(
+                "  {}",
+                format!(
+                    "warning[{}]: Unused binding '{}' in function '{}'",
+                    line, binding_name, fn_name
+                )
+                .yellow()
+            );
+        }
+
         // Check line count
         if line_count > 500 {
             println!(

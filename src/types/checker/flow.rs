@@ -99,6 +99,10 @@ impl TypeChecker {
 
             self.current_fn_ret = Some(declared_ret.clone());
 
+            // Clear unused-binding tracking for this function.
+            self.used_names.clear();
+            self.fn_bindings.clear();
+
             let last_type = self.check_stmts(f.body.stmts(), &f.name, &declared_effects);
             if !Self::constraint_compatible(&last_type, &declared_ret) {
                 self.error(format!(
@@ -107,6 +111,17 @@ impl TypeChecker {
                     last_type.display(),
                     declared_ret.display()
                 ));
+            }
+
+            // Detect unused bindings (skip names starting with '_').
+            for (binding_name, binding_line) in &self.fn_bindings {
+                if !binding_name.starts_with('_') && !self.used_names.contains(binding_name) {
+                    self.unused_warnings.push((
+                        binding_name.clone(),
+                        f.name.clone(),
+                        *binding_line,
+                    ));
+                }
             }
 
             self.current_fn_ret = None;
@@ -309,6 +324,9 @@ impl TypeChecker {
                         };
                         self.check_effects_in_expr(expr, fn_name, caller_effects);
                         self.locals.insert(name.clone(), ty);
+                        // Track binding for unused detection.
+                        let line = self.current_fn_line.unwrap_or(1);
+                        self.fn_bindings.push((name.clone(), line));
                     }
                     last = Type::Unit;
                 }
