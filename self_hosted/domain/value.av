@@ -21,7 +21,7 @@ type Val
     ValNone
     ValTuple(List<Val>)
     ValRecord(String, List<(String, Val)>)
-    ValVariant(String, String, List<Val>)
+    ValVariant(Int, String, List<Val>)
     ValMap(Map<String, Val>)
     ValUnit
 
@@ -55,7 +55,7 @@ fn valRepr(v: Val) -> String
         Val.ValNone -> "Option.None"
         Val.ValRecord(name, _) -> "{name}(...)"
         Val.ValMap(m) -> valMapRepr(Map.entries(m), "", true)
-        Val.ValVariant(typeName, ctorName, fields) -> valVariantRepr(typeName, ctorName, fields)
+        Val.ValVariant(_, fullName, fields) -> valVariantReprTagged(fullName, fields)
         Val.ValUnit -> "()"
 
 verify valRepr
@@ -71,7 +71,7 @@ verify valRepr
     valRepr(Val.ValTuple([Val.ValInt(1), Val.ValInt(2)])) => "(1, 2)"
     valRepr(Val.ValFloat(3.14)) => "3.14"
     valRepr(Val.ValRecord("User", [("name", Val.ValStr("Alice"))])) => "User(...)"
-    valRepr(Val.ValVariant("Token", "TkPlus", [])) => "Token.TkPlus"
+    valRepr(Val.ValVariant(0, "Token.TkPlus", [])) => "Token.TkPlus"
 
 fn valReprInner(v: Val) -> String
     ? "Display representation for nested values. Strings are quoted inside containers and wrappers."
@@ -110,15 +110,15 @@ verify mapKeyRepr
     mapKeyRepr(Val.ValStr("hello")) => "hello"
     mapKeyRepr(Val.ValBool(true)) => "true"
 
-fn valVariantRepr(typeName: String, ctorName: String, fields: List<Val>) -> String
-    ? "Display a variant value."
+fn valVariantReprTagged(fullName: String, fields: List<Val>) -> String
+    ? "Display a variant value using its full name."
     match fields
-        [] -> "{typeName}.{ctorName}"
-        _ -> "{typeName}.{ctorName}({valFieldsRepr(fields, "", true)})"
+        [] -> fullName
+        _ -> "{fullName}({valFieldsRepr(fields, "", true)})"
 
-verify valVariantRepr
-    valVariantRepr("Token", "TkPlus", []) => "Token.TkPlus"
-    valVariantRepr("Expr", "ExprInt", [Val.ValInt(5)]) => "Expr.ExprInt(5)"
+verify valVariantReprTagged
+    valVariantReprTagged("Token.TkPlus", []) => "Token.TkPlus"
+    valVariantReprTagged("Expr.ExprInt", [Val.ValInt(5)]) => "Expr.ExprInt(5)"
 
 fn valFieldsRepr(items: List<Val>, acc: String, first: Bool) -> String
     ? "Build comma-separated repr of variant fields."

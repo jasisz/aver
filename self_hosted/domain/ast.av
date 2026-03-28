@@ -2,7 +2,7 @@ module Ast
     intent =
         "AST node types for the mini Aver interpreter."
         "Covers: literals, binops, comparisons, variables, bindings, function defs/calls, match."
-    exposes [Expr, MatchArm, Pattern, Stmt, FnDef, Program, BinOp, CmpOp, FnFastPath, FastLeaf]
+    exposes [Expr, MatchArm, Pattern, Stmt, FnDef, Program, BinOp, CmpOp, FnFastPath, FastLeaf, tagResultOk, tagResultErr, tagOptionSome, tagOptionNone, tagUserBase, ctorNameToTag]
 
 type Expr
     ExprInt(Int)
@@ -52,6 +52,7 @@ type Pattern
     PatEmpty
     PatCons(String, String)
     PatConstructor(String, List<String>)
+    PatConstructorId(Int, List<String>)
     PatTuple(List<Pattern>)
     PatWild
     PatVar(String)
@@ -111,3 +112,39 @@ type CmpOp
     CmpGt
     CmpLte
     CmpGte
+
+fn tagResultOk() -> Int
+    ? "Tag ID for Result.Ok constructor."
+    1
+
+fn tagResultErr() -> Int
+    ? "Tag ID for Result.Err constructor."
+    2
+
+fn tagOptionSome() -> Int
+    ? "Tag ID for Option.Some constructor."
+    3
+
+fn tagOptionNone() -> Int
+    ? "Tag ID for Option.None constructor."
+    4
+
+fn tagUserBase() -> Int
+    ? "Base tag ID for user-defined constructors. User tags start from this value."
+    100
+
+fn ctorNameToTag(name: String) -> Int
+    ? "Map well-known constructor names to their fixed tag IDs. Returns 0 for unknown names."
+    match name
+        "Result.Ok" -> tagResultOk()
+        "Result.Err" -> tagResultErr()
+        "Option.Some" -> tagOptionSome()
+        "Option.None" -> tagOptionNone()
+        _ -> 0
+
+verify ctorNameToTag
+    ctorNameToTag("Result.Ok") => 1
+    ctorNameToTag("Result.Err") => 2
+    ctorNameToTag("Option.Some") => 3
+    ctorNameToTag("Option.None") => 4
+    ctorNameToTag("Shape.Circle") => 0

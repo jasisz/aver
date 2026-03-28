@@ -10,12 +10,11 @@ fn evalVarFallback(name: String, fns: FnStore) -> Result<Val, String>
     match Domain.Eval.Store.lookupFnOption(fns, name)
         Option.Some(fd) -> Result.Ok(Val.ValFnRef(fd.name))
         Option.None -> match Domain.Builtins.splitDotted(name)
-            Option.Some(pair) -> match pair
-                (typeName, ctorName) -> Result.Ok(Val.ValVariant(typeName, ctorName, []))
+            Option.Some(_) -> Result.Ok(Val.ValVariant(Domain.Ast.ctorNameToTag(name), name, []))
             Option.None -> Result.Err("undefined variable: {name}")
 
 verify evalVarFallback
-    evalVarFallback("Token.TkPlus", Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValVariant("Token", "TkPlus", []))
+    evalVarFallback("Token.TkPlus", Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValVariant(0, "Token.TkPlus", []))
     evalVarFallback("xyz", Domain.Eval.Store.emptyFnStore()) => Result.Err("undefined variable: xyz")
 
 fn propagationPrefix() -> String

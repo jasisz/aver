@@ -523,14 +523,13 @@ fn builtinDiskListDir(args: List<Val>) -> Result<Val, String>
         Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn tryVariantConstructor(name: String, args: List<Val>) -> Result<Val, String>
-    ? "Try to construct a variant value from a dotted name like Type.Ctor."
+    ? "Try to construct a variant value from a dotted name like Type.Ctor. Uses tag ID for known constructors, 0 for unknown."
     match splitDotted(name)
-        Option.Some(pair) -> match pair
-            (typeName, ctorName) -> Result.Ok(Val.ValVariant(typeName, ctorName, args))
+        Option.Some(_) -> Result.Ok(Val.ValVariant(Domain.Ast.ctorNameToTag(name), name, args))
         Option.None -> Result.Err("undefined function: {name}")
 
 verify tryVariantConstructor
-    tryVariantConstructor("Shape.Circle", [Val.ValInt(5)]) => Result.Ok(Val.ValVariant("Shape", "Circle", [Val.ValInt(5)]))
+    tryVariantConstructor("Shape.Circle", [Val.ValInt(5)]) => Result.Ok(Val.ValVariant(0, "Shape.Circle", [Val.ValInt(5)]))
     tryVariantConstructor("noDot", []) => Result.Err("undefined function: noDot")
 
 fn splitDotted(name: String) -> Option<(String, String)>
