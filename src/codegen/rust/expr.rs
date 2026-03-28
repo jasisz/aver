@@ -74,12 +74,15 @@ pub(super) fn classify_body_plan_for_rust<'a>(
 }
 
 pub(super) fn body_plan_is_inline_candidate(plan: &BodyPlan<'_>) -> bool {
-    matches!(
-        plan,
-        BodyPlan::SingleExpr(
-            BodyExprPlan::Leaf(_) | BodyExprPlan::Call { .. } | BodyExprPlan::ForwardCall(_)
-        )
-    )
+    match plan {
+        BodyPlan::SingleExpr(expr) => body_expr_plan_is_inline_candidate(expr),
+        BodyPlan::Block { bindings, tail, .. } => {
+            bindings
+                .iter()
+                .all(|binding| body_expr_plan_is_inline_candidate(&binding.expr))
+                && body_expr_plan_is_inline_candidate(tail)
+        }
+    }
 }
 
 /// Emit a Rust expression from an Aver Expr.
@@ -329,14 +332,45 @@ pub(super) fn emit_body_plan_for_rust(
     ectx: &EmitCtx,
 ) -> String {
     match plan {
-        BodyPlan::SingleExpr(body_expr) => match body_expr {
-            BodyExprPlan::Expr(expr) => emit_expr(expr, ctx, ectx),
-            BodyExprPlan::Leaf(leaf) => emit_leaf_op(*leaf, ctx, ectx),
-            BodyExprPlan::Call { target, args } => {
-                emit_call_plan_with_args(target, args, ctx, ectx)
+        BodyPlan::SingleExpr(body_expr) => emit_body_expr_plan(body_expr, ctx, ectx),
+        BodyPlan::Block {
+            stmts,
+            bindings,
+            tail,
+        } => {
+            let stmt_ctxs = super::liveness::compute_block_used_after(
+                stmts,
+                &ectx.used_after,
+                &ectx.local_types,
+            );
+            let mut lines = Vec::with_capacity(stmts.len());
+            for (binding, sctx) in bindings.iter().zip(stmt_ctxs.iter()) {
+                lines.push(format!(
+                    "let {} = {};",
+                    aver_name_to_rust(binding.name),
+                    emit_body_expr_plan(&binding.expr, ctx, sctx)
+                ));
             }
-            BodyExprPlan::ForwardCall(plan) => emit_forward_call_plan(plan, ctx, ectx),
-        },
+            let tail_ctx = stmt_ctxs.last().unwrap_or(ectx);
+            lines.push(emit_body_expr_plan(tail, ctx, tail_ctx));
+            lines.join("\n    ")
+        }
+    }
+}
+
+fn body_expr_plan_is_inline_candidate(plan: &BodyExprPlan<'_>) -> bool {
+    matches!(
+        plan,
+        BodyExprPlan::Leaf(_) | BodyExprPlan::Call { .. } | BodyExprPlan::ForwardCall(_)
+    )
+}
+
+fn emit_body_expr_plan(plan: &BodyExprPlan<'_>, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
+    match plan {
+        BodyExprPlan::Expr(expr) => emit_expr(expr, ctx, ectx),
+        BodyExprPlan::Leaf(leaf) => emit_leaf_op(*leaf, ctx, ectx),
+        BodyExprPlan::Call { target, args } => emit_call_plan_with_args(target, args, ctx, ectx),
+        BodyExprPlan::ForwardCall(plan) => emit_forward_call_plan(plan, ctx, ectx),
     }
 }
 

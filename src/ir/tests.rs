@@ -1,9 +1,9 @@
 use super::{
-    BodyExprPlan, BodyPlan, BoolCompareOp, BoolMatchShape, BoolSubjectPlan, CallLowerCtx, CallPlan,
-    DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan, DispatchLiteral, DispatchTableShape,
-    ForwardArg, ForwardCallPlan, LeafOp, ListMatchShape, MatchDispatchPlan, SemanticConstructor,
-    SemanticDispatchPattern, TailCallPlan, WrapperKind, classify_body_plan,
-    classify_bool_match_shape, classify_bool_subject_plan, classify_call_plan,
+    BodyBindingPlan, BodyExprPlan, BodyPlan, BoolCompareOp, BoolMatchShape, BoolSubjectPlan,
+    CallLowerCtx, CallPlan, DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan,
+    DispatchLiteral, DispatchTableShape, ForwardArg, ForwardCallPlan, LeafOp, ListMatchShape,
+    MatchDispatchPlan, SemanticConstructor, SemanticDispatchPattern, TailCallPlan, WrapperKind,
+    classify_body_plan, classify_bool_match_shape, classify_bool_subject_plan, classify_call_plan,
     classify_constructor_name, classify_dispatch_pattern, classify_forward_call_plan,
     classify_forward_fn_body, classify_leaf_op, classify_list_match_shape,
     classify_match_dispatch_plan, classify_tail_call_plan, expr_to_dotted_name,
@@ -415,7 +415,28 @@ fn classify_body_plan_for_single_expr_leaf_and_rejects_blocks() {
         Stmt::Binding("x".to_string(), None, Expr::Literal(Literal::Int(1))),
         Stmt::Expr(Expr::Ident("x".to_string())),
     ]);
-    assert_eq!(classify_body_plan(&structured, &LocalCtx), None);
+    assert!(matches!(
+        classify_body_plan(&structured, &LocalCtx),
+        Some(BodyPlan::Block {
+            bindings,
+            tail: BodyExprPlan::Expr(Expr::Ident(name)),
+            ..
+        }) if bindings.len() == 1
+            && matches!(
+                &bindings[0],
+                BodyBindingPlan {
+                    name: "x",
+                    expr: BodyExprPlan::Expr(Expr::Literal(Literal::Int(1))),
+                }
+            )
+            && name == "x"
+    ));
+
+    let invalid = FnBody::Block(vec![
+        Stmt::Expr(Expr::Literal(Literal::Int(1))),
+        Stmt::Expr(Expr::Literal(Literal::Int(2))),
+    ]);
+    assert_eq!(classify_body_plan(&invalid, &LocalCtx), None);
 }
 
 #[test]

@@ -8,8 +8,9 @@ use super::{
 /// Minimal body-level semantic IR shared across backends.
 ///
 /// This first slice is intentionally narrow: it only recognizes single-expression
-/// function bodies. That is enough to start driving backend emission from a
-/// body plan instead of re-discovering call/leaf structure inside each emitter.
+/// function bodies and simple binding blocks ending in a tail expression.
+/// That is enough to start driving backend emission from a body plan instead of
+/// re-discovering call/leaf structure inside each emitter.
 #[derive(Debug, Clone, PartialEq)]
 pub enum BodyExprPlan<'a> {
     Expr(&'a Expr),
@@ -19,8 +20,19 @@ pub enum BodyExprPlan<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct BodyBindingPlan<'a> {
+    pub name: &'a str,
+    pub expr: BodyExprPlan<'a>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum BodyPlan<'a> {
     SingleExpr(BodyExprPlan<'a>),
+    Block {
+        stmts: &'a [Stmt],
+        bindings: Vec<BodyBindingPlan<'a>>,
+        tail: BodyExprPlan<'a>,
+    },
 }
 
 pub fn classify_body_expr_plan<'a>(expr: &'a Expr, ctx: &impl CallLowerCtx) -> BodyExprPlan<'a> {
@@ -43,8 +55,35 @@ pub fn classify_body_expr_plan<'a>(expr: &'a Expr, ctx: &impl CallLowerCtx) -> B
 }
 
 pub fn classify_body_plan<'a>(body: &'a FnBody, ctx: &impl CallLowerCtx) -> Option<BodyPlan<'a>> {
-    let [Stmt::Expr(expr)] = body.stmts() else {
+    let stmts = body.stmts();
+    let Some((tail_stmt, prefix)) = stmts.split_last() else {
         return None;
     };
-    Some(BodyPlan::SingleExpr(classify_body_expr_plan(expr, ctx)))
+
+    let Stmt::Expr(tail_expr) = tail_stmt else {
+        return None;
+    };
+
+    if prefix.is_empty() {
+        return Some(BodyPlan::SingleExpr(classify_body_expr_plan(
+            tail_expr, ctx,
+        )));
+    }
+
+    let mut bindings = Vec::with_capacity(prefix.len());
+    for stmt in prefix {
+        let Stmt::Binding(name, _type_ann, expr) = stmt else {
+            return None;
+        };
+        bindings.push(BodyBindingPlan {
+            name,
+            expr: classify_body_expr_plan(expr, ctx),
+        });
+    }
+
+    Some(BodyPlan::Block {
+        stmts,
+        bindings,
+        tail: classify_body_expr_plan(tail_expr, ctx),
+    })
 }

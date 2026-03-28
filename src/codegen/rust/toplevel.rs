@@ -2358,4 +2358,82 @@ mod tests {
         );
         assert!(optimized.contains("grid.get(idx as usize).cloned().unwrap_or(0i64)"));
     }
+
+    #[test]
+    fn optimized_binding_block_uses_body_plan_and_gets_inline_always() {
+        let fd = FnDef {
+            name: "cellAtPlusOne".to_string(),
+            line: 1,
+            params: vec![
+                ("grid".to_string(), "Vector<Int>".to_string()),
+                ("idx".to_string(), "Int".to_string()),
+            ],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::Block(vec![
+                Stmt::Binding(
+                    "cell".to_string(),
+                    None,
+                    Expr::FnCall(
+                        Box::new(Expr::Attr(
+                            Box::new(Expr::Ident("Option".to_string())),
+                            "withDefault".to_string(),
+                        )),
+                        vec![
+                            Expr::FnCall(
+                                Box::new(Expr::Attr(
+                                    Box::new(Expr::Ident("Vector".to_string())),
+                                    "get".to_string(),
+                                )),
+                                vec![
+                                    Expr::Ident("grid".to_string()),
+                                    Expr::Ident("idx".to_string()),
+                                ],
+                            ),
+                            Expr::Literal(Literal::Int(0)),
+                        ],
+                    ),
+                ),
+                Stmt::Expr(Expr::FnCall(
+                    Box::new(Expr::Attr(
+                        Box::new(Expr::Ident("Int".to_string())),
+                        "max".to_string(),
+                    )),
+                    vec![
+                        Expr::Ident("cell".to_string()),
+                        Expr::Literal(Literal::Int(1)),
+                    ],
+                )),
+            ])),
+            resolution: None,
+        };
+
+        let mut semantic_ctx = empty_ctx();
+        semantic_ctx.fn_sigs.insert(
+            "cellAtPlusOne".to_string(),
+            (
+                vec![Type::Vector(Box::new(Type::Int)), Type::Int],
+                Type::Int,
+                vec![],
+            ),
+        );
+        let semantic = emit_public_fn_def(&fd, false, &semantic_ctx);
+        assert!(!semantic.contains("#[inline(always)]"));
+
+        let mut optimized_ctx = empty_ctx();
+        optimized_ctx.emission_style = EmissionStyle::Optimized;
+        optimized_ctx.fn_sigs.insert(
+            "cellAtPlusOne".to_string(),
+            (
+                vec![Type::Vector(Box::new(Type::Int)), Type::Int],
+                Type::Int,
+                vec![],
+            ),
+        );
+        let optimized = emit_public_fn_def(&fd, false, &optimized_ctx);
+        assert!(optimized.contains("#[inline(always)]"));
+        assert!(optimized.contains("let cell = grid.get(idx as usize).cloned().unwrap_or(0i64);"));
+        assert!(optimized.contains("cell.max(1i64)"));
+    }
 }

@@ -3,7 +3,9 @@ mod calls;
 mod leaf;
 mod matches;
 
-pub use body::{BodyExprPlan, BodyPlan, classify_body_expr_plan, classify_body_plan};
+pub use body::{
+    BodyBindingPlan, BodyExprPlan, BodyPlan, classify_body_expr_plan, classify_body_plan,
+};
 pub use calls::{
     CallLowerCtx, CallPlan, ForwardArg, ForwardCallPlan, SemanticCallee, SemanticConstructor,
     TailCallPlan, WrapperKind, classify_call_plan, classify_callee, classify_constructor_name,
