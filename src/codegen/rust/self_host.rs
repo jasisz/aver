@@ -44,7 +44,7 @@ where
     F: FnOnce() -> T,
 {
     let all_fns = crate::aver_rt::AverList::concat(&module_fns, &local_fns);
-    let fns = fnsToStore(all_fns);
+    let fns = fnsToStore(&all_fns);
     with_fn_store(fns, run)
 }
 
@@ -105,7 +105,8 @@ fn dispatch_http_handler(
     }
     callback_args.push(http_request_to_val(request));
 
-    match callResolved(fd, crate::aver_rt::AverList::from_vec(callback_args), fns) {
+    let args_list = crate::aver_rt::AverList::from_vec(callback_args);
+    match callResolved(fd, &args_list, fns) {
         Ok(value) => match val_to_http_response(value) {
             Ok(resp) => resp,
             Err(err) => http_error_response(err.to_string()),

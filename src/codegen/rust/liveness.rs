@@ -16,6 +16,8 @@ pub struct EmitCtx {
     pub local_types: HashMap<String, Type>,
     /// Parameters passed as `&T` borrows (pass-through TCO optimization).
     pub rc_wrapped: HashSet<String>,
+    /// Parameters emitted as `&T` borrows (borrow-by-default for non-Copy, non-Str params).
+    pub borrowed_params: HashSet<String>,
 }
 
 impl EmitCtx {
@@ -25,15 +27,33 @@ impl EmitCtx {
             used_after: HashSet::new(),
             local_types: HashMap::new(),
             rc_wrapped: HashSet::new(),
+            borrowed_params: HashSet::new(),
         }
     }
 
     /// Build context for a function with known parameter types.
+    /// Automatically computes `borrowed_params` from param types.
     pub fn for_fn(param_types: HashMap<String, Type>) -> Self {
+        let borrowed_params = param_types
+            .iter()
+            .filter(|(_, ty)| should_borrow_param(ty))
+            .map(|(name, _)| name.clone())
+            .collect();
         EmitCtx {
             used_after: HashSet::new(),
             local_types: param_types,
             rc_wrapped: HashSet::new(),
+            borrowed_params,
+        }
+    }
+
+    /// Build context for a function WITHOUT borrow-by-default (e.g. TCO, memo).
+    pub fn for_fn_no_borrow(param_types: HashMap<String, Type>) -> Self {
+        EmitCtx {
+            used_after: HashSet::new(),
+            local_types: param_types,
+            rc_wrapped: HashSet::new(),
+            borrowed_params: HashSet::new(),
         }
     }
 
@@ -52,8 +72,12 @@ impl EmitCtx {
     /// True if it's Copy OR if it's last-use (can move).
     /// Pass-through params (Rc-wrapped in self-TCO, or `&T` in mutual-TCO trampoline)
     /// always need `(*param).clone()` to produce owned T, never skip.
+    /// Borrowed params (`&T`) also never skip — they always need explicit handling.
     pub fn skip_clone(&self, name: &str) -> bool {
         if self.rc_wrapped.contains(name) {
+            return false;
+        }
+        if self.borrowed_params.contains(name) {
             return false;
         }
         self.is_copy(name) || self.can_move(name)
@@ -64,6 +88,11 @@ impl EmitCtx {
         self.rc_wrapped.contains(name)
     }
 
+    /// Is this variable a borrowed parameter (`&T` from borrow-by-default)?
+    pub fn is_borrowed_param(&self, name: &str) -> bool {
+        self.borrowed_params.contains(name)
+    }
+
     /// Create a child context with additional used_after variables.
     pub fn with_used_after(&self, extra: &HashSet<String>) -> Self {
         let mut ua = self.used_after.clone();
@@ -72,15 +101,17 @@ impl EmitCtx {
             used_after: ua,
             local_types: self.local_types.clone(),
             rc_wrapped: self.rc_wrapped.clone(),
+            borrowed_params: self.borrowed_params.clone(),
         }
     }
 
-    /// Create a context with specified borrowed (`&T`) parameters.
+    /// Create a context with specified borrowed (`&T`) parameters (TCO pass-through).
     pub fn with_rc_wrapped(&self, rc: HashSet<String>) -> Self {
         EmitCtx {
             used_after: self.used_after.clone(),
             local_types: self.local_types.clone(),
             rc_wrapped: rc,
+            borrowed_params: self.borrowed_params.clone(),
         }
     }
 }
@@ -88,6 +119,23 @@ impl EmitCtx {
 /// Is a Type Copy in Rust? (Int, Float, Bool, Unit)
 pub fn is_copy_type(ty: &Type) -> bool {
     matches!(ty, Type::Int | Type::Float | Type::Bool | Type::Unit)
+}
+
+/// Should this type be passed by borrow (`&T`) in user function parameters?
+/// Should this param be borrowed (`&T`) instead of owned?
+/// Copy types pass by value. Str (AverStr = Rc<str>) is cheap to clone.
+/// Named types (user enums/records) have Rc recursive fields — clone is O(1).
+/// Only container types (HashMap, AverList, AverVector, tuples of non-Copy) benefit.
+pub fn should_borrow_param(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Map(_, _)
+            | Type::List(_)
+            | Type::Vector(_)
+            | Type::Result(_, _)
+            | Type::Option(_)
+            | Type::Tuple(_)
+    )
 }
 
 /// Collect all variable names referenced in an expression.
@@ -226,15 +274,38 @@ pub fn compute_block_used_after(
     parent_used_after: &HashSet<String>,
     local_types: &HashMap<String, Type>,
 ) -> Vec<EmitCtx> {
-    compute_block_used_after_with_rc(stmts, parent_used_after, local_types, &HashSet::new())
+    compute_block_used_after_full(
+        stmts,
+        parent_used_after,
+        local_types,
+        &HashSet::new(),
+        &HashSet::new(),
+    )
 }
 
-/// Like `compute_block_used_after` but propagates `rc_wrapped` to child contexts.
+/// Like `compute_block_used_after` but propagates `rc_wrapped` and `borrowed_params` to child contexts.
 pub fn compute_block_used_after_with_rc(
     stmts: &[Stmt],
     parent_used_after: &HashSet<String>,
     local_types: &HashMap<String, Type>,
     rc_wrapped: &HashSet<String>,
+) -> Vec<EmitCtx> {
+    compute_block_used_after_full(
+        stmts,
+        parent_used_after,
+        local_types,
+        rc_wrapped,
+        &HashSet::new(),
+    )
+}
+
+/// Full version that propagates all context fields including `borrowed_params`.
+pub fn compute_block_used_after_full(
+    stmts: &[Stmt],
+    parent_used_after: &HashSet<String>,
+    local_types: &HashMap<String, Type>,
+    rc_wrapped: &HashSet<String>,
+    borrowed_params: &HashSet<String>,
 ) -> Vec<EmitCtx> {
     let n = stmts.len();
     let mut result = vec![EmitCtx::empty(); n];
@@ -246,6 +317,7 @@ pub fn compute_block_used_after_with_rc(
             used_after: suffix_vars.clone(),
             local_types: local_types.clone(),
             rc_wrapped: rc_wrapped.clone(),
+            borrowed_params: borrowed_params.clone(),
         };
         // Add vars from this statement to suffix for the next one (going backwards)
         let stmt_vars = collect_vars_stmt(&stmts[i]);
@@ -260,12 +332,30 @@ pub fn compute_block_used_after_with_rc(
     result
 }
 
-/// Like `compute_args_used_after` but propagates `rc_wrapped` to child contexts.
+/// Like `compute_args_used_after` but propagates `rc_wrapped` and `borrowed_params` to child contexts.
+#[cfg(test)]
 pub fn compute_args_used_after_with_rc(
     args: &[Expr],
     parent_used_after: &HashSet<String>,
     local_types: &HashMap<String, Type>,
     rc_wrapped: &HashSet<String>,
+) -> Vec<EmitCtx> {
+    compute_args_used_after_full(
+        args,
+        parent_used_after,
+        local_types,
+        rc_wrapped,
+        &HashSet::new(),
+    )
+}
+
+/// Full version that propagates all context fields including `borrowed_params`.
+pub fn compute_args_used_after_full(
+    args: &[Expr],
+    parent_used_after: &HashSet<String>,
+    local_types: &HashMap<String, Type>,
+    rc_wrapped: &HashSet<String>,
+    borrowed_params: &HashSet<String>,
 ) -> Vec<EmitCtx> {
     let n = args.len();
     let mut result = vec![EmitCtx::empty(); n];
@@ -276,6 +366,7 @@ pub fn compute_args_used_after_with_rc(
             used_after: suffix_vars.clone(),
             local_types: local_types.clone(),
             rc_wrapped: rc_wrapped.clone(),
+            borrowed_params: borrowed_params.clone(),
         };
         let arg_vars = collect_vars(&args[i]);
         suffix_vars.extend(arg_vars);
@@ -360,6 +451,7 @@ mod tests {
             used_after: HashSet::from(["n".to_string(), "s".to_string()]),
             local_types: lt,
             rc_wrapped: HashSet::new(),
+            borrowed_params: HashSet::new(),
         };
         // n is i64 (Copy) — skip clone even though it's used after
         assert!(ectx.skip_clone("n"));
@@ -375,6 +467,7 @@ mod tests {
             used_after: HashSet::new(), // s NOT in used_after
             local_types: lt,
             rc_wrapped: HashSet::new(),
+            borrowed_params: HashSet::new(),
         };
         // s is last use — skip clone
         assert!(ectx.skip_clone("s"));

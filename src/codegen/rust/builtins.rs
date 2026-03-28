@@ -1,5 +1,5 @@
 use super::expr::{clone_arg, emit_expr};
-use super::liveness::{EmitCtx, compute_args_used_after_with_rc};
+use super::liveness::{EmitCtx, compute_args_used_after_full};
 /// Mapping of Aver builtin/namespace functions to Rust equivalents.
 use crate::ast::Expr;
 use crate::codegen::CodegenContext;
@@ -193,11 +193,12 @@ fn emit_replay_effect_call(
     ectx: &EmitCtx,
 ) -> Option<String> {
     let effect_name = builtin_effect_name(name);
-    let arg_ctxs = compute_args_used_after_with_rc(
+    let arg_ctxs = compute_args_used_after_full(
         args,
         &ectx.used_after,
         &ectx.local_types,
         &ectx.rc_wrapped,
+        &ectx.borrowed_params,
     );
     let temp_names = (0..args.len())
         .map(|idx| format!("__effect_arg{}", idx))
@@ -266,11 +267,12 @@ pub fn emit_builtin_call(
     }
 
     let result = emit_builtin_call_inner(name, args, ctx, ectx)?;
-    let arg_ctxs = compute_args_used_after_with_rc(
+    let arg_ctxs = compute_args_used_after_full(
         args,
         &ectx.used_after,
         &ectx.local_types,
         &ectx.rc_wrapped,
+        &ectx.borrowed_params,
     );
 
     // Convert String-returning builtins to AverStr.
@@ -314,11 +316,12 @@ fn emit_builtin_call_inner(
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> Option<String> {
-    let arg_ctxs = compute_args_used_after_with_rc(
+    let arg_ctxs = compute_args_used_after_full(
         args,
         &ectx.used_after,
         &ectx.local_types,
         &ectx.rc_wrapped,
+        &ectx.borrowed_params,
     );
     let emit_arg = |idx: usize| emit_expr(&args[idx], ctx, &arg_ctxs[idx]);
 

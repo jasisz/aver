@@ -1,5 +1,5 @@
 use super::builtins;
-use super::liveness::{EmitCtx, collect_vars, compute_args_used_after_with_rc};
+use super::liveness::{EmitCtx, collect_vars, compute_args_used_after_full, should_borrow_param};
 use super::pattern::emit_pattern;
 use crate::ast::*;
 use crate::codegen::common::{
@@ -234,11 +234,12 @@ fn emit_expr_with_options(
             if elements.is_empty() {
                 "aver_rt::AverList::empty()".to_string()
             } else {
-                let elem_ctxs = compute_args_used_after_with_rc(
+                let elem_ctxs = compute_args_used_after_full(
                     elements,
                     &ectx.used_after,
                     &ectx.local_types,
                     &ectx.rc_wrapped,
+                    &ectx.borrowed_params,
                 );
                 let parts: Vec<String> = elements
                     .iter()
@@ -249,11 +250,12 @@ fn emit_expr_with_options(
             }
         }
         Expr::Tuple(items) => {
-            let item_ctxs = compute_args_used_after_with_rc(
+            let item_ctxs = compute_args_used_after_full(
                 items,
                 &ectx.used_after,
                 &ectx.local_types,
                 &ectx.rc_wrapped,
+                &ectx.borrowed_params,
             );
             let parts: Vec<String> = items
                 .iter()
@@ -270,11 +272,12 @@ fn emit_expr_with_options(
                     .iter()
                     .flat_map(|(k, v)| [k.clone(), v.clone()])
                     .collect();
-                let flat_ctxs = compute_args_used_after_with_rc(
+                let flat_ctxs = compute_args_used_after_full(
                     &flat_exprs,
                     &ectx.used_after,
                     &ectx.local_types,
                     &ectx.rc_wrapped,
+                    &ectx.borrowed_params,
                 );
                 let mut parts = Vec::new();
                 for (idx, (k, v)) in entries.iter().enumerate() {
@@ -299,11 +302,12 @@ fn emit_expr_with_options(
                 type_name
             };
             let field_exprs: Vec<Expr> = fields.iter().map(|(_, e)| e.clone()).collect();
-            let field_ctxs = compute_args_used_after_with_rc(
+            let field_ctxs = compute_args_used_after_full(
                 &field_exprs,
                 &ectx.used_after,
                 &ectx.local_types,
                 &ectx.rc_wrapped,
+                &ectx.borrowed_params,
             );
             let parts: Vec<String> = fields
                 .iter()
@@ -330,11 +334,12 @@ fn emit_expr_with_options(
             };
             let base_str = clone_arg(base, ctx, ectx);
             let update_exprs: Vec<Expr> = updates.iter().map(|(_, e)| e.clone()).collect();
-            let update_ctxs = compute_args_used_after_with_rc(
+            let update_ctxs = compute_args_used_after_full(
                 &update_exprs,
                 &ectx.used_after,
                 &ectx.local_types,
                 &ectx.rc_wrapped,
+                &ectx.borrowed_params,
             );
             let parts: Vec<String> = updates
                 .iter()
@@ -389,10 +394,12 @@ fn emit_body_plan_for_rust_with_options(
             bindings,
             tail,
         } => {
-            let stmt_ctxs = super::liveness::compute_block_used_after(
+            let stmt_ctxs = super::liveness::compute_block_used_after_full(
                 stmts,
                 &ectx.used_after,
                 &ectx.local_types,
+                &ectx.rc_wrapped,
+                &ectx.borrowed_params,
             );
             let mut lines = Vec::with_capacity(stmts.len());
             for (binding, sctx) in bindings.iter().zip(stmt_ctxs.iter()) {
@@ -478,11 +485,12 @@ fn emit_fn_call_with_options(
     match plan {
         CallPlan::Dynamic => {
             let func = emit_expr_with_options(fn_expr, ctx, ectx, allow_callsite_inlining);
-            let arg_ctxs = compute_args_used_after_with_rc(
+            let arg_ctxs = compute_args_used_after_full(
                 args,
                 &ectx.used_after,
                 &ectx.local_types,
                 &ectx.rc_wrapped,
+                &ectx.borrowed_params,
             );
             let arg_strs: Vec<String> = args
                 .iter()
@@ -613,11 +621,12 @@ fn emit_leaf_op_with_options(
             value,
         } => {
             let inner_args = vec![vector.clone(), index.clone(), value.clone()];
-            let arg_ctxs = compute_args_used_after_with_rc(
+            let arg_ctxs = compute_args_used_after_full(
                 &inner_args,
                 &ectx.used_after,
                 &ectx.local_types,
                 &ectx.rc_wrapped,
+                &ectx.borrowed_params,
             );
             let vector = clone_arg_with_options(vector, ctx, &arg_ctxs[0], allow_callsite_inlining);
             let index = emit_expr_with_options(index, ctx, &arg_ctxs[1], allow_callsite_inlining);
@@ -633,11 +642,12 @@ fn emit_leaf_op_with_options(
             default_literal,
         } => {
             let inner_args = vec![vector.clone(), index.clone()];
-            let arg_ctxs = compute_args_used_after_with_rc(
+            let arg_ctxs = compute_args_used_after_full(
                 &inner_args,
                 &ectx.used_after,
                 &ectx.local_types,
                 &ectx.rc_wrapped,
+                &ectx.borrowed_params,
             );
             let vector = emit_expr_with_options(vector, ctx, &arg_ctxs[0], allow_callsite_inlining);
             let index = emit_expr_with_options(index, ctx, &arg_ctxs[1], allow_callsite_inlining);
@@ -666,22 +676,172 @@ fn emit_leaf_builtin_call_with_options(
     })
 }
 
+/// Check if a FnDef has self-tailcall (TCO) in its body.
+/// Returns true only if the function has self-recursive tail calls and NO mutual tail calls.
+/// Mutual-TCO functions get wrapper functions with `&T` params, so they should use borrow.
+fn fn_def_has_only_self_tco(fd: &FnDef) -> bool {
+    let has_self = fn_def_has_tco(fd);
+    if !has_self {
+        return false;
+    }
+    // Check if there are tail calls to OTHER functions (mutual TCO)
+    !fn_def_has_mutual_tco(fd)
+}
+
+fn fn_def_has_mutual_tco(fd: &FnDef) -> bool {
+    fn expr_has_other_tailcall(expr: &Expr, fn_name: &str) -> bool {
+        match expr {
+            Expr::TailCall(boxed) => boxed.as_ref().0 != fn_name,
+            Expr::Match { arms, .. } => arms
+                .iter()
+                .any(|arm| expr_has_other_tailcall(&arm.body, fn_name)),
+            _ => false,
+        }
+    }
+    fd.body.stmts().iter().any(|s| match s {
+        Stmt::Expr(e) => expr_has_other_tailcall(e, &fd.name),
+        Stmt::Binding(_, _, e) => expr_has_other_tailcall(e, &fd.name),
+    })
+}
+
+fn fn_def_has_tco(fd: &FnDef) -> bool {
+    fn expr_has_self_tailcall(expr: &Expr, fn_name: &str) -> bool {
+        match expr {
+            Expr::TailCall(boxed) => boxed.as_ref().0 == fn_name,
+            Expr::Match { arms, .. } => arms
+                .iter()
+                .any(|arm| expr_has_self_tailcall(&arm.body, fn_name)),
+            _ => false,
+        }
+    }
+    fd.body.stmts().iter().any(|s| match s {
+        Stmt::Expr(e) => expr_has_self_tailcall(e, &fd.name),
+        Stmt::Binding(_, _, e) => expr_has_self_tailcall(e, &fd.name),
+    })
+}
+
+/// Check if a FnDef has any tail call (self or mutual), meaning it participates in TCO.
+fn fn_def_has_any_tailcall(fd: &FnDef) -> bool {
+    fn expr_has_tailcall(expr: &Expr) -> bool {
+        match expr {
+            Expr::TailCall(_) => true,
+            Expr::Match { arms, .. } => arms.iter().any(|arm| expr_has_tailcall(&arm.body)),
+            _ => false,
+        }
+    }
+    fd.body.stmts().iter().any(|s| match s {
+        Stmt::Expr(e) => expr_has_tailcall(e),
+        Stmt::Binding(_, _, e) => expr_has_tailcall(e),
+    })
+}
+
+/// Compute borrow mask from a FnDef, checking for TCO.
+/// Self-TCO functions use `mut T` params, not `&T`, so their borrow mask is all-false.
+/// Mutual-TCO functions have public wrappers with `&T`, so they DO use borrow-by-default.
+fn borrow_mask_from_fn_def(fd: &FnDef, arg_count: usize) -> Vec<bool> {
+    // Self-TCO functions use `mut T` params (loop rebinding), skip borrow.
+    // Mutual-TCO functions have wrapper functions with `&T` params, so borrow applies.
+    // Distinguish: self-TCO = TailCall to SELF only. Mutual = TailCall to OTHERS.
+    if fn_def_has_only_self_tco(fd) {
+        return vec![false; arg_count];
+    }
+    fd.params
+        .iter()
+        .take(arg_count)
+        .map(|(_, type_ann)| {
+            let ty = crate::types::parse_type_str(type_ann);
+            should_borrow_param(&ty)
+        })
+        .collect()
+}
+
+/// Look up whether the callee's i-th parameter is borrowed (`&T`).
+/// Returns a Vec of booleans, one per parameter, indicating borrow status.
+/// Uses fn_sigs first, falls back to FnDef type annotations from the AST.
+/// TCO functions (self or mutual) never use borrow-by-default.
+fn callee_borrow_mask(name: &str, arg_count: usize, ctx: &CodegenContext) -> Vec<bool> {
+    // First, try to find the FnDef to check for TCO (which overrides everything)
+    let fd = find_fn_def_by_name(name, ctx);
+    if let Some(fd) = fd {
+        return borrow_mask_from_fn_def(fd, arg_count);
+    }
+
+    // No FnDef found, try fn_sigs (type-checker resolved types)
+    let lookup_name = if let Some((prefix, bare)) = resolve_module_call(name, ctx) {
+        format!("{}.{}", prefix, bare)
+    } else {
+        name.to_string()
+    };
+
+    if let Some((param_types, _, _)) = ctx
+        .fn_sigs
+        .get(&lookup_name)
+        .or_else(|| ctx.fn_sigs.get(name))
+    {
+        return param_types
+            .iter()
+            .take(arg_count)
+            .map(|ty| should_borrow_param(ty))
+            .collect();
+    }
+
+    // Unknown function -- don't borrow (conservative)
+    vec![false; arg_count]
+}
+
+/// Find a FnDef by name, checking top-level, modules (qualified), and all modules (unqualified).
+fn find_fn_def_by_name<'a>(name: &str, ctx: &'a CodegenContext) -> Option<&'a FnDef> {
+    // Check top-level fn_defs
+    if let Some(fd) = ctx.fn_defs.iter().find(|fd| fd.name == name) {
+        return Some(fd);
+    }
+
+    // Check module fn_defs for qualified calls
+    if let Some((prefix, bare)) = resolve_module_call(name, ctx) {
+        for module in &ctx.modules {
+            if module.prefix == prefix {
+                if let Some(fd) = module.fn_defs.iter().find(|fd| fd.name == bare) {
+                    return Some(fd);
+                }
+            }
+        }
+    }
+
+    // Check all module fn_defs for unqualified calls (same-module calls)
+    for module in &ctx.modules {
+        if let Some(fd) = module.fn_defs.iter().find(|fd| fd.name == name) {
+            return Some(fd);
+        }
+    }
+
+    None
+}
+
 fn emit_named_function_call(
     name: &str,
     args: &[Expr],
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> String {
-    let arg_ctxs = compute_args_used_after_with_rc(
+    let arg_ctxs = compute_args_used_after_full(
         args,
         &ectx.used_after,
         &ectx.local_types,
         &ectx.rc_wrapped,
+        &ectx.borrowed_params,
     );
+    let borrow_mask = callee_borrow_mask(name, args.len(), ctx);
     let arg_strs: Vec<String> = args
         .iter()
+        .enumerate()
         .zip(arg_ctxs.iter())
-        .map(|(a, ac)| clone_arg(a, ctx, ac))
+        .map(|((i, a), ac)| {
+            if borrow_mask.get(i).copied().unwrap_or(false) {
+                borrow_arg(a, ctx, ac)
+            } else {
+                clone_arg(a, ctx, ac)
+            }
+        })
         .collect();
 
     if let Some((prefix, bare)) = resolve_module_call(name, ctx) {
@@ -704,11 +864,12 @@ fn emit_type_constructor_call(
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> String {
-    let arg_ctxs = compute_args_used_after_with_rc(
+    let arg_ctxs = compute_args_used_after_full(
         args,
         &ectx.used_after,
         &ectx.local_types,
         &ectx.rc_wrapped,
+        &ectx.borrowed_params,
     );
     let ctor_name = format!("{}.{}", qualified_type_name, variant_name);
     let boxed_positions = constructor_boxed_positions(&ctor_name, ctx);
@@ -747,6 +908,9 @@ fn emit_type_constructor_call(
 
 /// Clone a value if it's a variable reference (to avoid move issues in generated Rust).
 /// Literals and complex expressions don't need cloning.
+///
+/// For borrowed params (`&T` from borrow-by-default), the default behavior is to
+/// produce an owned clone. Call sites for user functions override this via `borrow_arg`.
 pub(super) fn maybe_clone(code: String, expr: &Expr, ectx: &EmitCtx) -> String {
     match expr {
         Expr::Ident(name) => {
@@ -758,6 +922,10 @@ pub(super) fn maybe_clone(code: String, expr: &Expr, ectx: &EmitCtx) -> String {
                 // For &T: `(*param).clone()` derefs borrow then clones inner T.
                 // Both produce owned T at the call site.
                 format!("(*{}).clone()", code)
+            } else if ectx.is_borrowed_param(name) {
+                // Borrowed param: clone to produce owned T (e.g. for return position,
+                // constructors, wrappers). User function calls use `borrow_arg` instead.
+                format!("{}.clone()", code)
             } else {
                 format!("{}.clone()", code)
             }
@@ -769,6 +937,55 @@ pub(super) fn maybe_clone(code: String, expr: &Expr, ectx: &EmitCtx) -> String {
         // Adding another .clone() here would produce obj.field.clone().clone().
         Expr::Attr(_, _) => code,
         _ => code,
+    }
+}
+
+/// Emit an expression as a borrow for passing to a user function that takes `&T`.
+/// For borrowed params: pass directly (already `&T`).
+/// For owned locals: pass `&x`.
+/// For Copy types: pass by value (no borrow needed).
+/// For AverStr: pass by value (cheap clone).
+pub(super) fn borrow_arg(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
+    let code = emit_expr(expr, ctx, ectx);
+    match expr {
+        Expr::Ident(name) => {
+            if ectx.is_copy(name) {
+                // Copy type: pass by value
+                code
+            } else if ectx
+                .local_types
+                .get(name)
+                .is_some_and(|ty| matches!(ty, Type::Str))
+            {
+                // AverStr (Rc<str>): pass by value (cheap clone if needed)
+                if ectx.can_move(name) || ectx.is_rc_wrapped(name) {
+                    // If it's rc_wrapped, the outer code already handles deref
+                    if ectx.is_rc_wrapped(name) {
+                        format!("(*{}).clone()", code)
+                    } else {
+                        code
+                    }
+                } else {
+                    format!("{}.clone()", code)
+                }
+            } else if ectx.is_borrowed_param(name) {
+                // Already `&T` — pass directly
+                code
+            } else if ectx.is_rc_wrapped(name) {
+                // Pass-through TCO param (Rc<T> or &T): deref to get &T
+                format!("&*{}", code)
+            } else {
+                // Owned local: borrow it
+                format!("&{}", code)
+            }
+        }
+        _ => {
+            // Complex expression: emit and borrow the result.
+            // Check if the expression type needs borrowing by looking at what
+            // the callee expects. For complex expressions, we produce a temporary
+            // and borrow it.
+            format!("&{}", code)
+        }
     }
 }
 
@@ -948,7 +1165,7 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
             _ => None,
         };
         return emit_list_match(subj, arms, list_shape, optimized, ctx, |arm| {
-            emit_expr(&arm.body, ctx, ectx)
+            maybe_clone(emit_expr(&arm.body, ctx, ectx), &arm.body, ectx)
         });
     }
 

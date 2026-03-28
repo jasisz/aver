@@ -5,8 +5,9 @@ use super::expr::{
     thin_body_plan_is_parent_thin_candidate,
 };
 use super::liveness::{
-    EmitCtx, collect_vars, compute_args_used_after_with_rc, compute_block_used_after,
-    compute_block_used_after_with_rc, is_copy_type,
+    EmitCtx, collect_vars, compute_args_used_after_full, compute_block_used_after,
+    compute_block_used_after_full, compute_block_used_after_with_rc, is_copy_type,
+    should_borrow_param,
 };
 use super::types::type_annotation_to_rust;
 use crate::ast::*;
@@ -332,8 +333,8 @@ fn emit_product_type(
     out.trim_end().to_string()
 }
 
-/// Build an EmitCtx for a function from its parameter types in fn_sigs.
-fn build_fn_ectx(fd: &FnDef, ctx: &CodegenContext) -> EmitCtx {
+/// Collect local_types from function signature or annotations.
+fn collect_fn_local_types(fd: &FnDef, ctx: &CodegenContext) -> HashMap<String, Type> {
     let mut local_types = HashMap::new();
     if let Some((param_types, _, _)) = ctx.fn_sigs.get(&fd.name) {
         for (i, (name, _)) in fd.params.iter().enumerate() {
@@ -348,7 +349,19 @@ fn build_fn_ectx(fd: &FnDef, ctx: &CodegenContext) -> EmitCtx {
             local_types.insert(name.clone(), ty);
         }
     }
-    EmitCtx::for_fn(local_types)
+    local_types
+}
+
+/// Build an EmitCtx for a function from its parameter types in fn_sigs.
+/// Uses borrow-by-default: non-Copy, non-Str params are tracked as borrowed.
+fn build_fn_ectx(fd: &FnDef, ctx: &CodegenContext) -> EmitCtx {
+    EmitCtx::for_fn(collect_fn_local_types(fd, ctx))
+}
+
+/// Build an EmitCtx for a function WITHOUT borrow-by-default.
+/// Used for TCO and memo functions where params need to be owned/mutable.
+fn build_fn_ectx_no_borrow(fd: &FnDef, ctx: &CodegenContext) -> EmitCtx {
+    EmitCtx::for_fn_no_borrow(collect_fn_local_types(fd, ctx))
 }
 
 /// Emit a Rust function from an Aver FnDef.
@@ -388,9 +401,17 @@ fn emit_fn_def_with_visibility(
     let fn_name = aver_name_to_rust(&fd.name);
     let visibility = visibility_prefix(public);
 
-    let ectx = build_fn_ectx(fd, ctx);
     let use_memo = is_memo && fn_supports_rust_memo(fd, ctx);
     let is_guest_entry = ctx.guest_entry.as_deref() == Some(fd.name.as_str());
+
+    // TCO functions need owned/mutable params, no borrow-by-default.
+    // Memo and normal functions use borrow-by-default for non-Copy, non-Str params.
+    let ectx = if has_tco {
+        build_fn_ectx_no_borrow(fd, ctx)
+    } else {
+        build_fn_ectx(fd, ctx)
+    };
+
     let guest_args_name = if is_guest_entry {
         guest_args_param(fd)
     } else {
@@ -432,9 +453,18 @@ fn emit_fn_def_with_visibility(
         if ctx.emit_replay_runtime {
             match &guest_args_name {
                 Some(guest_args) => {
+                    // If the guest_args param is borrowed (&T), it's already a reference
+                    let is_borrowed = ectx.is_borrowed_param(
+                        &fd.params
+                            .iter()
+                            .find(|(n, _)| aver_name_to_rust(n) == *guest_args)
+                            .map(|(n, _)| n.clone())
+                            .unwrap_or_default(),
+                    );
+                    let ref_prefix = if is_borrowed { "" } else { "&" };
                     lines.push(format!(
-                        "    let __replay_input = aver_replay::ReplayValue::to_replay_json(&{});",
-                        guest_args
+                        "    let __replay_input = aver_replay::ReplayValue::to_replay_json({}{});",
+                        ref_prefix, guest_args
                     ));
                     if fd.return_type.starts_with("Result<") {
                         lines.push(format!(
@@ -453,8 +483,11 @@ fn emit_fn_def_with_visibility(
                         .params
                         .iter()
                         .map(|(name, _)| {
+                            let is_borrowed = ectx.is_borrowed_param(name);
+                            let ref_prefix = if is_borrowed { "" } else { "&" };
                             format!(
-                                "aver_replay::ReplayValue::to_replay_json(&{})",
+                                "aver_replay::ReplayValue::to_replay_json({}{})",
+                                ref_prefix,
                                 aver_name_to_rust(name)
                             )
                         })
@@ -545,7 +578,13 @@ fn emit_fn_params_with_rc(
             } else if mutable {
                 format!("mut {}: {}", rust_name, rust_type)
             } else {
-                format!("{}: {}", rust_name, rust_type)
+                // Borrow-by-default: non-Copy, non-Str params are `&T`
+                let ty = parse_type_str(type_ann);
+                if should_borrow_param(&ty) {
+                    format!("{}: &{}", rust_name, rust_type)
+                } else {
+                    format!("{}: {}", rust_name, rust_type)
+                }
             }
         })
         .collect::<Vec<_>>()
@@ -560,8 +599,14 @@ fn emit_fn_body(body: &FnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     }
 
     let stmts = body.stmts();
-    // Compute per-statement used_after sets
-    let stmt_ctxs = compute_block_used_after(stmts, &ectx.used_after, &ectx.local_types);
+    // Compute per-statement used_after sets, propagating borrowed_params
+    let stmt_ctxs = compute_block_used_after_full(
+        stmts,
+        &ectx.used_after,
+        &ectx.local_types,
+        &ectx.rc_wrapped,
+        &ectx.borrowed_params,
+    );
     let mut lines = Vec::new();
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last = i == stmts.len() - 1;
@@ -1777,11 +1822,12 @@ fn emit_tco_expr(
                 .map(|arg| rewrite_expr_with_hoists(arg, hoisted_exprs))
                 .collect::<Vec<_>>();
             let hoisted_names = hoisted_exprs.values().cloned().collect::<HashSet<_>>();
-            let arg_ctxs = compute_args_used_after_with_rc(
+            let arg_ctxs = compute_args_used_after_full(
                 &rewritten_args,
                 &hoisted_names,
                 &ectx.local_types,
                 &ectx.rc_wrapped,
+                &ectx.borrowed_params,
             );
             let arg_strs: Vec<String> = rewritten_args
                 .iter()
@@ -2084,7 +2130,8 @@ pub fn emit_mutual_tco_block(
         };
         tramp_lines.push(format!("            {} => {{", binding));
 
-        let ectx = build_fn_ectx(fd, ctx);
+        // Trampoline params are `mut T`, no borrow-by-default
+        let ectx = build_fn_ectx_no_borrow(fd, ctx);
         let ectx = if rc_names.is_empty() {
             ectx
         } else {
@@ -2102,17 +2149,27 @@ pub fn emit_mutual_tco_block(
     tramp_lines.push("}".to_string());
     sections.push(tramp_lines.join("\n"));
 
-    // 3. Wrapper functions — accept owned T, pass &T to trampoline
+    // 3. Wrapper functions — accept `&T` (borrow-by-default), clone into enum variant
     for fd in group_fns {
         let fn_name = aver_name_to_rust(&fd.name);
         let variant = fn_name_to_variant(&fd.name);
         let params = emit_fn_params(&fd.params, false);
-        // Enum variant args: only non-borrowed params
+        // Enum variant args: only non-rc-wrapped params.
+        // Borrowed params (`&T` from borrow-by-default) need `.clone()` to produce owned T for enum.
         let variant_arg_names: Vec<String> = fd
             .params
             .iter()
             .filter(|(name, _)| !rc_names.contains(name))
-            .map(|(name, _)| aver_name_to_rust(name))
+            .map(|(name, type_ann)| {
+                let rust_name = aver_name_to_rust(name);
+                let ty = parse_type_str(type_ann);
+                if should_borrow_param(&ty) {
+                    // Borrowed param: clone to get owned value for enum variant
+                    format!("{}.clone()", rust_name)
+                } else {
+                    rust_name
+                }
+            })
             .collect();
         let variant_call = if variant_arg_names.is_empty() {
             format!("{}::{}", enum_name, variant)
@@ -2222,11 +2279,12 @@ fn emit_trampoline_expr(
             if member_names.contains(target) {
                 // Bounce → produce enum variant (excluding Rc-wrapped args)
                 let variant = fn_name_to_variant(target);
-                let arg_ctxs = compute_args_used_after_with_rc(
+                let arg_ctxs = compute_args_used_after_full(
                     args,
                     &ectx.used_after,
                     &ectx.local_types,
                     &ectx.rc_wrapped,
+                    &ectx.borrowed_params,
                 );
                 let arg_strs: Vec<String> = args
                     .iter()
@@ -2484,7 +2542,13 @@ fn emit_memo_fn(
 
 fn emit_memo_inner_body(body: &FnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     let stmts = body.stmts();
-    let stmt_ctxs = compute_block_used_after(stmts, &ectx.used_after, &ectx.local_types);
+    let stmt_ctxs = compute_block_used_after_full(
+        stmts,
+        &ectx.used_after,
+        &ectx.local_types,
+        &ectx.rc_wrapped,
+        &ectx.borrowed_params,
+    );
     let mut parts = Vec::new();
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last = i == stmts.len() - 1;
