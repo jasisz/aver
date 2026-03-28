@@ -70,8 +70,9 @@ fn main() {
             file,
             module_root,
             deps,
+            verbose,
         } => {
-            commands::cmd_check(file, module_root.as_deref(), *deps);
+            commands::cmd_check(file, module_root.as_deref(), *deps, *verbose);
         }
         Commands::Verify {
             file,

@@ -1525,7 +1525,12 @@ pub(super) fn cmd_run_self_hosted(
     }
 }
 
-fn run_check_for_file(file: &str, module_root: &str, deps: bool) -> Result<bool, String> {
+fn run_check_for_file(
+    file: &str,
+    module_root: &str,
+    deps: bool,
+    verbose: bool,
+) -> Result<bool, String> {
     let units = collect_check_units(file, module_root, deps)?;
     let _entry_module = units.first().and_then(|(_, _, items)| module_name(items));
     let mut unused_exposes_by_file: HashMap<String, Vec<CheckFinding>> = HashMap::new();
@@ -1556,7 +1561,6 @@ fn run_check_for_file(file: &str, module_root: &str, deps: bool) -> Result<bool,
         let non_tail_warnings =
             collect_non_tail_recursion_warnings_with_sigs(&transformed, &tc_result.fn_sigs);
         let has_errors = !tc_result.errors.is_empty();
-        let verbose = false;
         for te in &tc_result.errors {
             let diag =
                 diagnostic::from_type_error(&te.message, te.line, te.col, source, &shown_path);
@@ -1611,7 +1615,7 @@ fn run_check_for_file(file: &str, module_root: &str, deps: bool) -> Result<bool,
                     source,
                     &shown_path,
                 );
-                print!("{}", diag.render(false));
+                print!("{}", diag.render(verbose));
             }
             for w in findings
                 .warnings
@@ -1626,7 +1630,7 @@ fn run_check_for_file(file: &str, module_root: &str, deps: bool) -> Result<bool,
                     source,
                     &shown_path,
                 );
-                print!("{}", diag.render(false));
+                print!("{}", diag.render(verbose));
             }
             for warning in &non_tail_warnings {
                 let finding = CheckFinding {
@@ -1641,7 +1645,7 @@ fn run_check_for_file(file: &str, module_root: &str, deps: bool) -> Result<bool,
                     source,
                     &shown_path,
                 );
-                print!("{}", diag.render(false));
+                print!("{}", diag.render(verbose));
             }
         }
 
@@ -1665,7 +1669,7 @@ fn run_check_for_file(file: &str, module_root: &str, deps: bool) -> Result<bool,
                     source,
                     &shown_path,
                 );
-                print!("{}", diag.render(false));
+                print!("{}", diag.render(verbose));
             }
         }
 
@@ -1690,7 +1694,7 @@ fn run_check_for_file(file: &str, module_root: &str, deps: bool) -> Result<bool,
     Ok(has_any_error)
 }
 
-pub(super) fn cmd_check(path: &str, module_root_override: Option<&str>, deps: bool) {
+pub(super) fn cmd_check(path: &str, module_root_override: Option<&str>, deps: bool, verbose: bool) {
     let module_root = resolve_module_root(module_root_override);
     let inputs = match resolve_av_inputs(path) {
         Ok(inputs) => inputs,
@@ -1712,7 +1716,7 @@ pub(super) fn cmd_check(path: &str, module_root_override: Option<&str>, deps: bo
             println!("Input: {}", display_check_path(file, &module_root).cyan());
         }
 
-        match run_check_for_file(file, &module_root, deps) {
+        match run_check_for_file(file, &module_root, deps, verbose) {
             Ok(has_errors) => {
                 if has_errors {
                     failed_files.push(file.clone());

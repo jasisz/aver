@@ -139,6 +139,9 @@ pub(super) enum Commands {
         /// Also run contract checks for transitive `depends [...]` modules
         #[arg(long)]
         deps: bool,
+        /// Show full diagnostic detail (intent, source snippets for warnings, repair alternatives)
+        #[arg(long)]
+        verbose: bool,
     },
     /// Run all verify blocks
     Verify {

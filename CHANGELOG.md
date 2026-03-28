@@ -5,15 +5,34 @@ All notable changes to Aver are documented here.
 ## 0.7.2 (unreleased)
 
 ### Added
-- `aver compile --with-self-host-support` now emits a separate self-host-only generated Rust support module for `SelfHostRuntime.*` builtins instead of mixing that glue into the general generated runtime.
+- **Structured diagnostics** — `aver check` now uses semantic slugs (`type-mismatch`, `unused-binding`, `missing-verify`, `effect-violation`), structured key-value fields (`at:`, `in-fn:`, `conflict:`, `repair:`), and source snippets with underlines. Errors get full context; warnings are compact. `--verbose` shows all fields and source for warnings too.
+- **Unused binding warnings** — `aver check` warns when a local binding is defined but never used. Bindings prefixed with `_` are excluded.
+- **`Map<T, Unit>` → native set lowering** — Lean codegen emits `Finset T`, Dafny codegen emits `set<T>`. `Map.set(s, k, Unit)` becomes `s + {k}` in Dafny and `AverSet.add s k` in Lean. Map literals with all-`Unit` values become set literals.
+- **Shared lowering IR** (`src/ir/`) — `CallPlan`, `LeafOp`, `MatchDispatch`, and `BodyPlan` classify AST patterns once for interpreter, VM, and codegen. Semantic and optimized Rust emission styles both read from this shared IR.
+- **Semantic + optimized Rust emission** — `aver compile` can now emit either a direct AST-faithful Rust translation (semantic) or a performance-oriented lowering through the shared IR (optimized) with inlined thin wrappers, hoisted invariants, and skipped pass-through rebinding.
+- `aver compile --with-self-host-support` emits a separate self-host-only generated Rust support module for `SelfHostRuntime.*` builtins.
+- **Self-hosted fast paths** — `FnFastPath` with `FastLeaf`, `FastBoolSlotBranch`, `FastEqIntBranch`, `FastListSlotBranch`, `FastForwardCall`, `LeafFieldAccess`, `LeafMapGet`, `LeafMapSet` for bypass of full eval on simple functions.
+- **Self-hosted `FnStore`** — functions stored as `nameToId: Map<String, Int>` + `byId: Vector<FnDef>` for O(1) lookup by id.
 
 ### Changed
-- Self-host callback/runtime glue is now emitted as `self_host_support` rather than piggybacking on the generic generated `runtime_support`.
-- Generated Rust code now rejects `SelfHostRuntime.*` usage unless `--with-self-host-support` is enabled, including top-level statement usage.
+- **Rust codegen: Rc pass-through params** — parameters that are unchanged across all tail calls in TCO/mutual-TCO groups are automatically wrapped in `Rc<T>`, eliminating deep clones on every iteration. Name+type-based detection handles SCC groups with varying arities.
+- **Rust codegen: `Rc<T>` for recursive sum types** — recursive fields in user-defined sum types use `Rc<T>` instead of `Box<T>`. Clone is O(1) refcount bump instead of deep copy.
+- **Rust codegen: owned container updates** — `Vector.set` and `Map.remove` emit `set_owned`/`remove_owned` when liveness proves the container is at its last use, bypassing COW overhead.
+- **Self-hosted interpreter** — `BinOp`/`CmpOp` enums replace string-based dispatch (zero allocation per arithmetic op). `ValMap(Map<String, Val>)` replaces `ValRecord("Map", List)` for O(1) map operations.
+- Self-host callback/runtime glue emitted as `self_host_support` rather than piggybacking on the generic `runtime_support`.
+- Generated Rust code rejects `SelfHostRuntime.*` usage unless `--with-self-host-support` is enabled.
+- **LSP** — Vector namespace completions (new/get/set/len/fromList/toList), List members updated (removed stale `get`/`append`, added `head`/`tail`/`find`/`any`), `exposes opaque` handled in document symbols, `when` keyword restored.
+- **Editor highlighting** — VSCode and Sublime grammars updated: Vector, Bool, Args, Time, Env, Random, Terminal namespaces added; `law`/`given`/`when` keywords added; stale `val`/`var`/`effects alias`/`service` removed.
+- Dafny codegen: `MapRemove` and `MapLen` inlined (works for both map and set types).
+- Aver formatter keeps medium effect lists on one line when they fit the line budget.
+
+### Removed
+- `TopLevel::EffectSet` variant and all `effect_sets` infrastructure (dead code from removed `effects X = [...]` syntax).
 
 ### Fixed
-- `--with-self-host-support` now enforces the guest-entry contract explicitly: the chosen `--guest-entry` must declare `prog: Program` and `moduleFns: List<FnDef>` so self-host callback bridges cannot silently compile into a broken runtime shape.
-- Aver formatter keeps medium effect lists like `! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]` on one line when they fit the line budget.
+- `Console.error` and `Console.warn` in self-hosted interpreter now route to stderr (were using stdout).
+- `evalCmpVals` in self-hosted uses tuple binding catch-all instead of wildcard, eliminating unnecessary clone.
+- `--with-self-host-support` enforces the guest-entry contract explicitly.
 
 ## 0.7.1 (2026-03-27)
 
