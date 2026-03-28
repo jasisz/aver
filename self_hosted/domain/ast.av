@@ -71,8 +71,13 @@ type FastLeaf
     LeafFieldAccess(Int, String)
     LeafMapGet(Int, Int)
     LeafMapSet(Int, Int, Int)
+    LeafMapHas(Int, Int)
+    LeafMapRemove(Int, Int)
     LeafVectorNew(Int, Int)
+    LeafVectorLen(Int)
     LeafVectorGetOrInt(Int, Int, Int)
+    LeafBinopSlots(BinOp, Int, Int)
+    LeafCmpSlots(CmpOp, Int, Int)
 
 type FnFastPath
     FastNone

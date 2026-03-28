@@ -81,6 +81,16 @@ fn classifyFastLeafExpr(expr: Expr) -> Option<FastLeaf>
         Expr.ExprSlot(slot) -> Option.Some(FastLeaf.LeafSlot(slot))
         Expr.ExprFieldAccess(obj, field) -> classifyFastFieldAccess(obj, field)
         Expr.ExprCallBuiltin(name, args) -> classifyFastBuiltinLeaf(name, args)
+        Expr.ExprAdd(a, b) -> classifyFastBinopSlots(BinOp.OpAdd, a, b)
+        Expr.ExprSub(a, b) -> classifyFastBinopSlots(BinOp.OpSub, a, b)
+        Expr.ExprMul(a, b) -> classifyFastBinopSlots(BinOp.OpMul, a, b)
+        Expr.ExprDiv(a, b) -> classifyFastBinopSlots(BinOp.OpDiv, a, b)
+        Expr.ExprEq(a, b) -> classifyFastCmpSlots(CmpOp.CmpEq, a, b)
+        Expr.ExprNeq(a, b) -> classifyFastCmpSlots(CmpOp.CmpNeq, a, b)
+        Expr.ExprLt(a, b) -> classifyFastCmpSlots(CmpOp.CmpLt, a, b)
+        Expr.ExprGt(a, b) -> classifyFastCmpSlots(CmpOp.CmpGt, a, b)
+        Expr.ExprLte(a, b) -> classifyFastCmpSlots(CmpOp.CmpLte, a, b)
+        Expr.ExprGte(a, b) -> classifyFastCmpSlots(CmpOp.CmpGte, a, b)
         _ -> Option.None
 
 fn classifyFastFieldAccess(obj: Expr, field: String) -> Option<FastLeaf>
@@ -89,17 +99,39 @@ fn classifyFastFieldAccess(obj: Expr, field: String) -> Option<FastLeaf>
         Expr.ExprSlot(slot) -> Option.Some(FastLeaf.LeafFieldAccess(slot, field))
         _ -> Option.None
 
+fn classifyFastBinopSlots(op: BinOp, a: Expr, b: Expr) -> Option<FastLeaf>
+    ? "Recognize slot op slot for arithmetic."
+    match a
+        Expr.ExprSlot(sa) -> match b
+            Expr.ExprSlot(sb) -> Option.Some(FastLeaf.LeafBinopSlots(op, sa, sb))
+            _ -> Option.None
+        _ -> Option.None
+
+fn classifyFastCmpSlots(op: CmpOp, a: Expr, b: Expr) -> Option<FastLeaf>
+    ? "Recognize slot cmp slot for comparisons."
+    match a
+        Expr.ExprSlot(sa) -> match b
+            Expr.ExprSlot(sb) -> Option.Some(FastLeaf.LeafCmpSlots(op, sa, sb))
+            _ -> Option.None
+        _ -> Option.None
+
 fn classifyFastBuiltinLeaf(name: String, args: List<Expr>) -> Option<FastLeaf>
     ? "Recognize tiny builtin wrappers that only shuffle slots and integer constants."
     match name == "Vector.new"
         true -> classifyFastVectorNew(args)
-        false -> match name == "Option.withDefault"
-            true -> classifyFastOptionWithDefault(args)
-            false -> match name == "Map.get"
-                true -> classifyFastMapGet(args)
-                false -> match name == "Map.set"
-                    true -> classifyFastMapSet(args)
-                    false -> Option.None
+        false -> match name == "Vector.len"
+            true -> classifyFastVectorLen(args)
+            false -> match name == "Option.withDefault"
+                true -> classifyFastOptionWithDefault(args)
+                false -> match name == "Map.get"
+                    true -> classifyFastMapGet(args)
+                    false -> match name == "Map.set"
+                        true -> classifyFastMapSet(args)
+                        false -> match name == "Map.has"
+                            true -> classifyFastMapHas(args)
+                            false -> match name == "Map.remove"
+                                true -> classifyFastMapRemove(args)
+                                false -> Option.None
 
 fn classifyFastMapGet(args: List<Expr>) -> Option<FastLeaf>
     ? "Recognize Map.get(slotMap, slotKey)."
@@ -134,6 +166,46 @@ fn classifyFastMapSetArgs(mapExpr: Expr, keyExpr: Expr, valueExpr: Expr) -> Opti
             Expr.ExprSlot(keySlot) -> match valueExpr
                 Expr.ExprSlot(valueSlot) -> Option.Some(FastLeaf.LeafMapSet(mapSlot, keySlot, valueSlot))
                 _ -> Option.None
+            _ -> Option.None
+        _ -> Option.None
+
+fn classifyFastMapHas(args: List<Expr>) -> Option<FastLeaf>
+    ? "Recognize Map.has(slotMap, slotKey)."
+    match args
+        [mapExpr, ..rest] -> match rest
+            [keyExpr, ..ignored] -> classifyFastMapHasArgs(mapExpr, keyExpr)
+            _ -> Option.None
+        _ -> Option.None
+
+fn classifyFastMapHasArgs(mapExpr: Expr, keyExpr: Expr) -> Option<FastLeaf>
+    ? "Encode a direct map membership test when both operands are resolved slots."
+    match mapExpr
+        Expr.ExprSlot(mapSlot) -> match keyExpr
+            Expr.ExprSlot(keySlot) -> Option.Some(FastLeaf.LeafMapHas(mapSlot, keySlot))
+            _ -> Option.None
+        _ -> Option.None
+
+fn classifyFastMapRemove(args: List<Expr>) -> Option<FastLeaf>
+    ? "Recognize Map.remove(slotMap, slotKey)."
+    match args
+        [mapExpr, ..rest] -> match rest
+            [keyExpr, ..ignored] -> classifyFastMapRemoveArgs(mapExpr, keyExpr)
+            _ -> Option.None
+        _ -> Option.None
+
+fn classifyFastMapRemoveArgs(mapExpr: Expr, keyExpr: Expr) -> Option<FastLeaf>
+    ? "Encode a direct map key removal when both operands are resolved slots."
+    match mapExpr
+        Expr.ExprSlot(mapSlot) -> match keyExpr
+            Expr.ExprSlot(keySlot) -> Option.Some(FastLeaf.LeafMapRemove(mapSlot, keySlot))
+            _ -> Option.None
+        _ -> Option.None
+
+fn classifyFastVectorLen(args: List<Expr>) -> Option<FastLeaf>
+    ? "Recognize Vector.len(slotVec)."
+    match args
+        [vecExpr, ..ignored] -> match vecExpr
+            Expr.ExprSlot(slot) -> Option.Some(FastLeaf.LeafVectorLen(slot))
             _ -> Option.None
         _ -> Option.None
 
