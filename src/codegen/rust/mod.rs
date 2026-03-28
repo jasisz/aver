@@ -858,7 +858,7 @@ fn read(grid: Vector<Int>, idx: Int) -> Int
     }
 
     #[test]
-    fn optimized_absorbs_known_leaf_wrapper_call_through_thin_ir() {
+    fn optimized_keeps_known_leaf_wrapper_callsite_and_leaves_absorption_to_rust() {
         let mut ctx = ctx_from_source(
             r#"
 module Demo
@@ -876,14 +876,12 @@ fn read(grid: Vector<Int>, idx: Int) -> Int
         let out = transpile(&ctx);
         let entry = generated_rust_entry_file(&out);
 
-        assert!(entry.contains("let __aver_thin_arg0 = grid;"));
-        assert!(entry.contains("let __aver_thin_arg1 = idx;"));
-        assert!(entry.contains("grid.get(idx as usize).cloned().unwrap_or(0i64)"));
-        assert!(!entry.contains("cellAt(grid, idx)"));
+        assert!(entry.contains("cellAt(grid, idx)"));
+        assert!(!entry.contains("__aver_thin_arg0"));
     }
 
     #[test]
-    fn optimized_absorbs_known_dispatch_wrapper_through_thin_ir() {
+    fn optimized_keeps_known_dispatch_wrapper_callsite_and_leaves_absorption_to_rust() {
         let mut ctx = ctx_from_source(
             r#"
 module Demo
@@ -903,10 +901,8 @@ fn readBucket(n: Int) -> Int
         let out = transpile(&ctx);
         let entry = generated_rust_entry_file(&out);
 
-        assert!(entry.contains("let __aver_thin_arg0 = n;"));
-        assert!(entry.contains("let n: i64 = __aver_thin_arg0;"));
-        assert!(entry.contains("if (n == 0i64) { 0i64 } else { 1i64 }"));
-        assert!(!entry.contains("bucket(n)"));
+        assert!(entry.contains("bucket(n)"));
+        assert!(!entry.contains("__aver_thin_arg0"));
     }
 
     #[test]
