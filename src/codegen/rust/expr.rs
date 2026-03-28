@@ -10,9 +10,9 @@ use crate::ir::{
     BoolCompareOp, BoolSubjectPlan, CallLowerCtx, CallPlan, DispatchArmPlan, DispatchBindingPlan,
     DispatchDefaultPlan, DispatchLiteral, DispatchTableShape, LeafOp, ListMatchShape,
     MatchDispatchPlan, SemanticConstructor, SemanticDispatchPattern, TailCallPlan, WrapperKind,
-    classify_bool_subject_plan, classify_call_plan, classify_constructor_name, classify_leaf_op,
-    classify_list_match_shape, classify_match_dispatch_plan, classify_tail_call_plan,
-    is_builtin_namespace,
+    classify_bool_subject_plan, classify_call_plan, classify_constructor_name,
+    classify_forward_fn_body, classify_leaf_op, classify_list_match_shape,
+    classify_match_dispatch_plan, classify_tail_call_plan, is_builtin_namespace,
 };
 use crate::types::Type;
 /// Aver expressions → Rust expression strings.
@@ -61,6 +61,15 @@ pub(super) fn classify_dispatch_plan_for_rust(
 ) -> Option<MatchDispatchPlan> {
     let lower_ctx = RustCallCtx { ctx, ectx };
     classify_match_dispatch_plan(arms, &lower_ctx)
+}
+
+pub(super) fn has_forward_fn_body_for_rust(
+    body: &FnBody,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> bool {
+    let lower_ctx = RustCallCtx { ctx, ectx };
+    classify_forward_fn_body(body, &lower_ctx).is_some()
 }
 
 /// Emit a Rust expression from an Aver Expr.

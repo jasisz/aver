@@ -1,6 +1,6 @@
 use super::expr::{
     aver_name_to_rust, classify_dispatch_plan_for_rust, clone_arg, emit_dispatch_table_match,
-    emit_expr, emit_stmt,
+    emit_expr, emit_stmt, has_forward_fn_body_for_rust,
 };
 use super::liveness::{
     EmitCtx, collect_vars, compute_args_used_after_with_rc, compute_block_used_after,
@@ -398,6 +398,12 @@ fn emit_fn_def_with_visibility(
     } else {
         None
     };
+    let is_forward_wrapper = matches!(ctx.emission_style, EmissionStyle::Optimized)
+        && has_forward_fn_body_for_rust(&fd.body, ctx, &ectx);
+
+    if is_forward_wrapper {
+        lines.push("#[inline(always)]".to_string());
+    }
 
     if is_guest_entry && (ctx.emit_replay_runtime || self_host_state.is_some()) {
         lines.push(format!(
@@ -2226,5 +2232,52 @@ mod tests {
             groups.is_empty(),
             "self-only TCO should not create a mutual group"
         );
+    }
+
+    #[test]
+    fn optimized_forward_wrapper_gets_inline_always() {
+        let fd = FnDef {
+            name: "swap".to_string(),
+            line: 1,
+            params: vec![
+                ("a".to_string(), "Int".to_string()),
+                ("b".to_string(), "Int".to_string()),
+            ],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(Expr::FnCall(
+                Box::new(Expr::Ident("first".to_string())),
+                vec![Expr::Ident("b".to_string()), Expr::Ident("a".to_string())],
+            ))),
+            resolution: None,
+        };
+
+        let mut semantic_ctx = empty_ctx();
+        semantic_ctx.fn_sigs.insert(
+            "swap".to_string(),
+            (vec![Type::Int, Type::Int], Type::Int, vec![]),
+        );
+        semantic_ctx.fn_sigs.insert(
+            "first".to_string(),
+            (vec![Type::Int, Type::Int], Type::Int, vec![]),
+        );
+        let semantic = emit_public_fn_def(&fd, false, &semantic_ctx);
+        assert!(!semantic.contains("#[inline(always)]"));
+
+        let mut optimized_ctx = empty_ctx();
+        optimized_ctx.emission_style = EmissionStyle::Optimized;
+        optimized_ctx.fn_sigs.insert(
+            "swap".to_string(),
+            (vec![Type::Int, Type::Int], Type::Int, vec![]),
+        );
+        optimized_ctx.fn_sigs.insert(
+            "first".to_string(),
+            (vec![Type::Int, Type::Int], Type::Int, vec![]),
+        );
+        let optimized = emit_public_fn_def(&fd, false, &optimized_ctx);
+        assert!(optimized.contains("#[inline(always)]"));
+        assert!(optimized.contains("pub fn swap(a: i64, b: i64) -> i64"));
+        assert!(optimized.contains("first(b, a)"));
     }
 }

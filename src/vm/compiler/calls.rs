@@ -1,8 +1,9 @@
 use super::{CallTarget, CompileError, FnCompiler};
 use crate::ast::{Expr, Literal};
 use crate::ir::{
-    CallLowerCtx, CallPlan, LeafOp, SemanticConstructor, TailCallPlan, WrapperKind,
-    classify_call_plan, classify_constructor_name, classify_leaf_op, classify_tail_call_plan,
+    CallLowerCtx, CallPlan, ForwardArg, LeafOp, SemanticConstructor, TailCallPlan, WrapperKind,
+    classify_call_plan, classify_constructor_name, classify_forward_call_parts, classify_leaf_op,
+    classify_tail_call_plan,
 };
 use crate::nan_value::NanValue;
 use crate::vm::builtin::VmBuiltin;
@@ -110,7 +111,11 @@ impl<'a> FnCompiler<'a> {
 
     pub(super) fn resolve_call_target(&self, expr: &Expr) -> Option<CallTarget> {
         let call_ctx = VmCallCtx { compiler: self };
-        match classify_call_plan(expr, &call_ctx) {
+        self.call_plan_to_target(classify_call_plan(expr, &call_ctx))
+    }
+
+    fn call_plan_to_target(&self, plan: CallPlan) -> Option<CallTarget> {
+        match plan {
             CallPlan::Dynamic => None,
             CallPlan::Function(name) => {
                 self.resolve_fn_id(&name)
@@ -152,11 +157,44 @@ impl<'a> FnCompiler<'a> {
         }
     }
 
+    fn compile_forward_arg(&mut self, arg: ForwardArg) -> Result<(), CompileError> {
+        match arg {
+            ForwardArg::Slot(slot) => {
+                self.emit_op(LOAD_LOCAL);
+                self.emit_u8(slot as u8);
+                Ok(())
+            }
+            ForwardArg::Local(name) => {
+                let Some(&slot) = self.local_slots.get(&name) else {
+                    return Err(CompileError {
+                        msg: format!("forwarded local '{}' is not a known slot", name),
+                    });
+                };
+                self.emit_op(LOAD_LOCAL);
+                self.emit_u8(slot as u8);
+                Ok(())
+            }
+        }
+    }
+
     pub(super) fn compile_call(
         &mut self,
         fn_expr: &Expr,
         args: &[Expr],
     ) -> Result<(), CompileError> {
+        let call_ctx = VmCallCtx { compiler: self };
+        if let Some(plan) = classify_forward_call_parts(fn_expr, args, &call_ctx) {
+            let Some(target) = self.call_plan_to_target(plan.target.clone()) else {
+                return Err(CompileError {
+                    msg: "dynamic call cannot lower through ForwardCallPlan".to_string(),
+                });
+            };
+            for arg in plan.args {
+                self.compile_forward_arg(arg)?;
+            }
+            return self.emit_resolved_call_after_loaded_args(target, args.len());
+        }
+
         if let Some(target) = self.resolve_call_target(fn_expr) {
             return self.compile_resolved_call(target, args);
         }
@@ -169,24 +207,19 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
-    fn compile_resolved_call(
+    fn emit_resolved_call_after_loaded_args(
         &mut self,
         target: CallTarget,
-        args: &[Expr],
+        argc: usize,
     ) -> Result<(), CompileError> {
         match target {
             CallTarget::KnownFn(fn_id) => {
-                for arg in args {
-                    self.compile_expr(arg)?;
-                }
                 self.emit_op(CALL_KNOWN);
                 self.emit_u16(fn_id as u16);
-                self.emit_u8(args.len() as u8);
+                self.emit_u8(argc as u8);
             }
             CallTarget::Wrapper(kind) => {
-                if let Some(arg) = args.first() {
-                    self.compile_expr(arg)?;
-                } else {
+                if argc == 0 {
                     self.emit_op(LOAD_UNIT);
                 }
                 self.emit_op(WRAP);
@@ -198,20 +231,12 @@ impl<'a> FnCompiler<'a> {
                 self.emit_u16(idx);
             }
             CallTarget::Variant(type_id, variant_id) => {
-                for arg in args {
-                    self.compile_expr(arg)?;
-                }
                 self.emit_op(VARIANT_NEW);
                 self.emit_u16(type_id as u16);
                 self.emit_u16(variant_id);
-                self.emit_u8(args.len() as u8);
+                self.emit_u8(argc as u8);
             }
-            CallTarget::Builtin(builtin) => {
-                for arg in args {
-                    self.compile_expr(arg)?;
-                }
-                self.emit_builtin_after_args(builtin, args.len());
-            }
+            CallTarget::Builtin(builtin) => self.emit_builtin_after_args(builtin, argc),
             CallTarget::UnknownQualified(qualified) => {
                 return Err(CompileError {
                     msg: format!("unknown builtin or namespace member: {}", qualified),
@@ -219,6 +244,17 @@ impl<'a> FnCompiler<'a> {
             }
         }
         Ok(())
+    }
+
+    fn compile_resolved_call(
+        &mut self,
+        target: CallTarget,
+        args: &[Expr],
+    ) -> Result<(), CompileError> {
+        for arg in args {
+            self.compile_expr(arg)?;
+        }
+        self.emit_resolved_call_after_loaded_args(target, args.len())
     }
 
     pub(super) fn compile_tail_call(

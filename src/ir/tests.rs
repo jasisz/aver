@@ -1,13 +1,14 @@
 use super::{
     BoolCompareOp, BoolMatchShape, BoolSubjectPlan, CallLowerCtx, CallPlan, DispatchArmPlan,
-    DispatchBindingPlan, DispatchDefaultPlan, DispatchLiteral, DispatchTableShape, LeafOp,
-    ListMatchShape, MatchDispatchPlan, SemanticConstructor, SemanticDispatchPattern, TailCallPlan,
-    WrapperKind, classify_bool_match_shape, classify_bool_subject_plan, classify_call_plan,
-    classify_constructor_name, classify_dispatch_pattern, classify_leaf_op,
-    classify_list_match_shape, classify_match_dispatch_plan, classify_tail_call_plan,
-    expr_to_dotted_name,
+    DispatchBindingPlan, DispatchDefaultPlan, DispatchLiteral, DispatchTableShape, ForwardArg,
+    ForwardCallPlan, LeafOp, ListMatchShape, MatchDispatchPlan, SemanticConstructor,
+    SemanticDispatchPattern, TailCallPlan, WrapperKind, classify_bool_match_shape,
+    classify_bool_subject_plan, classify_call_plan, classify_constructor_name,
+    classify_dispatch_pattern, classify_forward_call_plan, classify_forward_fn_body,
+    classify_leaf_op, classify_list_match_shape, classify_match_dispatch_plan,
+    classify_tail_call_plan, expr_to_dotted_name,
 };
-use crate::ast::{BinOp, Expr, Literal, MatchArm, Pattern};
+use crate::ast::{BinOp, Expr, FnBody, Literal, MatchArm, Pattern, Stmt};
 
 #[derive(Default)]
 struct DummyCtx;
@@ -269,6 +270,98 @@ fn classify_tail_call_self_known_and_unknown() {
     assert_eq!(
         classify_tail_call_plan("Result.Ok", "loop", &ctx),
         TailCallPlan::Unknown("Result.Ok".to_string())
+    );
+}
+
+#[test]
+fn classify_forward_call_for_known_target_and_forwarded_locals() {
+    let expr = Expr::FnCall(
+        Box::new(Expr::Attr(
+            Box::new(Expr::Attr(
+                Box::new(Expr::Ident("Data".to_string())),
+                "Fib".to_string(),
+            )),
+            "fib".to_string(),
+        )),
+        vec![Expr::Resolved(1), Expr::Ident("slot0".to_string())],
+    );
+
+    struct ForwardCtx;
+    impl CallLowerCtx for ForwardCtx {
+        fn is_local_value(&self, name: &str) -> bool {
+            name == "slot0"
+        }
+
+        fn is_user_type(&self, name: &str) -> bool {
+            matches!(name, "Shape" | "User")
+        }
+
+        fn resolve_module_call<'a>(&self, dotted: &'a str) -> Option<(&'a str, &'a str)> {
+            match dotted {
+                "Data.Fib.fib" => Some(("Data.Fib", "fib")),
+                "Models.Shape.Circle" => Some(("Models", "Shape.Circle")),
+                "Map.generateMap" => Some(("Map", "generateMap")),
+                _ => None,
+            }
+        }
+    }
+
+    assert_eq!(
+        classify_forward_call_plan(&expr, &ForwardCtx),
+        Some(ForwardCallPlan {
+            target: CallPlan::Function("Data.Fib.fib".to_string()),
+            args: vec![ForwardArg::Slot(1), ForwardArg::Local("slot0".to_string())],
+        })
+    );
+}
+
+#[test]
+fn classify_forward_fn_body_requires_single_expr_wrapper() {
+    struct ForwardCtx;
+    impl CallLowerCtx for ForwardCtx {
+        fn is_local_value(&self, name: &str) -> bool {
+            matches!(name, "a" | "b")
+        }
+
+        fn is_user_type(&self, name: &str) -> bool {
+            matches!(name, "Shape" | "User")
+        }
+
+        fn resolve_module_call<'a>(&self, dotted: &'a str) -> Option<(&'a str, &'a str)> {
+            match dotted {
+                "Data.Fib.fib" => Some(("Data.Fib", "fib")),
+                "Models.Shape.Circle" => Some(("Models", "Shape.Circle")),
+                "Map.generateMap" => Some(("Map", "generateMap")),
+                _ => None,
+            }
+        }
+    }
+
+    let forward_body = FnBody::from_expr(Expr::FnCall(
+        Box::new(Expr::Ident("target".to_string())),
+        vec![Expr::Ident("b".to_string()), Expr::Ident("a".to_string())],
+    ));
+    assert_eq!(
+        classify_forward_fn_body(&forward_body, &ForwardCtx),
+        Some(ForwardCallPlan {
+            target: CallPlan::Function("target".to_string()),
+            args: vec![
+                ForwardArg::Local("b".to_string()),
+                ForwardArg::Local("a".to_string()),
+            ],
+        })
+    );
+
+    let non_wrapper_body = FnBody::Block(vec![
+        Stmt::Binding("x".to_string(), None, Expr::Literal(Literal::Int(1))),
+        Stmt::Expr(Expr::FnCall(
+            Box::new(Expr::Ident("target".to_string())),
+            vec![Expr::Ident("a".to_string())],
+        )),
+    ]);
+    assert_eq!(
+        classify_forward_fn_body(&non_wrapper_body, &ForwardCtx),
+        None
     );
 }
 

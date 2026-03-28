@@ -3,9 +3,10 @@ mod leaf;
 mod matches;
 
 pub use calls::{
-    CallLowerCtx, CallPlan, SemanticCallee, SemanticConstructor, TailCallPlan, WrapperKind,
-    classify_call_plan, classify_callee, classify_constructor_name, classify_tail_call_plan,
-    expr_to_dotted_name, is_builtin_namespace,
+    CallLowerCtx, CallPlan, ForwardArg, ForwardCallPlan, SemanticCallee, SemanticConstructor,
+    TailCallPlan, WrapperKind, classify_call_plan, classify_callee, classify_constructor_name,
+    classify_forward_call_parts, classify_forward_call_plan, classify_forward_fn_body,
+    classify_tail_call_plan, expr_to_dotted_name, is_builtin_namespace,
 };
 pub use leaf::{LeafOp, classify_leaf_op};
 pub use matches::{

@@ -1,4 +1,4 @@
-use crate::ast::Expr;
+use crate::ast::{Expr, FnBody, Stmt};
 
 /// Shared semantic lowering helpers that sit between resolved AST and concrete backends.
 ///
@@ -45,6 +45,18 @@ pub enum CallPlan {
 }
 
 pub type SemanticCallee = CallPlan;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForwardArg {
+    Local(String),
+    Slot(u16),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForwardCallPlan {
+    pub target: CallPlan,
+    pub args: Vec<ForwardArg>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TailCallPlan {
@@ -135,6 +147,41 @@ pub fn classify_callee(expr: &Expr, ctx: &impl CallLowerCtx) -> SemanticCallee {
     classify_call_plan(expr, ctx)
 }
 
+pub fn classify_forward_call_plan(expr: &Expr, ctx: &impl CallLowerCtx) -> Option<ForwardCallPlan> {
+    let Expr::FnCall(fn_expr, args) = expr else {
+        return None;
+    };
+    classify_forward_call_parts(fn_expr, args, ctx)
+}
+
+pub fn classify_forward_call_parts(
+    fn_expr: &Expr,
+    args: &[Expr],
+    ctx: &impl CallLowerCtx,
+) -> Option<ForwardCallPlan> {
+    let target = classify_call_plan(fn_expr, ctx);
+    if matches!(target, CallPlan::Dynamic)
+        || matches!(target, CallPlan::NoneValue)
+        || matches!(target, CallPlan::Wrapper(_) if args.len() != 1)
+    {
+        return None;
+    }
+
+    let args = args
+        .iter()
+        .map(|arg| classify_forward_arg(arg, ctx))
+        .collect::<Option<Vec<_>>>()?;
+
+    Some(ForwardCallPlan { target, args })
+}
+
+pub fn classify_forward_fn_body(body: &FnBody, ctx: &impl CallLowerCtx) -> Option<ForwardCallPlan> {
+    let [Stmt::Expr(expr)] = body.stmts() else {
+        return None;
+    };
+    classify_forward_call_plan(expr, ctx)
+}
+
 pub fn classify_tail_call_plan(
     target: &str,
     current_fn: &str,
@@ -190,6 +237,14 @@ pub fn classify_constructor_name(name: &str, ctx: &impl CallLowerCtx) -> Semanti
     }
 
     SemanticConstructor::Unknown(name.to_string())
+}
+
+fn classify_forward_arg(expr: &Expr, ctx: &impl CallLowerCtx) -> Option<ForwardArg> {
+    match expr {
+        Expr::Resolved(slot) => Some(ForwardArg::Slot(*slot)),
+        Expr::Ident(name) if ctx.is_local_value(name) => Some(ForwardArg::Local(name.clone())),
+        _ => None,
+    }
 }
 
 fn classify_named_callee(

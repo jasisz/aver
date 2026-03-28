@@ -1,6 +1,6 @@
 use super::lowered::{
-    self, ExprId, LoweredDirectCallTarget, LoweredExpr, LoweredFunctionBody, LoweredLeafOp,
-    LoweredMatchArm, LoweredStmt, LoweredStrPart, LoweredTailCallTarget,
+    self, ExprId, LoweredDirectCallTarget, LoweredExpr, LoweredForwardArg, LoweredFunctionBody,
+    LoweredLeafOp, LoweredMatchArm, LoweredStmt, LoweredStrPart, LoweredTailCallTarget,
 };
 use super::*;
 
@@ -268,6 +268,9 @@ impl Interpreter {
                 Vec::with_capacity(args.len()),
                 conts,
             ),
+            LoweredExpr::ForwardCall { target, args } => {
+                self.dispatch_forward_call(target.clone(), args, conts)
+            }
             &LoweredExpr::BinOp { op, left, right } => {
                 conts.push(EvalCont::BinOpLeft {
                     lowered: Rc::clone(&lowered),
@@ -1452,6 +1455,29 @@ impl Interpreter {
                 EvalState::Apply(self.apply_runtime_constructor_nv(&name, args.first().copied()))
             }
         }
+    }
+
+    fn dispatch_forward_call(
+        &mut self,
+        target: LoweredDirectCallTarget,
+        args: &[LoweredForwardArg],
+        conts: &mut Vec<EvalCont>,
+    ) -> EvalState {
+        let mut values = Vec::with_capacity(args.len());
+        for arg in args {
+            let value = match arg {
+                LoweredForwardArg::Local(name) => match self.lookup_nv(name) {
+                    Ok(value) => value,
+                    Err(err) => return EvalState::Apply(Err(err)),
+                },
+                LoweredForwardArg::Slot(slot) => match self.lookup_slot(*slot) {
+                    Ok(value) => value,
+                    Err(err) => return EvalState::Apply(Err(err)),
+                },
+            };
+            values.push(value);
+        }
+        self.dispatch_direct_call(target, values, conts)
     }
 
     fn build_record_update_nv(

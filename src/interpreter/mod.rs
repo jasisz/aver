@@ -318,8 +318,8 @@ mod ir_bridge_tests {
 
     use super::ir_bridge::InterpreterLowerCtx;
     use super::lowered::{
-        self, ExprId, LoweredDirectCallTarget, LoweredExpr, LoweredLeafOp, LoweredMatchArm,
-        LoweredTailCallTarget,
+        self, ExprId, LoweredDirectCallTarget, LoweredExpr, LoweredForwardArg, LoweredLeafOp,
+        LoweredMatchArm, LoweredTailCallTarget,
     };
     use super::*;
 
@@ -824,6 +824,97 @@ mod ir_bridge_tests {
             }
             other => panic!("expected variant, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn lowered_fn_bodies_classify_forward_calls_through_shared_ir() {
+        let interpreter = Interpreter::new();
+        let ctx = InterpreterLowerCtx::new(&interpreter);
+        let body = FnBody::from_expr(Expr::FnCall(
+            Box::new(Expr::Ident("first".to_string())),
+            vec![Expr::Resolved(1), Expr::Resolved(0)],
+        ));
+        let lowered = lowered::lower_fn_body(&body, &ctx, "swap");
+
+        assert!(matches!(
+            lowered.expr(ExprId(0)),
+            LoweredExpr::ForwardCall {
+                target: LoweredDirectCallTarget::Function(name),
+                args,
+            } if name == "first"
+                && matches!(
+                    args.as_ref(),
+                    [LoweredForwardArg::Slot(1), LoweredForwardArg::Slot(0)]
+                )
+        ));
+    }
+
+    #[test]
+    fn runtime_executes_forward_calls_without_evaling_arg_exprs() {
+        let mut interpreter = Interpreter::new();
+
+        let first = FnDef {
+            name: "first".to_string(),
+            line: 1,
+            params: vec![
+                ("x".to_string(), "Int".to_string()),
+                ("y".to_string(), "Int".to_string()),
+            ],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(Expr::Resolved(0))),
+            resolution: Some(FnResolution {
+                local_slots: Rc::new(HashMap::from([
+                    (String::from("x"), 0u16),
+                    (String::from("y"), 1u16),
+                ])),
+                local_count: 2,
+            }),
+        };
+        interpreter
+            .exec_fn_def(&first)
+            .expect("first function should register");
+
+        let swap = FnDef {
+            name: "swap".to_string(),
+            line: 2,
+            params: vec![
+                ("a".to_string(), "Int".to_string()),
+                ("b".to_string(), "Int".to_string()),
+            ],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(Expr::FnCall(
+                Box::new(Expr::Ident("first".to_string())),
+                vec![Expr::Resolved(1), Expr::Resolved(0)],
+            ))),
+            resolution: Some(FnResolution {
+                local_slots: Rc::new(HashMap::from([
+                    (String::from("a"), 0u16),
+                    (String::from("b"), 1u16),
+                ])),
+                local_count: 2,
+            }),
+        };
+        interpreter
+            .exec_fn_def(&swap)
+            .expect("swap function should register");
+
+        let swap_call = Expr::FnCall(
+            Box::new(Expr::Ident("swap".to_string())),
+            vec![
+                Expr::Literal(Literal::Int(3)),
+                Expr::Literal(Literal::Int(7)),
+            ],
+        );
+        assert_eq!(
+            interpreter
+                .eval_expr(&swap_call)
+                .expect("forward call should run"),
+            Value::Int(7)
+        );
     }
 
     #[test]
