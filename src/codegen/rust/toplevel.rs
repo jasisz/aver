@@ -867,6 +867,7 @@ fn emit_tco_fn(
     ectx: &EmitCtx,
     visibility: &str,
 ) -> String {
+    let passthrough_indices = compute_self_passthrough_params(fd);
     // Compute pass-through Rc params for self-TCO
     let rc_indices = compute_rc_params(&[fd], ctx);
     let rc_names = rc_param_names(&fd.params, &rc_indices);
@@ -901,7 +902,15 @@ fn emit_tco_fn(
     lines.push("    loop {".to_string());
 
     // Emit body with TailCall → { reassign; continue }
-    let body_code = emit_tco_body(&fd.body, &fd.name, &fd.params, ctx, &ectx, &rc_indices);
+    let body_code = emit_tco_body(
+        &fd.body,
+        &fd.name,
+        &fd.params,
+        ctx,
+        &ectx,
+        &rc_indices,
+        &passthrough_indices,
+    );
     lines.push(body_code);
 
     lines.push("    }".to_string());
@@ -916,6 +925,7 @@ fn emit_tco_body(
     ctx: &CodegenContext,
     ectx: &EmitCtx,
     rc_indices: &HashSet<usize>,
+    passthrough_indices: &HashSet<usize>,
 ) -> String {
     let stmts = body.stmts();
     let stmt_ctxs = compute_block_used_after_with_rc(
@@ -940,7 +950,15 @@ fn emit_tco_body(
                 if is_last {
                     lines.push(format!(
                         "        return {};",
-                        emit_tco_expr(expr, self_name, params, ctx, sctx, rc_indices)
+                        emit_tco_expr(
+                            expr,
+                            self_name,
+                            params,
+                            ctx,
+                            sctx,
+                            rc_indices,
+                            passthrough_indices,
+                        )
                     ));
                 } else {
                     lines.push(format!("        {};", emit_expr(expr, ctx, sctx)));
@@ -959,6 +977,7 @@ fn try_emit_tco_bool_if_else(
     ctx: &CodegenContext,
     ectx: &EmitCtx,
     rc_indices: &HashSet<usize>,
+    passthrough_indices: &HashSet<usize>,
 ) -> Option<String> {
     if arms.len() != 2 {
         return None;
@@ -972,8 +991,24 @@ fn try_emit_tco_bool_if_else(
         }
         _ => return None,
     };
-    let t = emit_tco_expr(true_body, self_name, params, ctx, ectx, rc_indices);
-    let f = emit_tco_expr(false_body, self_name, params, ctx, ectx, rc_indices);
+    let t = emit_tco_expr(
+        true_body,
+        self_name,
+        params,
+        ctx,
+        ectx,
+        rc_indices,
+        passthrough_indices,
+    );
+    let f = emit_tco_expr(
+        false_body,
+        self_name,
+        params,
+        ctx,
+        ectx,
+        rc_indices,
+        passthrough_indices,
+    );
     Some(format!("if {} {{ {} }} else {{ {} }}", subj, t, f))
 }
 
@@ -984,6 +1019,7 @@ fn emit_tco_expr(
     ctx: &CodegenContext,
     ectx: &EmitCtx,
     rc_indices: &HashSet<usize>,
+    passthrough_indices: &HashSet<usize>,
 ) -> String {
     match expr {
         Expr::TailCall(boxed) => {
@@ -1009,14 +1045,14 @@ fn emit_tco_expr(
             let mut lines = Vec::new();
             lines.push("{".to_string());
             for (i, arg_str) in arg_strs.iter().enumerate() {
-                if rc_indices.contains(&i) {
-                    continue; // pass-through Rc param — no rebinding needed
+                if passthrough_indices.contains(&i) {
+                    continue; // pass-through param — no rebinding needed
                 }
                 lines.push(format!("            let __tmp{} = {};", i, arg_str));
             }
             for (i, (name, _)) in params.iter().enumerate() {
-                if rc_indices.contains(&i) {
-                    continue; // pass-through Rc param — no rebinding needed
+                if passthrough_indices.contains(&i) {
+                    continue; // pass-through param — no rebinding needed
                 }
                 lines.push(format!(
                     "            {} = __tmp{};",
@@ -1049,8 +1085,16 @@ fn emit_tco_expr(
 
             // Bool match → if/else in TCO context
             if matches!(ctx.emission_style, EmissionStyle::Optimized)
-                && let Some(code) =
-                    try_emit_tco_bool_if_else(&subj, arms, self_name, params, ctx, ectx, rc_indices)
+                && let Some(code) = try_emit_tco_bool_if_else(
+                    &subj,
+                    arms,
+                    self_name,
+                    params,
+                    ctx,
+                    ectx,
+                    rc_indices,
+                    passthrough_indices,
+                )
             {
                 return code;
             }
@@ -1063,13 +1107,31 @@ fn emit_tco_expr(
                     None,
                     matches!(ctx.emission_style, EmissionStyle::Optimized),
                     ctx,
-                    |arm| emit_tco_expr(&arm.body, self_name, params, ctx, ectx, rc_indices),
+                    |arm| {
+                        emit_tco_expr(
+                            &arm.body,
+                            self_name,
+                            params,
+                            ctx,
+                            ectx,
+                            rc_indices,
+                            passthrough_indices,
+                        )
+                    },
                 );
             }
 
             if let Some(crate::ir::MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
                 return emit_dispatch_table_match(subj, arms, shape, |arm| {
-                    emit_tco_expr(&arm.body, self_name, params, ctx, ectx, rc_indices)
+                    emit_tco_expr(
+                        &arm.body,
+                        self_name,
+                        params,
+                        ctx,
+                        ectx,
+                        rc_indices,
+                        passthrough_indices,
+                    )
                 });
             }
 
@@ -1082,7 +1144,15 @@ fn emit_tco_expr(
             let mut arm_strs = Vec::new();
             for arm in arms {
                 let pat = super::pattern::emit_pattern(&arm.pattern, needs_as_str, ctx);
-                let body = emit_tco_expr(&arm.body, self_name, params, ctx, ectx, rc_indices);
+                let body = emit_tco_expr(
+                    &arm.body,
+                    self_name,
+                    params,
+                    ctx,
+                    ectx,
+                    rc_indices,
+                    passthrough_indices,
+                );
                 let mut rebinding_lines: Vec<String> = Vec::new();
                 if let Pattern::Cons(head, tail) = &arm.pattern {
                     if head != "_" {
@@ -1123,6 +1193,13 @@ fn emit_tco_expr(
             emit_expr(expr, ctx, ectx)
         }
     }
+}
+
+fn compute_self_passthrough_params(fd: &FnDef) -> HashSet<usize> {
+    let mut candidates: HashSet<usize> = (0..fd.params.len()).collect();
+    let member_names = HashSet::from([fd.name.as_str()]);
+    check_tailcalls_for_rc(&fd.body, &member_names, &fd.params, &mut candidates);
+    candidates
 }
 
 // --- Mutual TCO (trampoline) support ---
@@ -1888,8 +1965,17 @@ mod tests {
             ],
         )));
 
-        let code = emit_tco_expr(&expr, &fd.name, &fd.params, &ctx, &ectx, &HashSet::new());
-        assert!(code.contains("let __tmp0 = xs.clone();"));
+        let passthrough = HashSet::from([0usize]);
+        let code = emit_tco_expr(
+            &expr,
+            &fd.name,
+            &fd.params,
+            &ctx,
+            &ectx,
+            &HashSet::new(),
+            &passthrough,
+        );
+        assert!(!code.contains("let __tmp0 = xs.clone();"));
         assert!(code.contains("let __tmp1 = (remaining - 1i64);"));
         assert!(code.contains("let __tmp2 = (sink + &sumList(xs, 0i64));"));
     }
@@ -1931,9 +2017,18 @@ mod tests {
             ],
         )));
 
-        let code = emit_tco_expr(&expr, &fd.name, &fd.params, &ctx, &ectx, &HashSet::new());
-        assert!(code.contains("let __tmp0 = a.clone();"));
-        assert!(code.contains("let __tmp1 = b.clone();"));
+        let passthrough = HashSet::from([0usize, 1usize]);
+        let code = emit_tco_expr(
+            &expr,
+            &fd.name,
+            &fd.params,
+            &ctx,
+            &ectx,
+            &HashSet::new(),
+            &passthrough,
+        );
+        assert!(!code.contains("let __tmp0 = a.clone();"));
+        assert!(!code.contains("let __tmp1 = b.clone();"));
         assert!(code.contains("let __tmp3 = (sink + &(appendLists(a, b).len() as i64));"));
     }
 
@@ -1947,9 +2042,58 @@ mod tests {
             vec![Expr::Ident("e".to_string())],
         )));
 
-        let code = emit_tco_expr(&expr, &fd.name, &fd.params, &ctx, &ectx, &HashSet::new());
+        let passthrough = HashSet::new();
+        let code = emit_tco_expr(
+            &expr,
+            &fd.name,
+            &fd.params,
+            &ctx,
+            &ectx,
+            &HashSet::new(),
+            &passthrough,
+        );
         assert_eq!(code, "validSymbolList(e)");
         assert!(!code.contains("continue"));
+    }
+
+    #[test]
+    fn self_tco_skips_rebinding_copy_passthrough_params() {
+        let ctx = empty_ctx();
+        let fd = list_param_fn(
+            "sumAreas",
+            vec![("n", "Int"), ("acc", "Int"), ("pick", "Int")],
+        );
+        let ectx = build_fn_ectx(&fd, &ctx);
+        let expr = Expr::TailCall(Box::new((
+            "sumAreas".to_string(),
+            vec![
+                Expr::BinOp(
+                    BinOp::Sub,
+                    Box::new(Expr::Ident("n".to_string())),
+                    Box::new(Expr::Literal(crate::ast::Literal::Int(1))),
+                ),
+                Expr::BinOp(
+                    BinOp::Add,
+                    Box::new(Expr::Ident("acc".to_string())),
+                    Box::new(Expr::Literal(crate::ast::Literal::Int(1))),
+                ),
+                Expr::Ident("pick".to_string()),
+            ],
+        )));
+
+        let passthrough = HashSet::from([2usize]);
+        let code = emit_tco_expr(
+            &expr,
+            &fd.name,
+            &fd.params,
+            &ctx,
+            &ectx,
+            &HashSet::new(),
+            &passthrough,
+        );
+        assert!(!code.contains("let __tmp2 = pick;"));
+        assert!(!code.contains("pick = __tmp2;"));
+        assert!(code.contains("continue;"));
     }
 
     #[test]
