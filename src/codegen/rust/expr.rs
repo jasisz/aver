@@ -753,8 +753,10 @@ pub(super) fn maybe_clone(code: String, expr: &Expr, ectx: &EmitCtx) -> String {
             if ectx.skip_clone(name) {
                 code
             } else if ectx.is_rc_wrapped(name) {
-                // Rc-wrapped pass-through param: deref then clone to get the inner T.
-                // `(*param).clone()` produces T, not Rc<T>.
+                // Pass-through param (Rc<T> in self-TCO, &T in mutual-TCO trampoline).
+                // For Rc<T>: `(*param).clone()` derefs Rc then clones inner T.
+                // For &T: `(*param).clone()` derefs borrow then clones inner T.
+                // Both produce owned T at the call site.
                 format!("(*{}).clone()", code)
             } else {
                 format!("{}.clone()", code)

@@ -540,8 +540,8 @@ fn emit_fn_params_with_rc(
             let rust_type = type_annotation_to_rust(type_ann);
             let rust_name = aver_name_to_rust(name);
             if rc_indices.contains(&i) {
-                // Rc-wrapped param: not mutable (it's shared via Rc)
-                format!("{}: std::rc::Rc<{}>", rust_name, rust_type)
+                // Borrowed pass-through param: &T instead of owned T
+                format!("{}: &{}", rust_name, rust_type)
             } else if mutable {
                 format!("mut {}: {}", rust_name, rust_type)
             } else {
@@ -640,7 +640,7 @@ fn is_expensive_clone_type(ty: &crate::types::Type) -> bool {
 
 /// For a group of mutually-recursive functions (or a single self-recursive fn),
 /// find param indices that are "pass-through" — never rebound in tail calls.
-/// These can safely be wrapped in Rc<T> to avoid deep cloning.
+/// These can safely be passed as `&T` borrows to avoid deep cloning.
 fn compute_rc_params(group_fns: &[&FnDef], _ctx: &CodegenContext) -> HashSet<usize> {
     if group_fns.is_empty() {
         return HashSet::new();
@@ -852,7 +852,7 @@ fn check_expr_tailcalls_for_rc(
     }
 }
 
-/// Build a set of param names that should be Rc-wrapped, given rc_indices.
+/// Build a set of param names that should be borrowed (`&T`), given rc_indices.
 fn rc_param_names(params: &[(String, String)], rc_indices: &HashSet<usize>) -> HashSet<String> {
     rc_indices
         .iter()
@@ -1615,14 +1615,12 @@ fn emit_tco_fn(
 
     // Wrap pass-through params in Rc before the loop (shadowing the original binding)
     for &i in &rc_indices {
-        let (name, ty) = &fd.params[i];
+        let (name, _) = &fd.params[i];
         let rust_name = aver_name_to_rust(name);
-        let rust_type = type_annotation_to_rust(ty);
         lines.push(format!(
             "    let {} = std::rc::Rc::new({});",
             rust_name, rust_name
         ));
-        let _ = rust_type;
     }
 
     for hoist in &invariant_hoists {
@@ -2016,7 +2014,7 @@ pub fn emit_mutual_tco_block(
 
     let mut sections = Vec::new();
 
-    // 1. Enum definition — exclude Rc-wrapped params (they're shared across iterations)
+    // 1. Enum definition — exclude borrowed params (they're shared across iterations)
     let mut enum_lines = Vec::new();
     enum_lines.push("#[allow(non_camel_case_types)]".to_string());
     enum_lines.push(format!("enum {} {{", enum_name));
@@ -2037,11 +2035,11 @@ pub fn emit_mutual_tco_block(
     enum_lines.push("}".to_string());
     sections.push(enum_lines.join("\n"));
 
-    // 2. Trampoline function — Rc-wrapped params are extra parameters
+    // 2. Trampoline function — borrowed params are extra `&T` parameters
     let mut tramp_lines = Vec::new();
 
-    // Build the Rc extra params for the trampoline signature (owned Rc<T>)
-    // Use first fn that has them (all fns have same name+type for Rc params)
+    // Build the borrowed extra params for the trampoline signature (&T)
+    // Use first fn that has them (all fns have same name+type for borrowed params)
     let rc_extra_params: String = if !rc_names.is_empty() && !group_fns.is_empty() {
         let parts: Vec<String> = group_fns[0]
             .params
@@ -2049,7 +2047,7 @@ pub fn emit_mutual_tco_block(
             .filter(|(name, _)| rc_names.contains(name))
             .map(|(name, ty)| {
                 format!(
-                    "{}: std::rc::Rc<{}>",
+                    "{}: &{}",
                     aver_name_to_rust(name),
                     type_annotation_to_rust(ty)
                 )
@@ -2104,12 +2102,12 @@ pub fn emit_mutual_tco_block(
     tramp_lines.push("}".to_string());
     sections.push(tramp_lines.join("\n"));
 
-    // 3. Wrapper functions — accept plain T, wrap Rc params in Rc::new(), call trampoline
+    // 3. Wrapper functions — accept owned T, pass &T to trampoline
     for fd in group_fns {
         let fn_name = aver_name_to_rust(&fd.name);
         let variant = fn_name_to_variant(&fd.name);
         let params = emit_fn_params(&fd.params, false);
-        // Enum variant args: only non-Rc params
+        // Enum variant args: only non-borrowed params
         let variant_arg_names: Vec<String> = fd
             .params
             .iter()
@@ -2127,13 +2125,13 @@ pub fn emit_mutual_tco_block(
             )
         };
 
-        // Build the Rc extra args for the trampoline call (owned Rc<T>)
+        // Build the borrowed extra args for the trampoline call (owned → &T)
         let rc_extra_args: String = if !rc_names.is_empty() {
             let parts: Vec<String> = fd
                 .params
                 .iter()
                 .filter(|(name, _)| rc_names.contains(name))
-                .map(|(name, _)| format!("std::rc::Rc::new({})", aver_name_to_rust(name)))
+                .map(|(name, _)| format!("&{}", aver_name_to_rust(name)))
                 .collect();
             if parts.is_empty() {
                 String::new()
@@ -2353,7 +2351,7 @@ fn emit_trampoline_expr(
         }
         _ => {
             // Non-tail expression → return to exit trampoline.
-            // If this is a bare Rc-wrapped ident, deref+clone to get T.
+            // If this is a bare pass-through ident (&T), deref+clone to get owned T.
             if let Expr::Ident(name) = expr
                 && ectx.is_rc_wrapped(name)
             {

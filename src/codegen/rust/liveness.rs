@@ -14,7 +14,7 @@ pub struct EmitCtx {
     pub used_after: HashSet<String>,
     /// Local variable types (from fn params) for copy-type elision.
     pub local_types: HashMap<String, Type>,
-    /// Parameters wrapped in Rc<T> for pass-through TCO optimization.
+    /// Parameters passed as `&T` borrows (pass-through TCO optimization).
     pub rc_wrapped: HashSet<String>,
 }
 
@@ -50,7 +50,8 @@ impl EmitCtx {
 
     /// Should `.clone()` be skipped for this variable?
     /// True if it's Copy OR if it's last-use (can move).
-    /// Rc-wrapped params always need `(*param).clone()` to produce T, never skip.
+    /// Pass-through params (Rc-wrapped in self-TCO, or `&T` in mutual-TCO trampoline)
+    /// always need `(*param).clone()` to produce owned T, never skip.
     pub fn skip_clone(&self, name: &str) -> bool {
         if self.rc_wrapped.contains(name) {
             return false;
@@ -58,7 +59,7 @@ impl EmitCtx {
         self.is_copy(name) || self.can_move(name)
     }
 
-    /// Is this variable wrapped in Rc<T> for pass-through TCO optimization?
+    /// Is this variable a pass-through parameter (Rc<T> in self-TCO, &T in mutual-TCO)?
     pub fn is_rc_wrapped(&self, name: &str) -> bool {
         self.rc_wrapped.contains(name)
     }
@@ -74,7 +75,7 @@ impl EmitCtx {
         }
     }
 
-    /// Create a context with specified Rc-wrapped parameters.
+    /// Create a context with specified borrowed (`&T`) parameters.
     pub fn with_rc_wrapped(&self, rc: HashSet<String>) -> Self {
         EmitCtx {
             used_after: self.used_after.clone(),
