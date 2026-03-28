@@ -19,7 +19,11 @@ pub fn type_to_rust(ty: &Type) -> String {
             format!("({})", parts.join(", "))
         }
         Type::Map(key, value) => {
-            format!("HashMap<{}, {}>", type_to_rust(key), type_to_rust(value))
+            format!(
+                "aver_rt::AverMap<{}, {}>",
+                type_to_rust(key),
+                type_to_rust(value)
+            )
         }
         Type::Vector(inner) => format!("aver_rt::AverVector<{}>", type_to_rust(inner)),
         Type::Fn(params, ret, _effects) => {

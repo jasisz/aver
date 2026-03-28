@@ -124,8 +124,10 @@ pub fn is_copy_type(ty: &Type) -> bool {
 /// Should this type be passed by borrow (`&T`) in user function parameters?
 /// Should this param be borrowed (`&T`) instead of owned?
 /// Copy types pass by value. Str (AverStr = Rc<str>) is cheap to clone.
-/// Named types (user enums/records) have Rc recursive fields — clone is O(1).
-/// Only container types (HashMap, AverList, AverVector, tuples of non-Copy) benefit.
+/// Named types stay owned — their fields are mostly Rc-wrapped containers
+/// (AverMap, AverList, AverVector, AverStr), so clone is refcount bumps,
+/// not deep copies. Borrow still eliminates the clone calls entirely,
+/// which reduces refcount churn and can improve optimizer output.
 pub fn should_borrow_param(ty: &Type) -> bool {
     matches!(
         ty,
