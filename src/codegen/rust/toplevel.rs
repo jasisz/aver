@@ -1199,6 +1199,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_self_tailcall_hoists_in_expr<'a>(
     expr: &'a Expr,
     self_name: &str,
@@ -1652,6 +1653,7 @@ fn emit_tco_fn(
     lines.join("\n")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_tco_body(
     body: &FnBody,
     self_name: &str,
@@ -1705,6 +1707,7 @@ fn emit_tco_body(
     lines.join("\n")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn try_emit_tco_bool_if_else(
     subj: &str,
     arms: &[MatchArm],
@@ -1751,6 +1754,7 @@ fn try_emit_tco_bool_if_else(
     Some(format!("if {} {{ {} }} else {{ {} }}", subj, t, f))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_tco_expr(
     expr: &Expr,
     self_name: &str,
@@ -2205,6 +2209,7 @@ fn emit_trampoline_arm_body(
 ///
 /// Tail calls to group members produce enum variants (bounce).
 /// Non-tail expressions use `return` to exit the trampoline.
+#[allow(clippy::too_many_arguments)]
 fn emit_trampoline_expr(
     expr: &Expr,
     enum_name: &str,
@@ -2360,6 +2365,7 @@ fn emit_trampoline_expr(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn try_emit_trampoline_bool_if_else(
     subj: &str,
     arms: &[MatchArm],

@@ -2279,6 +2279,7 @@ pub(super) fn cmd_verify(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_codegen_context(
     file: &str,
     project_name: Option<&str>,
