@@ -1556,41 +1556,10 @@ fn run_check_for_file(
         let mut transformed = items.clone();
         tco::transform_program(&mut transformed);
 
-        // --- Type errors (hard errors) ---
+        // --- Collect all diagnostics ---
         let tc_result = run_type_check_full(items, Some(module_root));
         let non_tail_warnings =
             collect_non_tail_recursion_warnings_with_sigs(&transformed, &tc_result.fn_sigs);
-        let has_errors = !tc_result.errors.is_empty();
-        for te in &tc_result.errors {
-            let diag =
-                diagnostic::from_type_error(&te.message, te.line, te.col, source, &shown_path);
-            print!("{}", diag.render(verbose));
-        }
-
-        // --- Unused binding warnings ---
-        for (binding_name, fn_name, line) in &tc_result.unused_bindings {
-            let diag = diagnostic::unused_binding_diagnostic(
-                binding_name,
-                fn_name,
-                *line,
-                source,
-                &shown_path,
-            );
-            print!("{}", diag.render(verbose));
-        }
-
-        // Check line count
-        if line_count > 500 {
-            println!(
-                "  {} File has {} lines (recommended max: 500)",
-                "WARNING:".yellow(),
-                line_count
-            );
-        } else {
-            println!("  {} Size OK ({} lines)", "✓".green(), line_count);
-        }
-
-        // Check intents, descriptions, and verify coverage
         let findings =
             check_module_intent_with_sigs_in(items, Some(&tc_result.fn_sigs), Some(path));
         let coverage_warnings = collect_verify_coverage_warnings_in(items, Some(path));
@@ -1600,94 +1569,112 @@ fn run_check_for_file(
             .get(&canonical_path_key(path))
             .cloned()
             .unwrap_or_default();
-        if findings.errors.is_empty()
-            && findings.warnings.is_empty()
-            && coverage_warnings.is_empty()
-            && law_dependency_warnings.is_empty()
-            && unused_exposes_warnings.is_empty()
-        {
-            println!("  {} All intent/desc/verify present", "✓".green());
-        } else {
-            for e in &findings.errors {
-                let diag = super::diagnostic::from_check_finding(
-                    super::diagnostic::Severity::Error,
-                    e,
-                    source,
-                    &shown_path,
-                );
-                print!("{}", diag.render(verbose));
+
+        let has_errors = !tc_result.errors.is_empty() || !findings.errors.is_empty();
+
+        // --- Emit all diagnostics (errors first, then warnings) ---
+        let mut diag_count = 0usize;
+
+        for te in &tc_result.errors {
+            let diag =
+                diagnostic::from_type_error(&te.message, te.line, te.col, source, &shown_path);
+            if diag_count > 0 {
+                println!();
             }
-            for w in findings
-                .warnings
-                .iter()
-                .chain(coverage_warnings.iter())
-                .chain(law_dependency_warnings.iter())
-                .chain(unused_exposes_warnings.iter())
-            {
-                let diag = super::diagnostic::from_check_finding(
-                    super::diagnostic::Severity::Warning,
-                    w,
-                    source,
-                    &shown_path,
-                );
-                print!("{}", diag.render(verbose));
-            }
-            for warning in &non_tail_warnings {
-                let finding = CheckFinding {
-                    line: warning.line,
-                    module: None,
-                    file: Some(path.to_string()),
-                    message: warning.message.clone(),
-                };
-                let diag = super::diagnostic::from_check_finding(
-                    super::diagnostic::Severity::Warning,
-                    &finding,
-                    source,
-                    &shown_path,
-                );
-                print!("{}", diag.render(verbose));
-            }
+            print!("{}", diag.render(verbose));
+            diag_count += 1;
         }
 
-        if findings.errors.is_empty()
-            && findings.warnings.is_empty()
-            && coverage_warnings.is_empty()
-            && law_dependency_warnings.is_empty()
-            && unused_exposes_warnings.is_empty()
-            && !non_tail_warnings.is_empty()
-        {
-            for warning in &non_tail_warnings {
-                let finding = CheckFinding {
-                    line: warning.line,
-                    module: None,
-                    file: Some(path.to_string()),
-                    message: warning.message.clone(),
-                };
-                let diag = super::diagnostic::from_check_finding(
-                    super::diagnostic::Severity::Warning,
-                    &finding,
-                    source,
-                    &shown_path,
-                );
-                print!("{}", diag.render(verbose));
-            }
-        }
-
-        // Count decisions
-        let decisions = index_decisions(items);
-        if !decisions.is_empty() {
-            println!(
-                "  {} Found {} decision block(s)",
-                "✓".green(),
-                decisions.len()
+        for e in &findings.errors {
+            let diag = super::diagnostic::from_check_finding(
+                super::diagnostic::Severity::Error,
+                e,
+                source,
+                &shown_path,
             );
+            if diag_count > 0 {
+                println!();
+            }
+            print!("{}", diag.render(verbose));
+            diag_count += 1;
         }
 
-        let has_contract_errors = !findings.errors.is_empty();
-        if has_errors || has_contract_errors {
-            has_any_error = true;
+        for (binding_name, fn_name, line) in &tc_result.unused_bindings {
+            let diag = diagnostic::unused_binding_diagnostic(
+                binding_name,
+                fn_name,
+                *line,
+                source,
+                &shown_path,
+            );
+            if diag_count > 0 {
+                println!();
+            }
+            print!("{}", diag.render(verbose));
+            diag_count += 1;
+        }
+
+        for w in findings
+            .warnings
+            .iter()
+            .chain(coverage_warnings.iter())
+            .chain(law_dependency_warnings.iter())
+            .chain(unused_exposes_warnings.iter())
+        {
+            let diag = super::diagnostic::from_check_finding(
+                super::diagnostic::Severity::Warning,
+                w,
+                source,
+                &shown_path,
+            );
+            if diag_count > 0 {
+                println!();
+            }
+            print!("{}", diag.render(verbose));
+            diag_count += 1;
+        }
+
+        for warning in &non_tail_warnings {
+            let finding = CheckFinding {
+                line: warning.line,
+                module: None,
+                file: Some(path.to_string()),
+                message: warning.message.clone(),
+            };
+            let diag = super::diagnostic::from_check_finding(
+                super::diagnostic::Severity::Warning,
+                &finding,
+                source,
+                &shown_path,
+            );
+            if diag_count > 0 {
+                println!();
+            }
+            print!("{}", diag.render(verbose));
+            diag_count += 1;
+        }
+
+        // --- Summary line ---
+        if diag_count > 0 {
+            println!();
+        }
+        let decisions = index_decisions(items);
+        let mut summary_parts = Vec::new();
+        if !has_errors {
+            summary_parts.push(format!("{} types", "✓".green()));
+        }
+        if line_count <= 500 {
+            summary_parts.push(format!("{} lines", line_count));
         } else {
-            println!("  {} Type check passed", "✓".green());
+            summary_parts.push(format!("{} {} lines (max 500)", "!".yellow(), line_count));
+        }
+        if !decisions.is_empty() {
+            summary_parts.push(format!("{} decision(s)", decisions.len()));
+        }
+        println!("  {}", summary_parts.join(" | "));
+
+        if has_errors {
+            has_any_error = true;
         }
     }
 
