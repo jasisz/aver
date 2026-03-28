@@ -721,6 +721,7 @@ fn fn_def_has_tco(fd: &FnDef) -> bool {
 }
 
 /// Check if a FnDef has any tail call (self or mutual), meaning it participates in TCO.
+#[allow(dead_code)]
 fn fn_def_has_any_tailcall(fd: &FnDef) -> bool {
     fn expr_has_tailcall(expr: &Expr) -> bool {
         match expr {
@@ -781,7 +782,7 @@ fn callee_borrow_mask(name: &str, arg_count: usize, ctx: &CodegenContext) -> Vec
         return param_types
             .iter()
             .take(arg_count)
-            .map(|ty| should_borrow_param(ty))
+            .map(should_borrow_param)
             .collect();
     }
 
@@ -799,10 +800,10 @@ fn find_fn_def_by_name<'a>(name: &str, ctx: &'a CodegenContext) -> Option<&'a Fn
     // Check module fn_defs for qualified calls
     if let Some((prefix, bare)) = resolve_module_call(name, ctx) {
         for module in &ctx.modules {
-            if module.prefix == prefix {
-                if let Some(fd) = module.fn_defs.iter().find(|fd| fd.name == bare) {
-                    return Some(fd);
-                }
+            if module.prefix == prefix
+                && let Some(fd) = module.fn_defs.iter().find(|fd| fd.name == bare)
+            {
+                return Some(fd);
             }
         }
     }
