@@ -75,32 +75,35 @@ impl Interpreter {
             .unwrap_or(false)
     }
 
-    pub(super) fn apply_runtime_constructor_nv(
+    pub(super) fn apply_runtime_constructor_args_nv(
         &mut self,
         name: &str,
-        inner: Option<NanValue>,
+        args: &[NanValue],
     ) -> Result<NanValue, RuntimeError> {
         match self.classify_runtime_constructor_name(name) {
-            SemanticConstructor::NoneValue => match inner {
-                None => Ok(NanValue::NONE),
-                Some(_) => Err(RuntimeError::Error(format!(
-                    "Constructor '{}' does not take an argument",
+            SemanticConstructor::NoneValue => {
+                if args.is_empty() {
+                    Ok(NanValue::NONE)
+                } else {
+                    Err(RuntimeError::Error(format!(
+                        "Constructor '{}' does not take an argument",
+                        name
+                    )))
+                }
+            }
+            SemanticConstructor::Wrapper(kind) => match args {
+                [inner] => match kind {
+                    WrapperKind::ResultOk => Ok(NanValue::new_ok_value(*inner, &mut self.arena)),
+                    WrapperKind::ResultErr => Ok(NanValue::new_err_value(*inner, &mut self.arena)),
+                    WrapperKind::OptionSome => {
+                        Ok(NanValue::new_some_value(*inner, &mut self.arena))
+                    }
+                },
+                _ => Err(RuntimeError::Error(format!(
+                    "Constructor '{}' expects exactly 1 argument",
                     name
                 ))),
             },
-            SemanticConstructor::Wrapper(kind) => {
-                let Some(inner) = inner else {
-                    return Err(RuntimeError::Error(format!(
-                        "Constructor '{}' expects an argument",
-                        name
-                    )));
-                };
-                match kind {
-                    WrapperKind::ResultOk => Ok(NanValue::new_ok_value(inner, &mut self.arena)),
-                    WrapperKind::ResultErr => Ok(NanValue::new_err_value(inner, &mut self.arena)),
-                    WrapperKind::OptionSome => Ok(NanValue::new_some_value(inner, &mut self.arena)),
-                }
-            }
             SemanticConstructor::TypeConstructor {
                 qualified_type_name,
                 variant_name,
@@ -124,21 +127,18 @@ impl Interpreter {
                             .register_variant_name(type_id, variant_name.clone())
                     });
 
-                let value = match inner {
-                    Some(inner) => {
-                        let variant_idx = self.arena.push_variant(type_id, variant_id, vec![inner]);
-                        NanValue::new_variant(variant_idx)
-                    }
-                    None => {
-                        let ctor_id =
-                            self.arena
-                                .find_ctor_id(type_id, variant_id)
-                                .ok_or_else(|| {
-                                    RuntimeError::Error(format!("Unknown constructor: {}", name))
-                                })?;
-                        let symbol = self.arena.push_nullary_variant_symbol(ctor_id);
-                        NanValue::new_nullary_variant(symbol)
-                    }
+                let value = if args.is_empty() {
+                    let ctor_id =
+                        self.arena
+                            .find_ctor_id(type_id, variant_id)
+                            .ok_or_else(|| {
+                                RuntimeError::Error(format!("Unknown constructor: {}", name))
+                            })?;
+                    let symbol = self.arena.push_nullary_variant_symbol(ctor_id);
+                    NanValue::new_nullary_variant(symbol)
+                } else {
+                    let variant_idx = self.arena.push_variant(type_id, variant_id, args.to_vec());
+                    NanValue::new_variant(variant_idx)
                 };
                 Ok(value)
             }
@@ -146,6 +146,19 @@ impl Interpreter {
                 "Unknown constructor: {}",
                 name
             ))),
+        }
+    }
+
+    pub(super) fn apply_runtime_constructor_nv(
+        &mut self,
+        name: &str,
+        inner: Option<NanValue>,
+    ) -> Result<NanValue, RuntimeError> {
+        match inner {
+            Some(inner) => {
+                self.apply_runtime_constructor_args_nv(name, std::slice::from_ref(&inner))
+            }
+            None => self.apply_runtime_constructor_args_nv(name, &[]),
         }
     }
 

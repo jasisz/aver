@@ -56,9 +56,7 @@ pub fn classify_body_expr_plan<'a>(expr: &'a Expr, ctx: &impl CallLowerCtx) -> B
 
 pub fn classify_body_plan<'a>(body: &'a FnBody, ctx: &impl CallLowerCtx) -> Option<BodyPlan<'a>> {
     let stmts = body.stmts();
-    let Some((tail_stmt, prefix)) = stmts.split_last() else {
-        return None;
-    };
+    let (tail_stmt, prefix) = stmts.split_last()?;
 
     let Stmt::Expr(tail_expr) = tail_stmt else {
         return None;

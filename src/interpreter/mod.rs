@@ -326,10 +326,16 @@ mod ir_bridge_tests {
     fn register_task_event_type(interpreter: &mut Interpreter) {
         interpreter.register_type_def(&TypeDef::Sum {
             name: "TaskEvent".to_string(),
-            variants: vec![TypeVariant {
-                name: "TaskCreated".to_string(),
-                fields: vec!["String".to_string()],
-            }],
+            variants: vec![
+                TypeVariant {
+                    name: "TaskCreated".to_string(),
+                    fields: vec!["String".to_string()],
+                },
+                TypeVariant {
+                    name: "TaskMoved".to_string(),
+                    fields: vec!["String".to_string(), "Int".to_string()],
+                },
+            ],
             line: 1,
         });
 
@@ -821,6 +827,41 @@ mod ir_bridge_tests {
                 assert_eq!(type_name, "TaskEvent");
                 assert_eq!(variant, "TaskCreated");
                 assert_eq!(fields.as_ref(), &[Value::Str("now".to_string())]);
+            }
+            other => panic!("expected variant, got {other:?}"),
+        }
+
+        let multi_ctor_call = Expr::FnCall(
+            Box::new(Expr::Attr(
+                Box::new(Expr::Attr(
+                    Box::new(Expr::Attr(
+                        Box::new(Expr::Ident("Domain".to_string())),
+                        "Types".to_string(),
+                    )),
+                    "TaskEvent".to_string(),
+                )),
+                "TaskMoved".to_string(),
+            )),
+            vec![
+                Expr::Literal(Literal::Str("later".to_string())),
+                Expr::Literal(Literal::Int(3)),
+            ],
+        );
+        match interpreter
+            .eval_expr(&multi_ctor_call)
+            .expect("direct qualified multi-field ctor call should run")
+        {
+            Value::Variant {
+                type_name,
+                variant,
+                fields,
+            } => {
+                assert_eq!(type_name, "TaskEvent");
+                assert_eq!(variant, "TaskMoved");
+                assert_eq!(
+                    fields.as_ref(),
+                    &[Value::Str("later".to_string()), Value::Int(3)]
+                );
             }
             other => panic!("expected variant, got {other:?}"),
         }

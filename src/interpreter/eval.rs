@@ -1444,15 +1444,8 @@ impl Interpreter {
                 qualified_type_name,
                 variant_name,
             } => {
-                if args.len() > 1 {
-                    return EvalState::Apply(Err(RuntimeError::Error(format!(
-                        "{}.{} expects at most 1 argument",
-                        qualified_type_name, variant_name
-                    ))));
-                }
-
                 let name = format!("{qualified_type_name}.{variant_name}");
-                EvalState::Apply(self.apply_runtime_constructor_nv(&name, args.first().copied()))
+                EvalState::Apply(self.apply_runtime_constructor_args_nv(&name, &args))
             }
         }
     }

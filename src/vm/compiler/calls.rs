@@ -130,7 +130,7 @@ impl<'a> FnCompiler<'a> {
             }
             CallPlan::Builtin(name) => self
                 .resolve_builtin_target(&name)
-                .or_else(|| Some(CallTarget::UnknownQualified(name))),
+                .or(Some(CallTarget::UnknownQualified(name))),
             CallPlan::Wrapper(kind) => {
                 let wrap_kind = match kind {
                     WrapperKind::ResultOk => 0,

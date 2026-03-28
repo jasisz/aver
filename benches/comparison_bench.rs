@@ -107,6 +107,14 @@ fn write_temp_source(dir: &std::path::Path, name: &str, source: &str) -> std::pa
     path
 }
 
+struct BenchArtifacts<'a> {
+    semantic_native_bin: &'a std::path::Path,
+    optimized_native_bin: &'a std::path::Path,
+    aver_bin: &'a str,
+    module_root: &'a std::path::Path,
+    source_file: &'a std::path::Path,
+}
+
 // ── Test programs ────────────────────────────────────────────────────────────
 
 const FIB_SRC: &str = r#"module Bench
@@ -221,11 +229,7 @@ fn bench_all_modes(
     group: &mut BenchmarkGroup<WallTime>,
     label: &str,
     source: &str,
-    semantic_native_bin: &std::path::Path,
-    optimized_native_bin: &std::path::Path,
-    aver_bin: &str,
-    module_root: &std::path::Path,
-    source_file: &std::path::Path,
+    artifacts: &BenchArtifacts<'_>,
 ) {
     group.bench_with_input(BenchmarkId::new("interpreter", label), source, |b, src| {
         b.iter(|| run_interpreter(src));
@@ -234,20 +238,20 @@ fn bench_all_modes(
         b.iter(|| run_vm(src));
     });
     group.bench_function(BenchmarkId::new("codegen-semantic", label), |b| {
-        b.iter(|| run_external(semantic_native_bin.to_str().unwrap(), &[]));
+        b.iter(|| run_external(artifacts.semantic_native_bin.to_str().unwrap(), &[]));
     });
     group.bench_function(BenchmarkId::new("codegen-optimized", label), |b| {
-        b.iter(|| run_external(optimized_native_bin.to_str().unwrap(), &[]));
+        b.iter(|| run_external(artifacts.optimized_native_bin.to_str().unwrap(), &[]));
     });
     group.bench_function(BenchmarkId::new("self-hosted", label), |b| {
         b.iter(|| {
             run_external(
-                aver_bin,
+                artifacts.aver_bin,
                 &[
                     "run",
-                    source_file.to_str().unwrap(),
+                    artifacts.source_file.to_str().unwrap(),
                     "--module-root",
-                    module_root.to_str().unwrap(),
+                    artifacts.module_root.to_str().unwrap(),
                     "--self-host",
                 ],
             )
@@ -305,16 +309,14 @@ fn comparison_benches(c: &mut Criterion) {
 
     for (i, (label, _, src)) in tests.iter().enumerate() {
         let mut group = c.benchmark_group(*label);
-        bench_all_modes(
-            &mut group,
-            label,
-            src,
-            &semantic_natives[i],
-            &optimized_natives[i],
+        let artifacts = BenchArtifacts {
+            semantic_native_bin: &semantic_natives[i],
+            optimized_native_bin: &optimized_natives[i],
             aver_bin,
-            self_host_root.path(),
-            &source_files[i],
-        );
+            module_root: self_host_root.path(),
+            source_file: &source_files[i],
+        };
+        bench_all_modes(&mut group, label, src, &artifacts);
         group.finish();
     }
 }
