@@ -33,6 +33,8 @@ use aver::verify_law::{
 };
 use aver::vm;
 
+use super::diagnostic;
+
 use crate::shared::{
     apply_runtime_policy_to_vm, compile_program_for_exec, compute_memo_fns, format_type_errors,
     load_dep_modules, load_runtime_policy, parse_file, print_type_errors, read_file,
@@ -1054,6 +1056,7 @@ fn collect_unused_exposes_findings(
     findings
 }
 
+#[allow(dead_code)]
 fn finding_location(f: &CheckFinding, entry_module: Option<&str>) -> String {
     match (&f.module, entry_module) {
         (Some(module), Some(entry)) if module == entry => f.line.to_string(),
@@ -1524,7 +1527,7 @@ pub(super) fn cmd_run_self_hosted(
 
 fn run_check_for_file(file: &str, module_root: &str, deps: bool) -> Result<bool, String> {
     let units = collect_check_units(file, module_root, deps)?;
-    let entry_module = units.first().and_then(|(_, _, items)| module_name(items));
+    let _entry_module = units.first().and_then(|(_, _, items)| module_name(items));
     let mut unused_exposes_by_file: HashMap<String, Vec<CheckFinding>> = HashMap::new();
     if deps {
         for finding in collect_unused_exposes_findings(&units, file, module_root) {
@@ -1553,20 +1556,23 @@ fn run_check_for_file(file: &str, module_root: &str, deps: bool) -> Result<bool,
         let non_tail_warnings =
             collect_non_tail_recursion_warnings_with_sigs(&transformed, &tc_result.fn_sigs);
         let has_errors = !tc_result.errors.is_empty();
+        let verbose = false;
         for te in &tc_result.errors {
-            println!("  {}", format!("error[{}]: {}", te.line, te.message).red());
+            let diag =
+                diagnostic::from_type_error(&te.message, te.line, te.col, source, &shown_path);
+            print!("{}", diag.render(verbose));
         }
 
         // --- Unused binding warnings ---
         for (binding_name, fn_name, line) in &tc_result.unused_bindings {
-            println!(
-                "  {}",
-                format!(
-                    "warning[{}]: Unused binding '{}' in function '{}'",
-                    line, binding_name, fn_name
-                )
-                .yellow()
+            let diag = diagnostic::unused_binding_diagnostic(
+                binding_name,
+                fn_name,
+                *line,
+                source,
+                &shown_path,
             );
+            print!("{}", diag.render(verbose));
         }
 
         // Check line count
@@ -1599,30 +1605,43 @@ fn run_check_for_file(file: &str, module_root: &str, deps: bool) -> Result<bool,
             println!("  {} All intent/desc/verify present", "✓".green());
         } else {
             for e in &findings.errors {
-                let loc = finding_location(e, entry_module.as_deref());
-                println!("  {}", format!("error[{}]: {}", loc, e.message).red());
+                let diag = super::diagnostic::from_check_finding(
+                    super::diagnostic::Severity::Error,
+                    e,
+                    source,
+                    &shown_path,
+                );
+                print!("{}", diag.render(false));
             }
-            for w in &findings.warnings {
-                let loc = finding_location(w, entry_module.as_deref());
-                println!("  {}", format!("warning[{}]: {}", loc, w.message).yellow());
-            }
-            for w in &coverage_warnings {
-                let loc = finding_location(w, entry_module.as_deref());
-                println!("  {}", format!("warning[{}]: {}", loc, w.message).yellow());
-            }
-            for w in &law_dependency_warnings {
-                let loc = finding_location(w, entry_module.as_deref());
-                println!("  {}", format!("warning[{}]: {}", loc, w.message).yellow());
-            }
-            for w in &unused_exposes_warnings {
-                let loc = finding_location(w, entry_module.as_deref());
-                println!("  {}", format!("warning[{}]: {}", loc, w.message).yellow());
+            for w in findings
+                .warnings
+                .iter()
+                .chain(coverage_warnings.iter())
+                .chain(law_dependency_warnings.iter())
+                .chain(unused_exposes_warnings.iter())
+            {
+                let diag = super::diagnostic::from_check_finding(
+                    super::diagnostic::Severity::Warning,
+                    w,
+                    source,
+                    &shown_path,
+                );
+                print!("{}", diag.render(false));
             }
             for warning in &non_tail_warnings {
-                println!(
-                    "  {}",
-                    format!("warning[{}:1]: {}", warning.line, warning.message).yellow()
+                let finding = CheckFinding {
+                    line: warning.line,
+                    module: None,
+                    file: Some(path.to_string()),
+                    message: warning.message.clone(),
+                };
+                let diag = super::diagnostic::from_check_finding(
+                    super::diagnostic::Severity::Warning,
+                    &finding,
+                    source,
+                    &shown_path,
                 );
+                print!("{}", diag.render(false));
             }
         }
 
@@ -1634,10 +1653,19 @@ fn run_check_for_file(file: &str, module_root: &str, deps: bool) -> Result<bool,
             && !non_tail_warnings.is_empty()
         {
             for warning in &non_tail_warnings {
-                println!(
-                    "  {}",
-                    format!("warning[{}:1]: {}", warning.line, warning.message).yellow()
+                let finding = CheckFinding {
+                    line: warning.line,
+                    module: None,
+                    file: Some(path.to_string()),
+                    message: warning.message.clone(),
+                };
+                let diag = super::diagnostic::from_check_finding(
+                    super::diagnostic::Severity::Warning,
+                    &finding,
+                    source,
+                    &shown_path,
                 );
+                print!("{}", diag.render(false));
             }
         }
 

@@ -11,6 +11,9 @@ mod context_cmd;
 mod context_data;
 #[path = "main/context_format.rs"]
 mod context_format;
+#[path = "main/diagnostic.rs"]
+#[allow(dead_code)]
+mod diagnostic;
 #[path = "main/format_cmd.rs"]
 mod format_cmd;
 #[path = "main/repl.rs"]
