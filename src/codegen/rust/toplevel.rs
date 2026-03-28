@@ -1,6 +1,7 @@
 use super::expr::{
-    aver_name_to_rust, classify_dispatch_plan_for_rust, clone_arg, emit_dispatch_table_match,
-    emit_expr, emit_stmt, has_forward_fn_body_for_rust,
+    aver_name_to_rust, body_plan_is_inline_candidate, classify_body_plan_for_rust,
+    classify_dispatch_plan_for_rust, clone_arg, emit_body_plan_for_rust, emit_dispatch_table_match,
+    emit_expr, emit_stmt,
 };
 use super::liveness::{
     EmitCtx, collect_vars, compute_args_used_after_with_rc, compute_block_used_after,
@@ -398,10 +399,17 @@ fn emit_fn_def_with_visibility(
     } else {
         None
     };
-    let is_forward_wrapper = matches!(ctx.emission_style, EmissionStyle::Optimized)
-        && has_forward_fn_body_for_rust(&fd.body, ctx, &ectx);
+    let optimized_body_plan = if matches!(ctx.emission_style, EmissionStyle::Optimized) {
+        classify_body_plan_for_rust(&fd.body, ctx, &ectx)
+    } else {
+        None
+    };
 
-    if is_forward_wrapper {
+    if fd.effects.is_empty()
+        && optimized_body_plan
+            .as_ref()
+            .is_some_and(body_plan_is_inline_candidate)
+    {
         lines.push("#[inline(always)]".to_string());
     }
 
@@ -543,6 +551,12 @@ fn emit_fn_params_with_rc(
 }
 
 fn emit_fn_body(body: &FnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
+    if matches!(ctx.emission_style, EmissionStyle::Optimized)
+        && let Some(plan) = classify_body_plan_for_rust(body, ctx, ectx)
+    {
+        return format!("    {}", emit_body_plan_for_rust(&plan, ctx, ectx));
+    }
+
     let stmts = body.stmts();
     // Compute per-statement used_after sets
     let stmt_ctxs = compute_block_used_after(stmts, &ectx.used_after, &ectx.local_types);
@@ -2279,5 +2293,69 @@ mod tests {
         assert!(optimized.contains("#[inline(always)]"));
         assert!(optimized.contains("pub fn swap(a: i64, b: i64) -> i64"));
         assert!(optimized.contains("first(b, a)"));
+    }
+
+    #[test]
+    fn optimized_leaf_wrapper_uses_body_plan_and_gets_inline_always() {
+        let fd = FnDef {
+            name: "cellAt".to_string(),
+            line: 1,
+            params: vec![
+                ("grid".to_string(), "Vector<Int>".to_string()),
+                ("idx".to_string(), "Int".to_string()),
+            ],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(Expr::FnCall(
+                Box::new(Expr::Attr(
+                    Box::new(Expr::Ident("Option".to_string())),
+                    "withDefault".to_string(),
+                )),
+                vec![
+                    Expr::FnCall(
+                        Box::new(Expr::Attr(
+                            Box::new(Expr::Ident("Vector".to_string())),
+                            "get".to_string(),
+                        )),
+                        vec![
+                            Expr::Ident("grid".to_string()),
+                            Expr::Ident("idx".to_string()),
+                        ],
+                    ),
+                    Expr::Literal(Literal::Int(0)),
+                ],
+            ))),
+            resolution: None,
+        };
+
+        let mut semantic_ctx = empty_ctx();
+        semantic_ctx.fn_sigs.insert(
+            "cellAt".to_string(),
+            (
+                vec![Type::Vector(Box::new(Type::Int)), Type::Int],
+                Type::Int,
+                vec![],
+            ),
+        );
+        let semantic = emit_public_fn_def(&fd, false, &semantic_ctx);
+        assert!(!semantic.contains("#[inline(always)]"));
+
+        let mut optimized_ctx = empty_ctx();
+        optimized_ctx.emission_style = EmissionStyle::Optimized;
+        optimized_ctx.fn_sigs.insert(
+            "cellAt".to_string(),
+            (
+                vec![Type::Vector(Box::new(Type::Int)), Type::Int],
+                Type::Int,
+                vec![],
+            ),
+        );
+        let optimized = emit_public_fn_def(&fd, false, &optimized_ctx);
+        assert!(optimized.contains("#[inline(always)]"));
+        assert!(
+            optimized.contains("pub fn cellAt(grid: aver_rt::AverVector<i64>, idx: i64) -> i64")
+        );
+        assert!(optimized.contains("grid.get(idx as usize).cloned().unwrap_or(0i64)"));
     }
 }

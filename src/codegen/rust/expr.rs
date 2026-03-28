@@ -7,12 +7,13 @@ use crate::codegen::common::{
 };
 use crate::codegen::{CodegenContext, EmissionStyle};
 use crate::ir::{
-    BoolCompareOp, BoolSubjectPlan, CallLowerCtx, CallPlan, DispatchArmPlan, DispatchBindingPlan,
-    DispatchDefaultPlan, DispatchLiteral, DispatchTableShape, LeafOp, ListMatchShape,
-    MatchDispatchPlan, SemanticConstructor, SemanticDispatchPattern, TailCallPlan, WrapperKind,
-    classify_bool_subject_plan, classify_call_plan, classify_constructor_name,
-    classify_forward_fn_body, classify_leaf_op, classify_list_match_shape,
-    classify_match_dispatch_plan, classify_tail_call_plan, is_builtin_namespace,
+    BodyExprPlan, BodyPlan, BoolCompareOp, BoolSubjectPlan, CallLowerCtx, CallPlan,
+    DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan, DispatchLiteral, DispatchTableShape,
+    ForwardArg, ForwardCallPlan, LeafOp, ListMatchShape, MatchDispatchPlan, SemanticConstructor,
+    SemanticDispatchPattern, TailCallPlan, WrapperKind, classify_body_plan,
+    classify_bool_subject_plan, classify_call_plan, classify_constructor_name, classify_leaf_op,
+    classify_list_match_shape, classify_match_dispatch_plan, classify_tail_call_plan,
+    is_builtin_namespace,
 };
 use crate::types::Type;
 /// Aver expressions → Rust expression strings.
@@ -63,13 +64,22 @@ pub(super) fn classify_dispatch_plan_for_rust(
     classify_match_dispatch_plan(arms, &lower_ctx)
 }
 
-pub(super) fn has_forward_fn_body_for_rust(
-    body: &FnBody,
+pub(super) fn classify_body_plan_for_rust<'a>(
+    body: &'a FnBody,
     ctx: &CodegenContext,
     ectx: &EmitCtx,
-) -> bool {
+) -> Option<BodyPlan<'a>> {
     let lower_ctx = RustCallCtx { ctx, ectx };
-    classify_forward_fn_body(body, &lower_ctx).is_some()
+    classify_body_plan(body, &lower_ctx)
+}
+
+pub(super) fn body_plan_is_inline_candidate(plan: &BodyPlan<'_>) -> bool {
+    matches!(
+        plan,
+        BodyPlan::SingleExpr(
+            BodyExprPlan::Leaf(_) | BodyExprPlan::Call { .. } | BodyExprPlan::ForwardCall(_)
+        )
+    )
 }
 
 /// Emit a Rust expression from an Aver Expr.
@@ -313,6 +323,23 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     }
 }
 
+pub(super) fn emit_body_plan_for_rust(
+    plan: &BodyPlan<'_>,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> String {
+    match plan {
+        BodyPlan::SingleExpr(body_expr) => match body_expr {
+            BodyExprPlan::Expr(expr) => emit_expr(expr, ctx, ectx),
+            BodyExprPlan::Leaf(leaf) => emit_leaf_op(*leaf, ctx, ectx),
+            BodyExprPlan::Call { target, args } => {
+                emit_call_plan_with_args(target, args, ctx, ectx)
+            }
+            BodyExprPlan::ForwardCall(plan) => emit_forward_call_plan(plan, ctx, ectx),
+        },
+    }
+}
+
 fn emit_literal(lit: &Literal) -> String {
     match lit {
         Literal::Int(i) => format!("{}i64", i),
@@ -340,8 +367,35 @@ fn emit_codegen_error_expr(message: String) -> String {
 
 fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     let call_ctx = RustCallCtx { ctx, ectx };
-    match classify_call_plan(fn_expr, &call_ctx) {
-        CallPlan::Builtin(name) => builtins::emit_builtin_call(&name, args, ctx, ectx)
+    let plan = classify_call_plan(fn_expr, &call_ctx);
+    match plan {
+        CallPlan::Dynamic => {
+            let func = emit_expr(fn_expr, ctx, ectx);
+            let arg_ctxs = compute_args_used_after_with_rc(
+                args,
+                &ectx.used_after,
+                &ectx.local_types,
+                &ectx.rc_wrapped,
+            );
+            let arg_strs: Vec<String> = args
+                .iter()
+                .zip(arg_ctxs.iter())
+                .map(|(a, ac)| clone_arg(a, ctx, ac))
+                .collect();
+            format!("{}({})", func, arg_strs.join(", "))
+        }
+        _ => emit_call_plan_with_args(&plan, args, ctx, ectx),
+    }
+}
+
+fn emit_call_plan_with_args(
+    plan: &CallPlan,
+    args: &[Expr],
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> String {
+    match plan {
+        CallPlan::Builtin(name) => builtins::emit_builtin_call(name, args, ctx, ectx)
             .unwrap_or_else(|| {
                 emit_codegen_error_expr(format!(
                     "Rust codegen: unhandled builtin call lowering for {}",
@@ -373,23 +427,32 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &Emit
         CallPlan::TypeConstructor {
             qualified_type_name,
             variant_name,
-        } => emit_type_constructor_call(&qualified_type_name, &variant_name, args, ctx, ectx),
-        CallPlan::Function(name) => emit_named_function_call(&name, args, ctx, ectx),
-        CallPlan::Dynamic => {
-            let func = emit_expr(fn_expr, ctx, ectx);
-            let arg_ctxs = compute_args_used_after_with_rc(
-                args,
-                &ectx.used_after,
-                &ectx.local_types,
-                &ectx.rc_wrapped,
-            );
-            let arg_strs: Vec<String> = args
-                .iter()
-                .zip(arg_ctxs.iter())
-                .map(|(a, ac)| clone_arg(a, ctx, ac))
-                .collect();
-            format!("{}({})", func, arg_strs.join(", "))
-        }
+        } => emit_type_constructor_call(qualified_type_name, variant_name, args, ctx, ectx),
+        CallPlan::Function(name) => emit_named_function_call(name, args, ctx, ectx),
+        CallPlan::Dynamic => emit_codegen_error_expr(
+            "Rust codegen: dynamic call passed to direct call emitter".to_string(),
+        ),
+    }
+}
+
+fn emit_forward_call_plan(plan: &ForwardCallPlan, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
+    let args = plan
+        .args
+        .iter()
+        .map(forward_arg_to_expr)
+        .collect::<Option<Vec<_>>>();
+    match args {
+        Some(args) => emit_call_plan_with_args(&plan.target, &args, ctx, ectx),
+        None => emit_codegen_error_expr(
+            "Rust codegen: unexpected slot-based ForwardCall in source-level emission".to_string(),
+        ),
+    }
+}
+
+fn forward_arg_to_expr(arg: &ForwardArg) -> Option<Expr> {
+    match arg {
+        ForwardArg::Local(name) => Some(Expr::Ident(name.clone())),
+        ForwardArg::Slot(_) => None,
     }
 }
 

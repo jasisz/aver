@@ -1,12 +1,12 @@
 use super::{
-    BoolCompareOp, BoolMatchShape, BoolSubjectPlan, CallLowerCtx, CallPlan, DispatchArmPlan,
-    DispatchBindingPlan, DispatchDefaultPlan, DispatchLiteral, DispatchTableShape, ForwardArg,
-    ForwardCallPlan, LeafOp, ListMatchShape, MatchDispatchPlan, SemanticConstructor,
-    SemanticDispatchPattern, TailCallPlan, WrapperKind, classify_bool_match_shape,
-    classify_bool_subject_plan, classify_call_plan, classify_constructor_name,
-    classify_dispatch_pattern, classify_forward_call_plan, classify_forward_fn_body,
-    classify_leaf_op, classify_list_match_shape, classify_match_dispatch_plan,
-    classify_tail_call_plan, expr_to_dotted_name,
+    BodyExprPlan, BodyPlan, BoolCompareOp, BoolMatchShape, BoolSubjectPlan, CallLowerCtx, CallPlan,
+    DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan, DispatchLiteral, DispatchTableShape,
+    ForwardArg, ForwardCallPlan, LeafOp, ListMatchShape, MatchDispatchPlan, SemanticConstructor,
+    SemanticDispatchPattern, TailCallPlan, WrapperKind, classify_body_plan,
+    classify_bool_match_shape, classify_bool_subject_plan, classify_call_plan,
+    classify_constructor_name, classify_dispatch_pattern, classify_forward_call_plan,
+    classify_forward_fn_body, classify_leaf_op, classify_list_match_shape,
+    classify_match_dispatch_plan, classify_tail_call_plan, expr_to_dotted_name,
 };
 use crate::ast::{BinOp, Expr, FnBody, Literal, MatchArm, Pattern, Stmt};
 
@@ -363,6 +363,59 @@ fn classify_forward_fn_body_requires_single_expr_wrapper() {
         classify_forward_fn_body(&non_wrapper_body, &ForwardCtx),
         None
     );
+}
+
+#[test]
+fn classify_body_plan_for_single_expr_leaf_and_rejects_blocks() {
+    struct LocalCtx;
+    impl CallLowerCtx for LocalCtx {
+        fn is_local_value(&self, name: &str) -> bool {
+            matches!(name, "vec" | "idx" | "x")
+        }
+
+        fn is_user_type(&self, name: &str) -> bool {
+            matches!(name, "Shape" | "User")
+        }
+
+        fn resolve_module_call<'a>(&self, dotted: &'a str) -> Option<(&'a str, &'a str)> {
+            match dotted {
+                "Data.Fib.fib" => Some(("Data.Fib", "fib")),
+                _ => None,
+            }
+        }
+    }
+
+    let leaf_body = FnBody::from_expr(Expr::FnCall(
+        Box::new(Expr::Attr(
+            Box::new(Expr::Ident("Option".to_string())),
+            "withDefault".to_string(),
+        )),
+        vec![
+            Expr::FnCall(
+                Box::new(Expr::Attr(
+                    Box::new(Expr::Ident("Vector".to_string())),
+                    "get".to_string(),
+                )),
+                vec![
+                    Expr::Ident("vec".to_string()),
+                    Expr::Ident("idx".to_string()),
+                ],
+            ),
+            Expr::Literal(Literal::Int(0)),
+        ],
+    ));
+    assert!(matches!(
+        classify_body_plan(&leaf_body, &LocalCtx),
+        Some(BodyPlan::SingleExpr(BodyExprPlan::Leaf(
+            LeafOp::VectorGetOrDefaultLiteral { .. }
+        )))
+    ));
+
+    let structured = FnBody::Block(vec![
+        Stmt::Binding("x".to_string(), None, Expr::Literal(Literal::Int(1))),
+        Stmt::Expr(Expr::Ident("x".to_string())),
+    ]);
+    assert_eq!(classify_body_plan(&structured, &LocalCtx), None);
 }
 
 #[test]
