@@ -1,6 +1,7 @@
 #![allow(clippy::approx_constant)]
-//! Benchmark comparing all four execution modes on the same programs:
-//!   interpreter (tree-walk), VM (bytecode), codegen (native Rust), self-hosted (`aver run --self-host`).
+//! Benchmark comparing all execution modes on the same programs:
+//!   interpreter (tree-walk), VM (bytecode), codegen-semantic (native Rust),
+//!   codegen-optimized (native Rust), self-hosted (`aver run --self-host`).
 //!
 //! Codegen runs as an external compiled binary. Self-hosted runs through the real CLI path,
 //! which builds and reuses the cached Aver-in-Aver binary behind `aver run --self-host`.
@@ -58,7 +59,7 @@ fn run_external(bin: &str, args: &[&str]) {
 
 /// Compile an Aver source to a temp binary via `aver compile` + `cargo build --release`.
 /// Returns the path to the compiled binary.
-fn compile_to_native(source: &str, name: &str) -> std::path::PathBuf {
+fn compile_to_native(source: &str, name: &str, style: &str) -> std::path::PathBuf {
     let dir = tempfile::tempdir().expect("create temp dir");
     let src_path = dir.path().join("main.av");
     std::fs::write(&src_path, source).expect("write source");
@@ -66,6 +67,7 @@ fn compile_to_native(source: &str, name: &str) -> std::path::PathBuf {
     let out_dir = dir.path().join("out");
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let rt_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("aver-rt");
+    let binary_name = format!("{name}_{style}");
 
     let status = Command::new(aver_bin)
         .arg("compile")
@@ -73,7 +75,9 @@ fn compile_to_native(source: &str, name: &str) -> std::path::PathBuf {
         .arg("-o")
         .arg(&out_dir)
         .arg("--name")
-        .arg(name)
+        .arg(&binary_name)
+        .arg("--style")
+        .arg(style)
         .env("AVER_RUNTIME_PATH", &rt_path)
         .status()
         .expect("aver compile");
@@ -87,9 +91,9 @@ fn compile_to_native(source: &str, name: &str) -> std::path::PathBuf {
         .expect("cargo build");
     assert!(status.success(), "cargo build failed");
 
-    let binary = out_dir.join("target/release").join(name);
+    let binary = out_dir.join("target/release").join(&binary_name);
     // Copy to a stable location so the tempdir can be kept alive
-    let stable = std::env::temp_dir().join(format!("aver_bench_{}", name));
+    let stable = std::env::temp_dir().join(format!("aver_bench_{}", binary_name));
     std::fs::copy(&binary, &stable).expect("copy binary");
     stable
 }
@@ -217,7 +221,8 @@ fn bench_all_modes(
     group: &mut BenchmarkGroup<WallTime>,
     label: &str,
     source: &str,
-    native_bin: &std::path::Path,
+    semantic_native_bin: &std::path::Path,
+    optimized_native_bin: &std::path::Path,
     aver_bin: &str,
     module_root: &std::path::Path,
     source_file: &std::path::Path,
@@ -228,8 +233,11 @@ fn bench_all_modes(
     group.bench_with_input(BenchmarkId::new("vm", label), source, |b, src| {
         b.iter(|| run_vm(src));
     });
-    group.bench_function(BenchmarkId::new("codegen", label), |b| {
-        b.iter(|| run_external(native_bin.to_str().unwrap(), &[]));
+    group.bench_function(BenchmarkId::new("codegen-semantic", label), |b| {
+        b.iter(|| run_external(semantic_native_bin.to_str().unwrap(), &[]));
+    });
+    group.bench_function(BenchmarkId::new("codegen-optimized", label), |b| {
+        b.iter(|| run_external(optimized_native_bin.to_str().unwrap(), &[]));
     });
     group.bench_function(BenchmarkId::new("self-hosted", label), |b| {
         b.iter(|| {
@@ -259,11 +267,18 @@ fn comparison_benches(c: &mut Criterion) {
     ];
 
     // Pre-compile all native binaries
-    let natives: Vec<std::path::PathBuf> = tests
+    let semantic_natives: Vec<std::path::PathBuf> = tests
         .iter()
         .map(|(label, name, src)| {
-            eprintln!("Compiling {} to native...", label);
-            compile_to_native(src, name)
+            eprintln!("Compiling {} to semantic native...", label);
+            compile_to_native(src, name, "semantic")
+        })
+        .collect();
+    let optimized_natives: Vec<std::path::PathBuf> = tests
+        .iter()
+        .map(|(label, name, src)| {
+            eprintln!("Compiling {} to optimized native...", label);
+            compile_to_native(src, name, "optimized")
         })
         .collect();
 
@@ -294,7 +309,8 @@ fn comparison_benches(c: &mut Criterion) {
             &mut group,
             label,
             src,
-            &natives[i],
+            &semantic_natives[i],
+            &optimized_natives[i],
             aver_bin,
             self_host_root.path(),
             &source_files[i],
