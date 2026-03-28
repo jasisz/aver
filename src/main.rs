@@ -71,8 +71,9 @@ fn main() {
             module_root,
             deps,
             verbose,
+            json,
         } => {
-            commands::cmd_check(file, module_root.as_deref(), *deps, *verbose);
+            commands::cmd_check(file, module_root.as_deref(), *deps, *verbose, *json);
         }
         Commands::Verify {
             file,

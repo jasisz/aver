@@ -142,6 +142,9 @@ pub(super) enum Commands {
         /// Show full diagnostic detail (intent, source snippets for warnings, repair alternatives)
         #[arg(long)]
         verbose: bool,
+        /// Output diagnostics as JSON (one object per line)
+        #[arg(long)]
+        json: bool,
     },
     /// Run all verify blocks
     Verify {

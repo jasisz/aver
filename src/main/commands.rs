@@ -1530,6 +1530,7 @@ fn run_check_for_file(
     module_root: &str,
     deps: bool,
     verbose: bool,
+    json: bool,
 ) -> Result<bool, String> {
     let units = collect_check_units(file, module_root, deps)?;
     let _entry_module = units.first().and_then(|(_, _, items)| module_name(items));
@@ -1547,11 +1548,13 @@ fn run_check_for_file(
     let mut has_any_error = false;
 
     for (idx, (path, source, items)) in units.iter().enumerate() {
-        if idx > 0 {
-            println!();
-        }
         let shown_path = display_check_path(path, module_root);
-        println!("Check: {}", shown_path.cyan());
+        if !json {
+            if idx > 0 {
+                println!();
+            }
+            println!("Check: {}", shown_path.cyan());
+        }
         let line_count = source.lines().count();
         let mut transformed = items.clone();
         tco::transform_program(&mut transformed);
@@ -1572,48 +1575,35 @@ fn run_check_for_file(
 
         let has_errors = !tc_result.errors.is_empty() || !findings.errors.is_empty();
 
-        // --- Emit all diagnostics (errors first, then warnings) ---
-        let mut diag_count = 0usize;
+        // --- Collect all diagnostics (errors first, then warnings) ---
+        let mut diagnostics = Vec::new();
 
         for te in &tc_result.errors {
-            let diag =
-                diagnostic::from_type_error(&te.message, te.line, te.col, source, &shown_path);
-            if diag_count > 0 {
-                println!();
-            }
-            print!("{}", diag.render(verbose));
-            diag_count += 1;
+            diagnostics.push(diagnostic::from_type_error(
+                &te.message,
+                te.line,
+                te.col,
+                source,
+                &shown_path,
+            ));
         }
-
         for e in &findings.errors {
-            let diag = super::diagnostic::from_check_finding(
-                super::diagnostic::Severity::Error,
+            diagnostics.push(diagnostic::from_check_finding(
+                diagnostic::Severity::Error,
                 e,
                 source,
                 &shown_path,
-            );
-            if diag_count > 0 {
-                println!();
-            }
-            print!("{}", diag.render(verbose));
-            diag_count += 1;
+            ));
         }
-
         for (binding_name, fn_name, line) in &tc_result.unused_bindings {
-            let diag = diagnostic::unused_binding_diagnostic(
+            diagnostics.push(diagnostic::unused_binding_diagnostic(
                 binding_name,
                 fn_name,
                 *line,
                 source,
                 &shown_path,
-            );
-            if diag_count > 0 {
-                println!();
-            }
-            print!("{}", diag.render(verbose));
-            diag_count += 1;
+            ));
         }
-
         for w in findings
             .warnings
             .iter()
@@ -1621,19 +1611,13 @@ fn run_check_for_file(
             .chain(law_dependency_warnings.iter())
             .chain(unused_exposes_warnings.iter())
         {
-            let diag = super::diagnostic::from_check_finding(
-                super::diagnostic::Severity::Warning,
+            diagnostics.push(diagnostic::from_check_finding(
+                diagnostic::Severity::Warning,
                 w,
                 source,
                 &shown_path,
-            );
-            if diag_count > 0 {
-                println!();
-            }
-            print!("{}", diag.render(verbose));
-            diag_count += 1;
+            ));
         }
-
         for warning in &non_tail_warnings {
             let finding = CheckFinding {
                 line: warning.line,
@@ -1641,37 +1625,44 @@ fn run_check_for_file(
                 file: Some(path.to_string()),
                 message: warning.message.clone(),
             };
-            let diag = super::diagnostic::from_check_finding(
-                super::diagnostic::Severity::Warning,
+            diagnostics.push(diagnostic::from_check_finding(
+                diagnostic::Severity::Warning,
                 &finding,
                 source,
                 &shown_path,
-            );
-            if diag_count > 0 {
-                println!();
-            }
-            print!("{}", diag.render(verbose));
-            diag_count += 1;
+            ));
         }
 
-        // --- Summary line ---
-        if diag_count > 0 {
+        // --- Emit ---
+        for (i, diag) in diagnostics.iter().enumerate() {
+            if json {
+                println!("{}", diag.render_json().trim());
+            } else {
+                if i > 0 {
+                    println!();
+                }
+                print!("{}", diag.render(verbose));
+            }
+        }
+        if !diagnostics.is_empty() && !json {
             println!();
         }
-        let decisions = index_decisions(items);
-        let mut summary_parts = Vec::new();
-        if !has_errors {
-            summary_parts.push(format!("{} types", "✓".green()));
+        if !json {
+            let decisions = index_decisions(items);
+            let mut summary_parts = Vec::new();
+            if !has_errors {
+                summary_parts.push(format!("{} types", "✓".green()));
+            }
+            if line_count <= 500 {
+                summary_parts.push(format!("{} lines", line_count));
+            } else {
+                summary_parts.push(format!("{} {} lines (max 500)", "!".yellow(), line_count));
+            }
+            if !decisions.is_empty() {
+                summary_parts.push(format!("{} decision(s)", decisions.len()));
+            }
+            println!("  {}", summary_parts.join(" | "));
         }
-        if line_count <= 500 {
-            summary_parts.push(format!("{} lines", line_count));
-        } else {
-            summary_parts.push(format!("{} {} lines (max 500)", "!".yellow(), line_count));
-        }
-        if !decisions.is_empty() {
-            summary_parts.push(format!("{} decision(s)", decisions.len()));
-        }
-        println!("  {}", summary_parts.join(" | "));
 
         if has_errors {
             has_any_error = true;
@@ -1681,7 +1672,13 @@ fn run_check_for_file(
     Ok(has_any_error)
 }
 
-pub(super) fn cmd_check(path: &str, module_root_override: Option<&str>, deps: bool, verbose: bool) {
+pub(super) fn cmd_check(
+    path: &str,
+    module_root_override: Option<&str>,
+    deps: bool,
+    verbose: bool,
+    json: bool,
+) {
     let module_root = resolve_module_root(module_root_override);
     let inputs = match resolve_av_inputs(path) {
         Ok(inputs) => inputs,
@@ -1703,7 +1700,7 @@ pub(super) fn cmd_check(path: &str, module_root_override: Option<&str>, deps: bo
             println!("Input: {}", display_check_path(file, &module_root).cyan());
         }
 
-        match run_check_for_file(file, &module_root, deps, verbose) {
+        match run_check_for_file(file, &module_root, deps, verbose, json) {
             Ok(has_errors) => {
                 if has_errors {
                     failed_files.push(file.clone());
