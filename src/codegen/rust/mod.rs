@@ -812,6 +812,7 @@ fn updateOrKeep(vec: Vector<Int>, idx: Int, value: Int) -> Vector<Int>
         let entry = generated_rust_entry_file(&out);
 
         assert!(entry.contains(".unwrap_or("));
+        assert!(entry.contains(".set_owned("));
         assert!(!entry.contains("set_unchecked"));
     }
 
@@ -833,6 +834,43 @@ fn updateOrKeep(vec: Vector<Int>, idx: Int, value: Int) -> Vector<Int>
 
         assert!(entry.contains("set_unchecked"));
         assert!(!entry.contains(".unwrap_or("));
+    }
+
+    #[test]
+    fn vector_set_uses_owned_update_lowering() {
+        let ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn update(vec: Vector<Int>, idx: Int, value: Int) -> Option<Vector<Int>>
+    Vector.set(vec, idx, value)
+"#,
+            "demo",
+        );
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains(".set_owned("));
+        assert!(!entry.contains(".set(idx as usize,"));
+    }
+
+    #[test]
+    fn map_remove_uses_owned_update_lowering() {
+        let ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn dropKey(m: Map<String, Int>, key: String) -> Map<String, Int>
+    Map.remove(m, key)
+"#,
+            "demo",
+        );
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains(".remove_owned(&"));
     }
 
     #[test]

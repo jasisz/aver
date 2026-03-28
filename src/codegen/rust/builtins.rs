@@ -645,9 +645,9 @@ fn emit_builtin_call_inner(
             Some(format!("{}.contains_key(&{})", map, key))
         }
         "Map.remove" => {
-            let map = emit_arg(0);
+            let map = clone_arg(&args[0], ctx, &arg_ctxs[0]);
             let key = emit_arg(1);
-            Some(format!("{}.remove(&{})", map, key))
+            Some(format!("{}.remove_owned(&{})", map, key))
         }
         "Map.keys" => {
             let map = emit_arg(0);
@@ -737,10 +737,10 @@ fn emit_builtin_call_inner(
             Some(format!("{}.get({} as usize).cloned()", vec, idx))
         }
         "Vector.set" => {
-            let vec = emit_arg(0);
+            let vec = clone_arg(&args[0], ctx, &arg_ctxs[0]);
             let idx = emit_arg(1);
             let val = clone_arg(&args[2], ctx, &arg_ctxs[2]);
-            Some(format!("{}.set({} as usize, {})", vec, idx, val))
+            Some(format!("{}.set_owned({} as usize, {})", vec, idx, val))
         }
         "Vector.len" => {
             let vec = emit_arg(0);
