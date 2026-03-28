@@ -11,9 +11,10 @@ use crate::ir::{
     DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan, DispatchLiteral, DispatchTableShape,
     ForwardArg, ForwardCallPlan, LeafOp, ListMatchShape, MatchDispatchPlan, SemanticConstructor,
     SemanticDispatchPattern, TailCallPlan, ThinBodyCtx, ThinBodyPlan, ThinKind, WrapperKind,
-    classify_body_plan, classify_bool_subject_plan, classify_call_plan, classify_constructor_name,
-    classify_leaf_op, classify_list_match_shape, classify_match_dispatch_plan,
-    classify_tail_call_plan, classify_thin_fn_def, is_builtin_namespace,
+    classify_body_expr_plan, classify_body_plan, classify_bool_subject_plan, classify_call_plan,
+    classify_constructor_name, classify_leaf_op, classify_list_match_shape,
+    classify_match_dispatch_plan, classify_tail_call_plan, classify_thin_fn_def,
+    is_builtin_namespace,
 };
 use crate::types::Type;
 /// Aver expressions → Rust expression strings.
@@ -71,14 +72,6 @@ fn use_optimized_emission(ctx: &CodegenContext) -> bool {
 }
 
 fn find_rust_fn_def<'a>(name: &str, ctx: &'a CodegenContext) -> Option<&'a FnDef> {
-    if let Some((prefix, bare)) = resolve_module_call(name, ctx) {
-        return ctx
-            .modules
-            .iter()
-            .find(|module| module.prefix == prefix)
-            .and_then(|module| module.fn_defs.iter().find(|fd| fd.name == bare));
-    }
-
     ctx.fn_defs.iter().find(|fd| fd.name == name)
 }
 
@@ -121,6 +114,74 @@ pub(super) fn thin_body_plan_is_parent_thin_candidate(plan: &ThinBodyPlan<'_>) -
     matches!(
         plan.kind,
         ThinKind::Leaf | ThinKind::Direct | ThinKind::Forward | ThinKind::Dispatch
+    )
+}
+
+fn thin_body_plan_is_absorption_candidate(
+    plan: &ThinBodyPlan<'_>,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> bool {
+    match plan.kind {
+        ThinKind::Leaf => true,
+        ThinKind::Dispatch => thin_dispatch_plan_is_absorption_candidate(plan, ctx, ectx),
+        ThinKind::Direct | ThinKind::Forward | ThinKind::Tail => false,
+    }
+}
+
+fn thin_dispatch_plan_is_absorption_candidate(
+    plan: &ThinBodyPlan<'_>,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> bool {
+    match &plan.body {
+        BodyPlan::SingleExpr(BodyExprPlan::Expr(Expr::Match { arms, .. })) => arms
+            .iter()
+            .all(|arm| expr_is_absorption_safe(&arm.body, ctx, ectx)),
+        BodyPlan::Block { bindings, tail, .. } => {
+            bindings
+                .iter()
+                .all(|binding| body_expr_plan_is_absorption_safe(&binding.expr, ctx, ectx))
+                && matches!(tail, BodyExprPlan::Expr(Expr::Match { arms, .. })
+                    if arms.iter().all(|arm| expr_is_absorption_safe(&arm.body, ctx, ectx)))
+        }
+        _ => false,
+    }
+}
+
+fn body_expr_plan_is_absorption_safe(
+    plan: &BodyExprPlan<'_>,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> bool {
+    match plan {
+        BodyExprPlan::Leaf(_) => true,
+        BodyExprPlan::Call { target, .. } => call_plan_is_scope_safe(target),
+        BodyExprPlan::ForwardCall(plan) => call_plan_is_scope_safe(&plan.target),
+        BodyExprPlan::Expr(expr) => expr_is_absorption_safe(expr, ctx, ectx),
+    }
+}
+
+fn expr_is_absorption_safe(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> bool {
+    let lower_ctx = RustCallCtx { ctx, ectx };
+    match classify_body_expr_plan(expr, &lower_ctx) {
+        BodyExprPlan::Leaf(_) => true,
+        BodyExprPlan::Call { target, .. } => call_plan_is_scope_safe(&target),
+        BodyExprPlan::ForwardCall(plan) => call_plan_is_scope_safe(&plan.target),
+        BodyExprPlan::Expr(expr) => matches!(
+            expr,
+            Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, _) | Expr::Attr(_, _)
+        ),
+    }
+}
+
+fn call_plan_is_scope_safe(plan: &CallPlan) -> bool {
+    matches!(
+        plan,
+        CallPlan::Builtin(_)
+            | CallPlan::Wrapper(_)
+            | CallPlan::NoneValue
+            | CallPlan::TypeConstructor { .. }
     )
 }
 
@@ -518,7 +579,7 @@ fn emit_call_plan_with_args_with_options(
         && !ctx.memo_fns.contains(name)
     {
         if let Some(thin_plan) = classify_thin_body_plan_for_rust(name, ctx, ectx)
-            && thin_body_plan_is_parent_thin_candidate(&thin_plan)
+            && thin_body_plan_is_absorption_candidate(&thin_plan, ctx, ectx)
             && thin_plan.params.len() == args.len()
         {
             return emit_thin_call_body(&thin_plan, args, ctx, ectx);
