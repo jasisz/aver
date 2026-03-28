@@ -52,7 +52,7 @@ type Pattern
     PatEmpty
     PatCons(String, String)
     PatConstructor(String, List<String>)
-    PatConstructorId(Int, List<String>)
+    PatConstructorId(Int, String, List<String>)
     PatTuple(List<Pattern>)
     PatWild
     PatVar(String)
@@ -138,18 +138,39 @@ fn tagUserBase() -> Int
     ? "Base tag ID for user-defined constructors. User tags start from this value."
     100
 
+fn userTagSpan() -> Int
+    ? "Modulo span used to keep hashed user constructor tags bounded."
+    1000003
+
 fn ctorNameToTag(name: String) -> Int
-    ? "Map well-known constructor names to their fixed tag IDs. Returns 0 for unknown names."
+    ? "Map constructor names to tag IDs. Builtins keep fixed tags; user constructors get stable hashed tags."
     match name
         "Result.Ok" -> tagResultOk()
         "Result.Err" -> tagResultErr()
         "Option.Some" -> tagOptionSome()
         "Option.None" -> tagOptionNone()
-        _ -> 0
+        _ -> tagUserBase() + userCtorTagOffset(name)
+
+fn userCtorTagOffset(name: String) -> Int
+    ? "Compute a stable non-zero offset for a user-defined constructor tag from its full dotted name."
+    userCtorTagOffsetLoop(name, 0, 0)
+
+fn userCtorTagOffsetLoop(name: String, pos: Int, acc: Int) -> Int
+    ? "Walk the constructor name and accumulate a bounded rolling hash."
+    match pos >= String.len(name)
+        true -> acc + 1
+        false -> match String.charAt(name, pos)
+            Option.Some(ch) -> userCtorTagOffsetLoop(name, pos + 1, userCtorTagStep(acc, Char.toCode(ch)))
+            Option.None -> acc + 1
+
+fn userCtorTagStep(acc: Int, code: Int) -> Int
+    ? "Update the user constructor rolling hash and keep it in a bounded range."
+    next = acc * 131 + code
+    Result.withDefault(Int.mod(next, userTagSpan()), 0)
 
 verify ctorNameToTag
     ctorNameToTag("Result.Ok") => 1
     ctorNameToTag("Result.Err") => 2
     ctorNameToTag("Option.Some") => 3
     ctorNameToTag("Option.None") => 4
-    ctorNameToTag("Shape.Circle") => 0
+    ctorNameToTag("Shape.Circle") > tagUserBase() => true

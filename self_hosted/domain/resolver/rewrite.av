@@ -74,24 +74,22 @@ fn rewriteInternalFields(fields: List<(String, Expr)>, acc: List<(String, Expr)>
             (name, expr) -> rewriteInternalFields(rest, List.prepend((name, rewriteInternalExpr(expr)), acc))
 
 fn rewriteInternalArms(arms: List<MatchArm>, acc: List<MatchArm>) -> List<MatchArm>
-    ? "Rewrite match arm bodies and resolve PatConstructor to PatConstructorId for known builtins."
+    ? "Rewrite match arm bodies and resolve PatConstructor to PatConstructorId using constructor tags."
     match arms
         [] -> List.reverse(acc)
         [arm, ..rest] -> rewriteInternalArms(rest, List.prepend(MatchArm(pattern = rewritePattern(arm.pattern), body = rewriteInternalExpr(arm.body), bindingSlots = arm.bindingSlots), acc))
 
 fn rewritePattern(pat: Pattern) -> Pattern
-    ? "Rewrite PatConstructor to PatConstructorId for known builtin constructors."
+    ? "Rewrite PatConstructor to PatConstructorId with both tag and full constructor name."
     match pat
         Pattern.PatConstructor(name, bindings) -> rewritePatConstructor(name, bindings)
         Pattern.PatTuple(pats) -> Pattern.PatTuple(rewritePatterns(pats, []))
         _ -> pat
 
 fn rewritePatConstructor(name: String, bindings: List<String>) -> Pattern
-    ? "Convert PatConstructor to PatConstructorId when the constructor has a known tag."
+    ? "Convert PatConstructor to PatConstructorId with stable tag and full constructor name."
     tag = Domain.Ast.ctorNameToTag(name)
-    match tag == 0
-        true -> Pattern.PatConstructor(name, bindings)
-        false -> Pattern.PatConstructorId(tag, bindings)
+    Pattern.PatConstructorId(tag, name, bindings)
 
 fn rewritePatterns(pats: List<Pattern>, acc: List<Pattern>) -> List<Pattern>
     ? "Rewrite a list of patterns."

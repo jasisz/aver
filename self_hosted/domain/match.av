@@ -17,7 +17,7 @@ fn matchPattern(pat: Pattern, v: Val) -> Result<List<(String, Val)>, String>
         Pattern.PatEmpty -> matchPatEmpty(v)
         Pattern.PatCons(h, t) -> matchPatCons(h, t, v)
         Pattern.PatConstructor(ctorName, bindings) -> matchPatConstructor(ctorName, bindings, v)
-        Pattern.PatConstructorId(tag, bindings) -> matchPatConstructorById(tag, bindings, v)
+        Pattern.PatConstructorId(tag, ctorName, bindings) -> matchPatConstructorById(tag, ctorName, bindings, v)
         Pattern.PatTuple(pats) -> matchPatTuple(pats, v)
         Pattern.PatVar(name) -> Result.Ok([(name, v)])
 
@@ -164,8 +164,8 @@ fn matchGenericConstructor(ctorName: String, bindings: List<String>, v: Val) -> 
         _ -> Result.Err("no match")
 
 verify matchGenericConstructor
-    matchGenericConstructor("Shape.Circle", ["r"], Val.ValVariant(0, "Shape.Circle", [Val.ValInt(5)])) => Result.Ok([("r", Val.ValInt(5))])
-    matchGenericConstructor("Shape.Circle", ["r"], Val.ValVariant(0, "Shape.Rect", [Val.ValInt(3)])) => Result.Err("no match")
+    matchGenericConstructor("Shape.Circle", ["r"], Val.ValVariant(Domain.Ast.ctorNameToTag("Shape.Circle"), "Shape.Circle", [Val.ValInt(5)])) => Result.Ok([("r", Val.ValInt(5))])
+    matchGenericConstructor("Shape.Circle", ["r"], Val.ValVariant(Domain.Ast.ctorNameToTag("Shape.Rect"), "Shape.Rect", [Val.ValInt(3)])) => Result.Err("no match")
     matchGenericConstructor("Shape.Circle", ["r"], Val.ValInt(5)) => Result.Err("no match")
 
 fn matchGenericCtorCheck(ctorName: String, fullName: String, bindings: List<String>, fields: List<Val>) -> Result<List<(String, Val)>, String>
@@ -179,23 +179,24 @@ verify matchGenericCtorCheck
     matchGenericCtorCheck("Shape.Circle", "Shape.Rect", ["r"], [Val.ValInt(5)]) => Result.Err("no match")
     matchGenericCtorCheck("Color.Red", "Color.Red", [], []) => Result.Ok([])
 
-fn matchPatConstructorById(tag: Int, bindings: List<String>, v: Val) -> Result<List<(String, Val)>, String>
-    ? "Match constructor pattern by integer tag ID. Dispatches builtins directly, user variants by tag comparison."
+fn matchPatConstructorById(tag: Int, ctorName: String, bindings: List<String>, v: Val) -> Result<List<(String, Val)>, String>
+    ? "Match constructor pattern by integer tag ID. Builtins dispatch directly; user variants confirm both tag and full name."
     match tag
         1 -> matchWrapperPatDirect(v, 1, bindings)
         2 -> matchWrapperPatDirect(v, 2, bindings)
         3 -> matchWrapperPatDirect(v, 3, bindings)
         4 -> matchNonePat(v)
-        _ -> matchGenericCtorById(tag, bindings, v)
+        _ -> matchGenericCtorById(tag, ctorName, bindings, v)
 
 verify matchPatConstructorById
-    matchPatConstructorById(1, ["x"], Val.ValOk(Val.ValInt(1))) => Result.Ok([("x", Val.ValInt(1))])
-    matchPatConstructorById(2, ["e"], Val.ValErr(Val.ValStr("fail"))) => Result.Ok([("e", Val.ValStr("fail"))])
-    matchPatConstructorById(3, ["v"], Val.ValSome(Val.ValInt(7))) => Result.Ok([("v", Val.ValInt(7))])
-    matchPatConstructorById(4, [], Val.ValNone) => Result.Ok([])
-    matchPatConstructorById(1, ["x"], Val.ValInt(5)) => Result.Err("no match")
-    matchPatConstructorById(100, ["r"], Val.ValVariant(100, "Shape.Circle", [Val.ValInt(5)])) => Result.Ok([("r", Val.ValInt(5))])
-    matchPatConstructorById(100, ["r"], Val.ValVariant(101, "Shape.Rect", [Val.ValInt(3)])) => Result.Err("no match")
+    matchPatConstructorById(1, "Result.Ok", ["x"], Val.ValOk(Val.ValInt(1))) => Result.Ok([("x", Val.ValInt(1))])
+    matchPatConstructorById(2, "Result.Err", ["e"], Val.ValErr(Val.ValStr("fail"))) => Result.Ok([("e", Val.ValStr("fail"))])
+    matchPatConstructorById(3, "Option.Some", ["v"], Val.ValSome(Val.ValInt(7))) => Result.Ok([("v", Val.ValInt(7))])
+    matchPatConstructorById(4, "Option.None", [], Val.ValNone) => Result.Ok([])
+    matchPatConstructorById(1, "Result.Ok", ["x"], Val.ValInt(5)) => Result.Err("no match")
+    matchPatConstructorById(Domain.Ast.ctorNameToTag("Shape.Circle"), "Shape.Circle", ["r"], Val.ValVariant(Domain.Ast.ctorNameToTag("Shape.Circle"), "Shape.Circle", [Val.ValInt(5)])) => Result.Ok([("r", Val.ValInt(5))])
+    matchPatConstructorById(Domain.Ast.ctorNameToTag("Shape.Circle"), "Shape.Circle", ["r"], Val.ValVariant(Domain.Ast.ctorNameToTag("Shape.Rect"), "Shape.Rect", [Val.ValInt(3)])) => Result.Err("no match")
+    matchPatConstructorById(Domain.Ast.ctorNameToTag("Shape.Circle"), "Shape.Circle", ["r"], Val.ValVariant(Domain.Ast.ctorNameToTag("Color.Red"), "Color.Red", [Val.ValInt(5)])) => Result.Err("no match")
 
 fn matchWrapperPatDirect(v: Val, tag: Int, bindings: List<String>) -> Result<List<(String, Val)>, String>
     ? "Match Ok/Err/Some wrapper by integer tag. 1=Ok, 2=Err, 3=Some."
@@ -217,19 +218,21 @@ verify matchWrapperPatDirect
     matchWrapperPatDirect(Val.ValSome(Val.ValInt(7)), 3, ["v"]) => Result.Ok([("v", Val.ValInt(7))])
     matchWrapperPatDirect(Val.ValInt(5), 1, ["x"]) => Result.Err("no match")
 
-fn matchGenericCtorById(tag: Int, bindings: List<String>, v: Val) -> Result<List<(String, Val)>, String>
-    ? "Match a user-defined variant by integer tag comparison. No string allocation."
+fn matchGenericCtorById(tag: Int, ctorName: String, bindings: List<String>, v: Val) -> Result<List<(String, Val)>, String>
+    ? "Match a user-defined variant by integer tag first, then full constructor name for collision safety."
     match v
-        Val.ValVariant(vTag, _, fields) -> match vTag == tag
-            true -> zipBindings(bindings, fields)
+        Val.ValVariant(vTag, fullName, fields) -> match vTag == tag
+            true -> match fullName == ctorName
+                true -> zipBindings(bindings, fields)
+                false -> Result.Err("no match")
             false -> Result.Err("no match")
         _ -> Result.Err("no match")
 
 verify matchGenericCtorById
-    matchGenericCtorById(100, ["r"], Val.ValVariant(100, "Shape.Circle", [Val.ValInt(5)])) => Result.Ok([("r", Val.ValInt(5))])
-    matchGenericCtorById(100, ["r"], Val.ValVariant(101, "Shape.Rect", [Val.ValInt(3)])) => Result.Err("no match")
-    matchGenericCtorById(100, [], Val.ValVariant(100, "Color.Red", [])) => Result.Ok([])
-    matchGenericCtorById(100, ["r"], Val.ValInt(5)) => Result.Err("no match")
+    matchGenericCtorById(Domain.Ast.ctorNameToTag("Shape.Circle"), "Shape.Circle", ["r"], Val.ValVariant(Domain.Ast.ctorNameToTag("Shape.Circle"), "Shape.Circle", [Val.ValInt(5)])) => Result.Ok([("r", Val.ValInt(5))])
+    matchGenericCtorById(Domain.Ast.ctorNameToTag("Shape.Circle"), "Shape.Circle", ["r"], Val.ValVariant(Domain.Ast.ctorNameToTag("Shape.Rect"), "Shape.Rect", [Val.ValInt(3)])) => Result.Err("no match")
+    matchGenericCtorById(Domain.Ast.ctorNameToTag("Color.Red"), "Color.Red", [], Val.ValVariant(Domain.Ast.ctorNameToTag("Color.Red"), "Color.Red", [])) => Result.Ok([])
+    matchGenericCtorById(Domain.Ast.ctorNameToTag("Shape.Circle"), "Shape.Circle", ["r"], Val.ValInt(5)) => Result.Err("no match")
 
 fn matchNonePat(v: Val) -> Result<List<(String, Val)>, String>
     ? "Match Option.None pattern."

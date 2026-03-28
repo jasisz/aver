@@ -14,10 +14,6 @@ fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
             true -> Domain.Builtins.List.call(name, args)
             false -> callBuiltinAfterList(name, args)
 
-verify callBuiltin
-    callBuiltin("List.len", [Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Result.Ok(Val.ValInt(2))
-    callBuiltin("Result.Ok", [Val.ValInt(5)]) => Result.Ok(Val.ValOk(Val.ValInt(5)))
-
 fn callBuiltinFast(name: String, args: List<Val>) -> Option<Result<Val, String>>
     ? "Fast exact-match dispatch for the hottest builtins."
     match name
@@ -42,6 +38,11 @@ fn callBuiltinFast(name: String, args: List<Val>) -> Option<Result<Val, String>>
         "Result.withDefault" -> Option.Some(Domain.Builtins.Wrappers.call(name, args))
         "Int.toString" -> Option.Some(Domain.Builtins.Primitives.callInt(name, args))
         _ -> Option.None
+
+verify callBuiltinFast
+    callBuiltinFast("Result.Ok", [Val.ValInt(5)]) => Option.Some(Result.Ok(Val.ValOk(Val.ValInt(5))))
+    callBuiltinFast("Option.None", []) => Option.Some(Result.Ok(Val.ValNone))
+    callBuiltinFast("List.len", [Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Option.None
 
 fn callBuiltinAfterList(name: String, args: List<Val>) -> Result<Val, String>
     ? "Continue dispatch after List."
@@ -98,10 +99,6 @@ fn callBuiltinOther(name: String, args: List<Val>) -> Result<Val, String>
         "Map.size" -> builtinMapSize(args)
         "Map.remove" -> builtinMapRemove(args)
         _ -> callBuiltinServices(name, args)
-
-verify callBuiltinOther
-    callBuiltinOther("Result.Ok", [Val.ValInt(1)]) => Result.Ok(Val.ValOk(Val.ValInt(1)))
-    callBuiltinOther("Option.None", []) => Result.Ok(Val.ValNone)
 
 fn builtinConsolePrint(args: List<Val>) -> Result<Val, String>
     ? "Console.print(v) -> print any value and return Unit."
@@ -523,13 +520,13 @@ fn builtinDiskListDir(args: List<Val>) -> Result<Val, String>
         Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn tryVariantConstructor(name: String, args: List<Val>) -> Result<Val, String>
-    ? "Try to construct a variant value from a dotted name like Type.Ctor. Uses tag ID for known constructors, 0 for unknown."
+    ? "Try to construct a variant value from a dotted name like Type.Ctor. Uses stable tags for both builtin and user constructors."
     match splitDotted(name)
         Option.Some(_) -> Result.Ok(Val.ValVariant(Domain.Ast.ctorNameToTag(name), name, args))
         Option.None -> Result.Err("undefined function: {name}")
 
 verify tryVariantConstructor
-    tryVariantConstructor("Shape.Circle", [Val.ValInt(5)]) => Result.Ok(Val.ValVariant(0, "Shape.Circle", [Val.ValInt(5)]))
+    tryVariantConstructor("Shape.Circle", [Val.ValInt(5)]) => Result.Ok(Val.ValVariant(Domain.Ast.ctorNameToTag("Shape.Circle"), "Shape.Circle", [Val.ValInt(5)]))
     tryVariantConstructor("noDot", []) => Result.Err("undefined function: noDot")
 
 fn splitDotted(name: String) -> Option<(String, String)>

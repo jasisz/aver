@@ -289,7 +289,7 @@ fn patternBindingSlotsInner(pat: Pattern, bindingSlots: Map<String, Int>, next: 
         Pattern.PatVar(name) -> (Map.set(bindingSlots, name, next), next + 1)
         Pattern.PatCons(h, t) -> patternBindingSlotsCons(h, t, bindingSlots, next)
         Pattern.PatConstructor(_, bindings) -> patternBindingSlotsConstructor(bindings, bindingSlots, next)
-        Pattern.PatConstructorId(_, bindings) -> patternBindingSlotsConstructor(bindings, bindingSlots, next)
+        Pattern.PatConstructorId(_, _, bindings) -> patternBindingSlotsConstructor(bindings, bindingSlots, next)
         Pattern.PatTuple(pats) -> patternBindingSlotsTuple(pats, bindingSlots, next)
         _ -> (bindingSlots, next)
 
@@ -340,7 +340,7 @@ fn addPatternSlotsInner(pat: Pattern, slots: Map<String, Int>, next: Int) -> (Ma
         Pattern.PatVar(name) -> (Map.set(slots, name, next), next + 1)
         Pattern.PatCons(h, t) -> addConsSlots(h, t, slots, next)
         Pattern.PatConstructor(_, bindings) -> addConstructorSlots(bindings, slots, next)
-        Pattern.PatConstructorId(_, bindings) -> addConstructorSlots(bindings, slots, next)
+        Pattern.PatConstructorId(_, _, bindings) -> addConstructorSlots(bindings, slots, next)
         Pattern.PatTuple(pats) -> addTuplePatternSlots(pats, slots, next)
         _ -> (slots, next)
 
