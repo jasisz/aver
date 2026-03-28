@@ -1,7 +1,7 @@
 use super::expr::{
-    aver_name_to_rust, body_plan_is_inline_candidate, classify_body_plan_for_rust,
-    classify_dispatch_plan_for_rust, clone_arg, emit_body_plan_for_rust, emit_dispatch_table_match,
-    emit_expr, emit_stmt,
+    aver_name_to_rust, classify_body_plan_for_rust, classify_dispatch_plan_for_rust,
+    classify_thin_fn_def_for_rust, clone_arg, emit_body_plan_for_rust, emit_dispatch_table_match,
+    emit_expr, emit_stmt, thin_body_plan_is_parent_thin_candidate,
 };
 use super::liveness::{
     EmitCtx, collect_vars, compute_args_used_after_with_rc, compute_block_used_after,
@@ -399,16 +399,16 @@ fn emit_fn_def_with_visibility(
     } else {
         None
     };
-    let optimized_body_plan = if matches!(ctx.emission_style, EmissionStyle::Optimized) {
-        classify_body_plan_for_rust(&fd.body, ctx, &ectx)
+    let optimized_thin_plan = if matches!(ctx.emission_style, EmissionStyle::Optimized) {
+        classify_thin_fn_def_for_rust(fd, ctx, &ectx)
     } else {
         None
     };
 
     if fd.effects.is_empty()
-        && optimized_body_plan
+        && optimized_thin_plan
             .as_ref()
-            .is_some_and(body_plan_is_inline_candidate)
+            .is_some_and(thin_body_plan_is_parent_thin_candidate)
     {
         lines.push("#[inline(always)]".to_string());
     }

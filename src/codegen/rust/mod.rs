@@ -836,6 +836,80 @@ fn updateOrKeep(vec: Vector<Int>, idx: Int, value: Int) -> Vector<Int>
     }
 
     #[test]
+    fn semantic_keeps_known_leaf_wrapper_call_structured() {
+        let ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn cellAt(grid: Vector<Int>, idx: Int) -> Int
+    Option.withDefault(Vector.get(grid, idx), 0)
+
+fn read(grid: Vector<Int>, idx: Int) -> Int
+    cellAt(grid, idx)
+"#,
+            "demo",
+        );
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("cellAt(grid, idx)"));
+        assert!(!entry.contains("__aver_thin_arg0"));
+    }
+
+    #[test]
+    fn optimized_absorbs_known_leaf_wrapper_call_through_thin_ir() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn cellAt(grid: Vector<Int>, idx: Int) -> Int
+    Option.withDefault(Vector.get(grid, idx), 0)
+
+fn read(grid: Vector<Int>, idx: Int) -> Int
+    cellAt(grid, idx)
+"#,
+            "demo",
+        );
+        ctx.emission_style = EmissionStyle::Optimized;
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("let __aver_thin_arg0 = grid;"));
+        assert!(entry.contains("let __aver_thin_arg1 = idx;"));
+        assert!(entry.contains("grid.get(idx as usize).cloned().unwrap_or(0i64)"));
+        assert!(!entry.contains("cellAt(grid, idx)"));
+    }
+
+    #[test]
+    fn optimized_absorbs_known_dispatch_wrapper_through_thin_ir() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn bucket(n: Int) -> Int
+    match n == 0
+        true -> 0
+        false -> 1
+
+fn readBucket(n: Int) -> Int
+    bucket(n)
+"#,
+            "demo",
+        );
+        ctx.emission_style = EmissionStyle::Optimized;
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("let __aver_thin_arg0 = n;"));
+        assert!(entry.contains("let n: i64 = __aver_thin_arg0;"));
+        assert!(entry.contains("if (n == 0i64) { 0i64 } else { 1i64 }"));
+        assert!(!entry.contains("bucket(n)"));
+    }
+
+    #[test]
     fn bool_match_on_gte_normalizes_to_base_comparison_when_optimized() {
         let mut ctx = ctx_from_source(
             r#"

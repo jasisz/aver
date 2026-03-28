@@ -2,13 +2,14 @@ use super::{
     BodyBindingPlan, BodyExprPlan, BodyPlan, BoolCompareOp, BoolMatchShape, BoolSubjectPlan,
     CallLowerCtx, CallPlan, DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan,
     DispatchLiteral, DispatchTableShape, ForwardArg, ForwardCallPlan, LeafOp, ListMatchShape,
-    MatchDispatchPlan, SemanticConstructor, SemanticDispatchPattern, TailCallPlan, WrapperKind,
-    classify_body_plan, classify_bool_match_shape, classify_bool_subject_plan, classify_call_plan,
-    classify_constructor_name, classify_dispatch_pattern, classify_forward_call_plan,
-    classify_forward_fn_body, classify_leaf_op, classify_list_match_shape,
-    classify_match_dispatch_plan, classify_tail_call_plan, expr_to_dotted_name,
+    MatchDispatchPlan, SemanticConstructor, SemanticDispatchPattern, TailCallPlan, ThinBodyCtx,
+    ThinBodyPlan, ThinKind, WrapperKind, classify_body_plan, classify_bool_match_shape,
+    classify_bool_subject_plan, classify_call_plan, classify_constructor_name,
+    classify_dispatch_pattern, classify_forward_call_plan, classify_forward_fn_body,
+    classify_leaf_op, classify_list_match_shape, classify_match_dispatch_plan,
+    classify_tail_call_plan, classify_thin_body_plan, expr_to_dotted_name,
 };
-use crate::ast::{BinOp, Expr, FnBody, Literal, MatchArm, Pattern, Stmt};
+use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Stmt};
 
 #[derive(Default)]
 struct DummyCtx;
@@ -437,6 +438,148 @@ fn classify_body_plan_for_single_expr_leaf_and_rejects_blocks() {
         Stmt::Expr(Expr::Literal(Literal::Int(2))),
     ]);
     assert_eq!(classify_body_plan(&invalid, &LocalCtx), None);
+}
+
+#[test]
+fn classify_thin_body_plan_for_known_thin_function() {
+    struct ThinCtx {
+        defs: Vec<FnDef>,
+    }
+
+    impl CallLowerCtx for ThinCtx {
+        fn is_local_value(&self, name: &str) -> bool {
+            matches!(name, "grid" | "idx")
+        }
+
+        fn is_user_type(&self, _name: &str) -> bool {
+            false
+        }
+
+        fn resolve_module_call<'a>(&self, _dotted: &'a str) -> Option<(&'a str, &'a str)> {
+            None
+        }
+    }
+
+    impl ThinBodyCtx for ThinCtx {
+        fn find_fn_def<'a>(&'a self, name: &str) -> Option<&'a FnDef> {
+            self.defs.iter().find(|fd| fd.name == name)
+        }
+    }
+
+    let ctx = ThinCtx {
+        defs: vec![FnDef {
+            name: "cellAt".to_string(),
+            line: 0,
+            params: vec![
+                ("grid".to_string(), "Vector<Int>".to_string()),
+                ("idx".to_string(), "Int".to_string()),
+            ],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: FnBody::from_expr(Expr::FnCall(
+                Box::new(Expr::Attr(
+                    Box::new(Expr::Ident("Option".to_string())),
+                    "withDefault".to_string(),
+                )),
+                vec![
+                    Expr::FnCall(
+                        Box::new(Expr::Attr(
+                            Box::new(Expr::Ident("Vector".to_string())),
+                            "get".to_string(),
+                        )),
+                        vec![
+                            Expr::Ident("grid".to_string()),
+                            Expr::Ident("idx".to_string()),
+                        ],
+                    ),
+                    Expr::Literal(Literal::Int(0)),
+                ],
+            ))
+            .into(),
+            resolution: None,
+        }],
+    };
+
+    assert!(matches!(
+        classify_thin_body_plan("cellAt", &ctx),
+        Some(ThinBodyPlan {
+            params,
+            kind: ThinKind::Leaf,
+            body: BodyPlan::SingleExpr(BodyExprPlan::Leaf(
+                LeafOp::VectorGetOrDefaultLiteral { .. }
+            )),
+        }) if params.len() == 2 && params[0].0 == "grid" && params[1].0 == "idx"
+    ));
+}
+
+#[test]
+fn classify_thin_body_plan_for_dispatch_function() {
+    struct ThinCtx {
+        defs: Vec<FnDef>,
+    }
+
+    impl CallLowerCtx for ThinCtx {
+        fn is_local_value(&self, name: &str) -> bool {
+            name == "r"
+        }
+
+        fn is_user_type(&self, _name: &str) -> bool {
+            false
+        }
+
+        fn resolve_module_call<'a>(&self, _dotted: &'a str) -> Option<(&'a str, &'a str)> {
+            None
+        }
+    }
+
+    impl ThinBodyCtx for ThinCtx {
+        fn find_fn_def<'a>(&'a self, name: &str) -> Option<&'a FnDef> {
+            self.defs.iter().find(|fd| fd.name == name)
+        }
+    }
+
+    let ctx = ThinCtx {
+        defs: vec![FnDef {
+            name: "unwrapOrZero".to_string(),
+            line: 0,
+            params: vec![("r".to_string(), "Result<Int, String>".to_string())],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: FnBody::from_expr(Expr::Match {
+                subject: Box::new(Expr::Ident("r".to_string())),
+                arms: vec![
+                    MatchArm {
+                        pattern: Pattern::Constructor(
+                            "Result.Ok".to_string(),
+                            vec!["n".to_string()],
+                        ),
+                        body: Box::new(Expr::Ident("n".to_string())),
+                    },
+                    MatchArm {
+                        pattern: Pattern::Constructor(
+                            "Result.Err".to_string(),
+                            vec!["_".to_string()],
+                        ),
+                        body: Box::new(Expr::Literal(Literal::Int(0))),
+                    },
+                ],
+                line: 0,
+            })
+            .into(),
+            resolution: None,
+        }],
+    };
+
+    assert!(matches!(
+        classify_thin_body_plan("unwrapOrZero", &ctx),
+        Some(ThinBodyPlan {
+            kind: ThinKind::Dispatch,
+            body: BodyPlan::SingleExpr(BodyExprPlan::Expr(Expr::Match { .. })),
+            ..
+        })
+    ));
 }
 
 #[test]

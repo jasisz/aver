@@ -1,8 +1,8 @@
-use crate::ast::{Expr, FnBody, Stmt};
+use crate::ast::{Expr, FnBody, FnDef, Stmt};
 
 use super::{
     CallLowerCtx, CallPlan, ForwardCallPlan, LeafOp, classify_call_plan,
-    classify_forward_call_plan, classify_leaf_op,
+    classify_forward_call_plan, classify_leaf_op, classify_match_dispatch_plan,
 };
 
 /// Minimal body-level semantic IR shared across backends.
@@ -33,6 +33,26 @@ pub enum BodyPlan<'a> {
         bindings: Vec<BodyBindingPlan<'a>>,
         tail: BodyExprPlan<'a>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThinKind {
+    Leaf,
+    Direct,
+    Forward,
+    Dispatch,
+    Tail,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThinBodyPlan<'a> {
+    pub params: &'a [(String, String)],
+    pub body: BodyPlan<'a>,
+    pub kind: ThinKind,
+}
+
+pub trait ThinBodyCtx: CallLowerCtx {
+    fn find_fn_def<'a>(&'a self, name: &str) -> Option<&'a FnDef>;
 }
 
 pub fn classify_body_expr_plan<'a>(expr: &'a Expr, ctx: &impl CallLowerCtx) -> BodyExprPlan<'a> {
@@ -84,4 +104,65 @@ pub fn classify_body_plan<'a>(body: &'a FnBody, ctx: &impl CallLowerCtx) -> Opti
         bindings,
         tail: classify_body_expr_plan(tail_expr, ctx),
     })
+}
+
+pub fn classify_thin_body_plan<'a>(
+    name: &str,
+    ctx: &'a impl ThinBodyCtx,
+) -> Option<ThinBodyPlan<'a>> {
+    let fd = ctx.find_fn_def(name)?;
+    classify_thin_fn_def(fd, ctx)
+}
+
+pub fn classify_thin_fn_def<'a>(
+    fd: &'a FnDef,
+    ctx: &impl CallLowerCtx,
+) -> Option<ThinBodyPlan<'a>> {
+    let body = classify_body_plan(&fd.body, ctx)?;
+    Some(ThinBodyPlan {
+        params: &fd.params,
+        kind: classify_thin_kind(&body, ctx)?,
+        body,
+    })
+}
+
+fn classify_thin_kind(plan: &BodyPlan<'_>, ctx: &impl CallLowerCtx) -> Option<ThinKind> {
+    match plan {
+        BodyPlan::SingleExpr(expr) => classify_thin_expr_kind(expr, ctx),
+        BodyPlan::Block { bindings, tail, .. } => {
+            if bindings
+                .iter()
+                .all(|binding| body_expr_is_thin_binding(&binding.expr))
+            {
+                classify_thin_expr_kind(tail, ctx)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn classify_thin_expr_kind(plan: &BodyExprPlan<'_>, ctx: &impl CallLowerCtx) -> Option<ThinKind> {
+    match plan {
+        BodyExprPlan::Leaf(_) => Some(ThinKind::Leaf),
+        BodyExprPlan::Call { .. } => Some(ThinKind::Direct),
+        BodyExprPlan::ForwardCall(_) => Some(ThinKind::Forward),
+        BodyExprPlan::Expr(expr) => match expr {
+            Expr::Match { arms, .. } if classify_match_dispatch_plan(arms, ctx).is_some() => {
+                Some(ThinKind::Dispatch)
+            }
+            Expr::TailCall(_) => Some(ThinKind::Tail),
+            _ => None,
+        },
+    }
+}
+
+fn body_expr_is_thin_binding(plan: &BodyExprPlan<'_>) -> bool {
+    match plan {
+        BodyExprPlan::Leaf(_) | BodyExprPlan::Call { .. } | BodyExprPlan::ForwardCall(_) => true,
+        BodyExprPlan::Expr(expr) => matches!(
+            expr,
+            Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, _)
+        ),
+    }
 }

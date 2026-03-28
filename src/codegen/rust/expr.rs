@@ -10,10 +10,10 @@ use crate::ir::{
     BodyExprPlan, BodyPlan, BoolCompareOp, BoolSubjectPlan, CallLowerCtx, CallPlan,
     DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan, DispatchLiteral, DispatchTableShape,
     ForwardArg, ForwardCallPlan, LeafOp, ListMatchShape, MatchDispatchPlan, SemanticConstructor,
-    SemanticDispatchPattern, TailCallPlan, WrapperKind, classify_body_plan,
-    classify_bool_subject_plan, classify_call_plan, classify_constructor_name, classify_leaf_op,
-    classify_list_match_shape, classify_match_dispatch_plan, classify_tail_call_plan,
-    is_builtin_namespace,
+    SemanticDispatchPattern, TailCallPlan, ThinBodyCtx, ThinBodyPlan, ThinKind, WrapperKind,
+    classify_body_plan, classify_bool_subject_plan, classify_call_plan, classify_constructor_name,
+    classify_leaf_op, classify_list_match_shape, classify_match_dispatch_plan,
+    classify_tail_call_plan, classify_thin_fn_def, is_builtin_namespace,
 };
 use crate::types::Type;
 /// Aver expressions → Rust expression strings.
@@ -51,8 +51,35 @@ impl CallLowerCtx for RustCallCtx<'_, '_> {
     }
 }
 
+impl ThinBodyCtx for RustCallCtx<'_, '_> {
+    fn find_fn_def<'a>(&'a self, name: &str) -> Option<&'a FnDef> {
+        if let Some((prefix, bare)) = resolve_module_call(name, self.ctx) {
+            return self
+                .ctx
+                .modules
+                .iter()
+                .find(|module| module.prefix == prefix)
+                .and_then(|module| module.fn_defs.iter().find(|fd| fd.name == bare));
+        }
+
+        self.ctx.fn_defs.iter().find(|fd| fd.name == name)
+    }
+}
+
 fn use_optimized_emission(ctx: &CodegenContext) -> bool {
     matches!(ctx.emission_style, EmissionStyle::Optimized)
+}
+
+fn find_rust_fn_def<'a>(name: &str, ctx: &'a CodegenContext) -> Option<&'a FnDef> {
+    if let Some((prefix, bare)) = resolve_module_call(name, ctx) {
+        return ctx
+            .modules
+            .iter()
+            .find(|module| module.prefix == prefix)
+            .and_then(|module| module.fn_defs.iter().find(|fd| fd.name == bare));
+    }
+
+    ctx.fn_defs.iter().find(|fd| fd.name == name)
 }
 
 pub(super) fn classify_dispatch_plan_for_rust(
@@ -73,25 +100,46 @@ pub(super) fn classify_body_plan_for_rust<'a>(
     classify_body_plan(body, &lower_ctx)
 }
 
-pub(super) fn body_plan_is_inline_candidate(plan: &BodyPlan<'_>) -> bool {
-    match plan {
-        BodyPlan::SingleExpr(expr) => body_expr_plan_is_inline_candidate(expr),
-        BodyPlan::Block { bindings, tail, .. } => {
-            bindings
-                .iter()
-                .all(|binding| body_expr_plan_is_inline_candidate(&binding.expr))
-                && body_expr_plan_is_inline_candidate(tail)
-        }
-    }
+pub(super) fn classify_thin_body_plan_for_rust<'a>(
+    name: &str,
+    ctx: &'a CodegenContext,
+    ectx: &'a EmitCtx,
+) -> Option<ThinBodyPlan<'a>> {
+    classify_thin_fn_def_for_rust(find_rust_fn_def(name, ctx)?, ctx, ectx)
+}
+
+pub(super) fn classify_thin_fn_def_for_rust<'a>(
+    fd: &'a FnDef,
+    ctx: &'a CodegenContext,
+    ectx: &'a EmitCtx,
+) -> Option<ThinBodyPlan<'a>> {
+    let lower_ctx = RustCallCtx { ctx, ectx };
+    classify_thin_fn_def(fd, &lower_ctx)
+}
+
+pub(super) fn thin_body_plan_is_parent_thin_candidate(plan: &ThinBodyPlan<'_>) -> bool {
+    matches!(
+        plan.kind,
+        ThinKind::Leaf | ThinKind::Direct | ThinKind::Forward | ThinKind::Dispatch
+    )
 }
 
 /// Emit a Rust expression from an Aver Expr.
 pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
+    emit_expr_with_options(expr, ctx, ectx, true)
+}
+
+fn emit_expr_with_options(
+    expr: &Expr,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+    allow_callsite_inlining: bool,
+) -> String {
     let lower_ctx = RustCallCtx { ctx, ectx };
     if use_optimized_emission(ctx)
         && let Some(leaf) = classify_leaf_op(expr, &lower_ctx)
     {
-        return emit_leaf_op(leaf, ctx, ectx);
+        return emit_leaf_op_with_options(leaf, ctx, ectx, allow_callsite_inlining);
     }
 
     match expr {
@@ -135,7 +183,9 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
                 format!("{}.clone()", field_access)
             }
         }
-        Expr::FnCall(fn_expr, args) => emit_fn_call(fn_expr, args, ctx, ectx),
+        Expr::FnCall(fn_expr, args) => {
+            emit_fn_call_with_options(fn_expr, args, ctx, ectx, allow_callsite_inlining)
+        }
         Expr::BinOp(op, left, right) => {
             // Unary minus: `- expr` is parsed as `BinOp(Sub, Literal(Int(0)), expr)`.
             // Emit as `-expr` instead of `(0i64 - expr)` to avoid type mismatch
@@ -331,8 +381,19 @@ pub(super) fn emit_body_plan_for_rust(
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> String {
+    emit_body_plan_for_rust_with_options(plan, ctx, ectx, true)
+}
+
+fn emit_body_plan_for_rust_with_options(
+    plan: &BodyPlan<'_>,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+    allow_callsite_inlining: bool,
+) -> String {
     match plan {
-        BodyPlan::SingleExpr(body_expr) => emit_body_expr_plan(body_expr, ctx, ectx),
+        BodyPlan::SingleExpr(body_expr) => {
+            emit_body_expr_plan_with_options(body_expr, ctx, ectx, allow_callsite_inlining)
+        }
         BodyPlan::Block {
             stmts,
             bindings,
@@ -348,29 +409,45 @@ pub(super) fn emit_body_plan_for_rust(
                 lines.push(format!(
                     "let {} = {};",
                     aver_name_to_rust(binding.name),
-                    emit_body_expr_plan(&binding.expr, ctx, sctx)
+                    emit_body_expr_plan_with_options(
+                        &binding.expr,
+                        ctx,
+                        sctx,
+                        allow_callsite_inlining,
+                    )
                 ));
             }
             let tail_ctx = stmt_ctxs.last().unwrap_or(ectx);
-            lines.push(emit_body_expr_plan(tail, ctx, tail_ctx));
+            lines.push(emit_body_expr_plan_with_options(
+                tail,
+                ctx,
+                tail_ctx,
+                allow_callsite_inlining,
+            ));
             lines.join("\n    ")
         }
     }
 }
 
-fn body_expr_plan_is_inline_candidate(plan: &BodyExprPlan<'_>) -> bool {
-    matches!(
-        plan,
-        BodyExprPlan::Leaf(_) | BodyExprPlan::Call { .. } | BodyExprPlan::ForwardCall(_)
-    )
-}
-
-fn emit_body_expr_plan(plan: &BodyExprPlan<'_>, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
+fn emit_body_expr_plan_with_options(
+    plan: &BodyExprPlan<'_>,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+    allow_callsite_inlining: bool,
+) -> String {
     match plan {
-        BodyExprPlan::Expr(expr) => emit_expr(expr, ctx, ectx),
-        BodyExprPlan::Leaf(leaf) => emit_leaf_op(*leaf, ctx, ectx),
-        BodyExprPlan::Call { target, args } => emit_call_plan_with_args(target, args, ctx, ectx),
-        BodyExprPlan::ForwardCall(plan) => emit_forward_call_plan(plan, ctx, ectx),
+        BodyExprPlan::Expr(expr) => {
+            emit_expr_with_options(expr, ctx, ectx, allow_callsite_inlining)
+        }
+        BodyExprPlan::Leaf(leaf) => {
+            emit_leaf_op_with_options(*leaf, ctx, ectx, allow_callsite_inlining)
+        }
+        BodyExprPlan::Call { target, args } => {
+            emit_call_plan_with_args_with_options(target, args, ctx, ectx, allow_callsite_inlining)
+        }
+        BodyExprPlan::ForwardCall(plan) => {
+            emit_forward_call_plan_with_options(plan, ctx, ectx, allow_callsite_inlining)
+        }
     }
 }
 
@@ -399,12 +476,18 @@ fn emit_codegen_error_expr(message: String) -> String {
     )
 }
 
-fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &EmitCtx) -> String {
+fn emit_fn_call_with_options(
+    fn_expr: &Expr,
+    args: &[Expr],
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+    allow_callsite_inlining: bool,
+) -> String {
     let call_ctx = RustCallCtx { ctx, ectx };
     let plan = classify_call_plan(fn_expr, &call_ctx);
     match plan {
         CallPlan::Dynamic => {
-            let func = emit_expr(fn_expr, ctx, ectx);
+            let func = emit_expr_with_options(fn_expr, ctx, ectx, allow_callsite_inlining);
             let arg_ctxs = compute_args_used_after_with_rc(
                 args,
                 &ectx.used_after,
@@ -418,16 +501,30 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext, ectx: &Emit
                 .collect();
             format!("{}({})", func, arg_strs.join(", "))
         }
-        _ => emit_call_plan_with_args(&plan, args, ctx, ectx),
+        _ => emit_call_plan_with_args_with_options(&plan, args, ctx, ectx, allow_callsite_inlining),
     }
 }
 
-fn emit_call_plan_with_args(
+fn emit_call_plan_with_args_with_options(
     plan: &CallPlan,
     args: &[Expr],
     ctx: &CodegenContext,
     ectx: &EmitCtx,
+    allow_callsite_inlining: bool,
 ) -> String {
+    if allow_callsite_inlining
+        && use_optimized_emission(ctx)
+        && let CallPlan::Function(name) = plan
+        && !ctx.memo_fns.contains(name)
+    {
+        if let Some(thin_plan) = classify_thin_body_plan_for_rust(name, ctx, ectx)
+            && thin_body_plan_is_parent_thin_candidate(&thin_plan)
+            && thin_plan.params.len() == args.len()
+        {
+            return emit_thin_call_body(&thin_plan, args, ctx, ectx);
+        }
+    }
+
     match plan {
         CallPlan::Builtin(name) => builtins::emit_builtin_call(name, args, ctx, ectx)
             .unwrap_or_else(|| {
@@ -469,14 +566,25 @@ fn emit_call_plan_with_args(
     }
 }
 
-fn emit_forward_call_plan(plan: &ForwardCallPlan, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
+fn emit_forward_call_plan_with_options(
+    plan: &ForwardCallPlan,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+    allow_callsite_inlining: bool,
+) -> String {
     let args = plan
         .args
         .iter()
         .map(forward_arg_to_expr)
         .collect::<Option<Vec<_>>>();
     match args {
-        Some(args) => emit_call_plan_with_args(&plan.target, &args, ctx, ectx),
+        Some(args) => emit_call_plan_with_args_with_options(
+            &plan.target,
+            &args,
+            ctx,
+            ectx,
+            allow_callsite_inlining,
+        ),
         None => emit_codegen_error_expr(
             "Rust codegen: unexpected slot-based ForwardCall in source-level emission".to_string(),
         ),
@@ -490,19 +598,38 @@ fn forward_arg_to_expr(arg: &ForwardArg) -> Option<Expr> {
     }
 }
 
-fn emit_leaf_op(leaf: LeafOp<'_>, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
+fn emit_leaf_op_with_options(
+    leaf: LeafOp<'_>,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+    allow_callsite_inlining: bool,
+) -> String {
     match leaf {
         LeafOp::FieldAccess { object, field_name } => {
-            let object = emit_expr(object, ctx, ectx);
+            let object = emit_expr_with_options(object, ctx, ectx, allow_callsite_inlining);
             format!("{}.{}.clone()", object, aver_name_to_rust(field_name))
         }
-        LeafOp::MapGet { map, key } => emit_leaf_builtin_call("Map.get", &[map, key], ctx, ectx),
-        LeafOp::MapSet { map, key, value } => {
-            emit_leaf_builtin_call("Map.set", &[map, key, value], ctx, ectx)
-        }
-        LeafOp::VectorNew { size, fill } => {
-            emit_leaf_builtin_call("Vector.new", &[size, fill], ctx, ectx)
-        }
+        LeafOp::MapGet { map, key } => emit_leaf_builtin_call_with_options(
+            "Map.get",
+            &[map, key],
+            ctx,
+            ectx,
+            allow_callsite_inlining,
+        ),
+        LeafOp::MapSet { map, key, value } => emit_leaf_builtin_call_with_options(
+            "Map.set",
+            &[map, key, value],
+            ctx,
+            ectx,
+            allow_callsite_inlining,
+        ),
+        LeafOp::VectorNew { size, fill } => emit_leaf_builtin_call_with_options(
+            "Vector.new",
+            &[size, fill],
+            ctx,
+            ectx,
+            allow_callsite_inlining,
+        ),
         LeafOp::VectorSetOrDefaultSameVector {
             vector,
             index,
@@ -515,9 +642,9 @@ fn emit_leaf_op(leaf: LeafOp<'_>, ctx: &CodegenContext, ectx: &EmitCtx) -> Strin
                 &ectx.local_types,
                 &ectx.rc_wrapped,
             );
-            let vector = clone_arg(vector, ctx, &arg_ctxs[0]);
-            let index = emit_expr(index, ctx, &arg_ctxs[1]);
-            let value = clone_arg(value, ctx, &arg_ctxs[2]);
+            let vector = clone_arg_with_options(vector, ctx, &arg_ctxs[0], allow_callsite_inlining);
+            let index = emit_expr_with_options(index, ctx, &arg_ctxs[1], allow_callsite_inlining);
+            let value = clone_arg_with_options(value, ctx, &arg_ctxs[2], allow_callsite_inlining);
             format!(
                 "{{ let __vec = {}; let __idx = {} as usize; if __idx < __vec.len() {{ __vec.set_unchecked(__idx, {}) }} else {{ __vec }} }}",
                 vector, index, value
@@ -535,8 +662,8 @@ fn emit_leaf_op(leaf: LeafOp<'_>, ctx: &CodegenContext, ectx: &EmitCtx) -> Strin
                 &ectx.local_types,
                 &ectx.rc_wrapped,
             );
-            let vector = emit_expr(vector, ctx, &arg_ctxs[0]);
-            let index = emit_expr(index, ctx, &arg_ctxs[1]);
+            let vector = emit_expr_with_options(vector, ctx, &arg_ctxs[0], allow_callsite_inlining);
+            let index = emit_expr_with_options(index, ctx, &arg_ctxs[1], allow_callsite_inlining);
             let default = emit_literal(default_literal);
             format!(
                 "{}.get({} as usize).cloned().unwrap_or({})",
@@ -546,11 +673,12 @@ fn emit_leaf_op(leaf: LeafOp<'_>, ctx: &CodegenContext, ectx: &EmitCtx) -> Strin
     }
 }
 
-fn emit_leaf_builtin_call(
+fn emit_leaf_builtin_call_with_options(
     name: &str,
     args: &[&Expr],
     ctx: &CodegenContext,
     ectx: &EmitCtx,
+    _allow_callsite_inlining: bool,
 ) -> String {
     let owned_args = args.iter().map(|expr| (*expr).clone()).collect::<Vec<_>>();
     builtins::emit_builtin_call(name, &owned_args, ctx, ectx).unwrap_or_else(|| {
@@ -559,6 +687,56 @@ fn emit_leaf_builtin_call(
             name
         ))
     })
+}
+
+fn build_thin_body_ectx(params: &[(String, String)]) -> EmitCtx {
+    let local_types = params
+        .iter()
+        .map(|(name, type_ann)| (name.clone(), crate::types::parse_type_str(type_ann)))
+        .collect();
+    EmitCtx::for_fn(local_types)
+}
+
+fn emit_thin_call_body(
+    plan: &ThinBodyPlan<'_>,
+    args: &[Expr],
+    ctx: &CodegenContext,
+    caller_ectx: &EmitCtx,
+) -> String {
+    let arg_ctxs = compute_args_used_after_with_rc(
+        args,
+        &caller_ectx.used_after,
+        &caller_ectx.local_types,
+        &caller_ectx.rc_wrapped,
+    );
+    let callee_ectx = build_thin_body_ectx(plan.params);
+    let mut lines = Vec::with_capacity(args.len() * 2 + 1);
+
+    for (idx, (arg, arg_ctx)) in args.iter().zip(arg_ctxs.iter()).enumerate() {
+        lines.push(format!(
+            "let __aver_thin_arg{} = {};",
+            idx,
+            clone_arg(arg, ctx, arg_ctx)
+        ));
+    }
+
+    for (idx, (name, type_ann)) in plan.params.iter().enumerate() {
+        lines.push(format!(
+            "let {}: {} = __aver_thin_arg{};",
+            aver_name_to_rust(name),
+            super::types::type_annotation_to_rust(type_ann),
+            idx
+        ));
+    }
+
+    lines.push(emit_body_plan_for_rust_with_options(
+        &plan.body,
+        ctx,
+        &callee_ectx,
+        false,
+    ));
+
+    format!("{{ {} }}", lines.join(" "))
 }
 
 fn emit_named_function_call(
@@ -667,7 +845,16 @@ pub(super) fn maybe_clone(code: String, expr: &Expr, ectx: &EmitCtx) -> String {
 
 /// Emit an expression as a function argument, cloning variables to prevent move errors.
 pub(super) fn clone_arg(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
-    let code = emit_expr(expr, ctx, ectx);
+    clone_arg_with_options(expr, ctx, ectx, true)
+}
+
+fn clone_arg_with_options(
+    expr: &Expr,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+    allow_callsite_inlining: bool,
+) -> String {
+    let code = emit_expr_with_options(expr, ctx, ectx, allow_callsite_inlining);
     maybe_clone(code, expr, ectx)
 }
 

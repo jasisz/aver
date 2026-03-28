@@ -4,7 +4,8 @@ mod leaf;
 mod matches;
 
 pub use body::{
-    BodyBindingPlan, BodyExprPlan, BodyPlan, classify_body_expr_plan, classify_body_plan,
+    BodyBindingPlan, BodyExprPlan, BodyPlan, ThinBodyCtx, ThinBodyPlan, ThinKind,
+    classify_body_expr_plan, classify_body_plan, classify_thin_body_plan, classify_thin_fn_def,
 };
 pub use calls::{
     CallLowerCtx, CallPlan, ForwardArg, ForwardCallPlan, SemanticCallee, SemanticConstructor,
