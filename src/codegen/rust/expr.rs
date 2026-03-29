@@ -1154,15 +1154,11 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
     let subj_ectx = ectx.with_used_after(&arms_vars);
     let subj = clone_arg(subject, ctx, &subj_ectx);
     let optimized = use_optimized_emission(ctx);
-    let dispatch_plan = if optimized {
-        classify_dispatch_plan_for_rust(arms, ctx, ectx)
-    } else {
-        None
-    };
+    let dispatch_plan = classify_dispatch_plan_for_rust(arms, ctx, ectx);
 
     // Bool match → if/else: match expr { true => A, false => B } → if expr { A } else { B }
-    if optimized
-        && let Some(MatchDispatchPlan::Bool(shape)) = dispatch_plan.as_ref()
+    // Always applied (not just optimized) since it generates strictly better code.
+    if let Some(MatchDispatchPlan::Bool(shape)) = dispatch_plan.as_ref()
         && let Some(code) =
             try_emit_bool_if_else(subject, &subj, arms, *shape, ctx, &subj_ectx, ectx)
     {
@@ -1183,7 +1179,7 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
         });
     }
 
-    if optimized && let Some(MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
+    if let Some(MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
         return emit_dispatch_table_match(subj, arms, shape, |arm| {
             maybe_clone(emit_expr(&arm.body, ctx, ectx), &arm.body, ectx)
         });

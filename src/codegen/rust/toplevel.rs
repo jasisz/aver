@@ -1835,23 +1835,66 @@ fn emit_tco_expr(
                 .map(|(a, ac)| clone_arg(a, ctx, ac))
                 .collect();
 
+            // Collect which params are being rebound (non-passthrough, non-identity).
+            let rebound_param_names: HashSet<String> = params
+                .iter()
+                .enumerate()
+                .filter(|(i, (name, _))| {
+                    !passthrough_indices.contains(i)
+                        && arg_strs.get(*i).map_or(true, |a| *a != aver_name_to_rust(name))
+                })
+                .map(|(_, (name, _))| aver_name_to_rust(name))
+                .collect();
+
+            // Check if each arg references a rebound param (needs tmp to avoid
+            // read-after-write). Simple heuristic: check if arg_str contains
+            // any rebound param name as a substring.
+            let needs_tmp: Vec<bool> = arg_strs
+                .iter()
+                .enumerate()
+                .map(|(i, arg_str)| {
+                    if passthrough_indices.contains(&i) {
+                        return false;
+                    }
+                    let param_name = aver_name_to_rust(&params[i].0);
+                    // Identity rebinding (x = x) → skip entirely
+                    if *arg_str == param_name {
+                        return false;
+                    }
+                    // If arg mentions any rebound param, must use tmp
+                    rebound_param_names
+                        .iter()
+                        .any(|p| arg_str.contains(p.as_str()))
+                })
+                .collect();
+
+            let any_tmp = needs_tmp.iter().any(|&t| t);
             let mut lines = Vec::new();
             lines.push("{".to_string());
-            for (i, arg_str) in arg_strs.iter().enumerate() {
-                if passthrough_indices.contains(&i) {
-                    continue; // pass-through param — no rebinding needed
+            // Phase 1: tmp bindings for args that reference rebound params
+            if any_tmp {
+                for (i, arg_str) in arg_strs.iter().enumerate() {
+                    if passthrough_indices.contains(&i) || !needs_tmp[i] {
+                        continue;
+                    }
+                    lines.push(format!("            let __tmp{} = {};", i, arg_str));
                 }
-                lines.push(format!("            let __tmp{} = {};", i, arg_str));
             }
+            // Phase 2: assignments
             for (i, (name, _)) in params.iter().enumerate() {
                 if passthrough_indices.contains(&i) {
-                    continue; // pass-through param — no rebinding needed
+                    continue;
                 }
-                lines.push(format!(
-                    "            {} = __tmp{};",
-                    aver_name_to_rust(name),
-                    i
-                ));
+                let param_name = aver_name_to_rust(name);
+                let arg_str = &arg_strs[i];
+                if *arg_str == param_name {
+                    continue; // identity rebinding — no-op
+                }
+                if needs_tmp[i] {
+                    lines.push(format!("            {} = __tmp{};", param_name, i));
+                } else {
+                    lines.push(format!("            {} = {};", param_name, arg_str));
+                }
             }
             lines.push("            continue;".to_string());
             lines.push("        }".to_string());
