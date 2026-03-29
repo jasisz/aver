@@ -1488,9 +1488,22 @@ where
     let tail_name = aver_name_to_rust(tail);
     let empty_body = emit_list_arm_body(empty_arm, ctx, body_for_arm(empty_arm));
     let cons_body = emit_list_arm_body(cons_arm, ctx, body_for_arm(cons_arm));
+    // Wrap arm bodies in braces only when they contain statements (return, let, etc.)
+    // to avoid Rust's "unnecessary braces" warning on simple expressions.
+    let wrap = |body: &str| -> String {
+        if body.contains("return ") || body.contains("let ") || body.contains(';') {
+            format!("{{ {} }}", body)
+        } else {
+            body.to_string()
+        }
+    };
     Some(format!(
-        "aver_list_match!({}, [] => {{ {} }}, [{}, {}] => {{ {} }})",
-        subject, empty_body, head_name, tail_name, cons_body
+        "aver_list_match!({}, [] => {}, [{}, {}] => {})",
+        subject,
+        wrap(&empty_body),
+        head_name,
+        tail_name,
+        wrap(&cons_body)
     ))
 }
 
