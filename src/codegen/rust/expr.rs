@@ -1272,6 +1272,13 @@ pub(super) fn emit_dispatch_table_match<F>(
 where
     F: Fn(&MatchArm) -> String,
 {
+    // Fast path: if all entries are wrapper tags (Result/Option), emit a Rust `match`
+    // with move bindings instead of if-chain + clone.  This is both shorter and faster
+    // because it avoids cloning the inner value.
+    if let Some(code) = try_emit_wrapper_match(&subject, arms, shape, &body_for_arm) {
+        return code;
+    }
+
     let subject_name = "__dispatch_subject";
     let fallback = match &shape.default_arm {
         Some(default_arm) => emit_default_dispatch_arm(
@@ -1295,6 +1302,76 @@ where
         });
 
     format!("{{ let {} = {}; {} }}", subject_name, subject, body)
+}
+
+/// Emit `match subject { Ok(v) => ..., Err(e) => ... }` when ALL dispatch entries are
+/// wrapper tags (Result.Ok/Err, Option.Some/None).  Bindings are by move (no clone).
+fn try_emit_wrapper_match<F>(
+    subject: &str,
+    arms: &[MatchArm],
+    shape: &DispatchTableShape,
+    body_for_arm: &F,
+) -> Option<String>
+where
+    F: Fn(&MatchArm) -> String,
+{
+    // All entries must be wrapper tags with payload bindings
+    let all_wrappers = shape.entries.iter().all(|e| {
+        matches!(
+            e.pattern,
+            SemanticDispatchPattern::WrapperTag(_) | SemanticDispatchPattern::NoneValue
+        )
+    });
+    if !all_wrappers {
+        return None;
+    }
+
+    let mut match_arms = Vec::new();
+    for entry in &shape.entries {
+        let arm = &arms[entry.arm_index];
+        let body = body_for_arm(arm);
+        match (&entry.pattern, &entry.binding) {
+            (SemanticDispatchPattern::WrapperTag(kind), DispatchBindingPlan::WrapperPayload(name)) => {
+                let binding = aver_name_to_rust(name);
+                let extractor = match kind {
+                    WrapperKind::ResultOk => "Ok",
+                    WrapperKind::ResultErr => "Err",
+                    WrapperKind::OptionSome => "Some",
+                };
+                match_arms.push(format!("{extractor}({binding}) => {{ {body} }}"));
+            }
+            (SemanticDispatchPattern::WrapperTag(kind), DispatchBindingPlan::None) => {
+                let pattern = match kind {
+                    WrapperKind::ResultOk => "Ok(_)",
+                    WrapperKind::ResultErr => "Err(_)",
+                    WrapperKind::OptionSome => "Some(_)",
+                };
+                match_arms.push(format!("{pattern} => {{ {body} }}"));
+            }
+            (SemanticDispatchPattern::NoneValue, _) => {
+                match_arms.push(format!("None => {{ {body} }}"));
+            }
+            _ => return None,
+        }
+    }
+
+    // Default arm (wildcard)
+    if let Some(default_arm) = &shape.default_arm {
+        let arm = &arms[default_arm.arm_index];
+        let body = body_for_arm(arm);
+        if let Some(name) = &default_arm.binding_name {
+            let binding = aver_name_to_rust(name);
+            match_arms.push(format!("{binding} => {{ {body} }}"));
+        } else {
+            match_arms.push(format!("_ => {{ {body} }}"));
+        }
+    }
+
+    Some(format!(
+        "match {} {{ {} }}",
+        subject,
+        match_arms.join(", ")
+    ))
 }
 
 fn emit_dispatch_condition(subject_name: &str, pattern: &SemanticDispatchPattern) -> String {
