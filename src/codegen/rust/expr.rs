@@ -160,12 +160,7 @@ fn emit_expr_with_options(
                 return format!("{}::{}", module_path, aver_name_to_rust(bare));
             }
             let obj_str = emit_expr(obj, ctx, ectx);
-            let field_access = format!("{}.{}", obj_str, aver_name_to_rust(field));
-            if matches!(obj.as_ref(), Expr::Ident(name) if is_builtin_namespace(name)) {
-                field_access
-            } else {
-                format!("{}.clone()", field_access)
-            }
+            format!("{}.{}", obj_str, aver_name_to_rust(field))
         }
         Expr::FnCall(fn_expr, args) => {
             emit_fn_call_with_options(fn_expr, args, ctx, ectx, allow_callsite_inlining)
@@ -586,7 +581,7 @@ fn emit_leaf_op_with_options(
     match leaf {
         LeafOp::FieldAccess { object, field_name } => {
             let object = emit_expr_with_options(object, ctx, ectx, allow_callsite_inlining);
-            format!("{}.{}.clone()", object, aver_name_to_rust(field_name))
+            format!("{}.{}", object, aver_name_to_rust(field_name))
         }
         LeafOp::MapGet { map, key } => emit_leaf_builtin_call_with_options(
             "Map.get",
@@ -940,10 +935,17 @@ pub(super) fn maybe_clone(code: String, expr: &Expr, ectx: &EmitCtx) -> String {
         }
         // `emit_expr` already encodes this as a compile_error! expression.
         Expr::Resolved(_) => code,
-        // emit_expr already adds .clone() for non-builtin field access (line 56),
-        // and returns bare paths for user-type constructors / module refs.
-        // Adding another .clone() here would produce obj.field.clone().clone().
-        Expr::Attr(_, _) => code,
+        // Field access on records: emit_expr produces `obj.field` without clone.
+        // Clone here when ownership is needed (constructors, return, etc.).
+        // When passed to a function expecting `&T`, `borrow_arg` handles it.
+        Expr::Attr(obj, _field) => {
+            // Builtin namespace access (e.g. Int.abs) → no clone needed
+            if matches!(obj.as_ref(), Expr::Ident(name) if is_builtin_namespace(name)) {
+                code
+            } else {
+                format!("{}.clone()", code)
+            }
+        }
         _ => code,
     }
 }
