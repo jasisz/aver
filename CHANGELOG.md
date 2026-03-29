@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here.
 
-## 0.7.2 (unreleased)
+## 0.7.2 (2026-03-29)
 
 ### Added
 - **Structured error messages** — `aver check` shows source snippets, repair suggestions, and semantic error categories (`type-mismatch`, `unused-binding`, `missing-verify`). Use `--verbose` for full context on warnings.
@@ -12,7 +12,7 @@ All notable changes to Aver are documented here.
 - **Common Pushback FAQ** — [docs/pushback.md](docs/pushback.md) covers frequent questions and objections about the language.
 
 ### Changed
-- **Faster compiled code** — generated Rust is significantly faster across all benchmarks: pattern matching -66%, maps -13%, records -14%, vectors -19%. The self-hosted interpreter is 7-25% faster depending on workload.
+- **Faster compiled code** — generated Rust is significantly faster across all benchmarks: pattern matching -66%, maps -13%, records -14%, vectors -19%. The self-hosted interpreter is 7-25% faster depending on workload. Fused IR ops (`IntModOrDefault`, `ListIndexGet`) eliminate intermediate allocations; codegen now skips unnecessary clones on Copy fields, drops `&` on numeric arithmetic, and matches borrowed params without cloning the subject.
 - **LSP** — Vector namespace completions, updated List members, `exposes opaque` support in document symbols.
 - **Editor highlighting** — VSCode and Sublime grammars updated with all current namespaces and keywords.
 - Aver formatter keeps medium effect lists on one line when they fit.
