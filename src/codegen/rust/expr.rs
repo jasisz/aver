@@ -1257,6 +1257,14 @@ fn emit_interpolated_str(parts: &[StrPart], ctx: &CodegenContext, ectx: &EmitCtx
     }
 }
 
+fn is_irrefutable_pattern(pat: &Pattern) -> bool {
+    match pat {
+        Pattern::Wildcard | Pattern::Ident(_) => true,
+        Pattern::Tuple(pats) => pats.iter().all(is_irrefutable_pattern),
+        _ => false,
+    }
+}
+
 fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     // Subject's used_after: all vars in arms + parent used_after
     let mut arms_vars = HashSet::new();
@@ -1269,6 +1277,24 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
         arms_vars.extend(arm_vars);
     }
     let subj_ectx = ectx.with_used_after(&arms_vars);
+
+    // Single-arm irrefutable match → `let` destructuring instead of `match`.
+    // e.g. `match x: (a, b) -> expr` → `{ let (a, b) = x; expr }`
+    if arms.len() == 1 && is_irrefutable_pattern(&arms[0].pattern) {
+        let arm = &arms[0];
+        let subj = clone_arg(subject, ctx, &subj_ectx);
+        let pat = emit_pattern(&arm.pattern, false, ctx);
+        let body = maybe_clone(emit_expr(&arm.body, ctx, ectx), &arm.body, ectx);
+        return match &arm.pattern {
+            Pattern::Wildcard => body,
+            Pattern::Ident(name) => {
+                let name = aver_name_to_rust(name);
+                format!("{{ let {} = {}; {} }}", name, subj, body)
+            }
+            _ => format!("{{ let {} = {}; {} }}", pat, subj, body),
+        };
+    }
+
     // For borrowed params, match on the reference directly instead of cloning,
     // but only when no arms have pattern bindings (destructuring produces &T refs
     // that would need clone rebindings across all match emission paths).
