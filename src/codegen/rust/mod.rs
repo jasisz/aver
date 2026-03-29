@@ -619,7 +619,7 @@ fn main() -> Int
 
     #[test]
     fn list_cons_match_uses_cloned_uncons_fast_path_when_optimized() {
-        let mut ctx = ctx_from_source(
+        let ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -809,7 +809,7 @@ fn updateOrKeep(vec: Vector<Int>, idx: Int, value: Int) -> Vector<Int>
 
     #[test]
     fn vector_set_default_uses_ir_leaf_fast_path_when_optimized() {
-        let mut ctx = ctx_from_source(
+        let ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -887,7 +887,7 @@ fn read(grid: Vector<Int>, idx: Int) -> Int
 
     #[test]
     fn optimized_keeps_known_leaf_wrapper_callsite_and_leaves_absorption_to_rust() {
-        let mut ctx = ctx_from_source(
+        let ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -909,7 +909,7 @@ fn read(grid: Vector<Int>, idx: Int) -> Int
 
     #[test]
     fn optimized_keeps_known_dispatch_wrapper_callsite_and_leaves_absorption_to_rust() {
-        let mut ctx = ctx_from_source(
+        let ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -933,7 +933,7 @@ fn readBucket(n: Int) -> Int
 
     #[test]
     fn bool_match_on_gte_normalizes_to_base_comparison_when_optimized() {
-        let mut ctx = ctx_from_source(
+        let ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -974,7 +974,7 @@ fn bucket(n: Int) -> Int
 
     #[test]
     fn optimized_self_tco_uses_dispatch_table_for_wrapper_match() {
-        let mut ctx = ctx_from_source(
+        let ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -997,7 +997,7 @@ fn loop(r: Result<Int, String>) -> Int
 
     #[test]
     fn optimized_mutual_tco_uses_dispatch_table_for_wrapper_match() {
-        let mut ctx = ctx_from_source(
+        let ctx = ctx_from_source(
             r#"
 module Demo
 
