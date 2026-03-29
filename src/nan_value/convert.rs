@@ -97,6 +97,13 @@ impl NanValue {
                     NanValue::new_nullary_variant(arena.push_nullary_variant_symbol(
                         arena.find_ctor_id(type_id, variant_id).unwrap(),
                     ))
+                } else if nv_fields.len() == 1 {
+                    if let Some(ctor_id) = arena.find_ctor_id(type_id, variant_id)
+                        && let Some(iv) = NanValue::try_new_inline_variant(ctor_id, nv_fields[0])
+                    {
+                        return iv;
+                    }
+                    NanValue::new_variant(arena.push_variant(type_id, variant_id, nv_fields))
                 } else {
                     NanValue::new_variant(arena.push_variant(type_id, variant_id, nv_fields))
                 }
@@ -127,6 +134,15 @@ impl NanValue {
                 WRAP_OK => Value::Ok(Box::new(inner)),
                 WRAP_ERR => Value::Err(Box::new(inner)),
                 _ => Value::Unit,
+            };
+        }
+        if let Some((type_id, variant_id, inner)) = self.inline_variant_info(arena) {
+            let type_name = arena.get_type_name(type_id).to_string();
+            let variant = arena.get_variant_name(type_id, variant_id).to_string();
+            return Value::Variant {
+                type_name,
+                variant,
+                fields: vec![inner.to_value(arena)].into(),
             };
         }
         if let Some((type_id, variant_id, fields)) = self.variant_parts(arena) {
@@ -191,7 +207,7 @@ impl NanValue {
                     fields: pairs.into(),
                 }
             }
-            TAG_VARIANT => {
+            TAG_VARIANT | TAG_INLINE_VARIANT => {
                 unreachable!("variant conversion handled before tag switch")
             }
             TAG_SYMBOL => match self.symbol_kind() {

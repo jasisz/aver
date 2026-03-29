@@ -877,6 +877,19 @@ impl VM {
                         self.stack.push(NanValue::new_nullary_variant(
                             self.arena.push_nullary_variant_symbol(ctor_id),
                         ));
+                    } else if fields.len() == 1 {
+                        if let Some(ctor_id) = self.arena.find_ctor_id(type_id, variant_id)
+                            && let Some(iv) = NanValue::try_new_inline_variant(ctor_id, fields[0])
+                        {
+                            self.stack.push(iv);
+                        } else {
+                            let idx = self
+                                .arena
+                                .with_alloc_space(self.next_value_alloc_space(code, ip), |arena| {
+                                    arena.push_variant(type_id, variant_id, fields)
+                                });
+                            self.stack.push(NanValue::new_variant(idx));
+                        }
                     } else {
                         let idx = self
                             .arena
@@ -1071,6 +1084,9 @@ impl VM {
                     if top.is_record() {
                         let (_, fields) = self.arena.get_record(top.arena_index());
                         self.stack.push(fields[field_idx]);
+                    } else if top.is_inline_variant() {
+                        debug_assert_eq!(field_idx, 0);
+                        self.stack.push(top.inline_variant_inner());
                     } else if top.is_variant() {
                         let (_, _, fields) = top.variant_parts(&self.arena).ok_or_else(|| {
                             VmError::Type("EXTRACT_FIELD on invalid variant".into())

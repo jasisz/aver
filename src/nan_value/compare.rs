@@ -18,6 +18,27 @@ impl NanValue {
             (Some(_), None) | (None, Some(_)) => return false,
             (None, None) => {}
         }
+        // Inline variant fast path (no arena indirection)
+        if self.tag() == TAG_INLINE_VARIANT || other.tag() == TAG_INLINE_VARIANT {
+            let s_ctor = self.variant_ctor_id(arena);
+            let o_ctor = other.variant_ctor_id(arena);
+            return match (s_ctor, o_ctor) {
+                (Some(sc), Some(oc)) if sc == oc => {
+                    // Same constructor — compare field(s)
+                    if self.tag() == TAG_INLINE_VARIANT && other.tag() == TAG_INLINE_VARIANT {
+                        self.inline_variant_inner()
+                            .eq_in(other.inline_variant_inner(), arena)
+                    } else {
+                        // Cross-representation: extract the single field from each side
+                        let sf = self.variant_single_field(arena);
+                        let of = other.variant_single_field(arena);
+                        sf.eq_in(of, arena)
+                    }
+                }
+                (Some(_), Some(_)) => false,
+                _ => false,
+            };
+        }
         match (self.variant_parts(arena), other.variant_parts(arena)) {
             (Some((st, sv, sf)), Some((ot, ov, of))) => {
                 return st == ot
@@ -75,7 +96,7 @@ impl NanValue {
                     && fa.len() == fb.len()
                     && fa.iter().zip(fb).all(|(a, b)| a.eq_in(*b, arena))
             }
-            TAG_VARIANT => {
+            TAG_VARIANT | TAG_INLINE_VARIANT => {
                 unreachable!("variant comparison handled above")
             }
             TAG_SYMBOL => self.bits() == other.bits(),
@@ -103,6 +124,13 @@ impl NanValue {
                 WRAP_ERR => (TAG_ERR as u8).hash(state),
                 _ => (0xFFu8).hash(state),
             }
+            inner.hash_in(state, arena);
+            return;
+        }
+        if let Some((tid, vid, inner)) = self.inline_variant_info(arena) {
+            (TAG_VARIANT as u8).hash(state);
+            tid.hash(state);
+            vid.hash(state);
             inner.hash_in(state, arena);
             return;
         }
@@ -154,7 +182,7 @@ impl NanValue {
                     f.hash_in(state, arena);
                 }
             }
-            TAG_VARIANT => {
+            TAG_VARIANT | TAG_INLINE_VARIANT => {
                 unreachable!("variant hashing handled above")
             }
             TAG_SYMBOL => self.bits().hash(state),
@@ -174,6 +202,10 @@ impl NanValue {
                 WRAP_ERR => format!("Result.Err({})", ir),
                 _ => "??".into(),
             };
+        }
+        if let Some((tid, vid, inner)) = self.inline_variant_info(arena) {
+            let vname = arena.get_variant_name(tid, vid);
+            return format!("{}({})", vname, inner.repr_inner(arena));
         }
         if let Some((tid, vid, fields)) = self.variant_parts(arena) {
             let vname = arena.get_variant_name(tid, vid);
@@ -239,7 +271,7 @@ impl NanValue {
                     .collect();
                 format!("{}({})", name, parts.join(", "))
             }
-            TAG_VARIANT => unreachable!("variant repr handled above"),
+            TAG_VARIANT | TAG_INLINE_VARIANT => unreachable!("variant repr handled above"),
             TAG_SYMBOL => match self.symbol_kind() {
                 SYMBOL_FN => format!("<fn {}>", arena.get_fn(self.symbol_index()).name),
                 SYMBOL_BUILTIN => format!("<builtin {}>", arena.get_builtin(self.symbol_index())),

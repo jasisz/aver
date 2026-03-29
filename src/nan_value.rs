@@ -31,7 +31,8 @@
 //!   11 = Record          payload bit45: 1=arena index
 //!   12 = Variant         payload bit45: 1=arena index
 //!   13 = Tuple           payload bit45: 1=arena index
-//!   14-15 = (reserved)
+//!   14 = InlineVariant  [45:30]=ctor_id, [29]=kind(0=int,1=imm), [28:0]=value
+//!   15 = (reserved)
 
 use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
@@ -67,6 +68,7 @@ const TAG_MAP: u64 = 10;
 const TAG_RECORD: u64 = 11;
 const TAG_VARIANT: u64 = 12;
 const TAG_TUPLE: u64 = 13;
+const TAG_INLINE_VARIANT: u64 = 14;
 
 const SYMBOL_FN: u64 = 0;
 const SYMBOL_BUILTIN: u64 = 1;
@@ -101,6 +103,23 @@ const STRING_ARENA_BIT: u64 = ARENA_REF_BIT;
 const STRING_INLINE_LEN_SHIFT: u32 = 40;
 const STRING_INLINE_LEN_MASK: u64 = 0b111 << STRING_INLINE_LEN_SHIFT;
 const STRING_INLINE_MAX_BYTES: usize = 5;
+
+// -- Inline variant layout --------------------------------------------------
+// [45:30] ctor_id (16 bits)
+// [29]    kind    (0=int, 1=immediate)
+// [28:0]  value   (int: 29-bit signed | imm: bits[28:27] = false/true/unit/none)
+const IV_CTOR_SHIFT: u32 = 30;
+const IV_CTOR_MASK: u64 = 0xFFFF;
+const IV_KIND_BIT: u64 = 1 << 29;
+const IV_INT_MASK: u64 = (1u64 << 29) - 1;
+const IV_INT_SIGN_BIT: u64 = 1u64 << 28;
+const IV_INT_MAX: i64 = (1i64 << 28) - 1;
+const IV_INT_MIN: i64 = -(1i64 << 28);
+const IV_IMM_SHIFT: u32 = 27;
+const IV_IMM_FALSE: u64 = 0;
+const IV_IMM_TRUE: u64 = 1;
+const IV_IMM_UNIT: u64 = 2;
+const IV_IMM_NONE: u64 = 3;
 
 // ---------------------------------------------------------------------------
 // NanValue - the 8-byte compact value
@@ -588,6 +607,80 @@ impl NanValue {
         Self::new_symbol(SYMBOL_NULLARY_VARIANT, symbol_index)
     }
 
+    /// Try to create an inline variant (TAG 14) for a single-field variant
+    /// whose inner value is a small int, bool, unit, or none.
+    /// Returns None if the value can't be inlined.
+    #[inline]
+    pub fn try_new_inline_variant(ctor_id: u32, inner: NanValue) -> Option<Self> {
+        if ctor_id > IV_CTOR_MASK as u32 {
+            return None;
+        }
+        let ctor_bits = (ctor_id as u64) << IV_CTOR_SHIFT;
+
+        if inner.is_nan_boxed() {
+            match inner.tag() {
+                TAG_INT if inner.payload() & INT_BIG_BIT == 0 => {
+                    let i = Self::decode_inline_int_payload(inner.payload());
+                    if (IV_INT_MIN..=IV_INT_MAX).contains(&i) {
+                        let int_bits = (i as u64) & IV_INT_MASK;
+                        return Some(Self::encode(TAG_INLINE_VARIANT, ctor_bits | int_bits));
+                    }
+                }
+                TAG_IMMEDIATE => {
+                    let imm = match inner.payload() {
+                        IMM_FALSE => IV_IMM_FALSE,
+                        IMM_TRUE => IV_IMM_TRUE,
+                        IMM_UNIT => IV_IMM_UNIT,
+                        _ => return None,
+                    };
+                    return Some(Self::encode(
+                        TAG_INLINE_VARIANT,
+                        ctor_bits | IV_KIND_BIT | (imm << IV_IMM_SHIFT),
+                    ));
+                }
+                TAG_NONE => {
+                    return Some(Self::encode(
+                        TAG_INLINE_VARIANT,
+                        ctor_bits | IV_KIND_BIT | (IV_IMM_NONE << IV_IMM_SHIFT),
+                    ));
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    #[inline]
+    pub fn inline_variant_ctor_id(self) -> u32 {
+        debug_assert!(self.is_nan_boxed() && self.tag() == TAG_INLINE_VARIANT);
+        ((self.payload() >> IV_CTOR_SHIFT) & IV_CTOR_MASK) as u32
+    }
+
+    #[inline]
+    pub fn inline_variant_inner(self) -> NanValue {
+        debug_assert!(self.is_nan_boxed() && self.tag() == TAG_INLINE_VARIANT);
+        let payload = self.payload();
+        if payload & IV_KIND_BIT == 0 {
+            // Inline int — sign-extend 29 bits to i64
+            let raw = payload & IV_INT_MASK;
+            let i = if raw & IV_INT_SIGN_BIT != 0 {
+                (raw | !IV_INT_MASK) as i64
+            } else {
+                raw as i64
+            };
+            Self::new_int_inline(i)
+        } else {
+            let imm = (payload >> IV_IMM_SHIFT) & 0b11;
+            match imm {
+                IV_IMM_FALSE => Self::FALSE,
+                IV_IMM_TRUE => Self::TRUE,
+                IV_IMM_UNIT => Self::UNIT,
+                IV_IMM_NONE => Self::NONE,
+                _ => unreachable!(),
+            }
+        }
+    }
+
     #[inline]
     pub fn new_fn(arena_index: u32) -> Self {
         Self::new_symbol(SYMBOL_FN, arena_index)
@@ -734,7 +827,13 @@ impl NanValue {
     pub fn is_variant(self) -> bool {
         self.is_nan_boxed()
             && (self.tag() == TAG_VARIANT
+                || self.tag() == TAG_INLINE_VARIANT
                 || (self.tag() == TAG_SYMBOL && self.symbol_kind() == SYMBOL_NULLARY_VARIANT))
+    }
+
+    #[inline]
+    pub fn is_inline_variant(self) -> bool {
+        self.is_nan_boxed() && self.tag() == TAG_INLINE_VARIANT
     }
 
     #[inline]
@@ -798,7 +897,7 @@ impl NanValue {
             TAG_MAP => "Map",
             TAG_VECTOR => "Vector",
             TAG_RECORD => "Record",
-            TAG_VARIANT => "Variant",
+            TAG_VARIANT | TAG_INLINE_VARIANT => "Variant",
             TAG_SYMBOL => match self.symbol_kind() {
                 SYMBOL_FN => "Fn",
                 SYMBOL_BUILTIN => "Builtin",
@@ -816,6 +915,7 @@ impl NanValue {
             return None;
         }
         match self.tag() {
+            TAG_INLINE_VARIANT => Some(self.inline_variant_ctor_id()),
             TAG_VARIANT => {
                 let (type_id, variant_id, _) = arena.get_variant(self.arena_index());
                 arena.find_ctor_id(type_id, variant_id)
@@ -827,6 +927,8 @@ impl NanValue {
         }
     }
 
+    /// Returns (type_id, variant_id, fields) for arena-backed and nullary variants.
+    /// Does NOT handle TAG_INLINE_VARIANT — use `inline_variant_info` for those.
     #[inline]
     pub fn variant_parts(self, arena: &Arena) -> Option<(u32, u16, &[NanValue])> {
         if !self.is_nan_boxed() {
@@ -844,6 +946,31 @@ impl NanValue {
             }
             _ => None,
         }
+    }
+
+    /// Extract the single field from any 1-field variant representation.
+    /// For inline variants: decode from bits. For arena variants: arena lookup.
+    /// Panics if the variant has != 1 field.
+    #[inline]
+    pub fn variant_single_field(self, arena: &Arena) -> NanValue {
+        if self.tag() == TAG_INLINE_VARIANT {
+            self.inline_variant_inner()
+        } else {
+            let (_, _, fields) = arena.get_variant(self.arena_index());
+            debug_assert_eq!(fields.len(), 1);
+            fields[0]
+        }
+    }
+
+    /// Returns (type_id, variant_id, inner_value) for inline variants.
+    #[inline]
+    pub fn inline_variant_info(self, arena: &Arena) -> Option<(u32, u16, NanValue)> {
+        if !self.is_nan_boxed() || self.tag() != TAG_INLINE_VARIANT {
+            return None;
+        }
+        let ctor_id = self.inline_variant_ctor_id();
+        let (type_id, variant_id) = arena.get_ctor_parts(ctor_id);
+        Some((type_id, variant_id, self.inline_variant_inner()))
     }
 
     /// Raw bits - useful for using as HashMap key (inline values only).
@@ -930,6 +1057,11 @@ impl std::fmt::Debug for NanValue {
                 } else {
                     write!(f, "String(arena:{})", self.arena_index())
                 }
+            }
+            TAG_INLINE_VARIANT => {
+                let ctor = self.inline_variant_ctor_id();
+                let inner = self.inline_variant_inner();
+                write!(f, "InlineVariant(ctor:{}, {:?})", ctor, inner)
             }
             TAG_LIST if self.is_empty_list_immediate() => write!(f, "EmptyList"),
             TAG_MAP if self.is_empty_map_immediate() => write!(f, "EmptyMap"),
