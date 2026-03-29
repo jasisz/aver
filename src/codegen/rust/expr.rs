@@ -1275,8 +1275,8 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
     let no_bindings = arms
         .iter()
         .all(|arm| super::liveness::pattern_bindings(&arm.pattern).is_empty());
-    let match_on_ref = no_bindings
-        && matches!(subject, Expr::Ident(name) if subj_ectx.is_borrowed_param(name));
+    let match_on_ref =
+        no_bindings && matches!(subject, Expr::Ident(name) if subj_ectx.is_borrowed_param(name));
     let subj = if match_on_ref {
         emit_expr(subject, ctx, &subj_ectx)
     } else {

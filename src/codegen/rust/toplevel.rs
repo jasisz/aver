@@ -2857,7 +2857,11 @@ mod tests {
         assert!(!code.contains("let __tmp0 = a.clone();"));
         assert!(!code.contains("let __tmp1 = b.clone();"));
         // Numeric add no longer uses &rhs; list params get .clone() when reused
-        assert!(code.contains("let __tmp3 = (sink + (appendLists(a.clone(), b.clone()).len() as i64));"));
+        assert!(
+            code.contains(
+                "let __tmp3 = (sink + (appendLists(a.clone(), b.clone()).len() as i64));"
+            )
+        );
     }
 
     #[test]

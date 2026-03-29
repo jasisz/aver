@@ -7,13 +7,12 @@ All notable changes to Aver are documented here.
 ### Added
 - **Structured error messages** — `aver check` shows source snippets, repair suggestions, and semantic error categories (`type-mismatch`, `unused-binding`, `missing-verify`). Use `--verbose` for full context on warnings.
 - **Unused binding warnings** — `aver check` warns on bindings that are defined but never used. Prefix with `_` to silence.
+- **`aver check --json`** — structured JSON output for editor and CI integrations.
 - **`Map<T, Unit>` as set** — Lean codegen emits `Finset T`, Dafny emits `set<T>`. See [docs](docs/language.md#sets).
-- **Shared lowering IR** — interpreter, VM, and Rust codegen share one classification of calls, matches, and leaf ops instead of reimplementing pattern recognition independently.
+- **Common Pushback FAQ** — [docs/pushback.md](docs/pushback.md) covers frequent questions and objections about the language.
 
 ### Changed
-- **Borrow-by-default for Named types** — user-defined record/sum types are now passed as `&T` instead of cloned at every call site. Self-host FnStore clones reduced from 118 to 16 (90 borrow pass-throughs).
-- **Faster compiled code** — pass-through parameters in recursive functions are automatically `Rc`-wrapped (clone = refcount bump). Recursive sum types like AST nodes use `Rc` instead of `Box`. `Vector.set` and `Map.remove` skip COW when the container is at its last use. TCO loop rebinding skips trivial temporaries. All IR lowering optimizations (leaf ops, dispatch tables, bool-to-if/else, list match macros, `#[inline(always)]`) are always enabled.
-- **Faster self-hosted interpreter** — function dispatch by id instead of string lookup, fast paths for leaf expressions and common match shapes, native `Map` for runtime values.
+- **Faster compiled code** — generated Rust is significantly faster across all benchmarks: pattern matching -66%, maps -13%, records -14%, vectors -19%. The self-hosted interpreter is 7-25% faster depending on workload.
 - **LSP** — Vector namespace completions, updated List members, `exposes opaque` support in document symbols.
 - **Editor highlighting** — VSCode and Sublime grammars updated with all current namespaces and keywords.
 - Aver formatter keeps medium effect lists on one line when they fit.
