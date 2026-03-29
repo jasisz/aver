@@ -35,6 +35,12 @@ pub enum LeafOp<'a> {
         index: &'a Expr,
         default_literal: &'a Literal,
     },
+    /// Fused `Result.withDefault(Int.mod(a, b), literal)` → skip Result allocation.
+    IntModOrDefaultLiteral {
+        a: &'a Expr,
+        b: &'a Expr,
+        default_literal: &'a Literal,
+    },
 }
 
 pub fn classify_leaf_op<'a>(expr: &'a Expr, ctx: &impl CallLowerCtx) -> Option<LeafOp<'a>> {
@@ -87,6 +93,9 @@ fn classify_leaf_call<'a>(
             "Option.withDefault" if args.len() == 2 => {
                 classify_vector_set_or_default(&args[0], &args[1], ctx)
                     .or_else(|| classify_vector_get_or_default(&args[0], &args[1], ctx))
+            }
+            "Result.withDefault" if args.len() == 2 => {
+                classify_int_mod_or_default(&args[0], &args[1], ctx)
             }
             _ => None,
         },
@@ -143,6 +152,33 @@ fn classify_vector_get_or_default<'a>(
                 default_literal,
             })
         }
+        _ => None,
+    }
+}
+
+fn classify_int_mod_or_default<'a>(
+    result_expr: &'a Expr,
+    default_expr: &'a Expr,
+    ctx: &impl CallLowerCtx,
+) -> Option<LeafOp<'a>> {
+    let default_literal = match default_expr {
+        Expr::Literal(lit) => lit,
+        _ => return None,
+    };
+
+    let Expr::FnCall(inner_callee, inner_args) = result_expr else {
+        return None;
+    };
+    if inner_args.len() != 2 {
+        return None;
+    }
+
+    match classify_call_plan(inner_callee, ctx) {
+        CallPlan::Builtin(name) if name == "Int.mod" => Some(LeafOp::IntModOrDefaultLiteral {
+            a: &inner_args[0],
+            b: &inner_args[1],
+            default_literal,
+        }),
         _ => None,
     }
 }

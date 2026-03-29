@@ -646,6 +646,44 @@ fn emit_leaf_op_with_options(
                 vector, index, default
             )
         }
+        LeafOp::IntModOrDefaultLiteral {
+            a,
+            b,
+            default_literal,
+        } => {
+            // When divisor is a known non-zero literal, skip the zero check entirely.
+            if let Expr::Literal(Literal::Int(n)) = b
+                && *n != 0
+            {
+                let inner_args = vec![a.clone(), b.clone()];
+                let arg_ctxs = compute_args_used_after_full(
+                    &inner_args,
+                    &ectx.used_after,
+                    &ectx.local_types,
+                    &ectx.rc_wrapped,
+                    &ectx.borrowed_params,
+                );
+                let a = emit_expr_with_options(a, ctx, &arg_ctxs[0], allow_callsite_inlining);
+                let b_str = emit_literal(&Literal::Int(*n));
+                format!("({}).rem_euclid({})", a, b_str)
+            } else {
+                let inner_args = vec![a.clone(), b.clone()];
+                let arg_ctxs = compute_args_used_after_full(
+                    &inner_args,
+                    &ectx.used_after,
+                    &ectx.local_types,
+                    &ectx.rc_wrapped,
+                    &ectx.borrowed_params,
+                );
+                let a = emit_expr_with_options(a, ctx, &arg_ctxs[0], allow_callsite_inlining);
+                let b = emit_expr_with_options(b, ctx, &arg_ctxs[1], allow_callsite_inlining);
+                let default = emit_literal(default_literal);
+                format!(
+                    "{{ let __b = {}; if __b == 0i64 {{ {} }} else {{ ({}).rem_euclid(__b) }} }}",
+                    b, default, a
+                )
+            }
+        }
     }
 }
 

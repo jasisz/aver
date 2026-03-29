@@ -1396,6 +1396,17 @@ impl Interpreter {
                     ))
                 }
             }
+            LoweredLeafOp::IntModOrDefaultLiteral {
+                default_literal, ..
+            } => {
+                let a = args[0].as_int(&self.arena);
+                let b = args[1].as_int(&self.arena);
+                if b == 0 {
+                    Ok(self.eval_literal_nv(default_literal))
+                } else {
+                    Ok(NanValue::new_int(a.rem_euclid(b), &mut self.arena))
+                }
+            }
         }
     }
 

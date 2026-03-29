@@ -41,6 +41,11 @@ pub(crate) enum LoweredLeafOp {
         index: ExprId,
         default_literal: Literal,
     },
+    IntModOrDefaultLiteral {
+        a: ExprId,
+        b: ExprId,
+        default_literal: Literal,
+    },
 }
 
 impl LoweredLeafOp {
@@ -50,6 +55,7 @@ impl LoweredLeafOp {
             Self::MapSet { .. } => 3,
             Self::VectorNew { .. } => 2,
             Self::VectorGetOrDefaultLiteral { .. } => 2,
+            Self::IntModOrDefaultLiteral { .. } => 2,
         }
     }
 
@@ -74,6 +80,11 @@ impl LoweredLeafOp {
             Self::VectorGetOrDefaultLiteral { vector, index, .. } => match idx {
                 0 => Some(*vector),
                 1 => Some(*index),
+                _ => None,
+            },
+            Self::IntModOrDefaultLiteral { a, b, .. } => match idx {
+                0 => Some(*a),
+                1 => Some(*b),
                 _ => None,
             },
         }
@@ -251,6 +262,15 @@ impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
                 }) => LoweredExpr::Leaf(LoweredLeafOp::VectorGetOrDefaultLiteral {
                     vector: self.lower_expr(vector),
                     index: self.lower_expr(index),
+                    default_literal: default_literal.clone(),
+                }),
+                Some(LeafOp::IntModOrDefaultLiteral {
+                    a,
+                    b,
+                    default_literal,
+                }) => LoweredExpr::Leaf(LoweredLeafOp::IntModOrDefaultLiteral {
+                    a: self.lower_expr(a),
+                    b: self.lower_expr(b),
                     default_literal: default_literal.clone(),
                 }),
                 Some(LeafOp::FieldAccess { .. })

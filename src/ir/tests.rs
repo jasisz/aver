@@ -646,6 +646,38 @@ fn classify_vector_get_with_literal_default_leaf() {
 }
 
 #[test]
+fn classify_int_mod_with_literal_default_leaf() {
+    let ctx = DummyCtx;
+    let expr = Expr::FnCall(
+        Box::new(Expr::Attr(
+            Box::new(Expr::Ident("Result".to_string())),
+            "withDefault".to_string(),
+        )),
+        vec![
+            Expr::FnCall(
+                Box::new(Expr::Attr(
+                    Box::new(Expr::Ident("Int".to_string())),
+                    "mod".to_string(),
+                )),
+                vec![
+                    Expr::Ident("a".to_string()),
+                    Expr::Ident("b".to_string()),
+                ],
+            ),
+            Expr::Literal(Literal::Int(0)),
+        ],
+    );
+
+    assert!(matches!(
+        classify_leaf_op(&expr, &ctx),
+        Some(LeafOp::IntModOrDefaultLiteral {
+            default_literal,
+            ..
+        }) if matches!(default_literal, Literal::Int(0))
+    ));
+}
+
+#[test]
 fn uppercase_module_paths_are_not_field_leafs() {
     let ctx = DummyCtx;
     let expr = Expr::Attr(

@@ -407,6 +407,21 @@ impl<'a> FnCompiler<'a> {
                 self.emit_op(VECTOR_SET_OR_KEEP);
                 Ok(())
             }
+            LeafOp::IntModOrDefaultLiteral {
+                a,
+                b,
+                default_literal,
+            } => {
+                self.compile_expr(a)?;
+                self.compile_expr(b)?;
+                self.emit_builtin_after_args(VmBuiltin::IntMod, 2);
+                let default_value = self.nan_literal(default_literal);
+                let const_idx = self.add_constant(default_value);
+                self.emit_op(LOAD_CONST);
+                self.emit_u16(const_idx);
+                self.emit_op(UNWRAP_RESULT_OR);
+                Ok(())
+            }
         }
     }
 
