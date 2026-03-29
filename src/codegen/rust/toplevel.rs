@@ -653,7 +653,7 @@ fn expr_uses_error_prop(expr: &Expr) -> bool {
     }
 }
 
-fn body_has_self_tailcall(body: &FnBody, fn_name: &str) -> bool {
+pub(super) fn body_has_self_tailcall(body: &FnBody, fn_name: &str) -> bool {
     body.stmts().iter().any(|s| match s {
         Stmt::Expr(e) => expr_has_self_tailcall(e, fn_name),
         Stmt::Binding(_, _, e) => expr_has_self_tailcall(e, fn_name),

@@ -95,7 +95,7 @@ fn dispatch_http_handler(
         return http_error_response("Self-host HttpServer callback store is not active".to_string());
     };
 
-    let Some(fd) = lookupFnOption(fns.clone(), handler_name) else {
+    let Some(fd) = lookupFnOption(&fns, handler_name) else {
         return http_error_response("Self-host HttpServer handler is not loaded".to_string());
     };
 
@@ -106,7 +106,7 @@ fn dispatch_http_handler(
     callback_args.push(http_request_to_val(request));
 
     let args_list = crate::aver_rt::AverList::from_vec(callback_args);
-    match callResolved(fd, &args_list, fns) {
+    match callResolved(&fd, &args_list, &fns) {
         Ok(value) => match val_to_http_response(value) {
             Ok(resp) => resp,
             Err(err) => http_error_response(err.to_string()),

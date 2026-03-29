@@ -739,14 +739,16 @@ fn fn_def_has_any_tailcall(fd: &FnDef) -> bool {
 }
 
 /// Compute borrow mask from a FnDef, checking for TCO.
-/// Functions in a mutual-TCO SCC group are emitted as wrapper + trampoline;
-/// wrappers use borrow-by-default (`&T`).  All other functions with TailCalls
-/// (self-TCO or one-way TailCall without SCC cycle) are emitted as loops with
-/// `mut T` params, so their borrow mask is all-false.
+/// Must mirror actual emitted signature:
+/// - Mutual-TCO SCC members → wrapper with borrow-by-default (`&T`)
+/// - Self-TCO only (not in SCC) → loop with `mut T`, all-false mask
+/// - Non-TCO → borrow-by-default
 fn borrow_mask_from_fn_def(fd: &FnDef, arg_count: usize, ctx: &CodegenContext) -> Vec<bool> {
-    // If the function is NOT in a mutual-TCO SCC group, it's emitted as a plain
-    // self-TCO loop (mut T params), so skip borrow-by-default.
-    if fn_def_has_any_tailcall(fd) && !ctx.mutual_tco_members.contains(&fd.name) {
+    // Mutual-TCO members are emitted as wrappers with borrow-by-default,
+    // even if they also have self-TailCalls. Don't skip borrow for them.
+    if !ctx.mutual_tco_members.contains(&fd.name)
+        && super::toplevel::body_has_self_tailcall(&fd.body, &fd.name)
+    {
         return vec![false; arg_count];
     }
     fd.params

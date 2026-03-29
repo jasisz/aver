@@ -137,6 +137,7 @@ pub fn should_borrow_param(ty: &Type) -> bool {
             | Type::Result(_, _)
             | Type::Option(_)
             | Type::Tuple(_)
+            | Type::Named(_)
     )
 }
 
