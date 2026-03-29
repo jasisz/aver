@@ -1269,8 +1269,14 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
         arms_vars.extend(arm_vars);
     }
     let subj_ectx = ectx.with_used_after(&arms_vars);
-    // For borrowed params, match on the reference directly instead of cloning.
-    let match_on_ref = matches!(subject, Expr::Ident(name) if subj_ectx.is_borrowed_param(name));
+    // For borrowed params, match on the reference directly instead of cloning,
+    // but only when no arms have pattern bindings (destructuring produces &T refs
+    // that would need clone rebindings across all match emission paths).
+    let no_bindings = arms
+        .iter()
+        .all(|arm| super::liveness::pattern_bindings(&arm.pattern).is_empty());
+    let match_on_ref = no_bindings
+        && matches!(subject, Expr::Ident(name) if subj_ectx.is_borrowed_param(name));
     let subj = if match_on_ref {
         emit_expr(subject, ctx, &subj_ectx)
     } else {
