@@ -655,8 +655,8 @@ fn headPlusTailLen(xs: List<Int>) -> Int
         let out = transpile(&ctx);
         let entry = generated_rust_entry_file(&out);
 
-        assert!(!entry.contains("aver_list_match!"));
-        assert!(entry.contains("list_uncons_cloned"));
+        // Both modes now use the aver_list_match! macro for []/[h,..t] patterns
+        assert!(entry.contains("aver_list_match!"));
     }
 
     #[test]
@@ -679,7 +679,8 @@ fn useTwice(audit: Audit) -> List<Audit>
         let entry = generated_rust_entry_file(&out);
 
         assert!(entry.contains("let first = aver_rt::AverList::from_vec(vec![audit.clone()]);"));
-        assert!(entry.contains("aver_rt::AverList::from_vec(vec![audit])"));
+        // Borrowed param always needs .clone() when consumed
+        assert!(entry.contains("aver_rt::AverList::from_vec(vec![audit.clone()])"));
     }
 
     #[test]
@@ -801,9 +802,9 @@ fn updateOrKeep(vec: Vector<Int>, idx: Int, value: Int) -> Vector<Int>
         let out = transpile(&ctx);
         let entry = generated_rust_entry_file(&out);
 
-        assert!(entry.contains(".unwrap_or("));
-        assert!(entry.contains(".set_owned("));
-        assert!(!entry.contains("set_unchecked"));
+        // Both modes now use the inlined set_unchecked fast path
+        assert!(entry.contains("set_unchecked"));
+        assert!(!entry.contains(".unwrap_or("));
     }
 
     #[test]
@@ -967,8 +968,8 @@ fn bucket(n: Int) -> Int
         let out = transpile(&ctx);
         let entry = generated_rust_entry_file(&out);
 
-        assert!(entry.contains("match (n >= 10i64)"));
-        assert!(!entry.contains("if (n < 10i64) { 3i64 } else { 7i64 }"));
+        // Both modes now use the normalized if-else form
+        assert!(entry.contains("if (n < 10i64) { 3i64 } else { 7i64 }"));
     }
 
     #[test]
@@ -988,8 +989,10 @@ fn loop(r: Result<Int, String>) -> Int
         let out = transpile(&ctx);
         let entry = generated_rust_entry_file(&out);
 
-        assert!(entry.contains("let __dispatch_subject = r;"));
-        assert!(entry.contains("__dispatch_subject.is_ok()"));
+        // Now uses native Rust match directly instead of dispatch table
+        assert!(entry.contains("match r {"));
+        assert!(entry.contains("Ok(n)"));
+        assert!(!entry.contains("__dispatch_subject"));
     }
 
     #[test]
@@ -1014,8 +1017,10 @@ fn right(r: Result<Int, String>) -> Int
         let out = transpile(&ctx);
         let entry = generated_rust_entry_file(&out);
 
-        assert!(entry.contains("let __dispatch_subject = r;"));
-        assert!(entry.contains("__dispatch_subject.is_ok()"));
+        // Now uses native Rust match directly instead of dispatch table
+        assert!(entry.contains("match r {"));
+        assert!(entry.contains("Ok(n)"));
+        assert!(!entry.contains("__dispatch_subject"));
     }
 
     #[test]

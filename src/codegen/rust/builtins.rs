@@ -1011,6 +1011,8 @@ mod tests {
             runtime_policy_from_env: false,
             guest_entry: None,
             emit_self_host_support: false,
+            extra_fn_defs: Vec::new(),
+            mutual_tco_members: HashSet::new(),
         }
     }
 
@@ -1057,6 +1059,7 @@ mod tests {
         .expect("Http.post should emit");
 
         assert!(emitted.contains("queryUrl(config.clone())"));
-        assert!(emitted.contains("authHeader(config)"));
+        // Named-type param gets .clone() at every use site
+        assert!(emitted.contains("authHeader(config.clone())"));
     }
 }

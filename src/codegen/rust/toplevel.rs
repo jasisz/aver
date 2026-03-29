@@ -2735,6 +2735,8 @@ mod tests {
             runtime_policy_from_env: false,
             guest_entry: None,
             emit_self_host_support: false,
+            extra_fn_defs: Vec::new(),
+            mutual_tco_members: HashSet::new(),
         }
     }
 
@@ -2800,7 +2802,8 @@ mod tests {
         );
         assert!(!code.contains("let __tmp0 = xs.clone();"));
         assert!(code.contains("let __tmp1 = (remaining - 1i64);"));
-        assert!(code.contains("let __tmp2 = (sink + &sumList(xs, 0i64));"));
+        // Numeric add no longer uses &rhs; list param gets .clone() when reused
+        assert!(code.contains("let __tmp2 = (sink + sumList(xs.clone(), 0i64));"));
     }
 
     #[test]
@@ -2853,7 +2856,8 @@ mod tests {
         );
         assert!(!code.contains("let __tmp0 = a.clone();"));
         assert!(!code.contains("let __tmp1 = b.clone();"));
-        assert!(code.contains("let __tmp3 = (sink + &(appendLists(a, b).len() as i64));"));
+        // Numeric add no longer uses &rhs; list params get .clone() when reused
+        assert!(code.contains("let __tmp3 = (sink + (appendLists(a.clone(), b.clone()).len() as i64));"));
     }
 
     #[test]
@@ -2877,7 +2881,8 @@ mod tests {
             &passthrough,
             &HashMap::new(),
         );
-        assert_eq!(code, "validSymbolList(e)");
+        // Borrowed param gets .clone() when passed to another function
+        assert_eq!(code, "validSymbolList(e.clone())");
         assert!(!code.contains("continue"));
     }
 
@@ -3023,7 +3028,8 @@ mod tests {
 
         let emitted = emit_public_fn_def(&fd, false, &ctx);
         assert!(emitted.contains("let __aver_inv0 = score(tag(pick));"));
-        assert!(emitted.contains("let __tmp1 = (acc + &__aver_inv0);"));
+        // Numeric add no longer uses &rhs
+        assert!(emitted.contains("let __tmp1 = (acc + __aver_inv0);"));
         assert!(!emitted.contains("pick = __tmp2;"));
     }
 
@@ -3352,22 +3358,10 @@ mod tests {
             (vec![Type::Int, Type::Int], Type::Int, vec![]),
         );
         let semantic = emit_public_fn_def(&fd, false, &semantic_ctx);
-        assert!(!semantic.contains("#[inline(always)]"));
-
-        let mut optimized_ctx = empty_ctx();
-
-        optimized_ctx.fn_sigs.insert(
-            "swap".to_string(),
-            (vec![Type::Int, Type::Int], Type::Int, vec![]),
-        );
-        optimized_ctx.fn_sigs.insert(
-            "first".to_string(),
-            (vec![Type::Int, Type::Int], Type::Int, vec![]),
-        );
-        let optimized = emit_public_fn_def(&fd, false, &optimized_ctx);
-        assert!(optimized.contains("#[inline(always)]"));
-        assert!(optimized.contains("pub fn swap(a: i64, b: i64) -> i64"));
-        assert!(optimized.contains("first(b, a)"));
+        // Both modes now emit #[inline(always)] for thin wrappers
+        assert!(semantic.contains("#[inline(always)]"));
+        assert!(semantic.contains("pub fn swap(a: i64, b: i64) -> i64"));
+        assert!(semantic.contains("first(b, a)"));
     }
 
     #[test]
@@ -3414,24 +3408,13 @@ mod tests {
             ),
         );
         let semantic = emit_public_fn_def(&fd, false, &semantic_ctx);
-        assert!(!semantic.contains("#[inline(always)]"));
-
-        let mut optimized_ctx = empty_ctx();
-
-        optimized_ctx.fn_sigs.insert(
-            "cellAt".to_string(),
-            (
-                vec![Type::Vector(Box::new(Type::Int)), Type::Int],
-                Type::Int,
-                vec![],
-            ),
-        );
-        let optimized = emit_public_fn_def(&fd, false, &optimized_ctx);
-        assert!(optimized.contains("#[inline(always)]"));
+        // Both modes now emit #[inline(always)] for leaf wrappers
+        assert!(semantic.contains("#[inline(always)]"));
+        // Vector param is now borrowed
         assert!(
-            optimized.contains("pub fn cellAt(grid: aver_rt::AverVector<i64>, idx: i64) -> i64")
+            semantic.contains("pub fn cellAt(grid: &aver_rt::AverVector<i64>, idx: i64) -> i64")
         );
-        assert!(optimized.contains("grid.get(idx as usize).cloned().unwrap_or(0i64)"));
+        assert!(semantic.contains("grid.get(idx as usize).cloned().unwrap_or(0i64)"));
     }
 
     #[test]
@@ -3494,21 +3477,9 @@ mod tests {
             ),
         );
         let semantic = emit_public_fn_def(&fd, false, &semantic_ctx);
-        assert!(!semantic.contains("#[inline(always)]"));
-
-        let mut optimized_ctx = empty_ctx();
-
-        optimized_ctx.fn_sigs.insert(
-            "cellAtPlusOne".to_string(),
-            (
-                vec![Type::Vector(Box::new(Type::Int)), Type::Int],
-                Type::Int,
-                vec![],
-            ),
-        );
-        let optimized = emit_public_fn_def(&fd, false, &optimized_ctx);
-        assert!(optimized.contains("#[inline(always)]"));
-        assert!(optimized.contains("let cell = grid.get(idx as usize).cloned().unwrap_or(0i64);"));
-        assert!(optimized.contains("cell.max(1i64)"));
+        // Both modes now emit #[inline(always)] for binding-block wrappers
+        assert!(semantic.contains("#[inline(always)]"));
+        assert!(semantic.contains("let cell = grid.get(idx as usize).cloned().unwrap_or(0i64);"));
+        assert!(semantic.contains("cell.max(1i64)"));
     }
 }
