@@ -1,7 +1,7 @@
 #![allow(clippy::approx_constant)]
 //! Benchmark comparing all execution modes on the same programs:
-//!   interpreter (tree-walk), VM (bytecode), codegen-semantic (native Rust),
-//!   codegen-optimized (native Rust), self-hosted (`aver run --self-host`).
+//!   interpreter (tree-walk), VM (bytecode), codegen (native Rust),
+//!   self-hosted (`aver run --self-host`).
 //!
 //! Codegen runs as an external compiled binary. Self-hosted runs through the real CLI path,
 //! which builds and reuses the cached Aver-in-Aver binary behind `aver run --self-host`.
@@ -59,7 +59,7 @@ fn run_external(bin: &str, args: &[&str]) {
 
 /// Compile an Aver source to a temp binary via `aver compile` + `cargo build --release`.
 /// Returns the path to the compiled binary.
-fn compile_to_native(source: &str, name: &str, style: &str) -> std::path::PathBuf {
+fn compile_to_native(source: &str, name: &str) -> std::path::PathBuf {
     let dir = tempfile::tempdir().expect("create temp dir");
     let src_path = dir.path().join("main.av");
     std::fs::write(&src_path, source).expect("write source");
@@ -67,7 +67,6 @@ fn compile_to_native(source: &str, name: &str, style: &str) -> std::path::PathBu
     let out_dir = dir.path().join("out");
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let rt_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("aver-rt");
-    let binary_name = format!("{name}_{style}");
 
     let status = Command::new(aver_bin)
         .arg("compile")
@@ -75,9 +74,7 @@ fn compile_to_native(source: &str, name: &str, style: &str) -> std::path::PathBu
         .arg("-o")
         .arg(&out_dir)
         .arg("--name")
-        .arg(&binary_name)
-        .arg("--style")
-        .arg(style)
+        .arg(name)
         .env("AVER_RUNTIME_PATH", &rt_path)
         .status()
         .expect("aver compile");
@@ -91,28 +88,19 @@ fn compile_to_native(source: &str, name: &str, style: &str) -> std::path::PathBu
         .expect("cargo build");
     assert!(status.success(), "cargo build failed");
 
-    let binary = out_dir.join("target/release").join(&binary_name);
+    let binary = out_dir.join("target/release").join(name);
     // Copy to a stable location so the tempdir can be kept alive
-    let stable = std::env::temp_dir().join(format!("aver_bench_{}", binary_name));
+    let stable = std::env::temp_dir().join(format!("aver_bench_{}", name));
     std::fs::copy(&binary, &stable).expect("copy binary");
     stable
 }
 
-/// Write source to a temp file, return its path (kept alive by caller).
-fn write_temp_source(dir: &std::path::Path, name: &str, source: &str) -> std::path::PathBuf {
-    let path = dir.join(format!("{name}.av"));
-    let mut file = std::fs::File::create(&path).expect("create temp source");
-    file.write_all(source.as_bytes()).expect("write");
-    file.flush().expect("flush");
+fn write_temp_source(root: &std::path::Path, name: &str, source: &str) -> std::path::PathBuf {
+    let path = root.join(format!("{}.av", name));
+    let mut f = std::fs::File::create(&path).expect("create temp source file");
+    f.write_all(source.as_bytes())
+        .expect("write temp source file");
     path
-}
-
-struct BenchArtifacts<'a> {
-    semantic_native_bin: &'a std::path::Path,
-    optimized_native_bin: &'a std::path::Path,
-    aver_bin: &'a str,
-    module_root: &'a std::path::Path,
-    source_file: &'a std::path::Path,
 }
 
 // ── Test programs ────────────────────────────────────────────────────────────
@@ -145,51 +133,51 @@ const RECORD_SRC: &str = r#"module Bench
 record Point
     x: Int
     y: Int
-    z: Int
 
-fn sumFields(p: Point, n: Int) -> Int
+fn distance(p: Point) -> Int
+    p.x * p.x + p.y * p.y
+
+fn sumDistances(n: Int, acc: Int) -> Int
     match n
-        0 -> 0
-        _ -> p.x + p.y + p.z + sumFields(p, n - 1)
+        0 -> acc
+        _ -> sumDistances(n - 1, acc + distance(Point(x = n, y = n * 2)))
 
 fn main() -> Int
-    sumFields(Point(x = 1, y = 2, z = 3), 20000)
+    sumDistances(20000, 0)
 "#;
 
 const MAP_BUILD_SRC: &str = r#"module Bench
 
-fn buildMap(n: Int, m: Map<Int, Int>) -> Map<Int, Int>
+fn buildMap(n: Int, m: Map<String, Int>) -> Map<String, Int>
     match n
         0 -> m
-        _ -> buildMap(n - 1, Map.set(m, n, n * n))
+        _ -> buildMap(n - 1, Map.set(m, Int.toString(n), n))
 
-fn main() -> Map<Int, Int>
-    buildMap(5000, Map.empty())
+fn main() -> Int
+    m = buildMap(5000, Map.empty())
+    Map.len(m)
 "#;
 
 const MATCH_SRC: &str = r#"module Bench
 
 type Shape
     Circle(Float)
-    Rect(Float, Float)
-    Triangle(Float, Float, Float)
+    Square(Float)
+    Triangle(Float, Float)
 
 fn area(s: Shape) -> Float
     match s
         Shape.Circle(r) -> 3.14159 * r * r
-        Shape.Rect(w, h) -> w * h
-        Shape.Triangle(a, b, c) -> (a + b + c) / 2.0
+        Shape.Square(side) -> side * side
+        Shape.Triangle(base, height) -> 0.5 * base * height
 
-fn pickShape(n: Int) -> Shape
-    match n
-        1 -> Shape.Circle(1.0)
-        2 -> Shape.Rect(2.0, 3.0)
-        _ -> Shape.Triangle(3.0, 4.0, 5.0)
-
-fn sumAreas(n: Int, acc: Float, pick: Int) -> Float
+fn sumAreas(n: Int, acc: Float, variant: Int) -> Float
     match n
         0 -> acc
-        _ -> sumAreas(n - 1, acc + area(pickShape(pick)), pick)
+        _ -> match variant
+            1 -> sumAreas(n - 1, acc + area(Shape.Circle(Float.fromInt(n))), variant)
+            2 -> sumAreas(n - 1, acc + area(Shape.Square(Float.fromInt(n))), variant)
+            _ -> sumAreas(n - 1, acc + area(Shape.Triangle(Float.fromInt(n), Float.fromInt(n))), variant)
 
 fn main() -> Float
     sumAreas(10000, 0.0, 1) + sumAreas(10000, 0.0, 2) + sumAreas(10000, 0.0, 3)
@@ -225,6 +213,13 @@ fn main() -> Int
 
 // ── Benchmark groups ─────────────────────────────────────────────────────────
 
+struct BenchArtifacts<'a> {
+    native_bin: &'a std::path::Path,
+    aver_bin: &'a str,
+    module_root: &'a std::path::Path,
+    source_file: &'a std::path::Path,
+}
+
 fn bench_all_modes(
     group: &mut BenchmarkGroup<WallTime>,
     label: &str,
@@ -237,11 +232,8 @@ fn bench_all_modes(
     group.bench_with_input(BenchmarkId::new("vm", label), source, |b, src| {
         b.iter(|| run_vm(src));
     });
-    group.bench_function(BenchmarkId::new("codegen-semantic", label), |b| {
-        b.iter(|| run_external(artifacts.semantic_native_bin.to_str().unwrap(), &[]));
-    });
-    group.bench_function(BenchmarkId::new("codegen-optimized", label), |b| {
-        b.iter(|| run_external(artifacts.optimized_native_bin.to_str().unwrap(), &[]));
+    group.bench_function(BenchmarkId::new("codegen", label), |b| {
+        b.iter(|| run_external(artifacts.native_bin.to_str().unwrap(), &[]));
     });
     group.bench_function(BenchmarkId::new("self-hosted", label), |b| {
         b.iter(|| {
@@ -271,18 +263,11 @@ fn comparison_benches(c: &mut Criterion) {
     ];
 
     // Pre-compile all native binaries
-    let semantic_natives: Vec<std::path::PathBuf> = tests
+    let natives: Vec<std::path::PathBuf> = tests
         .iter()
         .map(|(label, name, src)| {
-            eprintln!("Compiling {} to semantic native...", label);
-            compile_to_native(src, name, "semantic")
-        })
-        .collect();
-    let optimized_natives: Vec<std::path::PathBuf> = tests
-        .iter()
-        .map(|(label, name, src)| {
-            eprintln!("Compiling {} to optimized native...", label);
-            compile_to_native(src, name, "optimized")
+            eprintln!("Compiling {} to native...", label);
+            compile_to_native(src, name)
         })
         .collect();
 
@@ -310,8 +295,7 @@ fn comparison_benches(c: &mut Criterion) {
     for (i, (label, _, src)) in tests.iter().enumerate() {
         let mut group = c.benchmark_group(*label);
         let artifacts = BenchArtifacts {
-            semantic_native_bin: &semantic_natives[i],
-            optimized_native_bin: &optimized_natives[i],
+            native_bin: &natives[i],
             aver_bin,
             module_root: self_host_root.path(),
             source_file: &source_files[i],
