@@ -14,7 +14,7 @@ It is built around one idea: the risky part of AI-written code is usually not sy
 
 This is not a language optimized for humans to type by hand all day. It is optimized for AI to generate code that humans can inspect, constrain, test, and ship.
 
-Read the [Aver Manifesto](https://jasisz.github.io/aver-language/) for the longer argument.
+Read the [Aver Manifesto](https://jasisz.github.io/aver-language/) for the longer argument, or [Common Pushback](docs/pushback.md) for questions, objections, and honest answers.
 
 ---
 
@@ -543,4 +543,5 @@ For repository self-documentation via decision exports, see `decisions/architect
 | [docs/rust.md](docs/rust.md) | Rust backend: deployment-oriented Cargo generation |
 | [docs/lean.md](docs/lean.md) | Lean backend: proof export and formal-verification path |
 | [docs/dafny.md](docs/dafny.md) | Dafny backend: Z3-powered automated law verification |
+| [docs/pushback.md](docs/pushback.md) | Common pushback: questions, objections, and honest answers |
 | [docs/decisions.md](docs/decisions.md) | Decision export generated via `aver context --decisions-only` |
