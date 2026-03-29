@@ -123,6 +123,7 @@ fn callBuiltinOther(name: String, args: List<Val>) -> Result<Val, String>
         "Map.values" -> builtinMapValues(args)
         "Map.fromList" -> builtinMapFromList(args)
         "Map.size" -> builtinMapSize(args)
+        "Map.len" -> builtinMapSize(args)
         "Map.remove" -> builtinMapRemove(args)
         _ -> callBuiltinServices(name, args)
 
