@@ -67,6 +67,13 @@ pub struct CodegenContext {
     pub emit_self_host_support: bool,
     /// Preferred emission strategy for generated deployment code.
     pub emission_style: EmissionStyle,
+    /// Extra fn_defs visible during current module emission (not in `fn_defs` or `modules`).
+    /// Set temporarily by the Rust backend when emitting a dependent module so that
+    /// `find_fn_def_by_name` can resolve same-module calls.
+    pub extra_fn_defs: Vec<FnDef>,
+    /// Functions that are part of a mutual-TCO SCC group (emitted as trampoline + wrappers).
+    /// Functions NOT in this set but with TailCalls are emitted as plain self-TCO loops.
+    pub mutual_tco_members: HashSet<String>,
 }
 
 /// Output files from a codegen backend.
@@ -107,6 +114,27 @@ pub fn build_context(
 
     let module_prefixes: HashSet<String> = modules.iter().map(|m| m.prefix.clone()).collect();
 
+    // Compute which functions are in mutual-TCO SCC groups (emitted as trampoline + wrappers).
+    let mut mutual_tco_members = HashSet::new();
+    {
+        // Entry module (non-main)
+        let entry_fns: Vec<&FnDef> = fn_defs.iter().filter(|fd| fd.name != "main").collect();
+        for group in crate::call_graph::tailcall_scc_components(&entry_fns) {
+            for fd in &group {
+                mutual_tco_members.insert(fd.name.clone());
+            }
+        }
+        // Dependent modules
+        for module in &modules {
+            let mod_fns: Vec<&FnDef> = module.fn_defs.iter().collect();
+            for group in crate::call_graph::tailcall_scc_components(&mod_fns) {
+                for fd in &group {
+                    mutual_tco_members.insert(fd.name.clone());
+                }
+            }
+        }
+    }
+
     CodegenContext {
         items,
         fn_sigs: tc_result.fn_sigs.clone(),
@@ -123,5 +151,7 @@ pub fn build_context(
         guest_entry: None,
         emit_self_host_support: false,
         emission_style: EmissionStyle::Semantic,
+        extra_fn_defs: Vec::new(),
+        mutual_tco_members,
     }
 }

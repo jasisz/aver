@@ -679,6 +679,7 @@ fn emit_leaf_builtin_call_with_options(
 /// Check if a FnDef has self-tailcall (TCO) in its body.
 /// Returns true only if the function has self-recursive tail calls and NO mutual tail calls.
 /// Mutual-TCO functions get wrapper functions with `&T` params, so they should use borrow.
+#[allow(dead_code)]
 fn fn_def_has_only_self_tco(fd: &FnDef) -> bool {
     let has_self = fn_def_has_tco(fd);
     if !has_self {
@@ -688,6 +689,7 @@ fn fn_def_has_only_self_tco(fd: &FnDef) -> bool {
     !fn_def_has_mutual_tco(fd)
 }
 
+#[allow(dead_code)]
 fn fn_def_has_mutual_tco(fd: &FnDef) -> bool {
     fn expr_has_other_tailcall(expr: &Expr, fn_name: &str) -> bool {
         match expr {
@@ -704,6 +706,7 @@ fn fn_def_has_mutual_tco(fd: &FnDef) -> bool {
     })
 }
 
+#[allow(dead_code)]
 fn fn_def_has_tco(fd: &FnDef) -> bool {
     fn expr_has_self_tailcall(expr: &Expr, fn_name: &str) -> bool {
         match expr {
@@ -721,7 +724,6 @@ fn fn_def_has_tco(fd: &FnDef) -> bool {
 }
 
 /// Check if a FnDef has any tail call (self or mutual), meaning it participates in TCO.
-#[allow(dead_code)]
 fn fn_def_has_any_tailcall(fd: &FnDef) -> bool {
     fn expr_has_tailcall(expr: &Expr) -> bool {
         match expr {
@@ -737,13 +739,14 @@ fn fn_def_has_any_tailcall(fd: &FnDef) -> bool {
 }
 
 /// Compute borrow mask from a FnDef, checking for TCO.
-/// Self-TCO functions use `mut T` params, not `&T`, so their borrow mask is all-false.
-/// Mutual-TCO functions have public wrappers with `&T`, so they DO use borrow-by-default.
-fn borrow_mask_from_fn_def(fd: &FnDef, arg_count: usize) -> Vec<bool> {
-    // Self-TCO functions use `mut T` params (loop rebinding), skip borrow.
-    // Mutual-TCO functions have wrapper functions with `&T` params, so borrow applies.
-    // Distinguish: self-TCO = TailCall to SELF only. Mutual = TailCall to OTHERS.
-    if fn_def_has_only_self_tco(fd) {
+/// Functions in a mutual-TCO SCC group are emitted as wrapper + trampoline;
+/// wrappers use borrow-by-default (`&T`).  All other functions with TailCalls
+/// (self-TCO or one-way TailCall without SCC cycle) are emitted as loops with
+/// `mut T` params, so their borrow mask is all-false.
+fn borrow_mask_from_fn_def(fd: &FnDef, arg_count: usize, ctx: &CodegenContext) -> Vec<bool> {
+    // If the function is NOT in a mutual-TCO SCC group, it's emitted as a plain
+    // self-TCO loop (mut T params), so skip borrow-by-default.
+    if fn_def_has_any_tailcall(fd) && !ctx.mutual_tco_members.contains(&fd.name) {
         return vec![false; arg_count];
     }
     fd.params
@@ -764,7 +767,7 @@ fn callee_borrow_mask(name: &str, arg_count: usize, ctx: &CodegenContext) -> Vec
     // First, try to find the FnDef to check for TCO (which overrides everything)
     let fd = find_fn_def_by_name(name, ctx);
     if let Some(fd) = fd {
-        return borrow_mask_from_fn_def(fd, arg_count);
+        return borrow_mask_from_fn_def(fd, arg_count, ctx);
     }
 
     // No FnDef found, try fn_sigs (type-checker resolved types)
@@ -779,6 +782,9 @@ fn callee_borrow_mask(name: &str, arg_count: usize, ctx: &CodegenContext) -> Vec
         .get(&lookup_name)
         .or_else(|| ctx.fn_sigs.get(name))
     {
+        // Without FnDef we can't check TCO status, but self-TCO functions
+        // always resolve via find_fn_def_by_name above, so this path is safe
+        // for borrow-by-default on all non-scalar types including Named.
         return param_types
             .iter()
             .take(arg_count)
@@ -794,6 +800,11 @@ fn callee_borrow_mask(name: &str, arg_count: usize, ctx: &CodegenContext) -> Vec
 fn find_fn_def_by_name<'a>(name: &str, ctx: &'a CodegenContext) -> Option<&'a FnDef> {
     // Check top-level fn_defs
     if let Some(fd) = ctx.fn_defs.iter().find(|fd| fd.name == name) {
+        return Some(fd);
+    }
+
+    // Check extra fn_defs (current module being emitted)
+    if let Some(fd) = ctx.extra_fn_defs.iter().find(|fd| fd.name == name) {
         return Some(fd);
     }
 
