@@ -31,9 +31,9 @@ pub fn emit_stmt(stmt: &Stmt, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
 /// Rust reserved words that need raw identifier escaping.
 const RUST_RESERVED: &[&str] = &[
     "as", "async", "await", "box", "break", "const", "continue", "crate", "dyn", "else", "enum",
-    "extern", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub",
-    "ref", "return", "self", "static", "struct", "super", "trait", "type", "unsafe", "use",
-    "where", "while", "yield",
+    "extern", "fn", "for", "gen", "if", "impl", "in", "let", "loop", "match", "mod", "move",
+    "mut", "pub", "ref", "return", "self", "static", "struct", "super", "trait", "type", "unsafe",
+    "use", "where", "while", "yield",
 ];
 
 /// Convert an Aver identifier to a valid Rust identifier.
