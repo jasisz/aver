@@ -38,6 +38,10 @@ fn resolveCallsInExpr(expr: Expr, fnMap: Map<String, Int>) -> Expr
         Expr.ExprBoolBranch(cond, thenExpr, elseExpr) -> Expr.ExprBoolBranch(resolveCallsInExpr(cond, fnMap), resolveCallsInExpr(thenExpr, fnMap), resolveCallsInExpr(elseExpr, fnMap))
         Expr.ExprCall(name, args) -> resolveOneCall(name, args, fnMap)
         Expr.ExprCallDirect(fnId, args) -> Expr.ExprCallDirect(fnId, resolveCallsInExprs(args, fnMap, []))
+        Expr.ExprCallBuiltin(name, args) -> match Domain.Ast.builtinNameToId(name)
+            Option.Some(id) -> Expr.ExprCallBuiltinId(id, resolveCallsInExprs(args, fnMap, []))
+            Option.None -> Expr.ExprCallBuiltin(name, resolveCallsInExprs(args, fnMap, []))
+        Expr.ExprCallBuiltinId(id, args) -> Expr.ExprCallBuiltinId(id, resolveCallsInExprs(args, fnMap, []))
         Expr.ExprBinopSlotInt(_, _, _) -> expr
         Expr.ExprBinopSlots(_, _, _) -> expr
         Expr.ExprCmpSlotInt(_, _, _) -> expr

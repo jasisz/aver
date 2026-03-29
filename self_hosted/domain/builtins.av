@@ -3,7 +3,7 @@ module Builtins
     intent =
         "Builtin function implementations for the self-hosted evaluator."
         "Dispatches qualified names like List.len, String.charAt, Console.print to sub-modules."
-    exposes [callBuiltin, splitDotted, tryVariantConstructor]
+    exposes [callBuiltin, callBuiltinByIdValues, splitDotted, tryVariantConstructor]
 
 fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch qualified builtin calls to sub-module implementations."
@@ -43,6 +43,32 @@ verify callBuiltinFast
     callBuiltinFast("Result.Ok", [Val.ValInt(5)]) => Option.Some(Result.Ok(Val.ValOk(Val.ValInt(5))))
     callBuiltinFast("Option.None", []) => Option.Some(Result.Ok(Val.ValNone))
     callBuiltinFast("List.len", [Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Option.None
+
+fn callBuiltinByIdValues(id: Int, args: List<Val>) -> Result<Val, String>
+    ? "Dispatch pre-evaluated args by integer builtin ID. IDs assigned in Ast.builtinNameToId."
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
+    match id
+        0 -> builtinMapEmpty(args)
+        1 -> builtinMapSet(args)
+        2 -> builtinMapGet(args)
+        3 -> builtinMapHas(args)
+        4 -> builtinMapFromList(args)
+        5 -> builtinMapEntries(args)
+        6 -> builtinMapRemove(args)
+        7 -> Domain.Builtins.Vector.call("Vector.new", args)
+        8 -> Domain.Builtins.Vector.call("Vector.get", args)
+        9 -> Domain.Builtins.Vector.call("Vector.set", args)
+        10 -> Domain.Builtins.Vector.call("Vector.len", args)
+        11 -> Domain.Builtins.Vector.call("Vector.fromList", args)
+        12 -> Domain.Builtins.Vector.call("Vector.toList", args)
+        13 -> Result.Ok(Val.ValNone)
+        14 -> Domain.Builtins.Wrappers.call("Option.Some", args)
+        15 -> Domain.Builtins.Wrappers.call("Option.withDefault", args)
+        16 -> Domain.Builtins.Wrappers.call("Result.Ok", args)
+        17 -> Domain.Builtins.Wrappers.call("Result.Err", args)
+        18 -> Domain.Builtins.Wrappers.call("Result.withDefault", args)
+        19 -> Domain.Builtins.Primitives.callInt("Int.toString", args)
+        _ -> Result.Err("Unknown builtin ID: {Int.toString(id)}")
 
 fn callBuiltinAfterList(name: String, args: List<Val>) -> Result<Val, String>
     ? "Continue dispatch after List."

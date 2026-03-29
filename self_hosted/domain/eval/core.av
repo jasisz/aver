@@ -45,6 +45,7 @@ fn evalExpr(expr: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Val, Stri
         Expr.ExprCall(name, argExprs) -> evalCall(name, argExprs, env, fns)
         Expr.ExprCallDirect(fnId, argExprs) -> evalCallDirect(fnId, argExprs, env, fns)
         Expr.ExprCallBuiltin(name, argExprs) -> evalCallBuiltinMaybeSpecial(name, argExprs, env, fns)
+        Expr.ExprCallBuiltinId(id, argExprs) -> evalCallBuiltinById(id, argExprs, env, fns)
         Expr.ExprMatch(scrutinee, arms) -> evalMatchExpr(scrutinee, arms, env, fns)
         Expr.ExprPropagate(inner) -> evalPropagate(inner, env, fns)
 
@@ -469,6 +470,15 @@ fn evalCallBuiltin(name: String, argExprs: List<Expr>, env: Map<String, Val>, fn
         Result.Err(e) -> Result.Err(e)
         Result.Ok(args) -> Domain.Builtins.callBuiltin(name, args)
 
+fn evalCallBuiltinById(id: Int, argExprs: List<Expr>, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
+    ? "Builtin dispatch by integer ID — no string comparison."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match id
+        15 -> evalOptionWithDefaultExpr(argExprs, env, fns)
+        _ -> match evalArgs(argExprs, env, fns)
+            Result.Err(e) -> Result.Err(e)
+            Result.Ok(args) -> callBuiltinByIdValues(id, args)
+
 fn evalCallBuiltinMaybeSpecial(name: String, argExprs: List<Expr>, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
     ? "Builtin dispatch with fast-path peepholes for hot patterns."
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
@@ -649,6 +659,7 @@ fn evalExprSlot(expr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: Fn
         Expr.ExprCall(name, argExprs) -> evalCallSlot(name, argExprs, env, slotMap, fns)
         Expr.ExprCallDirect(fnId, argExprs) -> evalCallDirectSlot(fnId, argExprs, env, slotMap, fns)
         Expr.ExprCallBuiltin(name, argExprs) -> evalCallBuiltinSlotMaybeSpecial(name, argExprs, env, slotMap, fns)
+        Expr.ExprCallBuiltinId(id, argExprs) -> evalCallBuiltinByIdSlot(id, argExprs, env, slotMap, fns)
         Expr.ExprMatch(scrutinee, arms) -> evalMatchExprSlot(scrutinee, arms, env, slotMap, fns)
         Expr.ExprPropagate(inner) -> evalPropagateSlot(inner, env, slotMap, fns)
 
@@ -819,6 +830,15 @@ fn evalCallBuiltinSlot(name: String, argExprs: List<Expr>, env: Vector<Val>, slo
     ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
     args = evalArgsSlot(argExprs, env, slotMap, fns)?
     Domain.Builtins.callBuiltin(name, args)
+
+fn evalCallBuiltinByIdSlot(id: Int, argExprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
+    ? "Builtin dispatch by integer ID (slot-based path) — no string comparison."
+    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    match id
+        15 -> evalOptionWithDefaultExprSlot(argExprs, env, slotMap, fns)
+        _ -> match evalArgsSlot(argExprs, env, slotMap, fns)
+            Result.Err(e) -> Result.Err(e)
+            Result.Ok(args) -> callBuiltinByIdValues(id, args)
 
 fn evalCallBuiltinSlotMaybeSpecial(name: String, argExprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
     ? "Builtin dispatch with fast-path peepholes for hot patterns in slot path."

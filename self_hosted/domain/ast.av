@@ -2,7 +2,7 @@ module Ast
     intent =
         "AST node types for the mini Aver interpreter."
         "Covers: literals, binops, comparisons, variables, bindings, function defs/calls, match."
-    exposes [Expr, MatchArm, Pattern, Stmt, FnDef, Program, BinOp, CmpOp, FnFastPath, FastLeaf, tagResultOk, tagResultErr, tagOptionSome, tagOptionNone, tagUserBase, ctorNameToTag]
+    exposes [Expr, MatchArm, Pattern, Stmt, FnDef, Program, BinOp, CmpOp, FnFastPath, FastLeaf, tagResultOk, tagResultErr, tagOptionSome, tagOptionNone, tagUserBase, ctorNameToTag, builtinNameToId]
 
 type Expr
     ExprInt(Int)
@@ -36,6 +36,7 @@ type Expr
     ExprCall(String, List<Expr>)
     ExprCallDirect(Int, List<Expr>)
     ExprCallBuiltin(String, List<Expr>)
+    ExprCallBuiltinId(Int, List<Expr>)
     ExprMatch(Expr, List<MatchArm>)
     ExprPropagate(Expr)
 
@@ -174,3 +175,28 @@ verify ctorNameToTag
     ctorNameToTag("Option.Some") => 3
     ctorNameToTag("Option.None") => 4
     ctorNameToTag("Shape.Circle") > tagUserBase() => true
+
+fn builtinNameToId(name: String) -> Option<Int>
+    ? "Map builtin function names to integer IDs for fast dispatch."
+    match name
+        "Map.empty" -> Option.Some(0)
+        "Map.set" -> Option.Some(1)
+        "Map.get" -> Option.Some(2)
+        "Map.has" -> Option.Some(3)
+        "Map.fromList" -> Option.Some(4)
+        "Map.entries" -> Option.Some(5)
+        "Map.remove" -> Option.Some(6)
+        "Vector.new" -> Option.Some(7)
+        "Vector.get" -> Option.Some(8)
+        "Vector.set" -> Option.Some(9)
+        "Vector.len" -> Option.Some(10)
+        "Vector.fromList" -> Option.Some(11)
+        "Vector.toList" -> Option.Some(12)
+        "Option.None" -> Option.Some(13)
+        "Option.Some" -> Option.Some(14)
+        "Option.withDefault" -> Option.Some(15)
+        "Result.Ok" -> Option.Some(16)
+        "Result.Err" -> Option.Some(17)
+        "Result.withDefault" -> Option.Some(18)
+        "Int.toString" -> Option.Some(19)
+        _ -> Option.None

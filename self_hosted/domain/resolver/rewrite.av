@@ -58,6 +58,7 @@ fn rewriteInternalExpr(expr: Expr) -> Expr
         Expr.ExprCall(name, args) -> Expr.ExprCall(name, rewriteInternalExprs(args, []))
         Expr.ExprCallDirect(fnId, args) -> Expr.ExprCallDirect(fnId, rewriteInternalExprs(args, []))
         Expr.ExprCallBuiltin(name, args) -> rewriteInternalBuiltin(name, rewriteInternalExprs(args, []))
+        Expr.ExprCallBuiltinId(id, args) -> Expr.ExprCallBuiltinId(id, rewriteInternalExprs(args, []))
         _ -> expr
 
 fn rewriteInternalExprs(exprs: List<Expr>, acc: List<Expr>) -> List<Expr>
