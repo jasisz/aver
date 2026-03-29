@@ -990,8 +990,8 @@ fn emit_str_arg_or_deref(expr: &Expr, ectx: &EmitCtx, ctx: &CodegenContext) -> S
 mod tests {
     use super::emit_builtin_call;
     use crate::ast::{Expr, Literal};
-    use crate::codegen::rust::liveness::EmitCtx;
     use crate::codegen::CodegenContext;
+    use crate::codegen::rust::liveness::EmitCtx;
     use crate::types::Type;
     use std::collections::{HashMap, HashSet};
 

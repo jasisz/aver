@@ -2,10 +2,10 @@ use super::builtins;
 use super::liveness::{EmitCtx, collect_vars, compute_args_used_after_full, should_borrow_param};
 use super::pattern::emit_pattern;
 use crate::ast::*;
+use crate::codegen::CodegenContext;
 use crate::codegen::common::{
     expr_to_dotted_name, is_user_type, module_prefix_to_rust_path, resolve_module_call,
 };
-use crate::codegen::CodegenContext;
 use crate::ir::{
     BodyExprPlan, BodyPlan, BoolCompareOp, BoolSubjectPlan, CallLowerCtx, CallPlan,
     DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan, DispatchLiteral, DispatchTableShape,
@@ -180,9 +180,7 @@ fn emit_expr_with_options(
             let r = emit_expr(right, ctx, ectx);
             match op {
                 BinOp::Add => {
-                    if expr_is_numeric(left, &left_ectx)
-                        || expr_is_numeric(right, ectx)
-                    {
+                    if expr_is_numeric(left, &left_ectx) || expr_is_numeric(right, ectx) {
                         // Both sides are numeric (Int/Float) — plain value add.
                         format!("({} + {})", l, r)
                     } else {
@@ -769,21 +767,6 @@ fn fn_def_has_tco(fd: &FnDef) -> bool {
     })
 }
 
-/// Check if a FnDef has any tail call (self or mutual), meaning it participates in TCO.
-fn fn_def_has_any_tailcall(fd: &FnDef) -> bool {
-    fn expr_has_tailcall(expr: &Expr) -> bool {
-        match expr {
-            Expr::TailCall(_) => true,
-            Expr::Match { arms, .. } => arms.iter().any(|arm| expr_has_tailcall(&arm.body)),
-            _ => false,
-        }
-    }
-    fd.body.stmts().iter().any(|s| match s {
-        Stmt::Expr(e) => expr_has_tailcall(e),
-        Stmt::Binding(_, _, e) => expr_has_tailcall(e),
-    })
-}
-
 /// Compute borrow mask from a FnDef, checking for TCO.
 /// Must mirror actual emitted signature:
 /// - Mutual-TCO SCC members → wrapper with borrow-by-default (`&T`)
@@ -1056,12 +1039,7 @@ fn expr_is_numeric(expr: &Expr, ectx: &EmitCtx) -> bool {
 
 /// Is a record field access known to return a Copy type?
 /// Looks up the record definition in the context to find the field's type.
-fn attr_result_is_copy(
-    obj: &Expr,
-    field: &str,
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
-) -> bool {
+fn attr_result_is_copy(obj: &Expr, field: &str, ctx: &CodegenContext, ectx: &EmitCtx) -> bool {
     let obj_type = match obj {
         Expr::Ident(name) => ectx.local_types.get(name),
         _ => None,
@@ -1071,14 +1049,17 @@ fn attr_result_is_copy(
         _ => return false,
     };
     // Find record definition and look up field type.
-    for td in ctx.type_defs.iter().chain(ctx.modules.iter().flat_map(|m| m.type_defs.iter())) {
-        if let TypeDef::Product { name, fields, .. } = td {
-            if name == record_name {
-                if let Some((_, type_ann)) = fields.iter().find(|(n, _)| n == field) {
-                    let ty = types::parse_type_str(type_ann);
-                    return super::liveness::is_copy_type(&ty);
-                }
-            }
+    for td in ctx
+        .type_defs
+        .iter()
+        .chain(ctx.modules.iter().flat_map(|m| m.type_defs.iter()))
+    {
+        if let TypeDef::Product { name, fields, .. } = td
+            && name == record_name
+            && let Some((_, type_ann)) = fields.iter().find(|(n, _)| n == field)
+        {
+            let ty = types::parse_type_str(type_ann);
+            return super::liveness::is_copy_type(&ty);
         }
     }
     false
@@ -1146,10 +1127,10 @@ fn clone_arg_with_options(
 ) -> String {
     let code = emit_expr_with_options(expr, ctx, ectx, allow_callsite_inlining);
     // Field access on record: check if the field type is Copy before cloning.
-    if let Expr::Attr(obj, field) = expr {
-        if attr_result_is_copy(obj, field, ctx, ectx) {
-            return code;
-        }
+    if let Expr::Attr(obj, field) = expr
+        && attr_result_is_copy(obj, field, ctx, ectx)
+    {
+        return code;
     }
     maybe_clone(code, expr, ectx)
 }
@@ -1487,7 +1468,10 @@ where
         let arm = &arms[entry.arm_index];
         let body = body_for_arm(arm);
         match (&entry.pattern, &entry.binding) {
-            (SemanticDispatchPattern::WrapperTag(kind), DispatchBindingPlan::WrapperPayload(name)) => {
+            (
+                SemanticDispatchPattern::WrapperTag(kind),
+                DispatchBindingPlan::WrapperPayload(name),
+            ) => {
                 let binding = aver_name_to_rust(name);
                 let extractor = match kind {
                     WrapperKind::ResultOk => "Ok",
@@ -1523,11 +1507,7 @@ where
         }
     }
 
-    Some(format!(
-        "match {} {{ {} }}",
-        subject,
-        match_arms.join(", ")
-    ))
+    Some(format!("match {} {{ {} }}", subject, match_arms.join(", ")))
 }
 
 fn emit_dispatch_condition(subject_name: &str, pattern: &SemanticDispatchPattern) -> String {

@@ -659,10 +659,7 @@ fn classify_int_mod_with_literal_default_leaf() {
                     Box::new(Expr::Ident("Int".to_string())),
                     "mod".to_string(),
                 )),
-                vec![
-                    Expr::Ident("a".to_string()),
-                    Expr::Ident("b".to_string()),
-                ],
+                vec![Expr::Ident("a".to_string()), Expr::Ident("b".to_string())],
             ),
             Expr::Literal(Literal::Int(0)),
         ],

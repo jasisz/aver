@@ -95,9 +95,7 @@ fn classify_leaf_call<'a>(
                 size: &args[0],
                 fill: &args[1],
             }),
-            "Vector.get" if args.len() == 2 => {
-                classify_list_index_get(&args[0], &args[1], ctx)
-            }
+            "Vector.get" if args.len() == 2 => classify_list_index_get(&args[0], &args[1], ctx),
             "Option.withDefault" if args.len() == 2 => {
                 classify_vector_set_or_default(&args[0], &args[1], ctx)
                     .or_else(|| classify_vector_get_or_default(&args[0], &args[1], ctx))

@@ -1835,7 +1835,9 @@ fn emit_tco_expr(
                 .enumerate()
                 .filter(|(i, (name, _))| {
                     !passthrough_indices.contains(i)
-                        && arg_strs.get(*i).map_or(true, |a| *a != aver_name_to_rust(name))
+                        && arg_strs
+                            .get(*i)
+                            .is_none_or(|a| *a != aver_name_to_rust(name))
                 })
                 .map(|(_, (name, _))| aver_name_to_rust(name))
                 .collect();
@@ -1911,41 +1913,33 @@ fn emit_tco_expr(
 
             // Bool match → if/else in TCO context
             if let Some(code) = try_emit_tco_bool_if_else(
-                    &subj,
-                    arms,
-                    self_name,
-                    params,
-                    ctx,
-                    ectx,
-                    rc_indices,
-                    passthrough_indices,
-                    hoisted_exprs,
-                )
-            {
+                &subj,
+                arms,
+                self_name,
+                params,
+                ctx,
+                ectx,
+                rc_indices,
+                passthrough_indices,
+                hoisted_exprs,
+            ) {
                 return code;
             }
 
             let needs_as_str = super::expr::has_string_literal_patterns(arms);
             if super::expr::has_list_patterns(arms) {
-                return super::expr::emit_list_match(
-                    subj,
-                    arms,
-                    None,
-                    true,
-                    ctx,
-                    |arm| {
-                        emit_tco_expr(
-                            &arm.body,
-                            self_name,
-                            params,
-                            ctx,
-                            ectx,
-                            rc_indices,
-                            passthrough_indices,
-                            hoisted_exprs,
-                        )
-                    },
-                );
+                return super::expr::emit_list_match(subj, arms, None, true, ctx, |arm| {
+                    emit_tco_expr(
+                        &arm.body,
+                        self_name,
+                        params,
+                        ctx,
+                        ectx,
+                        rc_indices,
+                        passthrough_indices,
+                        hoisted_exprs,
+                    )
+                });
             }
 
             if let Some(crate::ir::MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
@@ -2354,37 +2348,22 @@ fn emit_trampoline_expr(
 
             // Bool match → if/else
             if let Some(code) = try_emit_trampoline_bool_if_else(
-                    &subj,
-                    arms,
-                    enum_name,
-                    member_names,
-                    ctx,
-                    ectx,
-                    rc_indices,
-                )
-            {
+                &subj,
+                arms,
+                enum_name,
+                member_names,
+                ctx,
+                ectx,
+                rc_indices,
+            ) {
                 return code;
             }
 
             // List match
             if super::expr::has_list_patterns(arms) {
-                return super::expr::emit_list_match(
-                    subj,
-                    arms,
-                    None,
-                    true,
-                    ctx,
-                    |arm| {
-                        emit_trampoline_expr(
-                            &arm.body,
-                            enum_name,
-                            member_names,
-                            ctx,
-                            ectx,
-                            rc_indices,
-                        )
-                    },
-                );
+                return super::expr::emit_list_match(subj, arms, None, true, ctx, |arm| {
+                    emit_trampoline_expr(&arm.body, enum_name, member_names, ctx, ectx, rc_indices)
+                });
             }
 
             if let Some(crate::ir::MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
