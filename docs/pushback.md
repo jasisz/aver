@@ -8,7 +8,7 @@ Questions, objections, and honest answers.
 
 Not in the usual sense.
 
-It borrows functional discipline — immutability, purity, pattern matching, recursion — but leaves out much of the abstraction machinery associated with modern FP: higher-order functions, closures, generics, monads.
+It borrows functional discipline — immutability, purity, pattern matching, recursion — but leaves out much of the abstraction machinery associated with modern FP: closures, generics, monads. Higher-order functions exist but only for callbacks (`Fn(A) -> B` parameters), not as a general composition tool.
 
 Aver keeps the constraints and leaves out many of the compression tools.
 
