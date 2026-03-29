@@ -16,7 +16,7 @@ use crate::ir::{
     classify_match_dispatch_plan, classify_tail_call_plan, classify_thin_fn_def,
     is_builtin_namespace,
 };
-use crate::types::Type;
+use crate::types::{self, Type};
 /// Aver expressions → Rust expression strings.
 use std::collections::HashSet;
 
@@ -180,10 +180,16 @@ fn emit_expr_with_options(
             let r = emit_expr(right, ctx, ectx);
             match op {
                 BinOp::Add => {
-                    // AverStr newtype implements Add<&AverStr>, so (l + &r) works
-                    // for both numeric types and strings.
-                    let l = maybe_clone(l, left, &left_ectx);
-                    format!("({} + &{})", l, r)
+                    if expr_is_numeric(left, &left_ectx)
+                        || expr_is_numeric(right, ectx)
+                    {
+                        // Both sides are numeric (Int/Float) — plain value add.
+                        format!("({} + {})", l, r)
+                    } else {
+                        // Might be AverStr concatenation: Add<&AverStr>.
+                        let l = maybe_clone(l, left, &left_ectx);
+                        format!("({} + &{})", l, r)
+                    }
                 }
                 _ => {
                     let op_str = match op {
@@ -684,6 +690,19 @@ fn emit_leaf_op_with_options(
                 )
             }
         }
+        LeafOp::ListIndexGet { list, index } => {
+            let inner_args = vec![list.clone(), index.clone()];
+            let arg_ctxs = compute_args_used_after_full(
+                &inner_args,
+                &ectx.used_after,
+                &ectx.local_types,
+                &ectx.rc_wrapped,
+                &ectx.borrowed_params,
+            );
+            let list = emit_expr_with_options(list, ctx, &arg_ctxs[0], allow_callsite_inlining);
+            let index = emit_expr_with_options(index, ctx, &arg_ctxs[1], allow_callsite_inlining);
+            format!("{}.to_vec().get({} as usize).cloned()", list, index)
+        }
     }
 }
 
@@ -988,6 +1007,83 @@ pub(super) fn maybe_clone(code: String, expr: &Expr, ectx: &EmitCtx) -> String {
     }
 }
 
+/// Is this expression known to produce a numeric (Int/Float) value?
+/// Used to decide whether `+` needs `&` on the RHS (only strings do).
+fn expr_is_numeric(expr: &Expr, ectx: &EmitCtx) -> bool {
+    match expr {
+        Expr::Literal(Literal::Int(_) | Literal::Float(_)) => true,
+        Expr::Ident(name) => matches!(
+            ectx.local_types.get(name.as_str()),
+            Some(Type::Int | Type::Float)
+        ),
+        // Sub/Mul/Div always produce numeric results.
+        Expr::BinOp(op, _, _) => !matches!(op, BinOp::Add),
+        Expr::FnCall(fn_expr, _) => {
+            if let Some(dotted) = expr_to_dotted_name(fn_expr) {
+                matches!(
+                    dotted.as_str(),
+                    "Int.abs"
+                        | "Int.min"
+                        | "Int.max"
+                        | "Int.rem"
+                        | "Float.abs"
+                        | "Float.floor"
+                        | "Float.ceil"
+                        | "Float.round"
+                        | "Float.min"
+                        | "Float.max"
+                        | "Float.sqrt"
+                        | "Float.pow"
+                        | "Float.sin"
+                        | "Float.cos"
+                        | "Float.atan2"
+                        | "Float.fromInt"
+                        | "Int.toFloat"
+                        | "List.len"
+                        | "Vector.len"
+                        | "Map.len"
+                        | "String.len"
+                        | "String.byteLength"
+                        | "Char.toCode"
+                )
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Is a record field access known to return a Copy type?
+/// Looks up the record definition in the context to find the field's type.
+fn attr_result_is_copy(
+    obj: &Expr,
+    field: &str,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> bool {
+    let obj_type = match obj {
+        Expr::Ident(name) => ectx.local_types.get(name),
+        _ => None,
+    };
+    let record_name = match obj_type {
+        Some(Type::Named(name)) => name.as_str(),
+        _ => return false,
+    };
+    // Find record definition and look up field type.
+    for td in ctx.type_defs.iter().chain(ctx.modules.iter().flat_map(|m| m.type_defs.iter())) {
+        if let TypeDef::Product { name, fields, .. } = td {
+            if name == record_name {
+                if let Some((_, type_ann)) = fields.iter().find(|(n, _)| n == field) {
+                    let ty = types::parse_type_str(type_ann);
+                    return super::liveness::is_copy_type(&ty);
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Emit an expression as a borrow for passing to a user function that takes `&T`.
 /// For borrowed params: pass directly (already `&T`).
 /// For owned locals: pass `&x`.
@@ -1049,6 +1145,12 @@ fn clone_arg_with_options(
     allow_callsite_inlining: bool,
 ) -> String {
     let code = emit_expr_with_options(expr, ctx, ectx, allow_callsite_inlining);
+    // Field access on record: check if the field type is Copy before cloning.
+    if let Expr::Attr(obj, field) = expr {
+        if attr_result_is_copy(obj, field, ctx, ectx) {
+            return code;
+        }
+    }
     maybe_clone(code, expr, ectx)
 }
 
@@ -1186,7 +1288,13 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
         arms_vars.extend(arm_vars);
     }
     let subj_ectx = ectx.with_used_after(&arms_vars);
-    let subj = clone_arg(subject, ctx, &subj_ectx);
+    // For borrowed params, match on the reference directly instead of cloning.
+    let match_on_ref = matches!(subject, Expr::Ident(name) if subj_ectx.is_borrowed_param(name));
+    let subj = if match_on_ref {
+        emit_expr(subject, ctx, &subj_ectx)
+    } else {
+        clone_arg(subject, ctx, &subj_ectx)
+    };
     let dispatch_plan = classify_dispatch_plan_for_rust(arms, ctx, ectx);
 
     // Bool match → if/else: match expr { true => A, false => B } → if expr { A } else { B }
@@ -1230,7 +1338,15 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
         // Each arm body is independent — use parent's used_after
         // Clone the result if it's a bare ident that's still needed after the match
         let body = maybe_clone(emit_expr(&arm.body, ctx, ectx), &arm.body, ectx);
-        let rebindings = emit_pattern_rebindings(&arm.pattern, ctx);
+        let mut rebindings = emit_pattern_rebindings(&arm.pattern, ctx);
+        // When matching on a reference (borrowed param), bindings are &T.
+        // Clone them to produce owned values expected by arm bodies.
+        if match_on_ref {
+            let ref_rebinds = emit_ref_match_rebindings(&arm.pattern);
+            if !ref_rebinds.is_empty() {
+                rebindings = format!("{}{}", ref_rebinds, rebindings);
+            }
+        }
         arm_strs.push(format!(
             "        {} => {{\n            {}{}\n        }}",
             pat, rebindings, body
@@ -1664,6 +1780,21 @@ pub(super) fn constructor_boxed_bindings(
             }
         })
         .collect()
+}
+
+/// When matching on a reference (`&T`), pattern bindings are `&Inner`.
+/// Emit `let b = b.clone();` for each binding to produce owned values.
+fn emit_ref_match_rebindings(pattern: &Pattern) -> String {
+    let bindings = super::liveness::pattern_bindings(pattern);
+    if bindings.is_empty() {
+        return String::new();
+    }
+    let mut lines = Vec::new();
+    for b in &bindings {
+        let rb = super::syntax::aver_name_to_rust(b);
+        lines.push(format!("let {} = {}.clone();", rb, rb));
+    }
+    format!("{}\n            ", lines.join("\n            "))
 }
 
 fn emit_pattern_rebindings(pattern: &Pattern, ctx: &CodegenContext) -> String {

@@ -46,6 +46,10 @@ pub(crate) enum LoweredLeafOp {
         b: ExprId,
         default_literal: Literal,
     },
+    ListIndexGet {
+        list: ExprId,
+        index: ExprId,
+    },
 }
 
 impl LoweredLeafOp {
@@ -56,6 +60,7 @@ impl LoweredLeafOp {
             Self::VectorNew { .. } => 2,
             Self::VectorGetOrDefaultLiteral { .. } => 2,
             Self::IntModOrDefaultLiteral { .. } => 2,
+            Self::ListIndexGet { .. } => 2,
         }
     }
 
@@ -85,6 +90,11 @@ impl LoweredLeafOp {
             Self::IntModOrDefaultLiteral { a, b, .. } => match idx {
                 0 => Some(*a),
                 1 => Some(*b),
+                _ => None,
+            },
+            Self::ListIndexGet { list, index } => match idx {
+                0 => Some(*list),
+                1 => Some(*index),
                 _ => None,
             },
         }
@@ -273,7 +283,8 @@ impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
                     b: self.lower_expr(b),
                     default_literal: default_literal.clone(),
                 }),
-                Some(LeafOp::FieldAccess { .. })
+                Some(LeafOp::ListIndexGet { .. })
+                | Some(LeafOp::FieldAccess { .. })
                 | Some(LeafOp::VectorSetOrDefaultSameVector { .. })
                 | None => {
                     if let Some(plan) = classify_forward_call_plan(expr, self.ctx)

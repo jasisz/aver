@@ -954,7 +954,7 @@ fn emit_builtin_call_inner(
         "Terminal.print" => {
             let s = emit_arg(0);
             Some(format!(
-                "{{ let __s = format!(\"{{}}\", {}); aver_rt::terminal_print(&__s).unwrap() }}",
+                "{{ let __s = aver_rt::aver_display(&{}); aver_rt::terminal_print(&__s).unwrap() }}",
                 s
             ))
         }

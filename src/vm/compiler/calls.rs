@@ -407,6 +407,14 @@ impl<'a> FnCompiler<'a> {
                 self.emit_op(VECTOR_SET_OR_KEEP);
                 Ok(())
             }
+            LeafOp::ListIndexGet { list, index } => {
+                // Decompose: Vector.fromList(list) then Vector.get(_, index)
+                self.compile_expr(list)?;
+                self.emit_builtin_after_args(VmBuiltin::VectorFromList, 1);
+                self.compile_expr(index)?;
+                self.emit_op(VECTOR_GET);
+                Ok(())
+            }
             LeafOp::IntModOrDefaultLiteral {
                 a,
                 b,

@@ -1407,6 +1407,9 @@ impl Interpreter {
                     Ok(NanValue::new_int(a.rem_euclid(b), &mut self.arena))
                 }
             }
+            LoweredLeafOp::ListIndexGet { .. } => {
+                unreachable!("ListIndexGet is lowered to fallthrough path, not leaf eval")
+            }
         }
     }
 

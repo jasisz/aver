@@ -41,6 +41,11 @@ pub enum LeafOp<'a> {
         b: &'a Expr,
         default_literal: &'a Literal,
     },
+    /// Fused `Vector.get(Vector.fromList(list), index)` → skip AverVector allocation.
+    ListIndexGet {
+        list: &'a Expr,
+        index: &'a Expr,
+    },
 }
 
 pub fn classify_leaf_op<'a>(expr: &'a Expr, ctx: &impl CallLowerCtx) -> Option<LeafOp<'a>> {
@@ -90,6 +95,9 @@ fn classify_leaf_call<'a>(
                 size: &args[0],
                 fill: &args[1],
             }),
+            "Vector.get" if args.len() == 2 => {
+                classify_list_index_get(&args[0], &args[1], ctx)
+            }
             "Option.withDefault" if args.len() == 2 => {
                 classify_vector_set_or_default(&args[0], &args[1], ctx)
                     .or_else(|| classify_vector_get_or_default(&args[0], &args[1], ctx))
@@ -152,6 +160,27 @@ fn classify_vector_get_or_default<'a>(
                 default_literal,
             })
         }
+        _ => None,
+    }
+}
+
+fn classify_list_index_get<'a>(
+    vector_expr: &'a Expr,
+    index: &'a Expr,
+    ctx: &impl CallLowerCtx,
+) -> Option<LeafOp<'a>> {
+    // Match Vector.get(Vector.fromList(list), index)
+    let Expr::FnCall(inner_callee, inner_args) = vector_expr else {
+        return None;
+    };
+    if inner_args.len() != 1 {
+        return None;
+    }
+    match classify_call_plan(inner_callee, ctx) {
+        CallPlan::Builtin(name) if name == "Vector.fromList" => Some(LeafOp::ListIndexGet {
+            list: &inner_args[0],
+            index,
+        }),
         _ => None,
     }
 }
