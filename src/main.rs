@@ -1,4 +1,3 @@
-use aver::codegen::EmissionStyle;
 use clap::Parser as ClapParser;
 
 #[path = "main/cli.rs"]
@@ -23,7 +22,7 @@ mod replay_cmd;
 #[path = "main/shared.rs"]
 mod shared;
 
-use cli::{Cli, Commands, CompilePolicyMode, CompileStyle};
+use cli::{Cli, Commands, CompilePolicyMode};
 
 fn main() {
     let cli = Cli::parse();
@@ -127,7 +126,6 @@ fn main() {
             module_root,
             with_replay,
             policy,
-            style,
             guest_entry,
             with_self_host_support,
         } => {
@@ -136,10 +134,6 @@ fn main() {
             } else {
                 CompilePolicyMode::Embed
             });
-            let emission_style = match style {
-                CompileStyle::Semantic => EmissionStyle::Semantic,
-                CompileStyle::Optimized => EmissionStyle::Optimized,
-            };
             commands::cmd_compile(commands::CompileOptions {
                 file,
                 output_dir: output,
@@ -147,7 +141,6 @@ fn main() {
                 module_root_override: module_root.as_deref(),
                 with_replay: *with_replay,
                 policy_mode: &policy_mode,
-                emission_style,
                 guest_entry: guest_entry.as_deref(),
                 with_self_host_support: *with_self_host_support,
             });

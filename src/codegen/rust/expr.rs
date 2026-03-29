@@ -5,7 +5,7 @@ use crate::ast::*;
 use crate::codegen::common::{
     expr_to_dotted_name, is_user_type, module_prefix_to_rust_path, resolve_module_call,
 };
-use crate::codegen::{CodegenContext, EmissionStyle};
+use crate::codegen::CodegenContext;
 use crate::ir::{
     BodyExprPlan, BodyPlan, BoolCompareOp, BoolSubjectPlan, CallLowerCtx, CallPlan,
     DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan, DispatchLiteral, DispatchTableShape,
@@ -67,10 +67,6 @@ impl ThinBodyCtx for RustCallCtx<'_, '_> {
     }
 }
 
-fn use_optimized_emission(ctx: &CodegenContext) -> bool {
-    matches!(ctx.emission_style, EmissionStyle::Optimized)
-}
-
 pub(super) fn classify_dispatch_plan_for_rust(
     arms: &[MatchArm],
     ctx: &CodegenContext,
@@ -126,9 +122,7 @@ fn emit_expr_with_options(
     allow_callsite_inlining: bool,
 ) -> String {
     let lower_ctx = RustCallCtx { ctx, ectx };
-    if use_optimized_emission(ctx)
-        && let Some(leaf) = classify_leaf_op(expr, &lower_ctx)
-    {
+    if let Some(leaf) = classify_leaf_op(expr, &lower_ctx) {
         return emit_leaf_op_with_options(leaf, ctx, ectx, allow_callsite_inlining);
     }
 
@@ -1153,7 +1147,6 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
     }
     let subj_ectx = ectx.with_used_after(&arms_vars);
     let subj = clone_arg(subject, ctx, &subj_ectx);
-    let optimized = use_optimized_emission(ctx);
     let dispatch_plan = classify_dispatch_plan_for_rust(arms, ctx, ectx);
 
     // Bool match → if/else: match expr { true => A, false => B } → if expr { A } else { B }
@@ -1174,7 +1167,7 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
             Some(MatchDispatchPlan::List(shape)) => Some(*shape),
             _ => None,
         };
-        return emit_list_match(subj, arms, list_shape, optimized, ctx, |arm| {
+        return emit_list_match(subj, arms, list_shape, true, ctx, |arm| {
             maybe_clone(emit_expr(&arm.body, ctx, ectx), &arm.body, ectx)
         });
     }

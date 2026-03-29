@@ -13,16 +13,6 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::{FnDef, TopLevel, TypeDef};
 use crate::types::checker::TypeCheckResult;
 
-/// Emission strategy for generated deployment backends.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum EmissionStyle {
-    /// Keep generated code close to Aver semantics and source structure.
-    #[default]
-    Semantic,
-    /// Prefer a more execution-oriented lowering, even if the emitted code is less direct.
-    Optimized,
-}
-
 /// Information about a dependent module loaded for codegen.
 pub struct ModuleInfo {
     /// Qualified module path, e.g. "Models.User".
@@ -65,8 +55,6 @@ pub struct CodegenContext {
     pub guest_entry: Option<String>,
     /// Emit extra generated helpers needed only by the cached self-host helper.
     pub emit_self_host_support: bool,
-    /// Preferred emission strategy for generated deployment code.
-    pub emission_style: EmissionStyle,
     /// Extra fn_defs visible during current module emission (not in `fn_defs` or `modules`).
     /// Set temporarily by the Rust backend when emitting a dependent module so that
     /// `find_fn_def_by_name` can resolve same-module calls.
@@ -150,7 +138,6 @@ pub fn build_context(
         runtime_policy_from_env: false,
         guest_entry: None,
         emit_self_host_support: false,
-        emission_style: EmissionStyle::Semantic,
         extra_fn_defs: Vec::new(),
         mutual_tco_members,
     }

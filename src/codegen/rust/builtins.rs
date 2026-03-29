@@ -991,7 +991,7 @@ mod tests {
     use super::emit_builtin_call;
     use crate::ast::{Expr, Literal};
     use crate::codegen::rust::liveness::EmitCtx;
-    use crate::codegen::{CodegenContext, EmissionStyle};
+    use crate::codegen::CodegenContext;
     use crate::types::Type;
     use std::collections::{HashMap, HashSet};
 
@@ -1011,7 +1011,6 @@ mod tests {
             runtime_policy_from_env: false,
             guest_entry: None,
             emit_self_host_support: false,
-            emission_style: EmissionStyle::Semantic,
         }
     }
 

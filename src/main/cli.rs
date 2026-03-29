@@ -46,18 +46,6 @@ pub(super) enum CompilePolicyMode {
     Runtime,
 }
 
-/// Emission strategy for generated Rust code.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
-pub(super) enum CompileStyle {
-    /// Keep generated Rust close to Aver semantics and source structure.
-    #[default]
-    #[value(name = "semantic")]
-    Semantic,
-    /// Prefer a more execution-oriented lowering, even if the Rust gets less direct.
-    #[value(name = "optimized")]
-    Optimized,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ContextDepth {
     Auto,
@@ -233,9 +221,6 @@ pub(super) enum Commands {
         /// Runtime policy mode: embed aver.toml at compile time or load it at runtime
         #[arg(long = "policy", value_enum)]
         policy: Option<CompilePolicyMode>,
-        /// Rust emission style: semantic (default) or optimized
-        #[arg(long = "style", value_enum, default_value = "semantic")]
-        style: CompileStyle,
         /// Explicit guest execution boundary for scoped replay/policy (self-host style)
         #[arg(long)]
         guest_entry: Option<String>,
@@ -340,14 +325,12 @@ mod tests {
             Commands::Compile {
                 with_replay,
                 policy,
-                style,
                 guest_entry,
                 with_self_host_support,
                 ..
             } => {
                 assert!(with_replay);
                 assert_eq!(policy, None);
-                assert_eq!(style, CompileStyle::Semantic);
                 assert_eq!(guest_entry.as_deref(), Some("runGuestProgram"));
                 assert!(!with_self_host_support);
             }
@@ -370,13 +353,11 @@ mod tests {
         match cli.command {
             Commands::Compile {
                 policy,
-                style,
                 guest_entry,
                 with_self_host_support,
                 ..
             } => {
                 assert_eq!(policy, Some(CompilePolicyMode::Runtime));
-                assert_eq!(style, CompileStyle::Semantic);
                 assert_eq!(guest_entry.as_deref(), Some("runGuestCliProgram"));
                 assert!(with_self_host_support);
             }
@@ -396,34 +377,6 @@ mod tests {
         match cli.command {
             Commands::Compile { policy, .. } => {
                 assert_eq!(policy, Some(CompilePolicyMode::Runtime));
-            }
-            _ => panic!("expected compile command"),
-        }
-    }
-
-    #[test]
-    fn compile_defaults_to_semantic_style() {
-        let cli = Cli::parse_from(["aver", "compile", "examples/modules/app.av"]);
-        match cli.command {
-            Commands::Compile { style, .. } => {
-                assert_eq!(style, CompileStyle::Semantic);
-            }
-            _ => panic!("expected compile command"),
-        }
-    }
-
-    #[test]
-    fn compile_accepts_optimized_style() {
-        let cli = Cli::parse_from([
-            "aver",
-            "compile",
-            "examples/modules/app.av",
-            "--style",
-            "optimized",
-        ]);
-        match cli.command {
-            Commands::Compile { style, .. } => {
-                assert_eq!(style, CompileStyle::Optimized);
             }
             _ => panic!("expected compile command"),
         }

@@ -293,7 +293,6 @@ pub(super) fn build_self_host_binary(show_progress: bool) -> Result<PathBuf, Str
         Some(&self_host_root_str),
         true,
         &super::cli::CompilePolicyMode::Runtime,
-        codegen::EmissionStyle::Optimized,
         Some("runGuestCliProgram"),
         true,
     );
@@ -2286,7 +2285,6 @@ fn build_codegen_context(
     module_root_override: Option<&str>,
     with_replay: bool,
     policy_mode: &super::cli::CompilePolicyMode,
-    emission_style: codegen::EmissionStyle,
     guest_entry: Option<&str>,
     with_self_host_support: bool,
 ) -> (codegen::CodegenContext, String) {
@@ -2360,7 +2358,6 @@ fn build_codegen_context(
     ctx.runtime_policy_from_env = use_runtime_policy;
     ctx.guest_entry = guest_entry.map(str::to_string);
     ctx.emit_self_host_support = with_self_host_support;
-    ctx.emission_style = emission_style;
     if let Some(entry) = guest_entry
         && !ctx.fn_defs.iter().any(|fd| fd.name == entry)
     {
@@ -2398,7 +2395,6 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         module_root_override,
         with_replay,
         policy_mode,
-        emission_style,
         guest_entry,
         with_self_host_support,
     } = opts;
@@ -2438,7 +2434,6 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         module_root_override,
         with_replay,
         policy_mode,
-        emission_style,
         guest_entry,
         with_self_host_support,
     );
@@ -2466,7 +2461,6 @@ pub(super) struct CompileOptions<'a> {
     pub(super) module_root_override: Option<&'a str>,
     pub(super) with_replay: bool,
     pub(super) policy_mode: &'a super::cli::CompilePolicyMode,
-    pub(super) emission_style: codegen::EmissionStyle,
     pub(super) guest_entry: Option<&'a str>,
     pub(super) with_self_host_support: bool,
 }
@@ -2485,7 +2479,6 @@ pub(super) fn cmd_proof(
         module_root_override,
         false,
         &super::cli::CompilePolicyMode::Embed,
-        codegen::EmissionStyle::Semantic,
         None,
         false,
     );
@@ -2693,7 +2686,7 @@ mod tests {
         codegen_uses_self_host_runtime, resolve_av_inputs, validate_self_host_guest_entry_contract,
     };
     use aver::ast::{Expr, FnBody, FnDef, Literal, Stmt, TopLevel};
-    use aver::codegen::{CodegenContext, EmissionStyle};
+    use aver::codegen::CodegenContext;
     use std::collections::{HashMap, HashSet};
     use std::fs;
     use std::path::PathBuf;
@@ -2724,7 +2717,6 @@ mod tests {
             runtime_policy_from_env: false,
             guest_entry: None,
             emit_self_host_support: false,
-            emission_style: EmissionStyle::Semantic,
         }
     }
 

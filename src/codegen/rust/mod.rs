@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use crate::ast::{FnDef, TopLevel, TypeDef};
 use crate::codegen::common::module_prefix_to_rust_segments;
-use crate::codegen::{CodegenContext, EmissionStyle, ProjectOutput};
+use crate::codegen::{CodegenContext, ProjectOutput};
 use crate::types::Type;
 
 #[derive(Default)]
@@ -90,7 +90,6 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
                 main_fn,
                 has_embedded_policy,
                 ctx.emit_replay_runtime,
-                ctx.emission_style,
                 ctx.guest_entry.as_deref(),
                 !verify_blocks.is_empty(),
                 ctx.emit_self_host_support,
@@ -171,20 +170,13 @@ fn render_root_main(
     main_fn: Option<&FnDef>,
     has_policy: bool,
     has_replay: bool,
-    emission_style: EmissionStyle,
     guest_entry: Option<&str>,
     has_verify: bool,
     has_self_host_support: bool,
 ) -> String {
     let mut sections = vec![
         "#![allow(unused_variables, unused_mut, dead_code, unused_imports, unused_parens, non_snake_case, non_camel_case_types, unreachable_patterns, hidden_glob_reexports)]".to_string(),
-        format!(
-            "// Aver Rust emission style: {}",
-            match emission_style {
-                EmissionStyle::Semantic => "semantic",
-                EmissionStyle::Optimized => "optimized",
-            }
-        ),
+        "// Aver Rust emission".to_string(),
         "#[macro_use] extern crate aver_rt;".to_string(),
         "pub use ::aver_rt::AverMap as HashMap;".to_string(),
         "pub use ::aver_rt::AverStr;".to_string(),
@@ -539,7 +531,7 @@ mod tests {
         ModuleTreeNode, emit_module_tree_files, insert_module_content, render_generated_module,
         transpile,
     };
-    use crate::codegen::{EmissionStyle, build_context};
+    use crate::codegen::build_context;
     use crate::source::parse_source;
     use crate::tco;
     use crate::types::checker::run_type_check_full;
@@ -574,8 +566,8 @@ mod tests {
     }
 
     #[test]
-    fn optimized_style_is_reported_in_root_main_banner() {
-        let mut ctx = ctx_from_source(
+    fn emission_banner_appears_in_root_main() {
+        let ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -584,12 +576,11 @@ fn main() -> Int
 "#,
             "demo",
         );
-        ctx.emission_style = EmissionStyle::Optimized;
 
         let out = transpile(&ctx);
         let root_main = generated_file(&out, "src/main.rs");
 
-        assert!(root_main.contains("// Aver Rust emission style: optimized"));
+        assert!(root_main.contains("// Aver Rust emission"));
     }
 
     #[test]
@@ -639,7 +630,6 @@ fn headPlusTailLen(xs: List<Int>) -> Int
 "#,
             "demo",
         );
-        ctx.emission_style = EmissionStyle::Optimized;
 
         let out = transpile(&ctx);
         let entry = generated_rust_entry_file(&out);
@@ -827,7 +817,6 @@ fn updateOrKeep(vec: Vector<Int>, idx: Int, value: Int) -> Vector<Int>
 "#,
             "demo",
         );
-        ctx.emission_style = EmissionStyle::Optimized;
 
         let out = transpile(&ctx);
         let entry = generated_rust_entry_file(&out);
@@ -909,7 +898,6 @@ fn read(grid: Vector<Int>, idx: Int) -> Int
 "#,
             "demo",
         );
-        ctx.emission_style = EmissionStyle::Optimized;
 
         let out = transpile(&ctx);
         let entry = generated_rust_entry_file(&out);
@@ -934,7 +922,6 @@ fn readBucket(n: Int) -> Int
 "#,
             "demo",
         );
-        ctx.emission_style = EmissionStyle::Optimized;
 
         let out = transpile(&ctx);
         let entry = generated_rust_entry_file(&out);
@@ -956,7 +943,6 @@ fn bucket(n: Int) -> Int
 "#,
             "demo",
         );
-        ctx.emission_style = EmissionStyle::Optimized;
 
         let out = transpile(&ctx);
         let entry = generated_rust_entry_file(&out);
@@ -998,7 +984,6 @@ fn loop(r: Result<Int, String>) -> Int
 "#,
             "demo",
         );
-        ctx.emission_style = EmissionStyle::Optimized;
 
         let out = transpile(&ctx);
         let entry = generated_rust_entry_file(&out);
@@ -1025,7 +1010,6 @@ fn right(r: Result<Int, String>) -> Int
 "#,
             "demo",
         );
-        ctx.emission_style = EmissionStyle::Optimized;
 
         let out = transpile(&ctx);
         let entry = generated_rust_entry_file(&out);

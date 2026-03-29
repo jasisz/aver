@@ -11,7 +11,7 @@ use super::liveness::{
 };
 use super::types::type_annotation_to_rust;
 use crate::ast::*;
-use crate::codegen::{CodegenContext, EmissionStyle};
+use crate::codegen::CodegenContext;
 use crate::ir::{BodyExprPlan, CallPlan};
 use crate::types::{Type, parse_type_str};
 /// Top-level Aver items → Rust items (structs, enums, functions, tests).
@@ -422,11 +422,7 @@ fn emit_fn_def_with_visibility(
     } else {
         None
     };
-    let optimized_thin_plan = if matches!(ctx.emission_style, EmissionStyle::Optimized) {
-        classify_thin_fn_def_for_rust(fd, ctx, &ectx)
-    } else {
-        None
-    };
+    let optimized_thin_plan = classify_thin_fn_def_for_rust(fd, ctx, &ectx);
 
     if fd.effects.is_empty()
         && optimized_thin_plan
@@ -592,9 +588,7 @@ fn emit_fn_params_with_rc(
 }
 
 fn emit_fn_body(body: &FnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
-    if matches!(ctx.emission_style, EmissionStyle::Optimized)
-        && let Some(plan) = classify_body_plan_for_rust(body, ctx, ectx)
-    {
+    if let Some(plan) = classify_body_plan_for_rust(body, ctx, ectx) {
         return format!("    {}", emit_body_plan_for_rust(&plan, ctx, ectx));
     }
 
@@ -1913,15 +1907,10 @@ fn emit_tco_expr(
             }
             let subj_ectx = ectx.with_used_after(&arms_vars);
             let subj = clone_arg(subject, ctx, &subj_ectx);
-            let dispatch_plan = if matches!(ctx.emission_style, EmissionStyle::Optimized) {
-                classify_dispatch_plan_for_rust(arms, ctx, ectx)
-            } else {
-                None
-            };
+            let dispatch_plan = classify_dispatch_plan_for_rust(arms, ctx, ectx);
 
             // Bool match → if/else in TCO context
-            if matches!(ctx.emission_style, EmissionStyle::Optimized)
-                && let Some(code) = try_emit_tco_bool_if_else(
+            if let Some(code) = try_emit_tco_bool_if_else(
                     &subj,
                     arms,
                     self_name,
@@ -1942,7 +1931,7 @@ fn emit_tco_expr(
                     subj,
                     arms,
                     None,
-                    matches!(ctx.emission_style, EmissionStyle::Optimized),
+                    true,
                     ctx,
                     |arm| {
                         emit_tco_expr(
@@ -2361,15 +2350,10 @@ fn emit_trampoline_expr(
             }
             let subj_ectx = ectx.with_used_after(&arms_vars);
             let subj = clone_arg(subject, ctx, &subj_ectx);
-            let dispatch_plan = if matches!(ctx.emission_style, EmissionStyle::Optimized) {
-                classify_dispatch_plan_for_rust(arms, ctx, ectx)
-            } else {
-                None
-            };
+            let dispatch_plan = classify_dispatch_plan_for_rust(arms, ctx, ectx);
 
             // Bool match → if/else
-            if matches!(ctx.emission_style, EmissionStyle::Optimized)
-                && let Some(code) = try_emit_trampoline_bool_if_else(
+            if let Some(code) = try_emit_trampoline_bool_if_else(
                     &subj,
                     arms,
                     enum_name,
@@ -2388,7 +2372,7 @@ fn emit_trampoline_expr(
                     subj,
                     arms,
                     None,
-                    matches!(ctx.emission_style, EmissionStyle::Optimized),
+                    true,
                     ctx,
                     |arm| {
                         emit_trampoline_expr(
@@ -2751,7 +2735,7 @@ mod tests {
     use crate::ast::{
         BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, TypeDef, TypeVariant,
     };
-    use crate::codegen::{CodegenContext, EmissionStyle};
+    use crate::codegen::CodegenContext;
     use crate::types::Type;
     use std::collections::{HashMap, HashSet};
     use std::rc::Rc;
@@ -2772,7 +2756,6 @@ mod tests {
             runtime_policy_from_env: false,
             guest_entry: None,
             emit_self_host_support: false,
-            emission_style: EmissionStyle::Semantic,
         }
     }
 
@@ -3049,7 +3032,6 @@ mod tests {
         };
 
         let mut ctx = empty_ctx();
-        ctx.emission_style = EmissionStyle::Optimized;
         ctx.fn_defs = vec![helper_tag.clone(), helper_score.clone(), fd.clone()];
         ctx.fn_sigs
             .insert("tag".to_string(), (vec![Type::Int], Type::Int, vec![]));
@@ -3394,7 +3376,7 @@ mod tests {
         assert!(!semantic.contains("#[inline(always)]"));
 
         let mut optimized_ctx = empty_ctx();
-        optimized_ctx.emission_style = EmissionStyle::Optimized;
+
         optimized_ctx.fn_sigs.insert(
             "swap".to_string(),
             (vec![Type::Int, Type::Int], Type::Int, vec![]),
@@ -3456,7 +3438,7 @@ mod tests {
         assert!(!semantic.contains("#[inline(always)]"));
 
         let mut optimized_ctx = empty_ctx();
-        optimized_ctx.emission_style = EmissionStyle::Optimized;
+
         optimized_ctx.fn_sigs.insert(
             "cellAt".to_string(),
             (
@@ -3536,7 +3518,7 @@ mod tests {
         assert!(!semantic.contains("#[inline(always)]"));
 
         let mut optimized_ctx = empty_ctx();
-        optimized_ctx.emission_style = EmissionStyle::Optimized;
+
         optimized_ctx.fn_sigs.insert(
             "cellAtPlusOne".to_string(),
             (
