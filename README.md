@@ -88,7 +88,7 @@ aver proof    examples/formal/law_auto.av -o proof/
 (cd proof && lake build)
 aver run      examples/services/console_demo.av --record recordings/
 aver replay   recordings/ --test --diff
-aver replay   recordings/ --test --diff --vm
+aver replay   recordings/ --test --check-args
 aver replay   recordings/ --test --json
 ```
 
