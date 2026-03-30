@@ -169,7 +169,7 @@ impl VmRuntime {
                     Err(e) => RecordedOutcome::RuntimeError(e),
                 };
                 self.replay_state
-                    .record_effect(builtin_name, args_json, outcome, "", 0); // VM: no caller fn available
+                    .record_effect(builtin_name, args_json, outcome, ""); // VM: no caller fn available
                 Ok(nv_result)
             }
             (true, VmExecutionMode::Replay) => self.replay_builtin(builtin_name, args, arena),

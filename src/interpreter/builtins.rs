@@ -36,7 +36,7 @@ impl Interpreter {
                     .map(|f| f.name.as_str())
                     .unwrap_or("");
                 self.replay_state
-                    .record_effect(effect_type, args_json, outcome, caller, 0);
+                    .record_effect(effect_type, args_json, outcome, caller);
                 // Autosave snapshots on every recorded effect so long-running
                 // processes (like HttpServer) still persist replay data.
                 self.persist_recording_snapshot(RecordedOutcome::Value(JsonValue::Null))?;

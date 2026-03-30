@@ -19,8 +19,6 @@ pub struct EffectRecord {
     pub outcome: RecordedOutcome,
     /// Name of the function that made this effect call (empty = unknown).
     pub caller_fn: String,
-    /// Source line of the effect call (0 = unknown).
-    pub source_line: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -58,12 +56,6 @@ struct SerdeEffectRecord {
     outcome: SerdeRecordedOutcome,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     caller_fn: String,
-    #[serde(default, skip_serializing_if = "is_zero")]
-    source_line: usize,
-}
-
-fn is_zero(v: &usize) -> bool {
-    *v == 0
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -144,7 +136,6 @@ fn effect_record_to_serde(effect: &EffectRecord) -> SerdeEffectRecord {
         args: effect.args.iter().map(json_value_to_serde).collect(),
         outcome: outcome_to_serde(&effect.outcome),
         caller_fn: effect.caller_fn.clone(),
-        source_line: effect.source_line,
     }
 }
 
@@ -159,7 +150,6 @@ fn effect_record_from_serde(effect: SerdeEffectRecord) -> Result<EffectRecord, S
             .collect::<Result<Vec<_>, _>>()?,
         outcome: outcome_from_serde(effect.outcome)?,
         caller_fn: effect.caller_fn,
-        source_line: effect.source_line,
     })
 }
 
@@ -259,7 +249,6 @@ mod tests {
                 args: vec![JsonValue::String("hi".to_string())],
                 outcome: RecordedOutcome::Value(JsonValue::Null),
                 caller_fn: String::new(),
-                source_line: 0,
             }],
             output: RecordedOutcome::RuntimeError("boom".to_string()),
         };

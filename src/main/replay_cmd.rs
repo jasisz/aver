@@ -298,26 +298,61 @@ pub(super) fn replay_recording_file(
 
     let replay_module_root = resolve_replay_module_root(path, &recording);
     let replay_program_file = resolve_replay_program_file(&recording, &replay_module_root);
+    let recording_output_line = find_json_line(&raw, "output");
+
+    let make_error_result = |err: String, interp: Option<&Interpreter>| -> ReplayResult {
+        let (consumed, total) = interp.map(|i| i.replay_progress()).unwrap_or((0, 0));
+        ReplayResult {
+            recording_path: path.display().to_string(),
+            program_file: replay_program_file.clone(),
+            entry_fn: recording.entry_fn.clone(),
+            entry_line: 0,
+            matched: false,
+            effects_consumed: consumed,
+            effects_total: total,
+            error: Some(err),
+            output_diff: None,
+            recording_output_line,
+        }
+    };
+
     let (mut interp, items, _) =
-        compile_program_for_exec(&replay_program_file, Some(&replay_module_root))?;
+        match compile_program_for_exec(&replay_program_file, Some(&replay_module_root)) {
+            Ok(v) => v,
+            Err(e) => return Ok(make_error_result(e, None)),
+        };
     interp.start_replay(recording.effects.clone(), check_args);
 
-    run_top_level_statements_runtime(&mut interp, &items)
-        .map_err(|e| format_replay_runtime_error(&e, &recording, &interp))?;
-    let entry_args = decode_entry_args(&recording.input)?;
-    let run_out = run_entry_function_runtime(&mut interp, &recording.entry_fn, entry_args)
-        .map_err(|e| format_replay_runtime_error(&e, &recording, &interp))?;
+    if let Err(e) = run_top_level_statements_runtime(&mut interp, &items) {
+        let msg = format_replay_runtime_error(&e, &recording, &interp);
+        return Ok(make_error_result(msg, Some(&interp)));
+    }
+    let entry_args = match decode_entry_args(&recording.input) {
+        Ok(a) => a,
+        Err(e) => return Ok(make_error_result(e, Some(&interp))),
+    };
+    let run_out = match run_entry_function_runtime(&mut interp, &recording.entry_fn, entry_args) {
+        Ok(v) => v,
+        Err(e) => {
+            let msg = format_replay_runtime_error(&e, &recording, &interp);
+            return Ok(make_error_result(msg, Some(&interp)));
+        }
+    };
     let actual_outcome = match run_out {
         Value::Err(err) => RecordedOutcome::RuntimeError(format!(
             "{} returned error: {}",
             recording.entry_fn,
             aver_repr(&err)
         )),
-        v => RecordedOutcome::Value(value_to_json(&v)?),
+        v => match value_to_json(&v) {
+            Ok(j) => RecordedOutcome::Value(j),
+            Err(e) => return Ok(make_error_result(e, Some(&interp))),
+        },
     };
-    interp
-        .ensure_replay_consumed()
-        .map_err(|e| format_replay_runtime_error(&e, &recording, &interp))?;
+    if let Err(e) = interp.ensure_replay_consumed() {
+        let msg = format_replay_runtime_error(&e, &recording, &interp);
+        return Ok(make_error_result(msg, Some(&interp)));
+    }
 
     let (consumed, total) = interp.replay_progress();
     let matched = actual_outcome == recording.output;
@@ -329,7 +364,6 @@ pub(super) fn replay_recording_file(
     };
 
     let entry_line = find_fn_line(&items, &recording.entry_fn);
-    let recording_output_line = find_json_line(&raw, "output");
     Ok(ReplayResult {
         recording_path: path.display().to_string(),
         program_file: replay_program_file,

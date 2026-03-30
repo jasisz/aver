@@ -3080,6 +3080,7 @@ fn check() -> Bool
                     "/definitely/not/existing/path".to_string(),
                 )],
                 outcome: RecordedOutcome::Value(JsonValue::Bool(true)),
+                caller_fn: String::new(),
             }],
             true,
         );
@@ -3106,6 +3107,7 @@ fn check() -> Bool
                 effect_type: "Http.get".to_string(),
                 args: vec![JsonValue::String("https://example.com".to_string())],
                 outcome: RecordedOutcome::Value(JsonValue::Object(outcome)),
+                caller_fn: String::new(),
             }],
             false,
         );
