@@ -1699,11 +1699,11 @@ pub(super) fn cmd_check(
     let mut failed_files = Vec::new();
 
     for (idx, file) in inputs.iter().enumerate() {
-        if batch && idx > 0 {
+        if !json && batch && idx > 0 {
             println!();
         }
 
-        if batch {
+        if !json && batch {
             println!("Input: {}", display_check_path(file, &module_root).cyan());
         }
 
@@ -1720,7 +1720,15 @@ pub(super) fn cmd_check(
         }
     }
 
-    if batch {
+    if json {
+        let passed = inputs.len().saturating_sub(failed_files.len());
+        println!(
+            "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"passed\":{},\"failed\":{}}}",
+            inputs.len(),
+            passed,
+            failed_files.len()
+        );
+    } else if batch {
         println!();
         let passed = inputs.len().saturating_sub(failed_files.len());
         if failed_files.is_empty() {
@@ -1742,7 +1750,6 @@ pub(super) fn cmd_check(
             for file in &failed_files {
                 println!("  {}", display_check_path(file, &module_root));
             }
-            // Hint if many files fail with module resolution errors
             if failed_files.len() > 3 {
                 println!(
                     "{}",
