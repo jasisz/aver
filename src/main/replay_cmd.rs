@@ -136,7 +136,6 @@ fn compact_json(v: &JsonValue) -> String {
     truncate_for_cli(compact, 240)
 }
 
-
 fn compact_args(args: &[JsonValue]) -> String {
     compact_json(&JsonValue::Array(args.to_vec()))
 }
@@ -597,8 +596,8 @@ fn build_replay_error_diagnostic(
             let fields = vec![
                 ("recording", recording_path.to_string()),
                 ("step", format!("{}", seq)),
-                ("expected.effect", expected_type.clone()),
-                ("actual.effect", got_type.clone()),
+                ("expected", expected_type.clone()),
+                ("actual", got_type.clone()),
                 ("expected.args", expected_args.clone()),
             ];
             super::diagnostic::Diagnostic {
@@ -635,13 +634,13 @@ fn build_replay_error_diagnostic(
                 ("recording", recording_path.to_string()),
                 ("step", format!("{}", seq)),
                 ("effect", effect_type.clone()),
-                ("expected.args", expected_args.clone()),
-                ("actual.args", got_args.clone()),
+                ("expected", expected_args.clone()),
+                ("actual", got_args.clone()),
             ];
             super::diagnostic::Diagnostic {
                 severity: Severity::Fail,
                 slug: "replay-args-mismatch",
-                summary: format!("args mismatch at step {} ({})", seq, effect_type),
+                summary: format!("args mismatch at step {}", seq),
                 span: Span {
                     file: program_file.to_string(),
                     line: entry_line,
