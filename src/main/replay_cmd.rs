@@ -264,6 +264,17 @@ fn resolve_replay_program_file(recording: &SessionRecording, module_root: &str) 
     recording.program_file.clone()
 }
 
+/// Find the line number of a key in raw JSON text (1-based, 0 = not found).
+fn find_json_line(raw: &str, key: &str) -> usize {
+    let pattern = format!("\"{}\"", key);
+    for (idx, line) in raw.lines().enumerate() {
+        if line.trim_start().starts_with(&pattern) {
+            return idx + 1;
+        }
+    }
+    0
+}
+
 fn find_fn_line(items: &[TopLevel], name: &str) -> usize {
     for item in items {
         if let TopLevel::FnDef(fd) = item
@@ -318,6 +329,7 @@ pub(super) fn replay_recording_file(
     };
 
     let entry_line = find_fn_line(&items, &recording.entry_fn);
+    let recording_output_line = find_json_line(&raw, "output");
     Ok(ReplayResult {
         recording_path: path.display().to_string(),
         program_file: replay_program_file,
@@ -328,6 +340,7 @@ pub(super) fn replay_recording_file(
         effects_total: total,
         error: None,
         output_diff,
+        recording_output_line,
     })
 }
 
@@ -435,6 +448,7 @@ fn replay_recording_file_vm(
     };
 
     let entry_line = find_fn_line(&items, &recording.entry_fn);
+    let recording_output_line = find_json_line(&raw, "output");
     Ok(ReplayResult {
         recording_path: path.display().to_string(),
         program_file: replay_program_file,
@@ -445,6 +459,7 @@ fn replay_recording_file_vm(
         effects_total: total,
         error: None,
         output_diff,
+        recording_output_line,
     })
 }
 
@@ -513,13 +528,14 @@ fn replay_recording_file_self_host(
         effects_total: n,
         error: None,
         output_diff: None,
+        recording_output_line: 0,
     })
 }
 
 pub(super) struct ReplayResult {
     recording_path: String,
     program_file: String,
-    #[allow(dead_code)] // Available for future JSON output
+    #[allow(dead_code)]
     entry_fn: String,
     entry_line: usize,
     matched: bool,
@@ -528,6 +544,8 @@ pub(super) struct ReplayResult {
     error: Option<String>,
     /// For output mismatch: expected, actual, diff_path
     output_diff: Option<(String, String, Option<String>)>,
+    /// Line of "output" key in recording JSON (for diagnostics).
+    recording_output_line: usize,
 }
 
 fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
@@ -578,6 +596,7 @@ fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
                 actual,
                 diff_path.as_deref(),
                 result.entry_line,
+                result.recording_output_line,
             ))
         } else {
             None
@@ -623,6 +642,7 @@ fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
                     actual,
                     diff_path.as_deref(),
                     result.entry_line,
+                    result.recording_output_line,
                 );
                 println!();
                 print!("{}", diag.render(false));
@@ -683,6 +703,7 @@ pub(super) fn cmd_replay(
                     effects_total: 0,
                     error: Some(e),
                     output_diff: None,
+                    recording_output_line: 0,
                 };
                 render_replay_result(&rr, diff, json);
                 total_replayed += 1;

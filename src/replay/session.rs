@@ -17,6 +17,8 @@ pub struct EffectRecord {
     pub effect_type: String,
     pub args: Vec<JsonValue>,
     pub outcome: RecordedOutcome,
+    /// Source line of the effect call (0 = unknown).
+    pub source_line: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -52,6 +54,12 @@ struct SerdeEffectRecord {
     effect_type: String,
     args: Vec<SerdeJsonValue>,
     outcome: SerdeRecordedOutcome,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    source_line: usize,
+}
+
+fn is_zero(v: &usize) -> bool {
+    *v == 0
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -131,6 +139,7 @@ fn effect_record_to_serde(effect: &EffectRecord) -> SerdeEffectRecord {
         effect_type: effect.effect_type.clone(),
         args: effect.args.iter().map(json_value_to_serde).collect(),
         outcome: outcome_to_serde(&effect.outcome),
+        source_line: effect.source_line,
     }
 }
 
@@ -144,6 +153,7 @@ fn effect_record_from_serde(effect: SerdeEffectRecord) -> Result<EffectRecord, S
             .map(serde_to_json_value)
             .collect::<Result<Vec<_>, _>>()?,
         outcome: outcome_from_serde(effect.outcome)?,
+        source_line: effect.source_line,
     })
 }
 
@@ -242,6 +252,7 @@ mod tests {
                 effect_type: "Console.print".to_string(),
                 args: vec![JsonValue::String("hi".to_string())],
                 outcome: RecordedOutcome::Value(JsonValue::Null),
+                source_line: 0,
             }],
             output: RecordedOutcome::RuntimeError("boom".to_string()),
         };

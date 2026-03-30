@@ -31,7 +31,7 @@ impl Interpreter {
                     Err(err) => RecordedOutcome::RuntimeError(err.to_string()),
                 };
                 self.replay_state
-                    .record_effect(effect_type, args_json, outcome);
+                    .record_effect(effect_type, args_json, outcome, 0); // TODO: pass real source line
                 // Autosave snapshots on every recorded effect so long-running
                 // processes (like HttpServer) still persist replay data.
                 self.persist_recording_snapshot(RecordedOutcome::Value(JsonValue::Null))?;

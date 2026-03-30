@@ -725,9 +725,15 @@ pub(super) fn replay_output_mismatch_diagnostic(
     actual: &str,
     diff_path: Option<&str>,
     entry_line: usize,
+    recording_output_line: usize,
 ) -> Diagnostic {
+    let recording_ref = if recording_output_line > 0 {
+        format!("{}:{}", recording_path, recording_output_line)
+    } else {
+        format!("{}:$.output", recording_path)
+    };
     let mut fields: Vec<(&'static str, String)> = vec![
-        ("recording", format!("{}:$.output", recording_path)),
+        ("recording", recording_ref),
         ("expected", expected.to_string()),
         ("actual", actual.to_string()),
     ];
