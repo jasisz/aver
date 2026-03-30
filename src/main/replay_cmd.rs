@@ -504,8 +504,11 @@ pub(super) struct ReplayResult {
     output_diff: Option<(String, String, Option<String>)>,
 }
 
-fn render_replay_result(result: &ReplayResult, diff: bool, json: bool) {
+fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
+    use super::diagnostic::{replay_effect_error_diagnostic, replay_output_mismatch_diagnostic};
+
     if json {
+        // Block-level result event
         let status = if result.error.is_some() {
             "error"
         } else if result.matched {
@@ -513,7 +516,7 @@ fn render_replay_result(result: &ReplayResult, diff: bool, json: bool) {
         } else {
             "mismatch"
         };
-        let mut parts = vec![
+        let parts = [
             "\"schema_version\":1".to_string(),
             "\"kind\":\"replay-result\"".to_string(),
             format!("\"file\":{}", crate::diagnostic::json_escape(&result.path)),
@@ -521,56 +524,52 @@ fn render_replay_result(result: &ReplayResult, diff: bool, json: bool) {
             format!("\"effects_consumed\":{}", result.effects_consumed),
             format!("\"effects_total\":{}", result.effects_total),
         ];
-        if let Some(ref err) = result.error {
-            parts.push(format!("\"error\":{}", crate::diagnostic::json_escape(err)));
-        }
-        if let Some((expected, actual, diff_path)) = &result.output_diff {
-            parts.push(format!(
-                "\"expected\":{}",
-                crate::diagnostic::json_escape(expected)
-            ));
-            parts.push(format!(
-                "\"actual\":{}",
-                crate::diagnostic::json_escape(actual)
-            ));
-            if let Some(dp) = diff_path {
-                parts.push(format!(
-                    "\"diff_path\":{}",
-                    crate::diagnostic::json_escape(dp)
-                ));
-            }
-        }
         println!("{{{}}}", parts.join(","));
+
+        // Diagnostic event for failures
+        let diag = if let Some(ref err) = result.error {
+            Some(replay_effect_error_diagnostic(&result.path, err))
+        } else if let Some((expected, actual, diff_path)) = &result.output_diff {
+            Some(replay_output_mismatch_diagnostic(
+                &result.path,
+                expected,
+                actual,
+                diff_path.as_deref(),
+            ))
+        } else {
+            None
+        };
+        if let Some(d) = diag {
+            println!("{}", d.render_json().trim());
+        }
     } else {
         println!();
         println!("Replay: {}", result.path);
+
         if let Some(ref err) = result.error {
-            for line in err.lines() {
-                eprintln!("  {}", line.red());
-            }
+            let diag = replay_effect_error_diagnostic(&result.path, err);
+            print!("{}", diag.render(false));
             return;
         }
+
         println!(
             "Effects: {} replayed ({} matched)",
             result.effects_consumed, result.effects_total
         );
-        println!(
-            "Output:  {}",
-            if result.matched {
-                "MATCH".green().to_string()
-            } else {
-                "DIFFERS".red().to_string()
-            }
-        );
-        if diff
-            && !result.matched
-            && let Some((expected, actual, diff_path)) = &result.output_diff
-        {
-            println!();
-            println!("Expected: {}", expected);
-            println!("Got:      {}", actual);
-            if let Some(dp) = diff_path {
-                println!("Diff at:  {}", dp);
+
+        if result.matched {
+            println!("Output:  {}", "MATCH".green());
+        } else {
+            println!("Output:  {}", "DIFFERS".red());
+            if let Some((expected, actual, diff_path)) = &result.output_diff {
+                let diag = replay_output_mismatch_diagnostic(
+                    &result.path,
+                    expected,
+                    actual,
+                    diff_path.as_deref(),
+                );
+                println!();
+                print!("{}", diag.render(false));
             }
         }
     }
