@@ -1,11 +1,15 @@
 use tower_lsp_server::ls_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 
-use aver::ast::{TopLevel, VerifyKind};
+use aver::ast::TopLevel;
+use aver::ast::VerifyKind;
 use aver::checker::{
-    check_module_intent_with_sigs, collect_verify_coverage_warnings, merge_verify_blocks,
+    VerifyCaseOutcome, check_module_intent_with_sigs, collect_verify_coverage_warnings,
+    merge_verify_blocks, run_verify,
 };
+use aver::interpreter::Interpreter;
 use aver::lexer::{Lexer, LexerError};
 use aver::parser::Parser;
+use aver::resolver;
 use aver::tco;
 use aver::types::checker::{TypeError, run_type_check_full};
 
@@ -100,6 +104,11 @@ pub fn diagnose(source: &str, base_dir: Option<&str>) -> Vec<Diagnostic> {
     }
     diagnostics.extend(verify_hygiene_diagnostics(&items));
 
+    // Phase 6: Run verify blocks (only when no type errors)
+    if tc_result.errors.is_empty() {
+        diagnostics.extend(verify_run_diagnostics(&mut items, base_dir));
+    }
+
     diagnostics
 }
 
@@ -193,6 +202,97 @@ fn verify_hygiene_diagnostics(items: &[TopLevel]) -> Vec<Diagnostic> {
     diagnostics
 }
 
+fn verify_run_diagnostics(items: &mut [TopLevel], base_dir: Option<&str>) -> Vec<Diagnostic> {
+    // Resolve variables for interpreter
+    resolver::resolve_program(items);
+
+    let mut interp = Interpreter::new();
+
+    // Register type definitions
+    for item in items.iter() {
+        if let TopLevel::TypeDef(td) = item {
+            interp.register_type_def(td);
+        }
+    }
+
+    // Register all functions
+    for item in items.iter() {
+        if let TopLevel::FnDef(fd) = item
+            && interp.exec_fn_def(fd).is_err()
+        {
+            return vec![];
+        }
+    }
+
+    // Load dependency modules if base_dir available
+    if let Some(base) = base_dir {
+        let mut loading = Vec::new();
+        let mut loading_set = std::collections::HashSet::new();
+        if let Some(TopLevel::Module(m)) = items.iter().find(|i| matches!(i, TopLevel::Module(_))) {
+            for dep_name in &m.depends {
+                if let Ok(ns) = interp.load_module(dep_name, base, &mut loading, &mut loading_set) {
+                    let _ = interp.define_module_path(dep_name, ns);
+                }
+            }
+        }
+    }
+
+    let verify_blocks = merge_verify_blocks(items);
+    let mut diagnostics = Vec::new();
+
+    for vb in &verify_blocks {
+        let result = run_verify(vb, &mut interp);
+        for cr in &result.case_results {
+            let (line, col) = cr
+                .span
+                .as_ref()
+                .map(|s| (s.line, s.col))
+                .unwrap_or((vb.line, 0));
+
+            let (severity, message) = match &cr.outcome {
+                VerifyCaseOutcome::Pass | VerifyCaseOutcome::Skipped => continue,
+                VerifyCaseOutcome::Mismatch { expected, actual } => (
+                    DiagnosticSeverity::ERROR,
+                    format!(
+                        "verify mismatch: {} — expected {}, got {}",
+                        cr.case_expr, expected, actual
+                    ),
+                ),
+                VerifyCaseOutcome::RuntimeError { error } => (
+                    DiagnosticSeverity::ERROR,
+                    format!("verify runtime error: {} — {}", cr.case_expr, error),
+                ),
+                VerifyCaseOutcome::UnexpectedErr { err_repr } => (
+                    DiagnosticSeverity::ERROR,
+                    format!(
+                        "verify error propagation: {} — ? hit {}",
+                        cr.case_expr, err_repr
+                    ),
+                ),
+            };
+
+            diagnostics.push(Diagnostic {
+                range: Range {
+                    start: Position {
+                        line: line.saturating_sub(1) as u32,
+                        character: col.saturating_sub(1) as u32,
+                    },
+                    end: Position {
+                        line: line.saturating_sub(1) as u32,
+                        character: (col + cr.case_expr.len()).min(200) as u32,
+                    },
+                },
+                severity: Some(severity),
+                source: Some("aver-verify".to_string()),
+                message,
+                ..Default::default()
+            });
+        }
+    }
+
+    diagnostics
+}
+
 fn hint_at_line(line: usize, message: String) -> Diagnostic {
     let line = line.saturating_sub(1) as u32;
     Diagnostic {
@@ -212,6 +312,55 @@ mod tests {
     use tower_lsp_server::ls_types::DiagnosticSeverity;
 
     use super::diagnose;
+
+    #[test]
+    fn diagnostics_show_verify_mismatch() {
+        let source = r#"module Demo
+    intent = "demo"
+
+fn add(a: Int, b: Int) -> Int
+    ? "adds"
+    a + b
+
+verify add
+    add(1, 2) => 3
+    add(2, 3) => 999
+"#;
+        let diagnostics = diagnose(source, None);
+        assert!(
+            diagnostics.iter().any(|diag| {
+                diag.severity == Some(DiagnosticSeverity::ERROR)
+                    && diag.message.contains("verify mismatch")
+                    && diag.message.contains("999")
+                    && diag.message.contains("5")
+            }),
+            "expected verify mismatch diagnostic, got: {:?}",
+            diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn diagnostics_no_verify_error_when_all_pass() {
+        let source = r#"module Demo
+    intent = "demo"
+
+fn add(a: Int, b: Int) -> Int
+    ? "adds"
+    a + b
+
+verify add
+    add(1, 2) => 3
+    add(2, 3) => 5
+"#;
+        let diagnostics = diagnose(source, None);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diag| diag.message.contains("verify mismatch")),
+            "should not have verify mismatch, got: {:?}",
+            diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
 
     #[test]
     fn diagnostics_warn_when_verify_has_cases_but_no_law() {
