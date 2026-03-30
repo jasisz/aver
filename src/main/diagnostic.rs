@@ -719,12 +719,15 @@ pub(super) fn verify_unexpected_err_diagnostic(
 // -- Replay failure diagnostics -----------------------------------------------
 
 pub(super) fn replay_output_mismatch_diagnostic(
+    program_file: &str,
     recording_path: &str,
     expected: &str,
     actual: &str,
     diff_path: Option<&str>,
+    entry_line: usize,
 ) -> Diagnostic {
     let mut fields: Vec<(&'static str, String)> = vec![
+        ("recording", recording_path.to_string()),
         ("expected", expected.to_string()),
         ("actual", actual.to_string()),
     ];
@@ -736,8 +739,8 @@ pub(super) fn replay_output_mismatch_diagnostic(
         slug: "replay-output-mismatch",
         summary: "recorded output differs".to_string(),
         span: Span {
-            file: recording_path.to_string(),
-            line: 0,
+            file: program_file.to_string(),
+            line: entry_line,
             col: 0,
         },
         fn_name: None,
@@ -752,15 +755,23 @@ pub(super) fn replay_output_mismatch_diagnostic(
     }
 }
 
-pub(super) fn replay_effect_error_diagnostic(recording_path: &str, error: &str) -> Diagnostic {
-    let fields: Vec<(&'static str, String)> = vec![("error", error.to_string())];
+pub(super) fn replay_effect_error_diagnostic(
+    program_file: &str,
+    recording_path: &str,
+    error: &str,
+    entry_line: usize,
+) -> Diagnostic {
+    let fields: Vec<(&'static str, String)> = vec![
+        ("recording", recording_path.to_string()),
+        ("error", error.to_string()),
+    ];
     Diagnostic {
         severity: Severity::Fail,
         slug: "replay-error",
         summary: "replay failed".to_string(),
         span: Span {
-            file: recording_path.to_string(),
-            line: 0,
+            file: program_file.to_string(),
+            line: entry_line,
             col: 0,
         },
         fn_name: None,

@@ -264,6 +264,17 @@ fn resolve_replay_program_file(recording: &SessionRecording, module_root: &str) 
     recording.program_file.clone()
 }
 
+fn find_fn_line(items: &[TopLevel], name: &str) -> usize {
+    for item in items {
+        if let TopLevel::FnDef(fd) = item
+            && fd.name == name
+        {
+            return fd.line;
+        }
+    }
+    1
+}
+
 pub(super) fn replay_recording_file(
     path: &Path,
     _diff: bool,
@@ -306,8 +317,12 @@ pub(super) fn replay_recording_file(
         None
     };
 
+    let entry_line = find_fn_line(&items, &recording.entry_fn);
     Ok(ReplayResult {
-        path: path.display().to_string(),
+        recording_path: path.display().to_string(),
+        program_file: replay_program_file,
+        entry_fn: recording.entry_fn.clone(),
+        entry_line,
         matched,
         effects_consumed: consumed,
         effects_total: total,
@@ -419,8 +434,12 @@ fn replay_recording_file_vm(
         None
     };
 
+    let entry_line = find_fn_line(&items, &recording.entry_fn);
     Ok(ReplayResult {
-        path: path.display().to_string(),
+        recording_path: path.display().to_string(),
+        program_file: replay_program_file,
+        entry_fn: recording.entry_fn.clone(),
+        entry_line,
         matched,
         effects_consumed: consumed,
         effects_total: total,
@@ -485,7 +504,10 @@ fn replay_recording_file_self_host(
 
     let n = recording.effects.len();
     Ok(ReplayResult {
-        path: path.display().to_string(),
+        recording_path: path.display().to_string(),
+        program_file: replay_program_file,
+        entry_fn: recording.entry_fn.clone(),
+        entry_line: 0,
         matched: true,
         effects_consumed: n,
         effects_total: n,
@@ -495,7 +517,11 @@ fn replay_recording_file_self_host(
 }
 
 pub(super) struct ReplayResult {
-    path: String,
+    recording_path: String,
+    program_file: String,
+    #[allow(dead_code)] // Available for future JSON output
+    entry_fn: String,
+    entry_line: usize,
     matched: bool,
     effects_consumed: usize,
     effects_total: usize,
@@ -508,7 +534,6 @@ fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
     use super::diagnostic::{replay_effect_error_diagnostic, replay_output_mismatch_diagnostic};
 
     if json {
-        // Block-level result event
         let status = if result.error.is_some() {
             "error"
         } else if result.matched {
@@ -519,22 +544,40 @@ fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
         let parts = [
             "\"schema_version\":1".to_string(),
             "\"kind\":\"replay-result\"".to_string(),
-            format!("\"file\":{}", crate::diagnostic::json_escape(&result.path)),
+            format!(
+                "\"recording\":{}",
+                crate::diagnostic::json_escape(&result.recording_path)
+            ),
+            format!(
+                "\"file\":{}",
+                crate::diagnostic::json_escape(&result.program_file)
+            ),
             format!("\"status\":\"{}\"", status),
             format!("\"effects_consumed\":{}", result.effects_consumed),
             format!("\"effects_total\":{}", result.effects_total),
         ];
         println!("{{{}}}", parts.join(","));
 
-        // Diagnostic event for failures
+        let at_file = if result.program_file.is_empty() {
+            &result.recording_path
+        } else {
+            &result.program_file
+        };
         let diag = if let Some(ref err) = result.error {
-            Some(replay_effect_error_diagnostic(&result.path, err))
+            Some(replay_effect_error_diagnostic(
+                at_file,
+                &result.recording_path,
+                err,
+                result.entry_line,
+            ))
         } else if let Some((expected, actual, diff_path)) = &result.output_diff {
             Some(replay_output_mismatch_diagnostic(
-                &result.path,
+                at_file,
+                &result.recording_path,
                 expected,
                 actual,
                 diff_path.as_deref(),
+                result.entry_line,
             ))
         } else {
             None
@@ -544,10 +587,21 @@ fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
         }
     } else {
         println!();
-        println!("Replay: {}", result.path);
+        println!("Replay: {}", result.recording_path);
+
+        let at_file = if result.program_file.is_empty() {
+            &result.recording_path
+        } else {
+            &result.program_file
+        };
 
         if let Some(ref err) = result.error {
-            let diag = replay_effect_error_diagnostic(&result.path, err);
+            let diag = replay_effect_error_diagnostic(
+                at_file,
+                &result.recording_path,
+                err,
+                result.entry_line,
+            );
             print!("{}", diag.render(false));
             return;
         }
@@ -563,10 +617,12 @@ fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
             println!("Output:  {}", "DIFFERS".red());
             if let Some((expected, actual, diff_path)) = &result.output_diff {
                 let diag = replay_output_mismatch_diagnostic(
-                    &result.path,
+                    at_file,
+                    &result.recording_path,
                     expected,
                     actual,
                     diff_path.as_deref(),
+                    result.entry_line,
                 );
                 println!();
                 print!("{}", diag.render(false));
@@ -618,7 +674,10 @@ pub(super) fn cmd_replay(
             }
             Err(e) => {
                 let rr = ReplayResult {
-                    path: file.display().to_string(),
+                    recording_path: file.display().to_string(),
+                    program_file: String::new(),
+                    entry_fn: String::new(),
+                    entry_line: 0,
                     matched: false,
                     effects_consumed: 0,
                     effects_total: 0,
