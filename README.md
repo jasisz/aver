@@ -58,7 +58,9 @@ aver run      hello.av --vm
 aver run      hello.av --self-host
 aver verify   hello.av
 aver verify   hello.av --vm
+aver verify   hello.av --json
 aver check    hello.av
+aver check    hello.av --json
 aver context  hello.av
 aver compile  hello.av -o out/
 (cd out && cargo run)
@@ -87,7 +89,7 @@ aver proof    examples/formal/law_auto.av -o proof/
 aver run      examples/services/console_demo.av --record recordings/
 aver replay   recordings/ --test --diff
 aver replay   recordings/ --test --diff --vm
-aver replay   recordings/ --test --diff --self-host
+aver replay   recordings/ --test --json
 ```
 
 Requires: Rust stable toolchain.
