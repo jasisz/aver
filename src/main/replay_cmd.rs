@@ -136,43 +136,25 @@ fn compact_json(v: &JsonValue) -> String {
     truncate_for_cli(compact, 240)
 }
 
-fn compact_outcome(outcome: &RecordedOutcome) -> String {
-    match outcome {
-        RecordedOutcome::Value(v) => format!("value {}", compact_json(v)),
-        RecordedOutcome::RuntimeError(msg) => format!("runtime_error {:?}", msg),
-    }
-}
 
 fn compact_args(args: &[JsonValue]) -> String {
     compact_json(&JsonValue::Array(args.to_vec()))
 }
 
-fn format_replay_runtime_error(
-    err: &RuntimeError,
-    recording: &SessionRecording,
-    interp: &Interpreter,
-) -> String {
-    let (consumed, total) = interp.replay_progress();
-    let mut lines = vec![
-        format!("Replay failed: {}", err),
-        format!(
-            "Progress: consumed {} of {} recorded effects",
-            consumed, total
-        ),
-    ];
-
+fn classify_replay_error(err: &RuntimeError, recording: &SessionRecording) -> ReplayError {
     match err {
         RuntimeError::ReplayMismatch { seq, expected, got } => {
-            lines.push(format!(
-                "Effect mismatch at seq {}: expected '{}', got '{}'",
-                seq, expected, got
-            ));
-            if let Some(rec) = recording.effects.iter().find(|r| r.seq == *seq) {
-                lines.push(format!("Expected args: {}", compact_args(&rec.args)));
-                lines.push(format!(
-                    "Expected outcome: {}",
-                    compact_outcome(&rec.outcome)
-                ));
+            let expected_args = recording
+                .effects
+                .iter()
+                .find(|r| r.seq == *seq)
+                .map(|r| compact_args(&r.args))
+                .unwrap_or_default();
+            ReplayError::EffectMismatch {
+                seq: *seq,
+                expected_type: expected.clone(),
+                got_type: got.clone(),
+                expected_args,
             }
         }
         RuntimeError::ReplayArgsMismatch {
@@ -180,48 +162,33 @@ fn format_replay_runtime_error(
             effect_type,
             expected,
             got,
-        } => {
-            lines.push(format!("Args mismatch at seq {} ('{}')", seq, effect_type));
-            lines.push(format!("Expected args: {}", expected));
-            lines.push(format!("Got args:      {}", got));
-            if let Some(rec) = recording.effects.iter().find(|r| r.seq == *seq) {
-                lines.push(format!(
-                    "Expected outcome: {}",
-                    compact_outcome(&rec.outcome)
-                ));
-            }
-        }
+        } => ReplayError::ArgsMismatch {
+            seq: *seq,
+            effect_type: effect_type.clone(),
+            expected_args: expected.clone(),
+            got_args: got.clone(),
+        },
         RuntimeError::ReplayExhausted {
             effect_type,
             position,
-        } => {
-            lines.push(format!(
-                "No recorded effect at position {} for call '{}'",
-                position, effect_type
-            ));
-            if let Some(next) = recording.effects.get(*position) {
-                lines.push(format!(
-                    "Next recorded effect: seq {} '{}'",
-                    next.seq, next.effect_type
-                ));
-            }
-        }
+        } => ReplayError::Exhausted {
+            position: *position,
+            effect_type: effect_type.clone(),
+        },
         RuntimeError::ReplayUnconsumed { remaining } => {
             let start = recording.effects.len().saturating_sub(*remaining);
-            if let Some(next) = recording.effects.get(start) {
-                lines.push(format!(
-                    "First unconsumed effect: seq {} '{}', args={}, outcome={}",
-                    next.seq,
-                    next.effect_type,
-                    compact_args(&next.args),
-                    compact_outcome(&next.outcome)
-                ));
+            let (seq, etype) = recording
+                .effects
+                .get(start)
+                .map(|r| (r.seq, r.effect_type.clone()))
+                .unwrap_or((0, "unknown".to_string()));
+            ReplayError::Unconsumed {
+                seq,
+                effect_type: etype,
             }
         }
-        _ => {}
+        other => ReplayError::Generic(format!("{}", other)),
     }
-
-    lines.join("\n")
 }
 
 fn resolve_replay_module_root(path: &Path, recording: &SessionRecording) -> String {
@@ -300,7 +267,7 @@ pub(super) fn replay_recording_file(
     let replay_program_file = resolve_replay_program_file(&recording, &replay_module_root);
     let recording_output_line = find_json_line(&raw, "output");
 
-    let make_error_result = |err: String, interp: Option<&Interpreter>| -> ReplayResult {
+    let make_error_result = |err: ReplayError, interp: Option<&Interpreter>| -> ReplayResult {
         let (consumed, total) = interp.map(|i| i.replay_progress()).unwrap_or((0, 0));
         ReplayResult {
             recording_path: path.display().to_string(),
@@ -319,23 +286,23 @@ pub(super) fn replay_recording_file(
     let (mut interp, items, _) =
         match compile_program_for_exec(&replay_program_file, Some(&replay_module_root)) {
             Ok(v) => v,
-            Err(e) => return Ok(make_error_result(e, None)),
+            Err(e) => return Ok(make_error_result(ReplayError::Generic(e), None)),
         };
     interp.start_replay(recording.effects.clone(), check_args);
 
     if let Err(e) = run_top_level_statements_runtime(&mut interp, &items) {
-        let msg = format_replay_runtime_error(&e, &recording, &interp);
-        return Ok(make_error_result(msg, Some(&interp)));
+        let re = classify_replay_error(&e, &recording);
+        return Ok(make_error_result(re, Some(&interp)));
     }
     let entry_args = match decode_entry_args(&recording.input) {
         Ok(a) => a,
-        Err(e) => return Ok(make_error_result(e, Some(&interp))),
+        Err(e) => return Ok(make_error_result(ReplayError::Generic(e), Some(&interp))),
     };
     let run_out = match run_entry_function_runtime(&mut interp, &recording.entry_fn, entry_args) {
         Ok(v) => v,
         Err(e) => {
-            let msg = format_replay_runtime_error(&e, &recording, &interp);
-            return Ok(make_error_result(msg, Some(&interp)));
+            let re = classify_replay_error(&e, &recording);
+            return Ok(make_error_result(re, Some(&interp)));
         }
     };
     let actual_outcome = match run_out {
@@ -346,12 +313,12 @@ pub(super) fn replay_recording_file(
         )),
         v => match value_to_json(&v) {
             Ok(j) => RecordedOutcome::Value(j),
-            Err(e) => return Ok(make_error_result(e, Some(&interp))),
+            Err(e) => return Ok(make_error_result(ReplayError::Generic(e), Some(&interp))),
         },
     };
     if let Err(e) = interp.ensure_replay_consumed() {
-        let msg = format_replay_runtime_error(&e, &recording, &interp);
-        return Ok(make_error_result(msg, Some(&interp)));
+        let re = classify_replay_error(&e, &recording);
+        return Ok(make_error_result(re, Some(&interp)));
     }
 
     let (consumed, total) = interp.replay_progress();
@@ -566,6 +533,32 @@ fn replay_recording_file_self_host(
     })
 }
 
+enum ReplayError {
+    /// Generic error (compilation, file not found, etc.)
+    Generic(String),
+    /// Effect type mismatch at seq N
+    EffectMismatch {
+        seq: u32,
+        expected_type: String,
+        got_type: String,
+        expected_args: String,
+    },
+    /// Effect args mismatch at seq N
+    ArgsMismatch {
+        seq: u32,
+        effect_type: String,
+        expected_args: String,
+        got_args: String,
+    },
+    /// More effects in recording than executed
+    Unconsumed { seq: u32, effect_type: String },
+    /// Fewer effects in recording than executed
+    Exhausted {
+        position: usize,
+        effect_type: String,
+    },
+}
+
 pub(super) struct ReplayResult {
     recording_path: String,
     program_file: String,
@@ -575,15 +568,169 @@ pub(super) struct ReplayResult {
     matched: bool,
     effects_consumed: usize,
     effects_total: usize,
-    error: Option<String>,
+    error: Option<ReplayError>,
     /// For output mismatch: expected, actual, diff_path
     output_diff: Option<(String, String, Option<String>)>,
     /// Line of "output" key in recording JSON (for diagnostics).
     recording_output_line: usize,
 }
 
+fn build_replay_error_diagnostic(
+    err: &ReplayError,
+    program_file: &str,
+    recording_path: &str,
+    entry_fn: &str,
+    entry_line: usize,
+) -> super::diagnostic::Diagnostic {
+    use super::diagnostic::{Severity, Span, replay_effect_error_diagnostic};
+
+    match err {
+        ReplayError::Generic(msg) => {
+            replay_effect_error_diagnostic(program_file, recording_path, msg, entry_fn, entry_line)
+        }
+        ReplayError::EffectMismatch {
+            seq,
+            expected_type,
+            got_type,
+            expected_args,
+        } => {
+            let fields = vec![
+                ("recording", recording_path.to_string()),
+                ("step", format!("{}", seq)),
+                ("expected.effect", expected_type.clone()),
+                ("actual.effect", got_type.clone()),
+                ("expected.args", expected_args.clone()),
+            ];
+            super::diagnostic::Diagnostic {
+                severity: Severity::Fail,
+                slug: "replay-effect-mismatch",
+                summary: format!("effect mismatch at step {}", seq),
+                span: Span {
+                    file: program_file.to_string(),
+                    line: entry_line,
+                    col: 0,
+                },
+                fn_name: if entry_fn.is_empty() {
+                    None
+                } else {
+                    Some(entry_fn.to_string())
+                },
+                intent: None,
+                fields,
+                conflict: None,
+                repair_primary: None,
+                repair_alternatives: Vec::new(),
+                repair_example: None,
+                source_lines: vec![],
+                underline: None,
+            }
+        }
+        ReplayError::ArgsMismatch {
+            seq,
+            effect_type,
+            expected_args,
+            got_args,
+        } => {
+            let fields = vec![
+                ("recording", recording_path.to_string()),
+                ("step", format!("{}", seq)),
+                ("effect", effect_type.clone()),
+                ("expected.args", expected_args.clone()),
+                ("actual.args", got_args.clone()),
+            ];
+            super::diagnostic::Diagnostic {
+                severity: Severity::Fail,
+                slug: "replay-args-mismatch",
+                summary: format!("args mismatch at step {} ({})", seq, effect_type),
+                span: Span {
+                    file: program_file.to_string(),
+                    line: entry_line,
+                    col: 0,
+                },
+                fn_name: if entry_fn.is_empty() {
+                    None
+                } else {
+                    Some(entry_fn.to_string())
+                },
+                intent: None,
+                fields,
+                conflict: None,
+                repair_primary: None,
+                repair_alternatives: Vec::new(),
+                repair_example: None,
+                source_lines: vec![],
+                underline: None,
+            }
+        }
+        ReplayError::Unconsumed { seq, effect_type } => {
+            let fields = vec![
+                ("recording", recording_path.to_string()),
+                ("unconsumed", format!("seq {} '{}'", seq, effect_type)),
+            ];
+            super::diagnostic::Diagnostic {
+                severity: Severity::Fail,
+                slug: "replay-unconsumed",
+                summary: "recorded effects not consumed".to_string(),
+                span: Span {
+                    file: program_file.to_string(),
+                    line: entry_line,
+                    col: 0,
+                },
+                fn_name: if entry_fn.is_empty() {
+                    None
+                } else {
+                    Some(entry_fn.to_string())
+                },
+                intent: None,
+                fields,
+                conflict: None,
+                repair_primary: None,
+                repair_alternatives: Vec::new(),
+                repair_example: None,
+                source_lines: vec![],
+                underline: None,
+            }
+        }
+        ReplayError::Exhausted {
+            position,
+            effect_type,
+        } => {
+            let fields = vec![
+                ("recording", recording_path.to_string()),
+                (
+                    "exhausted",
+                    format!("position {} for '{}'", position, effect_type),
+                ),
+            ];
+            super::diagnostic::Diagnostic {
+                severity: Severity::Fail,
+                slug: "replay-exhausted",
+                summary: "no recorded effect for call".to_string(),
+                span: Span {
+                    file: program_file.to_string(),
+                    line: entry_line,
+                    col: 0,
+                },
+                fn_name: if entry_fn.is_empty() {
+                    None
+                } else {
+                    Some(entry_fn.to_string())
+                },
+                intent: None,
+                fields,
+                conflict: None,
+                repair_primary: None,
+                repair_alternatives: Vec::new(),
+                repair_example: None,
+                source_lines: vec![],
+                underline: None,
+            }
+        }
+    }
+}
+
 fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
-    use super::diagnostic::{replay_effect_error_diagnostic, replay_output_mismatch_diagnostic};
+    use super::diagnostic::replay_output_mismatch_diagnostic;
 
     if json {
         let status = if result.error.is_some() {
@@ -616,10 +763,10 @@ fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
             &result.program_file
         };
         let diag = if let Some(ref err) = result.error {
-            Some(replay_effect_error_diagnostic(
+            Some(build_replay_error_diagnostic(
+                err,
                 at_file,
                 &result.recording_path,
-                err,
                 &result.entry_fn,
                 result.entry_line,
             ))
@@ -651,10 +798,10 @@ fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
         };
 
         if let Some(ref err) = result.error {
-            let diag = replay_effect_error_diagnostic(
+            let diag = build_replay_error_diagnostic(
+                err,
                 at_file,
                 &result.recording_path,
-                err,
                 &result.entry_fn,
                 result.entry_line,
             );
@@ -739,7 +886,7 @@ pub(super) fn cmd_replay(
                     matched: false,
                     effects_consumed: 0,
                     effects_total: 0,
-                    error: Some(e),
+                    error: Some(ReplayError::Generic(e)),
                     output_diff: None,
                     recording_output_line: 0,
                 };
