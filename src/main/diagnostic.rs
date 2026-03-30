@@ -718,12 +718,14 @@ pub(super) fn verify_unexpected_err_diagnostic(
 
 // -- Replay failure diagnostics -----------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn replay_output_mismatch_diagnostic(
     program_file: &str,
     recording_path: &str,
     expected: &str,
     actual: &str,
     diff_path: Option<&str>,
+    entry_fn: &str,
     entry_line: usize,
     recording_output_line: usize,
 ) -> Diagnostic {
@@ -754,7 +756,11 @@ pub(super) fn replay_output_mismatch_diagnostic(
             line: entry_line,
             col: 0,
         },
-        fn_name: None,
+        fn_name: if entry_fn.is_empty() {
+            None
+        } else {
+            Some(entry_fn.to_string())
+        },
         intent: None,
         fields,
         conflict: None,
@@ -770,6 +776,7 @@ pub(super) fn replay_effect_error_diagnostic(
     program_file: &str,
     recording_path: &str,
     error: &str,
+    entry_fn: &str,
     entry_line: usize,
 ) -> Diagnostic {
     let fields: Vec<(&'static str, String)> = vec![
@@ -785,7 +792,11 @@ pub(super) fn replay_effect_error_diagnostic(
             line: entry_line,
             col: 0,
         },
-        fn_name: None,
+        fn_name: if entry_fn.is_empty() {
+            None
+        } else {
+            Some(entry_fn.to_string())
+        },
         intent: None,
         fields,
         conflict: None,

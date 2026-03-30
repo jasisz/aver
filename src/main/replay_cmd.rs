@@ -586,6 +586,7 @@ fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
                 at_file,
                 &result.recording_path,
                 err,
+                &result.entry_fn,
                 result.entry_line,
             ))
         } else if let Some((expected, actual, diff_path)) = &result.output_diff {
@@ -595,6 +596,7 @@ fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
                 expected,
                 actual,
                 diff_path.as_deref(),
+                &result.entry_fn,
                 result.entry_line,
                 result.recording_output_line,
             ))
@@ -619,6 +621,7 @@ fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
                 at_file,
                 &result.recording_path,
                 err,
+                &result.entry_fn,
                 result.entry_line,
             );
             print!("{}", diag.render(false));
@@ -641,6 +644,7 @@ fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
                     expected,
                     actual,
                     diff_path.as_deref(),
+                    &result.entry_fn,
                     result.entry_line,
                     result.recording_output_line,
                 );
