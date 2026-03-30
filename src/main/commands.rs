@@ -2183,6 +2183,7 @@ fn render_verify_output(
     };
     use aver::checker::VerifyCaseOutcome;
 
+    let mut first_file = true;
     for fr in file_results {
         if fr.blocks.is_empty() {
             continue;
@@ -2273,6 +2274,10 @@ fn render_verify_output(
             }
         } else {
             // Terminal mode
+            if !first_file {
+                println!();
+            }
+            first_file = false;
             println!("{}", format!("Verify: {}", display_path).cyan());
 
             for block in &fr.blocks {
@@ -2406,7 +2411,14 @@ pub(super) fn cmd_verify(
                 all_file_results.extend(file_results);
             }
             Err(e) => {
-                eprintln!("{}", e.red());
+                let display = display_check_path(file, &module_root);
+                eprintln!(
+                    "{}",
+                    format!("Verify: {} — skipped (type errors)", display).red()
+                );
+                for line in e.lines() {
+                    eprintln!("  {}", line.red());
+                }
                 failed_files.push(file.clone());
             }
         }
