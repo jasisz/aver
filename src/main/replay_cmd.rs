@@ -233,13 +233,34 @@ pub(super) fn replay_recording_file(
     let replay_program_file = resolve_replay_program_file(&recording, &replay_module_root);
     let recording_output_line = find_json_line(&raw, "output");
 
+    let (mut interp, items, _) =
+        match compile_program_for_exec(&replay_program_file, Some(&replay_module_root)) {
+            Ok(v) => v,
+            Err(e) => {
+                return Ok(ReplayResult {
+                    recording_path: path.display().to_string(),
+                    program_file: replay_program_file,
+                    entry_fn: recording.entry_fn.clone(),
+                    entry_line: 0,
+                    matched: false,
+                    effects_consumed: 0,
+                    effects_total: 0,
+                    error: Some(ReplayError::Generic(e)),
+                    output_diff: None,
+                    args_diffs: 0,
+                    recording_output_line,
+                });
+            }
+        };
+
+    let entry_line = find_fn_line(&items, &recording.entry_fn);
     let make_error_result = |err: ReplayError, interp: Option<&Interpreter>| -> ReplayResult {
         let (consumed, total) = interp.map(|i| i.replay_progress()).unwrap_or((0, 0));
         ReplayResult {
             recording_path: path.display().to_string(),
             program_file: replay_program_file.clone(),
             entry_fn: recording.entry_fn.clone(),
-            entry_line: 0,
+            entry_line,
             matched: false,
             effects_consumed: consumed,
             effects_total: total,
@@ -250,11 +271,6 @@ pub(super) fn replay_recording_file(
         }
     };
 
-    let (mut interp, items, _) =
-        match compile_program_for_exec(&replay_program_file, Some(&replay_module_root)) {
-            Ok(v) => v,
-            Err(e) => return Ok(make_error_result(ReplayError::Generic(e), None)),
-        };
     interp.start_replay(recording.effects.clone(), check_args);
 
     if let Err(e) = run_top_level_statements_runtime(&mut interp, &items) {
