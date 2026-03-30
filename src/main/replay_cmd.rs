@@ -116,46 +116,13 @@ fn run_entry_function_runtime(
     interp.call_value_with_effects_pub(fn_val, args, &format!("<{}>", entry_fn), allowed)
 }
 
-fn truncate_for_cli(s: String, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        return s;
-    }
-    let mut out = s
-        .chars()
-        .take(max_chars.saturating_sub(3))
-        .collect::<String>();
-    out.push_str("...");
-    out
-}
-
-fn compact_json(v: &JsonValue) -> String {
-    let compact = format_json(v)
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    truncate_for_cli(compact, 240)
-}
-
-fn compact_args(args: &[JsonValue]) -> String {
-    compact_json(&JsonValue::Array(args.to_vec()))
-}
-
 fn classify_replay_error(err: &RuntimeError, recording: &SessionRecording) -> ReplayError {
     match err {
-        RuntimeError::ReplayMismatch { seq, expected, got } => {
-            let expected_args = recording
-                .effects
-                .iter()
-                .find(|r| r.seq == *seq)
-                .map(|r| compact_args(&r.args))
-                .unwrap_or_default();
-            ReplayError::EffectMismatch {
-                seq: *seq,
-                expected_type: expected.clone(),
-                got_type: got.clone(),
-                expected_args,
-            }
-        }
+        RuntimeError::ReplayMismatch { seq, expected, got } => ReplayError::EffectMismatch {
+            seq: *seq,
+            expected_type: expected.clone(),
+            got_type: got.clone(),
+        },
         RuntimeError::ReplayArgsMismatch {
             seq,
             effect_type,
@@ -540,7 +507,6 @@ enum ReplayError {
         seq: u32,
         expected_type: String,
         got_type: String,
-        expected_args: String,
     },
     /// Effect args mismatch at seq N
     ArgsMismatch {
@@ -591,14 +557,13 @@ fn build_replay_error_diagnostic(
             seq,
             expected_type,
             got_type,
-            expected_args,
+            ..
         } => {
             let fields = vec![
                 ("recording", recording_path.to_string()),
                 ("step", format!("{}", seq)),
                 ("expected", expected_type.clone()),
                 ("actual", got_type.clone()),
-                ("expected.args", expected_args.clone()),
             ];
             super::diagnostic::Diagnostic {
                 severity: Severity::Fail,
@@ -632,8 +597,7 @@ fn build_replay_error_diagnostic(
         } => {
             let fields = vec![
                 ("recording", recording_path.to_string()),
-                ("step", format!("{}", seq)),
-                ("effect", effect_type.clone()),
+                ("effect", format!("{} (step {})", effect_type, seq)),
                 ("expected", expected_args.clone()),
                 ("actual", got_args.clone()),
             ];
@@ -804,7 +768,7 @@ fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
                 &result.entry_fn,
                 result.entry_line,
             );
-            print!("{}", diag.render(false));
+            print!("{}", diag.render(true));
             return;
         }
 
@@ -829,7 +793,7 @@ fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
                     result.recording_output_line,
                 );
                 println!();
-                print!("{}", diag.render(false));
+                print!("{}", diag.render(true));
             }
         }
     }
