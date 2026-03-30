@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here.
 
-## 0.7.3 (unreleased)
+## 0.7.3 (2026-03-30)
 
 ### Added
 - **`aver verify --json`** — structured NDJSON output: `block-result` per verify block, `diagnostic` per failure, `summary` at end.
