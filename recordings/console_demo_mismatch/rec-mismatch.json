@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "request_id": "rec-1774871740821",
+  "timestamp": "unix-1774871740",
+  "program_file": "examples/services/console_demo.av",
+  "module_root": ".",
+  "entry_fn": "main",
+  "input": null,
+  "effects": [
+    {
+      "seq": 1,
+      "type": "Console.print",
+      "args": [
+        "Hello, world!"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      }
+    },
+    {
+      "seq": 2,
+      "type": "Console.warn",
+      "args": [
+        "This is just a demo \u2014 no real I/O side effects here."
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      }
+    },
+    {
+      "seq": 3,
+      "type": "Console.error",
+      "args": [
+        "Something went wrong (not really)."
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      }
+    },
+    {
+      "seq": 4,
+      "type": "Console.readLine",
+      "args": [],
+      "outcome": {
+        "kind": "value",
+        "value": {
+          "$err": "EOF"
+        }
+      }
+    },
+    {
+      "seq": 5,
+      "type": "Console.print",
+      "args": [
+        "Hello, stranger!"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      }
+    }
+  ],
+  "output": {
+    "kind": "value",
+    "value": "\"unexpected_result\""
+  }
+}

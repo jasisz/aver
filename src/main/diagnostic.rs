@@ -727,12 +727,17 @@ pub(super) fn replay_output_mismatch_diagnostic(
     entry_line: usize,
 ) -> Diagnostic {
     let mut fields: Vec<(&'static str, String)> = vec![
-        ("recording", recording_path.to_string()),
+        ("recording", format!("{}:$.output", recording_path)),
         ("expected", expected.to_string()),
         ("actual", actual.to_string()),
     ];
     if let Some(dp) = diff_path {
-        fields.push(("diff", dp.to_string()));
+        let label = if dp == "$" {
+            "$ (root)".to_string()
+        } else {
+            dp.to_string()
+        };
+        fields.push(("diff", label));
     }
     Diagnostic {
         severity: Severity::Fail,
