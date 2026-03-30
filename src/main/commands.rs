@@ -2400,6 +2400,8 @@ pub(super) fn cmd_verify(
     let mut all_file_results: Vec<VerifyFileResult> = Vec::new();
     let mut failed_files = Vec::new();
 
+    let mut skipped_typecheck: Vec<String> = Vec::new();
+
     for file in &inputs {
         match run_verify_for_file(file, &module_root, deps, vm_mode) {
             Ok(file_results) => {
@@ -2410,21 +2412,35 @@ pub(super) fn cmd_verify(
                 }
                 all_file_results.extend(file_results);
             }
-            Err(e) => {
-                let display = display_check_path(file, &module_root);
-                eprintln!(
-                    "{}",
-                    format!("Verify: {} — skipped (type errors)", display).red()
-                );
-                for line in e.lines() {
-                    eprintln!("  {}", line.red());
-                }
+            Err(_e) => {
+                skipped_typecheck.push(display_check_path(file, &module_root));
                 failed_files.push(file.clone());
             }
         }
     }
 
     render_verify_output(&all_file_results, &module_root, verbose, json);
+
+    if !skipped_typecheck.is_empty() && !json {
+        println!();
+        println!(
+            "{}",
+            format!(
+                "{} file(s) skipped — type errors (run aver check to see details)",
+                skipped_typecheck.len()
+            )
+            .yellow()
+        );
+        if skipped_typecheck.len() <= 5 {
+            for f in &skipped_typecheck {
+                println!("  {}", f.dimmed());
+            }
+        }
+        println!(
+            "{}",
+            "hint: if these files use modules, pass --module-root <dir>".dimmed()
+        );
+    }
 
     // Summary
     let total_blocks: usize = all_file_results.iter().map(|fr| fr.blocks.len()).sum();
