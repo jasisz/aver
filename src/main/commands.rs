@@ -2337,7 +2337,9 @@ fn render_verify_output(
                     );
                 }
 
-                // Emit diagnostics for failures
+                // Emit diagnostics for failures (capped in normal mode)
+                let max_diags = if verbose { usize::MAX } else { 3 };
+                let mut diag_count = 0usize;
                 for cr in &block.case_results {
                     let (line, col) = cr.span.as_ref().map(|s| (s.line, s.col)).unwrap_or((1, 1));
                     let diag = match &cr.outcome {
@@ -2380,9 +2382,22 @@ fn render_verify_output(
                         _ => None,
                     };
                     if let Some(d) = diag {
-                        println!();
-                        print!("{}", d.render(verbose));
+                        if diag_count < max_diags {
+                            println!();
+                            print!("{}", d.render(verbose));
+                        }
+                        diag_count += 1;
                     }
+                }
+                if diag_count > max_diags {
+                    println!(
+                        "\n  {}",
+                        format!(
+                            "... and {} more (use --verbose to see all)",
+                            diag_count - max_diags
+                        )
+                        .dimmed()
+                    );
                 }
             }
         }
