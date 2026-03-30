@@ -7,12 +7,19 @@ All notable changes to Aver are documented here.
 ### Added
 - **Structured error messages** — `aver check` shows source snippets, repair suggestions, and semantic error categories (`type-mismatch`, `unused-binding`, `missing-verify`). Use `--verbose` for full context on warnings.
 - **Unused binding warnings** — `aver check` warns on bindings that are defined but never used. Prefix with `_` to silence.
-- **`aver check --json`** — structured JSON output for editor and CI integrations.
+- **`aver check --json`** — NDJSON output with `schema_version`, `kind`, and summary event. Clean machine-readable stream for editors and CI.
+- **`aver verify --json`** — structured NDJSON output: `block-result` per verify block, `diagnostic` per failure, `summary` at end.
+- **`aver verify --verbose`** — failure diagnostics with source snippets and full fields (given/law context for specs).
+- **`aver replay --json`** — NDJSON output: `replay-result` per recording, `summary` at end.
+- **Structured verify diagnostics** — verify failures now use the same diagnostic system as `aver check`: `fail[verify-mismatch]`, `fail[verify-runtime-error]`, `fail[verify-unexpected-err]` with `at:`, `block:`, `case:`, `expected:`/`actual:`, source snippets with carets. Normal mode caps to 3 diagnostics per block.
 - **`Map<T, Unit>` as set** — Lean codegen emits `Finset T`, Dafny emits `set<T>`. See [docs](docs/language.md#sets).
 - **Common Pushback FAQ** — [docs/pushback.md](docs/pushback.md) covers frequent questions and objections about the language.
 
 ### Changed
 - **Inline variants (TAG 14)** — single-field variants whose payload is a small int (±268M), bool, unit, or none are now NaN-boxed inline (8 bytes, zero arena allocation). Pattern matching and field extraction skip arena indirection entirely.
+- **Unified NDJSON format** — `check`, `verify`, and `replay` all emit `{"schema_version":1,"kind":"..."}` envelope. Summary events at end of each command.
+- **Verify output redesign** — per-file grouping, one-line block summaries with failure type breakdown, streaming output. Skipped files (type errors) show count + hint about `--module-root`.
+- **Codegen: let-destructuring** — single-arm irrefutable matches (`match x: (a, b) -> expr`) now emit `let (a, b) = x; expr` instead of a full match block.
 - **Faster compiled code** — generated Rust is significantly faster across all benchmarks: pattern matching -66%, maps -13%, records -14%, vectors -19%. The self-hosted interpreter is 7-25% faster depending on workload. Fused IR ops (`IntModOrDefault`, `ListIndexGet`) eliminate intermediate allocations; codegen now skips unnecessary clones on Copy fields, drops `&` on numeric arithmetic, and matches borrowed params without cloning the subject.
 - **LSP** — Vector namespace completions, updated List members, `exposes opaque` support in document symbols.
 - **Editor highlighting** — VSCode and Sublime grammars updated with all current namespaces and keywords.
@@ -21,6 +28,8 @@ All notable changes to Aver are documented here.
 ### Fixed
 - `Console.error`/`Console.warn` in self-hosted now route to stderr.
 - `--with-self-host-support` enforces guest-entry contract.
+- `aver check --json` no longer emits human-readable lines mixed with JSON.
+- `aver replay` no longer duplicates "Replay:" prefix in error messages.
 
 ## 0.7.1 (2026-03-27)
 
