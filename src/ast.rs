@@ -195,6 +195,16 @@ pub struct VerifyLaw {
     pub sample_guards: Vec<Expr>,
 }
 
+/// Source range for AST nodes that need location tracking.
+/// Used by verify case spans: `cases[i] <-> case_spans[i]`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SourceSpan {
+    pub line: usize,
+    pub col: usize,
+    pub end_line: usize,
+    pub end_col: usize,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum VerifyKind {
     Cases,
@@ -206,7 +216,35 @@ pub struct VerifyBlock {
     pub fn_name: String,
     pub line: usize,
     pub cases: Vec<(Expr, Expr)>,
+    pub case_spans: Vec<SourceSpan>,
     pub kind: VerifyKind,
+}
+
+impl VerifyBlock {
+    /// Construct a VerifyBlock with default (zero) spans for each case.
+    /// Use when source location tracking is not needed (codegen, tests).
+    pub fn new_unspanned(
+        fn_name: String,
+        line: usize,
+        cases: Vec<(Expr, Expr)>,
+        kind: VerifyKind,
+    ) -> Self {
+        let case_spans = vec![SourceSpan::default(); cases.len()];
+        Self {
+            fn_name,
+            line,
+            cases,
+            case_spans,
+            kind,
+        }
+    }
+
+    pub fn iter_cases_with_spans(
+        &self,
+    ) -> impl Iterator<Item = (&(Expr, Expr), &SourceSpan)> {
+        debug_assert_eq!(self.cases.len(), self.case_spans.len());
+        self.cases.iter().zip(&self.case_spans)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

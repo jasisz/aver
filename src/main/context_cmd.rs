@@ -1686,12 +1686,12 @@ mod tests {
             fn_specs: HashMap::new(),
             fn_direct_calls: HashMap::new(),
             type_defs: vec![],
-            verify_blocks: vec![VerifyBlock {
-                fn_name: "entry".to_string(),
-                line: 2,
-                cases: vec![],
-                kind: VerifyKind::Cases,
-            }],
+            verify_blocks: vec![VerifyBlock::new_unspanned(
+                "entry".to_string(),
+                2,
+                vec![],
+                VerifyKind::Cases,
+            )],
             verify_counts: HashMap::new(),
             verify_samples: HashMap::new(),
             decisions: vec![DecisionBlock {

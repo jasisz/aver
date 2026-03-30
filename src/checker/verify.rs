@@ -343,6 +343,8 @@ pub fn merge_verify_blocks(items: &[TopLevel]) -> Vec<VerifyBlock> {
             VerifyKind::Cases => {
                 if let Some(&idx) = by_fn_cases.get(&vb.fn_name) {
                     merged[idx].cases.extend(vb.cases.clone());
+                    merged[idx].case_spans.extend(vb.case_spans.clone());
+                    debug_assert_eq!(merged[idx].cases.len(), merged[idx].case_spans.len());
                 } else {
                     by_fn_cases.insert(vb.fn_name.clone(), merged.len());
                     merged.push(vb.clone());

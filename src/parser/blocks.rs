@@ -345,6 +345,7 @@ impl Parser {
         self.skip_newlines();
 
         let mut cases = Vec::new();
+        let mut case_spans = Vec::new();
 
         if self.is_indent() {
             self.advance();
@@ -373,9 +374,13 @@ impl Parser {
                     None
                 };
 
+                let law_start_line = self.current().line;
+                let law_start_col = self.current().col;
                 let left = self.parse_expr()?;
                 self.expect_exact(&TokenKind::FatArrow)?;
                 let right = self.parse_expr()?;
+                let law_end_line = self.current().line;
+                let law_end_col = self.current().col;
                 self.skip_newlines();
 
                 if !self.is_dedent() && !self.is_eof() {
@@ -389,6 +394,14 @@ impl Parser {
                     cases: expanded_cases,
                     sample_guards,
                 } = self.expand_law_cases(&givens, when.as_ref(), &left, &right)?;
+                // All generated cases share the law assertion's span
+                let law_span = SourceSpan {
+                    line: law_start_line,
+                    col: law_start_col,
+                    end_line: law_end_line,
+                    end_col: law_end_col,
+                };
+                case_spans = vec![law_span; expanded_cases.len()];
                 cases = expanded_cases;
                 kind = VerifyKind::Law(Box::new(VerifyLaw {
                     name: law_name,
@@ -405,10 +418,20 @@ impl Parser {
                         continue;
                     }
 
+                    let start_line = self.current().line;
+                    let start_col = self.current().col;
                     let left = self.parse_expr()?;
                     self.expect_exact(&TokenKind::FatArrow)?;
                     let right = self.parse_expr()?;
+                    let end_line = self.current().line;
+                    let end_col = self.current().col;
                     cases.push((left, right));
+                    case_spans.push(SourceSpan {
+                        line: start_line,
+                        col: start_col,
+                        end_line: end_line,
+                        end_col: end_col,
+                    });
                     self.skip_newlines();
                 }
             }
@@ -420,10 +443,12 @@ impl Parser {
             return Err(self.error("Law verify block requires an indented block body".to_string()));
         }
 
+        debug_assert_eq!(cases.len(), case_spans.len());
         Ok(VerifyBlock {
             fn_name,
             line,
             cases,
+            case_spans,
             kind,
         })
     }

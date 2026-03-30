@@ -705,18 +705,18 @@ mod tests {
             fn_specs: HashMap::from([("fib".to_string(), vec!["fibSpec".to_string()])]),
             fn_direct_calls: HashMap::new(),
             type_defs: vec![],
-            verify_blocks: vec![aver::ast::VerifyBlock {
-                fn_name: "fib".to_string(),
-                line: 2,
-                cases: vec![(
+            verify_blocks: vec![aver::ast::VerifyBlock::new_unspanned(
+                "fib".to_string(),
+                2,
+                vec![(
                     aver::ast::Expr::FnCall(
                         Box::new(aver::ast::Expr::Ident("fib".to_string())),
                         vec![aver::ast::Expr::Literal(aver::ast::Literal::Int(5))],
                     ),
                     aver::ast::Expr::Literal(aver::ast::Literal::Int(8)),
                 )],
-                kind: aver::ast::VerifyKind::Cases,
-            }],
+                aver::ast::VerifyKind::Cases,
+            )],
             verify_counts: HashMap::from([("fib".to_string(), 1)]),
             verify_samples: HashMap::from([("fib".to_string(), vec!["fib(5) → 8".to_string()])]),
             decisions: vec![],
