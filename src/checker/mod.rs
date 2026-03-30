@@ -3,15 +3,52 @@ mod intent;
 mod law;
 mod verify;
 
-use crate::ast::{Expr, Literal, Pattern, TopLevel, TypeDef, VerifyBlock, VerifyKind};
+use crate::ast::{
+    Expr, Literal, Pattern, SourceSpan, TopLevel, TypeDef, VerifyBlock, VerifyKind,
+};
+
+// -- Structured verify results ------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub enum VerifyCaseOutcome {
+    Pass,
+    Skipped,
+    Mismatch {
+        expected: String,
+        actual: String,
+    },
+    RuntimeError {
+        error: String,
+    },
+    UnexpectedErr {
+        err_repr: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct VerifyCaseResult {
+    pub outcome: VerifyCaseOutcome,
+    pub span: Option<SourceSpan>,
+    pub case_expr: String,
+    pub case_index: usize,
+    pub case_total: usize,
+    pub law_context: Option<VerifyLawContext>,
+}
+
+#[derive(Debug, Clone)]
+pub struct VerifyLawContext {
+    pub givens: Vec<(String, String)>, // (name, value_repr)
+    pub law_expr: String,
+}
 
 pub struct VerifyResult {
-    #[allow(dead_code)]
     pub fn_name: String,
+    pub block_label: String, // "add" or "sort spec isSorted"
     pub passed: usize,
     pub failed: usize,
     pub skipped: usize,
-    #[allow(dead_code)]
+    pub case_results: Vec<VerifyCaseResult>,
+    // Legacy field — kept temporarily for existing consumers
     pub failures: Vec<(String, String, String)>, // (expr_src, expected, actual)
 }
 

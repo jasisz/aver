@@ -1,10 +1,10 @@
-use colored::Colorize;
-
 use crate::ast::{Expr, TopLevel, VerifyBlock, VerifyGivenDomain, VerifyKind};
 use crate::interpreter::{Interpreter, aver_repr};
 use crate::value::{RuntimeError, Value};
 
-use super::{VerifyResult, callee_is_target};
+use super::{
+    VerifyCaseOutcome, VerifyCaseResult, VerifyLawContext, VerifyResult, callee_is_target,
+};
 
 pub(super) fn collect_target_call_args<'a>(
     expr: &'a Expr,
@@ -146,54 +146,45 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
     let mut failed = 0;
     let mut skipped = 0;
     let mut failures = Vec::new();
+    let mut case_results = Vec::new();
     let is_law = matches!(block.kind, VerifyKind::Law(_));
+    let case_total = block.cases.len();
 
-    match &block.kind {
-        VerifyKind::Cases => println!("Verify: {}", block.fn_name.cyan()),
-        VerifyKind::Law(law) => {
-            if let Ok(Value::Fn(function)) = interp.lookup(&law.name)
-                && function.effects.is_empty()
-                && crate::verify_law::canonical_spec_shape(&block.fn_name, law, &law.name)
-            {
-                println!("Verify: {} spec {}", block.fn_name.cyan(), law.name.cyan());
-            } else {
-                println!("Verify: {} law {}", block.fn_name.cyan(), law.name.cyan());
-            }
-            for given in &law.givens {
-                println!(
-                    "  {} {}: {} = {}",
-                    "given".dimmed(),
-                    given.name,
-                    given.type_name,
-                    verify_given_domain_to_str(&given.domain)
-                );
-            }
-            if let Some(when_expr) = &law.when {
-                println!("  {} {}", "when".dimmed(), expr_to_str(when_expr));
-            }
-            println!(
-                "  {} {} == {}",
-                "law".dimmed(),
-                expr_to_str(&law.lhs),
-                expr_to_str(&law.rhs)
-            );
-            println!("  {} {}", "cases".dimmed(), block.cases.len());
-        }
-    }
+    let law_context_template = if let VerifyKind::Law(law) = &block.kind {
+        Some(format!("{} == {}", expr_to_str(&law.lhs), expr_to_str(&law.rhs)))
+    } else {
+        None
+    };
 
     for (idx, (left_expr, right_expr)) in block.cases.iter().enumerate() {
         let case_str = format!("{} == {}", expr_to_str(left_expr), expr_to_str(right_expr));
-        let case_label = if is_law {
-            format!("case {}/{}", idx + 1, block.cases.len())
-        } else {
-            case_str.clone()
-        };
+        let span = block.case_spans.get(idx).cloned();
         let failure_case = if is_law {
-            format!("{} [{}]", case_label, case_str)
+            format!("case {}/{} [{}]", idx + 1, case_total, case_str)
         } else {
             case_str.clone()
         };
 
+        let law_context = if let VerifyKind::Law(law) = &block.kind {
+            let givens: Vec<(String, String)> = law
+                .givens
+                .iter()
+                .map(|g| {
+                    let val_str = expr_to_str(
+                        &block.cases[idx].0, // best effort: use left expr
+                    );
+                    (g.name.clone(), val_str)
+                })
+                .collect();
+            Some(VerifyLawContext {
+                givens,
+                law_expr: law_context_template.clone().unwrap_or_default(),
+            })
+        } else {
+            None
+        };
+
+        // Check law sample guard
         if let VerifyKind::Law(law) = &block.kind
             && let Some(sample_guard) = law.sample_guards.get(idx)
         {
@@ -201,39 +192,56 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
                 Ok(Value::Bool(true)) => {}
                 Ok(Value::Bool(false)) => {
                     skipped += 1;
-                    println!("  {} {} (when false)", "·".dimmed(), case_label.dimmed());
+                    case_results.push(VerifyCaseResult {
+                        outcome: VerifyCaseOutcome::Skipped,
+                        span,
+                        case_expr: case_str,
+                        case_index: idx,
+                        case_total,
+                        law_context,
+                    });
                     continue;
                 }
                 Ok(other) => {
                     failed += 1;
-                    println!("  {} {}", "✗".red(), case_label);
-                    println!("      when did not evaluate to Bool: {}", aver_repr(&other));
-                    failures.push((
-                        failure_case,
-                        "Bool".to_string(),
-                        format!("when produced {}", aver_repr(&other)),
-                    ));
+                    let error = format!("when produced {}, expected Bool", aver_repr(&other));
+                    failures.push((failure_case, "Bool".to_string(), error.clone()));
+                    case_results.push(VerifyCaseResult {
+                        outcome: VerifyCaseOutcome::RuntimeError { error },
+                        span,
+                        case_expr: case_str,
+                        case_index: idx,
+                        case_total,
+                        law_context,
+                    });
                     continue;
                 }
                 Err(RuntimeError::ErrProp(err_val)) => {
                     failed += 1;
-                    println!("  {} {}", "✗".red(), case_label);
-                    println!(
-                        "      when ? hit Result.Err({})",
-                        err_val.repr(&interp.arena)
-                    );
-                    failures.push((
-                        failure_case,
-                        String::new(),
-                        format!("when ? hit Result.Err({})", err_val.repr(&interp.arena)),
-                    ));
+                    let err_repr = format!("Result.Err({})", err_val.repr(&interp.arena));
+                    failures.push((failure_case, String::new(), err_repr.clone()));
+                    case_results.push(VerifyCaseResult {
+                        outcome: VerifyCaseOutcome::UnexpectedErr { err_repr },
+                        span,
+                        case_expr: case_str,
+                        case_index: idx,
+                        case_total,
+                        law_context,
+                    });
                     continue;
                 }
                 Err(e) => {
                     failed += 1;
-                    println!("  {} {}", "✗".red(), case_label);
-                    println!("      when error: {}", e);
-                    failures.push((failure_case, String::new(), format!("WHEN ERROR: {}", e)));
+                    let error = format!("when error: {}", e);
+                    failures.push((failure_case, String::new(), error.clone()));
+                    case_results.push(VerifyCaseResult {
+                        outcome: VerifyCaseOutcome::RuntimeError { error },
+                        span,
+                        case_expr: case_str,
+                        case_index: idx,
+                        case_total,
+                        law_context,
+                    });
                     continue;
                 }
             }
@@ -246,86 +254,69 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
             (Ok(left_val), Ok(right_val)) => {
                 if interp.aver_eq(&left_val, &right_val) {
                     passed += 1;
-                    if !is_law {
-                        println!("  {} {}", "✓".green(), case_label);
-                    }
+                    case_results.push(VerifyCaseResult {
+                        outcome: VerifyCaseOutcome::Pass,
+                        span,
+                        case_expr: case_str,
+                        case_index: idx,
+                        case_total,
+                        law_context,
+                    });
                 } else {
                     failed += 1;
-                    println!("  {} {}", "✗".red(), case_label);
-                    if is_law {
-                        println!("      expanded: {}", case_str);
-                    }
                     let expected = aver_repr(&right_val);
                     let actual = aver_repr(&left_val);
-                    println!("      expected: {}", expected);
-                    println!("      got:      {}", actual);
-                    failures.push((failure_case, expected, actual));
+                    failures.push((failure_case, expected.clone(), actual.clone()));
+                    case_results.push(VerifyCaseResult {
+                        outcome: VerifyCaseOutcome::Mismatch { expected, actual },
+                        span,
+                        case_expr: case_str,
+                        case_index: idx,
+                        case_total,
+                        law_context,
+                    });
                 }
             }
-            // `?` in a verify case hitting Err produces ErrProp — treat as test failure.
             (Err(RuntimeError::ErrProp(err_val)), _) | (_, Err(RuntimeError::ErrProp(err_val))) => {
                 failed += 1;
-                println!("  {} {}", "✗".red(), case_label);
-                if is_law {
-                    println!("      expanded: {}", case_str);
-                }
-                println!("      ? hit Result.Err({})", err_val.repr(&interp.arena));
-                failures.push((
-                    failure_case,
-                    String::new(),
-                    format!("? hit Result.Err({})", err_val.repr(&interp.arena)),
-                ));
+                let err_repr = format!("Result.Err({})", err_val.repr(&interp.arena));
+                failures.push((failure_case, String::new(), err_repr.clone()));
+                case_results.push(VerifyCaseResult {
+                    outcome: VerifyCaseOutcome::UnexpectedErr { err_repr },
+                    span,
+                    case_expr: case_str,
+                    case_index: idx,
+                    case_total,
+                    law_context,
+                });
             }
             (Err(e), _) | (_, Err(e)) => {
                 failed += 1;
-                println!("  {} {}", "✗".red(), case_label);
-                if is_law {
-                    println!("      expanded: {}", case_str);
-                }
-                println!("      error: {}", e);
-                failures.push((failure_case, String::new(), format!("ERROR: {}", e)));
+                let error = e.to_string();
+                failures.push((failure_case, String::new(), error.clone()));
+                case_results.push(VerifyCaseResult {
+                    outcome: VerifyCaseOutcome::RuntimeError { error },
+                    span,
+                    case_expr: case_str,
+                    case_index: idx,
+                    case_total,
+                    law_context,
+                });
             }
         }
     }
 
-    let total = passed + failed;
-    if is_law && failed == 0 {
-        if skipped == 0 {
-            println!(
-                "  {} all {} generated case(s) passed",
-                "✓".green(),
-                block.cases.len()
-            );
-        } else {
-            println!(
-                "  {} all {} active generated case(s) passed ({} skipped by when)",
-                "✓".green(),
-                passed,
-                skipped
-            );
-        }
-    }
-    if failed == 0 && skipped == 0 {
-        println!("  {}", format!("{}/{} passed", passed, total).green());
-    } else if failed == 0 {
-        println!(
-            "  {}",
-            format!("{}/{} passed, {} skipped", passed, total + skipped, skipped).green()
-        );
-    } else if skipped == 0 {
-        println!("  {}", format!("{}/{} passed", passed, total).red());
-    } else {
-        println!(
-            "  {}",
-            format!("{}/{} passed, {} skipped", passed, total + skipped, skipped).red()
-        );
-    }
-
+    let block_label = match &block.kind {
+        VerifyKind::Law(law) => format!("{} spec {}", block.fn_name, law.name),
+        VerifyKind::Cases => block.fn_name.clone(),
+    };
     VerifyResult {
         fn_name: block.fn_name.clone(),
+        block_label,
         passed,
         failed,
         skipped,
+        case_results,
         failures,
     }
 }
