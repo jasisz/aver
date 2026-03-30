@@ -4,9 +4,8 @@ All notable changes to Aver are documented here.
 
 ## 0.7.4 (unreleased)
 
-### Added
-- **`aver replay --json`** — NDJSON output with structured per-error-type diagnostics (`replay-args-mismatch`, `replay-effect-mismatch`, `replay-output-mismatch`). `at:` points to source file, `recording:` to JSON with line number.
-- **Replay args diff hint** — without `--check-args`, replay warns about arg differences instead of silently ignoring them.
+### Changed
+- **Structured replay diagnostics** — replay failures now use per-error-type diagnostics (`replay-args-mismatch`, `replay-effect-mismatch`, `replay-output-mismatch`) with proper source file and recording JSON locations. Args diff hint shown even without `--check-args`.
 
 ## 0.7.3 (2026-03-30)
 
