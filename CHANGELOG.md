@@ -2,19 +2,11 @@
 
 All notable changes to Aver are documented here.
 
-## Unreleased
+## 0.7.4 (unreleased)
 
 ### Added
-- **`aver replay --json`** — NDJSON output: `replay-result` per recording with `args_diffs` count, `summary` at end.
-- **Structured replay diagnostics** — replay failures use per-error-type diagnostics: `fail[replay-args-mismatch]`, `fail[replay-effect-mismatch]`, `fail[replay-output-mismatch]`, `fail[replay-exhausted]`, `fail[replay-unconsumed]` with structured fields (`step`, `effect`, `expected`/`actual`, `recording`). `at:` points to source .av file with entry fn line, `recording:` to JSON with line number.
-- **Replay args diff hint** — without `--check-args`, replay still counts arg differences and shows "N effect(s) had different args (use --check-args to enforce)".
-- **Replay caller tracking** — `EffectRecord` stores `caller_fn` (populated by interpreter from call stack). Replay diagnostics show `in-fn:`.
-
-### Changed
-- **Cleaned up recordings** — removed broken recordings (mission_control, notepad), re-recorded console_demo, added mismatch test recordings.
-
-### Fixed
-- Replay `at:` now shows real entry fn line instead of `0:0`.
+- **`aver replay --json`** — NDJSON output with structured per-error-type diagnostics (`replay-args-mismatch`, `replay-effect-mismatch`, `replay-output-mismatch`). `at:` points to source file, `recording:` to JSON with line number.
+- **Replay args diff hint** — without `--check-args`, replay warns about arg differences instead of silently ignoring them.
 
 ## 0.7.3 (2026-03-30)
 
