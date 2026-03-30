@@ -1290,10 +1290,9 @@ pub(super) fn cmd_run_vm(
         match run_verify_for_items_vm(items, &module_root) {
             Ok(results) => {
                 let failed: usize = results.iter().map(|r| r.failed).sum();
-                // Render inline for cmd_run_vm
                 let file_results = vec![VerifyFileResult {
-                    path: String::new(),
-                    source: String::new(),
+                    path: file.to_string(),
+                    source: source.clone(),
                     blocks: results,
                 }];
                 render_verify_output(&file_results, &module_root, false, false);
@@ -1420,9 +1419,10 @@ pub(super) fn cmd_run(
             results.push(run_verify(vb, &mut interp));
         }
         let failed: usize = results.iter().map(|r| r.failed).sum();
+        let verify_source = read_file(file).unwrap_or_default();
         let file_results = vec![VerifyFileResult {
-            path: String::new(),
-            source: String::new(),
+            path: file.to_string(),
+            source: verify_source,
             blocks: results,
         }];
         render_verify_output(&file_results, &module_root, false, false);
