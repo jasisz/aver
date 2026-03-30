@@ -2,23 +2,32 @@
 
 All notable changes to Aver are documented here.
 
+## Unreleased
+
+### Added
+- **`aver replay --json`** — NDJSON output: `replay-result` per recording with `args_diffs` count, `summary` at end.
+- **Structured replay diagnostics** — replay failures use per-error-type diagnostics: `fail[replay-args-mismatch]`, `fail[replay-effect-mismatch]`, `fail[replay-output-mismatch]`, `fail[replay-exhausted]`, `fail[replay-unconsumed]` with structured fields (`step`, `effect`, `expected`/`actual`, `recording`). `at:` points to source .av file with entry fn line, `recording:` to JSON with line number.
+- **Replay args diff hint** — without `--check-args`, replay still counts arg differences and shows "N effect(s) had different args (use --check-args to enforce)".
+- **Replay caller tracking** — `EffectRecord` stores `caller_fn` (populated by interpreter from call stack). Replay diagnostics show `in-fn:`.
+
+### Changed
+- **Cleaned up recordings** — removed broken recordings (mission_control, notepad), re-recorded console_demo, added mismatch test recordings.
+
+### Fixed
+- Replay `at:` now shows real entry fn line instead of `0:0`.
+
 ## 0.7.3 (2026-03-30)
 
 ### Added
 - **`aver verify --json`** — structured NDJSON output: `block-result` per verify block, `diagnostic` per failure, `summary` at end.
 - **`aver verify --verbose`** — failure diagnostics with source snippets and full fields (given/law context for specs).
-- **`aver replay --json`** — NDJSON output: `replay-result` per recording with `args_diffs` count, `summary` at end.
 - **Structured verify diagnostics** — verify failures use the same diagnostic system as `aver check`: `fail[verify-mismatch]`, `fail[verify-runtime-error]`, `fail[verify-unexpected-err]` with `at:`, `block:`, `case:`, `expected:`/`actual:`, source snippets with carets. Normal mode caps to 3 diagnostics per block.
-- **Structured replay diagnostics** — replay failures use per-error-type diagnostics: `fail[replay-args-mismatch]`, `fail[replay-effect-mismatch]`, `fail[replay-output-mismatch]`, `fail[replay-exhausted]`, `fail[replay-unconsumed]` with structured fields (`step`, `effect`, `expected`/`actual`, `recording`). `at:` points to source .av file, `recording:` to JSON with line number.
-- **Replay args diff hint** — without `--check-args`, replay still counts arg differences and shows "N effect(s) had different args (use --check-args to enforce)".
-- **Replay caller tracking** — `EffectRecord` now stores `caller_fn` (populated by interpreter from call stack). Replay diagnostics show `in-fn:`.
 
 ### Changed
 - **Inline variants (TAG 14)** — single-field variants whose payload is a small int (±268M), bool, unit, or none are now NaN-boxed inline (8 bytes, zero arena allocation). Pattern matching and field extraction skip arena indirection entirely.
 - **Unified NDJSON format** — `check`, `verify`, and `replay` all emit `{"schema_version":1,"kind":"..."}` envelope with summary events.
 - **Verify output redesign** — per-file grouping, one-line block summaries with failure type breakdown, streaming output. Skipped files (type errors) show count + hint about `--module-root`.
 - **Codegen: let-destructuring** — single-arm irrefutable matches (`match x: (a, b) -> expr`) now emit `let (a, b) = x; expr` instead of a full match block.
-- **Cleaned up recordings** — removed broken recordings (mission_control, notepad), re-recorded console_demo, added mismatch test recordings.
 
 ### Fixed
 - `aver check --json` no longer emits human-readable lines mixed with JSON.
