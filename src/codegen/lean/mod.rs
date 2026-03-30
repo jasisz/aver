@@ -2272,6 +2272,7 @@ mod tests {
                 Expr::Literal(Literal::Int(1)),
                 Expr::Literal(Literal::Int(1)),
             )],
+            case_spans: vec![],
             kind: VerifyKind::Cases,
         }));
         ctx
@@ -2286,6 +2287,7 @@ mod tests {
                 Expr::Literal(Literal::Int(1)),
                 Expr::Literal(Literal::Int(1)),
             )],
+            case_spans: vec![],
             kind: VerifyKind::Cases,
         }));
         ctx.items.push(TopLevel::Verify(VerifyBlock {
@@ -2295,6 +2297,7 @@ mod tests {
                 Expr::Literal(Literal::Int(2)),
                 Expr::Literal(Literal::Int(2)),
             )],
+            case_spans: vec![],
             kind: VerifyKind::Cases,
         }));
         ctx
@@ -2358,6 +2361,7 @@ mod tests {
                     ),
                 ),
             ],
+            case_spans: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "commutative".to_string(),
                 givens: vec![
@@ -2769,6 +2773,7 @@ verify square law squareSpec
                 Expr::Literal(Literal::Int(1)),
                 Expr::Literal(Literal::Int(1)),
             )],
+            case_spans: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "reflexive".to_string(),
                 givens: vec![VerifyGiven {
@@ -2809,6 +2814,7 @@ verify square law squareSpec
                 ),
                 Expr::Literal(Literal::Int(1)),
             )],
+            case_spans: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "identityZero".to_string(),
                 givens: vec![VerifyGiven {
@@ -2873,6 +2879,7 @@ verify square law squareSpec
                     ],
                 ),
             )],
+            case_spans: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "associative".to_string(),
                 givens: vec![
@@ -2965,6 +2972,7 @@ verify square law squareSpec
                 ),
                 Expr::Literal(Literal::Int(2)),
             )],
+            case_spans: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "rightIdentity".to_string(),
                 givens: vec![VerifyGiven {
@@ -3004,6 +3012,7 @@ verify square law squareSpec
                     )),
                 ),
             )],
+            case_spans: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "antiCommutative".to_string(),
                 givens: vec![
@@ -3103,6 +3112,7 @@ verify square law squareSpec
                     ],
                 ),
             )],
+            case_spans: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "identityViaAdd".to_string(),
                 givens: vec![VerifyGiven {
@@ -3191,6 +3201,7 @@ verify square law squareSpec
                 ),
                 Expr::Literal(Literal::Bool(true)),
             )],
+            case_spans: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "setHasKey".to_string(),
                 givens: vec![
@@ -3246,6 +3257,7 @@ verify square law squareSpec
                 ),
                 some(Expr::Ident("v".to_string())),
             )],
+            case_spans: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "setGetKey".to_string(),
                 givens: vec![
@@ -3473,6 +3485,7 @@ verify mirror law involutive
                 ),
                 Expr::Literal(Literal::Bool(true)),
             )],
+            case_spans: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "keyPresent".to_string(),
                 givens: vec![
@@ -3536,6 +3549,7 @@ verify mirror law involutive
                     )],
                 )),
             )],
+            case_spans: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "existingKeyIncrements".to_string(),
                 givens: vec![VerifyGiven {
@@ -3631,6 +3645,7 @@ verify mirror law involutive
                     ],
                 ),
             )],
+            case_spans: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "commutative".to_string(),
                 givens: vec![
@@ -3691,6 +3706,7 @@ verify mirror law involutive
                 Expr::Literal(Literal::Int(1)),
                 Expr::Literal(Literal::Int(1)),
             )],
+            case_spans: vec![],
             kind: VerifyKind::Cases,
         }));
         ctx.items.push(TopLevel::Verify(VerifyBlock {
@@ -3700,6 +3716,7 @@ verify mirror law involutive
                 Expr::Literal(Literal::Int(2)),
                 Expr::Literal(Literal::Int(2)),
             )],
+            case_spans: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "identity".to_string(),
                 givens: vec![VerifyGiven {
