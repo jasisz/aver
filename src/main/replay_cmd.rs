@@ -280,22 +280,11 @@ pub(super) fn replay_recording_file(
         compile_program_for_exec(&replay_program_file, Some(&replay_module_root))?;
     interp.start_replay(recording.effects.clone(), check_args);
 
-    run_top_level_statements_runtime(&mut interp, &items).map_err(|e| {
-        format!(
-            "Replay: {}\n{}",
-            path.display(),
-            format_replay_runtime_error(&e, &recording, &interp)
-        )
-    })?;
+    run_top_level_statements_runtime(&mut interp, &items)
+        .map_err(|e| format_replay_runtime_error(&e, &recording, &interp))?;
     let entry_args = decode_entry_args(&recording.input)?;
     let run_out = run_entry_function_runtime(&mut interp, &recording.entry_fn, entry_args)
-        .map_err(|e| {
-            format!(
-                "Replay: {}\n{}",
-                path.display(),
-                format_replay_runtime_error(&e, &recording, &interp)
-            )
-        })?;
+        .map_err(|e| format_replay_runtime_error(&e, &recording, &interp))?;
     let actual_outcome = match run_out {
         Value::Err(err) => RecordedOutcome::RuntimeError(format!(
             "{} returned error: {}",
@@ -304,13 +293,9 @@ pub(super) fn replay_recording_file(
         )),
         v => RecordedOutcome::Value(value_to_json(&v)?),
     };
-    interp.ensure_replay_consumed().map_err(|e| {
-        format!(
-            "Replay: {}\n{}",
-            path.display(),
-            format_replay_runtime_error(&e, &recording, &interp)
-        )
-    })?;
+    interp
+        .ensure_replay_consumed()
+        .map_err(|e| format_replay_runtime_error(&e, &recording, &interp))?;
 
     let (consumed, total) = interp.replay_progress();
     let matched = actual_outcome == recording.output;
@@ -384,11 +369,8 @@ fn replay_recording_file_vm(
     machine.run_top_level().map_err(|e| {
         let (consumed, total) = machine.replay_progress();
         format!(
-            "Replay: {}\nReplay failed: {}\nProgress: consumed {} of {} recorded effects",
-            path.display(),
-            e,
-            consumed,
-            total
+            "Replay failed: {}\nProgress: consumed {} of {} recorded effects",
+            e, consumed, total
         )
     })?;
 
@@ -403,11 +385,8 @@ fn replay_recording_file_vm(
         .map_err(|e| {
             let (consumed, total) = machine.replay_progress();
             format!(
-                "Replay: {}\nReplay failed: {}\nProgress: consumed {} of {} recorded effects",
-                path.display(),
-                e,
-                consumed,
-                total
+                "Replay failed: {}\nProgress: consumed {} of {} recorded effects",
+                e, consumed, total
             )
         })?;
 
@@ -426,11 +405,8 @@ fn replay_recording_file_vm(
     machine.ensure_replay_consumed().map_err(|e| {
         let (consumed, total) = machine.replay_progress();
         format!(
-            "Replay: {}\nReplay failed: {}\nProgress: consumed {} of {} recorded effects",
-            path.display(),
-            e,
-            consumed,
-            total
+            "Replay failed: {}\nProgress: consumed {} of {} recorded effects",
+            e, consumed, total
         )
     })?;
 
@@ -497,7 +473,7 @@ fn replay_recording_file_self_host(
     if !output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let mut msg = format!("Replay: {}\nSelf-host replay failed", path.display());
+        let mut msg = "Self-host replay failed".to_string();
         if !stdout.is_empty() {
             msg.push_str(&format!("\nstdout:\n{}", stdout));
         }
