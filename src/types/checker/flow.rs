@@ -237,11 +237,19 @@ impl TypeChecker {
                     }
                 }
                 for (idx, (left, right)) in vb.cases.iter().enumerate() {
+                    // Use case-specific line if available, fall back to block line
+                    let case_line = vb
+                        .case_spans
+                        .get(idx)
+                        .map(|s| s.line)
+                        .filter(|l| *l > 0)
+                        .unwrap_or(vb.line);
+                    self.current_fn_line = Some(case_line);
                     if matches!(vb.kind, crate::ast::VerifyKind::Cases)
                         && !Self::verify_case_calls_target(left, &vb.fn_name)
                     {
                         self.error_at_line(
-                            vb.line,
+                            case_line,
                             format!(
                                 "Verify block '{}' case #{} must call '{}' on the left side",
                                 vb.fn_name,

@@ -131,6 +131,7 @@ fn check_finding_to_diagnostic(
 }
 
 fn type_error_to_diagnostic(te: &TypeError) -> Diagnostic {
+    let end_char = if te.col == 0 { 200 } else { te.col + 1 };
     Diagnostic {
         range: Range {
             start: Position {
@@ -139,7 +140,7 @@ fn type_error_to_diagnostic(te: &TypeError) -> Diagnostic {
             },
             end: Position {
                 line: te.line.saturating_sub(1) as u32,
-                character: (te.col + 1) as u32,
+                character: end_char as u32,
             },
         },
         severity: Some(DiagnosticSeverity::ERROR),
