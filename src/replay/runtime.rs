@@ -39,6 +39,7 @@ pub struct EffectReplayState {
     replay_effects: Vec<EffectRecord>,
     replay_pos: usize,
     validate_replay_args: bool,
+    args_diff_count: usize,
 }
 
 impl EffectReplayState {
@@ -80,6 +81,10 @@ impl EffectReplayState {
 
     pub fn replay_progress(&self) -> (usize, usize) {
         (self.replay_pos, self.replay_effects.len())
+    }
+
+    pub fn args_diff_count(&self) -> usize {
+        self.args_diff_count
     }
 
     pub fn ensure_replay_consumed(&self) -> Result<(), ReplayFailure> {
@@ -129,16 +134,18 @@ impl EffectReplayState {
             });
         }
 
-        if self.validate_replay_args
-            && let Some(got_args) = got_args
+        if let Some(got_args) = got_args
             && got_args != record.args
         {
-            return Err(ReplayFailure::ArgsMismatch {
-                seq: record.seq,
-                effect_type: effect_type.to_string(),
-                expected: json_to_string(&JsonValue::Array(record.args.clone())),
-                got: json_to_string(&JsonValue::Array(got_args)),
-            });
+            if self.validate_replay_args {
+                return Err(ReplayFailure::ArgsMismatch {
+                    seq: record.seq,
+                    effect_type: effect_type.to_string(),
+                    expected: json_to_string(&JsonValue::Array(record.args.clone())),
+                    got: json_to_string(&JsonValue::Array(got_args)),
+                });
+            }
+            self.args_diff_count += 1;
         }
 
         self.replay_pos += 1;

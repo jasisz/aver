@@ -147,6 +147,10 @@ impl Interpreter {
         self.replay_state.replay_progress()
     }
 
+    pub fn args_diff_count(&self) -> usize {
+        self.replay_state.args_diff_count()
+    }
+
     pub fn ensure_replay_consumed(&self) -> Result<(), RuntimeError> {
         self.replay_state
             .ensure_replay_consumed()

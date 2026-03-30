@@ -245,6 +245,7 @@ pub(super) fn replay_recording_file(
             effects_total: total,
             error: Some(err),
             output_diff: None,
+            args_diffs: 0,
             recording_output_line,
         }
     };
@@ -297,6 +298,7 @@ pub(super) fn replay_recording_file(
     };
 
     let entry_line = find_fn_line(&items, &recording.entry_fn);
+    let args_diffs = interp.args_diff_count();
     Ok(ReplayResult {
         recording_path: path.display().to_string(),
         program_file: replay_program_file,
@@ -307,6 +309,7 @@ pub(super) fn replay_recording_file(
         effects_total: total,
         error: None,
         output_diff,
+        args_diffs,
         recording_output_line,
     })
 }
@@ -416,6 +419,7 @@ fn replay_recording_file_vm(
 
     let entry_line = find_fn_line(&items, &recording.entry_fn);
     let recording_output_line = find_json_line(&raw, "output");
+    let args_diffs = machine.args_diff_count();
     Ok(ReplayResult {
         recording_path: path.display().to_string(),
         program_file: replay_program_file,
@@ -426,6 +430,7 @@ fn replay_recording_file_vm(
         effects_total: total,
         error: None,
         output_diff,
+        args_diffs,
         recording_output_line,
     })
 }
@@ -495,6 +500,7 @@ fn replay_recording_file_self_host(
         effects_total: n,
         error: None,
         output_diff: None,
+        args_diffs: 0,
         recording_output_line: 0,
     })
 }
@@ -536,6 +542,8 @@ pub(super) struct ReplayResult {
     error: Option<ReplayError>,
     /// For output mismatch: expected, actual, diff_path
     output_diff: Option<(String, String, Option<String>)>,
+    /// Number of effects with differing args (even without --check-args).
+    args_diffs: usize,
     /// Line of "output" key in recording JSON (for diagnostics).
     recording_output_line: usize,
 }
@@ -717,6 +725,7 @@ fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
             format!("\"status\":\"{}\"", status),
             format!("\"effects_consumed\":{}", result.effects_consumed),
             format!("\"effects_total\":{}", result.effects_total),
+            format!("\"args_diffs\":{}", result.args_diffs),
         ];
         println!("{{{}}}", parts.join(","));
 
@@ -779,6 +788,16 @@ fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
 
         if result.matched {
             println!("Output:  {}", "MATCH".green());
+            if result.args_diffs > 0 {
+                println!(
+                    "  {}",
+                    format!(
+                        "{} effect(s) had different args (use --check-args to enforce)",
+                        result.args_diffs
+                    )
+                    .yellow()
+                );
+            }
         } else {
             println!("Output:  {}", "DIFFERS".red());
             if let Some((expected, actual, diff_path)) = &result.output_diff {
@@ -851,6 +870,7 @@ pub(super) fn cmd_replay(
                     effects_total: 0,
                     error: Some(ReplayError::Generic(e)),
                     output_diff: None,
+                    args_diffs: 0,
                     recording_output_line: 0,
                 };
                 render_replay_result(&rr, diff, json);

@@ -102,6 +102,10 @@ impl VM {
         self.runtime.replay_progress()
     }
 
+    pub fn args_diff_count(&self) -> usize {
+        self.runtime.args_diff_count()
+    }
+
     pub fn ensure_replay_consumed(&self) -> Result<(), VmError> {
         self.runtime.ensure_replay_consumed()
     }
