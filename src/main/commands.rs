@@ -1742,6 +1742,13 @@ pub(super) fn cmd_check(
             for file in &failed_files {
                 println!("  {}", display_check_path(file, &module_root));
             }
+            // Hint if many files fail with module resolution errors
+            if failed_files.len() > 3 {
+                println!(
+                    "{}",
+                    "hint: if these files use modules, pass --module-root <dir>".dimmed()
+                );
+            }
         }
     }
 
