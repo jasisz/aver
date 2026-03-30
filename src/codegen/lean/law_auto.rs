@@ -11,7 +11,7 @@ mod spec;
 
 use super::VerifyEmitMode;
 use super::expr::aver_name_to_lean;
-use crate::ast::{VerifyBlock, VerifyLaw};
+use crate::ast::{Expr, Spanned, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 use crate::verify_law::{collect_missing_helper_law_hints, missing_helper_law_message};
 use sampled::emit_guarded_domain_law;
@@ -186,11 +186,10 @@ fn body_calls_any_of(
     called.iter().any(|c| names.contains(c))
 }
 
-fn collect_fn_calls(expr: &crate::ast::Expr, out: &mut std::collections::BTreeSet<String>) {
-    use crate::ast::Expr;
-    match expr {
+fn collect_fn_calls(expr: &Spanned<Expr>, out: &mut std::collections::BTreeSet<String>) {
+    match &expr.node {
         Expr::FnCall(f, args) => {
-            if let Some(name) = crate::codegen::common::expr_to_dotted_name(f)
+            if let Some(name) = crate::codegen::common::expr_to_dotted_name(&f.node)
                 && (!name.contains('.') || name.chars().next().is_some_and(|c| c.is_lowercase()))
             {
                 out.insert(name);

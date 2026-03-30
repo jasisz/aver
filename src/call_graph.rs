@@ -6,7 +6,7 @@
 /// self-edge).
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{Expr, FnBody, Stmt, StrPart, TopLevel};
+use crate::ast::{Expr, FnBody, Spanned, Stmt, StrPart, TopLevel};
 
 mod codegen;
 mod scc;
@@ -156,7 +156,7 @@ fn collect_codegen_deps_body(
 }
 
 fn collect_codegen_deps_expr(
-    expr: &Expr,
+    expr: &Spanned<Expr>,
     fn_names: &HashSet<String>,
     module_prefixes: &HashSet<String>,
     out: &mut HashSet<String>,
@@ -187,8 +187,8 @@ fn collect_codegen_deps_expr(
     });
 }
 
-fn expr_to_dotted_name(expr: &Expr) -> Option<String> {
-    match expr {
+fn expr_to_dotted_name(expr: &Spanned<Expr>) -> Option<String> {
+    match &expr.node {
         Expr::Ident(name) => Some(name.clone()),
         Expr::Attr(obj, field) => {
             let head = expr_to_dotted_name(obj)?;
@@ -198,9 +198,9 @@ fn expr_to_dotted_name(expr: &Expr) -> Option<String> {
     }
 }
 
-fn walk_expr(expr: &Expr, visit: &mut impl FnMut(&Expr)) {
-    visit(expr);
-    match expr {
+fn walk_expr(expr: &Spanned<Expr>, visit: &mut impl FnMut(&Expr)) {
+    visit(&expr.node);
+    match &expr.node {
         Expr::FnCall(func, args) => {
             walk_expr(func, visit);
             for arg in args {
@@ -347,17 +347,17 @@ fn count_recursive_calls_stmt(stmt: &Stmt, recursive: &HashSet<String>, out: &mu
     }
 }
 
-fn count_recursive_calls_expr(expr: &Expr, recursive: &HashSet<String>, out: &mut usize) {
-    match expr {
+fn count_recursive_calls_expr(expr: &Spanned<Expr>, recursive: &HashSet<String>, out: &mut usize) {
+    match &expr.node {
         Expr::FnCall(func, args) => {
-            match func.as_ref() {
+            match &func.node {
                 Expr::Ident(name) => {
                     if recursive.contains(name) {
                         *out += 1;
                     }
                 }
                 Expr::Attr(obj, member) => {
-                    if let Expr::Ident(ns) = obj.as_ref() {
+                    if let Expr::Ident(ns) = &obj.node {
                         let q = format!("{}.{}", ns, member);
                         if recursive.contains(&q) {
                             *out += 1;
@@ -366,7 +366,7 @@ fn count_recursive_calls_expr(expr: &Expr, recursive: &HashSet<String>, out: &mu
                         count_recursive_calls_expr(obj, recursive, out);
                     }
                 }
-                other => count_recursive_calls_expr(other, recursive, out),
+                _ => count_recursive_calls_expr(func, recursive, out),
             }
             for arg in args {
                 count_recursive_calls_expr(arg, recursive, out);
@@ -442,7 +442,7 @@ fn collect_callees_stmt(stmt: &Stmt, callees: &mut HashSet<String>) {
     }
 }
 
-fn collect_callees_expr(expr: &Expr, callees: &mut HashSet<String>) {
+fn collect_callees_expr(expr: &Spanned<Expr>, callees: &mut HashSet<String>) {
     walk_expr(expr, &mut |node| match node {
         Expr::FnCall(func, _) => {
             if let Some(callee) = expr_to_dotted_name(func.as_ref()) {

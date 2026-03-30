@@ -1,4 +1,4 @@
-use crate::ast::{Expr, TopLevel, VerifyBlock, VerifyGivenDomain, VerifyKind};
+use crate::ast::{Expr, Spanned, TopLevel, VerifyBlock, VerifyGivenDomain, VerifyKind};
 use crate::interpreter::{Interpreter, aver_repr};
 use crate::value::{RuntimeError, Value};
 
@@ -7,12 +7,12 @@ use super::{
 };
 
 pub(super) fn collect_target_call_args<'a>(
-    expr: &'a Expr,
+    expr: &'a Spanned<Expr>,
     fn_name: &str,
     arg_index: usize,
-    out: &mut Vec<&'a Expr>,
+    out: &mut Vec<&'a Spanned<Expr>>,
 ) {
-    match expr {
+    match &expr.node {
         Expr::FnCall(callee, args) => {
             if callee_is_target(callee, fn_name)
                 && let Some(arg) = args.get(arg_index)
@@ -79,8 +79,8 @@ pub(super) fn collect_target_call_args<'a>(
     }
 }
 
-pub(super) fn verify_case_calls_target(left: &Expr, fn_name: &str) -> bool {
-    match left {
+pub(super) fn verify_case_calls_target(left: &Spanned<Expr>, fn_name: &str) -> bool {
+    match &left.node {
         Expr::FnCall(callee, args) => {
             callee_is_target(callee, fn_name)
                 || verify_case_calls_target(callee, fn_name)
@@ -355,11 +355,11 @@ pub fn merge_verify_blocks(items: &[TopLevel]) -> Vec<VerifyBlock> {
     merged
 }
 
-pub fn expr_to_str(expr: &crate::ast::Expr) -> String {
+pub fn expr_to_str(expr: &Spanned<Expr>) -> String {
     use crate::ast::Expr;
     use crate::ast::Literal;
 
-    match expr {
+    match &expr.node {
         Expr::Literal(lit) => match lit {
             Literal::Int(i) => i.to_string(),
             Literal::Float(f) => f.to_string(),

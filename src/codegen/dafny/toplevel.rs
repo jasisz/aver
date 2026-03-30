@@ -202,10 +202,10 @@ fn body_has_recursive_call(body: &FnBody, fn_name: &str) -> bool {
     }
 }
 
-fn expr_has_call(expr: &Expr, fn_name: &str) -> bool {
-    match expr {
+fn expr_has_call(expr: &Spanned<Expr>, fn_name: &str) -> bool {
+    match &expr.node {
         Expr::FnCall(fn_expr, args) => {
-            if let Expr::Ident(name) = fn_expr.as_ref()
+            if let Expr::Ident(name) = &fn_expr.node
                 && name == fn_name
             {
                 return true;
@@ -301,10 +301,10 @@ fn infer_decreases(fd: &FnDef) -> Option<DecreasesInfo> {
 }
 
 /// Collect all function names called in an expression (top-level only).
-fn collect_called_fns(expr: &Expr, out: &mut std::collections::BTreeSet<String>) {
-    match expr {
+fn collect_called_fns(expr: &Spanned<Expr>, out: &mut std::collections::BTreeSet<String>) {
+    match &expr.node {
         Expr::FnCall(f, args) => {
-            if let Some(name) = crate::codegen::common::expr_to_dotted_name(f) {
+            if let Some(name) = crate::codegen::common::expr_to_dotted_name(&f.node) {
                 // Skip builtins — only user functions need fuel
                 if !name.contains('.') {
                     out.insert(name);
@@ -342,9 +342,9 @@ fn collect_called_fns(expr: &Expr, out: &mut std::collections::BTreeSet<String>)
 }
 
 /// Get the top-level function name from a law expression like `fib(n)`.
-fn law_top_level_fn(expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::FnCall(fn_expr, _) => crate::codegen::common::expr_to_dotted_name(fn_expr),
+fn law_top_level_fn(expr: &Spanned<Expr>) -> Option<String> {
+    match &expr.node {
+        Expr::FnCall(fn_expr, _) => crate::codegen::common::expr_to_dotted_name(&fn_expr.node),
         _ => None,
     }
 }
@@ -356,10 +356,10 @@ fn is_directly_recursive(fn_name: &str, ctx: &CodegenContext) -> bool {
         .any(|fd| fd.name == fn_name && body_has_recursive_call(&fd.body, &fd.name))
 }
 
-fn count_recursive_calls(expr: &Expr, fn_name: &str) -> usize {
-    match expr {
+fn count_recursive_calls(expr: &Spanned<Expr>, fn_name: &str) -> usize {
+    match &expr.node {
         Expr::FnCall(fn_expr, args) => {
-            let self_call = if let Expr::Ident(name) = fn_expr.as_ref() {
+            let self_call = if let Expr::Ident(name) = &fn_expr.node {
                 if name == fn_name { 1 } else { 0 }
             } else {
                 0

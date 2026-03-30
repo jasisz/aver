@@ -7,8 +7,8 @@ use crate::codegen::CodegenContext;
 use crate::codegen::common::{expr_to_dotted_name, is_user_type, resolve_module_call};
 
 /// Emit a Lean 4 expression from an Aver Expr.
-pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
-    match expr {
+pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
+    match &expr.node {
         Expr::Literal(lit) => emit_literal(lit),
         Expr::Ident(name) => aver_name_to_lean(name),
         Expr::Resolved(slot) => {
@@ -18,7 +18,7 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
             )
         }
         Expr::Attr(obj, field) => {
-            if let Expr::Ident(type_name) = obj.as_ref() {
+            if let Expr::Ident(type_name) = &obj.node {
                 // Option.None → none
                 if type_name == "Option" && field == "None" {
                     return "none".to_string();
@@ -29,7 +29,7 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
                 }
             }
             // Check module-qualified reference
-            if let Some(full_dotted) = expr_to_dotted_name(expr)
+            if let Some(full_dotted) = expr_to_dotted_name(&expr.node)
                 && let Some((_, bare)) = resolve_module_call(&full_dotted, ctx)
             {
                 if let Some(dot_pos) = bare.find('.') {
@@ -42,7 +42,7 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
                 return aver_name_to_lean(bare);
             }
             let obj_str = emit_expr(obj, ctx);
-            let needs_parens = !matches!(obj.as_ref(), Expr::Ident(_) | Expr::Attr(_, _));
+            let needs_parens = !matches!(&obj.node, Expr::Ident(_) | Expr::Attr(_, _));
             if needs_parens {
                 format!("({}).{}", obj_str, aver_name_to_lean(field))
             } else {
@@ -52,7 +52,7 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
         Expr::FnCall(fn_expr, args) => emit_fn_call(fn_expr, args, ctx),
         Expr::BinOp(op, left, right) => {
             // Unary minus
-            if matches!(op, BinOp::Sub) && matches!(left.as_ref(), Expr::Literal(Literal::Int(0))) {
+            if matches!(op, BinOp::Sub) && matches!(&left.node, Expr::Literal(Literal::Int(0))) {
                 let r = emit_expr(right, ctx);
                 return format!("(-{})", r);
             }
@@ -72,12 +72,7 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
             };
             format!("({} {} {})", l, op_str, r)
         }
-        Expr::Match {
-            subject,
-            arms,
-            line,
-            ..
-        } => emit_match(subject, arms, *line, ctx),
+        Expr::Match { subject, arms } => emit_match(subject, arms, expr.line, ctx),
         Expr::Constructor(name, arg) => emit_constructor(name, arg, ctx),
         Expr::ErrorProp(inner) => {
             // ? operator — unwrap Except using withDefault
@@ -102,7 +97,7 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
                 "[]".to_string()
             } else if entries
                 .iter()
-                .all(|(_, v)| crate::codegen::common::is_unit_expr(v))
+                .all(|(_, v)| crate::codegen::common::is_unit_expr(&v.node))
             {
                 // Map<T, Unit> literal → set literal
                 let parts: Vec<String> = entries.iter().map(|(k, _)| emit_expr(k, ctx)).collect();
@@ -152,9 +147,9 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
 }
 
 /// Emit an expression wrapped in parens if it's a compound expression.
-fn emit_expr_atom(expr: &Expr, ctx: &CodegenContext) -> String {
+fn emit_expr_atom(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
     let s = emit_expr(expr, ctx);
-    match expr {
+    match &expr.node {
         Expr::Literal(Literal::Int(i)) if *i < 0 => format!("({})", s),
         Expr::Literal(Literal::Float(f)) if *f < 0.0 => format!("({})", s),
         Expr::Literal(_) | Expr::Ident(_) | Expr::List(_) | Expr::Tuple(_) => s,
@@ -194,8 +189,8 @@ fn escape_lean_string(s: &str) -> String {
     crate::codegen::common::escape_string_literal(s)
 }
 
-fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext) -> String {
-    let fn_name = expr_to_dotted_name(fn_expr);
+fn emit_fn_call(fn_expr: &Spanned<Expr>, args: &[Spanned<Expr>], ctx: &CodegenContext) -> String {
+    let fn_name = expr_to_dotted_name(&fn_expr.node);
 
     if let Some(name) = &fn_name {
         // Check builtin
@@ -255,7 +250,7 @@ fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext) -> String {
     }
 }
 
-fn emit_constructor(name: &str, arg: &Option<Box<Expr>>, ctx: &CodegenContext) -> String {
+fn emit_constructor(name: &str, arg: &Option<Box<Spanned<Expr>>>, ctx: &CodegenContext) -> String {
     match name {
         "Ok" => {
             let inner = arg
@@ -312,7 +307,12 @@ fn emit_interpolated_str(parts: &[StrPart], ctx: &CodegenContext) -> String {
     result
 }
 
-fn emit_match(subject: &Expr, arms: &[MatchArm], line: usize, ctx: &CodegenContext) -> String {
+fn emit_match(
+    subject: &Spanned<Expr>,
+    arms: &[MatchArm],
+    line: usize,
+    ctx: &CodegenContext,
+) -> String {
     // Bool match → if/then/else (avoids Lean dependent elimination issues)
     if let Some((true_body, false_body)) = extract_bool_arms(arms) {
         let cond = emit_expr(subject, ctx);
@@ -345,7 +345,7 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], line: usize, ctx: &CodegenConte
 }
 
 /// If all arms are `true -> expr` and `false -> expr`, return (true_body, false_body).
-fn extract_bool_arms(arms: &[MatchArm]) -> Option<(&Expr, &Expr)> {
+fn extract_bool_arms(arms: &[MatchArm]) -> Option<(&Spanned<Expr>, &Spanned<Expr>)> {
     if arms.len() != 2 {
         return None;
     }

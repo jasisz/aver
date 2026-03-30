@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use super::{Type, parse_type_str_strict};
-use crate::ast::{BinOp, Expr, FnDef, Literal, Module, Pattern, Stmt, TopLevel, TypeDef};
+use crate::ast::{BinOp, Expr, FnDef, Literal, Module, Pattern, Spanned, Stmt, TopLevel, TypeDef};
 use crate::source::{
     canonicalize_path, find_module_file, parse_source, require_module_declaration,
 };

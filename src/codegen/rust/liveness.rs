@@ -156,23 +156,23 @@ fn collect_vars_inner(expr: &Expr, vars: &mut HashSet<String>) {
         }
         Expr::Resolved(_) => {}
         Expr::Literal(_) => {}
-        Expr::Attr(obj, _) => collect_vars_inner(obj, vars),
+        Expr::Attr(obj, _) => collect_vars_inner(&obj.node, vars),
         Expr::FnCall(fn_expr, args) => {
-            collect_vars_inner(fn_expr, vars);
+            collect_vars_inner(&fn_expr.node, vars);
             for a in args {
-                collect_vars_inner(a, vars);
+                collect_vars_inner(&a.node, vars);
             }
         }
         Expr::BinOp(_, left, right) => {
-            collect_vars_inner(left, vars);
-            collect_vars_inner(right, vars);
+            collect_vars_inner(&left.node, vars);
+            collect_vars_inner(&right.node, vars);
         }
         Expr::Match { subject, arms, .. } => {
-            collect_vars_inner(subject, vars);
+            collect_vars_inner(&subject.node, vars);
             for arm in arms {
                 // Collect vars from arm body, minus pattern-bound names
                 let mut arm_vars = HashSet::new();
-                collect_vars_inner(&arm.body, &mut arm_vars);
+                collect_vars_inner(&arm.body.node, &mut arm_vars);
                 let bindings = pattern_bindings(&arm.pattern);
                 for v in arm_vars {
                     if !bindings.contains(&v) {
@@ -181,47 +181,47 @@ fn collect_vars_inner(expr: &Expr, vars: &mut HashSet<String>) {
                 }
             }
         }
-        Expr::Constructor(_, Some(inner)) => collect_vars_inner(inner, vars),
+        Expr::Constructor(_, Some(inner)) => collect_vars_inner(&inner.node, vars),
         Expr::Constructor(_, None) => {}
-        Expr::ErrorProp(inner) => collect_vars_inner(inner, vars),
+        Expr::ErrorProp(inner) => collect_vars_inner(&inner.node, vars),
         Expr::InterpolatedStr(parts) => {
             for part in parts {
                 if let StrPart::Parsed(expr) = part {
-                    collect_vars_inner(expr, vars);
+                    collect_vars_inner(&expr.node, vars);
                 }
             }
         }
         Expr::List(elements) => {
             for e in elements {
-                collect_vars_inner(e, vars);
+                collect_vars_inner(&e.node, vars);
             }
         }
         Expr::Tuple(items) => {
             for e in items {
-                collect_vars_inner(e, vars);
+                collect_vars_inner(&e.node, vars);
             }
         }
         Expr::MapLiteral(entries) => {
             for (k, v) in entries {
-                collect_vars_inner(k, vars);
-                collect_vars_inner(v, vars);
+                collect_vars_inner(&k.node, vars);
+                collect_vars_inner(&v.node, vars);
             }
         }
         Expr::RecordCreate { fields, .. } => {
             for (_, expr) in fields {
-                collect_vars_inner(expr, vars);
+                collect_vars_inner(&expr.node, vars);
             }
         }
         Expr::RecordUpdate { base, updates, .. } => {
-            collect_vars_inner(base, vars);
+            collect_vars_inner(&base.node, vars);
             for (_, expr) in updates {
-                collect_vars_inner(expr, vars);
+                collect_vars_inner(&expr.node, vars);
             }
         }
         Expr::TailCall(boxed) => {
             let (_, args) = boxed.as_ref();
             for a in args {
-                collect_vars_inner(a, vars);
+                collect_vars_inner(&a.node, vars);
             }
         }
     }
@@ -230,8 +230,8 @@ fn collect_vars_inner(expr: &Expr, vars: &mut HashSet<String>) {
 /// Collect variables in a statement.
 pub fn collect_vars_stmt(stmt: &Stmt) -> HashSet<String> {
     match stmt {
-        Stmt::Binding(_, _, expr) => collect_vars(expr),
-        Stmt::Expr(expr) => collect_vars(expr),
+        Stmt::Binding(_, _, expr) => collect_vars(&expr.node),
+        Stmt::Expr(expr) => collect_vars(&expr.node),
     }
 }
 
@@ -338,13 +338,14 @@ pub fn compute_block_used_after_full(
 /// Like `compute_args_used_after` but propagates `rc_wrapped` and `borrowed_params` to child contexts.
 #[cfg(test)]
 pub fn compute_args_used_after_with_rc(
-    args: &[Expr],
+    args: &[Spanned<Expr>],
     parent_used_after: &HashSet<String>,
     local_types: &HashMap<String, Type>,
     rc_wrapped: &HashSet<String>,
 ) -> Vec<EmitCtx> {
-    compute_args_used_after_full(
-        args,
+    let bare_args: Vec<&Expr> = args.iter().map(|a| &a.node).collect();
+    compute_args_used_after_full_refs(
+        &bare_args,
         parent_used_after,
         local_types,
         rc_wrapped,
@@ -378,6 +379,33 @@ pub fn compute_args_used_after_full(
     result
 }
 
+/// Like `compute_args_used_after_full` but accepts `&[&Expr]` references.
+#[allow(dead_code)]
+pub fn compute_args_used_after_full_refs(
+    args: &[&Expr],
+    parent_used_after: &HashSet<String>,
+    local_types: &HashMap<String, Type>,
+    rc_wrapped: &HashSet<String>,
+    borrowed_params: &HashSet<String>,
+) -> Vec<EmitCtx> {
+    let n = args.len();
+    let mut result = vec![EmitCtx::empty(); n];
+
+    let mut suffix_vars = parent_used_after.clone();
+    for i in (0..n).rev() {
+        result[i] = EmitCtx {
+            used_after: suffix_vars.clone(),
+            local_types: local_types.clone(),
+            rc_wrapped: rc_wrapped.clone(),
+            borrowed_params: borrowed_params.clone(),
+        };
+        let arg_vars = collect_vars(args[i]);
+        suffix_vars.extend(arg_vars);
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,8 +432,8 @@ mod tests {
     fn test_collect_vars_binop() {
         let expr = Expr::BinOp(
             BinOp::Add,
-            Box::new(Expr::Ident("x".to_string())),
-            Box::new(Expr::Ident("y".to_string())),
+            Box::new(Spanned::bare(Expr::Ident("x".to_string()))),
+            Box::new(Spanned::bare(Expr::Ident("y".to_string()))),
         );
         let vars = collect_vars(&expr);
         assert_eq!(vars, HashSet::from(["x".to_string(), "y".to_string()]));
@@ -414,8 +442,11 @@ mod tests {
     #[test]
     fn test_collect_vars_fn_call() {
         let expr = Expr::FnCall(
-            Box::new(Expr::Ident("f".to_string())),
-            vec![Expr::Ident("a".to_string()), Expr::Ident("b".to_string())],
+            Box::new(Spanned::bare(Expr::Ident("f".to_string()))),
+            vec![
+                Spanned::bare(Expr::Ident("a".to_string())),
+                Spanned::bare(Expr::Ident("b".to_string())),
+            ],
         );
         let vars = collect_vars(&expr);
         assert_eq!(
@@ -427,16 +458,15 @@ mod tests {
     #[test]
     fn test_collect_vars_match_excludes_pattern_bindings() {
         let expr = Expr::Match {
-            subject: Box::new(Expr::Ident("val".to_string())),
+            subject: Box::new(Spanned::bare(Expr::Ident("val".to_string()))),
             arms: vec![MatchArm {
                 pattern: Pattern::Ident("x".to_string()),
-                body: Box::new(Expr::BinOp(
+                body: Box::new(Spanned::bare(Expr::BinOp(
                     BinOp::Add,
-                    Box::new(Expr::Ident("x".to_string())),
-                    Box::new(Expr::Ident("y".to_string())),
-                )),
+                    Box::new(Spanned::bare(Expr::Ident("x".to_string()))),
+                    Box::new(Spanned::bare(Expr::Ident("y".to_string()))),
+                ))),
             }],
-            line: 0,
         };
         let vars = collect_vars(&expr);
         // "val" from subject, "y" from arm body; "x" is pattern-bound so excluded
@@ -479,12 +509,16 @@ mod tests {
     #[test]
     fn test_compute_block_used_after() {
         let stmts = vec![
-            Stmt::Binding("a".to_string(), None, Expr::Literal(Literal::Int(1))),
-            Stmt::Expr(Expr::BinOp(
+            Stmt::Binding(
+                "a".to_string(),
+                None,
+                Spanned::bare(Expr::Literal(Literal::Int(1))),
+            ),
+            Stmt::Expr(Spanned::bare(Expr::BinOp(
                 BinOp::Add,
-                Box::new(Expr::Ident("a".to_string())),
-                Box::new(Expr::Ident("b".to_string())),
-            )),
+                Box::new(Spanned::bare(Expr::Ident("a".to_string()))),
+                Box::new(Spanned::bare(Expr::Ident("b".to_string()))),
+            ))),
         ];
         let parent = HashSet::new();
         let lt = HashMap::new();
@@ -499,9 +533,9 @@ mod tests {
     #[test]
     fn test_compute_args_used_after() {
         let args = vec![
-            Expr::Ident("x".to_string()),
-            Expr::Ident("y".to_string()),
-            Expr::Ident("x".to_string()),
+            Spanned::bare(Expr::Ident("x".to_string())),
+            Spanned::bare(Expr::Ident("y".to_string())),
+            Spanned::bare(Expr::Ident("x".to_string())),
         ];
         let parent = HashSet::new();
         let lt = HashMap::new();

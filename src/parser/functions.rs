@@ -133,8 +133,9 @@ impl Parser {
                     kw
                 )));
             } else if self.check_exact(&TokenKind::Match) {
+                let line = self.current().line;
                 let expr = self.parse_match()?;
-                stmts.push(Stmt::Expr(expr));
+                stmts.push(Stmt::Expr(Spanned::new(expr, line)));
             } else if matches!(&self.current().kind, TokenKind::Ident(_))
                 && matches!(&self.peek(1).kind, TokenKind::Assign | TokenKind::Colon)
             {

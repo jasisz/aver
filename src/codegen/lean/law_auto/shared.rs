@@ -1,10 +1,10 @@
 use std::collections::BTreeSet;
 
 use super::super::expr::aver_name_to_lean;
-use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, Stmt, VerifyBlock, VerifyLaw};
+use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, Spanned, Stmt, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 
-pub(super) fn body_terminal_expr(body: &FnBody) -> Option<&Expr> {
+pub(super) fn body_terminal_expr(body: &FnBody) -> Option<&Spanned<Expr>> {
     match body.stmts() {
         [Stmt::Expr(expr)] => Some(expr),
         _ => None,
@@ -12,14 +12,18 @@ pub(super) fn body_terminal_expr(body: &FnBody) -> Option<&Expr> {
 }
 
 pub(super) fn substitute_expr(
-    expr: &Expr,
-    bindings: &std::collections::HashMap<&str, &Expr>,
-) -> Expr {
-    match expr {
+    expr: &Spanned<Expr>,
+    bindings: &std::collections::HashMap<&str, &Spanned<Expr>>,
+) -> Spanned<Expr> {
+    let line = expr.line;
+    let new_node = match &expr.node {
         Expr::Literal(lit) => Expr::Literal(lit.clone()),
-        Expr::Ident(name) => bindings
-            .get(name.as_str())
-            .map_or_else(|| Expr::Ident(name.clone()), |bound| (*bound).clone()),
+        Expr::Ident(name) => {
+            return bindings.get(name.as_str()).map_or_else(
+                || Spanned::new(Expr::Ident(name.clone()), line),
+                |bound| (*bound).clone(),
+            );
+        }
         Expr::Attr(base, field) => {
             Expr::Attr(Box::new(substitute_expr(base, bindings)), field.clone())
         }
@@ -34,11 +38,7 @@ pub(super) fn substitute_expr(
             Box::new(substitute_expr(left, bindings)),
             Box::new(substitute_expr(right, bindings)),
         ),
-        Expr::Match {
-            subject,
-            arms,
-            line,
-        } => Expr::Match {
+        Expr::Match { subject, arms } => Expr::Match {
             subject: Box::new(substitute_expr(subject, bindings)),
             arms: arms
                 .iter()
@@ -47,7 +47,6 @@ pub(super) fn substitute_expr(
                     body: Box::new(substitute_expr(&arm.body, bindings)),
                 })
                 .collect(),
-            line: *line,
         },
         Expr::Constructor(name, inner) => Expr::Constructor(
             name.clone(),
@@ -117,7 +116,8 @@ pub(super) fn substitute_expr(
                 .collect(),
         ))),
         Expr::Resolved(slot) => Expr::Resolved(*slot),
-    }
+    };
+    Spanned::new(new_node, line)
 }
 
 pub(super) fn law_simp_defs(
@@ -173,12 +173,12 @@ fn expand_pure_fn_simp_names(ctx: &CodegenContext, skip_fn: &str, out: &mut BTre
 }
 
 fn collect_user_fn_simp_names(
-    expr: &Expr,
+    expr: &Spanned<Expr>,
     ctx: &CodegenContext,
     skip_fn: &str,
     out: &mut BTreeSet<String>,
 ) {
-    match expr {
+    match &expr.node {
         Expr::FnCall(callee, args) => {
             if let Some(name) = expr_dotted_name(callee)
                 && let Some(fd) = find_fn_def_by_call_name(ctx, &name)
@@ -273,27 +273,30 @@ pub(super) fn find_fn_def_by_call_name<'a>(
     })
 }
 
-pub(super) fn expr_dotted_name(expr: &Expr) -> Option<String> {
-    match expr {
+pub(super) fn expr_dotted_name(expr: &Spanned<Expr>) -> Option<String> {
+    match &expr.node {
         Expr::Ident(name) => Some(name.clone()),
         Expr::Attr(base, field) => expr_dotted_name(base).map(|p| format!("{p}.{field}")),
         _ => None,
     }
 }
 
-pub(super) fn matches_ident(expr: &Expr, name: &str) -> bool {
-    matches!(expr, Expr::Ident(n) if n == name)
+pub(super) fn matches_ident(expr: &Spanned<Expr>, name: &str) -> bool {
+    matches!(&expr.node, Expr::Ident(n) if n == name)
 }
 
-pub(super) fn callee_matches_name(expr: &Expr, target: &str) -> bool {
+pub(super) fn callee_matches_name(expr: &Spanned<Expr>, target: &str) -> bool {
     let Some(name) = expr_dotted_name(expr) else {
         return false;
     };
     name == target || name.rsplit('.').next() == Some(target)
 }
 
-pub(super) fn call2_args<'a>(expr: &'a Expr, fn_name: &str) -> Option<(&'a Expr, &'a Expr)> {
-    let Expr::FnCall(callee, args) = expr else {
+pub(super) fn call2_args<'a>(
+    expr: &'a Spanned<Expr>,
+    fn_name: &str,
+) -> Option<(&'a Spanned<Expr>, &'a Spanned<Expr>)> {
+    let Expr::FnCall(callee, args) = &expr.node else {
         return None;
     };
     if args.len() != 2 || !callee_matches_name(callee, fn_name) {
@@ -302,8 +305,11 @@ pub(super) fn call2_args<'a>(expr: &'a Expr, fn_name: &str) -> Option<(&'a Expr,
     Some((&args[0], &args[1]))
 }
 
-pub(super) fn call_named_args<'a>(expr: &'a Expr, full_name: &str) -> Option<&'a [Expr]> {
-    let Expr::FnCall(callee, args) = expr else {
+pub(super) fn call_named_args<'a>(
+    expr: &'a Spanned<Expr>,
+    full_name: &str,
+) -> Option<&'a [Spanned<Expr>]> {
+    let Expr::FnCall(callee, args) = &expr.node else {
         return None;
     };
     let callee_name = expr_dotted_name(callee)?;
@@ -314,29 +320,32 @@ pub(super) fn call_named_args<'a>(expr: &'a Expr, full_name: &str) -> Option<&'a
     }
 }
 
-pub(super) fn matches_binary_call(expr: &Expr, fn_name: &str, a: &str, b: &str) -> bool {
+pub(super) fn matches_binary_call(expr: &Spanned<Expr>, fn_name: &str, a: &str, b: &str) -> bool {
     let Some((x, y)) = call2_args(expr, fn_name) else {
         return false;
     };
     matches_ident(x, a) && matches_ident(y, b)
 }
 
-pub(super) fn matches_unary_call(expr: &Expr, fn_name: &str, arg: &str) -> bool {
-    let Expr::FnCall(callee, args) = expr else {
+pub(super) fn matches_unary_call(expr: &Spanned<Expr>, fn_name: &str, arg: &str) -> bool {
+    let Expr::FnCall(callee, args) = &expr.node else {
         return false;
     };
     args.len() == 1 && callee_matches_name(callee, fn_name) && matches_ident(&args[0], arg)
 }
 
-pub(super) fn binary_call_var_const(expr: &Expr, var_name: &str) -> Option<(String, bool, i64)> {
-    let Expr::FnCall(callee, args) = expr else {
+pub(super) fn binary_call_var_const(
+    expr: &Spanned<Expr>,
+    var_name: &str,
+) -> Option<(String, bool, i64)> {
+    let Expr::FnCall(callee, args) = &expr.node else {
         return None;
     };
     if args.len() != 2 {
         return None;
     }
     let callee_name = expr_dotted_name(callee)?;
-    match (&args[0], &args[1]) {
+    match (&args[0].node, &args[1].node) {
         (Expr::Ident(v), Expr::Literal(Literal::Int(n))) if v == var_name => {
             Some((callee_name, true, *n))
         }
@@ -347,7 +356,13 @@ pub(super) fn binary_call_var_const(expr: &Expr, var_name: &str) -> Option<(Stri
     }
 }
 
-pub(super) fn matches_assoc_nested(expr: &Expr, fn_name: &str, a: &str, b: &str, c: &str) -> bool {
+pub(super) fn matches_assoc_nested(
+    expr: &Spanned<Expr>,
+    fn_name: &str,
+    a: &str,
+    b: &str,
+    c: &str,
+) -> bool {
     let Some((ab, z)) = call2_args(expr, fn_name) else {
         return false;
     };
@@ -357,7 +372,13 @@ pub(super) fn matches_assoc_nested(expr: &Expr, fn_name: &str, a: &str, b: &str,
     matches_ident(x, a) && matches_ident(y, b) && matches_ident(z, c)
 }
 
-pub(super) fn matches_assoc_flat(expr: &Expr, fn_name: &str, a: &str, b: &str, c: &str) -> bool {
+pub(super) fn matches_assoc_flat(
+    expr: &Spanned<Expr>,
+    fn_name: &str,
+    a: &str,
+    b: &str,
+    c: &str,
+) -> bool {
     let Some((x, bc)) = call2_args(expr, fn_name) else {
         return false;
     };
@@ -368,8 +389,8 @@ pub(super) fn matches_assoc_flat(expr: &Expr, fn_name: &str, a: &str, b: &str, c
 }
 
 pub(super) fn matches_identity_side(
-    call_side: &Expr,
-    ident_side: &Expr,
+    call_side: &Spanned<Expr>,
+    ident_side: &Spanned<Expr>,
     fn_name: &str,
     given_name: &str,
     identity: i64,
@@ -385,8 +406,8 @@ pub(super) fn matches_identity_side(
 }
 
 pub(super) fn matches_sub_right_identity_side(
-    call_side: &Expr,
-    ident_side: &Expr,
+    call_side: &Spanned<Expr>,
+    ident_side: &Spanned<Expr>,
     fn_name: &str,
     given_name: &str,
 ) -> bool {
@@ -399,8 +420,13 @@ pub(super) fn matches_sub_right_identity_side(
     matches_ident(x, given_name) && matches_int_lit(y, 0)
 }
 
-pub(super) fn matches_neg_binary_call(expr: &Expr, fn_name: &str, a: &str, b: &str) -> bool {
-    match expr {
+pub(super) fn matches_neg_binary_call(
+    expr: &Spanned<Expr>,
+    fn_name: &str,
+    a: &str,
+    b: &str,
+) -> bool {
+    match &expr.node {
         Expr::BinOp(BinOp::Sub, left, right) => {
             matches_int_lit(left, 0) && matches_binary_call(right, fn_name, a, b)
         }
@@ -408,15 +434,17 @@ pub(super) fn matches_neg_binary_call(expr: &Expr, fn_name: &str, a: &str, b: &s
     }
 }
 
-pub(super) fn matches_int_lit(expr: &Expr, expected: i64) -> bool {
-    matches!(expr, Expr::Literal(Literal::Int(n)) if *n == expected)
+pub(super) fn matches_int_lit(expr: &Spanned<Expr>, expected: i64) -> bool {
+    matches!(&expr.node, Expr::Literal(Literal::Int(n)) if *n == expected)
 }
 
-pub(super) fn matches_bool_true(expr: &Expr) -> bool {
-    matches!(expr, Expr::Literal(Literal::Bool(true)))
+pub(super) fn matches_bool_true(expr: &Spanned<Expr>) -> bool {
+    matches!(&expr.node, Expr::Literal(Literal::Bool(true)))
 }
 
-pub(super) fn map_has_set_parts(expr: &Expr) -> Option<(&Expr, &Expr, &Expr)> {
+pub(super) fn map_has_set_parts(
+    expr: &Spanned<Expr>,
+) -> Option<(&Spanned<Expr>, &Spanned<Expr>, &Spanned<Expr>)> {
     let has_args = call_named_args(expr, "Map.has")?;
     if has_args.len() != 2 {
         return None;
@@ -431,7 +459,9 @@ pub(super) fn map_has_set_parts(expr: &Expr) -> Option<(&Expr, &Expr, &Expr)> {
     Some((&set_args[0], &set_args[1], &set_args[2]))
 }
 
-pub(super) fn map_get_set_parts(expr: &Expr) -> Option<(&Expr, &Expr, &Expr)> {
+pub(super) fn map_get_set_parts(
+    expr: &Spanned<Expr>,
+) -> Option<(&Spanned<Expr>, &Spanned<Expr>, &Spanned<Expr>)> {
     let get_args = call_named_args(expr, "Map.get")?;
     if get_args.len() != 2 {
         return None;
@@ -446,20 +476,20 @@ pub(super) fn map_get_set_parts(expr: &Expr) -> Option<(&Expr, &Expr, &Expr)> {
     Some((&set_args[0], &set_args[1], &set_args[2]))
 }
 
-pub(super) fn option_some_arg(expr: &Expr) -> Option<&Expr> {
+pub(super) fn option_some_arg(expr: &Spanned<Expr>) -> Option<&Spanned<Expr>> {
     let args = call_named_args(expr, "Option.Some")?;
     (args.len() == 1).then_some(&args[0])
 }
 
 pub(super) fn map_has_after_fn_call<'a>(
-    expr: &'a Expr,
+    expr: &'a Spanned<Expr>,
     fn_name: &str,
-) -> Option<(&'a Expr, &'a Expr)> {
+) -> Option<(&'a Spanned<Expr>, &'a Spanned<Expr>)> {
     let has_args = call_named_args(expr, "Map.has")?;
     if has_args.len() != 2 {
         return None;
     }
-    let Expr::FnCall(callee, fn_args) = &has_args[0] else {
+    let Expr::FnCall(callee, fn_args) = &has_args[0].node else {
         return None;
     };
     if fn_args.len() != 2 || !matches_ident(callee, fn_name) || fn_args[1] != has_args[1] {
@@ -469,14 +499,14 @@ pub(super) fn map_has_after_fn_call<'a>(
 }
 
 pub(super) fn map_get_after_fn_call<'a>(
-    expr: &'a Expr,
+    expr: &'a Spanned<Expr>,
     fn_name: &str,
-) -> Option<(&'a Expr, &'a Expr)> {
+) -> Option<(&'a Spanned<Expr>, &'a Spanned<Expr>)> {
     let get_args = call_named_args(expr, "Map.get")?;
     if get_args.len() != 2 {
         return None;
     }
-    let Expr::FnCall(callee, fn_args) = &get_args[0] else {
+    let Expr::FnCall(callee, fn_args) = &get_args[0].node else {
         return None;
     };
     if fn_args.len() != 2 || !matches_ident(callee, fn_name) || fn_args[1] != get_args[1] {
@@ -485,12 +515,16 @@ pub(super) fn map_get_after_fn_call<'a>(
     Some((&fn_args[0], &fn_args[1]))
 }
 
-pub(super) fn option_with_default_args(expr: &Expr) -> Option<(&Expr, &Expr)> {
+pub(super) fn option_with_default_args(
+    expr: &Spanned<Expr>,
+) -> Option<(&Spanned<Expr>, &Spanned<Expr>)> {
     let args = call_named_args(expr, "Option.withDefault")?;
     (args.len() == 2).then_some((&args[0], &args[1]))
 }
 
-pub(super) fn defaulted_map_get(expr: &Expr) -> Option<(&Expr, &Expr, &Expr)> {
+pub(super) fn defaulted_map_get(
+    expr: &Spanned<Expr>,
+) -> Option<(&Spanned<Expr>, &Spanned<Expr>, &Spanned<Expr>)> {
     let (inner, default) = option_with_default_args(expr)?;
     let get_args = call_named_args(inner, "Map.get")?;
     if get_args.len() != 2 {
@@ -500,22 +534,22 @@ pub(super) fn defaulted_map_get(expr: &Expr) -> Option<(&Expr, &Expr, &Expr)> {
 }
 
 pub(super) fn defaulted_map_get_after_fn_call<'a>(
-    expr: &'a Expr,
+    expr: &'a Spanned<Expr>,
     fn_name: &str,
-) -> Option<(&'a Expr, &'a Expr, &'a Expr)> {
+) -> Option<(&'a Spanned<Expr>, &'a Spanned<Expr>, &'a Spanned<Expr>)> {
     let (inner, default) = option_with_default_args(expr)?;
     let (map_arg, key_arg) = map_get_after_fn_call(inner, fn_name)?;
     Some((map_arg, key_arg, default))
 }
 
-pub(super) fn is_map_get_call(expr: &Expr, map_param: &str, key_param: &str) -> bool {
+pub(super) fn is_map_get_call(expr: &Spanned<Expr>, map_param: &str, key_param: &str) -> bool {
     let Some(args) = call_named_args(expr, "Map.get") else {
         return false;
     };
     args.len() == 2 && matches_ident(&args[0], map_param) && matches_ident(&args[1], key_param)
 }
 
-pub(super) fn is_map_set_call(expr: &Expr, map_param: &str, key_param: &str) -> bool {
+pub(super) fn is_map_set_call(expr: &Spanned<Expr>, map_param: &str, key_param: &str) -> bool {
     let Some(args) = call_named_args(expr, "Map.set") else {
         return false;
     };

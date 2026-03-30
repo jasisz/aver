@@ -143,14 +143,14 @@ impl Interpreter {
         match (&a, &b) {
             (Value::Int(x), Value::Int(y)) => {
                 if *y == 0 {
-                    Err(RuntimeError::Error("Division by zero".to_string()))
+                    Err(RuntimeError::Error("division by zero".to_string()))
                 } else {
                     Ok(Value::Int(x / y))
                 }
             }
             (Value::Float(x), Value::Float(y)) => {
                 if *y == 0.0 {
-                    Err(RuntimeError::Error("Division by zero".to_string()))
+                    Err(RuntimeError::Error("division by zero".to_string()))
                 } else {
                     Ok(Value::Float(x / y))
                 }
@@ -251,7 +251,7 @@ impl Interpreter {
         if a.is_int() && b.is_int() {
             let bv = b.as_int(&self.arena);
             if bv == 0 {
-                return Err(RuntimeError::Error("Division by zero".to_string()));
+                return Err(RuntimeError::Error("division by zero".to_string()));
             }
             let result = a.as_int(&self.arena) / bv;
             return Ok(NanValue::new_int(result, &mut self.arena));
@@ -259,7 +259,7 @@ impl Interpreter {
         if a.is_float() && b.is_float() {
             let bv = b.as_float();
             if bv == 0.0 {
-                return Err(RuntimeError::Error("Division by zero".to_string()));
+                return Err(RuntimeError::Error("division by zero".to_string()));
             }
             return Ok(NanValue::new_float(a.as_float() / bv));
         }

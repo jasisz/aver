@@ -1,4 +1,4 @@
-use crate::ast::{Expr, Literal};
+use crate::ast::{Expr, Literal, Spanned};
 
 use super::{CallLowerCtx, CallPlan, classify_call_plan, expr_to_dotted_name};
 
@@ -9,56 +9,56 @@ use super::{CallLowerCtx, CallPlan, classify_call_plan, expr_to_dotted_name};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LeafOp<'a> {
     FieldAccess {
-        object: &'a Expr,
+        object: &'a Spanned<Expr>,
         field_name: &'a str,
     },
     MapGet {
-        map: &'a Expr,
-        key: &'a Expr,
+        map: &'a Spanned<Expr>,
+        key: &'a Spanned<Expr>,
     },
     MapSet {
-        map: &'a Expr,
-        key: &'a Expr,
-        value: &'a Expr,
+        map: &'a Spanned<Expr>,
+        key: &'a Spanned<Expr>,
+        value: &'a Spanned<Expr>,
     },
     VectorNew {
-        size: &'a Expr,
-        fill: &'a Expr,
+        size: &'a Spanned<Expr>,
+        fill: &'a Spanned<Expr>,
     },
     VectorSetOrDefaultSameVector {
-        vector: &'a Expr,
-        index: &'a Expr,
-        value: &'a Expr,
+        vector: &'a Spanned<Expr>,
+        index: &'a Spanned<Expr>,
+        value: &'a Spanned<Expr>,
     },
     VectorGetOrDefaultLiteral {
-        vector: &'a Expr,
-        index: &'a Expr,
+        vector: &'a Spanned<Expr>,
+        index: &'a Spanned<Expr>,
         default_literal: &'a Literal,
     },
     /// Fused `Result.withDefault(Int.mod(a, b), literal)` → skip Result allocation.
     IntModOrDefaultLiteral {
-        a: &'a Expr,
-        b: &'a Expr,
+        a: &'a Spanned<Expr>,
+        b: &'a Spanned<Expr>,
         default_literal: &'a Literal,
     },
     /// Fused `Vector.get(Vector.fromList(list), index)` → skip AverVector allocation.
     ListIndexGet {
-        list: &'a Expr,
-        index: &'a Expr,
+        list: &'a Spanned<Expr>,
+        index: &'a Spanned<Expr>,
     },
 }
 
 pub fn classify_leaf_op<'a>(expr: &'a Expr, ctx: &impl CallLowerCtx) -> Option<LeafOp<'a>> {
     match expr {
-        Expr::Attr(object, field_name) => classify_field_access(expr, object.as_ref(), field_name),
-        Expr::FnCall(fn_expr, args) => classify_leaf_call(fn_expr, args, ctx),
+        Expr::Attr(object, field_name) => classify_field_access(expr, object, field_name),
+        Expr::FnCall(fn_expr, args) => classify_leaf_call(&fn_expr.node, args, ctx),
         _ => None,
     }
 }
 
 fn classify_field_access<'a>(
     full_expr: &'a Expr,
-    object: &'a Expr,
+    object: &'a Spanned<Expr>,
     field_name: &'a str,
 ) -> Option<LeafOp<'a>> {
     // Uppercase dotted paths are static module/type/builtin references, not
@@ -77,7 +77,7 @@ fn classify_field_access<'a>(
 
 fn classify_leaf_call<'a>(
     fn_expr: &'a Expr,
-    args: &'a [Expr],
+    args: &'a [Spanned<Expr>],
     ctx: &impl CallLowerCtx,
 ) -> Option<LeafOp<'a>> {
     match classify_call_plan(fn_expr, ctx) {
@@ -110,18 +110,18 @@ fn classify_leaf_call<'a>(
 }
 
 fn classify_vector_set_or_default<'a>(
-    option_expr: &'a Expr,
-    default_expr: &'a Expr,
+    option_expr: &'a Spanned<Expr>,
+    default_expr: &'a Spanned<Expr>,
     ctx: &impl CallLowerCtx,
 ) -> Option<LeafOp<'a>> {
-    let Expr::FnCall(inner_callee, inner_args) = option_expr else {
+    let Expr::FnCall(inner_callee, inner_args) = &option_expr.node else {
         return None;
     };
     if inner_args.len() != 3 {
         return None;
     }
 
-    match classify_call_plan(inner_callee, ctx) {
+    match classify_call_plan(&inner_callee.node, ctx) {
         CallPlan::Builtin(name) if name == "Vector.set" && default_expr == &inner_args[0] => {
             Some(LeafOp::VectorSetOrDefaultSameVector {
                 vector: &inner_args[0],
@@ -134,23 +134,23 @@ fn classify_vector_set_or_default<'a>(
 }
 
 fn classify_vector_get_or_default<'a>(
-    option_expr: &'a Expr,
-    default_expr: &'a Expr,
+    option_expr: &'a Spanned<Expr>,
+    default_expr: &'a Spanned<Expr>,
     ctx: &impl CallLowerCtx,
 ) -> Option<LeafOp<'a>> {
-    let default_literal = match default_expr {
+    let default_literal = match &default_expr.node {
         Expr::Literal(lit) => lit,
         _ => return None,
     };
 
-    let Expr::FnCall(inner_callee, inner_args) = option_expr else {
+    let Expr::FnCall(inner_callee, inner_args) = &option_expr.node else {
         return None;
     };
     if inner_args.len() != 2 {
         return None;
     }
 
-    match classify_call_plan(inner_callee, ctx) {
+    match classify_call_plan(&inner_callee.node, ctx) {
         CallPlan::Builtin(name) if name == "Vector.get" => {
             Some(LeafOp::VectorGetOrDefaultLiteral {
                 vector: &inner_args[0],
@@ -163,18 +163,18 @@ fn classify_vector_get_or_default<'a>(
 }
 
 fn classify_list_index_get<'a>(
-    vector_expr: &'a Expr,
-    index: &'a Expr,
+    vector_expr: &'a Spanned<Expr>,
+    index: &'a Spanned<Expr>,
     ctx: &impl CallLowerCtx,
 ) -> Option<LeafOp<'a>> {
     // Match Vector.get(Vector.fromList(list), index)
-    let Expr::FnCall(inner_callee, inner_args) = vector_expr else {
+    let Expr::FnCall(inner_callee, inner_args) = &vector_expr.node else {
         return None;
     };
     if inner_args.len() != 1 {
         return None;
     }
-    match classify_call_plan(inner_callee, ctx) {
+    match classify_call_plan(&inner_callee.node, ctx) {
         CallPlan::Builtin(name) if name == "Vector.fromList" => Some(LeafOp::ListIndexGet {
             list: &inner_args[0],
             index,
@@ -184,23 +184,23 @@ fn classify_list_index_get<'a>(
 }
 
 fn classify_int_mod_or_default<'a>(
-    result_expr: &'a Expr,
-    default_expr: &'a Expr,
+    result_expr: &'a Spanned<Expr>,
+    default_expr: &'a Spanned<Expr>,
     ctx: &impl CallLowerCtx,
 ) -> Option<LeafOp<'a>> {
-    let default_literal = match default_expr {
+    let default_literal = match &default_expr.node {
         Expr::Literal(lit) => lit,
         _ => return None,
     };
 
-    let Expr::FnCall(inner_callee, inner_args) = result_expr else {
+    let Expr::FnCall(inner_callee, inner_args) = &result_expr.node else {
         return None;
     };
     if inner_args.len() != 2 {
         return None;
     }
 
-    match classify_call_plan(inner_callee, ctx) {
+    match classify_call_plan(&inner_callee.node, ctx) {
         CallPlan::Builtin(name) if name == "Int.mod" => Some(LeafOp::IntModOrDefaultLiteral {
             a: &inner_args[0],
             b: &inner_args[1],

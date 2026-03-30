@@ -3081,6 +3081,7 @@ fn check() -> Bool
                 )],
                 outcome: RecordedOutcome::Value(JsonValue::Bool(true)),
                 caller_fn: String::new(),
+                source_line: 0,
             }],
             true,
         );
@@ -3108,6 +3109,7 @@ fn check() -> Bool
                 args: vec![JsonValue::String("https://example.com".to_string())],
                 outcome: RecordedOutcome::Value(JsonValue::Object(outcome)),
                 caller_fn: String::new(),
+                source_line: 0,
             }],
             false,
         );

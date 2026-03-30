@@ -146,11 +146,12 @@ impl TypeChecker {
         canonicalize_path(path).to_string_lossy().to_string()
     }
 
+    /// Extract a dotted path from an Expr (unwrapped, not Spanned).
     pub(super) fn attr_path(expr: &Expr) -> Option<Vec<String>> {
         match expr {
             Expr::Ident(name) => Some(vec![name.clone()]),
             Expr::Attr(inner, field) => {
-                let mut parts = Self::attr_path(inner)?;
+                let mut parts = Self::attr_path(&inner.node)?;
                 parts.push(field.clone());
                 Some(parts)
             }

@@ -251,9 +251,9 @@ struct ContextFnFlags {
     fn_sigs: HashMap<String, (Vec<aver::types::Type>, aver::types::Type, Vec<String>)>,
 }
 
-fn expr_has_tail_call(expr: &aver::ast::Expr) -> bool {
+fn expr_has_tail_call(expr: &aver::ast::Spanned<aver::ast::Expr>) -> bool {
     use aver::ast::Expr;
-    match expr {
+    match &expr.node {
         Expr::TailCall(_) => true,
         Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => false,
         Expr::Attr(obj, _) => expr_has_tail_call(obj),

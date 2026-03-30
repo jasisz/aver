@@ -56,6 +56,10 @@ impl VM {
         loop {
             let code = &self.code.functions[fn_id as usize].code;
 
+            // Save position for error reporting (cold-path lookup in line_table).
+            self.error_fn_id = fn_id;
+            self.error_ip = ip as u32;
+
             let op = code[ip];
             ip += 1;
             if let Some(profile) = self.profile.as_mut() {
@@ -175,7 +179,7 @@ impl VM {
                     } else if a.is_float() {
                         self.stack.push(NanValue::new_float(-a.as_float()));
                     } else {
-                        return Err(VmError::Type("cannot negate non-numeric".into()));
+                        return Err(VmError::type_err("cannot negate non-numeric"));
                     }
                 }
                 NOT => {
@@ -324,7 +328,7 @@ impl VM {
                                     .get(symbol_id)
                                     .map(|info| info.name.as_str())
                                     .unwrap_or("<wrapper>");
-                                return Err(VmError::Runtime(format!(
+                                return Err(VmError::runtime(format!(
                                     "{} expects 1 argument, got {}",
                                     name, argc
                                 )));
@@ -337,7 +341,7 @@ impl VM {
                                     0 => Ok(NanValue::new_ok_value(val, arena)),
                                     1 => Ok(NanValue::new_err_value(val, arena)),
                                     2 => Ok(NanValue::new_some_value(val, arena)),
-                                    _ => Err(VmError::Runtime("invalid wrap kind".into())),
+                                    _ => Err(VmError::runtime("invalid wrap kind")),
                                 },
                             )?;
                             self.stack.push(wrapped);
@@ -352,7 +356,7 @@ impl VM {
                                     .get(symbol_id)
                                     .map(|info| info.name.as_str())
                                     .unwrap_or("<ctor>");
-                                return Err(VmError::Runtime(format!(
+                                return Err(VmError::runtime(format!(
                                     "{} expects {} argument(s), got {}",
                                     name, ctor.field_count, argc
                                 )));
@@ -383,7 +387,7 @@ impl VM {
                                 .get(symbol_id)
                                 .map(|info| info.name.as_str())
                                 .unwrap_or("<constant>");
-                            return Err(VmError::Runtime(format!(
+                            return Err(VmError::runtime(format!(
                                 "cannot call constant {} = {}",
                                 name,
                                 self.value_repr(value)
@@ -440,7 +444,7 @@ impl VM {
                                     .get(symbol_id)
                                     .map(|info| info.name.as_str())
                                     .unwrap_or("<unknown>");
-                                VmError::Runtime(format!("symbol {} is not a builtin", name))
+                                VmError::runtime(format!("symbol {} is not a builtin", name))
                             })?;
                     if let Some(profile) = self.profile.as_mut() {
                         profile.record_builtin_call(builtin.name());
@@ -614,9 +618,7 @@ impl VM {
                 LIST_LEN => {
                     let list = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     if !list.is_list() {
-                        return Err(VmError::Runtime(
-                            "List.len() argument must be a List".into(),
-                        ));
+                        return Err(VmError::runtime("List.len() argument must be a List"));
                     }
                     self.stack.push(NanValue::new_int(
                         self.arena.list_len_value(list) as i64,
@@ -630,8 +632,8 @@ impl VM {
                     let list = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let value = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     if !list.is_list() {
-                        return Err(VmError::Runtime(
-                            "List.prepend() second argument must be a List".into(),
+                        return Err(VmError::runtime(
+                            "List.prepend() second argument must be a List",
                         ));
                     }
                     let idx = self
@@ -719,8 +721,8 @@ impl VM {
                             }
                         }
                     }
-                    return Err(VmError::Type(
-                        "error propagation expects a Result value".into(),
+                    return Err(VmError::type_err(
+                        "error propagation expects a Result value",
                     ));
                 }
 
@@ -737,11 +739,11 @@ impl VM {
                         .ok_or(VmError::StackUnderflow)?;
                     let base = self.stack[base_pos];
                     if !base.is_record() {
-                        return Err(VmError::Type("RECORD_UPDATE on non-record".into()));
+                        return Err(VmError::type_err("RECORD_UPDATE on non-record"));
                     }
                     let (type_id, old_fields) = self.arena.get_record(base.arena_index());
                     if type_id != expected_type_id {
-                        return Err(VmError::Runtime(format!(
+                        return Err(VmError::runtime(format!(
                             "record update type mismatch: expected {}, got {}",
                             self.arena.get_type_name(expected_type_id),
                             self.arena.get_type_name(type_id)
@@ -752,9 +754,7 @@ impl VM {
                     for offset in (0..count).rev() {
                         let field_idx = code[field_indices_start + offset] as usize;
                         if field_idx >= fields.len() {
-                            return Err(VmError::Runtime(
-                                "record update field out of bounds".into(),
-                            ));
+                            return Err(VmError::runtime("record update field out of bounds"));
                         }
                         let val = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                         fields[field_idx] = val;
@@ -791,10 +791,10 @@ impl VM {
                         if field_idx < fields.len() {
                             self.stack.push(fields[field_idx]);
                         } else {
-                            return Err(VmError::Runtime("field index out of bounds".into()));
+                            return Err(VmError::runtime("field index out of bounds"));
                         }
                     } else {
-                        return Err(VmError::Type("RECORD_GET on non-record".into()));
+                        return Err(VmError::type_err("RECORD_GET on non-record"));
                     }
                 }
 
@@ -817,7 +817,7 @@ impl VM {
                                 .get(field_symbol_id)
                                 .map(|info| info.name.as_str())
                                 .unwrap_or("<unknown>");
-                            return Err(VmError::Runtime(format!(
+                            return Err(VmError::runtime(format!(
                                 "record has no field '{}'",
                                 field_name
                             )));
@@ -851,13 +851,13 @@ impl VM {
                                 .get(field_symbol_id)
                                 .map(|info| info.name.as_str())
                                 .unwrap_or("<unknown>");
-                            return Err(VmError::Runtime(format!(
+                            return Err(VmError::runtime(format!(
                                 "namespace {} has no member '{}'",
                                 namespace, field_name
                             )));
                         }
                     } else {
-                        return Err(VmError::Type(format!(
+                        return Err(VmError::type_err(format!(
                             "field access on non-record value ({})",
                             self.value_type_name(record)
                         )));
@@ -909,7 +909,7 @@ impl VM {
                             0 => Ok(NanValue::new_ok_value(val, arena)),
                             1 => Ok(NanValue::new_err_value(val, arena)),
                             2 => Ok(NanValue::new_some_value(val, arena)),
-                            _ => Err(VmError::Runtime("invalid wrap kind".into())),
+                            _ => Err(VmError::runtime("invalid wrap kind")),
                         },
                     )?;
                     self.stack.push(wrapped);
@@ -1072,7 +1072,7 @@ impl VM {
                 LIST_HEAD_TAIL => {
                     let list = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let Some((head, tail)) = self.arena.list_uncons(list) else {
-                        return Err(VmError::Runtime("LIST_HEAD_TAIL on empty list".into()));
+                        return Err(VmError::runtime("LIST_HEAD_TAIL on empty list"));
                     };
                     self.stack.push(tail);
                     self.stack.push(head);
@@ -1088,12 +1088,12 @@ impl VM {
                         debug_assert_eq!(field_idx, 0);
                         self.stack.push(top.inline_variant_inner());
                     } else if top.is_variant() {
-                        let (_, _, fields) = top.variant_parts(&self.arena).ok_or_else(|| {
-                            VmError::Type("EXTRACT_FIELD on invalid variant".into())
-                        })?;
+                        let (_, _, fields) = top
+                            .variant_parts(&self.arena)
+                            .ok_or_else(|| VmError::type_err("EXTRACT_FIELD on invalid variant"))?;
                         self.stack.push(fields[field_idx]);
                     } else {
-                        return Err(VmError::Type("EXTRACT_FIELD on non-record/variant".into()));
+                        return Err(VmError::type_err("EXTRACT_FIELD on non-record/variant"));
                     }
                 }
 
@@ -1112,11 +1112,11 @@ impl VM {
                     let item_idx = read_u8!(code, ip) as usize;
                     let top = *self.stack.last().ok_or(VmError::StackUnderflow)?;
                     if !top.is_tuple() {
-                        return Err(VmError::Type("EXTRACT_TUPLE_ITEM on non-tuple".into()));
+                        return Err(VmError::type_err("EXTRACT_TUPLE_ITEM on non-tuple"));
                     }
                     let items = self.arena.get_tuple(top.arena_index());
                     if item_idx >= items.len() {
-                        return Err(VmError::Runtime("tuple index out of bounds".into()));
+                        return Err(VmError::runtime("tuple index out of bounds"));
                     }
                     self.stack.push(items[item_idx]);
                 }
@@ -1245,7 +1245,7 @@ impl VM {
                 }
 
                 _ => {
-                    return Err(VmError::Runtime(format!("unknown opcode: 0x{:02X}", op)));
+                    return Err(VmError::runtime(format!("unknown opcode: 0x{:02X}", op)));
                 }
             }
         }

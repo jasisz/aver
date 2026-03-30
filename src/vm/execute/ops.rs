@@ -36,7 +36,7 @@ impl VM {
             return Ok(fn_id);
         }
         let caller_name = &self.code.functions[caller_fn_id as usize].name;
-        Err(VmError::Type(format!(
+        Err(VmError::type_err(format!(
             "cannot call non-function (got {} = {:?}) in {} at ip={}",
             self.value_type_name(val),
             self.value_repr(val),
@@ -142,7 +142,7 @@ impl VM {
             );
             Ok(NanValue::new_string_value(&s, &mut self.arena))
         } else {
-            Err(VmError::Type(format!(
+            Err(VmError::type_err(format!(
                 "cannot add {} and {}",
                 self.value_type_name(a),
                 self.value_type_name(b)
@@ -167,7 +167,7 @@ impl VM {
                 a.as_float() - b.as_int(&self.arena) as f64,
             ))
         } else {
-            Err(VmError::Type(format!(
+            Err(VmError::type_err(format!(
                 "cannot subtract {} and {}",
                 self.value_type_name(a),
                 self.value_type_name(b)
@@ -192,7 +192,7 @@ impl VM {
                 a.as_float() * b.as_int(&self.arena) as f64,
             ))
         } else {
-            Err(VmError::Type(format!(
+            Err(VmError::type_err(format!(
                 "cannot multiply {} and {}",
                 self.value_type_name(a),
                 self.value_type_name(b)
@@ -204,7 +204,7 @@ impl VM {
         if a.is_int() && b.is_int() {
             let bv = b.as_int(&self.arena);
             if bv == 0 {
-                return Err(VmError::Runtime("division by zero".into()));
+                return Err(VmError::runtime("division by zero"));
             }
             Ok(NanValue::new_int(
                 a.as_int(&self.arena) / bv,
@@ -221,7 +221,7 @@ impl VM {
                 a.as_float() / b.as_int(&self.arena) as f64,
             ))
         } else {
-            Err(VmError::Type(format!(
+            Err(VmError::type_err(format!(
                 "cannot divide {} and {}",
                 self.value_type_name(a),
                 self.value_type_name(b)
@@ -233,14 +233,14 @@ impl VM {
         if a.is_int() && b.is_int() {
             let bv = b.as_int(&self.arena);
             if bv == 0 {
-                return Err(VmError::Runtime("modulo by zero".into()));
+                return Err(VmError::runtime("modulo by zero"));
             }
             Ok(NanValue::new_int(
                 a.as_int(&self.arena) % bv,
                 &mut self.arena,
             ))
         } else {
-            Err(VmError::Type(format!(
+            Err(VmError::type_err(format!(
                 "cannot modulo {} and {}",
                 self.value_type_name(a),
                 self.value_type_name(b)
@@ -260,7 +260,7 @@ impl VM {
         } else if a.is_float() && b.is_int() {
             Ok(a.as_float() < (b.as_int(&self.arena) as f64))
         } else {
-            Err(VmError::Type(format!(
+            Err(VmError::type_err(format!(
                 "cannot compare {} and {}",
                 self.value_type_name(a),
                 self.value_type_name(b)

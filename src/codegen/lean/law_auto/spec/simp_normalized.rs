@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::ast::{BinOp, Expr, Literal, VerifyBlock, VerifyLaw};
+use crate::ast::{BinOp, Expr, Literal, Spanned, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 use crate::verify_law::canonical_spec_ref;
 
@@ -16,35 +16,36 @@ fn int_lit(expr: &Expr) -> Option<i64> {
     }
 }
 
-fn simplify_identity_expr(expr: &Expr) -> Expr {
-    match expr {
+fn simplify_identity_expr(expr: &Spanned<Expr>) -> Spanned<Expr> {
+    let line = expr.line;
+    let new_node = match &expr.node {
         Expr::BinOp(op, left, right) => {
             let left = simplify_identity_expr(left);
             let right = simplify_identity_expr(right);
             match op {
                 BinOp::Add => {
-                    if int_lit(&left) == Some(0) {
-                        right
-                    } else if int_lit(&right) == Some(0) {
-                        left
+                    if int_lit(&left.node) == Some(0) {
+                        return right;
+                    } else if int_lit(&right.node) == Some(0) {
+                        return left;
                     } else {
                         Expr::BinOp(*op, Box::new(left), Box::new(right))
                     }
                 }
                 BinOp::Sub => {
-                    if int_lit(&right) == Some(0) {
-                        left
+                    if int_lit(&right.node) == Some(0) {
+                        return left;
                     } else {
                         Expr::BinOp(*op, Box::new(left), Box::new(right))
                     }
                 }
                 BinOp::Mul => {
-                    if int_lit(&left) == Some(0) || int_lit(&right) == Some(0) {
+                    if int_lit(&left.node) == Some(0) || int_lit(&right.node) == Some(0) {
                         Expr::Literal(Literal::Int(0))
-                    } else if int_lit(&left) == Some(1) {
-                        right
-                    } else if int_lit(&right) == Some(1) {
-                        left
+                    } else if int_lit(&left.node) == Some(1) {
+                        return right;
+                    } else if int_lit(&right.node) == Some(1) {
+                        return left;
                     } else {
                         Expr::BinOp(*op, Box::new(left), Box::new(right))
                     }
@@ -59,11 +60,7 @@ fn simplify_identity_expr(expr: &Expr) -> Expr {
             Box::new(simplify_identity_expr(callee)),
             args.iter().map(simplify_identity_expr).collect(),
         ),
-        Expr::Match {
-            subject,
-            arms,
-            line,
-        } => Expr::Match {
+        Expr::Match { subject, arms } => Expr::Match {
             subject: Box::new(simplify_identity_expr(subject)),
             arms: arms
                 .iter()
@@ -72,7 +69,6 @@ fn simplify_identity_expr(expr: &Expr) -> Expr {
                     body: Box::new(simplify_identity_expr(&arm.body)),
                 })
                 .collect(),
-            line: *line,
         },
         Expr::Constructor(name, inner) => Expr::Constructor(
             name.clone(),
@@ -123,8 +119,9 @@ fn simplify_identity_expr(expr: &Expr) -> Expr {
             call.0.clone(),
             call.1.iter().map(simplify_identity_expr).collect(),
         ))),
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => expr.clone(),
-    }
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => return expr.clone(),
+    };
+    Spanned::new(new_node, line)
 }
 
 pub(super) fn emit_simp_normalized_spec_equivalence_law(
@@ -139,11 +136,11 @@ pub(super) fn emit_simp_normalized_spec_equivalence_law(
     let impl_body = body_terminal_expr(impl_fd.body.as_ref())?;
     let spec_body = body_terminal_expr(spec_fd.body.as_ref())?;
 
-    let try_side = |impl_side: &Expr, spec_side: &Expr| -> Option<AutoProof> {
-        let Expr::FnCall(impl_callee, impl_args) = impl_side else {
+    let try_side = |impl_side: &Spanned<Expr>, spec_side: &Spanned<Expr>| -> Option<AutoProof> {
+        let Expr::FnCall(impl_callee, impl_args) = &impl_side.node else {
             return None;
         };
-        let Expr::FnCall(spec_callee, spec_args) = spec_side else {
+        let Expr::FnCall(spec_callee, spec_args) = &spec_side.node else {
             return None;
         };
         if !callee_matches_name(impl_callee, &vb.fn_name)
@@ -155,13 +152,13 @@ pub(super) fn emit_simp_normalized_spec_equivalence_law(
             return None;
         }
 
-        let impl_bindings: HashMap<&str, &Expr> = impl_fd
+        let impl_bindings: HashMap<&str, &Spanned<Expr>> = impl_fd
             .params
             .iter()
             .zip(impl_args.iter())
             .map(|((name, _), arg)| (name.as_str(), arg))
             .collect();
-        let spec_bindings: HashMap<&str, &Expr> = spec_fd
+        let spec_bindings: HashMap<&str, &Spanned<Expr>> = spec_fd
             .params
             .iter()
             .zip(spec_args.iter())

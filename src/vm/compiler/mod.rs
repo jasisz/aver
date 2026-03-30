@@ -21,7 +21,7 @@ pub fn compile_program(
     items: &[TopLevel],
     arena: &mut Arena,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
-    compile_program_with_modules(items, arena, None)
+    compile_program_with_modules(items, arena, None, "")
 }
 
 /// Compile with explicit module root for `depends` resolution.
@@ -29,8 +29,10 @@ pub fn compile_program_with_modules(
     items: &[TopLevel],
     arena: &mut Arena,
     module_root: Option<&str>,
+    source_file: &str,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
     let mut compiler = ProgramCompiler::new();
+    compiler.source_file = source_file.to_string();
     compiler.sync_record_field_symbols(arena);
 
     if let Some(module_root) = module_root {
@@ -56,6 +58,8 @@ pub fn compile_program_with_modules(
                     thin: false,
                     parent_thin: false,
                     leaf: false,
+                    source_file: String::new(),
+                    line_table: Vec::new(),
                 });
                 let symbol_id =
                     compiler
@@ -104,6 +108,8 @@ struct ProgramCompiler {
     symbols: VmSymbolTable,
     globals: Vec<NanValue>,
     global_names: HashMap<String, u16>,
+    /// Source file path for the main program (propagated to FnChunks).
+    source_file: String,
 }
 
 impl ProgramCompiler {
@@ -113,6 +119,7 @@ impl ProgramCompiler {
             symbols: VmSymbolTable::default(),
             globals: Vec::new(),
             global_names: HashMap::new(),
+            source_file: String::new(),
         };
         compiler.bootstrap_core_symbols();
         compiler
@@ -239,6 +246,8 @@ impl ProgramCompiler {
                     thin: false,
                     parent_thin: false,
                     leaf: false,
+                    source_file: String::new(),
+                    line_table: Vec::new(),
                 });
                 self.symbols
                     .intern_function(&qualified_name, fn_id, &fndef.effects);
@@ -473,6 +482,8 @@ impl ProgramCompiler {
             &mut self.symbols,
             arena,
         );
+        fc.source_file = self.source_file.clone();
+        fc.note_line(fndef.line);
 
         match fndef.body.as_ref() {
             FnBody::Block(stmts) => fc.compile_body(stmts)?,
@@ -620,6 +631,12 @@ struct FnCompiler<'a> {
     constants: Vec<NanValue>,
     /// Byte offset of the last emitted opcode (for superinstruction fusion).
     last_op_pos: usize,
+    /// Source file path for this function.
+    source_file: String,
+    /// Run-length encoded line table being built: (bytecode_offset, source_line).
+    line_table: Vec<(u16, u16)>,
+    /// Last emitted line (for RLE dedup).
+    last_noted_line: u16,
 }
 
 impl<'a> FnCompiler<'a> {
@@ -650,6 +667,9 @@ impl<'a> FnCompiler<'a> {
             code: Vec::new(),
             constants: Vec::new(),
             last_op_pos: usize::MAX,
+            source_file: String::new(),
+            line_table: Vec::new(),
+            last_noted_line: 0,
         }
     }
 
@@ -664,7 +684,24 @@ impl<'a> FnCompiler<'a> {
             thin: false,
             parent_thin: false,
             leaf: false,
+            source_file: self.source_file,
+            line_table: self.line_table,
         }
+    }
+
+    /// Record that bytecode emitted from this point forward corresponds to
+    /// the given source line. RLE-deduplicated: consecutive calls with the
+    /// same line produce only one entry.
+    fn note_line(&mut self, line: usize) {
+        if line == 0 {
+            return;
+        }
+        let line16 = line as u16;
+        if line16 == self.last_noted_line {
+            return; // RLE dedup
+        }
+        self.last_noted_line = line16;
+        self.line_table.push((self.code.len() as u16, line16));
     }
 
     fn emit_op(&mut self, op: u8) {

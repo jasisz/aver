@@ -1,3 +1,31 @@
+/// Source line number (1-based). 0 = synthetic/unknown.
+pub type SourceLine = usize;
+
+/// AST node with source location. Line-agnostic equality: two `Spanned` values
+/// are equal iff their inner nodes are equal, regardless of line.
+#[derive(Debug, Clone)]
+pub struct Spanned<T> {
+    pub node: T,
+    pub line: SourceLine,
+}
+
+impl<T: PartialEq> PartialEq for Spanned<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.node == other.node
+    }
+}
+
+impl<T> Spanned<T> {
+    pub fn new(node: T, line: SourceLine) -> Self {
+        Self { node, line }
+    }
+
+    /// Create a Spanned with line=0 (synthetic/generated AST, no source location).
+    pub fn bare(node: T) -> Self {
+        Self { node, line: 0 }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Int(i64),
@@ -24,7 +52,7 @@ pub enum BinOp {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {
     pub pattern: Pattern,
-    pub body: Box<Expr>,
+    pub body: Box<Spanned<Expr>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -47,43 +75,41 @@ pub enum Pattern {
 #[derive(Debug, Clone, PartialEq)]
 pub enum StrPart {
     Literal(String),
-    Parsed(Box<Expr>),
+    Parsed(Box<Spanned<Expr>>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Literal(Literal),
     Ident(String),
-    Attr(Box<Expr>, String),
-    FnCall(Box<Expr>, Vec<Expr>),
-    BinOp(BinOp, Box<Expr>, Box<Expr>),
+    Attr(Box<Spanned<Expr>>, String),
+    FnCall(Box<Spanned<Expr>>, Vec<Spanned<Expr>>),
+    BinOp(BinOp, Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     Match {
-        subject: Box<Expr>,
+        subject: Box<Spanned<Expr>>,
         arms: Vec<MatchArm>,
-        line: usize,
     },
-    Constructor(String, Option<Box<Expr>>),
-    ErrorProp(Box<Expr>),
+    Constructor(String, Option<Box<Spanned<Expr>>>),
+    ErrorProp(Box<Spanned<Expr>>),
     InterpolatedStr(Vec<StrPart>),
-    List(Vec<Expr>),
-    Tuple(Vec<Expr>),
+    List(Vec<Spanned<Expr>>),
+    Tuple(Vec<Spanned<Expr>>),
     /// Map literal: `{"a" => 1, "b" => 2}`
-    MapLiteral(Vec<(Expr, Expr)>),
+    MapLiteral(Vec<(Spanned<Expr>, Spanned<Expr>)>),
     /// Record creation: `User(name = "Alice", age = 30)`
     RecordCreate {
         type_name: String,
-        fields: Vec<(String, Expr)>,
+        fields: Vec<(String, Spanned<Expr>)>,
     },
     /// Record update: `User.update(base, field = newVal, ...)`
     RecordUpdate {
         type_name: String,
-        base: Box<Expr>,
-        updates: Vec<(String, Expr)>,
+        base: Box<Spanned<Expr>>,
+        updates: Vec<(String, Spanned<Expr>)>,
     },
     /// Tail-position call to a function in the same SCC (self or mutual recursion).
     /// Produced by the TCO transform pass before type-checking.
-    /// Boxed to keep Expr enum at its original size (48 bytes).
-    TailCall(Box<(String, Vec<Expr>)>),
+    TailCall(Box<(String, Vec<Spanned<Expr>>)>),
     /// Compiled variable lookup: `env[last][slot]` — O(1) instead of HashMap scan.
     /// Produced by the resolver pass for locals inside function bodies.
     Resolved(u16),
@@ -91,8 +117,8 @@ pub enum Expr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
-    Binding(String, Option<String>, Expr),
-    Expr(Expr),
+    Binding(String, Option<String>, Spanned<Expr>),
+    Expr(Spanned<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -101,7 +127,7 @@ pub enum FnBody {
 }
 
 impl FnBody {
-    pub fn from_expr(expr: Expr) -> Self {
+    pub fn from_expr(expr: Spanned<Expr>) -> Self {
         Self::Block(vec![Stmt::Expr(expr)])
     }
 
@@ -117,14 +143,14 @@ impl FnBody {
         }
     }
 
-    pub fn tail_expr(&self) -> Option<&Expr> {
+    pub fn tail_expr(&self) -> Option<&Spanned<Expr>> {
         match self.stmts().last() {
             Some(Stmt::Expr(expr)) => Some(expr),
             _ => None,
         }
     }
 
-    pub fn tail_expr_mut(&mut self) -> Option<&mut Expr> {
+    pub fn tail_expr_mut(&mut self) -> Option<&mut Spanned<Expr>> {
         match self.stmts_mut().last_mut() {
             Some(Stmt::Expr(expr)) => Some(expr),
             _ => None,
@@ -172,7 +198,7 @@ pub enum VerifyGivenDomain {
     /// Integer range domain in verify law: `1..50` (inclusive).
     IntRange { start: i64, end: i64 },
     /// Explicit domain values in verify law: `[v1, v2, ...]`.
-    Explicit(Vec<Expr>),
+    Explicit(Vec<Spanned<Expr>>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -187,12 +213,12 @@ pub struct VerifyLaw {
     pub name: String,
     pub givens: Vec<VerifyGiven>,
     /// Optional precondition for the law template, written as `when <bool-expr>`.
-    pub when: Option<Expr>,
+    pub when: Option<Spanned<Expr>>,
     /// Template assertion from source before given-domain expansion.
-    pub lhs: Expr,
-    pub rhs: Expr,
+    pub lhs: Spanned<Expr>,
+    pub rhs: Spanned<Expr>,
     /// Per-sample substituted guards for `when`, aligned with `VerifyBlock.cases`.
-    pub sample_guards: Vec<Expr>,
+    pub sample_guards: Vec<Spanned<Expr>>,
 }
 
 /// Source range for AST nodes that need location tracking.
@@ -215,10 +241,10 @@ pub enum VerifyKind {
 pub struct VerifyBlock {
     pub fn_name: String,
     pub line: usize,
-    pub cases: Vec<(Expr, Expr)>,
+    pub cases: Vec<(Spanned<Expr>, Spanned<Expr>)>,
     pub case_spans: Vec<SourceSpan>,
     /// Per-case given bindings for law verify (empty for Cases kind).
-    pub case_givens: Vec<Vec<(String, Expr)>>,
+    pub case_givens: Vec<Vec<(String, Spanned<Expr>)>>,
     pub kind: VerifyKind,
 }
 
@@ -228,7 +254,7 @@ impl VerifyBlock {
     pub fn new_unspanned(
         fn_name: String,
         line: usize,
-        cases: Vec<(Expr, Expr)>,
+        cases: Vec<(Spanned<Expr>, Spanned<Expr>)>,
         kind: VerifyKind,
     ) -> Self {
         let case_spans = vec![SourceSpan::default(); cases.len()];
@@ -242,7 +268,9 @@ impl VerifyBlock {
         }
     }
 
-    pub fn iter_cases_with_spans(&self) -> impl Iterator<Item = (&(Expr, Expr), &SourceSpan)> {
+    pub fn iter_cases_with_spans(
+        &self,
+    ) -> impl Iterator<Item = (&(Spanned<Expr>, Spanned<Expr>), &SourceSpan)> {
         debug_assert_eq!(self.cases.len(), self.case_spans.len());
         self.cases.iter().zip(&self.case_spans)
     }

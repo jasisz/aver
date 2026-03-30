@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 
-use crate::ast::{DecisionBlock, DecisionImpact, Expr, FnDef, Stmt, TopLevel, TypeDef, VerifyKind};
+use crate::ast::{
+    DecisionBlock, DecisionImpact, Expr, FnDef, Spanned, Stmt, TopLevel, TypeDef, VerifyKind,
+};
 use crate::verify_law::{canonical_spec_ref, named_law_function};
 
 use super::{CheckFinding, FnSigMap, ModuleCheckFindings, dotted_name, verify_case_calls_target};
@@ -37,8 +39,8 @@ fn is_trivial_passthrough_wrapper(f: &FnDef) -> bool {
         .is_some_and(|expr| expr_is_passthrough(expr, &param_names))
 }
 
-fn expr_is_passthrough(expr: &Expr, param_names: &[&str]) -> bool {
-    match expr {
+fn expr_is_passthrough(expr: &Spanned<Expr>, param_names: &[&str]) -> bool {
+    match &expr.node {
         // `fn id(x) = x`
         Expr::Ident(name) => param_names.len() == 1 && name == param_names[0],
         // `fn wrap(a,b) = inner(a,b)` (no argument transformation)
@@ -48,23 +50,23 @@ fn expr_is_passthrough(expr: &Expr, param_names: &[&str]) -> bool {
             if param_names.len() != 1 {
                 return false;
             }
-            matches!(arg.as_ref(), Expr::Ident(name) if name == param_names[0])
+            matches!(&arg.node, Expr::Ident(name) if name == param_names[0])
         }
         _ => false,
     }
 }
 
-fn args_match_params(args: &[Expr], param_names: &[&str]) -> bool {
+fn args_match_params(args: &[Spanned<Expr>], param_names: &[&str]) -> bool {
     if args.len() != param_names.len() {
         return false;
     }
     args.iter()
         .zip(param_names.iter())
-        .all(|(arg, expected)| matches!(arg, Expr::Ident(name) if name == *expected))
+        .all(|(arg, expected)| matches!(&arg.node, Expr::Ident(name) if name == *expected))
 }
 
-fn collect_used_effects_expr(expr: &Expr, fn_sigs: &FnSigMap, out: &mut BTreeSet<String>) {
-    match expr {
+fn collect_used_effects_expr(expr: &Spanned<Expr>, fn_sigs: &FnSigMap, out: &mut BTreeSet<String>) {
+    match &expr.node {
         Expr::FnCall(callee, args) => {
             if let Some(callee_name) = dotted_name(callee)
                 && let Some((_, _, effects)) = fn_sigs.get(&callee_name)

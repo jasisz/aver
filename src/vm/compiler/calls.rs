@@ -1,5 +1,5 @@
 use super::{CallTarget, CompileError, FnCompiler};
-use crate::ast::{Expr, Literal};
+use crate::ast::{Expr, Literal, Spanned};
 use crate::ir::{
     CallLowerCtx, CallPlan, ForwardArg, LeafOp, SemanticConstructor, TailCallPlan, WrapperKind,
     classify_call_plan, classify_constructor_name, classify_forward_call_parts, classify_leaf_op,
@@ -85,8 +85,8 @@ impl<'a> FnCompiler<'a> {
             .map(CallTarget::Builtin)
     }
 
-    fn flatten_path(&self, expr: &Expr) -> Option<String> {
-        match expr {
+    fn flatten_path(&self, expr: &Spanned<Expr>) -> Option<String> {
+        match &expr.node {
             Expr::Ident(name) => Some(name.clone()),
             Expr::Attr(inner, field) => Some(format!("{}.{}", self.flatten_path(inner)?, field)),
             _ => Option::None,
@@ -179,11 +179,11 @@ impl<'a> FnCompiler<'a> {
 
     pub(super) fn compile_call(
         &mut self,
-        fn_expr: &Expr,
-        args: &[Expr],
+        fn_expr: &Spanned<Expr>,
+        args: &[Spanned<Expr>],
     ) -> Result<(), CompileError> {
         let call_ctx = VmCallCtx { compiler: self };
-        if let Some(plan) = classify_forward_call_parts(fn_expr, args, &call_ctx) {
+        if let Some(plan) = classify_forward_call_parts(&fn_expr.node, args, &call_ctx) {
             let Some(target) = self.call_plan_to_target(plan.target.clone()) else {
                 return Err(CompileError {
                     msg: "dynamic call cannot lower through ForwardCallPlan".to_string(),
@@ -195,7 +195,7 @@ impl<'a> FnCompiler<'a> {
             return self.emit_resolved_call_after_loaded_args(target, args.len());
         }
 
-        if let Some(target) = self.resolve_call_target(fn_expr) {
+        if let Some(target) = self.resolve_call_target(&fn_expr.node) {
             return self.compile_resolved_call(target, args);
         }
         self.compile_expr(fn_expr)?;
@@ -249,7 +249,7 @@ impl<'a> FnCompiler<'a> {
     fn compile_resolved_call(
         &mut self,
         target: CallTarget,
-        args: &[Expr],
+        args: &[Spanned<Expr>],
     ) -> Result<(), CompileError> {
         for arg in args {
             self.compile_expr(arg)?;
@@ -260,7 +260,7 @@ impl<'a> FnCompiler<'a> {
     pub(super) fn compile_tail_call(
         &mut self,
         target: &str,
-        args: &[Expr],
+        args: &[Spanned<Expr>],
     ) -> Result<(), CompileError> {
         for arg in args {
             self.compile_expr(arg)?;
@@ -295,7 +295,7 @@ impl<'a> FnCompiler<'a> {
     pub(super) fn compile_constructor(
         &mut self,
         name: &str,
-        arg: Option<&Expr>,
+        arg: Option<&Spanned<Expr>>,
     ) -> Result<(), CompileError> {
         let normalized_name = match name {
             "Ok" => "Result.Ok",
@@ -352,7 +352,7 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
-    fn compile_constructor_arg(&mut self, arg: Option<&Expr>) -> Result<(), CompileError> {
+    fn compile_constructor_arg(&mut self, arg: Option<&Spanned<Expr>>) -> Result<(), CompileError> {
         if let Some(a) = arg {
             self.compile_expr(a)
         } else {
@@ -461,7 +461,11 @@ impl<'a> FnCompiler<'a> {
         }
     }
 
-    pub(super) fn compile_attr(&mut self, obj: &Expr, field: &str) -> Result<(), CompileError> {
+    pub(super) fn compile_attr(
+        &mut self,
+        obj: &Spanned<Expr>,
+        field: &str,
+    ) -> Result<(), CompileError> {
         if let Some(path) = self.flatten_path(obj)
             && let Some(symbol_id) = self.symbols.resolve_namespace_path(&path)
         {
@@ -475,8 +479,8 @@ impl<'a> FnCompiler<'a> {
         }
 
         if let Some(field_idx) = self
-            .infer_record_field_idx(obj, field)
-            .or_else(|| self.resolve_record_field_idx(obj, field))
+            .infer_record_field_idx(&obj.node, field)
+            .or_else(|| self.resolve_record_field_idx(&obj.node, field))
         {
             self.compile_expr(obj)?;
             self.emit_op(RECORD_GET);

@@ -989,7 +989,7 @@ fn emit_str_arg_or_deref(expr: &Expr, ectx: &EmitCtx, ctx: &CodegenContext) -> S
 #[cfg(test)]
 mod tests {
     use super::emit_builtin_call;
-    use crate::ast::{Expr, Literal};
+    use crate::ast::{Expr, Literal, Spanned};
     use crate::codegen::CodegenContext;
     use crate::codegen::rust::liveness::EmitCtx;
     use crate::types::Type;
@@ -1033,18 +1033,18 @@ mod tests {
     fn http_post_preserves_nested_arg_liveness() {
         let args = vec![
             Expr::FnCall(
-                Box::new(Expr::Ident("queryUrl".to_string())),
-                vec![Expr::Ident("config".to_string())],
+                Box::new(Spanned::bare(Expr::Ident("queryUrl".to_string()))),
+                vec![Spanned::bare(Expr::Ident("config".to_string()))],
             ),
             Expr::FnCall(
-                Box::new(Expr::Ident("sqlBody".to_string())),
-                vec![Expr::Ident("sql".to_string())],
+                Box::new(Spanned::bare(Expr::Ident("sqlBody".to_string()))),
+                vec![Spanned::bare(Expr::Ident("sql".to_string()))],
             ),
             Expr::Literal(Literal::Str("application/json".to_string())),
-            Expr::List(vec![Expr::FnCall(
-                Box::new(Expr::Ident("authHeader".to_string())),
-                vec![Expr::Ident("config".to_string())],
-            )]),
+            Expr::List(vec![Spanned::bare(Expr::FnCall(
+                Box::new(Spanned::bare(Expr::Ident("authHeader".to_string()))),
+                vec![Spanned::bare(Expr::Ident("config".to_string()))],
+            ))]),
         ];
         let mut local_types = HashMap::new();
         local_types.insert("config".to_string(), Type::Named("DbConfig".to_string()));

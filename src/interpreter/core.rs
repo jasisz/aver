@@ -116,6 +116,7 @@ impl Interpreter {
             verify_match_coverage: None,
             runtime_policy: None,
             cli_args: Vec::new(),
+            last_call_line: 0,
         }
     }
 
@@ -340,78 +341,78 @@ impl Interpreter {
         out: &mut std::collections::BTreeMap<MatchSiteKey, usize>,
     ) {
         match stmt {
-            Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => {
-                Self::collect_match_sites_from_expr(expr, out);
+            Stmt::Binding(_, _, spanned_expr) | Stmt::Expr(spanned_expr) => {
+                Self::collect_match_sites_from_spanned(spanned_expr, out);
             }
         }
     }
 
-    fn collect_match_sites_from_expr(
-        expr: &Expr,
+    fn collect_match_sites_from_spanned(
+        spanned: &Spanned<Expr>,
         out: &mut std::collections::BTreeMap<MatchSiteKey, usize>,
     ) {
-        match expr {
-            Expr::Match {
-                subject,
-                arms,
-                line,
-            } => {
-                out.insert((*line, arms.len()), arms.len());
-                Self::collect_match_sites_from_expr(subject, out);
+        let line = spanned.line;
+        match &spanned.node {
+            Expr::Match { subject, arms } => {
+                out.insert((line, arms.len()), arms.len());
+                Self::collect_match_sites_from_spanned(subject, out);
                 for arm in arms {
-                    Self::collect_match_sites_from_expr(&arm.body, out);
+                    Self::collect_match_sites_from_spanned(&arm.body, out);
                 }
             }
             Expr::FnCall(fn_expr, args) => {
-                Self::collect_match_sites_from_expr(fn_expr, out);
+                Self::collect_match_sites_from_spanned(fn_expr, out);
                 for arg in args {
-                    Self::collect_match_sites_from_expr(arg, out);
+                    Self::collect_match_sites_from_spanned(arg, out);
                 }
             }
             Expr::BinOp(_, left, right) => {
-                Self::collect_match_sites_from_expr(left, out);
-                Self::collect_match_sites_from_expr(right, out);
+                Self::collect_match_sites_from_spanned(left, out);
+                Self::collect_match_sites_from_spanned(right, out);
             }
-            Expr::Attr(obj, _) | Expr::ErrorProp(obj) => {
-                Self::collect_match_sites_from_expr(obj, out);
+            Expr::Attr(obj, _) => {
+                Self::collect_match_sites_from_spanned(obj, out);
+            }
+            Expr::ErrorProp(inner) => {
+                Self::collect_match_sites_from_spanned(inner, out);
             }
             Expr::Constructor(_, maybe_arg) => {
                 if let Some(arg) = maybe_arg {
-                    Self::collect_match_sites_from_expr(arg, out);
+                    Self::collect_match_sites_from_spanned(arg, out);
                 }
             }
             Expr::InterpolatedStr(parts) => {
                 for part in parts {
                     if let StrPart::Parsed(expr) = part {
-                        Self::collect_match_sites_from_expr(expr, out);
+                        Self::collect_match_sites_from_spanned(expr, out);
                     }
                 }
             }
             Expr::List(items) | Expr::Tuple(items) => {
                 for item in items {
-                    Self::collect_match_sites_from_expr(item, out);
+                    Self::collect_match_sites_from_spanned(item, out);
                 }
             }
             Expr::MapLiteral(entries) => {
                 for (key, value) in entries {
-                    Self::collect_match_sites_from_expr(key, out);
-                    Self::collect_match_sites_from_expr(value, out);
+                    Self::collect_match_sites_from_spanned(key, out);
+                    Self::collect_match_sites_from_spanned(value, out);
                 }
             }
             Expr::RecordCreate { fields, .. } => {
                 for (_, expr) in fields {
-                    Self::collect_match_sites_from_expr(expr, out);
+                    Self::collect_match_sites_from_spanned(expr, out);
                 }
             }
             Expr::RecordUpdate { base, updates, .. } => {
-                Self::collect_match_sites_from_expr(base, out);
+                Self::collect_match_sites_from_spanned(base, out);
                 for (_, expr) in updates {
-                    Self::collect_match_sites_from_expr(expr, out);
+                    Self::collect_match_sites_from_spanned(expr, out);
                 }
             }
             Expr::TailCall(boxed) => {
                 for arg in &boxed.1 {
-                    Self::collect_match_sites_from_expr(arg, out);
+                    Self::collect_match_sites_from_spanned(arg, out);
                 }
             }
             Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => {}

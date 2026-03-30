@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{BinOp, Expr, VerifyBlock, VerifyLaw};
+use crate::ast::{BinOp, Expr, Spanned, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 use crate::verify_law::canonical_spec_ref;
 
@@ -8,8 +8,8 @@ use super::super::super::expr::emit_expr;
 use super::super::shared::{body_terminal_expr, callee_matches_name, find_fn_def, substitute_expr};
 use super::super::{AutoProof, intro_then};
 
-fn is_linear_int_expr(expr: &Expr, allowed_idents: &HashSet<&str>) -> bool {
-    match expr {
+fn is_linear_int_expr(expr: &Spanned<Expr>, allowed_idents: &HashSet<&str>) -> bool {
+    match &expr.node {
         Expr::Literal(crate::ast::Literal::Int(_)) => true,
         Expr::Ident(name) => allowed_idents.contains(name.as_str()),
         Expr::BinOp(BinOp::Add | BinOp::Sub, left, right) => {
@@ -41,11 +41,11 @@ pub(super) fn emit_linear_int_omega_spec_equivalence_law(
     let allowed_idents: HashSet<&str> =
         law.givens.iter().map(|given| given.name.as_str()).collect();
 
-    let try_side = |impl_side: &Expr, spec_side: &Expr| -> Option<AutoProof> {
-        let Expr::FnCall(impl_callee, impl_args) = impl_side else {
+    let try_side = |impl_side: &Spanned<Expr>, spec_side: &Spanned<Expr>| -> Option<AutoProof> {
+        let Expr::FnCall(impl_callee, impl_args) = &impl_side.node else {
             return None;
         };
-        let Expr::FnCall(spec_callee, spec_args) = spec_side else {
+        let Expr::FnCall(spec_callee, spec_args) = &spec_side.node else {
             return None;
         };
         if !callee_matches_name(impl_callee, &vb.fn_name)
@@ -57,13 +57,13 @@ pub(super) fn emit_linear_int_omega_spec_equivalence_law(
             return None;
         }
 
-        let impl_bindings: HashMap<&str, &Expr> = impl_fd
+        let impl_bindings: HashMap<&str, &Spanned<Expr>> = impl_fd
             .params
             .iter()
             .zip(impl_args.iter())
             .map(|((name, _), arg)| (name.as_str(), arg))
             .collect();
-        let spec_bindings: HashMap<&str, &Expr> = spec_fd
+        let spec_bindings: HashMap<&str, &Spanned<Expr>> = spec_fd
             .params
             .iter()
             .zip(spec_args.iter())

@@ -40,7 +40,7 @@ fn parse_error(src: &str) -> String {
 fn single_expr_body(fd: &FnDef) -> &Expr {
     match fd.body.as_ref() {
         FnBody::Block(stmts) if stmts.len() == 1 => match &stmts[0] {
-            Stmt::Expr(expr) => expr,
+            Stmt::Expr(expr) => &expr.node,
             other => panic!("expected single expression body, got {:?}", other),
         },
         other => panic!("expected single expression block body, got {:?}", other),
@@ -59,7 +59,7 @@ fn binding_int() {
         vec![TopLevel::Stmt(Stmt::Binding(
             "x".to_string(),
             None,
-            Expr::Literal(Literal::Int(42))
+            Spanned::bare(Expr::Literal(Literal::Int(42)))
         ))]
     );
 }
@@ -72,7 +72,7 @@ fn binding_string() {
         vec![TopLevel::Stmt(Stmt::Binding(
             "greeting".to_string(),
             None,
-            Expr::Literal(Literal::Str("hello".to_string()))
+            Spanned::bare(Expr::Literal(Literal::Str("hello".to_string())))
         ))]
     );
 }
@@ -85,7 +85,7 @@ fn binding_string_supports_backspace_and_formfeed_escapes() {
         vec![TopLevel::Stmt(Stmt::Binding(
             "x".to_string(),
             None,
-            Expr::Literal(Literal::Str("\u{0008}\u{000C}".to_string()))
+            Spanned::bare(Expr::Literal(Literal::Str("\u{0008}\u{000C}".to_string())))
         ))]
     );
 }
@@ -98,7 +98,7 @@ fn binding_bool_true() {
         vec![TopLevel::Stmt(Stmt::Binding(
             "flag".to_string(),
             None,
-            Expr::Literal(Literal::Bool(true))
+            Spanned::bare(Expr::Literal(Literal::Bool(true)))
         ))]
     );
 }
@@ -111,7 +111,7 @@ fn binding_unit_singleton() {
         vec![TopLevel::Stmt(Stmt::Binding(
             "done".to_string(),
             None,
-            Expr::Literal(Literal::Unit)
+            Spanned::bare(Expr::Literal(Literal::Unit))
         ))]
     );
 }
@@ -143,7 +143,7 @@ fn typed_binding_parses_annotation() {
         vec![TopLevel::Stmt(Stmt::Binding(
             "x".to_string(),
             Some("Int".to_string()),
-            Expr::Literal(Literal::Int(5))
+            Spanned::bare(Expr::Literal(Literal::Int(5)))
         ))]
     );
 }
@@ -366,7 +366,10 @@ fn expr_arithmetic_add() {
     let items = parse("1 + 2");
     assert!(matches!(
         items[0],
-        TopLevel::Stmt(Stmt::Expr(Expr::BinOp(BinOp::Add, _, _)))
+        TopLevel::Stmt(Stmt::Expr(Spanned {
+            node: Expr::BinOp(BinOp::Add, _, _),
+            ..
+        }))
     ));
 }
 
@@ -375,7 +378,10 @@ fn expr_arithmetic_mul() {
     let items = parse("3 * 4");
     assert!(matches!(
         items[0],
-        TopLevel::Stmt(Stmt::Expr(Expr::BinOp(BinOp::Mul, _, _)))
+        TopLevel::Stmt(Stmt::Expr(Spanned {
+            node: Expr::BinOp(BinOp::Mul, _, _),
+            ..
+        }))
     ));
 }
 
@@ -384,7 +390,10 @@ fn expr_comparison_eq() {
     let items = parse("a == b");
     assert!(matches!(
         items[0],
-        TopLevel::Stmt(Stmt::Expr(Expr::BinOp(BinOp::Eq, _, _)))
+        TopLevel::Stmt(Stmt::Expr(Spanned {
+            node: Expr::BinOp(BinOp::Eq, _, _),
+            ..
+        }))
     ));
 }
 
@@ -393,7 +402,10 @@ fn expr_comparison_lt() {
     let items = parse("x < 10");
     assert!(matches!(
         items[0],
-        TopLevel::Stmt(Stmt::Expr(Expr::BinOp(BinOp::Lt, _, _)))
+        TopLevel::Stmt(Stmt::Expr(Spanned {
+            node: Expr::BinOp(BinOp::Lt, _, _),
+            ..
+        }))
     ));
 }
 
@@ -405,8 +417,10 @@ fn expr_pipe_is_rejected() {
 #[test]
 fn expr_fn_call() {
     let items = parse("add(1, 2)");
-    if let TopLevel::Stmt(Stmt::Expr(Expr::FnCall(fn_expr, args))) = &items[0] {
-        assert!(matches!(**fn_expr, Expr::Ident(_)));
+    if let TopLevel::Stmt(Stmt::Expr(ref spanned)) = items[0]
+        && let Expr::FnCall(fn_expr, args) = &spanned.node
+    {
+        assert!(matches!(fn_expr.node, Expr::Ident(_)));
         assert_eq!(args.len(), 2);
     } else {
         panic!("expected FnCall");
@@ -416,15 +430,17 @@ fn expr_fn_call() {
 #[test]
 fn expr_constructor_ok() {
     let items = parse("Result.Ok(42)");
-    if let TopLevel::Stmt(Stmt::Expr(Expr::FnCall(fn_expr, args))) = &items[0] {
-        if let Expr::Attr(obj, field) = fn_expr.as_ref() {
-            assert!(matches!(obj.as_ref(), Expr::Ident(n) if n == "Result"));
+    if let TopLevel::Stmt(Stmt::Expr(ref spanned)) = items[0]
+        && let Expr::FnCall(fn_expr, args) = &spanned.node
+    {
+        if let Expr::Attr(obj, field) = &fn_expr.node {
+            assert!(matches!(&obj.node, Expr::Ident(n) if n == "Result"));
             assert_eq!(field, "Ok");
         } else {
             panic!("expected Attr, got: {:?}", fn_expr);
         }
         assert_eq!(args.len(), 1);
-        assert!(matches!(&args[0], Expr::Literal(Literal::Int(42))));
+        assert!(matches!(&args[0].node, Expr::Literal(Literal::Int(42))));
     } else {
         panic!("expected Result.Ok call, got: {:?}", items[0]);
     }
@@ -433,9 +449,11 @@ fn expr_constructor_ok() {
 #[test]
 fn expr_constructor_err() {
     let items = parse("Result.Err(\"fail\")");
-    if let TopLevel::Stmt(Stmt::Expr(Expr::FnCall(fn_expr, _))) = &items[0] {
-        if let Expr::Attr(obj, field) = fn_expr.as_ref() {
-            assert!(matches!(obj.as_ref(), Expr::Ident(n) if n == "Result"));
+    if let TopLevel::Stmt(Stmt::Expr(ref spanned)) = items[0]
+        && let Expr::FnCall(fn_expr, _) = &spanned.node
+    {
+        if let Expr::Attr(obj, field) = &fn_expr.node {
+            assert!(matches!(&obj.node, Expr::Ident(n) if n == "Result"));
             assert_eq!(field, "Err");
         } else {
             panic!("expected Attr, got: {:?}", fn_expr);
@@ -448,9 +466,11 @@ fn expr_constructor_err() {
 #[test]
 fn expr_constructor_some() {
     let items = parse("Option.Some(1)");
-    if let TopLevel::Stmt(Stmt::Expr(Expr::FnCall(fn_expr, _))) = &items[0] {
-        if let Expr::Attr(obj, field) = fn_expr.as_ref() {
-            assert!(matches!(obj.as_ref(), Expr::Ident(n) if n == "Option"));
+    if let TopLevel::Stmt(Stmt::Expr(ref spanned)) = items[0]
+        && let Expr::FnCall(fn_expr, _) = &spanned.node
+    {
+        if let Expr::Attr(obj, field) = &fn_expr.node {
+            assert!(matches!(&obj.node, Expr::Ident(n) if n == "Option"));
             assert_eq!(field, "Some");
         } else {
             panic!("expected Attr, got: {:?}", fn_expr);
@@ -463,8 +483,10 @@ fn expr_constructor_some() {
 #[test]
 fn expr_constructor_none() {
     let items = parse("Option.None");
-    if let TopLevel::Stmt(Stmt::Expr(Expr::Attr(obj, field))) = &items[0] {
-        assert!(matches!(obj.as_ref(), Expr::Ident(n) if n == "Option"));
+    if let TopLevel::Stmt(Stmt::Expr(ref spanned)) = items[0]
+        && let Expr::Attr(obj, field) = &spanned.node
+    {
+        assert!(matches!(&obj.node, Expr::Ident(n) if n == "Option"));
         assert_eq!(field, "None");
     } else {
         panic!("expected Option.None attr, got: {:?}", items[0]);
@@ -486,9 +508,14 @@ fn expr_list_empty() {
     let items = parse("[]");
     assert!(matches!(
         items[0],
-        TopLevel::Stmt(Stmt::Expr(Expr::List(_)))
+        TopLevel::Stmt(Stmt::Expr(Spanned {
+            node: Expr::List(_),
+            ..
+        }))
     ));
-    if let TopLevel::Stmt(Stmt::Expr(Expr::List(elems))) = &items[0] {
+    if let TopLevel::Stmt(Stmt::Expr(ref spanned)) = items[0]
+        && let Expr::List(elems) = &spanned.node
+    {
         assert!(elems.is_empty());
     }
 }
@@ -496,10 +523,12 @@ fn expr_list_empty() {
 #[test]
 fn expr_list_int() {
     let items = parse("[1, 2, 3]");
-    if let TopLevel::Stmt(Stmt::Expr(Expr::List(elems))) = &items[0] {
+    if let TopLevel::Stmt(Stmt::Expr(ref spanned)) = items[0]
+        && let Expr::List(elems) = &spanned.node
+    {
         assert_eq!(elems.len(), 3);
-        assert_eq!(elems[0], Expr::Literal(Literal::Int(1)));
-        assert_eq!(elems[2], Expr::Literal(Literal::Int(3)));
+        assert_eq!(elems[0].node, Expr::Literal(Literal::Int(1)));
+        assert_eq!(elems[2].node, Expr::Literal(Literal::Int(3)));
     } else {
         panic!("expected List");
     }
@@ -508,10 +537,12 @@ fn expr_list_int() {
 #[test]
 fn expr_tuple_literal() {
     let items = parse("(1, \"x\")");
-    if let TopLevel::Stmt(Stmt::Expr(Expr::Tuple(items))) = &items[0] {
-        assert_eq!(items.len(), 2);
-        assert_eq!(items[0], Expr::Literal(Literal::Int(1)));
-        assert_eq!(items[1], Expr::Literal(Literal::Str("x".to_string())));
+    if let TopLevel::Stmt(Stmt::Expr(ref spanned)) = items[0]
+        && let Expr::Tuple(elems) = &spanned.node
+    {
+        assert_eq!(elems.len(), 2);
+        assert_eq!(elems[0].node, Expr::Literal(Literal::Int(1)));
+        assert_eq!(elems[1].node, Expr::Literal(Literal::Str("x".to_string())));
     } else {
         panic!("expected Tuple");
     }
@@ -520,7 +551,9 @@ fn expr_tuple_literal() {
 #[test]
 fn expr_map_literal_empty() {
     let items = parse("{}");
-    if let TopLevel::Stmt(Stmt::Expr(Expr::MapLiteral(entries))) = &items[0] {
+    if let TopLevel::Stmt(Stmt::Expr(ref spanned)) = items[0]
+        && let Expr::MapLiteral(entries) = &spanned.node
+    {
         assert!(entries.is_empty());
     } else {
         panic!("expected MapLiteral, got: {:?}", items[0]);
@@ -530,12 +563,20 @@ fn expr_map_literal_empty() {
 #[test]
 fn expr_map_literal_entries() {
     let items = parse("{\"a\" => 1, \"b\" => 2}");
-    if let TopLevel::Stmt(Stmt::Expr(Expr::MapLiteral(entries))) = &items[0] {
+    if let TopLevel::Stmt(Stmt::Expr(ref spanned)) = items[0]
+        && let Expr::MapLiteral(entries) = &spanned.node
+    {
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].0, Expr::Literal(Literal::Str("a".to_string())));
-        assert_eq!(entries[0].1, Expr::Literal(Literal::Int(1)));
-        assert_eq!(entries[1].0, Expr::Literal(Literal::Str("b".to_string())));
-        assert_eq!(entries[1].1, Expr::Literal(Literal::Int(2)));
+        assert_eq!(
+            entries[0].0.node,
+            Expr::Literal(Literal::Str("a".to_string()))
+        );
+        assert_eq!(entries[0].1.node, Expr::Literal(Literal::Int(1)));
+        assert_eq!(
+            entries[1].0.node,
+            Expr::Literal(Literal::Str("b".to_string()))
+        );
+        assert_eq!(entries[1].1.node, Expr::Literal(Literal::Int(2)));
     } else {
         panic!("expected MapLiteral, got: {:?}", items[0]);
     }
@@ -556,14 +597,19 @@ fn expr_parenthesized_group_not_tuple() {
     let items = parse("(1 + 2)");
     assert!(matches!(
         items[0],
-        TopLevel::Stmt(Stmt::Expr(Expr::BinOp(BinOp::Add, _, _)))
+        TopLevel::Stmt(Stmt::Expr(Spanned {
+            node: Expr::BinOp(BinOp::Add, _, _),
+            ..
+        }))
     ));
 }
 
 #[test]
 fn expr_error_propagation() {
     let items = parse("result?");
-    if let TopLevel::Stmt(Stmt::Expr(Expr::ErrorProp(_))) = &items[0] {
+    if let TopLevel::Stmt(Stmt::Expr(ref spanned)) = items[0]
+        && let Expr::ErrorProp(_) = &spanned.node
+    {
         // pass
     } else {
         panic!("expected ErrorProp");
@@ -609,7 +655,10 @@ fn match_subject_colon_is_not_type_ascription() {
     let items = parse("match xs\n    [] -> 0\n    _ -> 1\n");
     assert!(matches!(
         items[0],
-        TopLevel::Stmt(Stmt::Expr(Expr::Match { .. }))
+        TopLevel::Stmt(Stmt::Expr(Spanned {
+            node: Expr::Match { .. },
+            ..
+        }))
     ));
 }
 
@@ -839,7 +888,7 @@ fn verify_case_lhs_is_fn_call() {
     let items = parse(src);
     if let TopLevel::Verify(vb) = &items[0] {
         let (lhs, _) = &vb.cases[0];
-        assert!(matches!(lhs, Expr::FnCall(_, _)));
+        assert!(matches!(lhs.node, Expr::FnCall(_, _)));
     } else {
         panic!("expected Verify");
     }
@@ -851,7 +900,7 @@ fn verify_case_rhs_is_literal() {
     let items = parse(src);
     if let TopLevel::Verify(vb) = &items[0] {
         let (_, rhs) = &vb.cases[0];
-        assert!(matches!(rhs, Expr::Literal(Literal::Int(6))));
+        assert!(matches!(rhs.node, Expr::Literal(Literal::Int(6))));
     } else {
         panic!("expected Verify");
     }
@@ -902,20 +951,23 @@ verify max law ordered
         let VerifyKind::Law(law) = &vb.kind else {
             panic!("expected law verify");
         };
-        assert!(matches!(law.when, Some(Expr::BinOp(BinOp::Gt, _, _))));
+        assert!(matches!(
+            law.when.as_ref().map(|s| &s.node),
+            Some(Expr::BinOp(BinOp::Gt, _, _))
+        ));
         assert_eq!(vb.cases.len(), 4);
         assert_eq!(law.sample_guards.len(), 4);
         assert!(matches!(
-            &law.sample_guards[0],
+            &law.sample_guards[0].node,
             Expr::BinOp(BinOp::Gt, left, right)
-                if matches!(left.as_ref(), Expr::Literal(Literal::Int(1)))
-                    && matches!(right.as_ref(), Expr::Literal(Literal::Int(1)))
+                if matches!(left.node, Expr::Literal(Literal::Int(1)))
+                    && matches!(right.node, Expr::Literal(Literal::Int(1)))
         ));
         assert!(matches!(
-            &law.sample_guards[3],
+            &law.sample_guards[3].node,
             Expr::BinOp(BinOp::Gt, left, right)
-                if matches!(left.as_ref(), Expr::Literal(Literal::Int(2)))
-                    && matches!(right.as_ref(), Expr::Literal(Literal::Int(2)))
+                if matches!(left.node, Expr::Literal(Literal::Int(2)))
+                    && matches!(right.node, Expr::Literal(Literal::Int(2)))
         ));
     } else {
         panic!("expected Verify");
@@ -1166,8 +1218,10 @@ fn parse_record_type_with_fields() {
 fn parse_sum_type_constructor_call() {
     let src = "Circle(3.14)\n";
     let items = parse(src);
-    if let TopLevel::Stmt(Stmt::Expr(Expr::FnCall(fn_expr, args))) = &items[0] {
-        assert!(matches!(fn_expr.as_ref(), Expr::Ident(n) if n == "Circle"));
+    if let TopLevel::Stmt(Stmt::Expr(ref spanned)) = items[0]
+        && let Expr::FnCall(fn_expr, args) = &spanned.node
+    {
+        assert!(matches!(&fn_expr.node, Expr::Ident(n) if n == "Circle"));
         assert_eq!(args.len(), 1);
     } else {
         panic!("expected FnCall, got: {:?}", items[0]);
@@ -1178,7 +1232,9 @@ fn parse_sum_type_constructor_call() {
 fn parse_record_create_expression() {
     let src = "User(name = \"Alice\", age = 30)\n";
     let items = parse(src);
-    if let TopLevel::Stmt(Stmt::Expr(Expr::RecordCreate { type_name, fields })) = &items[0] {
+    if let TopLevel::Stmt(Stmt::Expr(ref spanned)) = items[0]
+        && let Expr::RecordCreate { type_name, fields } = &spanned.node
+    {
         assert_eq!(type_name, "User");
         assert_eq!(fields.len(), 2);
         assert_eq!(fields[0].0, "name");
@@ -1276,7 +1332,7 @@ fn record_update_parses() {
                 updates,
             } => {
                 assert_eq!(type_name, "User");
-                assert!(matches!(base.as_ref(), Expr::Ident(n) if n == "u"));
+                assert!(matches!(&base.as_ref().node, Expr::Ident(n) if n == "u"));
                 assert_eq!(updates.len(), 1);
                 assert_eq!(updates[0].0, "age");
             }

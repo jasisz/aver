@@ -2,17 +2,21 @@
 ///
 /// Only pure namespaces are mapped. Effectful services (Console, Disk, Http, etc.)
 /// are skipped by the Lean transpiler — those functions won't appear in output.
-use crate::ast::Expr;
+use crate::ast::{Expr, Spanned};
 use crate::codegen::CodegenContext;
 use crate::codegen::builtins::{Builtin, recognize_builtin};
 
 /// Try to emit a builtin call as Lean 4 code.
 /// Returns `None` if the name is not a pure builtin.
-pub fn emit_builtin_call(name: &str, args: &[Expr], ctx: &CodegenContext) -> Option<String> {
+pub fn emit_builtin_call(
+    name: &str,
+    args: &[Spanned<Expr>],
+    ctx: &CodegenContext,
+) -> Option<String> {
     use crate::codegen::common::is_unit_expr;
 
     // Map<T, Unit> set operations: intercept before generic builtin path
-    if name == "Map.set" && args.len() == 3 && is_unit_expr(&args[2]) {
+    if name == "Map.set" && args.len() == 3 && is_unit_expr(&args[2].node) {
         let m = p(&super::expr::emit_expr(&args[0], ctx));
         let k = p(&super::expr::emit_expr(&args[1], ctx));
         return Some(format!("AverSet.add {} {}", m, k));
@@ -135,8 +139,8 @@ pub fn emit_builtin_call(name: &str, args: &[Expr], ctx: &CodegenContext) -> Opt
     Some(result)
 }
 
-fn emit_list_length_subject(arg: &Expr, ctx: &CodegenContext) -> String {
-    match arg {
+fn emit_list_length_subject(arg: &Spanned<Expr>, ctx: &CodegenContext) -> String {
+    match &arg.node {
         Expr::List(items) if items.is_empty() => "(([] : List Unit))".to_string(),
         _ => p(&super::expr::emit_expr(arg, ctx)),
     }
@@ -154,7 +158,7 @@ fn p(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{Expr, Literal};
+    use crate::ast::{Expr, Literal, Spanned};
     use crate::codegen::CodegenContext;
     use std::collections::{HashMap, HashSet};
 
@@ -182,14 +186,14 @@ mod tests {
     #[test]
     fn option_with_default_wraps_getd_expression_in_parentheses() {
         let ctx = empty_ctx();
-        let option_expr = Expr::FnCall(
-            Box::new(Expr::Attr(
-                Box::new(Expr::Ident("Char".to_string())),
+        let option_expr = Spanned::bare(Expr::FnCall(
+            Box::new(Spanned::bare(Expr::Attr(
+                Box::new(Spanned::bare(Expr::Ident("Char".to_string()))),
                 "fromCode".to_string(),
-            )),
-            vec![Expr::Literal(Literal::Int(8))],
-        );
-        let default_expr = Expr::Literal(Literal::Str("".to_string()));
+            ))),
+            vec![Spanned::bare(Expr::Literal(Literal::Int(8)))],
+        ));
+        let default_expr = Spanned::bare(Expr::Literal(Literal::Str("".to_string())));
 
         let emitted = emit_builtin_call("Option.withDefault", &[option_expr, default_expr], &ctx)
             .expect("Option.withDefault should be emitted");
@@ -200,7 +204,7 @@ mod tests {
     #[test]
     fn list_len_annotates_empty_list_in_theorem_friendly_form() {
         let ctx = empty_ctx();
-        let emitted = emit_builtin_call("List.len", &[Expr::List(vec![])], &ctx)
+        let emitted = emit_builtin_call("List.len", &[Spanned::bare(Expr::List(vec![]))], &ctx)
             .expect("List.len should be emitted");
 
         assert_eq!(emitted, "(([] : List Unit)).length");

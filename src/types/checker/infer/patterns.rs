@@ -5,7 +5,7 @@ impl TypeChecker {
         &mut self,
         pattern: &Pattern,
         subject_ty: &Type,
-        body: &Expr,
+        body: &Spanned<Expr>,
     ) -> Type {
         let mut bindings = Vec::new();
         self.collect_pattern_bindings(pattern, subject_ty, &mut bindings);

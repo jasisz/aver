@@ -1,4 +1,4 @@
-use crate::ast::{Expr, FnBody, FnDef, Stmt};
+use crate::ast::{Expr, FnBody, FnDef, Spanned, Stmt};
 
 use super::{
     CallLowerCtx, CallPlan, ForwardCallPlan, LeafOp, classify_call_plan,
@@ -15,7 +15,10 @@ use super::{
 pub enum BodyExprPlan<'a> {
     Expr(&'a Expr),
     Leaf(LeafOp<'a>),
-    Call { target: CallPlan, args: &'a [Expr] },
+    Call {
+        target: CallPlan,
+        args: &'a [Spanned<Expr>],
+    },
     ForwardCall(ForwardCallPlan),
 }
 
@@ -65,7 +68,7 @@ pub fn classify_body_expr_plan<'a>(expr: &'a Expr, ctx: &impl CallLowerCtx) -> B
     }
 
     if let Expr::FnCall(fn_expr, args) = expr {
-        let target = classify_call_plan(fn_expr, ctx);
+        let target = classify_call_plan(&fn_expr.node, ctx);
         if !matches!(target, CallPlan::Dynamic) {
             return BodyExprPlan::Call { target, args };
         }
@@ -84,7 +87,8 @@ pub fn classify_body_plan<'a>(body: &'a FnBody, ctx: &impl CallLowerCtx) -> Opti
 
     if prefix.is_empty() {
         return Some(BodyPlan::SingleExpr(classify_body_expr_plan(
-            tail_expr, ctx,
+            &tail_expr.node,
+            ctx,
         )));
     }
 
@@ -95,14 +99,14 @@ pub fn classify_body_plan<'a>(body: &'a FnBody, ctx: &impl CallLowerCtx) -> Opti
         };
         bindings.push(BodyBindingPlan {
             name,
-            expr: classify_body_expr_plan(expr, ctx),
+            expr: classify_body_expr_plan(&expr.node, ctx),
         });
     }
 
     Some(BodyPlan::Block {
         stmts,
         bindings,
-        tail: classify_body_expr_plan(tail_expr, ctx),
+        tail: classify_body_expr_plan(&tail_expr.node, ctx),
     })
 }
 
@@ -147,7 +151,7 @@ fn classify_thin_expr_kind(plan: &BodyExprPlan<'_>, ctx: &impl CallLowerCtx) -> 
         BodyExprPlan::Leaf(_) => Some(ThinKind::Leaf),
         BodyExprPlan::Call { .. } => Some(ThinKind::Direct),
         BodyExprPlan::ForwardCall(_) => Some(ThinKind::Forward),
-        BodyExprPlan::Expr(expr) => match expr {
+        BodyExprPlan::Expr(expr) => match *expr {
             Expr::Match { arms, .. } if classify_match_dispatch_plan(arms, ctx).is_some() => {
                 Some(ThinKind::Dispatch)
             }

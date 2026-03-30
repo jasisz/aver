@@ -1,5 +1,5 @@
 use super::{CompileError, FnCompiler};
-use crate::ast::{BinOp, Expr, Literal, Stmt, StrPart};
+use crate::ast::{BinOp, Expr, Literal, Spanned, Stmt, StrPart};
 use crate::nan_value::NanValue;
 use crate::vm::builtin::VmBuiltin;
 use crate::vm::opcode::*;
@@ -15,33 +15,40 @@ impl<'a> FnCompiler<'a> {
 
         for (i, stmt) in stmts.iter().enumerate() {
             let is_last = i == stmts.len() - 1;
-            match stmt {
-                Stmt::Binding(name, _type_ann, expr) => {
-                    self.compile_expr(expr)?;
-                    if let Some(&slot) = self.local_slots.get(name) {
-                        self.emit_op(STORE_LOCAL);
-                        self.emit_u8(slot as u8);
-                    }
-                }
-                Stmt::Expr(expr) => {
-                    self.compile_expr(expr)?;
-                    if !is_last {
-                        self.emit_op(POP);
-                    }
-                }
-            }
+            self.compile_stmt(stmt, is_last)?;
         }
 
         self.emit_op(RETURN);
         Ok(())
     }
 
-    pub(super) fn compile_expr(&mut self, expr: &Expr) -> Result<(), CompileError> {
-        if self.try_compile_leaf_expr(expr)? {
+    pub(super) fn compile_stmt(&mut self, stmt: &Stmt, is_tail: bool) -> Result<(), CompileError> {
+        match stmt {
+            Stmt::Binding(name, _type_ann, expr) => {
+                self.compile_expr(expr)?;
+                if let Some(&slot) = self.local_slots.get(name) {
+                    self.emit_op(STORE_LOCAL);
+                    self.emit_u8(slot as u8);
+                }
+            }
+            Stmt::Expr(expr) => {
+                self.compile_expr(expr)?;
+                if !is_tail {
+                    self.emit_op(POP);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn compile_expr(&mut self, expr: &Spanned<Expr>) -> Result<(), CompileError> {
+        self.note_line(expr.line);
+
+        if self.try_compile_leaf_expr(&expr.node)? {
             return Ok(());
         }
 
-        match expr {
+        match &expr.node {
             Expr::Literal(lit) => self.compile_literal(lit),
             Expr::Resolved(slot) => {
                 self.emit_op(LOAD_LOCAL);
@@ -60,11 +67,7 @@ impl<'a> FnCompiler<'a> {
                 let (target, args) = boxed.as_ref();
                 self.compile_tail_call(target, args)
             }
-            Expr::Match {
-                subject,
-                arms,
-                line,
-            } => self.compile_match(subject, arms, *line),
+            Expr::Match { subject, arms } => self.compile_match(subject, arms),
             Expr::Constructor(name, arg) => self.compile_constructor(name, arg.as_deref()),
             Expr::ErrorProp(inner) => self.compile_error_prop(inner),
             Expr::List(items) => self.compile_list(items),
@@ -158,13 +161,13 @@ impl<'a> FnCompiler<'a> {
         }
     }
 
-    fn compile_error_prop(&mut self, inner: &Expr) -> Result<(), CompileError> {
+    fn compile_error_prop(&mut self, inner: &Spanned<Expr>) -> Result<(), CompileError> {
         self.compile_expr(inner)?;
         self.emit_op(PROPAGATE_ERR);
         Ok(())
     }
 
-    fn compile_list(&mut self, items: &[Expr]) -> Result<(), CompileError> {
+    fn compile_list(&mut self, items: &[Spanned<Expr>]) -> Result<(), CompileError> {
         if items.is_empty() {
             self.emit_op(LIST_NIL);
             return Ok(());
@@ -215,7 +218,7 @@ impl<'a> FnCompiler<'a> {
     fn compile_record_create(
         &mut self,
         type_name: &str,
-        fields: &[(String, Expr)],
+        fields: &[(String, Spanned<Expr>)],
     ) -> Result<(), CompileError> {
         let type_id = self
             .resolve_type_id(type_name)
@@ -243,8 +246,8 @@ impl<'a> FnCompiler<'a> {
     fn compile_record_update(
         &mut self,
         type_name: &str,
-        base: &Expr,
-        updates: &[(String, Expr)],
+        base: &Spanned<Expr>,
+        updates: &[(String, Spanned<Expr>)],
     ) -> Result<(), CompileError> {
         let type_id = self
             .resolve_type_id(type_name)
@@ -272,7 +275,7 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
-    fn compile_tuple(&mut self, items: &[Expr]) -> Result<(), CompileError> {
+    fn compile_tuple(&mut self, items: &[Spanned<Expr>]) -> Result<(), CompileError> {
         for item in items {
             self.compile_expr(item)?;
         }
@@ -281,7 +284,10 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
-    fn compile_map(&mut self, entries: &[(Expr, Expr)]) -> Result<(), CompileError> {
+    fn compile_map(
+        &mut self,
+        entries: &[(Spanned<Expr>, Spanned<Expr>)],
+    ) -> Result<(), CompileError> {
         let empty_map = self.arena.push_map(crate::nan_value::PersistentMap::new());
         let nv = NanValue::new_map(empty_map);
         let idx = self.add_constant(nv);

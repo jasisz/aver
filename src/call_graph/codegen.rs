@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{Expr, FnBody, FnDef, Stmt};
+use crate::ast::{Expr, FnBody, FnDef, Spanned, Stmt};
 
 use super::collect_codegen_deps_body;
 use super::scc::{tarjan_sccs, topo_components};
@@ -115,8 +115,12 @@ fn collect_tailcall_deps_body(
     }
 }
 
-fn collect_tailcall_deps_expr(expr: &Expr, fn_names: &HashSet<String>, out: &mut HashSet<String>) {
-    match expr {
+fn collect_tailcall_deps_expr(
+    expr: &Spanned<Expr>,
+    fn_names: &HashSet<String>,
+    out: &mut HashSet<String>,
+) {
+    match &expr.node {
         Expr::TailCall(boxed) => {
             let (target, _) = boxed.as_ref();
             if fn_names.contains(target) {

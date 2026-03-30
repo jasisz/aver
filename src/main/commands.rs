@@ -8,7 +8,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use colored::Colorize;
 
-use aver::ast::{Expr, FnBody, FnDef, Pattern, Stmt, TopLevel, TypeDef, VerifyBlock, VerifyKind};
+use aver::ast::{
+    Expr, FnBody, FnDef, Pattern, Spanned, Stmt, TopLevel, TypeDef, VerifyBlock, VerifyKind,
+};
 use aver::checker::{
     CheckFinding, VerifyResult, check_module_intent_with_sigs_in,
     collect_verify_coverage_warnings_in, collect_verify_law_dependency_warnings_in, expr_to_str,
@@ -478,10 +480,10 @@ fn mark_path_use(
     }
 }
 
-fn expr_path_parts(expr: &Expr) -> Option<Vec<String>> {
-    match expr {
+fn expr_path_parts(expr: &Spanned<Expr>) -> Option<Vec<String>> {
+    match &expr.node {
         Expr::Attr(inner, field) => {
-            let mut parts = match inner.as_ref() {
+            let mut parts = match &inner.node {
                 Expr::Ident(name) => vec![name.clone()],
                 _ => expr_path_parts(inner)?,
             };
@@ -494,8 +496,8 @@ fn expr_path_parts(expr: &Expr) -> Option<Vec<String>> {
     }
 }
 
-fn expr_self_host_runtime_name(expr: &Expr) -> Option<String> {
-    match expr {
+fn expr_self_host_runtime_name(expr: &Spanned<Expr>) -> Option<String> {
+    match &expr.node {
         Expr::Ident(name) => Some(name.clone()),
         Expr::Attr(_, _) => expr_path_parts(expr).map(|parts| parts.join(".")),
         Expr::Constructor(name, _) => Some(name.clone()),
@@ -503,12 +505,12 @@ fn expr_self_host_runtime_name(expr: &Expr) -> Option<String> {
     }
 }
 
-fn expr_uses_self_host_runtime(expr: &Expr) -> bool {
+fn expr_uses_self_host_runtime(expr: &Spanned<Expr>) -> bool {
     if expr_self_host_runtime_name(expr).is_some_and(|name| name.starts_with("SelfHostRuntime.")) {
         return true;
     }
 
-    match expr {
+    match &expr.node {
         Expr::Attr(inner, _) | Expr::Constructor(_, Some(inner)) | Expr::ErrorProp(inner) => {
             expr_uses_self_host_runtime(inner)
         }
@@ -683,7 +685,7 @@ fn walk_pattern_for_exposes(
 }
 
 fn walk_expr_for_exposes(
-    expr: &Expr,
+    expr: &Spanned<Expr>,
     dep_targets: &[ImportTarget],
     unique_type_owner: &HashMap<String, String>,
     used_by_target: &mut HashMap<String, HashSet<String>>,
@@ -692,7 +694,7 @@ fn walk_expr_for_exposes(
         mark_path_use(&parts, dep_targets, unique_type_owner, used_by_target);
     }
 
-    match expr {
+    match &expr.node {
         Expr::Attr(inner, _) => {
             walk_expr_for_exposes(inner, dep_targets, unique_type_owner, used_by_target);
         }
@@ -1140,7 +1142,7 @@ pub(super) fn cmd_run_vm(
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
     let (code, globals) =
-        match vm::compile_program_with_modules(&items, &mut arena, Some(&module_root)) {
+        match vm::compile_program_with_modules(&items, &mut arena, Some(&module_root), file) {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("{}", format!("VM compile error: {}", e).red());
@@ -1287,7 +1289,7 @@ pub(super) fn cmd_run_vm(
 
     if run_verify_blocks {
         println!();
-        match run_verify_for_items_vm(items, &module_root) {
+        match run_verify_for_items_vm(items, &module_root, file) {
             Ok(results) => {
                 let failed: usize = results.iter().map(|r| r.failed).sum();
                 let file_results = vec![VerifyFileResult {
@@ -1780,9 +1782,17 @@ enum VmVerifyEval {
     ErrProp(Value),
 }
 
-fn make_verify_vm_helper(name: String, line: usize, expr: Expr, wrap_result: bool) -> TopLevel {
+fn make_verify_vm_helper(
+    name: String,
+    line: usize,
+    expr: Spanned<Expr>,
+    wrap_result: bool,
+) -> TopLevel {
     let body_expr = if wrap_result {
-        Expr::Constructor("Result.Ok".to_string(), Some(Box::new(expr)))
+        Spanned::new(
+            Expr::Constructor("Result.Ok".to_string(), Some(Box::new(expr))),
+            line,
+        )
     } else {
         expr
     };
@@ -2128,6 +2138,7 @@ fn run_verify_for_items(
 fn run_verify_for_items_vm(
     mut items: Vec<TopLevel>,
     module_root: &str,
+    source_file: &str,
 ) -> Result<Vec<VerifyResult>, String> {
     tco::transform_program(&mut items);
 
@@ -2146,8 +2157,9 @@ fn run_verify_for_items_vm(
 
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
-    let (code, globals) = vm::compile_program_with_modules(&items, &mut arena, Some(module_root))
-        .map_err(|e| format!("VM compile error: {}", e))?;
+    let (code, globals) =
+        vm::compile_program_with_modules(&items, &mut arena, Some(module_root), source_file)
+            .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
     apply_runtime_policy_to_vm(&mut machine, module_root)?;
 
@@ -2175,7 +2187,7 @@ fn run_verify_for_file(
 
     for (path, source, items) in units {
         let blocks = if vm_mode {
-            run_verify_for_items_vm(items, module_root)?
+            run_verify_for_items_vm(items, module_root, &path)?
         } else {
             run_verify_for_items(items, module_root)?
         };
@@ -2948,7 +2960,7 @@ mod tests {
     use super::{
         codegen_uses_self_host_runtime, resolve_av_inputs, validate_self_host_guest_entry_contract,
     };
-    use aver::ast::{Expr, FnBody, FnDef, Literal, Stmt, TopLevel};
+    use aver::ast::{Expr, FnBody, FnDef, Literal, Spanned, Stmt, TopLevel};
     use aver::codegen::CodegenContext;
     use std::collections::{HashMap, HashSet};
     use std::fs;
@@ -2993,7 +3005,9 @@ mod tests {
             return_type: "Unit".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Literal(Literal::Unit))),
+            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::Literal(
+                Literal::Unit,
+            )))),
             resolution: None,
         }
     }
@@ -3038,16 +3052,16 @@ mod tests {
     #[test]
     fn detects_self_host_runtime_in_top_level_statement() {
         let mut ctx = empty_codegen_ctx();
-        ctx.items = vec![TopLevel::Stmt(Stmt::Expr(Expr::FnCall(
-            Box::new(Expr::Attr(
-                Box::new(Expr::Ident("SelfHostRuntime".to_string())),
+        ctx.items = vec![TopLevel::Stmt(Stmt::Expr(Spanned::bare(Expr::FnCall(
+            Box::new(Spanned::bare(Expr::Attr(
+                Box::new(Spanned::bare(Expr::Ident("SelfHostRuntime".to_string()))),
                 "httpServerListen".to_string(),
-            )),
+            ))),
             vec![
-                Expr::Literal(Literal::Int(3000)),
-                Expr::Ident("handler".to_string()),
+                Spanned::bare(Expr::Literal(Literal::Int(3000))),
+                Spanned::bare(Expr::Ident("handler".to_string())),
             ],
-        )))];
+        ))))];
 
         assert!(codegen_uses_self_host_runtime(&ctx));
     }

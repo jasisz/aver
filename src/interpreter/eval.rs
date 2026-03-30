@@ -25,24 +25,37 @@ enum EvalState {
     Apply(Result<NanValue, RuntimeError>),
 }
 
+impl EvalState {
+    /// Decorate an error in `Apply(Err(...))` with a source line.
+    fn map_err_line(self, line: usize) -> Self {
+        match self {
+            EvalState::Apply(Err(err)) => EvalState::Apply(Err(err.at_line(line))),
+            other => other,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 enum EvalCont {
-    Attr(String),
+    Attr(String, usize),
     Call {
         lowered: Rc<LoweredFunctionBody>,
         args: SharedExprs,
         idx: usize,
         fn_val: Option<NanValue>,
         arg_vals: Vec<NanValue>,
+        call_line: usize,
     },
     BinOpLeft {
         lowered: Rc<LoweredFunctionBody>,
         op: BinOp,
         right: ExprId,
+        line: usize,
     },
     BinOpRight {
         op: BinOp,
         left: NanValue,
+        line: usize,
     },
     Match {
         lowered: Rc<LoweredFunctionBody>,
@@ -55,6 +68,7 @@ enum EvalCont {
         idx: usize,
         args: SharedExprs,
         arg_vals: Vec<NanValue>,
+        call_line: usize,
     },
     Leaf {
         lowered: Rc<LoweredFunctionBody>,
@@ -63,7 +77,7 @@ enum EvalCont {
         values: Vec<NanValue>,
     },
     Constructor(String),
-    ErrorProp,
+    ErrorProp(usize),
     InterpolatedStr {
         lowered: Rc<LoweredFunctionBody>,
         parts: SharedStrParts,
@@ -176,13 +190,13 @@ impl Interpreter {
     }
 
     /// Public eval_expr — returns Value for external callers.
-    pub fn eval_expr(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
+    pub fn eval_expr(&mut self, expr: &Spanned<Expr>) -> Result<Value, RuntimeError> {
         let nv = self.eval_expr_nv(expr)?;
         Ok(nv.to_value(&self.arena))
     }
 
     /// Internal eval_expr — returns NanValue natively.
-    pub(super) fn eval_expr_nv(&mut self, expr: &Expr) -> Result<NanValue, RuntimeError> {
+    pub(super) fn eval_expr_nv(&mut self, expr: &Spanned<Expr>) -> Result<NanValue, RuntimeError> {
         let ctx = super::ir_bridge::InterpreterLowerCtx::new(self);
         let (lowered, root) = lowered::lower_expr_root(expr, &ctx);
         self.eval_loop(
@@ -230,52 +244,72 @@ impl Interpreter {
             LoweredExpr::Literal(lit) => EvalState::Apply(Ok(self.eval_literal_nv(lit))),
             &LoweredExpr::Resolved(slot) => EvalState::Apply(self.lookup_slot(slot)),
             LoweredExpr::Ident(name) => EvalState::Apply(self.lookup_nv(name)),
-            LoweredExpr::Attr { obj, field } => {
+            LoweredExpr::Attr { obj, field, line } => {
                 let obj = *obj;
+                let line = *line;
                 if let LoweredExpr::Ident(name) = lowered.expr(obj) {
                     let nv = match self.lookup_nv(name) {
                         Ok(nv) => nv,
                         Err(err) => return EvalState::Apply(Err(err)),
                     };
                     let result = self.attr_access_nv(nv, field);
-                    return EvalState::Apply(result);
+                    return EvalState::Apply(result.map_err(|e| e.at_line(line)));
                 }
 
                 let field = field.clone();
-                conts.push(EvalCont::Attr(field));
+                conts.push(EvalCont::Attr(field, line));
                 EvalState::Expr { lowered, expr: obj }
             }
-            LoweredExpr::FnCall { fn_expr, args } => {
+            LoweredExpr::FnCall {
+                fn_expr,
+                args,
+                call_line,
+            } => {
                 let fn_expr = *fn_expr;
                 let args = Rc::clone(args);
+                let call_line = *call_line;
                 conts.push(EvalCont::Call {
                     lowered: Rc::clone(&lowered),
                     idx: 0,
                     fn_val: None,
                     arg_vals: Vec::with_capacity(args.len()),
                     args,
+                    call_line,
                 });
                 EvalState::Expr {
                     lowered,
                     expr: fn_expr,
                 }
             }
-            LoweredExpr::DirectCall { target, args } => self.resume_direct_call(
+            LoweredExpr::DirectCall {
+                target,
+                args,
+                call_line,
+            } => self.resume_direct_call(
                 Rc::clone(&lowered),
                 target.clone(),
                 Rc::clone(args),
                 0,
                 Vec::with_capacity(args.len()),
+                *call_line,
                 conts,
             ),
-            LoweredExpr::ForwardCall { target, args } => {
-                self.dispatch_forward_call(target.clone(), args, conts)
-            }
-            &LoweredExpr::BinOp { op, left, right } => {
+            LoweredExpr::ForwardCall {
+                target,
+                args,
+                call_line,
+            } => self.dispatch_forward_call(target.clone(), args, *call_line, conts),
+            &LoweredExpr::BinOp {
+                op,
+                left,
+                right,
+                line,
+            } => {
                 conts.push(EvalCont::BinOpLeft {
                     lowered: Rc::clone(&lowered),
                     op,
                     right,
+                    line,
                 });
                 EvalState::Expr {
                     lowered,
@@ -320,8 +354,8 @@ impl Interpreter {
                 }
                 None => EvalState::Apply(self.apply_runtime_constructor_nv(name, None)),
             },
-            &LoweredExpr::ErrorProp { inner } => {
-                conts.push(EvalCont::ErrorProp);
+            &LoweredExpr::ErrorProp { inner, line } => {
+                conts.push(EvalCont::ErrorProp(line));
                 EvalState::Expr {
                     lowered,
                     expr: inner,
@@ -430,8 +464,10 @@ impl Interpreter {
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
         match cont {
-            EvalCont::Attr(field) => match result {
-                Ok(nv) => EvalState::Apply(self.attr_access_nv(nv, &field)),
+            EvalCont::Attr(field, line) => match result {
+                Ok(nv) => {
+                    EvalState::Apply(self.attr_access_nv(nv, &field).map_err(|e| e.at_line(line)))
+                }
                 Err(err) => EvalState::Apply(Err(err)),
             },
             EvalCont::Call {
@@ -440,16 +476,19 @@ impl Interpreter {
                 mut idx,
                 mut fn_val,
                 mut arg_vals,
+                call_line,
             } => match result {
                 Ok(value) => {
                     if fn_val.is_none() {
                         fn_val = Some(value);
                         if args.is_empty() {
-                            return self.dispatch_call(
+                            self.last_call_line = call_line;
+                            let state = self.dispatch_call(
                                 fn_val.expect("function value set before dispatch"),
                                 arg_vals,
                                 conts,
                             );
+                            return state.map_err_line(call_line);
                         }
                         conts.push(EvalCont::Call {
                             lowered: Rc::clone(&lowered),
@@ -457,6 +496,7 @@ impl Interpreter {
                             idx,
                             fn_val,
                             arg_vals,
+                            call_line,
                         });
                         return EvalState::Expr {
                             lowered,
@@ -473,24 +513,32 @@ impl Interpreter {
                             idx,
                             fn_val,
                             arg_vals,
+                            call_line,
                         });
                         EvalState::Expr {
                             lowered,
                             expr: args[idx],
                         }
                     } else {
-                        self.dispatch_call(
+                        self.last_call_line = call_line;
+                        let state = self.dispatch_call(
                             fn_val.expect("function value present when args are done"),
                             arg_vals,
                             conts,
-                        )
+                        );
+                        state.map_err_line(call_line)
                     }
                 }
                 Err(err) => EvalState::Apply(Err(err)),
             },
-            EvalCont::BinOpLeft { lowered, op, right } => match result {
+            EvalCont::BinOpLeft {
+                lowered,
+                op,
+                right,
+                line,
+            } => match result {
                 Ok(left) => {
-                    conts.push(EvalCont::BinOpRight { op, left });
+                    conts.push(EvalCont::BinOpRight { op, left, line });
                     EvalState::Expr {
                         lowered,
                         expr: right,
@@ -498,8 +546,11 @@ impl Interpreter {
                 }
                 Err(err) => EvalState::Apply(Err(err)),
             },
-            EvalCont::BinOpRight { op, left } => match result {
-                Ok(right) => EvalState::Apply(self.eval_binop_nv(&op, left, right)),
+            EvalCont::BinOpRight { op, left, line } => match result {
+                Ok(right) => EvalState::Apply(
+                    self.eval_binop_nv(&op, left, right)
+                        .map_err(|e| e.at_line(line)),
+                ),
                 Err(err) => EvalState::Apply(Err(err)),
             },
             EvalCont::Match {
@@ -516,10 +567,19 @@ impl Interpreter {
                 idx,
                 args,
                 mut arg_vals,
+                call_line,
             } => match result {
                 Ok(value) => {
                     arg_vals.push(value);
-                    self.resume_direct_call(lowered, target, args, idx + 1, arg_vals, conts)
+                    self.resume_direct_call(
+                        lowered,
+                        target,
+                        args,
+                        idx + 1,
+                        arg_vals,
+                        call_line,
+                        conts,
+                    )
                 }
                 Err(err) => EvalState::Apply(Err(err)),
             },
@@ -541,7 +601,7 @@ impl Interpreter {
                 }
                 Err(err) => EvalState::Apply(Err(err)),
             },
-            EvalCont::ErrorProp => match result {
+            EvalCont::ErrorProp(line) => match result {
                 Ok(value) => EvalState::Apply(if value.is_ok() {
                     let inner = value.wrapper_inner(&self.arena);
                     Ok(inner)
@@ -551,7 +611,8 @@ impl Interpreter {
                 } else {
                     Err(RuntimeError::Error(
                         "Operator '?' can only be applied to Result".to_string(),
-                    ))
+                    )
+                    .at_line(line))
                 }),
                 Err(err) => EvalState::Apply(Err(err)),
             },
@@ -1109,6 +1170,7 @@ impl Interpreter {
         EvalState::Apply(Ok(NanValue::new_string_value(&result, &mut self.arena)))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn resume_direct_call(
         &mut self,
         lowered: Rc<LoweredFunctionBody>,
@@ -1116,10 +1178,14 @@ impl Interpreter {
         args: SharedExprs,
         idx: usize,
         arg_vals: Vec<NanValue>,
+        call_line: usize,
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
         if idx >= args.len() {
-            return self.dispatch_direct_call(target, arg_vals, conts);
+            self.last_call_line = call_line;
+            return self
+                .dispatch_direct_call(target, arg_vals, conts)
+                .map_err_line(call_line);
         }
 
         conts.push(EvalCont::DirectCall {
@@ -1128,6 +1194,7 @@ impl Interpreter {
             idx,
             args: Rc::clone(&args),
             arg_vals,
+            call_line,
         });
         EvalState::Expr {
             lowered,
@@ -1465,6 +1532,7 @@ impl Interpreter {
         &mut self,
         target: LoweredDirectCallTarget,
         args: &[LoweredForwardArg],
+        call_line: usize,
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
         let mut values = Vec::with_capacity(args.len());
@@ -1481,7 +1549,9 @@ impl Interpreter {
             };
             values.push(value);
         }
+        self.last_call_line = call_line;
         self.dispatch_direct_call(target, values, conts)
+            .map_err_line(call_line)
     }
 
     fn build_record_update_nv(

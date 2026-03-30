@@ -1,5 +1,5 @@
 use super::super::expr::{aver_name_to_lean, emit_expr};
-use crate::ast::{BinOp, Expr, Pattern, Stmt, VerifyBlock, VerifyLaw};
+use crate::ast::{BinOp, Expr, Pattern, Spanned, Stmt, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 
 use super::intro_then;
@@ -15,7 +15,7 @@ pub(super) fn emit_direct_map_set_law(
     ctx: &CodegenContext,
     intro_names: &[String],
 ) -> Option<Vec<String>> {
-    let has_side = |side: &Expr, other: &Expr| -> Option<Vec<String>> {
+    let has_side = |side: &Spanned<Expr>, other: &Spanned<Expr>| -> Option<Vec<String>> {
         let (m, k, v) = map_has_set_parts(side)?;
         if !matches_bool_true(other) {
             return None;
@@ -34,7 +34,7 @@ pub(super) fn emit_direct_map_set_law(
         return Some(lines);
     }
 
-    let get_side = |side: &Expr, other: &Expr| -> Option<Vec<String>> {
+    let get_side = |side: &Spanned<Expr>, other: &Spanned<Expr>| -> Option<Vec<String>> {
         let (m, k, v) = map_get_set_parts(side)?;
         let some_v = option_some_arg(other)?;
         if some_v != v {
@@ -62,7 +62,7 @@ pub(super) fn emit_map_update_law(
     map_key_update_shape(ctx, &vb.fn_name)?;
     let fn_lean = aver_name_to_lean(&vb.fn_name);
 
-    let key_present_side = |side: &Expr, other: &Expr| -> Option<Vec<String>> {
+    let key_present_side = |side: &Spanned<Expr>, other: &Spanned<Expr>| -> Option<Vec<String>> {
         if !matches_bool_true(other) {
             return None;
         }
@@ -85,34 +85,35 @@ pub(super) fn emit_map_update_law(
         return Some(lines);
     }
 
-    let get_after_update_side = |side: &Expr, other: &Expr| -> Option<Vec<String>> {
-        let (map_arg, key_arg) = map_get_after_fn_call(side, &vb.fn_name)?;
-        option_some_arg(other)?;
+    let get_after_update_side =
+        |side: &Spanned<Expr>, other: &Spanned<Expr>| -> Option<Vec<String>> {
+            let (map_arg, key_arg) = map_get_after_fn_call(side, &vb.fn_name)?;
+            option_some_arg(other)?;
 
-        let mut simp_defs: Vec<String> = law_simp_defs(ctx, vb, law).into_iter().collect();
-        if !simp_defs.iter().any(|n| n == "AverMap.get_set_self") {
-            simp_defs.sort();
-        }
-        let simp_list = format!("[{}]", simp_defs.join(", "));
-        let extra = if simp_defs.is_empty() {
-            String::new()
-        } else {
-            format!(", {}", simp_defs.join(", "))
+            let mut simp_defs: Vec<String> = law_simp_defs(ctx, vb, law).into_iter().collect();
+            if !simp_defs.iter().any(|n| n == "AverMap.get_set_self") {
+                simp_defs.sort();
+            }
+            let simp_list = format!("[{}]", simp_defs.join(", "));
+            let extra = if simp_defs.is_empty() {
+                String::new()
+            } else {
+                format!(", {}", simp_defs.join(", "))
+            };
+
+            Some(intro_then(
+                intro_names,
+                vec![
+                    format!("simp {}", simp_list),
+                    format!(
+                        "cases h : AverMap.get {} {} <;> simp [AverMap.get_set_self{}]",
+                        atom(&emit_expr(map_arg, ctx)),
+                        atom(&emit_expr(key_arg, ctx)),
+                        extra
+                    ),
+                ],
+            ))
         };
-
-        Some(intro_then(
-            intro_names,
-            vec![
-                format!("simp {}", simp_list),
-                format!(
-                    "cases h : AverMap.get {} {} <;> simp [AverMap.get_set_self{}]",
-                    atom(&emit_expr(map_arg, ctx)),
-                    atom(&emit_expr(key_arg, ctx)),
-                    extra
-                ),
-            ],
-        ))
-    };
 
     get_after_update_side(&law.lhs, &law.rhs).or_else(|| get_after_update_side(&law.rhs, &law.lhs))
 }
@@ -125,12 +126,12 @@ pub(super) fn emit_map_increment_tracked_count_law(
 ) -> Option<Vec<String>> {
     map_increment_update_shape(ctx, &vb.fn_name)?;
 
-    let tracked_count_side = |side: &Expr, other: &Expr| -> Option<Vec<String>> {
+    let tracked_count_side = |side: &Spanned<Expr>, other: &Spanned<Expr>| -> Option<Vec<String>> {
         let (map_arg, key_arg, default_arg) = defaulted_map_get_after_fn_call(side, &vb.fn_name)?;
         if !matches_int_lit(default_arg, 0) {
             return None;
         }
-        let Expr::BinOp(BinOp::Add, base, one) = other else {
+        let Expr::BinOp(BinOp::Add, base, one) = &other.node else {
             return None;
         };
         if !matches_int_lit(one, 1) {
@@ -197,7 +198,10 @@ fn map_increment_update_shape(ctx: &CodegenContext, fn_name: &str) -> Option<()>
     if !is_map_get_call(bound_expr, &map_param, &key_param) {
         return None;
     }
-    let Stmt::Expr(Expr::Match { subject, arms, .. }) = &stmts[1] else {
+    let Stmt::Expr(last_expr) = &stmts[1] else {
+        return None;
+    };
+    let Expr::Match { subject, arms, .. } = &last_expr.node else {
         return None;
     };
     if !matches_ident(subject, current) || arms.len() != 2 {
@@ -230,7 +234,7 @@ fn map_increment_update_shape(ctx: &CodegenContext, fn_name: &str) -> Option<()>
     {
         return None;
     }
-    let Expr::BinOp(BinOp::Add, add_left, add_right) = &some_set[2] else {
+    let Expr::BinOp(BinOp::Add, add_left, add_right) = &some_set[2].node else {
         return None;
     };
     if !matches_ident(add_left, some_bound) || !matches_int_lit(add_right, 1) {
@@ -268,15 +272,19 @@ fn map_update_block(stmts: &[Stmt], shape: &MapKeyUpdateShape) -> bool {
     }
 }
 
-fn map_update_match_expr(expr: &Expr, shape: &MapKeyUpdateShape, bound_name: Option<&str>) -> bool {
-    let Expr::Match { subject, arms, .. } = expr else {
+fn map_update_match_expr(
+    expr: &Spanned<Expr>,
+    shape: &MapKeyUpdateShape,
+    bound_name: Option<&str>,
+) -> bool {
+    let Expr::Match { subject, arms, .. } = &expr.node else {
         return false;
     };
     if arms.len() < 2 {
         return false;
     }
     let subject_ok = match bound_name {
-        Some(name) => matches!(subject.as_ref(), Expr::Ident(id) if id == name),
+        Some(name) => matches!(&subject.node, Expr::Ident(id) if id == name),
         None => is_map_get_call(subject, &shape.map_param, &shape.key_param),
     };
     if !subject_ok {

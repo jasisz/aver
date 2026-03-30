@@ -1,10 +1,10 @@
 use super::*;
 
 struct ExpandedLawCases {
-    cases: Vec<(Expr, Expr)>,
-    sample_guards: Vec<Expr>,
+    cases: Vec<(Spanned<Expr>, Spanned<Expr>)>,
+    sample_guards: Vec<Spanned<Expr>>,
     /// Per-case given bindings: vec of (name, value_expr) pairs.
-    case_givens: Vec<Vec<(String, Expr)>>,
+    case_givens: Vec<Vec<(String, Spanned<Expr>)>>,
 }
 
 impl Parser {
@@ -73,21 +73,27 @@ impl Parser {
         }
     }
 
-    fn domain_values(domain: &VerifyGivenDomain) -> Vec<Expr> {
+    fn domain_values(domain: &VerifyGivenDomain) -> Vec<Spanned<Expr>> {
         match domain {
             VerifyGivenDomain::IntRange { start, end } => (*start..=*end)
-                .map(|n| Expr::Literal(Literal::Int(n)))
+                .map(|n| Spanned::bare(Expr::Literal(Literal::Int(n))))
                 .collect(),
             VerifyGivenDomain::Explicit(values) => values.clone(),
         }
     }
 
-    fn substitute_expr(expr: &Expr, bindings: &std::collections::HashMap<String, Expr>) -> Expr {
-        match expr {
-            Expr::Ident(name) => bindings
-                .get(name)
-                .cloned()
-                .unwrap_or_else(|| Expr::Ident(name.clone())),
+    fn substitute_expr(
+        expr: &Spanned<Expr>,
+        bindings: &std::collections::HashMap<String, Spanned<Expr>>,
+    ) -> Spanned<Expr> {
+        let line = expr.line;
+        let node = match &expr.node {
+            Expr::Ident(name) => {
+                return bindings
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| Spanned::new(Expr::Ident(name.clone()), line));
+            }
             Expr::Attr(obj, field) => Expr::Attr(
                 Box::new(Self::substitute_expr(obj, bindings)),
                 field.clone(),
@@ -103,11 +109,7 @@ impl Parser {
                 Box::new(Self::substitute_expr(left, bindings)),
                 Box::new(Self::substitute_expr(right, bindings)),
             ),
-            Expr::Match {
-                subject,
-                arms,
-                line,
-            } => Expr::Match {
+            Expr::Match { subject, arms } => Expr::Match {
                 subject: Box::new(Self::substitute_expr(subject, bindings)),
                 arms: arms
                     .iter()
@@ -116,7 +118,6 @@ impl Parser {
                         body: Box::new(Self::substitute_expr(&arm.body, bindings)),
                     })
                     .collect(),
-                line: *line,
             },
             Expr::Constructor(name, arg) => Expr::Constructor(
                 name.clone(),
@@ -189,16 +190,17 @@ impl Parser {
             ))),
             Expr::Literal(lit) => Expr::Literal(lit.clone()),
             Expr::Resolved(slot) => Expr::Resolved(*slot),
-        }
+        };
+        Spanned::new(node, line)
     }
 
     fn expand_law_cases_rec(
         givens: &[VerifyGiven],
         idx: usize,
-        bindings: &mut std::collections::HashMap<String, Expr>,
-        when: Option<&Expr>,
-        left: &Expr,
-        right: &Expr,
+        bindings: &mut std::collections::HashMap<String, Spanned<Expr>>,
+        when: Option<&Spanned<Expr>>,
+        left: &Spanned<Expr>,
+        right: &Spanned<Expr>,
         out: &mut ExpandedLawCases,
     ) {
         if idx == givens.len() {
@@ -231,9 +233,9 @@ impl Parser {
     fn expand_law_cases(
         &self,
         givens: &[VerifyGiven],
-        when: Option<&Expr>,
-        left: &Expr,
-        right: &Expr,
+        when: Option<&Spanned<Expr>>,
+        left: &Spanned<Expr>,
+        right: &Spanned<Expr>,
     ) -> Result<ExpandedLawCases, ParseError> {
         let mut total = 1usize;
         for given in givens {
@@ -306,7 +308,7 @@ impl Parser {
             VerifyGivenDomain::IntRange { start, end }
         } else {
             let domain_expr = self.parse_expr()?;
-            let Expr::List(values) = domain_expr else {
+            let Expr::List(values) = domain_expr.node else {
                 return Err(self.error(
                     "Given domain must be list literal ([...]) or Int range (a..b)".to_string(),
                 ));
@@ -356,7 +358,7 @@ impl Parser {
 
         let mut cases = Vec::new();
         let mut case_spans = Vec::new();
-        let mut case_givens: Vec<Vec<(String, Expr)>> = Vec::new();
+        let mut case_givens: Vec<Vec<(String, Spanned<Expr>)>> = Vec::new();
 
         if self.is_indent() {
             self.advance();

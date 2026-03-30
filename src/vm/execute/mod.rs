@@ -20,6 +20,9 @@ pub struct VM {
     pub arena: Arena,
     runtime: VmRuntime,
     profile: Option<VmProfileState>,
+    /// Last executing (fn_id, ip) — updated at top of dispatch loop for error reporting.
+    error_fn_id: u32,
+    error_ip: u32,
 }
 
 enum ReturnControl {
@@ -42,6 +45,8 @@ impl VM {
             arena,
             runtime: VmRuntime::new(),
             profile: None,
+            error_fn_id: 0,
+            error_ip: 0,
         }
     }
 
@@ -133,7 +138,7 @@ impl VM {
             .find(name)
             .and_then(|symbol_id| self.code.symbols.resolve_function(symbol_id))
             .or_else(|| self.code.find(name))
-            .ok_or_else(|| VmError::Runtime(format!("function '{}' not found", name)))?;
+            .ok_or_else(|| VmError::runtime(format!("function '{}' not found", name)))?;
         self.runtime
             .set_allowed_effects(self.code.get(fn_id).effects.clone());
         self.call_function(fn_id, args)
@@ -170,6 +175,16 @@ impl VM {
         if let Some(profile) = self.profile.as_mut() {
             profile.record_function_entry(chunk, fn_id);
         }
-        self.execute_until(caller_depth)
+        self.execute_until(caller_depth).map_err(|err| {
+            // Cold path: resolve source location from line_table.
+            let loc = self
+                .code
+                .resolve_source_location(self.error_fn_id, self.error_ip);
+            err.with_location(loc.map(|(file, line)| super::types::VmSourceLoc {
+                file: file.to_string(),
+                line,
+                fn_name: self.code.get(self.error_fn_id).name.clone(),
+            }))
+        })
     }
 }

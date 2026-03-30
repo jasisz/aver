@@ -1,4 +1,4 @@
-use crate::ast::{Expr, FnBody, Stmt};
+use crate::ast::{Expr, FnBody, Spanned, Stmt};
 
 /// Shared semantic lowering helpers that sit between resolved AST and concrete backends.
 ///
@@ -80,7 +80,7 @@ pub fn expr_to_dotted_name(expr: &Expr) -> Option<String> {
     match expr {
         Expr::Ident(name) => Some(name.clone()),
         Expr::Attr(obj, field) => {
-            let head = expr_to_dotted_name(obj)?;
+            let head = expr_to_dotted_name(&obj.node)?;
             Some(format!("{head}.{field}"))
         }
         _ => None,
@@ -151,12 +151,12 @@ pub fn classify_forward_call_plan(expr: &Expr, ctx: &impl CallLowerCtx) -> Optio
     let Expr::FnCall(fn_expr, args) = expr else {
         return None;
     };
-    classify_forward_call_parts(fn_expr, args, ctx)
+    classify_forward_call_parts(&fn_expr.node, args, ctx)
 }
 
 pub fn classify_forward_call_parts(
     fn_expr: &Expr,
-    args: &[Expr],
+    args: &[Spanned<Expr>],
     ctx: &impl CallLowerCtx,
 ) -> Option<ForwardCallPlan> {
     let target = classify_call_plan(fn_expr, ctx);
@@ -169,7 +169,7 @@ pub fn classify_forward_call_parts(
 
     let args = args
         .iter()
-        .map(|arg| classify_forward_arg(arg, ctx))
+        .map(|arg| classify_forward_arg(&arg.node, ctx))
         .collect::<Option<Vec<_>>>()?;
 
     Some(ForwardCallPlan { target, args })
@@ -179,7 +179,7 @@ pub fn classify_forward_fn_body(body: &FnBody, ctx: &impl CallLowerCtx) -> Optio
     let [Stmt::Expr(expr)] = body.stmts() else {
         return None;
     };
-    classify_forward_call_plan(expr, ctx)
+    classify_forward_call_plan(&expr.node, ctx)
 }
 
 pub fn classify_tail_call_plan(

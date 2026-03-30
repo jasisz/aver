@@ -21,14 +21,20 @@ impl Parser {
         Ok(())
     }
 
-    pub fn parse_expr(&mut self) -> Result<Expr, ParseError> {
+    /// Wrap an Expr with the current token's line.
+    fn spanned(&self, expr: Expr, line: usize) -> Spanned<Expr> {
+        Spanned::new(expr, line)
+    }
+
+    pub fn parse_expr(&mut self) -> Result<Spanned<Expr>, ParseError> {
         self.parse_comparison()
     }
 
-    pub(super) fn parse_comparison(&mut self) -> Result<Expr, ParseError> {
+    pub(super) fn parse_comparison(&mut self) -> Result<Spanned<Expr>, ParseError> {
         let mut left = self.parse_additive()?;
 
         loop {
+            let line = self.current().line;
             let op = match &self.current().kind {
                 TokenKind::Eq => BinOp::Eq,
                 TokenKind::Neq => BinOp::Neq,
@@ -40,16 +46,17 @@ impl Parser {
             };
             self.advance();
             let right = self.parse_additive()?;
-            left = Expr::BinOp(op, Box::new(left), Box::new(right));
+            left = self.spanned(Expr::BinOp(op, Box::new(left), Box::new(right)), line);
         }
 
         Ok(left)
     }
 
-    pub(super) fn parse_additive(&mut self) -> Result<Expr, ParseError> {
+    pub(super) fn parse_additive(&mut self) -> Result<Spanned<Expr>, ParseError> {
         let mut left = self.parse_multiplicative()?;
 
         loop {
+            let line = self.current().line;
             let op = match &self.current().kind {
                 TokenKind::Plus => BinOp::Add,
                 TokenKind::Minus => BinOp::Sub,
@@ -57,16 +64,17 @@ impl Parser {
             };
             self.advance();
             let right = self.parse_multiplicative()?;
-            left = Expr::BinOp(op, Box::new(left), Box::new(right));
+            left = self.spanned(Expr::BinOp(op, Box::new(left), Box::new(right)), line);
         }
 
         Ok(left)
     }
 
-    pub(super) fn parse_multiplicative(&mut self) -> Result<Expr, ParseError> {
+    pub(super) fn parse_multiplicative(&mut self) -> Result<Spanned<Expr>, ParseError> {
         let mut left = self.parse_unary()?;
 
         loop {
+            let line = self.current().line;
             let op = match &self.current().kind {
                 TokenKind::Star => BinOp::Mul,
                 TokenKind::Slash => BinOp::Div,
@@ -74,33 +82,39 @@ impl Parser {
             };
             self.advance();
             let right = self.parse_unary()?;
-            left = Expr::BinOp(op, Box::new(left), Box::new(right));
+            left = self.spanned(Expr::BinOp(op, Box::new(left), Box::new(right)), line);
         }
 
         Ok(left)
     }
 
-    pub(super) fn parse_unary(&mut self) -> Result<Expr, ParseError> {
+    pub(super) fn parse_unary(&mut self) -> Result<Spanned<Expr>, ParseError> {
         if self.check_exact(&TokenKind::Minus) {
+            let line = self.current().line;
             self.advance();
             let operand = self.parse_postfix()?;
-            return Ok(Expr::BinOp(
-                BinOp::Sub,
-                Box::new(Expr::Literal(Literal::Int(0))),
-                Box::new(operand),
+            return Ok(self.spanned(
+                Expr::BinOp(
+                    BinOp::Sub,
+                    Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
+                    Box::new(operand),
+                ),
+                line,
             ));
         }
         self.parse_postfix()
     }
 
-    pub(super) fn parse_postfix(&mut self) -> Result<Expr, ParseError> {
+    pub(super) fn parse_postfix(&mut self) -> Result<Spanned<Expr>, ParseError> {
         let mut expr = self.parse_call_or_atom()?;
 
         loop {
             if self.check_exact(&TokenKind::Question) {
+                let line = self.current().line;
                 self.advance();
-                expr = Expr::ErrorProp(Box::new(expr));
+                expr = self.spanned(Expr::ErrorProp(Box::new(expr)), line);
             } else if self.check_exact(&TokenKind::Dot) {
+                let dot_line = self.current().line;
                 self.advance();
                 let field_tok = self.expect_kind(
                     &TokenKind::Ident(String::new()),
@@ -110,7 +124,7 @@ impl Parser {
                     TokenKind::Ident(s) => s,
                     _ => unreachable!(),
                 };
-                expr = Expr::Attr(Box::new(expr), field);
+                expr = self.spanned(Expr::Attr(Box::new(expr), field), dot_line);
                 if self.check_exact(&TokenKind::LParen) {
                     // Detect `Type.update(base, field = val, ...)` for record update
                     if let Some(path) = Self::dotted_name(&expr)
@@ -120,6 +134,7 @@ impl Parser {
                         if !prefix.is_empty()
                             && prefix.chars().next().is_some_and(|c| c.is_uppercase())
                         {
+                            let update_line = self.current().line;
                             self.advance(); // consume (
                             let base = self.parse_expr()?;
                             let updates = if self.check_exact(&TokenKind::Comma) {
@@ -130,11 +145,14 @@ impl Parser {
                                 Vec::new()
                             };
                             self.expect_exact(&TokenKind::RParen)?;
-                            expr = Expr::RecordUpdate {
-                                type_name: prefix.to_string(),
-                                base: Box::new(base),
-                                updates,
-                            };
+                            expr = self.spanned(
+                                Expr::RecordUpdate {
+                                    type_name: prefix.to_string(),
+                                    base: Box::new(base),
+                                    updates,
+                                },
+                                update_line,
+                            );
                             continue;
                         }
                     }
@@ -145,18 +163,23 @@ impl Parser {
                         && self.peek(2).kind == TokenKind::Assign;
                     if named_arg_start && let Some(path) = Self::dotted_name(&expr) {
                         // Dotted record constructor: Tcp.Connection(id = ..., host = ...)
+                        let ctor_line = self.current().line;
                         self.advance();
                         let fields = self.parse_record_create_fields()?;
                         self.expect_exact(&TokenKind::RParen)?;
-                        expr = Expr::RecordCreate {
-                            type_name: path,
-                            fields,
-                        };
+                        expr = self.spanned(
+                            Expr::RecordCreate {
+                                type_name: path,
+                                fields,
+                            },
+                            ctor_line,
+                        );
                     } else {
+                        let call_line = self.current().line;
                         self.advance();
                         let args = self.parse_args()?;
                         self.expect_exact(&TokenKind::RParen)?;
-                        expr = Expr::FnCall(Box::new(expr), args);
+                        expr = self.spanned(Expr::FnCall(Box::new(expr), args), call_line);
                     }
                 }
             } else {
@@ -167,8 +190,8 @@ impl Parser {
         Ok(expr)
     }
 
-    pub(super) fn dotted_name(expr: &Expr) -> Option<String> {
-        match expr {
+    pub(super) fn dotted_name(expr: &Spanned<Expr>) -> Option<String> {
+        match &expr.node {
             Expr::Ident(name) => Some(name.clone()),
             Expr::Attr(inner, field) => {
                 let mut base = Self::dotted_name(inner)?;
@@ -180,7 +203,7 @@ impl Parser {
         }
     }
 
-    pub(super) fn parse_call_or_atom(&mut self) -> Result<Expr, ParseError> {
+    pub(super) fn parse_call_or_atom(&mut self) -> Result<Spanned<Expr>, ParseError> {
         let atom = self.parse_atom()?;
 
         if self.check_exact(&TokenKind::LParen) {
@@ -191,7 +214,7 @@ impl Parser {
             // Lookahead: is this `Name(field = value, ...)` (record creation)?
             // Detect by checking if token after `(` is `Ident` followed by `=`.
             // Use peek_skip_formatting to handle multiline constructor syntax.
-            let is_record_create = if let Expr::Ident(ref name) = atom {
+            let is_record_create = if let Expr::Ident(ref name) = atom.node {
                 name.chars().next().is_some_and(|c| c.is_uppercase())
                     && matches!(&self.peek_skip_formatting(1).kind, TokenKind::Ident(_))
                     && self.peek_skip_formatting(2).kind == TokenKind::Assign
@@ -201,35 +224,43 @@ impl Parser {
             let named_arg_start = matches!(&self.peek_skip_formatting(1).kind, TokenKind::Ident(_))
                 && self.peek_skip_formatting(2).kind == TokenKind::Assign;
 
-            if is_record_create && let Expr::Ident(type_name) = atom {
+            if is_record_create && let Expr::Ident(type_name) = atom.node {
+                let line = atom.line;
                 self.advance(); // consume (
                 let fields = self.parse_record_create_fields()?;
                 self.expect_exact(&TokenKind::RParen)?;
-                return Ok(Expr::RecordCreate { type_name, fields });
+                return Ok(self.spanned(Expr::RecordCreate { type_name, fields }, line));
             }
 
             // Dotted record constructor: Tcp.Connection(id = ..., host = ...)
             if named_arg_start && let Some(path) = Self::dotted_name(&atom) {
+                let line = atom.line;
                 self.advance();
                 let fields = self.parse_record_create_fields()?;
                 self.expect_exact(&TokenKind::RParen)?;
-                return Ok(Expr::RecordCreate {
-                    type_name: path,
-                    fields,
-                });
+                return Ok(self.spanned(
+                    Expr::RecordCreate {
+                        type_name: path,
+                        fields,
+                    },
+                    line,
+                ));
             }
 
+            let call_line = self.current().line;
             self.advance();
             let args = self.parse_args()?;
             self.expect_exact(&TokenKind::RParen)?;
-            return Ok(Expr::FnCall(Box::new(atom), args));
+            return Ok(self.spanned(Expr::FnCall(Box::new(atom), args), call_line));
         }
 
         Ok(atom)
     }
 
     /// Parse named-field arguments for record creation: `name = expr, name2 = expr2`
-    pub(super) fn parse_record_create_fields(&mut self) -> Result<Vec<(String, Expr)>, ParseError> {
+    pub(super) fn parse_record_create_fields(
+        &mut self,
+    ) -> Result<Vec<(String, Spanned<Expr>)>, ParseError> {
         let mut fields = Vec::new();
         self.skip_formatting();
 
@@ -254,7 +285,7 @@ impl Parser {
         Ok(fields)
     }
 
-    pub(super) fn parse_args(&mut self) -> Result<Vec<Expr>, ParseError> {
+    pub(super) fn parse_args(&mut self) -> Result<Vec<Spanned<Expr>>, ParseError> {
         let mut args = Vec::new();
         self.skip_formatting();
 
@@ -306,19 +337,20 @@ impl Parser {
         Ok(Expr::MapLiteral(entries))
     }
 
-    pub(super) fn parse_atom(&mut self) -> Result<Expr, ParseError> {
+    pub(super) fn parse_atom(&mut self) -> Result<Spanned<Expr>, ParseError> {
+        let line = self.current().line;
         match self.current().kind.clone() {
             TokenKind::Int(i) => {
                 self.advance();
-                Ok(Expr::Literal(Literal::Int(i)))
+                Ok(self.spanned(Expr::Literal(Literal::Int(i)), line))
             }
             TokenKind::Float(f) => {
                 self.advance();
-                Ok(Expr::Literal(Literal::Float(f)))
+                Ok(self.spanned(Expr::Literal(Literal::Float(f)), line))
             }
             TokenKind::Str(s) => {
                 self.advance();
-                Ok(Expr::Literal(Literal::Str(s)))
+                Ok(self.spanned(Expr::Literal(Literal::Str(s)), line))
             }
             TokenKind::InterpStr(parts) => {
                 self.advance();
@@ -347,13 +379,16 @@ impl Parser {
                         str_parts.push(StrPart::Literal(s));
                     }
                 }
-                Ok(Expr::InterpolatedStr(str_parts))
+                Ok(self.spanned(Expr::InterpolatedStr(str_parts), line))
             }
             TokenKind::Bool(b) => {
                 self.advance();
-                Ok(Expr::Literal(Literal::Bool(b)))
+                Ok(self.spanned(Expr::Literal(Literal::Bool(b)), line))
             }
-            TokenKind::Match => self.parse_match(),
+            TokenKind::Match => {
+                let m = self.parse_match()?;
+                Ok(self.spanned(m, line))
+            }
             TokenKind::LParen => {
                 self.advance();
                 let first = self.parse_expr()?;
@@ -364,7 +399,7 @@ impl Parser {
                         items.push(self.parse_expr()?);
                     }
                     self.expect_exact(&TokenKind::RParen)?;
-                    Ok(Expr::Tuple(items))
+                    Ok(self.spanned(Expr::Tuple(items), line))
                 } else {
                     self.expect_exact(&TokenKind::RParen)?;
                     Ok(first)
@@ -373,9 +408,9 @@ impl Parser {
             TokenKind::Ident(s) => {
                 self.advance();
                 if s == "Unit" {
-                    Ok(Expr::Literal(Literal::Unit))
+                    Ok(self.spanned(Expr::Literal(Literal::Unit), line))
                 } else {
-                    Ok(Expr::Ident(s))
+                    Ok(self.spanned(Expr::Ident(s), line))
                 }
             }
             TokenKind::LBracket => {
@@ -392,9 +427,12 @@ impl Parser {
                     self.skip_formatting();
                 }
                 self.expect_exact(&TokenKind::RBracket)?;
-                Ok(Expr::List(elements))
+                Ok(self.spanned(Expr::List(elements), line))
             }
-            TokenKind::LBrace => self.parse_map_literal(),
+            TokenKind::LBrace => {
+                let map = self.parse_map_literal()?;
+                Ok(self.spanned(map, line))
+            }
             TokenKind::Fn => Err(self.error(
                 "Anonymous functions are not supported in Aver. Define a top-level function and pass its name."
                     .to_string(),

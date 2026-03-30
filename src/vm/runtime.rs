@@ -120,11 +120,11 @@ impl VmRuntime {
         self.replay_state
             .ensure_replay_consumed()
             .map_err(|err| match err {
-                ReplayFailure::Unconsumed { remaining } => VmError::Runtime(format!(
+                ReplayFailure::Unconsumed { remaining } => VmError::runtime(format!(
                     "Replay finished with {} unconsumed recorded effect(s)",
                     remaining
                 )),
-                other => VmError::Runtime(format!("invalid replay state: {:?}", other)),
+                other => VmError::runtime(format!("invalid replay state: {:?}", other)),
             })
     }
 
@@ -153,8 +153,9 @@ impl VmRuntime {
             (_, VmExecutionMode::Normal) | (false, _) => builtin
                 .invoke_nv(args, arena, &self.cli_args, self.silent_console)
                 .map_err(|err| match err {
-                    crate::value::RuntimeError::Error(msg) => VmError::Runtime(msg),
-                    other => VmError::Runtime(format!("{:?}", other)),
+                    crate::value::RuntimeError::Error(msg)
+                    | crate::value::RuntimeError::ErrorAt { msg, .. } => VmError::runtime(msg),
+                    other => VmError::runtime(format!("{:?}", other)),
                 }),
             (true, VmExecutionMode::Record) => {
                 let args_json = {
@@ -164,8 +165,9 @@ impl VmRuntime {
                 let nv_result = builtin
                     .invoke_nv(args, arena, &self.cli_args, self.silent_console)
                     .map_err(|err| match err {
-                        crate::value::RuntimeError::Error(msg) => VmError::Runtime(msg),
-                        other => VmError::Runtime(format!("{:?}", other)),
+                        crate::value::RuntimeError::Error(msg)
+                        | crate::value::RuntimeError::ErrorAt { msg, .. } => VmError::runtime(msg),
+                        other => VmError::runtime(format!("{:?}", other)),
                     })?;
                 let result_val = nv_result.to_value(arena);
                 let outcome = match value_to_json(&result_val) {
@@ -173,7 +175,7 @@ impl VmRuntime {
                     Err(e) => RecordedOutcome::RuntimeError(e),
                 };
                 self.replay_state
-                    .record_effect(builtin_name, args_json, outcome, ""); // VM: no caller fn available
+                    .record_effect(builtin_name, args_json, outcome, "", 0); // VM: no caller fn/line yet
                 Ok(nv_result)
             }
             (true, VmExecutionMode::Replay) => self.replay_builtin(builtin_name, args, arena),
@@ -194,31 +196,31 @@ impl VmRuntime {
             .replay_state
             .replay_effect(builtin_name, Some(got_args))
             .map_err(|err| match err {
-                ReplayFailure::Exhausted { effect_type, .. } => VmError::Runtime(format!(
+                ReplayFailure::Exhausted { effect_type, .. } => VmError::runtime(format!(
                     "Replay exhausted: no more recorded effects for '{}'",
                     effect_type
                 )),
-                ReplayFailure::Mismatch { seq, expected, got } => VmError::Runtime(format!(
+                ReplayFailure::Mismatch { seq, expected, got } => VmError::runtime(format!(
                     "Replay mismatch at #{}: expected '{}', got '{}'",
                     seq, expected, got
                 )),
                 ReplayFailure::ArgsMismatch {
                     seq, effect_type, ..
-                } => VmError::Runtime(format!(
+                } => VmError::runtime(format!(
                     "Replay args mismatch at #{} for '{}'",
                     seq, effect_type
                 )),
-                ReplayFailure::Unconsumed { remaining } => VmError::Runtime(format!(
+                ReplayFailure::Unconsumed { remaining } => VmError::runtime(format!(
                     "Replay finished with {} unconsumed recorded effect(s)",
                     remaining
                 )),
             })?;
         let result = match &record {
             RecordedOutcome::Value(json) => {
-                let val = json_to_value(json).map_err(VmError::Runtime)?;
+                let val = json_to_value(json).map_err(VmError::runtime)?;
                 NanValue::from_value(&val, arena)
             }
-            RecordedOutcome::RuntimeError(msg) => return Err(VmError::Runtime(msg.clone())),
+            RecordedOutcome::RuntimeError(msg) => return Err(VmError::runtime(msg.clone())),
         };
         Ok(result)
     }
@@ -238,7 +240,7 @@ impl VmRuntime {
                     .get(*effect_id)
                     .map(|info| info.name.as_str())
                     .unwrap_or("<unknown>");
-                return Err(VmError::Runtime(format!(
+                return Err(VmError::runtime(format!(
                     "Runtime effect violation: cannot call '{}' (missing effect: {})",
                     callable_name, effect_name
                 )));
@@ -279,21 +281,21 @@ impl VmRuntime {
                 if let Value::Str(url) = arg.to_value(arena) {
                     policy
                         .check_http_host(builtin_name, &url)
-                        .map_err(VmError::Runtime)?;
+                        .map_err(VmError::runtime)?;
                 }
             }
             (Some("Disk"), Some(arg)) => {
                 if let Value::Str(path) = arg.to_value(arena) {
                     policy
                         .check_disk_path(builtin_name, &path)
-                        .map_err(VmError::Runtime)?;
+                        .map_err(VmError::runtime)?;
                 }
             }
             (Some("Env"), Some(arg)) => {
                 if let Value::Str(key) = arg.to_value(arena) {
                     policy
                         .check_env_key(builtin_name, &key)
-                        .map_err(VmError::Runtime)?;
+                        .map_err(VmError::runtime)?;
                 }
             }
             _ => {}

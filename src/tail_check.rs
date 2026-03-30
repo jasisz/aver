@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{Expr, FnBody, Stmt, StrPart, TopLevel};
+use crate::ast::{Expr, FnBody, Spanned, Stmt, StrPart, TopLevel};
 use crate::call_graph;
 use crate::verify_law::canonical_spec_ref;
 
@@ -99,8 +99,8 @@ fn count_non_tail_recursive_calls_stmt(stmt: &Stmt, recursive: &HashSet<String>)
     }
 }
 
-fn count_non_tail_recursive_calls_expr(expr: &Expr, recursive: &HashSet<String>) -> usize {
-    match expr {
+fn count_non_tail_recursive_calls_expr(expr: &Spanned<Expr>, recursive: &HashSet<String>) -> usize {
+    match &expr.node {
         Expr::FnCall(func, args) => {
             let mut count = 0;
             if let Some(callee) = dotted_name(func.as_ref())
@@ -127,7 +127,7 @@ fn count_non_tail_recursive_calls_expr(expr: &Expr, recursive: &HashSet<String>)
             count_non_tail_recursive_calls_expr(left, recursive)
                 + count_non_tail_recursive_calls_expr(right, recursive)
         }
-        Expr::Match { subject, arms, .. } => {
+        Expr::Match { subject, arms } => {
             count_non_tail_recursive_calls_expr(subject, recursive)
                 + arms
                     .iter()
@@ -171,8 +171,8 @@ fn count_non_tail_recursive_calls_expr(expr: &Expr, recursive: &HashSet<String>)
     }
 }
 
-fn dotted_name(expr: &Expr) -> Option<String> {
-    match expr {
+fn dotted_name(expr: &Spanned<Expr>) -> Option<String> {
+    match &expr.node {
         Expr::Ident(name) => Some(name.clone()),
         Expr::Attr(base, field) => {
             let mut prefix = dotted_name(base)?;

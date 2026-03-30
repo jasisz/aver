@@ -48,16 +48,16 @@ fn transform_fn(fd: &mut FnDef, scc_members: &HashSet<String>) {
 }
 
 /// Recursively transform an expression in tail position.
-fn transform_tail_expr(expr: &mut Expr, scc_members: &HashSet<String>) {
-    match expr {
+fn transform_tail_expr(spanned: &mut Spanned<Expr>, scc_members: &HashSet<String>) {
+    match &mut spanned.node {
         // Direct call: `f(args)` where f is Ident in SCC
         Expr::FnCall(fn_expr, args) => {
-            if let Expr::Ident(name) = fn_expr.as_ref()
+            if let Expr::Ident(name) = &fn_expr.node
                 && scc_members.contains(name)
             {
                 let name = name.clone();
                 let args = std::mem::take(args);
-                *expr = Expr::TailCall(Box::new((name, args)));
+                spanned.node = Expr::TailCall(Box::new((name, args)));
             }
         }
         // Match: each arm body is in tail position
@@ -85,7 +85,9 @@ mod tests {
     /// Helper: extract the match arms from a fn body.
     /// The parser produces `Block([Expr(Match{subject, arms, ..})])` for indented match bodies.
     fn extract_match_arms(fd: &FnDef) -> &[MatchArm] {
-        if let Some(Stmt::Expr(Expr::Match { arms, .. })) = fd.body.stmts().last() {
+        if let Some(Stmt::Expr(spanned)) = fd.body.stmts().last()
+            && let Expr::Match { arms, .. } = &spanned.node
+        {
             arms
         } else {
             panic!("expected Match in block body, got {:?}", fd.body)
@@ -110,9 +112,9 @@ fn factorial(n: Int, acc: Int) -> Int
 
         let arms = extract_match_arms(fd);
         // arm 0: literal 0 -> acc (unchanged)
-        assert!(!matches!(*arms[0].body, Expr::TailCall(..)));
+        assert!(!matches!(arms[0].body.node, Expr::TailCall(..)));
         // arm 1: _ -> TailCall("factorial", ...)
-        match &*arms[1].body {
+        match &arms[1].body.node {
             Expr::TailCall(boxed) => {
                 let (name, args) = boxed.as_ref();
                 assert_eq!(name, "factorial");
@@ -142,7 +144,7 @@ fn fib(n: Int) -> Int
         let arms = extract_match_arms(fd);
         // arm 2: _ -> fib(n-1) + fib(n-2) — BinOp, NOT TailCall
         assert!(
-            !matches!(*arms[2].body, Expr::TailCall(..)),
+            !matches!(arms[2].body.node, Expr::TailCall(..)),
             "fib should NOT be tail-call transformed"
         );
     }
@@ -169,7 +171,7 @@ fn isOdd(n: Int) -> Bool
             _ => panic!("expected FnDef"),
         };
         let arms_even = extract_match_arms(fd_even);
-        match &*arms_even[1].body {
+        match &arms_even[1].body.node {
             Expr::TailCall(boxed) => assert_eq!(boxed.0, "isOdd"),
             other => panic!("expected TailCall to isOdd, got {:?}", other),
         }
@@ -180,7 +182,7 @@ fn isOdd(n: Int) -> Bool
             _ => panic!("expected FnDef"),
         };
         let arms_odd = extract_match_arms(fd_odd);
-        match &*arms_odd[1].body {
+        match &arms_odd[1].body.node {
             Expr::TailCall(boxed) => assert_eq!(boxed.0, "isEven"),
             other => panic!("expected TailCall to isEven, got {:?}", other),
         }

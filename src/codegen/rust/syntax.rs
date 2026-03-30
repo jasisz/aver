@@ -18,11 +18,11 @@ pub(super) fn has_list_patterns(arms: &[MatchArm]) -> bool {
 pub fn emit_stmt(stmt: &Stmt, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     match stmt {
         Stmt::Binding(name, _type_ann, expr) => {
-            let val = emit_expr(expr, ctx, ectx);
+            let val = emit_expr(&expr.node, ctx, ectx);
             format!("let {} = {};", aver_name_to_rust(name), val)
         }
         Stmt::Expr(expr) => {
-            let val = emit_expr(expr, ctx, ectx);
+            let val = emit_expr(&expr.node, ctx, ectx);
             format!("{};", val)
         }
     }

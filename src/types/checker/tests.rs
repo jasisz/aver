@@ -1,5 +1,5 @@
 use super::{TypeChecker, run_type_check};
-use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Stmt, TopLevel};
+use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt, TopLevel};
 
 fn errors(items: Vec<TopLevel>) -> Vec<String> {
     run_type_check(&items)
@@ -17,11 +17,11 @@ fn top_level_statements_are_typechecked() {
     let items = vec![TopLevel::Stmt(Stmt::Binding(
         "x".to_string(),
         None,
-        Expr::BinOp(
+        Spanned::bare(Expr::BinOp(
             BinOp::Add,
-            Box::new(Expr::Literal(Literal::Int(1))),
-            Box::new(Expr::Literal(Literal::Str("a".to_string()))),
-        ),
+            Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
+            Box::new(Spanned::bare(Expr::Literal(Literal::Str("a".to_string())))),
+        )),
     ))];
     let errs = errors(items);
     assert!(
@@ -40,9 +40,11 @@ fn unknown_function_calls_are_errors() {
         return_type: "Unit".to_string(),
         effects: vec![],
         desc: None,
-        body: std::rc::Rc::new(FnBody::Block(vec![Stmt::Expr(Expr::FnCall(
-            Box::new(Expr::Ident("nosuch".to_string())),
-            vec![Expr::Literal(Literal::Int(1))],
+        body: std::rc::Rc::new(FnBody::Block(vec![Stmt::Expr(Spanned::bare(
+            Expr::FnCall(
+                Box::new(Spanned::bare(Expr::Ident("nosuch".to_string()))),
+                vec![Spanned::bare(Expr::Literal(Literal::Int(1)))],
+            ),
         ))])),
         resolution: None,
     };
@@ -62,12 +64,12 @@ fn duplicate_binding_is_rejected() {
         TopLevel::Stmt(Stmt::Binding(
             "x".to_string(),
             None,
-            Expr::Literal(Literal::Int(1)),
+            Spanned::bare(Expr::Literal(Literal::Int(1))),
         )),
         TopLevel::Stmt(Stmt::Binding(
             "x".to_string(),
             None,
-            Expr::Literal(Literal::Int(2)),
+            Spanned::bare(Expr::Literal(Literal::Int(2))),
         )),
     ];
     let errs = errors(items);
@@ -81,10 +83,10 @@ fn duplicate_binding_is_rejected() {
 #[test]
 fn nested_attr_callee_key() {
     let expr = Expr::Attr(
-        Box::new(Expr::Attr(
-            Box::new(Expr::Ident("Models".to_string())),
+        Box::new(Spanned::bare(Expr::Attr(
+            Box::new(Spanned::bare(Expr::Ident("Models".to_string()))),
             "User".to_string(),
-        )),
+        ))),
         "findById".to_string(),
     );
     assert_eq!(
@@ -102,14 +104,16 @@ fn non_exhaustive_match_reports_match_line() {
         return_type: "Int".to_string(),
         effects: vec![],
         desc: None,
-        body: std::rc::Rc::new(FnBody::from_expr(Expr::Match {
-            subject: Box::new(Expr::Ident("b".to_string())),
-            arms: vec![MatchArm {
-                pattern: Pattern::Literal(Literal::Bool(true)),
-                body: Box::new(Expr::Literal(Literal::Int(1))),
-            }],
-            line: 7,
-        })),
+        body: std::rc::Rc::new(FnBody::from_expr(Spanned::new(
+            Expr::Match {
+                subject: Box::new(Spanned::bare(Expr::Ident("b".to_string()))),
+                arms: vec![MatchArm {
+                    pattern: Pattern::Literal(Literal::Bool(true)),
+                    body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
+                }],
+            },
+            7,
+        ))),
         resolution: None,
     };
 
@@ -133,26 +137,28 @@ fn tuple_union_patterns_can_be_exhaustive_without_single_total_arm() {
         return_type: "Int".to_string(),
         effects: vec![],
         desc: None,
-        body: std::rc::Rc::new(FnBody::from_expr(Expr::Match {
-            subject: Box::new(Expr::Ident("t".to_string())),
-            arms: vec![
-                MatchArm {
-                    pattern: Pattern::Tuple(vec![
-                        Pattern::Literal(Literal::Bool(true)),
-                        Pattern::Wildcard,
-                    ]),
-                    body: Box::new(Expr::Literal(Literal::Int(1))),
-                },
-                MatchArm {
-                    pattern: Pattern::Tuple(vec![
-                        Pattern::Literal(Literal::Bool(false)),
-                        Pattern::Wildcard,
-                    ]),
-                    body: Box::new(Expr::Literal(Literal::Int(0))),
-                },
-            ],
-            line: 9,
-        })),
+        body: std::rc::Rc::new(FnBody::from_expr(Spanned::new(
+            Expr::Match {
+                subject: Box::new(Spanned::bare(Expr::Ident("t".to_string()))),
+                arms: vec![
+                    MatchArm {
+                        pattern: Pattern::Tuple(vec![
+                            Pattern::Literal(Literal::Bool(true)),
+                            Pattern::Wildcard,
+                        ]),
+                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
+                    },
+                    MatchArm {
+                        pattern: Pattern::Tuple(vec![
+                            Pattern::Literal(Literal::Bool(false)),
+                            Pattern::Wildcard,
+                        ]),
+                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
+                    },
+                ],
+            },
+            9,
+        ))),
         resolution: None,
     };
 
@@ -174,26 +180,28 @@ fn nested_tuple_union_still_reports_missing_case() {
         return_type: "Int".to_string(),
         effects: vec![],
         desc: None,
-        body: std::rc::Rc::new(FnBody::from_expr(Expr::Match {
-            subject: Box::new(Expr::Ident("t".to_string())),
-            arms: vec![
-                MatchArm {
-                    pattern: Pattern::Tuple(vec![
-                        Pattern::Literal(Literal::Bool(true)),
-                        Pattern::Wildcard,
-                    ]),
-                    body: Box::new(Expr::Literal(Literal::Int(1))),
-                },
-                MatchArm {
-                    pattern: Pattern::Tuple(vec![
-                        Pattern::Wildcard,
-                        Pattern::Literal(Literal::Bool(true)),
-                    ]),
-                    body: Box::new(Expr::Literal(Literal::Int(2))),
-                },
-            ],
-            line: 13,
-        })),
+        body: std::rc::Rc::new(FnBody::from_expr(Spanned::new(
+            Expr::Match {
+                subject: Box::new(Spanned::bare(Expr::Ident("t".to_string()))),
+                arms: vec![
+                    MatchArm {
+                        pattern: Pattern::Tuple(vec![
+                            Pattern::Literal(Literal::Bool(true)),
+                            Pattern::Wildcard,
+                        ]),
+                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
+                    },
+                    MatchArm {
+                        pattern: Pattern::Tuple(vec![
+                            Pattern::Wildcard,
+                            Pattern::Literal(Literal::Bool(true)),
+                        ]),
+                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(2)))),
+                    },
+                ],
+            },
+            13,
+        ))),
         resolution: None,
     };
 

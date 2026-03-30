@@ -1,4 +1,4 @@
-use crate::ast::{BinOp, Expr, Literal, MatchArm, Pattern};
+use crate::ast::{BinOp, Expr, Literal, MatchArm, Pattern, Spanned};
 
 use super::{CallLowerCtx, SemanticConstructor, WrapperKind, classify_constructor_name};
 
@@ -36,8 +36,8 @@ pub enum BoolCompareOp {
 pub enum BoolSubjectPlan<'a> {
     Expr(&'a Expr),
     Compare {
-        lhs: &'a Expr,
-        rhs: &'a Expr,
+        lhs: &'a Spanned<Expr>,
+        rhs: &'a Spanned<Expr>,
         op: BoolCompareOp,
         invert: bool,
     },

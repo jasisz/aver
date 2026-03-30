@@ -51,6 +51,7 @@ fn vm_run_with_module_root_and_arena(src: &str, module_root: &Path) -> (NanValue
                 .to_str()
                 .expect("module root must be valid UTF-8"),
         ),
+        "",
     )
     .expect("compile failed");
     let mut machine = vm::VM::new(code, globals, arena);
@@ -1335,6 +1336,7 @@ fn vm_respects_aver_toml_runtime_policy() {
                 .to_str()
                 .expect("module root must be valid UTF-8"),
         ),
+        "",
     )
     .expect("compile failed");
     let mut machine = vm::VM::new(code, globals, arena);

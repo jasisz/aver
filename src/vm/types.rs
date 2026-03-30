@@ -22,6 +22,11 @@ pub struct FnChunk {
     /// and opcodes). When also thin and args-only (local_count == arity),
     /// can be called without pushing a CallFrame.
     pub leaf: bool,
+    /// Source file path for this function (empty for synthetic/unknown).
+    pub source_file: String,
+    /// Run-length encoded line table: `(bytecode_offset, source_line)`.
+    /// Sorted by offset. Lookup: find last entry where offset <= target ip.
+    pub line_table: Vec<(u16, u16)>,
 }
 
 /// Minimal call frame: 16 bytes of metadata, no closure/upvalue fields.
@@ -112,26 +117,101 @@ impl CodeStore {
                 .insert((type_id, symbol_id), field_idx as u8);
         }
     }
+
+    /// Resolve a bytecode position to (source_file, source_line).
+    /// Returns None if line table is empty or fn_id is invalid.
+    pub fn resolve_source_location(&self, fn_id: u32, ip: u32) -> Option<(&str, u16)> {
+        let chunk = self.functions.get(fn_id as usize)?;
+        if chunk.line_table.is_empty() {
+            return None;
+        }
+        // Binary search: find last entry where offset <= ip
+        let ip16 = ip as u16;
+        let idx = match chunk
+            .line_table
+            .binary_search_by_key(&ip16, |&(off, _)| off)
+        {
+            Ok(i) => i,
+            Err(0) => return None,
+            Err(i) => i - 1,
+        };
+        let (_, line) = chunk.line_table[idx];
+        let file = if chunk.source_file.is_empty() {
+            None
+        } else {
+            Some(chunk.source_file.as_str())
+        };
+        Some((file.unwrap_or(""), line))
+    }
+}
+
+/// Source location resolved from line table (cold-path only).
+#[derive(Debug, Default, Clone)]
+pub struct VmSourceLoc {
+    pub file: String,
+    pub line: u16,
+    pub fn_name: String,
 }
 
 /// VM runtime error.
 #[derive(Debug)]
 pub enum VmError {
-    /// Runtime error with message.
-    Runtime(String),
+    /// Runtime error with message and optional source line.
+    Runtime { msg: String, line: u16 },
     /// Type error (e.g. adding int + string).
-    Type(String),
+    Type { msg: String, line: u16 },
     /// Non-exhaustive match at source line.
     MatchFail(u16),
     /// Stack underflow (bug in compiler).
     StackUnderflow,
 }
 
+impl VmError {
+    pub fn runtime(msg: impl Into<String>) -> Self {
+        VmError::Runtime {
+            msg: msg.into(),
+            line: 0,
+        }
+    }
+
+    pub fn type_err(msg: impl Into<String>) -> Self {
+        VmError::Type {
+            msg: msg.into(),
+            line: 0,
+        }
+    }
+
+    /// Attach resolved source location (cold path).
+    pub fn with_location(self, loc: Option<VmSourceLoc>) -> Self {
+        let Some(loc) = loc else { return self };
+        if loc.line == 0 {
+            return self;
+        }
+        match self {
+            VmError::Runtime { msg, line: 0 } => VmError::Runtime {
+                msg,
+                line: loc.line,
+            },
+            VmError::Type { msg, line: 0 } => VmError::Type {
+                msg,
+                line: loc.line,
+            },
+            other => other,
+        }
+    }
+}
+
 impl std::fmt::Display for VmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            VmError::Runtime(msg) => write!(f, "Runtime error: {}", msg),
-            VmError::Type(msg) => write!(f, "Type error: {}", msg),
+            VmError::Runtime { msg, line } if *line > 0 => {
+                write!(f, "Runtime error [line {}]: {}", line, msg)
+            }
+            VmError::Runtime { msg, .. } => write!(f, "Runtime error: {}", msg),
+            VmError::Type { msg, line } if *line > 0 => {
+                write!(f, "Type error [line {}]: {}", line, msg)
+            }
+            VmError::Type { msg, .. } => write!(f, "Type error: {}", msg),
             VmError::MatchFail(line) => write!(f, "Non-exhaustive match at line {}", line),
             VmError::StackUnderflow => write!(f, "Internal error: stack underflow"),
         }

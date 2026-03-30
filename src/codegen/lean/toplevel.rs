@@ -9,7 +9,7 @@ use super::recurrence::{
 use super::shared::to_lower_first;
 use super::types::type_annotation_to_lean;
 use super::{RecursionPlan, VerifyEmitMode, sizeof_measure_param_indices};
-use crate::ast::*;
+use crate::ast::{self, *};
 use crate::codegen::CodegenContext;
 use crate::codegen::common::expr_to_dotted_name;
 use crate::verify_law::canonical_spec_ref;
@@ -618,25 +618,33 @@ fn emit_mutual_sizeof_wrapper(
     ]
 }
 
-fn rewrite_recursive_calls_expr(expr: &Expr, targets: &HashSet<String>, fuel_var: &str) -> Expr {
-    match expr {
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => expr.clone(),
+fn rewrite_recursive_calls_expr(
+    expr: &Spanned<Expr>,
+    targets: &HashSet<String>,
+    fuel_var: &str,
+) -> Spanned<Expr> {
+    let line = expr.line;
+    let new_node = match &expr.node {
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => return expr.clone(),
         Expr::Attr(obj, field) => Expr::Attr(
             Box::new(rewrite_recursive_calls_expr(obj, targets, fuel_var)),
             field.clone(),
         ),
         Expr::FnCall(callee, args) => {
-            let rewritten_args: Vec<Expr> = args
+            let rewritten_args: Vec<Spanned<Expr>> = args
                 .iter()
                 .map(|arg| rewrite_recursive_calls_expr(arg, targets, fuel_var))
                 .collect();
-            if let Some(name) = expr_to_dotted_name(callee)
+            if let Some(name) = expr_to_dotted_name(&callee.node)
                 && targets.contains(&name)
             {
                 let mut call_args = Vec::with_capacity(rewritten_args.len() + 1);
-                call_args.push(Expr::Ident(fuel_var.to_string()));
+                call_args.push(Spanned::new(Expr::Ident(fuel_var.to_string()), line));
                 call_args.extend(rewritten_args);
-                Expr::FnCall(Box::new(Expr::Ident(fuel_helper_name(&name))), call_args)
+                Expr::FnCall(
+                    Box::new(Spanned::new(Expr::Ident(fuel_helper_name(&name)), line)),
+                    call_args,
+                )
             } else {
                 Expr::FnCall(
                     Box::new(rewrite_recursive_calls_expr(callee, targets, fuel_var)),
@@ -649,11 +657,7 @@ fn rewrite_recursive_calls_expr(expr: &Expr, targets: &HashSet<String>, fuel_var
             Box::new(rewrite_recursive_calls_expr(left, targets, fuel_var)),
             Box::new(rewrite_recursive_calls_expr(right, targets, fuel_var)),
         ),
-        Expr::Match {
-            subject,
-            arms,
-            line,
-        } => Expr::Match {
+        Expr::Match { subject, arms } => Expr::Match {
             subject: Box::new(rewrite_recursive_calls_expr(subject, targets, fuel_var)),
             arms: arms
                 .iter()
@@ -662,7 +666,6 @@ fn rewrite_recursive_calls_expr(expr: &Expr, targets: &HashSet<String>, fuel_var
                     body: Box::new(rewrite_recursive_calls_expr(&arm.body, targets, fuel_var)),
                 })
                 .collect(),
-            line: *line,
         },
         Expr::Constructor(name, arg) => Expr::Constructor(
             name.clone(),
@@ -737,20 +740,24 @@ fn rewrite_recursive_calls_expr(expr: &Expr, targets: &HashSet<String>, fuel_var
         },
         Expr::TailCall(boxed) => {
             let (target, args) = boxed.as_ref();
-            let rewritten_args: Vec<Expr> = args
+            let rewritten_args: Vec<Spanned<Expr>> = args
                 .iter()
                 .map(|arg| rewrite_recursive_calls_expr(arg, targets, fuel_var))
                 .collect();
             if targets.contains(target) {
                 let mut call_args = Vec::with_capacity(rewritten_args.len() + 1);
-                call_args.push(Expr::Ident(fuel_var.to_string()));
+                call_args.push(Spanned::new(Expr::Ident(fuel_var.to_string()), line));
                 call_args.extend(rewritten_args);
-                Expr::FnCall(Box::new(Expr::Ident(fuel_helper_name(target))), call_args)
+                Expr::FnCall(
+                    Box::new(Spanned::new(Expr::Ident(fuel_helper_name(target)), line)),
+                    call_args,
+                )
             } else {
                 Expr::TailCall(Box::new((target.clone(), rewritten_args)))
             }
         }
-    }
+    };
+    Spanned::new(new_node, line)
 }
 
 fn rewrite_recursive_calls_body(
@@ -758,7 +765,7 @@ fn rewrite_recursive_calls_body(
     targets: &HashSet<String>,
     fuel_var: &str,
 ) -> FnBody {
-    FnBody::Block(
+    ast::FnBody::Block(
         body.stmts()
             .iter()
             .map(|stmt| match stmt {
@@ -1250,8 +1257,8 @@ fn emit_fn_params(params: &[(String, String)]) -> String {
         .join(" ")
 }
 
-fn expr_uses_error_prop(expr: &Expr) -> bool {
-    match expr {
+fn expr_uses_error_prop(expr: &Spanned<Expr>) -> bool {
+    match &expr.node {
         Expr::ErrorProp(_) => true,
         Expr::FnCall(callee, args) => {
             expr_uses_error_prop(callee) || args.iter().any(expr_uses_error_prop)
@@ -1297,18 +1304,33 @@ fn fn_returns_result(fd: &FnDef) -> bool {
 
 fn emit_do_stmt(stmt: &Stmt, ctx: &CodegenContext, is_last: bool) -> String {
     match stmt {
-        Stmt::Binding(name, _, Expr::ErrorProp(inner)) => format!(
-            "  let {} <- {}",
-            aver_name_to_lean(name),
-            emit_expr(inner, ctx)
-        ),
+        Stmt::Binding(name, _, expr) if matches!(&expr.node, Expr::ErrorProp(_)) => {
+            let Expr::ErrorProp(inner) = &expr.node else {
+                unreachable!()
+            };
+            format!(
+                "  let {} <- {}",
+                aver_name_to_lean(name),
+                emit_expr(inner, ctx)
+            )
+        }
         Stmt::Binding(name, _, expr) => format!(
             "  let {} := {}",
             aver_name_to_lean(name),
             emit_expr(expr, ctx)
         ),
-        Stmt::Expr(Expr::ErrorProp(inner)) if is_last => format!("  {}", emit_expr(inner, ctx)),
-        Stmt::Expr(Expr::ErrorProp(inner)) => format!("  let _ <- {}", emit_expr(inner, ctx)),
+        Stmt::Expr(expr) if matches!(&expr.node, Expr::ErrorProp(_)) && is_last => {
+            let Expr::ErrorProp(inner) = &expr.node else {
+                unreachable!()
+            };
+            format!("  {}", emit_expr(inner, ctx))
+        }
+        Stmt::Expr(expr) if matches!(&expr.node, Expr::ErrorProp(_)) => {
+            let Expr::ErrorProp(inner) = &expr.node else {
+                unreachable!()
+            };
+            format!("  let _ <- {}", emit_expr(inner, ctx))
+        }
         Stmt::Expr(expr) if is_last => format!("  {}", emit_expr(expr, ctx)),
         Stmt::Expr(expr) => format!("  let _ := {}", emit_expr(expr, ctx)),
     }
@@ -1638,10 +1660,10 @@ fn law_given_domain_prop(given: &VerifyGiven, ctx: &CodegenContext) -> String {
     }
 }
 
-pub(super) fn law_given_domain_values(domain: &VerifyGivenDomain) -> Vec<Expr> {
+pub(super) fn law_given_domain_values(domain: &VerifyGivenDomain) -> Vec<Spanned<Expr>> {
     match domain {
         VerifyGivenDomain::IntRange { start, end } => (*start..=*end)
-            .map(|n| Expr::Literal(Literal::Int(n)))
+            .map(|n| Spanned::bare(Expr::Literal(Literal::Int(n))))
             .collect(),
         VerifyGivenDomain::Explicit(values) => values.clone(),
     }

@@ -23,6 +23,8 @@ pub use memo::hash_memo_args;
 pub enum RuntimeError {
     #[error("Runtime error: {0}")]
     Error(String),
+    #[error("Runtime error [line {line}]: {msg}")]
+    ErrorAt { msg: String, line: usize },
     /// Internal signal: `?` operator encountered Err — caught by call_value to
     /// do early return. Never surfaces to the user (type checker prevents
     /// top-level use).
@@ -56,6 +58,44 @@ pub enum RuntimeError {
     ReplayUnconsumed { remaining: usize },
     #[error("Replay serialization error: {0}")]
     ReplaySerialization(String),
+}
+
+impl RuntimeError {
+    /// Attach a source line to an undecorated error. Already-decorated errors
+    /// and internal signals (TailCall, ErrProp) pass through unchanged.
+    pub fn at_line(self, line: usize) -> Self {
+        if line == 0 {
+            return self;
+        }
+        match self {
+            RuntimeError::Error(msg) => RuntimeError::ErrorAt { msg, line },
+            other => other,
+        }
+    }
+
+    /// Extract the human-readable message regardless of variant.
+    pub fn message(&self) -> &str {
+        match self {
+            RuntimeError::Error(msg) | RuntimeError::ErrorAt { msg, .. } => msg,
+            other => {
+                // For non-message variants, fall back to thiserror Display.
+                // This is a cold path — only needed for unusual error kinds.
+                // Return a static placeholder; callers should use Display.
+                match other {
+                    RuntimeError::Error(_) | RuntimeError::ErrorAt { .. } => unreachable!(),
+                    _ => "",
+                }
+            }
+        }
+    }
+
+    /// Source line if available (ErrorAt only).
+    pub fn source_line(&self) -> Option<usize> {
+        match self {
+            RuntimeError::ErrorAt { line, .. } if *line > 0 => Some(*line),
+            _ => None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -14,10 +14,10 @@ use super::{
 };
 
 fn direct_match_target(f: &FnDef) -> Option<(usize, &[crate::ast::MatchArm])> {
-    let Expr::Match { subject, arms, .. } = f.body.tail_expr()? else {
+    let Expr::Match { subject, arms, .. } = &f.body.tail_expr()?.node else {
         return None;
     };
-    let Expr::Ident(subject_name) = subject.as_ref() else {
+    let Expr::Ident(subject_name) = &subject.node else {
         return None;
     };
     let param_index = f.params.iter().position(|(name, _)| name == subject_name)?;

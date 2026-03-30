@@ -373,9 +373,13 @@ fn replay_recording_file_vm(
 
     let mut arena = aver::nan_value::Arena::new();
     vm::register_service_types(&mut arena);
-    let (code, globals) =
-        vm::compile_program_with_modules(&items, &mut arena, Some(&replay_module_root))
-            .map_err(|e| format!("VM compile error: {}", e))?;
+    let (code, globals) = vm::compile_program_with_modules(
+        &items,
+        &mut arena,
+        Some(&replay_module_root),
+        &recording.program_file,
+    )
+    .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
     apply_runtime_policy_to_vm(&mut machine, &replay_module_root)?;
     machine.start_replay(recording.effects.clone(), check_args);

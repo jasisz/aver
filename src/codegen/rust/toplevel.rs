@@ -612,9 +612,9 @@ fn emit_fn_body(body: &FnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
             }
             Stmt::Expr(expr) => {
                 if is_last {
-                    lines.push(format!("    {}", emit_expr(expr, ctx, sctx)));
+                    lines.push(format!("    {}", emit_expr(&expr.node, ctx, sctx)));
                 } else {
-                    lines.push(format!("    {};", emit_expr(expr, ctx, sctx)));
+                    lines.push(format!("    {};", emit_expr(&expr.node, ctx, sctx)));
                 }
             }
         }
@@ -626,22 +626,28 @@ fn emit_fn_body(body: &FnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
 fn expr_uses_error_prop(expr: &Expr) -> bool {
     match expr {
         Expr::ErrorProp(_) => true,
-        Expr::FnCall(f, args) => expr_uses_error_prop(f) || args.iter().any(expr_uses_error_prop),
-        Expr::BinOp(_, l, r) => expr_uses_error_prop(l) || expr_uses_error_prop(r),
-        Expr::Match { subject, arms, .. } => {
-            expr_uses_error_prop(subject) || arms.iter().any(|a| expr_uses_error_prop(&a.body))
+        Expr::FnCall(f, args) => {
+            expr_uses_error_prop(&f.node) || args.iter().any(|a| expr_uses_error_prop(&a.node))
         }
-        Expr::List(es) => es.iter().any(expr_uses_error_prop),
-        Expr::Tuple(es) => es.iter().any(expr_uses_error_prop),
-        Expr::Attr(e, _) => expr_uses_error_prop(e),
-        Expr::Constructor(_, Some(e)) => expr_uses_error_prop(e),
+        Expr::BinOp(_, l, r) => expr_uses_error_prop(&l.node) || expr_uses_error_prop(&r.node),
+        Expr::Match { subject, arms, .. } => {
+            expr_uses_error_prop(&subject.node)
+                || arms.iter().any(|a| expr_uses_error_prop(&a.body.node))
+        }
+        Expr::List(es) => es.iter().any(|e| expr_uses_error_prop(&e.node)),
+        Expr::Tuple(es) => es.iter().any(|e| expr_uses_error_prop(&e.node)),
+        Expr::Attr(e, _) => expr_uses_error_prop(&e.node),
+        Expr::Constructor(_, Some(e)) => expr_uses_error_prop(&e.node),
         Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
-            StrPart::Parsed(e) => expr_uses_error_prop(e),
+            StrPart::Parsed(e) => expr_uses_error_prop(&e.node),
             _ => false,
         }),
-        Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| expr_uses_error_prop(e)),
+        Expr::RecordCreate { fields, .. } => {
+            fields.iter().any(|(_, e)| expr_uses_error_prop(&e.node))
+        }
         Expr::RecordUpdate { base, updates, .. } => {
-            expr_uses_error_prop(base) || updates.iter().any(|(_, e)| expr_uses_error_prop(e))
+            expr_uses_error_prop(&base.node)
+                || updates.iter().any(|(_, e)| expr_uses_error_prop(&e.node))
         }
         _ => false,
     }
@@ -649,8 +655,8 @@ fn expr_uses_error_prop(expr: &Expr) -> bool {
 
 pub(super) fn body_has_self_tailcall(body: &FnBody, fn_name: &str) -> bool {
     body.stmts().iter().any(|s| match s {
-        Stmt::Expr(e) => expr_has_self_tailcall(e, fn_name),
-        Stmt::Binding(_, _, e) => expr_has_self_tailcall(e, fn_name),
+        Stmt::Expr(e) => expr_has_self_tailcall(&e.node, fn_name),
+        Stmt::Binding(_, _, e) => expr_has_self_tailcall(&e.node, fn_name),
     })
 }
 
@@ -662,7 +668,7 @@ fn expr_has_self_tailcall(expr: &Expr, fn_name: &str) -> bool {
         }
         Expr::Match { arms, .. } => arms
             .iter()
-            .any(|arm| expr_has_self_tailcall(&arm.body, fn_name)),
+            .any(|arm| expr_has_self_tailcall(&arm.body.node, fn_name)),
         _ => false,
     }
 }
@@ -801,7 +807,8 @@ fn check_param_passthrough_by_name(
     for stmt in body.stmts() {
         match stmt {
             Stmt::Expr(e) | Stmt::Binding(_, _, e) => {
-                if !check_expr_passthrough_by_name(e, member_names, param_name, fn_param_map) {
+                if !check_expr_passthrough_by_name(&e.node, member_names, param_name, fn_param_map)
+                {
                     return false;
                 }
             }
@@ -828,13 +835,13 @@ fn check_expr_passthrough_by_name(
             {
                 // arg at target_idx must be Ident(param_name) from the caller
                 target_idx < args.len()
-                    && matches!(&args[target_idx], Expr::Ident(name) if name == param_name)
+                    && matches!(&args[target_idx].node, Expr::Ident(name) if name == param_name)
             } else {
                 false
             }
         }
         Expr::Match { arms, .. } => arms.iter().all(|arm| {
-            check_expr_passthrough_by_name(&arm.body, member_names, param_name, fn_param_map)
+            check_expr_passthrough_by_name(&arm.body.node, member_names, param_name, fn_param_map)
         }),
         _ => true,
     }
@@ -852,7 +859,7 @@ fn check_tailcalls_for_rc(
     for stmt in body.stmts() {
         match stmt {
             Stmt::Expr(e) | Stmt::Binding(_, _, e) => {
-                check_expr_tailcalls_for_rc(e, member_names, params, candidates);
+                check_expr_tailcalls_for_rc(&e.node, member_names, params, candidates);
             }
         }
     }
@@ -875,7 +882,9 @@ fn check_expr_tailcalls_for_rc(
                 let to_remove: Vec<usize> = candidates
                     .iter()
                     .copied()
-                    .filter(|&i| !matches!(&args[i], Expr::Ident(name) if *name == params[i].0))
+                    .filter(
+                        |&i| !matches!(&args[i].node, Expr::Ident(name) if *name == params[i].0),
+                    )
                     .collect();
                 for idx in to_remove {
                     candidates.remove(&idx);
@@ -884,7 +893,7 @@ fn check_expr_tailcalls_for_rc(
         }
         Expr::Match { arms, .. } => {
             for arm in arms {
-                check_expr_tailcalls_for_rc(&arm.body, member_names, params, candidates);
+                check_expr_tailcalls_for_rc(&arm.body.node, member_names, params, candidates);
             }
         }
         _ => {}
@@ -965,57 +974,59 @@ fn expr_is_loop_invariant(
         Expr::Attr(obj, _) => {
             crate::ir::expr_to_dotted_name(expr)
                 .is_some_and(|dotted| dotted.chars().next().is_some_and(|c| c.is_uppercase()))
-                || expr_is_loop_invariant(obj, stable_names, ctx, ectx)
+                || expr_is_loop_invariant(&obj.node, stable_names, ctx, ectx)
         }
         Expr::FnCall(_, args) => match classify_body_expr_plan_for_rust(expr, ctx, ectx) {
             BodyExprPlan::Leaf(_) => args
                 .iter()
-                .all(|arg| expr_is_loop_invariant(arg, stable_names, ctx, ectx)),
+                .all(|arg| expr_is_loop_invariant(&arg.node, stable_names, ctx, ectx)),
             BodyExprPlan::Call { target, args } => {
                 call_plan_is_effect_free(&target, ctx)
                     && args
                         .iter()
-                        .all(|arg| expr_is_loop_invariant(arg, stable_names, ctx, ectx))
+                        .all(|arg| expr_is_loop_invariant(&arg.node, stable_names, ctx, ectx))
             }
             BodyExprPlan::ForwardCall(plan) => {
                 call_plan_is_effect_free(&plan.target, ctx)
                     && args
                         .iter()
-                        .all(|arg| expr_is_loop_invariant(arg, stable_names, ctx, ectx))
+                        .all(|arg| expr_is_loop_invariant(&arg.node, stable_names, ctx, ectx))
             }
             BodyExprPlan::Expr(_) => false,
         },
         Expr::BinOp(_, left, right) => {
-            expr_is_loop_invariant(left, stable_names, ctx, ectx)
-                && expr_is_loop_invariant(right, stable_names, ctx, ectx)
+            expr_is_loop_invariant(&left.node, stable_names, ctx, ectx)
+                && expr_is_loop_invariant(&right.node, stable_names, ctx, ectx)
         }
         Expr::Match { subject, arms, .. } => {
-            expr_is_loop_invariant(subject, stable_names, ctx, ectx)
+            expr_is_loop_invariant(&subject.node, stable_names, ctx, ectx)
                 && arms
                     .iter()
-                    .all(|arm| expr_is_loop_invariant(&arm.body, stable_names, ctx, ectx))
+                    .all(|arm| expr_is_loop_invariant(&arm.body.node, stable_names, ctx, ectx))
         }
-        Expr::Constructor(_, Some(inner)) => expr_is_loop_invariant(inner, stable_names, ctx, ectx),
+        Expr::Constructor(_, Some(inner)) => {
+            expr_is_loop_invariant(&inner.node, stable_names, ctx, ectx)
+        }
         Expr::Constructor(_, None) => true,
         Expr::InterpolatedStr(parts) => parts.iter().all(|part| match part {
             StrPart::Literal(_) => true,
-            StrPart::Parsed(expr) => expr_is_loop_invariant(expr, stable_names, ctx, ectx),
+            StrPart::Parsed(expr) => expr_is_loop_invariant(&expr.node, stable_names, ctx, ectx),
         }),
         Expr::List(items) | Expr::Tuple(items) => items
             .iter()
-            .all(|item| expr_is_loop_invariant(item, stable_names, ctx, ectx)),
+            .all(|item| expr_is_loop_invariant(&item.node, stable_names, ctx, ectx)),
         Expr::MapLiteral(entries) => entries.iter().all(|(key, value)| {
-            expr_is_loop_invariant(key, stable_names, ctx, ectx)
-                && expr_is_loop_invariant(value, stable_names, ctx, ectx)
+            expr_is_loop_invariant(&key.node, stable_names, ctx, ectx)
+                && expr_is_loop_invariant(&value.node, stable_names, ctx, ectx)
         }),
         Expr::RecordCreate { fields, .. } => fields
             .iter()
-            .all(|(_, value)| expr_is_loop_invariant(value, stable_names, ctx, ectx)),
+            .all(|(_, value)| expr_is_loop_invariant(&value.node, stable_names, ctx, ectx)),
         Expr::RecordUpdate { base, updates, .. } => {
-            expr_is_loop_invariant(base, stable_names, ctx, ectx)
+            expr_is_loop_invariant(&base.node, stable_names, ctx, ectx)
                 && updates
                     .iter()
-                    .all(|(_, value)| expr_is_loop_invariant(value, stable_names, ctx, ectx))
+                    .all(|(_, value)| expr_is_loop_invariant(&value.node, stable_names, ctx, ectx))
         }
     }
 }
@@ -1062,7 +1073,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
 
     match expr {
         Expr::Attr(obj, _) => collect_hoistable_invariant_subexprs(
-            obj,
+            &obj.node,
             stable_names,
             ctx,
             ectx,
@@ -1072,7 +1083,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
         ),
         Expr::FnCall(fn_expr, args) => {
             collect_hoistable_invariant_subexprs(
-                fn_expr,
+                &fn_expr.node,
                 stable_names,
                 ctx,
                 ectx,
@@ -1082,7 +1093,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
             );
             for arg in args {
                 collect_hoistable_invariant_subexprs(
-                    arg,
+                    &arg.node,
                     stable_names,
                     ctx,
                     ectx,
@@ -1094,7 +1105,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
         }
         Expr::BinOp(_, left, right) => {
             collect_hoistable_invariant_subexprs(
-                left,
+                &left.node,
                 stable_names,
                 ctx,
                 ectx,
@@ -1103,7 +1114,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
                 next_idx,
             );
             collect_hoistable_invariant_subexprs(
-                right,
+                &right.node,
                 stable_names,
                 ctx,
                 ectx,
@@ -1114,7 +1125,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
         }
         Expr::Match { subject, arms, .. } => {
             collect_hoistable_invariant_subexprs(
-                subject,
+                &subject.node,
                 stable_names,
                 ctx,
                 ectx,
@@ -1124,7 +1135,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
             );
             for arm in arms {
                 collect_hoistable_invariant_subexprs(
-                    &arm.body,
+                    &arm.body.node,
                     stable_names,
                     ctx,
                     ectx,
@@ -1136,7 +1147,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
         }
         Expr::Constructor(_, Some(inner)) | Expr::ErrorProp(inner) => {
             collect_hoistable_invariant_subexprs(
-                inner,
+                &inner.node,
                 stable_names,
                 ctx,
                 ectx,
@@ -1149,7 +1160,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
             for part in parts {
                 if let StrPart::Parsed(expr) = part {
                     collect_hoistable_invariant_subexprs(
-                        expr,
+                        &expr.node,
                         stable_names,
                         ctx,
                         ectx,
@@ -1163,7 +1174,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
         Expr::List(items) | Expr::Tuple(items) => {
             for item in items {
                 collect_hoistable_invariant_subexprs(
-                    item,
+                    &item.node,
                     stable_names,
                     ctx,
                     ectx,
@@ -1176,7 +1187,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
         Expr::MapLiteral(entries) => {
             for (key, value) in entries {
                 collect_hoistable_invariant_subexprs(
-                    key,
+                    &key.node,
                     stable_names,
                     ctx,
                     ectx,
@@ -1185,7 +1196,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
                     next_idx,
                 );
                 collect_hoistable_invariant_subexprs(
-                    value,
+                    &value.node,
                     stable_names,
                     ctx,
                     ectx,
@@ -1198,7 +1209,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
         Expr::RecordCreate { fields, .. } => {
             for (_, value) in fields {
                 collect_hoistable_invariant_subexprs(
-                    value,
+                    &value.node,
                     stable_names,
                     ctx,
                     ectx,
@@ -1210,7 +1221,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
         }
         Expr::RecordUpdate { base, updates, .. } => {
             collect_hoistable_invariant_subexprs(
-                base,
+                &base.node,
                 stable_names,
                 ctx,
                 ectx,
@@ -1220,7 +1231,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
             );
             for (_, value) in updates {
                 collect_hoistable_invariant_subexprs(
-                    value,
+                    &value.node,
                     stable_names,
                     ctx,
                     ectx,
@@ -1255,7 +1266,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
             if target == self_name {
                 for arg in args {
                     collect_hoistable_invariant_subexprs(
-                        arg,
+                        &arg.node,
                         stable_names,
                         ctx,
                         ectx,
@@ -1267,7 +1278,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
             } else {
                 for arg in args {
                     collect_self_tailcall_hoists_in_expr(
-                        arg,
+                        &arg.node,
                         self_name,
                         stable_names,
                         ctx,
@@ -1281,7 +1292,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
         }
         Expr::Match { subject, arms, .. } => {
             collect_self_tailcall_hoists_in_expr(
-                subject,
+                &subject.node,
                 self_name,
                 stable_names,
                 ctx,
@@ -1292,7 +1303,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
             );
             for arm in arms {
                 collect_self_tailcall_hoists_in_expr(
-                    &arm.body,
+                    &arm.body.node,
                     self_name,
                     stable_names,
                     ctx,
@@ -1304,7 +1315,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
             }
         }
         Expr::Attr(obj, _) => collect_self_tailcall_hoists_in_expr(
-            obj,
+            &obj.node,
             self_name,
             stable_names,
             ctx,
@@ -1315,7 +1326,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
         ),
         Expr::FnCall(fn_expr, args) => {
             collect_self_tailcall_hoists_in_expr(
-                fn_expr,
+                &fn_expr.node,
                 self_name,
                 stable_names,
                 ctx,
@@ -1326,7 +1337,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
             );
             for arg in args {
                 collect_self_tailcall_hoists_in_expr(
-                    arg,
+                    &arg.node,
                     self_name,
                     stable_names,
                     ctx,
@@ -1339,7 +1350,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
         }
         Expr::BinOp(_, left, right) => {
             collect_self_tailcall_hoists_in_expr(
-                left,
+                &left.node,
                 self_name,
                 stable_names,
                 ctx,
@@ -1349,7 +1360,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
                 next_idx,
             );
             collect_self_tailcall_hoists_in_expr(
-                right,
+                &right.node,
                 self_name,
                 stable_names,
                 ctx,
@@ -1361,7 +1372,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
         }
         Expr::Constructor(_, Some(inner)) | Expr::ErrorProp(inner) => {
             collect_self_tailcall_hoists_in_expr(
-                inner,
+                &inner.node,
                 self_name,
                 stable_names,
                 ctx,
@@ -1375,7 +1386,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
             for part in parts {
                 if let StrPart::Parsed(expr) = part {
                     collect_self_tailcall_hoists_in_expr(
-                        expr,
+                        &expr.node,
                         self_name,
                         stable_names,
                         ctx,
@@ -1390,7 +1401,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
         Expr::List(items) | Expr::Tuple(items) => {
             for item in items {
                 collect_self_tailcall_hoists_in_expr(
-                    item,
+                    &item.node,
                     self_name,
                     stable_names,
                     ctx,
@@ -1404,7 +1415,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
         Expr::MapLiteral(entries) => {
             for (key, value) in entries {
                 collect_self_tailcall_hoists_in_expr(
-                    key,
+                    &key.node,
                     self_name,
                     stable_names,
                     ctx,
@@ -1414,7 +1425,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
                     next_idx,
                 );
                 collect_self_tailcall_hoists_in_expr(
-                    value,
+                    &value.node,
                     self_name,
                     stable_names,
                     ctx,
@@ -1428,7 +1439,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
         Expr::RecordCreate { fields, .. } => {
             for (_, value) in fields {
                 collect_self_tailcall_hoists_in_expr(
-                    value,
+                    &value.node,
                     self_name,
                     stable_names,
                     ctx,
@@ -1441,7 +1452,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
         }
         Expr::RecordUpdate { base, updates, .. } => {
             collect_self_tailcall_hoists_in_expr(
-                base,
+                &base.node,
                 self_name,
                 stable_names,
                 ctx,
@@ -1452,7 +1463,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
             );
             for (_, value) in updates {
                 collect_self_tailcall_hoists_in_expr(
-                    value,
+                    &value.node,
                     self_name,
                     stable_names,
                     ctx,
@@ -1483,7 +1494,7 @@ fn collect_self_tailcall_invariant_hoists<'a>(
     for stmt in body.stmts() {
         match stmt {
             Stmt::Expr(expr) | Stmt::Binding(_, _, expr) => collect_self_tailcall_hoists_in_expr(
-                expr,
+                &expr.node,
                 self_name,
                 &stable_names,
                 ctx,
@@ -1503,56 +1514,58 @@ fn rewrite_expr_with_hoists(expr: &Expr, hoisted_exprs: &HashMap<usize, String>)
         return Expr::Ident(name.clone());
     }
 
+    fn rewrite_spanned(
+        spanned: &Spanned<Expr>,
+        hoisted_exprs: &HashMap<usize, String>,
+    ) -> Spanned<Expr> {
+        Spanned::new(
+            rewrite_expr_with_hoists(&spanned.node, hoisted_exprs),
+            spanned.line,
+        )
+    }
+
     match expr {
         Expr::Literal(lit) => Expr::Literal(lit.clone()),
         Expr::Ident(name) => Expr::Ident(name.clone()),
         Expr::Resolved(slot) => Expr::Resolved(*slot),
-        Expr::Attr(obj, field) => Expr::Attr(
-            Box::new(rewrite_expr_with_hoists(obj, hoisted_exprs)),
-            field.clone(),
-        ),
+        Expr::Attr(obj, field) => {
+            Expr::Attr(Box::new(rewrite_spanned(obj, hoisted_exprs)), field.clone())
+        }
         Expr::FnCall(fn_expr, args) => Expr::FnCall(
-            Box::new(rewrite_expr_with_hoists(fn_expr, hoisted_exprs)),
+            Box::new(rewrite_spanned(fn_expr, hoisted_exprs)),
             args.iter()
-                .map(|arg| rewrite_expr_with_hoists(arg, hoisted_exprs))
+                .map(|arg| rewrite_spanned(arg, hoisted_exprs))
                 .collect(),
         ),
         Expr::BinOp(op, left, right) => Expr::BinOp(
             *op,
-            Box::new(rewrite_expr_with_hoists(left, hoisted_exprs)),
-            Box::new(rewrite_expr_with_hoists(right, hoisted_exprs)),
+            Box::new(rewrite_spanned(left, hoisted_exprs)),
+            Box::new(rewrite_spanned(right, hoisted_exprs)),
         ),
-        Expr::Match {
-            subject,
-            arms,
-            line,
-        } => Expr::Match {
-            subject: Box::new(rewrite_expr_with_hoists(subject, hoisted_exprs)),
+        Expr::Match { subject, arms } => Expr::Match {
+            subject: Box::new(rewrite_spanned(subject, hoisted_exprs)),
             arms: arms
                 .iter()
                 .map(|arm| MatchArm {
                     pattern: arm.pattern.clone(),
-                    body: Box::new(rewrite_expr_with_hoists(&arm.body, hoisted_exprs)),
+                    body: Box::new(rewrite_spanned(&arm.body, hoisted_exprs)),
                 })
                 .collect(),
-            line: *line,
         },
         Expr::Constructor(name, inner) => Expr::Constructor(
             name.clone(),
             inner
                 .as_ref()
-                .map(|expr| Box::new(rewrite_expr_with_hoists(expr, hoisted_exprs))),
+                .map(|expr| Box::new(rewrite_spanned(expr, hoisted_exprs))),
         ),
-        Expr::ErrorProp(inner) => {
-            Expr::ErrorProp(Box::new(rewrite_expr_with_hoists(inner, hoisted_exprs)))
-        }
+        Expr::ErrorProp(inner) => Expr::ErrorProp(Box::new(rewrite_spanned(inner, hoisted_exprs))),
         Expr::InterpolatedStr(parts) => Expr::InterpolatedStr(
             parts
                 .iter()
                 .map(|part| match part {
                     StrPart::Literal(text) => StrPart::Literal(text.clone()),
                     StrPart::Parsed(expr) => {
-                        StrPart::Parsed(Box::new(rewrite_expr_with_hoists(expr, hoisted_exprs)))
+                        StrPart::Parsed(Box::new(rewrite_spanned(expr, hoisted_exprs)))
                     }
                 })
                 .collect(),
@@ -1560,13 +1573,13 @@ fn rewrite_expr_with_hoists(expr: &Expr, hoisted_exprs: &HashMap<usize, String>)
         Expr::List(items) => Expr::List(
             items
                 .iter()
-                .map(|item| rewrite_expr_with_hoists(item, hoisted_exprs))
+                .map(|item| rewrite_spanned(item, hoisted_exprs))
                 .collect(),
         ),
         Expr::Tuple(items) => Expr::Tuple(
             items
                 .iter()
-                .map(|item| rewrite_expr_with_hoists(item, hoisted_exprs))
+                .map(|item| rewrite_spanned(item, hoisted_exprs))
                 .collect(),
         ),
         Expr::MapLiteral(entries) => Expr::MapLiteral(
@@ -1574,8 +1587,8 @@ fn rewrite_expr_with_hoists(expr: &Expr, hoisted_exprs: &HashMap<usize, String>)
                 .iter()
                 .map(|(key, value)| {
                     (
-                        rewrite_expr_with_hoists(key, hoisted_exprs),
-                        rewrite_expr_with_hoists(value, hoisted_exprs),
+                        rewrite_spanned(key, hoisted_exprs),
+                        rewrite_spanned(value, hoisted_exprs),
                     )
                 })
                 .collect(),
@@ -1584,7 +1597,7 @@ fn rewrite_expr_with_hoists(expr: &Expr, hoisted_exprs: &HashMap<usize, String>)
             type_name: type_name.clone(),
             fields: fields
                 .iter()
-                .map(|(name, value)| (name.clone(), rewrite_expr_with_hoists(value, hoisted_exprs)))
+                .map(|(name, value)| (name.clone(), rewrite_spanned(value, hoisted_exprs)))
                 .collect(),
         },
         Expr::RecordUpdate {
@@ -1593,10 +1606,10 @@ fn rewrite_expr_with_hoists(expr: &Expr, hoisted_exprs: &HashMap<usize, String>)
             updates,
         } => Expr::RecordUpdate {
             type_name: type_name.clone(),
-            base: Box::new(rewrite_expr_with_hoists(base, hoisted_exprs)),
+            base: Box::new(rewrite_spanned(base, hoisted_exprs)),
             updates: updates
                 .iter()
-                .map(|(name, value)| (name.clone(), rewrite_expr_with_hoists(value, hoisted_exprs)))
+                .map(|(name, value)| (name.clone(), rewrite_spanned(value, hoisted_exprs)))
                 .collect(),
         },
         Expr::TailCall(boxed) => {
@@ -1604,7 +1617,7 @@ fn rewrite_expr_with_hoists(expr: &Expr, hoisted_exprs: &HashMap<usize, String>)
             Expr::TailCall(Box::new((
                 target.clone(),
                 args.iter()
-                    .map(|arg| rewrite_expr_with_hoists(arg, hoisted_exprs))
+                    .map(|arg| rewrite_spanned(arg, hoisted_exprs))
                     .collect(),
             )))
         }
@@ -1717,7 +1730,7 @@ fn emit_tco_body(
                 lines.push(format!(
                     "        let {} = {};",
                     aver_name_to_rust(name),
-                    emit_expr(expr, ctx, sctx)
+                    emit_expr(&expr.node, ctx, sctx)
                 ));
             }
             Stmt::Expr(expr) => {
@@ -1725,7 +1738,7 @@ fn emit_tco_body(
                     lines.push(format!(
                         "        return {};",
                         emit_tco_expr(
-                            expr,
+                            &expr.node,
                             self_name,
                             params,
                             ctx,
@@ -1736,7 +1749,7 @@ fn emit_tco_body(
                         )
                     ));
                 } else {
-                    lines.push(format!("        {};", emit_expr(expr, ctx, sctx)));
+                    lines.push(format!("        {};", emit_expr(&expr.node, ctx, sctx)));
                 }
             }
         }
@@ -1769,7 +1782,7 @@ fn try_emit_tco_bool_if_else(
         _ => return None,
     };
     let t = emit_tco_expr(
-        true_body,
+        &true_body.node,
         self_name,
         params,
         ctx,
@@ -1779,7 +1792,7 @@ fn try_emit_tco_bool_if_else(
         hoisted_exprs,
     );
     let f = emit_tco_expr(
-        false_body,
+        &false_body.node,
         self_name,
         params,
         ctx,
@@ -1813,7 +1826,7 @@ fn emit_tco_expr(
             // Skip Rc-wrapped params (they're pass-through, never rebound).
             let rewritten_args = args
                 .iter()
-                .map(|arg| rewrite_expr_with_hoists(arg, hoisted_exprs))
+                .map(|arg| rewrite_expr_with_hoists(&arg.node, hoisted_exprs))
                 .collect::<Vec<_>>();
             let hoisted_names = hoisted_exprs.values().cloned().collect::<HashSet<_>>();
             let arg_ctxs = compute_args_used_after_full(
@@ -1900,7 +1913,7 @@ fn emit_tco_expr(
             // Subject's used_after: all vars in arms + parent used_after
             let mut arms_vars = std::collections::HashSet::new();
             for arm in arms {
-                let mut arm_vars = collect_vars(&arm.body);
+                let mut arm_vars = collect_vars(&arm.body.node);
                 let bindings = super::liveness::pattern_bindings(&arm.pattern);
                 for b in &bindings {
                     arm_vars.remove(b);
@@ -1908,7 +1921,7 @@ fn emit_tco_expr(
                 arms_vars.extend(arm_vars);
             }
             let subj_ectx = ectx.with_used_after(&arms_vars);
-            let subj = clone_arg(subject, ctx, &subj_ectx);
+            let subj = clone_arg(&subject.node, ctx, &subj_ectx);
             let dispatch_plan = classify_dispatch_plan_for_rust(arms, ctx, ectx);
 
             // Bool match → if/else in TCO context
@@ -1930,7 +1943,7 @@ fn emit_tco_expr(
             if super::expr::has_list_patterns(arms) {
                 return super::expr::emit_list_match(subj, arms, None, true, ctx, |arm| {
                     emit_tco_expr(
-                        &arm.body,
+                        &arm.body.node,
                         self_name,
                         params,
                         ctx,
@@ -1945,7 +1958,7 @@ fn emit_tco_expr(
             if let Some(crate::ir::MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
                 return emit_dispatch_table_match(subj, arms, shape, |arm| {
                     emit_tco_expr(
-                        &arm.body,
+                        &arm.body.node,
                         self_name,
                         params,
                         ctx,
@@ -1967,7 +1980,7 @@ fn emit_tco_expr(
             for arm in arms {
                 let pat = super::pattern::emit_pattern(&arm.pattern, needs_as_str, ctx);
                 let body = emit_tco_expr(
-                    &arm.body,
+                    &arm.body.node,
                     self_name,
                     params,
                     ctx,
@@ -2268,17 +2281,27 @@ fn emit_trampoline_arm_body(
                 lines.push(format!(
                     "                let {} = {};",
                     aver_name_to_rust(name),
-                    emit_expr(expr, ctx, sctx)
+                    emit_expr(&expr.node, ctx, sctx)
                 ));
             }
             Stmt::Expr(expr) => {
                 if is_last {
                     lines.push(format!(
                         "                {}",
-                        emit_trampoline_expr(expr, enum_name, member_names, ctx, sctx, rc_indices,)
+                        emit_trampoline_expr(
+                            &expr.node,
+                            enum_name,
+                            member_names,
+                            ctx,
+                            sctx,
+                            rc_indices,
+                        )
                     ));
                 } else {
-                    lines.push(format!("                {};", emit_expr(expr, ctx, sctx)));
+                    lines.push(format!(
+                        "                {};",
+                        emit_expr(&expr.node, ctx, sctx)
+                    ));
                 }
             }
         }
@@ -2305,14 +2328,15 @@ fn emit_trampoline_expr(
             if member_names.contains(target) {
                 // Bounce → produce enum variant (excluding Rc-wrapped args)
                 let variant = fn_name_to_variant(target);
+                let bare_args: Vec<Expr> = args.iter().map(|a| a.node.clone()).collect();
                 let arg_ctxs = compute_args_used_after_full(
-                    args,
+                    &bare_args,
                     &ectx.used_after,
                     &ectx.local_types,
                     &ectx.rc_wrapped,
                     &ectx.borrowed_params,
                 );
-                let arg_strs: Vec<String> = args
+                let arg_strs: Vec<String> = bare_args
                     .iter()
                     .zip(arg_ctxs.iter())
                     .filter(|(a, _)| {
@@ -2335,7 +2359,7 @@ fn emit_trampoline_expr(
             // Compute used_after for subject
             let mut arms_vars = HashSet::new();
             for arm in arms {
-                let mut arm_vars = collect_vars(&arm.body);
+                let mut arm_vars = collect_vars(&arm.body.node);
                 let bindings = super::liveness::pattern_bindings(&arm.pattern);
                 for b in &bindings {
                     arm_vars.remove(b);
@@ -2343,7 +2367,7 @@ fn emit_trampoline_expr(
                 arms_vars.extend(arm_vars);
             }
             let subj_ectx = ectx.with_used_after(&arms_vars);
-            let subj = clone_arg(subject, ctx, &subj_ectx);
+            let subj = clone_arg(&subject.node, ctx, &subj_ectx);
             let dispatch_plan = classify_dispatch_plan_for_rust(arms, ctx, ectx);
 
             // Bool match → if/else
@@ -2362,13 +2386,27 @@ fn emit_trampoline_expr(
             // List match
             if super::expr::has_list_patterns(arms) {
                 return super::expr::emit_list_match(subj, arms, None, true, ctx, |arm| {
-                    emit_trampoline_expr(&arm.body, enum_name, member_names, ctx, ectx, rc_indices)
+                    emit_trampoline_expr(
+                        &arm.body.node,
+                        enum_name,
+                        member_names,
+                        ctx,
+                        ectx,
+                        rc_indices,
+                    )
                 });
             }
 
             if let Some(crate::ir::MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
                 return emit_dispatch_table_match(subj, arms, shape, |arm| {
-                    emit_trampoline_expr(&arm.body, enum_name, member_names, ctx, ectx, rc_indices)
+                    emit_trampoline_expr(
+                        &arm.body.node,
+                        enum_name,
+                        member_names,
+                        ctx,
+                        ectx,
+                        rc_indices,
+                    )
                 });
             }
 
@@ -2382,8 +2420,14 @@ fn emit_trampoline_expr(
             let mut arm_strs = Vec::new();
             for arm in arms {
                 let pat = super::pattern::emit_pattern(&arm.pattern, needs_as_str, ctx);
-                let body =
-                    emit_trampoline_expr(&arm.body, enum_name, member_names, ctx, ectx, rc_indices);
+                let body = emit_trampoline_expr(
+                    &arm.body.node,
+                    enum_name,
+                    member_names,
+                    ctx,
+                    ectx,
+                    rc_indices,
+                );
 
                 let mut rebinding_lines: Vec<String> = Vec::new();
                 if let Pattern::Cons(head, _) = &arm.pattern
@@ -2449,8 +2493,22 @@ fn try_emit_trampoline_bool_if_else(
         }
         _ => return None,
     };
-    let t = emit_trampoline_expr(true_body, enum_name, member_names, ctx, ectx, rc_indices);
-    let f = emit_trampoline_expr(false_body, enum_name, member_names, ctx, ectx, rc_indices);
+    let t = emit_trampoline_expr(
+        &true_body.node,
+        enum_name,
+        member_names,
+        ctx,
+        ectx,
+        rc_indices,
+    );
+    let f = emit_trampoline_expr(
+        &false_body.node,
+        enum_name,
+        member_names,
+        ctx,
+        ectx,
+        rc_indices,
+    );
     Some(format!("if {} {{ {} }} else {{ {} }}", subj, t, f))
 }
 
@@ -2563,9 +2621,9 @@ fn emit_memo_inner_body(body: &FnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> 
             Stmt::Binding(_, _, _) => parts.push(emit_stmt(stmt, ctx, sctx)),
             Stmt::Expr(expr) => {
                 if is_last {
-                    parts.push(emit_expr(expr, ctx, sctx));
+                    parts.push(emit_expr(&expr.node, ctx, sctx));
                 } else {
-                    parts.push(format!("{};", emit_expr(expr, ctx, sctx)));
+                    parts.push(format!("{};", emit_expr(&expr.node, ctx, sctx)));
                 }
             }
         }
@@ -2647,7 +2705,7 @@ fn emit_main_with_visibility(
                     }
                     Stmt::Expr(expr) => {
                         let indent = if guest_wrap_main { "        " } else { "    " };
-                        writeln!(out, "{}{}", indent, emit_expr(expr, ctx, sctx)).unwrap();
+                        writeln!(out, "{}{}", indent, emit_expr(&expr.node, ctx, sctx)).unwrap();
                     }
                 }
             } else {
@@ -2684,11 +2742,12 @@ pub fn emit_verify_blocks(verify_blocks: &[&VerifyBlock], ctx: &CodegenContext) 
             let counter = fn_counters.entry(fn_key.clone()).or_insert(0);
             *counter += 1;
             let test_name = format!("test_{}_case_{}", fn_key, *counter);
-            let left_str = emit_expr(left, ctx, &ectx);
-            let right_str = emit_expr(right, ctx, &ectx);
+            let left_str = emit_expr(&left.node, ctx, &ectx);
+            let right_str = emit_expr(&right.node, ctx, &ectx);
 
             // Check if either side uses `?` operator
-            let uses_error_prop = expr_uses_error_prop(left) || expr_uses_error_prop(right);
+            let uses_error_prop =
+                expr_uses_error_prop(&left.node) || expr_uses_error_prop(&right.node);
 
             writeln!(out, "    #[test]").unwrap();
             if uses_error_prop {
@@ -2712,7 +2771,7 @@ pub fn emit_verify_blocks(verify_blocks: &[&VerifyBlock], ctx: &CodegenContext) 
 mod tests {
     use super::*;
     use crate::ast::{
-        BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, TypeDef, TypeVariant,
+        BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, TypeDef, TypeVariant,
     };
     use crate::codegen::CodegenContext;
     use crate::types::Type;
@@ -2751,8 +2810,8 @@ mod tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Literal(crate::ast::Literal::Int(
-                0,
+            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::Literal(
+                crate::ast::Literal::Int(0),
             )))),
             resolution: None,
         }
@@ -2769,23 +2828,23 @@ mod tests {
         let expr = Expr::TailCall(Box::new((
             "repeatSum".to_string(),
             vec![
-                Expr::Ident("xs".to_string()),
-                Expr::BinOp(
+                Spanned::bare(Expr::Ident("xs".to_string())),
+                Spanned::bare(Expr::BinOp(
                     BinOp::Sub,
-                    Box::new(Expr::Ident("remaining".to_string())),
-                    Box::new(Expr::Literal(crate::ast::Literal::Int(1))),
-                ),
-                Expr::BinOp(
+                    Box::new(Spanned::bare(Expr::Ident("remaining".to_string()))),
+                    Box::new(Spanned::bare(Expr::Literal(crate::ast::Literal::Int(1)))),
+                )),
+                Spanned::bare(Expr::BinOp(
                     BinOp::Add,
-                    Box::new(Expr::Ident("sink".to_string())),
-                    Box::new(Expr::FnCall(
-                        Box::new(Expr::Ident("sumList".to_string())),
+                    Box::new(Spanned::bare(Expr::Ident("sink".to_string()))),
+                    Box::new(Spanned::bare(Expr::FnCall(
+                        Box::new(Spanned::bare(Expr::Ident("sumList".to_string()))),
                         vec![
-                            Expr::Ident("xs".to_string()),
-                            Expr::Literal(crate::ast::Literal::Int(0)),
+                            Spanned::bare(Expr::Ident("xs".to_string())),
+                            Spanned::bare(Expr::Literal(crate::ast::Literal::Int(0))),
                         ],
-                    )),
-                ),
+                    ))),
+                )),
             ],
         )));
 
@@ -2822,24 +2881,27 @@ mod tests {
         let expr = Expr::TailCall(Box::new((
             "repeatAppend".to_string(),
             vec![
-                Expr::Ident("a".to_string()),
-                Expr::Ident("b".to_string()),
-                Expr::BinOp(
+                Spanned::bare(Expr::Ident("a".to_string())),
+                Spanned::bare(Expr::Ident("b".to_string())),
+                Spanned::bare(Expr::BinOp(
                     BinOp::Sub,
-                    Box::new(Expr::Ident("remaining".to_string())),
-                    Box::new(Expr::Literal(crate::ast::Literal::Int(1))),
-                ),
-                Expr::BinOp(
+                    Box::new(Spanned::bare(Expr::Ident("remaining".to_string()))),
+                    Box::new(Spanned::bare(Expr::Literal(crate::ast::Literal::Int(1)))),
+                )),
+                Spanned::bare(Expr::BinOp(
                     BinOp::Add,
-                    Box::new(Expr::Ident("sink".to_string())),
-                    Box::new(Expr::FnCall(
-                        Box::new(Expr::Ident("List.len".to_string())),
-                        vec![Expr::FnCall(
-                            Box::new(Expr::Ident("appendLists".to_string())),
-                            vec![Expr::Ident("a".to_string()), Expr::Ident("b".to_string())],
-                        )],
-                    )),
-                ),
+                    Box::new(Spanned::bare(Expr::Ident("sink".to_string()))),
+                    Box::new(Spanned::bare(Expr::FnCall(
+                        Box::new(Spanned::bare(Expr::Ident("List.len".to_string()))),
+                        vec![Spanned::bare(Expr::FnCall(
+                            Box::new(Spanned::bare(Expr::Ident("appendLists".to_string()))),
+                            vec![
+                                Spanned::bare(Expr::Ident("a".to_string())),
+                                Spanned::bare(Expr::Ident("b".to_string())),
+                            ],
+                        ))],
+                    ))),
+                )),
             ],
         )));
 
@@ -2871,7 +2933,7 @@ mod tests {
         let ectx = build_fn_ectx(&fd, &ctx);
         let expr = Expr::TailCall(Box::new((
             "validSymbolList".to_string(),
-            vec![Expr::Ident("e".to_string())],
+            vec![Spanned::bare(Expr::Ident("e".to_string()))],
         )));
 
         let passthrough = HashSet::new();
@@ -2901,17 +2963,17 @@ mod tests {
         let expr = Expr::TailCall(Box::new((
             "sumAreas".to_string(),
             vec![
-                Expr::BinOp(
+                Spanned::bare(Expr::BinOp(
                     BinOp::Sub,
-                    Box::new(Expr::Ident("n".to_string())),
-                    Box::new(Expr::Literal(crate::ast::Literal::Int(1))),
-                ),
-                Expr::BinOp(
+                    Box::new(Spanned::bare(Expr::Ident("n".to_string()))),
+                    Box::new(Spanned::bare(Expr::Literal(crate::ast::Literal::Int(1)))),
+                )),
+                Spanned::bare(Expr::BinOp(
                     BinOp::Add,
-                    Box::new(Expr::Ident("acc".to_string())),
-                    Box::new(Expr::Literal(crate::ast::Literal::Int(1))),
-                ),
-                Expr::Ident("pick".to_string()),
+                    Box::new(Spanned::bare(Expr::Ident("acc".to_string()))),
+                    Box::new(Spanned::bare(Expr::Literal(crate::ast::Literal::Int(1)))),
+                )),
+                Spanned::bare(Expr::Ident("pick".to_string())),
             ],
         )));
 
@@ -2940,20 +3002,19 @@ mod tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Match {
-                subject: Box::new(Expr::Ident("pick".to_string())),
+            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::Match {
+                subject: Box::new(Spanned::bare(Expr::Ident("pick".to_string()))),
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Int(1)),
-                        body: Box::new(Expr::Literal(Literal::Int(10))),
+                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(10)))),
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
-                        body: Box::new(Expr::Literal(Literal::Int(20))),
+                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(20)))),
                     },
                 ],
-                line: 1,
-            })),
+            }))),
             resolution: None,
         };
         let helper_score = FnDef {
@@ -2963,11 +3024,11 @@ mod tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::BinOp(
+            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::BinOp(
                 BinOp::Add,
-                Box::new(Expr::Ident("x".to_string())),
-                Box::new(Expr::Literal(Literal::Int(1))),
-            ))),
+                Box::new(Spanned::bare(Expr::Ident("x".to_string()))),
+                Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
+            )))),
             resolution: None,
         };
         let fd = FnDef {
@@ -2981,41 +3042,40 @@ mod tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Match {
-                subject: Box::new(Expr::Ident("n".to_string())),
+            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::Match {
+                subject: Box::new(Spanned::bare(Expr::Ident("n".to_string()))),
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Int(0)),
-                        body: Box::new(Expr::Ident("acc".to_string())),
+                        body: Box::new(Spanned::bare(Expr::Ident("acc".to_string()))),
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
-                        body: Box::new(Expr::TailCall(Box::new((
+                        body: Box::new(Spanned::bare(Expr::TailCall(Box::new((
                             "sumAreas".to_string(),
                             vec![
-                                Expr::BinOp(
+                                Spanned::bare(Expr::BinOp(
                                     BinOp::Sub,
-                                    Box::new(Expr::Ident("n".to_string())),
-                                    Box::new(Expr::Literal(Literal::Int(1))),
-                                ),
-                                Expr::BinOp(
+                                    Box::new(Spanned::bare(Expr::Ident("n".to_string()))),
+                                    Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
+                                )),
+                                Spanned::bare(Expr::BinOp(
                                     BinOp::Add,
-                                    Box::new(Expr::Ident("acc".to_string())),
-                                    Box::new(Expr::FnCall(
-                                        Box::new(Expr::Ident("score".to_string())),
-                                        vec![Expr::FnCall(
-                                            Box::new(Expr::Ident("tag".to_string())),
-                                            vec![Expr::Ident("pick".to_string())],
-                                        )],
-                                    )),
-                                ),
-                                Expr::Ident("pick".to_string()),
+                                    Box::new(Spanned::bare(Expr::Ident("acc".to_string()))),
+                                    Box::new(Spanned::bare(Expr::FnCall(
+                                        Box::new(Spanned::bare(Expr::Ident("score".to_string()))),
+                                        vec![Spanned::bare(Expr::FnCall(
+                                            Box::new(Spanned::bare(Expr::Ident("tag".to_string()))),
+                                            vec![Spanned::bare(Expr::Ident("pick".to_string()))],
+                                        ))],
+                                    ))),
+                                )),
+                                Spanned::bare(Expr::Ident("pick".to_string())),
                             ],
-                        )))),
+                        ))))),
                     },
                 ],
-                line: 1,
-            })),
+            }))),
             resolution: None,
         };
 
@@ -3069,7 +3129,9 @@ mod tests {
             return_type: "Float".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Ident("x".to_string()))),
+            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::Ident(
+                "x".to_string(),
+            )))),
             resolution: None,
         };
         let mut ctx = empty_ctx();
@@ -3103,20 +3165,19 @@ mod tests {
             return_type: "Bool".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Match {
-                subject: Box::new(Expr::Ident("t".to_string())),
+            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::Match {
+                subject: Box::new(Spanned::bare(Expr::Ident("t".to_string()))),
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Constructor("Tree.Empty".to_string(), vec![]),
-                        body: Box::new(Expr::Literal(Literal::Bool(false))),
+                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Bool(false)))),
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
-                        body: Box::new(Expr::Literal(Literal::Bool(true))),
+                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Bool(true)))),
                     },
                 ],
-                line: 1,
-            })),
+            }))),
             resolution: None,
         };
 
@@ -3142,31 +3203,30 @@ mod tests {
             return_type: "Bool".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Match {
-                subject: Box::new(Expr::BinOp(
+            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::Match {
+                subject: Box::new(Spanned::bare(Expr::BinOp(
                     BinOp::Eq,
-                    Box::new(Expr::Ident("n".to_string())),
-                    Box::new(Expr::Literal(Literal::Int(0))),
-                )),
+                    Box::new(Spanned::bare(Expr::Ident("n".to_string()))),
+                    Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
+                ))),
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(true)),
-                        body: Box::new(Expr::Literal(Literal::Bool(true))),
+                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Bool(true)))),
                     },
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(false)),
-                        body: Box::new(Expr::TailCall(Box::new((
+                        body: Box::new(Spanned::bare(Expr::TailCall(Box::new((
                             "isOdd".to_string(),
-                            vec![Expr::BinOp(
+                            vec![Spanned::bare(Expr::BinOp(
                                 BinOp::Sub,
-                                Box::new(Expr::Ident("n".to_string())),
-                                Box::new(Expr::Literal(Literal::Int(1))),
-                            )],
-                        )))),
+                                Box::new(Spanned::bare(Expr::Ident("n".to_string()))),
+                                Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
+                            ))],
+                        ))))),
                     },
                 ],
-                line: 0,
-            })),
+            }))),
             resolution: None,
         };
 
@@ -3177,31 +3237,30 @@ mod tests {
             return_type: "Bool".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Match {
-                subject: Box::new(Expr::BinOp(
+            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::Match {
+                subject: Box::new(Spanned::bare(Expr::BinOp(
                     BinOp::Eq,
-                    Box::new(Expr::Ident("n".to_string())),
-                    Box::new(Expr::Literal(Literal::Int(0))),
-                )),
+                    Box::new(Spanned::bare(Expr::Ident("n".to_string()))),
+                    Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
+                ))),
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(true)),
-                        body: Box::new(Expr::Literal(Literal::Bool(false))),
+                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Bool(false)))),
                     },
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(false)),
-                        body: Box::new(Expr::TailCall(Box::new((
+                        body: Box::new(Spanned::bare(Expr::TailCall(Box::new((
                             "isEven".to_string(),
-                            vec![Expr::BinOp(
+                            vec![Spanned::bare(Expr::BinOp(
                                 BinOp::Sub,
-                                Box::new(Expr::Ident("n".to_string())),
-                                Box::new(Expr::Literal(Literal::Int(1))),
-                            )],
-                        )))),
+                                Box::new(Spanned::bare(Expr::Ident("n".to_string()))),
+                                Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
+                            ))],
+                        ))))),
                     },
                 ],
-                line: 0,
-            })),
+            }))),
             resolution: None,
         };
 
@@ -3247,9 +3306,11 @@ mod tests {
             return_type: "String".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::TailCall(Box::new((
-                target.to_string(),
-                vec![Expr::Ident("n".to_string())],
+            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::TailCall(Box::new(
+                (
+                    target.to_string(),
+                    vec![Spanned::bare(Expr::Ident("n".to_string()))],
+                ),
             ))))),
             resolution: None,
         };
@@ -3279,9 +3340,11 @@ mod tests {
             return_type: "String".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::TailCall(Box::new((
-                target.to_string(),
-                vec![Expr::Ident("n".to_string())],
+            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::TailCall(Box::new(
+                (
+                    target.to_string(),
+                    vec![Spanned::bare(Expr::Ident("n".to_string()))],
+                ),
             ))))),
             resolution: None,
         };
@@ -3295,8 +3358,8 @@ mod tests {
             return_type: "String".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Literal(Literal::Str(
-                "done".to_string(),
+            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::Literal(
+                Literal::Str("done".to_string()),
             )))),
             resolution: None,
         };
@@ -3318,9 +3381,11 @@ mod tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::TailCall(Box::new((
-                "factorial".to_string(),
-                vec![Expr::Ident("n".to_string())],
+            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::TailCall(Box::new(
+                (
+                    "factorial".to_string(),
+                    vec![Spanned::bare(Expr::Ident("n".to_string()))],
+                ),
             ))))),
             resolution: None,
         };
@@ -3345,10 +3410,13 @@ mod tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::FnCall(
-                Box::new(Expr::Ident("first".to_string())),
-                vec![Expr::Ident("b".to_string()), Expr::Ident("a".to_string())],
-            ))),
+            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::FnCall(
+                Box::new(Spanned::bare(Expr::Ident("first".to_string()))),
+                vec![
+                    Spanned::bare(Expr::Ident("b".to_string())),
+                    Spanned::bare(Expr::Ident("a".to_string())),
+                ],
+            )))),
             resolution: None,
         };
 
@@ -3380,25 +3448,25 @@ mod tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::FnCall(
-                Box::new(Expr::Attr(
-                    Box::new(Expr::Ident("Option".to_string())),
+            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::FnCall(
+                Box::new(Spanned::bare(Expr::Attr(
+                    Box::new(Spanned::bare(Expr::Ident("Option".to_string()))),
                     "withDefault".to_string(),
-                )),
+                ))),
                 vec![
-                    Expr::FnCall(
-                        Box::new(Expr::Attr(
-                            Box::new(Expr::Ident("Vector".to_string())),
+                    Spanned::bare(Expr::FnCall(
+                        Box::new(Spanned::bare(Expr::Attr(
+                            Box::new(Spanned::bare(Expr::Ident("Vector".to_string()))),
                             "get".to_string(),
-                        )),
+                        ))),
                         vec![
-                            Expr::Ident("grid".to_string()),
-                            Expr::Ident("idx".to_string()),
+                            Spanned::bare(Expr::Ident("grid".to_string())),
+                            Spanned::bare(Expr::Ident("idx".to_string())),
                         ],
-                    ),
-                    Expr::Literal(Literal::Int(0)),
+                    )),
+                    Spanned::bare(Expr::Literal(Literal::Int(0))),
                 ],
-            ))),
+            )))),
             resolution: None,
         };
 
@@ -3437,36 +3505,36 @@ mod tests {
                 Stmt::Binding(
                     "cell".to_string(),
                     None,
-                    Expr::FnCall(
-                        Box::new(Expr::Attr(
-                            Box::new(Expr::Ident("Option".to_string())),
+                    Spanned::bare(Expr::FnCall(
+                        Box::new(Spanned::bare(Expr::Attr(
+                            Box::new(Spanned::bare(Expr::Ident("Option".to_string()))),
                             "withDefault".to_string(),
-                        )),
+                        ))),
                         vec![
-                            Expr::FnCall(
-                                Box::new(Expr::Attr(
-                                    Box::new(Expr::Ident("Vector".to_string())),
+                            Spanned::bare(Expr::FnCall(
+                                Box::new(Spanned::bare(Expr::Attr(
+                                    Box::new(Spanned::bare(Expr::Ident("Vector".to_string()))),
                                     "get".to_string(),
-                                )),
+                                ))),
                                 vec![
-                                    Expr::Ident("grid".to_string()),
-                                    Expr::Ident("idx".to_string()),
+                                    Spanned::bare(Expr::Ident("grid".to_string())),
+                                    Spanned::bare(Expr::Ident("idx".to_string())),
                                 ],
-                            ),
-                            Expr::Literal(Literal::Int(0)),
+                            )),
+                            Spanned::bare(Expr::Literal(Literal::Int(0))),
                         ],
-                    ),
-                ),
-                Stmt::Expr(Expr::FnCall(
-                    Box::new(Expr::Attr(
-                        Box::new(Expr::Ident("Int".to_string())),
-                        "max".to_string(),
                     )),
+                ),
+                Stmt::Expr(Spanned::bare(Expr::FnCall(
+                    Box::new(Spanned::bare(Expr::Attr(
+                        Box::new(Spanned::bare(Expr::Ident("Int".to_string()))),
+                        "max".to_string(),
+                    ))),
                     vec![
-                        Expr::Ident("cell".to_string()),
-                        Expr::Literal(Literal::Int(1)),
+                        Spanned::bare(Expr::Ident("cell".to_string())),
+                        Spanned::bare(Expr::Literal(Literal::Int(1))),
                     ],
-                )),
+                ))),
             ])),
             resolution: None,
         };

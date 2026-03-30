@@ -268,6 +268,9 @@ pub struct Interpreter {
     runtime_policy: Option<crate::config::ProjectConfig>,
     /// Command-line arguments passed to the Aver program (available via `Args.get()`).
     cli_args: Vec<String>,
+    /// Source line of the current call expression (set before dispatch, used for
+    /// effect recording and error decoration). 0 = unknown.
+    pub(crate) last_call_line: usize,
 }
 
 mod api;
@@ -323,6 +326,16 @@ mod ir_bridge_tests {
     };
     use super::*;
 
+    /// Shorthand: wrap an Expr in Spanned::bare (line=0).
+    fn sb(expr: Expr) -> Spanned<Expr> {
+        Spanned::bare(expr)
+    }
+
+    /// Shorthand: wrap an Expr in Box<Spanned::bare(...)>.
+    fn sbb(expr: Expr) -> Box<Spanned<Expr>> {
+        Box::new(Spanned::bare(expr))
+    }
+
     fn register_task_event_type(interpreter: &mut Interpreter) {
         interpreter.register_type_def(&TypeDef::Sum {
             name: "TaskEvent".to_string(),
@@ -362,14 +375,14 @@ mod ir_bridge_tests {
         let mut interpreter = Interpreter::new();
         register_task_event_type(&mut interpreter);
 
-        let ok_expr = Expr::Constructor(
+        let ok_expr = sb(Expr::Constructor(
             "Ok".to_string(),
-            Some(Box::new(Expr::Literal(Literal::Int(7)))),
-        );
-        let created_expr = Expr::Constructor(
+            Some(sbb(Expr::Literal(Literal::Int(7)))),
+        ));
+        let created_expr = sb(Expr::Constructor(
             "Domain.Types.TaskEvent.TaskCreated".to_string(),
-            Some(Box::new(Expr::Literal(Literal::Str("now".to_string())))),
-        );
+            Some(sbb(Expr::Literal(Literal::Str("now".to_string())))),
+        ));
 
         assert_eq!(
             interpreter
@@ -508,38 +521,41 @@ mod ir_bridge_tests {
         let interpreter = Interpreter::new();
         let ctx = InterpreterLowerCtx::new(&interpreter);
 
-        let map_get = Expr::FnCall(
-            Box::new(Expr::Attr(
-                Box::new(Expr::Ident("Map".to_string())),
+        let map_get = sb(Expr::FnCall(
+            sbb(Expr::Attr(
+                sbb(Expr::Ident("Map".to_string())),
                 "get".to_string(),
             )),
             vec![
-                Expr::Ident("m".to_string()),
-                Expr::Literal(Literal::Str("k".to_string())),
+                sb(Expr::Ident("m".to_string())),
+                sb(Expr::Literal(Literal::Str("k".to_string()))),
             ],
-        );
+        ));
         let (lowered_map_get, map_get_root) = lowered::lower_expr_root(&map_get, &ctx);
         assert!(matches!(
             lowered_map_get.expr(map_get_root),
             LoweredExpr::Leaf(LoweredLeafOp::MapGet { .. })
         ));
 
-        let vec_default = Expr::FnCall(
-            Box::new(Expr::Attr(
-                Box::new(Expr::Ident("Option".to_string())),
+        let vec_default = sb(Expr::FnCall(
+            sbb(Expr::Attr(
+                sbb(Expr::Ident("Option".to_string())),
                 "withDefault".to_string(),
             )),
             vec![
-                Expr::FnCall(
-                    Box::new(Expr::Attr(
-                        Box::new(Expr::Ident("Vector".to_string())),
+                sb(Expr::FnCall(
+                    sbb(Expr::Attr(
+                        sbb(Expr::Ident("Vector".to_string())),
                         "get".to_string(),
                     )),
-                    vec![Expr::Ident("v".to_string()), Expr::Ident("idx".to_string())],
-                ),
-                Expr::Literal(Literal::Int(0)),
+                    vec![
+                        sb(Expr::Ident("v".to_string())),
+                        sb(Expr::Ident("idx".to_string())),
+                    ],
+                )),
+                sb(Expr::Literal(Literal::Int(0))),
             ],
-        );
+        ));
         let (lowered_vec_default, vec_default_root) = lowered::lower_expr_root(&vec_default, &ctx);
         assert!(matches!(
             lowered_vec_default.expr(vec_default_root),
@@ -564,16 +580,16 @@ mod ir_bridge_tests {
         interpreter.define("idx".to_string(), Value::Int(1));
         interpreter.define("miss".to_string(), Value::Int(5));
 
-        let map_get = Expr::FnCall(
-            Box::new(Expr::Attr(
-                Box::new(Expr::Ident("Map".to_string())),
+        let map_get = sb(Expr::FnCall(
+            sbb(Expr::Attr(
+                sbb(Expr::Ident("Map".to_string())),
                 "get".to_string(),
             )),
             vec![
-                Expr::Ident("m".to_string()),
-                Expr::Literal(Literal::Str("k".to_string())),
+                sb(Expr::Ident("m".to_string())),
+                sb(Expr::Literal(Literal::Str("k".to_string()))),
             ],
-        );
+        ));
         assert_eq!(
             interpreter
                 .eval_expr(&map_get)
@@ -581,22 +597,25 @@ mod ir_bridge_tests {
             Value::Some(Box::new(Value::Int(7)))
         );
 
-        let vec_hit = Expr::FnCall(
-            Box::new(Expr::Attr(
-                Box::new(Expr::Ident("Option".to_string())),
+        let vec_hit = sb(Expr::FnCall(
+            sbb(Expr::Attr(
+                sbb(Expr::Ident("Option".to_string())),
                 "withDefault".to_string(),
             )),
             vec![
-                Expr::FnCall(
-                    Box::new(Expr::Attr(
-                        Box::new(Expr::Ident("Vector".to_string())),
+                sb(Expr::FnCall(
+                    sbb(Expr::Attr(
+                        sbb(Expr::Ident("Vector".to_string())),
                         "get".to_string(),
                     )),
-                    vec![Expr::Ident("v".to_string()), Expr::Ident("idx".to_string())],
-                ),
-                Expr::Literal(Literal::Int(0)),
+                    vec![
+                        sb(Expr::Ident("v".to_string())),
+                        sb(Expr::Ident("idx".to_string())),
+                    ],
+                )),
+                sb(Expr::Literal(Literal::Int(0))),
             ],
-        );
+        ));
         assert_eq!(
             interpreter
                 .eval_expr(&vec_hit)
@@ -604,25 +623,25 @@ mod ir_bridge_tests {
             Value::Int(20)
         );
 
-        let vec_miss = Expr::FnCall(
-            Box::new(Expr::Attr(
-                Box::new(Expr::Ident("Option".to_string())),
+        let vec_miss = sb(Expr::FnCall(
+            sbb(Expr::Attr(
+                sbb(Expr::Ident("Option".to_string())),
                 "withDefault".to_string(),
             )),
             vec![
-                Expr::FnCall(
-                    Box::new(Expr::Attr(
-                        Box::new(Expr::Ident("Vector".to_string())),
+                sb(Expr::FnCall(
+                    sbb(Expr::Attr(
+                        sbb(Expr::Ident("Vector".to_string())),
                         "get".to_string(),
                     )),
                     vec![
-                        Expr::Ident("v".to_string()),
-                        Expr::Ident("miss".to_string()),
+                        sb(Expr::Ident("v".to_string())),
+                        sb(Expr::Ident("miss".to_string())),
                     ],
-                ),
-                Expr::Literal(Literal::Int(0)),
+                )),
+                sb(Expr::Literal(Literal::Int(0))),
             ],
-        );
+        ));
         assert_eq!(
             interpreter
                 .eval_expr(&vec_miss)
@@ -637,13 +656,13 @@ mod ir_bridge_tests {
         register_task_event_type(&mut interpreter);
         let ctx = InterpreterLowerCtx::new(&interpreter);
 
-        let list_len = Expr::FnCall(
-            Box::new(Expr::Attr(
-                Box::new(Expr::Ident("List".to_string())),
+        let list_len = sb(Expr::FnCall(
+            sbb(Expr::Attr(
+                sbb(Expr::Ident("List".to_string())),
                 "len".to_string(),
             )),
-            vec![Expr::Ident("xs".to_string())],
-        );
+            vec![sb(Expr::Ident("xs".to_string()))],
+        ));
         let (lowered_builtin, builtin_root) = lowered::lower_expr_root(&list_len, &ctx);
         assert!(matches!(
             lowered_builtin.expr(builtin_root),
@@ -653,10 +672,10 @@ mod ir_bridge_tests {
             } if name == "List.len"
         ));
 
-        let identity_call = Expr::FnCall(
-            Box::new(Expr::Ident("identity".to_string())),
-            vec![Expr::Literal(Literal::Int(7))],
-        );
+        let identity_call = sb(Expr::FnCall(
+            sbb(Expr::Ident("identity".to_string())),
+            vec![sb(Expr::Literal(Literal::Int(7)))],
+        ));
         let (lowered_fn, fn_root) = lowered::lower_expr_root(&identity_call, &ctx);
         assert!(matches!(
             lowered_fn.expr(fn_root),
@@ -666,13 +685,13 @@ mod ir_bridge_tests {
             } if name == "identity"
         ));
 
-        let wrapper_call = Expr::FnCall(
-            Box::new(Expr::Attr(
-                Box::new(Expr::Ident("Result".to_string())),
+        let wrapper_call = sb(Expr::FnCall(
+            sbb(Expr::Attr(
+                sbb(Expr::Ident("Result".to_string())),
                 "Ok".to_string(),
             )),
-            vec![Expr::Literal(Literal::Int(1))],
-        );
+            vec![sb(Expr::Literal(Literal::Int(1)))],
+        ));
         let (lowered_wrapper, wrapper_root) = lowered::lower_expr_root(&wrapper_call, &ctx);
         assert!(matches!(
             lowered_wrapper.expr(wrapper_root),
@@ -682,13 +701,13 @@ mod ir_bridge_tests {
             }
         ));
 
-        let none_call = Expr::FnCall(
-            Box::new(Expr::Attr(
-                Box::new(Expr::Ident("Option".to_string())),
+        let none_call = sb(Expr::FnCall(
+            sbb(Expr::Attr(
+                sbb(Expr::Ident("Option".to_string())),
                 "None".to_string(),
             )),
             vec![],
-        );
+        ));
         let (lowered_none, none_root) = lowered::lower_expr_root(&none_call, &ctx);
         assert!(matches!(
             lowered_none.expr(none_root),
@@ -698,19 +717,19 @@ mod ir_bridge_tests {
             }
         ));
 
-        let ctor_call = Expr::FnCall(
-            Box::new(Expr::Attr(
-                Box::new(Expr::Attr(
-                    Box::new(Expr::Attr(
-                        Box::new(Expr::Ident("Domain".to_string())),
+        let ctor_call = sb(Expr::FnCall(
+            sbb(Expr::Attr(
+                sbb(Expr::Attr(
+                    sbb(Expr::Attr(
+                        sbb(Expr::Ident("Domain".to_string())),
                         "Types".to_string(),
                     )),
                     "TaskEvent".to_string(),
                 )),
                 "TaskCreated".to_string(),
             )),
-            vec![Expr::Literal(Literal::Str("now".to_string()))],
-        );
+            vec![sb(Expr::Literal(Literal::Str("now".to_string())))],
+        ));
         let (lowered_ctor, ctor_root) = lowered::lower_expr_root(&ctor_call, &ctx);
         assert!(matches!(
             lowered_ctor.expr(ctor_root),
@@ -736,7 +755,7 @@ mod ir_bridge_tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Resolved(0))),
+            body: Rc::new(FnBody::from_expr(sb(Expr::Resolved(0)))),
             resolution: Some(FnResolution {
                 local_slots: Rc::new(HashMap::from([(String::from("x"), 0u16)])),
                 local_count: 1,
@@ -746,16 +765,16 @@ mod ir_bridge_tests {
             .exec_fn_def(&identity)
             .expect("identity function should register");
 
-        let list_len = Expr::FnCall(
-            Box::new(Expr::Attr(
-                Box::new(Expr::Ident("List".to_string())),
+        let list_len = sb(Expr::FnCall(
+            sbb(Expr::Attr(
+                sbb(Expr::Ident("List".to_string())),
                 "len".to_string(),
             )),
-            vec![Expr::List(vec![
-                Expr::Literal(Literal::Int(1)),
-                Expr::Literal(Literal::Int(2)),
-            ])],
-        );
+            vec![sb(Expr::List(vec![
+                sb(Expr::Literal(Literal::Int(1))),
+                sb(Expr::Literal(Literal::Int(2))),
+            ]))],
+        ));
         assert_eq!(
             interpreter
                 .eval_expr(&list_len)
@@ -763,10 +782,10 @@ mod ir_bridge_tests {
             Value::Int(2)
         );
 
-        let identity_call = Expr::FnCall(
-            Box::new(Expr::Ident("identity".to_string())),
-            vec![Expr::Literal(Literal::Int(9))],
-        );
+        let identity_call = sb(Expr::FnCall(
+            sbb(Expr::Ident("identity".to_string())),
+            vec![sb(Expr::Literal(Literal::Int(9)))],
+        ));
         assert_eq!(
             interpreter
                 .eval_expr(&identity_call)
@@ -774,13 +793,13 @@ mod ir_bridge_tests {
             Value::Int(9)
         );
 
-        let wrapper_call = Expr::FnCall(
-            Box::new(Expr::Attr(
-                Box::new(Expr::Ident("Result".to_string())),
+        let wrapper_call = sb(Expr::FnCall(
+            sbb(Expr::Attr(
+                sbb(Expr::Ident("Result".to_string())),
                 "Ok".to_string(),
             )),
-            vec![Expr::Literal(Literal::Int(5))],
-        );
+            vec![sb(Expr::Literal(Literal::Int(5)))],
+        ));
         assert_eq!(
             interpreter
                 .eval_expr(&wrapper_call)
@@ -788,13 +807,13 @@ mod ir_bridge_tests {
             Value::Ok(Box::new(Value::Int(5)))
         );
 
-        let none_call = Expr::FnCall(
-            Box::new(Expr::Attr(
-                Box::new(Expr::Ident("Option".to_string())),
+        let none_call = sb(Expr::FnCall(
+            sbb(Expr::Attr(
+                sbb(Expr::Ident("Option".to_string())),
                 "None".to_string(),
             )),
             vec![],
-        );
+        ));
         assert_eq!(
             interpreter
                 .eval_expr(&none_call)
@@ -802,19 +821,19 @@ mod ir_bridge_tests {
             Value::None
         );
 
-        let ctor_call = Expr::FnCall(
-            Box::new(Expr::Attr(
-                Box::new(Expr::Attr(
-                    Box::new(Expr::Attr(
-                        Box::new(Expr::Ident("Domain".to_string())),
+        let ctor_call = sb(Expr::FnCall(
+            sbb(Expr::Attr(
+                sbb(Expr::Attr(
+                    sbb(Expr::Attr(
+                        sbb(Expr::Ident("Domain".to_string())),
                         "Types".to_string(),
                     )),
                     "TaskEvent".to_string(),
                 )),
                 "TaskCreated".to_string(),
             )),
-            vec![Expr::Literal(Literal::Str("now".to_string()))],
-        );
+            vec![sb(Expr::Literal(Literal::Str("now".to_string())))],
+        ));
         match interpreter
             .eval_expr(&ctor_call)
             .expect("direct qualified ctor call should run")
@@ -831,11 +850,11 @@ mod ir_bridge_tests {
             other => panic!("expected variant, got {other:?}"),
         }
 
-        let multi_ctor_call = Expr::FnCall(
-            Box::new(Expr::Attr(
-                Box::new(Expr::Attr(
-                    Box::new(Expr::Attr(
-                        Box::new(Expr::Ident("Domain".to_string())),
+        let multi_ctor_call = sb(Expr::FnCall(
+            sbb(Expr::Attr(
+                sbb(Expr::Attr(
+                    sbb(Expr::Attr(
+                        sbb(Expr::Ident("Domain".to_string())),
                         "Types".to_string(),
                     )),
                     "TaskEvent".to_string(),
@@ -843,10 +862,10 @@ mod ir_bridge_tests {
                 "TaskMoved".to_string(),
             )),
             vec![
-                Expr::Literal(Literal::Str("later".to_string())),
-                Expr::Literal(Literal::Int(3)),
+                sb(Expr::Literal(Literal::Str("later".to_string()))),
+                sb(Expr::Literal(Literal::Int(3))),
             ],
-        );
+        ));
         match interpreter
             .eval_expr(&multi_ctor_call)
             .expect("direct qualified multi-field ctor call should run")
@@ -871,10 +890,10 @@ mod ir_bridge_tests {
     fn lowered_fn_bodies_classify_forward_calls_through_shared_ir() {
         let interpreter = Interpreter::new();
         let ctx = InterpreterLowerCtx::new(&interpreter);
-        let body = FnBody::from_expr(Expr::FnCall(
-            Box::new(Expr::Ident("first".to_string())),
-            vec![Expr::Resolved(1), Expr::Resolved(0)],
-        ));
+        let body = FnBody::from_expr(sb(Expr::FnCall(
+            sbb(Expr::Ident("first".to_string())),
+            vec![sb(Expr::Resolved(1)), sb(Expr::Resolved(0))],
+        )));
         let lowered = lowered::lower_fn_body(&body, &ctx, "swap");
 
         assert!(matches!(
@@ -882,6 +901,7 @@ mod ir_bridge_tests {
             LoweredExpr::ForwardCall {
                 target: LoweredDirectCallTarget::Function(name),
                 args,
+                ..
             } if name == "first"
                 && matches!(
                     args.as_ref(),
@@ -904,7 +924,7 @@ mod ir_bridge_tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Resolved(0))),
+            body: Rc::new(FnBody::from_expr(sb(Expr::Resolved(0)))),
             resolution: Some(FnResolution {
                 local_slots: Rc::new(HashMap::from([
                     (String::from("x"), 0u16),
@@ -927,10 +947,10 @@ mod ir_bridge_tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::FnCall(
-                Box::new(Expr::Ident("first".to_string())),
-                vec![Expr::Resolved(1), Expr::Resolved(0)],
-            ))),
+            body: Rc::new(FnBody::from_expr(sb(Expr::FnCall(
+                sbb(Expr::Ident("first".to_string())),
+                vec![sb(Expr::Resolved(1)), sb(Expr::Resolved(0))],
+            )))),
             resolution: Some(FnResolution {
                 local_slots: Rc::new(HashMap::from([
                     (String::from("a"), 0u16),
@@ -943,13 +963,13 @@ mod ir_bridge_tests {
             .exec_fn_def(&swap)
             .expect("swap function should register");
 
-        let swap_call = Expr::FnCall(
-            Box::new(Expr::Ident("swap".to_string())),
+        let swap_call = sb(Expr::FnCall(
+            sbb(Expr::Ident("swap".to_string())),
             vec![
-                Expr::Literal(Literal::Int(3)),
-                Expr::Literal(Literal::Int(7)),
+                sb(Expr::Literal(Literal::Int(3))),
+                sb(Expr::Literal(Literal::Int(7))),
             ],
-        );
+        ));
         assert_eq!(
             interpreter
                 .eval_expr(&swap_call)
@@ -963,10 +983,10 @@ mod ir_bridge_tests {
         let interpreter = Interpreter::new();
         let ctx = InterpreterLowerCtx::new(&interpreter);
 
-        let self_body = FnBody::from_expr(Expr::TailCall(Box::new((
+        let self_body = FnBody::from_expr(sb(Expr::TailCall(Box::new((
             "loop".to_string(),
-            vec![Expr::Literal(Literal::Int(1))],
-        ))));
+            vec![sb(Expr::Literal(Literal::Int(1)))],
+        )))));
         let lowered_self = lowered::lower_fn_body(&self_body, &ctx, "loop");
         assert!(matches!(
             lowered_self.expr(ExprId(1)),
@@ -976,10 +996,10 @@ mod ir_bridge_tests {
             }
         ));
 
-        let known_body = FnBody::from_expr(Expr::TailCall(Box::new((
+        let known_body = FnBody::from_expr(sb(Expr::TailCall(Box::new((
             "other".to_string(),
-            vec![Expr::Literal(Literal::Int(2))],
-        ))));
+            vec![sb(Expr::Literal(Literal::Int(2)))],
+        )))));
         let lowered_known = lowered::lower_fn_body(&known_body, &ctx, "loop");
         assert!(matches!(
             lowered_known.expr(ExprId(1)),
@@ -989,10 +1009,10 @@ mod ir_bridge_tests {
             } if name == "other"
         ));
 
-        let unknown_body = FnBody::from_expr(Expr::TailCall(Box::new((
+        let unknown_body = FnBody::from_expr(sb(Expr::TailCall(Box::new((
             "Result.Ok".to_string(),
-            vec![Expr::Literal(Literal::Int(3))],
-        ))));
+            vec![sb(Expr::Literal(Literal::Int(3)))],
+        )))));
         let lowered_unknown = lowered::lower_fn_body(&unknown_body, &ctx, "loop");
         assert!(matches!(
             lowered_unknown.expr(ExprId(1)),

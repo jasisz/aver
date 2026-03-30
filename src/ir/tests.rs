@@ -9,7 +9,17 @@ use super::{
     classify_leaf_op, classify_list_match_shape, classify_match_dispatch_plan,
     classify_tail_call_plan, classify_thin_body_plan, expr_to_dotted_name,
 };
-use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Stmt};
+use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt};
+
+/// Shorthand: wrap an Expr in Spanned::bare (line=0).
+fn sb(expr: Expr) -> Spanned<Expr> {
+    Spanned::bare(expr)
+}
+
+/// Shorthand: wrap an Expr in Box<Spanned::bare(...)>.
+fn sbb(expr: Expr) -> Box<Spanned<Expr>> {
+    Box::new(Spanned::bare(expr))
+}
 
 #[derive(Default)]
 struct DummyCtx;
@@ -36,8 +46,8 @@ impl CallLowerCtx for DummyCtx {
 #[test]
 fn dotted_name_flattens_attr_paths() {
     let expr = Expr::Attr(
-        Box::new(Expr::Attr(
-            Box::new(Expr::Ident("Data".to_string())),
+        sbb(Expr::Attr(
+            sbb(Expr::Ident("Data".to_string())),
             "Fib".to_string(),
         )),
         "fib".to_string(),
@@ -50,27 +60,21 @@ fn classify_builtin_wrapper_and_none() {
     let ctx = DummyCtx;
     assert_eq!(
         classify_call_plan(
-            &Expr::Attr(
-                Box::new(Expr::Ident("Result".to_string())),
-                "Ok".to_string(),
-            ),
+            &Expr::Attr(sbb(Expr::Ident("Result".to_string())), "Ok".to_string(),),
             &ctx
         ),
         CallPlan::Wrapper(WrapperKind::ResultOk)
     );
     assert_eq!(
         classify_call_plan(
-            &Expr::Attr(
-                Box::new(Expr::Ident("Option".to_string())),
-                "None".to_string(),
-            ),
+            &Expr::Attr(sbb(Expr::Ident("Option".to_string())), "None".to_string(),),
             &ctx
         ),
         CallPlan::NoneValue
     );
     assert_eq!(
         classify_call_plan(
-            &Expr::Attr(Box::new(Expr::Ident("List".to_string())), "len".to_string()),
+            &Expr::Attr(sbb(Expr::Ident("List".to_string())), "len".to_string(),),
             &ctx
         ),
         CallPlan::Builtin("List.len".to_string())
@@ -81,8 +85,8 @@ fn classify_builtin_wrapper_and_none() {
 fn classify_module_function_and_ctor() {
     let ctx = DummyCtx;
     let module_fn = Expr::Attr(
-        Box::new(Expr::Attr(
-            Box::new(Expr::Ident("Data".to_string())),
+        sbb(Expr::Attr(
+            sbb(Expr::Ident("Data".to_string())),
             "Fib".to_string(),
         )),
         "fib".to_string(),
@@ -93,8 +97,8 @@ fn classify_module_function_and_ctor() {
     );
 
     let ctor = Expr::Attr(
-        Box::new(Expr::Attr(
-            Box::new(Expr::Ident("Models".to_string())),
+        sbb(Expr::Attr(
+            sbb(Expr::Ident("Models".to_string())),
             "Shape".to_string(),
         )),
         "Circle".to_string(),
@@ -118,10 +122,7 @@ fn classify_module_function_and_ctor() {
 #[test]
 fn lowercase_attr_and_local_ident_remain_dynamic() {
     let ctx = DummyCtx;
-    let attr = Expr::Attr(
-        Box::new(Expr::Ident("user".to_string())),
-        "handler".to_string(),
-    );
+    let attr = Expr::Attr(sbb(Expr::Ident("user".to_string())), "handler".to_string());
     assert_eq!(classify_call_plan(&attr, &ctx), CallPlan::Dynamic);
     assert_eq!(
         classify_call_plan(&Expr::Ident("handler".to_string()), &ctx),
@@ -159,11 +160,11 @@ fn classify_bool_and_list_match_shapes() {
     let bool_arms = vec![
         MatchArm {
             pattern: Pattern::Literal(Literal::Bool(false)),
-            body: Box::new(Expr::Literal(Literal::Int(0))),
+            body: sbb(Expr::Literal(Literal::Int(0))),
         },
         MatchArm {
             pattern: Pattern::Literal(Literal::Bool(true)),
-            body: Box::new(Expr::Literal(Literal::Int(1))),
+            body: sbb(Expr::Literal(Literal::Int(1))),
         },
     ];
     assert_eq!(
@@ -177,11 +178,11 @@ fn classify_bool_and_list_match_shapes() {
     let list_arms = vec![
         MatchArm {
             pattern: Pattern::Cons("h".to_string(), "t".to_string()),
-            body: Box::new(Expr::Literal(Literal::Int(1))),
+            body: sbb(Expr::Literal(Literal::Int(1))),
         },
         MatchArm {
             pattern: Pattern::EmptyList,
-            body: Box::new(Expr::Literal(Literal::Int(0))),
+            body: sbb(Expr::Literal(Literal::Int(0))),
         },
     ];
     assert_eq!(
@@ -222,15 +223,15 @@ fn classify_dispatch_table_shape_with_default_arm() {
     let arms = vec![
         MatchArm {
             pattern: Pattern::Constructor("Option.None".to_string(), vec![]),
-            body: Box::new(Expr::Literal(Literal::Int(0))),
+            body: sbb(Expr::Literal(Literal::Int(0))),
         },
         MatchArm {
             pattern: Pattern::Constructor("Option.Some".to_string(), vec!["x".to_string()]),
-            body: Box::new(Expr::Literal(Literal::Int(1))),
+            body: sbb(Expr::Literal(Literal::Int(1))),
         },
         MatchArm {
             pattern: Pattern::Wildcard,
-            body: Box::new(Expr::Literal(Literal::Int(2))),
+            body: sbb(Expr::Literal(Literal::Int(2))),
         },
     ];
 
@@ -277,14 +278,14 @@ fn classify_tail_call_self_known_and_unknown() {
 #[test]
 fn classify_forward_call_for_known_target_and_forwarded_locals() {
     let expr = Expr::FnCall(
-        Box::new(Expr::Attr(
-            Box::new(Expr::Attr(
-                Box::new(Expr::Ident("Data".to_string())),
+        sbb(Expr::Attr(
+            sbb(Expr::Attr(
+                sbb(Expr::Ident("Data".to_string())),
                 "Fib".to_string(),
             )),
             "fib".to_string(),
         )),
-        vec![Expr::Resolved(1), Expr::Ident("slot0".to_string())],
+        vec![sb(Expr::Resolved(1)), sb(Expr::Ident("slot0".to_string()))],
     );
 
     struct ForwardCtx;
@@ -338,10 +339,13 @@ fn classify_forward_fn_body_requires_single_expr_wrapper() {
         }
     }
 
-    let forward_body = FnBody::from_expr(Expr::FnCall(
-        Box::new(Expr::Ident("target".to_string())),
-        vec![Expr::Ident("b".to_string()), Expr::Ident("a".to_string())],
-    ));
+    let forward_body = FnBody::from_expr(sb(Expr::FnCall(
+        sbb(Expr::Ident("target".to_string())),
+        vec![
+            sb(Expr::Ident("b".to_string())),
+            sb(Expr::Ident("a".to_string())),
+        ],
+    )));
     assert_eq!(
         classify_forward_fn_body(&forward_body, &ForwardCtx),
         Some(ForwardCallPlan {
@@ -354,11 +358,11 @@ fn classify_forward_fn_body_requires_single_expr_wrapper() {
     );
 
     let non_wrapper_body = FnBody::Block(vec![
-        Stmt::Binding("x".to_string(), None, Expr::Literal(Literal::Int(1))),
-        Stmt::Expr(Expr::FnCall(
-            Box::new(Expr::Ident("target".to_string())),
-            vec![Expr::Ident("a".to_string())],
-        )),
+        Stmt::Binding("x".to_string(), None, sb(Expr::Literal(Literal::Int(1)))),
+        Stmt::Expr(sb(Expr::FnCall(
+            sbb(Expr::Ident("target".to_string())),
+            vec![sb(Expr::Ident("a".to_string()))],
+        ))),
     ]);
     assert_eq!(
         classify_forward_fn_body(&non_wrapper_body, &ForwardCtx),
@@ -386,25 +390,25 @@ fn classify_body_plan_for_single_expr_leaf_and_rejects_blocks() {
         }
     }
 
-    let leaf_body = FnBody::from_expr(Expr::FnCall(
-        Box::new(Expr::Attr(
-            Box::new(Expr::Ident("Option".to_string())),
+    let leaf_body = FnBody::from_expr(sb(Expr::FnCall(
+        sbb(Expr::Attr(
+            sbb(Expr::Ident("Option".to_string())),
             "withDefault".to_string(),
         )),
         vec![
-            Expr::FnCall(
-                Box::new(Expr::Attr(
-                    Box::new(Expr::Ident("Vector".to_string())),
+            sb(Expr::FnCall(
+                sbb(Expr::Attr(
+                    sbb(Expr::Ident("Vector".to_string())),
                     "get".to_string(),
                 )),
                 vec![
-                    Expr::Ident("vec".to_string()),
-                    Expr::Ident("idx".to_string()),
+                    sb(Expr::Ident("vec".to_string())),
+                    sb(Expr::Ident("idx".to_string())),
                 ],
-            ),
-            Expr::Literal(Literal::Int(0)),
+            )),
+            sb(Expr::Literal(Literal::Int(0))),
         ],
-    ));
+    )));
     assert!(matches!(
         classify_body_plan(&leaf_body, &LocalCtx),
         Some(BodyPlan::SingleExpr(BodyExprPlan::Leaf(
@@ -413,8 +417,8 @@ fn classify_body_plan_for_single_expr_leaf_and_rejects_blocks() {
     ));
 
     let structured = FnBody::Block(vec![
-        Stmt::Binding("x".to_string(), None, Expr::Literal(Literal::Int(1))),
-        Stmt::Expr(Expr::Ident("x".to_string())),
+        Stmt::Binding("x".to_string(), None, sb(Expr::Literal(Literal::Int(1)))),
+        Stmt::Expr(sb(Expr::Ident("x".to_string()))),
     ]);
     assert!(matches!(
         classify_body_plan(&structured, &LocalCtx),
@@ -434,8 +438,8 @@ fn classify_body_plan_for_single_expr_leaf_and_rejects_blocks() {
     ));
 
     let invalid = FnBody::Block(vec![
-        Stmt::Expr(Expr::Literal(Literal::Int(1))),
-        Stmt::Expr(Expr::Literal(Literal::Int(2))),
+        Stmt::Expr(sb(Expr::Literal(Literal::Int(1)))),
+        Stmt::Expr(sb(Expr::Literal(Literal::Int(2)))),
     ]);
     assert_eq!(classify_body_plan(&invalid, &LocalCtx), None);
 }
@@ -477,25 +481,25 @@ fn classify_thin_body_plan_for_known_thin_function() {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: FnBody::from_expr(Expr::FnCall(
-                Box::new(Expr::Attr(
-                    Box::new(Expr::Ident("Option".to_string())),
+            body: FnBody::from_expr(sb(Expr::FnCall(
+                sbb(Expr::Attr(
+                    sbb(Expr::Ident("Option".to_string())),
                     "withDefault".to_string(),
                 )),
                 vec![
-                    Expr::FnCall(
-                        Box::new(Expr::Attr(
-                            Box::new(Expr::Ident("Vector".to_string())),
+                    sb(Expr::FnCall(
+                        sbb(Expr::Attr(
+                            sbb(Expr::Ident("Vector".to_string())),
                             "get".to_string(),
                         )),
                         vec![
-                            Expr::Ident("grid".to_string()),
-                            Expr::Ident("idx".to_string()),
+                            sb(Expr::Ident("grid".to_string())),
+                            sb(Expr::Ident("idx".to_string())),
                         ],
-                    ),
-                    Expr::Literal(Literal::Int(0)),
+                    )),
+                    sb(Expr::Literal(Literal::Int(0))),
                 ],
-            ))
+            )))
             .into(),
             resolution: None,
         }],
@@ -547,26 +551,25 @@ fn classify_thin_body_plan_for_dispatch_function() {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: FnBody::from_expr(Expr::Match {
-                subject: Box::new(Expr::Ident("r".to_string())),
+            body: FnBody::from_expr(sb(Expr::Match {
+                subject: sbb(Expr::Ident("r".to_string())),
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Constructor(
                             "Result.Ok".to_string(),
                             vec!["n".to_string()],
                         ),
-                        body: Box::new(Expr::Ident("n".to_string())),
+                        body: sbb(Expr::Ident("n".to_string())),
                     },
                     MatchArm {
                         pattern: Pattern::Constructor(
                             "Result.Err".to_string(),
                             vec!["_".to_string()],
                         ),
-                        body: Box::new(Expr::Literal(Literal::Int(0))),
+                        body: sbb(Expr::Literal(Literal::Int(0))),
                     },
                 ],
-                line: 0,
-            })
+            }))
             .into(),
             resolution: None,
         }],
@@ -585,10 +588,7 @@ fn classify_thin_body_plan_for_dispatch_function() {
 #[test]
 fn classify_leaf_field_access_and_builtin_shapes() {
     let ctx = DummyCtx;
-    let user_name = Expr::Attr(
-        Box::new(Expr::Ident("user".to_string())),
-        "name".to_string(),
-    );
+    let user_name = Expr::Attr(sbb(Expr::Ident("user".to_string())), "name".to_string());
     assert!(matches!(
         classify_leaf_op(&user_name, &ctx),
         Some(LeafOp::FieldAccess {
@@ -598,13 +598,13 @@ fn classify_leaf_field_access_and_builtin_shapes() {
     ));
 
     let map_get = Expr::FnCall(
-        Box::new(Expr::Attr(
-            Box::new(Expr::Ident("Map".to_string())),
+        sbb(Expr::Attr(
+            sbb(Expr::Ident("Map".to_string())),
             "get".to_string(),
         )),
         vec![
-            Expr::Ident("m".to_string()),
-            Expr::Literal(Literal::Str("k".to_string())),
+            sb(Expr::Ident("m".to_string())),
+            sb(Expr::Literal(Literal::Str("k".to_string()))),
         ],
     );
     assert!(matches!(
@@ -617,22 +617,22 @@ fn classify_leaf_field_access_and_builtin_shapes() {
 fn classify_vector_get_with_literal_default_leaf() {
     let ctx = DummyCtx;
     let expr = Expr::FnCall(
-        Box::new(Expr::Attr(
-            Box::new(Expr::Ident("Option".to_string())),
+        sbb(Expr::Attr(
+            sbb(Expr::Ident("Option".to_string())),
             "withDefault".to_string(),
         )),
         vec![
-            Expr::FnCall(
-                Box::new(Expr::Attr(
-                    Box::new(Expr::Ident("Vector".to_string())),
+            sb(Expr::FnCall(
+                sbb(Expr::Attr(
+                    sbb(Expr::Ident("Vector".to_string())),
                     "get".to_string(),
                 )),
                 vec![
-                    Expr::Ident("vec".to_string()),
-                    Expr::Ident("idx".to_string()),
+                    sb(Expr::Ident("vec".to_string())),
+                    sb(Expr::Ident("idx".to_string())),
                 ],
-            ),
-            Expr::Literal(Literal::Int(42)),
+            )),
+            sb(Expr::Literal(Literal::Int(42))),
         ],
     );
 
@@ -649,19 +649,22 @@ fn classify_vector_get_with_literal_default_leaf() {
 fn classify_int_mod_with_literal_default_leaf() {
     let ctx = DummyCtx;
     let expr = Expr::FnCall(
-        Box::new(Expr::Attr(
-            Box::new(Expr::Ident("Result".to_string())),
+        sbb(Expr::Attr(
+            sbb(Expr::Ident("Result".to_string())),
             "withDefault".to_string(),
         )),
         vec![
-            Expr::FnCall(
-                Box::new(Expr::Attr(
-                    Box::new(Expr::Ident("Int".to_string())),
+            sb(Expr::FnCall(
+                sbb(Expr::Attr(
+                    sbb(Expr::Ident("Int".to_string())),
                     "mod".to_string(),
                 )),
-                vec![Expr::Ident("a".to_string()), Expr::Ident("b".to_string())],
-            ),
-            Expr::Literal(Literal::Int(0)),
+                vec![
+                    sb(Expr::Ident("a".to_string())),
+                    sb(Expr::Ident("b".to_string())),
+                ],
+            )),
+            sb(Expr::Literal(Literal::Int(0))),
         ],
     );
 
@@ -678,8 +681,8 @@ fn classify_int_mod_with_literal_default_leaf() {
 fn uppercase_module_paths_are_not_field_leafs() {
     let ctx = DummyCtx;
     let expr = Expr::Attr(
-        Box::new(Expr::Attr(
-            Box::new(Expr::Ident("Data".to_string())),
+        sbb(Expr::Attr(
+            sbb(Expr::Ident("Data".to_string())),
             "Fib".to_string(),
         )),
         "fib".to_string(),
@@ -691,17 +694,18 @@ fn uppercase_module_paths_are_not_field_leafs() {
 fn classify_bool_subject_normalizes_negated_comparisons() {
     let subject = Expr::BinOp(
         BinOp::Gte,
-        Box::new(Expr::Ident("n".to_string())),
-        Box::new(Expr::Literal(Literal::Int(10))),
+        sbb(Expr::Ident("n".to_string())),
+        sbb(Expr::Literal(Literal::Int(10))),
     );
 
     assert!(matches!(
         classify_bool_subject_plan(&subject),
         BoolSubjectPlan::Compare {
-            lhs: Expr::Ident(name),
-            rhs: Expr::Literal(Literal::Int(10)),
+            lhs,
+            rhs,
             op: BoolCompareOp::Lt,
             invert: true,
-        } if name == "n"
+        } if matches!(lhs.node, Expr::Ident(ref name) if name == "n")
+          && matches!(rhs.node, Expr::Literal(Literal::Int(10)))
     ));
 }

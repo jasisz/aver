@@ -23,9 +23,9 @@ fn body_uses_error_prop(body: &std::rc::Rc<crate::ast::FnBody>) -> bool {
     }
 }
 
-fn expr_uses_error_prop(expr: &crate::ast::Expr) -> bool {
+fn expr_uses_error_prop(expr: &crate::ast::Spanned<crate::ast::Expr>) -> bool {
     use crate::ast::Expr;
-    match expr {
+    match &expr.node {
         Expr::ErrorProp(_) => true,
         Expr::FnCall(f, args) => expr_uses_error_prop(f) || args.iter().any(expr_uses_error_prop),
         Expr::BinOp(_, l, r) => expr_uses_error_prop(l) || expr_uses_error_prop(r),

@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use crate::ast::{BinOp, Expr, FnBody, Literal, Pattern, Stmt, StrPart};
+use crate::ast::{BinOp, Expr, FnBody, Literal, Pattern, Spanned, Stmt, StrPart};
 use crate::ir::{
     CallLowerCtx, CallPlan, ForwardArg, LeafOp, TailCallPlan, WrapperKind, classify_call_plan,
     classify_forward_call_plan, classify_leaf_op, classify_tail_call_plan,
@@ -123,15 +123,18 @@ pub(crate) enum LoweredExpr {
     Attr {
         obj: ExprId,
         field: String,
+        line: usize,
     },
     FnCall {
         fn_expr: ExprId,
         args: Rc<[ExprId]>,
+        call_line: usize,
     },
     BinOp {
         op: BinOp,
         left: ExprId,
         right: ExprId,
+        line: usize,
     },
     Match {
         subject: ExprId,
@@ -142,10 +145,12 @@ pub(crate) enum LoweredExpr {
     ForwardCall {
         target: LoweredDirectCallTarget,
         args: Rc<[LoweredForwardArg]>,
+        call_line: usize,
     },
     DirectCall {
         target: LoweredDirectCallTarget,
         args: Rc<[ExprId]>,
+        call_line: usize,
     },
     Constructor {
         name: String,
@@ -153,6 +158,7 @@ pub(crate) enum LoweredExpr {
     },
     ErrorProp {
         inner: ExprId,
+        line: usize,
     },
     InterpolatedStr(Rc<[LoweredStrPart]>),
     List(Rc<[ExprId]>),
@@ -228,7 +234,9 @@ impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
         }
     }
 
-    fn lower_expr(&mut self, expr: &Expr) -> ExprId {
+    fn lower_expr(&mut self, spanned: &Spanned<Expr>) -> ExprId {
+        let line = spanned.line;
+        let expr = &spanned.node;
         let lowered = match expr {
             Expr::Literal(lit) => LoweredExpr::Literal(lit.clone()),
             Expr::Ident(name) => LoweredExpr::Ident(name.clone()),
@@ -236,6 +244,7 @@ impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
             Expr::Attr(obj, field) => LoweredExpr::Attr {
                 obj: self.lower_expr(obj),
                 field: field.clone(),
+                line,
             },
             Expr::FnCall(fn_expr, args) => match classify_leaf_op(expr, self.ctx) {
                 Some(LeafOp::MapGet { map, key }) => LoweredExpr::Leaf(LoweredLeafOp::MapGet {
@@ -288,9 +297,10 @@ impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
                         LoweredExpr::ForwardCall {
                             target,
                             args: lowered_args.into(),
+                            call_line: line,
                         }
                     } else {
-                        match classify_call_plan(fn_expr, self.ctx) {
+                        match classify_call_plan(&fn_expr.node, self.ctx) {
                             CallPlan::Builtin(name) => {
                                 let lowered_args = args
                                     .iter()
@@ -301,6 +311,7 @@ impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
                                         .lower_direct_call_target(CallPlan::Builtin(name))
                                         .expect("builtin direct target should lower"),
                                     args: lowered_args.into(),
+                                    call_line: line,
                                 }
                             }
                             CallPlan::Function(name) => {
@@ -313,6 +324,7 @@ impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
                                         .lower_direct_call_target(CallPlan::Function(name))
                                         .expect("function direct target should lower"),
                                     args: lowered_args.into(),
+                                    call_line: line,
                                 }
                             }
                             CallPlan::Wrapper(kind) => {
@@ -325,6 +337,7 @@ impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
                                         .lower_direct_call_target(CallPlan::Wrapper(kind))
                                         .expect("wrapper direct target should lower"),
                                     args: lowered_args.into(),
+                                    call_line: line,
                                 }
                             }
                             CallPlan::NoneValue => {
@@ -337,6 +350,7 @@ impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
                                         .lower_direct_call_target(CallPlan::NoneValue)
                                         .expect("none direct target should lower"),
                                     args: lowered_args.into(),
+                                    call_line: line,
                                 }
                             }
                             CallPlan::TypeConstructor {
@@ -355,6 +369,7 @@ impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
                                         })
                                         .expect("constructor direct target should lower"),
                                     args: lowered_args.into(),
+                                    call_line: line,
                                 }
                             }
                             CallPlan::Dynamic => {
@@ -365,6 +380,7 @@ impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
                                 LoweredExpr::FnCall {
                                     fn_expr: self.lower_expr(fn_expr),
                                     args: lowered_args.into(),
+                                    call_line: line,
                                 }
                             }
                         }
@@ -375,12 +391,9 @@ impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
                 op: *op,
                 left: self.lower_expr(left),
                 right: self.lower_expr(right),
-            },
-            Expr::Match {
-                subject,
-                arms,
                 line,
-            } => {
+            },
+            Expr::Match { subject, arms } => {
                 let lowered_arms = arms
                     .iter()
                     .map(|arm| LoweredMatchArm {
@@ -391,7 +404,7 @@ impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
                 LoweredExpr::Match {
                     subject: self.lower_expr(subject),
                     arms: lowered_arms.into(),
-                    line: *line,
+                    line,
                 }
             }
             Expr::Constructor(name, arg) => LoweredExpr::Constructor {
@@ -400,6 +413,7 @@ impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
             },
             Expr::ErrorProp(inner) => LoweredExpr::ErrorProp {
                 inner: self.lower_expr(inner),
+                line,
             },
             Expr::InterpolatedStr(parts) => {
                 let lowered_parts = parts
@@ -489,10 +503,10 @@ impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
 
     fn lower_stmt(&mut self, stmt: &Stmt) -> LoweredStmt {
         match stmt {
-            Stmt::Binding(name, _, expr) => {
-                LoweredStmt::Binding(name.clone(), self.lower_expr(expr))
+            Stmt::Binding(name, _, spanned_expr) => {
+                LoweredStmt::Binding(name.clone(), self.lower_expr(spanned_expr))
             }
-            Stmt::Expr(expr) => LoweredStmt::Expr(self.lower_expr(expr)),
+            Stmt::Expr(spanned_expr) => LoweredStmt::Expr(self.lower_expr(spanned_expr)),
         }
     }
 
@@ -523,7 +537,7 @@ pub(crate) fn lower_fn_body(
 }
 
 pub(crate) fn lower_expr_root(
-    expr: &Expr,
+    expr: &Spanned<Expr>,
     ctx: &impl CallLowerCtx,
 ) -> (Rc<LoweredFunctionBody>, ExprId) {
     let mut builder = LowerBuilder {

@@ -15,7 +15,7 @@ mod types;
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
-    BinOp, Expr, FnBody, FnDef, MatchArm, Pattern, Stmt, TopLevel, TypeDef, VerifyKind,
+    BinOp, Expr, FnBody, FnDef, MatchArm, Pattern, Spanned, Stmt, TopLevel, TypeDef, VerifyKind,
 };
 use crate::call_graph;
 use crate::codegen::{CodegenContext, ProjectOutput};
@@ -761,8 +761,8 @@ fn lean_project_name(ctx: &CodegenContext) -> String {
         .unwrap_or_else(|| capitalize_first(&ctx.project_name))
 }
 
-fn expr_to_dotted_name(expr: &Expr) -> Option<String> {
-    match expr {
+fn expr_to_dotted_name(expr: &Spanned<Expr>) -> Option<String> {
+    match &expr.node {
         Expr::Ident(name) => Some(name.clone()),
         Expr::Attr(obj, field) => expr_to_dotted_name(obj).map(|p| format!("{}.{}", p, field)),
         _ => None,
@@ -797,11 +797,11 @@ fn call_matches_any(name: &str, targets: &HashSet<String>) -> bool {
     }
 }
 
-fn is_int_minus_positive(expr: &Expr, param_name: &str) -> bool {
-    match expr {
+fn is_int_minus_positive(expr: &Spanned<Expr>, param_name: &str) -> bool {
+    match &expr.node {
         Expr::BinOp(BinOp::Sub, left, right) => {
-            matches!(left.as_ref(), Expr::Ident(id) if id == param_name)
-                && matches!(right.as_ref(), Expr::Literal(crate::ast::Literal::Int(n)) if *n >= 1)
+            matches!(&left.node, Expr::Ident(id) if id == param_name)
+                && matches!(&right.node, Expr::Literal(crate::ast::Literal::Int(n)) if *n >= 1)
         }
         Expr::FnCall(callee, args) => {
             let Some(name) = expr_to_dotted_name(callee) else {
@@ -809,15 +809,18 @@ fn is_int_minus_positive(expr: &Expr, param_name: &str) -> bool {
             };
             (name == "Int.sub" || name == "int.sub")
                 && args.len() == 2
-                && matches!(&args[0], Expr::Ident(id) if id == param_name)
-                && matches!(&args[1], Expr::Literal(crate::ast::Literal::Int(n)) if *n >= 1)
+                && matches!(&args[0].node, Expr::Ident(id) if id == param_name)
+                && matches!(&args[1].node, Expr::Literal(crate::ast::Literal::Int(n)) if *n >= 1)
         }
         _ => false,
     }
 }
 
-fn collect_calls_from_expr<'a>(expr: &'a Expr, out: &mut Vec<(String, Vec<&'a Expr>)>) {
-    match expr {
+fn collect_calls_from_expr<'a>(
+    expr: &'a Spanned<Expr>,
+    out: &mut Vec<(String, Vec<&'a Spanned<Expr>>)>,
+) {
+    match &expr.node {
         Expr::FnCall(callee, args) => {
             if let Some(name) = expr_to_dotted_name(callee) {
                 out.push((name, args.iter().collect()));
@@ -884,7 +887,7 @@ fn collect_calls_from_expr<'a>(expr: &'a Expr, out: &mut Vec<(String, Vec<&'a Ex
     }
 }
 
-fn collect_calls_from_body(body: &FnBody) -> Vec<(String, Vec<&Expr>)> {
+fn collect_calls_from_body(body: &FnBody) -> Vec<(String, Vec<&Spanned<Expr>>)> {
     let mut out = Vec::new();
     for stmt in body.stmts() {
         match stmt {
@@ -895,13 +898,13 @@ fn collect_calls_from_body(body: &FnBody) -> Vec<(String, Vec<&Expr>)> {
 }
 
 fn collect_list_tail_binders_from_expr(
-    expr: &Expr,
+    expr: &Spanned<Expr>,
     list_param_name: &str,
     tails: &mut HashSet<String>,
 ) {
-    match expr {
+    match &expr.node {
         Expr::Match { subject, arms, .. } => {
-            if matches!(subject.as_ref(), Expr::Ident(id) if id == list_param_name) {
+            if matches!(&subject.node, Expr::Ident(id) if id == list_param_name) {
                 for MatchArm { pattern, .. } in arms {
                     if let Pattern::Cons(_, tail) = pattern {
                         tails.insert(tail.clone());
@@ -1017,14 +1020,14 @@ fn recursive_constructor_binders(
 }
 
 fn grow_recursive_subterm_binders_from_expr(
-    expr: &Expr,
+    expr: &Spanned<Expr>,
     tracked: &HashSet<String>,
     td: &TypeDef,
     out: &mut HashSet<String>,
 ) {
-    match expr {
+    match &expr.node {
         Expr::Match { subject, arms, .. } => {
-            if let Expr::Ident(subject_name) = subject.as_ref()
+            if let Expr::Ident(subject_name) = &subject.node
                 && tracked.contains(subject_name)
             {
                 for arm in arms {
@@ -1120,7 +1123,7 @@ fn collect_recursive_subterm_binders(
 }
 
 fn single_int_countdown_param_index(fd: &FnDef) -> Option<usize> {
-    let recursive_calls: Vec<Vec<&Expr>> = collect_calls_from_body(fd.body.as_ref())
+    let recursive_calls: Vec<Vec<&Spanned<Expr>>> = collect_calls_from_body(fd.body.as_ref())
         .into_iter()
         .filter(|(name, _)| call_matches(name, &fd.name))
         .map(|(_, args)| args)
@@ -1157,14 +1160,17 @@ fn single_int_countdown_param_index(fd: &FnDef) -> Option<usize> {
 }
 
 fn has_negative_guarded_ascent(fd: &FnDef, param_name: &str) -> bool {
-    let Some(Expr::Match { subject, arms, .. }) = fd.body.tail_expr() else {
+    let Some(tail) = fd.body.tail_expr() else {
         return false;
     };
-    let Expr::BinOp(BinOp::Lt, left, right) = subject.as_ref() else {
+    let Expr::Match { subject, arms, .. } = &tail.node else {
+        return false;
+    };
+    let Expr::BinOp(BinOp::Lt, left, right) = &subject.node else {
         return false;
     };
     if !is_ident(left, param_name)
-        || !matches!(right.as_ref(), Expr::Literal(crate::ast::Literal::Int(0)))
+        || !matches!(&right.node, Expr::Literal(crate::ast::Literal::Int(0)))
     {
         return false;
     }
@@ -1204,7 +1210,7 @@ fn has_negative_guarded_ascent(fd: &FnDef, param_name: &str) -> bool {
 /// Detect ascending-index recursion and extract the bound expression.
 /// Returns (param_index, bound_lean_string) if found.
 fn single_int_ascending_param(fd: &FnDef) -> Option<(usize, String)> {
-    let recursive_calls: Vec<Vec<&Expr>> = collect_calls_from_body(fd.body.as_ref())
+    let recursive_calls: Vec<Vec<&Spanned<Expr>>> = collect_calls_from_body(fd.body.as_ref())
         .into_iter()
         .filter(|(name, _)| call_matches(name, &fd.name))
         .map(|(_, args)| args)
@@ -1234,10 +1240,11 @@ fn single_int_ascending_param(fd: &FnDef) -> Option<(usize, String)> {
 
 /// Extract the bound expression from `match param == BOUND` as a Lean string.
 fn extract_equality_bound_lean(fd: &FnDef, param_name: &str) -> Option<String> {
-    let Expr::Match { subject, arms, .. } = fd.body.tail_expr()? else {
+    let tail = fd.body.tail_expr()?;
+    let Expr::Match { subject, arms, .. } = &tail.node else {
         return None;
     };
-    let Expr::BinOp(BinOp::Eq, left, right) = subject.as_ref() else {
+    let Expr::BinOp(BinOp::Eq, left, right) = &subject.node else {
         return None;
     };
     if !is_ident(left, param_name) {
@@ -1268,12 +1275,12 @@ fn extract_equality_bound_lean(fd: &FnDef, param_name: &str) -> Option<String> {
     Some(bound_expr_to_lean(right))
 }
 
-fn bound_expr_to_lean(expr: &Expr) -> String {
-    match expr {
+fn bound_expr_to_lean(expr: &Spanned<Expr>) -> String {
+    match &expr.node {
         Expr::Literal(crate::ast::Literal::Int(n)) => format!("{}", n),
         Expr::Ident(name) => expr::aver_name_to_lean(name),
         Expr::FnCall(f, args) => {
-            if let Some(dotted) = crate::codegen::common::expr_to_dotted_name(f) {
+            if let Some(dotted) = crate::codegen::common::expr_to_dotted_name(&f.node) {
                 // List.len(xs) → xs.length in Lean
                 if dotted == "List.len" && args.len() == 1 {
                     return format!("{}.length", bound_expr_to_lean(&args[0]));
@@ -1298,7 +1305,7 @@ fn bound_expr_to_lean(expr: &Expr) -> String {
 }
 
 fn supports_single_sizeof_structural(fd: &FnDef, ctx: &CodegenContext) -> bool {
-    let recursive_calls: Vec<Vec<&Expr>> = collect_calls_from_body(fd.body.as_ref())
+    let recursive_calls: Vec<Vec<&Spanned<Expr>>> = collect_calls_from_body(fd.body.as_ref())
         .into_iter()
         .filter(|(name, _)| call_matches(name, &fd.name))
         .map(|(_, args)| args)
@@ -1344,7 +1351,7 @@ fn supports_single_sizeof_structural(fd: &FnDef, ctx: &CodegenContext) -> bool {
             let Some(binders) = binder_sets.get(idx) else {
                 return false;
             };
-            if matches!(arg, Expr::Ident(id) if binders.contains(id)) {
+            if matches!(&arg.node, Expr::Ident(id) if binders.contains(id)) {
                 strictly_smaller = true;
                 continue;
             }
@@ -1368,11 +1375,12 @@ fn single_list_structural_param_index(fd: &FnDef) -> Option<usize> {
                 return None;
             }
 
-            let recursive_calls: Vec<Option<&Expr>> = collect_calls_from_body(fd.body.as_ref())
-                .into_iter()
-                .filter(|(name, _)| call_matches(name, &fd.name))
-                .map(|(_, args)| args.get(param_index).cloned())
-                .collect();
+            let recursive_calls: Vec<Option<&Spanned<Expr>>> =
+                collect_calls_from_body(fd.body.as_ref())
+                    .into_iter()
+                    .filter(|(name, _)| call_matches(name, &fd.name))
+                    .map(|(_, args)| args.get(param_index).cloned())
+                    .collect();
             if recursive_calls.is_empty() {
                 return None;
             }
@@ -1380,24 +1388,21 @@ fn single_list_structural_param_index(fd: &FnDef) -> Option<usize> {
             recursive_calls
                 .into_iter()
                 .all(|arg| {
-                    matches!(
-                        arg,
-                        Some(Expr::Ident(id)) if tails.contains(id)
-                    )
+                    arg.is_some_and(|a| matches!(&a.node, Expr::Ident(id) if tails.contains(id)))
                 })
                 .then_some(param_index)
         })
 }
 
-fn is_ident(expr: &Expr, name: &str) -> bool {
-    matches!(expr, Expr::Ident(id) if id == name)
+fn is_ident(expr: &Spanned<Expr>, name: &str) -> bool {
+    matches!(&expr.node, Expr::Ident(id) if id == name)
 }
 
-fn is_int_plus_positive(expr: &Expr, param_name: &str) -> bool {
-    match expr {
+fn is_int_plus_positive(expr: &Spanned<Expr>, param_name: &str) -> bool {
+    match &expr.node {
         Expr::BinOp(BinOp::Add, left, right) => {
-            matches!(left.as_ref(), Expr::Ident(id) if id == param_name)
-                && matches!(right.as_ref(), Expr::Literal(crate::ast::Literal::Int(n)) if *n >= 1)
+            matches!(&left.node, Expr::Ident(id) if id == param_name)
+                && matches!(&right.node, Expr::Literal(crate::ast::Literal::Int(n)) if *n >= 1)
         }
         Expr::FnCall(callee, args) => {
             let Some(name) = expr_to_dotted_name(callee) else {
@@ -1405,15 +1410,15 @@ fn is_int_plus_positive(expr: &Expr, param_name: &str) -> bool {
             };
             (name == "Int.add" || name == "int.add")
                 && args.len() == 2
-                && matches!(&args[0], Expr::Ident(id) if id == param_name)
-                && matches!(&args[1], Expr::Literal(crate::ast::Literal::Int(n)) if *n >= 1)
+                && matches!(&args[0].node, Expr::Ident(id) if id == param_name)
+                && matches!(&args[1].node, Expr::Literal(crate::ast::Literal::Int(n)) if *n >= 1)
         }
         _ => false,
     }
 }
 
-fn is_skip_ws_advance(expr: &Expr, string_param: &str, pos_param: &str) -> bool {
-    let Expr::FnCall(callee, args) = expr else {
+fn is_skip_ws_advance(expr: &Spanned<Expr>, string_param: &str, pos_param: &str) -> bool {
+    let Expr::FnCall(callee, args) = &expr.node else {
         return false;
     };
     let Some(name) = expr_to_dotted_name(callee) else {
@@ -1425,8 +1430,8 @@ fn is_skip_ws_advance(expr: &Expr, string_param: &str, pos_param: &str) -> bool 
     is_ident(&args[0], string_param) && is_int_plus_positive(&args[1], pos_param)
 }
 
-fn is_skip_ws_same(expr: &Expr, string_param: &str, pos_param: &str) -> bool {
-    let Expr::FnCall(callee, args) = expr else {
+fn is_skip_ws_same(expr: &Spanned<Expr>, string_param: &str, pos_param: &str) -> bool {
+    let Expr::FnCall(callee, args) = &expr.node else {
         return false;
     };
     let Some(name) = expr_to_dotted_name(callee) else {
@@ -1438,7 +1443,7 @@ fn is_skip_ws_same(expr: &Expr, string_param: &str, pos_param: &str) -> bool {
     is_ident(&args[0], string_param) && is_ident(&args[1], pos_param)
 }
 
-fn is_string_pos_advance(expr: &Expr, string_param: &str, pos_param: &str) -> bool {
+fn is_string_pos_advance(expr: &Spanned<Expr>, string_param: &str, pos_param: &str) -> bool {
     is_int_plus_positive(expr, pos_param) || is_skip_ws_advance(expr, string_param, pos_param)
 }
 
@@ -1449,7 +1454,7 @@ enum StringPosEdge {
 }
 
 fn classify_string_pos_edge(
-    expr: &Expr,
+    expr: &Spanned<Expr>,
     string_param: &str,
     pos_param: &str,
 ) -> Option<StringPosEdge> {
@@ -1459,17 +1464,17 @@ fn classify_string_pos_edge(
     if is_string_pos_advance(expr, string_param, pos_param) {
         return Some(StringPosEdge::Advance);
     }
-    if let Expr::FnCall(callee, args) = expr {
+    if let Expr::FnCall(callee, args) = &expr.node {
         let name = expr_to_dotted_name(callee)?;
         if call_matches(&name, "skipWs")
             && args.len() == 2
             && is_ident(&args[0], string_param)
-            && matches!(&args[1], Expr::Ident(id) if id != pos_param)
+            && matches!(&args[1].node, Expr::Ident(id) if id != pos_param)
         {
             return Some(StringPosEdge::Advance);
         }
     }
-    if matches!(expr, Expr::Ident(id) if id != pos_param) {
+    if matches!(&expr.node, Expr::Ident(id) if id != pos_param) {
         return Some(StringPosEdge::Advance);
     }
     None
@@ -1537,12 +1542,12 @@ fn supports_single_string_pos_advance(fd: &FnDef) -> bool {
         return false;
     }
 
-    let recursive_calls: Vec<(Option<&Expr>, Option<&Expr>)> =
-        collect_calls_from_body(fd.body.as_ref())
-            .into_iter()
-            .filter(|(name, _)| call_matches(name, &fd.name))
-            .map(|(_, args)| (args.first().cloned(), args.get(1).cloned()))
-            .collect();
+    type CallPair<'a> = (Option<&'a Spanned<Expr>>, Option<&'a Spanned<Expr>>);
+    let recursive_calls: Vec<CallPair<'_>> = collect_calls_from_body(fd.body.as_ref())
+        .into_iter()
+        .filter(|(name, _)| call_matches(name, &fd.name))
+        .map(|(_, args)| (args.first().cloned(), args.get(1).cloned()))
+        .collect();
     if recursive_calls.is_empty() {
         return false;
     }
@@ -2211,9 +2216,18 @@ mod tests {
         transpile_for_proof_mode, transpile_with_verify_mode,
     };
     use crate::ast::{
-        BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Stmt, TopLevel, TypeDef,
+        BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt, TopLevel, TypeDef,
         TypeVariant, VerifyBlock, VerifyGiven, VerifyGivenDomain, VerifyKind, VerifyLaw,
     };
+
+    /// Shorthand: wrap an Expr in Spanned with line=0.
+    fn sb(e: Expr) -> Spanned<Expr> {
+        Spanned::bare(e)
+    }
+    /// Shorthand: wrap an Expr in Box<Spanned> with line=0.
+    fn sbb(e: Expr) -> Box<Spanned<Expr>> {
+        Box::new(Spanned::bare(e))
+    }
     use crate::codegen::{CodegenContext, build_context};
     use crate::source::parse_source;
     use crate::tco;
@@ -2269,8 +2283,8 @@ mod tests {
             fn_name: "f".to_string(),
             line: 1,
             cases: vec![(
-                Expr::Literal(Literal::Int(1)),
-                Expr::Literal(Literal::Int(1)),
+                sb(Expr::Literal(Literal::Int(1))),
+                sb(Expr::Literal(Literal::Int(1))),
             )],
             case_spans: vec![],
             case_givens: vec![],
@@ -2285,8 +2299,8 @@ mod tests {
             fn_name: "f".to_string(),
             line: 1,
             cases: vec![(
-                Expr::Literal(Literal::Int(1)),
-                Expr::Literal(Literal::Int(1)),
+                sb(Expr::Literal(Literal::Int(1))),
+                sb(Expr::Literal(Literal::Int(1))),
             )],
             case_spans: vec![],
             case_givens: vec![],
@@ -2296,8 +2310,8 @@ mod tests {
             fn_name: "f".to_string(),
             line: 2,
             cases: vec![(
-                Expr::Literal(Literal::Int(2)),
-                Expr::Literal(Literal::Int(2)),
+                sb(Expr::Literal(Literal::Int(2))),
+                sb(Expr::Literal(Literal::Int(2))),
             )],
             case_spans: vec![],
             case_givens: vec![],
@@ -2318,11 +2332,11 @@ mod tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::BinOp(
+            body: Rc::new(FnBody::from_expr(sb(Expr::BinOp(
                 BinOp::Add,
-                Box::new(Expr::Ident("a".to_string())),
-                Box::new(Expr::Ident("b".to_string())),
-            ))),
+                sbb(Expr::Ident("a".to_string())),
+                sbb(Expr::Ident("b".to_string())),
+            )))),
             resolution: None,
         };
         ctx.fn_defs.push(add.clone());
@@ -2332,36 +2346,36 @@ mod tests {
             line: 1,
             cases: vec![
                 (
-                    Expr::FnCall(
-                        Box::new(Expr::Ident("add".to_string())),
+                    sb(Expr::FnCall(
+                        sbb(Expr::Ident("add".to_string())),
                         vec![
-                            Expr::Literal(Literal::Int(1)),
-                            Expr::Literal(Literal::Int(2)),
+                            sb(Expr::Literal(Literal::Int(1))),
+                            sb(Expr::Literal(Literal::Int(2))),
                         ],
-                    ),
-                    Expr::FnCall(
-                        Box::new(Expr::Ident("add".to_string())),
+                    )),
+                    sb(Expr::FnCall(
+                        sbb(Expr::Ident("add".to_string())),
                         vec![
-                            Expr::Literal(Literal::Int(2)),
-                            Expr::Literal(Literal::Int(1)),
+                            sb(Expr::Literal(Literal::Int(2))),
+                            sb(Expr::Literal(Literal::Int(1))),
                         ],
-                    ),
+                    )),
                 ),
                 (
-                    Expr::FnCall(
-                        Box::new(Expr::Ident("add".to_string())),
+                    sb(Expr::FnCall(
+                        sbb(Expr::Ident("add".to_string())),
                         vec![
-                            Expr::Literal(Literal::Int(2)),
-                            Expr::Literal(Literal::Int(3)),
+                            sb(Expr::Literal(Literal::Int(2))),
+                            sb(Expr::Literal(Literal::Int(3))),
                         ],
-                    ),
-                    Expr::FnCall(
-                        Box::new(Expr::Ident("add".to_string())),
+                    )),
+                    sb(Expr::FnCall(
+                        sbb(Expr::Ident("add".to_string())),
                         vec![
-                            Expr::Literal(Literal::Int(3)),
-                            Expr::Literal(Literal::Int(2)),
+                            sb(Expr::Literal(Literal::Int(3))),
+                            sb(Expr::Literal(Literal::Int(2))),
                         ],
-                    ),
+                    )),
                 ),
             ],
             case_spans: vec![],
@@ -2378,20 +2392,26 @@ mod tests {
                         name: "b".to_string(),
                         type_name: "Int".to_string(),
                         domain: VerifyGivenDomain::Explicit(vec![
-                            Expr::Literal(Literal::Int(2)),
-                            Expr::Literal(Literal::Int(3)),
+                            sb(Expr::Literal(Literal::Int(2))),
+                            sb(Expr::Literal(Literal::Int(3))),
                         ]),
                     },
                 ],
                 when: None,
-                lhs: Expr::FnCall(
-                    Box::new(Expr::Ident("add".to_string())),
-                    vec![Expr::Ident("a".to_string()), Expr::Ident("b".to_string())],
-                ),
-                rhs: Expr::FnCall(
-                    Box::new(Expr::Ident("add".to_string())),
-                    vec![Expr::Ident("b".to_string()), Expr::Ident("a".to_string())],
-                ),
+                lhs: sb(Expr::FnCall(
+                    sbb(Expr::Ident("add".to_string())),
+                    vec![
+                        sb(Expr::Ident("a".to_string())),
+                        sb(Expr::Ident("b".to_string())),
+                    ],
+                )),
+                rhs: sb(Expr::FnCall(
+                    sbb(Expr::Ident("add".to_string())),
+                    vec![
+                        sb(Expr::Ident("b".to_string())),
+                        sb(Expr::Ident("a".to_string())),
+                    ],
+                )),
                 sample_guards: vec![],
             })),
         }));
@@ -2774,8 +2794,8 @@ verify square law squareSpec
             fn_name: "idLaw".to_string(),
             line: 1,
             cases: vec![(
-                Expr::Literal(Literal::Int(1)),
-                Expr::Literal(Literal::Int(1)),
+                sb(Expr::Literal(Literal::Int(1))),
+                sb(Expr::Literal(Literal::Int(1))),
             )],
             case_spans: vec![],
             case_givens: vec![],
@@ -2787,8 +2807,8 @@ verify square law squareSpec
                     domain: VerifyGivenDomain::IntRange { start: 1, end: 2 },
                 }],
                 when: None,
-                lhs: Expr::Ident("x".to_string()),
-                rhs: Expr::Ident("x".to_string()),
+                lhs: sb(Expr::Ident("x".to_string())),
+                rhs: sb(Expr::Ident("x".to_string())),
                 sample_guards: vec![],
             })),
         }));
@@ -2810,14 +2830,14 @@ verify square law squareSpec
             fn_name: "add".to_string(),
             line: 10,
             cases: vec![(
-                Expr::FnCall(
-                    Box::new(Expr::Ident("add".to_string())),
+                sb(Expr::FnCall(
+                    sbb(Expr::Ident("add".to_string())),
                     vec![
-                        Expr::Literal(Literal::Int(1)),
-                        Expr::Literal(Literal::Int(0)),
+                        sb(Expr::Literal(Literal::Int(1))),
+                        sb(Expr::Literal(Literal::Int(0))),
                     ],
-                ),
-                Expr::Literal(Literal::Int(1)),
+                )),
+                sb(Expr::Literal(Literal::Int(1))),
             )],
             case_spans: vec![],
             case_givens: vec![],
@@ -2827,16 +2847,19 @@ verify square law squareSpec
                     name: "a".to_string(),
                     type_name: "Int".to_string(),
                     domain: VerifyGivenDomain::Explicit(vec![
-                        Expr::Literal(Literal::Int(0)),
-                        Expr::Literal(Literal::Int(1)),
+                        sb(Expr::Literal(Literal::Int(0))),
+                        sb(Expr::Literal(Literal::Int(1))),
                     ]),
                 }],
                 when: None,
-                lhs: Expr::FnCall(
-                    Box::new(Expr::Ident("add".to_string())),
-                    vec![Expr::Ident("a".to_string()), Expr::Literal(Literal::Int(0))],
-                ),
-                rhs: Expr::Ident("a".to_string()),
+                lhs: sb(Expr::FnCall(
+                    sbb(Expr::Ident("add".to_string())),
+                    vec![
+                        sb(Expr::Ident("a".to_string())),
+                        sb(Expr::Literal(Literal::Int(0))),
+                    ],
+                )),
+                rhs: sb(Expr::Ident("a".to_string())),
                 sample_guards: vec![],
             })),
         }));
@@ -2858,32 +2881,32 @@ verify square law squareSpec
             fn_name: "add".to_string(),
             line: 20,
             cases: vec![(
-                Expr::FnCall(
-                    Box::new(Expr::Ident("add".to_string())),
+                sb(Expr::FnCall(
+                    sbb(Expr::Ident("add".to_string())),
                     vec![
-                        Expr::FnCall(
-                            Box::new(Expr::Ident("add".to_string())),
+                        sb(Expr::FnCall(
+                            sbb(Expr::Ident("add".to_string())),
                             vec![
-                                Expr::Literal(Literal::Int(1)),
-                                Expr::Literal(Literal::Int(2)),
+                                sb(Expr::Literal(Literal::Int(1))),
+                                sb(Expr::Literal(Literal::Int(2))),
                             ],
-                        ),
-                        Expr::Literal(Literal::Int(3)),
+                        )),
+                        sb(Expr::Literal(Literal::Int(3))),
                     ],
-                ),
-                Expr::FnCall(
-                    Box::new(Expr::Ident("add".to_string())),
+                )),
+                sb(Expr::FnCall(
+                    sbb(Expr::Ident("add".to_string())),
                     vec![
-                        Expr::Literal(Literal::Int(1)),
-                        Expr::FnCall(
-                            Box::new(Expr::Ident("add".to_string())),
+                        sb(Expr::Literal(Literal::Int(1))),
+                        sb(Expr::FnCall(
+                            sbb(Expr::Ident("add".to_string())),
                             vec![
-                                Expr::Literal(Literal::Int(2)),
-                                Expr::Literal(Literal::Int(3)),
+                                sb(Expr::Literal(Literal::Int(2))),
+                                sb(Expr::Literal(Literal::Int(3))),
                             ],
-                        ),
+                        )),
                     ],
-                ),
+                )),
             )],
             case_spans: vec![],
             case_givens: vec![],
@@ -2893,40 +2916,52 @@ verify square law squareSpec
                     VerifyGiven {
                         name: "a".to_string(),
                         type_name: "Int".to_string(),
-                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(1))]),
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(
+                            1,
+                        )))]),
                     },
                     VerifyGiven {
                         name: "b".to_string(),
                         type_name: "Int".to_string(),
-                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(2))]),
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(
+                            2,
+                        )))]),
                     },
                     VerifyGiven {
                         name: "c".to_string(),
                         type_name: "Int".to_string(),
-                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(3))]),
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(
+                            3,
+                        )))]),
                     },
                 ],
                 when: None,
-                lhs: Expr::FnCall(
-                    Box::new(Expr::Ident("add".to_string())),
+                lhs: sb(Expr::FnCall(
+                    sbb(Expr::Ident("add".to_string())),
                     vec![
-                        Expr::FnCall(
-                            Box::new(Expr::Ident("add".to_string())),
-                            vec![Expr::Ident("a".to_string()), Expr::Ident("b".to_string())],
-                        ),
-                        Expr::Ident("c".to_string()),
+                        sb(Expr::FnCall(
+                            sbb(Expr::Ident("add".to_string())),
+                            vec![
+                                sb(Expr::Ident("a".to_string())),
+                                sb(Expr::Ident("b".to_string())),
+                            ],
+                        )),
+                        sb(Expr::Ident("c".to_string())),
                     ],
-                ),
-                rhs: Expr::FnCall(
-                    Box::new(Expr::Ident("add".to_string())),
+                )),
+                rhs: sb(Expr::FnCall(
+                    sbb(Expr::Ident("add".to_string())),
                     vec![
-                        Expr::Ident("a".to_string()),
-                        Expr::FnCall(
-                            Box::new(Expr::Ident("add".to_string())),
-                            vec![Expr::Ident("b".to_string()), Expr::Ident("c".to_string())],
-                        ),
+                        sb(Expr::Ident("a".to_string())),
+                        sb(Expr::FnCall(
+                            sbb(Expr::Ident("add".to_string())),
+                            vec![
+                                sb(Expr::Ident("b".to_string())),
+                                sb(Expr::Ident("c".to_string())),
+                            ],
+                        )),
                     ],
-                ),
+                )),
                 sample_guards: vec![],
             })),
         }));
@@ -2956,11 +2991,11 @@ verify square law squareSpec
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::BinOp(
+            body: Rc::new(FnBody::from_expr(sb(Expr::BinOp(
                 BinOp::Sub,
-                Box::new(Expr::Ident("a".to_string())),
-                Box::new(Expr::Ident("b".to_string())),
-            ))),
+                sbb(Expr::Ident("a".to_string())),
+                sbb(Expr::Ident("b".to_string())),
+            )))),
             resolution: None,
         };
         ctx.fn_defs.push(sub.clone());
@@ -2970,14 +3005,14 @@ verify square law squareSpec
             fn_name: "sub".to_string(),
             line: 10,
             cases: vec![(
-                Expr::FnCall(
-                    Box::new(Expr::Ident("sub".to_string())),
+                sb(Expr::FnCall(
+                    sbb(Expr::Ident("sub".to_string())),
                     vec![
-                        Expr::Literal(Literal::Int(2)),
-                        Expr::Literal(Literal::Int(0)),
+                        sb(Expr::Literal(Literal::Int(2))),
+                        sb(Expr::Literal(Literal::Int(0))),
                     ],
-                ),
-                Expr::Literal(Literal::Int(2)),
+                )),
+                sb(Expr::Literal(Literal::Int(2))),
             )],
             case_spans: vec![],
             case_givens: vec![],
@@ -2986,14 +3021,17 @@ verify square law squareSpec
                 givens: vec![VerifyGiven {
                     name: "a".to_string(),
                     type_name: "Int".to_string(),
-                    domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(2))]),
+                    domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(2)))]),
                 }],
                 when: None,
-                lhs: Expr::FnCall(
-                    Box::new(Expr::Ident("sub".to_string())),
-                    vec![Expr::Ident("a".to_string()), Expr::Literal(Literal::Int(0))],
-                ),
-                rhs: Expr::Ident("a".to_string()),
+                lhs: sb(Expr::FnCall(
+                    sbb(Expr::Ident("sub".to_string())),
+                    vec![
+                        sb(Expr::Ident("a".to_string())),
+                        sb(Expr::Literal(Literal::Int(0))),
+                    ],
+                )),
+                rhs: sb(Expr::Ident("a".to_string())),
                 sample_guards: vec![],
             })),
         }));
@@ -3001,24 +3039,24 @@ verify square law squareSpec
             fn_name: "sub".to_string(),
             line: 20,
             cases: vec![(
-                Expr::FnCall(
-                    Box::new(Expr::Ident("sub".to_string())),
+                sb(Expr::FnCall(
+                    sbb(Expr::Ident("sub".to_string())),
                     vec![
-                        Expr::Literal(Literal::Int(2)),
-                        Expr::Literal(Literal::Int(1)),
+                        sb(Expr::Literal(Literal::Int(2))),
+                        sb(Expr::Literal(Literal::Int(1))),
                     ],
-                ),
-                Expr::BinOp(
+                )),
+                sb(Expr::BinOp(
                     BinOp::Sub,
-                    Box::new(Expr::Literal(Literal::Int(0))),
-                    Box::new(Expr::FnCall(
-                        Box::new(Expr::Ident("sub".to_string())),
+                    sbb(Expr::Literal(Literal::Int(0))),
+                    sbb(Expr::FnCall(
+                        sbb(Expr::Ident("sub".to_string())),
                         vec![
-                            Expr::Literal(Literal::Int(1)),
-                            Expr::Literal(Literal::Int(2)),
+                            sb(Expr::Literal(Literal::Int(1))),
+                            sb(Expr::Literal(Literal::Int(2))),
                         ],
                     )),
-                ),
+                )),
             )],
             case_spans: vec![],
             case_givens: vec![],
@@ -3028,27 +3066,37 @@ verify square law squareSpec
                     VerifyGiven {
                         name: "a".to_string(),
                         type_name: "Int".to_string(),
-                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(2))]),
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(
+                            2,
+                        )))]),
                     },
                     VerifyGiven {
                         name: "b".to_string(),
                         type_name: "Int".to_string(),
-                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(1))]),
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(
+                            1,
+                        )))]),
                     },
                 ],
                 when: None,
-                lhs: Expr::FnCall(
-                    Box::new(Expr::Ident("sub".to_string())),
-                    vec![Expr::Ident("a".to_string()), Expr::Ident("b".to_string())],
-                ),
-                rhs: Expr::BinOp(
+                lhs: sb(Expr::FnCall(
+                    sbb(Expr::Ident("sub".to_string())),
+                    vec![
+                        sb(Expr::Ident("a".to_string())),
+                        sb(Expr::Ident("b".to_string())),
+                    ],
+                )),
+                rhs: sb(Expr::BinOp(
                     BinOp::Sub,
-                    Box::new(Expr::Literal(Literal::Int(0))),
-                    Box::new(Expr::FnCall(
-                        Box::new(Expr::Ident("sub".to_string())),
-                        vec![Expr::Ident("b".to_string()), Expr::Ident("a".to_string())],
+                    sbb(Expr::Literal(Literal::Int(0))),
+                    sbb(Expr::FnCall(
+                        sbb(Expr::Ident("sub".to_string())),
+                        vec![
+                            sb(Expr::Ident("b".to_string())),
+                            sb(Expr::Ident("a".to_string())),
+                        ],
                     )),
-                ),
+                )),
                 sample_guards: vec![],
             })),
         }));
@@ -3080,11 +3128,11 @@ verify square law squareSpec
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::BinOp(
+            body: Rc::new(FnBody::from_expr(sb(Expr::BinOp(
                 BinOp::Add,
-                Box::new(Expr::Ident("a".to_string())),
-                Box::new(Expr::Ident("b".to_string())),
-            ))),
+                sbb(Expr::Ident("a".to_string())),
+                sbb(Expr::Ident("b".to_string())),
+            )))),
             resolution: None,
         };
         let add_one = FnDef {
@@ -3094,11 +3142,11 @@ verify square law squareSpec
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::BinOp(
+            body: Rc::new(FnBody::from_expr(sb(Expr::BinOp(
                 BinOp::Add,
-                Box::new(Expr::Ident("n".to_string())),
-                Box::new(Expr::Literal(Literal::Int(1))),
-            ))),
+                sbb(Expr::Ident("n".to_string())),
+                sbb(Expr::Literal(Literal::Int(1))),
+            )))),
             resolution: None,
         };
         ctx.fn_defs.push(add.clone());
@@ -3109,17 +3157,17 @@ verify square law squareSpec
             fn_name: "addOne".to_string(),
             line: 3,
             cases: vec![(
-                Expr::FnCall(
-                    Box::new(Expr::Ident("addOne".to_string())),
-                    vec![Expr::Literal(Literal::Int(2))],
-                ),
-                Expr::FnCall(
-                    Box::new(Expr::Ident("add".to_string())),
+                sb(Expr::FnCall(
+                    sbb(Expr::Ident("addOne".to_string())),
+                    vec![sb(Expr::Literal(Literal::Int(2)))],
+                )),
+                sb(Expr::FnCall(
+                    sbb(Expr::Ident("add".to_string())),
                     vec![
-                        Expr::Literal(Literal::Int(2)),
-                        Expr::Literal(Literal::Int(1)),
+                        sb(Expr::Literal(Literal::Int(2))),
+                        sb(Expr::Literal(Literal::Int(1))),
                     ],
-                ),
+                )),
             )],
             case_spans: vec![],
             case_givens: vec![],
@@ -3128,17 +3176,20 @@ verify square law squareSpec
                 givens: vec![VerifyGiven {
                     name: "n".to_string(),
                     type_name: "Int".to_string(),
-                    domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(2))]),
+                    domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(2)))]),
                 }],
                 when: None,
-                lhs: Expr::FnCall(
-                    Box::new(Expr::Ident("addOne".to_string())),
-                    vec![Expr::Ident("n".to_string())],
-                ),
-                rhs: Expr::FnCall(
-                    Box::new(Expr::Ident("add".to_string())),
-                    vec![Expr::Ident("n".to_string()), Expr::Literal(Literal::Int(1))],
-                ),
+                lhs: sb(Expr::FnCall(
+                    sbb(Expr::Ident("addOne".to_string())),
+                    vec![sb(Expr::Ident("n".to_string()))],
+                )),
+                rhs: sb(Expr::FnCall(
+                    sbb(Expr::Ident("add".to_string())),
+                    vec![
+                        sb(Expr::Ident("n".to_string())),
+                        sb(Expr::Literal(Literal::Int(1))),
+                    ],
+                )),
                 sample_guards: vec![],
             })),
         }));
@@ -3160,41 +3211,50 @@ verify square law squareSpec
     fn transpile_auto_proves_direct_map_set_laws() {
         let mut ctx = empty_ctx();
 
-        let map_set = |m: Expr, k: Expr, v: Expr| {
-            Expr::FnCall(
-                Box::new(Expr::Attr(
-                    Box::new(Expr::Ident("Map".to_string())),
+        let map_set = |m: Spanned<Expr>, k: Spanned<Expr>, v: Spanned<Expr>| {
+            sb(Expr::FnCall(
+                sbb(Expr::Attr(
+                    sbb(Expr::Ident("Map".to_string())),
                     "set".to_string(),
                 )),
                 vec![m, k, v],
-            )
+            ))
         };
-        let map_has = |m: Expr, k: Expr| {
-            Expr::FnCall(
-                Box::new(Expr::Attr(
-                    Box::new(Expr::Ident("Map".to_string())),
+        let map_has = |m: Spanned<Expr>, k: Spanned<Expr>| {
+            sb(Expr::FnCall(
+                sbb(Expr::Attr(
+                    sbb(Expr::Ident("Map".to_string())),
                     "has".to_string(),
                 )),
                 vec![m, k],
-            )
+            ))
         };
-        let map_get = |m: Expr, k: Expr| {
-            Expr::FnCall(
-                Box::new(Expr::Attr(
-                    Box::new(Expr::Ident("Map".to_string())),
+        let map_get = |m: Spanned<Expr>, k: Spanned<Expr>| {
+            sb(Expr::FnCall(
+                sbb(Expr::Attr(
+                    sbb(Expr::Ident("Map".to_string())),
                     "get".to_string(),
                 )),
                 vec![m, k],
-            )
+            ))
         };
-        let some = |v: Expr| {
-            Expr::FnCall(
-                Box::new(Expr::Attr(
-                    Box::new(Expr::Ident("Option".to_string())),
+        let some = |v: Spanned<Expr>| {
+            sb(Expr::FnCall(
+                sbb(Expr::Attr(
+                    sbb(Expr::Ident("Option".to_string())),
                     "Some".to_string(),
                 )),
                 vec![v],
-            )
+            ))
+        };
+        let map_empty = || {
+            sb(Expr::FnCall(
+                sbb(Expr::Attr(
+                    sbb(Expr::Ident("Map".to_string())),
+                    "empty".to_string(),
+                )),
+                vec![],
+            ))
         };
 
         ctx.items.push(TopLevel::Verify(VerifyBlock {
@@ -3203,13 +3263,13 @@ verify square law squareSpec
             cases: vec![(
                 map_has(
                     map_set(
-                        Expr::Ident("m".to_string()),
-                        Expr::Ident("k".to_string()),
-                        Expr::Ident("v".to_string()),
+                        sb(Expr::Ident("m".to_string())),
+                        sb(Expr::Ident("k".to_string())),
+                        sb(Expr::Ident("v".to_string())),
                     ),
-                    Expr::Ident("k".to_string()),
+                    sb(Expr::Ident("k".to_string())),
                 ),
-                Expr::Literal(Literal::Bool(true)),
+                sb(Expr::Literal(Literal::Bool(true))),
             )],
             case_spans: vec![],
             case_givens: vec![],
@@ -3219,37 +3279,33 @@ verify square law squareSpec
                     VerifyGiven {
                         name: "m".to_string(),
                         type_name: "Map<String, Int>".to_string(),
-                        domain: VerifyGivenDomain::Explicit(vec![Expr::FnCall(
-                            Box::new(Expr::Attr(
-                                Box::new(Expr::Ident("Map".to_string())),
-                                "empty".to_string(),
-                            )),
-                            vec![],
-                        )]),
+                        domain: VerifyGivenDomain::Explicit(vec![map_empty()]),
                     },
                     VerifyGiven {
                         name: "k".to_string(),
                         type_name: "String".to_string(),
-                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Str(
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Str(
                             "a".to_string(),
-                        ))]),
+                        )))]),
                     },
                     VerifyGiven {
                         name: "v".to_string(),
                         type_name: "Int".to_string(),
-                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(1))]),
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(
+                            1,
+                        )))]),
                     },
                 ],
                 when: None,
                 lhs: map_has(
                     map_set(
-                        Expr::Ident("m".to_string()),
-                        Expr::Ident("k".to_string()),
-                        Expr::Ident("v".to_string()),
+                        sb(Expr::Ident("m".to_string())),
+                        sb(Expr::Ident("k".to_string())),
+                        sb(Expr::Ident("v".to_string())),
                     ),
-                    Expr::Ident("k".to_string()),
+                    sb(Expr::Ident("k".to_string())),
                 ),
-                rhs: Expr::Literal(Literal::Bool(true)),
+                rhs: sb(Expr::Literal(Literal::Bool(true))),
                 sample_guards: vec![],
             })),
         }));
@@ -3260,13 +3316,13 @@ verify square law squareSpec
             cases: vec![(
                 map_get(
                     map_set(
-                        Expr::Ident("m".to_string()),
-                        Expr::Ident("k".to_string()),
-                        Expr::Ident("v".to_string()),
+                        sb(Expr::Ident("m".to_string())),
+                        sb(Expr::Ident("k".to_string())),
+                        sb(Expr::Ident("v".to_string())),
                     ),
-                    Expr::Ident("k".to_string()),
+                    sb(Expr::Ident("k".to_string())),
                 ),
-                some(Expr::Ident("v".to_string())),
+                some(sb(Expr::Ident("v".to_string()))),
             )],
             case_spans: vec![],
             case_givens: vec![],
@@ -3276,37 +3332,33 @@ verify square law squareSpec
                     VerifyGiven {
                         name: "m".to_string(),
                         type_name: "Map<String, Int>".to_string(),
-                        domain: VerifyGivenDomain::Explicit(vec![Expr::FnCall(
-                            Box::new(Expr::Attr(
-                                Box::new(Expr::Ident("Map".to_string())),
-                                "empty".to_string(),
-                            )),
-                            vec![],
-                        )]),
+                        domain: VerifyGivenDomain::Explicit(vec![map_empty()]),
                     },
                     VerifyGiven {
                         name: "k".to_string(),
                         type_name: "String".to_string(),
-                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Str(
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Str(
                             "a".to_string(),
-                        ))]),
+                        )))]),
                     },
                     VerifyGiven {
                         name: "v".to_string(),
                         type_name: "Int".to_string(),
-                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(1))]),
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(
+                            1,
+                        )))]),
                     },
                 ],
                 when: None,
                 lhs: map_get(
                     map_set(
-                        Expr::Ident("m".to_string()),
-                        Expr::Ident("k".to_string()),
-                        Expr::Ident("v".to_string()),
+                        sb(Expr::Ident("m".to_string())),
+                        sb(Expr::Ident("k".to_string())),
+                        sb(Expr::Ident("v".to_string())),
                     ),
-                    Expr::Ident("k".to_string()),
+                    sb(Expr::Ident("k".to_string())),
                 ),
-                rhs: some(Expr::Ident("v".to_string())),
+                rhs: some(sb(Expr::Ident("v".to_string()))),
                 sample_guards: vec![],
             })),
         }));
@@ -3364,50 +3416,59 @@ verify mirror law involutive
     fn transpile_auto_proves_map_update_laws() {
         let mut ctx = empty_ctx();
 
-        let map_get = |m: Expr, k: Expr| {
-            Expr::FnCall(
-                Box::new(Expr::Attr(
-                    Box::new(Expr::Ident("Map".to_string())),
+        let map_get = |m: Spanned<Expr>, k: Spanned<Expr>| {
+            sb(Expr::FnCall(
+                sbb(Expr::Attr(
+                    sbb(Expr::Ident("Map".to_string())),
                     "get".to_string(),
                 )),
                 vec![m, k],
-            )
+            ))
         };
-        let map_set = |m: Expr, k: Expr, v: Expr| {
-            Expr::FnCall(
-                Box::new(Expr::Attr(
-                    Box::new(Expr::Ident("Map".to_string())),
+        let map_set = |m: Spanned<Expr>, k: Spanned<Expr>, v: Spanned<Expr>| {
+            sb(Expr::FnCall(
+                sbb(Expr::Attr(
+                    sbb(Expr::Ident("Map".to_string())),
                     "set".to_string(),
                 )),
                 vec![m, k, v],
-            )
+            ))
         };
-        let map_has = |m: Expr, k: Expr| {
-            Expr::FnCall(
-                Box::new(Expr::Attr(
-                    Box::new(Expr::Ident("Map".to_string())),
+        let map_has = |m: Spanned<Expr>, k: Spanned<Expr>| {
+            sb(Expr::FnCall(
+                sbb(Expr::Attr(
+                    sbb(Expr::Ident("Map".to_string())),
                     "has".to_string(),
                 )),
                 vec![m, k],
-            )
+            ))
         };
-        let option_some = |v: Expr| {
-            Expr::FnCall(
-                Box::new(Expr::Attr(
-                    Box::new(Expr::Ident("Option".to_string())),
+        let option_some = |v: Spanned<Expr>| {
+            sb(Expr::FnCall(
+                sbb(Expr::Attr(
+                    sbb(Expr::Ident("Option".to_string())),
                     "Some".to_string(),
                 )),
                 vec![v],
-            )
+            ))
         };
-        let option_with_default = |opt: Expr, def: Expr| {
-            Expr::FnCall(
-                Box::new(Expr::Attr(
-                    Box::new(Expr::Ident("Option".to_string())),
+        let option_with_default = |opt: Spanned<Expr>, def: Spanned<Expr>| {
+            sb(Expr::FnCall(
+                sbb(Expr::Attr(
+                    sbb(Expr::Ident("Option".to_string())),
                     "withDefault".to_string(),
                 )),
                 vec![opt, def],
-            )
+            ))
+        };
+        let map_empty = || {
+            sb(Expr::FnCall(
+                sbb(Expr::Attr(
+                    sbb(Expr::Ident("Map".to_string())),
+                    "empty".to_string(),
+                )),
+                vec![],
+            ))
         };
 
         let add_one = FnDef {
@@ -3417,11 +3478,11 @@ verify mirror law involutive
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::BinOp(
+            body: Rc::new(FnBody::from_expr(sb(Expr::BinOp(
                 BinOp::Add,
-                Box::new(Expr::Ident("n".to_string())),
-                Box::new(Expr::Literal(Literal::Int(1))),
-            ))),
+                sbb(Expr::Ident("n".to_string())),
+                sbb(Expr::Literal(Literal::Int(1))),
+            )))),
             resolution: None,
         };
         ctx.fn_defs.push(add_one.clone());
@@ -3442,12 +3503,12 @@ verify mirror law involutive
                     "current".to_string(),
                     None,
                     map_get(
-                        Expr::Ident("counts".to_string()),
-                        Expr::Ident("word".to_string()),
+                        sb(Expr::Ident("counts".to_string())),
+                        sb(Expr::Ident("word".to_string())),
                     ),
                 ),
-                Stmt::Expr(Expr::Match {
-                    subject: Box::new(Expr::Ident("current".to_string())),
+                Stmt::Expr(sb(Expr::Match {
+                    subject: sbb(Expr::Ident("current".to_string())),
                     arms: vec![
                         MatchArm {
                             pattern: Pattern::Constructor(
@@ -3455,26 +3516,25 @@ verify mirror law involutive
                                 vec!["n".to_string()],
                             ),
                             body: Box::new(map_set(
-                                Expr::Ident("counts".to_string()),
-                                Expr::Ident("word".to_string()),
-                                Expr::BinOp(
+                                sb(Expr::Ident("counts".to_string())),
+                                sb(Expr::Ident("word".to_string())),
+                                sb(Expr::BinOp(
                                     BinOp::Add,
-                                    Box::new(Expr::Ident("n".to_string())),
-                                    Box::new(Expr::Literal(Literal::Int(1))),
-                                ),
+                                    sbb(Expr::Ident("n".to_string())),
+                                    sbb(Expr::Literal(Literal::Int(1))),
+                                )),
                             )),
                         },
                         MatchArm {
                             pattern: Pattern::Constructor("Option.None".to_string(), vec![]),
                             body: Box::new(map_set(
-                                Expr::Ident("counts".to_string()),
-                                Expr::Ident("word".to_string()),
-                                Expr::Literal(Literal::Int(1)),
+                                sb(Expr::Ident("counts".to_string())),
+                                sb(Expr::Ident("word".to_string())),
+                                sb(Expr::Literal(Literal::Int(1))),
                             )),
                         },
                     ],
-                    line: 2,
-                }),
+                })),
             ])),
             resolution: None,
         };
@@ -3486,16 +3546,16 @@ verify mirror law involutive
             line: 10,
             cases: vec![(
                 map_has(
-                    Expr::FnCall(
-                        Box::new(Expr::Ident("incCount".to_string())),
+                    sb(Expr::FnCall(
+                        sbb(Expr::Ident("incCount".to_string())),
                         vec![
-                            Expr::Ident("counts".to_string()),
-                            Expr::Ident("word".to_string()),
+                            sb(Expr::Ident("counts".to_string())),
+                            sb(Expr::Ident("word".to_string())),
                         ],
-                    ),
-                    Expr::Ident("word".to_string()),
+                    )),
+                    sb(Expr::Ident("word".to_string())),
                 ),
-                Expr::Literal(Literal::Bool(true)),
+                sb(Expr::Literal(Literal::Bool(true))),
             )],
             case_spans: vec![],
             case_givens: vec![],
@@ -3505,34 +3565,28 @@ verify mirror law involutive
                     VerifyGiven {
                         name: "counts".to_string(),
                         type_name: "Map<String, Int>".to_string(),
-                        domain: VerifyGivenDomain::Explicit(vec![Expr::FnCall(
-                            Box::new(Expr::Attr(
-                                Box::new(Expr::Ident("Map".to_string())),
-                                "empty".to_string(),
-                            )),
-                            vec![],
-                        )]),
+                        domain: VerifyGivenDomain::Explicit(vec![map_empty()]),
                     },
                     VerifyGiven {
                         name: "word".to_string(),
                         type_name: "String".to_string(),
-                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Str(
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Str(
                             "a".to_string(),
-                        ))]),
+                        )))]),
                     },
                 ],
                 when: None,
                 lhs: map_has(
-                    Expr::FnCall(
-                        Box::new(Expr::Ident("incCount".to_string())),
+                    sb(Expr::FnCall(
+                        sbb(Expr::Ident("incCount".to_string())),
                         vec![
-                            Expr::Ident("counts".to_string()),
-                            Expr::Ident("word".to_string()),
+                            sb(Expr::Ident("counts".to_string())),
+                            sb(Expr::Ident("word".to_string())),
                         ],
-                    ),
-                    Expr::Ident("word".to_string()),
+                    )),
+                    sb(Expr::Ident("word".to_string())),
                 ),
-                rhs: Expr::Literal(Literal::Bool(true)),
+                rhs: sb(Expr::Literal(Literal::Bool(true))),
                 sample_guards: vec![],
             })),
         }));
@@ -3542,25 +3596,25 @@ verify mirror law involutive
             line: 20,
             cases: vec![(
                 map_get(
-                    Expr::FnCall(
-                        Box::new(Expr::Ident("incCount".to_string())),
+                    sb(Expr::FnCall(
+                        sbb(Expr::Ident("incCount".to_string())),
                         vec![
-                            Expr::Ident("counts".to_string()),
-                            Expr::Literal(Literal::Str("a".to_string())),
+                            sb(Expr::Ident("counts".to_string())),
+                            sb(Expr::Literal(Literal::Str("a".to_string()))),
                         ],
-                    ),
-                    Expr::Literal(Literal::Str("a".to_string())),
+                    )),
+                    sb(Expr::Literal(Literal::Str("a".to_string()))),
                 ),
-                option_some(Expr::FnCall(
-                    Box::new(Expr::Ident("addOne".to_string())),
+                option_some(sb(Expr::FnCall(
+                    sbb(Expr::Ident("addOne".to_string())),
                     vec![option_with_default(
                         map_get(
-                            Expr::Ident("counts".to_string()),
-                            Expr::Literal(Literal::Str("a".to_string())),
+                            sb(Expr::Ident("counts".to_string())),
+                            sb(Expr::Literal(Literal::Str("a".to_string()))),
                         ),
-                        Expr::Literal(Literal::Int(0)),
+                        sb(Expr::Literal(Literal::Int(0))),
                     )],
-                )),
+                ))),
             )],
             case_spans: vec![],
             case_givens: vec![],
@@ -3569,35 +3623,29 @@ verify mirror law involutive
                 givens: vec![VerifyGiven {
                     name: "counts".to_string(),
                     type_name: "Map<String, Int>".to_string(),
-                    domain: VerifyGivenDomain::Explicit(vec![Expr::FnCall(
-                        Box::new(Expr::Attr(
-                            Box::new(Expr::Ident("Map".to_string())),
-                            "empty".to_string(),
-                        )),
-                        vec![],
-                    )]),
+                    domain: VerifyGivenDomain::Explicit(vec![map_empty()]),
                 }],
                 when: None,
                 lhs: map_get(
-                    Expr::FnCall(
-                        Box::new(Expr::Ident("incCount".to_string())),
+                    sb(Expr::FnCall(
+                        sbb(Expr::Ident("incCount".to_string())),
                         vec![
-                            Expr::Ident("counts".to_string()),
-                            Expr::Literal(Literal::Str("a".to_string())),
+                            sb(Expr::Ident("counts".to_string())),
+                            sb(Expr::Literal(Literal::Str("a".to_string()))),
                         ],
-                    ),
-                    Expr::Literal(Literal::Str("a".to_string())),
+                    )),
+                    sb(Expr::Literal(Literal::Str("a".to_string()))),
                 ),
-                rhs: option_some(Expr::FnCall(
-                    Box::new(Expr::Ident("addOne".to_string())),
+                rhs: option_some(sb(Expr::FnCall(
+                    sbb(Expr::Ident("addOne".to_string())),
                     vec![option_with_default(
                         map_get(
-                            Expr::Ident("counts".to_string()),
-                            Expr::Literal(Literal::Str("a".to_string())),
+                            sb(Expr::Ident("counts".to_string())),
+                            sb(Expr::Literal(Literal::Str("a".to_string()))),
                         ),
-                        Expr::Literal(Literal::Int(0)),
+                        sb(Expr::Literal(Literal::Int(0))),
                     )],
-                )),
+                ))),
                 sample_guards: vec![],
             })),
         }));
@@ -3631,11 +3679,11 @@ verify mirror law involutive
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::BinOp(
+            body: Rc::new(FnBody::from_expr(sb(Expr::BinOp(
                 BinOp::Add,
-                Box::new(Expr::Ident("a".to_string())),
-                Box::new(Expr::Ident("b".to_string())),
-            ))),
+                sbb(Expr::Ident("a".to_string())),
+                sbb(Expr::Ident("b".to_string())),
+            )))),
             resolution: None,
         };
         ctx.fn_defs.push(add.clone());
@@ -3644,20 +3692,20 @@ verify mirror law involutive
             fn_name: "add".to_string(),
             line: 1,
             cases: vec![(
-                Expr::FnCall(
-                    Box::new(Expr::Ident("add".to_string())),
+                sb(Expr::FnCall(
+                    sbb(Expr::Ident("add".to_string())),
                     vec![
-                        Expr::Literal(Literal::Int(-2)),
-                        Expr::Literal(Literal::Int(-1)),
+                        sb(Expr::Literal(Literal::Int(-2))),
+                        sb(Expr::Literal(Literal::Int(-1))),
                     ],
-                ),
-                Expr::FnCall(
-                    Box::new(Expr::Ident("add".to_string())),
+                )),
+                sb(Expr::FnCall(
+                    sbb(Expr::Ident("add".to_string())),
                     vec![
-                        Expr::Literal(Literal::Int(-1)),
-                        Expr::Literal(Literal::Int(-2)),
+                        sb(Expr::Literal(Literal::Int(-1))),
+                        sb(Expr::Literal(Literal::Int(-2))),
                     ],
-                ),
+                )),
             )],
             case_spans: vec![],
             case_givens: vec![],
@@ -3667,23 +3715,33 @@ verify mirror law involutive
                     VerifyGiven {
                         name: "a".to_string(),
                         type_name: "Int".to_string(),
-                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(-2))]),
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(
+                            -2,
+                        )))]),
                     },
                     VerifyGiven {
                         name: "b".to_string(),
                         type_name: "Int".to_string(),
-                        domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(-1))]),
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(
+                            -1,
+                        )))]),
                     },
                 ],
                 when: None,
-                lhs: Expr::FnCall(
-                    Box::new(Expr::Ident("add".to_string())),
-                    vec![Expr::Ident("a".to_string()), Expr::Ident("b".to_string())],
-                ),
-                rhs: Expr::FnCall(
-                    Box::new(Expr::Ident("add".to_string())),
-                    vec![Expr::Ident("b".to_string()), Expr::Ident("a".to_string())],
-                ),
+                lhs: sb(Expr::FnCall(
+                    sbb(Expr::Ident("add".to_string())),
+                    vec![
+                        sb(Expr::Ident("a".to_string())),
+                        sb(Expr::Ident("b".to_string())),
+                    ],
+                )),
+                rhs: sb(Expr::FnCall(
+                    sbb(Expr::Ident("add".to_string())),
+                    vec![
+                        sb(Expr::Ident("b".to_string())),
+                        sb(Expr::Ident("a".to_string())),
+                    ],
+                )),
                 sample_guards: vec![],
             })),
         }));
@@ -3709,7 +3767,7 @@ verify mirror law involutive
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Ident("x".to_string()))),
+            body: Rc::new(FnBody::from_expr(sb(Expr::Ident("x".to_string())))),
             resolution: None,
         };
         ctx.fn_defs.push(f.clone());
@@ -3718,8 +3776,8 @@ verify mirror law involutive
             fn_name: "f".to_string(),
             line: 1,
             cases: vec![(
-                Expr::Literal(Literal::Int(1)),
-                Expr::Literal(Literal::Int(1)),
+                sb(Expr::Literal(Literal::Int(1))),
+                sb(Expr::Literal(Literal::Int(1))),
             )],
             case_spans: vec![],
             case_givens: vec![],
@@ -3729,8 +3787,8 @@ verify mirror law involutive
             fn_name: "f".to_string(),
             line: 2,
             cases: vec![(
-                Expr::Literal(Literal::Int(2)),
-                Expr::Literal(Literal::Int(2)),
+                sb(Expr::Literal(Literal::Int(2))),
+                sb(Expr::Literal(Literal::Int(2))),
             )],
             case_spans: vec![],
             case_givens: vec![],
@@ -3739,11 +3797,11 @@ verify mirror law involutive
                 givens: vec![VerifyGiven {
                     name: "x".to_string(),
                     type_name: "Int".to_string(),
-                    domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(2))]),
+                    domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(2)))]),
                 }],
                 when: None,
-                lhs: Expr::Ident("x".to_string()),
-                rhs: Expr::Ident("x".to_string()),
+                lhs: sb(Expr::Ident("x".to_string())),
+                rhs: sb(Expr::Ident("x".to_string())),
                 sample_guards: vec![],
             })),
         }));
@@ -3769,27 +3827,26 @@ verify mirror law involutive
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Match {
-                subject: Box::new(Expr::Ident("n".to_string())),
+            body: Rc::new(FnBody::from_expr(sb(Expr::Match {
+                subject: sbb(Expr::Ident("n".to_string())),
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Int(0)),
-                        body: Box::new(Expr::Literal(Literal::Int(0))),
+                        body: sbb(Expr::Literal(Literal::Int(0))),
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
-                        body: Box::new(Expr::TailCall(Box::new((
+                        body: sbb(Expr::TailCall(Box::new((
                             "down".to_string(),
-                            vec![Expr::BinOp(
+                            vec![sb(Expr::BinOp(
                                 BinOp::Sub,
-                                Box::new(Expr::Ident("n".to_string())),
-                                Box::new(Expr::Literal(Literal::Int(1))),
-                            )],
+                                sbb(Expr::Ident("n".to_string())),
+                                sbb(Expr::Literal(Literal::Int(1))),
+                            ))],
                         )))),
                     },
                 ],
-                line: 1,
-            })),
+            }))),
             resolution: None,
         };
         ctx.items.push(TopLevel::FnDef(down.clone()));
@@ -3826,34 +3883,33 @@ verify mirror law involutive
             return_type: "List<String>".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Match {
-                subject: Box::new(Expr::BinOp(
+            body: Rc::new(FnBody::from_expr(sb(Expr::Match {
+                subject: sbb(Expr::BinOp(
                     BinOp::Lte,
-                    Box::new(Expr::Ident("n".to_string())),
-                    Box::new(Expr::Literal(Literal::Int(0))),
+                    sbb(Expr::Ident("n".to_string())),
+                    sbb(Expr::Literal(Literal::Int(0))),
                 )),
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(true)),
-                        body: Box::new(Expr::List(vec![])),
+                        body: sbb(Expr::List(vec![])),
                     },
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(false)),
-                        body: Box::new(Expr::TailCall(Box::new((
+                        body: sbb(Expr::TailCall(Box::new((
                             "repeatLike".to_string(),
                             vec![
-                                Expr::Ident("char".to_string()),
-                                Expr::BinOp(
+                                sb(Expr::Ident("char".to_string())),
+                                sb(Expr::BinOp(
                                     BinOp::Sub,
-                                    Box::new(Expr::Ident("n".to_string())),
-                                    Box::new(Expr::Literal(Literal::Int(1))),
-                                ),
+                                    sbb(Expr::Ident("n".to_string())),
+                                    sbb(Expr::Literal(Literal::Int(1))),
+                                )),
                             ],
                         )))),
                     },
                 ],
-                line: 1,
-            })),
+            }))),
             resolution: None,
         };
         ctx.items.push(TopLevel::FnDef(repeat_like.clone()));
@@ -3887,31 +3943,30 @@ verify mirror law involutive
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Match {
-                subject: Box::new(Expr::BinOp(
+            body: Rc::new(FnBody::from_expr(sb(Expr::Match {
+                subject: sbb(Expr::BinOp(
                     BinOp::Lt,
-                    Box::new(Expr::Ident("angle".to_string())),
-                    Box::new(Expr::Literal(Literal::Int(0))),
+                    sbb(Expr::Ident("angle".to_string())),
+                    sbb(Expr::Literal(Literal::Int(0))),
                 )),
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(true)),
-                        body: Box::new(Expr::TailCall(Box::new((
+                        body: sbb(Expr::TailCall(Box::new((
                             "normalize".to_string(),
-                            vec![Expr::BinOp(
+                            vec![sb(Expr::BinOp(
                                 BinOp::Add,
-                                Box::new(Expr::Ident("angle".to_string())),
-                                Box::new(Expr::Literal(Literal::Int(360))),
-                            )],
+                                sbb(Expr::Ident("angle".to_string())),
+                                sbb(Expr::Literal(Literal::Int(360))),
+                            ))],
                         )))),
                     },
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(false)),
-                        body: Box::new(Expr::Ident("angle".to_string())),
+                        body: sbb(Expr::Ident("angle".to_string())),
                     },
                 ],
-                line: 1,
-            })),
+            }))),
             resolution: None,
         };
         ctx.items.push(TopLevel::FnDef(normalize.clone()));
@@ -3944,23 +3999,22 @@ verify mirror law involutive
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Match {
-                subject: Box::new(Expr::Ident("xs".to_string())),
+            body: Rc::new(FnBody::from_expr(sb(Expr::Match {
+                subject: sbb(Expr::Ident("xs".to_string())),
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::EmptyList,
-                        body: Box::new(Expr::Literal(Literal::Int(0))),
+                        body: sbb(Expr::Literal(Literal::Int(0))),
                     },
                     MatchArm {
                         pattern: Pattern::Cons("h".to_string(), "t".to_string()),
-                        body: Box::new(Expr::TailCall(Box::new((
+                        body: sbb(Expr::TailCall(Box::new((
                             "len".to_string(),
-                            vec![Expr::Ident("t".to_string())],
+                            vec![sb(Expr::Ident("t".to_string()))],
                         )))),
                     },
                 ],
-                line: 1,
-            })),
+            }))),
             resolution: None,
         };
         ctx.items.push(TopLevel::FnDef(len.clone()));
@@ -3987,30 +4041,29 @@ verify mirror law involutive
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Match {
-                subject: Box::new(Expr::Ident("xs".to_string())),
+            body: Rc::new(FnBody::from_expr(sb(Expr::Match {
+                subject: sbb(Expr::Ident("xs".to_string())),
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::EmptyList,
-                        body: Box::new(Expr::Ident("count".to_string())),
+                        body: sbb(Expr::Ident("count".to_string())),
                     },
                     MatchArm {
                         pattern: Pattern::Cons("h".to_string(), "t".to_string()),
-                        body: Box::new(Expr::TailCall(Box::new((
+                        body: sbb(Expr::TailCall(Box::new((
                             "lenFrom".to_string(),
                             vec![
-                                Expr::BinOp(
+                                sb(Expr::BinOp(
                                     BinOp::Add,
-                                    Box::new(Expr::Ident("count".to_string())),
-                                    Box::new(Expr::Literal(Literal::Int(1))),
-                                ),
-                                Expr::Ident("t".to_string()),
+                                    sbb(Expr::Ident("count".to_string())),
+                                    sbb(Expr::Literal(Literal::Int(1))),
+                                )),
+                                sb(Expr::Ident("t".to_string())),
                             ],
                         )))),
                     },
                 ],
-                line: 1,
-            })),
+            }))),
             resolution: None,
         };
         ctx.items.push(TopLevel::FnDef(len_from.clone()));
@@ -4042,36 +4095,38 @@ verify mirror law involutive
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Match {
-                subject: Box::new(Expr::FnCall(
-                    Box::new(Expr::Attr(
-                        Box::new(Expr::Ident("String".to_string())),
+            body: Rc::new(FnBody::from_expr(sb(Expr::Match {
+                subject: sbb(Expr::FnCall(
+                    sbb(Expr::Attr(
+                        sbb(Expr::Ident("String".to_string())),
                         "charAt".to_string(),
                     )),
-                    vec![Expr::Ident("s".to_string()), Expr::Ident("pos".to_string())],
+                    vec![
+                        sb(Expr::Ident("s".to_string())),
+                        sb(Expr::Ident("pos".to_string())),
+                    ],
                 )),
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Constructor("Option.None".to_string(), vec![]),
-                        body: Box::new(Expr::Ident("pos".to_string())),
+                        body: sbb(Expr::Ident("pos".to_string())),
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
-                        body: Box::new(Expr::TailCall(Box::new((
+                        body: sbb(Expr::TailCall(Box::new((
                             "skipWs".to_string(),
                             vec![
-                                Expr::Ident("s".to_string()),
-                                Expr::BinOp(
+                                sb(Expr::Ident("s".to_string())),
+                                sb(Expr::BinOp(
                                     BinOp::Add,
-                                    Box::new(Expr::Ident("pos".to_string())),
-                                    Box::new(Expr::Literal(Literal::Int(1))),
-                                ),
+                                    sbb(Expr::Ident("pos".to_string())),
+                                    sbb(Expr::Literal(Literal::Int(1))),
+                                )),
                             ],
                         )))),
                     },
                 ],
-                line: 1,
-            })),
+            }))),
             resolution: None,
         };
         ctx.items.push(TopLevel::FnDef(skip_ws.clone()));
@@ -4100,27 +4155,26 @@ verify mirror law involutive
             return_type: "Bool".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Match {
-                subject: Box::new(Expr::Ident("n".to_string())),
+            body: Rc::new(FnBody::from_expr(sb(Expr::Match {
+                subject: sbb(Expr::Ident("n".to_string())),
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Int(0)),
-                        body: Box::new(Expr::Literal(Literal::Bool(true))),
+                        body: sbb(Expr::Literal(Literal::Bool(true))),
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
-                        body: Box::new(Expr::TailCall(Box::new((
+                        body: sbb(Expr::TailCall(Box::new((
                             "odd".to_string(),
-                            vec![Expr::BinOp(
+                            vec![sb(Expr::BinOp(
                                 BinOp::Sub,
-                                Box::new(Expr::Ident("n".to_string())),
-                                Box::new(Expr::Literal(Literal::Int(1))),
-                            )],
+                                sbb(Expr::Ident("n".to_string())),
+                                sbb(Expr::Literal(Literal::Int(1))),
+                            ))],
                         )))),
                     },
                 ],
-                line: 1,
-            })),
+            }))),
             resolution: None,
         };
         let odd = FnDef {
@@ -4130,27 +4184,26 @@ verify mirror law involutive
             return_type: "Bool".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Match {
-                subject: Box::new(Expr::Ident("n".to_string())),
+            body: Rc::new(FnBody::from_expr(sb(Expr::Match {
+                subject: sbb(Expr::Ident("n".to_string())),
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Int(0)),
-                        body: Box::new(Expr::Literal(Literal::Bool(false))),
+                        body: sbb(Expr::Literal(Literal::Bool(false))),
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
-                        body: Box::new(Expr::TailCall(Box::new((
+                        body: sbb(Expr::TailCall(Box::new((
                             "even".to_string(),
-                            vec![Expr::BinOp(
+                            vec![sb(Expr::BinOp(
                                 BinOp::Sub,
-                                Box::new(Expr::Ident("n".to_string())),
-                                Box::new(Expr::Literal(Literal::Int(1))),
-                            )],
+                                sbb(Expr::Ident("n".to_string())),
+                                sbb(Expr::Literal(Literal::Int(1))),
+                            ))],
                         )))),
                     },
                 ],
-                line: 2,
-            })),
+            }))),
             resolution: None,
         };
         ctx.items.push(TopLevel::FnDef(even.clone()));
@@ -4186,27 +4239,29 @@ verify mirror law involutive
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Match {
-                subject: Box::new(Expr::BinOp(
+            body: Rc::new(FnBody::from_expr(sb(Expr::Match {
+                subject: sbb(Expr::BinOp(
                     BinOp::Gte,
-                    Box::new(Expr::Ident("pos".to_string())),
-                    Box::new(Expr::Literal(Literal::Int(3))),
+                    sbb(Expr::Ident("pos".to_string())),
+                    sbb(Expr::Literal(Literal::Int(3))),
                 )),
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(true)),
-                        body: Box::new(Expr::Ident("pos".to_string())),
+                        body: sbb(Expr::Ident("pos".to_string())),
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
-                        body: Box::new(Expr::TailCall(Box::new((
+                        body: sbb(Expr::TailCall(Box::new((
                             "g".to_string(),
-                            vec![Expr::Ident("s".to_string()), Expr::Ident("pos".to_string())],
+                            vec![
+                                sb(Expr::Ident("s".to_string())),
+                                sb(Expr::Ident("pos".to_string())),
+                            ],
                         )))),
                     },
                 ],
-                line: 1,
-            })),
+            }))),
             resolution: None,
         };
         let g = FnDef {
@@ -4219,34 +4274,33 @@ verify mirror law involutive
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Match {
-                subject: Box::new(Expr::BinOp(
+            body: Rc::new(FnBody::from_expr(sb(Expr::Match {
+                subject: sbb(Expr::BinOp(
                     BinOp::Gte,
-                    Box::new(Expr::Ident("pos".to_string())),
-                    Box::new(Expr::Literal(Literal::Int(3))),
+                    sbb(Expr::Ident("pos".to_string())),
+                    sbb(Expr::Literal(Literal::Int(3))),
                 )),
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(true)),
-                        body: Box::new(Expr::Ident("pos".to_string())),
+                        body: sbb(Expr::Ident("pos".to_string())),
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
-                        body: Box::new(Expr::TailCall(Box::new((
+                        body: sbb(Expr::TailCall(Box::new((
                             "f".to_string(),
                             vec![
-                                Expr::Ident("s".to_string()),
-                                Expr::BinOp(
+                                sb(Expr::Ident("s".to_string())),
+                                sb(Expr::BinOp(
                                     BinOp::Add,
-                                    Box::new(Expr::Ident("pos".to_string())),
-                                    Box::new(Expr::Literal(Literal::Int(1))),
-                                ),
+                                    sbb(Expr::Ident("pos".to_string())),
+                                    sbb(Expr::Literal(Literal::Int(1))),
+                                )),
                             ],
                         )))),
                     },
                 ],
-                line: 2,
-            })),
+            }))),
             resolution: None,
         };
         ctx.items.push(TopLevel::FnDef(f.clone()));
@@ -4278,13 +4332,13 @@ verify mirror law involutive
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::TailCall(Box::new((
+            body: Rc::new(FnBody::from_expr(sb(Expr::TailCall(Box::new((
                 "g".to_string(),
                 vec![
-                    Expr::Literal(Literal::Str("acc".to_string())),
-                    Expr::Ident("xs".to_string()),
+                    sb(Expr::Literal(Literal::Str("acc".to_string()))),
+                    sb(Expr::Ident("xs".to_string())),
                 ],
-            ))))),
+            )))))),
             resolution: None,
         };
         let g = FnDef {
@@ -4297,23 +4351,22 @@ verify mirror law involutive
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Match {
-                subject: Box::new(Expr::Ident("xs".to_string())),
+            body: Rc::new(FnBody::from_expr(sb(Expr::Match {
+                subject: sbb(Expr::Ident("xs".to_string())),
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::EmptyList,
-                        body: Box::new(Expr::Literal(Literal::Int(0))),
+                        body: sbb(Expr::Literal(Literal::Int(0))),
                     },
                     MatchArm {
                         pattern: Pattern::Cons("h".to_string(), "t".to_string()),
-                        body: Box::new(Expr::TailCall(Box::new((
+                        body: sbb(Expr::TailCall(Box::new((
                             "f".to_string(),
-                            vec![Expr::Ident("t".to_string())],
+                            vec![sb(Expr::Ident("t".to_string()))],
                         )))),
                     },
                 ],
-                line: 2,
-            })),
+            }))),
             resolution: None,
         };
         ctx.items.push(TopLevel::FnDef(f.clone()));
@@ -4347,10 +4400,10 @@ verify mirror law involutive
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::FnCall(
-                Box::new(Expr::Ident("loop".to_string())),
-                vec![Expr::Ident("n".to_string())],
-            ))),
+            body: Rc::new(FnBody::from_expr(sb(Expr::FnCall(
+                sbb(Expr::Ident("loop".to_string())),
+                vec![sb(Expr::Ident("n".to_string()))],
+            )))),
             resolution: None,
         };
         ctx.items.push(TopLevel::FnDef(recursive_fn.clone()));

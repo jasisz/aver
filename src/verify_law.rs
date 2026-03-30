@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::ast::{
-    Expr, FnDef, MatchArm, Stmt, StrPart, TopLevel, VerifyBlock, VerifyKind, VerifyLaw,
+    Expr, FnDef, MatchArm, Spanned, Stmt, StrPart, TopLevel, VerifyBlock, VerifyKind, VerifyLaw,
 };
 use crate::types::Type;
 
@@ -68,7 +68,7 @@ pub fn law_calls_function(law: &VerifyLaw, fn_name: &str) -> bool {
 }
 
 pub fn canonical_spec_shape(fn_name: &str, law: &VerifyLaw, spec_fn_name: &str) -> bool {
-    let try_side = |impl_side: &Expr, spec_side: &Expr| -> bool {
+    let try_side = |impl_side: &Spanned<Expr>, spec_side: &Spanned<Expr>| -> bool {
         let Some((impl_callee, impl_args)) = direct_call(impl_side) else {
             return false;
         };
@@ -323,7 +323,7 @@ fn wrapper_dispatch_root(
 ) -> Option<String> {
     let fd = fn_defs.get(fn_name)?;
     let tail = fd.body.tail_expr()?;
-    match tail {
+    match &tail.node {
         Expr::Match { subject, .. } => direct_pure_user_call_name(subject, fn_defs, fn_sigs),
         Expr::FnCall(_, _) => direct_pure_user_call_name(tail, fn_defs, fn_sigs),
         _ => None,
@@ -362,12 +362,12 @@ fn direct_pure_fn_callees_matching_return(
 }
 
 fn collect_direct_pure_user_calls(
-    expr: &Expr,
+    expr: &Spanned<Expr>,
     fn_defs: &HashMap<String, &FnDef>,
     fn_sigs: &FnSigMap,
     out: &mut BTreeSet<String>,
 ) {
-    match expr {
+    match &expr.node {
         Expr::FnCall(callee, args) => {
             if let Some(name) = direct_pure_user_call_name(expr, fn_defs, fn_sigs) {
                 out.insert(name);
@@ -382,7 +382,7 @@ fn collect_direct_pure_user_calls(
             collect_direct_pure_user_calls(left, fn_defs, fn_sigs, out);
             collect_direct_pure_user_calls(right, fn_defs, fn_sigs, out);
         }
-        Expr::Match { subject, arms, .. } => {
+        Expr::Match { subject, arms } => {
             collect_direct_pure_user_calls(subject, fn_defs, fn_sigs, out);
             for arm in arms {
                 collect_direct_pure_user_calls(&arm.body, fn_defs, fn_sigs, out);
@@ -438,11 +438,11 @@ fn collect_direct_pure_user_calls(
 }
 
 fn direct_pure_user_call_name(
-    expr: &Expr,
+    expr: &Spanned<Expr>,
     fn_defs: &HashMap<String, &FnDef>,
     fn_sigs: &FnSigMap,
 ) -> Option<String> {
-    let Expr::FnCall(callee, _) = expr else {
+    let Expr::FnCall(callee, _) = &expr.node else {
         return None;
     };
     let name = dotted_name(callee)?;
@@ -455,8 +455,8 @@ fn direct_pure_user_call_name(
         .then_some(name)
 }
 
-fn dotted_name(expr: &Expr) -> Option<String> {
-    match expr {
+fn dotted_name(expr: &Spanned<Expr>) -> Option<String> {
+    match &expr.node {
         Expr::Ident(name) => Some(name.clone()),
         Expr::Attr(base, field) => {
             let mut prefix = dotted_name(base)?;
@@ -479,12 +479,12 @@ fn detect_roundtrip_layers(
     }
 
     fn detect_roundtrip_side(
-        expr: &Expr,
+        expr: &Spanned<Expr>,
         given_name: &str,
         fn_defs: &HashMap<String, &FnDef>,
         fn_sigs: &FnSigMap,
     ) -> Option<(String, String)> {
-        let Expr::FnCall(parser_callee, parser_args) = expr else {
+        let Expr::FnCall(parser_callee, parser_args) = &expr.node else {
             return None;
         };
         if parser_args.is_empty() {
@@ -537,9 +537,9 @@ fn detect_roundtrip_layers(
 }
 
 fn extract_roundtrip_serializer_call<'a>(
-    expr: &'a Expr,
+    expr: &'a Spanned<Expr>,
     given_name: &str,
-) -> Option<(&'a Expr, &'a [Expr])> {
+) -> Option<(&'a Spanned<Expr>, &'a [Spanned<Expr>])> {
     let mut candidates = Vec::new();
     collect_roundtrip_serializer_calls(expr, given_name, &mut candidates);
     if candidates.len() != 1 {
@@ -559,11 +559,11 @@ fn extract_roundtrip_serializer_call<'a>(
 }
 
 fn collect_roundtrip_serializer_calls<'a>(
-    expr: &'a Expr,
+    expr: &'a Spanned<Expr>,
     given_name: &str,
-    out: &mut Vec<(&'a Expr, &'a [Expr])>,
+    out: &mut Vec<(&'a Spanned<Expr>, &'a [Spanned<Expr>])>,
 ) {
-    match expr {
+    match &expr.node {
         Expr::FnCall(callee, args) => {
             if args.iter().any(|arg| matches_ident(arg, given_name))
                 && args
@@ -583,7 +583,7 @@ fn collect_roundtrip_serializer_calls<'a>(
             collect_roundtrip_serializer_calls(left, given_name, out);
             collect_roundtrip_serializer_calls(right, given_name, out);
         }
-        Expr::Match { subject, arms, .. } => {
+        Expr::Match { subject, arms } => {
             collect_roundtrip_serializer_calls(subject, given_name, out);
             for arm in arms {
                 collect_roundtrip_serializer_calls(&arm.body, given_name, out);
@@ -633,12 +633,12 @@ fn collect_roundtrip_serializer_calls<'a>(
     }
 }
 
-fn matches_ident(expr: &Expr, name: &str) -> bool {
-    matches!(expr, Expr::Ident(current) if current == name)
+fn matches_ident(expr: &Spanned<Expr>, name: &str) -> bool {
+    matches!(&expr.node, Expr::Ident(current) if current == name)
 }
 
-fn expr_mentions_ident(expr: &Expr, name: &str) -> bool {
-    match expr {
+fn expr_mentions_ident(expr: &Spanned<Expr>, name: &str) -> bool {
+    match &expr.node {
         Expr::Ident(current) => current == name,
         Expr::Attr(base, _) => expr_mentions_ident(base, name),
         Expr::FnCall(callee, args) => {
@@ -648,7 +648,7 @@ fn expr_mentions_ident(expr: &Expr, name: &str) -> bool {
         Expr::BinOp(_, left, right) => {
             expr_mentions_ident(left, name) || expr_mentions_ident(right, name)
         }
-        Expr::Match { subject, arms, .. } => {
+        Expr::Match { subject, arms } => {
             expr_mentions_ident(subject, name)
                 || arms.iter().any(|arm| expr_mentions_ident(&arm.body, name))
         }
@@ -680,8 +680,8 @@ fn expr_mentions_ident(expr: &Expr, name: &str) -> bool {
     }
 }
 
-fn expr_calls_function(expr: &Expr, fn_name: &str) -> bool {
-    match expr {
+fn expr_calls_function(expr: &Spanned<Expr>, fn_name: &str) -> bool {
+    match &expr.node {
         Expr::FnCall(callee, args) => {
             expr_is_function_name(callee, fn_name)
                 || expr_calls_function(callee, fn_name)
@@ -691,7 +691,7 @@ fn expr_calls_function(expr: &Expr, fn_name: &str) -> bool {
         Expr::BinOp(_, left, right) => {
             expr_calls_function(left, fn_name) || expr_calls_function(right, fn_name)
         }
-        Expr::Match { subject, arms, .. } => {
+        Expr::Match { subject, arms } => {
             expr_calls_function(subject, fn_name)
                 || arms
                     .iter()
@@ -729,15 +729,15 @@ fn match_arm_calls_function(arm: &MatchArm, fn_name: &str) -> bool {
     expr_calls_function(&arm.body, fn_name)
 }
 
-fn expr_is_function_name(expr: &Expr, fn_name: &str) -> bool {
-    matches!(expr, Expr::Ident(name) if name == fn_name)
+fn expr_is_function_name(expr: &Spanned<Expr>, fn_name: &str) -> bool {
+    matches!(&expr.node, Expr::Ident(name) if name == fn_name)
 }
 
-fn direct_call(expr: &Expr) -> Option<(&str, &[Expr])> {
-    let Expr::FnCall(callee, args) = expr else {
+fn direct_call(expr: &Spanned<Expr>) -> Option<(&str, &[Spanned<Expr>])> {
+    let Expr::FnCall(callee, args) = &expr.node else {
         return None;
     };
-    let Expr::Ident(name) = callee.as_ref() else {
+    let Expr::Ident(name) = &callee.node else {
         return None;
     };
     Some((name.as_str(), args.as_slice()))
@@ -746,19 +746,21 @@ fn direct_call(expr: &Expr) -> Option<(&str, &[Expr])> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{Literal, VerifyGiven, VerifyGivenDomain};
+    use crate::ast::{Literal, Spanned, VerifyGiven, VerifyGivenDomain};
 
     fn int_sig() -> (Vec<Type>, Type, Vec<String>) {
         (vec![Type::Int], Type::Int, vec![])
     }
 
-    fn law(lhs: Expr, rhs: Expr, name: &str) -> VerifyLaw {
+    fn law(lhs: Spanned<Expr>, rhs: Spanned<Expr>, name: &str) -> VerifyLaw {
         VerifyLaw {
             name: name.to_string(),
             givens: vec![VerifyGiven {
                 name: "x".to_string(),
                 type_name: "Int".to_string(),
-                domain: VerifyGivenDomain::Explicit(vec![Expr::Literal(Literal::Int(1))]),
+                domain: VerifyGivenDomain::Explicit(vec![Spanned::bare(Expr::Literal(
+                    Literal::Int(1),
+                ))]),
             }],
             when: None,
             lhs,
@@ -773,14 +775,14 @@ mod tests {
         fn_sigs.insert("fooSpec".to_string(), int_sig());
 
         let verify_law = law(
-            Expr::FnCall(
-                Box::new(Expr::Ident("foo".to_string())),
-                vec![Expr::Ident("x".to_string())],
-            ),
-            Expr::FnCall(
-                Box::new(Expr::Ident("fooSpec".to_string())),
-                vec![Expr::Ident("x".to_string())],
-            ),
+            Spanned::bare(Expr::FnCall(
+                Box::new(Spanned::bare(Expr::Ident("foo".to_string()))),
+                vec![Spanned::bare(Expr::Ident("x".to_string()))],
+            )),
+            Spanned::bare(Expr::FnCall(
+                Box::new(Spanned::bare(Expr::Ident("fooSpec".to_string()))),
+                vec![Spanned::bare(Expr::Ident("x".to_string()))],
+            )),
             "fooSpec",
         );
 
@@ -813,8 +815,8 @@ mod tests {
         );
 
         let verify_law = law(
-            Expr::Ident("x".to_string()),
-            Expr::Ident("x".to_string()),
+            Spanned::bare(Expr::Ident("x".to_string())),
+            Spanned::bare(Expr::Ident("x".to_string())),
             "fooSpec",
         );
 
@@ -834,8 +836,8 @@ mod tests {
         fn_sigs.insert("fooSpec".to_string(), int_sig());
 
         let verify_law = law(
-            Expr::Ident("x".to_string()),
-            Expr::Ident("x".to_string()),
+            Spanned::bare(Expr::Ident("x".to_string())),
+            Spanned::bare(Expr::Ident("x".to_string())),
             "fooSpec",
         );
 
@@ -850,14 +852,17 @@ mod tests {
         fn_sigs.insert("fooSpec".to_string(), int_sig());
 
         let verify_law = law(
-            Expr::FnCall(
-                Box::new(Expr::Ident("foo".to_string())),
-                vec![Expr::Ident("x".to_string())],
-            ),
-            Expr::FnCall(
-                Box::new(Expr::Ident("fooSpec".to_string())),
-                vec![Expr::Literal(Literal::Int(5)), Expr::Ident("x".to_string())],
-            ),
+            Spanned::bare(Expr::FnCall(
+                Box::new(Spanned::bare(Expr::Ident("foo".to_string()))),
+                vec![Spanned::bare(Expr::Ident("x".to_string()))],
+            )),
+            Spanned::bare(Expr::FnCall(
+                Box::new(Spanned::bare(Expr::Ident("fooSpec".to_string()))),
+                vec![
+                    Spanned::bare(Expr::Literal(Literal::Int(5))),
+                    Spanned::bare(Expr::Ident("x".to_string())),
+                ],
+            )),
             "fooSpec",
         );
 

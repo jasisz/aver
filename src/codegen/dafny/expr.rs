@@ -93,9 +93,9 @@ pub fn aver_name_to_dafny(name: &str) -> String {
     crate::codegen::common::escape_reserved_word(name, DAFNY_RESERVED, "_")
 }
 
-/// Emit a Dafny expression from an Aver Expr.
-pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
-    match expr {
+/// Emit a Dafny expression from an Aver Spanned<Expr>.
+pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
+    match &expr.node {
         Expr::Literal(lit) => emit_literal(lit),
         Expr::Ident(name) => aver_name_to_dafny(name),
         Expr::Resolved(slot) => {
@@ -105,7 +105,7 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
             )
         }
         Expr::Attr(obj, field) => {
-            if let Expr::Ident(type_name) = obj.as_ref() {
+            if let Expr::Ident(type_name) = &obj.node {
                 if type_name == "Option" && field == "None" {
                     return "Option.None".to_string();
                 }
@@ -113,7 +113,7 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
                     return format!("{}.{}", type_name, field);
                 }
             }
-            if let Some(full_dotted) = expr_to_dotted_name(expr)
+            if let Some(full_dotted) = expr_to_dotted_name_spanned(expr)
                 && let Some((_, bare)) = resolve_module_call(&full_dotted, ctx)
             {
                 if let Some(dot_pos) = bare.find('.') {
@@ -130,7 +130,7 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
         }
         Expr::FnCall(fn_expr, args) => emit_fn_call(fn_expr, args, ctx),
         Expr::BinOp(op, left, right) => {
-            if matches!(op, BinOp::Sub) && matches!(left.as_ref(), Expr::Literal(Literal::Int(0))) {
+            if matches!(op, BinOp::Sub) && matches!(left.node, Expr::Literal(Literal::Int(0))) {
                 let r = emit_expr(right, ctx);
                 return format!("(-{})", r);
             }
@@ -151,7 +151,7 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
             format!("({} {} {})", l, op_str, r)
         }
         Expr::Match { subject, arms, .. } => emit_match(subject, arms, ctx),
-        Expr::Constructor(name, arg) => emit_constructor(name, arg, ctx),
+        Expr::Constructor(name, arg) => emit_constructor(name, arg.as_deref(), ctx),
         Expr::ErrorProp(_) => {
             // ? operator requires early-return semantics (Err propagation).
             // Dafny pure functions cannot express this; functions using ? are
@@ -174,7 +174,7 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
                 "map[]".to_string()
             } else if entries
                 .iter()
-                .all(|(_, v)| crate::codegen::common::is_unit_expr(v))
+                .all(|(_, v)| crate::codegen::common::is_unit_expr_spanned(v))
             {
                 // Map<T, Unit> literal → set literal
                 let items: Vec<String> = entries.iter().map(|(k, _)| emit_expr(k, ctx)).collect();
@@ -214,6 +214,11 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext) -> String {
     }
 }
 
+/// Helper to extract dotted name from a Spanned<Expr>.
+fn expr_to_dotted_name_spanned(expr: &Spanned<Expr>) -> Option<String> {
+    expr_to_dotted_name(&expr.node)
+}
+
 fn emit_literal(lit: &Literal) -> String {
     match lit {
         Literal::Int(n) => n.to_string(),
@@ -236,17 +241,17 @@ fn emit_literal(lit: &Literal) -> String {
     }
 }
 
-fn emit_fn_call(fn_expr: &Expr, args: &[Expr], ctx: &CodegenContext) -> String {
+fn emit_fn_call(fn_expr: &Spanned<Expr>, args: &[Spanned<Expr>], ctx: &CodegenContext) -> String {
     use crate::codegen::builtins::recognize_builtin;
-    use crate::codegen::common::is_unit_expr;
+    use crate::codegen::common::is_unit_expr_spanned;
 
-    let dotted = expr_to_dotted_name(fn_expr);
+    let dotted = expr_to_dotted_name_spanned(fn_expr);
 
     // Map<T, Unit> set operations: intercept before generic builtin path
     if let Some(name) = dotted.as_deref()
         && name == "Map.set"
         && args.len() == 3
-        && is_unit_expr(&args[2])
+        && is_unit_expr_spanned(&args[2])
     {
         let m = emit_expr(&args[0], ctx);
         let k = emit_expr(&args[1], ctx);
@@ -371,7 +376,7 @@ fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> Str
     }
 }
 
-fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext) -> String {
+fn emit_match(subject: &Spanned<Expr>, arms: &[MatchArm], ctx: &CodegenContext) -> String {
     // Check if this is a list-pattern match (EmptyList / Cons arms)
     if has_list_patterns(arms) {
         return emit_list_match(subject, arms, ctx);
@@ -427,7 +432,7 @@ fn is_bool_match(arms: &[MatchArm]) -> bool {
 }
 
 /// Emit a bool match as `if subject then true_body else false_body`.
-fn emit_bool_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext) -> String {
+fn emit_bool_match(subject: &Spanned<Expr>, arms: &[MatchArm], ctx: &CodegenContext) -> String {
     let subj = emit_expr(subject, ctx);
     let true_arm = arms
         .iter()
@@ -443,7 +448,7 @@ fn emit_bool_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext) -> S
 }
 
 /// Emit a match as a Dafny if-then-else chain.
-fn emit_if_chain(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext) -> String {
+fn emit_if_chain(subject: &Spanned<Expr>, arms: &[MatchArm], ctx: &CodegenContext) -> String {
     let subj = emit_expr(subject, ctx);
     emit_if_chain_inner(&subj, arms, 0, ctx)
 }
@@ -484,7 +489,7 @@ fn has_list_patterns(arms: &[MatchArm]) -> bool {
 }
 
 /// Emit a match on a list (seq) as if-then-else with seq operations.
-fn emit_list_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext) -> String {
+fn emit_list_match(subject: &Spanned<Expr>, arms: &[MatchArm], ctx: &CodegenContext) -> String {
     let subj = emit_expr(subject, ctx);
 
     // Find empty-list arm and cons arm
@@ -563,7 +568,7 @@ fn emit_pattern(pattern: &Pattern) -> String {
     }
 }
 
-fn emit_constructor(name: &str, arg: &Option<Box<Expr>>, ctx: &CodegenContext) -> String {
+fn emit_constructor(name: &str, arg: Option<&Spanned<Expr>>, ctx: &CodegenContext) -> String {
     // In Dafny expression context, qualify constructors to avoid ambiguity.
     // "Shape.Circle" → "Shape.Circle", "Foo" → "Foo"
     let qualified = if let Some(dot_pos) = name.rfind('.') {

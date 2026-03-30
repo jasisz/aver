@@ -2,7 +2,7 @@ mod linear_int;
 mod linear_recurrence2;
 mod simp_normalized;
 
-use crate::ast::{Expr, VerifyBlock, VerifyLaw};
+use crate::ast::{Expr, Spanned, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 use crate::verify_law::canonical_spec_ref;
 
@@ -23,11 +23,11 @@ pub(super) fn emit_spec_function_equivalence_law(
     let spec_body = body_terminal_expr(spec_fd.body.as_ref())?;
     let bodies_match_exactly = emit_expr(impl_body, ctx) == emit_expr(spec_body, ctx);
 
-    let try_side = |impl_side: &Expr, spec_side: &Expr| -> Option<AutoProof> {
-        let Expr::FnCall(impl_callee, impl_args) = impl_side else {
+    let try_side = |impl_side: &Spanned<Expr>, spec_side: &Spanned<Expr>| -> Option<AutoProof> {
+        let Expr::FnCall(impl_callee, impl_args) = &impl_side.node else {
             return None;
         };
-        let Expr::FnCall(spec_callee, spec_args) = spec_side else {
+        let Expr::FnCall(spec_callee, spec_args) = &spec_side.node else {
             return None;
         };
         if !callee_matches_name(impl_callee, &vb.fn_name)

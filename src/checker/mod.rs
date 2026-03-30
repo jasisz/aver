@@ -3,7 +3,9 @@ mod intent;
 mod law;
 mod verify;
 
-use crate::ast::{Expr, Literal, Pattern, SourceSpan, TopLevel, TypeDef, VerifyBlock, VerifyKind};
+use crate::ast::{
+    Expr, Literal, Pattern, SourceSpan, Spanned, TopLevel, TypeDef, VerifyBlock, VerifyKind,
+};
 
 // -- Structured verify results ------------------------------------------------
 
@@ -69,8 +71,8 @@ fn module_name_for_items(items: &[TopLevel]) -> Option<String> {
     })
 }
 
-fn dotted_name(expr: &Expr) -> Option<String> {
-    match expr {
+fn dotted_name(expr: &Spanned<Expr>) -> Option<String> {
+    match &expr.node {
         Expr::Ident(name) => Some(name.clone()),
         Expr::Attr(base, field) => {
             let mut prefix = dotted_name(base)?;
@@ -99,8 +101,8 @@ fn constructor_tag_from_pattern(pattern: &Pattern) -> Option<String> {
     }
 }
 
-fn constructor_tag_from_expr(expr: &Expr) -> Option<String> {
-    match expr {
+fn constructor_tag_from_expr(expr: &Spanned<Expr>) -> Option<String> {
+    match &expr.node {
         Expr::Attr(_, _) => normalize_constructor_tag(&dotted_name(expr)?),
         Expr::FnCall(callee, _) => normalize_constructor_tag(&dotted_name(callee)?),
         Expr::Constructor(name, _) => normalize_constructor_tag(name),
@@ -108,8 +110,8 @@ fn constructor_tag_from_expr(expr: &Expr) -> Option<String> {
     }
 }
 
-fn expr_is_result_err_case(expr: &Expr) -> bool {
-    match expr {
+fn expr_is_result_err_case(expr: &Spanned<Expr>) -> bool {
+    match &expr.node {
         Expr::FnCall(callee, _) => dotted_name(callee)
             .and_then(|path| normalize_constructor_tag(&path))
             .is_some_and(|tag| tag == "Result.Err"),
@@ -120,8 +122,8 @@ fn expr_is_result_err_case(expr: &Expr) -> bool {
     }
 }
 
-fn expr_is_result_ok_case(expr: &Expr) -> bool {
-    match expr {
+fn expr_is_result_ok_case(expr: &Spanned<Expr>) -> bool {
+    match &expr.node {
         Expr::FnCall(callee, _) => dotted_name(callee)
             .and_then(|path| normalize_constructor_tag(&path))
             .is_some_and(|tag| tag == "Result.Ok"),
@@ -132,8 +134,8 @@ fn expr_is_result_ok_case(expr: &Expr) -> bool {
     }
 }
 
-fn expr_is_option_none_case(expr: &Expr) -> bool {
-    match expr {
+fn expr_is_option_none_case(expr: &Spanned<Expr>) -> bool {
+    match &expr.node {
         Expr::Attr(_, _) => dotted_name(expr)
             .and_then(|path| normalize_constructor_tag(&path))
             .is_some_and(|tag| tag == "Option.None"),
@@ -144,8 +146,8 @@ fn expr_is_option_none_case(expr: &Expr) -> bool {
     }
 }
 
-fn expr_is_option_some_case(expr: &Expr) -> bool {
-    match expr {
+fn expr_is_option_some_case(expr: &Spanned<Expr>) -> bool {
+    match &expr.node {
         Expr::FnCall(callee, _) => dotted_name(callee)
             .and_then(|path| normalize_constructor_tag(&path))
             .is_some_and(|tag| tag == "Option.Some"),
@@ -156,24 +158,24 @@ fn expr_is_option_some_case(expr: &Expr) -> bool {
     }
 }
 
-fn expr_is_bool_case(expr: &Expr, expected: bool) -> bool {
-    matches!(expr, Expr::Literal(Literal::Bool(value)) if *value == expected)
+fn expr_is_bool_case(expr: &Spanned<Expr>, expected: bool) -> bool {
+    matches!(&expr.node, Expr::Literal(Literal::Bool(value)) if *value == expected)
 }
 
-fn expr_is_empty_list_case(expr: &Expr) -> bool {
-    matches!(expr, Expr::List(items) if items.is_empty())
+fn expr_is_empty_list_case(expr: &Spanned<Expr>) -> bool {
+    matches!(&expr.node, Expr::List(items) if items.is_empty())
 }
 
-fn expr_is_non_empty_list_case(expr: &Expr) -> bool {
-    matches!(expr, Expr::List(items) if !items.is_empty())
+fn expr_is_non_empty_list_case(expr: &Spanned<Expr>) -> bool {
+    matches!(&expr.node, Expr::List(items) if !items.is_empty())
 }
 
-fn expr_is_empty_string_case(expr: &Expr) -> bool {
-    matches!(expr, Expr::Literal(Literal::Str(value)) if value.is_empty())
+fn expr_is_empty_string_case(expr: &Spanned<Expr>) -> bool {
+    matches!(&expr.node, Expr::Literal(Literal::Str(value)) if value.is_empty())
 }
 
-fn expr_is_int_literal_case(expr: &Expr, expected: i64) -> bool {
-    matches!(expr, Expr::Literal(Literal::Int(value)) if *value == expected)
+fn expr_is_int_literal_case(expr: &Spanned<Expr>, expected: i64) -> bool {
+    matches!(&expr.node, Expr::Literal(Literal::Int(value)) if *value == expected)
 }
 
 fn verify_cases_block_is_well_formed(block: &VerifyBlock) -> bool {
@@ -197,8 +199,8 @@ fn local_sum_type_constructors(items: &[TopLevel], type_name: &str) -> Option<Ve
     })
 }
 
-fn callee_is_target(callee: &Expr, fn_name: &str) -> bool {
-    matches!(callee, Expr::Ident(name) if name == fn_name)
+fn callee_is_target(callee: &Spanned<Expr>, fn_name: &str) -> bool {
+    matches!(&callee.node, Expr::Ident(name) if name == fn_name)
 }
 
 // Re-export from verify submodule

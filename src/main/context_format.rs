@@ -709,11 +709,15 @@ mod tests {
                 "fib".to_string(),
                 2,
                 vec![(
-                    aver::ast::Expr::FnCall(
-                        Box::new(aver::ast::Expr::Ident("fib".to_string())),
-                        vec![aver::ast::Expr::Literal(aver::ast::Literal::Int(5))],
-                    ),
-                    aver::ast::Expr::Literal(aver::ast::Literal::Int(8)),
+                    aver::ast::Spanned::bare(aver::ast::Expr::FnCall(
+                        Box::new(aver::ast::Spanned::bare(aver::ast::Expr::Ident(
+                            "fib".to_string(),
+                        ))),
+                        vec![aver::ast::Spanned::bare(aver::ast::Expr::Literal(
+                            aver::ast::Literal::Int(5),
+                        ))],
+                    )),
+                    aver::ast::Spanned::bare(aver::ast::Expr::Literal(aver::ast::Literal::Int(8))),
                 )],
                 aver::ast::VerifyKind::Cases,
             )],

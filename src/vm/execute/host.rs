@@ -96,9 +96,12 @@ impl VM {
         let skip = self.runtime.execution_mode() == VmExecutionMode::Record;
         match http_server::call_with_runtime(builtin.name(), &val_args, invoke_handler, skip) {
             Some(Ok(val)) => Ok(NanValue::from_value(&val, &mut self.arena)),
-            Some(Err(crate::value::RuntimeError::Error(msg))) => Err(VmError::Runtime(msg)),
-            Some(Err(e)) => Err(VmError::Runtime(format!("{:?}", e))),
-            None => Err(VmError::Runtime(format!(
+            Some(Err(
+                crate::value::RuntimeError::Error(msg)
+                | crate::value::RuntimeError::ErrorAt { msg, .. },
+            )) => Err(VmError::runtime(msg)),
+            Some(Err(e)) => Err(VmError::runtime(format!("{:?}", e))),
+            None => Err(VmError::runtime(format!(
                 "unknown HttpServer builtin: {}",
                 builtin.name()
             ))),

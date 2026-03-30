@@ -134,7 +134,7 @@ fn emit_expr_with_options(
              Compile pipeline should emit source-level AST (Ident), not slot-indexed AST."
         )),
         Expr::Attr(obj, field) => {
-            if let Expr::Ident(type_name) = obj.as_ref() {
+            if let Expr::Ident(type_name) = &obj.node {
                 // Option.None → None
                 if type_name == "Option" && field == "None" {
                     return "None".to_string();
@@ -159,33 +159,41 @@ fn emit_expr_with_options(
                 }
                 return format!("{}::{}", module_path, aver_name_to_rust(bare));
             }
-            let obj_str = emit_expr(obj, ctx, ectx);
+            let obj_str = emit_expr(&obj.node, ctx, ectx);
             format!("{}.{}", obj_str, aver_name_to_rust(field))
         }
         Expr::FnCall(fn_expr, args) => {
-            emit_fn_call_with_options(fn_expr, args, ctx, ectx, allow_callsite_inlining)
+            let bare_args: Vec<Expr> = args.iter().map(|a| a.node.clone()).collect();
+            emit_fn_call_with_options(
+                &fn_expr.node,
+                &bare_args,
+                ctx,
+                ectx,
+                allow_callsite_inlining,
+            )
         }
         Expr::BinOp(op, left, right) => {
             // Unary minus: `- expr` is parsed as `BinOp(Sub, Literal(Int(0)), expr)`.
             // Emit as `-expr` instead of `(0i64 - expr)` to avoid type mismatch
             // when the operand is Float.
-            if matches!(op, BinOp::Sub) && matches!(left.as_ref(), Expr::Literal(Literal::Int(0))) {
-                let r = emit_expr(right, ctx, ectx);
+            if matches!(op, BinOp::Sub) && matches!(&left.node, Expr::Literal(Literal::Int(0))) {
+                let r = emit_expr(&right.node, ctx, ectx);
                 return format!("(-{})", r);
             }
             // BinOp: left's used_after includes vars from right
-            let right_vars = collect_vars(right);
+            let right_vars = collect_vars(&right.node);
             let left_ectx = ectx.with_used_after(&right_vars);
-            let l = emit_expr(left, ctx, &left_ectx);
-            let r = emit_expr(right, ctx, ectx);
+            let l = emit_expr(&left.node, ctx, &left_ectx);
+            let r = emit_expr(&right.node, ctx, ectx);
             match op {
                 BinOp::Add => {
-                    if expr_is_numeric(left, &left_ectx) || expr_is_numeric(right, ectx) {
+                    if expr_is_numeric(&left.node, &left_ectx) || expr_is_numeric(&right.node, ectx)
+                    {
                         // Both sides are numeric (Int/Float) — plain value add.
                         format!("({} + {})", l, r)
                     } else {
                         // Might be AverStr concatenation: Add<&AverStr>.
-                        let l = maybe_clone(l, left, &left_ectx);
+                        let l = maybe_clone(l, &left.node, &left_ectx);
                         format!("({} + &{})", l, r)
                     }
                 }
@@ -205,10 +213,10 @@ fn emit_expr_with_options(
                     // For Eq/Neq with a string literal on either side, deref AverStr (Rc<str>)
                     // to &str for comparison since Rc<str> doesn't impl PartialEq<&str>.
                     if matches!(op, BinOp::Eq | BinOp::Neq) {
-                        if let Expr::Literal(Literal::Str(s)) = right.as_ref() {
+                        if let Expr::Literal(Literal::Str(s)) = &right.node {
                             return format!("(&*{} {} {:?})", l, op_str, s);
                         }
-                        if let Expr::Literal(Literal::Str(s)) = left.as_ref() {
+                        if let Expr::Literal(Literal::Str(s)) = &left.node {
                             return format!("({:?} {} &*{})", s, op_str, r);
                         }
                     }
@@ -216,10 +224,13 @@ fn emit_expr_with_options(
                 }
             }
         }
-        Expr::Match { subject, arms, .. } => emit_match(subject, arms, ctx, ectx),
-        Expr::Constructor(name, arg) => emit_constructor(name, arg, ctx, ectx),
+        Expr::Match { subject, arms, .. } => emit_match(&subject.node, arms, ctx, ectx),
+        Expr::Constructor(name, arg) => {
+            let bare_arg = arg.as_ref().map(|a| Box::new(a.node.clone()));
+            emit_constructor(name, &bare_arg, ctx, ectx)
+        }
         Expr::ErrorProp(inner) => {
-            let inner_str = emit_expr(inner, ctx, ectx);
+            let inner_str = emit_expr(&inner.node, ctx, ectx);
             format!("{}?", inner_str)
         }
         Expr::InterpolatedStr(parts) => emit_interpolated_str(parts, ctx, ectx),
@@ -227,14 +238,15 @@ fn emit_expr_with_options(
             if elements.is_empty() {
                 "aver_rt::AverList::empty()".to_string()
             } else {
+                let bare_elems: Vec<Expr> = elements.iter().map(|e| e.node.clone()).collect();
                 let elem_ctxs = compute_args_used_after_full(
-                    elements,
+                    &bare_elems,
                     &ectx.used_after,
                     &ectx.local_types,
                     &ectx.rc_wrapped,
                     &ectx.borrowed_params,
                 );
-                let parts: Vec<String> = elements
+                let parts: Vec<String> = bare_elems
                     .iter()
                     .zip(elem_ctxs.iter())
                     .map(|(e, elem_ctx)| clone_arg(e, ctx, elem_ctx))
@@ -243,14 +255,15 @@ fn emit_expr_with_options(
             }
         }
         Expr::Tuple(items) => {
+            let bare_items: Vec<Expr> = items.iter().map(|e| e.node.clone()).collect();
             let item_ctxs = compute_args_used_after_full(
-                items,
+                &bare_items,
                 &ectx.used_after,
                 &ectx.local_types,
                 &ectx.rc_wrapped,
                 &ectx.borrowed_params,
             );
-            let parts: Vec<String> = items
+            let parts: Vec<String> = bare_items
                 .iter()
                 .zip(item_ctxs.iter())
                 .map(|(e, item_ctx)| clone_arg(e, ctx, item_ctx))
@@ -263,7 +276,7 @@ fn emit_expr_with_options(
             } else {
                 let flat_exprs: Vec<Expr> = entries
                     .iter()
-                    .flat_map(|(k, v)| [k.clone(), v.clone()])
+                    .flat_map(|(k, v)| [k.node.clone(), v.node.clone()])
                     .collect();
                 let flat_ctxs = compute_args_used_after_full(
                     &flat_exprs,
@@ -278,8 +291,8 @@ fn emit_expr_with_options(
                     let value_ctx = &flat_ctxs[idx * 2 + 1];
                     parts.push(format!(
                         "({}, {})",
-                        clone_arg(k, ctx, key_ctx),
-                        clone_arg(v, ctx, value_ctx)
+                        clone_arg(&k.node, ctx, key_ctx),
+                        clone_arg(&v.node, ctx, value_ctx)
                     ));
                 }
                 format!(
@@ -294,7 +307,7 @@ fn emit_expr_with_options(
             } else {
                 type_name
             };
-            let field_exprs: Vec<Expr> = fields.iter().map(|(_, e)| e.clone()).collect();
+            let field_exprs: Vec<Expr> = fields.iter().map(|(_, e)| e.node.clone()).collect();
             let field_ctxs = compute_args_used_after_full(
                 &field_exprs,
                 &ectx.used_after,
@@ -309,7 +322,7 @@ fn emit_expr_with_options(
                     format!(
                         "{}: {}",
                         aver_name_to_rust(name),
-                        clone_arg(expr, ctx, &field_ctxs[i])
+                        clone_arg(&expr.node, ctx, &field_ctxs[i])
                     )
                 })
                 .collect();
@@ -325,8 +338,8 @@ fn emit_expr_with_options(
             } else {
                 type_name
             };
-            let base_str = clone_arg(base, ctx, ectx);
-            let update_exprs: Vec<Expr> = updates.iter().map(|(_, e)| e.clone()).collect();
+            let base_str = clone_arg(&base.node, ctx, ectx);
+            let update_exprs: Vec<Expr> = updates.iter().map(|(_, e)| e.node.clone()).collect();
             let update_ctxs = compute_args_used_after_full(
                 &update_exprs,
                 &ectx.used_after,
@@ -341,7 +354,7 @@ fn emit_expr_with_options(
                     format!(
                         "{}: {}",
                         aver_name_to_rust(name),
-                        clone_arg(expr, ctx, uctx)
+                        clone_arg(&expr.node, ctx, uctx)
                     )
                 })
                 .collect();
@@ -350,10 +363,11 @@ fn emit_expr_with_options(
         Expr::TailCall(boxed) => {
             // TailCall outside of a TCO loop → emit as regular function call
             let (target, args) = boxed.as_ref();
+            let bare_args: Vec<Expr> = args.iter().map(|a| a.node.clone()).collect();
             let call_ctx = RustCallCtx { ctx, ectx };
             match classify_tail_call_plan(target, "", &call_ctx) {
                 TailCallPlan::SelfCall | TailCallPlan::KnownFunction(_) => {
-                    emit_named_function_call(target, args, ctx, ectx)
+                    emit_named_function_call(target, &bare_args, ctx, ectx)
                 }
                 TailCallPlan::Unknown(name) => emit_codegen_error_expr(format!(
                     "Rust codegen: unknown tail call target {}",
@@ -433,7 +447,14 @@ fn emit_body_expr_plan_with_options(
             emit_leaf_op_with_options(*leaf, ctx, ectx, allow_callsite_inlining)
         }
         BodyExprPlan::Call { target, args } => {
-            emit_call_plan_with_args_with_options(target, args, ctx, ectx, allow_callsite_inlining)
+            let bare_args: Vec<Expr> = args.iter().map(|a| a.node.clone()).collect();
+            emit_call_plan_with_args_with_options(
+                target,
+                &bare_args,
+                ctx,
+                ectx,
+                allow_callsite_inlining,
+            )
         }
         BodyExprPlan::ForwardCall(plan) => {
             emit_forward_call_plan_with_options(plan, ctx, ectx, allow_callsite_inlining)
@@ -584,26 +605,26 @@ fn emit_leaf_op_with_options(
 ) -> String {
     match leaf {
         LeafOp::FieldAccess { object, field_name } => {
-            let object = emit_expr_with_options(object, ctx, ectx, allow_callsite_inlining);
+            let object = emit_expr_with_options(&object.node, ctx, ectx, allow_callsite_inlining);
             format!("{}.{}", object, aver_name_to_rust(field_name))
         }
         LeafOp::MapGet { map, key } => emit_leaf_builtin_call_with_options(
             "Map.get",
-            &[map, key],
+            &[&map.node, &key.node],
             ctx,
             ectx,
             allow_callsite_inlining,
         ),
         LeafOp::MapSet { map, key, value } => emit_leaf_builtin_call_with_options(
             "Map.set",
-            &[map, key, value],
+            &[&map.node, &key.node, &value.node],
             ctx,
             ectx,
             allow_callsite_inlining,
         ),
         LeafOp::VectorNew { size, fill } => emit_leaf_builtin_call_with_options(
             "Vector.new",
-            &[size, fill],
+            &[&size.node, &fill.node],
             ctx,
             ectx,
             allow_callsite_inlining,
@@ -613,7 +634,7 @@ fn emit_leaf_op_with_options(
             index,
             value,
         } => {
-            let inner_args = vec![vector.clone(), index.clone(), value.clone()];
+            let inner_args = vec![vector.node.clone(), index.node.clone(), value.node.clone()];
             let arg_ctxs = compute_args_used_after_full(
                 &inner_args,
                 &ectx.used_after,
@@ -621,9 +642,12 @@ fn emit_leaf_op_with_options(
                 &ectx.rc_wrapped,
                 &ectx.borrowed_params,
             );
-            let vector = clone_arg_with_options(vector, ctx, &arg_ctxs[0], allow_callsite_inlining);
-            let index = emit_expr_with_options(index, ctx, &arg_ctxs[1], allow_callsite_inlining);
-            let value = clone_arg_with_options(value, ctx, &arg_ctxs[2], allow_callsite_inlining);
+            let vector =
+                clone_arg_with_options(&vector.node, ctx, &arg_ctxs[0], allow_callsite_inlining);
+            let index =
+                emit_expr_with_options(&index.node, ctx, &arg_ctxs[1], allow_callsite_inlining);
+            let value =
+                clone_arg_with_options(&value.node, ctx, &arg_ctxs[2], allow_callsite_inlining);
             format!(
                 "{{ let __vec = {}; let __idx = {} as usize; if __idx < __vec.len() {{ __vec.set_unchecked(__idx, {}) }} else {{ __vec }} }}",
                 vector, index, value
@@ -634,7 +658,7 @@ fn emit_leaf_op_with_options(
             index,
             default_literal,
         } => {
-            let inner_args = vec![vector.clone(), index.clone()];
+            let inner_args = vec![vector.node.clone(), index.node.clone()];
             let arg_ctxs = compute_args_used_after_full(
                 &inner_args,
                 &ectx.used_after,
@@ -642,8 +666,10 @@ fn emit_leaf_op_with_options(
                 &ectx.rc_wrapped,
                 &ectx.borrowed_params,
             );
-            let vector = emit_expr_with_options(vector, ctx, &arg_ctxs[0], allow_callsite_inlining);
-            let index = emit_expr_with_options(index, ctx, &arg_ctxs[1], allow_callsite_inlining);
+            let vector =
+                emit_expr_with_options(&vector.node, ctx, &arg_ctxs[0], allow_callsite_inlining);
+            let index =
+                emit_expr_with_options(&index.node, ctx, &arg_ctxs[1], allow_callsite_inlining);
             let default = emit_literal(default_literal);
             format!(
                 "{}.get({} as usize).cloned().unwrap_or({})",
@@ -656,10 +682,10 @@ fn emit_leaf_op_with_options(
             default_literal,
         } => {
             // When divisor is a known non-zero literal, skip the zero check entirely.
-            if let Expr::Literal(Literal::Int(n)) = b
+            if let Expr::Literal(Literal::Int(n)) = &b.node
                 && *n != 0
             {
-                let inner_args = vec![a.clone(), b.clone()];
+                let inner_args = vec![a.node.clone(), b.node.clone()];
                 let arg_ctxs = compute_args_used_after_full(
                     &inner_args,
                     &ectx.used_after,
@@ -667,11 +693,11 @@ fn emit_leaf_op_with_options(
                     &ectx.rc_wrapped,
                     &ectx.borrowed_params,
                 );
-                let a = emit_expr_with_options(a, ctx, &arg_ctxs[0], allow_callsite_inlining);
+                let a = emit_expr_with_options(&a.node, ctx, &arg_ctxs[0], allow_callsite_inlining);
                 let b_str = emit_literal(&Literal::Int(*n));
                 format!("({}).rem_euclid({})", a, b_str)
             } else {
-                let inner_args = vec![a.clone(), b.clone()];
+                let inner_args = vec![a.node.clone(), b.node.clone()];
                 let arg_ctxs = compute_args_used_after_full(
                     &inner_args,
                     &ectx.used_after,
@@ -679,8 +705,8 @@ fn emit_leaf_op_with_options(
                     &ectx.rc_wrapped,
                     &ectx.borrowed_params,
                 );
-                let a = emit_expr_with_options(a, ctx, &arg_ctxs[0], allow_callsite_inlining);
-                let b = emit_expr_with_options(b, ctx, &arg_ctxs[1], allow_callsite_inlining);
+                let a = emit_expr_with_options(&a.node, ctx, &arg_ctxs[0], allow_callsite_inlining);
+                let b = emit_expr_with_options(&b.node, ctx, &arg_ctxs[1], allow_callsite_inlining);
                 let default = emit_literal(default_literal);
                 format!(
                     "{{ let __b = {}; if __b == 0i64 {{ {} }} else {{ ({}).rem_euclid(__b) }} }}",
@@ -689,7 +715,7 @@ fn emit_leaf_op_with_options(
             }
         }
         LeafOp::ListIndexGet { list, index } => {
-            let inner_args = vec![list.clone(), index.clone()];
+            let inner_args = vec![list.node.clone(), index.node.clone()];
             let arg_ctxs = compute_args_used_after_full(
                 &inner_args,
                 &ectx.used_after,
@@ -697,8 +723,10 @@ fn emit_leaf_op_with_options(
                 &ectx.rc_wrapped,
                 &ectx.borrowed_params,
             );
-            let list = emit_expr_with_options(list, ctx, &arg_ctxs[0], allow_callsite_inlining);
-            let index = emit_expr_with_options(index, ctx, &arg_ctxs[1], allow_callsite_inlining);
+            let list =
+                emit_expr_with_options(&list.node, ctx, &arg_ctxs[0], allow_callsite_inlining);
+            let index =
+                emit_expr_with_options(&index.node, ctx, &arg_ctxs[1], allow_callsite_inlining);
             format!("{}.to_vec().get({} as usize).cloned()", list, index)
         }
     }
@@ -740,13 +768,13 @@ fn fn_def_has_mutual_tco(fd: &FnDef) -> bool {
             Expr::TailCall(boxed) => boxed.as_ref().0 != fn_name,
             Expr::Match { arms, .. } => arms
                 .iter()
-                .any(|arm| expr_has_other_tailcall(&arm.body, fn_name)),
+                .any(|arm| expr_has_other_tailcall(&arm.body.node, fn_name)),
             _ => false,
         }
     }
     fd.body.stmts().iter().any(|s| match s {
-        Stmt::Expr(e) => expr_has_other_tailcall(e, &fd.name),
-        Stmt::Binding(_, _, e) => expr_has_other_tailcall(e, &fd.name),
+        Stmt::Expr(e) => expr_has_other_tailcall(&e.node, &fd.name),
+        Stmt::Binding(_, _, e) => expr_has_other_tailcall(&e.node, &fd.name),
     })
 }
 
@@ -757,13 +785,13 @@ fn fn_def_has_tco(fd: &FnDef) -> bool {
             Expr::TailCall(boxed) => boxed.as_ref().0 == fn_name,
             Expr::Match { arms, .. } => arms
                 .iter()
-                .any(|arm| expr_has_self_tailcall(&arm.body, fn_name)),
+                .any(|arm| expr_has_self_tailcall(&arm.body.node, fn_name)),
             _ => false,
         }
     }
     fd.body.stmts().iter().any(|s| match s {
-        Stmt::Expr(e) => expr_has_self_tailcall(e, &fd.name),
-        Stmt::Binding(_, _, e) => expr_has_self_tailcall(e, &fd.name),
+        Stmt::Expr(e) => expr_has_self_tailcall(&e.node, &fd.name),
+        Stmt::Binding(_, _, e) => expr_has_self_tailcall(&e.node, &fd.name),
     })
 }
 
@@ -980,7 +1008,7 @@ pub(super) fn maybe_clone(code: String, expr: &Expr, ectx: &EmitCtx) -> String {
         // When passed to a function expecting `&T`, `borrow_arg` handles it.
         Expr::Attr(obj, _field) => {
             // Builtin namespace access (e.g. Int.abs) → no clone needed
-            if matches!(obj.as_ref(), Expr::Ident(name) if is_builtin_namespace(name)) {
+            if matches!(&obj.node, Expr::Ident(name) if is_builtin_namespace(name)) {
                 code
             } else {
                 format!("{}.clone()", code)
@@ -1002,7 +1030,7 @@ fn expr_is_numeric(expr: &Expr, ectx: &EmitCtx) -> bool {
         // Sub/Mul/Div always produce numeric results.
         Expr::BinOp(op, _, _) => !matches!(op, BinOp::Add),
         Expr::FnCall(fn_expr, _) => {
-            if let Some(dotted) = expr_to_dotted_name(fn_expr) {
+            if let Some(dotted) = expr_to_dotted_name(&fn_expr.node) {
                 matches!(
                     dotted.as_str(),
                     "Int.abs"
@@ -1128,7 +1156,7 @@ fn clone_arg_with_options(
     let code = emit_expr_with_options(expr, ctx, ectx, allow_callsite_inlining);
     // Field access on record: check if the field type is Copy before cloning.
     if let Expr::Attr(obj, field) = expr
-        && attr_result_is_copy(obj, field, ctx, ectx)
+        && attr_result_is_copy(&obj.node, field, ctx, ectx)
     {
         return code;
     }
@@ -1234,10 +1262,10 @@ fn emit_interpolated_str(parts: &[StrPart], ctx: &CodegenContext, ectx: &EmitCtx
             }
             StrPart::Parsed(expr) => {
                 fmt_str.push_str("{}");
-                let emitted = emit_expr(expr, ctx, ectx);
+                let emitted = emit_expr(&expr.node, ctx, ectx);
                 // Skip aver_display when the expression type is known to be displayable natively.
                 // String, Int (i64), Float (f64), Bool all have Display impls matching aver_display.
-                let arg = match expr_display_type(expr, ectx) {
+                let arg = match expr_display_type(&expr.node, ectx) {
                     Some(DisplayKind::Native) => emitted,
                     _ => format!("aver_rt::aver_display(&{})", emitted),
                 };
@@ -1269,7 +1297,7 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
     // Subject's used_after: all vars in arms + parent used_after
     let mut arms_vars = HashSet::new();
     for arm in arms {
-        let mut arm_vars = collect_vars(&arm.body);
+        let mut arm_vars = collect_vars(&arm.body.node);
         let bindings = super::liveness::pattern_bindings(&arm.pattern);
         for b in &bindings {
             arm_vars.remove(b);
@@ -1284,7 +1312,7 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
         let arm = &arms[0];
         let subj = clone_arg(subject, ctx, &subj_ectx);
         let pat = emit_pattern(&arm.pattern, false, ctx);
-        let body = maybe_clone(emit_expr(&arm.body, ctx, ectx), &arm.body, ectx);
+        let body = maybe_clone(emit_expr(&arm.body.node, ctx, ectx), &arm.body.node, ectx);
         return match &arm.pattern {
             Pattern::Wildcard => body,
             Pattern::Ident(name) => {
@@ -1329,13 +1357,13 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
             _ => None,
         };
         return emit_list_match(subj, arms, list_shape, true, ctx, |arm| {
-            maybe_clone(emit_expr(&arm.body, ctx, ectx), &arm.body, ectx)
+            maybe_clone(emit_expr(&arm.body.node, ctx, ectx), &arm.body.node, ectx)
         });
     }
 
     if let Some(MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
         return emit_dispatch_table_match(subj, arms, shape, |arm| {
-            maybe_clone(emit_expr(&arm.body, ctx, ectx), &arm.body, ectx)
+            maybe_clone(emit_expr(&arm.body.node, ctx, ectx), &arm.body.node, ectx)
         });
     }
 
@@ -1350,7 +1378,7 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
         let pat = emit_pattern(&arm.pattern, needs_as_str, ctx);
         // Each arm body is independent — use parent's used_after
         // Clone the result if it's a bare ident that's still needed after the match
-        let body = maybe_clone(emit_expr(&arm.body, ctx, ectx), &arm.body, ectx);
+        let body = maybe_clone(emit_expr(&arm.body.node, ctx, ectx), &arm.body.node, ectx);
         let mut rebindings = emit_pattern_rebindings(&arm.pattern, ctx);
         // When matching on a reference (borrowed param), bindings are &T.
         // Clone them to produce owned values expected by arm bodies.
@@ -1392,10 +1420,10 @@ fn try_emit_bool_if_else(
             op,
             invert,
         } => {
-            let rhs_vars = collect_vars(rhs);
+            let rhs_vars = collect_vars(&rhs.node);
             let lhs_ectx = subj_ectx.with_used_after(&rhs_vars);
-            let lhs_code = emit_expr(lhs, ctx, &lhs_ectx);
-            let rhs_code = emit_expr(rhs, ctx, subj_ectx);
+            let lhs_code = emit_expr(&lhs.node, ctx, &lhs_ectx);
+            let rhs_code = emit_expr(&rhs.node, ctx, subj_ectx);
             let op_code = match op {
                 BoolCompareOp::Eq => "==",
                 BoolCompareOp::Lt => "<",
@@ -1417,8 +1445,12 @@ fn try_emit_bool_if_else(
             }
         }
     };
-    let t = maybe_clone(emit_expr(true_body, ctx, ectx), true_body, ectx);
-    let f = maybe_clone(emit_expr(false_body, ctx, ectx), false_body, ectx);
+    let t = maybe_clone(emit_expr(&true_body.node, ctx, ectx), &true_body.node, ectx);
+    let f = maybe_clone(
+        emit_expr(&false_body.node, ctx, ectx),
+        &false_body.node,
+        ectx,
+    );
     Some(format!("if {} {{ {} }} else {{ {} }}", cond, t, f))
 }
 

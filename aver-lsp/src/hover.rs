@@ -310,8 +310,8 @@ fn fn_has_tail_call(fd: &FnDef) -> bool {
     })
 }
 
-fn expr_has_tail_call(expr: &Expr) -> bool {
-    match expr {
+fn expr_has_tail_call(expr: &aver::ast::Spanned<Expr>) -> bool {
+    match &expr.node {
         Expr::TailCall(_) => true,
         Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => false,
         Expr::Attr(obj, _) => expr_has_tail_call(obj),
@@ -326,17 +326,15 @@ fn expr_has_tail_call(expr: &Expr) -> bool {
         Expr::Constructor(_, None) => false,
         Expr::InterpolatedStr(parts) => parts.iter().any(|part| match part {
             aver::ast::StrPart::Literal(_) => false,
-            aver::ast::StrPart::Parsed(expr) => expr_has_tail_call(expr),
+            aver::ast::StrPart::Parsed(e) => expr_has_tail_call(e),
         }),
         Expr::List(items) | Expr::Tuple(items) => items.iter().any(expr_has_tail_call),
         Expr::MapLiteral(entries) => entries
             .iter()
             .any(|(key, value)| expr_has_tail_call(key) || expr_has_tail_call(value)),
-        Expr::RecordCreate { fields, .. } => {
-            fields.iter().any(|(_, expr)| expr_has_tail_call(expr))
-        }
+        Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| expr_has_tail_call(e)),
         Expr::RecordUpdate { base, updates, .. } => {
-            expr_has_tail_call(base) || updates.iter().any(|(_, expr)| expr_has_tail_call(expr))
+            expr_has_tail_call(base) || updates.iter().any(|(_, e)| expr_has_tail_call(e))
         }
     }
 }

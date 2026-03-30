@@ -25,10 +25,10 @@ impl TypeChecker {
         out
     }
 
-    fn verify_case_calls_target(left: &Expr, fn_name: &str) -> bool {
-        match left {
+    fn verify_case_calls_target(expr: &Spanned<Expr>, fn_name: &str) -> bool {
+        match &expr.node {
             Expr::FnCall(callee, args) => {
-                Self::callee_is_verify_target(callee, fn_name)
+                Self::callee_is_verify_target(&callee.node, fn_name)
                     || Self::verify_case_calls_target(callee, fn_name)
                     || args
                         .iter()
@@ -139,7 +139,7 @@ impl TypeChecker {
                         if self.locals.contains_key(name) {
                             self.error(format!("'{}' is already defined", name));
                         } else {
-                            if matches!(expr, Expr::List(elems) if elems.is_empty())
+                            if matches!(expr.node, Expr::List(ref elems) if elems.is_empty())
                                 && type_ann.is_none()
                             {
                                 self.error(format!(
@@ -299,7 +299,7 @@ impl TypeChecker {
                     if self.locals.contains_key(name) {
                         self.error(format!("'{}' is already defined in '{}'", name, fn_name));
                     } else {
-                        if matches!(expr, Expr::List(elems) if elems.is_empty())
+                        if matches!(expr.node, Expr::List(ref elems) if elems.is_empty())
                             && type_ann.is_none()
                         {
                             self.error(format!(
@@ -333,7 +333,11 @@ impl TypeChecker {
                         self.check_effects_in_expr(expr, fn_name, caller_effects);
                         self.locals.insert(name.clone(), ty);
                         // Track binding for unused detection.
-                        let line = self.current_fn_line.unwrap_or(1);
+                        let line = if expr.line > 0 {
+                            expr.line
+                        } else {
+                            self.current_fn_line.unwrap_or(1)
+                        };
                         self.fn_bindings.push((name.clone(), line));
                     }
                     last = Type::Unit;
@@ -371,16 +375,21 @@ impl TypeChecker {
 
     pub(super) fn check_effects_in_expr(
         &mut self,
-        expr: &Expr,
+        expr: &Spanned<Expr>,
         caller_name: &str,
         caller_effects: &[String],
     ) {
-        match expr {
+        match &expr.node {
             Expr::FnCall(fn_expr, args) => {
-                if let Some((callee_name, effects)) = self.callable_effects(fn_expr) {
+                if let Some((callee_name, effects)) = self.callable_effects(&fn_expr.node) {
+                    let err_line = if expr.line > 0 {
+                        expr.line
+                    } else {
+                        self.current_fn_line.unwrap_or(1)
+                    };
                     for effect in &effects {
                         if !self.caller_has_effect(caller_effects, effect) {
-                            self.error(format!(
+                            self.error_at_line(err_line, format!(
                                 "Function '{}' calls '{}' which has effect '{}', but '{}' does not declare it",
                                 caller_name, callee_name, effect, caller_name
                             ));

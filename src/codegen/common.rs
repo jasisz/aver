@@ -211,6 +211,11 @@ pub(crate) fn is_unit_expr(expr: &crate::ast::Expr) -> bool {
     matches!(expr, crate::ast::Expr::Literal(crate::ast::Literal::Unit))
 }
 
+/// Check if a spanned expression is a compile-time Unit literal.
+pub(crate) fn is_unit_expr_spanned(expr: &crate::ast::Spanned<crate::ast::Expr>) -> bool {
+    is_unit_expr(&expr.node)
+}
+
 /// Escape an Aver identifier if it collides with a target language reserved word.
 ///
 /// `affix` is appended as a suffix (e.g. `"_"` for Dafny, `"'"` for Lean).

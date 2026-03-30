@@ -1,5 +1,5 @@
 use super::super::expr::aver_name_to_lean;
-use crate::ast::{BinOp, Expr, Literal, VerifyBlock, VerifyLaw};
+use crate::ast::{BinOp, Expr, Literal, Spanned, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 
 use super::intro_then;
@@ -101,7 +101,7 @@ pub(super) fn emit_unary_wrapper_equivalence_law(
     let unary = int_unary_wrapper(ctx, &vb.fn_name)?;
     let given = &law.givens[0].name;
 
-    let try_side = |call_side: &Expr, other_side: &Expr| -> Option<Vec<String>> {
+    let try_side = |call_side: &Spanned<Expr>, other_side: &Spanned<Expr>| -> Option<Vec<String>> {
         if !matches_unary_call(call_side, &vb.fn_name, given) {
             return None;
         }
@@ -215,7 +215,7 @@ fn int_binary_wrapper_op(ctx: &CodegenContext, fn_name: &str) -> Option<BinOp> {
         return None;
     }
     let expr = body_terminal_expr(fd.body.as_ref())?;
-    let Expr::BinOp(op, left, right) = expr else {
+    let Expr::BinOp(op, left, right) = &expr.node else {
         return None;
     };
     if !matches_ident(left, p1) || !matches_ident(right, p2) {
@@ -234,11 +234,11 @@ fn int_unary_wrapper(ctx: &CodegenContext, fn_name: &str) -> Option<UnaryIntWrap
         return None;
     }
     let expr = body_terminal_expr(fd.body.as_ref())?;
-    let Expr::BinOp(op, left, right) = expr else {
+    let Expr::BinOp(op, left, right) = &expr.node else {
         return None;
     };
 
-    match (left.as_ref(), right.as_ref()) {
+    match (&left.node, &right.node) {
         (Expr::Ident(id), Expr::Literal(Literal::Int(n))) if id == param => Some(UnaryIntWrapper {
             op: *op,
             constant: *n,

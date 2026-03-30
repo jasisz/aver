@@ -4,7 +4,7 @@ impl TypeChecker {
     pub(in super::super) fn infer_record_create_expr(
         &mut self,
         type_name: &str,
-        fields: &[(String, Expr)],
+        fields: &[(String, Spanned<Expr>)],
     ) -> Type {
         if self.opaque_types.contains(type_name) {
             self.error(format!(
@@ -75,8 +75,8 @@ impl TypeChecker {
     pub(in super::super) fn infer_record_update_expr(
         &mut self,
         type_name: &str,
-        base: &Expr,
-        updates: &[(String, Expr)],
+        base: &Spanned<Expr>,
+        updates: &[(String, Spanned<Expr>)],
     ) -> Type {
         if self.opaque_types.contains(type_name) {
             self.error(format!(

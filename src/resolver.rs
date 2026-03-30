@@ -71,9 +71,13 @@ fn collect_binding_slots(
 }
 
 /// Collect pattern bindings from match expressions inside an expression tree.
-fn collect_expr_bindings(expr: &Expr, local_slots: &mut HashMap<String, u16>, next_slot: &mut u16) {
-    match expr {
-        Expr::Match { subject, arms, .. } => {
+fn collect_expr_bindings(
+    expr: &Spanned<Expr>,
+    local_slots: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+) {
+    match &expr.node {
+        Expr::Match { subject, arms } => {
             collect_expr_bindings(subject, local_slots, next_slot);
             for arm in arms {
                 collect_pattern_bindings(&arm.pattern, local_slots, next_slot);
@@ -182,11 +186,11 @@ fn collect_pattern_bindings(
 }
 
 /// Resolve `Expr::Ident` → `Expr::Resolved` for locals in an expression.
-fn resolve_expr(expr: &mut Expr, local_slots: &HashMap<String, u16>) {
-    match expr {
+fn resolve_expr(expr: &mut Spanned<Expr>, local_slots: &HashMap<String, u16>) {
+    match &mut expr.node {
         Expr::Ident(name) => {
             if let Some(&slot) = local_slots.get(name) {
-                *expr = Expr::Resolved(slot);
+                expr.node = Expr::Resolved(slot);
             }
             // else: global/namespace — leave as Ident for HashMap fallback
         }
@@ -204,7 +208,7 @@ fn resolve_expr(expr: &mut Expr, local_slots: &HashMap<String, u16>) {
             resolve_expr(left, local_slots);
             resolve_expr(right, local_slots);
         }
-        Expr::Match { subject, arms, .. } => {
+        Expr::Match { subject, arms } => {
             resolve_expr(subject, local_slots);
             for arm in arms {
                 resolve_expr(&mut arm.body, local_slots);
@@ -286,11 +290,11 @@ mod tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::BinOp(
+            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::BinOp(
                 BinOp::Add,
-                Box::new(Expr::Ident("a".to_string())),
-                Box::new(Expr::Ident("b".to_string())),
-            ))),
+                Box::new(Spanned::bare(Expr::Ident("a".to_string()))),
+                Box::new(Spanned::bare(Expr::Ident("b".to_string()))),
+            )))),
             resolution: None,
         };
         resolve_fn(&mut fd);
@@ -300,9 +304,12 @@ mod tests {
         assert_eq!(res.local_count, 2);
 
         match fd.body.tail_expr() {
-            Some(Expr::BinOp(_, left, right)) => {
-                assert_eq!(**left, Expr::Resolved(0));
-                assert_eq!(**right, Expr::Resolved(1));
+            Some(Spanned {
+                node: Expr::BinOp(_, left, right),
+                ..
+            }) => {
+                assert_eq!(left.node, Expr::Resolved(0));
+                assert_eq!(right.node, Expr::Resolved(1));
             }
             other => panic!("unexpected body: {:?}", other),
         }
@@ -317,17 +324,20 @@ mod tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::FnCall(
-                Box::new(Expr::Ident("Console".to_string())),
-                vec![Expr::Ident("x".to_string())],
-            ))),
+            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::FnCall(
+                Box::new(Spanned::bare(Expr::Ident("Console".to_string()))),
+                vec![Spanned::bare(Expr::Ident("x".to_string()))],
+            )))),
             resolution: None,
         };
         resolve_fn(&mut fd);
         match fd.body.tail_expr() {
-            Some(Expr::FnCall(func, args)) => {
-                assert_eq!(**func, Expr::Ident("Console".to_string()));
-                assert_eq!(args[0], Expr::Resolved(0));
+            Some(Spanned {
+                node: Expr::FnCall(func, args),
+                ..
+            }) => {
+                assert_eq!(func.node, Expr::Ident("Console".to_string()));
+                assert_eq!(args[0].node, Expr::Resolved(0));
             }
             other => panic!("unexpected body: {:?}", other),
         }
@@ -346,13 +356,13 @@ mod tests {
                 Stmt::Binding(
                     "y".to_string(),
                     None,
-                    Expr::BinOp(
+                    Spanned::bare(Expr::BinOp(
                         BinOp::Add,
-                        Box::new(Expr::Ident("x".to_string())),
-                        Box::new(Expr::Literal(Literal::Int(1))),
-                    ),
+                        Box::new(Spanned::bare(Expr::Ident("x".to_string()))),
+                        Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
+                    )),
                 ),
-                Stmt::Expr(Expr::Ident("y".to_string())),
+                Stmt::Expr(Spanned::bare(Expr::Ident("y".to_string()))),
             ])),
             resolution: None,
         };
@@ -365,14 +375,24 @@ mod tests {
         let stmts = fd.body.stmts();
         // val y = x + 1  →  val y = Resolved(0,0) + 1
         match &stmts[0] {
-            Stmt::Binding(_, _, Expr::BinOp(_, left, _)) => {
-                assert_eq!(**left, Expr::Resolved(0));
+            Stmt::Binding(
+                _,
+                _,
+                Spanned {
+                    node: Expr::BinOp(_, left, _),
+                    ..
+                },
+            ) => {
+                assert_eq!(left.node, Expr::Resolved(0));
             }
             other => panic!("unexpected stmt: {:?}", other),
         }
         // y  →  Resolved(0,1)
         match &stmts[1] {
-            Stmt::Expr(Expr::Resolved(1)) => {}
+            Stmt::Expr(Spanned {
+                node: Expr::Resolved(1),
+                ..
+            }) => {}
             other => panic!("unexpected stmt: {:?}", other),
         }
     }
@@ -387,23 +407,25 @@ mod tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(Expr::Match {
-                subject: Box::new(Expr::Ident("x".to_string())),
-                arms: vec![
-                    MatchArm {
-                        pattern: Pattern::Constructor(
-                            "Result.Ok".to_string(),
-                            vec!["v".to_string()],
-                        ),
-                        body: Box::new(Expr::Ident("v".to_string())),
-                    },
-                    MatchArm {
-                        pattern: Pattern::Wildcard,
-                        body: Box::new(Expr::Literal(Literal::Int(0))),
-                    },
-                ],
-                line: 1,
-            })),
+            body: Rc::new(FnBody::from_expr(Spanned::new(
+                Expr::Match {
+                    subject: Box::new(Spanned::bare(Expr::Ident("x".to_string()))),
+                    arms: vec![
+                        MatchArm {
+                            pattern: Pattern::Constructor(
+                                "Result.Ok".to_string(),
+                                vec!["v".to_string()],
+                            ),
+                            body: Box::new(Spanned::bare(Expr::Ident("v".to_string()))),
+                        },
+                        MatchArm {
+                            pattern: Pattern::Wildcard,
+                            body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
+                        },
+                    ],
+                },
+                1,
+            ))),
             resolution: None,
         };
         resolve_fn(&mut fd);
@@ -412,8 +434,11 @@ mod tests {
         assert_eq!(res.local_slots["v"], 1);
 
         match fd.body.tail_expr() {
-            Some(Expr::Match { arms, .. }) => {
-                assert_eq!(*arms[0].body, Expr::Resolved(1));
+            Some(Spanned {
+                node: Expr::Match { arms, .. },
+                ..
+            }) => {
+                assert_eq!(arms[0].body.node, Expr::Resolved(1));
             }
             other => panic!("unexpected body: {:?}", other),
         }

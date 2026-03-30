@@ -102,6 +102,7 @@ impl EffectReplayState {
         args: Vec<JsonValue>,
         outcome: RecordedOutcome,
         caller_fn: &str,
+        source_line: usize,
     ) {
         let seq = self.recorded_effects.len() as u32 + 1;
         self.recorded_effects.push(EffectRecord {
@@ -110,6 +111,7 @@ impl EffectReplayState {
             args,
             outcome,
             caller_fn: caller_fn.to_string(),
+            source_line,
         });
     }
 

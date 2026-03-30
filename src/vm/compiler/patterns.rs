@@ -1,5 +1,5 @@
 use super::{CompileError, FnCompiler};
-use crate::ast::{Expr, Literal, MatchArm, Pattern};
+use crate::ast::{Expr, Literal, MatchArm, Pattern, Spanned};
 use crate::ir::{
     BoolCompareOp, BoolMatchShape, BoolSubjectPlan, CallLowerCtx, DispatchArmPlan,
     DispatchBindingPlan, DispatchLiteral, DispatchTableShape, MatchDispatchPlan,
@@ -261,9 +261,8 @@ impl<'a> FnCompiler<'a> {
 
     pub(super) fn compile_match(
         &mut self,
-        subject: &Expr,
+        subject: &Spanned<Expr>,
         arms: &[MatchArm],
-        line: usize,
     ) -> Result<(), CompileError> {
         let lower_ctx = VmPatternCtx { compiler: self };
         if let Some(plan) = classify_match_dispatch_plan(arms, &lower_ctx) {
@@ -274,7 +273,7 @@ impl<'a> FnCompiler<'a> {
                 }
                 MatchDispatchPlan::Table(shape) => {
                     if let Some(result) =
-                        self.try_compile_match_dispatch_with_shape(subject, arms, &shape, line)?
+                        self.try_compile_match_dispatch_with_shape(subject, arms, &shape)?
                     {
                         return Ok(result);
                     }
@@ -353,7 +352,7 @@ impl<'a> FnCompiler<'a> {
     /// Avoids MATCH_DISPATCH overhead for the most common Aver branch pattern.
     fn compile_bool_match_with_shape(
         &mut self,
-        subject: &Expr,
+        subject: &Spanned<Expr>,
         arms: &[MatchArm],
         shape: BoolMatchShape,
     ) -> Result<(), CompileError> {
@@ -365,7 +364,7 @@ impl<'a> FnCompiler<'a> {
             rhs,
             op,
             invert,
-        } = classify_bool_subject_plan(subject)
+        } = classify_bool_subject_plan(&subject.node)
         {
             self.compile_expr(lhs)?;
             self.compile_expr(rhs)?;
@@ -408,10 +407,9 @@ impl<'a> FnCompiler<'a> {
     /// Try to compile a match as a MATCH_DISPATCH table from a shared IR shape.
     fn try_compile_match_dispatch_with_shape(
         &mut self,
-        subject: &Expr,
+        subject: &Spanned<Expr>,
         arms: &[MatchArm],
         shape: &DispatchTableShape,
-        _line: usize,
     ) -> Result<Option<()>, CompileError> {
         if shape.entries.len() > 255 {
             return Ok(None);
@@ -435,7 +433,7 @@ impl<'a> FnCompiler<'a> {
             let arm = &arms[e.arm_index];
             // Must be exact match (not tag prefix — those need unwrap/bind).
             (e.kind == DISPATCH_KIND_EXACT || e.kind == DISPATCH_KIND_STRING)
-                && self.try_const_expr(&arm.body).is_some()
+                && self.try_const_expr(&arm.body.node).is_some()
         });
 
         if all_const {
@@ -521,7 +519,7 @@ impl<'a> FnCompiler<'a> {
         &mut self,
         entries: &[DispatchableArm],
         arms: &[MatchArm],
-        subject: &Expr,
+        subject: &Spanned<Expr>,
         default_arm_index: Option<usize>,
     ) -> Result<Option<()>, CompileError> {
         self.compile_expr(subject)?;
@@ -535,7 +533,7 @@ impl<'a> FnCompiler<'a> {
         // Emit table entries with inline results.
         for entry in entries {
             let arm = &arms[entry.arm_index];
-            let result_bits = self.try_const_expr(&arm.body).unwrap();
+            let result_bits = self.try_const_expr(&arm.body.node).unwrap();
             self.emit_u8(entry.kind);
             self.emit_u64(entry.expected);
             self.emit_u64(result_bits);
