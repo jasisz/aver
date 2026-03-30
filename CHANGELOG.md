@@ -12,6 +12,7 @@ All notable changes to Aver are documented here.
 ### Added
 - **`aver verify --json`** — structured NDJSON output: `block-result` per verify block, `diagnostic` per failure, `summary` at end.
 - **`aver verify --verbose`** — failure diagnostics with source snippets and full fields (given/law context for specs).
+- **`aver replay --json`** — NDJSON output: `replay-result` per recording, `summary` at end.
 - **Structured verify diagnostics** — verify failures use the same diagnostic system as `aver check`: `fail[verify-mismatch]`, `fail[verify-runtime-error]`, `fail[verify-unexpected-err]` with `at:`, `block:`, `case:`, `expected:`/`actual:`, source snippets with carets. Normal mode caps to 3 diagnostics per block.
 
 ### Changed
