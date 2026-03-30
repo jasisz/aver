@@ -217,6 +217,8 @@ pub struct VerifyBlock {
     pub line: usize,
     pub cases: Vec<(Expr, Expr)>,
     pub case_spans: Vec<SourceSpan>,
+    /// Per-case given bindings for law verify (empty for Cases kind).
+    pub case_givens: Vec<Vec<(String, Expr)>>,
     pub kind: VerifyKind,
 }
 
@@ -235,13 +237,12 @@ impl VerifyBlock {
             line,
             cases,
             case_spans,
+            case_givens: vec![],
             kind,
         }
     }
 
-    pub fn iter_cases_with_spans(
-        &self,
-    ) -> impl Iterator<Item = (&(Expr, Expr), &SourceSpan)> {
+    pub fn iter_cases_with_spans(&self) -> impl Iterator<Item = (&(Expr, Expr), &SourceSpan)> {
         debug_assert_eq!(self.cases.len(), self.case_spans.len());
         self.cases.iter().zip(&self.case_spans)
     }

@@ -2273,6 +2273,7 @@ mod tests {
                 Expr::Literal(Literal::Int(1)),
             )],
             case_spans: vec![],
+            case_givens: vec![],
             kind: VerifyKind::Cases,
         }));
         ctx
@@ -2288,6 +2289,7 @@ mod tests {
                 Expr::Literal(Literal::Int(1)),
             )],
             case_spans: vec![],
+            case_givens: vec![],
             kind: VerifyKind::Cases,
         }));
         ctx.items.push(TopLevel::Verify(VerifyBlock {
@@ -2298,6 +2300,7 @@ mod tests {
                 Expr::Literal(Literal::Int(2)),
             )],
             case_spans: vec![],
+            case_givens: vec![],
             kind: VerifyKind::Cases,
         }));
         ctx
@@ -3707,6 +3710,7 @@ verify mirror law involutive
                 Expr::Literal(Literal::Int(1)),
             )],
             case_spans: vec![],
+            case_givens: vec![],
             kind: VerifyKind::Cases,
         }));
         ctx.items.push(TopLevel::Verify(VerifyBlock {

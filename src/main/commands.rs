@@ -1909,12 +1909,16 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
             case_str.clone()
         };
 
-        let law_context = if let VerifyKind::Law(law) = &block.kind {
-            let givens: Vec<(String, String)> = law
-                .givens
-                .iter()
-                .map(|g| (g.name.clone(), expr_to_str(&block.cases[idx].0)))
-                .collect();
+        let law_context = if let VerifyKind::Law(_) = &block.kind {
+            let givens: Vec<(String, String)> = block
+                .case_givens
+                .get(idx)
+                .map(|gs| {
+                    gs.iter()
+                        .map(|(name, expr)| (name.clone(), expr_to_str(expr)))
+                        .collect()
+                })
+                .unwrap_or_default();
             Some(VerifyLawContext {
                 givens,
                 law_expr: law_context_template.clone().unwrap_or_default(),

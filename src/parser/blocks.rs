@@ -3,6 +3,8 @@ use super::*;
 struct ExpandedLawCases {
     cases: Vec<(Expr, Expr)>,
     sample_guards: Vec<Expr>,
+    /// Per-case given bindings: vec of (name, value_expr) pairs.
+    case_givens: Vec<Vec<(String, Expr)>>,
 }
 
 impl Parser {
@@ -208,6 +210,13 @@ impl Parser {
                 Self::substitute_expr(left, bindings),
                 Self::substitute_expr(right, bindings),
             ));
+            // Snapshot current given bindings for this case
+            out.case_givens.push(
+                givens
+                    .iter()
+                    .filter_map(|g| bindings.get(&g.name).map(|e| (g.name.clone(), e.clone())))
+                    .collect(),
+            );
             return;
         }
 
@@ -253,6 +262,7 @@ impl Parser {
         let mut out = ExpandedLawCases {
             cases: Vec::with_capacity(total),
             sample_guards: Vec::with_capacity(total),
+            case_givens: Vec::with_capacity(total),
         };
         let mut bindings = std::collections::HashMap::new();
         Self::expand_law_cases_rec(givens, 0, &mut bindings, when, left, right, &mut out);
@@ -346,6 +356,7 @@ impl Parser {
 
         let mut cases = Vec::new();
         let mut case_spans = Vec::new();
+        let mut case_givens: Vec<Vec<(String, Expr)>> = Vec::new();
 
         if self.is_indent() {
             self.advance();
@@ -393,6 +404,7 @@ impl Parser {
                 let ExpandedLawCases {
                     cases: expanded_cases,
                     sample_guards,
+                    case_givens: expanded_givens,
                 } = self.expand_law_cases(&givens, when.as_ref(), &left, &right)?;
                 // All generated cases share the law assertion's span
                 let law_span = SourceSpan {
@@ -402,6 +414,7 @@ impl Parser {
                     end_col: law_end_col,
                 };
                 case_spans = vec![law_span; expanded_cases.len()];
+                case_givens = expanded_givens;
                 cases = expanded_cases;
                 kind = VerifyKind::Law(Box::new(VerifyLaw {
                     name: law_name,
@@ -449,6 +462,7 @@ impl Parser {
             line,
             cases,
             case_spans,
+            case_givens,
             kind,
         })
     }

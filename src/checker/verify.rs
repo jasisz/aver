@@ -170,17 +170,16 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
             case_str.clone()
         };
 
-        let law_context = if let VerifyKind::Law(law) = &block.kind {
-            let givens: Vec<(String, String)> = law
-                .givens
-                .iter()
-                .map(|g| {
-                    let val_str = expr_to_str(
-                        &block.cases[idx].0, // best effort: use left expr
-                    );
-                    (g.name.clone(), val_str)
+        let law_context = if let VerifyKind::Law(_) = &block.kind {
+            let givens: Vec<(String, String)> = block
+                .case_givens
+                .get(idx)
+                .map(|gs| {
+                    gs.iter()
+                        .map(|(name, expr)| (name.clone(), expr_to_str(expr)))
+                        .collect()
                 })
-                .collect();
+                .unwrap_or_default();
             Some(VerifyLawContext {
                 givens,
                 law_expr: law_context_template.clone().unwrap_or_default(),
@@ -340,6 +339,7 @@ pub fn merge_verify_blocks(items: &[TopLevel]) -> Vec<VerifyBlock> {
                 if let Some(&idx) = by_fn_cases.get(&vb.fn_name) {
                     merged[idx].cases.extend(vb.cases.clone());
                     merged[idx].case_spans.extend(vb.case_spans.clone());
+                    merged[idx].case_givens.extend(vb.case_givens.clone());
                     debug_assert_eq!(merged[idx].cases.len(), merged[idx].case_spans.len());
                 } else {
                     by_fn_cases.insert(vb.fn_name.clone(), merged.len());
