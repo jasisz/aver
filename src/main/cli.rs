@@ -181,6 +181,9 @@ pub(super) enum Commands {
         /// Replay using the self-hosted Aver interpreter compiled to Rust
         #[arg(long, conflicts_with = "vm")]
         self_host: bool,
+        /// Output results as JSON (NDJSON, one object per line)
+        #[arg(long)]
+        json: bool,
     },
     /// Interactive REPL
     Repl,

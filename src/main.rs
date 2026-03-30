@@ -94,8 +94,9 @@ fn main() {
             check_args,
             vm,
             self_host,
+            json,
         } => {
-            replay_cmd::cmd_replay(recording, *diff, *test, *check_args, *vm, *self_host);
+            replay_cmd::cmd_replay(recording, *diff, *test, *check_args, *vm, *self_host, *json);
         }
         Commands::Repl => {
             repl::cmd_repl();

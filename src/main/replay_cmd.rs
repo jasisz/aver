@@ -266,9 +266,9 @@ fn resolve_replay_program_file(recording: &SessionRecording, module_root: &str) 
 
 pub(super) fn replay_recording_file(
     path: &Path,
-    diff: bool,
+    _diff: bool,
     check_args: bool,
-) -> Result<bool, String> {
+) -> Result<ReplayResult, String> {
     let raw = fs::read_to_string(path)
         .map_err(|e| format!("Cannot read recording '{}': {}", path.display(), e))?;
     let recording: SessionRecording = parse_session_recording(&raw)
@@ -315,43 +315,45 @@ pub(super) fn replay_recording_file(
     let (consumed, total) = interp.replay_progress();
     let matched = actual_outcome == recording.output;
 
-    println!();
-    println!("Replay: {}", path.display());
-    println!("Effects: {} replayed ({} matched)", consumed, total);
-    println!(
-        "Output:  {}",
-        if matched {
-            "MATCH".green().to_string()
-        } else {
-            "DIFFERS".red().to_string()
-        }
-    );
+    let output_diff = if !matched {
+        build_output_diff(&recording.output, &actual_outcome)
+    } else {
+        None
+    };
 
-    if diff && !matched {
-        match (&recording.output, &actual_outcome) {
-            (RecordedOutcome::Value(expected), RecordedOutcome::Value(got)) => {
-                println!();
-                println!("Expected: {}", format_json(expected));
-                println!("Got:      {}", format_json(got));
-                if let Some(path) = first_diff_path(expected, got) {
-                    println!("Diff at:  {}", path);
-                }
-            }
-            (RecordedOutcome::RuntimeError(expected), RecordedOutcome::RuntimeError(got)) => {
-                println!("Expected runtime error: {}", expected);
-                println!("Got runtime error:      {}", got);
-            }
-            (expected, got) => {
-                println!("Expected outcome: {:?}", expected);
-                println!("Got outcome:      {:?}", got);
-            }
-        }
-    }
-
-    Ok(matched)
+    Ok(ReplayResult {
+        path: path.display().to_string(),
+        matched,
+        effects_consumed: consumed,
+        effects_total: total,
+        error: None,
+        output_diff,
+    })
 }
 
-fn replay_recording_file_vm(path: &Path, diff: bool, check_args: bool) -> Result<bool, String> {
+fn build_output_diff(
+    expected: &RecordedOutcome,
+    actual: &RecordedOutcome,
+) -> Option<(String, String, Option<String>)> {
+    match (expected, actual) {
+        (RecordedOutcome::Value(exp), RecordedOutcome::Value(got)) => {
+            let diff_path = first_diff_path(exp, got).map(|p| p.to_string());
+            Some((format_json(exp), format_json(got), diff_path))
+        }
+        (RecordedOutcome::RuntimeError(exp), RecordedOutcome::RuntimeError(got)) => Some((
+            format!("runtime_error: {}", exp),
+            format!("runtime_error: {}", got),
+            None,
+        )),
+        (exp, got) => Some((format!("{:?}", exp), format!("{:?}", got), None)),
+    }
+}
+
+fn replay_recording_file_vm(
+    path: &Path,
+    _diff: bool,
+    check_args: bool,
+) -> Result<ReplayResult, String> {
     let raw = fs::read_to_string(path)
         .map_err(|e| format!("Cannot read recording '{}': {}", path.display(), e))?;
     let recording: SessionRecording = parse_session_recording(&raw)
@@ -435,47 +437,27 @@ fn replay_recording_file_vm(path: &Path, diff: bool, check_args: bool) -> Result
     let (consumed, total) = machine.replay_progress();
     let matched = actual_outcome == recording.output;
 
-    println!();
-    println!("Replay: {}", path.display());
-    println!("Effects: {} replayed ({} matched)", consumed, total);
-    println!(
-        "Output:  {}",
-        if matched {
-            "MATCH".green().to_string()
-        } else {
-            "DIFFERS".red().to_string()
-        }
-    );
+    let output_diff = if !matched {
+        build_output_diff(&recording.output, &actual_outcome)
+    } else {
+        None
+    };
 
-    if diff && !matched {
-        match (&recording.output, &actual_outcome) {
-            (RecordedOutcome::Value(expected), RecordedOutcome::Value(got)) => {
-                println!();
-                println!("Expected: {}", format_json(expected));
-                println!("Got:      {}", format_json(got));
-                if let Some(path) = first_diff_path(expected, got) {
-                    println!("Diff at:  {}", path);
-                }
-            }
-            (RecordedOutcome::RuntimeError(expected), RecordedOutcome::RuntimeError(got)) => {
-                println!("Expected runtime error: {}", expected);
-                println!("Got runtime error:      {}", got);
-            }
-            (expected, got) => {
-                println!("Expected outcome: {:?}", expected);
-                println!("Got outcome:      {:?}", got);
-            }
-        }
-    }
-
-    Ok(matched)
+    Ok(ReplayResult {
+        path: path.display().to_string(),
+        matched,
+        effects_consumed: consumed,
+        effects_total: total,
+        error: None,
+        output_diff,
+    })
 }
 
 fn replay_recording_file_self_host(
     path: &Path,
     _diff: bool,
     check_args: bool,
-) -> Result<bool, String> {
+) -> Result<ReplayResult, String> {
     let raw = fs::read_to_string(path)
         .map_err(|e| format!("Cannot read recording '{}': {}", path.display(), e))?;
     let recording: SessionRecording = parse_session_recording(&raw)
@@ -525,16 +507,97 @@ fn replay_recording_file_self_host(
         return Err(msg);
     }
 
-    println!();
-    println!("Replay: {}", path.display());
-    println!(
-        "Effects: {} replayed ({} matched)",
-        recording.effects.len(),
-        recording.effects.len()
-    );
-    println!("Output:  {}", "MATCH".green());
+    let n = recording.effects.len();
+    Ok(ReplayResult {
+        path: path.display().to_string(),
+        matched: true,
+        effects_consumed: n,
+        effects_total: n,
+        error: None,
+        output_diff: None,
+    })
+}
 
-    Ok(true)
+pub(super) struct ReplayResult {
+    path: String,
+    matched: bool,
+    effects_consumed: usize,
+    effects_total: usize,
+    error: Option<String>,
+    /// For output mismatch: expected, actual, diff_path
+    output_diff: Option<(String, String, Option<String>)>,
+}
+
+fn render_replay_result(result: &ReplayResult, diff: bool, json: bool) {
+    if json {
+        let status = if result.error.is_some() {
+            "error"
+        } else if result.matched {
+            "pass"
+        } else {
+            "mismatch"
+        };
+        let mut parts = vec![
+            "\"schema_version\":1".to_string(),
+            "\"kind\":\"replay-result\"".to_string(),
+            format!("\"file\":{}", crate::diagnostic::json_escape(&result.path)),
+            format!("\"status\":\"{}\"", status),
+            format!("\"effects_consumed\":{}", result.effects_consumed),
+            format!("\"effects_total\":{}", result.effects_total),
+        ];
+        if let Some(ref err) = result.error {
+            parts.push(format!("\"error\":{}", crate::diagnostic::json_escape(err)));
+        }
+        if let Some((expected, actual, diff_path)) = &result.output_diff {
+            parts.push(format!(
+                "\"expected\":{}",
+                crate::diagnostic::json_escape(expected)
+            ));
+            parts.push(format!(
+                "\"actual\":{}",
+                crate::diagnostic::json_escape(actual)
+            ));
+            if let Some(dp) = diff_path {
+                parts.push(format!(
+                    "\"diff_path\":{}",
+                    crate::diagnostic::json_escape(dp)
+                ));
+            }
+        }
+        println!("{{{}}}", parts.join(","));
+    } else {
+        println!();
+        println!("Replay: {}", result.path);
+        if let Some(ref err) = result.error {
+            for line in err.lines() {
+                eprintln!("  {}", line.red());
+            }
+            return;
+        }
+        println!(
+            "Effects: {} replayed ({} matched)",
+            result.effects_consumed, result.effects_total
+        );
+        println!(
+            "Output:  {}",
+            if result.matched {
+                "MATCH".green().to_string()
+            } else {
+                "DIFFERS".red().to_string()
+            }
+        );
+        if diff
+            && !result.matched
+            && let Some((expected, actual, diff_path)) = &result.output_diff
+        {
+            println!();
+            println!("Expected: {}", expected);
+            println!("Got:      {}", actual);
+            if let Some(dp) = diff_path {
+                println!("Diff at:  {}", dp);
+            }
+        }
+    }
 }
 
 pub(super) fn cmd_replay(
@@ -544,6 +607,7 @@ pub(super) fn cmd_replay(
     check_args: bool,
     vm_mode: bool,
     self_host_mode: bool,
+    json: bool,
 ) {
     let files = match collect_recording_files(recording) {
         Ok(f) => f,
@@ -554,24 +618,65 @@ pub(super) fn cmd_replay(
     };
 
     let mut all_match = true;
-    for file in files {
+    let mut total_replayed = 0usize;
+    let mut total_matched = 0usize;
+    let mut total_failed = 0usize;
+
+    for file in &files {
         let result = if self_host_mode {
-            replay_recording_file_self_host(&file, diff, check_args)
+            replay_recording_file_self_host(file, diff, check_args)
         } else if vm_mode {
-            replay_recording_file_vm(&file, diff, check_args)
+            replay_recording_file_vm(file, diff, check_args)
         } else {
-            replay_recording_file(&file, diff, check_args)
+            replay_recording_file(file, diff, check_args)
         };
         match result {
-            Ok(matched) => {
-                if !matched {
+            Ok(rr) => {
+                render_replay_result(&rr, diff, json);
+                total_replayed += 1;
+                if rr.matched {
+                    total_matched += 1;
+                } else {
+                    total_failed += 1;
                     all_match = false;
                 }
             }
             Err(e) => {
-                eprintln!("{}", e.red());
+                let rr = ReplayResult {
+                    path: file.display().to_string(),
+                    matched: false,
+                    effects_consumed: 0,
+                    effects_total: 0,
+                    error: Some(e),
+                    output_diff: None,
+                };
+                render_replay_result(&rr, diff, json);
+                total_replayed += 1;
+                total_failed += 1;
                 all_match = false;
             }
+        }
+    }
+
+    // Summary
+    if json {
+        println!(
+            "{{\"schema_version\":1,\"kind\":\"summary\",\"recordings\":{},\"matched\":{},\"failed\":{}}}",
+            total_replayed, total_matched, total_failed
+        );
+    } else if files.len() > 1 {
+        println!();
+        let summary = format!(
+            "Summary: {} recording{} | {} matched | {} failed",
+            total_replayed,
+            if total_replayed == 1 { "" } else { "s" },
+            total_matched,
+            total_failed,
+        );
+        if all_match {
+            println!("{}", summary.green());
+        } else {
+            println!("{}", summary.red());
         }
     }
 
