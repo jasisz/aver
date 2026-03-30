@@ -16,6 +16,7 @@ use std::fmt::Write;
 pub(super) enum Severity {
     Error,
     Warning,
+    Fail,
 }
 
 /// Source location.
@@ -71,10 +72,11 @@ impl Diagnostic {
         let tag = match self.severity {
             Severity::Error => "error",
             Severity::Warning => "warning",
+            Severity::Fail => "fail",
         };
         let header_text = format!("{}[{}]: {}", tag, self.slug, self.summary);
         let header = match self.severity {
-            Severity::Error => header_text.red().bold().to_string(),
+            Severity::Error | Severity::Fail => header_text.red().bold().to_string(),
             Severity::Warning => header_text.yellow().bold().to_string(),
         };
         let _ = writeln!(out, "{}", header);
@@ -99,7 +101,7 @@ impl Diagnostic {
             let _ = writeln!(out, "  {} {}", key, intent.dimmed());
         }
 
-        let is_error = matches!(self.severity, Severity::Error);
+        let is_error = matches!(self.severity, Severity::Error | Severity::Fail);
 
         // --- conflict (errors) ---
         if is_error && let Some(ref conflict) = self.conflict {
@@ -166,7 +168,7 @@ impl Diagnostic {
                 let pad: String = " ".repeat(ul.col.saturating_sub(1));
                 let carets: String = "^".repeat(ul.len.max(1));
                 let colored_carets = match self.severity {
-                    Severity::Error => carets.red().to_string(),
+                    Severity::Error | Severity::Fail => carets.red().to_string(),
                     Severity::Warning => carets.yellow().to_string(),
                 };
                 let _ = writeln!(
@@ -189,8 +191,11 @@ impl Diagnostic {
         let severity_str = match self.severity {
             Severity::Error => "error",
             Severity::Warning => "warning",
+            Severity::Fail => "fail",
         };
         let mut parts: Vec<String> = Vec::new();
+        parts.push("\"schema_version\":1".to_string());
+        parts.push("\"kind\":\"diagnostic\"".to_string());
         parts.push(format!("\"severity\":\"{}\"", severity_str));
         parts.push(format!("\"slug\":\"{}\"", self.slug));
         parts.push(format!("\"summary\":{}", json_escape(&self.summary)));
@@ -222,7 +227,7 @@ impl Diagnostic {
 }
 
 /// Minimal JSON string escaping (no external deps).
-fn json_escape(s: &str) -> String {
+pub(super) fn json_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for ch in s.chars() {
@@ -559,4 +564,149 @@ fn classify_type_error(msg: &str) -> Classification {
 
     // Fallback
     ("type-error", None, Vec::new(), None)
+}
+
+// -- Verify failure diagnostics -----------------------------------------------
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn verify_mismatch_diagnostic(
+    file: &str,
+    source: &str,
+    block_name: &str,
+    case_expr: &str,
+    expected: &str,
+    actual: &str,
+    line: usize,
+    col: usize,
+    is_law: bool,
+    law_context: Option<&aver::checker::VerifyLawContext>,
+) -> Diagnostic {
+    let summary = if is_law {
+        "law violated"
+    } else {
+        "assertion failed"
+    };
+    let mut fields: Vec<(&'static str, String)> = Vec::new();
+    fields.push(("block", block_name.to_string()));
+    if let Some(lctx) = law_context {
+        fields.push(("case", case_expr.to_string()));
+        for (name, val) in &lctx.givens {
+            fields.push(("given", format!("{} = {}", name, val)));
+        }
+        fields.push(("law", lctx.law_expr.clone()));
+    } else {
+        fields.push(("case", case_expr.to_string()));
+    }
+    fields.push(("expected", expected.to_string()));
+    fields.push(("actual", actual.to_string()));
+    Diagnostic {
+        severity: Severity::Fail,
+        slug: "verify-mismatch",
+        summary: summary.to_string(),
+        span: Span {
+            file: file.to_string(),
+            line,
+            col,
+        },
+        fn_name: None,
+        intent: None,
+        fields,
+        conflict: None,
+        repair_primary: None,
+        repair_alternatives: Vec::new(),
+        repair_example: None,
+        source_lines: extract_source_lines(source, line, 0),
+        underline: Some(Underline {
+            col,
+            len: estimate_span_len(
+                source.lines().nth(line.saturating_sub(1)).unwrap_or(""),
+                col,
+            ),
+            label: "verify-mismatch".to_string(),
+        }),
+    }
+}
+
+pub(super) fn verify_runtime_error_diagnostic(
+    file: &str,
+    source: &str,
+    block_name: &str,
+    case_expr: &str,
+    error: &str,
+    line: usize,
+    col: usize,
+) -> Diagnostic {
+    let fields: Vec<(&'static str, String)> = vec![
+        ("block", block_name.to_string()),
+        ("case", case_expr.to_string()),
+        ("error", error.to_string()),
+    ];
+    Diagnostic {
+        severity: Severity::Fail,
+        slug: "verify-runtime-error",
+        summary: "case aborted".to_string(),
+        span: Span {
+            file: file.to_string(),
+            line,
+            col,
+        },
+        fn_name: None,
+        intent: None,
+        fields,
+        conflict: None,
+        repair_primary: None,
+        repair_alternatives: Vec::new(),
+        repair_example: None,
+        source_lines: extract_source_lines(source, line, 0),
+        underline: Some(Underline {
+            col,
+            len: estimate_span_len(
+                source.lines().nth(line.saturating_sub(1)).unwrap_or(""),
+                col,
+            ),
+            label: "verify-runtime-error".to_string(),
+        }),
+    }
+}
+
+pub(super) fn verify_unexpected_err_diagnostic(
+    file: &str,
+    source: &str,
+    block_name: &str,
+    case_expr: &str,
+    err_repr: &str,
+    line: usize,
+    col: usize,
+) -> Diagnostic {
+    let fields: Vec<(&'static str, String)> = vec![
+        ("block", block_name.to_string()),
+        ("case", case_expr.to_string()),
+        ("error", err_repr.to_string()),
+    ];
+    Diagnostic {
+        severity: Severity::Fail,
+        slug: "verify-unexpected-err",
+        summary: "error propagated from ?".to_string(),
+        span: Span {
+            file: file.to_string(),
+            line,
+            col,
+        },
+        fn_name: None,
+        intent: None,
+        fields,
+        conflict: None,
+        repair_primary: None,
+        repair_alternatives: Vec::new(),
+        repair_example: None,
+        source_lines: extract_source_lines(source, line, 0),
+        underline: Some(Underline {
+            col,
+            len: estimate_span_len(
+                source.lines().nth(line.saturating_sub(1)).unwrap_or(""),
+                col,
+            ),
+            label: "verify-unexpected-err".to_string(),
+        }),
+    }
 }

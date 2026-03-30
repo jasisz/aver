@@ -429,8 +429,8 @@ impl Parser {
                     case_spans.push(SourceSpan {
                         line: start_line,
                         col: start_col,
-                        end_line: end_line,
-                        end_col: end_col,
+                        end_line,
+                        end_col,
                     });
                     self.skip_newlines();
                 }

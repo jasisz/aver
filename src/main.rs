@@ -79,8 +79,10 @@ fn main() {
             module_root,
             deps,
             vm,
+            verbose,
+            json,
         } => {
-            commands::cmd_verify(file, module_root.as_deref(), *deps, *vm);
+            commands::cmd_verify(file, module_root.as_deref(), *deps, *vm, *verbose, *json);
         }
         Commands::Format { path, check } => {
             format_cmd::cmd_format(path, *check);

@@ -147,6 +147,12 @@ pub(super) enum Commands {
         /// Execute verify cases on the bytecode VM instead of the tree-walking interpreter
         #[arg(long)]
         vm: bool,
+        /// Show full diagnostic detail (source snippets on failures)
+        #[arg(long)]
+        verbose: bool,
+        /// Output diagnostics as JSON (NDJSON, one object per line)
+        #[arg(long)]
+        json: bool,
     },
     /// Format Aver source files
     Format {

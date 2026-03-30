@@ -3,9 +3,7 @@ mod intent;
 mod law;
 mod verify;
 
-use crate::ast::{
-    Expr, Literal, Pattern, SourceSpan, TopLevel, TypeDef, VerifyBlock, VerifyKind,
-};
+use crate::ast::{Expr, Literal, Pattern, SourceSpan, TopLevel, TypeDef, VerifyBlock, VerifyKind};
 
 // -- Structured verify results ------------------------------------------------
 
@@ -13,16 +11,9 @@ use crate::ast::{
 pub enum VerifyCaseOutcome {
     Pass,
     Skipped,
-    Mismatch {
-        expected: String,
-        actual: String,
-    },
-    RuntimeError {
-        error: String,
-    },
-    UnexpectedErr {
-        err_repr: String,
-    },
+    Mismatch { expected: String, actual: String },
+    RuntimeError { error: String },
+    UnexpectedErr { err_repr: String },
 }
 
 #[derive(Debug, Clone)]

@@ -131,6 +131,7 @@ pub(super) fn verify_case_calls_target(left: &Expr, fn_name: &str) -> bool {
     }
 }
 
+#[allow(dead_code)] // Used by future verbose law rendering
 fn verify_given_domain_to_str(domain: &VerifyGivenDomain) -> String {
     match domain {
         VerifyGivenDomain::IntRange { start, end } => format!("{start}..{end}"),
@@ -151,7 +152,11 @@ pub fn run_verify(block: &VerifyBlock, interp: &mut Interpreter) -> VerifyResult
     let case_total = block.cases.len();
 
     let law_context_template = if let VerifyKind::Law(law) = &block.kind {
-        Some(format!("{} == {}", expr_to_str(&law.lhs), expr_to_str(&law.rhs)))
+        Some(format!(
+            "{} == {}",
+            expr_to_str(&law.lhs),
+            expr_to_str(&law.rhs)
+        ))
     } else {
         None
     };

@@ -1288,7 +1288,15 @@ pub(super) fn cmd_run_vm(
     if run_verify_blocks {
         println!();
         match run_verify_for_items_vm(items, &module_root) {
-            Ok((_passed, failed, _had_blocks)) => {
+            Ok(results) => {
+                let failed: usize = results.iter().map(|r| r.failed).sum();
+                // Render inline for cmd_run_vm
+                let file_results = vec![VerifyFileResult {
+                    path: String::new(),
+                    source: String::new(),
+                    blocks: results,
+                }];
+                render_verify_output(&file_results, &module_root, false, false);
                 if failed > 0 {
                     process::exit(1);
                 }
@@ -1406,21 +1414,21 @@ pub(super) fn cmd_run(
     // Optionally run verify blocks
     if run_verify_blocks {
         println!();
-        let mut total_passed = 0;
-        let mut total_failed = 0;
-
         let verify_blocks = merge_verify_blocks(&items);
+        let mut results = Vec::new();
         for vb in &verify_blocks {
-            let result = run_verify(vb, &mut interp);
-            total_passed += result.passed;
-            total_failed += result.failed;
-            println!();
+            results.push(run_verify(vb, &mut interp));
         }
-
-        if total_failed > 0 {
+        let failed: usize = results.iter().map(|r| r.failed).sum();
+        let file_results = vec![VerifyFileResult {
+            path: String::new(),
+            source: String::new(),
+            blocks: results,
+        }];
+        render_verify_output(&file_results, &module_root, false, false);
+        if failed > 0 {
             process::exit(1);
         }
-        let _ = (total_passed, total_failed);
     }
 }
 
@@ -1520,7 +1528,7 @@ pub(super) fn cmd_run_self_hosted(
 
     if run_verify_blocks {
         println!();
-        cmd_verify(file, module_root_override, false, false);
+        cmd_verify(file, module_root_override, false, false, false, false);
     }
 }
 
@@ -1874,7 +1882,11 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
     let case_total = block.cases.len();
 
     let law_context_template = if let VerifyKind::Law(law) = &block.kind {
-        Some(format!("{} == {}", expr_to_str(&law.lhs), expr_to_str(&law.rhs)))
+        Some(format!(
+            "{} == {}",
+            expr_to_str(&law.lhs),
+            expr_to_str(&law.rhs)
+        ))
     } else {
         None
     };
@@ -2042,7 +2054,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
 fn run_verify_for_items(
     mut items: Vec<TopLevel>,
     module_root: &str,
-) -> Result<(usize, usize, bool), String> {
+) -> Result<Vec<VerifyResult>, String> {
     // TCO transform — rewrite tail-position calls in recursive SCCs
     tco::transform_program(&mut items);
 
@@ -2088,27 +2100,17 @@ fn run_verify_for_items(
 
     let verify_blocks = merge_verify_blocks(&items);
 
-    if verify_blocks.is_empty() {
-        return Ok((0, 0, false));
-    }
-
-    let mut total_passed = 0;
-    let mut total_failed = 0;
-
+    let mut results = Vec::new();
     for vb in &verify_blocks {
-        let result = run_verify(vb, &mut interp);
-        total_passed += result.passed;
-        total_failed += result.failed;
-        println!();
+        results.push(run_verify(vb, &mut interp));
     }
-
-    Ok((total_passed, total_failed, true))
+    Ok(results)
 }
 
 fn run_verify_for_items_vm(
     mut items: Vec<TopLevel>,
     module_root: &str,
-) -> Result<(usize, usize, bool), String> {
+) -> Result<Vec<VerifyResult>, String> {
     tco::transform_program(&mut items);
 
     let tc_result = run_type_check_full(&items, Some(module_root));
@@ -2118,7 +2120,7 @@ fn run_verify_for_items_vm(
 
     let verify_blocks = merge_verify_blocks(&items);
     if verify_blocks.is_empty() {
-        return Ok((0, 0, false));
+        return Ok(vec![]);
     }
 
     let plans = build_verify_vm_plans(&mut items, &verify_blocks);
@@ -2131,56 +2133,246 @@ fn run_verify_for_items_vm(
     let mut machine = vm::VM::new(code, globals, arena);
     apply_runtime_policy_to_vm(&mut machine, module_root)?;
 
-    let mut total_passed = 0;
-    let mut total_failed = 0;
-
+    let mut results = Vec::new();
     for plan in &plans {
-        let result = run_verify_vm(plan, &mut machine);
-        total_passed += result.passed;
-        total_failed += result.failed;
-        println!();
+        results.push(run_verify_vm(plan, &mut machine));
     }
+    Ok(results)
+}
 
-    Ok((total_passed, total_failed, true))
+struct VerifyFileResult {
+    path: String,
+    source: String,
+    blocks: Vec<VerifyResult>,
 }
 
 fn run_verify_for_file(
     file: &str,
     module_root: &str,
     deps: bool,
-    show_file_headers: bool,
     vm_mode: bool,
-) -> Result<(usize, usize, bool), String> {
+) -> Result<Vec<VerifyFileResult>, String> {
     let units = collect_check_units(file, module_root, deps)?;
-    let mut total_passed = 0;
-    let mut total_failed = 0;
-    let mut saw_verify_blocks = false;
+    let mut file_results = Vec::new();
 
-    for (idx, (path, _source, items)) in units.into_iter().enumerate() {
-        if show_file_headers {
-            if idx > 0 || deps {
-                println!();
-            }
-            println!(
-                "{}",
-                format!("Verify file: {}", display_check_path(&path, module_root)).cyan()
-            );
-        }
-
-        let (passed, failed, had_blocks) = if vm_mode {
+    for (path, source, items) in units {
+        let blocks = if vm_mode {
             run_verify_for_items_vm(items, module_root)?
         } else {
             run_verify_for_items(items, module_root)?
         };
-
-        if had_blocks {
-            saw_verify_blocks = true;
-            total_passed += passed;
-            total_failed += failed;
-        }
+        file_results.push(VerifyFileResult {
+            path,
+            source,
+            blocks,
+        });
     }
 
-    Ok((total_passed, total_failed, saw_verify_blocks))
+    Ok(file_results)
+}
+
+fn render_verify_output(
+    file_results: &[VerifyFileResult],
+    module_root: &str,
+    verbose: bool,
+    json: bool,
+) {
+    use super::diagnostic::{
+        verify_mismatch_diagnostic, verify_runtime_error_diagnostic,
+        verify_unexpected_err_diagnostic,
+    };
+    use aver::checker::VerifyCaseOutcome;
+
+    for fr in file_results {
+        if fr.blocks.is_empty() {
+            continue;
+        }
+        let display_path = display_check_path(&fr.path, module_root);
+
+        if json {
+            // NDJSON mode
+            for block in &fr.blocks {
+                // block-result event
+                let mut failure_counts: std::collections::HashMap<&str, usize> =
+                    std::collections::HashMap::new();
+                for cr in &block.case_results {
+                    match &cr.outcome {
+                        VerifyCaseOutcome::Mismatch { .. } => {
+                            *failure_counts.entry("verify-mismatch").or_default() += 1
+                        }
+                        VerifyCaseOutcome::RuntimeError { .. } => {
+                            *failure_counts.entry("verify-runtime-error").or_default() += 1
+                        }
+                        VerifyCaseOutcome::UnexpectedErr { .. } => {
+                            *failure_counts.entry("verify-unexpected-err").or_default() += 1
+                        }
+                        _ => {}
+                    }
+                }
+                let failures_json: Vec<String> = failure_counts
+                    .iter()
+                    .map(|(k, v)| format!("\"{}\":{}", k, v))
+                    .collect();
+                println!(
+                    "{{\"schema_version\":1,\"kind\":\"block-result\",\"file\":{},\"block\":{},\"passed\":{},\"failed\":{},\"skipped\":{},\"total\":{},\"failures\":{{{}}}}}",
+                    diagnostic::json_escape(&display_path),
+                    diagnostic::json_escape(&block.block_label),
+                    block.passed,
+                    block.failed,
+                    block.skipped,
+                    block.passed + block.failed + block.skipped,
+                    failures_json.join(","),
+                );
+
+                // diagnostic events for failures
+                for cr in &block.case_results {
+                    let (line, col) = cr.span.as_ref().map(|s| (s.line, s.col)).unwrap_or((1, 1));
+                    let diag = match &cr.outcome {
+                        VerifyCaseOutcome::Mismatch { expected, actual } => {
+                            Some(verify_mismatch_diagnostic(
+                                &display_path,
+                                &fr.source,
+                                &block.block_label,
+                                &cr.case_expr,
+                                expected,
+                                actual,
+                                line,
+                                col,
+                                cr.law_context.is_some(),
+                                cr.law_context.as_ref(),
+                            ))
+                        }
+                        VerifyCaseOutcome::RuntimeError { error } => {
+                            Some(verify_runtime_error_diagnostic(
+                                &display_path,
+                                &fr.source,
+                                &block.block_label,
+                                &cr.case_expr,
+                                error,
+                                line,
+                                col,
+                            ))
+                        }
+                        VerifyCaseOutcome::UnexpectedErr { err_repr } => {
+                            Some(verify_unexpected_err_diagnostic(
+                                &display_path,
+                                &fr.source,
+                                &block.block_label,
+                                &cr.case_expr,
+                                err_repr,
+                                line,
+                                col,
+                            ))
+                        }
+                        _ => None,
+                    };
+                    if let Some(d) = diag {
+                        println!("{}", d.render_json().trim());
+                    }
+                }
+            }
+        } else {
+            // Terminal mode
+            println!("{}", format!("Verify: {}", display_path).cyan());
+
+            for block in &fr.blocks {
+                let total = block.passed + block.failed + block.skipped;
+                if block.failed == 0 {
+                    println!(
+                        "  {} {}      {}/{}",
+                        "✓".green(),
+                        block.block_label,
+                        block.passed,
+                        total
+                    );
+                } else {
+                    // Count failure types
+                    let mut mismatch = 0usize;
+                    let mut runtime_err = 0usize;
+                    let mut unexpected_err = 0usize;
+                    for cr in &block.case_results {
+                        match &cr.outcome {
+                            VerifyCaseOutcome::Mismatch { .. } => mismatch += 1,
+                            VerifyCaseOutcome::RuntimeError { .. } => runtime_err += 1,
+                            VerifyCaseOutcome::UnexpectedErr { .. } => unexpected_err += 1,
+                            _ => {}
+                        }
+                    }
+                    let mut parts = Vec::new();
+                    if mismatch > 0 {
+                        parts.push(format!("{} mismatch", mismatch));
+                    }
+                    if runtime_err > 0 {
+                        parts.push(format!("{} runtime error", runtime_err));
+                    }
+                    if unexpected_err > 0 {
+                        parts.push(format!("{} unexpected err", unexpected_err));
+                    }
+                    let breakdown = if parts.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({})", parts.join(", "))
+                    };
+                    println!(
+                        "  {} {}      {}/{} passed{}",
+                        "✗".red(),
+                        block.block_label,
+                        block.passed,
+                        total,
+                        breakdown
+                    );
+                }
+
+                // Emit diagnostics for failures
+                for cr in &block.case_results {
+                    let (line, col) = cr.span.as_ref().map(|s| (s.line, s.col)).unwrap_or((1, 1));
+                    let diag = match &cr.outcome {
+                        VerifyCaseOutcome::Mismatch { expected, actual } => {
+                            Some(verify_mismatch_diagnostic(
+                                &display_path,
+                                &fr.source,
+                                &block.block_label,
+                                &cr.case_expr,
+                                expected,
+                                actual,
+                                line,
+                                col,
+                                cr.law_context.is_some(),
+                                cr.law_context.as_ref(),
+                            ))
+                        }
+                        VerifyCaseOutcome::RuntimeError { error } => {
+                            Some(verify_runtime_error_diagnostic(
+                                &display_path,
+                                &fr.source,
+                                &block.block_label,
+                                &cr.case_expr,
+                                error,
+                                line,
+                                col,
+                            ))
+                        }
+                        VerifyCaseOutcome::UnexpectedErr { err_repr } => {
+                            Some(verify_unexpected_err_diagnostic(
+                                &display_path,
+                                &fr.source,
+                                &block.block_label,
+                                &cr.case_expr,
+                                err_repr,
+                                line,
+                                col,
+                            ))
+                        }
+                        _ => None,
+                    };
+                    if let Some(d) = diag {
+                        println!();
+                        print!("{}", d.render(verbose));
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub(super) fn cmd_verify(
@@ -2188,6 +2380,8 @@ pub(super) fn cmd_verify(
     module_root_override: Option<&str>,
     deps: bool,
     vm_mode: bool,
+    verbose: bool,
+    json: bool,
 ) {
     let module_root = resolve_module_root(module_root_override);
     let inputs = match resolve_av_inputs(path) {
@@ -2198,69 +2392,84 @@ pub(super) fn cmd_verify(
         }
     };
 
-    let batch = Path::new(path).is_dir();
-    let mut total_passed = 0;
-    let mut total_failed = 0;
-    let mut saw_verify_blocks = false;
+    let mut all_file_results: Vec<VerifyFileResult> = Vec::new();
     let mut failed_files = Vec::new();
 
     for file in &inputs {
-        let (passed, failed, had_blocks) =
-            match run_verify_for_file(file, &module_root, deps, batch || deps, vm_mode) {
-                Ok(counts) => counts,
-                Err(e) => {
-                    eprintln!("{}", e.red());
-                    failed_files.push(file.clone());
-                    continue;
+        match run_verify_for_file(file, &module_root, deps, vm_mode) {
+            Ok(file_results) => {
+                for fr in &file_results {
+                    if fr.blocks.iter().any(|b| b.failed > 0) {
+                        failed_files.push(fr.path.clone());
+                    }
                 }
-            };
-
-        if had_blocks {
-            saw_verify_blocks = true;
-            total_passed += passed;
-            total_failed += failed;
-        }
-        if failed > 0 {
-            failed_files.push(file.clone());
+                all_file_results.extend(file_results);
+            }
+            Err(e) => {
+                eprintln!("{}", e.red());
+                failed_files.push(file.clone());
+            }
         }
     }
 
-    if !failed_files.is_empty() && batch {
-        println!();
-        println!(
-            "{}",
-            format!(
-                "Verify run completed with {} failed file(s).",
-                failed_files.len()
-            )
-            .red()
-        );
-        for file in &failed_files {
-            println!("  {}", display_check_path(file, &module_root));
-        }
-    }
+    render_verify_output(&all_file_results, &module_root, verbose, json);
 
-    let total = total_passed + total_failed;
-    if !saw_verify_blocks {
+    // Summary
+    let total_blocks: usize = all_file_results.iter().map(|fr| fr.blocks.len()).sum();
+    let total_passed: usize = all_file_results
+        .iter()
+        .flat_map(|fr| &fr.blocks)
+        .map(|b| b.passed)
+        .sum();
+    let total_failed: usize = all_file_results
+        .iter()
+        .flat_map(|fr| &fr.blocks)
+        .map(|b| b.failed)
+        .sum();
+    let total_cases = total_passed + total_failed;
+    let total_files = all_file_results
+        .iter()
+        .filter(|fr| !fr.blocks.is_empty())
+        .count();
+
+    if total_blocks == 0 {
         let scope = if deps {
             format!("{} or its transitive dependencies", path)
         } else {
             path.to_string()
         };
+        if json {
+            println!(
+                "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":0,\"blocks\":0,\"cases_passed\":0,\"cases_failed\":0}}"
+            );
+        } else {
+            println!(
+                "{}",
+                format!("No verify blocks found in {}.", scope).yellow()
+            );
+        }
+    } else if json {
         println!(
-            "{}",
-            format!("No verify blocks found in {}.", scope).yellow()
-        );
-    } else if total_failed == 0 {
-        println!(
-            "{}",
-            format!("Total: {}/{} passed", total_passed, total).green()
+            "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"blocks\":{},\"cases_passed\":{},\"cases_failed\":{}}}",
+            total_files, total_blocks, total_passed, total_failed
         );
     } else {
-        println!(
-            "{}",
-            format!("Total: {}/{} passed", total_passed, total).red()
+        println!();
+        let summary = format!(
+            "Summary: {} file{} | {} block{} | {}/{} cases passed | {} failed",
+            total_files,
+            if total_files == 1 { "" } else { "s" },
+            total_blocks,
+            if total_blocks == 1 { "" } else { "s" },
+            total_passed,
+            total_cases,
+            total_failed,
         );
+        if total_failed == 0 {
+            println!("{}", summary.green());
+        } else {
+            println!("{}", summary.red());
+        }
     }
 
     if !failed_files.is_empty() || total_failed > 0 {
