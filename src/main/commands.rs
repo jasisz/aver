@@ -2183,8 +2183,7 @@ fn render_verify_output(
     };
     use aver::checker::VerifyCaseOutcome;
 
-    let mut first_file = true;
-    for fr in file_results {
+    for (idx, fr) in file_results.iter().enumerate() {
         if fr.blocks.is_empty() {
             continue;
         }
@@ -2274,10 +2273,9 @@ fn render_verify_output(
             }
         } else {
             // Terminal mode
-            if !first_file {
+            if idx > 0 {
                 println!();
             }
-            first_file = false;
             println!("{}", format!("Verify: {}", display_path).cyan());
 
             for block in &fr.blocks {
@@ -2399,12 +2397,21 @@ pub(super) fn cmd_verify(
 
     let mut all_file_results: Vec<VerifyFileResult> = Vec::new();
     let mut failed_files = Vec::new();
-
     let mut skipped_typecheck: Vec<String> = Vec::new();
+    let mut printed_any = false;
 
     for file in &inputs {
         match run_verify_for_file(file, &module_root, deps, vm_mode) {
             Ok(file_results) => {
+                // Render immediately — streaming output
+                let has_blocks = file_results.iter().any(|fr| !fr.blocks.is_empty());
+                if has_blocks && printed_any && !json {
+                    println!();
+                }
+                render_verify_output(&file_results, &module_root, verbose, json);
+                if has_blocks {
+                    printed_any = true;
+                }
                 for fr in &file_results {
                     if fr.blocks.iter().any(|b| b.failed > 0) {
                         failed_files.push(fr.path.clone());
@@ -2419,22 +2426,18 @@ pub(super) fn cmd_verify(
         }
     }
 
-    render_verify_output(&all_file_results, &module_root, verbose, json);
-
     if !skipped_typecheck.is_empty() && !json {
         println!();
         println!(
             "{}",
             format!(
-                "{} file(s) skipped — type errors (run aver check to see details)",
+                "{} file(s) skipped — type errors (run aver check for details):",
                 skipped_typecheck.len()
             )
             .yellow()
         );
-        if skipped_typecheck.len() <= 5 {
-            for f in &skipped_typecheck {
-                println!("  {}", f.dimmed());
-            }
+        for f in &skipped_typecheck {
+            println!("  {}", f.dimmed());
         }
         println!(
             "{}",
