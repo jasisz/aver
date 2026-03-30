@@ -586,19 +586,18 @@ pub(super) fn verify_mismatch_diagnostic(
     } else {
         "assertion failed"
     };
-    let mut fields: Vec<(&'static str, String)> = Vec::new();
-    fields.push(("block", block_name.to_string()));
+    let mut fields: Vec<(&'static str, String)> = vec![
+        ("block", block_name.to_string()),
+        ("case", case_expr.to_string()),
+        ("expected", expected.to_string()),
+        ("actual", actual.to_string()),
+    ];
     if let Some(lctx) = law_context {
-        fields.push(("case", case_expr.to_string()));
         for (name, val) in &lctx.givens {
             fields.push(("given", format!("{} = {}", name, val)));
         }
         fields.push(("law", lctx.law_expr.clone()));
-    } else {
-        fields.push(("case", case_expr.to_string()));
     }
-    fields.push(("expected", expected.to_string()));
-    fields.push(("actual", actual.to_string()));
     Diagnostic {
         severity: Severity::Fail,
         slug: "verify-mismatch",
@@ -618,10 +617,12 @@ pub(super) fn verify_mismatch_diagnostic(
         source_lines: extract_source_lines(source, line, 0),
         underline: Some(Underline {
             col,
-            len: estimate_span_len(
-                source.lines().nth(line.saturating_sub(1)).unwrap_or(""),
-                col,
-            ),
+            len: source
+                .lines()
+                .nth(line.saturating_sub(1))
+                .map(|l| l.trim().len())
+                .unwrap_or(1)
+                .max(1),
             label: "verify-mismatch".to_string(),
         }),
     }
@@ -660,10 +661,12 @@ pub(super) fn verify_runtime_error_diagnostic(
         source_lines: extract_source_lines(source, line, 0),
         underline: Some(Underline {
             col,
-            len: estimate_span_len(
-                source.lines().nth(line.saturating_sub(1)).unwrap_or(""),
-                col,
-            ),
+            len: source
+                .lines()
+                .nth(line.saturating_sub(1))
+                .map(|l| l.trim().len())
+                .unwrap_or(1)
+                .max(1),
             label: "verify-runtime-error".to_string(),
         }),
     }
@@ -702,10 +705,12 @@ pub(super) fn verify_unexpected_err_diagnostic(
         source_lines: extract_source_lines(source, line, 0),
         underline: Some(Underline {
             col,
-            len: estimate_span_len(
-                source.lines().nth(line.saturating_sub(1)).unwrap_or(""),
-                col,
-            ),
+            len: source
+                .lines()
+                .nth(line.saturating_sub(1))
+                .map(|l| l.trim().len())
+                .unwrap_or(1)
+                .max(1),
             label: "verify-unexpected-err".to_string(),
         }),
     }
