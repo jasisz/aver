@@ -102,6 +102,15 @@ impl Interpreter {
                         .zip(f2.iter())
                         .all(|((k1, v1), (k2, v2))| k1 == k2 && self.aver_eq(v1, v2))
             }
+            (Value::Vector(a), Value::Vector(b)) => {
+                a.len() == b.len()
+                    && (0..a.len()).all(|i| {
+                        match (a.get(i), b.get(i)) {
+                            (Some(x), Some(y)) => self.aver_eq(x, y),
+                            _ => false,
+                        }
+                    })
+            }
             _ => false,
         }
     }

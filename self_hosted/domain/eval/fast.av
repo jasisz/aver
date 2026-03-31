@@ -25,6 +25,7 @@ fn runFastLeafSlot(leaf: FastLeaf, calleeEnv: Vector<Val>) -> Result<Val, String
         FastLeaf.LeafCmpSlots(op, slotA, slotB) -> fastCmpSlots(calleeEnv, op, slotA, slotB)
 
 verify runFastLeafSlot
+    runFastLeafSlot(FastLeaf.LeafConstInt(42), Vector.new(0, Val.ValUnit)) => Result.Ok(Val.ValInt(42))
     runFastLeafSlot(FastLeaf.LeafConstFloat(3.14), Vector.new(0, Val.ValUnit)) => Result.Ok(Val.ValFloat(3.14))
     runFastLeafSlot(FastLeaf.LeafConstStr("hi"), Vector.new(0, Val.ValUnit)) => Result.Ok(Val.ValStr("hi"))
     runFastLeafSlot(FastLeaf.LeafConstBool(true), Vector.new(0, Val.ValUnit)) => Result.Ok(Val.ValBool(true))
@@ -37,6 +38,8 @@ verify runFastLeafSlot
     runFastLeafSlot(FastLeaf.LeafVectorGetOrInt(0, 1, 99), Vector.fromList([Val.ValVector(Vector.fromList([Val.ValInt(42)])), Val.ValInt(0)])) => Result.Ok(Val.ValInt(42))
     runFastLeafSlot(FastLeaf.LeafBinopSlots(BinOp.OpAdd, 0, 1), Vector.fromList([Val.ValInt(3), Val.ValInt(4)])) => Result.Ok(Val.ValInt(7))
     runFastLeafSlot(FastLeaf.LeafCmpSlots(CmpOp.CmpEq, 0, 1), Vector.fromList([Val.ValInt(1), Val.ValInt(1)])) => Result.Ok(Val.ValBool(true))
+    runFastLeafSlot(FastLeaf.LeafVectorNew(0, 0), Vector.fromList([Val.ValInt(3)])) => Result.Ok(Val.ValVector(Vector.new(3, Val.ValInt(0))))
+    runFastLeafSlot(FastLeaf.LeafVectorLen(0), Vector.fromList([Val.ValVector(Vector.new(3, Val.ValInt(0)))])) => Result.Ok(Val.ValInt(3))
     runFastLeafSlot(FastLeaf.LeafSlot(0), Vector.new(0, Val.ValUnit)) => Result.Err("slot out of bounds: 0")
 
 fn fastBoolSlotBranch(calleeEnv: Vector<Val>, slot: Int, thenLeaf: FastLeaf, elseLeaf: FastLeaf) -> Result<Val, String>
