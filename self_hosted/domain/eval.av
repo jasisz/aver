@@ -7,15 +7,15 @@ module Eval
 
 fn evalProgram(prog: Program) -> Result<Val, String>
     ? "Evaluate a complete program through the self-hosted evaluator."
-    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     Domain.Eval.Core.evalProgram(prog)
 
 fn evalProgramWithFns(prog: Program, extraFns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate a program with additional loaded module functions."
-    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     Domain.Eval.Core.evalProgramWithFns(prog, extraFns)
 
 fn callResolved(fd: FnDef, args: List<Val>, fns: FnStore) -> Result<Val, String>
     ? "Stable facade for calling an already-resolved self-hosted function."
-    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     Domain.Eval.Core.callResolved(fd, args, fns)

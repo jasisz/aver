@@ -7,7 +7,7 @@ module SelfHosted
 
 fn run(source: String) -> Result<Val, String>
     ? "Lex, parse, resolve, and evaluate an Aver source string (no module loading)."
-    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     tokens = Domain.Lexer.lex(source)
     prog = Domain.Parser.parse(tokens)?
     resolved = Domain.Resolver.resolveProgram(prog)
@@ -15,7 +15,7 @@ fn run(source: String) -> Result<Val, String>
 
 fn runWithModules(source: String, moduleRoot: String) -> Result<Val, String>
     ? "Lex, parse, resolve, load modules, and evaluate."
-    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     prepared = prepareProgramWithModules(source, moduleRoot)?
     match prepared
         (prog, moduleFns) -> runGuestProgram(prog, moduleFns, [])
@@ -32,12 +32,12 @@ fn prepareProgramWithModules(source: String, moduleRoot: String) -> Result<(Prog
 
 fn runGuestProgram(prog: Program, moduleFns: List<FnDef>, guestArgs: List<String>) -> Result<Val, String>
     ? "Execute an already-loaded guest program. guestArgs marks the guest input boundary for scoped replay and policy in generated Rust."
-    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     Domain.Eval.evalProgramWithFns(prog, moduleFns)
 
 fn runGuestCliProgram(prog: Program, moduleFns: List<FnDef>, localFns: List<FnDef>, guestArgs: List<String>) -> Result<Unit, String>
     ? "Execute a loaded guest program with CLI-compatible main semantics inside the guest boundary."
-    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match runGuestProgram(prog, moduleFns, guestArgs)
         Result.Ok(result) -> finishCliRun(localFns, result)
         Result.Err(e) -> Result.Err("Runtime error: " + e)
@@ -117,14 +117,14 @@ verify qualifyFnsOne
 
 fn runRepr(source: String) -> String
     ? "Run source and return result representation or error."
-    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match run(source)
         Result.Ok(val) -> Domain.Value.valRepr(val)
         Result.Err(e) -> "ERROR: {e}"
 
 fn runFile(path: String, moduleRoot: String) -> Result<String, String>
     ? "Read a file and run it through the self-hosted pipeline with module loading."
-    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match loadProgramFromFile(path, moduleRoot)
         Result.Ok(pair) -> match pair
             (prog, moduleFns) -> runFileLoaded(prog, moduleFns)
@@ -132,7 +132,7 @@ fn runFile(path: String, moduleRoot: String) -> Result<String, String>
 
 fn runFileLoaded(prog: Program, moduleFns: List<FnDef>) -> Result<String, String>
     ? "Turn a loaded guest program into a representation string."
-    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match runGuestProgram(prog, moduleFns, [])
         Result.Ok(val) -> Result.Ok(Domain.Value.valRepr(val))
         Result.Err(e) -> Result.Err(e)
@@ -144,7 +144,7 @@ fn loadProgramFromFile(path: String, moduleRoot: String) -> Result<(Program, Lis
     prepareProgramWithModules(source, moduleRoot)
 
 fn main() -> Result<Unit, String>
-    ! [Args, Args.get, Console, Console.print, Disk, Http, Random, Tcp, Terminal, Time]
+    ! [Args, Args.get, Console, Console.print, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     args = Args.get()
     match args
         [] -> runDemo()
@@ -152,14 +152,14 @@ fn main() -> Result<Unit, String>
 
 fn runFromFileWithRest(path: String, rest: List<String>) -> Result<Unit, String>
     ? "Dispatch normalized CLI args: path, module root, then guest args."
-    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match rest
         [moduleRoot, ..guestArgs] -> runCliFile(path, moduleRoot, guestArgs)
         [] -> runCliFile(path, ".", [])
 
 fn runCliFile(path: String, moduleRoot: String, guestArgs: List<String>) -> Result<Unit, String>
     ? "Load a guest file outside scope, then execute the guest program inside the guest boundary."
-    ! [Args, Console, Disk, Http, Random, Tcp, Terminal, Time]
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     prepared = loadProgramFromFile(path, moduleRoot)?
     match prepared
         (prog, moduleFns) -> runGuestCliProgram(prog, moduleFns, prog.fns, guestArgs)
@@ -206,7 +206,7 @@ fn printIfNotUnit(s: String) -> Unit
 
 fn runDemo() -> Result<Unit, String>
     ? "Show built-in demo programs."
-    ! [Args, Console, Console.print, Disk, Http, Random, Tcp, Terminal, Time]
+    ! [Args, Console, Console.print, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     demoArithmetic = runRepr("x = 3 + 4\nx * 2")
     demoDouble = runRepr("fn double(n)\n    n + n\n\ndouble(21)")
     demoFib = runRepr("fn fib(n)\n    match n\n        0 -> 0\n        1 -> 1\n        _ -> fib(n - 1) + fib(n - 2)\n\nfib(10)")
