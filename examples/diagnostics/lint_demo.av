@@ -1,0 +1,78 @@
+module DemoLints
+    intent = "Showcase all checker lint warnings."
+
+// B1: List.len == 0 → use pattern match instead
+fn isEmpty(xs: List<Int>) -> Bool
+    ? "Check if list is empty."
+    match List.len(xs) == 0
+        true -> true
+        false -> false
+
+verify isEmpty
+    isEmpty([]) => true
+    isEmpty([1]) => false
+
+// B2: String concat in TailCall → use List + String.join
+fn repeat(s: String, n: Int, acc: String) -> String
+    ? "Repeat string n times."
+    match n
+        0 -> acc
+        _ -> repeat(s, n - 1, acc + s)
+
+verify repeat
+    repeat("ha", 0, "") => ""
+    repeat("ha", 2, "") => "haha"
+
+// B3: Nested match on x == literal → use match x directly
+fn classify(x: Int) -> String
+    ? "Classify number."
+    match x == 1
+        true -> "one"
+        false -> match x == 2
+            true -> "two"
+            false -> "other"
+
+verify classify
+    classify(1) => "one"
+    classify(2) => "two"
+    classify(3) => "other"
+
+// B4: Loop-invariant expression recomputed in recursion
+fn sumScaled(xs: List<Int>, factor: Int, acc: Int) -> Int
+    ? "Sum list elements scaled by factor * 100."
+    scale = factor * 100
+    match xs
+        [] -> acc
+        [h, ..tail] -> sumScaled(tail, factor, acc + h * scale)
+
+verify sumScaled
+    sumScaled([], 5, 0) => 0
+    sumScaled([1, 2], 1, 0) => 300
+
+// CSE: repeated arithmetic in match subject vs arm body
+fn mandelbrot(zr: Float, zi: Float, cr: Float, ci: Float, n: Int) -> Int
+    ? "Mandelbrot iteration step."
+    match zr * zr + zi * zi > 4.0
+        true -> n
+        false -> mandelbrot(zr * zr - zi * zi + cr, 2.0 * zr * zi + ci, cr, ci, n + 1)
+
+verify mandelbrot
+    mandelbrot(0.0, 0.0, 2.0, 2.0, 0) => 0
+
+// CSE: repeated pure function call
+fn processItems(xs: List<Int>) -> Int
+    ? "Double the length."
+    total = List.len(xs) + List.len(xs)
+    total
+
+verify processItems
+    processItems([1, 2, 3]) => 6
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(isEmpty([]))
+    Console.print(repeat("ha", 3, ""))
+    Console.print(classify(2))
+    Console.print(sumScaled([1, 2, 3], 5, 0))
+    Console.print(mandelbrot(0.0, 0.0, 0.5, 0.5, 0))
+    Console.print(processItems([1, 2, 3]))

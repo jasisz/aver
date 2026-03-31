@@ -84,7 +84,7 @@ impl Interpreter {
             name: Rc::new(fd.name.clone()),
             params: Rc::new(fd.params.clone()),
             return_type: Rc::new(fd.return_type.clone()),
-            effects: Rc::new(fd.effects.clone()),
+            effects: Rc::new(fd.effects.iter().map(|e| e.node.clone()).collect()),
             body: Rc::clone(&fd.body),
             lowered_body: super::lowered::lower_fn_body(fd.body.as_ref(), &lower_ctx, &fd.name),
             resolution: fd.resolution.clone(),

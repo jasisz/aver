@@ -257,10 +257,12 @@ pub fn check_module_intent_with_sigs_in(
                     line: v.line,
                     module: module_name.clone(),
                     file: source_file.map(|s| s.to_string()),
+                    fn_name: None,
                     message: format!(
                         "Verify block '{}' must contain at least one case",
                         v.fn_name
                     ),
+                    extra_spans: vec![],
                 });
                 empty_verify_fns.insert(v.fn_name.as_str());
             } else {
@@ -272,28 +274,34 @@ pub fn check_module_intent_with_sigs_in(
                                 line: v.line,
                                 module: module_name.clone(),
                                 file: source_file.map(|s| s.to_string()),
+                                fn_name: None,
                                 message: format!(
                                     "Verify block '{}' case #{} must call '{}' on the left side",
                                     v.fn_name,
                                     idx + 1,
                                     v.fn_name
                                 ),
+                                extra_spans: vec![],
                             });
                             block_valid = false;
                         }
                     }
                     for (idx, (_left, right)) in v.cases.iter().enumerate() {
                         if verify_case_calls_target(right, &v.fn_name) {
+                            // Use right-hand side line; finding will underline
+                            // after `=>` via the `=>` prefix hint in the message.
+                            let rhs_line = right.line;
                             errors.push(CheckFinding {
-                                line: v.line,
+                                line: if rhs_line > 0 { rhs_line } else { v.line },
                                 module: module_name.clone(),
                                 file: source_file.map(|s| s.to_string()),
+                                fn_name: Some(v.fn_name.clone()),
                                 message: format!(
-                                    "Verify block '{}' case #{} must not call '{}' on the right side",
-                                    v.fn_name,
+                                    "case #{} must not call `{}` on the right side of `=>`",
                                     idx + 1,
                                     v.fn_name
                                 ),
+                                extra_spans: vec![],
                             });
                             block_valid = false;
                         }
@@ -308,10 +316,12 @@ pub fn check_module_intent_with_sigs_in(
                             line: v.line,
                             module: module_name.clone(),
                             file: source_file.map(|s| s.to_string()),
+                            fn_name: None,
                             message: format!(
                                 "Verify law '{}.{}' resolves to effectful function '{}'; spec functions must be pure",
                                 v.fn_name, law.name, named_fn.name
                             ),
+                            extra_spans: vec![],
                         });
                         block_valid = false;
                     } else if let Some(spec_ref) = canonical_spec_ref(&v.fn_name, law, sigs) {
@@ -321,10 +331,12 @@ pub fn check_module_intent_with_sigs_in(
                             line: v.line,
                             module: module_name.clone(),
                             file: source_file.map(|s| s.to_string()),
+                            fn_name: None,
                             message: format!(
                                 "Verify law '{}.{}' names pure function '{}' but the law body never calls it; use '{}' in the assertion or rename the law",
                                 v.fn_name, law.name, named_fn.name, named_fn.name
                             ),
+                            extra_spans: vec![],
                         });
                     }
                 }
@@ -345,7 +357,9 @@ pub fn check_module_intent_with_sigs_in(
                         line: m.line,
                         module: Some(m.name.clone()),
                         file: source_file.map(|s| s.to_string()),
+                        fn_name: None,
                         message: format!("Module '{}' has no intent block", m.name),
+                        extra_spans: vec![],
                     });
                 }
                 // Validate exposes_opaque: each name must be a TypeDef.
@@ -368,10 +382,12 @@ pub fn check_module_intent_with_sigs_in(
                                 line: m.line,
                                 module: Some(m.name.clone()),
                                 file: source_file.map(|s| s.to_string()),
+                                fn_name: None,
                                 message: format!(
                                     "'{}' in exposes opaque is not a type defined in this module",
                                     opaque_name
                                 ),
+                                extra_spans: vec![],
                             });
                         }
                         if exposed_set.contains(opaque_name.as_str()) {
@@ -379,10 +395,12 @@ pub fn check_module_intent_with_sigs_in(
                                 line: m.line,
                                 module: Some(m.name.clone()),
                                 file: source_file.map(|s| s.to_string()),
+                                fn_name: None,
                                 message: format!(
                                     "'{}' cannot be in both exposes and exposes opaque",
                                     opaque_name
                                 ),
+                                extra_spans: vec![],
                             });
                         }
                     }
@@ -394,7 +412,9 @@ pub fn check_module_intent_with_sigs_in(
                         line: f.line,
                         module: module_name.clone(),
                         file: source_file.map(|s| s.to_string()),
+                        fn_name: None,
                         message: format!("Function '{}' has no description (?)", f.name),
+                        extra_spans: vec![],
                     });
                 }
                 if let Some(sigs) = fn_sigs
@@ -417,17 +437,23 @@ pub fn check_module_intent_with_sigs_in(
                         } else {
                             used_effects.iter().cloned().collect::<Vec<_>>().join(", ")
                         };
-                        warnings.push(CheckFinding {
-                            line: f.line,
-                            module: module_name.clone(),
-                            file: source_file.map(|s| s.to_string()),
-                            message: format!(
-                                "Function '{}' declares unused effect(s): {} (used: {})",
-                                f.name,
-                                unused_effects.join(", "),
-                                used
-                            ),
-                        });
+                        for unused in &unused_effects {
+                            // Find the line from the spanned effects in the AST
+                            let effect_line = f
+                                .effects
+                                .iter()
+                                .find(|e| e.node == *unused)
+                                .map(|e| e.line)
+                                .unwrap_or(f.line);
+                            warnings.push(CheckFinding {
+                                line: effect_line,
+                                module: module_name.clone(),
+                                file: source_file.map(|s| s.to_string()),
+                                fn_name: Some(f.name.clone()),
+                                message: format!("unused effect `{}` (used: {})", unused, used),
+                                extra_spans: vec![],
+                            });
+                        }
                     }
                     // Suggest granular effects when namespace shorthand could be narrowed
                     for declared in declared_effects {
@@ -444,6 +470,7 @@ pub fn check_module_intent_with_sigs_in(
                                     line: f.line,
                                     module: module_name.clone(),
                                     file: source_file.map(|s| s.to_string()),
+                                    fn_name: None,
                                     message: format!(
                                         "Function '{}' declares '{}' — only uses {}; consider granular `! [{}]`",
                                         f.name,
@@ -451,6 +478,7 @@ pub fn check_module_intent_with_sigs_in(
                                         matching.join(", "),
                                         matching.join(", ")
                                     ),
+                                    extra_spans: vec![],
                                 });
                             }
                         }
@@ -466,7 +494,9 @@ pub fn check_module_intent_with_sigs_in(
                         line: f.line,
                         module: module_name.clone(),
                         file: source_file.map(|s| s.to_string()),
+                        fn_name: None,
                         message: format!("Function '{}' has no verify block", f.name),
+                        extra_spans: vec![],
                     });
                 }
             }
@@ -483,10 +513,12 @@ pub fn check_module_intent_with_sigs_in(
                             line: d.line,
                             module: module_name.clone(),
                             file: source_file.map(|s| s.to_string()),
+                            fn_name: None,
                             message: format!(
                                 "Decision '{}' references unknown chosen symbol '{}'. Use quoted string for semantic chosen value.",
                                 d.name, name
                             ),
+                            extra_spans: vec![],
                         });
                 }
                 for rejected in &d.rejected {
@@ -502,10 +534,12 @@ pub fn check_module_intent_with_sigs_in(
                                 line: d.line,
                                 module: module_name.clone(),
                                 file: source_file.map(|s| s.to_string()),
+                                fn_name: None,
                                 message: format!(
                                     "Decision '{}' references unknown rejected symbol '{}'. Use quoted string for semantic rejected value.",
                                     d.name, name
                                 ),
+                                extra_spans: vec![],
                             });
                     }
                 }
@@ -522,10 +556,12 @@ pub fn check_module_intent_with_sigs_in(
                                 line: d.line,
                                 module: module_name.clone(),
                                 file: source_file.map(|s| s.to_string()),
+                                fn_name: Some(d.name.clone()),
                                 message: format!(
-                                    "Decision '{}' references unknown impact symbol '{}'. Use quoted string for semantic impact.",
-                                    d.name, name
+                                    "unknown impact symbol `{}` — use quoted string for semantic impact",
+                                    name
                                 ),
+                                extra_spans: vec![],
                             });
                     }
                 }
@@ -606,7 +642,7 @@ fn log(x: Int) -> Unit
         let findings = check_module_intent_with_sigs(&items, Some(&tc.fn_sigs));
         assert!(
             findings.warnings.iter().any(|w| {
-                w.message.contains("declares unused effect(s)")
+                w.message.contains("unused effect")
                     && w.message.contains("Http")
                     && w.message.contains("used: Console.print")
             }),
@@ -636,7 +672,7 @@ fn log(x: Int) -> Unit
             !findings
                 .warnings
                 .iter()
-                .any(|w| w.message.contains("declares unused effect(s)")),
+                .any(|w| w.message.contains("unused effect")),
             "did not expect unused-effect warning, got errors={:?}, warnings={:?}",
             findings.errors,
             findings.warnings
@@ -806,7 +842,7 @@ verify add1
         assert!(
             findings.errors.iter().any(|e| {
                 e.message
-                    .contains("Verify block 'add1' case #1 must not call 'add1' on the right side")
+                    .contains("case #1 must not call `add1` on the right side of `=>`")
             }),
             "expected verify-case-rhs error, got errors={:?}, warnings={:?}",
             findings.errors,
@@ -839,7 +875,7 @@ verify add1 law reflexive
             !findings
                 .errors
                 .iter()
-                .any(|e| e.message.contains("must not call 'add1' on the right side")),
+                .any(|e| e.message.contains("must not call `add1` on the right side of `=>`")),
             "did not expect rhs-call heuristic for law verify, got errors={:?}",
             findings.errors
         );
@@ -1013,9 +1049,10 @@ decision D
         );
         let findings = check_module_intent(&items);
         assert!(
-            findings.errors.iter().any(|e| e
-                .message
-                .contains("Decision 'D' references unknown impact symbol 'missingThing'")),
+            findings
+                .errors
+                .iter()
+                .any(|e| e.message.contains("unknown impact symbol `missingThing`")),
             "expected unknown-impact error, got errors={:?}, warnings={:?}",
             findings.errors,
             findings.warnings
@@ -1050,7 +1087,7 @@ decision D
             !findings
                 .errors
                 .iter()
-                .any(|e| e.message.contains("references unknown impact symbol")),
+                .any(|e| e.message.contains("unknown impact symbol")),
             "did not expect unknown-impact error, got errors={:?}, warnings={:?}",
             findings.errors,
             findings.warnings
@@ -1223,9 +1260,10 @@ decision D
         );
         let findings = check_module_intent(&items);
         assert!(
-            findings.errors.iter().any(|e| e
-                .message
-                .contains("references unknown impact symbol 'AppIO'")),
+            findings
+                .errors
+                .iter()
+                .any(|e| e.message.contains("unknown impact symbol `AppIO`")),
             "expected AppIO impact error, got errors={:?}, warnings={:?}",
             findings.errors,
             findings.warnings

@@ -164,7 +164,14 @@ impl Parser {
             if self.check_exact(&TokenKind::Bang) {
                 self.advance(); // !
                 let effects = self.parse_effect_ident_list()?;
-                out.push_str(&format!(" ! [{}]", effects.join(", ")));
+                out.push_str(&format!(
+                    " ! [{}]",
+                    effects
+                        .iter()
+                        .map(|e| e.node.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
             }
             return Ok(out);
         }
@@ -222,7 +229,9 @@ impl Parser {
         Ok(base)
     }
 
-    pub(super) fn parse_effect_ident_list(&mut self) -> Result<Vec<String>, ParseError> {
+    pub(super) fn parse_effect_ident_list(
+        &mut self,
+    ) -> Result<Vec<crate::ast::Spanned<String>>, ParseError> {
         self.expect_exact(&TokenKind::LBracket)?;
         let mut effects = Vec::new();
         while !self.check_exact(&TokenKind::RBracket) && !self.is_eof() {
@@ -231,8 +240,9 @@ impl Parser {
                     self.advance();
                 }
                 TokenKind::Ident(_) => {
+                    let line = self.current().line;
                     let name = self.parse_qualified_ident()?;
-                    effects.push(name);
+                    effects.push(crate::ast::Spanned { node: name, line });
                 }
                 TokenKind::Comma => {
                     self.advance();

@@ -709,19 +709,19 @@ fn materialize_selection(contexts: &[FileContext], state: &SelectionState) -> Ve
         next.module_effects = unique_sorted(
             next.fn_defs
                 .iter()
-                .flat_map(|fd| fd.effects.iter().cloned()),
+                .flat_map(|fd| fd.effects.iter().map(|e| e.node.clone())),
         );
         next.api_effects = unique_sorted(
             next.fn_defs
                 .iter()
                 .filter(|fd| next.exposes.contains(&fd.name))
-                .flat_map(|fd| fd.effects.iter().cloned()),
+                .flat_map(|fd| fd.effects.iter().map(|e| e.node.clone())),
         );
         next.main_effects = next
             .fn_defs
             .iter()
             .find(|fd| fd.name == "main")
-            .map(|fd| unique_sorted(fd.effects.iter().cloned()));
+            .map(|fd| unique_sorted(fd.effects.iter().map(|e| e.node.clone())));
 
         out.push(next);
     }
@@ -1413,18 +1413,18 @@ fn filter_contexts_to_focus(
         next.module_effects = unique_sorted(
             filtered_fns
                 .iter()
-                .flat_map(|fd| fd.effects.iter().cloned()),
+                .flat_map(|fd| fd.effects.iter().map(|e| e.node.clone())),
         );
         next.api_effects = unique_sorted(
             filtered_fns
                 .iter()
                 .filter(|fd| next.exposes.contains(&fd.name))
-                .flat_map(|fd| fd.effects.iter().cloned()),
+                .flat_map(|fd| fd.effects.iter().map(|e| e.node.clone())),
         );
         next.main_effects = filtered_fns
             .iter()
             .find(|fd| fd.name == "main")
-            .map(|fd| unique_sorted(fd.effects.iter().cloned()));
+            .map(|fd| unique_sorted(fd.effects.iter().map(|e| e.node.clone())));
 
         if next.fn_defs.is_empty() {
             next.type_defs.clear();

@@ -39,6 +39,22 @@ pub(super) struct Underline {
     pub label: String,
 }
 
+/// A contiguous group of source lines with an optional underline annotation.
+pub(super) struct AnnotatedRegion {
+    pub source_lines: Vec<SourceLine>,
+    pub underline: Option<Underline>,
+}
+
+impl AnnotatedRegion {
+    /// Convenience: wrap a single source block + underline into a Vec of one region.
+    pub(super) fn single(source_lines: Vec<SourceLine>, underline: Option<Underline>) -> Vec<Self> {
+        vec![Self {
+            source_lines,
+            underline,
+        }]
+    }
+}
+
 /// The canonical diagnostic record.
 pub(super) struct Diagnostic {
     pub severity: Severity,
@@ -52,8 +68,7 @@ pub(super) struct Diagnostic {
     pub repair_primary: Option<String>,
     pub repair_alternatives: Vec<String>,
     pub repair_example: Option<String>,
-    pub source_lines: Vec<SourceLine>,
-    pub underline: Option<Underline>,
+    pub regions: Vec<AnnotatedRegion>,
 }
 
 // ---------------------------------------------------------------------------
@@ -142,44 +157,64 @@ impl Diagnostic {
             let _ = writeln!(out, "  {} {}", key, example.cyan());
         }
 
-        // --- source snippet ---
+        // --- source snippet (multi-region) ---
         // Errors: always show. Warnings: only if verbose.
         let show_source = is_error || verbose;
-        if show_source && !self.source_lines.is_empty() {
+        let has_source = self.regions.iter().any(|r| !r.source_lines.is_empty());
+        if show_source && has_source {
             let max_num = self
-                .source_lines
+                .regions
                 .iter()
-                .map(|sl| sl.line_num)
+                .flat_map(|r| r.source_lines.iter().map(|sl| sl.line_num))
                 .max()
                 .unwrap_or(0);
             let gutter_width = format!("{}", max_num).len();
-
-            // empty gutter
             let gutter_pad: String = " ".repeat(gutter_width);
+
+            // initial empty gutter
             let _ = writeln!(out, "  {} {}", gutter_pad, "|".blue());
 
-            for sl in &self.source_lines {
-                let num_str = format!("{:>width$}", sl.line_num, width = gutter_width);
-                let _ = writeln!(out, "  {} {} {}", num_str.dimmed(), "|".blue(), sl.text);
-            }
+            let mut last_emitted: Option<usize> = None;
 
-            // underline
-            if let Some(ref ul) = self.underline {
-                let pad: String = " ".repeat(ul.col.saturating_sub(1));
-                let carets: String = "^".repeat(ul.len.max(1));
-                let colored_carets = match self.severity {
-                    Severity::Error | Severity::Fail => carets.red().to_string(),
-                    Severity::Warning => carets.yellow().to_string(),
-                };
-                let _ = writeln!(
-                    out,
-                    "  {} {} {}{}  {}",
-                    gutter_pad,
-                    "|".blue(),
-                    pad,
-                    colored_carets,
-                    ul.label.dimmed()
-                );
+            for region in &self.regions {
+                // Insert `...` separator between non-contiguous regions
+                if let Some(first_sl) = region.source_lines.first()
+                    && let Some(last) = last_emitted
+                    && first_sl.line_num > last + 1
+                {
+                    let _ = writeln!(out, "  {}", "...".blue());
+                }
+
+                // Emit source lines, skipping already-emitted ones
+                for sl in &region.source_lines {
+                    if let Some(last) = last_emitted
+                        && sl.line_num <= last
+                    {
+                        continue;
+                    }
+                    let num_str = format!("{:>width$}", sl.line_num, width = gutter_width);
+                    let _ = writeln!(out, "  {} {} {}", num_str.dimmed(), "|".blue(), sl.text);
+                    last_emitted = Some(sl.line_num);
+                }
+
+                // Underline for this region
+                if let Some(ref ul) = region.underline {
+                    let pad: String = " ".repeat(ul.col.saturating_sub(1));
+                    let carets: String = "^".repeat(ul.len.max(1));
+                    let colored_carets = match self.severity {
+                        Severity::Error | Severity::Fail => carets.red().to_string(),
+                        Severity::Warning => carets.yellow().to_string(),
+                    };
+                    let _ = writeln!(
+                        out,
+                        "  {} {} {}{}  {}",
+                        gutter_pad,
+                        "|".blue(),
+                        pad,
+                        colored_carets,
+                        ul.label.dimmed()
+                    );
+                }
             }
         }
 
@@ -276,6 +311,107 @@ fn estimate_span_len(line: &str, col: usize) -> usize {
     if len == 0 { 1 } else { len }
 }
 
+/// Extract source lines for an inclusive range [from..to] (1-based).
+fn extract_source_lines_range(source: &str, from: usize, to: usize) -> Vec<SourceLine> {
+    let lines: Vec<&str> = source.lines().collect();
+    let start = from.saturating_sub(1); // 0-based
+    let end = to.min(lines.len()); // inclusive, but capped
+    (start..end)
+        .map(|i| SourceLine {
+            line_num: i + 1,
+            text: lines[i].to_string(),
+        })
+        .collect()
+}
+
+/// Find the line number of the block header (`fn`, `verify`, `decision`) for `name`,
+/// searching forward from the start up to (but not including) `before_line`.
+/// Tries `fn <name>`, `verify <name>`, `decision <name>`.
+fn find_block_header_line(source: &str, name: &str, before_line: usize) -> Option<usize> {
+    let needles = [
+        format!("fn {}", name),
+        format!("verify {}", name),
+        format!("decision {}", name),
+    ];
+    let mut best: Option<usize> = None;
+    for (i, line) in source.lines().enumerate() {
+        let line_num = i + 1;
+        if line_num >= before_line {
+            break;
+        }
+        let trimmed = line.trim_start();
+        for needle in &needles {
+            if trimmed.starts_with(needle.as_str()) {
+                best = Some(line_num); // keep latest match (closest to finding)
+            }
+        }
+    }
+    best
+}
+
+/// Find where the block preamble ends.
+/// For fn: declaration + `?` desc + `!` effects.
+/// For decision: declaration + indented key = value lines.
+/// Returns the last preamble line number (1-based), capped before `before_line`.
+fn find_preamble_end(source: &str, header_line: usize, before_line: usize) -> usize {
+    let mut end = header_line;
+    for (i, line) in source.lines().enumerate() {
+        let line_num = i + 1;
+        if line_num <= header_line {
+            continue;
+        }
+        if line_num >= before_line {
+            break;
+        }
+        let trimmed = line.trim_start();
+        // Preamble lines: ? "desc", ! [effects], continuation strings,
+        // or indented key=value (decision fields like date =, reason =, etc.)
+        if trimmed.starts_with('?')
+            || trimmed.starts_with('!')
+            || trimmed.starts_with('"')
+            || trimmed.starts_with('[')
+            || trimmed.is_empty()
+            || (line.starts_with("    ") && trimmed.contains(" = "))
+        {
+            end = line_num;
+        } else {
+            break;
+        }
+    }
+    end
+}
+
+/// Try to find a precise (col, len) span by extracting the first quoted
+/// expression from `summary` and locating it in `source_line`.
+/// Tries backticks first, then single quotes. Returns 1-based col.
+/// If the summary mentions "right side" or `=>`, searches after `=>` in the source line.
+fn find_precise_span(source_line: &str, summary: &str) -> Option<(usize, usize)> {
+    let search_after_arrow = summary.contains("right side") || summary.contains("=>");
+    for quote in ['`', '\''] {
+        if let Some(start_offset) = summary.find(quote) {
+            let start = start_offset + 1;
+            if let Some(end_offset) = summary[start..].find(quote) {
+                let needle = &summary[start..start + end_offset];
+                if !needle.is_empty() {
+                    let search_region = if search_after_arrow {
+                        // Search only after `=>` to find the right-hand side
+                        source_line
+                            .find("=>")
+                            .map(|arrow_pos| arrow_pos + 2)
+                            .unwrap_or(0)
+                    } else {
+                        0
+                    };
+                    if let Some(pos) = source_line[search_region..].find(needle) {
+                        return Some((search_region + pos + 1, needle.len()));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 // ---------------------------------------------------------------------------
 // Factory functions — convert existing error types to Diagnostic
 // ---------------------------------------------------------------------------
@@ -295,10 +431,12 @@ pub(super) fn from_type_error(
         .lines()
         .nth(line.saturating_sub(1))
         .unwrap_or_default();
-    let span_len = if col > 0 {
-        estimate_span_len(source_line_text, col)
+    let (ul_col, ul_len) = if col > 0 {
+        (col, estimate_span_len(source_line_text, col))
     } else {
-        1
+        // col=0: underline the trimmed content of the target line
+        let indent = source_line_text.len() - source_line_text.trim_start().len();
+        (indent + 1, source_line_text.trim().len())
     };
 
     Diagnostic {
@@ -308,7 +446,7 @@ pub(super) fn from_type_error(
         span: Span {
             file: file.to_string(),
             line,
-            col,
+            col: ul_col,
         },
         fn_name: None,
         intent: None,
@@ -317,16 +455,18 @@ pub(super) fn from_type_error(
         repair_primary: repair,
         repair_alternatives: Vec::new(),
         repair_example: None,
-        source_lines: extract_source_lines(source, line, 1),
-        underline: if col > 0 {
-            Some(Underline {
-                col,
-                len: span_len,
-                label: String::new(),
-            })
-        } else {
-            None
-        },
+        regions: AnnotatedRegion::single(
+            extract_source_lines(source, line, 1),
+            if ul_len > 0 {
+                Some(Underline {
+                    col: ul_col,
+                    len: ul_len,
+                    label: String::new(),
+                })
+            } else {
+                None
+            },
+        ),
     }
 }
 
@@ -354,8 +494,7 @@ pub(super) fn unused_binding_diagnostic(
         repair_primary: Some(format!("Remove the binding or prefix with _: _{}", binding)),
         repair_alternatives: Vec::new(),
         repair_example: None,
-        source_lines: extract_source_lines(source, line, 0),
-        underline: None,
+        regions: AnnotatedRegion::single(extract_source_lines(source, line, 0), None),
     }
 }
 
@@ -383,8 +522,7 @@ pub(super) fn missing_verify_diagnostic(
         repair_primary: Some(format!("Add a verify block: verify {}:", fn_name)),
         repair_alternatives: Vec::new(),
         repair_example: None,
-        source_lines: extract_source_lines(source, line, 0),
-        underline: None,
+        regions: AnnotatedRegion::single(extract_source_lines(source, line, 0), None),
     }
 }
 
@@ -412,20 +550,22 @@ pub(super) fn effect_violation_diagnostic(
         repair_primary: Some("Declare missing effects with ! [Effect] on the function".to_string()),
         repair_alternatives: Vec::new(),
         repair_example: None,
-        source_lines: extract_source_lines(source, line, 1),
-        underline: if col > 0 {
-            let source_line_text = source
-                .lines()
-                .nth(line.saturating_sub(1))
-                .unwrap_or_default();
-            Some(Underline {
-                col,
-                len: estimate_span_len(source_line_text, col),
-                label: String::new(),
-            })
-        } else {
-            None
-        },
+        regions: AnnotatedRegion::single(
+            extract_source_lines(source, line, 1),
+            if col > 0 {
+                let source_line_text = source
+                    .lines()
+                    .nth(line.saturating_sub(1))
+                    .unwrap_or_default();
+                Some(Underline {
+                    col,
+                    len: estimate_span_len(source_line_text, col),
+                    label: String::new(),
+                })
+            } else {
+                None
+            },
+        ),
     }
 }
 
@@ -437,24 +577,119 @@ pub(super) fn from_check_finding(
     file: &str,
 ) -> Diagnostic {
     let (slug, repair) = classify_finding(&finding.message);
+    // Use structured fn_name if available, otherwise try to extract from message text
+    let fn_name = finding
+        .fn_name
+        .clone()
+        .or_else(|| extract_fn_name_from_finding(&finding.message));
+    // For classified findings, strip the repair part from the summary
+    let summary = if repair.is_some() {
+        finding
+            .message
+            .split_once(" — ")
+            .or_else(|| finding.message.split_once(" -- "))
+            .map(|(s, _)| s.to_string())
+            .unwrap_or_else(|| finding.message.clone())
+    } else {
+        finding.message.clone()
+    };
+    // Compute underline from the source line at finding.line.
+    // Try to find the backtick-quoted expression in the source line for precise underline.
+    let source_line_text = source
+        .lines()
+        .nth(finding.line.saturating_sub(1))
+        .unwrap_or_default();
+    let (col, span_len) = find_precise_span(source_line_text, &summary).unwrap_or_else(|| {
+        let indent = source_line_text.len() - source_line_text.trim_start().len();
+        (indent + 1, source_line_text.trim().len())
+    });
+
+    // Build regions: primary + extra_spans + optional fn header context
+    let primary_underline = if span_len > 0 {
+        Some(Underline {
+            col,
+            len: span_len,
+            label: String::new(),
+        })
+    } else {
+        None
+    };
+    let mut regions = vec![AnnotatedRegion {
+        source_lines: extract_source_lines(source, finding.line, 0),
+        underline: primary_underline,
+    }];
+
+    // Extra spans → extra regions
+    for extra in &finding.extra_spans {
+        let extra_source_line = source
+            .lines()
+            .nth(extra.line.saturating_sub(1))
+            .unwrap_or_default();
+        let (extra_col, extra_len) = if extra.col > 0 && extra.len > 0 {
+            (extra.col, extra.len)
+        } else {
+            // Auto-compute from the source line
+            find_precise_span(extra_source_line, &extra.label).unwrap_or_else(|| {
+                let indent = extra_source_line.len() - extra_source_line.trim_start().len();
+                (indent + 1, extra_source_line.trim().len())
+            })
+        };
+        regions.push(AnnotatedRegion {
+            source_lines: extract_source_lines(source, extra.line, 0),
+            underline: Some(Underline {
+                col: extra_col,
+                len: extra_len,
+                label: extra.label.clone(),
+            }),
+        });
+    }
+
+    // Block header context: show preamble (declaration + ? desc + ! effects),
+    // not the entire body. Cap at 4 lines to avoid noise from long intents.
+    // Skip if the finding itself IS the block header (verify/decision/fn line).
+    let finding_is_header = source_line_text.trim_start().starts_with("fn ")
+        || source_line_text.trim_start().starts_with("verify ")
+        || source_line_text.trim_start().starts_with("decision ");
+    if !finding_is_header
+        && let Some(ref name) = fn_name
+        && let Some(header_line) = find_block_header_line(source, name, finding.line)
+        && header_line < finding.line
+    {
+        let fn_line = header_line;
+        let preamble_end = find_preamble_end(source, fn_line, finding.line);
+        let capped_end = preamble_end.min(fn_line + 3); // max 4 lines
+        let header_lines = extract_source_lines_range(source, fn_line, capped_end);
+        if !header_lines.is_empty() {
+            regions.insert(
+                0,
+                AnnotatedRegion {
+                    source_lines: header_lines,
+                    underline: None,
+                },
+            );
+        }
+    }
+
+    // Sort regions by first line number
+    regions.sort_by_key(|r| r.source_lines.first().map(|sl| sl.line_num).unwrap_or(0));
+
     Diagnostic {
         severity,
         slug,
-        summary: finding.message.clone(),
+        summary,
         span: Span {
             file: file.to_string(),
             line: finding.line,
-            col: 0,
+            col,
         },
-        fn_name: extract_fn_name_from_finding(&finding.message),
+        fn_name,
         intent: None,
         fields: Vec::new(),
         conflict: None,
         repair_primary: repair,
         repair_alternatives: Vec::new(),
         repair_example: None,
-        source_lines: extract_source_lines(source, finding.line, 0),
-        underline: None,
+        regions,
     }
 }
 
@@ -480,9 +715,44 @@ fn classify_finding(msg: &str) -> (&'static str, Option<String>) {
         ("verify-coverage", None)
     } else if msg.contains("verify law") {
         ("verify-law", None)
+    } else if msg.contains("List.len") && msg.contains("traverses the entire list") {
+        ("perf-list-len", split_repair(msg))
+    } else if msg.contains("string concatenation") && msg.contains("recursive call") {
+        ("perf-string-concat", split_repair(msg))
+    } else if msg.contains("nested `match") {
+        ("perf-nested-match", split_repair(msg))
+    } else if msg.contains("recomputed every recursive call") {
+        ("perf-loop-invariant", split_repair(msg))
+    } else if msg.contains("computed in both the match condition") {
+        ("cse-match", split_repair(msg))
+    } else if msg.contains("computed") && msg.contains("times in this function") {
+        ("cse-duplicate", split_repair(msg))
+    } else if msg.contains("unused effect") {
+        (
+            "unused-effect",
+            Some("Remove unused effects from the ! [...] declaration".to_string()),
+        )
+    } else if msg.contains("unknown impact symbol") {
+        ("unknown-impact", split_repair(msg))
+    } else if msg.contains("must not call") && msg.contains("on the right side") {
+        ("verify-rhs", None)
     } else {
         ("check", None)
     }
+}
+
+/// Split a message on ` — ` (em-dash) to extract the repair suggestion.
+fn split_repair(msg: &str) -> Option<String> {
+    msg.split_once(" — ")
+        .or_else(|| msg.split_once(" -- "))
+        .map(|(_, repair)| {
+            let mut r = repair.to_string();
+            // Capitalize first letter
+            if let Some(first) = r.get_mut(0..1) {
+                first.make_ascii_uppercase();
+            }
+            r
+        })
 }
 
 fn extract_fn_name_from_finding(msg: &str) -> Option<String> {
@@ -614,17 +884,19 @@ pub(super) fn verify_mismatch_diagnostic(
         repair_primary: None,
         repair_alternatives: Vec::new(),
         repair_example: None,
-        source_lines: extract_source_lines(source, line, 0),
-        underline: Some(Underline {
-            col,
-            len: source
-                .lines()
-                .nth(line.saturating_sub(1))
-                .map(|l| l.trim().len())
-                .unwrap_or(1)
-                .max(1),
-            label: "verify-mismatch".to_string(),
-        }),
+        regions: AnnotatedRegion::single(
+            extract_source_lines(source, line, 0),
+            Some(Underline {
+                col,
+                len: source
+                    .lines()
+                    .nth(line.saturating_sub(1))
+                    .map(|l| l.trim().len())
+                    .unwrap_or(1)
+                    .max(1),
+                label: "verify-mismatch".to_string(),
+            }),
+        ),
     }
 }
 
@@ -658,17 +930,19 @@ pub(super) fn verify_runtime_error_diagnostic(
         repair_primary: None,
         repair_alternatives: Vec::new(),
         repair_example: None,
-        source_lines: extract_source_lines(source, line, 0),
-        underline: Some(Underline {
-            col,
-            len: source
-                .lines()
-                .nth(line.saturating_sub(1))
-                .map(|l| l.trim().len())
-                .unwrap_or(1)
-                .max(1),
-            label: "verify-runtime-error".to_string(),
-        }),
+        regions: AnnotatedRegion::single(
+            extract_source_lines(source, line, 0),
+            Some(Underline {
+                col,
+                len: source
+                    .lines()
+                    .nth(line.saturating_sub(1))
+                    .map(|l| l.trim().len())
+                    .unwrap_or(1)
+                    .max(1),
+                label: "verify-runtime-error".to_string(),
+            }),
+        ),
     }
 }
 
@@ -702,17 +976,19 @@ pub(super) fn verify_unexpected_err_diagnostic(
         repair_primary: None,
         repair_alternatives: Vec::new(),
         repair_example: None,
-        source_lines: extract_source_lines(source, line, 0),
-        underline: Some(Underline {
-            col,
-            len: source
-                .lines()
-                .nth(line.saturating_sub(1))
-                .map(|l| l.trim().len())
-                .unwrap_or(1)
-                .max(1),
-            label: "verify-unexpected-err".to_string(),
-        }),
+        regions: AnnotatedRegion::single(
+            extract_source_lines(source, line, 0),
+            Some(Underline {
+                col,
+                len: source
+                    .lines()
+                    .nth(line.saturating_sub(1))
+                    .map(|l| l.trim().len())
+                    .unwrap_or(1)
+                    .max(1),
+                label: "verify-unexpected-err".to_string(),
+            }),
+        ),
     }
 }
 
@@ -767,8 +1043,7 @@ pub(super) fn replay_output_mismatch_diagnostic(
         repair_primary: None,
         repair_alternatives: Vec::new(),
         repair_example: None,
-        source_lines: vec![],
-        underline: None,
+        regions: AnnotatedRegion::single(vec![], None),
     }
 }
 
@@ -803,7 +1078,6 @@ pub(super) fn replay_effect_error_diagnostic(
         repair_primary: None,
         repair_alternatives: Vec::new(),
         repair_example: None,
-        source_lines: vec![],
-        underline: None,
+        regions: AnnotatedRegion::single(vec![], None),
     }
 }

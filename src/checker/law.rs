@@ -25,7 +25,9 @@ pub fn collect_verify_law_dependency_warnings_in(
             line: hint.line,
             module: module_name.clone(),
             file: source_file.map(|s| s.to_string()),
+            fn_name: None,
             message: missing_helper_law_message(&hint),
+            extra_spans: vec![],
         })
         .collect::<Vec<_>>();
     findings.extend(
@@ -35,7 +37,9 @@ pub fn collect_verify_law_dependency_warnings_in(
                 line: hint.line,
                 module: module_name.clone(),
                 file: source_file.map(|s| s.to_string()),
+                fn_name: None,
                 message: contextual_helper_law_message(&hint),
+                extra_spans: vec![],
             }),
     );
     findings

@@ -414,7 +414,14 @@ fn format_signature(fd: &FnDef) -> String {
     }
 
     if !fd.effects.is_empty() {
-        sig.push_str(&format!(" ! [{}]", fd.effects.join(", ")));
+        sig.push_str(&format!(
+            " ! [{}]",
+            fd.effects
+                .iter()
+                .map(|e| e.node.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
     }
 
     sig

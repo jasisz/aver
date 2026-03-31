@@ -175,7 +175,7 @@ pub struct FnDef {
     pub line: usize,
     pub params: Vec<(String, String)>,
     pub return_type: String,
-    pub effects: Vec<String>,
+    pub effects: Vec<Spanned<String>>,
     pub desc: Option<String>,
     pub body: std::rc::Rc<FnBody>,
     /// `None` for unresolved (REPL, module sub-interpreters).

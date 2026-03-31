@@ -1,6 +1,8 @@
 mod coverage;
+mod cse;
 mod intent;
 mod law;
+mod perf;
 mod verify;
 
 use crate::ast::{
@@ -54,11 +56,21 @@ pub(crate) type FnSigSummary = (Vec<crate::types::Type>, crate::types::Type, Vec
 pub(crate) type FnSigMap = std::collections::HashMap<String, FnSigSummary>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FindingSpan {
+    pub line: usize,
+    pub col: usize,
+    pub len: usize,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckFinding {
     pub line: usize,
     pub module: Option<String>,
     pub file: Option<String>,
+    pub fn_name: Option<String>,
     pub message: String,
+    pub extra_spans: Vec<FindingSpan>,
 }
 
 fn module_name_for_items(items: &[TopLevel]) -> Option<String> {
@@ -209,9 +221,11 @@ use verify::verify_case_calls_target;
 
 // Public re-exports so external callers don't break
 pub use coverage::{collect_verify_coverage_warnings, collect_verify_coverage_warnings_in};
+pub use cse::{collect_cse_warnings, collect_cse_warnings_in};
 pub use intent::{
     check_module_intent, check_module_intent_with_sigs, check_module_intent_with_sigs_in,
     index_decisions,
 };
 pub use law::{collect_verify_law_dependency_warnings, collect_verify_law_dependency_warnings_in};
+pub use perf::{collect_perf_warnings, collect_perf_warnings_in};
 pub use verify::{expr_to_str, merge_verify_blocks, run_verify};

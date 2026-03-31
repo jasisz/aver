@@ -46,7 +46,7 @@ pub fn compile_program_with_modules(
                 let effect_ids: Vec<u32> = fndef
                     .effects
                     .iter()
-                    .map(|effect| compiler.symbols.intern_name(effect))
+                    .map(|effect| compiler.symbols.intern_name(&effect.node))
                     .collect();
                 let fn_id = compiler.code.add_function(FnChunk {
                     name: fndef.name.clone(),
@@ -61,10 +61,15 @@ pub fn compile_program_with_modules(
                     source_file: String::new(),
                     line_table: Vec::new(),
                 });
-                let symbol_id =
-                    compiler
-                        .symbols
-                        .intern_function(&fndef.name, fn_id, &fndef.effects);
+                let symbol_id = compiler.symbols.intern_function(
+                    &fndef.name,
+                    fn_id,
+                    &fndef
+                        .effects
+                        .iter()
+                        .map(|e| e.node.clone())
+                        .collect::<Vec<_>>(),
+                );
                 let global_idx = compiler.global_names[&fndef.name];
                 compiler.globals[global_idx as usize] = VmSymbolTable::symbol_ref(symbol_id);
             }
@@ -234,7 +239,7 @@ impl ProgramCompiler {
                 let effect_ids: Vec<u32> = fndef
                     .effects
                     .iter()
-                    .map(|effect| self.symbols.intern_name(effect))
+                    .map(|effect| self.symbols.intern_name(&effect.node))
                     .collect();
                 let fn_id = self.code.add_function(FnChunk {
                     name: qualified_name.clone(),
@@ -249,8 +254,15 @@ impl ProgramCompiler {
                     source_file: String::new(),
                     line_table: Vec::new(),
                 });
-                self.symbols
-                    .intern_function(&qualified_name, fn_id, &fndef.effects);
+                self.symbols.intern_function(
+                    &qualified_name,
+                    fn_id,
+                    &fndef
+                        .effects
+                        .iter()
+                        .map(|e| e.node.clone())
+                        .collect::<Vec<_>>(),
+                );
                 module_fn_ids.push((fndef.name.clone(), fn_id));
             }
         }
@@ -473,7 +485,7 @@ impl ProgramCompiler {
             fndef
                 .effects
                 .iter()
-                .map(|effect| self.symbols.intern_name(effect))
+                .map(|effect| self.symbols.intern_name(&effect.node))
                 .collect(),
             local_slots,
             &self.global_names,

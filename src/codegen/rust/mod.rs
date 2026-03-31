@@ -472,8 +472,8 @@ fn detect_used_services(ctx: &CodegenContext) -> HashSet<String> {
     for item in &ctx.items {
         if let TopLevel::FnDef(fd) = item {
             for eff in &fd.effects {
-                services.insert(eff.clone());
-                if let Some((service, _)) = eff.split_once('.') {
+                services.insert(eff.node.clone());
+                if let Some((service, _)) = eff.node.split_once('.') {
                     services.insert(service.to_string());
                 }
             }
@@ -482,8 +482,8 @@ fn detect_used_services(ctx: &CodegenContext) -> HashSet<String> {
     for module in &ctx.modules {
         for fd in &module.fn_defs {
             for eff in &fd.effects {
-                services.insert(eff.clone());
-                if let Some((service, _)) = eff.split_once('.') {
+                services.insert(eff.node.clone());
+                if let Some((service, _)) = eff.node.split_once('.') {
                     services.insert(service.to_string());
                 }
             }

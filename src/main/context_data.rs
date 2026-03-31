@@ -490,18 +490,22 @@ pub(super) fn collect_contexts(
 
     // Effect summaries are calculated from the full function set
     // before the public-function filtering done for display.
-    ctx.module_effects = unique_sorted_effects(ctx.fn_defs.iter().flat_map(|fd| fd.effects.iter()));
+    ctx.module_effects = unique_sorted_effects(
+        ctx.fn_defs
+            .iter()
+            .flat_map(|fd| fd.effects.iter().map(|e| &e.node)),
+    );
     ctx.api_effects = unique_sorted_effects(
         ctx.fn_defs
             .iter()
             .filter(|fd| ctx.exposes.contains(&fd.name))
-            .flat_map(|fd| fd.effects.iter()),
+            .flat_map(|fd| fd.effects.iter().map(|e| &e.node)),
     );
     ctx.main_effects = ctx
         .fn_defs
         .iter()
         .find(|fd| fd.name == "main")
-        .map(|fd| unique_sorted_effects(fd.effects.iter()));
+        .map(|fd| unique_sorted_effects(fd.effects.iter().map(|e| &e.node)));
 
     // Filter functions by exposes if the list is non-empty
     if !ctx.exposes.is_empty() {

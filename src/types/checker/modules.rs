@@ -34,7 +34,7 @@ impl TypeChecker {
                         FnSig {
                             params,
                             ret,
-                            effects: f.effects.clone(),
+                            effects: f.effects.iter().map(|e| e.node.clone()).collect(),
                         },
                     );
                 }
@@ -291,7 +291,7 @@ impl TypeChecker {
                         FnSig {
                             params,
                             ret,
-                            effects: fd.effects.clone(),
+                            effects: fd.effects.iter().map(|e| e.node.clone()).collect(),
                         },
                     ));
                 }

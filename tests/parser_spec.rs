@@ -257,7 +257,8 @@ fn fn_with_effects() {
     let src = "fn log(msg: String) -> Unit\n    ! [Io]\n    print(msg)\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        assert_eq!(fd.effects, vec!["Io".to_string()]);
+        let effect_names: Vec<&str> = fd.effects.iter().map(|e| e.node.as_str()).collect();
+        assert_eq!(effect_names, vec!["Io"]);
     } else {
         panic!("expected FnDef");
     }
@@ -268,15 +269,16 @@ fn fn_with_multiline_effects() {
     let src = "fn log(msg: String) -> Unit\n    ! [\n        Args.get,\n        Console.print, Console.warn,\n        Time.now,\n        Disk.readText, Disk.writeText,\n    ]\n    print(msg)\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
+        let effect_names: Vec<&str> = fd.effects.iter().map(|e| e.node.as_str()).collect();
         assert_eq!(
-            fd.effects,
+            effect_names,
             vec![
-                "Args.get".to_string(),
-                "Console.print".to_string(),
-                "Console.warn".to_string(),
-                "Time.now".to_string(),
-                "Disk.readText".to_string(),
-                "Disk.writeText".to_string(),
+                "Args.get",
+                "Console.print",
+                "Console.warn",
+                "Time.now",
+                "Disk.readText",
+                "Disk.writeText",
             ]
         );
     } else {

@@ -575,7 +575,7 @@ fn build_replay_error_diagnostic(
     entry_fn: &str,
     entry_line: usize,
 ) -> super::diagnostic::Diagnostic {
-    use super::diagnostic::{Severity, Span, replay_effect_error_diagnostic};
+    use super::diagnostic::{AnnotatedRegion, Severity, Span, replay_effect_error_diagnostic};
 
     match err {
         ReplayError::Generic(msg) => {
@@ -613,8 +613,7 @@ fn build_replay_error_diagnostic(
                 repair_primary: None,
                 repair_alternatives: Vec::new(),
                 repair_example: None,
-                source_lines: vec![],
-                underline: None,
+                regions: AnnotatedRegion::single(vec![], None),
             }
         }
         ReplayError::ArgsMismatch {
@@ -649,8 +648,7 @@ fn build_replay_error_diagnostic(
                 repair_primary: None,
                 repair_alternatives: Vec::new(),
                 repair_example: None,
-                source_lines: vec![],
-                underline: None,
+                regions: AnnotatedRegion::single(vec![], None),
             }
         }
         ReplayError::Unconsumed { seq, effect_type } => {
@@ -678,8 +676,7 @@ fn build_replay_error_diagnostic(
                 repair_primary: None,
                 repair_alternatives: Vec::new(),
                 repair_example: None,
-                source_lines: vec![],
-                underline: None,
+                regions: AnnotatedRegion::single(vec![], None),
             }
         }
         ReplayError::Exhausted {
@@ -713,8 +710,7 @@ fn build_replay_error_diagnostic(
                 repair_primary: None,
                 repair_alternatives: Vec::new(),
                 repair_example: None,
-                source_lines: vec![],
-                underline: None,
+                regions: AnnotatedRegion::single(vec![], None),
             }
         }
     }

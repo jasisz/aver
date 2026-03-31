@@ -100,10 +100,12 @@ pub fn collect_verify_coverage_warnings_in(
                     line: block.line,
                     module: module_name.clone(),
                     file: source_file.map(|s| s.to_string()),
+                    fn_name: None,
                     message: format!(
                         "verify examples for {} do not include any Result.Ok case",
                         block.fn_name
                     ),
+                    extra_spans: vec![],
                 });
             }
 
@@ -117,10 +119,12 @@ pub fn collect_verify_coverage_warnings_in(
                     line: block.line,
                     module: module_name.clone(),
                     file: source_file.map(|s| s.to_string()),
+                    fn_name: None,
                     message: format!(
                         "verify examples for {} do not include any Result.Err case",
                         block.fn_name
                     ),
+                    extra_spans: vec![],
                 });
             }
 
@@ -134,10 +138,12 @@ pub fn collect_verify_coverage_warnings_in(
                     line: block.line,
                     module: module_name.clone(),
                     file: source_file.map(|s| s.to_string()),
+                    fn_name: None,
                     message: format!(
                         "verify examples for {} do not include any Option.Some case",
                         block.fn_name
                     ),
+                    extra_spans: vec![],
                 });
             }
 
@@ -151,10 +157,12 @@ pub fn collect_verify_coverage_warnings_in(
                     line: block.line,
                     module: module_name.clone(),
                     file: source_file.map(|s| s.to_string()),
+                    fn_name: None,
                     message: format!(
                         "verify examples for {} do not include any Option.None case",
                         block.fn_name
                     ),
+                    extra_spans: vec![],
                 });
             }
 
@@ -168,10 +176,12 @@ pub fn collect_verify_coverage_warnings_in(
                     line: block.line,
                     module: module_name.clone(),
                     file: source_file.map(|s| s.to_string()),
+                    fn_name: None,
                     message: format!(
                         "verify examples for {} do not include any `true` result",
                         block.fn_name
                     ),
+                    extra_spans: vec![],
                 });
             }
 
@@ -185,10 +195,12 @@ pub fn collect_verify_coverage_warnings_in(
                     line: block.line,
                     module: module_name.clone(),
                     file: source_file.map(|s| s.to_string()),
+                    fn_name: None,
                     message: format!(
                         "verify examples for {} do not include any `false` result",
                         block.fn_name
                     ),
+                    extra_spans: vec![],
                 });
             }
 
@@ -208,12 +220,14 @@ pub fn collect_verify_coverage_warnings_in(
                         line: block.line,
                         module: module_name.clone(),
                         file: source_file.map(|s| s.to_string()),
+                        fn_name: None,
                         message: format!(
                             "verify examples for {} cover {}/{} output constructors",
                             block.fn_name,
                             covered.len(),
                             constructors.len()
                         ),
+                        extra_spans: vec![],
                     });
                 }
             }
@@ -237,12 +251,14 @@ pub fn collect_verify_coverage_warnings_in(
                     line: block.line,
                     module: module_name.clone(),
                     file: source_file.map(|s| s.to_string()),
+                    fn_name: None,
                     message: format!(
                         "verify examples for {} cover {}/{} enum constructors",
                         block.fn_name,
                         covered.len(),
                         constructors.len()
                     ),
+                    extra_spans: vec![],
                 });
             }
         }
@@ -258,10 +274,12 @@ pub fn collect_verify_coverage_warnings_in(
                     line: block.line,
                     module: module_name.clone(),
                     file: source_file.map(|s| s.to_string()),
+                    fn_name: None,
                     message: format!(
                         "verify examples for {} do not cover `{}` = `true`",
                         block.fn_name, param_name
                     ),
+                    extra_spans: vec![],
                 });
             }
             if !args.iter().any(|arg| expr_is_bool_case(arg, false)) {
@@ -269,10 +287,12 @@ pub fn collect_verify_coverage_warnings_in(
                     line: block.line,
                     module: module_name.clone(),
                     file: source_file.map(|s| s.to_string()),
+                    fn_name: None,
                     message: format!(
                         "verify examples for {} do not cover `{}` = `false`",
                         block.fn_name, param_name
                     ),
+                    extra_spans: vec![],
                 });
             }
         }
@@ -288,10 +308,12 @@ pub fn collect_verify_coverage_warnings_in(
                     line: block.line,
                     module: module_name.clone(),
                     file: source_file.map(|s| s.to_string()),
+                    fn_name: None,
                     message: format!(
                         "verify examples for {} do not cover empty list input for `{}`",
                         block.fn_name, param_name
                     ),
+                    extra_spans: vec![],
                 });
             }
             if !args.iter().any(|arg| expr_is_non_empty_list_case(arg)) {
@@ -299,10 +321,12 @@ pub fn collect_verify_coverage_warnings_in(
                     line: block.line,
                     module: module_name.clone(),
                     file: source_file.map(|s| s.to_string()),
+                    fn_name: None,
                     message: format!(
                         "verify examples for {} do not cover non-empty list input for `{}`",
                         block.fn_name, param_name
                     ),
+                    extra_spans: vec![],
                 });
             }
         }
@@ -326,10 +350,12 @@ pub fn collect_verify_coverage_warnings_in(
                                 line: block.line,
                                 module: module_name.clone(),
                                 file: source_file.map(|s| s.to_string()),
+                                fn_name: None,
                                 message: format!(
                                     "verify examples for recursive function {} may not include a numeric base-case input for `{}` (`0` or `1`)",
                                     block.fn_name, param_name
                                 ),
+                                extra_spans: vec![],
                             });
                     }
                 }
@@ -339,10 +365,12 @@ pub fn collect_verify_coverage_warnings_in(
                                 line: block.line,
                                 module: module_name.clone(),
                                 file: source_file.map(|s| s.to_string()),
+                                fn_name: None,
                                 message: format!(
                                     "verify examples for recursive function {} may not include an empty list input for `{}`",
                                     block.fn_name, param_name
                                 ),
+                                extra_spans: vec![],
                             });
                     }
                 }
@@ -352,10 +380,12 @@ pub fn collect_verify_coverage_warnings_in(
                                 line: block.line,
                                 module: module_name.clone(),
                                 file: source_file.map(|s| s.to_string()),
+                                fn_name: None,
                                 message: format!(
                                     "verify examples for recursive function {} may not include an empty string input for `{}`",
                                     block.fn_name, param_name
                                 ),
+                                extra_spans: vec![],
                             });
                     }
                 }
@@ -383,10 +413,12 @@ pub fn collect_verify_coverage_warnings_in(
                         line: block.line,
                         module: module_name.clone(),
                         file: source_file.map(|s| s.to_string()),
+                        fn_name: None,
                         message: format!(
                             "verify examples for {} may not include an empty string input for `{}`",
                             block.fn_name, param_name
                         ),
+                        extra_spans: vec![],
                     });
                 }
             }

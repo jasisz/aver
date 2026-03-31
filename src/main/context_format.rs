@@ -279,7 +279,7 @@ fn module_to_json(ctx: &FileContext) -> JsonModule<'_> {
                     .map_or_else(Vec::new, |samples| vec_refs(samples));
                 JsonFunction {
                     sig: fn_sig(fd),
-                    effects: vec_refs(&fd.effects),
+                    effects: fd.effects.iter().map(|e| e.node.as_str()).collect(),
                     analysis,
                     desc: fd.desc.as_deref(),
                     specs,
@@ -493,7 +493,14 @@ pub(super) fn format_context_md(
             out.push_str(&format!("### `{}`\n", fn_sig(fd)));
 
             if !fd.effects.is_empty() {
-                out.push_str(&format!("effects: `[{}]`  \n", fd.effects.join(", ")));
+                out.push_str(&format!(
+                    "effects: `[{}]`  \n",
+                    fd.effects
+                        .iter()
+                        .map(|e| e.node.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
             }
 
             // Only show analysis flags when non-default
