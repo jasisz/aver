@@ -58,12 +58,13 @@ verify skipTrailingDedent
 
 fn countIndentsInRange(tokens: List<Token>, pos: Int, endPos: Int, count: Int) -> Int
     ? "Count net indent/dedent balance in a token range."
+    nextPos = pos + 1
     match pos >= endPos
         true -> count
         false -> match Domain.ParserMatch.tokenAt(tokens, pos)
-            Token.TkIndent -> countIndentsInRange(tokens, pos + 1, endPos, count + 1)
-            Token.TkDedent -> countIndentsInRange(tokens, pos + 1, endPos, count - 1)
-            _ -> countIndentsInRange(tokens, pos + 1, endPos, count)
+            Token.TkIndent -> countIndentsInRange(tokens, nextPos, endPos, count + 1)
+            Token.TkDedent -> countIndentsInRange(tokens, nextPos, endPos, count - 1)
+            _ -> countIndentsInRange(tokens, nextPos, endPos, count)
 
 verify countIndentsInRange
     countIndentsInRange([Token.TkInt(1), Token.TkEof], 0, 0, 0) => 0
@@ -71,11 +72,12 @@ verify countIndentsInRange
 
 fn skipNDedents(tokens: List<Token>, pos: Int, n: Int) -> Int
     ? "Skip n DEDENT tokens (and interleaved newlines) after multi-line expression."
+    nextPos = pos + 1
     match n <= 0
         true -> pos
         false -> match Domain.ParserMatch.tokenAt(tokens, pos)
-            Token.TkNewline -> skipNDedents(tokens, pos + 1, n)
-            Token.TkDedent -> skipNDedents(tokens, pos + 1, n - 1)
+            Token.TkNewline -> skipNDedents(tokens, nextPos, n)
+            Token.TkDedent -> skipNDedents(tokens, nextPos, n - 1)
             _ -> pos
 
 verify skipNDedents

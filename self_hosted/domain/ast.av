@@ -165,11 +165,12 @@ verify userCtorTagOffset
 
 fn userCtorTagOffsetLoop(name: String, pos: Int, acc: Int) -> Int
     ? "Walk the constructor name and accumulate a bounded rolling hash."
+    accPlusOne = acc + 1
     match pos >= String.len(name)
-        true -> acc + 1
+        true -> accPlusOne
         false -> match String.charAt(name, pos)
             Option.Some(ch) -> userCtorTagOffsetLoop(name, pos + 1, userCtorTagStep(acc, Char.toCode(ch)))
-            Option.None -> acc + 1
+            Option.None -> accPlusOne
 
 verify userCtorTagOffsetLoop
     userCtorTagOffsetLoop("A", 0, 0) > 0 => true

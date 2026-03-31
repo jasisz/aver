@@ -189,21 +189,15 @@ verify classifyFastCmpSlots
 
 fn classifyFastBuiltinLeaf(name: String, args: List<Expr>) -> Option<FastLeaf>
     ? "Recognize tiny builtin wrappers that only shuffle slots and integer constants."
-    match name == "Vector.new"
-        true -> classifyFastVectorNew(args)
-        false -> match name == "Vector.len"
-            true -> classifyFastVectorLen(args)
-            false -> match name == "Option.withDefault"
-                true -> classifyFastOptionWithDefault(args)
-                false -> match name == "Map.get"
-                    true -> classifyFastMapGet(args)
-                    false -> match name == "Map.set"
-                        true -> classifyFastMapSet(args)
-                        false -> match name == "Map.has"
-                            true -> classifyFastMapHas(args)
-                            false -> match name == "Map.remove"
-                                true -> classifyFastMapRemove(args)
-                                false -> Option.None
+    match name
+        "Vector.new" -> classifyFastVectorNew(args)
+        "Vector.len" -> classifyFastVectorLen(args)
+        "Option.withDefault" -> classifyFastOptionWithDefault(args)
+        "Map.get" -> classifyFastMapGet(args)
+        "Map.set" -> classifyFastMapSet(args)
+        "Map.has" -> classifyFastMapHas(args)
+        "Map.remove" -> classifyFastMapRemove(args)
+        _ -> Option.None
 
 verify classifyFastBuiltinLeaf
     classifyFastBuiltinLeaf("unknown", []) => Option.None
@@ -558,15 +552,10 @@ verify classifyBoolArmPatternsInner
 
 fn classifyBoolArmPatternsPair(b1: Bool, leaf1: FastLeaf, b2: Bool, leaf2: FastLeaf) -> Option<(FastLeaf, FastLeaf)>
     ? "Return (trueLeaf, falseLeaf) when the two bool arms are complementary."
-    match b1 == true
-        true -> match b2 == false
-            true -> Option.Some((leaf1, leaf2))
-            false -> Option.None
-        false -> match b1 == false
-            true -> match b2 == true
-                true -> Option.Some((leaf2, leaf1))
-                false -> Option.None
-            false -> Option.None
+    match (b1, b2)
+        (true, false) -> Option.Some((leaf1, leaf2))
+        (false, true) -> Option.Some((leaf2, leaf1))
+        _ -> Option.None
 
 verify classifyBoolArmPatternsPair
     classifyBoolArmPatternsPair(true, FastLeaf.LeafConstInt(1), false, FastLeaf.LeafConstInt(0)) => Option.Some((FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(0)))
