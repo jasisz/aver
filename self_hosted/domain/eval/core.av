@@ -137,16 +137,16 @@ fn evalCmp(a: Expr, b: Expr, env: Map<String, Val>, fns: FnStore, op: CmpOp) -> 
 fn evalConcatExpr(parts: List<Expr>, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate string interpolation: concat all parts as strings."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
-    evalConcatParts(parts, env, fns, "")
+    evalConcatParts(parts, env, fns, [])
 
-fn evalConcatParts(parts: List<Expr>, env: Map<String, Val>, fns: FnStore, acc: String) -> Result<Val, String>
+fn evalConcatParts(parts: List<Expr>, env: Map<String, Val>, fns: FnStore, acc: List<String>) -> Result<Val, String>
     ? "Concatenate interpolation parts. Self-recursive for codegen TCO."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match parts
-        [] -> Result.Ok(Val.ValStr(acc))
+        [] -> Result.Ok(Val.ValStr(String.join(List.reverse(acc), "")))
         [p, ..rest] -> match evalExpr(p, env, fns)
             Result.Err(e) -> Result.Err(e)
-            Result.Ok(v) -> evalConcatParts(rest, env, fns, acc + Domain.Value.valRepr(v))
+            Result.Ok(v) -> evalConcatParts(rest, env, fns, List.prepend(Domain.Value.valRepr(v), acc))
 
 fn evalTupleExpr(exprs: List<Expr>, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate tuple literal."
@@ -762,16 +762,16 @@ fn evalCmpSlot(a: Expr, b: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fn
 fn evalConcatSlot(parts: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
     ? "String interpolation in slot path."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
-    evalConcatPartsSlot(parts, env, slotMap, fns, "")
+    evalConcatPartsSlot(parts, env, slotMap, fns, [])
 
-fn evalConcatPartsSlot(parts: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore, acc: String) -> Result<Val, String>
+fn evalConcatPartsSlot(parts: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore, acc: List<String>) -> Result<Val, String>
     ? "Concatenate interpolation parts in slot path."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match parts
-        [] -> Result.Ok(Val.ValStr(acc))
+        [] -> Result.Ok(Val.ValStr(String.join(List.reverse(acc), "")))
         [p, ..rest] -> match evalExprSlot(p, env, slotMap, fns)
             Result.Err(e) -> Result.Err(e)
-            Result.Ok(v) -> evalConcatPartsSlot(rest, env, slotMap, fns, acc + Domain.Value.valRepr(v))
+            Result.Ok(v) -> evalConcatPartsSlot(rest, env, slotMap, fns, List.prepend(Domain.Value.valRepr(v), acc))
 
 fn evalTupleSlot(exprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
     ? "Tuple literal in slot path."
