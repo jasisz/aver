@@ -1540,6 +1540,7 @@ pub(super) fn cmd_run_self_hosted(
 fn run_check_for_file(
     file: &str,
     module_root: &str,
+    config: Option<&aver::config::ProjectConfig>,
     deps: bool,
     verbose: bool,
     json: bool,
@@ -1673,6 +1674,15 @@ fn run_check_for_file(
             ));
         }
 
+        // --- Filter suppressed warnings ---
+        let total_before = diagnostics.len();
+        if let Some(cfg) = config {
+            diagnostics.retain(|diag| {
+                !diag.is_warning() || !cfg.is_check_suppressed(diag.slug, &shown_path)
+            });
+        }
+        let suppressed_count = total_before - diagnostics.len();
+
         // --- Emit ---
         for (i, diag) in diagnostics.iter().enumerate() {
             if json {
@@ -1701,6 +1711,12 @@ fn run_check_for_file(
             if !decisions.is_empty() {
                 summary_parts.push(format!("{} decision(s)", decisions.len()));
             }
+            if suppressed_count > 0 {
+                summary_parts.push(format!(
+                    "{} warning(s) suppressed by aver.toml",
+                    suppressed_count
+                ));
+            }
             println!("  {}", summary_parts.join(" | "));
         }
 
@@ -1720,6 +1736,13 @@ pub(super) fn cmd_check(
     json: bool,
 ) {
     let module_root = resolve_module_root(module_root_override);
+    let config = match aver::config::ProjectConfig::load_from_dir(Path::new(&module_root)) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
     let inputs = match resolve_av_inputs(path) {
         Ok(inputs) => inputs,
         Err(e) => {
@@ -1740,7 +1763,7 @@ pub(super) fn cmd_check(
             println!("Input: {}", display_check_path(file, &module_root).cyan());
         }
 
-        match run_check_for_file(file, &module_root, deps, verbose, json) {
+        match run_check_for_file(file, &module_root, config.as_ref(), deps, verbose, json) {
             Ok(has_errors) => {
                 if has_errors {
                     failed_files.push(file.clone());

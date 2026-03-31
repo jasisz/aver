@@ -1,0 +1,52 @@
+# Self-hosted Aver interpreter — project configuration
+
+[[check.suppress]]
+slug = "non-tail-recursion"
+files = ["**/eval/**", "**/eval.av"]
+reason = """
+The evaluator is a tree-walking interpreter over a 50+ variant AST. \
+Each eval* function pattern-matches on Expr and recurses into sub-expressions. \
+Converting these to accumulator-style tail recursion would require \
+continuation-passing (CPS), destroying the direct correspondence \
+between AST shape and evaluation logic."""
+
+[[check.suppress]]
+slug = "non-tail-recursion"
+files = ["**/lexer/**", "**/lexer.av"]
+reason = """
+Tokenizer functions consume one character at a time and recurse \
+to handle the next token state (e.g. string interpolation, indent tracking). \
+This is inherently state-machine recursion where each call represents \
+a distinct lexer state — tail conversion would obscure the state transitions."""
+
+[[check.suppress]]
+slug = "non-tail-recursion"
+files = ["**/parser/**", "**/parser.av", "**/parsermatch.av"]
+reason = """
+Recursive descent parser: each parse* function mirrors a grammar production \
+and recurses for sub-expressions (precedence climbing, match arms, blocks). \
+The call structure IS the grammar — flattening it would lose the direct \
+correspondence between code and language specification."""
+
+[[check.suppress]]
+slug = "non-tail-recursion"
+files = ["**/resolver/**", "**/resolver.av"]
+reason = """
+The resolver walks the AST to assign variable slots, recursing into \
+nested scopes and expressions. Like the evaluator, its structure mirrors \
+the AST shape. Tail conversion is not feasible without CPS."""
+
+[[check.suppress]]
+slug = "non-tail-recursion"
+files = ["**/value.av", "**/ast.av", "**/token.av", "**/builtins/**", "**/builtins.av", "**/match.av"]
+reason = """
+Support modules (value repr, builtins dispatch, pattern matching) recurse \
+over nested values and AST nodes. These are structural traversals where \
+recursion depth is bounded by data nesting, not input size."""
+
+[[check.suppress]]
+slug = "non-tail-recursion"
+files = ["**/main.av", "**/verify.av"]
+reason = """
+Entry point and verify harness contain recursive helpers for module loading \
+and test orchestration. Recursion depth is bounded by module graph size."""

@@ -1166,6 +1166,7 @@ fn main() -> Result<String, String>
         ctx.emit_replay_runtime = true;
         ctx.policy = Some(crate::config::ProjectConfig {
             effect_policies: std::collections::HashMap::new(),
+            check_suppressions: Vec::new(),
         });
 
         let out = transpile(&ctx);

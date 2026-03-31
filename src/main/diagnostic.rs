@@ -77,6 +77,10 @@ pub(super) struct Diagnostic {
 // ---------------------------------------------------------------------------
 
 impl Diagnostic {
+    pub fn is_warning(&self) -> bool {
+        matches!(self.severity, Severity::Warning)
+    }
+
     /// Render for terminal output.
     ///
     /// Errors get full treatment (fields + source).

@@ -4,6 +4,12 @@
 ///   [effects.Http]   hosts = ["api.example.com", "*.internal.corp"]
 ///   [effects.Disk]   paths = ["./data/**"]
 ///   [effects.Env]    keys  = ["APP_*", "TOKEN"]
+///
+/// And check-time warning suppression:
+///   [[check.suppress]]
+///   slug   = "non-tail-recursion"
+///   files  = ["self_hosted/**"]
+///   reason = "Tree walkers are structural recursive"
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -18,11 +24,24 @@ pub struct EffectPolicy {
     pub keys: Vec<String>,
 }
 
+/// A single check-warning suppression rule.
+#[derive(Debug, Clone)]
+pub struct CheckSuppression {
+    /// Diagnostic slug to suppress (e.g. `"non-tail-recursion"`).
+    pub slug: String,
+    /// Optional file glob patterns.  Empty = suppress globally.
+    pub files: Vec<String>,
+    /// Mandatory explanation — why the warning is acceptable.
+    pub reason: String,
+}
+
 /// Project-level configuration loaded from `aver.toml`.
 #[derive(Debug, Clone)]
 pub struct ProjectConfig {
     /// Effect namespace → policy.  Absence of a key means "allow all".
     pub effect_policies: HashMap<String, EffectPolicy>,
+    /// Check-time warning suppressions.
+    pub check_suppressions: Vec<CheckSuppression>,
 }
 
 impl ProjectConfig {
@@ -114,7 +133,21 @@ impl ProjectConfig {
             }
         }
 
-        Ok(ProjectConfig { effect_policies })
+        let check_suppressions = parse_check_suppressions(&table)?;
+
+        Ok(ProjectConfig {
+            effect_policies,
+            check_suppressions,
+        })
+    }
+
+    /// Returns `true` if a diagnostic with the given `slug` at `file_path`
+    /// is suppressed by any `[[check.suppress]]` rule.
+    pub fn is_check_suppressed(&self, slug: &str, file_path: &str) -> bool {
+        self.check_suppressions.iter().any(|s| {
+            s.slug == slug
+                && (s.files.is_empty() || s.files.iter().any(|g| glob_matches(file_path, g)))
+        })
     }
 
     /// Check whether an HTTP call to `url_str` is allowed by the policy.
@@ -314,6 +347,140 @@ fn env_key_matches(key: &str, pattern: &str) -> bool {
         key.starts_with(prefix)
     } else {
         false
+    }
+}
+
+/// Parse `[[check.suppress]]` entries from the top-level TOML table.
+fn parse_check_suppressions(table: &toml::Table) -> Result<Vec<CheckSuppression>, String> {
+    let check_table = match table.get("check") {
+        Some(toml::Value::Table(t)) => t,
+        Some(_) => return Err("aver.toml: [check] must be a table".to_string()),
+        None => return Ok(Vec::new()),
+    };
+
+    let arr = match check_table.get("suppress") {
+        Some(toml::Value::Array(a)) => a,
+        Some(_) => {
+            return Err("aver.toml: [[check.suppress]] must be an array of tables".to_string());
+        }
+        None => return Ok(Vec::new()),
+    };
+
+    let mut suppressions = Vec::new();
+    for (i, entry) in arr.iter().enumerate() {
+        let t = entry
+            .as_table()
+            .ok_or_else(|| format!("aver.toml: [[check.suppress]][{}] must be a table", i))?;
+
+        let slug = t
+            .get("slug")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                format!(
+                    "aver.toml: [[check.suppress]][{}] requires a string `slug`",
+                    i
+                )
+            })?
+            .to_string();
+
+        let reason = t
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                format!(
+                    "aver.toml: [[check.suppress]][{}] requires a string `reason` — explain why this warning is acceptable",
+                    i
+                )
+            })?
+            .to_string();
+
+        if reason.trim().is_empty() {
+            return Err(format!(
+                "aver.toml: [[check.suppress]][{}] `reason` must not be empty",
+                i
+            ));
+        }
+
+        let files = if let Some(val) = t.get("files") {
+            let arr = val.as_array().ok_or_else(|| {
+                format!(
+                    "aver.toml: [[check.suppress]][{}].files must be an array",
+                    i
+                )
+            })?;
+            arr.iter()
+                .enumerate()
+                .map(|(j, v)| {
+                    v.as_str().map(|s| s.to_string()).ok_or_else(|| {
+                        format!(
+                            "aver.toml: [[check.suppress]][{}].files[{}] must be a string",
+                            i, j
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            Vec::new()
+        };
+
+        suppressions.push(CheckSuppression {
+            slug,
+            files,
+            reason,
+        });
+    }
+
+    Ok(suppressions)
+}
+
+/// Simple glob match for file paths.
+/// Supports `**` (any path segments) and `*` (any single segment chars).
+fn glob_matches(path: &str, pattern: &str) -> bool {
+    // Normalize separators
+    let path = path.replace('\\', "/");
+    let pattern = pattern.replace('\\', "/");
+    glob_match_recursive(path.as_bytes(), pattern.as_bytes())
+}
+
+fn glob_match_recursive(path: &[u8], pattern: &[u8]) -> bool {
+    match (pattern.first(), path.first()) {
+        (None, None) => true,
+        (None, Some(_)) => false,
+        (Some(b'*'), _) if pattern.starts_with(b"**/") => {
+            // "**/" matches zero or more path segments
+            let rest = &pattern[3..];
+            // Try matching at current position (zero segments)
+            if glob_match_recursive(path, rest) {
+                return true;
+            }
+            // Try skipping path segments
+            for i in 0..path.len() {
+                if path[i] == b'/' && glob_match_recursive(&path[i + 1..], rest) {
+                    return true;
+                }
+            }
+            false
+        }
+        (Some(b'*'), _) if pattern == b"**" => true,
+        (Some(b'*'), _) => {
+            // Single `*` matches anything except `/`
+            let rest = &pattern[1..];
+            // Try consuming 0..N non-slash chars
+            if glob_match_recursive(path, rest) {
+                return true;
+            }
+            for i in 0..path.len() {
+                if path[i] == b'/' {
+                    break;
+                }
+                if glob_match_recursive(&path[i + 1..], rest) {
+                    return true;
+                }
+            }
+            false
+        }
+        (Some(&pc), Some(&bc)) if pc == bc => glob_match_recursive(&path[1..], &pattern[1..]),
+        _ => false,
     }
 }
 
@@ -594,5 +761,132 @@ keys = ["PUBLIC_*"]
         assert!(env_key_matches("APP_PORT", "APP_*"));
         assert!(env_key_matches("APP_", "APP_*"));
         assert!(!env_key_matches("PORT", "APP_*"));
+    }
+
+    // --- check.suppress tests ---
+
+    #[test]
+    fn test_parse_check_suppress_basic() {
+        let toml = r#"
+[[check.suppress]]
+slug = "non-tail-recursion"
+files = ["self_hosted/**"]
+reason = "Tree walkers cannot be converted to tail recursion"
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        assert_eq!(config.check_suppressions.len(), 1);
+        assert_eq!(config.check_suppressions[0].slug, "non-tail-recursion");
+        assert_eq!(config.check_suppressions[0].files, vec!["self_hosted/**"]);
+        assert!(
+            config.check_suppressions[0]
+                .reason
+                .contains("tail recursion")
+        );
+    }
+
+    #[test]
+    fn test_parse_check_suppress_multiple() {
+        let toml = r#"
+[[check.suppress]]
+slug = "non-tail-recursion"
+files = ["self_hosted/**"]
+reason = "Structural tree walkers"
+
+[[check.suppress]]
+slug = "missing-verify"
+reason = "Global suppression for now"
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        assert_eq!(config.check_suppressions.len(), 2);
+        assert_eq!(config.check_suppressions[1].slug, "missing-verify");
+        assert!(config.check_suppressions[1].files.is_empty());
+    }
+
+    #[test]
+    fn test_parse_check_suppress_missing_slug() {
+        let toml = r#"
+[[check.suppress]]
+reason = "No slug provided"
+"#;
+        let result = ProjectConfig::parse(toml);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("slug"));
+    }
+
+    #[test]
+    fn test_parse_check_suppress_missing_reason() {
+        let toml = r#"
+[[check.suppress]]
+slug = "non-tail-recursion"
+"#;
+        let result = ProjectConfig::parse(toml);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("reason"));
+    }
+
+    #[test]
+    fn test_parse_check_suppress_empty_reason() {
+        let toml = r#"
+[[check.suppress]]
+slug = "non-tail-recursion"
+reason = "   "
+"#;
+        let result = ProjectConfig::parse(toml);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must not be empty"));
+    }
+
+    #[test]
+    fn test_is_check_suppressed_glob() {
+        let toml = r#"
+[[check.suppress]]
+slug = "non-tail-recursion"
+files = ["self_hosted/**"]
+reason = "Tree walkers"
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        assert!(config.is_check_suppressed("non-tail-recursion", "self_hosted/eval.av"));
+        assert!(config.is_check_suppressed("non-tail-recursion", "self_hosted/sub/deep.av"));
+        assert!(!config.is_check_suppressed("non-tail-recursion", "examples/hello.av"));
+        assert!(!config.is_check_suppressed("missing-verify", "self_hosted/eval.av"));
+    }
+
+    #[test]
+    fn test_is_check_suppressed_global() {
+        let toml = r#"
+[[check.suppress]]
+slug = "missing-verify"
+reason = "Not yet ready for verify"
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        assert!(config.is_check_suppressed("missing-verify", "any/file.av"));
+        assert!(config.is_check_suppressed("missing-verify", "other.av"));
+        assert!(!config.is_check_suppressed("non-tail-recursion", "any/file.av"));
+    }
+
+    #[test]
+    fn test_glob_matches_double_star() {
+        assert!(glob_matches("self_hosted/eval.av", "self_hosted/**"));
+        assert!(glob_matches("self_hosted/sub/deep.av", "self_hosted/**"));
+        assert!(!glob_matches("examples/hello.av", "self_hosted/**"));
+    }
+
+    #[test]
+    fn test_glob_matches_single_star() {
+        assert!(glob_matches("self_hosted/eval.av", "self_hosted/*.av"));
+        assert!(!glob_matches("self_hosted/sub/eval.av", "self_hosted/*.av"));
+    }
+
+    #[test]
+    fn test_glob_matches_exact() {
+        assert!(glob_matches("self_hosted/eval.av", "self_hosted/eval.av"));
+        assert!(!glob_matches("self_hosted/other.av", "self_hosted/eval.av"));
+    }
+
+    #[test]
+    fn test_no_check_section_is_ok() {
+        let config = ProjectConfig::parse("").unwrap();
+        assert!(config.check_suppressions.is_empty());
+        assert!(!config.is_check_suppressed("non-tail-recursion", "any.av"));
     }
 }

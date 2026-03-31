@@ -47,9 +47,7 @@ fn is_trivial_body(f: &FnDef) -> bool {
 fn expr_has_branching_or_binop(expr: &Spanned<Expr>) -> bool {
     match &expr.node {
         Expr::Match { .. } => true,
-        Expr::BinOp(_, left, right) => {
-            true || expr_has_branching_or_binop(left) || expr_has_branching_or_binop(right)
-        }
+        Expr::BinOp(_, _, _) => true,
         Expr::FnCall(callee, args) => {
             expr_has_branching_or_binop(callee) || args.iter().any(expr_has_branching_or_binop)
         }
