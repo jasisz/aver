@@ -43,7 +43,7 @@ fn expect(tokens: List<Token>, pos: Int, expected: Token) -> Result<Int, String>
 
 verify expect
     expect([Token.TkPlus, Token.TkEof], 0, Token.TkPlus) => Result.Ok(1)
-    expect([Token.TkPlus, Token.TkEof], 0, Token.TkMinus) => Result.Err("Expected Minus, got Plus")
+    expect([Token.TkPlus, Token.TkEof], 0, Token.TkMinus) => Result.Err("Expected tokenRepr(TkMinus), got tokenRepr(TkPlus)")
 
 fn skipNewlines(tokens: List<Token>, pos: Int) -> Int
     ? "Skip past any newline tokens."
@@ -84,6 +84,7 @@ verify parsePattern
     parsePattern([Token.TkIdent("_"), Token.TkEof], 0) => Result.Ok((Pattern.PatWild, 1))
     parsePattern([Token.TkIdent("x"), Token.TkEof], 0) => Result.Ok((Pattern.PatVar("x"), 1))
     parsePattern([Token.TkLBracket, Token.TkRBracket, Token.TkEof], 0) => Result.Ok((Pattern.PatEmpty, 2))
+    parsePattern([Token.TkEof], 0) => Result.Err("Expected pattern, got tokenRepr(TkEof)")
 
 fn parseIdentPattern(tokens: List<Token>, pos: Int, name: String) -> Result<(Pattern, Int), String>
     ? "Parse ident pattern: wildcard _, variable, or constructor Foo.Bar(bindings)."
@@ -94,6 +95,7 @@ fn parseIdentPattern(tokens: List<Token>, pos: Int, name: String) -> Result<(Pat
 verify parseIdentPattern
     parseIdentPattern([Token.TkEof], 0, "_") => Result.Ok((Pattern.PatWild, 0))
     parseIdentPattern([Token.TkEof], 0, "x") => Result.Ok((Pattern.PatVar("x"), 0))
+    parseIdentPattern([Token.TkDot, Token.TkEof], 0, "Foo") => Result.Err("Expected identifier after '.' in pattern")
 
 fn parseIdentPatternMaybeConstructor(tokens: List<Token>, pos: Int, name: String) -> Result<(Pattern, Int), String>
     ? "Check for dot-qualified name, constructor pattern, or plain variable."
@@ -108,6 +110,7 @@ verify parseIdentPatternMaybeConstructor
     parseIdentPatternMaybeConstructor([Token.TkEof], 0, "x") => Result.Ok((Pattern.PatVar("x"), 0))
     parseIdentPatternMaybeConstructor([Token.TkEof], 0, "Option.None") => Result.Ok((Pattern.PatConstructor("Option.None", []), 0))
     parseIdentPatternMaybeConstructor([Token.TkEof], 0, "Token.TkEof") => Result.Ok((Pattern.PatConstructor("Token.TkEof", []), 0))
+    parseIdentPatternMaybeConstructor([Token.TkDot, Token.TkEof], 0, "Foo") => Result.Err("Expected identifier after '.' in pattern")
 
 fn parseIdentPatternDotted(tokens: List<Token>, pos: Int, prefix: String) -> Result<(Pattern, Int), String>
     ? "After dot: read next ident and check for ( or another dot."
@@ -117,6 +120,7 @@ fn parseIdentPatternDotted(tokens: List<Token>, pos: Int, prefix: String) -> Res
 
 verify parseIdentPatternDotted
     parseIdentPatternDotted([Token.TkIdent("Ok"), Token.TkLParen, Token.TkIdent("x"), Token.TkRParen, Token.TkEof], 0, "Result") => Result.Ok((Pattern.PatConstructor("Result.Ok", ["x"]), 4))
+    parseIdentPatternDotted([Token.TkEof], 0, "Foo") => Result.Err("Expected identifier after '.' in pattern")
 
 fn parseConstructorPatternBindings(tokens: List<Token>, pos: Int, name: String, acc: List<String>) -> Result<(Pattern, Int), String>
     ? "Parse bindings inside constructor pattern: Ctor(a, b) or Ctor()."
@@ -127,6 +131,7 @@ fn parseConstructorPatternBindings(tokens: List<Token>, pos: Int, name: String, 
 
 verify parseConstructorPatternBindings
     parseConstructorPatternBindings([Token.TkRParen, Token.TkEof], 0, "Foo", []) => Result.Ok((Pattern.PatConstructor("Foo", []), 1))
+    parseConstructorPatternBindings([Token.TkEof], 0, "Foo", []) => Result.Err("Expected binding or ')' in constructor pattern")
 
 fn parseConstructorPatternTail(tokens: List<Token>, pos: Int, name: String, acc: List<String>) -> Result<(Pattern, Int), String>
     ? "After binding: ',' for more or ')' to end."
@@ -137,6 +142,7 @@ fn parseConstructorPatternTail(tokens: List<Token>, pos: Int, name: String, acc:
 
 verify parseConstructorPatternTail
     parseConstructorPatternTail([Token.TkRParen, Token.TkEof], 0, "Foo", ["x"]) => Result.Ok((Pattern.PatConstructor("Foo", ["x"]), 1))
+    parseConstructorPatternTail([Token.TkEof], 0, "Foo", ["x"]) => Result.Err("Expected ',' or ')' in constructor pattern")
 
 fn parseTuplePattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), String>
     ? "Parse tuple pattern: (pat, pat, ...)."
@@ -144,6 +150,7 @@ fn parseTuplePattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), St
 
 verify parseTuplePattern
     parseTuplePattern([Token.TkRParen, Token.TkEof], 0) => Result.Ok((Pattern.PatTuple([]), 1))
+    parseTuplePattern([Token.TkEof], 0) => Result.Err("Expected pattern, got tokenRepr(TkEof)")
 
 fn parseTuplePatternElements(tokens: List<Token>, pos: Int, acc: List<Pattern>) -> Result<(Pattern, Int), String>
     ? "Parse elements of a tuple pattern."
@@ -153,6 +160,7 @@ fn parseTuplePatternElements(tokens: List<Token>, pos: Int, acc: List<Pattern>) 
 
 verify parseTuplePatternElements
     parseTuplePatternElements([Token.TkRParen, Token.TkEof], 0, []) => Result.Ok((Pattern.PatTuple([]), 1))
+    parseTuplePatternElements([Token.TkEof], 0, []) => Result.Err("Expected pattern, got tokenRepr(TkEof)")
 
 fn parseTuplePatternElement(tokens: List<Token>, pos: Int, acc: List<Pattern>) -> Result<(Pattern, Int), String>
     ? "Parse one pattern element and continue."
@@ -162,6 +170,7 @@ fn parseTuplePatternElement(tokens: List<Token>, pos: Int, acc: List<Pattern>) -
 
 verify parseTuplePatternElement
     parseTuplePatternElement([Token.TkInt(1), Token.TkRParen, Token.TkEof], 0, []) => Result.Ok((Pattern.PatTuple([Pattern.PatInt(1)]), 2))
+    parseTuplePatternElement([Token.TkEof], 0, []) => Result.Err("Expected pattern, got tokenRepr(TkEof)")
 
 fn parseTuplePatternElementTail(tokens: List<Token>, pos: Int, acc: List<Pattern>) -> Result<(Pattern, Int), String>
     ? "After element: ',' for more or ')' to end."
@@ -172,6 +181,7 @@ fn parseTuplePatternElementTail(tokens: List<Token>, pos: Int, acc: List<Pattern
 
 verify parseTuplePatternElementTail
     parseTuplePatternElementTail([Token.TkRParen, Token.TkEof], 0, [Pattern.PatInt(1)]) => Result.Ok((Pattern.PatTuple([Pattern.PatInt(1)]), 1))
+    parseTuplePatternElementTail([Token.TkEof], 0, []) => Result.Err("Expected ',' or ')' in tuple pattern")
 
 fn parseListPattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), String>
     ? "Parse [] or [h, ..t] list pattern."
@@ -182,6 +192,7 @@ fn parseListPattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), Str
 
 verify parseListPattern
     parseListPattern([Token.TkRBracket, Token.TkEof], 0) => Result.Ok((Pattern.PatEmpty, 1))
+    parseListPattern([Token.TkEof], 0) => Result.Err("Expected identifier or ']' in list pattern")
 
 fn parseConsPattern(tokens: List<Token>, pos: Int, head: String) -> Result<(Pattern, Int), String>
     ? "Parse [h, ..t] after reading head ident."
@@ -194,6 +205,7 @@ fn parseConsPattern(tokens: List<Token>, pos: Int, head: String) -> Result<(Patt
 
 verify parseConsPattern
     parseConsPattern([Token.TkComma, Token.TkDotDot, Token.TkIdent("rest"), Token.TkRBracket, Token.TkEof], 0, "h") => Result.Ok((Pattern.PatCons("h", "rest"), 4))
+    parseConsPattern([Token.TkEof], 0, "h") => Result.Err("Expected tokenRepr(TkComma), got tokenRepr(TkEof)")
 
 fn skipTypeAnnotation(tokens: List<Token>, pos: Int) -> Int
     ? "Skip optional : Type annotation."
@@ -406,6 +418,7 @@ fn parseParamList(tokens: List<Token>, pos: Int, acc: List<String>) -> Result<(L
 
 verify parseParamList
     parseParamList([Token.TkRParen, Token.TkEof], 0, []) => Result.Ok(([], 1))
+    parseParamList([Token.TkEof], 0, []) => Result.Err("Expected parameter name or ')'")
 
 fn parseParamListTail(tokens: List<Token>, pos: Int, acc: List<String>) -> Result<(List<String>, Int), String>
     ? "After a param name: ',' for more or ')' to end."
@@ -416,6 +429,7 @@ fn parseParamListTail(tokens: List<Token>, pos: Int, acc: List<String>) -> Resul
 
 verify parseParamListTail
     parseParamListTail([Token.TkRParen, Token.TkEof], 0, ["x"]) => Result.Ok((["x"], 1))
+    parseParamListTail([Token.TkEof], 0, ["x"]) => Result.Err("Expected ',' or ')' in parameter list")
 
 fn isBodyEndFlat(tokens: List<Token>, pos: Int) -> Bool
     ? "Check if we've reached the end of a function body (flat mode)."

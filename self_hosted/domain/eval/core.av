@@ -62,6 +62,7 @@ verify evalVar
     evalVar("x", Map.set(Map.empty(), "x", Val.ValInt(5)), Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValInt(5))
     evalVar("Unit", Map.empty(), Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValUnit)
     evalVar("Option.None", Map.empty(), Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValNone)
+    evalVar("missing", Map.empty(), Domain.Eval.Store.emptyFnStore()) => Result.Err("undefined variable: missing")
 
 fn evalBoolBranch(cond: Expr, thenExpr: Expr, elseExpr: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate a direct bool branch in map path."
@@ -437,6 +438,7 @@ fn collectFastForwardArgs(slotArgs: List<Int>, calleeEnv: Vector<Val>, acc: List
 verify collectFastForwardArgs
     collectFastForwardArgs([], Vector.new(0, Val.ValUnit), []) => Result.Ok([])
     collectFastForwardArgs([0, 1], Vector.fromList([Val.ValInt(10), Val.ValInt(20)]), []) => Result.Ok([Val.ValInt(10), Val.ValInt(20)])
+    collectFastForwardArgs([5], Vector.new(0, Val.ValUnit), []) => Result.Err("slot out of bounds: 5")
 
 fn evalCall(name: String, argExprs: List<Expr>, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate a function call."
@@ -675,6 +677,7 @@ fn evalVarSlot(name: String, fns: FnStore) -> Result<Val, String>
 verify evalVarSlot
     evalVarSlot("Unit", Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValUnit)
     evalVarSlot("Option.None", Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValNone)
+    evalVarSlot("missing", Domain.Eval.Store.emptyFnStore()) => Result.Err("undefined variable: missing")
 
 fn evalBoolBranchSlot(cond: Expr, thenExpr: Expr, elseExpr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate a direct bool branch in slot path."
@@ -694,6 +697,7 @@ fn evalBinopSlotInt(op: BinOp, slot: Int, rhs: Int, env: Vector<Val>) -> Result<
 verify evalBinopSlotInt
     evalBinopSlotInt(BinOp.OpAdd, 0, 5, Vector.fromList([Val.ValInt(3)])) => Result.Ok(Val.ValInt(8))
     evalBinopSlotInt(BinOp.OpMul, 0, 4, Vector.fromList([Val.ValInt(2)])) => Result.Ok(Val.ValInt(8))
+    evalBinopSlotInt(BinOp.OpAdd, 0, 5, Vector.new(0, Val.ValUnit)) => Result.Err("slot out of bounds: 0")
 
 fn evalBinopSlots(op: BinOp, lhs: Int, rhs: Int, env: Vector<Val>) -> Result<Val, String>
     ? "Evaluate a specialized slot-vs-slot arithmetic expression."
@@ -704,6 +708,7 @@ fn evalBinopSlots(op: BinOp, lhs: Int, rhs: Int, env: Vector<Val>) -> Result<Val
 verify evalBinopSlots
     evalBinopSlots(BinOp.OpAdd, 0, 1, Vector.fromList([Val.ValInt(3), Val.ValInt(7)])) => Result.Ok(Val.ValInt(10))
     evalBinopSlots(BinOp.OpSub, 0, 1, Vector.fromList([Val.ValInt(10), Val.ValInt(4)])) => Result.Ok(Val.ValInt(6))
+    evalBinopSlots(BinOp.OpAdd, 0, 1, Vector.new(0, Val.ValUnit)) => Result.Err("slot out of bounds: 0")
 
 fn evalCmpSlotInt(op: CmpOp, slot: Int, rhs: Int, env: Vector<Val>) -> Result<Val, String>
     ? "Evaluate a specialized slot-vs-int comparison."
@@ -713,6 +718,7 @@ fn evalCmpSlotInt(op: CmpOp, slot: Int, rhs: Int, env: Vector<Val>) -> Result<Va
 verify evalCmpSlotInt
     evalCmpSlotInt(CmpOp.CmpEq, 0, 5, Vector.fromList([Val.ValInt(5)])) => Result.Ok(Val.ValBool(true))
     evalCmpSlotInt(CmpOp.CmpLt, 0, 10, Vector.fromList([Val.ValInt(3)])) => Result.Ok(Val.ValBool(true))
+    evalCmpSlotInt(CmpOp.CmpEq, 0, 5, Vector.new(0, Val.ValUnit)) => Result.Err("slot out of bounds: 0")
 
 fn evalCmpSlots(op: CmpOp, lhs: Int, rhs: Int, env: Vector<Val>) -> Result<Val, String>
     ? "Evaluate a specialized slot-vs-slot comparison."
@@ -723,6 +729,7 @@ fn evalCmpSlots(op: CmpOp, lhs: Int, rhs: Int, env: Vector<Val>) -> Result<Val, 
 verify evalCmpSlots
     evalCmpSlots(CmpOp.CmpEq, 0, 1, Vector.fromList([Val.ValInt(3), Val.ValInt(3)])) => Result.Ok(Val.ValBool(true))
     evalCmpSlots(CmpOp.CmpGt, 0, 1, Vector.fromList([Val.ValInt(5), Val.ValInt(2)])) => Result.Ok(Val.ValBool(true))
+    evalCmpSlots(CmpOp.CmpEq, 0, 1, Vector.new(0, Val.ValUnit)) => Result.Err("slot out of bounds: 0")
 
 fn evalVectorGetOrIntExprSlot(vecExpr: Expr, idxExpr: Expr, defaultValue: Int, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate a fused Vector.get + Option.withDefault in slot path."

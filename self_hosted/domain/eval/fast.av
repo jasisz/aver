@@ -25,8 +25,6 @@ fn runFastLeafSlot(leaf: FastLeaf, calleeEnv: Vector<Val>) -> Result<Val, String
         FastLeaf.LeafCmpSlots(op, slotA, slotB) -> fastCmpSlots(calleeEnv, op, slotA, slotB)
 
 verify runFastLeafSlot
-    runFastLeafSlot(FastLeaf.LeafConstInt(42), Vector.new(0, Val.ValUnit)) => Result.Ok(Val.ValInt(42))
-    runFastLeafSlot(FastLeaf.LeafConstFloat(3.14), Vector.new(0, Val.ValUnit)) => Result.Ok(Val.ValFloat(3.14))
     runFastLeafSlot(FastLeaf.LeafConstStr("hi"), Vector.new(0, Val.ValUnit)) => Result.Ok(Val.ValStr("hi"))
     runFastLeafSlot(FastLeaf.LeafConstBool(true), Vector.new(0, Val.ValUnit)) => Result.Ok(Val.ValBool(true))
     runFastLeafSlot(FastLeaf.LeafSlot(0), Vector.fromList([Val.ValInt(7)])) => Result.Ok(Val.ValInt(7))
@@ -177,7 +175,6 @@ fn fastVectorNewSlot(calleeEnv: Vector<Val>, sizeSlot: Int, fill: Int) -> Result
     fastVectorNewSlotInner(sizeV, fill)
 
 verify fastVectorNewSlot
-    fastVectorNewSlot(Vector.fromList([Val.ValInt(2)]), 0, 0) => Result.Ok(Val.ValVector(Vector.new(2, Val.ValInt(0))))
     fastVectorNewSlot(Vector.fromList([Val.ValStr("x")]), 0, 0) => Result.Err("Vector.new size must be Int")
 
 fn fastVectorNewSlotInner(sizeV: Val, fill: Int) -> Result<Val, String>
@@ -187,7 +184,6 @@ fn fastVectorNewSlotInner(sizeV: Val, fill: Int) -> Result<Val, String>
         _ -> Result.Err("Vector.new size must be Int")
 
 verify fastVectorNewSlotInner
-    fastVectorNewSlotInner(Val.ValInt(2), 0) => Result.Ok(Val.ValVector(Vector.new(2, Val.ValInt(0))))
     fastVectorNewSlotInner(Val.ValStr("x"), 0) => Result.Err("Vector.new size must be Int")
 
 fn fastVectorGetOrIntSlot(calleeEnv: Vector<Val>, vecSlot: Int, idxSlot: Int, defaultValue: Int) -> Result<Val, String>

@@ -260,6 +260,7 @@ fn builtinMapFromList(args: List<Val>) -> Result<Val, String>
 
 verify builtinMapFromList
     builtinMapFromList([Val.ValList([])]) => Result.Ok(Val.ValMap(Map.empty()))
+    builtinMapFromList([]) => Result.Err("expected 1 argument")
 
 fn tuplesToMap(items: List<Val>, acc: Map<String, Val>) -> Map<String, Val>
     ? "Convert list of (key, value) tuples to a Map."
@@ -642,6 +643,7 @@ verify builtinBoolOr
     builtinBoolOr([Val.ValBool(true), Val.ValBool(false)]) => Result.Ok(Val.ValBool(true))
     builtinBoolOr([Val.ValBool(false), Val.ValBool(false)]) => Result.Ok(Val.ValBool(false))
     builtinBoolOr([Val.ValBool(false), Val.ValBool(true)]) => Result.Ok(Val.ValBool(true))
+    builtinBoolOr([Val.ValInt(1), Val.ValBool(true)]) => Result.Err("Bool.or requires Bool arguments")
 
 fn builtinBoolOrInner(aV: Val, bV: Val) -> Result<Val, String>
     ? "Inner Bool.or."
@@ -666,6 +668,7 @@ fn builtinBoolAnd(args: List<Val>) -> Result<Val, String>
 verify builtinBoolAnd
     builtinBoolAnd([Val.ValBool(true), Val.ValBool(true)]) => Result.Ok(Val.ValBool(true))
     builtinBoolAnd([Val.ValBool(true), Val.ValBool(false)]) => Result.Ok(Val.ValBool(false))
+    builtinBoolAnd([Val.ValInt(1), Val.ValBool(true)]) => Result.Err("Bool.and requires Bool arguments")
 
 fn builtinBoolAndInner(aV: Val, bV: Val) -> Result<Val, String>
     ? "Inner Bool.and."
@@ -694,6 +697,7 @@ fn builtinBoolNot(args: List<Val>) -> Result<Val, String>
 verify builtinBoolNot
     builtinBoolNot([Val.ValBool(true)]) => Result.Ok(Val.ValBool(false))
     builtinBoolNot([Val.ValBool(false)]) => Result.Ok(Val.ValBool(true))
+    builtinBoolNot([Val.ValInt(1)]) => Result.Err("Bool.not requires Bool argument")
 
 fn builtinMapEmpty(args: List<Val>) -> Result<Val, String>
     ? "Map.empty() -> empty map."
@@ -725,6 +729,7 @@ verify builtinMapSetInner
 verify builtinMapSet
     builtinMapSet([Val.ValMap(Map.empty()), Val.ValStr("k"), Val.ValInt(1)]) => Result.Ok(Val.ValMap(Map.set(Map.empty(), "k", Val.ValInt(1))))
     builtinMapSet([Val.ValInt(1)]) => Result.Err("Map.set takes 3 arguments")
+    builtinMapSet([]) => Result.Err("Map.set takes 3 arguments")
 
 fn builtinMapGet(args: List<Val>) -> Result<Val, String>
     ? "Map.get(map, key) -> Option<Val>. O(1)."
@@ -747,6 +752,7 @@ verify builtinMapGetInner
 verify builtinMapGet
     builtinMapGet([Val.ValMap(Map.empty()), Val.ValStr("x")]) => Result.Ok(Val.ValNone)
     builtinMapGet([Val.ValMap(Map.set(Map.empty(), "x", Val.ValInt(5))), Val.ValStr("x")]) => Result.Ok(Val.ValSome(Val.ValInt(5)))
+    builtinMapGet([Val.ValInt(1), Val.ValStr("x")]) => Result.Err("Map.get requires a Map")
 
 fn builtinMapHas(args: List<Val>) -> Result<Val, String>
     ? "Map.has(map, key) -> Bool. O(1)."
@@ -767,6 +773,7 @@ verify builtinMapHasInner
 verify builtinMapHas
     builtinMapHas([Val.ValMap(Map.empty()), Val.ValStr("x")]) => Result.Ok(Val.ValBool(false))
     builtinMapHas([Val.ValMap(Map.set(Map.empty(), "x", Val.ValInt(1))), Val.ValStr("x")]) => Result.Ok(Val.ValBool(true))
+    builtinMapHas([Val.ValInt(1), Val.ValStr("x")]) => Result.Err("Map.has requires a Map")
 
 fn builtinTimeNow(args: List<Val>) -> Result<Val, String>
     ? "Time.now() -> ISO timestamp string."
@@ -815,6 +822,7 @@ fn httpResponseToVal(result: Result<HttpResponse, String>) -> Result<Val, String
 
 verify httpResponseToVal
     httpResponseToVal(Result.Err("timeout")) => Result.Ok(Val.ValErr(Val.ValStr("timeout")))
+    httpResponseToVal(Result.Ok(HttpResponse(status = 200, body = "ok", headers = []))) => Result.Ok(Val.ValOk(Val.ValRecord("HttpResponse", [("status", Val.ValInt(200)), ("body", Val.ValStr("ok")), ("headers", Val.ValList([]))])))
 
 fn headersToVal(headers: List<Header>, acc: List<Val>) -> Val
     ? "Convert host Header list to Val list."
@@ -824,6 +832,7 @@ fn headersToVal(headers: List<Header>, acc: List<Val>) -> Val
 
 verify headersToVal
     headersToVal([], []) => Val.ValList([])
+    headersToVal([Header(name = "ct", value = "json")], []) => Val.ValList([Val.ValRecord("Header", [("name", Val.ValStr("ct")), ("value", Val.ValStr("json"))])])
 
 verify tcpConnToVal
     tcpConnToVal(Tcp.Connection(id = "tcp-1", host = "localhost", port = 8080)) => Val.ValRecord("Tcp.Connection", [("id", Val.ValStr("tcp-1")), ("host", Val.ValStr("localhost")), ("port", Val.ValInt(8080))])
