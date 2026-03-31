@@ -812,7 +812,7 @@ fn classify_finding(msg: &str) -> (&'static str, Option<String>) {
             "missing-description",
             Some("Add a ? \"description\" line after the function signature".to_string()),
         )
-    } else if msg.contains("non-tail recursive") {
+    } else if msg.contains("non-tail recursion") {
         (
             "non-tail-recursion",
             Some("Convert to accumulator style for tail-call optimization".to_string()),

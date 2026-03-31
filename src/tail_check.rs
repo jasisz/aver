@@ -9,6 +9,8 @@ pub struct NonTailRecursionWarning {
     pub fn_name: String,
     pub line: usize,
     pub recursive_calls: usize,
+    /// Source lines of the non-tail recursive callsites.
+    pub callsite_lines: Vec<usize>,
     pub message: String,
 }
 
@@ -46,14 +48,20 @@ fn collect_non_tail_recursion_warnings_in(
         let Some(scc_members) = fn_to_scc.get(&fd.name) else {
             continue;
         };
-        let recursive_calls = count_non_tail_recursive_calls_body(&fd.body, scc_members);
-        if recursive_calls == 0 {
+        let callsite_lines: Vec<usize> =
+            collect_non_tail_recursive_call_lines_body(&fd.body, scc_members)
+                .into_iter()
+                .filter(|&ln| ln >= fd.line)
+                .collect();
+        if callsite_lines.is_empty() {
             continue;
         }
+        let recursive_calls = callsite_lines.len();
         warnings.push(NonTailRecursionWarning {
             fn_name: fd.name.clone(),
             line: fd.line,
             recursive_calls,
+            callsite_lines,
             message: format!(
                 "non-tail recursion in '{}' — {} recursive callsite(s) remain after tail-call optimization; rewrite it to tail recursion or make it a spec",
                 fd.name, recursive_calls
@@ -84,90 +92,99 @@ fn collect_canonical_spec_functions(
         .collect()
 }
 
-fn count_non_tail_recursive_calls_body(body: &FnBody, recursive: &HashSet<String>) -> usize {
-    body.stmts()
-        .iter()
-        .map(|stmt| count_non_tail_recursive_calls_stmt(stmt, recursive))
-        .sum()
+fn collect_non_tail_recursive_call_lines_body(
+    body: &FnBody,
+    recursive: &HashSet<String>,
+) -> Vec<usize> {
+    let mut lines = Vec::new();
+    for stmt in body.stmts() {
+        collect_non_tail_recursive_call_lines_stmt(stmt, recursive, &mut lines);
+    }
+    lines
 }
 
-fn count_non_tail_recursive_calls_stmt(stmt: &Stmt, recursive: &HashSet<String>) -> usize {
+fn collect_non_tail_recursive_call_lines_stmt(
+    stmt: &Stmt,
+    recursive: &HashSet<String>,
+    out: &mut Vec<usize>,
+) {
     match stmt {
         Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => {
-            count_non_tail_recursive_calls_expr(expr, recursive)
+            collect_non_tail_recursive_call_lines_expr(expr, recursive, out);
         }
     }
 }
 
-fn count_non_tail_recursive_calls_expr(expr: &Spanned<Expr>, recursive: &HashSet<String>) -> usize {
+fn collect_non_tail_recursive_call_lines_expr(
+    expr: &Spanned<Expr>,
+    recursive: &HashSet<String>,
+    out: &mut Vec<usize>,
+) {
     match &expr.node {
         Expr::FnCall(func, args) => {
-            let mut count = 0;
             if let Some(callee) = dotted_name(func.as_ref())
                 && recursive.contains(&callee)
             {
-                count += 1;
+                out.push(expr.line);
             }
-            count
-                + count_non_tail_recursive_calls_expr(func, recursive)
-                + args
-                    .iter()
-                    .map(|arg| count_non_tail_recursive_calls_expr(arg, recursive))
-                    .sum::<usize>()
+            collect_non_tail_recursive_call_lines_expr(func, recursive, out);
+            for arg in args {
+                collect_non_tail_recursive_call_lines_expr(arg, recursive, out);
+            }
         }
-        Expr::TailCall(boxed) => boxed
-            .1
-            .iter()
-            .map(|arg| count_non_tail_recursive_calls_expr(arg, recursive))
-            .sum(),
+        Expr::TailCall(boxed) => {
+            for arg in &boxed.1 {
+                collect_non_tail_recursive_call_lines_expr(arg, recursive, out);
+            }
+        }
         Expr::Attr(obj, _) | Expr::ErrorProp(obj) => {
-            count_non_tail_recursive_calls_expr(obj, recursive)
+            collect_non_tail_recursive_call_lines_expr(obj, recursive, out);
         }
         Expr::BinOp(_, left, right) => {
-            count_non_tail_recursive_calls_expr(left, recursive)
-                + count_non_tail_recursive_calls_expr(right, recursive)
+            collect_non_tail_recursive_call_lines_expr(left, recursive, out);
+            collect_non_tail_recursive_call_lines_expr(right, recursive, out);
         }
         Expr::Match { subject, arms } => {
-            count_non_tail_recursive_calls_expr(subject, recursive)
-                + arms
-                    .iter()
-                    .map(|arm| count_non_tail_recursive_calls_expr(&arm.body, recursive))
-                    .sum::<usize>()
+            collect_non_tail_recursive_call_lines_expr(subject, recursive, out);
+            for arm in arms {
+                collect_non_tail_recursive_call_lines_expr(&arm.body, recursive, out);
+            }
         }
-        Expr::List(items) | Expr::Tuple(items) => items
-            .iter()
-            .map(|item| count_non_tail_recursive_calls_expr(item, recursive))
-            .sum(),
-        Expr::MapLiteral(entries) => entries
-            .iter()
-            .map(|(key, value)| {
-                count_non_tail_recursive_calls_expr(key, recursive)
-                    + count_non_tail_recursive_calls_expr(value, recursive)
-            })
-            .sum(),
-        Expr::Constructor(_, maybe_arg) => maybe_arg
-            .as_deref()
-            .map(|arg| count_non_tail_recursive_calls_expr(arg, recursive))
-            .unwrap_or(0),
-        Expr::InterpolatedStr(parts) => parts
-            .iter()
-            .map(|part| match part {
-                StrPart::Literal(_) => 0,
-                StrPart::Parsed(expr) => count_non_tail_recursive_calls_expr(expr, recursive),
-            })
-            .sum(),
-        Expr::RecordCreate { fields, .. } => fields
-            .iter()
-            .map(|(_, expr)| count_non_tail_recursive_calls_expr(expr, recursive))
-            .sum(),
+        Expr::List(items) | Expr::Tuple(items) => {
+            for item in items {
+                collect_non_tail_recursive_call_lines_expr(item, recursive, out);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (key, value) in entries {
+                collect_non_tail_recursive_call_lines_expr(key, recursive, out);
+                collect_non_tail_recursive_call_lines_expr(value, recursive, out);
+            }
+        }
+        Expr::Constructor(_, maybe_arg) => {
+            if let Some(arg) = maybe_arg.as_deref() {
+                collect_non_tail_recursive_call_lines_expr(arg, recursive, out);
+            }
+        }
+        Expr::InterpolatedStr(parts) => {
+            for part in parts {
+                if let StrPart::Parsed(expr) = part {
+                    collect_non_tail_recursive_call_lines_expr(expr, recursive, out);
+                }
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, val) in fields {
+                collect_non_tail_recursive_call_lines_expr(val, recursive, out);
+            }
+        }
         Expr::RecordUpdate { base, updates, .. } => {
-            count_non_tail_recursive_calls_expr(base, recursive)
-                + updates
-                    .iter()
-                    .map(|(_, expr)| count_non_tail_recursive_calls_expr(expr, recursive))
-                    .sum::<usize>()
+            collect_non_tail_recursive_call_lines_expr(base, recursive, out);
+            for (_, val) in updates {
+                collect_non_tail_recursive_call_lines_expr(val, recursive, out);
+            }
         }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => 0,
+        _ => {}
     }
 }
 

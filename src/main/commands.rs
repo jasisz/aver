@@ -1629,13 +1629,41 @@ fn run_check_for_file(
             ));
         }
         for warning in &non_tail_warnings {
+            // Deduplicate callsite lines: multiple calls on the same line
+            // get a single extra_span with a count suffix.
+            let mut line_counts: Vec<(usize, usize)> = Vec::new();
+            for &ln in &warning.callsite_lines {
+                if let Some(entry) = line_counts.iter_mut().find(|(l, _)| *l == ln) {
+                    entry.1 += 1;
+                } else {
+                    line_counts.push((ln, 1));
+                }
+            }
+            let max_shown = 3;
+            let extra_spans: Vec<_> = line_counts
+                .iter()
+                .take(max_shown)
+                .map(|&(ln, count)| {
+                    let label = if count > 1 {
+                        format!("{} non-tail calls", count)
+                    } else {
+                        "non-tail call".to_string()
+                    };
+                    aver::checker::FindingSpan {
+                        line: ln,
+                        col: 0,
+                        len: 0,
+                        label,
+                    }
+                })
+                .collect();
             let finding = CheckFinding {
                 line: warning.line,
                 module: None,
                 file: Some(path.to_string()),
-                fn_name: None,
+                fn_name: Some(warning.fn_name.clone()),
                 message: warning.message.clone(),
-                extra_spans: vec![],
+                extra_spans,
             };
             diagnostics.push(diagnostic::from_check_finding(
                 diagnostic::Severity::Warning,
