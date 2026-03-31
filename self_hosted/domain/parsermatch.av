@@ -57,9 +57,10 @@ verify skipNewlines
 
 fn skipNewlinesAndDedents(tokens: List<Token>, pos: Int) -> Int
     ? "Skip newlines and stray DEDENT tokens at top level."
+    nextPos = pos + 1
     match tokenAt(tokens, pos)
-        Token.TkNewline -> skipNewlinesAndDedents(tokens, pos + 1)
-        Token.TkDedent -> skipNewlinesAndDedents(tokens, pos + 1)
+        Token.TkNewline -> skipNewlinesAndDedents(tokens, nextPos)
+        Token.TkDedent -> skipNewlinesAndDedents(tokens, nextPos)
         _ -> pos
 
 verify skipNewlinesAndDedents
@@ -67,16 +68,17 @@ verify skipNewlinesAndDedents
 
 fn parsePattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), String>
     ? "Parse a match pattern: INT literal, _ (wildcard), or variable."
+    nextPos = pos + 1
     t = tokenAt(tokens, pos)
     match t
-        Token.TkInt(n) -> Result.Ok((Pattern.PatInt(n), pos + 1))
-        Token.TkFloat(f) -> Result.Ok((Pattern.PatFloat(f), pos + 1))
-        Token.TkStr(s) -> Result.Ok((Pattern.PatStr(s), pos + 1))
-        Token.TkTrue -> Result.Ok((Pattern.PatBool(true), pos + 1))
-        Token.TkFalse -> Result.Ok((Pattern.PatBool(false), pos + 1))
-        Token.TkLBracket -> parseListPattern(tokens, pos + 1)
-        Token.TkLParen -> parseTuplePattern(tokens, pos + 1)
-        Token.TkIdent(s) -> parseIdentPattern(tokens, pos + 1, s)
+        Token.TkInt(n) -> Result.Ok((Pattern.PatInt(n), nextPos))
+        Token.TkFloat(f) -> Result.Ok((Pattern.PatFloat(f), nextPos))
+        Token.TkStr(s) -> Result.Ok((Pattern.PatStr(s), nextPos))
+        Token.TkTrue -> Result.Ok((Pattern.PatBool(true), nextPos))
+        Token.TkFalse -> Result.Ok((Pattern.PatBool(false), nextPos))
+        Token.TkLBracket -> parseListPattern(tokens, nextPos)
+        Token.TkLParen -> parseTuplePattern(tokens, nextPos)
+        Token.TkIdent(s) -> parseIdentPattern(tokens, nextPos, s)
         _ -> Result.Err("Expected pattern, got {Domain.Token.tokenRepr(t)}")
 
 verify parsePattern
@@ -99,9 +101,10 @@ verify parseIdentPattern
 
 fn parseIdentPatternMaybeConstructor(tokens: List<Token>, pos: Int, name: String) -> Result<(Pattern, Int), String>
     ? "Check for dot-qualified name, constructor pattern, or plain variable."
+    nextPos = pos + 1
     match tokenAt(tokens, pos)
-        Token.TkDot -> parseIdentPatternDotted(tokens, pos + 1, name)
-        Token.TkLParen -> parseConstructorPatternBindings(tokens, pos + 1, name, [])
+        Token.TkDot -> parseIdentPatternDotted(tokens, nextPos, name)
+        Token.TkLParen -> parseConstructorPatternBindings(tokens, nextPos, name, [])
         _ -> match String.contains(name, ".")
             true -> Result.Ok((Pattern.PatConstructor(name, []), pos))
             false -> Result.Ok((Pattern.PatVar(name), pos))
@@ -219,9 +222,10 @@ verify skipTypeAnnotation
 
 fn skipTypeExpr(tokens: List<Token>, pos: Int) -> Int
     ? "Skip a type expression (ident, possibly with generics)."
+    nextPos = pos + 1
     match tokenAt(tokens, pos)
-        Token.TkIdent(_) -> skipTypeExprTail(tokens, pos + 1)
-        Token.TkLParen -> skipUntilClose(tokens, pos + 1, 1)
+        Token.TkIdent(_) -> skipTypeExprTail(tokens, nextPos)
+        Token.TkLParen -> skipUntilClose(tokens, nextPos, 1)
         _ -> pos
 
 verify skipTypeExpr
@@ -229,9 +233,10 @@ verify skipTypeExpr
 
 fn skipTypeExprTail(tokens: List<Token>, pos: Int) -> Int
     ? "After type ident: possibly <...> generics or .Qualified."
+    nextPos = pos + 1
     match tokenAt(tokens, pos)
-        Token.TkLt -> skipUntilGt(tokens, pos + 1, 1)
-        Token.TkDot -> match tokenAt(tokens, pos + 1)
+        Token.TkLt -> skipUntilGt(tokens, nextPos, 1)
+        Token.TkDot -> match tokenAt(tokens, nextPos)
             Token.TkIdent(_) -> skipTypeExprTail(tokens, pos + 2)
             _ -> pos
         _ -> pos
@@ -241,26 +246,28 @@ verify skipTypeExprTail
 
 fn skipUntilGt(tokens: List<Token>, pos: Int, depth: Int) -> Int
     ? "Skip until matching > for generic type params."
+    nextPos = pos + 1
     match depth == 0
         true -> pos
         false -> match tokenAt(tokens, pos)
             Token.TkEof -> pos
-            Token.TkLt -> skipUntilGt(tokens, pos + 1, depth + 1)
-            Token.TkGt -> skipUntilGt(tokens, pos + 1, depth - 1)
-            _ -> skipUntilGt(tokens, pos + 1, depth)
+            Token.TkLt -> skipUntilGt(tokens, nextPos, depth + 1)
+            Token.TkGt -> skipUntilGt(tokens, nextPos, depth - 1)
+            _ -> skipUntilGt(tokens, nextPos, depth)
 
 verify skipUntilGt
     skipUntilGt([Token.TkIdent("Int"), Token.TkGt, Token.TkEof], 0, 1) => 2
 
 fn skipUntilClose(tokens: List<Token>, pos: Int, depth: Int) -> Int
     ? "Skip until matching ) for tuple types."
+    nextPos = pos + 1
     match depth == 0
         true -> pos
         false -> match tokenAt(tokens, pos)
             Token.TkEof -> pos
-            Token.TkLParen -> skipUntilClose(tokens, pos + 1, depth + 1)
-            Token.TkRParen -> skipUntilClose(tokens, pos + 1, depth - 1)
-            _ -> skipUntilClose(tokens, pos + 1, depth)
+            Token.TkLParen -> skipUntilClose(tokens, nextPos, depth + 1)
+            Token.TkRParen -> skipUntilClose(tokens, nextPos, depth - 1)
+            _ -> skipUntilClose(tokens, nextPos, depth)
 
 verify skipUntilClose
     skipUntilClose([Token.TkIdent("Int"), Token.TkRParen, Token.TkEof], 0, 1) => 2
@@ -277,9 +284,10 @@ verify skipReturnType
 
 fn skipDescAndEffects(tokens: List<Token>, pos: Int) -> Int
     ? "Skip optional ? description and ! [effects] lines (including multi-line effects)."
+    nextPos = pos + 1
     match tokenAt(tokens, pos)
-        Token.TkQuestion -> skipDescAndEffects(tokens, skipToNextLine(tokens, pos + 1))
-        Token.TkBang -> skipDescAndEffects(tokens, skipEffectsBlock(tokens, pos + 1))
+        Token.TkQuestion -> skipDescAndEffects(tokens, skipToNextLine(tokens, nextPos))
+        Token.TkBang -> skipDescAndEffects(tokens, skipEffectsBlock(tokens, nextPos))
         _ -> pos
 
 verify skipDescAndEffects
@@ -296,20 +304,22 @@ verify skipEffectsBlock
 
 fn skipUntilRBracket(tokens: List<Token>, pos: Int) -> Int
     ? "Skip tokens until ] then past any trailing newline."
+    nextPos = pos + 1
     match tokenAt(tokens, pos)
         Token.TkEof -> pos
-        Token.TkRBracket -> skipNewlines(tokens, pos + 1)
-        _ -> skipUntilRBracket(tokens, pos + 1)
+        Token.TkRBracket -> skipNewlines(tokens, nextPos)
+        _ -> skipUntilRBracket(tokens, nextPos)
 
 verify skipUntilRBracket
     skipUntilRBracket([Token.TkIdent("X"), Token.TkRBracket, Token.TkNewline, Token.TkEof], 0) => 3
 
 fn skipToNextLine(tokens: List<Token>, pos: Int) -> Int
     ? "Skip tokens until newline, then past it."
+    nextPos = pos + 1
     match tokenAt(tokens, pos)
         Token.TkEof -> pos
-        Token.TkNewline -> pos + 1
-        _ -> skipToNextLine(tokens, pos + 1)
+        Token.TkNewline -> nextPos
+        _ -> skipToNextLine(tokens, nextPos)
 
 verify skipToNextLine
     skipToNextLine([Token.TkIdent("desc"), Token.TkNewline, Token.TkEof], 0) => 2
@@ -327,23 +337,25 @@ verify skipBlock
 
 fn skipIndentBlock(tokens: List<Token>, pos: Int, depth: Int) -> Int
     ? "Skip until matching DEDENT."
+    nextPos = pos + 1
     match tokenAt(tokens, pos)
         Token.TkEof -> pos
-        Token.TkIndent -> skipIndentBlock(tokens, pos + 1, depth + 1)
+        Token.TkIndent -> skipIndentBlock(tokens, nextPos, depth + 1)
         Token.TkDedent -> match depth <= 1
-            true -> pos + 1
-            false -> skipIndentBlock(tokens, pos + 1, depth - 1)
-        _ -> skipIndentBlock(tokens, pos + 1, depth)
+            true -> nextPos
+            false -> skipIndentBlock(tokens, nextPos, depth - 1)
+        _ -> skipIndentBlock(tokens, nextPos, depth)
 
 verify skipIndentBlock
     skipIndentBlock([Token.TkIdent("x"), Token.TkDedent, Token.TkEof], 0, 1) => 2
 
 fn skipBlockFlat(tokens: List<Token>, pos: Int) -> Int
     ? "Fallback: skip until blank line, fn, or EOF."
+    nextPos = pos + 1
     match tokenAt(tokens, pos)
         Token.TkEof -> pos
-        Token.TkNewline -> skipBlockFlatAfterNewline(tokens, pos + 1)
-        _ -> skipBlockFlat(tokens, pos + 1)
+        Token.TkNewline -> skipBlockFlatAfterNewline(tokens, nextPos)
+        _ -> skipBlockFlat(tokens, nextPos)
 
 verify skipBlockFlat
     skipBlockFlat([Token.TkEof], 0) => 0
@@ -377,13 +389,14 @@ verify parseModuleHeader
 
 fn findDependsInRange(tokens: List<Token>, pos: Int, endPos: Int) -> List<String>
     ? "Scan token range for depends [...] and extract module names."
+    nextPos = pos + 1
     match pos >= endPos
         true -> []
         false -> match tokenAt(tokens, pos)
             Token.TkIdent(kw) -> match kw == "depends"
-                true -> findDependsListAt(tokens, pos + 1, endPos)
-                false -> findDependsInRange(tokens, pos + 1, endPos)
-            _ -> findDependsInRange(tokens, pos + 1, endPos)
+                true -> findDependsListAt(tokens, nextPos, endPos)
+                false -> findDependsInRange(tokens, nextPos, endPos)
+            _ -> findDependsInRange(tokens, nextPos, endPos)
 
 verify findDependsInRange
     findDependsInRange([Token.TkEof], 0, 0) => []
@@ -399,12 +412,13 @@ verify findDependsListAt
 
 fn collectDependsNames(tokens: List<Token>, pos: Int, endPos: Int, acc: List<String>) -> List<String>
     ? "Collect module names until ]."
+    nextPos = pos + 1
     match pos >= endPos
         true -> acc
         false -> match tokenAt(tokens, pos)
             Token.TkRBracket -> acc
-            Token.TkIdent(name) -> collectDependsNames(tokens, pos + 1, endPos, List.concat(acc, [name]))
-            _ -> collectDependsNames(tokens, pos + 1, endPos, acc)
+            Token.TkIdent(name) -> collectDependsNames(tokens, nextPos, endPos, List.concat(acc, [name]))
+            _ -> collectDependsNames(tokens, nextPos, endPos, acc)
 
 verify collectDependsNames
     collectDependsNames([Token.TkIdent("Foo"), Token.TkComma, Token.TkIdent("Bar"), Token.TkRBracket, Token.TkEof], 0, 5, []) => ["Foo", "Bar"]

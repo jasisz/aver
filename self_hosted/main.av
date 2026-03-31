@@ -85,12 +85,13 @@ verify modulePathFromName
 
 fn dotToSlash(name: String, pos: Int, total: Int, acc: String) -> String
     ? "Replace dots with slashes and lowercase first char of each segment."
+    nextPos = pos + 1
     match pos >= total
         true -> acc
         false -> match String.charAt(name, pos)
             Option.Some(c) -> match c == "."
-                true -> dotToSlash(name, pos + 1, total, acc + "/")
-                false -> dotToSlash(name, pos + 1, total, acc + String.toLower(c))
+                true -> dotToSlash(name, nextPos, total, acc + "/")
+                false -> dotToSlash(name, nextPos, total, acc + String.toLower(c))
             Option.None -> acc
 
 verify dotToSlash

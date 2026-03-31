@@ -269,12 +269,13 @@ verify parseProgram
 
 fn parseProgramKeyword(tokens: List<Token>, pos: Int, deps: List<String>, fns: List<FnDef>, stmts: List<Stmt>, kw: String) -> Result<Program, String>
     ? "Handle keywords: module (extract depends), type/record/verify/decision (skip)."
+    nextPos = pos + 1
     match kw
-        "module" -> parseProgramModuleHeader(tokens, pos + 1, fns, stmts)
-        "type" -> parseProgram(tokens, Domain.ParserMatch.skipBlock(tokens, pos + 1), deps, fns, stmts)
-        "record" -> parseProgram(tokens, Domain.ParserMatch.skipBlock(tokens, pos + 1), deps, fns, stmts)
-        "verify" -> parseProgram(tokens, Domain.ParserMatch.skipBlock(tokens, pos + 1), deps, fns, stmts)
-        "decision" -> parseProgram(tokens, Domain.ParserMatch.skipBlock(tokens, pos + 1), deps, fns, stmts)
+        "module" -> parseProgramModuleHeader(tokens, nextPos, fns, stmts)
+        "type" -> parseProgram(tokens, Domain.ParserMatch.skipBlock(tokens, nextPos), deps, fns, stmts)
+        "record" -> parseProgram(tokens, Domain.ParserMatch.skipBlock(tokens, nextPos), deps, fns, stmts)
+        "verify" -> parseProgram(tokens, Domain.ParserMatch.skipBlock(tokens, nextPos), deps, fns, stmts)
+        "decision" -> parseProgram(tokens, Domain.ParserMatch.skipBlock(tokens, nextPos), deps, fns, stmts)
         _ -> parseProgramStmt(tokens, pos, deps, fns, stmts)
 
 verify parseProgramKeyword
