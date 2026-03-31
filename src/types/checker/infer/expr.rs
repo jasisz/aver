@@ -316,7 +316,12 @@ impl TypeChecker {
 
             Expr::List(elems) => {
                 let inner = if let Some(first) = elems.first() {
-                    self.infer_type(first)
+                    let ty = self.infer_type(first);
+                    // Infer remaining elements for side effects (used_names tracking).
+                    for elem in &elems[1..] {
+                        self.infer_type(elem);
+                    }
+                    ty
                 } else {
                     Type::Unknown
                 };
