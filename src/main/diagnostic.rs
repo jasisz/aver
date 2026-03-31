@@ -162,7 +162,10 @@ impl Diagnostic {
         // Errors: always show. Warnings: only if verbose.
         // Skip snippet for structural hints where the signature adds no information
         // beyond what in-fn: and repair: already say.
-        let skip_snippet = matches!(self.slug, "missing-verify" | "verify-effectful" | "missing-description");
+        let skip_snippet = matches!(
+            self.slug,
+            "missing-verify" | "verify-effectful" | "missing-description"
+        );
         let show_source = (is_error || verbose) && !skip_snippet;
         let has_source = self.regions.iter().any(|r| !r.source_lines.is_empty());
         if show_source && has_source {
@@ -304,9 +307,7 @@ fn extract_source_lines(source: &str, line: usize, context: usize) -> Vec<Source
 
 /// Extract the declared return type from a "declared return type is X" message.
 fn extract_return_type(msg: &str) -> &str {
-    msg.rsplit("declared return type is ")
-        .next()
-        .unwrap_or("?")
+    msg.rsplit("declared return type is ").next().unwrap_or("?")
 }
 
 /// Estimate how many characters to underline starting at `col` (1-based).
@@ -473,11 +474,7 @@ fn find_precise_span(source_line: &str, summary: &str) -> Option<(usize, usize)>
 // ---------------------------------------------------------------------------
 
 /// Build a `Diagnostic` from a `TypeError` (from the typechecker).
-pub(super) fn from_type_error(
-    te: &TypeError,
-    source: &str,
-    file: &str,
-) -> Diagnostic {
+pub(super) fn from_type_error(te: &TypeError, source: &str, file: &str) -> Diagnostic {
     let msg = &te.message;
     let line = te.line;
     let col = te.col;
@@ -504,10 +501,21 @@ pub(super) fn from_type_error(
             let after_arrow = &source_line_text[arrow_pos + 3..];
             let ret_type_len = after_arrow
                 .chars()
-                .take_while(|c| c.is_alphanumeric() || *c == '<' || *c == '>' || *c == ',' || *c == ' ' || *c == '.')
+                .take_while(|c| {
+                    c.is_alphanumeric()
+                        || *c == '<'
+                        || *c == '>'
+                        || *c == ','
+                        || *c == ' '
+                        || *c == '.'
+                })
                 .count();
             let ret_type_len = after_arrow[..ret_type_len].trim_end().len();
-            (arrow_pos + 4, ret_type_len.max(1), format!("declared {}", extract_return_type(msg)))
+            (
+                arrow_pos + 4,
+                ret_type_len.max(1),
+                format!("declared {}", extract_return_type(msg)),
+            )
         } else {
             (ul_col, ul_len, String::new())
         }
@@ -805,7 +813,10 @@ fn classify_finding(msg: &str) -> (&'static str, Option<String>) {
     if msg.contains("has effects") && msg.contains("verify blocks are for pure") {
         (
             "verify-effectful",
-            Some("Remove verify block; test via `aver run --record` + `aver replay --test`".to_string()),
+            Some(
+                "Remove verify block; test via `aver run --record` + `aver replay --test`"
+                    .to_string(),
+            ),
         )
     } else if msg.contains("no verify block") {
         (

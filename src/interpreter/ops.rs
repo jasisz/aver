@@ -104,11 +104,9 @@ impl Interpreter {
             }
             (Value::Vector(a), Value::Vector(b)) => {
                 a.len() == b.len()
-                    && (0..a.len()).all(|i| {
-                        match (a.get(i), b.get(i)) {
-                            (Some(x), Some(y)) => self.aver_eq(x, y),
-                            _ => false,
-                        }
+                    && (0..a.len()).all(|i| match (a.get(i), b.get(i)) {
+                        (Some(x), Some(y)) => self.aver_eq(x, y),
+                        _ => false,
                     })
             }
             _ => false,

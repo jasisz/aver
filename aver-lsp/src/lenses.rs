@@ -108,8 +108,7 @@ pub fn code_lenses(source: &str, base_dir: Option<&str>, uri: &str) -> Vec<CodeL
                 }
             }
             TopLevel::Decision(decision) => {
-                let impacts: Vec<&str> =
-                    decision.impacts.iter().map(|s| s.node.text()).collect();
+                let impacts: Vec<&str> = decision.impacts.iter().map(|s| s.node.text()).collect();
                 let target_line = first_impact_line(&items, decision).unwrap_or(decision.line);
                 lenses.push(make_lens(
                     uri,

@@ -47,12 +47,11 @@ fn is_trivial_body(f: &FnDef) -> bool {
 fn expr_has_branching_or_binop(expr: &Spanned<Expr>) -> bool {
     match &expr.node {
         Expr::Match { .. } => true,
-        Expr::BinOp(_, left, right) => true
-            || expr_has_branching_or_binop(left)
-            || expr_has_branching_or_binop(right),
+        Expr::BinOp(_, left, right) => {
+            true || expr_has_branching_or_binop(left) || expr_has_branching_or_binop(right)
+        }
         Expr::FnCall(callee, args) => {
-            expr_has_branching_or_binop(callee)
-                || args.iter().any(expr_has_branching_or_binop)
+            expr_has_branching_or_binop(callee) || args.iter().any(expr_has_branching_or_binop)
         }
         Expr::Constructor(_, Some(arg)) => expr_has_branching_or_binop(arg),
         Expr::List(items) | Expr::Tuple(items) => items.iter().any(expr_has_branching_or_binop),
@@ -541,9 +540,7 @@ pub fn check_module_intent_with_sigs_in(
                 }
                 // Warn when an effectful function HAS a verify block — verify
                 // is for pure functions; effectful ones should use replay.
-                if !f.effects.is_empty()
-                    && verified_fns.contains(f.name.as_str())
-                {
+                if !f.effects.is_empty() && verified_fns.contains(f.name.as_str()) {
                     warnings.push(CheckFinding {
                         line: f.line,
                         module: module_name.clone(),
@@ -929,10 +926,9 @@ verify add1 law reflexive
             findings.errors
         );
         assert!(
-            !findings
-                .errors
-                .iter()
-                .any(|e| e.message.contains("must not call `add1` on the right side of `=>`")),
+            !findings.errors.iter().any(|e| e
+                .message
+                .contains("must not call `add1` on the right side of `=>`")),
             "did not expect rhs-call heuristic for law verify, got errors={:?}",
             findings.errors
         );

@@ -1647,7 +1647,9 @@ pub(super) fn cmd_context(
 mod tests {
     use std::rc::Rc;
 
-    use aver::ast::{DecisionBlock, DecisionImpact, FnBody, FnDef, Spanned, VerifyBlock, VerifyKind};
+    use aver::ast::{
+        DecisionBlock, DecisionImpact, FnBody, FnDef, Spanned, VerifyBlock, VerifyKind,
+    };
 
     use super::*;
 

@@ -19,10 +19,7 @@ pub(super) struct ContextSelection {
 }
 
 fn impact_texts(impacts: &[Spanned<DecisionImpact>]) -> Vec<String> {
-    impacts
-        .iter()
-        .map(|s| s.node.as_context_string())
-        .collect()
+    impacts.iter().map(|s| s.node.as_context_string()).collect()
 }
 
 fn decision_ref_text(reference: &Spanned<DecisionImpact>) -> String {

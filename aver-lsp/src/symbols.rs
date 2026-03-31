@@ -123,7 +123,6 @@ fn line_range(line: usize) -> Range {
     }
 }
 
-
 fn make_symbol(
     name: String,
     detail: Option<String>,

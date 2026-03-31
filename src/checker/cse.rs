@@ -314,12 +314,11 @@ fn is_nontrivial_pure_fncall(expr: &Expr) -> bool {
 fn expr_contains_user_call(expr: &Expr) -> bool {
     match expr {
         Expr::FnCall(callee, args) => {
-            let is_namespace = callee_dotted_name(&callee.node)
-                .is_some_and(|name| {
-                    PURE_NAMESPACE_PREFIXES
-                        .iter()
-                        .any(|prefix| name.starts_with(prefix))
-                });
+            let is_namespace = callee_dotted_name(&callee.node).is_some_and(|name| {
+                PURE_NAMESPACE_PREFIXES
+                    .iter()
+                    .any(|prefix| name.starts_with(prefix))
+            });
             if !is_namespace {
                 return true;
             }

@@ -159,10 +159,7 @@ fn find_precise_span(source_line: &str, summary: &str) -> Option<(usize, usize)>
                 let needle = &summary[start..start + end_offset];
                 if !needle.is_empty() {
                     let search_region = if search_after_arrow {
-                        source_line
-                            .find("=>")
-                            .map(|p| p + 2)
-                            .unwrap_or(0)
+                        source_line.find("=>").map(|p| p + 2).unwrap_or(0)
                     } else {
                         0
                     };
