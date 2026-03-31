@@ -436,6 +436,10 @@ fn collectFastForwardArgs(slotArgs: List<Int>, calleeEnv: Vector<Val>, acc: List
             Result.Ok(v) -> collectFastForwardArgs(rest, calleeEnv, List.prepend(v, acc))
             Result.Err(e) -> Result.Err(e)
 
+verify collectFastForwardArgs
+    collectFastForwardArgs([], Vector.new(0, Val.ValUnit), []) => Result.Ok([])
+    collectFastForwardArgs([0, 1], Vector.fromList([Val.ValInt(10), Val.ValInt(20)]), []) => Result.Ok([Val.ValInt(10), Val.ValInt(20)])
+
 fn evalCall(name: String, argExprs: List<Expr>, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate a function call."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
@@ -670,6 +674,10 @@ fn evalVarSlot(name: String, fns: FnStore) -> Result<Val, String>
         "Option.None" -> Result.Ok(Val.ValNone)
         _ -> Domain.Eval.Common.evalVarFallback(name, fns)
 
+verify evalVarSlot
+    evalVarSlot("Unit", Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValUnit)
+    evalVarSlot("Option.None", Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValNone)
+
 fn evalBoolBranchSlot(cond: Expr, thenExpr: Expr, elseExpr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate a direct bool branch in slot path."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
@@ -685,22 +693,38 @@ fn evalBinopSlotInt(op: BinOp, slot: Int, rhs: Int, env: Vector<Val>) -> Result<
     left = Domain.Eval.Slots.lookupSlot(env, slot)?
     Domain.Eval.Ops.evalBinopVals(left, Val.ValInt(rhs), op)
 
+verify evalBinopSlotInt
+    evalBinopSlotInt(BinOp.OpAdd, 0, 5, Vector.fromList([Val.ValInt(3)])) => Result.Ok(Val.ValInt(8))
+    evalBinopSlotInt(BinOp.OpMul, 0, 4, Vector.fromList([Val.ValInt(2)])) => Result.Ok(Val.ValInt(8))
+
 fn evalBinopSlots(op: BinOp, lhs: Int, rhs: Int, env: Vector<Val>) -> Result<Val, String>
     ? "Evaluate a specialized slot-vs-slot arithmetic expression."
     left = Domain.Eval.Slots.lookupSlot(env, lhs)?
     right = Domain.Eval.Slots.lookupSlot(env, rhs)?
     Domain.Eval.Ops.evalBinopVals(left, right, op)
 
+verify evalBinopSlots
+    evalBinopSlots(BinOp.OpAdd, 0, 1, Vector.fromList([Val.ValInt(3), Val.ValInt(7)])) => Result.Ok(Val.ValInt(10))
+    evalBinopSlots(BinOp.OpSub, 0, 1, Vector.fromList([Val.ValInt(10), Val.ValInt(4)])) => Result.Ok(Val.ValInt(6))
+
 fn evalCmpSlotInt(op: CmpOp, slot: Int, rhs: Int, env: Vector<Val>) -> Result<Val, String>
     ? "Evaluate a specialized slot-vs-int comparison."
     left = Domain.Eval.Slots.lookupSlot(env, slot)?
     Domain.Eval.Ops.evalCmpVals(left, Val.ValInt(rhs), op)
+
+verify evalCmpSlotInt
+    evalCmpSlotInt(CmpOp.CmpEq, 0, 5, Vector.fromList([Val.ValInt(5)])) => Result.Ok(Val.ValBool(true))
+    evalCmpSlotInt(CmpOp.CmpLt, 0, 10, Vector.fromList([Val.ValInt(3)])) => Result.Ok(Val.ValBool(true))
 
 fn evalCmpSlots(op: CmpOp, lhs: Int, rhs: Int, env: Vector<Val>) -> Result<Val, String>
     ? "Evaluate a specialized slot-vs-slot comparison."
     left = Domain.Eval.Slots.lookupSlot(env, lhs)?
     right = Domain.Eval.Slots.lookupSlot(env, rhs)?
     Domain.Eval.Ops.evalCmpVals(left, right, op)
+
+verify evalCmpSlots
+    evalCmpSlots(CmpOp.CmpEq, 0, 1, Vector.fromList([Val.ValInt(3), Val.ValInt(3)])) => Result.Ok(Val.ValBool(true))
+    evalCmpSlots(CmpOp.CmpGt, 0, 1, Vector.fromList([Val.ValInt(5), Val.ValInt(2)])) => Result.Ok(Val.ValBool(true))
 
 fn evalVectorGetOrIntExprSlot(vecExpr: Expr, idxExpr: Expr, defaultValue: Int, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate a fused Vector.get + Option.withDefault in slot path."
@@ -1037,11 +1061,19 @@ fn mergeBindingsSlot(bindings: List<(String, Val)>, bindingSlots: Map<String, In
         [pair, ..rest] -> match pair
             (name, val) -> mergeOneBindingSlot(name, val, rest, bindingSlots, env)
 
+verify mergeBindingsSlot
+    mergeBindingsSlot([], Map.empty(), Vector.new(2, Val.ValUnit)) => Vector.new(2, Val.ValUnit)
+    mergeBindingsSlot([("x", Val.ValInt(5))], Map.set(Map.empty(), "x", 0), Vector.new(2, Val.ValUnit)) => Vector.fromList([Val.ValInt(5), Val.ValUnit])
+
 fn mergeOneBindingSlot(name: String, val: Val, rest: List<(String, Val)>, bindingSlots: Map<String, Int>, env: Vector<Val>) -> Vector<Val>
     ? "Merge one pattern binding into slot env."
     match Map.get(bindingSlots, name)
         Option.Some(slot) -> mergeBindingsSlot(rest, bindingSlots, Domain.Eval.Slots.setSlot(env, slot, val))
         Option.None -> mergeBindingsSlot(rest, bindingSlots, env)
+
+verify mergeOneBindingSlot
+    mergeOneBindingSlot("x", Val.ValInt(7), [], Map.set(Map.empty(), "x", 0), Vector.new(2, Val.ValUnit)) => Vector.fromList([Val.ValInt(7), Val.ValUnit])
+    mergeOneBindingSlot("y", Val.ValInt(3), [], Map.empty(), Vector.new(2, Val.ValUnit)) => Vector.new(2, Val.ValUnit)
 
 fn evalPropagateSlot(inner: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate ? operator in slot path."

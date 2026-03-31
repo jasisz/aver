@@ -22,6 +22,10 @@ fn tokenAtWalk(tokens: List<Token>, target: Int, idx: Int) -> Token
             true -> t
             false -> tokenAtWalk(rest, target, idx + 1)
 
+verify tokenAtWalk
+    tokenAtWalk([Token.TkPlus, Token.TkMinus, Token.TkEof], 1, 0) => Token.TkMinus
+    tokenAtWalk([], 0, 0) => Token.TkEof
+
 fn isToken(t: Token, expected: Token) -> Bool
     ? "Check if token matches expected (structural equality via repr)."
     Domain.Token.tokenRepr(t) == Domain.Token.tokenRepr(expected)

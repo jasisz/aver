@@ -11,11 +11,17 @@ fn buildFnMap(fns: List<FnDef>, acc: Map<String, Int>, idx: Int) -> Map<String, 
         [] -> acc
         [f, ..rest] -> buildFnMap(rest, Map.set(acc, f.name, idx), idx + 1)
 
+verify buildFnMap
+    buildFnMap([], Map.empty(), 0) => Map.empty()
+
 fn resolveCallsInFns(fns: List<FnDef>, fnMap: Map<String, Int>, acc: List<FnDef>) -> List<FnDef>
     ? "Transform ExprCall→ExprCallDirect for known functions in all fn bodies."
     match fns
         [] -> List.reverse(acc)
         [f, ..rest] -> resolveCallsInFns(rest, fnMap, List.prepend(resolveCallsInFn(f, fnMap), acc))
+
+verify resolveCallsInFns
+    resolveCallsInFns([], Map.empty(), []) => []
 
 fn resolveCallsInFn(fd: FnDef, fnMap: Map<String, Int>) -> FnDef
     ? "Transform calls in one function body."
@@ -26,11 +32,19 @@ fn resolveCallsInStmts(stmts: List<Stmt>, fnMap: Map<String, Int>, acc: List<Stm
         [] -> List.reverse(acc)
         [s, ..rest] -> resolveCallsInStmts(rest, fnMap, List.prepend(resolveCallsInStmt(s, fnMap), acc))
 
+verify resolveCallsInStmts
+    resolveCallsInStmts([], Map.empty(), []) => []
+    resolveCallsInStmts([Stmt.StmtExpr(Expr.ExprInt(1))], Map.empty(), []) => [Stmt.StmtExpr(Expr.ExprInt(1))]
+
 fn resolveCallsInStmt(s: Stmt, fnMap: Map<String, Int>) -> Stmt
     match s
         Stmt.StmtBind(name, expr) -> Stmt.StmtBind(name, resolveCallsInExpr(expr, fnMap))
         Stmt.StmtBindSlot(slot, expr) -> Stmt.StmtBindSlot(slot, resolveCallsInExpr(expr, fnMap))
         Stmt.StmtExpr(expr) -> Stmt.StmtExpr(resolveCallsInExpr(expr, fnMap))
+
+verify resolveCallsInStmt
+    resolveCallsInStmt(Stmt.StmtExpr(Expr.ExprInt(1)), Map.empty()) => Stmt.StmtExpr(Expr.ExprInt(1))
+    resolveCallsInStmt(Stmt.StmtBindSlot(0, Expr.ExprInt(2)), Map.empty()) => Stmt.StmtBindSlot(0, Expr.ExprInt(2))
 
 fn resolveCallsInExpr(expr: Expr, fnMap: Map<String, Int>) -> Expr
     ? "Replace ExprCall with ExprCallDirect for known user functions."
@@ -67,6 +81,10 @@ fn resolveCallsInExpr(expr: Expr, fnMap: Map<String, Int>) -> Expr
         Expr.ExprFieldAccess(obj, field) -> Expr.ExprFieldAccess(resolveCallsInExpr(obj, fnMap), field)
         _ -> expr
 
+verify resolveCallsInExpr
+    resolveCallsInExpr(Expr.ExprInt(42), Map.empty()) => Expr.ExprInt(42)
+    resolveCallsInExpr(Expr.ExprCall("foo", []), Map.set(Map.empty(), "foo", 0)) => Expr.ExprCallDirect(0, [])
+
 fn resolveOneCall(name: String, args: List<Expr>, fnMap: Map<String, Int>) -> Expr
     ? "User fn → ExprCallDirect, builtin → ExprCallBuiltin, record update → ExprCall."
     resolvedArgs = resolveCallsInExprs(args, fnMap, [])
@@ -77,6 +95,10 @@ fn resolveOneCall(name: String, args: List<Expr>, fnMap: Map<String, Int>) -> Ex
             false -> match isBuiltinCallName(name)
                 true -> Expr.ExprCallBuiltin(name, resolvedArgs)
                 false -> Expr.ExprCall(name, resolvedArgs)
+
+verify resolveOneCall
+    resolveOneCall("foo", [], Map.set(Map.empty(), "foo", 5)) => Expr.ExprCallDirect(5, [])
+    resolveOneCall("Map.get", [Expr.ExprInt(1)], Map.empty()) => Expr.ExprCallBuiltin("Map.get", [Expr.ExprInt(1)])
 
 fn isBuiltinCallName(name: String) -> Bool
     ? "Return whether a call name is one of the exact builtin/service entrypoints."
@@ -220,18 +242,34 @@ fn isBuiltinCallNameFrom(name: String, knownNames: List<String>) -> Bool
             true -> true
             false -> isBuiltinCallNameFrom(name, rest)
 
+verify isBuiltinCallNameFrom
+    isBuiltinCallNameFrom("Map.get", ["Map.get", "Map.set"]) => true
+    isBuiltinCallNameFrom("foo", ["Map.get"]) => false
+    isBuiltinCallNameFrom("x", []) => false
+
 fn resolveCallsInExprs(exprs: List<Expr>, fnMap: Map<String, Int>, acc: List<Expr>) -> List<Expr>
     match exprs
         [] -> List.reverse(acc)
         [e, ..rest] -> resolveCallsInExprs(rest, fnMap, List.prepend(resolveCallsInExpr(e, fnMap), acc))
+
+verify resolveCallsInExprs
+    resolveCallsInExprs([], Map.empty(), []) => []
+    resolveCallsInExprs([Expr.ExprInt(1)], Map.empty(), []) => [Expr.ExprInt(1)]
 
 fn resolveCallsInArms(arms: List<MatchArm>, fnMap: Map<String, Int>, acc: List<MatchArm>) -> List<MatchArm>
     match arms
         [] -> List.reverse(acc)
         [arm, ..rest] -> resolveCallsInArms(rest, fnMap, List.prepend(MatchArm(pattern = arm.pattern, body = resolveCallsInExpr(arm.body, fnMap), bindingSlots = arm.bindingSlots), acc))
 
+verify resolveCallsInArms
+    resolveCallsInArms([], Map.empty(), []) => []
+
 fn resolveCallsInFields(fields: List<(String, Expr)>, fnMap: Map<String, Int>, acc: List<(String, Expr)>) -> List<(String, Expr)>
     match fields
         [] -> List.reverse(acc)
         [pair, ..rest] -> match pair
             (name, expr) -> resolveCallsInFields(rest, fnMap, List.prepend((name, resolveCallsInExpr(expr, fnMap)), acc))
+
+verify resolveCallsInFields
+    resolveCallsInFields([], Map.empty(), []) => []
+    resolveCallsInFields([("x", Expr.ExprInt(1))], Map.empty(), []) => [("x", Expr.ExprInt(1))]

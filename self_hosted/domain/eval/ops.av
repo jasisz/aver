@@ -150,6 +150,10 @@ fn evalVectorGetOrIntVals(vecV: Val, idxV: Val, defaultValue: Int) -> Result<Val
             Option.None -> Result.Ok(Val.ValInt(defaultValue))
         Result.Err(err) -> Result.Err(err)
 
+verify evalVectorGetOrIntVals
+    evalVectorGetOrIntVals(Val.ValVector(Vector.fromList([Val.ValInt(10)])), Val.ValInt(0), 0) => Result.Ok(Val.ValInt(10))
+    evalVectorGetOrIntVals(Val.ValVector(Vector.fromList([Val.ValInt(10)])), Val.ValInt(5), 99) => Result.Ok(Val.ValInt(99))
+
 fn evalIntModOrIntVals(aV: Val, bV: Val, defaultValue: Int) -> Result<Val, String>
     ? "Apply Int.mod and return an integer fallback when the result would be Err."
     match aV
@@ -159,6 +163,10 @@ fn evalIntModOrIntVals(aV: Val, bV: Val, defaultValue: Int) -> Result<Val, Strin
                 false -> Result.Ok(Val.ValInt(Result.withDefault(Int.mod(a, b), defaultValue)))
             _ -> Result.Err("expected int argument")
         _ -> Result.Err("expected int argument")
+
+verify evalIntModOrIntVals
+    evalIntModOrIntVals(Val.ValInt(10), Val.ValInt(3), 0) => Result.Ok(Val.ValInt(1))
+    evalIntModOrIntVals(Val.ValInt(10), Val.ValInt(0), 99) => Result.Ok(Val.ValInt(99))
 
 fn evalVectorSetMaybeDefault(vecV: Val, idxV: Val, valueV: Val) -> Result<Option<Val>, String>
     ? "Apply Vector.set and return None when the caller should fall back to its default expression."
@@ -172,6 +180,10 @@ fn evalVectorSetMaybeDefault(vecV: Val, idxV: Val, valueV: Val) -> Result<Option
             _ -> Result.Err("Vector.set: second arg must be Int")
         _ -> Result.Err("Vector.set: first arg must be Vector")
 
+verify evalVectorSetMaybeDefault
+    evalVectorSetMaybeDefault(Val.ValVector(Vector.fromList([Val.ValInt(0)])), Val.ValInt(0), Val.ValInt(5)) => Result.Ok(Option.Some(Val.ValVector(Vector.fromList([Val.ValInt(5)]))))
+    evalVectorSetMaybeDefault(Val.ValVector(Vector.fromList([Val.ValInt(0)])), Val.ValInt(9), Val.ValInt(5)) => Result.Ok(Option.None)
+
 fn evalVectorGetMaybeDefault(vecV: Val, idxV: Val) -> Result<Option<Val>, String>
     ? "Apply Vector.get and return None when the caller should fall back to its default expression."
     match vecV
@@ -181,3 +193,7 @@ fn evalVectorGetMaybeDefault(vecV: Val, idxV: Val) -> Result<Option<Val>, String
                 Option.None -> Result.Ok(Option.None)
             _ -> Result.Err("Vector.get: expected (Vector, Int)")
         _ -> Result.Err("Vector.get: expected (Vector, Int)")
+
+verify evalVectorGetMaybeDefault
+    evalVectorGetMaybeDefault(Val.ValVector(Vector.fromList([Val.ValInt(7)])), Val.ValInt(0)) => Result.Ok(Option.Some(Val.ValInt(7)))
+    evalVectorGetMaybeDefault(Val.ValVector(Vector.fromList([])), Val.ValInt(0)) => Result.Ok(Option.None)

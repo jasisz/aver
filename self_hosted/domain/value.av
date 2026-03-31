@@ -7,6 +7,10 @@ fn quoteString(s: String) -> String
     ? "Render a string key or nested string value with quotes."
     "\"" + s + "\""
 
+verify quoteString
+    quoteString("hello") => "\"hello\""
+    quoteString("") => "\"\""
+
 type Val
     ValInt(Int)
     ValFloat(Float)
@@ -83,6 +87,11 @@ fn valReprInner(v: Val) -> String
         Val.ValList(items) -> valListRepr(items, "", true)
         _ -> valRepr(v)
 
+verify valReprInner
+    valReprInner(Val.ValStr("hi")) => "\"hi\""
+    valReprInner(Val.ValInt(7)) => "7"
+    valReprInner(Val.ValBool(false)) => "false"
+
 fn valMapRepr(entries: List<(String, Val)>, acc: String, first: Bool) -> String
     ? "Build a stable map repr close to the host interpreter output."
     match entries
@@ -93,8 +102,8 @@ fn valMapRepr(entries: List<(String, Val)>, acc: String, first: Bool) -> String
                 false -> valMapRepr(rest, acc + ", " + quoteString(k) + ": " + valReprInner(v), false)
 
 verify valMapRepr
-    valMapRepr([], "", true) => "{}"
-    valMapRepr([("alice", Val.ValInt(2))], "", true) => quoteString("alice") + ": 2"
+    valMapRepr([], "", true) => "{{}}"
+    valMapRepr([("alice", Val.ValInt(2))], "", true) => "{{" + quoteString("alice") + ": 2}"
 
 fn mapKeyRepr(v: Val) -> String
     ? "Stable repr for map keys. Keeps common scalar keys off the general valRepr path."

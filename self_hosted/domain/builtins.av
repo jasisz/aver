@@ -211,12 +211,20 @@ fn builtinMapEntries(args: List<Val>) -> Result<Val, String>
         Val.ValMap(m) -> Result.Ok(Val.ValList(mapEntriesToTuples(Map.entries(m), [])))
         _ -> Result.Err("Map.entries requires a Map")
 
+verify builtinMapEntries
+    builtinMapEntries([Val.ValMap(Map.empty())]) => Result.Ok(Val.ValList([]))
+    builtinMapEntries([Val.ValInt(1)]) => Result.Err("Map.entries requires a Map")
+
 fn mapEntriesToTuples(entries: List<(String, Val)>, acc: List<Val>) -> List<Val>
     ? "Convert entries to list of (key, value) tuples."
     match entries
         [] -> List.reverse(acc)
         [pair, ..rest] -> match pair
             (k, v) -> mapEntriesToTuples(rest, List.prepend(Val.ValTuple([Val.ValStr(k), v]), acc))
+
+verify mapEntriesToTuples
+    mapEntriesToTuples([], []) => []
+    mapEntriesToTuples([("a", Val.ValInt(1))], []) => [Val.ValTuple([Val.ValStr("a"), Val.ValInt(1)])]
 
 fn builtinMapKeys(args: List<Val>) -> Result<Val, String>
     ? "Map.keys(map) -> List of keys."
@@ -232,11 +240,22 @@ fn builtinMapValues(args: List<Val>) -> Result<Val, String>
         Val.ValMap(m) -> Result.Ok(Val.ValList(Map.values(m)))
         _ -> Result.Err("Map.values requires a Map")
 
+verify builtinMapKeys
+    builtinMapKeys([Val.ValMap(Map.empty())]) => Result.Ok(Val.ValList([]))
+    builtinMapKeys([Val.ValInt(1)]) => Result.Err("Map.keys requires a Map")
+
+verify builtinMapValues
+    builtinMapValues([Val.ValMap(Map.empty())]) => Result.Ok(Val.ValList([]))
+    builtinMapValues([Val.ValInt(1)]) => Result.Err("Map.values requires a Map")
+
 fn builtinMapFromList(args: List<Val>) -> Result<Val, String>
     ? "Map.fromList(entries) -> Map."
     v = Domain.Builtins.Helpers.oneArg(args)?
     items = Domain.Builtins.Helpers.expectList(v)?
     Result.Ok(Val.ValMap(tuplesToMap(items, Map.empty())))
+
+verify builtinMapFromList
+    builtinMapFromList([Val.ValList([])]) => Result.Ok(Val.ValMap(Map.empty()))
 
 fn tuplesToMap(items: List<Val>, acc: Map<String, Val>) -> Map<String, Val>
     ? "Convert list of (key, value) tuples to a Map."
@@ -254,12 +273,24 @@ fn tuplesToMapOne(parts: List<Val>, rest: List<Val>, acc: Map<String, Val>) -> M
             [] -> tuplesToMap(rest, acc)
         [] -> tuplesToMap(rest, acc)
 
+verify tuplesToMapOne
+    tuplesToMapOne([Val.ValStr("k"), Val.ValInt(1)], [], Map.empty()) => Map.set(Map.empty(), "k", Val.ValInt(1))
+    tuplesToMapOne([], [], Map.empty()) => Map.empty()
+
+verify tuplesToMap
+    tuplesToMap([], Map.empty()) => Map.empty()
+    tuplesToMap([Val.ValTuple([Val.ValStr("x"), Val.ValInt(1)])], Map.empty()) => Map.set(Map.empty(), "x", Val.ValInt(1))
+
 fn builtinMapSize(args: List<Val>) -> Result<Val, String>
     ? "Map.size(map) -> Int."
     v = Domain.Builtins.Helpers.oneArg(args)?
     match v
         Val.ValMap(m) -> Result.Ok(Val.ValInt(Map.len(m)))
         _ -> Result.Err("Map.size requires a Map")
+
+verify builtinMapSize
+    builtinMapSize([Val.ValMap(Map.empty())]) => Result.Ok(Val.ValInt(0))
+    builtinMapSize([Val.ValInt(1)]) => Result.Err("Map.size requires a Map")
 
 fn builtinMapRemove(args: List<Val>) -> Result<Val, String>
     ? "Map.remove(map, key) -> Map."
@@ -272,6 +303,14 @@ fn builtinMapRemoveInner(mapV: Val, keyV: Val) -> Result<Val, String>
     match mapV
         Val.ValMap(m) -> Result.Ok(Val.ValMap(Map.remove(m, Domain.Value.mapKeyRepr(keyV))))
         _ -> Result.Err("Map.remove requires a Map")
+
+verify builtinMapRemoveInner
+    builtinMapRemoveInner(Val.ValMap(Map.set(Map.empty(), "a", Val.ValInt(1))), Val.ValStr("a")) => Result.Ok(Val.ValMap(Map.empty()))
+    builtinMapRemoveInner(Val.ValInt(1), Val.ValStr("a")) => Result.Err("Map.remove requires a Map")
+
+verify builtinMapRemove
+    builtinMapRemove([Val.ValMap(Map.set(Map.empty(), "a", Val.ValInt(1))), Val.ValStr("a")]) => Result.Ok(Val.ValMap(Map.empty()))
+    builtinMapRemove([Val.ValInt(1), Val.ValStr("a")]) => Result.Err("Map.remove requires a Map")
 
 fn callBuiltinServices(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch Terminal.*, Time.*, Random.*, Http.*, Tcp.* service builtins."
@@ -312,6 +351,9 @@ fn callBuiltinServices(name: String, args: List<Val>) -> Result<Val, String>
 fn builtinUnsupportedHostService(name: String) -> Result<Val, String>
     ? "Fail explicitly for host services that still need callback/runtime bridging in the self-host."
     Result.Err("{name} is not supported in the self-hosted interpreter yet")
+
+verify builtinUnsupportedHostService
+    builtinUnsupportedHostService("Foo.bar") => Result.Err("Foo.bar is not supported in the self-hosted interpreter yet")
 
 fn builtinHttpServerListen(args: List<Val>) -> Result<Val, String>
     ? "HttpServer.listen(port, handler) through the generated self-host runtime bridge."
@@ -599,6 +641,10 @@ fn builtinBoolOrInner(aV: Val, bV: Val) -> Result<Val, String>
             _ -> Result.Err("Bool.or requires Bool arguments")
         _ -> Result.Err("Bool.or requires Bool arguments")
 
+verify builtinBoolOrInner
+    builtinBoolOrInner(Val.ValBool(true), Val.ValBool(false)) => Result.Ok(Val.ValBool(true))
+    builtinBoolOrInner(Val.ValInt(1), Val.ValBool(false)) => Result.Err("Bool.or requires Bool arguments")
+
 fn builtinBoolAnd(args: List<Val>) -> Result<Val, String>
     ? "Bool.and(a, b) -> a && b."
     pair = Domain.Builtins.Helpers.twoArgs(args)?
@@ -619,6 +665,11 @@ fn builtinBoolAndInner(aV: Val, bV: Val) -> Result<Val, String>
             _ -> Result.Err("Bool.and requires Bool arguments")
         _ -> Result.Err("Bool.and requires Bool arguments")
 
+verify builtinBoolAndInner
+    builtinBoolAndInner(Val.ValBool(true), Val.ValBool(true)) => Result.Ok(Val.ValBool(true))
+    builtinBoolAndInner(Val.ValBool(true), Val.ValBool(false)) => Result.Ok(Val.ValBool(false))
+    builtinBoolAndInner(Val.ValInt(1), Val.ValBool(true)) => Result.Err("Bool.and requires Bool arguments")
+
 fn builtinBoolNot(args: List<Val>) -> Result<Val, String>
     ? "Bool.not(a) -> negation."
     v = Domain.Builtins.Helpers.oneArg(args)?
@@ -636,6 +687,9 @@ fn builtinMapEmpty(args: List<Val>) -> Result<Val, String>
     ? "Map.empty() -> empty map."
     Result.Ok(Val.ValMap(Map.empty()))
 
+verify builtinMapEmpty
+    builtinMapEmpty([]) => Result.Ok(Val.ValMap(Map.empty()))
+
 fn builtinMapSet(args: List<Val>) -> Result<Val, String>
     ? "Map.set(map, key, value) -> updated map."
     match args
@@ -652,6 +706,14 @@ fn builtinMapSetInner(mapV: Val, keyV: Val, valV: Val) -> Result<Val, String>
         Val.ValMap(m) -> Result.Ok(Val.ValMap(Map.set(m, Domain.Value.mapKeyRepr(keyV), valV)))
         _ -> Result.Err("Map.set requires a Map")
 
+verify builtinMapSetInner
+    builtinMapSetInner(Val.ValMap(Map.empty()), Val.ValStr("k"), Val.ValInt(1)) => Result.Ok(Val.ValMap(Map.set(Map.empty(), "k", Val.ValInt(1))))
+    builtinMapSetInner(Val.ValInt(1), Val.ValStr("k"), Val.ValInt(1)) => Result.Err("Map.set requires a Map")
+
+verify builtinMapSet
+    builtinMapSet([Val.ValMap(Map.empty()), Val.ValStr("k"), Val.ValInt(1)]) => Result.Ok(Val.ValMap(Map.set(Map.empty(), "k", Val.ValInt(1))))
+    builtinMapSet([Val.ValInt(1)]) => Result.Err("Map.set takes 3 arguments")
+
 fn builtinMapGet(args: List<Val>) -> Result<Val, String>
     ? "Map.get(map, key) -> Option<Val>. O(1)."
     pair = Domain.Builtins.Helpers.twoArgs(args)?
@@ -666,6 +728,14 @@ fn builtinMapGetInner(mapV: Val, keyV: Val) -> Result<Val, String>
             Option.None -> Result.Ok(Val.ValNone)
         _ -> Result.Err("Map.get requires a Map")
 
+verify builtinMapGetInner
+    builtinMapGetInner(Val.ValMap(Map.empty()), Val.ValStr("x")) => Result.Ok(Val.ValNone)
+    builtinMapGetInner(Val.ValInt(1), Val.ValStr("x")) => Result.Err("Map.get requires a Map")
+
+verify builtinMapGet
+    builtinMapGet([Val.ValMap(Map.empty()), Val.ValStr("x")]) => Result.Ok(Val.ValNone)
+    builtinMapGet([Val.ValMap(Map.set(Map.empty(), "x", Val.ValInt(5))), Val.ValStr("x")]) => Result.Ok(Val.ValSome(Val.ValInt(5)))
+
 fn builtinMapHas(args: List<Val>) -> Result<Val, String>
     ? "Map.has(map, key) -> Bool. O(1)."
     pair = Domain.Builtins.Helpers.twoArgs(args)?
@@ -677,6 +747,14 @@ fn builtinMapHasInner(mapV: Val, keyV: Val) -> Result<Val, String>
     match mapV
         Val.ValMap(m) -> Result.Ok(Val.ValBool(Map.has(m, Domain.Value.mapKeyRepr(keyV))))
         _ -> Result.Err("Map.has requires a Map")
+
+verify builtinMapHasInner
+    builtinMapHasInner(Val.ValMap(Map.empty()), Val.ValStr("x")) => Result.Ok(Val.ValBool(false))
+    builtinMapHasInner(Val.ValInt(1), Val.ValStr("x")) => Result.Err("Map.has requires a Map")
+
+verify builtinMapHas
+    builtinMapHas([Val.ValMap(Map.empty()), Val.ValStr("x")]) => Result.Ok(Val.ValBool(false))
+    builtinMapHas([Val.ValMap(Map.set(Map.empty(), "x", Val.ValInt(1))), Val.ValStr("x")]) => Result.Ok(Val.ValBool(true))
 
 fn builtinTimeNow(args: List<Val>) -> Result<Val, String>
     ? "Time.now() -> ISO timestamp string."
@@ -723,11 +801,20 @@ fn httpResponseToVal(result: Result<HttpResponse, String>) -> Result<Val, String
         Result.Ok(resp) -> Result.Ok(Val.ValOk(Val.ValRecord("HttpResponse", [("status", Val.ValInt(resp.status)), ("body", Val.ValStr(resp.body)), ("headers", headersToVal(resp.headers, []))])))
         Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
+verify httpResponseToVal
+    httpResponseToVal(Result.Err("timeout")) => Result.Ok(Val.ValErr(Val.ValStr("timeout")))
+
 fn headersToVal(headers: List<Header>, acc: List<Val>) -> Val
     ? "Convert host Header list to Val list."
     match headers
         [] -> Val.ValList(List.reverse(acc))
         [h, ..rest] -> headersToVal(rest, List.prepend(Val.ValRecord("Header", [("name", Val.ValStr(h.name)), ("value", Val.ValStr(h.value))]), acc))
+
+verify headersToVal
+    headersToVal([], []) => Val.ValList([])
+
+verify tcpConnToVal
+    tcpConnToVal(Tcp.Connection(id = "tcp-1", host = "localhost", port = 8080)) => Val.ValRecord("Tcp.Connection", [("id", Val.ValStr("tcp-1")), ("host", Val.ValStr("localhost")), ("port", Val.ValInt(8080))])
 
 fn builtinTcpSend(args: List<Val>) -> Result<Val, String>
     ? "Tcp.send(host, port, message) -> Result<String, String>."
@@ -792,6 +879,10 @@ fn valToTcpConn(v: Val) -> Result<Tcp.Connection, String>
         Val.ValRecord(_, fields) -> valToTcpConnFields(fields)
         _ -> Result.Err("expected Tcp.Connection record")
 
+verify valToTcpConn
+    valToTcpConn(Val.ValRecord("Tcp.Connection", [("id", Val.ValStr("tcp-1")), ("host", Val.ValStr("localhost")), ("port", Val.ValInt(8080))])) => Result.Ok(Tcp.Connection(id = "tcp-1", host = "localhost", port = 8080))
+    valToTcpConn(Val.ValInt(1)) => Result.Err("expected Tcp.Connection record")
+
 fn valToTcpConnFields(fields: List<(String, Val)>) -> Result<Tcp.Connection, String>
     ? "Build Tcp.Connection from field list."
     idVal = lookupFieldVal(fields, "id")
@@ -805,6 +896,10 @@ fn valToTcpConnFields(fields: List<(String, Val)>) -> Result<Tcp.Connection, Str
             _ -> Result.Err("bad Tcp.Connection host")
         _ -> Result.Err("bad Tcp.Connection id")
 
+verify valToTcpConnFields
+    valToTcpConnFields([("id", Val.ValStr("tcp-1")), ("host", Val.ValStr("h")), ("port", Val.ValInt(80))]) => Result.Ok(Tcp.Connection(id = "tcp-1", host = "h", port = 80))
+    valToTcpConnFields([("id", Val.ValInt(1)), ("host", Val.ValStr("h")), ("port", Val.ValInt(80))]) => Result.Err("bad Tcp.Connection id")
+
 fn lookupFieldVal(fields: List<(String, Val)>, name: String) -> Val
     ? "Find field value by name, return ValUnit if missing."
     match fields
@@ -813,6 +908,11 @@ fn lookupFieldVal(fields: List<(String, Val)>, name: String) -> Val
             (k, v) -> match k == name
                 true -> v
                 false -> lookupFieldVal(rest, name)
+
+verify lookupFieldVal
+    lookupFieldVal([("name", Val.ValStr("hello"))], "name") => Val.ValStr("hello")
+    lookupFieldVal([("a", Val.ValInt(1))], "b") => Val.ValUnit
+    lookupFieldVal([], "x") => Val.ValUnit
 
 fn builtinTcpWriteLine(args: List<Val>) -> Result<Val, String>
     ? "Tcp.writeLine(conn, line) -> Result<Unit, String>."

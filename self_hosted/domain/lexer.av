@@ -122,6 +122,9 @@ fn tokenizeBraceOrSkip(c: String, src: String, pos: Int) -> List<Token>
             true -> List.prepend(Token.TkRBrace, tokenize(src, pos + 1))
             false -> tokenize(src, pos + 1)
 
+verify tokenizeBraceOrSkip
+    tokenizeBraceOrSkip("~", "~", 0) => [Token.TkEof]
+
 fn tokenizeString(src: String, pos: Int, acc: String) -> List<Token>
     ? "Read string literal with interpolation and escape sequences."
     match pos >= String.len(src)
@@ -199,6 +202,9 @@ fn tokenizeStringMaybeEscapedBrace(src: String, pos: Int, acc: String) -> List<T
             false -> tokenizeInterp(src, pos, acc)
         Option.None -> tokenizeInterp(src, pos, acc)
 
+verify tokenizeStringMaybeEscapedBrace
+    tokenizeStringMaybeEscapedBrace("", 0, "hi") => [Token.TkStr("hi"), Token.TkInterpStart, Token.TkInterpEnd, Token.TkEof]
+
 fn tokenizeStringMaybeEscapedClose(src: String, pos: Int, acc: String) -> List<Token>
     ? "Check for }} (escaped close brace) or continue."
     match String.charAt(src, pos + 1)
@@ -206,6 +212,9 @@ fn tokenizeStringMaybeEscapedClose(src: String, pos: Int, acc: String) -> List<T
             true -> tokenizeString(src, pos + 2, acc + closeBrace())
             false -> tokenizeString(src, pos + 1, acc + closeBrace())
         Option.None -> tokenizeString(src, pos + 1, acc + closeBrace())
+
+verify tokenizeStringMaybeEscapedClose
+    tokenizeStringMaybeEscapedClose("\"", 0, "a") => [Token.TkStr("a" + closeBrace()), Token.TkEof]
 
 fn tokenizeInterp(src: String, pos: Int, acc: String) -> List<Token>
     ? "Start interpolation: emit accumulated string, TkInterpStart, expr tokens, TkInterpEnd."

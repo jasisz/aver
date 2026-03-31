@@ -25,6 +25,9 @@ fn builtinIntMax(args: List<Val>) -> Result<Val, String>
     match pair
         (aV, bV) -> builtinIntMaxInner(aV, bV)
 
+verify builtinIntMax
+    builtinIntMax([Val.ValInt(3), Val.ValInt(7)]) => Result.Ok(Val.ValInt(7))
+
 fn builtinIntMaxInner(aV: Val, bV: Val) -> Result<Val, String>
     ? "Inner Int.max."
     a = Domain.Builtins.Helpers.expectInt(aV)?
@@ -33,11 +36,18 @@ fn builtinIntMaxInner(aV: Val, bV: Val) -> Result<Val, String>
         true -> Result.Ok(Val.ValInt(a))
         false -> Result.Ok(Val.ValInt(b))
 
+verify builtinIntMaxInner
+    builtinIntMaxInner(Val.ValInt(3), Val.ValInt(7)) => Result.Ok(Val.ValInt(7))
+    builtinIntMaxInner(Val.ValInt(10), Val.ValInt(2)) => Result.Ok(Val.ValInt(10))
+
 fn builtinIntMin(args: List<Val>) -> Result<Val, String>
     ? "Int.min(a, b) -> smaller of a and b."
     pair = Domain.Builtins.Helpers.twoArgs(args)?
     match pair
         (aV, bV) -> builtinIntMinInner(aV, bV)
+
+verify builtinIntMin
+    builtinIntMin([Val.ValInt(3), Val.ValInt(7)]) => Result.Ok(Val.ValInt(3))
 
 fn builtinIntMinInner(aV: Val, bV: Val) -> Result<Val, String>
     ? "Inner Int.min."
@@ -46,6 +56,10 @@ fn builtinIntMinInner(aV: Val, bV: Val) -> Result<Val, String>
     match a < b
         true -> Result.Ok(Val.ValInt(a))
         false -> Result.Ok(Val.ValInt(b))
+
+verify builtinIntMinInner
+    builtinIntMinInner(Val.ValInt(3), Val.ValInt(7)) => Result.Ok(Val.ValInt(3))
+    builtinIntMinInner(Val.ValInt(10), Val.ValInt(2)) => Result.Ok(Val.ValInt(2))
 
 fn callString(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch String.* builtins."
@@ -241,6 +255,9 @@ fn builtinStringFromFloat(args: List<Val>) -> Result<Val, String>
         Val.ValFloat(f) -> Result.Ok(Val.ValStr(Float.toString(f)))
         _ -> Result.Err("String.fromFloat requires Float")
 
+verify builtinStringFromFloat
+    builtinStringFromFloat([Val.ValFloat(3.14)]) => Result.Ok(Val.ValStr("3.14"))
+
 fn builtinStringContains(args: List<Val>) -> Result<Val, String>
     ? "String.contains(haystack, needle) -> Bool."
     pair = Domain.Builtins.Helpers.twoArgs(args)?
@@ -373,11 +390,17 @@ fn builtinFloatFromString(args: List<Val>) -> Result<Val, String>
         Result.Ok(f) -> Result.Ok(Val.ValOk(Val.ValFloat(f)))
         Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
+verify builtinFloatFromString
+    builtinFloatFromString([Val.ValStr("3.14")]) => Result.Ok(Val.ValOk(Val.ValFloat(3.14)))
+
 fn builtinFloatFromInt(args: List<Val>) -> Result<Val, String>
     ? "Float.fromInt(n) -> Float."
     v = Domain.Builtins.Helpers.oneArg(args)?
     n = Domain.Builtins.Helpers.expectInt(v)?
     Result.Ok(Val.ValFloat(Int.toFloat(n)))
+
+verify builtinFloatFromInt
+    builtinFloatFromInt([Val.ValInt(5)]) => Result.Ok(Val.ValFloat(5.0))
 
 fn builtinFloatRound(args: List<Val>) -> Result<Val, String>
     ? "Float.round(f) -> Int."
@@ -385,6 +408,9 @@ fn builtinFloatRound(args: List<Val>) -> Result<Val, String>
     match v
         Val.ValFloat(f) -> Result.Ok(Val.ValInt(Float.round(f)))
         _ -> Result.Err("Float.round requires Float")
+
+verify builtinFloatRound
+    builtinFloatRound([Val.ValFloat(2.7)]) => Result.Ok(Val.ValInt(3))
 
 fn builtinFloatToString(args: List<Val>) -> Result<Val, String>
     ? "Float.toString(f) -> string representation."
@@ -403,12 +429,18 @@ fn builtinFloatAbs(args: List<Val>) -> Result<Val, String>
         Val.ValFloat(f) -> Result.Ok(Val.ValFloat(Float.abs(f)))
         _ -> Result.Err("Float.abs requires Float")
 
+verify builtinFloatAbs
+    builtinFloatAbs([Val.ValFloat(-3.5)]) => Result.Ok(Val.ValFloat(3.5))
+
 fn builtinFloatFloor(args: List<Val>) -> Result<Val, String>
     ? "Float.floor(f) -> Int."
     v = Domain.Builtins.Helpers.oneArg(args)?
     match v
         Val.ValFloat(f) -> Result.Ok(Val.ValInt(Float.floor(f)))
         _ -> Result.Err("Float.floor requires Float")
+
+verify builtinFloatFloor
+    builtinFloatFloor([Val.ValFloat(2.7)]) => Result.Ok(Val.ValInt(2))
 
 fn builtinFloatCeil(args: List<Val>) -> Result<Val, String>
     ? "Float.ceil(f) -> Int."
@@ -417,6 +449,9 @@ fn builtinFloatCeil(args: List<Val>) -> Result<Val, String>
         Val.ValFloat(f) -> Result.Ok(Val.ValInt(Float.ceil(f)))
         _ -> Result.Err("Float.ceil requires Float")
 
+verify builtinFloatCeil
+    builtinFloatCeil([Val.ValFloat(2.3)]) => Result.Ok(Val.ValInt(3))
+
 fn builtinFloatMin(args: List<Val>) -> Result<Val, String>
     ? "Float.min(a, b) -> Float."
     pair = Domain.Builtins.Helpers.twoArgs(args)?
@@ -424,12 +459,18 @@ fn builtinFloatMin(args: List<Val>) -> Result<Val, String>
         (Val.ValFloat(a), Val.ValFloat(b)) -> Result.Ok(Val.ValFloat(Float.min(a, b)))
         _ -> Result.Err("Float.min requires two Floats")
 
+verify builtinFloatMin
+    builtinFloatMin([Val.ValFloat(1.0), Val.ValFloat(3.0)]) => Result.Ok(Val.ValFloat(1.0))
+
 fn builtinFloatMax(args: List<Val>) -> Result<Val, String>
     ? "Float.max(a, b) -> Float."
     pair = Domain.Builtins.Helpers.twoArgs(args)?
     match pair
         (Val.ValFloat(a), Val.ValFloat(b)) -> Result.Ok(Val.ValFloat(Float.max(a, b)))
         _ -> Result.Err("Float.max requires two Floats")
+
+verify builtinFloatMax
+    builtinFloatMax([Val.ValFloat(1.0), Val.ValFloat(3.0)]) => Result.Ok(Val.ValFloat(3.0))
 
 fn builtinFloatSin(args: List<Val>) -> Result<Val, String>
     ? "Float.sin(f) -> Float."
@@ -448,12 +489,18 @@ fn builtinFloatCos(args: List<Val>) -> Result<Val, String>
         Val.ValFloat(f) -> Result.Ok(Val.ValFloat(Float.cos(f)))
         _ -> Result.Err("Float.cos requires Float")
 
+verify builtinFloatCos
+    builtinFloatCos([Val.ValFloat(0.0)]) => Result.Ok(Val.ValFloat(1.0))
+
 fn builtinFloatSqrt(args: List<Val>) -> Result<Val, String>
     ? "Float.sqrt(f) -> Float."
     v = Domain.Builtins.Helpers.oneArg(args)?
     match v
         Val.ValFloat(f) -> Result.Ok(Val.ValFloat(Float.sqrt(f)))
         _ -> Result.Err("Float.sqrt requires Float")
+
+verify builtinFloatSqrt
+    builtinFloatSqrt([Val.ValFloat(4.0)]) => Result.Ok(Val.ValFloat(2.0))
 
 fn builtinFloatPow(args: List<Val>) -> Result<Val, String>
     ? "Float.pow(base, exp) -> Float."
@@ -462,12 +509,18 @@ fn builtinFloatPow(args: List<Val>) -> Result<Val, String>
         (Val.ValFloat(a), Val.ValFloat(b)) -> Result.Ok(Val.ValFloat(Float.pow(a, b)))
         _ -> Result.Err("Float.pow requires two Floats")
 
+verify builtinFloatPow
+    builtinFloatPow([Val.ValFloat(2.0), Val.ValFloat(3.0)]) => Result.Ok(Val.ValFloat(8.0))
+
 fn builtinFloatAtan2(args: List<Val>) -> Result<Val, String>
     ? "Float.atan2(y, x) -> Float."
     pair = Domain.Builtins.Helpers.twoArgs(args)?
     match pair
         (Val.ValFloat(a), Val.ValFloat(b)) -> Result.Ok(Val.ValFloat(Float.atan2(a, b)))
         _ -> Result.Err("Float.atan2 requires two Floats")
+
+verify builtinFloatAtan2
+    builtinFloatAtan2([Val.ValFloat(0.0), Val.ValFloat(1.0)]) => Result.Ok(Val.ValFloat(0.0))
 
 fn builtinFloatPi(args: List<Val>) -> Result<Val, String>
     ? "Float.pi() -> Float."
@@ -484,11 +537,17 @@ fn builtinStringToUpper(args: List<Val>) -> Result<Val, String>
     s = Domain.Builtins.Helpers.expectStr(v)?
     Result.Ok(Val.ValStr(String.toUpper(s)))
 
+verify builtinStringToUpper
+    builtinStringToUpper([Val.ValStr("hello")]) => Result.Ok(Val.ValStr("HELLO"))
+
 fn builtinStringTrim(args: List<Val>) -> Result<Val, String>
     ? "String.trim(s) -> trimmed string."
     v = Domain.Builtins.Helpers.oneArg(args)?
     s = Domain.Builtins.Helpers.expectStr(v)?
     Result.Ok(Val.ValStr(String.trim(s)))
+
+verify builtinStringTrim
+    builtinStringTrim([Val.ValStr("  hello  ")]) => Result.Ok(Val.ValStr("hello"))
 
 fn builtinStringEndsWith(args: List<Val>) -> Result<Val, String>
     ? "String.endsWith(s, suffix) -> Bool."
@@ -496,17 +555,27 @@ fn builtinStringEndsWith(args: List<Val>) -> Result<Val, String>
     match pair
         (sV, pV) -> builtinStringEndsWithInner(sV, pV)
 
+verify builtinStringEndsWith
+    builtinStringEndsWith([Val.ValStr("test.av"), Val.ValStr(".av")]) => Result.Ok(Val.ValBool(true))
+
 fn builtinStringEndsWithInner(sV: Val, pV: Val) -> Result<Val, String>
     ? "Inner String.endsWith."
     s = Domain.Builtins.Helpers.expectStr(sV)?
     p = Domain.Builtins.Helpers.expectStr(pV)?
     Result.Ok(Val.ValBool(String.endsWith(s, p)))
 
+verify builtinStringEndsWithInner
+    builtinStringEndsWithInner(Val.ValStr("hello"), Val.ValStr("lo")) => Result.Ok(Val.ValBool(true))
+    builtinStringEndsWithInner(Val.ValStr("hello"), Val.ValStr("xx")) => Result.Ok(Val.ValBool(false))
+
 fn builtinStringSplit(args: List<Val>) -> Result<Val, String>
     ? "String.split(s, sep) -> List<String>."
     pair = Domain.Builtins.Helpers.twoArgs(args)?
     match pair
         (sV, sepV) -> builtinStringSplitInner(sV, sepV)
+
+verify builtinStringSplit
+    builtinStringSplit([Val.ValStr("a-b"), Val.ValStr("-")]) => Result.Ok(Val.ValList([Val.ValStr("a"), Val.ValStr("b")]))
 
 fn builtinStringSplitInner(sV: Val, sepV: Val) -> Result<Val, String>
     ? "Inner String.split."
@@ -515,11 +584,18 @@ fn builtinStringSplitInner(sV: Val, sepV: Val) -> Result<Val, String>
     parts = String.split(s, sep)
     Result.Ok(Val.ValList(strPartsToVals(parts, [])))
 
+verify builtinStringSplitInner
+    builtinStringSplitInner(Val.ValStr("a,b,c"), Val.ValStr(",")) => Result.Ok(Val.ValList([Val.ValStr("a"), Val.ValStr("b"), Val.ValStr("c")]))
+
 fn strPartsToVals(parts: List<String>, acc: List<Val>) -> List<Val>
     ? "Convert string list to ValStr list."
     match parts
         [] -> List.reverse(acc)
         [s, ..rest] -> strPartsToVals(rest, List.prepend(Val.ValStr(s), acc))
+
+verify strPartsToVals
+    strPartsToVals(["a", "b"], []) => [Val.ValStr("a"), Val.ValStr("b")]
+    strPartsToVals([], []) => []
 
 fn builtinStringRepeat(args: List<Val>) -> Result<Val, String>
     ? "String.repeat(s, n) -> repeated string."
@@ -527,11 +603,17 @@ fn builtinStringRepeat(args: List<Val>) -> Result<Val, String>
     match pair
         (sV, nV) -> builtinStringRepeatInner(sV, nV)
 
+verify builtinStringRepeat
+    builtinStringRepeat([Val.ValStr("ab"), Val.ValInt(2)]) => Result.Ok(Val.ValStr("abab"))
+
 fn builtinStringRepeatInner(sV: Val, nV: Val) -> Result<Val, String>
     ? "Inner String.repeat."
     s = Domain.Builtins.Helpers.expectStr(sV)?
     n = Domain.Builtins.Helpers.expectInt(nV)?
     Result.Ok(Val.ValStr(repeatStr(s, n, "")))
+
+verify builtinStringRepeatInner
+    builtinStringRepeatInner(Val.ValStr("ha"), Val.ValInt(3)) => Result.Ok(Val.ValStr("hahaha"))
 
 fn repeatStr(s: String, n: Int, acc: String) -> String
     ? "Repeat string n times."
@@ -539,11 +621,18 @@ fn repeatStr(s: String, n: Int, acc: String) -> String
         true -> acc
         false -> repeatStr(s, n - 1, acc + s)
 
+verify repeatStr
+    repeatStr("ab", 3, "") => "ababab"
+    repeatStr("x", 0, "") => ""
+
 fn builtinStringReplaceAll(args: List<Val>) -> Result<Val, String>
     ? "String.replace(s, from, to) -> String with all occurrences replaced."
     match List.len(args) == 3
         true -> builtinStringReplaceAllExtract(args)
         false -> Result.Err("String.replace takes 3 arguments")
+
+verify builtinStringReplaceAll
+    builtinStringReplaceAll([Val.ValStr("aaa"), Val.ValStr("a"), Val.ValStr("b")]) => Result.Ok(Val.ValStr("bbb"))
 
 fn builtinStringReplaceAllExtract(args: List<Val>) -> Result<Val, String>
     ? "Extract args for String.replace."
@@ -555,9 +644,15 @@ fn builtinStringReplaceAllExtract(args: List<Val>) -> Result<Val, String>
             [] -> Result.Err("String.replace takes 3 arguments")
         [] -> Result.Err("String.replace takes 3 arguments")
 
+verify builtinStringReplaceAllExtract
+    builtinStringReplaceAllExtract([Val.ValStr("ab"), Val.ValStr("a"), Val.ValStr("x")]) => Result.Ok(Val.ValStr("xb"))
+
 fn builtinStringReplaceAllDo(sV: Val, fromV: Val, toV: Val) -> Result<Val, String>
     ? "Inner impl of String.replace."
     s = Domain.Builtins.Helpers.expectStr(sV)?
     from = Domain.Builtins.Helpers.expectStr(fromV)?
     to = Domain.Builtins.Helpers.expectStr(toV)?
     Result.Ok(Val.ValStr(String.replace(s, from, to)))
+
+verify builtinStringReplaceAllDo
+    builtinStringReplaceAllDo(Val.ValStr("hello world"), Val.ValStr("world"), Val.ValStr("aver")) => Result.Ok(Val.ValStr("hello aver"))
