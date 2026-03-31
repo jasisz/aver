@@ -1,7 +1,8 @@
 use std::collections::BTreeSet;
 
 use crate::ast::{
-    DecisionBlock, DecisionImpact, Expr, FnDef, Spanned, Stmt, TopLevel, TypeDef, VerifyKind,
+    DecisionBlock, DecisionImpact, Expr, FnDef, Spanned, Stmt, StrPart, TopLevel, TypeDef,
+    VerifyKind,
 };
 use crate::verify_law::{canonical_spec_ref, named_law_function};
 
@@ -17,6 +18,7 @@ fn fn_needs_desc(f: &FnDef) -> bool {
 /// - skip `main`
 /// - skip effectful functions (tested through replay/recording flow)
 /// - skip trivial pure pass-through wrappers
+/// - skip trivial single-expression bodies without branching/arithmetic
 /// - require verify for the rest (pure, non-trivial logic)
 fn fn_needs_verify(f: &FnDef) -> bool {
     if f.name == "main" {
@@ -25,7 +27,45 @@ fn fn_needs_verify(f: &FnDef) -> bool {
     if !f.effects.is_empty() {
         return false;
     }
-    !is_trivial_passthrough_wrapper(f)
+    !is_trivial_passthrough_wrapper(f) && !is_trivial_body(f)
+}
+
+/// A function body is trivial when it is a single expression that contains
+/// no branching (match) and no arithmetic/comparison (binop).
+/// Examples: constructor calls, literals, field access, simple fn calls
+/// with literal/ident args.
+fn is_trivial_body(f: &FnDef) -> bool {
+    if f.body.stmts().len() != 1 {
+        return false;
+    }
+    match f.body.stmts().first() {
+        Some(Stmt::Expr(expr)) => !expr_has_branching_or_binop(expr),
+        _ => false,
+    }
+}
+
+fn expr_has_branching_or_binop(expr: &Spanned<Expr>) -> bool {
+    match &expr.node {
+        Expr::Match { .. } => true,
+        Expr::BinOp(_, left, right) => true
+            || expr_has_branching_or_binop(left)
+            || expr_has_branching_or_binop(right),
+        Expr::FnCall(callee, args) => {
+            expr_has_branching_or_binop(callee)
+                || args.iter().any(expr_has_branching_or_binop)
+        }
+        Expr::Constructor(_, Some(arg)) => expr_has_branching_or_binop(arg),
+        Expr::List(items) | Expr::Tuple(items) => items.iter().any(expr_has_branching_or_binop),
+        Expr::ErrorProp(inner) | Expr::Attr(inner, _) => expr_has_branching_or_binop(inner),
+        Expr::RecordCreate { fields, .. } => {
+            fields.iter().any(|(_, v)| expr_has_branching_or_binop(v))
+        }
+        Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
+            StrPart::Parsed(e) => expr_has_branching_or_binop(e),
+            _ => false,
+        }),
+        _ => false,
+    }
 }
 
 fn is_trivial_passthrough_wrapper(f: &FnDef) -> bool {
