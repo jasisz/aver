@@ -543,27 +543,27 @@ pub(super) fn from_type_error(te: &TypeError, source: &str, file: &str) -> Diagn
     }];
 
     // Add secondary span region if present (e.g. return type mismatch body line).
-    if let Some(ref sec) = te.secondary {
-        if sec.line != line {
-            let sec_source_text = source
-                .lines()
-                .nth(sec.line.saturating_sub(1))
-                .unwrap_or_default();
-            let (sec_col, sec_len) = if sec.col > 0 {
-                (sec.col, estimate_span_len(sec_source_text, sec.col))
-            } else {
-                let indent = sec_source_text.len() - sec_source_text.trim_start().len();
-                (indent + 1, sec_source_text.trim().len())
-            };
-            regions.push(AnnotatedRegion {
-                source_lines: extract_source_lines(source, sec.line, 0),
-                underline: Some(Underline {
-                    col: sec_col,
-                    len: sec_len,
-                    label: sec.label.clone(),
-                }),
-            });
-        }
+    if let Some(ref sec) = te.secondary
+        && sec.line != line
+    {
+        let sec_source_text = source
+            .lines()
+            .nth(sec.line.saturating_sub(1))
+            .unwrap_or_default();
+        let (sec_col, sec_len) = if sec.col > 0 {
+            (sec.col, estimate_span_len(sec_source_text, sec.col))
+        } else {
+            let indent = sec_source_text.len() - sec_source_text.trim_start().len();
+            (indent + 1, sec_source_text.trim().len())
+        };
+        regions.push(AnnotatedRegion {
+            source_lines: extract_source_lines(source, sec.line, 0),
+            underline: Some(Underline {
+                col: sec_col,
+                len: sec_len,
+                label: sec.label.clone(),
+            }),
+        });
     }
 
     regions.sort_by_key(|r| r.source_lines.first().map(|sl| sl.line_num).unwrap_or(0));

@@ -543,23 +543,12 @@ mod tests {
         }
     }
 
-    fn spanned_at(node: Expr, line: usize) -> Spanned<Expr> {
-        Spanned {
-            node,
-            line: line as SourceLine,
-        }
-    }
-
     fn ident(name: &str) -> Expr {
         Expr::Ident(name.to_string())
     }
 
     fn int(i: i64) -> Expr {
         Expr::Literal(Literal::Int(i))
-    }
-
-    fn bool_lit(b: bool) -> Expr {
-        Expr::Literal(Literal::Bool(b))
     }
 
     fn binop(op: BinOp, left: Expr, right: Expr) -> Expr {
