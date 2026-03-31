@@ -729,7 +729,7 @@ mod tests {
                 aver::ast::VerifyKind::Cases,
             )],
             verify_counts: HashMap::from([("fib".to_string(), 1)]),
-            verify_samples: HashMap::from([("fib".to_string(), vec!["fib(5) → 8".to_string()])]),
+            verify_samples: HashMap::from([("fib".to_string(), vec!["fib(5) => 8".to_string()])]),
             decisions: vec![],
         }
     }
@@ -754,7 +754,7 @@ mod tests {
         assert_eq!(json["modules"][0]["functions"][0]["verify_count"], 1);
         assert_eq!(
             json["modules"][0]["functions"][0]["verify"][0],
-            "fib(5) → 8"
+            "fib(5) => 8"
         );
     }
 

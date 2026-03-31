@@ -163,7 +163,7 @@ fn scored_verify_samples(cases: &[(String, String)], ret_category: Option<&str>)
                 return None;
             }
             Some(ScoredVerifyCase {
-                rendered: format!("{lhs_text} -> {rhs_text}"),
+                rendered: format!("{lhs_text} => {rhs_text}"),
                 base_score: base_verify_case_score(lhs_text, rhs_text),
                 categories: classify_verify_case(lhs_text, rhs_text, ret_category),
                 original_index,
