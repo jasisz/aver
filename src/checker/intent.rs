@@ -484,11 +484,12 @@ pub fn check_module_intent_with_sigs_in(
                         }
                     }
                 }
-                let is_verified = verified_fns.contains(f.name.as_str())
-                    || spec_fns.contains(&f.name)
-                    || empty_verify_fns.contains(f.name.as_str())
-                    || invalid_verify_fns.contains(f.name.as_str());
-                if fn_needs_verify(f) && !is_verified {
+                if fn_needs_verify(f)
+                    && !verified_fns.contains(f.name.as_str())
+                    && !spec_fns.contains(&f.name)
+                    && !empty_verify_fns.contains(f.name.as_str())
+                    && !invalid_verify_fns.contains(f.name.as_str())
+                {
                     errors.push(CheckFinding {
                         line: f.line,
                         module: module_name.clone(),
@@ -497,9 +498,11 @@ pub fn check_module_intent_with_sigs_in(
                         message: format!("Function '{}' has no verify block", f.name),
                         extra_spans: vec![],
                     });
-                } else if !f.effects.is_empty()
-                    && f.name != "main"
-                    && !is_verified
+                }
+                // Warn when an effectful function HAS a verify block — verify
+                // is for pure functions; effectful ones should use replay.
+                if !f.effects.is_empty()
+                    && verified_fns.contains(f.name.as_str())
                 {
                     warnings.push(CheckFinding {
                         line: f.line,
@@ -507,7 +510,7 @@ pub fn check_module_intent_with_sigs_in(
                         file: source_file.map(|s| s.to_string()),
                         fn_name: None,
                         message: format!(
-                            "Function '{}' has effects but no verify block — consider testing via replay",
+                            "Function '{}' has effects — verify blocks are for pure functions; test via replay instead",
                             f.name
                         ),
                         extra_spans: vec![],

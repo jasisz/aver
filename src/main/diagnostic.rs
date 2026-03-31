@@ -162,7 +162,7 @@ impl Diagnostic {
         // Errors: always show. Warnings: only if verbose.
         // Skip snippet for structural hints where the signature adds no information
         // beyond what in-fn: and repair: already say.
-        let skip_snippet = matches!(self.slug, "missing-verify" | "missing-verify-effectful" | "missing-description");
+        let skip_snippet = matches!(self.slug, "missing-verify" | "verify-effectful" | "missing-description");
         let show_source = (is_error || verbose) && !skip_snippet;
         let has_source = self.regions.iter().any(|r| !r.source_lines.is_empty());
         if show_source && has_source {
@@ -802,10 +802,10 @@ pub(super) fn from_check_finding(
 }
 
 fn classify_finding(msg: &str) -> (&'static str, Option<String>) {
-    if msg.contains("has effects but no verify block") {
+    if msg.contains("has effects") && msg.contains("verify blocks are for pure") {
         (
-            "missing-verify-effectful",
-            Some("Test via `aver run --record` + `aver replay --test`".to_string()),
+            "verify-effectful",
+            Some("Remove verify block; test via `aver run --record` + `aver replay --test`".to_string()),
         )
     } else if msg.contains("no verify block") {
         (
