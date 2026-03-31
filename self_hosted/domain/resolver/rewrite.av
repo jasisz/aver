@@ -490,15 +490,10 @@ verify rewriteBoolMatchArmPairInner
 
 fn rewriteBoolMatchArmPairBools(b1: Bool, body1: Expr, b2: Bool, body2: Expr) -> Option<(Expr, Expr)>
     ? "Return ordered bool branch bodies when the pair is exactly true/false or false/true."
-    match b1 == true
-        true -> match b2 == false
-            true -> Option.Some((body1, body2))
-            false -> Option.None
-        false -> match b1 == false
-            true -> match b2 == true
-                true -> Option.Some((body2, body1))
-                false -> Option.None
-            false -> Option.None
+    match (b1, b2)
+        (true, false) -> Option.Some((body1, body2))
+        (false, true) -> Option.Some((body2, body1))
+        _ -> Option.None
 
 verify rewriteBoolMatchArmPairBools
     rewriteBoolMatchArmPairBools(true, Expr.ExprInt(1), false, Expr.ExprInt(2)) => Option.Some((Expr.ExprInt(1), Expr.ExprInt(2)))

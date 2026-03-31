@@ -7,7 +7,7 @@ module Builtins
 
 fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch qualified builtin calls to sub-module implementations."
-    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
+    ! [Args.get, Console.error, Console.print, Console.readLine, Console.warn, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Env.get, Env.set, Http.delete, Http.get, Http.head, Http.patch, Http.post, Http.put, HttpServer.listen, HttpServer.listenWith, Random.int, Tcp.close, Tcp.connect, Tcp.ping, Tcp.readLine, Tcp.send, Tcp.writeLine, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.now, Time.sleep, Time.unixMs]
     match callBuiltinFast(name, args)
         Option.Some(result) -> result
         Option.None -> match String.startsWith(name, "List.")
@@ -46,7 +46,6 @@ verify callBuiltinFast
 
 fn callBuiltinByIdValues(id: Int, args: List<Val>) -> Result<Val, String>
     ? "Dispatch pre-evaluated args by integer builtin ID. IDs assigned in Ast.builtinNameToId."
-    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match id
         0 -> builtinMapEmpty(args)
         1 -> builtinMapSet(args)
@@ -72,7 +71,7 @@ fn callBuiltinByIdValues(id: Int, args: List<Val>) -> Result<Val, String>
 
 fn callBuiltinAfterList(name: String, args: List<Val>) -> Result<Val, String>
     ? "Continue dispatch after List."
-    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
+    ! [Args.get, Console.error, Console.print, Console.readLine, Console.warn, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Env.get, Env.set, Http.delete, Http.get, Http.head, Http.patch, Http.post, Http.put, HttpServer.listen, HttpServer.listenWith, Random.int, Tcp.close, Tcp.connect, Tcp.ping, Tcp.readLine, Tcp.send, Tcp.writeLine, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.now, Time.sleep, Time.unixMs]
     match String.startsWith(name, "Vector.")
         true -> Domain.Builtins.Vector.call(name, args)
         false -> match String.startsWith(name, "Int.")
@@ -85,7 +84,7 @@ fn callBuiltinAfterList(name: String, args: List<Val>) -> Result<Val, String>
 
 fn callBuiltinOther(name: String, args: List<Val>) -> Result<Val, String>
     ? "Handle non-prefixed builtins: Result.*, Option.*, Bool.*, Map.*, services, Char, variant constructors."
-    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
+    ! [Args.get, Console.error, Console.print, Console.readLine, Console.warn, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Env.get, Env.set, Http.delete, Http.get, Http.head, Http.patch, Http.post, Http.put, HttpServer.listen, HttpServer.listenWith, Random.int, Tcp.close, Tcp.connect, Tcp.ping, Tcp.readLine, Tcp.send, Tcp.writeLine, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.now, Time.sleep, Time.unixMs]
     match name
         "Char.fromCode" -> Domain.Builtins.Primitives.callChar(name, args)
         "Char.toCode" -> Domain.Builtins.Primitives.callChar(name, args)
@@ -275,7 +274,7 @@ fn builtinMapRemoveInner(mapV: Val, keyV: Val) -> Result<Val, String>
 
 fn callBuiltinServices(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch Terminal.*, Time.*, Random.*, Http.*, Tcp.* service builtins."
-    ! [Env, Http, HttpServer, Random, Tcp, Terminal, Time]
+    ! [Http.delete, Http.get, Http.head, Http.patch, Http.post, Http.put, HttpServer.listen, HttpServer.listenWith, Random.int, Tcp.close, Tcp.connect, Tcp.ping, Tcp.readLine, Tcp.send, Tcp.writeLine, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.now, Time.sleep, Time.unixMs]
     match name
         "Random.int" -> builtinRandomInt(args)
         "Time.now" -> builtinTimeNow(args)
@@ -376,7 +375,7 @@ fn builtinTimeUnixMs(args: List<Val>) -> Result<Val, String>
 
 fn builtinTerminalNoArg(name: String, args: List<Val>) -> Result<Val, String>
     ? "Terminal no-arg commands: clear, flush, enableRawMode, etc."
-    ! [Terminal]
+    ! [Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.resetColor, Terminal.showCursor]
     match name
         "Terminal.clear" -> termClear()
         "Terminal.flush" -> termFlush()
@@ -388,36 +387,43 @@ fn builtinTerminalNoArg(name: String, args: List<Val>) -> Result<Val, String>
         _ -> Result.Err("unknown terminal command: {name}")
 
 fn termClear() -> Result<Val, String>
+    ? "Clear the terminal screen."
     ! [Terminal.clear]
     Terminal.clear()
     Result.Ok(Val.ValUnit)
 
 fn termFlush() -> Result<Val, String>
+    ? "Flush terminal output."
     ! [Terminal.flush]
     Terminal.flush()
     Result.Ok(Val.ValUnit)
 
 fn termEnableRawMode() -> Result<Val, String>
+    ? "Enable terminal raw mode."
     ! [Terminal.enableRawMode]
     Terminal.enableRawMode()
     Result.Ok(Val.ValUnit)
 
 fn termDisableRawMode() -> Result<Val, String>
+    ? "Disable terminal raw mode."
     ! [Terminal.disableRawMode]
     Terminal.disableRawMode()
     Result.Ok(Val.ValUnit)
 
 fn termHideCursor() -> Result<Val, String>
+    ? "Hide terminal cursor."
     ! [Terminal.hideCursor]
     Terminal.hideCursor()
     Result.Ok(Val.ValUnit)
 
 fn termShowCursor() -> Result<Val, String>
+    ? "Show terminal cursor."
     ! [Terminal.showCursor]
     Terminal.showCursor()
     Result.Ok(Val.ValUnit)
 
 fn termResetColor() -> Result<Val, String>
+    ? "Reset terminal color."
     ! [Terminal.resetColor]
     Terminal.resetColor()
     Result.Ok(Val.ValUnit)
@@ -444,6 +450,7 @@ fn builtinTerminalPrint(args: List<Val>) -> Result<Val, String>
         _ -> termPrintStr(Domain.Value.valRepr(v))
 
 fn termPrintStr(s: String) -> Result<Val, String>
+    ? "Print string to terminal."
     ! [Terminal.print]
     Terminal.print(s)
     Result.Ok(Val.ValUnit)
@@ -685,7 +692,7 @@ fn builtinTimeNow(args: List<Val>) -> Result<Val, String>
 
 fn builtinHttpSimple(args: List<Val>, method: String) -> Result<Val, String>
     ? "Http.get/head/delete(url) -> Result<HttpResponse, String> forwarded to host."
-    ! [Http]
+    ! [Http.delete, Http.get, Http.head]
     v = Domain.Builtins.Helpers.oneArg(args)?
     url = Domain.Builtins.Helpers.expectStr(v)?
     match method
@@ -695,7 +702,7 @@ fn builtinHttpSimple(args: List<Val>, method: String) -> Result<Val, String>
 
 fn builtinHttpBody(args: List<Val>, method: String) -> Result<Val, String>
     ? "Http.post/put/patch(url, body, contentType, headers) forwarded to host."
-    ! [Http]
+    ! [Http.patch, Http.post, Http.put]
     match args
         [urlV, ..r1] -> match r1
             [bodyV, ..r2] -> match r2
@@ -708,7 +715,7 @@ fn builtinHttpBody(args: List<Val>, method: String) -> Result<Val, String>
 
 fn builtinHttpBodyInner(urlV: Val, bodyV: Val, ctV: Val, hdrsV: Val, method: String) -> Result<Val, String>
     ? "Inner Http body method."
-    ! [Http]
+    ! [Http.patch, Http.post, Http.put]
     url = Domain.Builtins.Helpers.expectStr(urlV)?
     body = Domain.Builtins.Helpers.expectStr(bodyV)?
     ct = Domain.Builtins.Helpers.expectStr(ctV)?
