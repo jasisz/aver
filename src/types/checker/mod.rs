@@ -36,6 +36,15 @@ pub struct TypeError {
     pub message: String,
     pub line: usize,
     pub col: usize,
+    /// Optional secondary span for multi-region diagnostics (e.g. declared type vs actual return).
+    pub secondary: Option<TypeErrorSpan>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeErrorSpan {
+    pub line: usize,
+    pub col: usize,
+    pub label: String,
 }
 
 /// Result of type-checking that also carries memo-safety metadata.
@@ -181,6 +190,7 @@ impl TypeChecker {
             message: msg.into(),
             line,
             col: 0,
+            secondary: None,
         });
     }
 
@@ -189,6 +199,7 @@ impl TypeChecker {
             message: msg.into(),
             line,
             col: 0,
+            secondary: None,
         });
     }
 

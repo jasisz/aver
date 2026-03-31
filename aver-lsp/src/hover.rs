@@ -244,7 +244,7 @@ fn decision_summary(fd: &FnDef, items: &[TopLevel]) -> Option<String> {
         .into_iter()
         .filter(|decision| {
             decision.impacts.iter().any(
-                |impact| matches!(impact, DecisionImpact::Symbol(symbol) if symbol == &fd.name),
+                |impact| matches!(&impact.node, DecisionImpact::Symbol(symbol) if symbol == &fd.name),
             )
         })
         .collect();
@@ -355,14 +355,14 @@ fn is_memo_safe_type(ty: &Type, safe_named: &std::collections::HashSet<String>) 
 fn build_decision_hover(decision: &DecisionBlock) -> String {
     let mut parts = Vec::new();
     parts.push(format!("```aver\ndecision {}\n```", decision.name));
-    parts.push(format!("- chosen: `{}`", impact_text(&decision.chosen)));
+    parts.push(format!("- chosen: `{}`", decision.chosen.node.text()));
     if !decision.rejected.is_empty() {
         parts.push(format!(
             "- rejected: `{}`",
             decision
                 .rejected
                 .iter()
-                .map(impact_text)
+                .map(|s| s.node.text())
                 .collect::<Vec<_>>()
                 .join("`, `")
         ));
@@ -373,7 +373,7 @@ fn build_decision_hover(decision: &DecisionBlock) -> String {
             decision
                 .impacts
                 .iter()
-                .map(impact_text)
+                .map(|s| s.node.text())
                 .collect::<Vec<_>>()
                 .join("`, `")
         ));
@@ -388,10 +388,6 @@ fn build_decision_hover(decision: &DecisionBlock) -> String {
         parts.push(format!("\n{}", decision.reason));
     }
     parts.join("\n")
-}
-
-fn impact_text(impact: &DecisionImpact) -> &str {
-    impact.text()
 }
 
 fn format_signature(fd: &FnDef) -> String {

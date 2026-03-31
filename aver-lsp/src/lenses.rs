@@ -83,7 +83,7 @@ pub fn code_lenses(source: &str, base_dir: Option<&str>, uri: &str) -> Vec<CodeL
                     .iter()
                     .filter(|decision| {
                         decision.impacts.iter().any(
-                            |impact| matches!(impact, DecisionImpact::Symbol(symbol) if impact_matches_fn(symbol, &fd.name)),
+                            |impact| matches!(&impact.node, DecisionImpact::Symbol(symbol) if impact_matches_fn(symbol, &fd.name)),
                         )
                     })
                     .map(|decision| decision.name.as_str())
@@ -93,7 +93,7 @@ pub fn code_lenses(source: &str, base_dir: Option<&str>, uri: &str) -> Vec<CodeL
                         .iter()
                         .find(|decision| {
                             decision.impacts.iter().any(|impact| {
-                                matches!(impact, DecisionImpact::Symbol(symbol) if impact_matches_fn(symbol, &fd.name))
+                                matches!(&impact.node, DecisionImpact::Symbol(symbol) if impact_matches_fn(symbol, &fd.name))
                             })
                         })
                         .map(|decision| decision.line)
@@ -109,7 +109,7 @@ pub fn code_lenses(source: &str, base_dir: Option<&str>, uri: &str) -> Vec<CodeL
             }
             TopLevel::Decision(decision) => {
                 let impacts: Vec<&str> =
-                    decision.impacts.iter().map(DecisionImpact::text).collect();
+                    decision.impacts.iter().map(|s| s.node.text()).collect();
                 let target_line = first_impact_line(&items, decision).unwrap_or(decision.line);
                 lenses.push(make_lens(
                     uri,
@@ -119,7 +119,7 @@ pub fn code_lenses(source: &str, base_dir: Option<&str>, uri: &str) -> Vec<CodeL
                     format!(
                         "decision {}\nchosen: {}\nimpacts:\n{}",
                         decision.name,
-                        decision.chosen.text(),
+                        decision.chosen.node.text(),
                         impacts.join("\n")
                     ),
                 ));
@@ -162,7 +162,7 @@ fn summarize_counts(case_count: usize, law_count: usize) -> String {
 
 fn first_impact_line(items: &[TopLevel], decision: &aver::ast::DecisionBlock) -> Option<usize> {
     for impact in &decision.impacts {
-        let DecisionImpact::Symbol(symbol) = impact else {
+        let DecisionImpact::Symbol(symbol) = &impact.node else {
             continue;
         };
         for item in items {

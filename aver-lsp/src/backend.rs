@@ -40,7 +40,7 @@ impl AverBackend {
 
     async fn publish_diagnostics_for(&self, uri: &Uri, source: &str) {
         let base_dir = self.get_base_dir(uri);
-        let diags = diagnostics::diagnose(source, base_dir.as_deref());
+        let diags = diagnostics::diagnose(source, base_dir.as_deref(), Some(uri));
         self.client
             .publish_diagnostics(uri.clone(), diags, None)
             .await;

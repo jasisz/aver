@@ -2,7 +2,7 @@ use tower_lsp_server::ls_types::{
     DocumentSymbol, DocumentSymbolResponse, Position, Range, SymbolKind,
 };
 
-use aver::ast::{DecisionImpact, TopLevel, TypeDef, VerifyKind};
+use aver::ast::{TopLevel, TypeDef, VerifyKind};
 use aver::checker::merge_verify_blocks;
 
 use crate::completion;
@@ -48,7 +48,7 @@ pub fn document_symbols(source: &str) -> Option<DocumentSymbolResponse> {
             )),
             TopLevel::Decision(decision) => Some(make_symbol(
                 decision.name.clone(),
-                Some(format!("chosen {}", impact_text(&decision.chosen))),
+                Some(format!("chosen {}", decision.chosen.node.text())),
                 SymbolKind::OBJECT,
                 line_range(decision.line),
                 None,
@@ -123,9 +123,6 @@ fn line_range(line: usize) -> Range {
     }
 }
 
-fn impact_text(impact: &DecisionImpact) -> &str {
-    impact.text()
-}
 
 fn make_symbol(
     name: String,

@@ -1593,13 +1593,7 @@ fn run_check_for_file(
         let mut diagnostics = Vec::new();
 
         for te in &tc_result.errors {
-            diagnostics.push(diagnostic::from_type_error(
-                &te.message,
-                te.line,
-                te.col,
-                source,
-                &shown_path,
-            ));
+            diagnostics.push(diagnostic::from_type_error(te, source, &shown_path));
         }
         for e in &findings.errors {
             diagnostics.push(diagnostic::from_check_finding(

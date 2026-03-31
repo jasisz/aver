@@ -501,7 +501,7 @@ pub fn check_module_intent_with_sigs_in(
                 }
             }
             TopLevel::Decision(d) => {
-                if let DecisionImpact::Symbol(name) = &d.chosen
+                if let DecisionImpact::Symbol(name) = &d.chosen.node
                     && !decision_symbol_known(
                         name,
                         &declared_symbols,
@@ -510,10 +510,10 @@ pub fn check_module_intent_with_sigs_in(
                     )
                 {
                     errors.push(CheckFinding {
-                            line: d.line,
+                            line: d.chosen.line,
                             module: module_name.clone(),
                             file: source_file.map(|s| s.to_string()),
-                            fn_name: None,
+                            fn_name: Some(d.name.clone()),
                             message: format!(
                                 "Decision '{}' references unknown chosen symbol '{}'. Use quoted string for semantic chosen value.",
                                 d.name, name
@@ -522,7 +522,7 @@ pub fn check_module_intent_with_sigs_in(
                         });
                 }
                 for rejected in &d.rejected {
-                    if let DecisionImpact::Symbol(name) = rejected
+                    if let DecisionImpact::Symbol(name) = &rejected.node
                         && !decision_symbol_known(
                             name,
                             &declared_symbols,
@@ -531,10 +531,10 @@ pub fn check_module_intent_with_sigs_in(
                         )
                     {
                         errors.push(CheckFinding {
-                                line: d.line,
+                                line: rejected.line,
                                 module: module_name.clone(),
                                 file: source_file.map(|s| s.to_string()),
-                                fn_name: None,
+                                fn_name: Some(d.name.clone()),
                                 message: format!(
                                     "Decision '{}' references unknown rejected symbol '{}'. Use quoted string for semantic rejected value.",
                                     d.name, name
@@ -544,7 +544,7 @@ pub fn check_module_intent_with_sigs_in(
                     }
                 }
                 for impact in &d.impacts {
-                    if let DecisionImpact::Symbol(name) = impact
+                    if let DecisionImpact::Symbol(name) = &impact.node
                         && !decision_symbol_known(
                             name,
                             &declared_symbols,
@@ -553,7 +553,7 @@ pub fn check_module_intent_with_sigs_in(
                         )
                     {
                         errors.push(CheckFinding {
-                                line: d.line,
+                                line: impact.line,
                                 module: module_name.clone(),
                                 file: source_file.map(|s| s.to_string()),
                                 fn_name: Some(d.name.clone()),

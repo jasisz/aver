@@ -485,7 +485,7 @@ impl Parser {
 
         let mut date = String::new();
         let mut reason = String::new();
-        let mut chosen = DecisionImpact::Semantic(String::new());
+        let mut chosen = Spanned::bare(DecisionImpact::Semantic(String::new()));
         let mut rejected = Vec::new();
         let mut impacts = Vec::new();
         let mut author = None;
@@ -632,16 +632,20 @@ impl Parser {
         self.parse_multiline_text()
     }
 
-    fn parse_decision_ref(&mut self, field_name: &str) -> Result<DecisionImpact, ParseError> {
+    fn parse_decision_ref(
+        &mut self,
+        field_name: &str,
+    ) -> Result<Spanned<DecisionImpact>, ParseError> {
+        let line = self.current().line;
         match self.current().kind.clone() {
             TokenKind::Ident(s) => {
                 self.advance();
                 let sym = self.collect_dotted_name(s);
-                Ok(DecisionImpact::Symbol(sym))
+                Ok(Spanned::new(DecisionImpact::Symbol(sym), line))
             }
             TokenKind::Str(s) => {
                 self.advance();
-                Ok(DecisionImpact::Semantic(s))
+                Ok(Spanned::new(DecisionImpact::Semantic(s), line))
             }
             _ => Err(self.error(format!(
                 "Expected identifier or string value for decision '{}'",
@@ -653,20 +657,21 @@ impl Parser {
     fn parse_decision_refs_list(
         &mut self,
         field_name: &str,
-    ) -> Result<Vec<DecisionImpact>, ParseError> {
+    ) -> Result<Vec<Spanned<DecisionImpact>>, ParseError> {
         let mut items = Vec::new();
 
         if self.check_exact(&TokenKind::LBracket) {
             self.advance();
             while !self.check_exact(&TokenKind::RBracket) && !self.is_eof() {
+                let line = self.current().line;
                 match self.current().kind.clone() {
                     TokenKind::Ident(s) => {
                         self.advance();
                         let sym = self.collect_dotted_name(s);
-                        items.push(DecisionImpact::Symbol(sym));
+                        items.push(Spanned::new(DecisionImpact::Symbol(sym), line));
                     }
                     TokenKind::Str(s) => {
-                        items.push(DecisionImpact::Semantic(s));
+                        items.push(Spanned::new(DecisionImpact::Semantic(s), line));
                         self.advance();
                     }
                     TokenKind::Comma => {

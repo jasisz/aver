@@ -282,9 +282,9 @@ pub struct DecisionBlock {
     pub line: usize,
     pub date: String,
     pub reason: String,
-    pub chosen: DecisionImpact,
-    pub rejected: Vec<DecisionImpact>,
-    pub impacts: Vec<DecisionImpact>,
+    pub chosen: Spanned<DecisionImpact>,
+    pub rejected: Vec<Spanned<DecisionImpact>>,
+    pub impacts: Vec<Spanned<DecisionImpact>>,
     pub author: Option<String>,
 }
 

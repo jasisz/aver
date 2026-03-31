@@ -105,12 +105,27 @@ impl TypeChecker {
 
             let last_type = self.check_stmts(f.body.stmts(), &f.name, &declared_effects);
             if !Self::constraint_compatible(&last_type, &declared_ret) {
-                self.error(format!(
-                    "Function '{}': body returns {} but declared return type is {}",
-                    f.name,
-                    last_type.display(),
-                    declared_ret.display()
-                ));
+                // Find line of the last expression in body for secondary span.
+                let body_last_line = f.body.stmts().last().map(|stmt| match stmt {
+                    Stmt::Expr(e) => e.line,
+                    Stmt::Binding(_, _, e) => e.line,
+                });
+                let secondary = body_last_line.map(|line| TypeErrorSpan {
+                    line,
+                    col: 0,
+                    label: format!("returns {}", last_type.display()),
+                });
+                self.errors.push(TypeError {
+                    message: format!(
+                        "Function '{}': body returns {} but declared return type is {}",
+                        f.name,
+                        last_type.display(),
+                        declared_ret.display()
+                    ),
+                    line: f.line,
+                    col: 0,
+                    secondary,
+                });
             }
 
             // Detect unused bindings (skip names starting with '_').

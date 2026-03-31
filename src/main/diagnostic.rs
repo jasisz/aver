@@ -5,6 +5,7 @@
 ///
 /// Field order: severity, slug, summary, at, in-fn, intent,
 ///   contract.*, observed.*, conflict, repair.*, verify.*, source
+use aver::types::checker::TypeError;
 use colored::Colorize;
 use std::fmt::Write;
 
@@ -177,7 +178,8 @@ impl Diagnostic {
             let mut last_emitted: Option<usize> = None;
 
             for region in &self.regions {
-                // Insert `...` separator between non-contiguous regions
+                // Insert `...` separator between non-contiguous regions.
+                // Small gaps (<=2 lines) are pre-filled by `fill_small_region_gaps`.
                 if let Some(first_sl) = region.source_lines.first()
                     && let Some(last) = last_emitted
                     && first_sl.line_num > last + 1
@@ -297,6 +299,13 @@ fn extract_source_lines(source: &str, line: usize, context: usize) -> Vec<Source
         .collect()
 }
 
+/// Extract the declared return type from a "declared return type is X" message.
+fn extract_return_type(msg: &str) -> &str {
+    msg.rsplit("declared return type is ")
+        .next()
+        .unwrap_or("?")
+}
+
 /// Estimate how many characters to underline starting at `col` (1-based).
 fn estimate_span_len(line: &str, col: usize) -> usize {
     let start = col.saturating_sub(1);
@@ -322,6 +331,50 @@ fn extract_source_lines_range(source: &str, from: usize, to: usize) -> Vec<Sourc
             text: lines[i].to_string(),
         })
         .collect()
+}
+
+/// Fill small gaps (<=2 lines) between sorted regions with bridging source lines.
+/// Avoids a `...` separator for tiny jumps.
+fn fill_small_region_gaps(regions: &mut Vec<AnnotatedRegion>, source: &str) {
+    if regions.len() < 2 {
+        return;
+    }
+    let lines: Vec<&str> = source.lines().collect();
+    let mut i = 0;
+    while i + 1 < regions.len() {
+        let last_of_prev = regions[i]
+            .source_lines
+            .last()
+            .map(|sl| sl.line_num)
+            .unwrap_or(0);
+        let first_of_next = regions[i + 1]
+            .source_lines
+            .first()
+            .map(|sl| sl.line_num)
+            .unwrap_or(0);
+        if first_of_next > last_of_prev + 1 && first_of_next <= last_of_prev + 3 {
+            // Gap of 1-2 lines: insert a bridge region with no underline.
+            let bridge: Vec<SourceLine> = ((last_of_prev + 1)..first_of_next)
+                .filter_map(|ln| {
+                    lines.get(ln.saturating_sub(1)).map(|t| SourceLine {
+                        line_num: ln,
+                        text: t.to_string(),
+                    })
+                })
+                .collect();
+            if !bridge.is_empty() {
+                regions.insert(
+                    i + 1,
+                    AnnotatedRegion {
+                        source_lines: bridge,
+                        underline: None,
+                    },
+                );
+                i += 1; // skip the bridge we just inserted
+            }
+        }
+        i += 1;
+    }
 }
 
 /// Find the line number of the block header (`fn`, `verify`, `decision`) for `name`,
@@ -418,12 +471,14 @@ fn find_precise_span(source_line: &str, summary: &str) -> Option<(usize, usize)>
 
 /// Build a `Diagnostic` from a `TypeError` (from the typechecker).
 pub(super) fn from_type_error(
-    msg: &str,
-    line: usize,
-    col: usize,
+    te: &TypeError,
     source: &str,
     file: &str,
 ) -> Diagnostic {
+    let msg = &te.message;
+    let line = te.line;
+    let col = te.col;
+
     // Try to extract structured information from the message.
     let (slug, conflict, fields, repair) = classify_type_error(msg);
 
@@ -438,6 +493,66 @@ pub(super) fn from_type_error(
         let indent = source_line_text.len() - source_line_text.trim_start().len();
         (indent + 1, source_line_text.trim().len())
     };
+
+    // When we have a secondary span (e.g. return type mismatch), narrow the
+    // primary underline to just the declared return type after `->`.
+    let (primary_col, primary_len, primary_label) = if te.secondary.is_some() {
+        if let Some(arrow_pos) = source_line_text.find("-> ") {
+            let after_arrow = &source_line_text[arrow_pos + 3..];
+            let ret_type_len = after_arrow
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '<' || *c == '>' || *c == ',' || *c == ' ' || *c == '.')
+                .count();
+            let ret_type_len = after_arrow[..ret_type_len].trim_end().len();
+            (arrow_pos + 4, ret_type_len.max(1), format!("declared {}", extract_return_type(msg)))
+        } else {
+            (ul_col, ul_len, String::new())
+        }
+    } else {
+        (ul_col, ul_len, String::new())
+    };
+
+    let primary_underline = if primary_len > 0 {
+        Some(Underline {
+            col: primary_col,
+            len: primary_len,
+            label: primary_label,
+        })
+    } else {
+        None
+    };
+
+    let mut regions = vec![AnnotatedRegion {
+        source_lines: extract_source_lines(source, line, 0),
+        underline: primary_underline,
+    }];
+
+    // Add secondary span region if present (e.g. return type mismatch body line).
+    if let Some(ref sec) = te.secondary {
+        if sec.line != line {
+            let sec_source_text = source
+                .lines()
+                .nth(sec.line.saturating_sub(1))
+                .unwrap_or_default();
+            let (sec_col, sec_len) = if sec.col > 0 {
+                (sec.col, estimate_span_len(sec_source_text, sec.col))
+            } else {
+                let indent = sec_source_text.len() - sec_source_text.trim_start().len();
+                (indent + 1, sec_source_text.trim().len())
+            };
+            regions.push(AnnotatedRegion {
+                source_lines: extract_source_lines(source, sec.line, 0),
+                underline: Some(Underline {
+                    col: sec_col,
+                    len: sec_len,
+                    label: sec.label.clone(),
+                }),
+            });
+        }
+    }
+
+    regions.sort_by_key(|r| r.source_lines.first().map(|sl| sl.line_num).unwrap_or(0));
+    fill_small_region_gaps(&mut regions, source);
 
     Diagnostic {
         severity: Severity::Error,
@@ -455,18 +570,7 @@ pub(super) fn from_type_error(
         repair_primary: repair,
         repair_alternatives: Vec::new(),
         repair_example: None,
-        regions: AnnotatedRegion::single(
-            extract_source_lines(source, line, 1),
-            if ul_len > 0 {
-                Some(Underline {
-                    col: ul_col,
-                    len: ul_len,
-                    label: String::new(),
-                })
-            } else {
-                None
-            },
-        ),
+        regions,
     }
 }
 
@@ -670,8 +774,9 @@ pub(super) fn from_check_finding(
         }
     }
 
-    // Sort regions by first line number
+    // Sort regions by first line number, then fill small gaps
     regions.sort_by_key(|r| r.source_lines.first().map(|sl| sl.line_num).unwrap_or(0));
+    fill_small_region_gaps(&mut regions, source);
 
     Diagnostic {
         severity,

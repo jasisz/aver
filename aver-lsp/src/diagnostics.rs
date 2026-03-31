@@ -1,4 +1,6 @@
-use tower_lsp_server::ls_types::{Diagnostic, DiagnosticSeverity, Position, Range};
+use tower_lsp_server::ls_types::{
+    Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, Position, Range, Uri,
+};
 
 use aver::ast::TopLevel;
 use aver::ast::VerifyKind;
@@ -14,7 +16,7 @@ use aver::tco;
 use aver::types::checker::{TypeError, run_type_check_full};
 
 /// Run the full Aver analysis pipeline on source text and return LSP diagnostics.
-pub fn diagnose(source: &str, base_dir: Option<&str>) -> Vec<Diagnostic> {
+pub fn diagnose(source: &str, base_dir: Option<&str>, uri: Option<&Uri>) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     // Phase 1: Lexing
@@ -79,7 +81,7 @@ pub fn diagnose(source: &str, base_dir: Option<&str>) -> Vec<Diagnostic> {
     // Phase 4: Type checking (with module resolution from base_dir)
     let tc_result = run_type_check_full(&items, base_dir);
     for te in &tc_result.errors {
-        diagnostics.push(type_error_to_diagnostic(te));
+        diagnostics.push(type_error_to_diagnostic(te, source, uri));
     }
 
     // Phase 5: Contract-level findings (missing intent, descriptions, verify blocks)
@@ -88,18 +90,21 @@ pub fn diagnose(source: &str, base_dir: Option<&str>) -> Vec<Diagnostic> {
         diagnostics.push(check_finding_to_diagnostic(
             warning,
             DiagnosticSeverity::WARNING,
+            source,
         ));
     }
     for error in &findings.errors {
         diagnostics.push(check_finding_to_diagnostic(
             error,
             DiagnosticSeverity::ERROR,
+            source,
         ));
     }
     for warning in &collect_verify_coverage_warnings(&items) {
         diagnostics.push(check_finding_to_diagnostic(
             warning,
             DiagnosticSeverity::WARNING,
+            source,
         ));
     }
     diagnostics.extend(verify_hygiene_diagnostics(&items));
@@ -116,12 +121,25 @@ pub fn diagnose(source: &str, base_dir: Option<&str>) -> Vec<Diagnostic> {
 fn check_finding_to_diagnostic(
     finding: &aver::checker::CheckFinding,
     severity: DiagnosticSeverity,
+    source: &str,
 ) -> Diagnostic {
     let line = finding.line.saturating_sub(1) as u32;
+    let source_line = source.lines().nth(line as usize).unwrap_or("");
+    let (start_char, end_char) =
+        find_precise_span(source_line, &finding.message).unwrap_or_else(|| {
+            let indent = source_line.len() - source_line.trim_start().len();
+            (indent, indent + source_line.trim().len())
+        });
     Diagnostic {
         range: Range {
-            start: Position { line, character: 0 },
-            end: Position { line, character: 0 },
+            start: Position {
+                line,
+                character: start_char as u32,
+            },
+            end: Position {
+                line,
+                character: end_char as u32,
+            },
         },
         severity: Some(severity),
         source: Some("aver".to_string()),
@@ -130,13 +148,83 @@ fn check_finding_to_diagnostic(
     }
 }
 
-fn type_error_to_diagnostic(te: &TypeError) -> Diagnostic {
-    let end_char = if te.col == 0 { 200 } else { te.col + 1 };
+/// Find precise (start, end) byte offsets for the first backtick/quote-delimited
+/// fragment in `summary` within `source_line`. Returns 0-based offsets.
+fn find_precise_span(source_line: &str, summary: &str) -> Option<(usize, usize)> {
+    let search_after_arrow = summary.contains("right side") || summary.contains("=>");
+    for quote in ['`', '\''] {
+        if let Some(start_offset) = summary.find(quote) {
+            let start = start_offset + 1;
+            if let Some(end_offset) = summary[start..].find(quote) {
+                let needle = &summary[start..start + end_offset];
+                if !needle.is_empty() {
+                    let search_region = if search_after_arrow {
+                        source_line
+                            .find("=>")
+                            .map(|p| p + 2)
+                            .unwrap_or(0)
+                    } else {
+                        0
+                    };
+                    if let Some(pos) = source_line[search_region..].find(needle) {
+                        let col = search_region + pos;
+                        return Some((col, col + needle.len()));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn type_error_to_diagnostic(te: &TypeError, source: &str, uri: Option<&Uri>) -> Diagnostic {
+    // When secondary span is present, narrow primary range to the return type after `->`.
+    let source_line = source.lines().nth(te.line.saturating_sub(1)).unwrap_or("");
+    let (start_char, end_char) = if te.secondary.is_some() {
+        if let Some(arrow_pos) = source_line.find("-> ") {
+            let after = &source_line[arrow_pos + 3..];
+            let len = after
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || matches!(c, '<' | '>' | ',' | ' ' | '.'))
+                .count();
+            let len = after[..len].trim_end().len();
+            (arrow_pos + 3, arrow_pos + 3 + len.max(1))
+        } else if te.col > 0 {
+            (te.col, te.col + 1)
+        } else {
+            (0, 200)
+        }
+    } else if te.col > 0 {
+        (te.col, te.col + 1)
+    } else {
+        (0, 200)
+    };
+
+    let related = te.secondary.as_ref().and_then(|sec| {
+        let u = uri?;
+        Some(vec![DiagnosticRelatedInformation {
+            location: Location {
+                uri: u.clone(),
+                range: Range {
+                    start: Position {
+                        line: sec.line.saturating_sub(1) as u32,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: sec.line.saturating_sub(1) as u32,
+                        character: 200,
+                    },
+                },
+            },
+            message: sec.label.clone(),
+        }])
+    });
+
     Diagnostic {
         range: Range {
             start: Position {
                 line: te.line.saturating_sub(1) as u32,
-                character: te.col as u32,
+                character: start_char as u32,
             },
             end: Position {
                 line: te.line.saturating_sub(1) as u32,
@@ -146,6 +234,7 @@ fn type_error_to_diagnostic(te: &TypeError) -> Diagnostic {
         severity: Some(DiagnosticSeverity::ERROR),
         source: Some("aver".to_string()),
         message: te.message.clone(),
+        related_information: related,
         ..Default::default()
     }
 }
@@ -327,7 +416,7 @@ verify add
     add(1, 2) => 3
     add(2, 3) => 999
 "#;
-        let diagnostics = diagnose(source, None);
+        let diagnostics = diagnose(source, None, None);
         assert!(
             diagnostics.iter().any(|diag| {
                 diag.severity == Some(DiagnosticSeverity::ERROR)
@@ -353,7 +442,7 @@ verify add
     add(1, 2) => 3
     add(2, 3) => 5
 "#;
-        let diagnostics = diagnose(source, None);
+        let diagnostics = diagnose(source, None, None);
         assert!(
             !diagnostics
                 .iter()
@@ -376,7 +465,7 @@ verify add1
     add1(1) => 2
 "#;
 
-        let diagnostics = diagnose(source, None);
+        let diagnostics = diagnose(source, None, None);
         assert!(diagnostics.iter().any(|diag| {
             diag.severity == Some(DiagnosticSeverity::HINT)
                 && diag.message.contains("verify examples but no law")
@@ -400,7 +489,7 @@ verify add1 law add1Spec
     add1(x) => add1Spec(x)
 "#;
 
-        let diagnostics = diagnose(source, None);
+        let diagnostics = diagnose(source, None, None);
         assert!(diagnostics.iter().any(|diag| {
             diag.severity == Some(DiagnosticSeverity::HINT)
                 && diag

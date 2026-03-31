@@ -1,4 +1,4 @@
-use aver::ast::{DecisionBlock, DecisionImpact, FnDef, TypeDef};
+use aver::ast::{DecisionBlock, DecisionImpact, FnDef, Spanned, TypeDef};
 use serde::Serialize;
 
 use crate::context_data::FileContext;
@@ -18,19 +18,19 @@ pub(super) struct ContextSelection {
     pub elements_total: Option<usize>,
 }
 
-fn impact_texts(impacts: &[DecisionImpact]) -> Vec<String> {
+fn impact_texts(impacts: &[Spanned<DecisionImpact>]) -> Vec<String> {
     impacts
         .iter()
-        .map(DecisionImpact::as_context_string)
+        .map(|s| s.node.as_context_string())
         .collect()
 }
 
-fn decision_ref_text(reference: &DecisionImpact) -> String {
-    reference.as_context_string()
+fn decision_ref_text(reference: &Spanned<DecisionImpact>) -> String {
+    reference.node.as_context_string()
 }
 
-fn decision_ref_json_text(reference: &DecisionImpact) -> &str {
-    reference.text()
+fn decision_ref_json_text(reference: &Spanned<DecisionImpact>) -> &str {
+    reference.node.text()
 }
 
 const CONTEXT_SCHEMA_VERSION: u32 = 6;
@@ -203,7 +203,7 @@ fn decision_to_json(decision: &DecisionBlock) -> JsonDecision<'_> {
             .map(decision_ref_json_text)
             .collect(),
         reason: &decision.reason,
-        impacts: decision.impacts.iter().map(DecisionImpact::text).collect(),
+        impacts: decision.impacts.iter().map(|s| s.node.text()).collect(),
         author: decision.author.as_deref(),
     }
 }

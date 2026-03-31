@@ -1018,14 +1018,14 @@ fn decision_basic() {
     if let TopLevel::Decision(d) = &items[0] {
         assert_eq!(d.name, "UseResult");
         assert_eq!(d.date, "2024-01-01");
-        assert_eq!(d.chosen, DecisionImpact::Symbol("Result".to_string()));
+        assert_eq!(d.chosen.node, DecisionImpact::Symbol("Result".to_string()));
         assert_eq!(
-            d.rejected,
-            vec![DecisionImpact::Symbol("Exceptions".to_string())]
+            d.rejected.iter().map(|s| &s.node).collect::<Vec<_>>(),
+            vec![&DecisionImpact::Symbol("Exceptions".to_string())]
         );
         assert_eq!(
-            d.impacts,
-            vec![DecisionImpact::Symbol("AllModules".to_string())]
+            d.impacts.iter().map(|s| &s.node).collect::<Vec<_>>(),
+            vec![&DecisionImpact::Symbol("AllModules".to_string())]
         );
     } else {
         panic!("expected Decision");
@@ -1049,6 +1049,8 @@ fn decision_multiple_rejected() {
     let items = parse(src);
     if let TopLevel::Decision(d) = &items[0] {
         assert_eq!(d.rejected.len(), 3);
+        // Verify line info is preserved
+        assert!(d.rejected.iter().all(|s| s.line > 0));
     } else {
         panic!("expected Decision");
     }
@@ -1060,10 +1062,10 @@ fn decision_impacts_accepts_mixed_symbol_and_semantic_entries() {
     let items = parse(src);
     if let TopLevel::Decision(d) = &items[0] {
         assert_eq!(
-            d.impacts,
+            d.impacts.iter().map(|s| &s.node).collect::<Vec<_>>(),
             vec![
-                DecisionImpact::Symbol("doThing".to_string()),
-                DecisionImpact::Semantic("error handling strategy".to_string())
+                &DecisionImpact::Symbol("doThing".to_string()),
+                &DecisionImpact::Semantic("error handling strategy".to_string())
             ]
         );
     } else {
@@ -1076,12 +1078,12 @@ fn decision_chosen_and_rejected_accept_mixed_symbol_and_semantic_entries() {
     let src = "decision D\n    date = \"2026-03-05\"\n    reason =\n        \"R.\"\n    chosen = \"Keep\"\n    rejected = [OldPath, \"global mutable state\"]\n    impacts = []\n";
     let items = parse(src);
     if let TopLevel::Decision(d) = &items[0] {
-        assert_eq!(d.chosen, DecisionImpact::Semantic("Keep".to_string()));
+        assert_eq!(d.chosen.node, DecisionImpact::Semantic("Keep".to_string()));
         assert_eq!(
-            d.rejected,
+            d.rejected.iter().map(|s| &s.node).collect::<Vec<_>>(),
             vec![
-                DecisionImpact::Symbol("OldPath".to_string()),
-                DecisionImpact::Semantic("global mutable state".to_string()),
+                &DecisionImpact::Symbol("OldPath".to_string()),
+                &DecisionImpact::Semantic("global mutable state".to_string()),
             ]
         );
     } else {

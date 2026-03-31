@@ -1675,13 +1675,13 @@ pub fn emit_decision(db: &DecisionBlock) -> String {
     lines.push(format!("/- Decision: {}", db.name));
     lines.push(format!("   Date: {}", db.date));
     lines.push(format!("   Reason: {}", db.reason));
-    lines.push(format!("   Chosen: {}", db.chosen.as_context_string()));
+    lines.push(format!("   Chosen: {}", db.chosen.node.as_context_string()));
     if !db.rejected.is_empty() {
         lines.push(format!(
             "   Rejected: {}",
             db.rejected
                 .iter()
-                .map(|r| r.as_context_string())
+                .map(|r| r.node.as_context_string())
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
@@ -1690,7 +1690,7 @@ pub fn emit_decision(db: &DecisionBlock) -> String {
         let impacts = db
             .impacts
             .iter()
-            .map(|impact| impact.as_context_string())
+            .map(|impact| impact.node.as_context_string())
             .collect::<Vec<_>>()
             .join(", ");
         lines.push(format!("   Impacts: {}", impacts));

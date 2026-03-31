@@ -464,7 +464,7 @@ fn build_scoring_context(contexts: &[FileContext], focus_symbol: Option<&str>) -
         for (dec_idx, decision) in ctx.decisions.iter().enumerate() {
             let mut resolved = Vec::new();
             for impact in &decision.impacts {
-                let impact_name = impact.text();
+                let impact_name = impact.node.text();
                 // Try to find this function in the same module first
                 if ctx.fn_defs.iter().any(|fd| fd.name == impact_name) {
                     resolved.push((ctx_idx, impact_name.to_string()));
@@ -840,7 +840,7 @@ fn decision_impacts_focus(
     focus_symbol: &str,
     module_name: Option<&str>,
 ) -> bool {
-    decision.impacts.iter().any(|impact| match impact {
+    decision.impacts.iter().any(|impact| match &impact.node {
         DecisionImpact::Symbol(name) => {
             name == focus_symbol
                 || module_name.is_some_and(|module_name| {
@@ -1302,7 +1302,7 @@ fn decision_relevant(
     selected_local: &HashSet<String>,
     module_name: Option<&str>,
 ) -> bool {
-    decision.impacts.iter().any(|impact| match impact {
+    decision.impacts.iter().any(|impact| match &impact.node {
         DecisionImpact::Symbol(name) => {
             selected_canonical.contains(name)
                 || selected_local.contains(name)
@@ -1647,7 +1647,7 @@ pub(super) fn cmd_context(
 mod tests {
     use std::rc::Rc;
 
-    use aver::ast::{DecisionBlock, FnBody, FnDef, VerifyBlock, VerifyKind};
+    use aver::ast::{DecisionBlock, DecisionImpact, FnBody, FnDef, Spanned, VerifyBlock, VerifyKind};
 
     use super::*;
 
@@ -1699,9 +1699,9 @@ mod tests {
                 line: 1,
                 date: "2026-03-17".to_string(),
                 reason: "".to_string(),
-                chosen: DecisionImpact::Symbol("entry".to_string()),
+                chosen: Spanned::bare(DecisionImpact::Symbol("entry".to_string())),
                 rejected: vec![],
-                impacts: vec![DecisionImpact::Symbol("entry".to_string())],
+                impacts: vec![Spanned::bare(DecisionImpact::Symbol("entry".to_string()))],
                 author: None,
             }],
         }
