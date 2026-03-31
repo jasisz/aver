@@ -296,11 +296,39 @@ fn is_nontrivial_pure_fncall(expr: &Expr) -> bool {
                     .iter()
                     .any(|prefix| name.starts_with(prefix));
                 let has_non_literal = args.iter().any(|a| !matches!(&a.node, Expr::Literal(_)));
-                is_pure && has_non_literal
+                // Don't suggest extraction if any arg contains a user fn call —
+                // hoisting would eagerly evaluate the call even when the branch
+                // doesn't need it (Aver is eager, not lazy).
+                let args_have_user_call = args.iter().any(|a| expr_contains_user_call(&a.node));
+                is_pure && has_non_literal && !args_have_user_call
             } else {
                 false
             }
         }
+        _ => false,
+    }
+}
+
+/// Check if an expression contains a call to a user-defined function
+/// (i.e. not a pure namespace builtin like List.len, String.join, etc.).
+fn expr_contains_user_call(expr: &Expr) -> bool {
+    match expr {
+        Expr::FnCall(callee, args) => {
+            let is_namespace = callee_dotted_name(&callee.node)
+                .is_some_and(|name| {
+                    PURE_NAMESPACE_PREFIXES
+                        .iter()
+                        .any(|prefix| name.starts_with(prefix))
+                });
+            if !is_namespace {
+                return true;
+            }
+            args.iter().any(|a| expr_contains_user_call(&a.node))
+        }
+        Expr::BinOp(_, left, right) => {
+            expr_contains_user_call(&left.node) || expr_contains_user_call(&right.node)
+        }
+        Expr::ErrorProp(inner) | Expr::Attr(inner, _) => expr_contains_user_call(&inner.node),
         _ => false,
     }
 }

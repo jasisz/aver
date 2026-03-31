@@ -164,9 +164,19 @@ fn classify_thin_expr_kind(plan: &BodyExprPlan<'_>, ctx: &impl CallLowerCtx) -> 
 fn body_expr_is_thin_binding(plan: &BodyExprPlan<'_>) -> bool {
     match plan {
         BodyExprPlan::Leaf(_) | BodyExprPlan::Call { .. } | BodyExprPlan::ForwardCall(_) => true,
-        BodyExprPlan::Expr(expr) => matches!(
-            expr,
-            Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, _)
-        ),
+        BodyExprPlan::Expr(expr) => match expr {
+            Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, _) => true,
+            // Simple arithmetic on idents/literals (e.g. `nextPos = pos + 1`)
+            Expr::BinOp(_, left, right) => {
+                is_simple_operand(&left.node) && is_simple_operand(&right.node)
+            }
+            // Simple fn call with ident/literal args (e.g. `reversed = List.reverse(acc)`)
+            Expr::FnCall(_, args) => args.iter().all(|a| is_simple_operand(&a.node)),
+            _ => false,
+        },
     }
+}
+
+fn is_simple_operand(expr: &Expr) -> bool {
+    matches!(expr, Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_))
 }
