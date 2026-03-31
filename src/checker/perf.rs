@@ -17,7 +17,9 @@ pub fn collect_perf_warnings(items: &[TopLevel]) -> Vec<CheckFinding> {
     for item in items {
         if let TopLevel::FnDef(fd) = item {
             check_list_len_comparison(fd, &mut warnings);
-            check_string_concat_in_tailcall(fd, &mut warnings);
+            // String concat in tail-call args (acc + c) is now O(1) amortized
+            // in all backends (interpreter: in-place push_str, codegen: String append).
+            // No longer flagged as a performance issue.
             check_nested_eq_match(fd, &mut warnings);
             check_loop_invariant(fd, &mut warnings);
         }
@@ -288,84 +290,6 @@ fn is_small_int_literal(expr: &Expr) -> bool {
 
 fn is_zero_literal(expr: &Expr) -> bool {
     matches!(expr, Expr::Literal(Literal::Int(0)))
-}
-
-// ---------------------------------------------------------------------------
-// B2: String concat in TailCall argument
-// ---------------------------------------------------------------------------
-
-fn check_string_concat_in_tailcall(fd: &FnDef, warnings: &mut Vec<CheckFinding>) {
-    // Collect names of params with type annotation "String"
-    let string_params: HashSet<String> = fd
-        .params
-        .iter()
-        .filter(|(_, ty)| ty == "String")
-        .map(|(name, _)| name.clone())
-        .collect();
-
-    if string_params.is_empty() {
-        return;
-    }
-
-    walk_stmts(fd.body.stmts(), &mut |spanned| {
-        if let Expr::TailCall(boxed) = &spanned.node {
-            let (_, args) = boxed.as_ref();
-            for arg in args {
-                if let Some(param_name) = contains_string_concat_with(&arg.node, &string_params) {
-                    warnings.push(CheckFinding {
-                        line: spanned.line,
-                        module: None,
-                        file: None,
-                        fn_name: Some(fd.name.clone()),
-                        message: format!(
-                            "string concatenation with `{}` in recursive call — O(n²) per iteration; consider collecting into a list and joining",
-                            param_name
-                        ),
-                        extra_spans: vec![],
-                    });
-                }
-            }
-        }
-    });
-}
-
-/// Check if expr contains a BinOp(Add, ...) where one side is an Ident
-/// that belongs to `string_params`. Returns the param name if found.
-fn contains_string_concat_with<'a>(
-    expr: &Expr,
-    string_params: &'a HashSet<String>,
-) -> Option<&'a str> {
-    match expr {
-        Expr::BinOp(BinOp::Add, left, right) => {
-            if let Some(name) = ident_in_set(&left.node, string_params) {
-                return Some(name);
-            }
-            if let Some(name) = ident_in_set(&right.node, string_params) {
-                return Some(name);
-            }
-            // Recurse into sub-expressions
-            if let Some(name) = contains_string_concat_with(&left.node, string_params) {
-                return Some(name);
-            }
-            contains_string_concat_with(&right.node, string_params)
-        }
-        Expr::BinOp(_, left, right) => contains_string_concat_with(&left.node, string_params)
-            .or_else(|| contains_string_concat_with(&right.node, string_params)),
-        Expr::FnCall(callee, args) => contains_string_concat_with(&callee.node, string_params)
-            .or_else(|| {
-                args.iter()
-                    .find_map(|a| contains_string_concat_with(&a.node, string_params))
-            }),
-        _ => None,
-    }
-}
-
-fn ident_in_set<'a>(expr: &Expr, set: &'a HashSet<String>) -> Option<&'a str> {
-    if let Expr::Ident(name) = expr {
-        set.get(name.as_str()).map(|s| s.as_str())
-    } else {
-        None
-    }
 }
 
 // ---------------------------------------------------------------------------

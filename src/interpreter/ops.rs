@@ -107,10 +107,13 @@ impl Interpreter {
     }
 
     pub(super) fn op_add(&self, a: Value, b: Value) -> Result<Value, RuntimeError> {
-        match (&a, &b) {
+        match (a, b) {
             (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x + y)),
             (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x + y)),
-            (Value::Str(x), Value::Str(y)) => Ok(Value::Str(format!("{}{}", x, y))),
+            (Value::Str(mut x), Value::Str(y)) => {
+                x.push_str(&y);
+                Ok(Value::Str(x))
+            }
             _ => Err(RuntimeError::Error(
                 "Operator '+' does not support these types".to_string(),
             )),
@@ -205,12 +208,12 @@ impl Interpreter {
             return Ok(NanValue::new_float(a.as_float() + b.as_float()));
         }
         if a.is_string() && b.is_string() {
-            let combined = format!(
-                "{}{}",
-                self.arena.get_string_value(a),
-                self.arena.get_string_value(b)
-            );
-            return Ok(NanValue::new_string_value(&combined, &mut self.arena));
+            let sa = self.arena.get_string_value(a);
+            let sb = self.arena.get_string_value(b);
+            let mut buf = String::with_capacity(sa.len() + sb.len());
+            buf.push_str(sa.as_str());
+            buf.push_str(sb.as_str());
+            return Ok(NanValue::new_string_value(&buf, &mut self.arena));
         }
         Err(RuntimeError::Error(
             "Operator '+' does not support these types".to_string(),
