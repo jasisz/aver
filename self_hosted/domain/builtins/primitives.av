@@ -18,6 +18,7 @@ fn callInt(name: String, args: List<Val>) -> Result<Val, String>
 verify callInt
     callInt("Int.abs", [Val.ValInt(5)]) => Result.Ok(Val.ValInt(5))
     callInt("Int.toString", [Val.ValInt(42)]) => Result.Ok(Val.ValStr("42"))
+    callInt("Int.bogus", [Val.ValInt(1)]) => Result.Err("unknown int builtin: Int.bogus")
 
 fn builtinIntMax(args: List<Val>) -> Result<Val, String>
     ? "Int.max(a, b) -> larger of a and b."
@@ -27,6 +28,7 @@ fn builtinIntMax(args: List<Val>) -> Result<Val, String>
 
 verify builtinIntMax
     builtinIntMax([Val.ValInt(3), Val.ValInt(7)]) => Result.Ok(Val.ValInt(7))
+    builtinIntMax([Val.ValInt(1)]) => Result.Err("expected 2 arguments")
 
 fn builtinIntMaxInner(aV: Val, bV: Val) -> Result<Val, String>
     ? "Inner Int.max."
@@ -39,6 +41,7 @@ fn builtinIntMaxInner(aV: Val, bV: Val) -> Result<Val, String>
 verify builtinIntMaxInner
     builtinIntMaxInner(Val.ValInt(3), Val.ValInt(7)) => Result.Ok(Val.ValInt(7))
     builtinIntMaxInner(Val.ValInt(10), Val.ValInt(2)) => Result.Ok(Val.ValInt(10))
+    builtinIntMaxInner(Val.ValStr("x"), Val.ValInt(2)) => Result.Err("expected int argument")
 
 fn builtinIntMin(args: List<Val>) -> Result<Val, String>
     ? "Int.min(a, b) -> smaller of a and b."
@@ -48,6 +51,7 @@ fn builtinIntMin(args: List<Val>) -> Result<Val, String>
 
 verify builtinIntMin
     builtinIntMin([Val.ValInt(3), Val.ValInt(7)]) => Result.Ok(Val.ValInt(3))
+    builtinIntMin([Val.ValInt(1)]) => Result.Err("expected 2 arguments")
 
 fn builtinIntMinInner(aV: Val, bV: Val) -> Result<Val, String>
     ? "Inner Int.min."
@@ -60,6 +64,7 @@ fn builtinIntMinInner(aV: Val, bV: Val) -> Result<Val, String>
 verify builtinIntMinInner
     builtinIntMinInner(Val.ValInt(3), Val.ValInt(7)) => Result.Ok(Val.ValInt(3))
     builtinIntMinInner(Val.ValInt(10), Val.ValInt(2)) => Result.Ok(Val.ValInt(2))
+    builtinIntMinInner(Val.ValStr("x"), Val.ValInt(2)) => Result.Err("expected int argument")
 
 fn callString(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch String.* builtins."
@@ -85,6 +90,7 @@ fn callString(name: String, args: List<Val>) -> Result<Val, String>
 
 verify callString
     callString("String.len", [Val.ValStr("hello")]) => Result.Ok(Val.ValInt(5))
+    callString("String.bogus", [Val.ValStr("x")]) => Result.Err("unknown string builtin: String.bogus")
 
 fn callChar(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch Char.* builtins."
@@ -95,6 +101,7 @@ fn callChar(name: String, args: List<Val>) -> Result<Val, String>
 
 verify callChar
     callChar("Char.fromCode", [Val.ValInt(65)]) => Result.Ok(Val.ValSome(Val.ValStr("A")))
+    callChar("Char.bogus", [Val.ValInt(1)]) => Result.Err("unknown char builtin: Char.bogus")
 
 fn builtinIntToFloat(args: List<Val>) -> Result<Val, String>
     ? "Int.toFloat(n) -> Float value."
@@ -104,6 +111,7 @@ fn builtinIntToFloat(args: List<Val>) -> Result<Val, String>
 
 verify builtinIntToFloat
     builtinIntToFloat([Val.ValInt(3)]) => Result.Ok(Val.ValFloat(3.0))
+    builtinIntToFloat([Val.ValStr("x")]) => Result.Err("expected int argument")
 
 fn builtinIntToString(args: List<Val>) -> Result<Val, String>
     ? "Int.toString(n) -> string representation."
@@ -113,6 +121,7 @@ fn builtinIntToString(args: List<Val>) -> Result<Val, String>
 
 verify builtinIntToString
     builtinIntToString([Val.ValInt(42)]) => Result.Ok(Val.ValStr("42"))
+    builtinIntToString([Val.ValStr("x")]) => Result.Err("expected int argument")
 
 fn builtinIntAbs(args: List<Val>) -> Result<Val, String>
     ? "Int.abs(n) -> absolute value."
@@ -122,6 +131,7 @@ fn builtinIntAbs(args: List<Val>) -> Result<Val, String>
 
 verify builtinIntAbs
     builtinIntAbs([Val.ValInt(5)]) => Result.Ok(Val.ValInt(5))
+    builtinIntAbs([Val.ValStr("x")]) => Result.Err("expected int argument")
 
 fn builtinIntMod(args: List<Val>) -> Result<Val, String>
     ? "Int.mod(a, b) -> a mod b as Result."
@@ -131,6 +141,7 @@ fn builtinIntMod(args: List<Val>) -> Result<Val, String>
 
 verify builtinIntMod
     builtinIntMod([Val.ValInt(7), Val.ValInt(3)]) => Result.Ok(Val.ValOk(Val.ValInt(1)))
+    builtinIntMod([Val.ValInt(1)]) => Result.Err("expected 2 arguments")
 
 fn builtinIntModInner(aV: Val, bV: Val) -> Result<Val, String>
     ? "Inner impl of Int.mod."
@@ -143,6 +154,7 @@ fn builtinIntModInner(aV: Val, bV: Val) -> Result<Val, String>
 verify builtinIntModInner
     builtinIntModInner(Val.ValInt(7), Val.ValInt(3)) => Result.Ok(Val.ValOk(Val.ValInt(1)))
     builtinIntModInner(Val.ValInt(5), Val.ValInt(0)) => Result.Ok(Val.ValErr(Val.ValStr("modulo by zero")))
+    builtinIntModInner(Val.ValStr("x"), Val.ValInt(3)) => Result.Err("expected int argument")
 
 fn builtinStringLen(args: List<Val>) -> Result<Val, String>
     ? "String.len(s) -> length as Int."
@@ -152,6 +164,7 @@ fn builtinStringLen(args: List<Val>) -> Result<Val, String>
 
 verify builtinStringLen
     builtinStringLen([Val.ValStr("hello")]) => Result.Ok(Val.ValInt(5))
+    builtinStringLen([Val.ValInt(1)]) => Result.Err("expected string argument")
 
 fn builtinStringCharAt(args: List<Val>) -> Result<Val, String>
     ? "String.charAt(s, index) -> single character string or error."
@@ -161,6 +174,7 @@ fn builtinStringCharAt(args: List<Val>) -> Result<Val, String>
 
 verify builtinStringCharAt
     builtinStringCharAt([Val.ValStr("abc"), Val.ValInt(1)]) => Result.Ok(Val.ValStr("b"))
+    builtinStringCharAt([Val.ValStr("a")]) => Result.Err("expected 2 arguments")
 
 fn builtinStringCharAtInner(sV: Val, idxV: Val) -> Result<Val, String>
     ? "Inner impl of String.charAt."
@@ -172,6 +186,7 @@ fn builtinStringCharAtInner(sV: Val, idxV: Val) -> Result<Val, String>
 
 verify builtinStringCharAtInner
     builtinStringCharAtInner(Val.ValStr("abc"), Val.ValInt(0)) => Result.Ok(Val.ValStr("a"))
+    builtinStringCharAtInner(Val.ValInt(1), Val.ValInt(0)) => Result.Err("expected string argument")
 
 fn builtinStringJoin(args: List<Val>) -> Result<Val, String>
     ? "String.join(list, separator) -> joined string."
@@ -181,6 +196,7 @@ fn builtinStringJoin(args: List<Val>) -> Result<Val, String>
 
 verify builtinStringJoin
     builtinStringJoin([Val.ValList([Val.ValStr("a"), Val.ValStr("b")]), Val.ValStr(",")]) => Result.Ok(Val.ValStr("a,b"))
+    builtinStringJoin([Val.ValStr("a")]) => Result.Err("expected 2 arguments")
 
 fn builtinStringJoinInner(lstV: Val, sepV: Val) -> Result<Val, String>
     ? "Inner impl of String.join."
@@ -191,6 +207,7 @@ fn builtinStringJoinInner(lstV: Val, sepV: Val) -> Result<Val, String>
 
 verify builtinStringJoinInner
     builtinStringJoinInner(Val.ValList([Val.ValStr("x"), Val.ValStr("y")]), Val.ValStr("-")) => Result.Ok(Val.ValStr("x-y"))
+    builtinStringJoinInner(Val.ValInt(1), Val.ValStr("-")) => Result.Err("expected list argument")
 
 fn extractStrings(items: List<Val>, acc: List<String>) -> Result<List<String>, String>
     ? "Convert list of ValStr to list of String."
@@ -203,6 +220,7 @@ fn extractStrings(items: List<Val>, acc: List<String>) -> Result<List<String>, S
 verify extractStrings
     extractStrings([Val.ValStr("a"), Val.ValStr("b")], []) => Result.Ok(["a", "b"])
     extractStrings([], []) => Result.Ok([])
+    extractStrings([Val.ValInt(1)], []) => Result.Err("String.join requires list of strings")
 
 fn builtinStringSlice(args: List<Val>) -> Result<Val, String>
     ? "String.slice(s, start, end) -> substring."
@@ -218,6 +236,7 @@ fn builtinStringSlice(args: List<Val>) -> Result<Val, String>
 
 verify builtinStringSlice
     builtinStringSlice([Val.ValStr("hello"), Val.ValInt(1), Val.ValInt(3)]) => Result.Ok(Val.ValStr("el"))
+    builtinStringSlice([]) => Result.Err("String.slice takes 3 arguments")
 
 fn builtinStringSliceInner(sV: Val, startV: Val, endV: Val) -> Result<Val, String>
     ? "Inner impl of String.slice."
@@ -228,6 +247,7 @@ fn builtinStringSliceInner(sV: Val, startV: Val, endV: Val) -> Result<Val, Strin
 
 verify builtinStringSliceInner
     builtinStringSliceInner(Val.ValStr("hello"), Val.ValInt(0), Val.ValInt(2)) => Result.Ok(Val.ValStr("he"))
+    builtinStringSliceInner(Val.ValInt(1), Val.ValInt(0), Val.ValInt(2)) => Result.Err("expected string argument")
 
 fn builtinStringFromBool(args: List<Val>) -> Result<Val, String>
     ? "String.fromBool(b) -> string."
@@ -238,6 +258,7 @@ fn builtinStringFromBool(args: List<Val>) -> Result<Val, String>
 
 verify builtinStringFromBool
     builtinStringFromBool([Val.ValBool(true)]) => Result.Ok(Val.ValStr("true"))
+    builtinStringFromBool([Val.ValInt(1)]) => Result.Err("String.fromBool requires Bool")
 
 fn builtinStringFromInt(args: List<Val>) -> Result<Val, String>
     ? "String.fromInt(n) -> string (alias for Int.toString)."
@@ -247,6 +268,7 @@ fn builtinStringFromInt(args: List<Val>) -> Result<Val, String>
 
 verify builtinStringFromInt
     builtinStringFromInt([Val.ValInt(99)]) => Result.Ok(Val.ValStr("99"))
+    builtinStringFromInt([Val.ValStr("x")]) => Result.Err("expected int argument")
 
 fn builtinStringFromFloat(args: List<Val>) -> Result<Val, String>
     ? "String.fromFloat(f) -> string."
@@ -257,6 +279,7 @@ fn builtinStringFromFloat(args: List<Val>) -> Result<Val, String>
 
 verify builtinStringFromFloat
     builtinStringFromFloat([Val.ValFloat(3.14)]) => Result.Ok(Val.ValStr("3.14"))
+    builtinStringFromFloat([Val.ValInt(1)]) => Result.Err("String.fromFloat requires Float")
 
 fn builtinStringContains(args: List<Val>) -> Result<Val, String>
     ? "String.contains(haystack, needle) -> Bool."
@@ -266,6 +289,7 @@ fn builtinStringContains(args: List<Val>) -> Result<Val, String>
 
 verify builtinStringContains
     builtinStringContains([Val.ValStr("hello world"), Val.ValStr("world")]) => Result.Ok(Val.ValBool(true))
+    builtinStringContains([Val.ValStr("a")]) => Result.Err("expected 2 arguments")
 
 fn builtinStringContainsInner(hV: Val, nV: Val) -> Result<Val, String>
     ? "Inner impl of String.contains."
@@ -276,6 +300,7 @@ fn builtinStringContainsInner(hV: Val, nV: Val) -> Result<Val, String>
 verify builtinStringContainsInner
     builtinStringContainsInner(Val.ValStr("abc"), Val.ValStr("b")) => Result.Ok(Val.ValBool(true))
     builtinStringContainsInner(Val.ValStr("abc"), Val.ValStr("z")) => Result.Ok(Val.ValBool(false))
+    builtinStringContainsInner(Val.ValInt(1), Val.ValStr("b")) => Result.Err("expected string argument")
 
 fn builtinStringStartsWith(args: List<Val>) -> Result<Val, String>
     ? "String.startsWith(s, prefix) -> Bool."
@@ -285,6 +310,7 @@ fn builtinStringStartsWith(args: List<Val>) -> Result<Val, String>
 
 verify builtinStringStartsWith
     builtinStringStartsWith([Val.ValStr("hello"), Val.ValStr("he")]) => Result.Ok(Val.ValBool(true))
+    builtinStringStartsWith([Val.ValStr("a")]) => Result.Err("expected 2 arguments")
 
 fn builtinStringStartsWithInner(sV: Val, pV: Val) -> Result<Val, String>
     ? "Inner impl of String.startsWith."
@@ -295,6 +321,7 @@ fn builtinStringStartsWithInner(sV: Val, pV: Val) -> Result<Val, String>
 verify builtinStringStartsWithInner
     builtinStringStartsWithInner(Val.ValStr("hello"), Val.ValStr("he")) => Result.Ok(Val.ValBool(true))
     builtinStringStartsWithInner(Val.ValStr("hello"), Val.ValStr("xx")) => Result.Ok(Val.ValBool(false))
+    builtinStringStartsWithInner(Val.ValInt(1), Val.ValStr("he")) => Result.Err("expected string argument")
 
 fn builtinStringToLower(args: List<Val>) -> Result<Val, String>
     ? "String.toLower(s) -> lowercase string."
@@ -304,6 +331,7 @@ fn builtinStringToLower(args: List<Val>) -> Result<Val, String>
 
 verify builtinStringToLower
     builtinStringToLower([Val.ValStr("HELLO")]) => Result.Ok(Val.ValStr("hello"))
+    builtinStringToLower([Val.ValInt(1)]) => Result.Err("expected string argument")
 
 fn builtinCharFromCode(args: List<Val>) -> Result<Val, String>
     ? "Char.fromCode(n) -> single character string."
@@ -315,6 +343,7 @@ fn builtinCharFromCode(args: List<Val>) -> Result<Val, String>
 
 verify builtinCharFromCode
     builtinCharFromCode([Val.ValInt(65)]) => Result.Ok(Val.ValSome(Val.ValStr("A")))
+    builtinCharFromCode([Val.ValStr("x")]) => Result.Err("expected int argument")
 
 fn builtinCharToCode(args: List<Val>) -> Result<Val, String>
     ? "Char.toCode(c) -> Int code point."
@@ -325,6 +354,7 @@ fn builtinCharToCode(args: List<Val>) -> Result<Val, String>
 verify builtinCharToCode
     builtinCharToCode([Val.ValStr("A")]) => Result.Ok(Val.ValInt(65))
     builtinCharToCode([Val.ValStr("0")]) => Result.Ok(Val.ValInt(48))
+    builtinCharToCode([Val.ValInt(1)]) => Result.Err("expected string argument")
 
 fn builtinIntFromString(args: List<Val>) -> Result<Val, String>
     ? "Int.fromString(s) -> Result<Int, String>."
@@ -336,6 +366,7 @@ fn builtinIntFromString(args: List<Val>) -> Result<Val, String>
 
 verify builtinIntFromString
     builtinIntFromString([Val.ValStr("42")]) => Result.Ok(Val.ValOk(Val.ValInt(42)))
+    builtinIntFromString([Val.ValInt(1)]) => Result.Err("expected string argument")
 
 fn builtinStringChars(args: List<Val>) -> Result<Val, String>
     ? "String.chars(s) -> list of single-character strings."
@@ -346,6 +377,7 @@ fn builtinStringChars(args: List<Val>) -> Result<Val, String>
 verify builtinStringChars
     builtinStringChars([Val.ValStr("hi")]) => Result.Ok(Val.ValList([Val.ValStr("h"), Val.ValStr("i")]))
     builtinStringChars([Val.ValStr("")]) => Result.Ok(Val.ValList([]))
+    builtinStringChars([Val.ValInt(1)]) => Result.Err("expected string argument")
 
 fn stringToCharList(s: String, pos: Int, total: Int, acc: List<Val>) -> List<Val>
     ? "Split string into list of ValStr chars."
@@ -381,6 +413,7 @@ fn callFloat(name: String, args: List<Val>) -> Result<Val, String>
 
 verify callFloat
     callFloat("Float.toString", [Val.ValFloat(3.14)]) => Result.Ok(Val.ValStr("3.14"))
+    callFloat("Float.bogus", [Val.ValFloat(1.0)]) => Result.Err("unknown float builtin: Float.bogus")
 
 fn builtinFloatFromString(args: List<Val>) -> Result<Val, String>
     ? "Float.fromString(s) -> Result<Float, String>."
@@ -392,6 +425,7 @@ fn builtinFloatFromString(args: List<Val>) -> Result<Val, String>
 
 verify builtinFloatFromString
     builtinFloatFromString([Val.ValStr("3.14")]) => Result.Ok(Val.ValOk(Val.ValFloat(3.14)))
+    builtinFloatFromString([Val.ValInt(1)]) => Result.Err("expected string argument")
 
 fn builtinFloatFromInt(args: List<Val>) -> Result<Val, String>
     ? "Float.fromInt(n) -> Float."
@@ -401,6 +435,7 @@ fn builtinFloatFromInt(args: List<Val>) -> Result<Val, String>
 
 verify builtinFloatFromInt
     builtinFloatFromInt([Val.ValInt(5)]) => Result.Ok(Val.ValFloat(5.0))
+    builtinFloatFromInt([Val.ValStr("x")]) => Result.Err("expected int argument")
 
 fn builtinFloatRound(args: List<Val>) -> Result<Val, String>
     ? "Float.round(f) -> Int."
@@ -411,6 +446,7 @@ fn builtinFloatRound(args: List<Val>) -> Result<Val, String>
 
 verify builtinFloatRound
     builtinFloatRound([Val.ValFloat(2.7)]) => Result.Ok(Val.ValInt(3))
+    builtinFloatRound([Val.ValInt(1)]) => Result.Err("Float.round requires Float")
 
 fn builtinFloatToString(args: List<Val>) -> Result<Val, String>
     ? "Float.toString(f) -> string representation."
@@ -421,6 +457,7 @@ fn builtinFloatToString(args: List<Val>) -> Result<Val, String>
 
 verify builtinFloatToString
     builtinFloatToString([Val.ValFloat(3.14)]) => Result.Ok(Val.ValStr("3.14"))
+    builtinFloatToString([Val.ValInt(1)]) => Result.Err("Float.toString requires Float")
 
 fn builtinFloatAbs(args: List<Val>) -> Result<Val, String>
     ? "Float.abs(f) -> Float."
@@ -431,6 +468,7 @@ fn builtinFloatAbs(args: List<Val>) -> Result<Val, String>
 
 verify builtinFloatAbs
     builtinFloatAbs([Val.ValFloat(-3.5)]) => Result.Ok(Val.ValFloat(3.5))
+    builtinFloatAbs([Val.ValInt(1)]) => Result.Err("Float.abs requires Float")
 
 fn builtinFloatFloor(args: List<Val>) -> Result<Val, String>
     ? "Float.floor(f) -> Int."
@@ -441,6 +479,7 @@ fn builtinFloatFloor(args: List<Val>) -> Result<Val, String>
 
 verify builtinFloatFloor
     builtinFloatFloor([Val.ValFloat(2.7)]) => Result.Ok(Val.ValInt(2))
+    builtinFloatFloor([Val.ValInt(1)]) => Result.Err("Float.floor requires Float")
 
 fn builtinFloatCeil(args: List<Val>) -> Result<Val, String>
     ? "Float.ceil(f) -> Int."
@@ -451,6 +490,7 @@ fn builtinFloatCeil(args: List<Val>) -> Result<Val, String>
 
 verify builtinFloatCeil
     builtinFloatCeil([Val.ValFloat(2.3)]) => Result.Ok(Val.ValInt(3))
+    builtinFloatCeil([Val.ValInt(1)]) => Result.Err("Float.ceil requires Float")
 
 fn builtinFloatMin(args: List<Val>) -> Result<Val, String>
     ? "Float.min(a, b) -> Float."
@@ -461,6 +501,7 @@ fn builtinFloatMin(args: List<Val>) -> Result<Val, String>
 
 verify builtinFloatMin
     builtinFloatMin([Val.ValFloat(1.0), Val.ValFloat(3.0)]) => Result.Ok(Val.ValFloat(1.0))
+    builtinFloatMin([Val.ValInt(1), Val.ValFloat(3.0)]) => Result.Err("Float.min requires two Floats")
 
 fn builtinFloatMax(args: List<Val>) -> Result<Val, String>
     ? "Float.max(a, b) -> Float."
@@ -471,6 +512,7 @@ fn builtinFloatMax(args: List<Val>) -> Result<Val, String>
 
 verify builtinFloatMax
     builtinFloatMax([Val.ValFloat(1.0), Val.ValFloat(3.0)]) => Result.Ok(Val.ValFloat(3.0))
+    builtinFloatMax([Val.ValInt(1), Val.ValFloat(3.0)]) => Result.Err("Float.max requires two Floats")
 
 fn builtinFloatSin(args: List<Val>) -> Result<Val, String>
     ? "Float.sin(f) -> Float."
@@ -481,6 +523,7 @@ fn builtinFloatSin(args: List<Val>) -> Result<Val, String>
 
 verify builtinFloatSin
     builtinFloatSin([Val.ValFloat(0.0)]) => Result.Ok(Val.ValFloat(0.0))
+    builtinFloatSin([Val.ValInt(1)]) => Result.Err("Float.sin requires Float")
 
 fn builtinFloatCos(args: List<Val>) -> Result<Val, String>
     ? "Float.cos(f) -> Float."
@@ -491,6 +534,7 @@ fn builtinFloatCos(args: List<Val>) -> Result<Val, String>
 
 verify builtinFloatCos
     builtinFloatCos([Val.ValFloat(0.0)]) => Result.Ok(Val.ValFloat(1.0))
+    builtinFloatCos([Val.ValInt(1)]) => Result.Err("Float.cos requires Float")
 
 fn builtinFloatSqrt(args: List<Val>) -> Result<Val, String>
     ? "Float.sqrt(f) -> Float."
@@ -501,6 +545,7 @@ fn builtinFloatSqrt(args: List<Val>) -> Result<Val, String>
 
 verify builtinFloatSqrt
     builtinFloatSqrt([Val.ValFloat(4.0)]) => Result.Ok(Val.ValFloat(2.0))
+    builtinFloatSqrt([Val.ValInt(1)]) => Result.Err("Float.sqrt requires Float")
 
 fn builtinFloatPow(args: List<Val>) -> Result<Val, String>
     ? "Float.pow(base, exp) -> Float."
@@ -511,6 +556,7 @@ fn builtinFloatPow(args: List<Val>) -> Result<Val, String>
 
 verify builtinFloatPow
     builtinFloatPow([Val.ValFloat(2.0), Val.ValFloat(3.0)]) => Result.Ok(Val.ValFloat(8.0))
+    builtinFloatPow([Val.ValInt(1), Val.ValFloat(3.0)]) => Result.Err("Float.pow requires two Floats")
 
 fn builtinFloatAtan2(args: List<Val>) -> Result<Val, String>
     ? "Float.atan2(y, x) -> Float."
@@ -521,6 +567,7 @@ fn builtinFloatAtan2(args: List<Val>) -> Result<Val, String>
 
 verify builtinFloatAtan2
     builtinFloatAtan2([Val.ValFloat(0.0), Val.ValFloat(1.0)]) => Result.Ok(Val.ValFloat(0.0))
+    builtinFloatAtan2([Val.ValInt(1), Val.ValFloat(1.0)]) => Result.Err("Float.atan2 requires two Floats")
 
 fn builtinFloatPi(args: List<Val>) -> Result<Val, String>
     ? "Float.pi() -> Float."
@@ -530,6 +577,7 @@ fn builtinFloatPi(args: List<Val>) -> Result<Val, String>
 
 verify builtinFloatPi
     builtinFloatPi([]) => Result.Ok(Val.ValFloat(Float.pi()))
+    builtinFloatPi([Val.ValInt(1)]) => Result.Err("Float.pi takes 0 arguments")
 
 fn builtinStringToUpper(args: List<Val>) -> Result<Val, String>
     ? "String.toUpper(s) -> uppercase string."
@@ -539,6 +587,7 @@ fn builtinStringToUpper(args: List<Val>) -> Result<Val, String>
 
 verify builtinStringToUpper
     builtinStringToUpper([Val.ValStr("hello")]) => Result.Ok(Val.ValStr("HELLO"))
+    builtinStringToUpper([Val.ValInt(1)]) => Result.Err("expected string argument")
 
 fn builtinStringTrim(args: List<Val>) -> Result<Val, String>
     ? "String.trim(s) -> trimmed string."
@@ -548,6 +597,7 @@ fn builtinStringTrim(args: List<Val>) -> Result<Val, String>
 
 verify builtinStringTrim
     builtinStringTrim([Val.ValStr("  hello  ")]) => Result.Ok(Val.ValStr("hello"))
+    builtinStringTrim([Val.ValInt(1)]) => Result.Err("expected string argument")
 
 fn builtinStringEndsWith(args: List<Val>) -> Result<Val, String>
     ? "String.endsWith(s, suffix) -> Bool."
@@ -557,6 +607,7 @@ fn builtinStringEndsWith(args: List<Val>) -> Result<Val, String>
 
 verify builtinStringEndsWith
     builtinStringEndsWith([Val.ValStr("test.av"), Val.ValStr(".av")]) => Result.Ok(Val.ValBool(true))
+    builtinStringEndsWith([Val.ValStr("a")]) => Result.Err("expected 2 arguments")
 
 fn builtinStringEndsWithInner(sV: Val, pV: Val) -> Result<Val, String>
     ? "Inner String.endsWith."
@@ -567,6 +618,7 @@ fn builtinStringEndsWithInner(sV: Val, pV: Val) -> Result<Val, String>
 verify builtinStringEndsWithInner
     builtinStringEndsWithInner(Val.ValStr("hello"), Val.ValStr("lo")) => Result.Ok(Val.ValBool(true))
     builtinStringEndsWithInner(Val.ValStr("hello"), Val.ValStr("xx")) => Result.Ok(Val.ValBool(false))
+    builtinStringEndsWithInner(Val.ValInt(1), Val.ValStr("lo")) => Result.Err("expected string argument")
 
 fn builtinStringSplit(args: List<Val>) -> Result<Val, String>
     ? "String.split(s, sep) -> List<String>."
@@ -576,6 +628,7 @@ fn builtinStringSplit(args: List<Val>) -> Result<Val, String>
 
 verify builtinStringSplit
     builtinStringSplit([Val.ValStr("a-b"), Val.ValStr("-")]) => Result.Ok(Val.ValList([Val.ValStr("a"), Val.ValStr("b")]))
+    builtinStringSplit([Val.ValStr("a")]) => Result.Err("expected 2 arguments")
 
 fn builtinStringSplitInner(sV: Val, sepV: Val) -> Result<Val, String>
     ? "Inner String.split."
@@ -586,6 +639,7 @@ fn builtinStringSplitInner(sV: Val, sepV: Val) -> Result<Val, String>
 
 verify builtinStringSplitInner
     builtinStringSplitInner(Val.ValStr("a,b,c"), Val.ValStr(",")) => Result.Ok(Val.ValList([Val.ValStr("a"), Val.ValStr("b"), Val.ValStr("c")]))
+    builtinStringSplitInner(Val.ValInt(1), Val.ValStr(",")) => Result.Err("expected string argument")
 
 fn strPartsToVals(parts: List<String>, acc: List<Val>) -> List<Val>
     ? "Convert string list to ValStr list."
@@ -605,6 +659,7 @@ fn builtinStringRepeat(args: List<Val>) -> Result<Val, String>
 
 verify builtinStringRepeat
     builtinStringRepeat([Val.ValStr("ab"), Val.ValInt(2)]) => Result.Ok(Val.ValStr("abab"))
+    builtinStringRepeat([Val.ValStr("a")]) => Result.Err("expected 2 arguments")
 
 fn builtinStringRepeatInner(sV: Val, nV: Val) -> Result<Val, String>
     ? "Inner String.repeat."
@@ -614,6 +669,7 @@ fn builtinStringRepeatInner(sV: Val, nV: Val) -> Result<Val, String>
 
 verify builtinStringRepeatInner
     builtinStringRepeatInner(Val.ValStr("ha"), Val.ValInt(3)) => Result.Ok(Val.ValStr("hahaha"))
+    builtinStringRepeatInner(Val.ValInt(1), Val.ValInt(3)) => Result.Err("expected string argument")
 
 fn repeatStr(s: String, n: Int, acc: String) -> String
     ? "Repeat string n times."
@@ -633,6 +689,7 @@ fn builtinStringReplaceAll(args: List<Val>) -> Result<Val, String>
 
 verify builtinStringReplaceAll
     builtinStringReplaceAll([Val.ValStr("aaa"), Val.ValStr("a"), Val.ValStr("b")]) => Result.Ok(Val.ValStr("bbb"))
+    builtinStringReplaceAll([Val.ValStr("a")]) => Result.Err("String.replace takes 3 arguments")
 
 fn builtinStringReplaceAllExtract(args: List<Val>) -> Result<Val, String>
     ? "Extract args for String.replace."
@@ -646,6 +703,7 @@ fn builtinStringReplaceAllExtract(args: List<Val>) -> Result<Val, String>
 
 verify builtinStringReplaceAllExtract
     builtinStringReplaceAllExtract([Val.ValStr("ab"), Val.ValStr("a"), Val.ValStr("x")]) => Result.Ok(Val.ValStr("xb"))
+    builtinStringReplaceAllExtract([]) => Result.Err("String.replace takes 3 arguments")
 
 fn builtinStringReplaceAllDo(sV: Val, fromV: Val, toV: Val) -> Result<Val, String>
     ? "Inner impl of String.replace."

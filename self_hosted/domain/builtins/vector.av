@@ -82,6 +82,7 @@ fn builtinVectorSetInBounds(vec: Vector<Val>, idx: Int, valV: Val) -> Result<Val
 
 verify builtinVectorSetInBounds
     builtinVectorSetInBounds(Vector.fromList([Val.ValInt(1), Val.ValInt(2)]), 0, Val.ValInt(9)) => Result.Ok(Val.ValSome(Val.ValVector(Vector.fromList([Val.ValInt(9), Val.ValInt(2)]))))
+    builtinVectorSetInBounds(Vector.fromList([Val.ValInt(1)]), 0, Val.ValStr("x")) => Result.Ok(Val.ValSome(Val.ValVector(Vector.fromList([Val.ValStr("x")]))))
 
 fn builtinVectorLen(args: List<Val>) -> Result<Val, String>
     ? "Vector.len(vec) -> Int."

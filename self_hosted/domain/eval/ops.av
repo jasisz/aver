@@ -28,13 +28,16 @@ fn applyBinopFloat(x: Float, y: Float, op: BinOp) -> Result<Val, String>
         BinOp.OpAdd -> Result.Ok(Val.ValFloat(x + y))
         BinOp.OpSub -> Result.Ok(Val.ValFloat(x - y))
         BinOp.OpMul -> Result.Ok(Val.ValFloat(x * y))
-        BinOp.OpDiv -> Result.Ok(Val.ValFloat(x / y))
+        BinOp.OpDiv -> match y == 0.0
+            true -> Result.Err("float division by zero")
+            false -> Result.Ok(Val.ValFloat(x / y))
 
 verify applyBinopFloat
     applyBinopFloat(1.5, 2.5, BinOp.OpAdd) => Result.Ok(Val.ValFloat(4.0))
     applyBinopFloat(5.0, 3.0, BinOp.OpSub) => Result.Ok(Val.ValFloat(2.0))
     applyBinopFloat(2.0, 3.0, BinOp.OpMul) => Result.Ok(Val.ValFloat(6.0))
     applyBinopFloat(10.0, 4.0, BinOp.OpDiv) => Result.Ok(Val.ValFloat(2.5))
+    applyBinopFloat(1.0, 0.0, BinOp.OpDiv) => Result.Err("float division by zero")
 
 fn applyCmp(x: Int, y: Int, op: CmpOp) -> Result<Val, String>
     ? "Apply a comparison operation to two integers."
@@ -49,7 +52,11 @@ fn applyCmp(x: Int, y: Int, op: CmpOp) -> Result<Val, String>
 verify applyCmp
     applyCmp(1, 1, CmpOp.CmpEq) => Result.Ok(Val.ValBool(true))
     applyCmp(1, 2, CmpOp.CmpEq) => Result.Ok(Val.ValBool(false))
+    applyCmp(1, 2, CmpOp.CmpNeq) => Result.Ok(Val.ValBool(true))
     applyCmp(1, 2, CmpOp.CmpLt) => Result.Ok(Val.ValBool(true))
+    applyCmp(2, 1, CmpOp.CmpGt) => Result.Ok(Val.ValBool(true))
+    applyCmp(1, 2, CmpOp.CmpLte) => Result.Ok(Val.ValBool(true))
+    applyCmp(2, 1, CmpOp.CmpGte) => Result.Ok(Val.ValBool(true))
 
 fn applyCmpFloat(x: Float, y: Float, op: CmpOp) -> Result<Val, String>
     ? "Apply a comparison to two floats."
@@ -67,6 +74,7 @@ verify applyCmpFloat
     applyCmpFloat(3.0, 2.0, CmpOp.CmpGt) => Result.Ok(Val.ValBool(true))
     applyCmpFloat(1.0, 1.0, CmpOp.CmpLte) => Result.Ok(Val.ValBool(true))
     applyCmpFloat(1.0, 2.0, CmpOp.CmpNeq) => Result.Ok(Val.ValBool(true))
+    applyCmpFloat(1.0, 1.0, CmpOp.CmpGte) => Result.Ok(Val.ValBool(true))
 
 fn evalBinopVals(va: Val, vb: Val, op: BinOp) -> Result<Val, String>
     ? "Apply binary op to two evaluated values."
@@ -86,6 +94,7 @@ verify evalBinopVals
     evalBinopVals(Val.ValInt(1), Val.ValFloat(2.5), BinOp.OpAdd) => Result.Ok(Val.ValFloat(3.5))
     evalBinopVals(Val.ValFloat(3.0), Val.ValInt(2), BinOp.OpMul) => Result.Ok(Val.ValFloat(6.0))
     evalBinopVals(Val.ValStr("a"), Val.ValStr("b"), BinOp.OpAdd) => Result.Ok(Val.ValStr("ab"))
+    evalBinopVals(Val.ValBool(true), Val.ValInt(1), BinOp.OpAdd) => Result.Err("binop type mismatch")
 
 fn evalCmpVals(va: Val, vb: Val, op: CmpOp) -> Result<Val, String>
     ? "Apply comparison to two evaluated values (Int, Float, or String)."
@@ -105,6 +114,7 @@ verify evalCmpVals
     evalCmpVals(Val.ValInt(1), Val.ValFloat(1.0), CmpOp.CmpEq) => Result.Ok(Val.ValBool(true))
     evalCmpVals(Val.ValStr("a"), Val.ValStr("a"), CmpOp.CmpEq) => Result.Ok(Val.ValBool(true))
     evalCmpVals(Val.ValBool(true), Val.ValBool(false), CmpOp.CmpEq) => Result.Ok(Val.ValBool(false))
+    evalCmpVals(Val.ValBool(true), Val.ValBool(false), CmpOp.CmpLt) => Result.Err("bools only support == and !=")
 
 fn applyStrCmp(x: String, y: String, op: CmpOp) -> Result<Val, String>
     ? "String comparison: all operators supported."
@@ -118,8 +128,11 @@ fn applyStrCmp(x: String, y: String, op: CmpOp) -> Result<Val, String>
 
 verify applyStrCmp
     applyStrCmp("a", "a", CmpOp.CmpEq) => Result.Ok(Val.ValBool(true))
+    applyStrCmp("a", "b", CmpOp.CmpNeq) => Result.Ok(Val.ValBool(true))
     applyStrCmp("a", "b", CmpOp.CmpLt) => Result.Ok(Val.ValBool(true))
     applyStrCmp("b", "a", CmpOp.CmpGt) => Result.Ok(Val.ValBool(true))
+    applyStrCmp("a", "b", CmpOp.CmpLte) => Result.Ok(Val.ValBool(true))
+    applyStrCmp("b", "a", CmpOp.CmpGte) => Result.Ok(Val.ValBool(true))
 
 fn applyBoolCmp(x: Bool, y: Bool, op: CmpOp) -> Result<Val, String>
     ? "Bool comparison: eq and neq."
@@ -131,6 +144,7 @@ fn applyBoolCmp(x: Bool, y: Bool, op: CmpOp) -> Result<Val, String>
 verify applyBoolCmp
     applyBoolCmp(true, true, CmpOp.CmpEq) => Result.Ok(Val.ValBool(true))
     applyBoolCmp(true, false, CmpOp.CmpNeq) => Result.Ok(Val.ValBool(true))
+    applyBoolCmp(true, false, CmpOp.CmpLt) => Result.Err("bools only support == and !=")
 
 fn evalCmpRepr(va: Val, vb: Val, op: CmpOp) -> Result<Val, String>
     ? "Fallback comparison using repr (for variants, lists, etc)."
@@ -141,6 +155,8 @@ fn evalCmpRepr(va: Val, vb: Val, op: CmpOp) -> Result<Val, String>
 
 verify evalCmpRepr
     evalCmpRepr(Val.ValNone, Val.ValNone, CmpOp.CmpEq) => Result.Ok(Val.ValBool(true))
+    evalCmpRepr(Val.ValNone, Val.ValNone, CmpOp.CmpNeq) => Result.Ok(Val.ValBool(false))
+    evalCmpRepr(Val.ValNone, Val.ValNone, CmpOp.CmpLt) => Result.Err("comparison not supported for these types")
 
 fn evalVectorGetOrIntVals(vecV: Val, idxV: Val, defaultValue: Int) -> Result<Val, String>
     ? "Read a vector cell and return an integer fallback when the index misses."
@@ -153,6 +169,7 @@ fn evalVectorGetOrIntVals(vecV: Val, idxV: Val, defaultValue: Int) -> Result<Val
 verify evalVectorGetOrIntVals
     evalVectorGetOrIntVals(Val.ValVector(Vector.fromList([Val.ValInt(10)])), Val.ValInt(0), 0) => Result.Ok(Val.ValInt(10))
     evalVectorGetOrIntVals(Val.ValVector(Vector.fromList([Val.ValInt(10)])), Val.ValInt(5), 99) => Result.Ok(Val.ValInt(99))
+    evalVectorGetOrIntVals(Val.ValInt(1), Val.ValInt(0), 0) => Result.Err("Vector.get: expected (Vector, Int)")
 
 fn evalIntModOrIntVals(aV: Val, bV: Val, defaultValue: Int) -> Result<Val, String>
     ? "Apply Int.mod and return an integer fallback when the result would be Err."
@@ -167,6 +184,7 @@ fn evalIntModOrIntVals(aV: Val, bV: Val, defaultValue: Int) -> Result<Val, Strin
 verify evalIntModOrIntVals
     evalIntModOrIntVals(Val.ValInt(10), Val.ValInt(3), 0) => Result.Ok(Val.ValInt(1))
     evalIntModOrIntVals(Val.ValInt(10), Val.ValInt(0), 99) => Result.Ok(Val.ValInt(99))
+    evalIntModOrIntVals(Val.ValStr("x"), Val.ValInt(1), 0) => Result.Err("expected int argument")
 
 fn evalVectorSetMaybeDefault(vecV: Val, idxV: Val, valueV: Val) -> Result<Option<Val>, String>
     ? "Apply Vector.set and return None when the caller should fall back to its default expression."
@@ -183,6 +201,7 @@ fn evalVectorSetMaybeDefault(vecV: Val, idxV: Val, valueV: Val) -> Result<Option
 verify evalVectorSetMaybeDefault
     evalVectorSetMaybeDefault(Val.ValVector(Vector.fromList([Val.ValInt(0)])), Val.ValInt(0), Val.ValInt(5)) => Result.Ok(Option.Some(Val.ValVector(Vector.fromList([Val.ValInt(5)]))))
     evalVectorSetMaybeDefault(Val.ValVector(Vector.fromList([Val.ValInt(0)])), Val.ValInt(9), Val.ValInt(5)) => Result.Ok(Option.None)
+    evalVectorSetMaybeDefault(Val.ValInt(1), Val.ValInt(0), Val.ValInt(5)) => Result.Err("Vector.set: first arg must be Vector")
 
 fn evalVectorGetMaybeDefault(vecV: Val, idxV: Val) -> Result<Option<Val>, String>
     ? "Apply Vector.get and return None when the caller should fall back to its default expression."
@@ -197,3 +216,4 @@ fn evalVectorGetMaybeDefault(vecV: Val, idxV: Val) -> Result<Option<Val>, String
 verify evalVectorGetMaybeDefault
     evalVectorGetMaybeDefault(Val.ValVector(Vector.fromList([Val.ValInt(7)])), Val.ValInt(0)) => Result.Ok(Option.Some(Val.ValInt(7)))
     evalVectorGetMaybeDefault(Val.ValVector(Vector.fromList([])), Val.ValInt(0)) => Result.Ok(Option.None)
+    evalVectorGetMaybeDefault(Val.ValInt(1), Val.ValInt(0)) => Result.Err("Vector.get: expected (Vector, Int)")

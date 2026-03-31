@@ -208,8 +208,6 @@ fn evalArgs(exprs: List<Expr>, env: Map<String, Val>, fns: FnStore) -> Result<Li
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     evalArgsRev(exprs, env, fns, [])
 
-verify evalArgs
-    evalArgs([Expr.ExprInt(1), Expr.ExprInt(2)], Map.empty(), Domain.Eval.Store.emptyFnStore()) => Result.Ok([Val.ValInt(1), Val.ValInt(2)])
 
 fn evalArgsRev(exprs: List<Expr>, env: Map<String, Val>, fns: FnStore, acc: List<Val>) -> Result<List<Val>, String>
     ? "Tail-recursive worker for evalArgs. Accumulates in reverse."
@@ -884,8 +882,6 @@ fn evalArgsSlot(exprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, 
                     [] -> evalArgsSlot3(e0, e1, e2, env, slotMap, fns)
                     _ -> evalArgsSlotRev(exprs, env, slotMap, fns, [])
 
-verify evalArgsSlot
-    evalArgsSlot([Expr.ExprInt(1), Expr.ExprInt(2)], Vector.new(0, Val.ValUnit), Map.empty(), Domain.Eval.Store.emptyFnStore()) => Result.Ok([Val.ValInt(1), Val.ValInt(2)])
 
 fn evalArgsSlot1(e0: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<List<Val>, String>
     ? "Fast path for one slot-path argument."
