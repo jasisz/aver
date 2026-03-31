@@ -422,11 +422,10 @@ fn tokenizeEq(src: String, pos: Int) -> List<Token>
     twoAhead = pos + 2
     eqTokens = List.prepend(Token.TkEq, tokenize(src, nextPos))
     match String.charAt(src, nextPos)
-        Option.Some(c) -> match c == "="
-            true -> List.prepend(Token.TkEqEq, tokenize(src, twoAhead))
-            false -> match c == ">"
-                true -> List.prepend(Token.TkFatArrow, tokenize(src, twoAhead))
-                false -> eqTokens
+        Option.Some(c) -> match c
+            "=" -> List.prepend(Token.TkEqEq, tokenize(src, twoAhead))
+            ">" -> List.prepend(Token.TkFatArrow, tokenize(src, twoAhead))
+            _ -> eqTokens
         Option.None -> eqTokens
 
 verify tokenizeEq
