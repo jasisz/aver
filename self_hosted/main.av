@@ -73,39 +73,30 @@ fn findModulePath(dep: String, root: String, depth: Int) -> String
         true -> path
         false -> match depth >= 3
             true -> path
-            false -> findModulePath(dep, parentDir(root), depth + 1)
-
-fn parentDir(dir: String) -> String
-    ? "Go up one directory level."
-    dir + "/.."
-
-verify parentDir
-    parentDir("foo") => "foo/.."
-    parentDir("a/b") => "a/b/.."
+            false -> findModulePath(dep, root + "/..", depth + 1)
 
 fn modulePathFromName(name: String, moduleRoot: String) -> String
     ? "Convert Module.Name to file path: Domain.Foo -> domain/foo.av"
     // Simple: replace dots with / and lowercase
-    moduleRoot + "/" + dotToSlash(name, 0, String.len(name), []) + ".av"
+    moduleRoot + "/" + dotToSlash(name, 0, String.len(name), "") + ".av"
 
 verify modulePathFromName
     modulePathFromName("Domain.Foo", ".") => "./domain/foo.av"
 
-fn dotToSlash(name: String, pos: Int, total: Int, acc: List<String>) -> String
+fn dotToSlash(name: String, pos: Int, total: Int, acc: String) -> String
     ? "Replace dots with slashes and lowercase first char of each segment."
     nextPos = pos + 1
-    result = String.join(List.reverse(acc), "")
     match pos >= total
-        true -> result
+        true -> acc
         false -> match String.charAt(name, pos)
             Option.Some(c) -> match c == "."
-                true -> dotToSlash(name, nextPos, total, List.prepend("/", acc))
-                false -> dotToSlash(name, nextPos, total, List.prepend(String.toLower(c), acc))
-            Option.None -> result
+                true -> dotToSlash(name, nextPos, total, acc + "/")
+                false -> dotToSlash(name, nextPos, total, acc + String.toLower(c))
+            Option.None -> acc
 
 verify dotToSlash
-    dotToSlash("Domain.Foo", 0, 10, []) => "domain/foo"
-    dotToSlash("A.B.C", 0, 5, []) => "a/b/c"
+    dotToSlash("Domain.Foo", 0, 10, "") => "domain/foo"
+    dotToSlash("A.B.C", 0, 5, "") => "a/b/c"
 
 fn qualifyFns(fns: List<FnDef>, prefix: String, acc: List<FnDef>) -> List<FnDef>
     ? "Register functions with both qualified (Domain.Foo.bar) and unqualified (bar) names."

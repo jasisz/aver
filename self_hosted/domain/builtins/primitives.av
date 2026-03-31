@@ -666,21 +666,21 @@ fn builtinStringRepeatInner(sV: Val, nV: Val) -> Result<Val, String>
     ? "Inner String.repeat."
     s = Domain.Builtins.Helpers.expectStr(sV)?
     n = Domain.Builtins.Helpers.expectInt(nV)?
-    Result.Ok(Val.ValStr(repeatStr(s, n, [])))
+    Result.Ok(Val.ValStr(repeatStr(s, n, "")))
 
 verify builtinStringRepeatInner
     builtinStringRepeatInner(Val.ValStr("ha"), Val.ValInt(3)) => Result.Ok(Val.ValStr("hahaha"))
     builtinStringRepeatInner(Val.ValInt(1), Val.ValInt(3)) => Result.Err("expected string argument")
 
-fn repeatStr(s: String, n: Int, acc: List<String>) -> String
+fn repeatStr(s: String, n: Int, acc: String) -> String
     ? "Repeat string n times."
     match n <= 0
-        true -> String.join(List.reverse(acc), "")
-        false -> repeatStr(s, n - 1, List.prepend(s, acc))
+        true -> acc
+        false -> repeatStr(s, n - 1, acc + s)
 
 verify repeatStr
-    repeatStr("ab", 3, []) => "ababab"
-    repeatStr("x", 0, []) => ""
+    repeatStr("ab", 3, "") => "ababab"
+    repeatStr("x", 0, "") => ""
 
 fn builtinStringReplaceAll(args: List<Val>) -> Result<Val, String>
     ? "String.replace(s, from, to) -> String with all occurrences replaced."

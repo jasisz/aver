@@ -92,48 +92,38 @@ fn parseIdentPattern(tokens: List<Token>, pos: Int, name: String) -> Result<(Pat
     ? "Parse ident pattern: wildcard _, variable, or constructor Foo.Bar(bindings)."
     match name == "_"
         true -> Result.Ok((Pattern.PatWild, pos))
-        false -> parseIdentPatternMaybeConstructor(tokens, pos, [name])
+        false -> parseIdentPatternMaybeConstructor(tokens, pos, name)
 
 verify parseIdentPattern
     parseIdentPattern([Token.TkEof], 0, "_") => Result.Ok((Pattern.PatWild, 0))
     parseIdentPattern([Token.TkEof], 0, "x") => Result.Ok((Pattern.PatVar("x"), 0))
     parseIdentPattern([Token.TkDot, Token.TkEof], 0, "Foo") => Result.Err("Expected identifier after '.' in pattern")
 
-fn parseIdentPatternMaybeConstructor(tokens: List<Token>, pos: Int, segments: List<String>) -> Result<(Pattern, Int), String>
+fn parseIdentPatternMaybeConstructor(tokens: List<Token>, pos: Int, name: String) -> Result<(Pattern, Int), String>
     ? "Check for dot-qualified name, constructor pattern, or plain variable."
     nextPos = pos + 1
     match tokenAt(tokens, pos)
-        Token.TkDot -> parseIdentPatternDotted(tokens, nextPos, segments)
-        _ -> parseIdentPatternFinish(tokens, pos, segments)
-
-fn parseIdentPatternFinish(tokens: List<Token>, pos: Int, segments: List<String>) -> Result<(Pattern, Int), String>
-    ? "Finish pattern: constructor with parens, bare constructor, or variable."
-    name = String.join(segments, ".")
-    match tokenAt(tokens, pos)
-        Token.TkLParen -> parseConstructorPatternBindings(tokens, pos + 1, name, [])
-        _ -> match List.len(segments) > 1
+        Token.TkDot -> parseIdentPatternDotted(tokens, nextPos, name)
+        Token.TkLParen -> parseConstructorPatternBindings(tokens, nextPos, name, [])
+        _ -> match String.contains(name, ".")
             true -> Result.Ok((Pattern.PatConstructor(name, []), pos))
             false -> Result.Ok((Pattern.PatVar(name), pos))
 
-verify parseIdentPatternFinish
-    parseIdentPatternFinish([Token.TkEof], 0, ["x"]) => Result.Ok((Pattern.PatVar("x"), 0))
-    parseIdentPatternFinish([Token.TkEof], 0, ["Option", "None"]) => Result.Ok((Pattern.PatConstructor("Option.None", []), 0))
-
 verify parseIdentPatternMaybeConstructor
-    parseIdentPatternMaybeConstructor([Token.TkEof], 0, ["x"]) => Result.Ok((Pattern.PatVar("x"), 0))
-    parseIdentPatternMaybeConstructor([Token.TkEof], 0, ["Option", "None"]) => Result.Ok((Pattern.PatConstructor("Option.None", []), 0))
-    parseIdentPatternMaybeConstructor([Token.TkEof], 0, ["Token", "TkEof"]) => Result.Ok((Pattern.PatConstructor("Token.TkEof", []), 0))
-    parseIdentPatternMaybeConstructor([Token.TkDot, Token.TkEof], 0, ["Foo"]) => Result.Err("Expected identifier after '.' in pattern")
+    parseIdentPatternMaybeConstructor([Token.TkEof], 0, "x") => Result.Ok((Pattern.PatVar("x"), 0))
+    parseIdentPatternMaybeConstructor([Token.TkEof], 0, "Option.None") => Result.Ok((Pattern.PatConstructor("Option.None", []), 0))
+    parseIdentPatternMaybeConstructor([Token.TkEof], 0, "Token.TkEof") => Result.Ok((Pattern.PatConstructor("Token.TkEof", []), 0))
+    parseIdentPatternMaybeConstructor([Token.TkDot, Token.TkEof], 0, "Foo") => Result.Err("Expected identifier after '.' in pattern")
 
-fn parseIdentPatternDotted(tokens: List<Token>, pos: Int, segments: List<String>) -> Result<(Pattern, Int), String>
+fn parseIdentPatternDotted(tokens: List<Token>, pos: Int, prefix: String) -> Result<(Pattern, Int), String>
     ? "After dot: read next ident and check for ( or another dot."
     match tokenAt(tokens, pos)
-        Token.TkIdent(s) -> parseIdentPatternMaybeConstructor(tokens, pos + 1, List.concat(segments, [s]))
+        Token.TkIdent(s) -> parseIdentPatternMaybeConstructor(tokens, pos + 1, prefix + "." + s)
         _ -> Result.Err("Expected identifier after '.' in pattern")
 
 verify parseIdentPatternDotted
-    parseIdentPatternDotted([Token.TkIdent("Ok"), Token.TkLParen, Token.TkIdent("x"), Token.TkRParen, Token.TkEof], 0, ["Result"]) => Result.Ok((Pattern.PatConstructor("Result.Ok", ["x"]), 4))
-    parseIdentPatternDotted([Token.TkEof], 0, ["Foo"]) => Result.Err("Expected identifier after '.' in pattern")
+    parseIdentPatternDotted([Token.TkIdent("Ok"), Token.TkLParen, Token.TkIdent("x"), Token.TkRParen, Token.TkEof], 0, "Result") => Result.Ok((Pattern.PatConstructor("Result.Ok", ["x"]), 4))
+    parseIdentPatternDotted([Token.TkEof], 0, "Foo") => Result.Err("Expected identifier after '.' in pattern")
 
 fn parseConstructorPatternBindings(tokens: List<Token>, pos: Int, name: String, acc: List<String>) -> Result<(Pattern, Int), String>
     ? "Parse bindings inside constructor pattern: Ctor(a, b) or Ctor()."

@@ -132,39 +132,37 @@ fn isIdentCharPlain(c: String) -> Bool
     ? "Check if character can continue a plain identifier (alphanumeric, underscore only)."
     isAlphaNum(c)
 
-fn readIdentLoopDotted(src: String, pos: Int, acc: List<String>) -> (String, Int)
+fn readIdentLoopDotted(src: String, pos: Int, acc: String) -> (String, Int)
     ? "Read identifier including dots (for qualified names like List.prepend)."
-    done = (String.join(List.reverse(acc), ""), pos)
     match pos < String.len(src)
         true -> match String.charAt(src, pos)
             Option.Some(c) -> match isIdentCharDotted(c)
-                true -> readIdentLoopDotted(src, pos + 1, List.prepend(c, acc))
-                false -> done
-            Option.None -> done
-        false -> done
+                true -> readIdentLoopDotted(src, pos + 1, acc + c)
+                false -> (acc, pos)
+            Option.None -> (acc, pos)
+        false -> (acc, pos)
 
 verify readIdentLoopDotted
-    readIdentLoopDotted("List.len x", 0, []) => ("List.len", 8)
+    readIdentLoopDotted("List.len x", 0, "") => ("List.len", 8)
 
-fn readIdentLoopPlain(src: String, pos: Int, acc: List<String>) -> (String, Int)
+fn readIdentLoopPlain(src: String, pos: Int, acc: String) -> (String, Int)
     ? "Read identifier without dots (for local variables)."
-    done = (String.join(List.reverse(acc), ""), pos)
     match pos < String.len(src)
         true -> match String.charAt(src, pos)
             Option.Some(c) -> match isIdentCharPlain(c)
-                true -> readIdentLoopPlain(src, pos + 1, List.prepend(c, acc))
-                false -> done
-            Option.None -> done
-        false -> done
+                true -> readIdentLoopPlain(src, pos + 1, acc + c)
+                false -> (acc, pos)
+            Option.None -> (acc, pos)
+        false -> (acc, pos)
 
 verify readIdentLoopPlain
-    readIdentLoopPlain("foo x", 0, []) => ("foo", 3)
+    readIdentLoopPlain("foo x", 0, "") => ("foo", 3)
 
 fn readIdent(src: String, pos: Int, acc: String, dotted: Bool) -> (String, Int)
     ? "Read identifier, dotted if starts with uppercase."
     match dotted
-        true -> readIdentLoopDotted(src, pos, [acc])
-        false -> readIdentLoopPlain(src, pos, [acc])
+        true -> readIdentLoopDotted(src, pos, acc)
+        false -> readIdentLoopPlain(src, pos, acc)
 
 verify readIdent
     readIdent("List.len x", 0, "", true) => ("List.len", 8)

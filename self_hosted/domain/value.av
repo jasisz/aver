@@ -29,16 +29,18 @@ type Val
     ValMap(Map<String, Val>)
     ValUnit
 
-fn valListRepr(items: List<Val>, acc: List<String>) -> String
+fn valListRepr(items: List<Val>, acc: String, first: Bool) -> String
     ? "Build list repr recursively."
     match items
-        [] -> "[{String.join(List.reverse(acc), ", ")}]"
-        [v, ..rest] -> valListRepr(rest, List.prepend(valReprInner(v), acc))
+        [] -> "[{acc}]"
+        [v, ..rest] -> match first
+            true -> valListRepr(rest, valReprInner(v), false)
+            false -> valListRepr(rest, acc + ", " + valReprInner(v), false)
 
 verify valListRepr
-    valListRepr([], []) => "[]"
-    valListRepr([Val.ValInt(1), Val.ValInt(2)], []) => "[1, 2]"
-    valListRepr([Val.ValStr("a")], []) => "[\"a\"]"
+    valListRepr([], "", true) => "[]"
+    valListRepr([Val.ValInt(1), Val.ValInt(2)], "", true) => "[1, 2]"
+    valListRepr([Val.ValStr("a")], "", true) => "[\"a\"]"
 
 fn valRepr(v: Val) -> String
     ? "Display representation of a runtime value."
@@ -48,15 +50,15 @@ fn valRepr(v: Val) -> String
         Val.ValStr(s) -> s
         Val.ValBool(b) -> String.fromBool(b)
         Val.ValFnRef(name) -> "<fn {name}>"
-        Val.ValList(items) -> valListRepr(items, [])
-        Val.ValVector(vec) -> "Vector" + valListRepr(Vector.toList(vec), [])
+        Val.ValList(items) -> valListRepr(items, "", true)
+        Val.ValVector(vec) -> "Vector" + valListRepr(Vector.toList(vec), "", true)
         Val.ValOk(inner) -> "Result.Ok({valReprInner(inner)})"
         Val.ValErr(inner) -> "Result.Err({valReprInner(inner)})"
-        Val.ValTuple(items) -> "({valFieldsRepr(items, [])})"
+        Val.ValTuple(items) -> "({valFieldsRepr(items, "", true)})"
         Val.ValSome(inner) -> "Option.Some({valReprInner(inner)})"
         Val.ValNone -> "Option.None"
         Val.ValRecord(name, _) -> "{name}(...)"
-        Val.ValMap(m) -> valMapRepr(Map.entries(m), [])
+        Val.ValMap(m) -> valMapRepr(Map.entries(m), "", true)
         Val.ValVariant(_, fullName, fields) -> valVariantReprTagged(fullName, fields)
         Val.ValUnit -> "()"
 
@@ -83,9 +85,9 @@ fn valReprInner(v: Val) -> String
     match v
         Val.ValStr(s) -> "\"" + s + "\""
         Val.ValFnRef(name) -> "<fn {name}>"
-        Val.ValTuple(items) -> "({valFieldsRepr(items, [])})"
-        Val.ValVector(vec) -> "Vector" + valListRepr(Vector.toList(vec), [])
-        Val.ValList(items) -> valListRepr(items, [])
+        Val.ValTuple(items) -> "({valFieldsRepr(items, "", true)})"
+        Val.ValVector(vec) -> "Vector" + valListRepr(Vector.toList(vec), "", true)
+        Val.ValList(items) -> valListRepr(items, "", true)
         _ -> valRepr(v)
 
 verify valReprInner
@@ -97,16 +99,18 @@ verify valReprInner
     valReprInner(Val.ValList([Val.ValInt(1)])) => "[1]"
     valReprInner(Val.ValVector(Vector.fromList([]))) => "Vector[]"
 
-fn valMapRepr(entries: List<(String, Val)>, acc: List<String>) -> String
+fn valMapRepr(entries: List<(String, Val)>, acc: String, first: Bool) -> String
     ? "Build a stable map repr close to the host interpreter output."
     match entries
-        [] -> "{{{String.join(List.reverse(acc), ", ")}}}"
+        [] -> "{{{acc}}}"
         [pair, ..rest] -> match pair
-            (k, v) -> valMapRepr(rest, List.prepend(quoteString(k) + ": " + valReprInner(v), acc))
+            (k, v) -> match first
+                true -> valMapRepr(rest, quoteString(k) + ": " + valReprInner(v), false)
+                false -> valMapRepr(rest, acc + ", " + quoteString(k) + ": " + valReprInner(v), false)
 
 verify valMapRepr
-    valMapRepr([], []) => "{{}}"
-    valMapRepr([("alice", Val.ValInt(2))], []) => "{{" + quoteString("alice") + ": 2}"
+    valMapRepr([], "", true) => "{{}}"
+    valMapRepr([("alice", Val.ValInt(2))], "", true) => "{{" + quoteString("alice") + ": 2}"
 
 fn mapKeyRepr(v: Val) -> String
     ? "Stable repr for map keys. Keeps common scalar keys off the general valRepr path."
@@ -127,18 +131,20 @@ fn valVariantReprTagged(fullName: String, fields: List<Val>) -> String
     ? "Display a variant value using its full name."
     match fields
         [] -> fullName
-        _ -> "{fullName}({valFieldsRepr(fields, [])})"
+        _ -> "{fullName}({valFieldsRepr(fields, "", true)})"
 
 verify valVariantReprTagged
     valVariantReprTagged("Token.TkPlus", []) => "Token.TkPlus"
     valVariantReprTagged("Expr.ExprInt", [Val.ValInt(5)]) => "Expr.ExprInt(5)"
 
-fn valFieldsRepr(items: List<Val>, acc: List<String>) -> String
+fn valFieldsRepr(items: List<Val>, acc: String, first: Bool) -> String
     ? "Build comma-separated repr of variant fields."
     match items
-        [] -> String.join(List.reverse(acc), ", ")
-        [v, ..rest] -> valFieldsRepr(rest, List.prepend(valReprInner(v), acc))
+        [] -> acc
+        [v, ..rest] -> match first
+            true -> valFieldsRepr(rest, valReprInner(v), false)
+            false -> valFieldsRepr(rest, acc + ", " + valReprInner(v), false)
 
 verify valFieldsRepr
-    valFieldsRepr([], []) => ""
-    valFieldsRepr([Val.ValInt(1), Val.ValStr("hi")], []) => "1, \"hi\""
+    valFieldsRepr([], "", true) => ""
+    valFieldsRepr([Val.ValInt(1), Val.ValStr("hi")], "", true) => "1, \"hi\""
