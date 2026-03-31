@@ -200,7 +200,6 @@ impl TypeChecker {
     }
 
     pub(super) fn check_verify_blocks(&mut self, items: &[TopLevel]) {
-        let no_effects: Vec<String> = vec![];
         // Allow `?` in verify cases: treat each case as if inside a Result-returning
         // function so ErrorProp type-checks. At runtime, `?` hitting Err means
         // "test failed" rather than error propagation.
@@ -219,6 +218,13 @@ impl TypeChecker {
                     ));
                     continue;
                 }
+                // Inherit effects from the tested function so verify blocks
+                // can call effectful functions without declaring effects.
+                let inherited_effects: Vec<String> = self
+                    .fn_sigs
+                    .get(&vb.fn_name)
+                    .map(|sig| sig.effects.clone())
+                    .unwrap_or_default();
                 let caller = format!("<verify:{}>", vb.fn_name);
                 if let crate::ast::VerifyKind::Law(law) = &vb.kind {
                     self.with_verify_law_givens(&law.givens, |checker| {
@@ -235,7 +241,7 @@ impl TypeChecker {
                                     ),
                                 );
                             }
-                            checker.check_effects_in_expr(when_expr, &caller, &no_effects);
+                            checker.check_effects_in_expr(when_expr, &caller, &inherited_effects);
                         }
                     });
                     if law.when.is_some() && law.sample_guards.len() != vb.cases.len() {
@@ -274,9 +280,9 @@ impl TypeChecker {
                         );
                     }
                     let _ = self.infer_type(left);
-                    self.check_effects_in_expr(left, &caller, &no_effects);
+                    self.check_effects_in_expr(left, &caller, &inherited_effects);
                     let _ = self.infer_type(right);
-                    self.check_effects_in_expr(right, &caller, &no_effects);
+                    self.check_effects_in_expr(right, &caller, &inherited_effects);
                     if let crate::ast::VerifyKind::Law(law) = &vb.kind
                         && let Some(sample_guard) = law.sample_guards.get(idx)
                     {

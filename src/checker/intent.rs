@@ -466,7 +466,7 @@ pub fn check_module_intent_with_sigs_in(
                                 .collect();
                             matching.sort();
                             if !matching.is_empty() && !used_effects.contains(declared) {
-                                errors.push(CheckFinding {
+                                warnings.push(CheckFinding {
                                     line: f.line,
                                     module: module_name.clone(),
                                     file: source_file.map(|s| s.to_string()),
@@ -484,18 +484,32 @@ pub fn check_module_intent_with_sigs_in(
                         }
                     }
                 }
-                if fn_needs_verify(f)
-                    && !verified_fns.contains(f.name.as_str())
-                    && !spec_fns.contains(&f.name)
-                    && !empty_verify_fns.contains(f.name.as_str())
-                    && !invalid_verify_fns.contains(f.name.as_str())
-                {
+                let is_verified = verified_fns.contains(f.name.as_str())
+                    || spec_fns.contains(&f.name)
+                    || empty_verify_fns.contains(f.name.as_str())
+                    || invalid_verify_fns.contains(f.name.as_str());
+                if fn_needs_verify(f) && !is_verified {
                     errors.push(CheckFinding {
                         line: f.line,
                         module: module_name.clone(),
                         file: source_file.map(|s| s.to_string()),
                         fn_name: None,
                         message: format!("Function '{}' has no verify block", f.name),
+                        extra_spans: vec![],
+                    });
+                } else if !f.effects.is_empty()
+                    && f.name != "main"
+                    && !is_verified
+                {
+                    warnings.push(CheckFinding {
+                        line: f.line,
+                        module: module_name.clone(),
+                        file: source_file.map(|s| s.to_string()),
+                        fn_name: None,
+                        message: format!(
+                            "Function '{}' has effects but no verify block — consider testing via replay",
+                            f.name
+                        ),
                         extra_spans: vec![],
                     });
                 }

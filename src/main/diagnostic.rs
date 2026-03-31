@@ -162,7 +162,7 @@ impl Diagnostic {
         // Errors: always show. Warnings: only if verbose.
         // Skip snippet for structural hints where the signature adds no information
         // beyond what in-fn: and repair: already say.
-        let skip_snippet = matches!(self.slug, "missing-verify" | "missing-description");
+        let skip_snippet = matches!(self.slug, "missing-verify" | "missing-verify-effectful" | "missing-description");
         let show_source = (is_error || verbose) && !skip_snippet;
         let has_source = self.regions.iter().any(|r| !r.source_lines.is_empty());
         if show_source && has_source {
@@ -802,7 +802,12 @@ pub(super) fn from_check_finding(
 }
 
 fn classify_finding(msg: &str) -> (&'static str, Option<String>) {
-    if msg.contains("no verify block") {
+    if msg.contains("has effects but no verify block") {
+        (
+            "missing-verify-effectful",
+            Some("Test via `aver run --record` + `aver replay --test`".to_string()),
+        )
+    } else if msg.contains("no verify block") {
         (
             "missing-verify",
             Some("Add a verify block with representative test cases".to_string()),
@@ -844,6 +849,10 @@ fn classify_finding(msg: &str) -> (&'static str, Option<String>) {
         ("unknown-impact", split_repair(msg))
     } else if msg.contains("must not call") && msg.contains("on the right side") {
         ("verify-rhs", None)
+    } else if msg.contains("consider granular") {
+        ("effect-granularity", split_repair(msg))
+    } else if msg.contains("verify examples") || msg.contains("verify case") {
+        ("verify-coverage", None)
     } else {
         ("check", None)
     }
