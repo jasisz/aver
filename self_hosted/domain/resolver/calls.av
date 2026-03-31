@@ -109,7 +109,7 @@ verify resolveCallsInExpr
     resolveCallsInExpr(Expr.ExprLte(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => Expr.ExprLte(Expr.ExprInt(1), Expr.ExprInt(2))
     resolveCallsInExpr(Expr.ExprGte(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => Expr.ExprGte(Expr.ExprInt(1), Expr.ExprInt(2))
     resolveCallsInExpr(Expr.ExprCallDirect(0, []), Map.empty()) => Expr.ExprCallDirect(0, [])
-    resolveCallsInExpr(Expr.ExprCallBuiltin("Map.get", []), Map.empty()) => Expr.ExprCallBuiltin("Map.get", [])
+    resolveCallsInExpr(Expr.ExprCallBuiltin("Map.get", []), Map.empty()) => Expr.ExprCallBuiltinId(2, [])
     resolveCallsInExpr(Expr.ExprCallBuiltinId(0, []), Map.empty()) => Expr.ExprCallBuiltinId(0, [])
     resolveCallsInExpr(Expr.ExprMatch(Expr.ExprInt(1), []), Map.empty()) => Expr.ExprMatch(Expr.ExprInt(1), [])
     resolveCallsInExpr(Expr.ExprPropagate(Expr.ExprInt(1)), Map.empty()) => Expr.ExprPropagate(Expr.ExprInt(1))

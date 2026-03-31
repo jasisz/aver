@@ -77,12 +77,13 @@ verify builtinVectorSetInner
 
 fn builtinVectorSetInBounds(vec: Vector<Val>, idx: Int, valV: Val) -> Result<Val, String>
     ? "Set a vector element when bounds have already been checked."
-    newVec = Option.withDefault(Vector.set(vec, idx, valV), vec)
-    Result.Ok(Val.ValSome(Val.ValVector(newVec)))
+    match Vector.set(vec, idx, valV)
+        Option.Some(newVec) -> Result.Ok(Val.ValSome(Val.ValVector(newVec)))
+        Option.None -> Result.Err("Vector.set: index out of bounds")
 
 verify builtinVectorSetInBounds
     builtinVectorSetInBounds(Vector.fromList([Val.ValInt(1), Val.ValInt(2)]), 0, Val.ValInt(9)) => Result.Ok(Val.ValSome(Val.ValVector(Vector.fromList([Val.ValInt(9), Val.ValInt(2)]))))
-    builtinVectorSetInBounds(Vector.fromList([Val.ValInt(1)]), 0, Val.ValStr("x")) => Result.Ok(Val.ValSome(Val.ValVector(Vector.fromList([Val.ValStr("x")]))))
+    builtinVectorSetInBounds(Vector.fromList([Val.ValInt(1)]), 5, Val.ValStr("x")) => Result.Err("Vector.set: index out of bounds")
 
 fn builtinVectorLen(args: List<Val>) -> Result<Val, String>
     ? "Vector.len(vec) -> Int."

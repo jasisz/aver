@@ -81,6 +81,7 @@ fn fastLtIntSlotsBranch(calleeEnv: Vector<Val>, lhsSlot: Int, rhsSlot: Int, then
 verify fastLtIntSlotsBranch
     fastLtIntSlotsBranch(Vector.fromList([Val.ValInt(1), Val.ValInt(5)]), 0, 1, FastLeaf.LeafConstStr("lt"), FastLeaf.LeafConstStr("gte")) => Result.Ok(Val.ValStr("lt"))
     fastLtIntSlotsBranch(Vector.fromList([Val.ValInt(5), Val.ValInt(1)]), 0, 1, FastLeaf.LeafConstStr("lt"), FastLeaf.LeafConstStr("gte")) => Result.Ok(Val.ValStr("gte"))
+    fastLtIntSlotsBranch(Vector.fromList([Val.ValStr("x"), Val.ValInt(1)]), 0, 1, FastLeaf.LeafConstStr("lt"), FastLeaf.LeafConstStr("gte")) => Result.Err("fast lt branch expects Int lhs slot")
 
 fn selectFastLeaf(cond: Bool, thenLeaf: FastLeaf, elseLeaf: FastLeaf, calleeEnv: Vector<Val>) -> Result<Val, String>
     ? "Choose and execute one of two leaf results."
@@ -91,6 +92,7 @@ fn selectFastLeaf(cond: Bool, thenLeaf: FastLeaf, elseLeaf: FastLeaf, calleeEnv:
 verify selectFastLeaf
     selectFastLeaf(true, FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(2), Vector.new(0, Val.ValUnit)) => Result.Ok(Val.ValInt(1))
     selectFastLeaf(false, FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(2), Vector.new(0, Val.ValUnit)) => Result.Ok(Val.ValInt(2))
+    selectFastLeaf(true, FastLeaf.LeafSlot(0), FastLeaf.LeafConstInt(2), Vector.new(0, Val.ValUnit)) => Result.Err("slot out of bounds: 0")
 
 fn fastListSlotBranch(calleeEnv: Vector<Val>, slot: Int, emptyLeaf: FastLeaf, headSlot: Int, tailSlot: Int, consLeaf: FastLeaf) -> Result<Val, String>
     ? "Execute a two-arm [] / [h, ..t] list branch with precomputed leaf bodies."
@@ -101,6 +103,7 @@ fn fastListSlotBranch(calleeEnv: Vector<Val>, slot: Int, emptyLeaf: FastLeaf, he
 
 verify fastListSlotBranch
     fastListSlotBranch(Vector.fromList([Val.ValList([])]), 0, FastLeaf.LeafConstStr("empty"), 1, 2, FastLeaf.LeafConstStr("cons")) => Result.Ok(Val.ValStr("empty"))
+    fastListSlotBranch(Vector.fromList([Val.ValInt(1)]), 0, FastLeaf.LeafConstStr("empty"), 1, 2, FastLeaf.LeafConstStr("cons")) => Result.Err("no matching arm")
 
 fn fastListSlotBranchItems(items: List<Val>, calleeEnv: Vector<Val>, emptyLeaf: FastLeaf, headSlot: Int, tailSlot: Int, consLeaf: FastLeaf) -> Result<Val, String>
     ? "Finish [] / [h, ..t] list branching once the list payload is extracted."
@@ -111,6 +114,7 @@ fn fastListSlotBranchItems(items: List<Val>, calleeEnv: Vector<Val>, emptyLeaf: 
 verify fastListSlotBranchItems
     fastListSlotBranchItems([], Vector.new(3, Val.ValUnit), FastLeaf.LeafConstInt(0), 1, 2, FastLeaf.LeafConstInt(1)) => Result.Ok(Val.ValInt(0))
     fastListSlotBranchItems([Val.ValInt(10)], Vector.new(3, Val.ValUnit), FastLeaf.LeafConstInt(0), 1, 2, FastLeaf.LeafSlot(1)) => Result.Ok(Val.ValInt(10))
+    fastListSlotBranchItems([], Vector.new(0, Val.ValUnit), FastLeaf.LeafSlot(0), 1, 2, FastLeaf.LeafConstInt(1)) => Result.Err("slot out of bounds: 0")
 
 fn fastFieldAccessSlot(calleeEnv: Vector<Val>, slot: Int, field: String) -> Result<Val, String>
     ? "Read a record field directly from a resolved slot."
@@ -131,6 +135,7 @@ fn fastMapGetSlot(calleeEnv: Vector<Val>, mapSlot: Int, keySlot: Int) -> Result<
 
 verify fastMapGetSlot
     fastMapGetSlot(Vector.fromList([Val.ValMap(Map.set(Map.empty(), "k", Val.ValInt(9))), Val.ValStr("k")]), 0, 1) => Result.Ok(Val.ValSome(Val.ValInt(9)))
+    fastMapGetSlot(Vector.fromList([Val.ValInt(1), Val.ValStr("k")]), 0, 1) => Result.Err("Map.get requires a Map")
 
 fn fastMapGetSlotInner(mapV: Val, keyV: Val) -> Result<Val, String>
     ? "Look up a key in a ValMap without going through builtin dispatch."
@@ -154,6 +159,7 @@ fn fastMapSetSlot(calleeEnv: Vector<Val>, mapSlot: Int, keySlot: Int, valueSlot:
 
 verify fastMapSetSlot
     fastMapSetSlot(Vector.fromList([Val.ValMap(Map.empty()), Val.ValStr("k"), Val.ValInt(1)]), 0, 1, 2) => Result.Ok(Val.ValMap(Map.set(Map.empty(), "k", Val.ValInt(1))))
+    fastMapSetSlot(Vector.fromList([Val.ValInt(1), Val.ValStr("k"), Val.ValInt(1)]), 0, 1, 2) => Result.Err("Map.set requires a Map")
 
 fn fastMapSetSlotInner(mapV: Val, keyV: Val, valueV: Val) -> Result<Val, String>
     ? "Set a key in a ValMap without going through builtin dispatch."
@@ -171,6 +177,7 @@ fn fastVectorNewSlot(calleeEnv: Vector<Val>, sizeSlot: Int, fill: Int) -> Result
     fastVectorNewSlotInner(sizeV, fill)
 
 verify fastVectorNewSlot
+    fastVectorNewSlot(Vector.fromList([Val.ValInt(2)]), 0, 0) => Result.Ok(Val.ValVector(Vector.new(2, Val.ValInt(0))))
     fastVectorNewSlot(Vector.fromList([Val.ValStr("x")]), 0, 0) => Result.Err("Vector.new size must be Int")
 
 fn fastVectorNewSlotInner(sizeV: Val, fill: Int) -> Result<Val, String>
@@ -180,6 +187,7 @@ fn fastVectorNewSlotInner(sizeV: Val, fill: Int) -> Result<Val, String>
         _ -> Result.Err("Vector.new size must be Int")
 
 verify fastVectorNewSlotInner
+    fastVectorNewSlotInner(Val.ValInt(2), 0) => Result.Ok(Val.ValVector(Vector.new(2, Val.ValInt(0))))
     fastVectorNewSlotInner(Val.ValStr("x"), 0) => Result.Err("Vector.new size must be Int")
 
 fn fastVectorGetOrIntSlot(calleeEnv: Vector<Val>, vecSlot: Int, idxSlot: Int, defaultValue: Int) -> Result<Val, String>
@@ -190,6 +198,7 @@ fn fastVectorGetOrIntSlot(calleeEnv: Vector<Val>, vecSlot: Int, idxSlot: Int, de
 
 verify fastVectorGetOrIntSlot
     fastVectorGetOrIntSlot(Vector.fromList([Val.ValVector(Vector.fromList([Val.ValInt(42)])), Val.ValInt(0)]), 0, 1, 99) => Result.Ok(Val.ValInt(42))
+    fastVectorGetOrIntSlot(Vector.fromList([Val.ValInt(1), Val.ValInt(0)]), 0, 1, 99) => Result.Err("Vector.get expects a Vector")
 
 fn fastVectorGetOrIntSlotInner(vecV: Val, idxV: Val, defaultValue: Int) -> Result<Val, String>
     ? "Read a vector cell with an integer default without going through builtin dispatch."
@@ -217,6 +226,7 @@ fn fastMapHasSlot(calleeEnv: Vector<Val>, mapSlot: Int, keySlot: Int) -> Result<
 verify fastMapHasSlot
     fastMapHasSlot(Vector.fromList([Val.ValMap(Map.set(Map.empty(), "k", Val.ValInt(1))), Val.ValStr("k")]), 0, 1) => Result.Ok(Val.ValBool(true))
     fastMapHasSlot(Vector.fromList([Val.ValMap(Map.empty()), Val.ValStr("k")]), 0, 1) => Result.Ok(Val.ValBool(false))
+    fastMapHasSlot(Vector.fromList([Val.ValInt(1), Val.ValStr("k")]), 0, 1) => Result.Err("Map.has requires a Map")
 
 fn fastMapRemoveSlot(calleeEnv: Vector<Val>, mapSlot: Int, keySlot: Int) -> Result<Val, String>
     ? "Remove a map key directly from resolved slots."
@@ -228,6 +238,7 @@ fn fastMapRemoveSlot(calleeEnv: Vector<Val>, mapSlot: Int, keySlot: Int) -> Resu
 
 verify fastMapRemoveSlot
     fastMapRemoveSlot(Vector.fromList([Val.ValMap(Map.set(Map.empty(), "k", Val.ValInt(1))), Val.ValStr("k")]), 0, 1) => Result.Ok(Val.ValMap(Map.empty()))
+    fastMapRemoveSlot(Vector.fromList([Val.ValInt(1), Val.ValStr("k")]), 0, 1) => Result.Err("Map.remove requires a Map")
 
 fn fastVectorLenSlot(calleeEnv: Vector<Val>, vecSlot: Int) -> Result<Val, String>
     ? "Get vector length directly from a resolved slot."
@@ -249,6 +260,7 @@ fn fastBinopSlots(calleeEnv: Vector<Val>, op: BinOp, slotA: Int, slotB: Int) -> 
 verify fastBinopSlots
     fastBinopSlots(Vector.fromList([Val.ValInt(3), Val.ValInt(4)]), BinOp.OpAdd, 0, 1) => Result.Ok(Val.ValInt(7))
     fastBinopSlots(Vector.fromList([Val.ValInt(10), Val.ValInt(3)]), BinOp.OpSub, 0, 1) => Result.Ok(Val.ValInt(7))
+    fastBinopSlots(Vector.fromList([Val.ValBool(true), Val.ValInt(1)]), BinOp.OpAdd, 0, 1) => Result.Err("binop type mismatch")
 
 fn fastCmpSlots(calleeEnv: Vector<Val>, op: CmpOp, slotA: Int, slotB: Int) -> Result<Val, String>
     ? "Execute comparison on two slot values without entering the full eval."
@@ -259,3 +271,4 @@ fn fastCmpSlots(calleeEnv: Vector<Val>, op: CmpOp, slotA: Int, slotB: Int) -> Re
 verify fastCmpSlots
     fastCmpSlots(Vector.fromList([Val.ValInt(1), Val.ValInt(2)]), CmpOp.CmpLt, 0, 1) => Result.Ok(Val.ValBool(true))
     fastCmpSlots(Vector.fromList([Val.ValInt(3), Val.ValInt(3)]), CmpOp.CmpEq, 0, 1) => Result.Ok(Val.ValBool(true))
+    fastCmpSlots(Vector.fromList([Val.ValNone, Val.ValNone]), CmpOp.CmpLt, 0, 1) => Result.Err("comparison not supported for these types")

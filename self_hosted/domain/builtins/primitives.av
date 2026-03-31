@@ -714,3 +714,4 @@ fn builtinStringReplaceAllDo(sV: Val, fromV: Val, toV: Val) -> Result<Val, Strin
 
 verify builtinStringReplaceAllDo
     builtinStringReplaceAllDo(Val.ValStr("hello world"), Val.ValStr("world"), Val.ValStr("aver")) => Result.Ok(Val.ValStr("hello aver"))
+    builtinStringReplaceAllDo(Val.ValInt(1), Val.ValStr("world"), Val.ValStr("aver")) => Result.Err("expected string argument")
