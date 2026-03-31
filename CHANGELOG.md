@@ -4,6 +4,9 @@ All notable changes to Aver are documented here.
 
 ## 0.7.4 (unreleased)
 
+### Added
+- **`[[check.suppress]]` in `aver.toml`** — suppress specific `aver check` warnings with a mandatory `reason` explaining why the warning is acceptable. Supports `slug` (diagnostic category), optional `files` (glob patterns), and requires a non-empty `reason` string. Example: suppress `non-tail-recursion` for tree-walking interpreters that can't be rewritten without CPS.
+
 ### Changed
 - **Structured replay diagnostics** — replay failures now use per-error-type diagnostics (`replay-args-mismatch`, `replay-effect-mismatch`, `replay-output-mismatch`) with proper source file and recording JSON locations. Args diff hint shown even without `--check-args`.
 
