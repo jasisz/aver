@@ -39,42 +39,42 @@ verify applyBinopFloat
     applyBinopFloat(10.0, 4.0, BinOp.OpDiv) => Result.Ok(Val.ValFloat(2.5))
     applyBinopFloat(1.0, 0.0, BinOp.OpDiv) => Result.Err("float division by zero")
 
-fn applyCmp(x: Int, y: Int, op: CmpOp) -> Result<Val, String>
+fn applyCmp(x: Int, y: Int, op: CmpOp) -> Val
     ? "Apply a comparison operation to two integers."
     match op
-        CmpOp.CmpEq -> Result.Ok(Val.ValBool(x == y))
-        CmpOp.CmpNeq -> Result.Ok(Val.ValBool(x != y))
-        CmpOp.CmpLt -> Result.Ok(Val.ValBool(x < y))
-        CmpOp.CmpGt -> Result.Ok(Val.ValBool(x > y))
-        CmpOp.CmpLte -> Result.Ok(Val.ValBool(x <= y))
-        CmpOp.CmpGte -> Result.Ok(Val.ValBool(x >= y))
+        CmpOp.CmpEq -> Val.ValBool(x == y)
+        CmpOp.CmpNeq -> Val.ValBool(x != y)
+        CmpOp.CmpLt -> Val.ValBool(x < y)
+        CmpOp.CmpGt -> Val.ValBool(x > y)
+        CmpOp.CmpLte -> Val.ValBool(x <= y)
+        CmpOp.CmpGte -> Val.ValBool(x >= y)
 
 verify applyCmp
-    applyCmp(1, 1, CmpOp.CmpEq) => Result.Ok(Val.ValBool(true))
-    applyCmp(1, 2, CmpOp.CmpEq) => Result.Ok(Val.ValBool(false))
-    applyCmp(1, 2, CmpOp.CmpNeq) => Result.Ok(Val.ValBool(true))
-    applyCmp(1, 2, CmpOp.CmpLt) => Result.Ok(Val.ValBool(true))
-    applyCmp(2, 1, CmpOp.CmpGt) => Result.Ok(Val.ValBool(true))
-    applyCmp(1, 2, CmpOp.CmpLte) => Result.Ok(Val.ValBool(true))
-    applyCmp(2, 1, CmpOp.CmpGte) => Result.Ok(Val.ValBool(true))
+    applyCmp(1, 1, CmpOp.CmpEq) => Val.ValBool(true)
+    applyCmp(1, 2, CmpOp.CmpEq) => Val.ValBool(false)
+    applyCmp(1, 2, CmpOp.CmpNeq) => Val.ValBool(true)
+    applyCmp(1, 2, CmpOp.CmpLt) => Val.ValBool(true)
+    applyCmp(2, 1, CmpOp.CmpGt) => Val.ValBool(true)
+    applyCmp(1, 2, CmpOp.CmpLte) => Val.ValBool(true)
+    applyCmp(2, 1, CmpOp.CmpGte) => Val.ValBool(true)
 
-fn applyCmpFloat(x: Float, y: Float, op: CmpOp) -> Result<Val, String>
+fn applyCmpFloat(x: Float, y: Float, op: CmpOp) -> Val
     ? "Apply a comparison to two floats."
     match op
-        CmpOp.CmpEq -> Result.Ok(Val.ValBool(x == y))
-        CmpOp.CmpNeq -> Result.Ok(Val.ValBool(x != y))
-        CmpOp.CmpLt -> Result.Ok(Val.ValBool(x < y))
-        CmpOp.CmpGt -> Result.Ok(Val.ValBool(x > y))
-        CmpOp.CmpLte -> Result.Ok(Val.ValBool(x <= y))
-        CmpOp.CmpGte -> Result.Ok(Val.ValBool(x >= y))
+        CmpOp.CmpEq -> Val.ValBool(x == y)
+        CmpOp.CmpNeq -> Val.ValBool(x != y)
+        CmpOp.CmpLt -> Val.ValBool(x < y)
+        CmpOp.CmpGt -> Val.ValBool(x > y)
+        CmpOp.CmpLte -> Val.ValBool(x <= y)
+        CmpOp.CmpGte -> Val.ValBool(x >= y)
 
 verify applyCmpFloat
-    applyCmpFloat(1.0, 1.0, CmpOp.CmpEq) => Result.Ok(Val.ValBool(true))
-    applyCmpFloat(1.0, 2.0, CmpOp.CmpLt) => Result.Ok(Val.ValBool(true))
-    applyCmpFloat(3.0, 2.0, CmpOp.CmpGt) => Result.Ok(Val.ValBool(true))
-    applyCmpFloat(1.0, 1.0, CmpOp.CmpLte) => Result.Ok(Val.ValBool(true))
-    applyCmpFloat(1.0, 2.0, CmpOp.CmpNeq) => Result.Ok(Val.ValBool(true))
-    applyCmpFloat(1.0, 1.0, CmpOp.CmpGte) => Result.Ok(Val.ValBool(true))
+    applyCmpFloat(1.0, 1.0, CmpOp.CmpEq) => Val.ValBool(true)
+    applyCmpFloat(1.0, 2.0, CmpOp.CmpLt) => Val.ValBool(true)
+    applyCmpFloat(3.0, 2.0, CmpOp.CmpGt) => Val.ValBool(true)
+    applyCmpFloat(1.0, 1.0, CmpOp.CmpLte) => Val.ValBool(true)
+    applyCmpFloat(1.0, 2.0, CmpOp.CmpNeq) => Val.ValBool(true)
+    applyCmpFloat(1.0, 1.0, CmpOp.CmpGte) => Val.ValBool(true)
 
 fn evalBinopVals(va: Val, vb: Val, op: BinOp) -> Result<Val, String>
     ? "Apply binary op to two evaluated values."
@@ -99,11 +99,11 @@ verify evalBinopVals
 fn evalCmpVals(va: Val, vb: Val, op: CmpOp) -> Result<Val, String>
     ? "Apply comparison to two evaluated values (Int, Float, or String)."
     match (va, vb)
-        (Val.ValInt(x), Val.ValInt(y)) -> applyCmp(x, y, op)
-        (Val.ValFloat(x), Val.ValFloat(y)) -> applyCmpFloat(x, y, op)
-        (Val.ValInt(x), Val.ValFloat(y)) -> applyCmpFloat(Int.toFloat(x), y, op)
-        (Val.ValFloat(x), Val.ValInt(y)) -> applyCmpFloat(x, Int.toFloat(y), op)
-        (Val.ValStr(x), Val.ValStr(y)) -> applyStrCmp(x, y, op)
+        (Val.ValInt(x), Val.ValInt(y)) -> Result.Ok(applyCmp(x, y, op))
+        (Val.ValFloat(x), Val.ValFloat(y)) -> Result.Ok(applyCmpFloat(x, y, op))
+        (Val.ValInt(x), Val.ValFloat(y)) -> Result.Ok(applyCmpFloat(Int.toFloat(x), y, op))
+        (Val.ValFloat(x), Val.ValInt(y)) -> Result.Ok(applyCmpFloat(x, Int.toFloat(y), op))
+        (Val.ValStr(x), Val.ValStr(y)) -> Result.Ok(applyStrCmp(x, y, op))
         (Val.ValBool(x), Val.ValBool(y)) -> applyBoolCmp(x, y, op)
         (a, b) -> evalCmpRepr(a, b, op)
 
@@ -116,23 +116,23 @@ verify evalCmpVals
     evalCmpVals(Val.ValBool(true), Val.ValBool(false), CmpOp.CmpEq) => Result.Ok(Val.ValBool(false))
     evalCmpVals(Val.ValBool(true), Val.ValBool(false), CmpOp.CmpLt) => Result.Err("bools only support == and !=")
 
-fn applyStrCmp(x: String, y: String, op: CmpOp) -> Result<Val, String>
+fn applyStrCmp(x: String, y: String, op: CmpOp) -> Val
     ? "String comparison: all operators supported."
     match op
-        CmpOp.CmpEq -> Result.Ok(Val.ValBool(x == y))
-        CmpOp.CmpNeq -> Result.Ok(Val.ValBool(x != y))
-        CmpOp.CmpLt -> Result.Ok(Val.ValBool(x < y))
-        CmpOp.CmpGt -> Result.Ok(Val.ValBool(x > y))
-        CmpOp.CmpLte -> Result.Ok(Val.ValBool(x <= y))
-        CmpOp.CmpGte -> Result.Ok(Val.ValBool(x >= y))
+        CmpOp.CmpEq -> Val.ValBool(x == y)
+        CmpOp.CmpNeq -> Val.ValBool(x != y)
+        CmpOp.CmpLt -> Val.ValBool(x < y)
+        CmpOp.CmpGt -> Val.ValBool(x > y)
+        CmpOp.CmpLte -> Val.ValBool(x <= y)
+        CmpOp.CmpGte -> Val.ValBool(x >= y)
 
 verify applyStrCmp
-    applyStrCmp("a", "a", CmpOp.CmpEq) => Result.Ok(Val.ValBool(true))
-    applyStrCmp("a", "b", CmpOp.CmpNeq) => Result.Ok(Val.ValBool(true))
-    applyStrCmp("a", "b", CmpOp.CmpLt) => Result.Ok(Val.ValBool(true))
-    applyStrCmp("b", "a", CmpOp.CmpGt) => Result.Ok(Val.ValBool(true))
-    applyStrCmp("a", "b", CmpOp.CmpLte) => Result.Ok(Val.ValBool(true))
-    applyStrCmp("b", "a", CmpOp.CmpGte) => Result.Ok(Val.ValBool(true))
+    applyStrCmp("a", "a", CmpOp.CmpEq) => Val.ValBool(true)
+    applyStrCmp("a", "b", CmpOp.CmpNeq) => Val.ValBool(true)
+    applyStrCmp("a", "b", CmpOp.CmpLt) => Val.ValBool(true)
+    applyStrCmp("b", "a", CmpOp.CmpGt) => Val.ValBool(true)
+    applyStrCmp("a", "b", CmpOp.CmpLte) => Val.ValBool(true)
+    applyStrCmp("b", "a", CmpOp.CmpGte) => Val.ValBool(true)
 
 fn applyBoolCmp(x: Bool, y: Bool, op: CmpOp) -> Result<Val, String>
     ? "Bool comparison: eq and neq."

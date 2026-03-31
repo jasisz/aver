@@ -10,21 +10,21 @@ fn parseExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
     ? "Parse an expression: comparison level, then optional ? postfix."
     r = parseCmpExpr(tokens, pos)?
     match r
-        (expr, pos2) -> parsePostfixQuestion(tokens, pos2, expr)
+        (expr, pos2) -> Result.Ok(parsePostfixQuestion(tokens, pos2, expr))
 
 verify parseExpr
     parseExpr([Token.TkInt(42), Token.TkEof], 0) => Result.Ok((Expr.ExprInt(42), 1))
     parseExpr([Token.TkEof], 0) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
-fn parsePostfixQuestion(tokens: List<Token>, pos: Int, expr: Expr) -> Result<(Expr, Int), String>
+fn parsePostfixQuestion(tokens: List<Token>, pos: Int, expr: Expr) -> (Expr, Int)
     ? "Check for postfix ? (error propagation)."
     match Domain.ParserMatch.tokenAt(tokens, pos)
-        Token.TkQuestion -> Result.Ok((Expr.ExprPropagate(expr), pos + 1))
-        _ -> Result.Ok((expr, pos))
+        Token.TkQuestion -> (Expr.ExprPropagate(expr), pos + 1)
+        _ -> (expr, pos)
 
 verify parsePostfixQuestion
-    parsePostfixQuestion([Token.TkEof], 0, Expr.ExprInt(1)) => Result.Ok((Expr.ExprInt(1), 0))
-    parsePostfixQuestion([Token.TkQuestion, Token.TkEof], 0, Expr.ExprInt(1)) => Result.Ok((Expr.ExprPropagate(Expr.ExprInt(1)), 1))
+    parsePostfixQuestion([Token.TkEof], 0, Expr.ExprInt(1)) => (Expr.ExprInt(1), 0)
+    parsePostfixQuestion([Token.TkQuestion, Token.TkEof], 0, Expr.ExprInt(1)) => (Expr.ExprPropagate(Expr.ExprInt(1)), 1)
 
 fn parseCmpExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
     ? "Parse comparison: addExpr (('==' | '<' | '>') addExpr)?"
@@ -71,10 +71,12 @@ fn buildCmpExpr(left: Expr, right: Expr, pos: Int, op: Int) -> Result<(Expr, Int
         2 -> Result.Ok((Expr.ExprLt(left, right), pos))
         3 -> Result.Ok((Expr.ExprGt(left, right), pos))
         4 -> Result.Ok((Expr.ExprLte(left, right), pos))
-        _ -> Result.Ok((Expr.ExprGte(left, right), pos))
+        5 -> Result.Ok((Expr.ExprGte(left, right), pos))
+        _ -> Result.Err("unknown cmp operator")
 
 verify buildCmpExpr
     buildCmpExpr(Expr.ExprInt(1), Expr.ExprInt(2), 3, 0) => Result.Ok((Expr.ExprEq(Expr.ExprInt(1), Expr.ExprInt(2)), 3))
+    buildCmpExpr(Expr.ExprInt(1), Expr.ExprInt(2), 3, 99) => Result.Err("unknown cmp operator")
 
 fn parseAddExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
     ? "Parse additive: mulExpr (('+' | '-') mulExpr)*"

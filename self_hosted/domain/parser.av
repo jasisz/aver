@@ -128,20 +128,20 @@ fn parseStmtExprFromCmp(tokens: List<Token>, pos: Int, expr: Expr) -> Result<(St
     ? "Continue parsing expression statement from comparison level."
     cr = Domain.Parser.Expr.parseCmpExprTail(tokens, pos, expr)?
     match cr
-        (expr2, pos2) -> parseStmtExprFromQ(tokens, pos2, expr2)
+        (expr2, pos2) -> Result.Ok(parseStmtExprFromQ(tokens, pos2, expr2))
 
 verify parseStmtExprFromCmp
     parseStmtExprFromCmp([Token.TkEof], 0, Expr.ExprInt(1)) => Result.Ok((Stmt.StmtExpr(Expr.ExprInt(1)), 0))
     parseStmtExprFromCmp([Token.TkEqEq, Token.TkEof], 0, Expr.ExprInt(1)) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
-fn parseStmtExprFromQ(tokens: List<Token>, pos: Int, expr: Expr) -> Result<(Stmt, Int), String>
+fn parseStmtExprFromQ(tokens: List<Token>, pos: Int, expr: Expr) -> (Stmt, Int)
     ? "Check for postfix ? on expression statement."
-    qr = Domain.Parser.Expr.parsePostfixQuestion(tokens, pos, expr)?
+    qr = Domain.Parser.Expr.parsePostfixQuestion(tokens, pos, expr)
     match qr
-        (expr2, pos2) -> Result.Ok((Stmt.StmtExpr(expr2), pos2))
+        (expr2, pos2) -> (Stmt.StmtExpr(expr2), pos2)
 
 verify parseStmtExprFromQ
-    parseStmtExprFromQ([Token.TkEof], 0, Expr.ExprInt(1)) => Result.Ok((Stmt.StmtExpr(Expr.ExprInt(1)), 0))
+    parseStmtExprFromQ([Token.TkEof], 0, Expr.ExprInt(1)) => (Stmt.StmtExpr(Expr.ExprInt(1)), 0)
 
 fn parseFnDef(tokens: List<Token>, pos: Int) -> Result<(FnDef, Int), String>
     ? "Parse: fn NAME(params) NEWLINE body"
@@ -290,6 +290,7 @@ fn parseProgramModuleHeader(tokens: List<Token>, pos: Int, fns: List<FnDef>, stm
 
 verify parseProgramModuleHeader
     parseProgramModuleHeader([Token.TkIdent("Test"), Token.TkEof], 0, [], []) => Result.Ok(Program(deps = [], fns = [], stmts = []))
+    parseProgramModuleHeader([Token.TkIdent("Test"), Token.TkNewline, Token.TkNewline, Token.TkPlus, Token.TkEof], 0, [], []) => Result.Err("Expected expression, got tokenRepr(TkPlus)")
 
 fn parseProgramFn(tokens: List<Token>, pos: Int, deps: List<String>, fns: List<FnDef>, stmts: List<Stmt>) -> Result<Program, String>
     ? "Parse a function definition and continue."

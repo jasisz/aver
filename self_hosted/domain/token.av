@@ -127,3 +127,5 @@ verify tokenRepr
     tokenRepr(Token.TkPlus) => "Plus"
     tokenRepr(Token.TkInt(0)) => "Int(0)"
     tokenRepr(Token.TkFloat(3.14)) => "Float"
+    tokenRepr(Token.TkLBrace) => "LBrace"
+    tokenRepr(Token.TkRBrace) => "RBrace"

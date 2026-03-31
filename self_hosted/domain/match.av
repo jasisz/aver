@@ -33,6 +33,8 @@ verify matchPattern
     matchPattern(Pattern.PatEmpty, Val.ValList([])) => Result.Ok([])
     matchPattern(Pattern.PatCons("h", "t"), Val.ValList([Val.ValInt(1)])) => Result.Ok([("h", Val.ValInt(1)), ("t", Val.ValList([]))])
     matchPattern(Pattern.PatTuple([Pattern.PatVar("a")]), Val.ValTuple([Val.ValInt(1)])) => Result.Ok([("a", Val.ValInt(1))])
+    matchPattern(Pattern.PatConstructor("Result.Ok", ["x"]), Val.ValOk(Val.ValInt(1))) => Result.Ok([("x", Val.ValInt(1))])
+    matchPattern(Pattern.PatConstructorId(1, "Result.Ok", ["x"]), Val.ValOk(Val.ValInt(1))) => Result.Ok([("x", Val.ValInt(1))])
     matchPattern(Pattern.PatVar("x"), Val.ValInt(42)) => Result.Ok([("x", Val.ValInt(42))])
 
 fn matchPatInt(n: Int, v: Val) -> Result<List<(String, Val)>, String>
@@ -175,7 +177,7 @@ verify matchGenericConstructor
 fn matchGenericCtorCheck(ctorName: String, fullName: String, bindings: List<String>, fields: List<Val>) -> Result<List<(String, Val)>, String>
     ? "Check if variant full name matches constructor name."
     match fullName == ctorName
-        true -> zipBindings(bindings, fields)
+        true -> Result.Ok(zipBindings(bindings, fields))
         false -> Result.Err("no match")
 
 verify matchGenericCtorCheck
@@ -206,13 +208,13 @@ fn matchWrapperPatDirect(v: Val, tag: Int, bindings: List<String>) -> Result<Lis
     ? "Match Ok/Err/Some wrapper by integer tag. 1=Ok, 2=Err, 3=Some."
     match tag
         1 -> match v
-            Val.ValOk(inner) -> zipBindings(bindings, [inner])
+            Val.ValOk(inner) -> Result.Ok(zipBindings(bindings, [inner]))
             _ -> Result.Err("no match")
         2 -> match v
-            Val.ValErr(inner) -> zipBindings(bindings, [inner])
+            Val.ValErr(inner) -> Result.Ok(zipBindings(bindings, [inner]))
             _ -> Result.Err("no match")
         3 -> match v
-            Val.ValSome(inner) -> zipBindings(bindings, [inner])
+            Val.ValSome(inner) -> Result.Ok(zipBindings(bindings, [inner]))
             _ -> Result.Err("no match")
         _ -> Result.Err("no match")
 
@@ -227,7 +229,7 @@ fn matchGenericCtorById(tag: Int, ctorName: String, bindings: List<String>, v: V
     match v
         Val.ValVariant(vTag, fullName, fields) -> match vTag == tag
             true -> match fullName == ctorName
-                true -> zipBindings(bindings, fields)
+                true -> Result.Ok(zipBindings(bindings, fields))
                 false -> Result.Err("no match")
             false -> Result.Err("no match")
         _ -> Result.Err("no match")
@@ -252,13 +254,13 @@ fn matchWrapperPat(v: Val, tag: String, bindings: List<String>) -> Result<List<(
     ? "Match Ok/Err/Some wrapper and bind inner value."
     match tag
         "Ok" -> match v
-            Val.ValOk(inner) -> zipBindings(bindings, [inner])
+            Val.ValOk(inner) -> Result.Ok(zipBindings(bindings, [inner]))
             _ -> Result.Err("no match")
         "Err" -> match v
-            Val.ValErr(inner) -> zipBindings(bindings, [inner])
+            Val.ValErr(inner) -> Result.Ok(zipBindings(bindings, [inner]))
             _ -> Result.Err("no match")
         "Some" -> match v
-            Val.ValSome(inner) -> zipBindings(bindings, [inner])
+            Val.ValSome(inner) -> Result.Ok(zipBindings(bindings, [inner]))
             _ -> Result.Err("no match")
         _ -> Result.Err("no match")
 
@@ -269,16 +271,14 @@ verify matchWrapperPat
     matchWrapperPat(Val.ValInt(5), "Ok", ["x"]) => Result.Err("no match")
     matchWrapperPat(Val.ValOk(Val.ValInt(1)), "Err", ["x"]) => Result.Err("no match")
 
-fn zipBindings(names: List<String>, vals: List<Val>) -> Result<List<(String, Val)>, String>
+fn zipBindings(names: List<String>, vals: List<Val>) -> List<(String, Val)>
     ? "Pair binding names with values."
     match names
-        [] -> Result.Ok([])
+        [] -> []
         [n, ..ns] -> match vals
-            [] -> Result.Ok([])
-            [v, ..vs] -> match zipBindings(ns, vs)
-                Result.Ok(rest) -> Result.Ok(List.prepend((n, v), rest))
-                Result.Err(e) -> Result.Err(e)
+            [] -> []
+            [v, ..vs] -> List.prepend((n, v), zipBindings(ns, vs))
 
 verify zipBindings
-    zipBindings(["x", "y"], [Val.ValInt(1), Val.ValInt(2)]) => Result.Ok([("x", Val.ValInt(1)), ("y", Val.ValInt(2))])
-    zipBindings([], []) => Result.Ok([])
+    zipBindings(["x", "y"], [Val.ValInt(1), Val.ValInt(2)]) => [("x", Val.ValInt(1)), ("y", Val.ValInt(2))]
+    zipBindings([], []) => []

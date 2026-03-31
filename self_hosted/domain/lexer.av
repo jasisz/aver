@@ -29,9 +29,10 @@ verify tokenizeAfterInt
 
 fn tokenizeAfterIntDot(src: String, pos: Int, n: Int) -> List<Token>
     ? "After integer and dot, check if next char is digit (float) or not (int + dot)."
-    match String.charAt(src, pos + 1)
+    nextPos = pos + 1
+    match String.charAt(src, nextPos)
         Option.Some(d) -> match Domain.Lexer.Chars.isDigit(d)
-            true -> tokenizeFloat(src, pos + 1, n)
+            true -> tokenizeFloat(src, nextPos, n)
             false -> List.prepend(Token.TkInt(n), tokenize(src, pos))
         Option.None -> List.prepend(Token.TkInt(n), tokenize(src, pos))
 
@@ -91,14 +92,16 @@ fn isGreaterThan(c: String) -> Bool
 
 verify isGreaterThan
     isGreaterThan(">") => true
+    isGreaterThan("x") => false
 
 fn tokenizeMinus(src: String, pos: Int) -> List<Token>
     ? "Tokenize a minus or arrow token."
-    match String.charAt(src, pos + 1)
+    nextPos = pos + 1
+    match String.charAt(src, nextPos)
         Option.Some(c) -> match isGreaterThan(c)
             true -> List.prepend(Token.TkArrow, tokenize(src, pos + 2))
-            false -> List.prepend(Token.TkMinus, tokenize(src, pos + 1))
-        Option.None -> List.prepend(Token.TkMinus, tokenize(src, pos + 1))
+            false -> List.prepend(Token.TkMinus, tokenize(src, nextPos))
+        Option.None -> List.prepend(Token.TkMinus, tokenize(src, nextPos))
 
 verify tokenizeMinus
     tokenizeMinus("->", 0) => [Token.TkArrow, Token.TkEof]
@@ -116,11 +119,15 @@ verify tokenizeDefault
 
 fn tokenizeBraceOrSkip(c: String, src: String, pos: Int) -> List<Token>
     ? "Handle brace tokens or skip unknown chars."
+    nextPos = pos + 1
     match c == openBrace()
-        true -> List.prepend(Token.TkLBrace, tokenize(src, pos + 1))
+        true -> List.prepend(Token.TkLBrace, tokenize(src, nextPos))
         false -> match c == closeBrace()
-            true -> List.prepend(Token.TkRBrace, tokenize(src, pos + 1))
-            false -> tokenize(src, pos + 1)
+            true -> List.prepend(Token.TkRBrace, tokenize(src, nextPos))
+            false -> tokenize(src, nextPos)
+
+verify tokenizeBraceOrSkip
+    tokenizeBraceOrSkip("x", "x", 0) => [Token.TkEof]
 
 fn tokenizeString(src: String, pos: Int, acc: String) -> List<Token>
     ? "Read string literal with interpolation and escape sequences."
@@ -144,16 +151,17 @@ verify tokenizeStringAt
 
 fn tokenizeStringEscape(src: String, pos: Int, acc: String) -> List<Token>
     ? "Handle escape sequence in string: \\n -> newline, \\t -> tab, etc."
+    nextPos = pos + 1
     match String.charAt(src, pos)
         Option.Some(c) -> match c
-            "n" -> tokenizeString(src, pos + 1, acc + "\n")
-            "t" -> tokenizeString(src, pos + 1, acc + "\t")
-            "r" -> tokenizeString(src, pos + 1, acc + "\r")
-            "b" -> tokenizeString(src, pos + 1, acc + "\b")
-            "f" -> tokenizeString(src, pos + 1, acc + "\f")
-            "\"" -> tokenizeString(src, pos + 1, acc + "\"")
-            "\\" -> tokenizeString(src, pos + 1, acc + "\\")
-            _ -> tokenizeString(src, pos + 1, acc + c)
+            "n" -> tokenizeString(src, nextPos, acc + "\n")
+            "t" -> tokenizeString(src, nextPos, acc + "\t")
+            "r" -> tokenizeString(src, nextPos, acc + "\r")
+            "b" -> tokenizeString(src, nextPos, acc + "\b")
+            "f" -> tokenizeString(src, nextPos, acc + "\f")
+            "\"" -> tokenizeString(src, nextPos, acc + "\"")
+            "\\" -> tokenizeString(src, nextPos, acc + "\\")
+            _ -> tokenizeString(src, nextPos, acc + c)
         Option.None -> [Token.TkStr(acc), Token.TkEof]
 
 verify tokenizeStringEscape
@@ -193,19 +201,28 @@ verify tokenizeStringCharInner
 
 fn tokenizeStringMaybeEscapedBrace(src: String, pos: Int, acc: String) -> List<Token>
     ? "Check for {{ (escaped brace) or start interpolation."
-    match String.charAt(src, pos + 1)
+    nextPos = pos + 1
+    match String.charAt(src, nextPos)
         Option.Some(next) -> match next == openBrace()
             true -> tokenizeString(src, pos + 2, acc + openBrace())
             false -> tokenizeInterp(src, pos, acc)
         Option.None -> tokenizeInterp(src, pos, acc)
 
+verify tokenizeStringMaybeEscapedBrace
+    tokenizeStringMaybeEscapedBrace("x}", 0, "hi") => [Token.TkStr("hi"), Token.TkInterpStart, Token.TkInterpEnd, Token.TkStr(""), Token.TkEof]
+
 fn tokenizeStringMaybeEscapedClose(src: String, pos: Int, acc: String) -> List<Token>
     ? "Check for }} (escaped close brace) or continue."
-    match String.charAt(src, pos + 1)
+    nextPos = pos + 1
+    accBrace = acc + closeBrace()
+    match String.charAt(src, nextPos)
         Option.Some(next) -> match next == closeBrace()
-            true -> tokenizeString(src, pos + 2, acc + closeBrace())
-            false -> tokenizeString(src, pos + 1, acc + closeBrace())
-        Option.None -> tokenizeString(src, pos + 1, acc + closeBrace())
+            true -> tokenizeString(src, pos + 2, accBrace)
+            false -> tokenizeString(src, nextPos, accBrace)
+        Option.None -> tokenizeString(src, nextPos, accBrace)
+
+verify tokenizeStringMaybeEscapedClose
+    tokenizeStringMaybeEscapedClose("x\"", 0, "") => [Token.TkStr(closeBrace()), Token.TkEof]
 
 fn tokenizeInterp(src: String, pos: Int, acc: String) -> List<Token>
     ? "Start interpolation: emit accumulated string, TkInterpStart, expr tokens, TkInterpEnd."
@@ -269,31 +286,33 @@ verify tokenizeInterpNonDigit
 
 fn tokenizeInterpPunct(src: String, pos: Int, c: String) -> List<Token>
     ? "Handle punctuation in interpolation."
+    nextPos = pos + 1
     match c
-        " " -> tokenizeInterpExpr(src, pos + 1)
-        "(" -> List.prepend(Token.TkLParen, tokenizeInterpExpr(src, pos + 1))
-        ")" -> List.prepend(Token.TkRParen, tokenizeInterpExpr(src, pos + 1))
-        "+" -> List.prepend(Token.TkPlus, tokenizeInterpExpr(src, pos + 1))
-        "-" -> List.prepend(Token.TkMinus, tokenizeInterpExpr(src, pos + 1))
-        "*" -> List.prepend(Token.TkStar, tokenizeInterpExpr(src, pos + 1))
-        "," -> List.prepend(Token.TkComma, tokenizeInterpExpr(src, pos + 1))
-        "." -> List.prepend(Token.TkDot, tokenizeInterpExpr(src, pos + 1))
-        "[" -> List.prepend(Token.TkLBracket, tokenizeInterpExpr(src, pos + 1))
-        "]" -> List.prepend(Token.TkRBracket, tokenizeInterpExpr(src, pos + 1))
-        "\"" -> tokenizeInterpString(src, pos + 1, "")
-        _ -> tokenizeInterpExpr(src, pos + 1)
+        " " -> tokenizeInterpExpr(src, nextPos)
+        "(" -> List.prepend(Token.TkLParen, tokenizeInterpExpr(src, nextPos))
+        ")" -> List.prepend(Token.TkRParen, tokenizeInterpExpr(src, nextPos))
+        "+" -> List.prepend(Token.TkPlus, tokenizeInterpExpr(src, nextPos))
+        "-" -> List.prepend(Token.TkMinus, tokenizeInterpExpr(src, nextPos))
+        "*" -> List.prepend(Token.TkStar, tokenizeInterpExpr(src, nextPos))
+        "," -> List.prepend(Token.TkComma, tokenizeInterpExpr(src, nextPos))
+        "." -> List.prepend(Token.TkDot, tokenizeInterpExpr(src, nextPos))
+        "[" -> List.prepend(Token.TkLBracket, tokenizeInterpExpr(src, nextPos))
+        "]" -> List.prepend(Token.TkRBracket, tokenizeInterpExpr(src, nextPos))
+        "\"" -> tokenizeInterpString(src, nextPos, "")
+        _ -> tokenizeInterpExpr(src, nextPos)
 
 verify tokenizeInterpPunct
     tokenizeInterpPunct("}", 1, "+") => [Token.TkPlus, Token.TkInterpEnd, Token.TkEof]
 
 fn tokenizeInterpString(src: String, pos: Int, acc: String) -> List<Token>
     ? "Read string literal inside interpolation braces."
+    nextPos = pos + 1
     match pos >= String.len(src)
         true -> List.prepend(Token.TkStr(acc), tokenizeInterpExpr(src, pos))
         false -> match String.charAt(src, pos)
             Option.Some(c) -> match c == "\""
-                true -> List.prepend(Token.TkStr(acc), tokenizeInterpExpr(src, pos + 1))
-                false -> tokenizeInterpString(src, pos + 1, acc + c)
+                true -> List.prepend(Token.TkStr(acc), tokenizeInterpExpr(src, nextPos))
+                false -> tokenizeInterpString(src, nextPos, acc + c)
             Option.None -> List.prepend(Token.TkStr(acc), tokenizeInterpExpr(src, pos))
 
 verify tokenizeInterpString
@@ -319,23 +338,25 @@ verify tokenizeInterpAlpha
 
 fn tokenizeSlashOrComment(src: String, pos: Int) -> List<Token>
     ? "Tokenize / (division) or // (line comment)."
-    match String.charAt(src, pos + 1)
+    nextPos = pos + 1
+    match String.charAt(src, nextPos)
         Option.Some(c) -> match c == "/"
             true -> skipLineComment(src, pos + 2)
-            false -> List.prepend(Token.TkSlash, tokenize(src, pos + 1))
-        Option.None -> List.prepend(Token.TkSlash, tokenize(src, pos + 1))
+            false -> List.prepend(Token.TkSlash, tokenize(src, nextPos))
+        Option.None -> List.prepend(Token.TkSlash, tokenize(src, nextPos))
 
 verify tokenizeSlashOrComment
     tokenizeSlashOrComment("/", 0) => [Token.TkSlash, Token.TkEof]
 
 fn skipLineComment(src: String, pos: Int) -> List<Token>
     ? "Skip characters until newline or EOF. Newline goes through indent handling."
+    nextPos = pos + 1
     match pos >= String.len(src)
         true -> [Token.TkEof]
         false -> match String.charAt(src, pos)
             Option.Some(c) -> match c == "\n"
-                true -> tokenizeNewline(src, pos + 1)
-                false -> skipLineComment(src, pos + 1)
+                true -> tokenizeNewline(src, nextPos)
+                false -> skipLineComment(src, nextPos)
             Option.None -> [Token.TkEof]
 
 verify skipLineComment
@@ -343,81 +364,87 @@ verify skipLineComment
 
 fn tokenizeDot(src: String, pos: Int) -> List<Token>
     ? "Tokenize . (field access) or .. (rest pattern)."
-    match String.charAt(src, pos + 1)
+    nextPos = pos + 1
+    match String.charAt(src, nextPos)
         Option.Some(c) -> match c == "."
             true -> List.prepend(Token.TkDotDot, tokenize(src, pos + 2))
-            false -> List.prepend(Token.TkDot, tokenize(src, pos + 1))
-        Option.None -> List.prepend(Token.TkDot, tokenize(src, pos + 1))
+            false -> List.prepend(Token.TkDot, tokenize(src, nextPos))
+        Option.None -> List.prepend(Token.TkDot, tokenize(src, nextPos))
 
 verify tokenizeDot
     tokenizeDot("..", 0) => [Token.TkDotDot, Token.TkEof]
 
 fn tokenizeLt(src: String, pos: Int) -> List<Token>
     ? "Tokenize < or <=."
-    match String.charAt(src, pos + 1)
+    nextPos = pos + 1
+    match String.charAt(src, nextPos)
         Option.Some(c) -> match c == "="
             true -> List.prepend(Token.TkLte, tokenize(src, pos + 2))
-            false -> List.prepend(Token.TkLt, tokenize(src, pos + 1))
-        Option.None -> List.prepend(Token.TkLt, tokenize(src, pos + 1))
+            false -> List.prepend(Token.TkLt, tokenize(src, nextPos))
+        Option.None -> List.prepend(Token.TkLt, tokenize(src, nextPos))
 
 verify tokenizeLt
     tokenizeLt("<=", 0) => [Token.TkLte, Token.TkEof]
 
 fn tokenizeGt(src: String, pos: Int) -> List<Token>
     ? "Tokenize > or >=."
-    match String.charAt(src, pos + 1)
+    nextPos = pos + 1
+    match String.charAt(src, nextPos)
         Option.Some(c) -> match c == "="
             true -> List.prepend(Token.TkGte, tokenize(src, pos + 2))
-            false -> List.prepend(Token.TkGt, tokenize(src, pos + 1))
-        Option.None -> List.prepend(Token.TkGt, tokenize(src, pos + 1))
+            false -> List.prepend(Token.TkGt, tokenize(src, nextPos))
+        Option.None -> List.prepend(Token.TkGt, tokenize(src, nextPos))
 
 verify tokenizeGt
     tokenizeGt(">=", 0) => [Token.TkGte, Token.TkEof]
 
 fn tokenizeBang(src: String, pos: Int) -> List<Token>
     ? "Tokenize ! or !=."
-    match String.charAt(src, pos + 1)
+    nextPos = pos + 1
+    match String.charAt(src, nextPos)
         Option.Some(c) -> match c == "="
             true -> List.prepend(Token.TkNeq, tokenize(src, pos + 2))
-            false -> List.prepend(Token.TkBang, tokenize(src, pos + 1))
-        Option.None -> List.prepend(Token.TkBang, tokenize(src, pos + 1))
+            false -> List.prepend(Token.TkBang, tokenize(src, nextPos))
+        Option.None -> List.prepend(Token.TkBang, tokenize(src, nextPos))
 
 verify tokenizeBang
     tokenizeBang("!=", 0) => [Token.TkNeq, Token.TkEof]
 
 fn tokenizeEq(src: String, pos: Int) -> List<Token>
     ? "Tokenize =, ==, or =>."
-    match String.charAt(src, pos + 1)
-        Option.Some(c) -> match c == "="
-            true -> List.prepend(Token.TkEqEq, tokenize(src, pos + 2))
-            false -> match c == ">"
-                true -> List.prepend(Token.TkFatArrow, tokenize(src, pos + 2))
-                false -> List.prepend(Token.TkEq, tokenize(src, pos + 1))
-        Option.None -> List.prepend(Token.TkEq, tokenize(src, pos + 1))
+    nextPos = pos + 1
+    pos2 = pos + 2
+    match String.charAt(src, nextPos)
+        Option.Some(c) -> match c
+            "=" -> List.prepend(Token.TkEqEq, tokenize(src, pos2))
+            ">" -> List.prepend(Token.TkFatArrow, tokenize(src, pos2))
+            _ -> List.prepend(Token.TkEq, tokenize(src, nextPos))
+        Option.None -> List.prepend(Token.TkEq, tokenize(src, nextPos))
 
 verify tokenizeEq
     tokenizeEq("==", 0) => [Token.TkEqEq, Token.TkEof]
 
 fn tokenizeChar(c: String, src: String, pos: Int) -> List<Token>
     ? "Tokenize based on the current character."
+    nextPos = pos + 1
     match c
-        " " -> tokenize(src, pos + 1)
-        "\n" -> tokenizeNewline(src, pos + 1)
+        " " -> tokenize(src, nextPos)
+        "\n" -> tokenizeNewline(src, nextPos)
         "/" -> tokenizeSlashOrComment(src, pos)
-        "+" -> List.prepend(Token.TkPlus, tokenize(src, pos + 1))
-        "*" -> List.prepend(Token.TkStar, tokenize(src, pos + 1))
+        "+" -> List.prepend(Token.TkPlus, tokenize(src, nextPos))
+        "*" -> List.prepend(Token.TkStar, tokenize(src, nextPos))
         "<" -> tokenizeLt(src, pos)
         ">" -> tokenizeGt(src, pos)
         "!" -> tokenizeBang(src, pos)
-        "?" -> List.prepend(Token.TkQuestion, tokenize(src, pos + 1))
-        "\"" -> tokenizeString(src, pos + 1, "")
-        "(" -> List.prepend(Token.TkLParen, tokenize(src, pos + 1))
-        ")" -> List.prepend(Token.TkRParen, tokenize(src, pos + 1))
-        "[" -> List.prepend(Token.TkLBracket, tokenize(src, pos + 1))
-        "]" -> List.prepend(Token.TkRBracket, tokenize(src, pos + 1))
+        "?" -> List.prepend(Token.TkQuestion, tokenize(src, nextPos))
+        "\"" -> tokenizeString(src, nextPos, "")
+        "(" -> List.prepend(Token.TkLParen, tokenize(src, nextPos))
+        ")" -> List.prepend(Token.TkRParen, tokenize(src, nextPos))
+        "[" -> List.prepend(Token.TkLBracket, tokenize(src, nextPos))
+        "]" -> List.prepend(Token.TkRBracket, tokenize(src, nextPos))
         "." -> tokenizeDot(src, pos)
-        "," -> List.prepend(Token.TkComma, tokenize(src, pos + 1))
-        ":" -> List.prepend(Token.TkColon, tokenize(src, pos + 1))
+        "," -> List.prepend(Token.TkComma, tokenize(src, nextPos))
+        ":" -> List.prepend(Token.TkColon, tokenize(src, nextPos))
         "=" -> tokenizeEq(src, pos)
         "-" -> tokenizeMinus(src, pos)
         _ -> tokenizeDefault(c, src, pos)
@@ -471,10 +498,11 @@ verify countIndent
 
 fn countIndentChar(src: String, pos: Int, spaces: Int) -> (Int, Int)
     ? "Check one character for indent counting."
+    nextPos = pos + 1
     match String.charAt(src, pos)
         Option.Some(c) -> match c
-            " " -> countIndent(src, pos + 1, spaces + 1)
-            "\n" -> countIndent(src, pos + 1, 0)
+            " " -> countIndent(src, nextPos, spaces + 1)
+            "\n" -> countIndent(src, nextPos, 0)
             _ -> (spaces, pos)
         Option.None -> (spaces, pos)
 
@@ -506,6 +534,7 @@ fn processIndentation(tokens: List<Token>, stack: List<Int>) -> List<Token>
 
 verify processIndentation
     processIndentation([Token.TkEof], [0]) => [Token.TkEof]
+    processIndentation([], [0]) => []
 
 fn processIndentToken(t: Token, rest: List<Token>, stack: List<Int>) -> List<Token>
     ? "Process one token in the indentation pass."
@@ -516,6 +545,8 @@ fn processIndentToken(t: Token, rest: List<Token>, stack: List<Int>) -> List<Tok
 
 verify processIndentToken
     processIndentToken(Token.TkEof, [], [0]) => [Token.TkEof]
+    processIndentToken(Token.TkNewline, [Token.TkEof], [0]) => [Token.TkNewline, Token.TkEof]
+    processIndentToken(Token.TkPlus, [Token.TkEof], [0]) => [Token.TkPlus, Token.TkEof]
 
 fn processAfterNewline(tokens: List<Token>, stack: List<Int>) -> List<Token>
     ? "After TkNewline, check for raw indent marker (negative TkInt)."
@@ -525,6 +556,7 @@ fn processAfterNewline(tokens: List<Token>, stack: List<Int>) -> List<Token>
 
 verify processAfterNewline
     processAfterNewline([Token.TkEof], [0]) => List.prepend(Token.TkNewline, [Token.TkEof])
+    processAfterNewline([], [0]) => [Token.TkNewline]
 
 fn processAfterNewlineToken(t: Token, rest: List<Token>, stack: List<Int>) -> List<Token>
     ? "Check if token after newline is a raw indent marker."
@@ -559,6 +591,7 @@ fn emitDedents(targetIndent: Int, rest: List<Token>, stack: List<Int>) -> List<T
 
 verify emitDedents
     emitDedents(0, [Token.TkEof], [4, 0]) => [Token.TkDedent, Token.TkNewline, Token.TkEof]
+    emitDedents(0, [Token.TkEof], []) => [Token.TkEof]
 
 fn emitFinalDedents(stack: List<Int>) -> List<Token>
     ? "At EOF, emit DEDENT for each indent level above 0."
@@ -571,6 +604,7 @@ fn emitFinalDedents(stack: List<Int>) -> List<Token>
 verify emitFinalDedents
     emitFinalDedents([0]) => []
     emitFinalDedents([4, 0]) => [Token.TkDedent]
+    emitFinalDedents([]) => []
 
 fn stackTop(stack: List<Int>) -> Int
     ? "Return top of indent stack, or 0 if empty."

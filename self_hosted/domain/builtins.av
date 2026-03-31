@@ -640,6 +640,7 @@ verify builtinBoolOr
     builtinBoolOr([Val.ValBool(true), Val.ValBool(false)]) => Result.Ok(Val.ValBool(true))
     builtinBoolOr([Val.ValBool(false), Val.ValBool(false)]) => Result.Ok(Val.ValBool(false))
     builtinBoolOr([Val.ValBool(false), Val.ValBool(true)]) => Result.Ok(Val.ValBool(true))
+    builtinBoolOr([]) => Result.Err("expected 2 arguments")
 
 fn builtinBoolOrInner(aV: Val, bV: Val) -> Result<Val, String>
     ? "Inner Bool.or."
@@ -665,6 +666,7 @@ fn builtinBoolAnd(args: List<Val>) -> Result<Val, String>
 verify builtinBoolAnd
     builtinBoolAnd([Val.ValBool(true), Val.ValBool(true)]) => Result.Ok(Val.ValBool(true))
     builtinBoolAnd([Val.ValBool(true), Val.ValBool(false)]) => Result.Ok(Val.ValBool(false))
+    builtinBoolAnd([]) => Result.Err("expected 2 arguments")
 
 fn builtinBoolAndInner(aV: Val, bV: Val) -> Result<Val, String>
     ? "Inner Bool.and."
@@ -693,13 +695,17 @@ fn builtinBoolNot(args: List<Val>) -> Result<Val, String>
 verify builtinBoolNot
     builtinBoolNot([Val.ValBool(true)]) => Result.Ok(Val.ValBool(false))
     builtinBoolNot([Val.ValBool(false)]) => Result.Ok(Val.ValBool(true))
+    builtinBoolNot([]) => Result.Err("expected 1 argument")
 
 fn builtinMapEmpty(args: List<Val>) -> Result<Val, String>
     ? "Map.empty() -> empty map."
-    Result.Ok(Val.ValMap(Map.empty()))
+    match args
+        [] -> Result.Ok(Val.ValMap(Map.empty()))
+        _ -> Result.Err("Map.empty takes 0 arguments")
 
 verify builtinMapEmpty
     builtinMapEmpty([]) => Result.Ok(Val.ValMap(Map.empty()))
+    builtinMapEmpty([Val.ValInt(1)]) => Result.Err("Map.empty takes 0 arguments")
 
 fn builtinMapSet(args: List<Val>) -> Result<Val, String>
     ? "Map.set(map, key, value) -> updated map."
@@ -714,6 +720,7 @@ fn builtinMapSet(args: List<Val>) -> Result<Val, String>
 verify builtinMapSet
     builtinMapSet([Val.ValMap(Map.empty()), Val.ValStr("a"), Val.ValInt(1)]) => Result.Ok(Val.ValMap(Map.set(Map.empty(), "a", Val.ValInt(1))))
     builtinMapSet([Val.ValInt(1)]) => Result.Err("Map.set takes 3 arguments")
+    builtinMapSet([]) => Result.Err("Map.set takes 3 arguments")
 
 fn builtinMapSetInner(mapV: Val, keyV: Val, valV: Val) -> Result<Val, String>
     ? "Set a key in the map. O(1)."
@@ -734,6 +741,7 @@ fn builtinMapGet(args: List<Val>) -> Result<Val, String>
 verify builtinMapGet
     builtinMapGet([Val.ValMap(Map.set(Map.empty(), "a", Val.ValInt(1))), Val.ValStr("a")]) => Result.Ok(Val.ValSome(Val.ValInt(1)))
     builtinMapGet([Val.ValMap(Map.empty()), Val.ValStr("x")]) => Result.Ok(Val.ValNone)
+    builtinMapGet([]) => Result.Err("expected 2 arguments")
 
 fn builtinMapGetInner(mapV: Val, keyV: Val) -> Result<Val, String>
     ? "Look up key in map. O(1)."
@@ -757,6 +765,7 @@ fn builtinMapHas(args: List<Val>) -> Result<Val, String>
 verify builtinMapHas
     builtinMapHas([Val.ValMap(Map.set(Map.empty(), "a", Val.ValInt(1))), Val.ValStr("a")]) => Result.Ok(Val.ValBool(true))
     builtinMapHas([Val.ValMap(Map.empty()), Val.ValStr("a")]) => Result.Ok(Val.ValBool(false))
+    builtinMapHas([]) => Result.Err("expected 2 arguments")
 
 fn builtinMapHasInner(mapV: Val, keyV: Val) -> Result<Val, String>
     ? "Check if key exists in map. O(1)."
@@ -780,9 +789,9 @@ fn builtinHttpSimple(args: List<Val>, method: String) -> Result<Val, String>
     v = Domain.Builtins.Helpers.oneArg(args)?
     url = Domain.Builtins.Helpers.expectStr(v)?
     match method
-        "get" -> httpResponseToVal(Http.get(url))
-        "head" -> httpResponseToVal(Http.head(url))
-        _ -> httpResponseToVal(Http.delete(url))
+        "get" -> Result.Ok(httpResponseToVal(Http.get(url)))
+        "head" -> Result.Ok(httpResponseToVal(Http.head(url)))
+        _ -> Result.Ok(httpResponseToVal(Http.delete(url)))
 
 fn builtinHttpBody(args: List<Val>, method: String) -> Result<Val, String>
     ? "Http.post/put/patch(url, body, contentType, headers) forwarded to host."
@@ -804,18 +813,19 @@ fn builtinHttpBodyInner(urlV: Val, bodyV: Val, ctV: Val, hdrsV: Val, method: Str
     body = Domain.Builtins.Helpers.expectStr(bodyV)?
     ct = Domain.Builtins.Helpers.expectStr(ctV)?
     match method
-        "post" -> httpResponseToVal(Http.post(url, body, ct, []))
-        "put" -> httpResponseToVal(Http.put(url, body, ct, []))
-        _ -> httpResponseToVal(Http.patch(url, body, ct, []))
+        "post" -> Result.Ok(httpResponseToVal(Http.post(url, body, ct, [])))
+        "put" -> Result.Ok(httpResponseToVal(Http.put(url, body, ct, [])))
+        _ -> Result.Ok(httpResponseToVal(Http.patch(url, body, ct, [])))
 
-fn httpResponseToVal(result: Result<HttpResponse, String>) -> Result<Val, String>
+fn httpResponseToVal(result: Result<HttpResponse, String>) -> Val
     ? "Convert host HttpResponse to Val."
     match result
-        Result.Ok(resp) -> Result.Ok(Val.ValOk(Val.ValRecord("HttpResponse", [("status", Val.ValInt(resp.status)), ("body", Val.ValStr(resp.body)), ("headers", headersToVal(resp.headers, []))])))
-        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
+        Result.Ok(resp) -> Val.ValOk(Val.ValRecord("HttpResponse", [("status", Val.ValInt(resp.status)), ("body", Val.ValStr(resp.body)), ("headers", headersToVal(resp.headers, []))]))
+        Result.Err(e) -> Val.ValErr(Val.ValStr(e))
 
 verify httpResponseToVal
-    httpResponseToVal(Result.Err("fail")) => Result.Ok(Val.ValErr(Val.ValStr("fail")))
+    httpResponseToVal(Result.Err("fail")) => Val.ValErr(Val.ValStr("fail"))
+    httpResponseToVal(Result.Ok(HttpResponse(status = 200, body = "ok", headers = []))) => Val.ValOk(Val.ValRecord("HttpResponse", [("status", Val.ValInt(200)), ("body", Val.ValStr("ok")), ("headers", Val.ValList([]))]))
 
 fn headersToVal(headers: List<Header>, acc: List<Val>) -> Val
     ? "Convert host Header list to Val list."
@@ -825,6 +835,7 @@ fn headersToVal(headers: List<Header>, acc: List<Val>) -> Val
 
 verify headersToVal
     headersToVal([], []) => Val.ValList([])
+    headersToVal([Header(name = "X", value = "Y")], []) => Val.ValList([Val.ValRecord("Header", [("name", Val.ValStr("X")), ("value", Val.ValStr("Y"))])])
 
 fn builtinTcpSend(args: List<Val>) -> Result<Val, String>
     ? "Tcp.send(host, port, message) -> Result<String, String>."
