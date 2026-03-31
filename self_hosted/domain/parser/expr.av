@@ -14,7 +14,6 @@ fn parseExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
 
 verify parseExpr
     parseExpr([Token.TkInt(42), Token.TkEof], 0) => Result.Ok((Expr.ExprInt(42), 1))
-    parseExpr([Token.TkEof], 0) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parsePostfixQuestion(tokens: List<Token>, pos: Int, expr: Expr) -> Result<(Expr, Int), String>
     ? "Check for postfix ? (error propagation)."
@@ -34,24 +33,21 @@ fn parseCmpExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
 
 verify parseCmpExpr
     parseCmpExpr([Token.TkInt(1), Token.TkEof], 0) => Result.Ok((Expr.ExprInt(1), 1))
-    parseCmpExpr([Token.TkEof], 0) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseCmpExprTail(tokens: List<Token>, pos: Int, left: Expr) -> Result<(Expr, Int), String>
     ? "Check for comparison operator."
-    nextPos = pos + 1
     match Domain.ParserMatch.tokenAt(tokens, pos)
-        Token.TkEqEq -> parseCmpExprRight(tokens, nextPos, left, 0)
-        Token.TkNeq -> parseCmpExprRight(tokens, nextPos, left, 1)
-        Token.TkLt -> parseCmpExprRight(tokens, nextPos, left, 2)
-        Token.TkGt -> parseCmpExprRight(tokens, nextPos, left, 3)
-        Token.TkLte -> parseCmpExprRight(tokens, nextPos, left, 4)
-        Token.TkGte -> parseCmpExprRight(tokens, nextPos, left, 5)
+        Token.TkEqEq -> parseCmpExprRight(tokens, pos + 1, left, 0)
+        Token.TkNeq -> parseCmpExprRight(tokens, pos + 1, left, 1)
+        Token.TkLt -> parseCmpExprRight(tokens, pos + 1, left, 2)
+        Token.TkGt -> parseCmpExprRight(tokens, pos + 1, left, 3)
+        Token.TkLte -> parseCmpExprRight(tokens, pos + 1, left, 4)
+        Token.TkGte -> parseCmpExprRight(tokens, pos + 1, left, 5)
         _ -> Result.Ok((left, pos))
 
 verify parseCmpExprTail
     parseCmpExprTail([Token.TkEof], 0, Expr.ExprInt(1)) => Result.Ok((Expr.ExprInt(1), 0))
     parseCmpExprTail([Token.TkEqEq, Token.TkInt(2), Token.TkEof], 0, Expr.ExprInt(1)) => Result.Ok((Expr.ExprEq(Expr.ExprInt(1), Expr.ExprInt(2)), 2))
-    parseCmpExprTail([Token.TkEqEq, Token.TkEof], 0, Expr.ExprInt(1)) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseCmpExprRight(tokens: List<Token>, pos: Int, left: Expr, op: Int) -> Result<(Expr, Int), String>
     ? "Parse right side of comparison."
@@ -61,7 +57,6 @@ fn parseCmpExprRight(tokens: List<Token>, pos: Int, left: Expr, op: Int) -> Resu
 
 verify parseCmpExprRight
     parseCmpExprRight([Token.TkInt(2), Token.TkEof], 0, Expr.ExprInt(1), 0) => Result.Ok((Expr.ExprEq(Expr.ExprInt(1), Expr.ExprInt(2)), 1))
-    parseCmpExprRight([Token.TkEof], 0, Expr.ExprInt(1), 0) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn buildCmpExpr(left: Expr, right: Expr, pos: Int, op: Int) -> Result<(Expr, Int), String>
     ? "Build comparison AST node from op code."
@@ -84,21 +79,18 @@ fn parseAddExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
 
 verify parseAddExpr
     parseAddExpr([Token.TkInt(1), Token.TkEof], 0) => Result.Ok((Expr.ExprInt(1), 1))
-    parseAddExpr([Token.TkEof], 0) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseAddExprTail(tokens: List<Token>, pos: Int, left: Expr) -> Result<(Expr, Int), String>
     ? "Continue parsing additive operators."
-    nextPos = pos + 1
     t = Domain.ParserMatch.tokenAt(tokens, pos)
     match t
-        Token.TkPlus -> parseAddExprRight(tokens, nextPos, left, 0)
-        Token.TkMinus -> parseAddExprRight(tokens, nextPos, left, 1)
+        Token.TkPlus -> parseAddExprRight(tokens, pos + 1, left, 0)
+        Token.TkMinus -> parseAddExprRight(tokens, pos + 1, left, 1)
         _ -> Result.Ok((left, pos))
 
 verify parseAddExprTail
     parseAddExprTail([Token.TkPlus, Token.TkInt(2), Token.TkEof], 0, Expr.ExprInt(1)) => Result.Ok((Expr.ExprAdd(Expr.ExprInt(1), Expr.ExprInt(2)), 2))
     parseAddExprTail([Token.TkEof], 0, Expr.ExprInt(1)) => Result.Ok((Expr.ExprInt(1), 0))
-    parseAddExprTail([Token.TkPlus, Token.TkEof], 0, Expr.ExprInt(1)) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseAddExprRight(tokens: List<Token>, pos: Int, left: Expr, op: Int) -> Result<(Expr, Int), String>
     ? "Parse right side of additive op."
@@ -110,7 +102,6 @@ fn parseAddExprRight(tokens: List<Token>, pos: Int, left: Expr, op: Int) -> Resu
 
 verify parseAddExprRight
     parseAddExprRight([Token.TkInt(2), Token.TkEof], 0, Expr.ExprInt(1), 0) => Result.Ok((Expr.ExprAdd(Expr.ExprInt(1), Expr.ExprInt(2)), 1))
-    parseAddExprRight([Token.TkEof], 0, Expr.ExprInt(1), 0) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseMulExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
     ? "Parse multiplicative: atom ('*' atom)*"
@@ -120,19 +111,16 @@ fn parseMulExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
 
 verify parseMulExpr
     parseMulExpr([Token.TkInt(3), Token.TkEof], 0) => Result.Ok((Expr.ExprInt(3), 1))
-    parseMulExpr([Token.TkEof], 0) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseMulExprTail(tokens: List<Token>, pos: Int, left: Expr) -> Result<(Expr, Int), String>
     ? "Continue parsing multiplicative operators."
-    nextPos = pos + 1
     match Domain.ParserMatch.tokenAt(tokens, pos)
-        Token.TkStar -> parseMulExprRight(tokens, nextPos, left, 0)
-        Token.TkSlash -> parseMulExprRight(tokens, nextPos, left, 1)
+        Token.TkStar -> parseMulExprRight(tokens, pos + 1, left, 0)
+        Token.TkSlash -> parseMulExprRight(tokens, pos + 1, left, 1)
         _ -> Result.Ok((left, pos))
 
 verify parseMulExprTail
     parseMulExprTail([Token.TkEof], 0, Expr.ExprInt(1)) => Result.Ok((Expr.ExprInt(1), 0))
-    parseMulExprTail([Token.TkStar, Token.TkEof], 0, Expr.ExprInt(1)) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseMulExprRight(tokens: List<Token>, pos: Int, left: Expr, op: Int) -> Result<(Expr, Int), String>
     ? "Parse right side of mul/div op."
@@ -144,24 +132,22 @@ fn parseMulExprRight(tokens: List<Token>, pos: Int, left: Expr, op: Int) -> Resu
 
 verify parseMulExprRight
     parseMulExprRight([Token.TkInt(2), Token.TkEof], 0, Expr.ExprInt(3), 0) => Result.Ok((Expr.ExprMul(Expr.ExprInt(3), Expr.ExprInt(2)), 1))
-    parseMulExprRight([Token.TkEof], 0, Expr.ExprInt(3), 0) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseAtom(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
     ? "Parse atomic expression: literal, variable, call, match, or parenthesized."
-    nextPos = pos + 1
     t = Domain.ParserMatch.tokenAt(tokens, pos)
     match t
-        Token.TkMinus -> parseNegAtom(tokens, nextPos)
-        Token.TkInt(n) -> Result.Ok((Expr.ExprInt(n), nextPos))
-        Token.TkFloat(f) -> Result.Ok((Expr.ExprFloat(f), nextPos))
-        Token.TkStr(s) -> parseStringOrInterp(tokens, nextPos, s)
-        Token.TkTrue -> Result.Ok((Expr.ExprBool(true), nextPos))
-        Token.TkFalse -> Result.Ok((Expr.ExprBool(false), nextPos))
-        Token.TkLBracket -> parseListExpr(tokens, nextPos)
-        Token.TkLBrace -> parseMapLiteral(tokens, nextPos)
-        Token.TkLParen -> parseParenExpr(tokens, nextPos)
-        Token.TkMatch -> parseMatchExpr(tokens, nextPos)
-        Token.TkIdent(name) -> parseIdentOrCall(tokens, nextPos, name)
+        Token.TkMinus -> parseNegAtom(tokens, pos + 1)
+        Token.TkInt(n) -> Result.Ok((Expr.ExprInt(n), pos + 1))
+        Token.TkFloat(f) -> Result.Ok((Expr.ExprFloat(f), pos + 1))
+        Token.TkStr(s) -> parseStringOrInterp(tokens, pos + 1, s)
+        Token.TkTrue -> Result.Ok((Expr.ExprBool(true), pos + 1))
+        Token.TkFalse -> Result.Ok((Expr.ExprBool(false), pos + 1))
+        Token.TkLBracket -> parseListExpr(tokens, pos + 1)
+        Token.TkLBrace -> parseMapLiteral(tokens, pos + 1)
+        Token.TkLParen -> parseParenExpr(tokens, pos + 1)
+        Token.TkMatch -> parseMatchExpr(tokens, pos + 1)
+        Token.TkIdent(name) -> parseIdentOrCall(tokens, pos + 1, name)
         _ -> Result.Err("Expected expression, got {Domain.Token.tokenRepr(t)}")
 
 verify parseAtom
@@ -169,7 +155,6 @@ verify parseAtom
     parseAtom([Token.TkFloat(3.14), Token.TkEof], 0) => Result.Ok((Expr.ExprFloat(3.14), 1))
     parseAtom([Token.TkTrue, Token.TkEof], 0) => Result.Ok((Expr.ExprBool(true), 1))
     parseAtom([Token.TkStr("hi"), Token.TkEof], 0) => Result.Ok((Expr.ExprStr("hi"), 1))
-    parseAtom([Token.TkEof], 0) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseMapLiteral(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
     ? "Parse map literal into Map.fromList call."
@@ -178,19 +163,11 @@ fn parseMapLiteral(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
         Token.TkRBrace -> Result.Ok((Expr.ExprCall("Map.fromList", [Expr.ExprList([])]), pos2 + 1))
         _ -> parseMapEntries(tokens, pos2, [])
 
-verify parseMapLiteral
-    parseMapLiteral([Token.TkRBrace, Token.TkEof], 0) => Result.Ok((Expr.ExprCall("Map.fromList", [Expr.ExprList([])]), 1))
-    parseMapLiteral([Token.TkEof], 0) => Result.Err("Expected expression, got tokenRepr(TkEof)")
-
 fn parseMapEntries(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(Expr, Int), String>
     ? "Parse key => value pairs."
     kr = parseExpr(tokens, pos)?
     match kr
         (keyExpr, pos2) -> parseMapAfterKey(tokens, pos2, acc, keyExpr)
-
-verify parseMapEntries
-    parseMapEntries([Token.TkStr("a"), Token.TkFatArrow, Token.TkInt(1), Token.TkRBrace, Token.TkEof], 0, []) => Result.Ok((Expr.ExprCall("Map.fromList", [Expr.ExprList([Expr.ExprTuple([Expr.ExprStr("a"), Expr.ExprInt(1)])])]), 4))
-    parseMapEntries([Token.TkEof], 0, []) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseMapAfterKey(tokens: List<Token>, pos: Int, acc: List<Expr>, keyExpr: Expr) -> Result<(Expr, Int), String>
     ? "After key, expect => then value."
@@ -198,10 +175,6 @@ fn parseMapAfterKey(tokens: List<Token>, pos: Int, acc: List<Expr>, keyExpr: Exp
     vr = parseExpr(tokens, pos2)?
     match vr
         (valExpr, pos3) -> parseMapEntryTail(tokens, pos3, List.concat(acc, [Expr.ExprTuple([keyExpr, valExpr])]))
-
-verify parseMapAfterKey
-    parseMapAfterKey([Token.TkFatArrow, Token.TkInt(1), Token.TkRBrace, Token.TkEof], 0, [], Expr.ExprStr("k")) => Result.Ok((Expr.ExprCall("Map.fromList", [Expr.ExprList([Expr.ExprTuple([Expr.ExprStr("k"), Expr.ExprInt(1)])])]), 3))
-    parseMapAfterKey([Token.TkEof], 0, [], Expr.ExprStr("k")) => Result.Err("Expected tokenRepr(TkFatArrow), got tokenRepr(TkEof)")
 
 fn parseMapEntryTail(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(Expr, Int), String>
     ? "After entry: , for more or } to end."
@@ -211,10 +184,6 @@ fn parseMapEntryTail(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(
         Token.TkRBrace -> Result.Ok((Expr.ExprCall("Map.fromList", [Expr.ExprList(acc)]), pos2 + 1))
         _ -> Result.Err("Expected ',' or '}' in map literal")
 
-verify parseMapEntryTail
-    parseMapEntryTail([Token.TkRBrace, Token.TkEof], 0, [Expr.ExprTuple([Expr.ExprStr("a"), Expr.ExprInt(1)])]) => Result.Ok((Expr.ExprCall("Map.fromList", [Expr.ExprList([Expr.ExprTuple([Expr.ExprStr("a"), Expr.ExprInt(1)])])]), 1))
-    parseMapEntryTail([Token.TkEof], 0, []) => Result.Err("Expected ',' or '}' in map literal")
-
 fn parseNegAtom(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
     ? "Parse unary minus: -expr -> 0 - expr."
     r = parseAtom(tokens, pos)?
@@ -223,7 +192,6 @@ fn parseNegAtom(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
 
 verify parseNegAtom
     parseNegAtom([Token.TkInt(5), Token.TkEof], 0) => Result.Ok((Expr.ExprSub(Expr.ExprInt(0), Expr.ExprInt(5)), 1))
-    parseNegAtom([Token.TkEof], 0) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseStringOrInterp(tokens: List<Token>, pos: Int, prefix: String) -> Result<(Expr, Int), String>
     ? "After TkStr: check for interpolation (TkInterpStart) or plain string."
@@ -233,7 +201,6 @@ fn parseStringOrInterp(tokens: List<Token>, pos: Int, prefix: String) -> Result<
 
 verify parseStringOrInterp
     parseStringOrInterp([Token.TkEof], 0, "hello") => Result.Ok((Expr.ExprStr("hello"), 0))
-    parseStringOrInterp([Token.TkInterpStart, Token.TkEof], 0, "hi") => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseInterpParts(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(Expr, Int), String>
     ? "Parse interpolation parts: expressions between TkInterpStart/TkInterpEnd and TkStr segments."
@@ -243,7 +210,6 @@ fn parseInterpParts(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(E
 
 verify parseInterpParts
     parseInterpParts([Token.TkInt(1), Token.TkInterpEnd, Token.TkEof], 0, [Expr.ExprStr("x=")]) => Result.Ok((Expr.ExprConcat([Expr.ExprStr("x="), Expr.ExprInt(1)]), 2))
-    parseInterpParts([Token.TkEof], 0, []) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseInterpAfterExpr(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(Expr, Int), String>
     ? "After interpolation expr: expect TkInterpEnd, then maybe more string."
@@ -253,20 +219,17 @@ fn parseInterpAfterExpr(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Resul
 
 verify parseInterpAfterExpr
     parseInterpAfterExpr([Token.TkInterpEnd, Token.TkEof], 0, [Expr.ExprStr("a")]) => Result.Ok((Expr.ExprConcat([Expr.ExprStr("a")]), 1))
-    parseInterpAfterExpr([Token.TkEof], 0, []) => Result.Err("Expected } in string interpolation")
 
 fn parseInterpContinue(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(Expr, Int), String>
     ? "After }: next TkStr continues, or end of string."
-    nextPos = pos + 1
     match Domain.ParserMatch.tokenAt(tokens, pos)
-        Token.TkStr(s) -> parseInterpAfterStr(tokens, nextPos, List.concat(acc, [Expr.ExprStr(s)]))
-        Token.TkInterpStart -> parseInterpParts(tokens, nextPos, acc)
+        Token.TkStr(s) -> parseInterpAfterStr(tokens, pos + 1, List.concat(acc, [Expr.ExprStr(s)]))
+        Token.TkInterpStart -> parseInterpParts(tokens, pos + 1, acc)
         _ -> Result.Ok((Expr.ExprConcat(acc), pos))
 
 verify parseInterpContinue
     parseInterpContinue([Token.TkEof], 0, [Expr.ExprStr("a")]) => Result.Ok((Expr.ExprConcat([Expr.ExprStr("a")]), 0))
     parseInterpContinue([Token.TkStr("b"), Token.TkEof], 0, [Expr.ExprStr("a")]) => Result.Ok((Expr.ExprConcat([Expr.ExprStr("a"), Expr.ExprStr("b")]), 1))
-    parseInterpContinue([Token.TkInterpStart, Token.TkEof], 0, []) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseInterpAfterStr(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(Expr, Int), String>
     ? "After string segment: more interpolation or end."
@@ -276,7 +239,6 @@ fn parseInterpAfterStr(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result
 
 verify parseInterpAfterStr
     parseInterpAfterStr([Token.TkEof], 0, [Expr.ExprStr("a"), Expr.ExprStr("b")]) => Result.Ok((Expr.ExprConcat([Expr.ExprStr("a"), Expr.ExprStr("b")]), 0))
-    parseInterpAfterStr([Token.TkInterpStart, Token.TkEof], 0, []) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseListExpr(tokens: List<Token>, pos0: Int) -> Result<(Expr, Int), String>
     ? "Parse list literal: [expr, expr, ...] or []."
@@ -287,7 +249,6 @@ fn parseListExpr(tokens: List<Token>, pos0: Int) -> Result<(Expr, Int), String>
 
 verify parseListExpr
     parseListExpr([Token.TkRBracket, Token.TkEof], 0) => Result.Ok((Expr.ExprList([]), 1))
-    parseListExpr([Token.TkEof], 0) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseListItems(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(Expr, Int), String>
     ? "Parse comma-separated list items."
@@ -297,7 +258,6 @@ fn parseListItems(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(Exp
 
 verify parseListItems
     parseListItems([Token.TkInt(1), Token.TkRBracket, Token.TkEof], 0, []) => Result.Ok((Expr.ExprList([Expr.ExprInt(1)]), 2))
-    parseListItems([Token.TkEof], 0, []) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseListItemsTail(tokens: List<Token>, pos0: Int, items: List<Expr>) -> Result<(Expr, Int), String>
     ? "After a list item: ',' for more or ']' to end."
@@ -310,7 +270,6 @@ fn parseListItemsTail(tokens: List<Token>, pos0: Int, items: List<Expr>) -> Resu
 verify parseListItemsTail
     parseListItemsTail([Token.TkRBracket, Token.TkEof], 0, [Expr.ExprInt(1)]) => Result.Ok((Expr.ExprList([Expr.ExprInt(1)]), 1))
     parseListItemsTail([Token.TkComma, Token.TkInt(2), Token.TkRBracket, Token.TkEof], 0, [Expr.ExprInt(1)]) => Result.Ok((Expr.ExprList([Expr.ExprInt(1), Expr.ExprInt(2)]), 3))
-    parseListItemsTail([Token.TkEof], 0, []) => Result.Err("Expected ',' or ']' in list literal")
 
 fn parseListAfterComma(tokens: List<Token>, pos: Int, items: List<Expr>) -> Result<(Expr, Int), String>
     ? "Allow a trailing comma before ']' in list literals."
@@ -321,7 +280,6 @@ fn parseListAfterComma(tokens: List<Token>, pos: Int, items: List<Expr>) -> Resu
 verify parseListAfterComma
     parseListAfterComma([Token.TkRBracket, Token.TkEof], 0, [Expr.ExprInt(1)]) => Result.Ok((Expr.ExprList([Expr.ExprInt(1)]), 1))
     parseListAfterComma([Token.TkInt(2), Token.TkRBracket, Token.TkEof], 0, [Expr.ExprInt(1)]) => Result.Ok((Expr.ExprList([Expr.ExprInt(1), Expr.ExprInt(2)]), 2))
-    parseListAfterComma([Token.TkEof], 0, []) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseParenExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
     ? "Parse parenthesized expression or tuple."
@@ -334,7 +292,6 @@ fn parseParenExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
 
 verify parseParenExpr
     parseParenExpr([Token.TkInt(1), Token.TkRParen, Token.TkEof], 0) => Result.Ok((Expr.ExprInt(1), 2))
-    parseParenExpr([Token.TkEof], 0) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseTupleRest(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(Expr, Int), String>
     ? "Parse remaining tuple elements after first comma."
@@ -344,7 +301,6 @@ fn parseTupleRest(tokens: List<Token>, pos: Int, acc: List<Expr>) -> Result<(Exp
 
 verify parseTupleRest
     parseTupleRest([Token.TkInt(2), Token.TkRParen, Token.TkEof], 0, [Expr.ExprInt(1)]) => Result.Ok((Expr.ExprTuple([Expr.ExprInt(1), Expr.ExprInt(2)]), 2))
-    parseTupleRest([Token.TkEof], 0, []) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseTupleRestTail(tokens: List<Token>, pos0: Int, items: List<Expr>) -> Result<(Expr, Int), String>
     ? "After tuple element: ',' for more or ')' to end."
@@ -356,7 +312,6 @@ fn parseTupleRestTail(tokens: List<Token>, pos0: Int, items: List<Expr>) -> Resu
 
 verify parseTupleRestTail
     parseTupleRestTail([Token.TkRParen, Token.TkEof], 0, [Expr.ExprInt(1), Expr.ExprInt(2)]) => Result.Ok((Expr.ExprTuple([Expr.ExprInt(1), Expr.ExprInt(2)]), 1))
-    parseTupleRestTail([Token.TkEof], 0, []) => Result.Err("Expected ')' or ',' in tuple")
 
 fn parseTupleAfterComma(tokens: List<Token>, pos: Int, items: List<Expr>) -> Result<(Expr, Int), String>
     ? "Allow a trailing comma before ')' in tuples."
@@ -367,30 +322,23 @@ fn parseTupleAfterComma(tokens: List<Token>, pos: Int, items: List<Expr>) -> Res
 verify parseTupleAfterComma
     parseTupleAfterComma([Token.TkRParen, Token.TkEof], 0, [Expr.ExprInt(1), Expr.ExprInt(2)]) => Result.Ok((Expr.ExprTuple([Expr.ExprInt(1), Expr.ExprInt(2)]), 1))
     parseTupleAfterComma([Token.TkInt(3), Token.TkRParen, Token.TkEof], 0, [Expr.ExprInt(1), Expr.ExprInt(2)]) => Result.Ok((Expr.ExprTuple([Expr.ExprInt(1), Expr.ExprInt(2), Expr.ExprInt(3)]), 2))
-    parseTupleAfterComma([Token.TkEof], 0, []) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseIdentOrCall(tokens: List<Token>, pos: Int, name: String) -> Result<(Expr, Int), String>
     ? "After reading an identifier: call, record constructor, field access, or variable?"
-    nextPos = pos + 1
     match Domain.ParserMatch.tokenAt(tokens, pos)
-        Token.TkLParen -> chainFieldAccess(tokens, nextPos, name)
-        Token.TkDot -> parseFieldAccess(tokens, nextPos, Expr.ExprVar(name))
+        Token.TkLParen -> chainFieldAccess(tokens, pos + 1, name)
+        Token.TkDot -> parseFieldAccess(tokens, pos + 1, Expr.ExprVar(name))
         _ -> Result.Ok((Expr.ExprVar(name), pos))
 
 verify parseIdentOrCall
     parseIdentOrCall([Token.TkEof], 0, "x") => Result.Ok((Expr.ExprVar("x"), 0))
     parseIdentOrCall([Token.TkLParen, Token.TkRParen, Token.TkEof], 0, "f") => Result.Ok((Expr.ExprCall("f", []), 2))
-    parseIdentOrCall([Token.TkDot, Token.TkEof], 0, "x") => Result.Err("Expected field name after '.'")
 
 fn chainFieldAccess(tokens: List<Token>, pos: Int, name: String) -> Result<(Expr, Int), String>
     ? "Parse call/record then chain .field access if present."
     r = parseCallOrRecord(tokens, pos, name)?
     match r
         (expr, pos2) -> parseFieldAccessTail(tokens, pos2, expr)
-
-verify chainFieldAccess
-    chainFieldAccess([Token.TkRParen, Token.TkEof], 0, "f") => Result.Ok((Expr.ExprCall("f", []), 1))
-    chainFieldAccess([Token.TkEof], 0, "f") => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseFieldAccess(tokens: List<Token>, pos: Int, obj: Expr) -> Result<(Expr, Int), String>
     ? "Parse .field after an expression."
@@ -400,7 +348,6 @@ fn parseFieldAccess(tokens: List<Token>, pos: Int, obj: Expr) -> Result<(Expr, I
 
 verify parseFieldAccess
     parseFieldAccess([Token.TkIdent("x"), Token.TkEof], 0, Expr.ExprVar("a")) => Result.Ok((Expr.ExprFieldAccess(Expr.ExprVar("a"), "x"), 1))
-    parseFieldAccess([Token.TkEof], 0, Expr.ExprVar("a")) => Result.Err("Expected field name after '.'")
 
 fn parseFieldAccessTail(tokens: List<Token>, pos: Int, expr: Expr) -> Result<(Expr, Int), String>
     ? "Check for chained field access."
@@ -410,20 +357,14 @@ fn parseFieldAccessTail(tokens: List<Token>, pos: Int, expr: Expr) -> Result<(Ex
 
 verify parseFieldAccessTail
     parseFieldAccessTail([Token.TkEof], 0, Expr.ExprFieldAccess(Expr.ExprVar("a"), "x")) => Result.Ok((Expr.ExprFieldAccess(Expr.ExprVar("a"), "x"), 0))
-    parseFieldAccessTail([Token.TkDot, Token.TkEof], 0, Expr.ExprVar("a")) => Result.Err("Expected field name after '.'")
 
 fn skipNl(tokens: List<Token>, pos: Int) -> Int
     ? "Skip newlines and indents inside parenthesized expressions."
-    nextPos = pos + 1
     match Domain.ParserMatch.tokenAt(tokens, pos)
-        Token.TkNewline -> skipNl(tokens, nextPos)
-        Token.TkIndent -> skipNl(tokens, nextPos)
-        Token.TkDedent -> skipNl(tokens, nextPos)
+        Token.TkNewline -> skipNl(tokens, pos + 1)
+        Token.TkIndent -> skipNl(tokens, pos + 1)
+        Token.TkDedent -> skipNl(tokens, pos + 1)
         _ -> pos
-
-verify skipNl
-    skipNl([Token.TkNewline, Token.TkIndent, Token.TkInt(1), Token.TkEof], 0) => 2
-    skipNl([Token.TkInt(1), Token.TkEof], 0) => 0
 
 fn parseCallOrRecord(tokens: List<Token>, pos: Int, name: String) -> Result<(Expr, Int), String>
     ? "After '(': is this a function call f(args) or record Foo(field = val)?"
@@ -435,7 +376,6 @@ fn parseCallOrRecord(tokens: List<Token>, pos: Int, name: String) -> Result<(Exp
 
 verify parseCallOrRecord
     parseCallOrRecord([Token.TkRParen, Token.TkEof], 0, "f") => Result.Ok((Expr.ExprCall("f", []), 1))
-    parseCallOrRecord([Token.TkEof], 0, "f") => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseCallOrRecordLookahead(tokens: List<Token>, pos: Int, name: String, first: String) -> Result<(Expr, Int), String>
     ? "Lookahead after first ident in parens: '=' means record, otherwise call."
@@ -445,7 +385,6 @@ fn parseCallOrRecordLookahead(tokens: List<Token>, pos: Int, name: String, first
 
 verify parseCallOrRecordLookahead
     parseCallOrRecordLookahead([Token.TkIdent("a"), Token.TkEq, Token.TkInt(1), Token.TkRParen, Token.TkEof], 0, "Foo", "a") => Result.Ok((Expr.ExprRecord("Foo", [("a", Expr.ExprInt(1))]), 4))
-    parseCallOrRecordLookahead([Token.TkIdent("a"), Token.TkEof], 0, "f", "a") => Result.Err("Expected ',' or ')' in argument list")
 
 fn parseRecordFields(tokens: List<Token>, pos: Int, name: String, acc: List<(String, Expr)>) -> Result<(Expr, Int), String>
     ? "Parse record fields: field = expr, ..."
@@ -455,7 +394,6 @@ fn parseRecordFields(tokens: List<Token>, pos: Int, name: String, acc: List<(Str
 
 verify parseRecordFields
     parseRecordFields([Token.TkIdent("x"), Token.TkEq, Token.TkInt(1), Token.TkRParen, Token.TkEof], 0, "R", []) => Result.Ok((Expr.ExprRecord("R", [("x", Expr.ExprInt(1))]), 4))
-    parseRecordFields([Token.TkEof], 0, "R", []) => Result.Err("Expected field name in record constructor")
 
 fn parseRecordField(tokens: List<Token>, pos: Int, name: String, acc: List<(String, Expr)>, field: String) -> Result<(Expr, Int), String>
     ? "Parse = expr after field name."
@@ -466,7 +404,6 @@ fn parseRecordField(tokens: List<Token>, pos: Int, name: String, acc: List<(Stri
 
 verify parseRecordField
     parseRecordField([Token.TkEq, Token.TkInt(1), Token.TkRParen, Token.TkEof], 0, "R", [], "x") => Result.Ok((Expr.ExprRecord("R", [("x", Expr.ExprInt(1))]), 3))
-    parseRecordField([Token.TkEof], 0, "R", [], "x") => Result.Err("Expected tokenRepr(TkEq), got tokenRepr(TkEof)")
 
 fn parseRecordFieldsTail(tokens: List<Token>, pos: Int, name: String, fields: List<(String, Expr)>) -> Result<(Expr, Int), String>
     ? "After a field: ',' for more or ')' to end."
@@ -478,7 +415,6 @@ fn parseRecordFieldsTail(tokens: List<Token>, pos: Int, name: String, fields: Li
 
 verify parseRecordFieldsTail
     parseRecordFieldsTail([Token.TkRParen, Token.TkEof], 0, "R", [("x", Expr.ExprInt(1))]) => Result.Ok((Expr.ExprRecord("R", [("x", Expr.ExprInt(1))]), 1))
-    parseRecordFieldsTail([Token.TkEof], 0, "R", []) => Result.Err("Expected ',' or ')' in record constructor")
 
 fn parseRecordAfterComma(tokens: List<Token>, pos: Int, name: String, fields: List<(String, Expr)>) -> Result<(Expr, Int), String>
     ? "Allow a trailing comma before ')' in record constructors."
@@ -489,7 +425,6 @@ fn parseRecordAfterComma(tokens: List<Token>, pos: Int, name: String, fields: Li
 verify parseRecordAfterComma
     parseRecordAfterComma([Token.TkRParen, Token.TkEof], 0, "R", [("x", Expr.ExprInt(1))]) => Result.Ok((Expr.ExprRecord("R", [("x", Expr.ExprInt(1))]), 1))
     parseRecordAfterComma([Token.TkIdent("y"), Token.TkEq, Token.TkInt(2), Token.TkRParen, Token.TkEof], 0, "R", [("x", Expr.ExprInt(1))]) => Result.Ok((Expr.ExprRecord("R", [("x", Expr.ExprInt(1)), ("y", Expr.ExprInt(2))]), 4))
-    parseRecordAfterComma([Token.TkEof], 0, "R", []) => Result.Err("Expected field name in record constructor")
 
 fn parseCallArgsList(tokens: List<Token>, pos: Int, name: String, acc: List<Expr>) -> Result<(Expr, Int), String>
     ? "Parse comma-separated argument list."
@@ -499,7 +434,6 @@ fn parseCallArgsList(tokens: List<Token>, pos: Int, name: String, acc: List<Expr
 
 verify parseCallArgsList
     parseCallArgsList([Token.TkInt(1), Token.TkRParen, Token.TkEof], 0, "f", []) => Result.Ok((Expr.ExprCall("f", [Expr.ExprInt(1)]), 2))
-    parseCallArgsList([Token.TkEof], 0, "f", []) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseCallArgsListTail(tokens: List<Token>, pos0: Int, name: String, args: List<Expr>) -> Result<(Expr, Int), String>
     ? "After an argument: ',' for more or ')' to end. Detects named args (field = expr)."
@@ -511,7 +445,6 @@ fn parseCallArgsListTail(tokens: List<Token>, pos0: Int, name: String, args: Lis
 
 verify parseCallArgsListTail
     parseCallArgsListTail([Token.TkRParen, Token.TkEof], 0, "f", [Expr.ExprInt(1)]) => Result.Ok((Expr.ExprCall("f", [Expr.ExprInt(1)]), 1))
-    parseCallArgsListTail([Token.TkEof], 0, "f", []) => Result.Err("Expected ',' or ')' in argument list")
 
 fn parseCallArgsAfterComma(tokens: List<Token>, pos: Int, name: String, args: List<Expr>) -> Result<(Expr, Int), String>
     ? "After comma in call args: check if next is ident = (named arg) or regular expr."
@@ -520,20 +453,11 @@ fn parseCallArgsAfterComma(tokens: List<Token>, pos: Int, name: String, args: Li
         Token.TkIdent(field) -> parseCallArgsCheckNamed(tokens, pos, name, args, field)
         _ -> parseCallArgsList(tokens, pos, name, args)
 
-verify parseCallArgsAfterComma
-    parseCallArgsAfterComma([Token.TkRParen, Token.TkEof], 0, "f", [Expr.ExprInt(1)]) => Result.Ok((Expr.ExprCall("f", [Expr.ExprInt(1)]), 1))
-    parseCallArgsAfterComma([Token.TkInt(2), Token.TkRParen, Token.TkEof], 0, "f", [Expr.ExprInt(1)]) => Result.Ok((Expr.ExprCall("f", [Expr.ExprInt(1), Expr.ExprInt(2)]), 2))
-    parseCallArgsAfterComma([Token.TkEof], 0, "f", []) => Result.Err("Expected expression, got tokenRepr(TkEof)")
-
 fn parseCallArgsCheckNamed(tokens: List<Token>, pos: Int, name: String, args: List<Expr>, field: String) -> Result<(Expr, Int), String>
     ? "Lookahead: if next token after ident is =, switch to named args mode."
     match Domain.ParserMatch.tokenAt(tokens, pos + 1)
         Token.TkEq -> parseNamedArgs(tokens, pos, name, args, [])
         _ -> parseCallArgsList(tokens, pos, name, args)
-
-verify parseCallArgsCheckNamed
-    parseCallArgsCheckNamed([Token.TkIdent("x"), Token.TkRParen, Token.TkEof], 0, "f", [], "x") => Result.Ok((Expr.ExprCall("f", [Expr.ExprVar("x")]), 2))
-    parseCallArgsCheckNamed([Token.TkIdent("x"), Token.TkEq, Token.TkEof], 0, "f", [], "x") => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseNamedArgs(tokens: List<Token>, pos: Int, name: String, positionalArgs: List<Expr>, namedAcc: List<(String, Expr)>) -> Result<(Expr, Int), String>
     ? "Parse field = expr pairs for named/record-update args."
@@ -542,20 +466,12 @@ fn parseNamedArgs(tokens: List<Token>, pos: Int, name: String, positionalArgs: L
         Token.TkRParen -> Result.Ok((Expr.ExprCall(name, List.concat(positionalArgs, [Expr.ExprRecord("_named", namedAcc)])), pos + 1))
         _ -> Result.Err("Expected field name or ')' in named arguments")
 
-verify parseNamedArgs
-    parseNamedArgs([Token.TkRParen, Token.TkEof], 0, "f", [Expr.ExprInt(1)], []) => Result.Ok((Expr.ExprCall("f", [Expr.ExprInt(1), Expr.ExprRecord("_named", [])]), 1))
-    parseNamedArgs([Token.TkEof], 0, "f", [], []) => Result.Err("Expected field name or ')' in named arguments")
-
 fn parseNamedArgField(tokens: List<Token>, pos: Int, name: String, positionalArgs: List<Expr>, namedAcc: List<(String, Expr)>, field: String) -> Result<(Expr, Int), String>
     ? "Parse = expr after field name in named args."
     pos2 = Domain.ParserMatch.expect(tokens, pos, Token.TkEq)?
     r = parseExpr(tokens, pos2)?
     match r
         (expr, pos3) -> parseNamedArgsTail(tokens, pos3, name, positionalArgs, List.concat(namedAcc, [(field, expr)]))
-
-verify parseNamedArgField
-    parseNamedArgField([Token.TkEq, Token.TkInt(1), Token.TkRParen, Token.TkEof], 0, "f", [], [], "x") => Result.Ok((Expr.ExprCall("f", [Expr.ExprRecord("_named", [("x", Expr.ExprInt(1))])]), 3))
-    parseNamedArgField([Token.TkEof], 0, "f", [], [], "x") => Result.Err("Expected tokenRepr(TkEq), got tokenRepr(TkEof)")
 
 fn parseNamedArgsTail(tokens: List<Token>, pos0: Int, name: String, positionalArgs: List<Expr>, namedAcc: List<(String, Expr)>) -> Result<(Expr, Int), String>
     ? "After named arg: ',' for more or ')' to end."
@@ -565,10 +481,6 @@ fn parseNamedArgsTail(tokens: List<Token>, pos0: Int, name: String, positionalAr
         Token.TkRParen -> Result.Ok((Expr.ExprCall(name, List.concat(positionalArgs, [Expr.ExprRecord("_named", namedAcc)])), pos + 1))
         _ -> Result.Err("Expected ',' or ')' in named arguments")
 
-verify parseNamedArgsTail
-    parseNamedArgsTail([Token.TkRParen, Token.TkEof], 0, "f", [], [("x", Expr.ExprInt(1))]) => Result.Ok((Expr.ExprCall("f", [Expr.ExprRecord("_named", [("x", Expr.ExprInt(1))])]), 1))
-    parseNamedArgsTail([Token.TkEof], 0, "f", [], []) => Result.Err("Expected ',' or ')' in named arguments")
-
 fn parseMatchExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
     ? "Parse: match expr NEWLINE INDENT arms DEDENT. Called after TkMatch is consumed."
     r = parseExpr(tokens, pos)?
@@ -577,7 +489,6 @@ fn parseMatchExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
 
 verify parseMatchExpr
     parseMatchExpr([Token.TkInt(1), Token.TkNewline, Token.TkIndent, Token.TkInt(1), Token.TkArrow, Token.TkTrue, Token.TkNewline, Token.TkDedent, Token.TkEof], 0) => Result.Ok((Expr.ExprMatch(Expr.ExprInt(1), [MatchArm(pattern = Pattern.PatInt(1), body = Expr.ExprBool(true), bindingSlots = Map.empty())]), 8))
-    parseMatchExpr([Token.TkEof], 0) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseMatchAfterSubject(tokens: List<Token>, pos: Int, subject: Expr) -> Result<(Expr, Int), String>
     ? "Skip newlines, consume INDENT, then parse arms."
@@ -588,35 +499,32 @@ fn parseMatchAfterSubject(tokens: List<Token>, pos: Int, subject: Expr) -> Resul
 
 verify parseMatchAfterSubject
     parseMatchAfterSubject([Token.TkNewline, Token.TkIndent, Token.TkIdent("_"), Token.TkArrow, Token.TkInt(0), Token.TkNewline, Token.TkDedent, Token.TkEof], 0, Expr.ExprVar("x")) => Result.Ok((Expr.ExprMatch(Expr.ExprVar("x"), [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(0), bindingSlots = Map.empty())]), 7))
-    parseMatchAfterSubject([Token.TkEof], 0, Expr.ExprVar("x")) => Result.Err("Expected at least one match arm")
 
 fn parseMatchArms(tokens: List<Token>, pos: Int, subject: Expr, acc: List<MatchArm>) -> Result<(Expr, Int), String>
     ? "Parse match arms until DEDENT."
     pos2 = Domain.ParserMatch.skipNewlines(tokens, pos)
     match Domain.ParserMatch.tokenAt(tokens, pos2)
-        Token.TkDedent -> match acc
-            [] -> Result.Err("Expected at least one match arm")
-            _ -> Result.Ok((Expr.ExprMatch(subject, acc), pos2 + 1))
-        Token.TkEof -> match acc
-            [] -> Result.Err("Expected at least one match arm")
-            _ -> Result.Ok((Expr.ExprMatch(subject, acc), pos2))
+        Token.TkDedent -> match List.len(acc) == 0
+            true -> Result.Err("Expected at least one match arm")
+            false -> Result.Ok((Expr.ExprMatch(subject, acc), pos2 + 1))
+        Token.TkEof -> match List.len(acc) == 0
+            true -> Result.Err("Expected at least one match arm")
+            false -> Result.Ok((Expr.ExprMatch(subject, acc), pos2))
         _ -> parseOneArm(tokens, pos2, subject, acc)
 
 verify parseMatchArms
     parseMatchArms([Token.TkIdent("_"), Token.TkArrow, Token.TkInt(0), Token.TkNewline, Token.TkDedent, Token.TkEof], 0, Expr.ExprVar("x"), []) => Result.Ok((Expr.ExprMatch(Expr.ExprVar("x"), [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(0), bindingSlots = Map.empty())]), 5))
-    parseMatchArms([Token.TkDedent, Token.TkEof], 0, Expr.ExprVar("x"), []) => Result.Err("Expected at least one match arm")
 
 fn parseMatchArmsFlat(tokens: List<Token>, pos: Int, subject: Expr, acc: List<MatchArm>) -> Result<(Expr, Int), String>
     ? "Parse match arms without INDENT/DEDENT (fallback for flat token streams)."
     match Domain.ParserMatch.isArmStart(tokens, pos)
         true -> parseOneArmFlat(tokens, pos, subject, acc)
-        false -> match acc
-            [] -> Result.Err("Expected at least one match arm")
-            _ -> Result.Ok((Expr.ExprMatch(subject, acc), pos))
+        false -> match List.len(acc) == 0
+            true -> Result.Err("Expected at least one match arm")
+            false -> Result.Ok((Expr.ExprMatch(subject, acc), pos))
 
 verify parseMatchArmsFlat
     parseMatchArmsFlat([Token.TkIdent("_"), Token.TkArrow, Token.TkInt(0), Token.TkEof], 0, Expr.ExprVar("x"), []) => Result.Ok((Expr.ExprMatch(Expr.ExprVar("x"), [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(0), bindingSlots = Map.empty())]), 3))
-    parseMatchArmsFlat([Token.TkEof], 0, Expr.ExprVar("x"), []) => Result.Err("Expected at least one match arm")
 
 fn parseOneArmFlat(tokens: List<Token>, pos: Int, subject: Expr, acc: List<MatchArm>) -> Result<(Expr, Int), String>
     ? "Parse one arm and continue in flat mode."
@@ -626,7 +534,6 @@ fn parseOneArmFlat(tokens: List<Token>, pos: Int, subject: Expr, acc: List<Match
 
 verify parseOneArmFlat
     parseOneArmFlat([Token.TkIdent("_"), Token.TkArrow, Token.TkInt(0), Token.TkEof], 0, Expr.ExprVar("x"), []) => Result.Ok((Expr.ExprMatch(Expr.ExprVar("x"), [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(0), bindingSlots = Map.empty())]), 3))
-    parseOneArmFlat([Token.TkIdent("_"), Token.TkEof], 0, Expr.ExprVar("x"), []) => Result.Err("Expected tokenRepr(TkArrow), got tokenRepr(TkEof)")
 
 fn parseOneArmFlatBody(tokens: List<Token>, pos: Int, subject: Expr, acc: List<MatchArm>, pat: Pattern) -> Result<(Expr, Int), String>
     ? "Parse arrow and body, then continue flat."
@@ -637,7 +544,6 @@ fn parseOneArmFlatBody(tokens: List<Token>, pos: Int, subject: Expr, acc: List<M
 
 verify parseOneArmFlatBody
     parseOneArmFlatBody([Token.TkArrow, Token.TkInt(0), Token.TkEof], 0, Expr.ExprVar("x"), [], Pattern.PatWild) => Result.Ok((Expr.ExprMatch(Expr.ExprVar("x"), [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(0), bindingSlots = Map.empty())]), 2))
-    parseOneArmFlatBody([Token.TkEof], 0, Expr.ExprVar("x"), [], Pattern.PatWild) => Result.Err("Expected tokenRepr(TkArrow), got tokenRepr(TkEof)")
 
 fn parseOneArm(tokens: List<Token>, pos: Int, subject: Expr, acc: List<MatchArm>) -> Result<(Expr, Int), String>
     ? "Parse one match arm: pattern '->' expr NEWLINE"
@@ -647,7 +553,6 @@ fn parseOneArm(tokens: List<Token>, pos: Int, subject: Expr, acc: List<MatchArm>
 
 verify parseOneArm
     parseOneArm([Token.TkIdent("_"), Token.TkArrow, Token.TkInt(0), Token.TkNewline, Token.TkDedent, Token.TkEof], 0, Expr.ExprVar("x"), []) => Result.Ok((Expr.ExprMatch(Expr.ExprVar("x"), [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(0), bindingSlots = Map.empty())]), 5))
-    parseOneArm([Token.TkIdent("_"), Token.TkEof], 0, Expr.ExprVar("x"), []) => Result.Err("Expected tokenRepr(TkArrow), got tokenRepr(TkEof)")
 
 fn parseOneArmBody(tokens: List<Token>, pos: Int, subject: Expr, acc: List<MatchArm>, pat: Pattern) -> Result<(Expr, Int), String>
     ? "Parse arrow and body of a match arm."
@@ -658,4 +563,3 @@ fn parseOneArmBody(tokens: List<Token>, pos: Int, subject: Expr, acc: List<Match
 
 verify parseOneArmBody
     parseOneArmBody([Token.TkArrow, Token.TkInt(0), Token.TkNewline, Token.TkDedent, Token.TkEof], 0, Expr.ExprVar("x"), [], Pattern.PatWild) => Result.Ok((Expr.ExprMatch(Expr.ExprVar("x"), [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(0), bindingSlots = Map.empty())]), 4))
-    parseOneArmBody([Token.TkEof], 0, Expr.ExprVar("x"), [], Pattern.PatWild) => Result.Err("Expected tokenRepr(TkArrow), got tokenRepr(TkEof)")

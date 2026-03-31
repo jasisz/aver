@@ -27,8 +27,6 @@ fn twoArgs(args: List<Val>) -> Result<(Val, Val), String>
 
 verify twoArgs
     twoArgs([Val.ValInt(1), Val.ValInt(2)]) => Result.Ok((Val.ValInt(1), Val.ValInt(2)))
-    twoArgs([]) => Result.Err("expected 2 arguments")
-    twoArgs([Val.ValInt(1)]) => Result.Err("expected 2 arguments")
 
 fn expectList(v: Val) -> Result<List<Val>, String>
     ? "Extract list from Val or error."

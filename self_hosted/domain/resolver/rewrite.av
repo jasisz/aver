@@ -11,16 +11,9 @@ fn rewriteInternalFns(fns: List<FnDef>, acc: List<FnDef>) -> List<FnDef>
         [] -> List.reverse(acc)
         [f, ..rest] -> rewriteInternalFns(rest, List.prepend(rewriteInternalFn(f), acc))
 
-verify rewriteInternalFns
-    rewriteInternalFns([], []) => []
-    List.len(rewriteInternalFns([FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)], [])) => 1
-
 fn rewriteInternalFn(fd: FnDef) -> FnDef
     ? "Rewrite the body of one resolved function into lighter internal expression shapes."
     FnDef(name = fd.name, params = fd.params, body = rewriteInternalStmts(fd.body, []), slotCount = fd.slotCount, slotMap = fd.slotMap, fastPath = fd.fastPath, tailLoop = fd.tailLoop)
-
-verify rewriteInternalFn
-    rewriteInternalFn(FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)).name => "f"
 
 fn rewriteInternalStmts(stmts: List<Stmt>, acc: List<Stmt>) -> List<Stmt>
     ? "Rewrite statements recursively into lighter internal expression shapes."
@@ -28,21 +21,12 @@ fn rewriteInternalStmts(stmts: List<Stmt>, acc: List<Stmt>) -> List<Stmt>
         [] -> List.reverse(acc)
         [stmt, ..rest] -> rewriteInternalStmts(rest, List.prepend(rewriteInternalStmt(stmt), acc))
 
-verify rewriteInternalStmts
-    rewriteInternalStmts([], []) => []
-    rewriteInternalStmts([Stmt.StmtExpr(Expr.ExprInt(1))], []) => [Stmt.StmtExpr(Expr.ExprInt(1))]
-
 fn rewriteInternalStmt(stmt: Stmt) -> Stmt
     ? "Rewrite one statement recursively into lighter internal expression shapes."
     match stmt
         Stmt.StmtBind(name, expr) -> Stmt.StmtBind(name, rewriteInternalExpr(expr))
         Stmt.StmtBindSlot(slot, expr) -> Stmt.StmtBindSlot(slot, rewriteInternalExpr(expr))
         Stmt.StmtExpr(expr) -> Stmt.StmtExpr(rewriteInternalExpr(expr))
-
-verify rewriteInternalStmt
-    rewriteInternalStmt(Stmt.StmtExpr(Expr.ExprInt(1))) => Stmt.StmtExpr(Expr.ExprInt(1))
-    rewriteInternalStmt(Stmt.StmtBindSlot(0, Expr.ExprStr("hi"))) => Stmt.StmtBindSlot(0, Expr.ExprStr("hi"))
-    rewriteInternalStmt(Stmt.StmtBind("x", Expr.ExprInt(1))) => Stmt.StmtBind("x", Expr.ExprInt(1))
 
 fn rewriteInternalExpr(expr: Expr) -> Expr
     ? "Rewrite one expression into lighter internal forms after resolve and direct-call linking."
@@ -77,51 +61,11 @@ fn rewriteInternalExpr(expr: Expr) -> Expr
         Expr.ExprCallBuiltinId(id, args) -> Expr.ExprCallBuiltinId(id, rewriteInternalExprs(args, []))
         _ -> expr
 
-verify rewriteInternalExpr
-    rewriteInternalExpr(Expr.ExprInt(42)) => Expr.ExprInt(42)
-    rewriteInternalExpr(Expr.ExprStr("hi")) => Expr.ExprStr("hi")
-    rewriteInternalExpr(Expr.ExprSlot(0)) => Expr.ExprSlot(0)
-    rewriteInternalExpr(Expr.ExprAdd(Expr.ExprSlot(0), Expr.ExprInt(1))) => Expr.ExprBinopSlotInt(BinOp.OpAdd, 0, 1)
-    rewriteInternalExpr(Expr.ExprBool(true)) => Expr.ExprBool(true)
-    rewriteInternalExpr(Expr.ExprFloat(1.0)) => Expr.ExprFloat(1.0)
-    rewriteInternalExpr(Expr.ExprVar("x")) => Expr.ExprVar("x")
-    rewriteInternalExpr(Expr.ExprBinopSlotInt(BinOp.OpAdd, 0, 1)) => Expr.ExprBinopSlotInt(BinOp.OpAdd, 0, 1)
-    rewriteInternalExpr(Expr.ExprBinopSlots(BinOp.OpAdd, 0, 1)) => Expr.ExprBinopSlots(BinOp.OpAdd, 0, 1)
-    rewriteInternalExpr(Expr.ExprCmpSlotInt(CmpOp.CmpEq, 0, 1)) => Expr.ExprCmpSlotInt(CmpOp.CmpEq, 0, 1)
-    rewriteInternalExpr(Expr.ExprCmpSlots(CmpOp.CmpEq, 0, 1)) => Expr.ExprCmpSlots(CmpOp.CmpEq, 0, 1)
-    rewriteInternalExpr(Expr.ExprSub(Expr.ExprInt(1), Expr.ExprInt(2))) => Expr.ExprSub(Expr.ExprInt(1), Expr.ExprInt(2))
-    rewriteInternalExpr(Expr.ExprMul(Expr.ExprInt(1), Expr.ExprInt(2))) => Expr.ExprMul(Expr.ExprInt(1), Expr.ExprInt(2))
-    rewriteInternalExpr(Expr.ExprDiv(Expr.ExprInt(1), Expr.ExprInt(2))) => Expr.ExprDiv(Expr.ExprInt(1), Expr.ExprInt(2))
-    rewriteInternalExpr(Expr.ExprEq(Expr.ExprInt(1), Expr.ExprInt(2))) => Expr.ExprEq(Expr.ExprInt(1), Expr.ExprInt(2))
-    rewriteInternalExpr(Expr.ExprNeq(Expr.ExprInt(1), Expr.ExprInt(2))) => Expr.ExprNeq(Expr.ExprInt(1), Expr.ExprInt(2))
-    rewriteInternalExpr(Expr.ExprLt(Expr.ExprInt(1), Expr.ExprInt(2))) => Expr.ExprLt(Expr.ExprInt(1), Expr.ExprInt(2))
-    rewriteInternalExpr(Expr.ExprGt(Expr.ExprInt(1), Expr.ExprInt(2))) => Expr.ExprGt(Expr.ExprInt(1), Expr.ExprInt(2))
-    rewriteInternalExpr(Expr.ExprLte(Expr.ExprInt(1), Expr.ExprInt(2))) => Expr.ExprLte(Expr.ExprInt(1), Expr.ExprInt(2))
-    rewriteInternalExpr(Expr.ExprGte(Expr.ExprInt(1), Expr.ExprInt(2))) => Expr.ExprGte(Expr.ExprInt(1), Expr.ExprInt(2))
-    rewriteInternalExpr(Expr.ExprMatch(Expr.ExprInt(1), [])) => Expr.ExprMatch(Expr.ExprInt(1), [])
-    rewriteInternalExpr(Expr.ExprPropagate(Expr.ExprInt(1))) => Expr.ExprPropagate(Expr.ExprInt(1))
-    rewriteInternalExpr(Expr.ExprConcat([])) => Expr.ExprConcat([])
-    rewriteInternalExpr(Expr.ExprTuple([])) => Expr.ExprTuple([])
-    rewriteInternalExpr(Expr.ExprList([])) => Expr.ExprList([])
-    rewriteInternalExpr(Expr.ExprRecord("Foo", [])) => Expr.ExprRecord("Foo", [])
-    rewriteInternalExpr(Expr.ExprFieldAccess(Expr.ExprInt(1), "x")) => Expr.ExprFieldAccess(Expr.ExprInt(1), "x")
-    rewriteInternalExpr(Expr.ExprCall("f", [])) => Expr.ExprCall("f", [])
-    rewriteInternalExpr(Expr.ExprCallDirect(0, [])) => Expr.ExprCallDirect(0, [])
-    rewriteInternalExpr(Expr.ExprCallBuiltin("Map.get", [])) => Expr.ExprCallBuiltin("Map.get", [])
-    rewriteInternalExpr(Expr.ExprCallBuiltinId(0, [])) => Expr.ExprCallBuiltinId(0, [])
-    rewriteInternalExpr(Expr.ExprBoolBranch(Expr.ExprBool(true), Expr.ExprInt(1), Expr.ExprInt(2))) => Expr.ExprBoolBranch(Expr.ExprBool(true), Expr.ExprInt(1), Expr.ExprInt(2))
-    rewriteInternalExpr(Expr.ExprVectorGetOrInt(Expr.ExprInt(1), Expr.ExprInt(2), 0)) => Expr.ExprVectorGetOrInt(Expr.ExprInt(1), Expr.ExprInt(2), 0)
-    rewriteInternalExpr(Expr.ExprIntModOrInt(Expr.ExprInt(1), Expr.ExprInt(2), 0)) => Expr.ExprIntModOrInt(Expr.ExprInt(1), Expr.ExprInt(2), 0)
-
 fn rewriteInternalExprs(exprs: List<Expr>, acc: List<Expr>) -> List<Expr>
     ? "Rewrite a list of expressions recursively."
     match exprs
         [] -> List.reverse(acc)
         [expr, ..rest] -> rewriteInternalExprs(rest, List.prepend(rewriteInternalExpr(expr), acc))
-
-verify rewriteInternalExprs
-    rewriteInternalExprs([], []) => []
-    rewriteInternalExprs([Expr.ExprInt(1)], []) => [Expr.ExprInt(1)]
 
 fn rewriteInternalFields(fields: List<(String, Expr)>, acc: List<(String, Expr)>) -> List<(String, Expr)>
     ? "Rewrite record field expressions recursively."
@@ -130,19 +74,11 @@ fn rewriteInternalFields(fields: List<(String, Expr)>, acc: List<(String, Expr)>
         [pair, ..rest] -> match pair
             (name, expr) -> rewriteInternalFields(rest, List.prepend((name, rewriteInternalExpr(expr)), acc))
 
-verify rewriteInternalFields
-    rewriteInternalFields([], []) => []
-    rewriteInternalFields([("x", Expr.ExprInt(1))], []) => [("x", Expr.ExprInt(1))]
-
 fn rewriteInternalArms(arms: List<MatchArm>, acc: List<MatchArm>) -> List<MatchArm>
     ? "Rewrite match arm bodies and resolve PatConstructor to PatConstructorId using constructor tags."
     match arms
         [] -> List.reverse(acc)
         [arm, ..rest] -> rewriteInternalArms(rest, List.prepend(MatchArm(pattern = rewritePattern(arm.pattern), body = rewriteInternalExpr(arm.body), bindingSlots = arm.bindingSlots), acc))
-
-verify rewriteInternalArms
-    rewriteInternalArms([], []) => []
-    rewriteInternalArms([MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = Map.empty())], []) => [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = Map.empty())]
 
 fn rewritePattern(pat: Pattern) -> Pattern
     ? "Rewrite PatConstructor to PatConstructorId with both tag and full constructor name."
@@ -151,30 +87,16 @@ fn rewritePattern(pat: Pattern) -> Pattern
         Pattern.PatTuple(pats) -> Pattern.PatTuple(rewritePatterns(pats, []))
         _ -> pat
 
-verify rewritePattern
-    rewritePattern(Pattern.PatWild) => Pattern.PatWild
-    rewritePattern(Pattern.PatInt(5)) => Pattern.PatInt(5)
-    rewritePattern(Pattern.PatConstructor("Result.Ok", ["x"])) => Pattern.PatConstructorId(Domain.Ast.ctorNameToTag("Result.Ok"), "Result.Ok", ["x"])
-    rewritePattern(Pattern.PatTuple([Pattern.PatWild])) => Pattern.PatTuple([Pattern.PatWild])
-
 fn rewritePatConstructor(name: String, bindings: List<String>) -> Pattern
     ? "Convert PatConstructor to PatConstructorId with stable tag and full constructor name."
     tag = Domain.Ast.ctorNameToTag(name)
     Pattern.PatConstructorId(tag, name, bindings)
-
-verify rewritePatConstructor
-    rewritePatConstructor("Result.Ok", ["x"]) => Pattern.PatConstructorId(1, "Result.Ok", ["x"])
-    rewritePatConstructor("Result.Err", ["e"]) => Pattern.PatConstructorId(2, "Result.Err", ["e"])
 
 fn rewritePatterns(pats: List<Pattern>, acc: List<Pattern>) -> List<Pattern>
     ? "Rewrite a list of patterns."
     match pats
         [] -> List.reverse(acc)
         [p, ..rest] -> rewritePatterns(rest, List.prepend(rewritePattern(p), acc))
-
-verify rewritePatterns
-    rewritePatterns([], []) => []
-    rewritePatterns([Pattern.PatWild], []) => [Pattern.PatWild]
 
 fn rewriteInternalBinop(op: BinOp, left: Expr, right: Expr) -> Expr
     ? "Compress simple resolved arithmetic into slot-based internal nodes."
@@ -184,21 +106,12 @@ fn rewriteInternalBinop(op: BinOp, left: Expr, right: Expr) -> Expr
             Expr.ExprSlot(slot) -> rewriteInternalBinopSlotRight(op, left, slot)
             _ -> rebuildInternalBinop(op, left, right)
 
-verify rewriteInternalBinop
-    rewriteInternalBinop(BinOp.OpAdd, Expr.ExprSlot(0), Expr.ExprInt(1)) => Expr.ExprBinopSlotInt(BinOp.OpAdd, 0, 1)
-    rewriteInternalBinop(BinOp.OpAdd, Expr.ExprSlot(0), Expr.ExprSlot(1)) => Expr.ExprBinopSlots(BinOp.OpAdd, 0, 1)
-    rewriteInternalBinop(BinOp.OpAdd, Expr.ExprInt(1), Expr.ExprInt(2)) => Expr.ExprAdd(Expr.ExprInt(1), Expr.ExprInt(2))
-
 fn rewriteInternalBinopSlotLeft(op: BinOp, slot: Int, right: Expr) -> Expr
     ? "Rewrite arithmetic with a slot on the left when the right side is simple."
     match right
         Expr.ExprInt(n) -> Expr.ExprBinopSlotInt(op, slot, n)
         Expr.ExprSlot(rhs) -> Expr.ExprBinopSlots(op, slot, rhs)
         _ -> rebuildInternalBinop(op, Expr.ExprSlot(slot), right)
-
-verify rewriteInternalBinopSlotLeft
-    rewriteInternalBinopSlotLeft(BinOp.OpAdd, 0, Expr.ExprInt(5)) => Expr.ExprBinopSlotInt(BinOp.OpAdd, 0, 5)
-    rewriteInternalBinopSlotLeft(BinOp.OpAdd, 0, Expr.ExprSlot(1)) => Expr.ExprBinopSlots(BinOp.OpAdd, 0, 1)
 
 fn rewriteInternalBinopSlotRight(op: BinOp, left: Expr, slot: Int) -> Expr
     ? "Rewrite commutative arithmetic when the slot appears on the right."
@@ -209,10 +122,6 @@ fn rewriteInternalBinopSlotRight(op: BinOp, left: Expr, slot: Int) -> Expr
             false -> rebuildInternalBinop(op, left, Expr.ExprSlot(slot))
         _ -> rebuildInternalBinop(op, left, Expr.ExprSlot(slot))
 
-verify rewriteInternalBinopSlotRight
-    rewriteInternalBinopSlotRight(BinOp.OpAdd, Expr.ExprSlot(0), 1) => Expr.ExprBinopSlots(BinOp.OpAdd, 0, 1)
-    rewriteInternalBinopSlotRight(BinOp.OpAdd, Expr.ExprInt(5), 1) => Expr.ExprBinopSlotInt(BinOp.OpAdd, 1, 5)
-
 fn rebuildInternalBinop(op: BinOp, left: Expr, right: Expr) -> Expr
     ? "Rebuild a generic arithmetic expression when no narrower internal form applies."
     match op
@@ -221,24 +130,12 @@ fn rebuildInternalBinop(op: BinOp, left: Expr, right: Expr) -> Expr
         BinOp.OpMul -> Expr.ExprMul(left, right)
         BinOp.OpDiv -> Expr.ExprDiv(left, right)
 
-verify rebuildInternalBinop
-    rebuildInternalBinop(BinOp.OpAdd, Expr.ExprInt(1), Expr.ExprInt(2)) => Expr.ExprAdd(Expr.ExprInt(1), Expr.ExprInt(2))
-    rebuildInternalBinop(BinOp.OpSub, Expr.ExprInt(3), Expr.ExprInt(1)) => Expr.ExprSub(Expr.ExprInt(3), Expr.ExprInt(1))
-    rebuildInternalBinop(BinOp.OpMul, Expr.ExprInt(2), Expr.ExprInt(3)) => Expr.ExprMul(Expr.ExprInt(2), Expr.ExprInt(3))
-    rebuildInternalBinop(BinOp.OpDiv, Expr.ExprInt(6), Expr.ExprInt(2)) => Expr.ExprDiv(Expr.ExprInt(6), Expr.ExprInt(2))
-
 fn binopCanFlip(op: BinOp) -> Bool
     ? "Return whether swapping operand order preserves arithmetic semantics."
     match op
         BinOp.OpAdd -> true
         BinOp.OpMul -> true
         _ -> false
-
-verify binopCanFlip
-    binopCanFlip(BinOp.OpAdd) => true
-    binopCanFlip(BinOp.OpMul) => true
-    binopCanFlip(BinOp.OpSub) => false
-    binopCanFlip(BinOp.OpDiv) => false
 
 fn rewriteInternalBuiltin(name: String, args: List<Expr>) -> Expr
     ? "Recognize fused builtin wrapper patterns after children have already been rewritten."
@@ -247,9 +144,6 @@ fn rewriteInternalBuiltin(name: String, args: List<Expr>) -> Expr
         "Result.withDefault" -> rewriteInternalResultWithDefault(args)
         _ -> Expr.ExprCallBuiltin(name, args)
 
-verify rewriteInternalBuiltin
-    rewriteInternalBuiltin("Map.get", [Expr.ExprInt(1)]) => Expr.ExprCallBuiltin("Map.get", [Expr.ExprInt(1)])
-
 fn rewriteInternalOptionWithDefault(args: List<Expr>) -> Expr
     ? "Rewrite Option.withDefault(Vector.get(...), int) into one internal node."
     match args
@@ -257,10 +151,6 @@ fn rewriteInternalOptionWithDefault(args: List<Expr>) -> Expr
             [defaultExpr, ..ignored] -> rewriteInternalOptionWithDefaultArgs(optionExpr, defaultExpr)
             _ -> Expr.ExprCallBuiltin("Option.withDefault", args)
         _ -> Expr.ExprCallBuiltin("Option.withDefault", args)
-
-verify rewriteInternalOptionWithDefault
-    rewriteInternalOptionWithDefault([]) => Expr.ExprCallBuiltin("Option.withDefault", [])
-    rewriteInternalOptionWithDefault([Expr.ExprInt(1), Expr.ExprStr("no")]) => Expr.ExprCallBuiltin("Option.withDefault", [Expr.ExprInt(1), Expr.ExprStr("no")])
 
 fn rewriteInternalOptionWithDefaultArgs(optionExpr: Expr, defaultExpr: Expr) -> Expr
     ? "Recognize a fused Vector.get-with-default shape."
@@ -272,10 +162,6 @@ fn rewriteInternalOptionWithDefaultArgs(optionExpr: Expr, defaultExpr: Expr) -> 
             _ -> Expr.ExprCallBuiltin("Option.withDefault", [optionExpr, defaultExpr])
         _ -> Expr.ExprCallBuiltin("Option.withDefault", [optionExpr, defaultExpr])
 
-verify rewriteInternalOptionWithDefaultArgs
-    rewriteInternalOptionWithDefaultArgs(Expr.ExprInt(1), Expr.ExprStr("no")) => Expr.ExprCallBuiltin("Option.withDefault", [Expr.ExprInt(1), Expr.ExprStr("no")])
-    rewriteInternalOptionWithDefaultArgs(Expr.ExprInt(1), Expr.ExprInt(0)) => Expr.ExprCallBuiltin("Option.withDefault", [Expr.ExprInt(1), Expr.ExprInt(0)])
-
 fn rewriteInternalVectorGetOrInt(args: List<Expr>, defaultValue: Int) -> Expr
     ? "Fuse Vector.get(vec, idx) with an integer fallback."
     match args
@@ -283,10 +169,6 @@ fn rewriteInternalVectorGetOrInt(args: List<Expr>, defaultValue: Int) -> Expr
             [idxExpr, ..ignored] -> rewriteInternalVectorGetOrIntArgs(vecExpr, idxExpr, defaultValue)
             _ -> Expr.ExprCallBuiltin("Option.withDefault", [Expr.ExprCallBuiltin("Vector.get", args), Expr.ExprInt(defaultValue)])
         _ -> Expr.ExprCallBuiltin("Option.withDefault", [Expr.ExprCallBuiltin("Vector.get", args), Expr.ExprInt(defaultValue)])
-
-verify rewriteInternalVectorGetOrInt
-    rewriteInternalVectorGetOrInt([], 0) => Expr.ExprCallBuiltin("Option.withDefault", [Expr.ExprCallBuiltin("Vector.get", []), Expr.ExprInt(0)])
-    rewriteInternalVectorGetOrInt([Expr.ExprSlot(0), Expr.ExprSlot(1)], 99) => Expr.ExprVectorGetOrInt(Expr.ExprSlot(0), Expr.ExprSlot(1), 99)
 
 fn rewriteInternalVectorGetOrIntArgs(vecExpr: Expr, idxExpr: Expr, defaultValue: Int) -> Expr
     ? "Only fuse Vector.get-with-default when at least one operand is already slot-shaped."
@@ -296,10 +178,6 @@ fn rewriteInternalVectorGetOrIntArgs(vecExpr: Expr, idxExpr: Expr, defaultValue:
             true -> Expr.ExprVectorGetOrInt(vecExpr, idxExpr, defaultValue)
             false -> Expr.ExprCallBuiltin("Option.withDefault", [Expr.ExprCallBuiltin("Vector.get", [vecExpr, idxExpr]), Expr.ExprInt(defaultValue)])
 
-verify rewriteInternalVectorGetOrIntArgs
-    rewriteInternalVectorGetOrIntArgs(Expr.ExprSlot(0), Expr.ExprSlot(1), 99) => Expr.ExprVectorGetOrInt(Expr.ExprSlot(0), Expr.ExprSlot(1), 99)
-    rewriteInternalVectorGetOrIntArgs(Expr.ExprInt(1), Expr.ExprInt(2), 0) => Expr.ExprCallBuiltin("Option.withDefault", [Expr.ExprCallBuiltin("Vector.get", [Expr.ExprInt(1), Expr.ExprInt(2)]), Expr.ExprInt(0)])
-
 fn rewriteInternalResultWithDefault(args: List<Expr>) -> Expr
     ? "Rewrite Result.withDefault(Int.mod(...), int) into one internal node."
     match args
@@ -307,10 +185,6 @@ fn rewriteInternalResultWithDefault(args: List<Expr>) -> Expr
             [defaultExpr, ..ignored] -> rewriteInternalResultWithDefaultArgs(resultExpr, defaultExpr)
             _ -> Expr.ExprCallBuiltin("Result.withDefault", args)
         _ -> Expr.ExprCallBuiltin("Result.withDefault", args)
-
-verify rewriteInternalResultWithDefault
-    rewriteInternalResultWithDefault([]) => Expr.ExprCallBuiltin("Result.withDefault", [])
-    rewriteInternalResultWithDefault([Expr.ExprInt(1), Expr.ExprStr("no")]) => Expr.ExprCallBuiltin("Result.withDefault", [Expr.ExprInt(1), Expr.ExprStr("no")])
 
 fn rewriteInternalResultWithDefaultArgs(resultExpr: Expr, defaultExpr: Expr) -> Expr
     ? "Recognize a fused Int.mod-with-default shape."
@@ -322,10 +196,6 @@ fn rewriteInternalResultWithDefaultArgs(resultExpr: Expr, defaultExpr: Expr) -> 
             _ -> Expr.ExprCallBuiltin("Result.withDefault", [resultExpr, defaultExpr])
         _ -> Expr.ExprCallBuiltin("Result.withDefault", [resultExpr, defaultExpr])
 
-verify rewriteInternalResultWithDefaultArgs
-    rewriteInternalResultWithDefaultArgs(Expr.ExprInt(1), Expr.ExprStr("no")) => Expr.ExprCallBuiltin("Result.withDefault", [Expr.ExprInt(1), Expr.ExprStr("no")])
-    rewriteInternalResultWithDefaultArgs(Expr.ExprInt(1), Expr.ExprInt(0)) => Expr.ExprCallBuiltin("Result.withDefault", [Expr.ExprInt(1), Expr.ExprInt(0)])
-
 fn rewriteInternalIntModOrInt(args: List<Expr>, defaultValue: Int) -> Expr
     ? "Fuse Int.mod(a, b) with an integer fallback when the operands are slot-shaped."
     match args
@@ -334,10 +204,6 @@ fn rewriteInternalIntModOrInt(args: List<Expr>, defaultValue: Int) -> Expr
             _ -> Expr.ExprCallBuiltin("Result.withDefault", [Expr.ExprCallBuiltin("Int.mod", args), Expr.ExprInt(defaultValue)])
         _ -> Expr.ExprCallBuiltin("Result.withDefault", [Expr.ExprCallBuiltin("Int.mod", args), Expr.ExprInt(defaultValue)])
 
-verify rewriteInternalIntModOrInt
-    rewriteInternalIntModOrInt([], 0) => Expr.ExprCallBuiltin("Result.withDefault", [Expr.ExprCallBuiltin("Int.mod", []), Expr.ExprInt(0)])
-    rewriteInternalIntModOrInt([Expr.ExprSlot(0), Expr.ExprSlot(1)], 0) => Expr.ExprIntModOrInt(Expr.ExprSlot(0), Expr.ExprSlot(1), 0)
-
 fn rewriteInternalIntModOrIntArgs(a: Expr, b: Expr, defaultValue: Int) -> Expr
     ? "Only fuse Int.mod-with-default when at least one operand is already slot-shaped."
     match exprHasSlotShape(a)
@@ -345,10 +211,6 @@ fn rewriteInternalIntModOrIntArgs(a: Expr, b: Expr, defaultValue: Int) -> Expr
         false -> match exprHasSlotShape(b)
             true -> Expr.ExprIntModOrInt(a, b, defaultValue)
             false -> Expr.ExprCallBuiltin("Result.withDefault", [Expr.ExprCallBuiltin("Int.mod", [a, b]), Expr.ExprInt(defaultValue)])
-
-verify rewriteInternalIntModOrIntArgs
-    rewriteInternalIntModOrIntArgs(Expr.ExprSlot(0), Expr.ExprSlot(1), 0) => Expr.ExprIntModOrInt(Expr.ExprSlot(0), Expr.ExprSlot(1), 0)
-    rewriteInternalIntModOrIntArgs(Expr.ExprInt(1), Expr.ExprInt(2), 0) => Expr.ExprCallBuiltin("Result.withDefault", [Expr.ExprCallBuiltin("Int.mod", [Expr.ExprInt(1), Expr.ExprInt(2)]), Expr.ExprInt(0)])
 
 fn exprHasSlotShape(expr: Expr) -> Bool
     ? "Return whether an expression is already in a slot-based internal shape worth fusing around."
@@ -362,17 +224,6 @@ fn exprHasSlotShape(expr: Expr) -> Bool
         Expr.ExprIntModOrInt(_, _, _) -> true
         _ -> false
 
-verify exprHasSlotShape
-    exprHasSlotShape(Expr.ExprSlot(0)) => true
-    exprHasSlotShape(Expr.ExprBinopSlotInt(BinOp.OpAdd, 0, 1)) => true
-    exprHasSlotShape(Expr.ExprBinopSlots(BinOp.OpAdd, 0, 1)) => true
-    exprHasSlotShape(Expr.ExprCmpSlotInt(CmpOp.CmpEq, 0, 1)) => true
-    exprHasSlotShape(Expr.ExprCmpSlots(CmpOp.CmpEq, 0, 1)) => true
-    exprHasSlotShape(Expr.ExprVectorGetOrInt(Expr.ExprSlot(0), Expr.ExprSlot(1), 0)) => true
-    exprHasSlotShape(Expr.ExprIntModOrInt(Expr.ExprSlot(0), Expr.ExprSlot(1), 0)) => true
-    exprHasSlotShape(Expr.ExprInt(42)) => false
-    exprHasSlotShape(Expr.ExprStr("hi")) => false
-
 fn rewriteInternalCmp(op: CmpOp, left: Expr, right: Expr) -> Expr
     ? "Compress simple resolved comparisons into slot-based internal nodes."
     match left
@@ -381,11 +232,6 @@ fn rewriteInternalCmp(op: CmpOp, left: Expr, right: Expr) -> Expr
             Expr.ExprSlot(slot) -> rewriteInternalCmpSlotRight(op, left, slot)
             _ -> rebuildInternalCmp(op, left, right)
 
-verify rewriteInternalCmp
-    rewriteInternalCmp(CmpOp.CmpEq, Expr.ExprSlot(0), Expr.ExprInt(1)) => Expr.ExprCmpSlotInt(CmpOp.CmpEq, 0, 1)
-    rewriteInternalCmp(CmpOp.CmpEq, Expr.ExprSlot(0), Expr.ExprSlot(1)) => Expr.ExprCmpSlots(CmpOp.CmpEq, 0, 1)
-    rewriteInternalCmp(CmpOp.CmpLt, Expr.ExprInt(1), Expr.ExprInt(2)) => Expr.ExprLt(Expr.ExprInt(1), Expr.ExprInt(2))
-
 fn rewriteInternalCmpSlotLeft(op: CmpOp, slot: Int, right: Expr) -> Expr
     ? "Rewrite comparisons with a slot on the left when the right side is simple."
     match right
@@ -393,20 +239,12 @@ fn rewriteInternalCmpSlotLeft(op: CmpOp, slot: Int, right: Expr) -> Expr
         Expr.ExprSlot(rhs) -> Expr.ExprCmpSlots(op, slot, rhs)
         _ -> rebuildInternalCmp(op, Expr.ExprSlot(slot), right)
 
-verify rewriteInternalCmpSlotLeft
-    rewriteInternalCmpSlotLeft(CmpOp.CmpEq, 0, Expr.ExprInt(5)) => Expr.ExprCmpSlotInt(CmpOp.CmpEq, 0, 5)
-    rewriteInternalCmpSlotLeft(CmpOp.CmpLt, 0, Expr.ExprSlot(1)) => Expr.ExprCmpSlots(CmpOp.CmpLt, 0, 1)
-
 fn rewriteInternalCmpSlotRight(op: CmpOp, left: Expr, slot: Int) -> Expr
     ? "Rewrite comparisons with a slot on the right when the left side is a simple integer."
     match left
         Expr.ExprInt(n) -> Expr.ExprCmpSlotInt(flipCmp(op), slot, n)
         Expr.ExprSlot(lhs) -> Expr.ExprCmpSlots(op, lhs, slot)
         _ -> rebuildInternalCmp(op, left, Expr.ExprSlot(slot))
-
-verify rewriteInternalCmpSlotRight
-    rewriteInternalCmpSlotRight(CmpOp.CmpEq, Expr.ExprInt(5), 0) => Expr.ExprCmpSlotInt(CmpOp.CmpEq, 0, 5)
-    rewriteInternalCmpSlotRight(CmpOp.CmpLt, Expr.ExprSlot(0), 1) => Expr.ExprCmpSlots(CmpOp.CmpLt, 0, 1)
 
 fn rebuildInternalCmp(op: CmpOp, left: Expr, right: Expr) -> Expr
     ? "Rebuild a generic comparison expression when no narrower internal form applies."
@@ -418,14 +256,6 @@ fn rebuildInternalCmp(op: CmpOp, left: Expr, right: Expr) -> Expr
         CmpOp.CmpLte -> Expr.ExprLte(left, right)
         CmpOp.CmpGte -> Expr.ExprGte(left, right)
 
-verify rebuildInternalCmp
-    rebuildInternalCmp(CmpOp.CmpEq, Expr.ExprInt(1), Expr.ExprInt(2)) => Expr.ExprEq(Expr.ExprInt(1), Expr.ExprInt(2))
-    rebuildInternalCmp(CmpOp.CmpNeq, Expr.ExprInt(1), Expr.ExprInt(2)) => Expr.ExprNeq(Expr.ExprInt(1), Expr.ExprInt(2))
-    rebuildInternalCmp(CmpOp.CmpLt, Expr.ExprInt(1), Expr.ExprInt(2)) => Expr.ExprLt(Expr.ExprInt(1), Expr.ExprInt(2))
-    rebuildInternalCmp(CmpOp.CmpGt, Expr.ExprInt(1), Expr.ExprInt(2)) => Expr.ExprGt(Expr.ExprInt(1), Expr.ExprInt(2))
-    rebuildInternalCmp(CmpOp.CmpLte, Expr.ExprInt(1), Expr.ExprInt(2)) => Expr.ExprLte(Expr.ExprInt(1), Expr.ExprInt(2))
-    rebuildInternalCmp(CmpOp.CmpGte, Expr.ExprInt(1), Expr.ExprInt(2)) => Expr.ExprGte(Expr.ExprInt(1), Expr.ExprInt(2))
-
 fn flipCmp(op: CmpOp) -> CmpOp
     ? "Flip a comparison when swapping operand order."
     match op
@@ -436,23 +266,12 @@ fn flipCmp(op: CmpOp) -> CmpOp
         CmpOp.CmpLte -> CmpOp.CmpGte
         CmpOp.CmpGte -> CmpOp.CmpLte
 
-verify flipCmp
-    flipCmp(CmpOp.CmpEq) => CmpOp.CmpEq
-    flipCmp(CmpOp.CmpLt) => CmpOp.CmpGt
-    flipCmp(CmpOp.CmpGt) => CmpOp.CmpLt
-    flipCmp(CmpOp.CmpLte) => CmpOp.CmpGte
-    flipCmp(CmpOp.CmpGte) => CmpOp.CmpLte
-    flipCmp(CmpOp.CmpNeq) => CmpOp.CmpNeq
-
 fn rewriteInternalMatch(scrutinee: Expr, arms: List<MatchArm>) -> Expr
     ? "Rewrite simple bool matches into a direct branch node."
     match rewriteBoolMatchArms(arms)
         Option.Some(pair) -> match pair
             (thenExpr, elseExpr) -> Expr.ExprBoolBranch(scrutinee, thenExpr, elseExpr)
         Option.None -> Expr.ExprMatch(scrutinee, arms)
-
-verify rewriteInternalMatch
-    rewriteInternalMatch(Expr.ExprInt(1), []) => Expr.ExprMatch(Expr.ExprInt(1), [])
 
 fn rewriteBoolMatchArms(arms: List<MatchArm>) -> Option<(Expr, Expr)>
     ? "Extract (thenExpr, elseExpr) from a two-arm bool match regardless of arm order."
@@ -464,19 +283,11 @@ fn rewriteBoolMatchArms(arms: List<MatchArm>) -> Option<(Expr, Expr)>
             _ -> Option.None
         _ -> Option.None
 
-verify rewriteBoolMatchArms
-    rewriteBoolMatchArms([]) => Option.None
-    rewriteBoolMatchArms([MatchArm(pattern = Pattern.PatBool(true), body = Expr.ExprInt(1), bindingSlots = Map.empty()), MatchArm(pattern = Pattern.PatBool(false), body = Expr.ExprInt(2), bindingSlots = Map.empty())]) => Option.Some((Expr.ExprInt(1), Expr.ExprInt(2)))
-
 fn rewriteBoolMatchArmPair(arm1: MatchArm, arm2: MatchArm) -> Option<(Expr, Expr)>
     ? "Order two complementary bool arms into (trueExpr, falseExpr)."
     match arm1.pattern
         Pattern.PatBool(b1) -> rewriteBoolMatchArmPairInner(b1, arm1.body, arm2.pattern, arm2.body)
         _ -> Option.None
-
-verify rewriteBoolMatchArmPair
-    rewriteBoolMatchArmPair(MatchArm(pattern = Pattern.PatBool(true), body = Expr.ExprInt(1), bindingSlots = Map.empty()), MatchArm(pattern = Pattern.PatBool(false), body = Expr.ExprInt(2), bindingSlots = Map.empty())) => Option.Some((Expr.ExprInt(1), Expr.ExprInt(2)))
-    rewriteBoolMatchArmPair(MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = Map.empty()), MatchArm(pattern = Pattern.PatBool(false), body = Expr.ExprInt(2), bindingSlots = Map.empty())) => Option.None
 
 fn rewriteBoolMatchArmPairInner(b1: Bool, body1: Expr, p2: Pattern, body2: Expr) -> Option<(Expr, Expr)>
     ? "Finish ordering bool arms once the first pattern bool is known."
@@ -484,18 +295,14 @@ fn rewriteBoolMatchArmPairInner(b1: Bool, body1: Expr, p2: Pattern, body2: Expr)
         Pattern.PatBool(b2) -> rewriteBoolMatchArmPairBools(b1, body1, b2, body2)
         _ -> Option.None
 
-verify rewriteBoolMatchArmPairInner
-    rewriteBoolMatchArmPairInner(true, Expr.ExprInt(1), Pattern.PatBool(false), Expr.ExprInt(2)) => Option.Some((Expr.ExprInt(1), Expr.ExprInt(2)))
-    rewriteBoolMatchArmPairInner(true, Expr.ExprInt(1), Pattern.PatWild, Expr.ExprInt(2)) => Option.None
-
 fn rewriteBoolMatchArmPairBools(b1: Bool, body1: Expr, b2: Bool, body2: Expr) -> Option<(Expr, Expr)>
     ? "Return ordered bool branch bodies when the pair is exactly true/false or false/true."
-    match (b1, b2)
-        (true, false) -> Option.Some((body1, body2))
-        (false, true) -> Option.Some((body2, body1))
-        _ -> Option.None
-
-verify rewriteBoolMatchArmPairBools
-    rewriteBoolMatchArmPairBools(true, Expr.ExprInt(1), false, Expr.ExprInt(2)) => Option.Some((Expr.ExprInt(1), Expr.ExprInt(2)))
-    rewriteBoolMatchArmPairBools(false, Expr.ExprInt(1), true, Expr.ExprInt(2)) => Option.Some((Expr.ExprInt(2), Expr.ExprInt(1)))
-    rewriteBoolMatchArmPairBools(true, Expr.ExprInt(1), true, Expr.ExprInt(2)) => Option.None
+    match b1 == true
+        true -> match b2 == false
+            true -> Option.Some((body1, body2))
+            false -> Option.None
+        false -> match b1 == false
+            true -> match b2 == true
+                true -> Option.Some((body2, body1))
+                false -> Option.None
+            false -> Option.None

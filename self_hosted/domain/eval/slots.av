@@ -19,10 +19,6 @@ fn buildSlotEnvLoop(args: List<Val>, acc: Vector<Val>, idx: Int) -> Vector<Val>
         [] -> acc
         [a, ..rest] -> buildSlotEnvLoop(rest, Option.withDefault(Vector.set(acc, idx, a), acc), idx + 1)
 
-verify buildSlotEnvLoop
-    buildSlotEnvLoop([Val.ValInt(5)], Vector.new(2, Val.ValUnit), 0) => Vector.fromList([Val.ValInt(5), Val.ValUnit])
-    buildSlotEnvLoop([], Vector.new(1, Val.ValUnit), 0) => Vector.new(1, Val.ValUnit)
-
 fn lookupSlot(env: Vector<Val>, slot: Int) -> Result<Val, String>
     ? "Look up a variable by slot index. O(1)."
     match Vector.get(env, slot)

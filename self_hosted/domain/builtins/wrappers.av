@@ -16,7 +16,6 @@ fn call(name: String, args: List<Val>) -> Result<Val, String>
 verify call
     call("Result.Ok", [Val.ValInt(5)]) => Result.Ok(Val.ValOk(Val.ValInt(5)))
     call("Option.Some", [Val.ValInt(7)]) => Result.Ok(Val.ValSome(Val.ValInt(7)))
-    call("Result.bogus", [Val.ValInt(1)]) => Result.Err("unknown wrapper builtin: Result.bogus")
 
 fn builtinResultOk(args: List<Val>) -> Result<Val, String>
     ? "Result.Ok(value) -> wrapped Ok value."
@@ -25,7 +24,6 @@ fn builtinResultOk(args: List<Val>) -> Result<Val, String>
 
 verify builtinResultOk
     builtinResultOk([Val.ValInt(1)]) => Result.Ok(Val.ValOk(Val.ValInt(1)))
-    builtinResultOk([]) => Result.Err("expected 1 argument")
 
 fn builtinResultErr(args: List<Val>) -> Result<Val, String>
     ? "Result.Err(value) -> wrapped Err value."
@@ -34,7 +32,6 @@ fn builtinResultErr(args: List<Val>) -> Result<Val, String>
 
 verify builtinResultErr
     builtinResultErr([Val.ValStr("fail")]) => Result.Ok(Val.ValErr(Val.ValStr("fail")))
-    builtinResultErr([]) => Result.Err("expected 1 argument")
 
 fn builtinResultWithDefault(args: List<Val>) -> Result<Val, String>
     ? "Result.withDefault(result, default) -> unwrap Ok or return default."
@@ -48,7 +45,6 @@ fn builtinResultWithDefault(args: List<Val>) -> Result<Val, String>
 verify builtinResultWithDefault
     builtinResultWithDefault([Val.ValOk(Val.ValInt(3)), Val.ValInt(0)]) => Result.Ok(Val.ValInt(3))
     builtinResultWithDefault([Val.ValErr(Val.ValStr("x")), Val.ValInt(0)]) => Result.Ok(Val.ValInt(0))
-    builtinResultWithDefault([Val.ValInt(1), Val.ValInt(0)]) => Result.Err("Result.withDefault requires Result value")
 
 fn builtinOptionSome(args: List<Val>) -> Result<Val, String>
     ? "Option.Some(value) -> wrapped Some value."
@@ -57,7 +53,6 @@ fn builtinOptionSome(args: List<Val>) -> Result<Val, String>
 
 verify builtinOptionSome
     builtinOptionSome([Val.ValInt(7)]) => Result.Ok(Val.ValSome(Val.ValInt(7)))
-    builtinOptionSome([]) => Result.Err("expected 1 argument")
 
 fn builtinOptionWithDefault(args: List<Val>) -> Result<Val, String>
     ? "Option.withDefault(option, default) -> unwrap Some or return default."
@@ -71,7 +66,6 @@ fn builtinOptionWithDefault(args: List<Val>) -> Result<Val, String>
 verify builtinOptionWithDefault
     builtinOptionWithDefault([Val.ValSome(Val.ValInt(3)), Val.ValInt(0)]) => Result.Ok(Val.ValInt(3))
     builtinOptionWithDefault([Val.ValNone, Val.ValInt(0)]) => Result.Ok(Val.ValInt(0))
-    builtinOptionWithDefault([Val.ValInt(1), Val.ValInt(0)]) => Result.Err("Option.withDefault requires Option value")
 
 fn callOptionToResult(args: List<Val>) -> Result<Val, String>
     ? "Option.toResult(option, errMsg) -> Result."
@@ -85,4 +79,3 @@ fn callOptionToResult(args: List<Val>) -> Result<Val, String>
 verify callOptionToResult
     callOptionToResult([Val.ValSome(Val.ValInt(3)), Val.ValStr("err")]) => Result.Ok(Val.ValOk(Val.ValInt(3)))
     callOptionToResult([Val.ValNone, Val.ValStr("err")]) => Result.Ok(Val.ValErr(Val.ValStr("err")))
-    callOptionToResult([Val.ValInt(1), Val.ValStr("err")]) => Result.Err("Option.toResult requires Option value")

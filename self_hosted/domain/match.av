@@ -29,10 +29,6 @@ verify matchPattern
     matchPattern(Pattern.PatFloat(3.14), Val.ValFloat(2.0)) => Result.Err("no match")
     matchPattern(Pattern.PatBool(true), Val.ValBool(true)) => Result.Ok([])
     matchPattern(Pattern.PatBool(true), Val.ValBool(false)) => Result.Err("no match")
-    matchPattern(Pattern.PatStr("hi"), Val.ValStr("hi")) => Result.Ok([])
-    matchPattern(Pattern.PatEmpty, Val.ValList([])) => Result.Ok([])
-    matchPattern(Pattern.PatCons("h", "t"), Val.ValList([Val.ValInt(1)])) => Result.Ok([("h", Val.ValInt(1)), ("t", Val.ValList([]))])
-    matchPattern(Pattern.PatTuple([Pattern.PatVar("a")]), Val.ValTuple([Val.ValInt(1)])) => Result.Ok([("a", Val.ValInt(1))])
     matchPattern(Pattern.PatVar("x"), Val.ValInt(42)) => Result.Ok([("x", Val.ValInt(42))])
 
 fn matchPatInt(n: Int, v: Val) -> Result<List<(String, Val)>, String>

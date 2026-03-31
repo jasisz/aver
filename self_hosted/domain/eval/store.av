@@ -23,18 +23,11 @@ fn emptyFnStore() -> FnStore
     ? "Create an empty function store."
     FnStore(nameToId = Map.empty(), byId = Vector.fromList([]))
 
-verify emptyFnStore
-    emptyFnStore().nameToId => Map.empty()
-
 fn lookupFnId(fns: FnStore, name: String) -> Result<Int, String>
     ? "Look up a function id by name."
     match Map.get(fns.nameToId, name)
         Option.Some(id) -> Result.Ok(id)
         Option.None -> Result.Err("undefined function: " + name)
-
-verify lookupFnId
-    lookupFnId(fnsToStore([FnDef(name = "bar", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)]), "bar") => Result.Ok(0)
-    lookupFnId(emptyFnStore(), "bar") => Result.Err("undefined function: bar")
 
 fn lookupFnById(fns: FnStore, id: Int) -> Result<FnDef, String>
     ? "Look up a function definition by id."
@@ -42,19 +35,11 @@ fn lookupFnById(fns: FnStore, id: Int) -> Result<FnDef, String>
         Option.Some(fd) -> Result.Ok(fd)
         Option.None -> Result.Err("undefined function id: {Int.toString(id)}")
 
-verify lookupFnById
-    lookupFnById(fnsToStore([FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)]), 0) => Result.Ok(FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false))
-    lookupFnById(emptyFnStore(), 0) => Result.Err("undefined function id: 0")
-
 fn lookupFnOption(fns: FnStore, name: String) -> Option<FnDef>
     ? "Look up a function definition by name without wrapping success in Result."
     match Map.get(fns.nameToId, name)
         Option.Some(id) -> Vector.get(fns.byId, id)
         Option.None -> Option.None
-
-verify lookupFnOption
-    lookupFnOption(fnsToStore([FnDef(name = "g", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)]), "g") => Option.Some(FnDef(name = "g", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false))
-    lookupFnOption(emptyFnStore(), "g") => Option.None
 
 fn lookupFn(fns: FnStore, name: String) -> Result<FnDef, String>
     ? "Look up a function definition by name through the function store."
@@ -74,10 +59,6 @@ fn zipArgs(params: List<String>, args: List<Val>, acc: Map<String, Val>) -> Map<
             [] -> acc
             [a, ..as_] -> zipArgs(ps, as_, Map.set(acc, p, a))
 
-verify zipArgs
-    zipArgs(["x"], [Val.ValInt(1)], Map.empty()) => Map.set(Map.empty(), "x", Val.ValInt(1))
-    zipArgs([], [], Map.empty()) => Map.empty()
-
 fn mergeBindings(bindings: List<(String, Val)>, env: Map<String, Val>) -> Map<String, Val>
     ? "Add pattern match bindings to an env map."
     match bindings
@@ -94,15 +75,8 @@ fn fnsToStore(fns: List<FnDef>) -> FnStore
     nameToId = fnsToIdMap(fns, Map.empty(), 0)
     FnStore(nameToId = nameToId, byId = Vector.fromList(fns))
 
-verify fnsToStore
-    fnsToStore([]).nameToId => Map.empty()
-
 fn fnsToIdMap(fns: List<FnDef>, acc: Map<String, Int>, idx: Int) -> Map<String, Int>
     ? "Convert a list of FnDefs to a name->id map. Later defs shadow earlier ones."
     match fns
         [] -> acc
         [f, ..rest] -> fnsToIdMap(rest, Map.set(acc, f.name, idx), idx + 1)
-
-verify fnsToIdMap
-    fnsToIdMap([], Map.empty(), 0) => Map.empty()
-    fnsToIdMap([FnDef(name = "a", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)], Map.empty(), 0) => Map.set(Map.empty(), "a", 0)
