@@ -141,27 +141,34 @@ verify matchPatTuple
 
 fn matchPatTupleItems(pats: List<Pattern>, items: List<Val>) -> Result<List<(String, Val)>, String>
     ? "Match each pattern against corresponding tuple item."
+    matchPatTupleItemsAcc(pats, items, [])
+
+fn matchPatTupleItemsAcc(pats: List<Pattern>, items: List<Val>, acc: List<(String, Val)>) -> Result<List<(String, Val)>, String>
+    ? "Accumulate bindings from tuple pattern matching."
     match pats
-        [] -> Result.Ok([])
+        [] -> Result.Ok(acc)
         [pat, ..restPats] -> match items
             [] -> Result.Err("no match")
-            [item, ..restItems] -> matchPatTupleOne(pat, item, restPats, restItems)
+            [item, ..restItems] -> matchPatTupleOne(pat, item, restPats, restItems, acc)
+
+verify matchPatTupleItemsAcc
+    matchPatTupleItemsAcc([], [], []) => Result.Ok([])
+    matchPatTupleItemsAcc([Pattern.PatVar("a")], [], []) => Result.Err("no match")
 
 verify matchPatTupleItems
     matchPatTupleItems([Pattern.PatVar("a")], [Val.ValInt(1)]) => Result.Ok([("a", Val.ValInt(1))])
     matchPatTupleItems([], []) => Result.Ok([])
     matchPatTupleItems([Pattern.PatVar("a")], []) => Result.Err("no match")
 
-fn matchPatTupleOne(pat: Pattern, item: Val, restPats: List<Pattern>, restItems: List<Val>) -> Result<List<(String, Val)>, String>
-    ? "Match one tuple element and continue."
+fn matchPatTupleOne(pat: Pattern, item: Val, restPats: List<Pattern>, restItems: List<Val>, acc: List<(String, Val)>) -> Result<List<(String, Val)>, String>
+    ? "Match one tuple element and continue with accumulated bindings."
     bindings = matchPattern(pat, item)?
-    restBindings = matchPatTupleItems(restPats, restItems)?
-    Result.Ok(List.concat(bindings, restBindings))
+    matchPatTupleItemsAcc(restPats, restItems, List.concat(acc, bindings))
 
 verify matchPatTupleOne
-    matchPatTupleOne(Pattern.PatVar("a"), Val.ValInt(1), [], []) => Result.Ok([("a", Val.ValInt(1))])
-    matchPatTupleOne(Pattern.PatVar("a"), Val.ValInt(1), [Pattern.PatVar("b")], [Val.ValInt(2)]) => Result.Ok([("a", Val.ValInt(1)), ("b", Val.ValInt(2))])
-    matchPatTupleOne(Pattern.PatInt(5), Val.ValInt(6), [], []) => Result.Err("no match")
+    matchPatTupleOne(Pattern.PatVar("a"), Val.ValInt(1), [], [], []) => Result.Ok([("a", Val.ValInt(1))])
+    matchPatTupleOne(Pattern.PatVar("a"), Val.ValInt(1), [Pattern.PatVar("b")], [Val.ValInt(2)], []) => Result.Ok([("a", Val.ValInt(1)), ("b", Val.ValInt(2))])
+    matchPatTupleOne(Pattern.PatInt(5), Val.ValInt(6), [], [], []) => Result.Err("no match")
 
 fn matchGenericConstructor(ctorName: String, bindings: List<String>, v: Val) -> Result<List<(String, Val)>, String>
     ? "Match a generic variant constructor pattern using the full name stored in the value."
@@ -273,11 +280,20 @@ verify matchWrapperPat
 
 fn zipBindings(names: List<String>, vals: List<Val>) -> List<(String, Val)>
     ? "Pair binding names with values."
+    zipBindingsAcc(names, vals, [])
+
+fn zipBindingsAcc(names: List<String>, vals: List<Val>, acc: List<(String, Val)>) -> List<(String, Val)>
+    ? "Accumulate binding pairs in reverse, then reverse at end."
+    reversed = List.reverse(acc)
     match names
-        [] -> []
+        [] -> reversed
         [n, ..ns] -> match vals
-            [] -> []
-            [v, ..vs] -> List.prepend((n, v), zipBindings(ns, vs))
+            [] -> reversed
+            [v, ..vs] -> zipBindingsAcc(ns, vs, List.prepend((n, v), acc))
+
+verify zipBindingsAcc
+    zipBindingsAcc(["x"], [Val.ValInt(1)], []) => [("x", Val.ValInt(1))]
+    zipBindingsAcc([], [], []) => []
 
 verify zipBindings
     zipBindings(["x", "y"], [Val.ValInt(1), Val.ValInt(2)]) => [("x", Val.ValInt(1)), ("y", Val.ValInt(2))]

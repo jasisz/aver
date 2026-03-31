@@ -59,9 +59,17 @@ verify buildFloat
 
 fn pow10(n: Int) -> Float
     ? "Compute 10^n as Float."
+    pow10Acc(n, 1.0)
+
+fn pow10Acc(n: Int, acc: Float) -> Float
+    ? "Accumulate 10^n as Float."
     match n <= 0
-        true -> 1.0
-        false -> 10.0 * pow10(n - 1)
+        true -> acc
+        false -> pow10Acc(n - 1, acc * 10.0)
+
+verify pow10Acc
+    pow10Acc(0, 1.0) => 1.0
+    pow10Acc(2, 1.0) => 100.0
 
 verify pow10
     pow10(0) => 1.0
@@ -583,11 +591,20 @@ verify emitIndentChange
 
 fn emitDedents(targetIndent: Int, rest: List<Token>, stack: List<Int>) -> List<Token>
     ? "Emit DEDENT tokens until stack matches target indent."
+    emitDedentsAcc(targetIndent, rest, stack, [])
+
+fn emitDedentsAcc(targetIndent: Int, rest: List<Token>, stack: List<Int>, acc: List<Token>) -> List<Token>
+    ? "Accumulate DEDENT tokens until stack matches target indent."
+    reversed = List.reverse(acc)
     match stack
-        [] -> processIndentation(rest, [0])
+        [] -> List.concat(reversed, processIndentation(rest, [0]))
         [top, ..below] -> match top <= targetIndent
-            true -> List.prepend(Token.TkNewline, processIndentation(rest, stack))
-            false -> List.prepend(Token.TkDedent, emitDedents(targetIndent, rest, below))
+            true -> List.concat(reversed, List.prepend(Token.TkNewline, processIndentation(rest, stack)))
+            false -> emitDedentsAcc(targetIndent, rest, below, List.prepend(Token.TkDedent, acc))
+
+verify emitDedentsAcc
+    emitDedentsAcc(0, [Token.TkEof], [4, 0], []) => [Token.TkDedent, Token.TkNewline, Token.TkEof]
+    emitDedentsAcc(0, [Token.TkEof], [], []) => [Token.TkEof]
 
 verify emitDedents
     emitDedents(0, [Token.TkEof], [4, 0]) => [Token.TkDedent, Token.TkNewline, Token.TkEof]
@@ -595,11 +612,20 @@ verify emitDedents
 
 fn emitFinalDedents(stack: List<Int>) -> List<Token>
     ? "At EOF, emit DEDENT for each indent level above 0."
+    emitFinalDedentsAcc(stack, [])
+
+fn emitFinalDedentsAcc(stack: List<Int>, acc: List<Token>) -> List<Token>
+    ? "Accumulate DEDENT tokens for each indent level above 0."
+    reversed = List.reverse(acc)
     match stack
-        [] -> []
+        [] -> reversed
         [top, ..rest] -> match top > 0
-            true -> List.prepend(Token.TkDedent, emitFinalDedents(rest))
-            false -> []
+            true -> emitFinalDedentsAcc(rest, List.prepend(Token.TkDedent, acc))
+            false -> reversed
+
+verify emitFinalDedentsAcc
+    emitFinalDedentsAcc([4, 0], []) => [Token.TkDedent]
+    emitFinalDedentsAcc([], []) => []
 
 verify emitFinalDedents
     emitFinalDedents([0]) => []

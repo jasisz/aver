@@ -135,11 +135,20 @@ verify builtinListZipInner
 
 fn zipLists(a: List<Val>, b: List<Val>) -> List<Val>
     ? "Zip two lists into list of ValTuple."
+    zipListsAcc(a, b, [])
+
+fn zipListsAcc(a: List<Val>, b: List<Val>, acc: List<Val>) -> List<Val>
+    ? "Accumulate zipped pairs in reverse, then reverse at end."
+    reversed = List.reverse(acc)
     match a
-        [] -> []
+        [] -> reversed
         [x, ..xs] -> match b
-            [] -> []
-            [y, ..ys] -> List.prepend(Val.ValTuple([x, y]), zipLists(xs, ys))
+            [] -> reversed
+            [y, ..ys] -> zipListsAcc(xs, ys, List.prepend(Val.ValTuple([x, y]), acc))
+
+verify zipListsAcc
+    zipListsAcc([Val.ValInt(1)], [Val.ValStr("a")], []) => [Val.ValTuple([Val.ValInt(1), Val.ValStr("a")])]
+    zipListsAcc([], [], []) => []
 
 verify zipLists
     zipLists([Val.ValInt(1), Val.ValInt(2)], [Val.ValStr("a"), Val.ValStr("b")]) => [Val.ValTuple([Val.ValInt(1), Val.ValStr("a")]), Val.ValTuple([Val.ValInt(2), Val.ValStr("b")])]
