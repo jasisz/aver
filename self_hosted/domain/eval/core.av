@@ -1062,8 +1062,8 @@ fn mergeBindingsSlot(bindings: List<(String, Val)>, bindingSlots: Map<String, In
             (name, val) -> mergeOneBindingSlot(name, val, rest, bindingSlots, env)
 
 verify mergeBindingsSlot
-    mergeBindingsSlot([], Map.empty(), Vector.new(2, Val.ValUnit)) => Vector.new(2, Val.ValUnit)
-    mergeBindingsSlot([("x", Val.ValInt(5))], Map.set(Map.empty(), "x", 0), Vector.new(2, Val.ValUnit)) => Vector.fromList([Val.ValInt(5), Val.ValUnit])
+    Vector.get(mergeBindingsSlot([], Map.empty(), Vector.fromList([Val.ValUnit])), 0) => Option.Some(Val.ValUnit)
+    Vector.get(mergeBindingsSlot([("x", Val.ValInt(5))], Map.set(Map.empty(), "x", 0), Vector.fromList([Val.ValUnit, Val.ValUnit])), 0) => Option.Some(Val.ValInt(5))
 
 fn mergeOneBindingSlot(name: String, val: Val, rest: List<(String, Val)>, bindingSlots: Map<String, Int>, env: Vector<Val>) -> Vector<Val>
     ? "Merge one pattern binding into slot env."
@@ -1072,8 +1072,8 @@ fn mergeOneBindingSlot(name: String, val: Val, rest: List<(String, Val)>, bindin
         Option.None -> mergeBindingsSlot(rest, bindingSlots, env)
 
 verify mergeOneBindingSlot
-    mergeOneBindingSlot("x", Val.ValInt(7), [], Map.set(Map.empty(), "x", 0), Vector.new(2, Val.ValUnit)) => Vector.fromList([Val.ValInt(7), Val.ValUnit])
-    mergeOneBindingSlot("y", Val.ValInt(3), [], Map.empty(), Vector.new(2, Val.ValUnit)) => Vector.new(2, Val.ValUnit)
+    Vector.get(mergeOneBindingSlot("x", Val.ValInt(7), [], Map.set(Map.empty(), "x", 0), Vector.fromList([Val.ValUnit, Val.ValUnit])), 0) => Option.Some(Val.ValInt(7))
+    Vector.get(mergeOneBindingSlot("y", Val.ValInt(3), [], Map.empty(), Vector.fromList([Val.ValUnit, Val.ValUnit])), 0) => Option.Some(Val.ValUnit)
 
 fn evalPropagateSlot(inner: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate ? operator in slot path."

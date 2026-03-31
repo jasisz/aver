@@ -11,10 +11,16 @@ fn annotateFastFns(fns: List<FnDef>, fnMap: Map<String, Int>, acc: List<FnDef>) 
         [] -> List.reverse(acc)
         [f, ..rest] -> annotateFastFns(rest, fnMap, List.prepend(annotateFastFn(f, fnMap), acc))
 
+verify annotateFastFns
+    annotateFastFns([], Map.empty(), []) => []
+
 fn annotateFastFn(fd: FnDef, fnMap: Map<String, Int>) -> FnDef
     ? "Attach a narrow fast-path tag to a function definition."
     selfId = Option.withDefault(Map.get(fnMap, fd.name), -1)
     FnDef(name = fd.name, params = fd.params, body = fd.body, slotCount = fd.slotCount, slotMap = fd.slotMap, fastPath = classifyFastPath(fd.body), tailLoop = classifyTailLoop(selfId, fd.body))
+
+verify annotateFastFn
+    annotateFastFn(FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false), Map.empty()).name => "f"
 
 fn classifyTailLoop(selfId: Int, body: List<Stmt>) -> Bool
     ? "Precompute whether the final expression position can self-tail-call directly."
@@ -24,11 +30,19 @@ fn classifyTailLoop(selfId: Int, body: List<Stmt>) -> Bool
             [] -> stmtNeedsTailLoop(selfId, stmt)
             _ -> classifyTailLoop(selfId, rest)
 
+verify classifyTailLoop
+    classifyTailLoop(0, []) => false
+    classifyTailLoop(0, [Stmt.StmtExpr(Expr.ExprInt(1))]) => false
+
 fn stmtNeedsTailLoop(selfId: Int, stmt: Stmt) -> Bool
     ? "Only the final expression statement can trigger the tail-loop slot evaluator."
     match stmt
         Stmt.StmtExpr(expr) -> exprNeedsTailLoop(selfId, expr)
         _ -> false
+
+verify stmtNeedsTailLoop
+    stmtNeedsTailLoop(0, Stmt.StmtExpr(Expr.ExprInt(1))) => false
+    stmtNeedsTailLoop(0, Stmt.StmtBind("x", Expr.ExprInt(1))) => false
 
 fn exprNeedsTailLoop(selfId: Int, expr: Expr) -> Bool
     ? "Recognize direct self-calls in tail position, including bool branches and matches."
@@ -40,6 +54,11 @@ fn exprNeedsTailLoop(selfId: Int, expr: Expr) -> Bool
         Expr.ExprMatch(_, arms) -> armsNeedTailLoop(selfId, arms)
         _ -> false
 
+verify exprNeedsTailLoop
+    exprNeedsTailLoop(0, Expr.ExprInt(42)) => false
+    exprNeedsTailLoop(5, Expr.ExprCallDirect(5, [])) => true
+    exprNeedsTailLoop(5, Expr.ExprCallDirect(3, [])) => false
+
 fn armsNeedTailLoop(selfId: Int, arms: List<MatchArm>) -> Bool
     ? "Return true when any match arm ends in a direct self-tail-call."
     match arms
@@ -47,6 +66,9 @@ fn armsNeedTailLoop(selfId: Int, arms: List<MatchArm>) -> Bool
         [arm, ..rest] -> match exprNeedsTailLoop(selfId, arm.body)
             true -> true
             false -> armsNeedTailLoop(selfId, rest)
+
+verify armsNeedTailLoop
+    armsNeedTailLoop(0, []) => false
 
 fn classifyFastPath(body: List<Stmt>) -> FnFastPath
     ? "Single expression bodies can bypass evalStmts* and evaluate the expr directly."
@@ -56,11 +78,19 @@ fn classifyFastPath(body: List<Stmt>) -> FnFastPath
             false -> FnFastPath.FastNone
         _ -> FnFastPath.FastNone
 
+verify classifyFastPath
+    classifyFastPath([]) => FnFastPath.FastNone
+    classifyFastPath([Stmt.StmtExpr(Expr.ExprInt(42))]) => FnFastPath.FastLeaf(FastLeaf.LeafConstInt(42))
+
 fn classifyFastStmt(stmt: Stmt) -> FnFastPath
     ? "Only plain expression bodies get a fast expr tag."
     match stmt
         Stmt.StmtExpr(expr) -> classifyFastExpr(expr)
         _ -> FnFastPath.FastNone
+
+verify classifyFastStmt
+    classifyFastStmt(Stmt.StmtExpr(Expr.ExprInt(42))) => FnFastPath.FastLeaf(FastLeaf.LeafConstInt(42))
+    classifyFastStmt(Stmt.StmtBind("x", Expr.ExprInt(1))) => FnFastPath.FastNone
 
 fn classifyFastExpr(expr: Expr) -> FnFastPath
     ? "Recognize a few leaf-like and branch-like expr shapes worth running without the full stmt walker."
@@ -70,6 +100,10 @@ fn classifyFastExpr(expr: Expr) -> FnFastPath
             Expr.ExprCallDirect(fnId, args) -> classifyFastForwardCall(fnId, args)
             Expr.ExprMatch(scrutinee, arms) -> classifyFastMatch(scrutinee, arms)
             _ -> FnFastPath.FastSingleExpr
+
+verify classifyFastExpr
+    classifyFastExpr(Expr.ExprInt(42)) => FnFastPath.FastLeaf(FastLeaf.LeafConstInt(42))
+    classifyFastExpr(Expr.ExprStr("hi")) => FnFastPath.FastLeaf(FastLeaf.LeafConstStr("hi"))
 
 fn classifyFastLeafExpr(expr: Expr) -> Option<FastLeaf>
     ? "Recognize a leaf-like expr that can be executed without descending the AST."
@@ -93,11 +127,21 @@ fn classifyFastLeafExpr(expr: Expr) -> Option<FastLeaf>
         Expr.ExprGte(a, b) -> classifyFastCmpSlots(CmpOp.CmpGte, a, b)
         _ -> Option.None
 
+verify classifyFastLeafExpr
+    classifyFastLeafExpr(Expr.ExprInt(42)) => Option.Some(FastLeaf.LeafConstInt(42))
+    classifyFastLeafExpr(Expr.ExprStr("hi")) => Option.Some(FastLeaf.LeafConstStr("hi"))
+    classifyFastLeafExpr(Expr.ExprBool(true)) => Option.Some(FastLeaf.LeafConstBool(true))
+    classifyFastLeafExpr(Expr.ExprSlot(3)) => Option.Some(FastLeaf.LeafSlot(3))
+
 fn classifyFastFieldAccess(obj: Expr, field: String) -> Option<FastLeaf>
     ? "Recognize obj.field when obj is already a resolved slot."
     match obj
         Expr.ExprSlot(slot) -> Option.Some(FastLeaf.LeafFieldAccess(slot, field))
         _ -> Option.None
+
+verify classifyFastFieldAccess
+    classifyFastFieldAccess(Expr.ExprSlot(0), "name") => Option.Some(FastLeaf.LeafFieldAccess(0, "name"))
+    classifyFastFieldAccess(Expr.ExprInt(1), "name") => Option.None
 
 fn classifyFastBinopSlots(op: BinOp, a: Expr, b: Expr) -> Option<FastLeaf>
     ? "Recognize slot op slot for arithmetic."
@@ -107,6 +151,10 @@ fn classifyFastBinopSlots(op: BinOp, a: Expr, b: Expr) -> Option<FastLeaf>
             _ -> Option.None
         _ -> Option.None
 
+verify classifyFastBinopSlots
+    classifyFastBinopSlots(BinOp.OpAdd, Expr.ExprSlot(0), Expr.ExprSlot(1)) => Option.Some(FastLeaf.LeafBinopSlots(BinOp.OpAdd, 0, 1))
+    classifyFastBinopSlots(BinOp.OpAdd, Expr.ExprInt(1), Expr.ExprSlot(0)) => Option.None
+
 fn classifyFastCmpSlots(op: CmpOp, a: Expr, b: Expr) -> Option<FastLeaf>
     ? "Recognize slot cmp slot for comparisons."
     match a
@@ -114,6 +162,10 @@ fn classifyFastCmpSlots(op: CmpOp, a: Expr, b: Expr) -> Option<FastLeaf>
             Expr.ExprSlot(sb) -> Option.Some(FastLeaf.LeafCmpSlots(op, sa, sb))
             _ -> Option.None
         _ -> Option.None
+
+verify classifyFastCmpSlots
+    classifyFastCmpSlots(CmpOp.CmpEq, Expr.ExprSlot(0), Expr.ExprSlot(1)) => Option.Some(FastLeaf.LeafCmpSlots(CmpOp.CmpEq, 0, 1))
+    classifyFastCmpSlots(CmpOp.CmpLt, Expr.ExprInt(1), Expr.ExprSlot(0)) => Option.None
 
 fn classifyFastBuiltinLeaf(name: String, args: List<Expr>) -> Option<FastLeaf>
     ? "Recognize tiny builtin wrappers that only shuffle slots and integer constants."
@@ -133,6 +185,9 @@ fn classifyFastBuiltinLeaf(name: String, args: List<Expr>) -> Option<FastLeaf>
                                 true -> classifyFastMapRemove(args)
                                 false -> Option.None
 
+verify classifyFastBuiltinLeaf
+    classifyFastBuiltinLeaf("unknown", []) => Option.None
+
 fn classifyFastMapGet(args: List<Expr>) -> Option<FastLeaf>
     ? "Recognize Map.get(slotMap, slotKey)."
     match args
@@ -141,6 +196,10 @@ fn classifyFastMapGet(args: List<Expr>) -> Option<FastLeaf>
             _ -> Option.None
         _ -> Option.None
 
+verify classifyFastMapGet
+    classifyFastMapGet([Expr.ExprSlot(0), Expr.ExprSlot(1)]) => Option.Some(FastLeaf.LeafMapGet(0, 1))
+    classifyFastMapGet([]) => Option.None
+
 fn classifyFastMapGetArgs(mapExpr: Expr, keyExpr: Expr) -> Option<FastLeaf>
     ? "Encode a direct map lookup when both operands are resolved slots."
     match mapExpr
@@ -148,6 +207,10 @@ fn classifyFastMapGetArgs(mapExpr: Expr, keyExpr: Expr) -> Option<FastLeaf>
             Expr.ExprSlot(keySlot) -> Option.Some(FastLeaf.LeafMapGet(mapSlot, keySlot))
             _ -> Option.None
         _ -> Option.None
+
+verify classifyFastMapGetArgs
+    classifyFastMapGetArgs(Expr.ExprSlot(0), Expr.ExprSlot(1)) => Option.Some(FastLeaf.LeafMapGet(0, 1))
+    classifyFastMapGetArgs(Expr.ExprInt(0), Expr.ExprSlot(1)) => Option.None
 
 fn classifyFastMapSet(args: List<Expr>) -> Option<FastLeaf>
     ? "Recognize Map.set(slotMap, slotKey, slotValue)."
@@ -159,6 +222,10 @@ fn classifyFastMapSet(args: List<Expr>) -> Option<FastLeaf>
             _ -> Option.None
         _ -> Option.None
 
+verify classifyFastMapSet
+    classifyFastMapSet([Expr.ExprSlot(0), Expr.ExprSlot(1), Expr.ExprSlot(2)]) => Option.Some(FastLeaf.LeafMapSet(0, 1, 2))
+    classifyFastMapSet([]) => Option.None
+
 fn classifyFastMapSetArgs(mapExpr: Expr, keyExpr: Expr, valueExpr: Expr) -> Option<FastLeaf>
     ? "Encode a direct map update when all operands are resolved slots."
     match mapExpr
@@ -169,6 +236,10 @@ fn classifyFastMapSetArgs(mapExpr: Expr, keyExpr: Expr, valueExpr: Expr) -> Opti
             _ -> Option.None
         _ -> Option.None
 
+verify classifyFastMapSetArgs
+    classifyFastMapSetArgs(Expr.ExprSlot(0), Expr.ExprSlot(1), Expr.ExprSlot(2)) => Option.Some(FastLeaf.LeafMapSet(0, 1, 2))
+    classifyFastMapSetArgs(Expr.ExprInt(0), Expr.ExprSlot(1), Expr.ExprSlot(2)) => Option.None
+
 fn classifyFastMapHas(args: List<Expr>) -> Option<FastLeaf>
     ? "Recognize Map.has(slotMap, slotKey)."
     match args
@@ -176,6 +247,10 @@ fn classifyFastMapHas(args: List<Expr>) -> Option<FastLeaf>
             [keyExpr, ..ignored] -> classifyFastMapHasArgs(mapExpr, keyExpr)
             _ -> Option.None
         _ -> Option.None
+
+verify classifyFastMapHas
+    classifyFastMapHas([Expr.ExprSlot(0), Expr.ExprSlot(1)]) => Option.Some(FastLeaf.LeafMapHas(0, 1))
+    classifyFastMapHas([]) => Option.None
 
 fn classifyFastMapHasArgs(mapExpr: Expr, keyExpr: Expr) -> Option<FastLeaf>
     ? "Encode a direct map membership test when both operands are resolved slots."
@@ -185,6 +260,10 @@ fn classifyFastMapHasArgs(mapExpr: Expr, keyExpr: Expr) -> Option<FastLeaf>
             _ -> Option.None
         _ -> Option.None
 
+verify classifyFastMapHasArgs
+    classifyFastMapHasArgs(Expr.ExprSlot(0), Expr.ExprSlot(1)) => Option.Some(FastLeaf.LeafMapHas(0, 1))
+    classifyFastMapHasArgs(Expr.ExprInt(0), Expr.ExprSlot(1)) => Option.None
+
 fn classifyFastMapRemove(args: List<Expr>) -> Option<FastLeaf>
     ? "Recognize Map.remove(slotMap, slotKey)."
     match args
@@ -192,6 +271,10 @@ fn classifyFastMapRemove(args: List<Expr>) -> Option<FastLeaf>
             [keyExpr, ..ignored] -> classifyFastMapRemoveArgs(mapExpr, keyExpr)
             _ -> Option.None
         _ -> Option.None
+
+verify classifyFastMapRemove
+    classifyFastMapRemove([Expr.ExprSlot(0), Expr.ExprSlot(1)]) => Option.Some(FastLeaf.LeafMapRemove(0, 1))
+    classifyFastMapRemove([]) => Option.None
 
 fn classifyFastMapRemoveArgs(mapExpr: Expr, keyExpr: Expr) -> Option<FastLeaf>
     ? "Encode a direct map key removal when both operands are resolved slots."
@@ -201,6 +284,10 @@ fn classifyFastMapRemoveArgs(mapExpr: Expr, keyExpr: Expr) -> Option<FastLeaf>
             _ -> Option.None
         _ -> Option.None
 
+verify classifyFastMapRemoveArgs
+    classifyFastMapRemoveArgs(Expr.ExprSlot(0), Expr.ExprSlot(1)) => Option.Some(FastLeaf.LeafMapRemove(0, 1))
+    classifyFastMapRemoveArgs(Expr.ExprInt(0), Expr.ExprSlot(1)) => Option.None
+
 fn classifyFastVectorLen(args: List<Expr>) -> Option<FastLeaf>
     ? "Recognize Vector.len(slotVec)."
     match args
@@ -208,6 +295,10 @@ fn classifyFastVectorLen(args: List<Expr>) -> Option<FastLeaf>
             Expr.ExprSlot(slot) -> Option.Some(FastLeaf.LeafVectorLen(slot))
             _ -> Option.None
         _ -> Option.None
+
+verify classifyFastVectorLen
+    classifyFastVectorLen([Expr.ExprSlot(0)]) => Option.Some(FastLeaf.LeafVectorLen(0))
+    classifyFastVectorLen([]) => Option.None
 
 fn classifyFastVectorNew(args: List<Expr>) -> Option<FastLeaf>
     ? "Recognize Vector.new(slot, int) wrappers."
@@ -217,6 +308,10 @@ fn classifyFastVectorNew(args: List<Expr>) -> Option<FastLeaf>
             _ -> Option.None
         _ -> Option.None
 
+verify classifyFastVectorNew
+    classifyFastVectorNew([Expr.ExprSlot(0), Expr.ExprInt(0)]) => Option.Some(FastLeaf.LeafVectorNew(0, 0))
+    classifyFastVectorNew([]) => Option.None
+
 fn classifyFastVectorNewArgs(sizeExpr: Expr, fillExpr: Expr) -> Option<FastLeaf>
     ? "Encode Vector.new(slot, int) without keeping the whole AST around."
     match sizeExpr
@@ -224,6 +319,10 @@ fn classifyFastVectorNewArgs(sizeExpr: Expr, fillExpr: Expr) -> Option<FastLeaf>
             Expr.ExprInt(fill) -> Option.Some(FastLeaf.LeafVectorNew(sizeSlot, fill))
             _ -> Option.None
         _ -> Option.None
+
+verify classifyFastVectorNewArgs
+    classifyFastVectorNewArgs(Expr.ExprSlot(0), Expr.ExprInt(0)) => Option.Some(FastLeaf.LeafVectorNew(0, 0))
+    classifyFastVectorNewArgs(Expr.ExprInt(5), Expr.ExprInt(0)) => Option.None
 
 fn classifyFastOptionWithDefault(args: List<Expr>) -> Option<FastLeaf>
     ? "Recognize Option.withDefault(Vector.get(slot, slot), int)."
@@ -233,6 +332,9 @@ fn classifyFastOptionWithDefault(args: List<Expr>) -> Option<FastLeaf>
             _ -> Option.None
         _ -> Option.None
 
+verify classifyFastOptionWithDefault
+    classifyFastOptionWithDefault([]) => Option.None
+
 fn classifyFastOptionWithDefaultArgs(optionExpr: Expr, defaultExpr: Expr) -> Option<FastLeaf>
     ? "Encode the common Vector.get-with-default wrapper used in tiny helpers like cellAt."
     match optionExpr
@@ -241,6 +343,9 @@ fn classifyFastOptionWithDefaultArgs(optionExpr: Expr, defaultExpr: Expr) -> Opt
             false -> Option.None
         _ -> Option.None
 
+verify classifyFastOptionWithDefaultArgs
+    classifyFastOptionWithDefaultArgs(Expr.ExprInt(1), Expr.ExprInt(0)) => Option.None
+
 fn classifyFastVectorGet(args: List<Expr>, defaultExpr: Expr) -> Option<FastLeaf>
     ? "Recognize Vector.get(slotVec, slotIdx) with an integer default."
     match args
@@ -248,6 +353,9 @@ fn classifyFastVectorGet(args: List<Expr>, defaultExpr: Expr) -> Option<FastLeaf
             [idxExpr, ..ignored] -> classifyFastVectorGetArgs(vecExpr, idxExpr, defaultExpr)
             _ -> Option.None
         _ -> Option.None
+
+verify classifyFastVectorGet
+    classifyFastVectorGet([], Expr.ExprInt(0)) => Option.None
 
 fn classifyFastVectorGetArgs(vecExpr: Expr, idxExpr: Expr, defaultExpr: Expr) -> Option<FastLeaf>
     ? "Encode Vector.get(slotVec, slotIdx) with an integer fallback."
@@ -259,6 +367,10 @@ fn classifyFastVectorGetArgs(vecExpr: Expr, idxExpr: Expr, defaultExpr: Expr) ->
             _ -> Option.None
         _ -> Option.None
 
+verify classifyFastVectorGetArgs
+    classifyFastVectorGetArgs(Expr.ExprSlot(0), Expr.ExprSlot(1), Expr.ExprInt(99)) => Option.Some(FastLeaf.LeafVectorGetOrInt(0, 1, 99))
+    classifyFastVectorGetArgs(Expr.ExprInt(0), Expr.ExprSlot(1), Expr.ExprInt(99)) => Option.None
+
 fn classifyFastMatch(scrutinee: Expr, arms: List<MatchArm>) -> FnFastPath
     ? "Recognize a small fixed-shape branch over bools or slot-based comparisons."
     match classifyBoolArms(arms)
@@ -266,11 +378,17 @@ fn classifyFastMatch(scrutinee: Expr, arms: List<MatchArm>) -> FnFastPath
             (thenLeaf, elseLeaf) -> classifyFastMatchScrutinee(scrutinee, thenLeaf, elseLeaf)
         Option.None -> classifyFastListMatch(scrutinee, arms)
 
+verify classifyFastMatch
+    classifyFastMatch(Expr.ExprInt(1), []) => FnFastPath.FastSingleExpr
+
 fn classifyFastListMatch(scrutinee: Expr, arms: List<MatchArm>) -> FnFastPath
     ? "Recognize a two-arm list match with [] and [h, ..t] leaf bodies."
     match scrutinee
         Expr.ExprSlot(slot) -> classifyFastListArms(slot, arms)
         _ -> FnFastPath.FastSingleExpr
+
+verify classifyFastListMatch
+    classifyFastListMatch(Expr.ExprInt(1), []) => FnFastPath.FastSingleExpr
 
 fn classifyFastListArms(slot: Int, arms: List<MatchArm>) -> FnFastPath
     ? "Extract fixed empty/cons list arms regardless of order."
@@ -282,6 +400,9 @@ fn classifyFastListArms(slot: Int, arms: List<MatchArm>) -> FnFastPath
             _ -> FnFastPath.FastSingleExpr
         _ -> FnFastPath.FastSingleExpr
 
+verify classifyFastListArms
+    classifyFastListArms(0, []) => FnFastPath.FastSingleExpr
+
 fn classifyFastListArmPair(slot: Int, arm1: MatchArm, arm2: MatchArm) -> FnFastPath
     ? "Convert two list-pattern arms into a direct slot branch."
     leaf1 = classifyFastLeafExpr(arm1.body)
@@ -292,6 +413,9 @@ fn classifyFastListArmPair(slot: Int, arm1: MatchArm, arm2: MatchArm) -> FnFastP
             Option.None -> FnFastPath.FastSingleExpr
         Option.None -> FnFastPath.FastSingleExpr
 
+verify classifyFastListArmPair
+    classifyFastListArmPair(0, MatchArm(pattern = Pattern.PatWild, body = Expr.ExprCall("f", []), bindingSlots = Map.empty()), MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = Map.empty())) => FnFastPath.FastSingleExpr
+
 fn classifyFastListPatterns(slot: Int, p1: Pattern, bindingSlots1: Map<String, Int>, leaf1: FastLeaf, p2: Pattern, bindingSlots2: Map<String, Int>, leaf2: FastLeaf) -> FnFastPath
     ? "Order empty/cons arms into a direct list branch."
     match p1
@@ -299,17 +423,26 @@ fn classifyFastListPatterns(slot: Int, p1: Pattern, bindingSlots1: Map<String, I
         Pattern.PatCons(head, tail) -> classifyFastListConsFirst(slot, head, tail, bindingSlots1, leaf1, p2, leaf2)
         _ -> FnFastPath.FastSingleExpr
 
+verify classifyFastListPatterns
+    classifyFastListPatterns(0, Pattern.PatWild, Map.empty(), FastLeaf.LeafConstInt(1), Pattern.PatWild, Map.empty(), FastLeaf.LeafConstInt(2)) => FnFastPath.FastSingleExpr
+
 fn classifyFastListOther(slot: Int, emptyLeaf: FastLeaf, other: Pattern, bindingSlots: Map<String, Int>, otherLeaf: FastLeaf) -> FnFastPath
     ? "Finish list fast-path classification when the empty arm is known."
     match other
         Pattern.PatCons(head, tail) -> classifyFastListCons(slot, emptyLeaf, head, tail, bindingSlots, otherLeaf)
         _ -> FnFastPath.FastSingleExpr
 
+verify classifyFastListOther
+    classifyFastListOther(0, FastLeaf.LeafConstInt(0), Pattern.PatWild, Map.empty(), FastLeaf.LeafConstInt(1)) => FnFastPath.FastSingleExpr
+
 fn classifyFastListConsFirst(slot: Int, head: String, tail: String, bindingSlots: Map<String, Int>, consLeaf: FastLeaf, other: Pattern, otherLeaf: FastLeaf) -> FnFastPath
     ? "Handle reversed list arms where the cons case appears first."
     match other
         Pattern.PatEmpty -> classifyFastListCons(slot, otherLeaf, head, tail, bindingSlots, consLeaf)
         _ -> FnFastPath.FastSingleExpr
+
+verify classifyFastListConsFirst
+    classifyFastListConsFirst(0, "h", "t", Map.empty(), FastLeaf.LeafConstInt(1), Pattern.PatWild, FastLeaf.LeafConstInt(0)) => FnFastPath.FastSingleExpr
 
 fn classifyFastListCons(slot: Int, emptyLeaf: FastLeaf, head: String, tail: String, bindingSlots: Map<String, Int>, consLeaf: FastLeaf) -> FnFastPath
     ? "Build the list-slot branch once head/tail binding slots are known."
@@ -319,11 +452,18 @@ fn classifyFastListCons(slot: Int, emptyLeaf: FastLeaf, head: String, tail: Stri
             Option.None -> FnFastPath.FastSingleExpr
         Option.None -> FnFastPath.FastSingleExpr
 
+verify classifyFastListCons
+    classifyFastListCons(0, FastLeaf.LeafConstInt(0), "h", "t", Map.empty(), FastLeaf.LeafConstInt(1)) => FnFastPath.FastSingleExpr
+
 fn classifyFastForwardCall(fnId: Int, args: List<Expr>) -> FnFastPath
     ? "Recognize tiny direct-call wrappers that only forward slot arguments."
     match classifyFastForwardSlots(args, [])
         Option.Some(slotArgs) -> FnFastPath.FastForwardCall(fnId, slotArgs)
         Option.None -> FnFastPath.FastSingleExpr
+
+verify classifyFastForwardCall
+    classifyFastForwardCall(5, [Expr.ExprSlot(0), Expr.ExprSlot(1)]) => FnFastPath.FastForwardCall(5, [0, 1])
+    classifyFastForwardCall(5, [Expr.ExprInt(1)]) => FnFastPath.FastSingleExpr
 
 fn classifyFastForwardSlots(args: List<Expr>, acc: List<Int>) -> Option<List<Int>>
     ? "Extract slot numbers from a direct call argument list."
@@ -332,6 +472,11 @@ fn classifyFastForwardSlots(args: List<Expr>, acc: List<Int>) -> Option<List<Int
         [arg, ..rest] -> match arg
             Expr.ExprSlot(slot) -> classifyFastForwardSlots(rest, List.prepend(slot, acc))
             _ -> Option.None
+
+verify classifyFastForwardSlots
+    classifyFastForwardSlots([], []) => Option.Some([])
+    classifyFastForwardSlots([Expr.ExprSlot(0)], []) => Option.Some([0])
+    classifyFastForwardSlots([Expr.ExprInt(1)], []) => Option.None
 
 fn classifyBoolArms(arms: List<MatchArm>) -> Option<(FastLeaf, FastLeaf)>
     ? "Extract (then, else) leaves from a two-arm bool match, regardless of arm order."
@@ -343,6 +488,9 @@ fn classifyBoolArms(arms: List<MatchArm>) -> Option<(FastLeaf, FastLeaf)>
             _ -> Option.None
         _ -> Option.None
 
+verify classifyBoolArms
+    classifyBoolArms([]) => Option.None
+
 fn classifyBoolArmPair(arm1: MatchArm, arm2: MatchArm) -> Option<(FastLeaf, FastLeaf)>
     ? "Convert two bool-pattern arms into ordered leaves."
     leaf1 = classifyFastLeafExpr(arm1.body)
@@ -353,17 +501,28 @@ fn classifyBoolArmPair(arm1: MatchArm, arm2: MatchArm) -> Option<(FastLeaf, Fast
             Option.None -> Option.None
         Option.None -> Option.None
 
+verify classifyBoolArmPair
+    classifyBoolArmPair(MatchArm(pattern = Pattern.PatBool(true), body = Expr.ExprInt(1), bindingSlots = Map.empty()), MatchArm(pattern = Pattern.PatBool(false), body = Expr.ExprInt(0), bindingSlots = Map.empty())) => Option.Some((FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(0)))
+
 fn classifyBoolArmPatterns(p1: Pattern, leaf1: FastLeaf, p2: Pattern, leaf2: FastLeaf) -> Option<(FastLeaf, FastLeaf)>
     ? "Order bool match arms into (trueLeaf, falseLeaf)."
     match p1
         Pattern.PatBool(b1) -> classifyBoolArmPatternsInner(b1, leaf1, p2, leaf2)
         _ -> Option.None
 
+verify classifyBoolArmPatterns
+    classifyBoolArmPatterns(Pattern.PatBool(true), FastLeaf.LeafConstInt(1), Pattern.PatBool(false), FastLeaf.LeafConstInt(0)) => Option.Some((FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(0)))
+    classifyBoolArmPatterns(Pattern.PatWild, FastLeaf.LeafConstInt(1), Pattern.PatBool(false), FastLeaf.LeafConstInt(0)) => Option.None
+
 fn classifyBoolArmPatternsInner(b1: Bool, leaf1: FastLeaf, p2: Pattern, leaf2: FastLeaf) -> Option<(FastLeaf, FastLeaf)>
     ? "Finish ordering bool match arms once the first arm bool is extracted."
     match p2
         Pattern.PatBool(b2) -> classifyBoolArmPatternsPair(b1, leaf1, b2, leaf2)
         _ -> Option.None
+
+verify classifyBoolArmPatternsInner
+    classifyBoolArmPatternsInner(true, FastLeaf.LeafConstInt(1), Pattern.PatBool(false), FastLeaf.LeafConstInt(0)) => Option.Some((FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(0)))
+    classifyBoolArmPatternsInner(true, FastLeaf.LeafConstInt(1), Pattern.PatWild, FastLeaf.LeafConstInt(0)) => Option.None
 
 fn classifyBoolArmPatternsPair(b1: Bool, leaf1: FastLeaf, b2: Bool, leaf2: FastLeaf) -> Option<(FastLeaf, FastLeaf)>
     ? "Return (trueLeaf, falseLeaf) when the two bool arms are complementary."
@@ -377,6 +536,10 @@ fn classifyBoolArmPatternsPair(b1: Bool, leaf1: FastLeaf, b2: Bool, leaf2: FastL
                 false -> Option.None
             false -> Option.None
 
+verify classifyBoolArmPatternsPair
+    classifyBoolArmPatternsPair(true, FastLeaf.LeafConstInt(1), false, FastLeaf.LeafConstInt(0)) => Option.Some((FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(0)))
+    classifyBoolArmPatternsPair(false, FastLeaf.LeafConstInt(0), true, FastLeaf.LeafConstInt(1)) => Option.Some((FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(0)))
+
 fn classifyFastMatchScrutinee(scrutinee: Expr, thenLeaf: FastLeaf, elseLeaf: FastLeaf) -> FnFastPath
     ? "Encode a recognized branch scrutinee with preclassified leaves."
     match scrutinee
@@ -386,6 +549,10 @@ fn classifyFastMatchScrutinee(scrutinee: Expr, thenLeaf: FastLeaf, elseLeaf: Fas
         Expr.ExprGt(a, b) -> classifyFastLtScrutinee(b, a, thenLeaf, elseLeaf)
         _ -> FnFastPath.FastSingleExpr
 
+verify classifyFastMatchScrutinee
+    classifyFastMatchScrutinee(Expr.ExprSlot(0), FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(0)) => FnFastPath.FastBoolSlotBranch(0, FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(0))
+    classifyFastMatchScrutinee(Expr.ExprInt(1), FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(0)) => FnFastPath.FastSingleExpr
+
 fn classifyFastEqScrutinee(a: Expr, b: Expr, thenLeaf: FastLeaf, elseLeaf: FastLeaf) -> FnFastPath
     ? "Recognize slot == int/string in either operand order."
     match a
@@ -394,12 +561,19 @@ fn classifyFastEqScrutinee(a: Expr, b: Expr, thenLeaf: FastLeaf, elseLeaf: FastL
             Expr.ExprSlot(slot) -> classifyFastEqOther(slot, a, thenLeaf, elseLeaf)
             _ -> FnFastPath.FastSingleExpr
 
+verify classifyFastEqScrutinee
+    classifyFastEqScrutinee(Expr.ExprInt(1), Expr.ExprInt(2), FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(0)) => FnFastPath.FastSingleExpr
+
 fn classifyFastEqOther(slot: Int, other: Expr, thenLeaf: FastLeaf, elseLeaf: FastLeaf) -> FnFastPath
     ? "Encode equality against a constant once the slot side is known."
     match other
         Expr.ExprInt(n) -> FnFastPath.FastEqIntBranch(slot, n, thenLeaf, elseLeaf)
         Expr.ExprStr(s) -> FnFastPath.FastEqStringBranch(slot, s, thenLeaf, elseLeaf)
         _ -> FnFastPath.FastSingleExpr
+
+verify classifyFastEqOther
+    classifyFastEqOther(0, Expr.ExprInt(42), FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(0)) => FnFastPath.FastEqIntBranch(0, 42, FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(0))
+    classifyFastEqOther(0, Expr.ExprStr("hi"), FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(0)) => FnFastPath.FastEqStringBranch(0, "hi", FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(0))
 
 fn classifyFastLtScrutinee(a: Expr, b: Expr, thenLeaf: FastLeaf, elseLeaf: FastLeaf) -> FnFastPath
     ? "Recognize slot < slot branches like minInt."
@@ -408,3 +582,7 @@ fn classifyFastLtScrutinee(a: Expr, b: Expr, thenLeaf: FastLeaf, elseLeaf: FastL
             Expr.ExprSlot(rhs) -> FnFastPath.FastLtIntSlotsBranch(lhs, rhs, thenLeaf, elseLeaf)
             _ -> FnFastPath.FastSingleExpr
         _ -> FnFastPath.FastSingleExpr
+
+verify classifyFastLtScrutinee
+    classifyFastLtScrutinee(Expr.ExprSlot(0), Expr.ExprSlot(1), FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(0)) => FnFastPath.FastLtIntSlotsBranch(0, 1, FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(0))
+    classifyFastLtScrutinee(Expr.ExprInt(0), Expr.ExprSlot(1), FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(0)) => FnFastPath.FastSingleExpr

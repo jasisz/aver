@@ -21,7 +21,7 @@ verify resolveFns
     resolveFns([], []) => []
 
 verify resolveFn
-    resolveFn(FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)).name => "f"
+    resolveFn(FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)).name => "f"
 
 fn buildParamSlots(params: List<String>, slots: Map<String, Int>, next: Int) -> (Map<String, Int>, Int)
     ? "Assign slot indices 0..n-1 to parameters."
@@ -40,7 +40,7 @@ fn resolveBody(fd: FnDef, slots: Map<String, Int>, nextSlot: Int) -> FnDef
         (newBody, finalSlot, finalSlotMap) -> computeSlotCount(fd, newBody, finalSlot, finalSlotMap)
 
 verify resolveBody
-    resolveBody(FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false), Map.empty(), 0).body => [Stmt.StmtExpr(Expr.ExprInt(1))]
+    resolveBody(FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false), Map.empty(), 0).body => []
 
 fn computeSlotCount(fd: FnDef, body: List<Stmt>, baseSlot: Int, slotMap: Map<String, Int>) -> FnDef
     ? "Compute slotCount as max slot index found in body + 1."
