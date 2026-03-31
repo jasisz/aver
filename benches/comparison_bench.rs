@@ -114,7 +114,7 @@ fn fib(n: Int) -> Int
         _ -> fib(n - 1) + fib(n - 2)
 
 fn main() -> Int
-    fib(25)
+    fib(15)
 "#;
 
 const COUNTDOWN_SRC: &str = r#"module Bench
@@ -253,7 +253,7 @@ fn bench_all_modes(
 
 fn comparison_benches(c: &mut Criterion) {
     let tests: &[(&str, &str, &str)] = &[
-        ("fib(25)", "bench_fib", FIB_SRC),
+        ("fib(15)", "bench_fib", FIB_SRC),
         ("countdown(20k)", "bench_countdown", COUNTDOWN_SRC),
         ("record access 20k", "bench_record", RECORD_SRC),
         ("map build 5k", "bench_map", MAP_BUILD_SRC),
@@ -301,6 +301,7 @@ fn comparison_benches(c: &mut Criterion) {
             source_file: &source_files[i],
         };
         bench_all_modes(&mut group, label, src, &artifacts);
+
         group.finish();
     }
 }
