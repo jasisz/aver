@@ -381,11 +381,12 @@ verify builtinStringChars
 
 fn stringToCharList(s: String, pos: Int, total: Int, acc: List<Val>) -> List<Val>
     ? "Split string into list of ValStr chars."
+    reversed = List.reverse(acc)
     match pos >= total
-        true -> List.reverse(acc)
+        true -> reversed
         false -> match String.charAt(s, pos)
             Option.Some(c) -> stringToCharList(s, pos + 1, total, List.prepend(Val.ValStr(c), acc))
-            Option.None -> List.reverse(acc)
+            Option.None -> reversed
 
 verify stringToCharList
     stringToCharList("ab", 0, 2, []) => [Val.ValStr("a"), Val.ValStr("b")]
@@ -571,9 +572,9 @@ verify builtinFloatAtan2
 
 fn builtinFloatPi(args: List<Val>) -> Result<Val, String>
     ? "Float.pi() -> Float."
-    match List.len(args) == 0
-        true -> Result.Ok(Val.ValFloat(Float.pi()))
-        false -> Result.Err("Float.pi takes 0 arguments")
+    match args
+        [] -> Result.Ok(Val.ValFloat(Float.pi()))
+        _ -> Result.Err("Float.pi takes 0 arguments")
 
 verify builtinFloatPi
     builtinFloatPi([]) => Result.Ok(Val.ValFloat(Float.pi()))
