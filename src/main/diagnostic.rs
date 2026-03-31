@@ -160,7 +160,10 @@ impl Diagnostic {
 
         // --- source snippet (multi-region) ---
         // Errors: always show. Warnings: only if verbose.
-        let show_source = is_error || verbose;
+        // Skip snippet for structural hints where the signature adds no information
+        // beyond what in-fn: and repair: already say.
+        let skip_snippet = matches!(self.slug, "missing-verify" | "missing-description");
+        let show_source = (is_error || verbose) && !skip_snippet;
         let has_source = self.regions.iter().any(|r| !r.source_lines.is_empty());
         if show_source && has_source {
             let max_num = self
