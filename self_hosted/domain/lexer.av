@@ -91,6 +91,7 @@ fn isGreaterThan(c: String) -> Bool
 
 verify isGreaterThan
     isGreaterThan(">") => true
+    isGreaterThan("x") => false
 
 fn tokenizeMinus(src: String, pos: Int) -> List<Token>
     ? "Tokenize a minus or arrow token."
@@ -121,6 +122,9 @@ fn tokenizeBraceOrSkip(c: String, src: String, pos: Int) -> List<Token>
         false -> match c == closeBrace()
             true -> List.prepend(Token.TkRBrace, tokenize(src, pos + 1))
             false -> tokenize(src, pos + 1)
+
+verify tokenizeBraceOrSkip
+    tokenizeBraceOrSkip("~", "~", 0) => [Token.TkEof]
 
 fn tokenizeString(src: String, pos: Int, acc: String) -> List<Token>
     ? "Read string literal with interpolation and escape sequences."
@@ -199,6 +203,9 @@ fn tokenizeStringMaybeEscapedBrace(src: String, pos: Int, acc: String) -> List<T
             false -> tokenizeInterp(src, pos, acc)
         Option.None -> tokenizeInterp(src, pos, acc)
 
+verify tokenizeStringMaybeEscapedBrace
+    tokenizeStringMaybeEscapedBrace("", 0, "hi") => [Token.TkStr("hi"), Token.TkInterpStart, Token.TkInterpEnd, Token.TkEof]
+
 fn tokenizeStringMaybeEscapedClose(src: String, pos: Int, acc: String) -> List<Token>
     ? "Check for }} (escaped close brace) or continue."
     match String.charAt(src, pos + 1)
@@ -206,6 +213,9 @@ fn tokenizeStringMaybeEscapedClose(src: String, pos: Int, acc: String) -> List<T
             true -> tokenizeString(src, pos + 2, acc + closeBrace())
             false -> tokenizeString(src, pos + 1, acc + closeBrace())
         Option.None -> tokenizeString(src, pos + 1, acc + closeBrace())
+
+verify tokenizeStringMaybeEscapedClose
+    tokenizeStringMaybeEscapedClose("\"", 0, "a") => [Token.TkStr("a" + closeBrace()), Token.TkEof]
 
 fn tokenizeInterp(src: String, pos: Int, acc: String) -> List<Token>
     ? "Start interpolation: emit accumulated string, TkInterpStart, expr tokens, TkInterpEnd."
@@ -506,6 +516,7 @@ fn processIndentation(tokens: List<Token>, stack: List<Int>) -> List<Token>
 
 verify processIndentation
     processIndentation([Token.TkEof], [0]) => [Token.TkEof]
+    processIndentation([], [0]) => []
 
 fn processIndentToken(t: Token, rest: List<Token>, stack: List<Int>) -> List<Token>
     ? "Process one token in the indentation pass."
@@ -525,6 +536,7 @@ fn processAfterNewline(tokens: List<Token>, stack: List<Int>) -> List<Token>
 
 verify processAfterNewline
     processAfterNewline([Token.TkEof], [0]) => List.prepend(Token.TkNewline, [Token.TkEof])
+    processAfterNewline([], [0]) => List.prepend(Token.TkNewline, [])
 
 fn processAfterNewlineToken(t: Token, rest: List<Token>, stack: List<Int>) -> List<Token>
     ? "Check if token after newline is a raw indent marker."
@@ -559,6 +571,7 @@ fn emitDedents(targetIndent: Int, rest: List<Token>, stack: List<Int>) -> List<T
 
 verify emitDedents
     emitDedents(0, [Token.TkEof], [4, 0]) => [Token.TkDedent, Token.TkNewline, Token.TkEof]
+    emitDedents(0, [Token.TkEof], []) => [Token.TkEof]
 
 fn emitFinalDedents(stack: List<Int>) -> List<Token>
     ? "At EOF, emit DEDENT for each indent level above 0."
@@ -571,6 +584,7 @@ fn emitFinalDedents(stack: List<Int>) -> List<Token>
 verify emitFinalDedents
     emitFinalDedents([0]) => []
     emitFinalDedents([4, 0]) => [Token.TkDedent]
+    emitFinalDedents([]) => []
 
 fn stackTop(stack: List<Int>) -> Int
     ? "Return top of indent stack, or 0 if empty."

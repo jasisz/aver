@@ -25,6 +25,9 @@ fn wrapPropagatedError(msg: String) -> String
     ? "Mark a language-level Result.Err so function boundaries can convert it back into a value."
     propagationPrefix() + msg
 
+verify wrapPropagatedError
+    wrapPropagatedError("boom") => "__aver_prop__:boom"
+
 fn unwrapPropagatedError(err: String) -> Option<String>
     ? "Return the propagated payload when the evaluator error is an internal ? marker."
     prefix = propagationPrefix()
@@ -61,3 +64,4 @@ fn lookupField(fields: List<(String, Val)>, name: String) -> Result<Val, String>
 verify lookupField
     lookupField([("x", Val.ValInt(1)), ("y", Val.ValInt(2))], "x") => Result.Ok(Val.ValInt(1))
     lookupField([("x", Val.ValInt(1))], "z") => Result.Err("unknown field: z")
+    lookupField([], "x") => Result.Err("unknown field: x")

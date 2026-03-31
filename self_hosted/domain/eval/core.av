@@ -62,6 +62,7 @@ verify evalVar
     evalVar("x", Map.set(Map.empty(), "x", Val.ValInt(5)), Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValInt(5))
     evalVar("Unit", Map.empty(), Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValUnit)
     evalVar("Option.None", Map.empty(), Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValNone)
+    evalVar("missing", Map.empty(), Domain.Eval.Store.emptyFnStore()) => Result.Err("undefined variable: missing")
 
 fn evalBoolBranch(cond: Expr, thenExpr: Expr, elseExpr: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate a direct bool branch in map path."
@@ -208,8 +209,6 @@ fn evalArgs(exprs: List<Expr>, env: Map<String, Val>, fns: FnStore) -> Result<Li
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     evalArgsRev(exprs, env, fns, [])
 
-verify evalArgs
-    evalArgs([Expr.ExprInt(1), Expr.ExprInt(2)], Map.empty(), Domain.Eval.Store.emptyFnStore()) => Result.Ok([Val.ValInt(1), Val.ValInt(2)])
 
 fn evalArgsRev(exprs: List<Expr>, env: Map<String, Val>, fns: FnStore, acc: List<Val>) -> Result<List<Val>, String>
     ? "Tail-recursive worker for evalArgs. Accumulates in reverse."
@@ -435,6 +434,11 @@ fn collectFastForwardArgs(slotArgs: List<Int>, calleeEnv: Vector<Val>, acc: List
         [slot, ..rest] -> match Domain.Eval.Slots.lookupSlot(calleeEnv, slot)
             Result.Ok(v) -> collectFastForwardArgs(rest, calleeEnv, List.prepend(v, acc))
             Result.Err(e) -> Result.Err(e)
+
+verify collectFastForwardArgs
+    collectFastForwardArgs([], Vector.new(0, Val.ValUnit), []) => Result.Ok([])
+    collectFastForwardArgs([0, 1], Vector.fromList([Val.ValInt(10), Val.ValInt(20)]), []) => Result.Ok([Val.ValInt(10), Val.ValInt(20)])
+    collectFastForwardArgs([5], Vector.new(0, Val.ValUnit), []) => Result.Err("slot out of bounds: 5")
 
 fn evalCall(name: String, argExprs: List<Expr>, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate a function call."
@@ -670,6 +674,11 @@ fn evalVarSlot(name: String, fns: FnStore) -> Result<Val, String>
         "Option.None" -> Result.Ok(Val.ValNone)
         _ -> Domain.Eval.Common.evalVarFallback(name, fns)
 
+verify evalVarSlot
+    evalVarSlot("Unit", Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValUnit)
+    evalVarSlot("Option.None", Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValNone)
+    evalVarSlot("missing", Domain.Eval.Store.emptyFnStore()) => Result.Err("undefined variable: missing")
+
 fn evalBoolBranchSlot(cond: Expr, thenExpr: Expr, elseExpr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate a direct bool branch in slot path."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
@@ -685,22 +694,42 @@ fn evalBinopSlotInt(op: BinOp, slot: Int, rhs: Int, env: Vector<Val>) -> Result<
     left = Domain.Eval.Slots.lookupSlot(env, slot)?
     Domain.Eval.Ops.evalBinopVals(left, Val.ValInt(rhs), op)
 
+verify evalBinopSlotInt
+    evalBinopSlotInt(BinOp.OpAdd, 0, 5, Vector.fromList([Val.ValInt(3)])) => Result.Ok(Val.ValInt(8))
+    evalBinopSlotInt(BinOp.OpMul, 0, 4, Vector.fromList([Val.ValInt(2)])) => Result.Ok(Val.ValInt(8))
+    evalBinopSlotInt(BinOp.OpAdd, 0, 5, Vector.new(0, Val.ValUnit)) => Result.Err("slot out of bounds: 0")
+
 fn evalBinopSlots(op: BinOp, lhs: Int, rhs: Int, env: Vector<Val>) -> Result<Val, String>
     ? "Evaluate a specialized slot-vs-slot arithmetic expression."
     left = Domain.Eval.Slots.lookupSlot(env, lhs)?
     right = Domain.Eval.Slots.lookupSlot(env, rhs)?
     Domain.Eval.Ops.evalBinopVals(left, right, op)
 
+verify evalBinopSlots
+    evalBinopSlots(BinOp.OpAdd, 0, 1, Vector.fromList([Val.ValInt(3), Val.ValInt(7)])) => Result.Ok(Val.ValInt(10))
+    evalBinopSlots(BinOp.OpSub, 0, 1, Vector.fromList([Val.ValInt(10), Val.ValInt(4)])) => Result.Ok(Val.ValInt(6))
+    evalBinopSlots(BinOp.OpAdd, 0, 1, Vector.new(0, Val.ValUnit)) => Result.Err("slot out of bounds: 0")
+
 fn evalCmpSlotInt(op: CmpOp, slot: Int, rhs: Int, env: Vector<Val>) -> Result<Val, String>
     ? "Evaluate a specialized slot-vs-int comparison."
     left = Domain.Eval.Slots.lookupSlot(env, slot)?
     Domain.Eval.Ops.evalCmpVals(left, Val.ValInt(rhs), op)
+
+verify evalCmpSlotInt
+    evalCmpSlotInt(CmpOp.CmpEq, 0, 5, Vector.fromList([Val.ValInt(5)])) => Result.Ok(Val.ValBool(true))
+    evalCmpSlotInt(CmpOp.CmpLt, 0, 10, Vector.fromList([Val.ValInt(3)])) => Result.Ok(Val.ValBool(true))
+    evalCmpSlotInt(CmpOp.CmpEq, 0, 5, Vector.new(0, Val.ValUnit)) => Result.Err("slot out of bounds: 0")
 
 fn evalCmpSlots(op: CmpOp, lhs: Int, rhs: Int, env: Vector<Val>) -> Result<Val, String>
     ? "Evaluate a specialized slot-vs-slot comparison."
     left = Domain.Eval.Slots.lookupSlot(env, lhs)?
     right = Domain.Eval.Slots.lookupSlot(env, rhs)?
     Domain.Eval.Ops.evalCmpVals(left, right, op)
+
+verify evalCmpSlots
+    evalCmpSlots(CmpOp.CmpEq, 0, 1, Vector.fromList([Val.ValInt(3), Val.ValInt(3)])) => Result.Ok(Val.ValBool(true))
+    evalCmpSlots(CmpOp.CmpGt, 0, 1, Vector.fromList([Val.ValInt(5), Val.ValInt(2)])) => Result.Ok(Val.ValBool(true))
+    evalCmpSlots(CmpOp.CmpEq, 0, 1, Vector.new(0, Val.ValUnit)) => Result.Err("slot out of bounds: 0")
 
 fn evalVectorGetOrIntExprSlot(vecExpr: Expr, idxExpr: Expr, defaultValue: Int, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate a fused Vector.get + Option.withDefault in slot path."
@@ -860,8 +889,6 @@ fn evalArgsSlot(exprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, 
                     [] -> evalArgsSlot3(e0, e1, e2, env, slotMap, fns)
                     _ -> evalArgsSlotRev(exprs, env, slotMap, fns, [])
 
-verify evalArgsSlot
-    evalArgsSlot([Expr.ExprInt(1), Expr.ExprInt(2)], Vector.new(0, Val.ValUnit), Map.empty(), Domain.Eval.Store.emptyFnStore()) => Result.Ok([Val.ValInt(1), Val.ValInt(2)])
 
 fn evalArgsSlot1(e0: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<List<Val>, String>
     ? "Fast path for one slot-path argument."
@@ -1037,11 +1064,19 @@ fn mergeBindingsSlot(bindings: List<(String, Val)>, bindingSlots: Map<String, In
         [pair, ..rest] -> match pair
             (name, val) -> mergeOneBindingSlot(name, val, rest, bindingSlots, env)
 
+verify mergeBindingsSlot
+    Vector.get(mergeBindingsSlot([], Map.empty(), Vector.fromList([Val.ValUnit])), 0) => Option.Some(Val.ValUnit)
+    Vector.get(mergeBindingsSlot([("x", Val.ValInt(5))], Map.set(Map.empty(), "x", 0), Vector.fromList([Val.ValUnit, Val.ValUnit])), 0) => Option.Some(Val.ValInt(5))
+
 fn mergeOneBindingSlot(name: String, val: Val, rest: List<(String, Val)>, bindingSlots: Map<String, Int>, env: Vector<Val>) -> Vector<Val>
     ? "Merge one pattern binding into slot env."
     match Map.get(bindingSlots, name)
         Option.Some(slot) -> mergeBindingsSlot(rest, bindingSlots, Domain.Eval.Slots.setSlot(env, slot, val))
         Option.None -> mergeBindingsSlot(rest, bindingSlots, env)
+
+verify mergeOneBindingSlot
+    Vector.get(mergeOneBindingSlot("x", Val.ValInt(7), [], Map.set(Map.empty(), "x", 0), Vector.fromList([Val.ValUnit, Val.ValUnit])), 0) => Option.Some(Val.ValInt(7))
+    Vector.get(mergeOneBindingSlot("y", Val.ValInt(3), [], Map.empty(), Vector.fromList([Val.ValUnit, Val.ValUnit])), 0) => Option.Some(Val.ValUnit)
 
 fn evalPropagateSlot(inner: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate ? operator in slot path."

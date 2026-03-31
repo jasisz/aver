@@ -19,6 +19,7 @@ fn call(name: String, args: List<Val>) -> Result<Val, String>
 verify call
     call("List.len", [Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Result.Ok(Val.ValInt(2))
     call("List.head", [Val.ValList([Val.ValInt(1)])]) => Result.Ok(Val.ValSome(Val.ValInt(1)))
+    call("List.bogus", [Val.ValInt(1)]) => Result.Err("unknown list builtin: List.bogus")
 
 fn builtinListPrepend(args: List<Val>) -> Result<Val, String>
     ? "List.prepend(value, list) -> list with value at front."
@@ -28,6 +29,7 @@ fn builtinListPrepend(args: List<Val>) -> Result<Val, String>
 
 verify builtinListPrepend
     builtinListPrepend([Val.ValInt(1), Val.ValList([Val.ValInt(2)])]) => Result.Ok(Val.ValList([Val.ValInt(1), Val.ValInt(2)]))
+    builtinListPrepend([Val.ValInt(1)]) => Result.Err("expected 2 arguments")
 
 fn builtinListPrependInner(v: Val, lstV: Val) -> Result<Val, String>
     ? "Inner impl of List.prepend."
@@ -36,6 +38,7 @@ fn builtinListPrependInner(v: Val, lstV: Val) -> Result<Val, String>
 
 verify builtinListPrependInner
     builtinListPrependInner(Val.ValInt(0), Val.ValList([Val.ValInt(1)])) => Result.Ok(Val.ValList([Val.ValInt(0), Val.ValInt(1)]))
+    builtinListPrependInner(Val.ValInt(0), Val.ValInt(1)) => Result.Err("expected list argument")
 
 fn builtinListLen(args: List<Val>) -> Result<Val, String>
     ? "List.len(list) -> length as Int."
@@ -46,6 +49,7 @@ fn builtinListLen(args: List<Val>) -> Result<Val, String>
 verify builtinListLen
     builtinListLen([Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Result.Ok(Val.ValInt(2))
     builtinListLen([Val.ValList([])]) => Result.Ok(Val.ValInt(0))
+    builtinListLen([Val.ValInt(1)]) => Result.Err("expected list argument")
 
 fn builtinListReverse(args: List<Val>) -> Result<Val, String>
     ? "List.reverse(list) -> reversed list."
@@ -55,6 +59,7 @@ fn builtinListReverse(args: List<Val>) -> Result<Val, String>
 
 verify builtinListReverse
     builtinListReverse([Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Result.Ok(Val.ValList([Val.ValInt(2), Val.ValInt(1)]))
+    builtinListReverse([Val.ValInt(1)]) => Result.Err("expected list argument")
 
 fn builtinListConcat(args: List<Val>) -> Result<Val, String>
     ? "List.concat(a, b) -> concatenated list."
@@ -64,6 +69,7 @@ fn builtinListConcat(args: List<Val>) -> Result<Val, String>
 
 verify builtinListConcat
     builtinListConcat([Val.ValList([Val.ValInt(1)]), Val.ValList([Val.ValInt(2)])]) => Result.Ok(Val.ValList([Val.ValInt(1), Val.ValInt(2)]))
+    builtinListConcat([Val.ValInt(1)]) => Result.Err("expected 2 arguments")
 
 fn builtinListConcatInner(aV: Val, bV: Val) -> Result<Val, String>
     ? "Inner impl of List.concat."
@@ -73,6 +79,7 @@ fn builtinListConcatInner(aV: Val, bV: Val) -> Result<Val, String>
 
 verify builtinListConcatInner
     builtinListConcatInner(Val.ValList([Val.ValInt(1)]), Val.ValList([Val.ValInt(2)])) => Result.Ok(Val.ValList([Val.ValInt(1), Val.ValInt(2)]))
+    builtinListConcatInner(Val.ValInt(1), Val.ValList([Val.ValInt(2)])) => Result.Err("expected list argument")
 
 fn builtinListContains(args: List<Val>) -> Result<Val, String>
     ? "List.contains(list, value) -> Bool."
@@ -83,6 +90,7 @@ fn builtinListContains(args: List<Val>) -> Result<Val, String>
 verify builtinListContains
     builtinListContains([Val.ValList([Val.ValInt(1), Val.ValInt(2)]), Val.ValInt(2)]) => Result.Ok(Val.ValBool(true))
     builtinListContains([Val.ValList([Val.ValInt(1)]), Val.ValInt(3)]) => Result.Ok(Val.ValBool(false))
+    builtinListContains([Val.ValInt(1)]) => Result.Err("expected 2 arguments")
 
 fn builtinListContainsInner(lstV: Val, needle: Val) -> Result<Val, String>
     ? "Inner impl of List.contains."
@@ -91,6 +99,7 @@ fn builtinListContainsInner(lstV: Val, needle: Val) -> Result<Val, String>
 
 verify builtinListContainsInner
     builtinListContainsInner(Val.ValList([Val.ValInt(1)]), Val.ValInt(1)) => Result.Ok(Val.ValBool(true))
+    builtinListContainsInner(Val.ValInt(1), Val.ValInt(1)) => Result.Err("expected list argument")
 
 fn listContainsVal(items: List<Val>, needle: Val) -> Bool
     ? "Check if a value is in a list by repr comparison."
@@ -112,6 +121,7 @@ fn builtinListZip(args: List<Val>) -> Result<Val, String>
 
 verify builtinListZip
     builtinListZip([Val.ValList([Val.ValInt(1)]), Val.ValList([Val.ValInt(2)])]) => Result.Ok(Val.ValList([Val.ValTuple([Val.ValInt(1), Val.ValInt(2)])]))
+    builtinListZip([Val.ValInt(1)]) => Result.Err("expected 2 arguments")
 
 fn builtinListZipInner(aV: Val, bV: Val) -> Result<Val, String>
     ? "Inner impl of List.zip."
@@ -121,6 +131,7 @@ fn builtinListZipInner(aV: Val, bV: Val) -> Result<Val, String>
 
 verify builtinListZipInner
     builtinListZipInner(Val.ValList([Val.ValInt(1)]), Val.ValList([Val.ValStr("a")])) => Result.Ok(Val.ValList([Val.ValTuple([Val.ValInt(1), Val.ValStr("a")])]))
+    builtinListZipInner(Val.ValInt(1), Val.ValList([Val.ValStr("a")])) => Result.Err("expected list argument")
 
 fn zipLists(a: List<Val>, b: List<Val>) -> List<Val>
     ? "Zip two lists into list of ValTuple."
@@ -145,6 +156,7 @@ fn builtinListHead(args: List<Val>) -> Result<Val, String>
 verify builtinListHead
     builtinListHead([Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Result.Ok(Val.ValSome(Val.ValInt(1)))
     builtinListHead([Val.ValList([])]) => Result.Ok(Val.ValNone)
+    builtinListHead([Val.ValInt(1)]) => Result.Err("expected list argument")
 
 fn builtinListTail(args: List<Val>) -> Result<Val, String>
     ? "List.tail(list) -> Option of rest."
@@ -156,3 +168,4 @@ fn builtinListTail(args: List<Val>) -> Result<Val, String>
 
 verify builtinListTail
     builtinListTail([Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Result.Ok(Val.ValSome(Val.ValList([Val.ValInt(2)])))
+    builtinListTail([Val.ValInt(1)]) => Result.Err("expected list argument")

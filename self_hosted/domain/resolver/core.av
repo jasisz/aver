@@ -17,6 +17,13 @@ fn resolveFn(fd: FnDef) -> FnDef
     match paramResult
         (slotMap, nextSlot) -> resolveBody(fd, slotMap, nextSlot)
 
+verify resolveFns
+    resolveFns([], []) => []
+    List.len(resolveFns([FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)], [])) => 1
+
+verify resolveFn
+    resolveFn(FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)).name => "f"
+
 fn buildParamSlots(params: List<String>, slots: Map<String, Int>, next: Int) -> (Map<String, Int>, Int)
     ? "Assign slot indices 0..n-1 to parameters."
     match params
@@ -33,10 +40,16 @@ fn resolveBody(fd: FnDef, slots: Map<String, Int>, nextSlot: Int) -> FnDef
     match resolved
         (newBody, finalSlot, finalSlotMap) -> computeSlotCount(fd, newBody, finalSlot, finalSlotMap)
 
+verify resolveBody
+    resolveBody(FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false), Map.empty(), 0).body => []
+
 fn computeSlotCount(fd: FnDef, body: List<Stmt>, baseSlot: Int, slotMap: Map<String, Int>) -> FnDef
     ? "Compute slotCount as max slot index found in body + 1."
     maxFromBody = maxSlotInStmts(body, baseSlot - 1)
     FnDef(name = fd.name, params = fd.params, body = body, slotCount = maxFromBody + 1, slotMap = slotMap, fastPath = FnFastPath.FastNone, tailLoop = false)
+
+verify computeSlotCount
+    computeSlotCount(FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false), [Stmt.StmtExpr(Expr.ExprInt(1))], 0, Map.empty()).slotCount => 0
 
 fn maxSlotInStmts(stmts: List<Stmt>, acc: Int) -> Int
     ? "Find highest slot index in a list of statements."
@@ -44,12 +57,21 @@ fn maxSlotInStmts(stmts: List<Stmt>, acc: Int) -> Int
         [] -> acc
         [s, ..rest] -> maxSlotInStmts(rest, maxSlotInStmt(s, acc))
 
+verify maxSlotInStmts
+    maxSlotInStmts([], 0 - 1) => 0 - 1
+    maxSlotInStmts([Stmt.StmtExpr(Expr.ExprInt(1))], 0 - 1) => 0 - 1
+
 fn maxSlotInStmt(s: Stmt, acc: Int) -> Int
     ? "Find highest slot index in a statement."
     match s
         Stmt.StmtBindSlot(slot, expr) -> maxSlotInExpr(expr, maxInt(slot, acc))
         Stmt.StmtExpr(expr) -> maxSlotInExpr(expr, acc)
         Stmt.StmtBind(_, expr) -> maxSlotInExpr(expr, acc)
+
+verify maxSlotInStmt
+    maxSlotInStmt(Stmt.StmtExpr(Expr.ExprInt(1)), 0 - 1) => 0 - 1
+    maxSlotInStmt(Stmt.StmtBindSlot(3, Expr.ExprInt(1)), 0 - 1) => 3
+    maxSlotInStmt(Stmt.StmtBind("x", Expr.ExprInt(1)), 0 - 1) => 0 - 1
 
 fn maxSlotInExpr(expr: Expr, acc: Int) -> Int
     ? "Find highest slot index in an expression tree."
@@ -85,11 +107,52 @@ fn maxSlotInExpr(expr: Expr, acc: Int) -> Int
         Expr.ExprFieldAccess(obj, _) -> maxSlotInExpr(obj, acc)
         _ -> acc
 
+verify maxSlotInExpr
+    maxSlotInExpr(Expr.ExprInt(42), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprSlot(5), 0 - 1) => 5
+    maxSlotInExpr(Expr.ExprSlot(2), 7) => 7
+    maxSlotInExpr(Expr.ExprFloat(1.0), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprStr("hi"), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprBool(true), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprVar("x"), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprAdd(Expr.ExprInt(1), Expr.ExprInt(2)), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprSub(Expr.ExprInt(1), Expr.ExprInt(2)), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprMul(Expr.ExprInt(1), Expr.ExprInt(2)), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprDiv(Expr.ExprInt(1), Expr.ExprInt(2)), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprEq(Expr.ExprInt(1), Expr.ExprInt(2)), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprNeq(Expr.ExprInt(1), Expr.ExprInt(2)), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprLt(Expr.ExprInt(1), Expr.ExprInt(2)), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprGt(Expr.ExprInt(1), Expr.ExprInt(2)), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprLte(Expr.ExprInt(1), Expr.ExprInt(2)), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprGte(Expr.ExprInt(1), Expr.ExprInt(2)), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprCall("f", []), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprCallDirect(0, []), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprCallBuiltin("Map.get", []), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprCallBuiltinId(0, []), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprMatch(Expr.ExprInt(1), []), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprPropagate(Expr.ExprInt(1)), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprConcat([]), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprTuple([]), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprList([]), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprRecord("Foo", []), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprFieldAccess(Expr.ExprInt(1), "x"), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprBoolBranch(Expr.ExprBool(true), Expr.ExprInt(1), Expr.ExprInt(2)), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprBinopSlotInt(BinOp.OpAdd, 3, 1), 0 - 1) => 3
+    maxSlotInExpr(Expr.ExprBinopSlots(BinOp.OpAdd, 2, 4), 0 - 1) => 4
+    maxSlotInExpr(Expr.ExprCmpSlotInt(CmpOp.CmpEq, 3, 1), 0 - 1) => 3
+    maxSlotInExpr(Expr.ExprCmpSlots(CmpOp.CmpEq, 2, 4), 0 - 1) => 4
+    maxSlotInExpr(Expr.ExprVectorGetOrInt(Expr.ExprInt(1), Expr.ExprInt(2), 0), 0 - 1) => 0 - 1
+    maxSlotInExpr(Expr.ExprIntModOrInt(Expr.ExprInt(1), Expr.ExprInt(2), 0), 0 - 1) => 0 - 1
+
 fn maxSlotInExprs(exprs: List<Expr>, acc: Int) -> Int
     ? "Find highest slot index in a list of expressions."
     match exprs
         [] -> acc
         [e, ..rest] -> maxSlotInExprs(rest, maxSlotInExpr(e, acc))
+
+verify maxSlotInExprs
+    maxSlotInExprs([], 0 - 1) => 0 - 1
+    maxSlotInExprs([Expr.ExprSlot(3), Expr.ExprSlot(1)], 0 - 1) => 3
 
 fn maxSlotInFields(fields: List<(String, Expr)>, acc: Int) -> Int
     ? "Find highest slot index in record fields."
@@ -98,11 +161,19 @@ fn maxSlotInFields(fields: List<(String, Expr)>, acc: Int) -> Int
         [pair, ..rest] -> match pair
             (_, expr) -> maxSlotInFields(rest, maxSlotInExpr(expr, acc))
 
+verify maxSlotInFields
+    maxSlotInFields([], 0 - 1) => 0 - 1
+    maxSlotInFields([("x", Expr.ExprSlot(2))], 0 - 1) => 2
+
 fn maxSlotInArms(arms: List<MatchArm>, acc: Int) -> Int
     ? "Find highest slot index in match arms."
     match arms
         [] -> acc
         [arm, ..rest] -> maxSlotInArms(rest, maxSlotInExpr(arm.body, acc))
+
+verify maxSlotInArms
+    maxSlotInArms([], 0 - 1) => 0 - 1
+    maxSlotInArms([MatchArm(pattern = Pattern.PatWild, body = Expr.ExprSlot(3), bindingSlots = Map.empty())], 0 - 1) => 3
 
 fn maxInt(a: Int, b: Int) -> Int
     ? "Return the larger of two integers."
@@ -110,11 +181,20 @@ fn maxInt(a: Int, b: Int) -> Int
         true -> a
         false -> b
 
+verify maxInt
+    maxInt(3, 5) => 5
+    maxInt(7, 2) => 7
+    maxInt(4, 4) => 4
+
 fn resolveStmts(stmts: List<Stmt>, slots: Map<String, Int>, next: Int, acc: List<Stmt>) -> (List<Stmt>, Int, Map<String, Int>)
     ? "Resolve statements, threading slot assignments."
     match stmts
         [] -> (List.reverse(acc), next, slots)
         [s, ..rest] -> resolveOneStmt(s, rest, slots, next, acc)
+
+verify resolveStmts
+    resolveStmts([], Map.empty(), 0, []) => ([], 0, Map.empty())
+    resolveStmts([Stmt.StmtExpr(Expr.ExprInt(1))], Map.empty(), 0, []) => ([Stmt.StmtExpr(Expr.ExprInt(1))], 0, Map.empty())
 
 fn resolveOneStmt(s: Stmt, rest: List<Stmt>, slots: Map<String, Int>, next: Int, acc: List<Stmt>) -> (List<Stmt>, Int, Map<String, Int>)
     ? "Resolve a single statement and continue."
@@ -123,20 +203,34 @@ fn resolveOneStmt(s: Stmt, rest: List<Stmt>, slots: Map<String, Int>, next: Int,
         Stmt.StmtExpr(expr) -> resolveStmtExpr(expr, rest, slots, next, acc)
         Stmt.StmtBindSlot(_, _) -> resolveStmts(rest, slots, next, List.prepend(s, acc))
 
+verify resolveOneStmt
+    resolveOneStmt(Stmt.StmtExpr(Expr.ExprInt(1)), [], Map.empty(), 0, []) => ([Stmt.StmtExpr(Expr.ExprInt(1))], 0, Map.empty())
+    resolveOneStmt(Stmt.StmtBind("x", Expr.ExprInt(1)), [], Map.empty(), 0, []) => ([Stmt.StmtBindSlot(0, Expr.ExprInt(1))], 1, Map.set(Map.empty(), "x", 0))
+    resolveOneStmt(Stmt.StmtBindSlot(0, Expr.ExprInt(1)), [], Map.empty(), 0, []) => ([Stmt.StmtBindSlot(0, Expr.ExprInt(1))], 0, Map.empty())
+
 fn resolveStmtExpr(expr: Expr, rest: List<Stmt>, slots: Map<String, Int>, next: Int, acc: List<Stmt>) -> (List<Stmt>, Int, Map<String, Int>)
     ? "Resolve an expression statement, collecting pattern slots."
     match resolveExpr(expr, slots)
         (re, newSlots) -> resolveStmts(rest, newSlots, maxInt(next, mapMaxVal(newSlots) + 1), List.prepend(Stmt.StmtExpr(re), acc))
+
+verify resolveStmtExpr
+    resolveStmtExpr(Expr.ExprInt(1), [], Map.empty(), 0, []) => ([Stmt.StmtExpr(Expr.ExprInt(1))], 0, Map.empty())
 
 fn resolveStmtBind(name: String, expr: Expr, rest: List<Stmt>, slots: Map<String, Int>, next: Int, acc: List<Stmt>) -> (List<Stmt>, Int, Map<String, Int>)
     ? "Resolve a binding: assign a new slot, replace with StmtBindSlot."
     match resolveExpr(expr, slots)
         (newExpr, exprSlots) -> resolveStmtBindFinish(name, newExpr, rest, exprSlots, next, acc)
 
+verify resolveStmtBind
+    resolveStmtBind("x", Expr.ExprInt(1), [], Map.empty(), 0, []) => ([Stmt.StmtBindSlot(0, Expr.ExprInt(1))], 1, Map.set(Map.empty(), "x", 0))
+
 fn resolveStmtBindFinish(name: String, newExpr: Expr, rest: List<Stmt>, slots: Map<String, Int>, next: Int, acc: List<Stmt>) -> (List<Stmt>, Int, Map<String, Int>)
     ? "Finish resolving a binding after expr is resolved."
     newSlots = Map.set(slots, name, next)
     resolveStmts(rest, newSlots, next + 1, List.prepend(Stmt.StmtBindSlot(next, newExpr), acc))
+
+verify resolveStmtBindFinish
+    resolveStmtBindFinish("x", Expr.ExprInt(1), [], Map.empty(), 0, []) => ([Stmt.StmtBindSlot(0, Expr.ExprInt(1))], 1, Map.set(Map.empty(), "x", 0))
 
 fn resolveExpr(expr: Expr, slots: Map<String, Int>) -> (Expr, Map<String, Int>)
     ? "Resolve an expression. Returns (resolved expr, slots with any new pattern bindings)."
@@ -176,6 +270,43 @@ fn resolveExpr(expr: Expr, slots: Map<String, Int>) -> (Expr, Map<String, Int>)
         Expr.ExprRecord(name, fields) -> resolveRecordExpr(name, fields, slots)
         Expr.ExprFieldAccess(obj, field) -> resolveFieldExpr(obj, field, slots)
 
+verify resolveExpr
+    resolveExpr(Expr.ExprInt(42), Map.empty()) => (Expr.ExprInt(42), Map.empty())
+    resolveExpr(Expr.ExprStr("hi"), Map.empty()) => (Expr.ExprStr("hi"), Map.empty())
+    resolveExpr(Expr.ExprBool(true), Map.empty()) => (Expr.ExprBool(true), Map.empty())
+    resolveExpr(Expr.ExprFloat(1.0), Map.empty()) => (Expr.ExprFloat(1.0), Map.empty())
+    resolveExpr(Expr.ExprVar("x"), Map.set(Map.empty(), "x", 0)) => (Expr.ExprSlot(0), Map.set(Map.empty(), "x", 0))
+    resolveExpr(Expr.ExprVar("y"), Map.empty()) => (Expr.ExprVar("y"), Map.empty())
+    resolveExpr(Expr.ExprSlot(3), Map.empty()) => (Expr.ExprSlot(3), Map.empty())
+    resolveExpr(Expr.ExprBinopSlotInt(BinOp.OpAdd, 0, 1), Map.empty()) => (Expr.ExprBinopSlotInt(BinOp.OpAdd, 0, 1), Map.empty())
+    resolveExpr(Expr.ExprBinopSlots(BinOp.OpAdd, 0, 1), Map.empty()) => (Expr.ExprBinopSlots(BinOp.OpAdd, 0, 1), Map.empty())
+    resolveExpr(Expr.ExprCmpSlotInt(CmpOp.CmpEq, 0, 1), Map.empty()) => (Expr.ExprCmpSlotInt(CmpOp.CmpEq, 0, 1), Map.empty())
+    resolveExpr(Expr.ExprCmpSlots(CmpOp.CmpEq, 0, 1), Map.empty()) => (Expr.ExprCmpSlots(CmpOp.CmpEq, 0, 1), Map.empty())
+    resolveExpr(Expr.ExprAdd(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => (Expr.ExprAdd(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty())
+    resolveExpr(Expr.ExprSub(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => (Expr.ExprSub(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty())
+    resolveExpr(Expr.ExprMul(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => (Expr.ExprMul(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty())
+    resolveExpr(Expr.ExprDiv(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => (Expr.ExprDiv(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty())
+    resolveExpr(Expr.ExprEq(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => (Expr.ExprEq(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty())
+    resolveExpr(Expr.ExprNeq(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => (Expr.ExprNeq(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty())
+    resolveExpr(Expr.ExprLt(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => (Expr.ExprLt(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty())
+    resolveExpr(Expr.ExprGt(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => (Expr.ExprGt(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty())
+    resolveExpr(Expr.ExprLte(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => (Expr.ExprLte(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty())
+    resolveExpr(Expr.ExprGte(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => (Expr.ExprGte(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty())
+    resolveExpr(Expr.ExprCall("f", []), Map.empty()) => (Expr.ExprCall("f", []), Map.empty())
+    resolveExpr(Expr.ExprCallDirect(0, []), Map.empty()) => (Expr.ExprCallDirect(0, []), Map.empty())
+    resolveExpr(Expr.ExprCallBuiltin("Map.get", []), Map.empty()) => (Expr.ExprCallBuiltin("Map.get", []), Map.empty())
+    resolveExpr(Expr.ExprCallBuiltinId(0, []), Map.empty()) => (Expr.ExprCallBuiltinId(0, []), Map.empty())
+    resolveExpr(Expr.ExprMatch(Expr.ExprInt(1), []), Map.empty()) => (Expr.ExprMatch(Expr.ExprInt(1), []), Map.empty())
+    resolveExpr(Expr.ExprPropagate(Expr.ExprInt(1)), Map.empty()) => (Expr.ExprPropagate(Expr.ExprInt(1)), Map.empty())
+    resolveExpr(Expr.ExprConcat([]), Map.empty()) => (Expr.ExprConcat([]), Map.empty())
+    resolveExpr(Expr.ExprTuple([]), Map.empty()) => (Expr.ExprTuple([]), Map.empty())
+    resolveExpr(Expr.ExprList([]), Map.empty()) => (Expr.ExprList([]), Map.empty())
+    resolveExpr(Expr.ExprRecord("Foo", []), Map.empty()) => (Expr.ExprRecord("Foo", []), Map.empty())
+    resolveExpr(Expr.ExprFieldAccess(Expr.ExprInt(1), "x"), Map.empty()) => (Expr.ExprFieldAccess(Expr.ExprInt(1), "x"), Map.empty())
+    resolveExpr(Expr.ExprBoolBranch(Expr.ExprBool(true), Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => (Expr.ExprBoolBranch(Expr.ExprBool(true), Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty())
+    resolveExpr(Expr.ExprVectorGetOrInt(Expr.ExprInt(1), Expr.ExprInt(2), 0), Map.empty()) => (Expr.ExprVectorGetOrInt(Expr.ExprInt(1), Expr.ExprInt(2), 0), Map.empty())
+    resolveExpr(Expr.ExprIntModOrInt(Expr.ExprInt(1), Expr.ExprInt(2), 0), Map.empty()) => (Expr.ExprIntModOrInt(Expr.ExprInt(1), Expr.ExprInt(2), 0), Map.empty())
+
 fn resolveBinExpr(a: Expr, b: Expr, slots: Map<String, Int>, op: String) -> (Expr, Map<String, Int>)
     ? "Resolve binary expression and rebuild."
     ra = resolveExprSimple(a, slots)
@@ -193,14 +324,26 @@ fn resolveBinExpr(a: Expr, b: Expr, slots: Map<String, Int>, op: String) -> (Exp
         "gte" -> (Expr.ExprGte(ra, rb), slots)
         _ -> (Expr.ExprAdd(ra, rb), slots)
 
+verify resolveBinExpr
+    resolveBinExpr(Expr.ExprInt(1), Expr.ExprInt(2), Map.empty(), "add") => (Expr.ExprAdd(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty())
+    resolveBinExpr(Expr.ExprInt(3), Expr.ExprInt(4), Map.empty(), "sub") => (Expr.ExprSub(Expr.ExprInt(3), Expr.ExprInt(4)), Map.empty())
+
 fn resolveExprSimple(expr: Expr, slots: Map<String, Int>) -> Expr
     ? "Resolve expression, discarding slots update (for non-match contexts)."
     match resolveExpr(expr, slots)
         (e, _) -> e
 
+verify resolveExprSimple
+    resolveExprSimple(Expr.ExprInt(1), Map.empty()) => Expr.ExprInt(1)
+    resolveExprSimple(Expr.ExprVar("x"), Map.set(Map.empty(), "x", 0)) => Expr.ExprSlot(0)
+
 fn resolveCallExpr(name: String, args: List<Expr>, slots: Map<String, Int>) -> (Expr, Map<String, Int>)
     ? "Resolve function call arguments."
     (Expr.ExprCall(name, resolveExprs(args, slots, [])), slots)
+
+verify resolveCallExpr
+    resolveCallExpr("foo", [], Map.empty()) => (Expr.ExprCall("foo", []), Map.empty())
+    resolveCallExpr("bar", [Expr.ExprVar("x")], Map.set(Map.empty(), "x", 0)) => (Expr.ExprCall("bar", [Expr.ExprSlot(0)]), Map.set(Map.empty(), "x", 0))
 
 fn resolveMatchExpr(subj: Expr, arms: List<MatchArm>, slots: Map<String, Int>) -> (Expr, Map<String, Int>)
     ? "Resolve match expression, collecting pattern slots."
@@ -209,29 +352,50 @@ fn resolveMatchExpr(subj: Expr, arms: List<MatchArm>, slots: Map<String, Int>) -
     match armsResult
         (resolvedArms, mergedSlots) -> (Expr.ExprMatch(rs, resolvedArms), mergedSlots)
 
+verify resolveMatchExpr
+    resolveMatchExpr(Expr.ExprInt(1), [], Map.empty()) => (Expr.ExprMatch(Expr.ExprInt(1), []), Map.empty())
+
 fn resolvePropExpr(inner: Expr, slots: Map<String, Int>) -> (Expr, Map<String, Int>)
     ? "Resolve ? propagation."
     (Expr.ExprPropagate(resolveExprSimple(inner, slots)), slots)
+
+verify resolvePropExpr
+    resolvePropExpr(Expr.ExprInt(1), Map.empty()) => (Expr.ExprPropagate(Expr.ExprInt(1)), Map.empty())
 
 fn resolveConcatExpr(parts: List<Expr>, slots: Map<String, Int>) -> (Expr, Map<String, Int>)
     ? "Resolve string concatenation parts."
     (Expr.ExprConcat(resolveExprs(parts, slots, [])), slots)
 
+verify resolveConcatExpr
+    resolveConcatExpr([], Map.empty()) => (Expr.ExprConcat([]), Map.empty())
+
 fn resolveTupleExpr(exprs: List<Expr>, slots: Map<String, Int>) -> (Expr, Map<String, Int>)
     ? "Resolve tuple expressions."
     (Expr.ExprTuple(resolveExprs(exprs, slots, [])), slots)
+
+verify resolveTupleExpr
+    resolveTupleExpr([], Map.empty()) => (Expr.ExprTuple([]), Map.empty())
 
 fn resolveListExpr(exprs: List<Expr>, slots: Map<String, Int>) -> (Expr, Map<String, Int>)
     ? "Resolve list expressions."
     (Expr.ExprList(resolveExprs(exprs, slots, [])), slots)
 
+verify resolveListExpr
+    resolveListExpr([], Map.empty()) => (Expr.ExprList([]), Map.empty())
+
 fn resolveRecordExpr(name: String, fields: List<(String, Expr)>, slots: Map<String, Int>) -> (Expr, Map<String, Int>)
     ? "Resolve record expressions."
     (Expr.ExprRecord(name, resolveFields(fields, slots, [])), slots)
 
+verify resolveRecordExpr
+    resolveRecordExpr("Foo", [], Map.empty()) => (Expr.ExprRecord("Foo", []), Map.empty())
+
 fn resolveFieldExpr(obj: Expr, field: String, slots: Map<String, Int>) -> (Expr, Map<String, Int>)
     ? "Resolve field access."
     (Expr.ExprFieldAccess(resolveExprSimple(obj, slots), field), slots)
+
+verify resolveFieldExpr
+    resolveFieldExpr(Expr.ExprInt(1), "x", Map.empty()) => (Expr.ExprFieldAccess(Expr.ExprInt(1), "x"), Map.empty())
 
 fn resolveVar(name: String, slots: Map<String, Int>) -> Expr
     ? "Resolve a variable: local vars become ExprSlot, others stay ExprVar."
@@ -250,6 +414,10 @@ fn resolveExprs(exprs: List<Expr>, slots: Map<String, Int>, acc: List<Expr>) -> 
         [] -> List.reverse(acc)
         [e, ..rest] -> resolveExprs(rest, slots, List.prepend(resolveExprSimple(e, slots), acc))
 
+verify resolveExprs
+    resolveExprs([], Map.empty(), []) => []
+    resolveExprs([Expr.ExprInt(1)], Map.empty(), []) => [Expr.ExprInt(1)]
+
 fn resolveFields(fields: List<(String, Expr)>, slots: Map<String, Int>, acc: List<(String, Expr)>) -> List<(String, Expr)>
     ? "Resolve record field expressions."
     match fields
@@ -257,16 +425,27 @@ fn resolveFields(fields: List<(String, Expr)>, slots: Map<String, Int>, acc: Lis
         [pair, ..rest] -> match pair
             (name, expr) -> resolveFields(rest, slots, List.prepend((name, resolveExprSimple(expr, slots)), acc))
 
+verify resolveFields
+    resolveFields([], Map.empty(), []) => []
+    resolveFields([("x", Expr.ExprInt(1))], Map.empty(), []) => [("x", Expr.ExprInt(1))]
+
 fn resolveArms(arms: List<MatchArm>, slots: Map<String, Int>, acc: List<MatchArm>) -> (List<MatchArm>, Map<String, Int>)
     ? "Resolve match arms, collecting all pattern slots."
     match arms
         [] -> (List.reverse(acc), slots)
         [arm, ..rest] -> resolveOneArm(arm, rest, slots, acc)
 
+verify resolveArms
+    resolveArms([], Map.empty(), []) => ([], Map.empty())
+    resolveArms([MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = Map.empty())], Map.empty(), []) => ([MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = Map.empty())], Map.empty())
+
 fn resolveOneArm(arm: MatchArm, rest: List<MatchArm>, slots: Map<String, Int>, acc: List<MatchArm>) -> (List<MatchArm>, Map<String, Int>)
     ? "Resolve one match arm and continue."
     match resolveArm(arm, slots)
         (resolvedArm, mergedSlots) -> resolveArms(rest, mergedSlots, List.prepend(resolvedArm, acc))
+
+verify resolveOneArm
+    resolveOneArm(MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = Map.empty()), [], Map.empty(), []) => ([MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = Map.empty())], Map.empty())
 
 fn resolveArm(arm: MatchArm, slots: Map<String, Int>) -> (MatchArm, Map<String, Int>)
     ? "Resolve a match arm: extend slots with pattern bindings, then resolve body."
@@ -274,16 +453,26 @@ fn resolveArm(arm: MatchArm, slots: Map<String, Int>) -> (MatchArm, Map<String, 
     match armSlotResult
         (newSlots, _) -> resolveArmBody(arm, newSlots, patternBindingSlots(arm.pattern, slots))
 
+verify resolveArm
+    resolveArm(MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = Map.empty()), Map.empty()) => (MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = Map.empty()), Map.empty())
+
 fn resolveArmBody(arm: MatchArm, newSlots: Map<String, Int>, bindingSlots: Map<String, Int>) -> (MatchArm, Map<String, Int>)
     ? "Resolve arm body with extended slots."
     match resolveExpr(arm.body, newSlots)
         (re, finalSlots) -> (MatchArm(pattern = arm.pattern, body = re, bindingSlots = bindingSlots), finalSlots)
+
+verify resolveArmBody
+    resolveArmBody(MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = Map.empty()), Map.empty(), Map.empty()) => (MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = Map.empty()), Map.empty())
 
 fn patternBindingSlots(pat: Pattern, slots: Map<String, Int>) -> Map<String, Int>
     ? "Compute only the slots introduced by one pattern, using the same numbering as addPatternSlots."
     nextSlot = mapMaxVal(slots) + 1
     match patternBindingSlotsInner(pat, Map.empty(), nextSlot)
         (bindingSlots, _) -> bindingSlots
+
+verify patternBindingSlots
+    patternBindingSlots(Pattern.PatWild, Map.empty()) => Map.empty()
+    patternBindingSlots(Pattern.PatVar("x"), Map.empty()) => Map.set(Map.empty(), "x", 0)
 
 fn patternBindingSlotsInner(pat: Pattern, bindingSlots: Map<String, Int>, next: Int) -> (Map<String, Int>, Int)
     ? "Assign slots to pattern binders without carrying the outer slot map."
@@ -295,16 +484,31 @@ fn patternBindingSlotsInner(pat: Pattern, bindingSlots: Map<String, Int>, next: 
         Pattern.PatTuple(pats) -> patternBindingSlotsTuple(pats, bindingSlots, next)
         _ -> (bindingSlots, next)
 
+verify patternBindingSlotsInner
+    patternBindingSlotsInner(Pattern.PatWild, Map.empty(), 0) => (Map.empty(), 0)
+    patternBindingSlotsInner(Pattern.PatVar("x"), Map.empty(), 5) => (Map.set(Map.empty(), "x", 5), 6)
+    patternBindingSlotsInner(Pattern.PatCons("h", "t"), Map.empty(), 0) => (Map.set(Map.set(Map.empty(), "h", 0), "t", 1), 2)
+    patternBindingSlotsInner(Pattern.PatConstructor("Result.Ok", ["v"]), Map.empty(), 0) => (Map.set(Map.empty(), "v", 0), 1)
+    patternBindingSlotsInner(Pattern.PatConstructorId(1, "Result.Ok", ["v"]), Map.empty(), 0) => (Map.set(Map.empty(), "v", 0), 1)
+    patternBindingSlotsInner(Pattern.PatTuple([Pattern.PatVar("a")]), Map.empty(), 0) => (Map.set(Map.empty(), "a", 0), 1)
+
 fn patternBindingSlotsCons(h: String, t: String, bindingSlots: Map<String, Int>, next: Int) -> (Map<String, Int>, Int)
     ? "Assign slots for cons-pattern binders."
     bindingSlots2 = Map.set(bindingSlots, h, next)
     (Map.set(bindingSlots2, t, next + 1), next + 2)
+
+verify patternBindingSlotsCons
+    patternBindingSlotsCons("h", "t", Map.empty(), 0) => (Map.set(Map.set(Map.empty(), "h", 0), "t", 1), 2)
 
 fn patternBindingSlotsConstructor(bindings: List<String>, bindingSlots: Map<String, Int>, next: Int) -> (Map<String, Int>, Int)
     ? "Assign slots for constructor-pattern binders."
     match bindings
         [] -> (bindingSlots, next)
         [name, ..rest] -> patternBindingSlotsConstructor(rest, Map.set(bindingSlots, name, next), next + 1)
+
+verify patternBindingSlotsConstructor
+    patternBindingSlotsConstructor([], Map.empty(), 0) => (Map.empty(), 0)
+    patternBindingSlotsConstructor(["a"], Map.empty(), 3) => (Map.set(Map.empty(), "a", 3), 4)
 
 fn patternBindingSlotsTuple(pats: List<Pattern>, bindingSlots: Map<String, Int>, next: Int) -> (Map<String, Int>, Int)
     ? "Assign slots for tuple sub-patterns."
@@ -313,15 +517,27 @@ fn patternBindingSlotsTuple(pats: List<Pattern>, bindingSlots: Map<String, Int>,
         [p, ..rest] -> match patternBindingSlotsInner(p, bindingSlots, next)
             (newBindingSlots, newNext) -> patternBindingSlotsTuple(rest, newBindingSlots, newNext)
 
+verify patternBindingSlotsTuple
+    patternBindingSlotsTuple([], Map.empty(), 0) => (Map.empty(), 0)
+    patternBindingSlotsTuple([Pattern.PatVar("a")], Map.empty(), 0) => (Map.set(Map.empty(), "a", 0), 1)
+
 fn addPatternSlots(pat: Pattern, slots: Map<String, Int>) -> (Map<String, Int>, Int)
     ? "Find the next available slot and add pattern bindings."
     nextSlot = mapMaxVal(slots) + 1
     addPatternSlotsInner(pat, slots, nextSlot)
 
+verify addPatternSlots
+    addPatternSlots(Pattern.PatWild, Map.empty()) => (Map.empty(), 0)
+    addPatternSlots(Pattern.PatVar("x"), Map.empty()) => (Map.set(Map.empty(), "x", 0), 1)
+
 fn mapMaxVal(m: Map<String, Int>) -> Int
     ? "Get maximum value in a map, or -1 if empty."
     vals = Map.values(m)
     maxInList(vals, 0 - 1)
+
+verify mapMaxVal
+    mapMaxVal(Map.empty()) => 0 - 1
+    mapMaxVal(Map.set(Map.empty(), "a", 3)) => 3
 
 fn maxInList(vals: List<Int>, acc: Int) -> Int
     ? "Find maximum value in a list."
@@ -335,6 +551,15 @@ verify maxInList
     maxInList([], 0 - 1) => 0 - 1
     maxInList([0, 2, 1], 0 - 1) => 2
     maxInList([5], 0 - 1) => 5
+
+verify addPatternSlotsInner
+    addPatternSlotsInner(Pattern.PatWild, Map.empty(), 0) => (Map.empty(), 0)
+    addPatternSlotsInner(Pattern.PatVar("x"), Map.empty(), 2) => (Map.set(Map.empty(), "x", 2), 3)
+    addPatternSlotsInner(Pattern.PatInt(5), Map.empty(), 0) => (Map.empty(), 0)
+    addPatternSlotsInner(Pattern.PatCons("h", "t"), Map.empty(), 0) => (Map.set(Map.set(Map.empty(), "h", 0), "t", 1), 2)
+    addPatternSlotsInner(Pattern.PatConstructor("Result.Ok", ["v"]), Map.empty(), 0) => (Map.set(Map.empty(), "v", 0), 1)
+    addPatternSlotsInner(Pattern.PatConstructorId(1, "Result.Ok", ["v"]), Map.empty(), 0) => (Map.set(Map.empty(), "v", 0), 1)
+    addPatternSlotsInner(Pattern.PatTuple([Pattern.PatVar("a")]), Map.empty(), 0) => (Map.set(Map.empty(), "a", 0), 1)
 
 fn addPatternSlotsInner(pat: Pattern, slots: Map<String, Int>, next: Int) -> (Map<String, Int>, Int)
     ? "Add slots for pattern bindings."
@@ -351,11 +576,18 @@ fn addConsSlots(h: String, t: String, slots: Map<String, Int>, next: Int) -> (Ma
     slots2 = Map.set(slots, h, next)
     (Map.set(slots2, t, next + 1), next + 2)
 
+verify addConsSlots
+    addConsSlots("h", "t", Map.empty(), 0) => (Map.set(Map.set(Map.empty(), "h", 0), "t", 1), 2)
+
 fn addConstructorSlots(bindings: List<String>, slots: Map<String, Int>, next: Int) -> (Map<String, Int>, Int)
     ? "Add slots for constructor pattern bindings."
     match bindings
         [] -> (slots, next)
         [name, ..rest] -> addConstructorSlots(rest, Map.set(slots, name, next), next + 1)
+
+verify addConstructorSlots
+    addConstructorSlots([], Map.empty(), 0) => (Map.empty(), 0)
+    addConstructorSlots(["a", "b"], Map.empty(), 0) => (Map.set(Map.set(Map.empty(), "a", 0), "b", 1), 2)
 
 fn addTuplePatternSlots(pats: List<Pattern>, slots: Map<String, Int>, next: Int) -> (Map<String, Int>, Int)
     ? "Add slots for tuple sub-patterns."
@@ -363,3 +595,7 @@ fn addTuplePatternSlots(pats: List<Pattern>, slots: Map<String, Int>, next: Int)
         [] -> (slots, next)
         [p, ..rest] -> match addPatternSlotsInner(p, slots, next)
             (newSlots, newNext) -> addTuplePatternSlots(rest, newSlots, newNext)
+
+verify addTuplePatternSlots
+    addTuplePatternSlots([], Map.empty(), 0) => (Map.empty(), 0)
+    addTuplePatternSlots([Pattern.PatVar("a")], Map.empty(), 0) => (Map.set(Map.empty(), "a", 0), 1)
