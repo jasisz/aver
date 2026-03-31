@@ -689,70 +689,8 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------------
-    // B2: String concat in TailCall argument
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn b2_string_concat_in_tailcall_warns() {
-        // fn build(acc: String, n: Int) -> String
-        //   ...
-        //   TailCall("build", [acc + "x", n - 1])
-        let tailcall = Expr::TailCall(Box::new((
-            "build".to_string(),
-            vec![
-                spanned(binop(
-                    BinOp::Add,
-                    ident("acc"),
-                    Expr::Literal(Literal::Str("x".to_string())),
-                )),
-                spanned(binop(BinOp::Sub, ident("n"), int(1))),
-            ],
-        )));
-        let fd = make_fn(
-            "build",
-            vec![("acc", "String"), ("n", "Int")],
-            "String",
-            vec![Stmt::Expr(spanned(tailcall))],
-        );
-        let items = vec![TopLevel::FnDef(fd)];
-        let warnings = collect_perf_warnings(&items);
-        assert!(
-            warnings
-                .iter()
-                .any(|w| w.message.contains("string concatenation with `acc`")),
-            "expected string concat warning, got {:?}",
-            warnings
-        );
-    }
-
-    #[test]
-    fn b2_non_string_param_no_warning() {
-        // fn count(n: Int, m: Int) -> Int
-        //   TailCall("count", [n + 1, m - 1])
-        let tailcall = Expr::TailCall(Box::new((
-            "count".to_string(),
-            vec![
-                spanned(binop(BinOp::Add, ident("n"), int(1))),
-                spanned(binop(BinOp::Sub, ident("m"), int(1))),
-            ],
-        )));
-        let fd = make_fn(
-            "count",
-            vec![("n", "Int"), ("m", "Int")],
-            "Int",
-            vec![Stmt::Expr(spanned(tailcall))],
-        );
-        let items = vec![TopLevel::FnDef(fd)];
-        let warnings = collect_perf_warnings(&items);
-        assert!(
-            !warnings
-                .iter()
-                .any(|w| w.message.contains("string concatenation")),
-            "expected no string concat warning, got {:?}",
-            warnings
-        );
-    }
+    // B2: String concat check was removed — string concat in tail-call args
+    // is O(1) amortized in all backends (see comment in collect_perf_warnings).
 
     // -----------------------------------------------------------------------
     // B3: Nested match x == literal
