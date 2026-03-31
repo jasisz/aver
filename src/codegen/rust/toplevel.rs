@@ -1829,13 +1829,35 @@ fn emit_tco_expr(
                 .map(|arg| rewrite_expr_with_hoists(&arg.node, hoisted_exprs))
                 .collect::<Vec<_>>();
             let hoisted_names = hoisted_exprs.values().cloned().collect::<HashSet<_>>();
-            let arg_ctxs = compute_args_used_after_full(
+            let mut arg_ctxs = compute_args_used_after_full(
                 &rewritten_args,
                 &hoisted_names,
                 &ectx.local_types,
                 &ectx.rc_wrapped,
                 &ectx.borrowed_params,
             );
+            // In a TCO loop, passthrough (non-rebound) params are implicitly
+            // live across iterations. Mark non-Copy passthrough params as
+            // used_after so that arg expressions clone them instead of moving.
+            let passthrough_param_names: Vec<String> = passthrough_indices
+                .iter()
+                .filter_map(|&i| {
+                    let (name, type_ann) = &params[i];
+                    let ty = crate::types::parse_type_str(type_ann);
+                    if !is_copy_type(&ty) {
+                        Some(aver_name_to_rust(name))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if !passthrough_param_names.is_empty() {
+                for ac in &mut arg_ctxs {
+                    for pn in &passthrough_param_names {
+                        ac.used_after.insert(pn.clone());
+                    }
+                }
+            }
             let arg_strs: Vec<String> = rewritten_args
                 .iter()
                 .zip(arg_ctxs.iter())
