@@ -1,3 +1,11 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/logo-light.svg">
+    <img alt="aver" src="docs/logo-dark.svg" width="360">
+  </picture>
+</p>
+
 # Aver
 
 Aver is a statically typed language designed for AI to write in and humans to review, with a fast interpreter for iteration, a bytecode VM for runtime execution, a Rust backend for deployment, Lean proof export for pure core logic, and Dafny verification for automated law checking via Z3.
