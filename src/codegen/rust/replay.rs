@@ -1122,6 +1122,15 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
         matches!(current_scope_mode(), Some(ScopeMode::Record { .. }))
     }
 
+    /// True when effects are being recorded or replayed — callers should
+    /// execute ?!/! elements sequentially so effect tracking works correctly.
+    pub fn is_effect_tracking_active() -> bool {
+        matches!(
+            current_scope_mode(),
+            Some(ScopeMode::Record { .. } | ScopeMode::Replay { .. })
+        )
+    }
+
     pub fn enter_effect_group() {
         SCOPE_STATE.with(|cell| {
             if let ScopeState::Active(scope) = &mut *cell.borrow_mut() {

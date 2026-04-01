@@ -285,10 +285,42 @@ fn emit_expr_with_options(
                 .map(|(e, item_ctx)| clone_arg(e, ctx, item_ctx))
                 .collect();
 
-            // Parallel execution via std::thread::scope — works for any
-            // arity and heterogeneous return types
+            // Runtime branch: if recording/replaying, execute sequentially
+            // with replay groups (thread_local state stays on one thread).
+            // Otherwise, use thread::scope for real parallelism.
             let n = parts.len();
-            let mut code = String::from("std::thread::scope(|_s| { ");
+            let mut code = String::from("if crate::aver_replay::is_effect_tracking_active() { ");
+
+            // Sequential path with replay groups
+            code.push_str("crate::aver_replay::enter_effect_group(); ");
+            if *unwrap {
+                for (i, part) in parts.iter().enumerate() {
+                    code.push_str(&format!("let _r{i} = {part}?; "));
+                }
+                code.push_str("crate::aver_replay::exit_effect_group(); (");
+                for i in 0..n {
+                    if i > 0 {
+                        code.push_str(", ");
+                    }
+                    code.push_str(&format!("_r{i}"));
+                }
+                code.push(')');
+            } else {
+                for (i, part) in parts.iter().enumerate() {
+                    code.push_str(&format!("let _r{i} = {part}; "));
+                }
+                code.push_str("crate::aver_replay::exit_effect_group(); (");
+                for i in 0..n {
+                    if i > 0 {
+                        code.push_str(", ");
+                    }
+                    code.push_str(&format!("_r{i}"));
+                }
+                code.push(')');
+            }
+
+            // Parallel path
+            code.push_str(" } else { std::thread::scope(|_s| { ");
             for (i, part) in parts.iter().enumerate() {
                 code.push_str(&format!("let _h{i} = _s.spawn(|| {part}); "));
             }
@@ -300,7 +332,7 @@ fn emit_expr_with_options(
                     }
                     code.push_str(&format!("_h{i}.join().unwrap()?"));
                 }
-                code.push_str(")) })?");
+                code.push_str(")) })? }");
             } else {
                 code.push('(');
                 for i in 0..n {
@@ -309,7 +341,7 @@ fn emit_expr_with_options(
                     }
                     code.push_str(&format!("_h{i}.join().unwrap()"));
                 }
-                code.push_str(") })");
+                code.push_str(") }) }");
             }
             code
         }
