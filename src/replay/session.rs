@@ -21,6 +21,9 @@ pub struct EffectRecord {
     pub caller_fn: String,
     /// Source line of the call expression that triggered this effect (0 = unknown).
     pub source_line: usize,
+    /// Effect tuple group: effects sharing a `group_id` are order-independent.
+    /// During replay, effects within a group are matched by type+args, not position.
+    pub group_id: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -60,6 +63,8 @@ struct SerdeEffectRecord {
     caller_fn: String,
     #[serde(default, skip_serializing_if = "is_zero")]
     source_line: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    group_id: Option<u32>,
 }
 
 fn is_zero(v: &usize) -> bool {
@@ -145,6 +150,7 @@ fn effect_record_to_serde(effect: &EffectRecord) -> SerdeEffectRecord {
         outcome: outcome_to_serde(&effect.outcome),
         caller_fn: effect.caller_fn.clone(),
         source_line: effect.source_line,
+        group_id: effect.group_id,
     }
 }
 
@@ -160,6 +166,7 @@ fn effect_record_from_serde(effect: SerdeEffectRecord) -> Result<EffectRecord, S
         outcome: outcome_from_serde(effect.outcome)?,
         caller_fn: effect.caller_fn,
         source_line: effect.source_line,
+        group_id: effect.group_id,
     })
 }
 
@@ -260,6 +267,7 @@ mod tests {
                 outcome: RecordedOutcome::Value(JsonValue::Null),
                 caller_fn: String::new(),
                 source_line: 0,
+                group_id: None,
             }],
             output: RecordedOutcome::RuntimeError("boom".to_string()),
         };

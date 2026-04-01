@@ -40,6 +40,12 @@ pub struct EffectReplayState {
     replay_pos: usize,
     validate_replay_args: bool,
     args_diff_count: usize,
+    /// Current effect tuple group id for recording. None = sequential.
+    current_group: Option<u32>,
+    /// Next group id to assign.
+    next_group_id: u32,
+    /// Indices within replay_effects consumed from current group (for unordered match).
+    group_consumed: Vec<usize>,
 }
 
 impl EffectReplayState {
@@ -96,6 +102,19 @@ impl EffectReplayState {
         Ok(())
     }
 
+    /// Enter an effect tuple group for recording. Returns the group id.
+    pub fn enter_group(&mut self) -> u32 {
+        self.next_group_id += 1;
+        let id = self.next_group_id;
+        self.current_group = Some(id);
+        id
+    }
+
+    /// Exit the current effect tuple group.
+    pub fn exit_group(&mut self) {
+        self.current_group = None;
+    }
+
     pub fn record_effect(
         &mut self,
         effect_type: &str,
@@ -112,6 +131,7 @@ impl EffectReplayState {
             outcome,
             caller_fn: caller_fn.to_string(),
             source_line,
+            group_id: self.current_group,
         });
     }
 
@@ -120,6 +140,14 @@ impl EffectReplayState {
         effect_type: &str,
         got_args: Option<Vec<JsonValue>>,
     ) -> Result<RecordedOutcome, ReplayFailure> {
+        // Check if current position is inside a group — match by type+args, not position
+        if self.replay_pos < self.replay_effects.len() {
+            if let Some(gid) = self.replay_effects[self.replay_pos].group_id {
+                return self.replay_effect_in_group(gid, effect_type, got_args);
+            }
+        }
+
+        // Sequential matching (original behavior)
         if self.replay_pos >= self.replay_effects.len() {
             return Err(ReplayFailure::Exhausted {
                 effect_type: effect_type.to_string(),
@@ -152,5 +180,62 @@ impl EffectReplayState {
 
         self.replay_pos += 1;
         Ok(record.outcome)
+    }
+
+    /// Match an effect within a replay group by type (and optionally args), not position.
+    fn replay_effect_in_group(
+        &mut self,
+        group_id: u32,
+        effect_type: &str,
+        got_args: Option<Vec<JsonValue>>,
+    ) -> Result<RecordedOutcome, ReplayFailure> {
+        // Find all effects in this group that haven't been consumed yet
+        let group_start = self.replay_pos;
+        let group_end = self.replay_effects[group_start..]
+            .iter()
+            .position(|e| e.group_id != Some(group_id))
+            .map(|offset| group_start + offset)
+            .unwrap_or(self.replay_effects.len());
+
+        // Search for a matching effect in the group
+        for idx in group_start..group_end {
+            if self.group_consumed.contains(&idx) {
+                continue;
+            }
+            let record = &self.replay_effects[idx];
+            if record.effect_type != effect_type {
+                continue;
+            }
+
+            // Found a match by type — check args
+            if let Some(ref got) = got_args
+                && *got != record.args
+            {
+                if self.validate_replay_args {
+                    // Keep searching for an exact args match
+                    continue;
+                }
+                self.args_diff_count += 1;
+            }
+
+            let outcome = record.outcome.clone();
+            self.group_consumed.push(idx);
+
+            // If all group effects consumed, advance past the group
+            let group_size = group_end - group_start;
+            if self.group_consumed.len() >= group_size {
+                self.replay_pos = group_end;
+                self.group_consumed.clear();
+            }
+
+            return Ok(outcome);
+        }
+
+        // No match found in group
+        Err(ReplayFailure::Mismatch {
+            seq: self.replay_effects[group_start].seq,
+            expected: format!("one of group {} effects", group_id),
+            got: effect_type.to_string(),
+        })
     }
 }

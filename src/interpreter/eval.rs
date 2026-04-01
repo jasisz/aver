@@ -1308,7 +1308,15 @@ impl Interpreter {
         unwrap: bool,
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
+        // Enter replay group when starting the effect tuple
+        if idx == 0 {
+            self.replay_state.enter_group();
+        }
+
         if idx >= items.len() {
+            // Exit replay group when all elements are evaluated
+            self.replay_state.exit_group();
+
             if unwrap {
                 // Unwrap each Result: if any is Err, propagate it.
                 let mut unwrapped = Vec::with_capacity(values.len());
