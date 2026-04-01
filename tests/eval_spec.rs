@@ -3082,6 +3082,7 @@ fn check() -> Bool
                 outcome: RecordedOutcome::Value(JsonValue::Bool(true)),
                 caller_fn: String::new(),
                 source_line: 0,
+                group_id: None,
             }],
             true,
         );
@@ -3110,6 +3111,7 @@ fn check() -> Bool
                 outcome: RecordedOutcome::Value(JsonValue::Object(outcome)),
                 caller_fn: String::new(),
                 source_line: 0,
+                group_id: None,
             }],
             false,
         );

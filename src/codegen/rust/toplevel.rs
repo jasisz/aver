@@ -2807,7 +2807,7 @@ mod tests {
     use crate::codegen::CodegenContext;
     use crate::types::Type;
     use std::collections::{HashMap, HashSet};
-    use std::sync::Arc;
+    use std::sync::Arc as Rc;
 
     fn empty_ctx() -> CodegenContext {
         CodegenContext {

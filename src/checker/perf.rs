@@ -581,7 +581,7 @@ mod tests {
             return_type: return_type.to_string(),
             effects: vec![],
             desc: None,
-            body: std::rc::Rc::new(FnBody::Block(stmts)),
+            body: std::sync::Arc::new(FnBody::Block(stmts)),
             resolution: None,
         }
     }

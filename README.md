@@ -595,5 +595,6 @@ For repository self-documentation via decision exports, see `decisions/architect
 | [docs/rust.md](docs/rust.md) | Rust backend: deployment-oriented Cargo generation |
 | [docs/lean.md](docs/lean.md) | Lean backend: proof export and formal-verification path |
 | [docs/dafny.md](docs/dafny.md) | Dafny backend: Z3-powered automated law verification |
+| [docs/independence.md](docs/independence.md) | Independent products: the semantic model behind `?!` and `!` |
 | [docs/pushback.md](docs/pushback.md) | Common pushback: questions, objections, and honest answers |
 | [docs/decisions.md](docs/decisions.md) | Decision export generated via `aver context --decisions-only` |

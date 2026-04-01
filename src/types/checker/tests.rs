@@ -40,7 +40,7 @@ fn unknown_function_calls_are_errors() {
         return_type: "Unit".to_string(),
         effects: vec![],
         desc: None,
-        body: std::rc::Rc::new(FnBody::Block(vec![Stmt::Expr(Spanned::bare(
+        body: std::sync::Arc::new(FnBody::Block(vec![Stmt::Expr(Spanned::bare(
             Expr::FnCall(
                 Box::new(Spanned::bare(Expr::Ident("nosuch".to_string()))),
                 vec![Spanned::bare(Expr::Literal(Literal::Int(1)))],
@@ -104,7 +104,7 @@ fn non_exhaustive_match_reports_match_line() {
         return_type: "Int".to_string(),
         effects: vec![],
         desc: None,
-        body: std::rc::Rc::new(FnBody::from_expr(Spanned::new(
+        body: std::sync::Arc::new(FnBody::from_expr(Spanned::new(
             Expr::Match {
                 subject: Box::new(Spanned::bare(Expr::Ident("b".to_string()))),
                 arms: vec![MatchArm {
@@ -137,7 +137,7 @@ fn tuple_union_patterns_can_be_exhaustive_without_single_total_arm() {
         return_type: "Int".to_string(),
         effects: vec![],
         desc: None,
-        body: std::rc::Rc::new(FnBody::from_expr(Spanned::new(
+        body: std::sync::Arc::new(FnBody::from_expr(Spanned::new(
             Expr::Match {
                 subject: Box::new(Spanned::bare(Expr::Ident("t".to_string()))),
                 arms: vec![
@@ -180,7 +180,7 @@ fn nested_tuple_union_still_reports_missing_case() {
         return_type: "Int".to_string(),
         effects: vec![],
         desc: None,
-        body: std::rc::Rc::new(FnBody::from_expr(Spanned::new(
+        body: std::sync::Arc::new(FnBody::from_expr(Spanned::new(
             Expr::Match {
                 subject: Box::new(Spanned::bare(Expr::Ident("t".to_string()))),
                 arms: vec![

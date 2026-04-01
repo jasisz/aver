@@ -484,7 +484,7 @@ mod tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: std::rc::Rc::new(crate::ast::FnBody::Block(vec![Stmt::Expr(spanned(
+            body: std::sync::Arc::new(crate::ast::FnBody::Block(vec![Stmt::Expr(spanned(
                 match_expr,
             ))])),
             resolution: None,
@@ -527,7 +527,7 @@ mod tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: std::rc::Rc::new(crate::ast::FnBody::Block(vec![Stmt::Expr(spanned(
+            body: std::sync::Arc::new(crate::ast::FnBody::Block(vec![Stmt::Expr(spanned(
                 match_expr,
             ))])),
             resolution: None,
@@ -567,7 +567,7 @@ mod tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: std::rc::Rc::new(crate::ast::FnBody::Block(vec![Stmt::Expr(spanned(
+            body: std::sync::Arc::new(crate::ast::FnBody::Block(vec![Stmt::Expr(spanned(
                 match_expr,
             ))])),
             resolution: None,
@@ -599,7 +599,7 @@ mod tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: std::rc::Rc::new(crate::ast::FnBody::Block(vec![
+            body: std::sync::Arc::new(crate::ast::FnBody::Block(vec![
                 Stmt::Binding("a".to_string(), None, spanned(len_call.clone())),
                 Stmt::Expr(spanned(len_call)),
             ])),
@@ -635,7 +635,7 @@ mod tests {
                 line: 0,
             }],
             desc: None,
-            body: std::rc::Rc::new(crate::ast::FnBody::Block(vec![
+            body: std::sync::Arc::new(crate::ast::FnBody::Block(vec![
                 Stmt::Expr(spanned(print_call.clone())),
                 Stmt::Expr(spanned(print_call)),
             ])),
@@ -668,7 +668,7 @@ mod tests {
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: std::rc::Rc::new(crate::ast::FnBody::Block(vec![
+            body: std::sync::Arc::new(crate::ast::FnBody::Block(vec![
                 Stmt::Binding("a".to_string(), None, spanned_at(len_call.clone(), 10)),
                 Stmt::Expr(spanned_at(len_call, 20)),
             ])),
