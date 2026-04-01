@@ -211,7 +211,7 @@ fn emit_variant_from_arm(type_name: &str, variant: &TypeVariant) -> String {
 fn replay_variant_field_type(type_name: &str, field_type: &str) -> String {
     let rust_ty = type_annotation_to_rust(field_type);
     if field_type == type_name {
-        format!("std::rc::Rc<{rust_ty}>")
+        format!("std::sync::Arc<{rust_ty}>")
     } else {
         rust_ty
     }
@@ -780,13 +780,13 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
         }
     }
 
-    impl<T: ReplayValue> ReplayValue for std::rc::Rc<T> {
+    impl<T: ReplayValue> ReplayValue for std::sync::Arc<T> {
         fn to_replay_json(&self) -> ReplayJson {
             (**self).to_replay_json()
         }
 
         fn from_replay_json(value: &ReplayJson) -> Result<Self, String> {
-            Ok(std::rc::Rc::new(T::from_replay_json(value)?))
+            Ok(std::sync::Arc::new(T::from_replay_json(value)?))
         }
     }
 

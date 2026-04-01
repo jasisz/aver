@@ -198,7 +198,7 @@ fn emit_sum_type(
                     let rust_ty = type_annotation_to_rust(f);
                     if f == name {
                         // Recursive field: Rc<T> instead of Box<T> — clone is O(1) refcount bump
-                        format!("std::rc::Rc<{}>", rust_ty)
+                        format!("std::sync::Arc<{}>", rust_ty)
                     } else {
                         rust_ty
                     }
@@ -1679,7 +1679,7 @@ fn emit_tco_fn(
         let (name, _) = &fd.params[i];
         let rust_name = aver_name_to_rust(name);
         lines.push(format!(
-            "    let {} = std::rc::Rc::new({});",
+            "    let {} = std::sync::Arc::new({});",
             rust_name, rust_name
         ));
     }
@@ -2807,7 +2807,7 @@ mod tests {
     use crate::codegen::CodegenContext;
     use crate::types::Type;
     use std::collections::{HashMap, HashSet};
-    use std::rc::Rc;
+    use std::sync::Arc;
 
     fn empty_ctx() -> CodegenContext {
         CodegenContext {

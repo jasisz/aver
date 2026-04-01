@@ -115,7 +115,7 @@ pub fn aver_str_concat(a: &AverStr, b: &AverStr) -> AverStr {
     s.push_str(b);
     AverStr::from(s)
 }
-use std::rc::Rc;
+use std::sync::Arc as Rc;
 
 // ── AverMap: Copy-on-Write HashMap ──────────────────────────────────────────
 //

@@ -282,16 +282,44 @@ fn emit_expr_with_options(
             let parts: Vec<String> = bare_items
                 .iter()
                 .zip(item_ctxs.iter())
-                .map(|(e, item_ctx)| {
-                    let expr_code = clone_arg(e, ctx, item_ctx);
-                    if *unwrap {
-                        format!("{}?", expr_code)
-                    } else {
-                        expr_code
-                    }
-                })
+                .map(|(e, item_ctx)| clone_arg(e, ctx, item_ctx))
                 .collect();
-            format!("({})", parts.join(", "))
+
+            // Generate parallel execution using std::thread::scope
+            let n = parts.len();
+            let mut code = String::from("std::thread::scope(|_aver_s| { ");
+            // Spawn a thread for each element
+            for (i, part) in parts.iter().enumerate() {
+                code.push_str(&format!(
+                    "let _aver_h{i} = _aver_s.spawn(|| {{ {part} }}); "
+                ));
+            }
+            if *unwrap {
+                // ?! — unwrap each Result inside scope, return Result<tuple, E>
+                for i in 0..n {
+                    code.push_str(&format!("let _aver_r{i} = _aver_h{i}.join().unwrap()?; "));
+                }
+                code.push_str("Ok::<_, aver_rt::AverStr>((");
+                for i in 0..n {
+                    if i > 0 {
+                        code.push_str(", ");
+                    }
+                    code.push_str(&format!("_aver_r{i}"));
+                }
+                // scope returns Result<(T1,T2,...), AverStr>, outer ? propagates
+                code.push_str(")) })?");
+            } else {
+                // bare ! — return raw tuple
+                code.push('(');
+                for i in 0..n {
+                    if i > 0 {
+                        code.push_str(", ");
+                    }
+                    code.push_str(&format!("_aver_h{i}.join().unwrap()"));
+                }
+                code.push_str(") })");
+            }
+            code
         }
         Expr::MapLiteral(entries) => {
             if entries.is_empty() {
@@ -974,7 +1002,7 @@ fn emit_type_constructor_call(
         .map(|((idx, a), ac)| {
             let arg = clone_arg(a, ctx, ac);
             if boxed_positions.contains(&idx) {
-                format!("std::rc::Rc::new({})", arg)
+                format!("std::sync::Arc::new({})", arg)
             } else {
                 arg
             }
