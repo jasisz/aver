@@ -123,10 +123,7 @@ use std::sync::Arc as Rc;
 /// Uniform parallel execution for VM/interpreter (all tasks return NanValue).
 pub fn par_execute<T: Send>(tasks: Vec<Box<dyn FnOnce() -> T + Send>>) -> Vec<T> {
     std::thread::scope(|s| {
-        let handles: Vec<_> = tasks
-            .into_iter()
-            .map(|task| s.spawn(move || task()))
-            .collect();
+        let handles: Vec<_> = tasks.into_iter().map(|task| s.spawn(task)).collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     })
 }

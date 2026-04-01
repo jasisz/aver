@@ -714,7 +714,7 @@ impl VM {
 
                     // Save caller IP — drop code borrow before call_function
                     self.frames.last_mut().unwrap().ip = ip as u32;
-                    let saved_fn_id = fn_id;
+                    let _saved_fn_id = fn_id;
 
                     // Enter replay group
                     self.runtime.replay_enter_group();

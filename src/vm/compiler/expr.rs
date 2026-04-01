@@ -308,10 +308,11 @@ impl<'a> FnCompiler<'a> {
                     }
                     // Resolve function to fn_id (always CALL_KNOWN in effect tuples)
                     let fn_id = match self.resolve_call_target(&fn_expr.node) {
-                        Some(CallTarget::KnownFn(id)) => id as u32,
+                        Some(CallTarget::KnownFn(id)) => id,
                         _ => {
                             return Err(CompileError {
-                                msg: format!("Effect tuple element must be a known function call"),
+                                msg: "Effect tuple element must be a known function call"
+                                    .to_string(),
                             });
                         }
                     };
