@@ -8,24 +8,40 @@ A tuple followed by `?!` denotes a product of independent Result computations wi
 
 ## Core definitions
 
-1. **`(a, b)`** — product of values. Both `a` and `b` are evaluated; result is a tuple. Standard semantics.
+**`(a, b)!`** — product of independent computations.
 
-2. **`(a, b)!`** — product of independent computations. `a` and `b` are computations with no data dependency between them. The language guarantees they cannot observe each other. The runtime may evaluate them in any order or concurrently. Result is a tuple of their outcomes.
+For pure computations, independence follows structurally: tuple elements have no data dependency on each other, and under Aver's core restrictions (no mutation, no closures, no shared state) they cannot interfere.
 
-3. **`(a, b)?!`** — product of independent Result computations. Same as `!`, but each element must produce a `Result<T, E>`. All elements are evaluated; if any yields `Err`, the first error propagates. If all yield `Ok`, the unwrapped values form the result tuple.
+For effectful computations, `!` is a declaration by the author that the effects of the elements are safe to reorder or execute concurrently. The compiler checks shape and types, but does not prove effect commutativity.
 
-4. **Structural independence** — tuple elements cannot reference each other. This is enforced by construction: there is no binding site inside a tuple expression that could make one element visible to another. Independence is not annotated; it is a consequence of the syntax.
+The runtime may therefore evaluate elements sequentially, in any order permitted by the execution model, or concurrently.
 
-5. **Composition** — `!` products compose exactly like tuples:
-   - Nested: `(a, (b, c)!)!` — outer product of `a` and an inner independent product.
-   - Recursive: `(f(x), g(xs))?!` — product of a computation and a recursive continuation.
-   - Flat: `(a, b, c, d)?!` — product of N independent computations.
+**`(a, b)?!`** — product of independent Result computations.
 
-6. **Recursion builds products** — a recursive function over a list naturally constructs a product at each step: the computation for the current element and the computation for the rest. With `?!`, this gives fan-out parallelism, streaming, and backpressure — without introducing any of these as language concepts.
+If all elements produce `Ok`, the result is the tuple of unwrapped values. If one or more elements produce `Err`, evaluation fails with one error chosen by the execution schedule, or by replay policy when replay is enabled.
 
-7. **Error algebra** — `?` lifts through the product. `(a, b)?!` is equivalent to: evaluate the `!` product, then apply `?` to each component. First `Err` wins. This is the same `?` that works on single expressions, extended to products.
+In sequential execution, this choice is deterministic. In parallel execution, it may be nondeterministic.
 
-8. **Execution model** — the language does not prescribe how independent products are evaluated. Sequential evaluation is correct. Concurrent evaluation is correct. The runtime chooses. Replay records the effects and their grouping, accepting any order within a product.
+**`(a, b)`** — product of values. Standard tuple semantics. No independence claim.
+
+## Soundness envelope
+
+This construct is sound by construction for pure terms. For effectful terms, correctness depends on the author's declaration that the participating effects are non-interfering with respect to the program's intended observable behavior.
+
+## Structural properties
+
+1. **Structural independence** — tuple elements cannot reference each other. There is no binding site inside a tuple expression that could make one element visible to another.
+
+2. **Composition** — `!` products compose exactly like tuples:
+   - Nested: `(a, (b, c)!)!`
+   - Recursive: `(f(x), g(xs))?!`
+   - Flat: `(a, b, c, d)?!`
+
+3. **Error algebra** — `?` lifts through the product. `(a, b)?!` evaluates the `!` product, then applies `?` to each component. In sequential execution, the first `Err` (left-to-right) propagates. In parallel execution, any produced `Err` may propagate.
+
+4. **Recursion builds products** — a recursive function over a list constructs a product at each step: the computation for the current element and the computation for the rest. With `?!`, this gives recursive structured fork/join, which can expose fan-out parallelism and latency hiding without introducing futures or async syntax.
+
+5. **Execution model** — the language does not prescribe how independent products are evaluated. Sequential and concurrent evaluation are both valid implementations, given that the programmer has correctly declared effect independence. Replay records effects and their grouping, accepting any order within a product.
 
 ## Examples
 
@@ -72,33 +88,9 @@ fn loadWithFallback(userId: String) -> String
         (Result.Err(_), Result.Err(_)) -> "nothing loaded"
 ```
 
-### Windowed streaming
-
-```aver
-fn processAllInWindow(window: List<Item>) -> Result<List<Processed>, String>
-    ? "All items in one window are independent."
-    ! [Process.item]
-    match window
-        [] -> Result.Ok([])
-        [item, ..rest] ->
-            data = (processItem(item), processAllInWindow(rest))?!
-            match data
-                (p, ps) -> Result.Ok(List.prepend(p, ps))
-
-fn processWindowed(items: List<Item>, windowSize: Int) -> Result<List<Processed>, String>
-    ? "Process items in sliding windows."
-    ! [Process.item]
-    match splitIntoWindows(items, windowSize)
-        [] -> Result.Ok([])
-        [window, ..remaining] ->
-            data = (processAllInWindow(window), processWindowed(flatten(remaining), windowSize))?!
-            match data
-                (processedWindow, processedRest) -> Result.Ok(List.append(processedWindow, processedRest))
-```
-
 ## What Aver does not have
 
-Aver does not have tasks, futures, async/await, channels, streams, thread pools, or executors as language concepts. It has products and independence. The runtime handles the rest.
+Aver does not have tasks, futures, async/await, channels, streams, thread pools, or executors as language concepts. It has products and independence. The runtime handles execution strategy.
 
 ## Why this works
 
