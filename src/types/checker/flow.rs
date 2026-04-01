@@ -49,7 +49,7 @@ impl TypeChecker {
             Expr::List(elems) => elems
                 .iter()
                 .any(|elem| Self::verify_case_calls_target(elem, fn_name)),
-            Expr::Tuple(items) => items
+            Expr::Tuple(items) | Expr::EffectTuple(items, _) => items
                 .iter()
                 .any(|item| Self::verify_case_calls_target(item, fn_name)),
             Expr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
@@ -443,7 +443,7 @@ impl TypeChecker {
                     self.check_effects_in_expr(elem, caller_name, caller_effects);
                 }
             }
-            Expr::Tuple(items) => {
+            Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
                 for item in items {
                     self.check_effects_in_expr(item, caller_name, caller_effects);
                 }

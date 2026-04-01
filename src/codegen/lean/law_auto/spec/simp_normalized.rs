@@ -90,6 +90,9 @@ fn simplify_identity_expr(expr: &Spanned<Expr>) -> Spanned<Expr> {
         ),
         Expr::List(items) => Expr::List(items.iter().map(simplify_identity_expr).collect()),
         Expr::Tuple(items) => Expr::Tuple(items.iter().map(simplify_identity_expr).collect()),
+        Expr::EffectTuple(items, flag) => {
+            Expr::EffectTuple(items.iter().map(simplify_identity_expr).collect(), *flag)
+        }
         Expr::MapLiteral(entries) => Expr::MapLiteral(
             entries
                 .iter()

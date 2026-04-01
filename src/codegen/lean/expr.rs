@@ -88,7 +88,7 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
                 format!("[{}]", parts.join(", "))
             }
         }
-        Expr::Tuple(items) => {
+        Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
             let parts: Vec<String> = items.iter().map(|e| emit_expr(e, ctx)).collect();
             format!("({})", parts.join(", "))
         }
@@ -152,7 +152,11 @@ fn emit_expr_atom(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
     match &expr.node {
         Expr::Literal(Literal::Int(i)) if *i < 0 => format!("({})", s),
         Expr::Literal(Literal::Float(f)) if *f < 0.0 => format!("({})", s),
-        Expr::Literal(_) | Expr::Ident(_) | Expr::List(_) | Expr::Tuple(_) => s,
+        Expr::Literal(_)
+        | Expr::Ident(_)
+        | Expr::List(_)
+        | Expr::Tuple(_)
+        | Expr::EffectTuple(_, _) => s,
         _ => {
             if s.starts_with('(')
                 || s.starts_with('[')

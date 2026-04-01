@@ -333,6 +333,70 @@ impl TypeChecker {
                 Type::Tuple(tys)
             }
 
+            Expr::EffectTuple(elements, unwrap) => {
+                if *unwrap {
+                    // ?! variant: each element must be Result<T, E>, unwrap Ok types,
+                    // validate Err types against the function's return error type.
+                    let prop_line = if expr.line > 0 {
+                        expr.line
+                    } else {
+                        self.current_fn_line.unwrap_or(1)
+                    };
+                    let mut ok_types = Vec::with_capacity(elements.len());
+                    for elem in elements {
+                        let ty = self.infer_type(elem);
+                        match ty {
+                            Type::Result(ok_ty, err_ty) => {
+                                match self.current_fn_ret.clone() {
+                                    Some(Type::Result(_, fn_err_ty)) => {
+                                        if !err_ty.compatible(&fn_err_ty) {
+                                            self.error_at_line(prop_line, format!(
+                                                "Effect tuple '?!': Err type {} is incompatible with function's Err type {}",
+                                                err_ty.display(),
+                                                fn_err_ty.display()
+                                            ));
+                                        }
+                                    }
+                                    Some(Type::Unknown) => {}
+                                    Some(other) => {
+                                        self.error_at_line(prop_line, format!(
+                                            "Effect tuple '?!' used in function returning {}, which is not Result",
+                                            other.display()
+                                        ));
+                                    }
+                                    None => {
+                                        self.error_at_line(
+                                            prop_line,
+                                            "Effect tuple '?!' used outside of a function"
+                                                .to_string(),
+                                        );
+                                    }
+                                }
+                                ok_types.push(*ok_ty);
+                            }
+                            Type::Unknown => {
+                                ok_types.push(Type::Unknown);
+                            }
+                            other => {
+                                self.error_at_line(
+                                    prop_line,
+                                    format!(
+                                        "Effect tuple '?!' element must be Result, got {}",
+                                        other.display()
+                                    ),
+                                );
+                                ok_types.push(Type::Unknown);
+                            }
+                        }
+                    }
+                    Type::Tuple(ok_types)
+                } else {
+                    // bare ! variant: same as regular Tuple
+                    let tys = elements.iter().map(|elem| self.infer_type(elem)).collect();
+                    Type::Tuple(tys)
+                }
+            }
+
             Expr::MapLiteral(entries) => {
                 let mut key_ty = Type::Unknown;
                 let mut val_ty = Type::Unknown;

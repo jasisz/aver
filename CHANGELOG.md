@@ -5,6 +5,7 @@ All notable changes to Aver are documented here.
 ## 0.7.4 (unreleased)
 
 ### Added
+- **Effect tuples (`?!` / `!`)** — declare independent effectful expressions. `(a, b)?!` evaluates both independently, unwraps Results (all-or-nothing). `(a, b)!` returns raw tuple for partial-success handling. Works recursively: `(fetchOne(url), fetchAll(rest))?!` fans out into parallel-ready effect trees. Sequential execution in interpreter (MVP); replay groups and codegen parallelism (`tokio::join!`) planned.
 - **`aver why`** — trace justification coverage across a codebase. Scores every function as justified (description + verify without coverage gaps), partial, or unjustified. Effectful functions are justified by description alone since verify blocks don't apply. Supports `--verbose` (show all functions) and `--json` (NDJSON output with per-file and per-function detail).
 - **`[[check.suppress]]` in `aver.toml`** — suppress specific `aver check` warnings with a mandatory `reason` explaining why the warning is acceptable. Supports `slug` (diagnostic category), optional `files` (glob patterns), and requires a non-empty `reason` string. Example: suppress `non-tail-recursion` for tree-walking interpreters that can't be rewritten without CPS.
 

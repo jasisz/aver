@@ -150,7 +150,7 @@ fn collect_non_tail_recursive_call_lines_expr(
                 collect_non_tail_recursive_call_lines_expr(&arm.body, recursive, out);
             }
         }
-        Expr::List(items) | Expr::Tuple(items) => {
+        Expr::List(items) | Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
             for item in items {
                 collect_non_tail_recursive_call_lines_expr(item, recursive, out);
             }

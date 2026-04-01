@@ -96,6 +96,13 @@ enum EvalCont {
         idx: usize,
         values: Vec<NanValue>,
     },
+    EffectTuple {
+        lowered: Rc<LoweredFunctionBody>,
+        items: SharedExprs,
+        idx: usize,
+        values: Vec<NanValue>,
+        unwrap: bool,
+    },
     MapKey {
         lowered: Rc<LoweredFunctionBody>,
         entries: SharedMapEntries,
@@ -374,6 +381,12 @@ impl Interpreter {
                 let items = Rc::clone(items);
                 self.resume_tuple(lowered, items, 0, Vec::with_capacity(cap), conts)
             }
+            LoweredExpr::EffectTuple { items, unwrap } => {
+                let cap = items.len();
+                let items = Rc::clone(items);
+                let unwrap = *unwrap;
+                self.resume_effect_tuple(lowered, items, 0, Vec::with_capacity(cap), unwrap, conts)
+            }
             LoweredExpr::MapLiteral(entries) => {
                 let entries = Rc::clone(entries);
                 self.resume_map(
@@ -649,6 +662,19 @@ impl Interpreter {
                 Ok(value) => {
                     values.push(value);
                     self.resume_tuple(lowered, items, idx, values, conts)
+                }
+                Err(err) => EvalState::Apply(Err(err)),
+            },
+            EvalCont::EffectTuple {
+                lowered,
+                items,
+                idx,
+                mut values,
+                unwrap,
+            } => match result {
+                Ok(value) => {
+                    values.push(value);
+                    self.resume_effect_tuple(lowered, items, idx, values, unwrap, conts)
                 }
                 Err(err) => EvalState::Apply(Err(err)),
             },
@@ -1266,6 +1292,52 @@ impl Interpreter {
             items: Rc::clone(&items),
             idx: idx + 1,
             values,
+        });
+        EvalState::Expr {
+            lowered,
+            expr: items[idx],
+        }
+    }
+
+    fn resume_effect_tuple(
+        &mut self,
+        lowered: Rc<LoweredFunctionBody>,
+        items: SharedExprs,
+        idx: usize,
+        values: Vec<NanValue>,
+        unwrap: bool,
+        conts: &mut Vec<EvalCont>,
+    ) -> EvalState {
+        if idx >= items.len() {
+            if unwrap {
+                // Unwrap each Result: if any is Err, propagate it.
+                let mut unwrapped = Vec::with_capacity(values.len());
+                for v in &values {
+                    if v.is_ok() {
+                        unwrapped.push(v.wrapper_inner(&self.arena));
+                    } else if v.is_err() {
+                        let inner = v.wrapper_inner(&self.arena);
+                        return EvalState::Apply(Err(RuntimeError::ErrProp(inner)));
+                    } else {
+                        return EvalState::Apply(Err(RuntimeError::Error(
+                            "Effect tuple with '?' can only contain Result values".to_string(),
+                        )));
+                    }
+                }
+                let tuple_idx = self.arena.push_tuple(unwrapped);
+                return EvalState::Apply(Ok(NanValue::new_tuple(tuple_idx)));
+            } else {
+                let tuple_idx = self.arena.push_tuple(values);
+                return EvalState::Apply(Ok(NanValue::new_tuple(tuple_idx)));
+            }
+        }
+
+        conts.push(EvalCont::EffectTuple {
+            lowered: Rc::clone(&lowered),
+            items: Rc::clone(&items),
+            idx: idx + 1,
+            values,
+            unwrap,
         });
         EvalState::Expr {
             lowered,

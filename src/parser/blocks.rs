@@ -150,6 +150,13 @@ impl Parser {
                     .map(|item| Self::substitute_expr(item, bindings))
                     .collect(),
             ),
+            Expr::EffectTuple(items, flag) => Expr::EffectTuple(
+                items
+                    .iter()
+                    .map(|item| Self::substitute_expr(item, bindings))
+                    .collect(),
+                *flag,
+            ),
             Expr::MapLiteral(entries) => Expr::MapLiteral(
                 entries
                     .iter()

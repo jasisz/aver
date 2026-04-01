@@ -388,7 +388,7 @@ impl Interpreter {
                     }
                 }
             }
-            Expr::List(items) | Expr::Tuple(items) => {
+            Expr::List(items) | Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
                 for item in items {
                     Self::collect_match_sites_from_spanned(item, out);
                 }

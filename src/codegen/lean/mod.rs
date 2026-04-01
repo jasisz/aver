@@ -861,7 +861,7 @@ fn collect_calls_from_expr<'a>(
                 }
             }
         }
-        Expr::List(items) | Expr::Tuple(items) => {
+        Expr::List(items) | Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
             for item in items {
                 collect_calls_from_expr(item, out);
             }
@@ -948,7 +948,7 @@ fn collect_list_tail_binders_from_expr(
                 }
             }
         }
-        Expr::List(items) | Expr::Tuple(items) => {
+        Expr::List(items) | Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
             for item in items {
                 collect_list_tail_binders_from_expr(item, list_param_name, tails);
             }
@@ -1062,7 +1062,7 @@ fn grow_recursive_subterm_binders_from_expr(
                 }
             }
         }
-        Expr::List(items) | Expr::Tuple(items) => {
+        Expr::List(items) | Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
             for item in items {
                 grow_recursive_subterm_binders_from_expr(item, tracked, td, out);
             }

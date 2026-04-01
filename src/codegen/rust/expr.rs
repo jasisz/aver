@@ -270,6 +270,29 @@ fn emit_expr_with_options(
                 .collect();
             format!("({})", parts.join(", "))
         }
+        Expr::EffectTuple(items, unwrap) => {
+            let bare_items: Vec<Expr> = items.iter().map(|e| e.node.clone()).collect();
+            let item_ctxs = compute_args_used_after_full(
+                &bare_items,
+                &ectx.used_after,
+                &ectx.local_types,
+                &ectx.rc_wrapped,
+                &ectx.borrowed_params,
+            );
+            let parts: Vec<String> = bare_items
+                .iter()
+                .zip(item_ctxs.iter())
+                .map(|(e, item_ctx)| {
+                    let expr_code = clone_arg(e, ctx, item_ctx);
+                    if *unwrap {
+                        format!("{}?", expr_code)
+                    } else {
+                        expr_code
+                    }
+                })
+                .collect();
+            format!("({})", parts.join(", "))
+        }
         Expr::MapLiteral(entries) => {
             if entries.is_empty() {
                 "HashMap::new()".to_string()

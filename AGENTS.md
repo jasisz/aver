@@ -45,18 +45,7 @@ Below: implementation details relevant to development only.
 - **`check` command**: warns when module has no `intent =`, function with effects/Result return has no `?` description, file exceeds 250 lines. `fn main()` is exempt from `?` requirement.
 - **Entry-point effect enforcement**: `main`/top-level entry calls use `call_value_with_effects_pub(...)` with synthetic call frame.
 - **Opaque types** (`exposes opaque [T]`): module-level access control for types. An opaque type is visible in signatures (can be passed, returned, stored) but cannot be constructed, have its fields accessed, or be pattern-matched from outside the defining module. Enforced at compile time in the typechecker; `load_module_sigs` registers a dummy sig (type resolves) but omits field types, constructors, and variant info. Parser recognizes `exposes opaque` after the `Exposes` token by checking for `Ident("opaque")`.
-
-### What is missing / known limitations
-
-- No `if`/`else` — **this is intentional by design**; `match` is the only branching construct
-- No loops (`for`, `while`) — **intentionally absent**; Aver has no imperative iteration; use `map`/`filter`/`fold`
-- No guard clauses in match (`when`, `> 0`, etc.) — **rejected by design**; guards break exhaustiveness checking and add a class of "forgotten else" bugs; nested `match` on `true`/`false` is verbose but verifiably safe
-- Field access works for `record` values (`u.name`) but not on sum type variants or other values
-
-### What was explicitly NOT implemented yet (save for later)
-
-- Effect handlers / row-polymorphic effects — runtime currently uses declared effect lists with call-edge capability checks; no handlers yet
-- decision-query flags (`--impacts`, `--since`, etc.) for `aver context --decisions-only`
+- **Effect tuples** (`?!` / `!`): `Expr::EffectTuple(Vec<Spanned<Expr>>, bool)` — postfix on tuple expressions. `(a, b)?!` = independent effects with Result unwrapping; `(a, b)!` = independent effects returning raw tuple. Parser detects `?` + `!` or bare `!` after tuple in `parse_postfix`. Typechecker: `?!` verifies all elements are `Result<T, E>` with compatible error types; `!` infers as regular tuple. Interpreter MVP: sequential evaluation, no parallelism yet. Designed for replay groups (effects within a `?!`/`!` tuple are order-independent) and codegen parallelism (`tokio::join!`).
 
 ### Design omissions
 

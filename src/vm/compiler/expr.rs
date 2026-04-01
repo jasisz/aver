@@ -81,7 +81,7 @@ impl<'a> FnCompiler<'a> {
                 updates,
             } => self.compile_record_update(type_name, base, updates),
             Expr::Attr(obj, field) => self.compile_attr(obj, field),
-            Expr::Tuple(items) => self.compile_tuple(items),
+            Expr::Tuple(items) | Expr::EffectTuple(items, _) => self.compile_tuple(items),
             Expr::MapLiteral(entries) => self.compile_map(entries),
         }
     }

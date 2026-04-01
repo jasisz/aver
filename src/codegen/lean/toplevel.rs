@@ -698,6 +698,13 @@ fn rewrite_recursive_calls_expr(
                 .map(|item| rewrite_recursive_calls_expr(item, targets, fuel_var))
                 .collect(),
         ),
+        Expr::EffectTuple(items, flag) => Expr::EffectTuple(
+            items
+                .iter()
+                .map(|item| rewrite_recursive_calls_expr(item, targets, fuel_var))
+                .collect(),
+            *flag,
+        ),
         Expr::MapLiteral(entries) => Expr::MapLiteral(
             entries
                 .iter()
@@ -1273,7 +1280,9 @@ fn expr_uses_error_prop(expr: &Spanned<Expr>) -> bool {
             StrPart::Parsed(expr) => expr_uses_error_prop(expr),
             StrPart::Literal(_) => false,
         }),
-        Expr::List(items) | Expr::Tuple(items) => items.iter().any(expr_uses_error_prop),
+        Expr::List(items) | Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
+            items.iter().any(expr_uses_error_prop)
+        }
         Expr::MapLiteral(entries) => entries
             .iter()
             .any(|(key, value)| expr_uses_error_prop(key) || expr_uses_error_prop(value)),

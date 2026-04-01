@@ -163,6 +163,10 @@ pub(crate) enum LoweredExpr {
     InterpolatedStr(Rc<[LoweredStrPart]>),
     List(Rc<[ExprId]>),
     Tuple(Rc<[ExprId]>),
+    EffectTuple {
+        items: Rc<[ExprId]>,
+        unwrap: bool,
+    },
     MapLiteral(Rc<[(ExprId, ExprId)]>),
     RecordCreate {
         type_name: String,
@@ -438,6 +442,16 @@ impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
                     .map(|item| self.lower_expr(item))
                     .collect::<Vec<_>>();
                 LoweredExpr::Tuple(lowered_items.into())
+            }
+            Expr::EffectTuple(items, unwrap) => {
+                let lowered_items = items
+                    .iter()
+                    .map(|item| self.lower_expr(item))
+                    .collect::<Vec<_>>();
+                LoweredExpr::EffectTuple {
+                    items: lowered_items.into(),
+                    unwrap: *unwrap,
+                }
             }
             Expr::MapLiteral(entries) => {
                 let lowered_entries = entries

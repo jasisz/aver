@@ -109,7 +109,32 @@ impl Parser {
         let mut expr = self.parse_call_or_atom()?;
 
         loop {
-            if self.check_exact(&TokenKind::Question) {
+            if self.check_exact(&TokenKind::Question) && self.peek(1).kind == TokenKind::Bang {
+                // ?! on tuple: effect tuple with Result unwrapping
+                let line = self.current().line;
+                if let Expr::Tuple(elements) = expr.node {
+                    self.advance(); // consume ?
+                    self.advance(); // consume !
+                    expr = self.spanned(Expr::EffectTuple(elements, true), line);
+                } else {
+                    return Err(self.error(
+                        "Operator '?!' can only be applied to a tuple expression, e.g. (a, b)?!"
+                            .to_string(),
+                    ));
+                }
+            } else if self.check_exact(&TokenKind::Bang)
+                && !matches!(self.peek(1).kind, TokenKind::LBracket)
+            {
+                // ! on tuple: effect tuple without unwrapping
+                // (but not `! [Effects]` which is an effect declaration)
+                let line = self.current().line;
+                if let Expr::Tuple(elements) = expr.node {
+                    self.advance(); // consume !
+                    expr = self.spanned(Expr::EffectTuple(elements, false), line);
+                } else {
+                    break; // bare ! on non-tuple — not ours, leave for caller
+                }
+            } else if self.check_exact(&TokenKind::Question) {
                 let line = self.current().line;
                 self.advance();
                 expr = self.spanned(Expr::ErrorProp(Box::new(expr)), line);
