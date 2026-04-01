@@ -237,6 +237,14 @@ pub(super) enum Commands {
         #[arg(long)]
         with_self_host_support: bool,
     },
+    /// Trace justifications: decisions, verify blocks, descriptions
+    Why {
+        /// Aver file or directory
+        file: String,
+        /// Resolve `depends [...]` from this root (default: current working directory)
+        #[arg(long)]
+        module_root: Option<String>,
+    },
     /// Export pure Aver code to a proof/verification project
     Proof {
         file: String,

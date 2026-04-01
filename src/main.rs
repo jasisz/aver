@@ -21,6 +21,8 @@ mod repl;
 mod replay_cmd;
 #[path = "main/shared.rs"]
 mod shared;
+#[path = "main/why_cmd.rs"]
+mod why_cmd;
 
 use cli::{Cli, Commands, CompilePolicyMode};
 
@@ -147,6 +149,9 @@ fn main() {
                 guest_entry: guest_entry.as_deref(),
                 with_self_host_support: *with_self_host_support,
             });
+        }
+        Commands::Why { file, module_root } => {
+            why_cmd::cmd_why(file, module_root.as_deref());
         }
         Commands::Proof {
             file,

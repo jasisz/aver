@@ -104,7 +104,7 @@ fn collect_av_input_files(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), Str
     Ok(())
 }
 
-fn resolve_av_inputs(path: &str) -> Result<Vec<String>, String> {
+pub(super) fn resolve_av_inputs(path: &str) -> Result<Vec<String>, String> {
     let root = Path::new(path);
     let mut files = Vec::new();
     collect_av_input_files(root, &mut files)?;
@@ -1069,7 +1069,7 @@ fn finding_location(f: &CheckFinding, entry_module: Option<&str>) -> String {
     }
 }
 
-fn display_check_path(path: &str, module_root: &str) -> String {
+pub(super) fn display_check_path(path: &str, module_root: &str) -> String {
     let p = Path::new(path);
     let root = Path::new(module_root);
 
