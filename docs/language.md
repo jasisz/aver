@@ -327,6 +327,7 @@ Type errors block `run`, `check`, and `verify`. No partial execution. The checke
 |--------|--------|
 | `if`/`else` | `match` is exhaustive — no silent missing cases |
 | `for`/`while` | Use recursion, pattern matching, and explicit list operations |
+| Streams / channels / async iterators | Recursive `?!` over lists gives streaming, backpressure, and fan-out parallelism with no new concepts |
 | `null` | `Option<T>` with `Some`/`None` only |
 | Exceptions | `Result<T, E>` only — errors are values |
 | Global mutable state | No shared mutable state by design |
