@@ -117,6 +117,21 @@ pub fn aver_str_concat(a: &AverStr, b: &AverStr) -> AverStr {
 }
 use std::sync::Arc as Rc;
 
+// ── par_execute: parallel execution for effect tuples (?!) ─────────────────
+
+/// Execute tasks in parallel using scoped threads.
+/// All tasks run concurrently; results are returned in the same order as input.
+/// Used by codegen, VM, and interpreter for `?!` / `!` effect tuples.
+pub fn par_execute<T: Send>(tasks: Vec<Box<dyn FnOnce() -> T + Send>>) -> Vec<T> {
+    std::thread::scope(|s| {
+        let handles: Vec<_> = tasks
+            .into_iter()
+            .map(|task| s.spawn(move || task()))
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    })
+}
+
 // ── AverMap: Copy-on-Write HashMap ──────────────────────────────────────────
 //
 // Semantically immutable (like im::HashMap), but when the Rc has a single

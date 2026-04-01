@@ -334,6 +334,29 @@ impl TypeChecker {
             }
 
             Expr::EffectTuple(elements, unwrap) => {
+                // Validate: each element must be a function call
+                for elem in elements {
+                    match &elem.node {
+                        Expr::FnCall(_, _) => {}
+                        Expr::ErrorProp(inner) => match &inner.node {
+                            Expr::FnCall(_, _) => {}
+                            _ => {
+                                self.error_at_line(
+                                    elem.line,
+                                    "Effect tuple element must be a function call, e.g. (fetchA(), fetchB())?!"
+                                        .to_string(),
+                                );
+                            }
+                        },
+                        _ => {
+                            self.error_at_line(
+                                elem.line,
+                                "Effect tuple element must be a function call, e.g. (fetchA(), fetchB())?!"
+                                    .to_string(),
+                            );
+                        }
+                    }
+                }
                 if *unwrap {
                     // ?! variant: each element must be Result<T, E>, unwrap Ok types,
                     // validate Err types against the function's return error type.

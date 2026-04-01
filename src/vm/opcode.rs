@@ -134,14 +134,14 @@ pub const WRAP: u8 = 0x66; // kind:u8
 /// Pop `count` items, build a tuple from them, push tuple.
 pub const TUPLE_NEW: u8 = 0x68; // count:u8
 
-/// Enter effect tuple group — marks the start of independent effect evaluation.
-/// All effects recorded between BEGIN and the matching EFFECT_TUPLE share a group_id.
-pub const EFFECT_TUPLE_BEGIN: u8 = 0x86;
-
-/// Effect tuple: pop `count` items (already evaluated), build tuple, exit group.
-/// unwrap=1 (?!): each item must be Result; unwrap Ok, propagate first Err.
+/// Parallel function calls for effect tuples (?! / !).
+/// Pops all args from stack, dispatches N function calls via aver_rt::par_execute,
+/// builds result tuple. Enters/exits replay group around parallel dispatch.
+///
+/// Encoding: CALL_PAR count:u8 unwrap:u8 [(fn_id:u32 argc:u8) × count]
+/// unwrap=1 (?!): unwrap each Result, propagate first Err.
 /// unwrap=0 (!): return raw tuple.
-pub const EFFECT_TUPLE: u8 = 0x87; // count:u8, unwrap:u8
+pub const CALL_PAR: u8 = 0x86;
 
 /// Update selected fields on a record, preserving the rest from the base value.
 /// Stack: [..., base_record, update_0, ..., update_n-1] -> [..., updated_record]
@@ -341,8 +341,7 @@ pub fn opcode_name(op: u8) -> &'static str {
         VECTOR_GET_OR => "VECTOR_GET_OR",
         VECTOR_SET => "VECTOR_SET",
         VECTOR_SET_OR_KEEP => "VECTOR_SET_OR_KEEP",
-        EFFECT_TUPLE_BEGIN => "EFFECT_TUPLE_BEGIN",
-        EFFECT_TUPLE => "EFFECT_TUPLE",
+        CALL_PAR => "CALL_PAR",
         NOP => "NOP",
         _ => "UNKNOWN",
     }
@@ -356,7 +355,7 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
         | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | LIST_NIL | LIST_CONS
         | LIST_LEN | LIST_PREPEND | UNWRAP_OR | UNWRAP_RESULT_OR | CONCAT | VECTOR_GET
-        | VECTOR_SET | VECTOR_SET_OR_KEEP | EFFECT_TUPLE_BEGIN | NOP => 0,
+        | VECTOR_SET | VECTOR_SET_OR_KEEP | NOP => 0,
 
         // 1-byte
         LOAD_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD | EXTRACT_TUPLE_ITEM
@@ -364,7 +363,7 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
 
         // 2-byte (u16 or u8+u8)
         LOAD_CONST | LOAD_GLOBAL | STORE_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL | MATCH_NIL
-        | MATCH_CONS | LOAD_LOCAL_2 | VECTOR_GET_OR | EFFECT_TUPLE => 2,
+        | MATCH_CONS | LOAD_LOCAL_2 | VECTOR_GET_OR => 2,
 
         // 3-byte
         CALL_KNOWN | CALL_LEAF | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE | RECORD_NEW
@@ -389,6 +388,15 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         RECORD_UPDATE => {
             if ip + 2 < code.len() {
                 3 + code[ip + 2] as usize
+            } else {
+                0
+            }
+        }
+        // CALL_PAR count:u8 unwrap:u8 [(fn_id:u32 argc:u8) × count]
+        CALL_PAR => {
+            if ip < code.len() {
+                let count = code[ip] as usize;
+                2 + count * 5
             } else {
                 0
             }

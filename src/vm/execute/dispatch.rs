@@ -694,68 +694,79 @@ impl VM {
                     self.stack.push(NanValue::new_tuple(idx));
                 }
 
-                EFFECT_TUPLE_BEGIN => {
-                    self.runtime.replay_enter_group();
-                }
-
-                EFFECT_TUPLE => {
-                    self.runtime.replay_exit_group();
+                CALL_PAR => {
                     let count = read_u8!(code, ip) as usize;
                     let unwrap = read_u8!(code, ip) != 0;
-                    let start = self.stack.len() - count;
-                    let items: Vec<NanValue> = self.stack[start..].to_vec();
-                    self.stack.truncate(start);
+
+                    // Read call descriptors: (fn_id:u32, argc:u8) × count
+                    let mut descs = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        let call_fn_id = read_u32!(code, ip);
+                        let argc = read_u8!(code, ip) as usize;
+                        descs.push((call_fn_id, argc));
+                    }
+
+                    // Pop args from stack
+                    let total_args: usize = descs.iter().map(|(_, argc)| argc).sum();
+                    let args_start = self.stack.len() - total_args;
+                    let all_args: Vec<NanValue> = self.stack[args_start..].to_vec();
+                    self.stack.truncate(args_start);
+
+                    // Save caller IP — drop code borrow before call_function
+                    self.frames.last_mut().unwrap().ip = ip as u32;
+                    let saved_fn_id = fn_id;
+
+                    // Enter replay group
+                    self.runtime.replay_enter_group();
+
+                    // Execute each call sequentially (MVP — parallel via par_execute next)
+                    let mut results = Vec::with_capacity(count);
+                    let mut arg_offset = 0;
+                    for (call_fn_id, argc) in &descs {
+                        let args = &all_args[arg_offset..arg_offset + *argc];
+                        arg_offset += argc;
+                        let result = self.call_function(*call_fn_id, args)?;
+                        results.push(result);
+                    }
+
+                    // Exit replay group
+                    self.runtime.replay_exit_group();
 
                     if unwrap {
                         // ?! — unwrap each Result, propagate first Err
                         let mut unwrapped = Vec::with_capacity(count);
-                        let mut err_value = None;
-                        for v in &items {
+                        for v in &results {
                             if v.is_ok() {
                                 unwrapped.push(v.wrapper_inner(&self.arena));
                             } else if v.is_err() {
-                                err_value = Some(*v);
-                                break;
+                                let frame = self.frames.pop().unwrap();
+                                self.stack.truncate(frame.bp as usize);
+                                match self.complete_frame_return(frame, *v, caller_depth) {
+                                    ReturnControl::Done(result) => return Ok(result),
+                                    ReturnControl::Resume {
+                                        result,
+                                        fn_id: next_fn_id,
+                                        ip: next_ip,
+                                        bp: next_bp,
+                                    } => {
+                                        self.stack.push(result);
+                                        fn_id = next_fn_id;
+                                        ip = next_ip;
+                                        bp = next_bp;
+                                        continue;
+                                    }
+                                }
                             } else {
                                 return Err(VmError::runtime(
-                                    "Effect tuple with '?' requires all elements to be Result",
+                                    "Effect tuple '?!' requires all elements to be Result",
                                 ));
                             }
                         }
-                        if let Some(err) = err_value {
-                            // Propagate Err — same as PROPAGATE_ERR
-                            let frame = self.frames.pop().unwrap();
-                            self.stack.truncate(frame.bp as usize);
-                            match self.complete_frame_return(frame, err, caller_depth) {
-                                ReturnControl::Done(result) => return Ok(result),
-                                ReturnControl::Resume {
-                                    result,
-                                    fn_id: next_fn_id,
-                                    ip: next_ip,
-                                    bp: next_bp,
-                                } => {
-                                    self.stack.push(result);
-                                    fn_id = next_fn_id;
-                                    ip = next_ip;
-                                    bp = next_bp;
-                                    continue;
-                                }
-                            }
-                        }
-                        let idx = self
-                            .arena
-                            .with_alloc_space(self.next_value_alloc_space(code, ip), |arena| {
-                                arena.push_tuple(unwrapped)
-                            });
-                        self.stack.push(NanValue::new_tuple(idx));
+                        let tuple_idx = self.arena.push_tuple(unwrapped);
+                        self.stack.push(NanValue::new_tuple(tuple_idx));
                     } else {
-                        // bare ! — return raw tuple
-                        let idx = self
-                            .arena
-                            .with_alloc_space(self.next_value_alloc_space(code, ip), |arena| {
-                                arena.push_tuple(items)
-                            });
-                        self.stack.push(NanValue::new_tuple(idx));
+                        let tuple_idx = self.arena.push_tuple(results);
+                        self.stack.push(NanValue::new_tuple(tuple_idx));
                     }
                 }
 

@@ -155,7 +155,7 @@ fn base_parent_thin_chunk(code_store: &CodeStore, chunk: &FnChunk) -> Result<boo
         match op {
             STORE_GLOBAL | TAIL_CALL_SELF | TAIL_CALL_KNOWN | CALL_VALUE | MATCH_CONS
             | LIST_HEAD_TAIL | CONCAT | LIST_CONS | LIST_PREPEND | RECORD_UPDATE | LIST_NEW
-            | WRAP | TUPLE_NEW | EFFECT_TUPLE | RECORD_NEW | TAIL_CALL_SELF_THIN => {
+            | WRAP | TUPLE_NEW | CALL_PAR | RECORD_NEW | TAIL_CALL_SELF_THIN => {
                 return Ok(false);
             }
 
@@ -248,9 +248,9 @@ fn classify_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
         ip += 1;
         match op {
             STORE_GLOBAL | TAIL_CALL_SELF | TAIL_CALL_KNOWN | CONCAT | LIST_NIL | LIST_CONS
-            | LIST_NEW | RECORD_NEW | WRAP | TUPLE_NEW | EFFECT_TUPLE | RECORD_UPDATE
-            | LIST_LEN | LIST_PREPEND | VECTOR_GET | VECTOR_GET_OR | VECTOR_SET
-            | VECTOR_SET_OR_KEEP | TAIL_CALL_SELF_THIN => {
+            | LIST_NEW | RECORD_NEW | WRAP | TUPLE_NEW | CALL_PAR | RECORD_UPDATE | LIST_LEN
+            | LIST_PREPEND | VECTOR_GET | VECTOR_GET_OR | VECTOR_SET | VECTOR_SET_OR_KEEP
+            | TAIL_CALL_SELF_THIN => {
                 return Ok(false);
             }
 
@@ -283,7 +283,7 @@ fn classify_thin_ignoring_self_tco(chunk: &FnChunk) -> Result<bool, CompileError
         ip += 1;
         match op {
             STORE_GLOBAL | TAIL_CALL_KNOWN | CONCAT | LIST_NIL | LIST_CONS | LIST_NEW
-            | RECORD_NEW | WRAP | TUPLE_NEW | EFFECT_TUPLE | RECORD_UPDATE | LIST_LEN
+            | RECORD_NEW | WRAP | TUPLE_NEW | CALL_PAR | RECORD_UPDATE | LIST_LEN
             | LIST_PREPEND | VECTOR_GET | VECTOR_GET_OR | VECTOR_SET | VECTOR_SET_OR_KEEP => {
                 return Ok(false);
             }
