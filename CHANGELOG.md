@@ -5,19 +5,16 @@ All notable changes to Aver are documented here.
 ## 0.8.0 (unreleased)
 
 ### Added
-- **Independent products (`?!` / `!`)** — a tuple followed by `!` denotes a product of independent computations. A tuple followed by `?!` denotes a product of independent Result computations with error propagation. Elements cannot reference each other — independence is structural, not annotated. Composes recursively: `(fetchOne(url), fetchAll(rest))?!` gives fan-out parallelism, streaming, and backpressure with no new language concepts. See [docs/independence.md](docs/independence.md).
-- **Parallel codegen** — `?!` / `!` tuples compile to `std::thread::scope` in generated Rust. Measured: 4 HTTP calls × 2s = 3.7s total (vs ~8s sequential).
-- **Replay groups** — effects within a `?!` / `!` product share a `group_id`. During replay, effects within a group are matched by type and args, not position. Reordering independent effects in code does not break replay sessions.
-- **VM `CALL_PAR` opcode** — bytecode VM compiles `?!` / `!` to a single `CALL_PAR` opcode encoding `(fn_id, argc)` per element. Sequential execution with replay groups (parallel dispatch via `aver_rt::par_execute` planned).
-- **`Arena.clone_static()`** — creates a fresh Arena with only compile-time context (symbols, type metadata, stable constants). No runtime garbage. Foundation for VM parallel dispatch.
-- **`aver_rt::par_execute`** — shared parallel runtime backend for VM and interpreter. Uses `std::thread::scope` internally; configurable thread pool planned.
-- **`aver check` validation** — effect tuple elements must be function calls. Complex expressions (arithmetic, match) produce a compile error.
-- **`aver why`** — trace justification coverage across a codebase. Scores every function as justified (description + verify without coverage gaps), partial, or unjustified. Effectful functions are justified by description alone since verify blocks don't apply. Supports `--verbose` (show all functions) and `--json` (NDJSON output with per-file and per-function detail).
-- **`[[check.suppress]]` in `aver.toml`** — suppress specific `aver check` warnings with a mandatory `reason` explaining why the warning is acceptable. Supports `slug` (diagnostic category), optional `files` (glob patterns), and requires a non-empty `reason` string.
+- **Independent products (`?!` / `!`)** — a tuple followed by `!` is a product of independent computations. `?!` adds Result unwrapping — all must succeed or the first error propagates. Independence is structural: tuple elements cannot reference each other. Composes recursively, giving fan-out parallelism, streaming, and backpressure with no new language concepts. No async, no futures, no channels — just products and independence. See [docs/independence.md](docs/independence.md).
+- **Parallel execution** — compiled Aver programs run `?!` / `!` elements on separate threads. Two HTTP calls that each take 2 seconds complete in ~3 seconds, not 4. Recursive `?!` over a list fans out the entire tree.
+- **Replay groups** — effects inside a `?!` / `!` product are order-independent in replay. Reordering independent code does not break recorded sessions.
+- **`aver check`** validates that `?!` / `!` elements are function calls — no complex expressions allowed inside independent products.
+- **`aver why`** — justification coverage tracer. Scores every function as justified, partial, or unjustified based on description, verify blocks, and coverage. `--verbose` and `--json` output modes.
+- **`[[check.suppress]]` in `aver.toml`** — suppress specific warnings with a mandatory `reason`.
 
 ### Changed
-- **Rc → Arc migration** — all runtime types (`AverStr`, `AverList`, `AverMap`, `NanValue` arena entries, AST nodes) use `Arc` instead of `Rc`. Makes Aver types `Send + Sync` for parallel execution. Overhead: ~1ns per clone (negligible for I/O-bound `?!` workloads).
-- **Structured replay diagnostics** — replay failures now use per-error-type diagnostics (`replay-args-mismatch`, `replay-effect-mismatch`, `replay-output-mismatch`) with proper source file and recording JSON locations. Args diff hint shown even without `--check-args`.
+- **Thread-safe runtime** — all runtime types use atomic reference counting, enabling parallel execution of independent products.
+- **Structured replay diagnostics** — per-error-type diagnostics with source locations. Args diff hint shown even without `--check-args`.
 
 ## 0.7.3 (2026-03-30)
 
