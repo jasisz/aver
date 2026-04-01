@@ -286,16 +286,17 @@ fn emit_expr_with_options(
                 .collect();
 
             // Generate parallel execution using std::thread::scope
+            // (codegen uses thread::scope directly because elements may have
+            // heterogeneous types; VM/interpreter use aver_rt::par_execute
+            // since NanValue is uniform)
             let n = parts.len();
             let mut code = String::from("std::thread::scope(|_aver_s| { ");
-            // Spawn a thread for each element
             for (i, part) in parts.iter().enumerate() {
                 code.push_str(&format!(
                     "let _aver_h{i} = _aver_s.spawn(|| {{ {part} }}); "
                 ));
             }
             if *unwrap {
-                // ?! — unwrap each Result inside scope, return Result<tuple, E>
                 for i in 0..n {
                     code.push_str(&format!("let _aver_r{i} = _aver_h{i}.join().unwrap()?; "));
                 }
@@ -306,10 +307,8 @@ fn emit_expr_with_options(
                     }
                     code.push_str(&format!("_aver_r{i}"));
                 }
-                // scope returns Result<(T1,T2,...), AverStr>, outer ? propagates
                 code.push_str(")) })?");
             } else {
-                // bare ! — return raw tuple
                 code.push('(');
                 for i in 0..n {
                     if i > 0 {
