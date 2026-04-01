@@ -111,6 +111,7 @@ struct FnDetail {
     name: String,
     lines: usize,
     has_description: bool,
+    is_effectful: bool,
     verify_cases: usize,
     has_coverage_gaps: bool,
     has_decision_impact: bool,
@@ -129,9 +130,17 @@ enum Justification {
 impl FnDetail {
     fn justification(&self) -> Justification {
         let has_verify = self.verify_cases > 0;
-        // Justified: description AND verify without coverage gaps
-        if self.has_description && has_verify && !self.has_coverage_gaps {
-            return Justification::Justified;
+        if self.is_effectful {
+            // Effectful functions can't have verify blocks —
+            // description alone is sufficient for "justified".
+            if self.has_description {
+                return Justification::Justified;
+            }
+        } else {
+            // Pure: description AND verify without coverage gaps
+            if self.has_description && has_verify && !self.has_coverage_gaps {
+                return Justification::Justified;
+            }
         }
         // Partial: has at least one signal
         if self.has_description || has_verify || self.has_decision_impact {
@@ -241,6 +250,7 @@ fn analyze_file(path: &str) -> Result<FileStats, String> {
             name: fd.name.clone(),
             lines: fn_lines,
             has_description: fd.desc.is_some(),
+            is_effectful: !fd.effects.is_empty(),
             verify_cases,
             has_coverage_gaps: fns_with_coverage_gaps.contains(&fd.name),
             has_decision_impact,
@@ -373,7 +383,11 @@ fn render_file(shown_path: &str, stats: &FileStats, verbose: bool) {
         if !f.has_description {
             hints.push("no description");
         }
-        if f.verify_cases == 0 {
+        if f.is_effectful {
+            if !f.has_description {
+                hints.push("effectful — test via replay");
+            }
+        } else if f.verify_cases == 0 {
             hints.push("no verify");
         } else if f.has_coverage_gaps {
             hints.push("verify has gaps");
@@ -426,11 +440,12 @@ fn render_file_json(shown_path: &str, stats: &FileStats) {
                 missing.push("\"verify has gaps\"");
             }
             format!(
-                "{{\"name\":\"{}\",\"lines\":{},\"level\":\"{}\",\"description\":{},\"verify_cases\":{},\"coverage_gaps\":{},\"decision_impact\":{},\"missing\":[{}]}}",
+                "{{\"name\":\"{}\",\"lines\":{},\"level\":\"{}\",\"description\":{},\"effectful\":{},\"verify_cases\":{},\"coverage_gaps\":{},\"decision_impact\":{},\"missing\":[{}]}}",
                 json_escape(&f.name),
                 f.lines,
                 level,
                 f.has_description,
+                f.is_effectful,
                 f.verify_cases,
                 f.has_coverage_gaps,
                 f.has_decision_impact,
