@@ -120,8 +120,7 @@ use std::sync::Arc as Rc;
 // ── par_execute: parallel execution for effect tuples (?!) ─────────────────
 
 /// Execute tasks in parallel using scoped threads.
-/// All tasks run concurrently; results are returned in the same order as input.
-/// Used by codegen, VM, and interpreter for `?!` / `!` effect tuples.
+/// Uniform parallel execution for VM/interpreter (all tasks return NanValue).
 pub fn par_execute<T: Send>(tasks: Vec<Box<dyn FnOnce() -> T + Send>>) -> Vec<T> {
     std::thread::scope(|s| {
         let handles: Vec<_> = tasks

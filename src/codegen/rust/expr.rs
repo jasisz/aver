@@ -285,27 +285,20 @@ fn emit_expr_with_options(
                 .map(|(e, item_ctx)| clone_arg(e, ctx, item_ctx))
                 .collect();
 
-            // Generate parallel execution using std::thread::scope
-            // (codegen uses thread::scope directly because elements may have
-            // heterogeneous types; VM/interpreter use aver_rt::par_execute
-            // since NanValue is uniform)
+            // Parallel execution via std::thread::scope — works for any
+            // arity and heterogeneous return types
             let n = parts.len();
-            let mut code = String::from("std::thread::scope(|_aver_s| { ");
+            let mut code = String::from("std::thread::scope(|_s| { ");
             for (i, part) in parts.iter().enumerate() {
-                code.push_str(&format!(
-                    "let _aver_h{i} = _aver_s.spawn(|| {{ {part} }}); "
-                ));
+                code.push_str(&format!("let _h{i} = _s.spawn(|| {part}); "));
             }
             if *unwrap {
-                for i in 0..n {
-                    code.push_str(&format!("let _aver_r{i} = _aver_h{i}.join().unwrap()?; "));
-                }
                 code.push_str("Ok::<_, aver_rt::AverStr>((");
                 for i in 0..n {
                     if i > 0 {
                         code.push_str(", ");
                     }
-                    code.push_str(&format!("_aver_r{i}"));
+                    code.push_str(&format!("_h{i}.join().unwrap()?"));
                 }
                 code.push_str(")) })?");
             } else {
@@ -314,7 +307,7 @@ fn emit_expr_with_options(
                     if i > 0 {
                         code.push_str(", ");
                     }
-                    code.push_str(&format!("_aver_h{i}.join().unwrap()"));
+                    code.push_str(&format!("_h{i}.join().unwrap()"));
                 }
                 code.push_str(") })");
             }
