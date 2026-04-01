@@ -30,7 +30,6 @@ pub(super) fn cmd_why(path: &str, module_root_override: Option<&str>) {
                 render_file(&shown_path, &stats);
                 total_stats.total_lines += stats.total_lines;
                 total_stats.justified_lines += stats.justified_lines;
-                total_stats.partial_lines += stats.partial_lines;
                 total_stats.unjustified_lines += stats.unjustified_lines;
                 total_stats.decisions.extend(stats.decisions);
                 total_stats.fn_details.extend(stats.fn_details);
@@ -52,23 +51,16 @@ pub(super) fn cmd_why(path: &str, module_root_override: Option<&str>) {
         inputs.len(),
         total_stats.total_lines
     );
-    let just_pct = pct(total_stats.justified_lines, total_stats.total_lines);
-    let part_pct = pct(total_stats.partial_lines, total_stats.total_lines);
-    let unjust_pct = pct(total_stats.unjustified_lines, total_stats.total_lines);
+    let just_pct = fmt_pct(total_stats.justified_lines, total_stats.total_lines);
+    let unjust_pct = fmt_pct(total_stats.unjustified_lines, total_stats.total_lines);
     println!(
-        "  {}    {} lines ({}%)",
+        "  {}    {} lines ({})",
         "justified".green(),
         total_stats.justified_lines,
         just_pct
     );
     println!(
-        "  {}      {} lines ({}%)",
-        "partial".yellow(),
-        total_stats.partial_lines,
-        part_pct
-    );
-    println!(
-        "  {}  {} lines ({}%)",
+        "  {}  {} lines ({})",
         "unjustified".red(),
         total_stats.unjustified_lines,
         unjust_pct
@@ -95,31 +87,16 @@ struct FnDetail {
 }
 
 impl FnDetail {
-    fn justification_level(&self) -> Justification {
-        let score =
-            self.has_description as u8 + self.has_verify as u8 + self.has_decision_impact as u8;
-        match score {
-            0 => Justification::Unjustified,
-            1 => Justification::Partial,
-            _ => Justification::Justified,
-        }
+    fn is_justified(&self) -> bool {
+        self.has_description || self.has_verify || self.has_decision_impact
     }
-}
-
-#[derive(Clone, Copy)]
-enum Justification {
-    Justified,
-    Partial,
-    Unjustified,
 }
 
 #[derive(Default)]
 struct FileStats {
     total_lines: usize,
     justified_lines: usize,
-    partial_lines: usize,
     unjustified_lines: usize,
-    _has_module_intent: bool,
     decisions: Vec<DecisionSummary>,
     fn_details: Vec<FnDetail>,
 }
@@ -177,7 +154,6 @@ fn analyze_file(path: &str) -> Result<FileStats, String> {
 
     let mut fn_details = Vec::new();
     let mut justified_lines = 0usize;
-    let mut partial_lines = 0usize;
     let mut unjustified_lines = 0usize;
 
     // Estimate lines per function: from fn line to next fn/toplevel line (or EOF)
@@ -186,7 +162,6 @@ fn analyze_file(path: &str) -> Result<FileStats, String> {
         let fn_end = if i + 1 < fns.len() {
             fns[i + 1].line.saturating_sub(1)
         } else {
-            // Last fn — estimate: look for next non-fn toplevel or EOF
             next_toplevel_line_after(&items, fd.line).unwrap_or(total_lines)
         };
         let fn_lines = fn_end.saturating_sub(fn_start).max(1);
@@ -205,23 +180,22 @@ fn analyze_file(path: &str) -> Result<FileStats, String> {
             has_decision_impact,
         };
 
-        match detail.justification_level() {
-            Justification::Justified => justified_lines += fn_lines,
-            Justification::Partial => partial_lines += fn_lines,
-            Justification::Unjustified => unjustified_lines += fn_lines,
+        if detail.is_justified() {
+            justified_lines += fn_lines;
+        } else {
+            unjustified_lines += fn_lines;
         }
 
         fn_details.push(detail);
     }
 
     // Non-function lines (module, type defs, decisions, verify blocks, etc.)
-    // Count them as justified if module has intent, partial otherwise
-    let non_fn_lines =
-        total_lines.saturating_sub(justified_lines + partial_lines + unjustified_lines);
+    // Count them as justified if module has intent, unjustified otherwise
+    let non_fn_lines = total_lines.saturating_sub(justified_lines + unjustified_lines);
     if has_module_intent {
         justified_lines += non_fn_lines;
     } else {
-        partial_lines += non_fn_lines;
+        unjustified_lines += non_fn_lines;
     }
 
     let decision_summaries: Vec<DecisionSummary> = decisions
@@ -244,9 +218,7 @@ fn analyze_file(path: &str) -> Result<FileStats, String> {
     Ok(FileStats {
         total_lines,
         justified_lines,
-        partial_lines,
         unjustified_lines,
-        _has_module_intent: has_module_intent,
         decisions: decision_summaries,
         fn_details,
     })
@@ -279,22 +251,22 @@ fn next_toplevel_line_after(items: &[TopLevel], after_line: usize) -> Option<usi
 // ---------------------------------------------------------------------------
 
 fn render_file(shown_path: &str, stats: &FileStats) {
-    let just_pct = pct(stats.justified_lines, stats.total_lines);
+    let just_pct_raw = raw_pct(stats.justified_lines, stats.total_lines);
 
-    let color_path = if just_pct >= 60 {
+    let color_path = if just_pct_raw >= 60 {
         shown_path.green()
-    } else if just_pct >= 30 {
+    } else if just_pct_raw >= 30 {
         shown_path.yellow()
     } else {
         shown_path.red()
     };
     println!("{}", color_path);
     println!(
-        "  {} {}/{} lines ({}%)",
+        "  {} {}/{} lines ({})",
         "justified:".bold(),
         stats.justified_lines,
         stats.total_lines,
-        just_pct
+        fmt_pct(stats.justified_lines, stats.total_lines)
     );
 
     for d in &stats.decisions {
@@ -330,7 +302,7 @@ fn render_file(shown_path: &str, stats: &FileStats) {
     let mut unjustified: Vec<&FnDetail> = stats
         .fn_details
         .iter()
-        .filter(|f| matches!(f.justification_level(), Justification::Unjustified))
+        .filter(|f| !f.is_justified())
         .collect();
     unjustified.sort_by(|a, b| b.lines.cmp(&a.lines));
 
@@ -360,9 +332,24 @@ fn render_file(shown_path: &str, stats: &FileStats) {
     println!();
 }
 
-fn pct(part: usize, total: usize) -> usize {
+/// Raw integer percentage (for threshold comparisons).
+fn raw_pct(part: usize, total: usize) -> usize {
     if total == 0 {
         return 0;
     }
     (part * 100) / total
+}
+
+/// Human-friendly percentage string: `"0%"` only when count is truly 0,
+/// otherwise `"<1%"` for small fractions, or `"N%"` for the rest.
+fn fmt_pct(part: usize, total: usize) -> String {
+    if total == 0 || part == 0 {
+        return "0%".to_string();
+    }
+    let pct = (part * 100) / total;
+    if pct == 0 {
+        "<1%".to_string()
+    } else {
+        format!("{}%", pct)
+    }
 }
