@@ -1,0 +1,88 @@
+module IndependentProducts
+    intent =
+        "Demonstrates independent products (?! and !) for concurrent effects."
+        "A tuple followed by ! is a product of independent computations."
+        "A tuple followed by ?! adds Result unwrapping."
+
+decision IndependenceNotParallelism
+    date = "2026-04-01"
+    reason =
+        "Aver expresses independence, not parallelism."
+        "The runtime decides whether to run concurrently — the programmer"
+        "declares that computations have no data dependency between them."
+    chosen = "Independent products via ?! and !"
+    rejected = ["async/await", "par keyword", "streams", "channels"]
+    impacts = [loadDashboard, fetchAll, fetchStep, loadWithFallback]
+
+// ── Flat: multiple independent effects ──────────────────────────────────────
+
+record Dashboard
+    profile: String
+    settings: String
+
+fn fetchProfile(userId: String) -> Result<String, String>
+    ? "Fetches user profile from an API."
+    ! [Http.get]
+    resp = Http.get("https://httpbin.org/get?user={userId}")?
+    Result.Ok(resp.body)
+
+fn loadSettings(userId: String) -> Result<String, String>
+    ? "Reads user settings from a local file."
+    ! [Disk.readText]
+    Disk.readText("config/{userId}.json")
+
+fn loadDashboard(userId: String) -> Result<Dashboard, String>
+    ? "Loads profile and settings independently."
+    ! [Http.get, Disk.readText]
+    data = (fetchProfile(userId), loadSettings(userId))?!
+    match data
+        (profile, settings) -> Result.Ok(Dashboard(profile = profile, settings = settings))
+
+// ── Recursive: fan-out over a list ──────────────────────────────────────────
+
+fn fetchOne(url: String) -> Result<String, String>
+    ? "Fetches a single URL."
+    ! [Http.get]
+    resp = Http.get(url)?
+    Result.Ok(resp.body)
+
+fn fetchStep(url: String, rest: List<String>) -> Result<List<String>, String>
+    ? "Fetches one URL and the rest independently."
+    ! [Http.get]
+    data = (fetchOne(url), fetchAll(rest))?!
+    match data
+        (body, others) -> Result.Ok(List.prepend(body, others))
+
+fn fetchAll(urls: List<String>) -> Result<List<String>, String>
+    ? "Fetches all URLs via recursive fan-out."
+    ! [Http.get]
+    match urls
+        [] -> Result.Ok([])
+        [url, ..rest] -> fetchStep(url, rest)
+
+// ── Bare !: partial success handling ────────────────────────────────────────
+
+fn loadWithFallback(userId: String) -> String
+    ? "Loads profile and settings, handles partial failures."
+    ! [Http.get, Disk.readText]
+    results = (fetchProfile(userId), loadSettings(userId))!
+    match results
+        (Result.Ok(profile), Result.Ok(settings)) -> "both: {profile}"
+        (Result.Ok(profile), Result.Err(_)) -> "profile only: {profile}"
+        (Result.Err(_), Result.Ok(settings)) -> "settings only: {settings}"
+        (Result.Err(_), Result.Err(_)) -> "nothing loaded"
+
+// ── Entry point ─────────────────────────────────────────────────────────────
+
+fn main() -> Unit
+    ! [Console.print, Console.error, Http.get, Disk.readText]
+    Console.print("=== Independent Products Demo ===")
+
+    // Flat ?!
+    match loadDashboard("alice")
+        Result.Ok(dash) -> Console.print("Dashboard: {dash.profile}")
+        Result.Err(e) -> Console.error("Dashboard failed: {e}")
+
+    // Bare !
+    result = loadWithFallback("bob")
+    Console.print("Fallback: {result}")
