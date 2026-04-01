@@ -247,6 +247,9 @@ pub(super) enum Commands {
         /// Show all partial/unjustified functions (default: top 3 per file)
         #[arg(long)]
         verbose: bool,
+        /// Output as NDJSON (one object per line)
+        #[arg(long)]
+        json: bool,
     },
     /// Export pure Aver code to a proof/verification project
     Proof {

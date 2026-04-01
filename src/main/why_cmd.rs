@@ -13,7 +13,7 @@ use super::shared::{parse_file, read_file, resolve_module_root};
 // Public entry point
 // ---------------------------------------------------------------------------
 
-pub(super) fn cmd_why(path: &str, module_root_override: Option<&str>, verbose: bool) {
+pub(super) fn cmd_why(path: &str, module_root_override: Option<&str>, verbose: bool, json: bool) {
     let module_root = resolve_module_root(module_root_override);
     let inputs = match resolve_av_inputs(path) {
         Ok(inputs) => inputs,
@@ -29,7 +29,11 @@ pub(super) fn cmd_why(path: &str, module_root_override: Option<&str>, verbose: b
         let shown_path = display_check_path(file, &module_root);
         match analyze_file(file) {
             Ok(stats) => {
-                render_file(&shown_path, &stats, verbose);
+                if json {
+                    render_file_json(&shown_path, &stats);
+                } else {
+                    render_file(&shown_path, &stats, verbose);
+                }
                 total_stats.total_lines += stats.total_lines;
                 total_stats.justified_lines += stats.justified_lines;
                 total_stats.partial_lines += stats.partial_lines;
@@ -38,45 +42,64 @@ pub(super) fn cmd_why(path: &str, module_root_override: Option<&str>, verbose: b
                 total_stats.fn_details.extend(stats.fn_details);
             }
             Err(e) => {
-                println!("{}", shown_path.red());
-                println!("  error: {}", e);
-                println!();
+                if json {
+                    println!(
+                        "{{\"schema_version\":1,\"kind\":\"file-error\",\"file\":\"{}\",\"error\":\"{}\"}}",
+                        json_escape(&shown_path),
+                        json_escape(&e)
+                    );
+                } else {
+                    println!("{}", shown_path.red());
+                    println!("  error: {}", e);
+                    println!();
+                }
             }
         }
     }
 
-    // Summary
-    println!("{}", "─".repeat(50).dimmed());
-    println!();
-    println!(
-        "{} {} files, {} lines",
-        "Summary:".bold(),
-        inputs.len(),
-        total_stats.total_lines
-    );
-    println!(
-        "  {}    {} lines ({})",
-        "justified".green(),
-        total_stats.justified_lines,
-        fmt_pct(total_stats.justified_lines, total_stats.total_lines)
-    );
-    println!(
-        "  {}      {} lines ({})",
-        "partial".yellow(),
-        total_stats.partial_lines,
-        fmt_pct(total_stats.partial_lines, total_stats.total_lines)
-    );
-    println!(
-        "  {}  {} lines ({})",
-        "unjustified".red(),
-        total_stats.unjustified_lines,
-        fmt_pct(total_stats.unjustified_lines, total_stats.total_lines)
-    );
-    println!();
-    println!(
-        "{}",
-        "Tip: add ? descriptions, verify blocks, and decision blocks to improve coverage.".dimmed()
-    );
+    if json {
+        println!(
+            "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"lines\":{},\"justified\":{},\"partial\":{},\"unjustified\":{}}}",
+            inputs.len(),
+            total_stats.total_lines,
+            total_stats.justified_lines,
+            total_stats.partial_lines,
+            total_stats.unjustified_lines
+        );
+    } else {
+        println!("{}", "─".repeat(50).dimmed());
+        println!();
+        println!(
+            "{} {} files, {} lines",
+            "Summary:".bold(),
+            inputs.len(),
+            total_stats.total_lines
+        );
+        println!(
+            "  {}    {} lines ({})",
+            "justified".green(),
+            total_stats.justified_lines,
+            fmt_pct(total_stats.justified_lines, total_stats.total_lines)
+        );
+        println!(
+            "  {}      {} lines ({})",
+            "partial".yellow(),
+            total_stats.partial_lines,
+            fmt_pct(total_stats.partial_lines, total_stats.total_lines)
+        );
+        println!(
+            "  {}  {} lines ({})",
+            "unjustified".red(),
+            total_stats.unjustified_lines,
+            fmt_pct(total_stats.unjustified_lines, total_stats.total_lines)
+        );
+        println!();
+        println!(
+            "{}",
+            "Tip: add ? descriptions, verify blocks, and decision blocks to improve coverage."
+                .dimmed()
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -380,6 +403,70 @@ impl Justification {
             Justification::Justified => 2,
         }
     }
+}
+
+fn render_file_json(shown_path: &str, stats: &FileStats) {
+    // Per-function details as JSON array
+    let fns_json: Vec<String> = stats
+        .fn_details
+        .iter()
+        .map(|f| {
+            let level = match f.justification() {
+                Justification::Justified => "justified",
+                Justification::Partial => "partial",
+                Justification::Unjustified => "unjustified",
+            };
+            let mut missing = Vec::new();
+            if !f.has_description {
+                missing.push("\"no description\"");
+            }
+            if f.verify_cases == 0 {
+                missing.push("\"no verify\"");
+            } else if f.has_coverage_gaps {
+                missing.push("\"verify has gaps\"");
+            }
+            format!(
+                "{{\"name\":\"{}\",\"lines\":{},\"level\":\"{}\",\"description\":{},\"verify_cases\":{},\"coverage_gaps\":{},\"decision_impact\":{},\"missing\":[{}]}}",
+                json_escape(&f.name),
+                f.lines,
+                level,
+                f.has_description,
+                f.verify_cases,
+                f.has_coverage_gaps,
+                f.has_decision_impact,
+                missing.join(",")
+            )
+        })
+        .collect();
+
+    let decisions_json: Vec<String> = stats
+        .decisions
+        .iter()
+        .map(|d| {
+            format!(
+                "{{\"name\":\"{}\",\"date\":\"{}\"}}",
+                json_escape(&d.name),
+                json_escape(&d.date)
+            )
+        })
+        .collect();
+
+    println!(
+        "{{\"schema_version\":1,\"kind\":\"file\",\"file\":\"{}\",\"lines\":{},\"justified\":{},\"partial\":{},\"unjustified\":{},\"decisions\":[{}],\"functions\":[{}]}}",
+        json_escape(shown_path),
+        stats.total_lines,
+        stats.justified_lines,
+        stats.partial_lines,
+        stats.unjustified_lines,
+        decisions_json.join(","),
+        fns_json.join(",")
+    );
+}
+
+fn json_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
 }
 
 fn raw_pct(part: usize, total: usize) -> usize {

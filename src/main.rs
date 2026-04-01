@@ -154,8 +154,9 @@ fn main() {
             file,
             module_root,
             verbose,
+            json,
         } => {
-            why_cmd::cmd_why(file, module_root.as_deref(), *verbose);
+            why_cmd::cmd_why(file, module_root.as_deref(), *verbose, *json);
         }
         Commands::Proof {
             file,
