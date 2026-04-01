@@ -744,6 +744,7 @@ impl VM {
                         let globals = self.globals.clone();
                         let allowed_effects = self.runtime.allowed_effects().to_vec();
 
+                        #[allow(clippy::type_complexity)]
                         let tasks: Vec<
                             Box<dyn FnOnce() -> Result<(NanValue, Arena), VmError> + Send>,
                         > = descs
