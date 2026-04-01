@@ -1,8 +1,10 @@
+use std::collections::{HashMap, HashSet};
 use std::process;
 
 use colored::Colorize;
 
 use aver::ast::{DecisionBlock, FnDef, TopLevel};
+use aver::checker::{collect_verify_coverage_warnings, merge_verify_blocks};
 
 use super::commands::{display_check_path, resolve_av_inputs};
 use super::shared::{parse_file, read_file, resolve_module_root};
@@ -30,6 +32,7 @@ pub(super) fn cmd_why(path: &str, module_root_override: Option<&str>) {
                 render_file(&shown_path, &stats);
                 total_stats.total_lines += stats.total_lines;
                 total_stats.justified_lines += stats.justified_lines;
+                total_stats.partial_lines += stats.partial_lines;
                 total_stats.unjustified_lines += stats.unjustified_lines;
                 total_stats.decisions.extend(stats.decisions);
                 total_stats.fn_details.extend(stats.fn_details);
@@ -51,19 +54,23 @@ pub(super) fn cmd_why(path: &str, module_root_override: Option<&str>) {
         inputs.len(),
         total_stats.total_lines
     );
-    let just_pct = fmt_pct(total_stats.justified_lines, total_stats.total_lines);
-    let unjust_pct = fmt_pct(total_stats.unjustified_lines, total_stats.total_lines);
     println!(
         "  {}    {} lines ({})",
         "justified".green(),
         total_stats.justified_lines,
-        just_pct
+        fmt_pct(total_stats.justified_lines, total_stats.total_lines)
+    );
+    println!(
+        "  {}      {} lines ({})",
+        "partial".yellow(),
+        total_stats.partial_lines,
+        fmt_pct(total_stats.partial_lines, total_stats.total_lines)
     );
     println!(
         "  {}  {} lines ({})",
         "unjustified".red(),
         total_stats.unjustified_lines,
-        unjust_pct
+        fmt_pct(total_stats.unjustified_lines, total_stats.total_lines)
     );
     println!();
     println!(
@@ -76,19 +83,38 @@ pub(super) fn cmd_why(path: &str, module_root_override: Option<&str>) {
 // Analysis
 // ---------------------------------------------------------------------------
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct FnDetail {
     name: String,
-    line: usize,
     lines: usize,
     has_description: bool,
-    has_verify: bool,
+    verify_cases: usize,
+    has_coverage_gaps: bool,
     has_decision_impact: bool,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum Justification {
+    /// description + verify with no coverage gaps
+    Justified,
+    /// has something but incomplete (desc only, verify with gaps, decision only, etc.)
+    Partial,
+    /// nothing at all
+    Unjustified,
+}
+
 impl FnDetail {
-    fn is_justified(&self) -> bool {
-        self.has_description || self.has_verify || self.has_decision_impact
+    fn justification(&self) -> Justification {
+        let has_verify = self.verify_cases > 0;
+        // Justified: description AND verify without coverage gaps
+        if self.has_description && has_verify && !self.has_coverage_gaps {
+            return Justification::Justified;
+        }
+        // Partial: has at least one signal
+        if self.has_description || has_verify || self.has_decision_impact {
+            return Justification::Partial;
+        }
+        Justification::Unjustified
     }
 }
 
@@ -96,6 +122,7 @@ impl FnDetail {
 struct FileStats {
     total_lines: usize,
     justified_lines: usize,
+    partial_lines: usize,
     unjustified_lines: usize,
     decisions: Vec<DecisionSummary>,
     fn_details: Vec<FnDetail>,
@@ -123,18 +150,32 @@ fn analyze_file(path: &str) -> Result<FileStats, String> {
         })
         .collect();
 
-    // Collect decision impact symbols for cross-referencing
-    let impact_symbols: std::collections::HashSet<String> = decisions
+    let impact_symbols: HashSet<String> = decisions
         .iter()
         .flat_map(|d| d.impacts.iter().map(|i| i.node.text().to_string()))
         .collect();
 
-    // Collect verify blocks by function name
-    let verified_fns: std::collections::HashSet<String> = items
+    // Verify: merge blocks, count cases per fn
+    let merged_verify = merge_verify_blocks(&items);
+    let mut verify_cases_per_fn: HashMap<String, usize> = HashMap::new();
+    for vb in &merged_verify {
+        *verify_cases_per_fn.entry(vb.fn_name.clone()).or_default() += vb.cases.len();
+    }
+
+    // Coverage gaps: run the existing checker, collect fn names with warnings
+    let coverage_warnings = collect_verify_coverage_warnings(&items);
+    let fns_with_coverage_gaps: HashSet<String> = coverage_warnings
         .iter()
-        .filter_map(|item| match item {
-            TopLevel::Verify(v) => Some(v.fn_name.clone()),
-            _ => None,
+        .filter_map(|w| {
+            // Messages are "verify examples for {fn_name} ..."
+            w.message
+                .strip_prefix("verify examples for ")
+                .or_else(|| {
+                    w.message
+                        .strip_prefix("verify examples for recursive function ")
+                })
+                .and_then(|rest| rest.split_whitespace().next())
+                .map(|s| s.to_string())
         })
         .collect();
 
@@ -154,9 +195,9 @@ fn analyze_file(path: &str) -> Result<FileStats, String> {
 
     let mut fn_details = Vec::new();
     let mut justified_lines = 0usize;
+    let mut partial_lines = 0usize;
     let mut unjustified_lines = 0usize;
 
-    // Estimate lines per function: from fn line to next fn/toplevel line (or EOF)
     for (i, fd) in fns.iter().enumerate() {
         let fn_start = fd.line;
         let fn_end = if i + 1 < fns.len() {
@@ -171,27 +212,29 @@ fn analyze_file(path: &str) -> Result<FileStats, String> {
                 .iter()
                 .any(|s: &String| fd.name.starts_with(s.as_str()));
 
+        let verify_cases = verify_cases_per_fn.get(&fd.name).copied().unwrap_or(0);
+
         let detail = FnDetail {
             name: fd.name.clone(),
-            line: fd.line,
             lines: fn_lines,
             has_description: fd.desc.is_some(),
-            has_verify: verified_fns.contains(&fd.name),
+            verify_cases,
+            has_coverage_gaps: fns_with_coverage_gaps.contains(&fd.name),
             has_decision_impact,
         };
 
-        if detail.is_justified() {
-            justified_lines += fn_lines;
-        } else {
-            unjustified_lines += fn_lines;
+        match detail.justification() {
+            Justification::Justified => justified_lines += fn_lines,
+            Justification::Partial => partial_lines += fn_lines,
+            Justification::Unjustified => unjustified_lines += fn_lines,
         }
 
         fn_details.push(detail);
     }
 
-    // Non-function lines (module, type defs, decisions, verify blocks, etc.)
-    // Count them as justified if module has intent, unjustified otherwise
-    let non_fn_lines = total_lines.saturating_sub(justified_lines + unjustified_lines);
+    // Non-function lines
+    let non_fn_lines =
+        total_lines.saturating_sub(justified_lines + partial_lines + unjustified_lines);
     if has_module_intent {
         justified_lines += non_fn_lines;
     } else {
@@ -218,6 +261,7 @@ fn analyze_file(path: &str) -> Result<FileStats, String> {
     Ok(FileStats {
         total_lines,
         justified_lines,
+        partial_lines,
         unjustified_lines,
         decisions: decision_summaries,
         fn_details,
@@ -231,9 +275,7 @@ fn next_toplevel_line_after(items: &[TopLevel], after_line: usize) -> Option<usi
             TopLevel::FnDef(fd) => fd.line,
             TopLevel::Verify(v) => v.line,
             TopLevel::Decision(d) => d.line,
-            TopLevel::TypeDef(_) => continue,
-            TopLevel::Module(_) => continue,
-            TopLevel::Stmt(_) => continue,
+            TopLevel::TypeDef(_) | TopLevel::Module(_) | TopLevel::Stmt(_) => continue,
         };
         if line > after_line {
             min_line = Some(match min_line {
@@ -251,22 +293,26 @@ fn next_toplevel_line_after(items: &[TopLevel], after_line: usize) -> Option<usi
 // ---------------------------------------------------------------------------
 
 fn render_file(shown_path: &str, stats: &FileStats) {
-    let just_pct_raw = raw_pct(stats.justified_lines, stats.total_lines);
+    let just_raw = raw_pct(stats.justified_lines, stats.total_lines);
 
-    let color_path = if just_pct_raw >= 60 {
+    let color_path = if just_raw >= 60 {
         shown_path.green()
-    } else if just_pct_raw >= 30 {
+    } else if just_raw >= 30 {
         shown_path.yellow()
     } else {
         shown_path.red()
     };
     println!("{}", color_path);
+
+    // One-line summary
     println!(
-        "  {} {}/{} lines ({})",
-        "justified:".bold(),
-        stats.justified_lines,
-        stats.total_lines,
-        fmt_pct(stats.justified_lines, stats.total_lines)
+        "  {} {} | {} {} | {} {}",
+        fmt_pct(stats.justified_lines, stats.total_lines).green(),
+        "justified".green(),
+        fmt_pct(stats.partial_lines, stats.total_lines).yellow(),
+        "partial".yellow(),
+        fmt_pct(stats.unjustified_lines, stats.total_lines).red(),
+        "unjustified".red(),
     );
 
     for d in &stats.decisions {
@@ -279,60 +325,62 @@ fn render_file(shown_path: &str, stats: &FileStats) {
         );
     }
 
-    // Count verify/description coverage
-    let verify_count = stats.fn_details.iter().filter(|f| f.has_verify).count();
-    let desc_count = stats
+    // Show partial/unjustified functions (up to 3 worst)
+    let mut problematic: Vec<&FnDetail> = stats
         .fn_details
         .iter()
-        .filter(|f| f.has_description)
-        .count();
-    let total_fns = stats.fn_details.len();
-    if total_fns > 0 {
+        .filter(|f| f.justification() != Justification::Justified)
+        .collect();
+    problematic.sort_by(|a, b| {
+        // Unjustified first, then partial; within each tier, largest first
+        a.justification()
+            .cmp_priority()
+            .cmp(&b.justification().cmp_priority())
+            .then(b.lines.cmp(&a.lines))
+    });
+
+    for f in problematic.iter().take(3) {
+        let tag = match f.justification() {
+            Justification::Unjustified => "unjustified:".red(),
+            Justification::Partial => "partial:".yellow(),
+            Justification::Justified => unreachable!(),
+        };
+        let mut hints = Vec::new();
+        if !f.has_description {
+            hints.push("no description");
+        }
+        if f.verify_cases == 0 {
+            hints.push("no verify");
+        } else if f.has_coverage_gaps {
+            hints.push("verify has gaps");
+        }
+        let hint = if hints.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", hints.join(", "))
+        };
+        println!("  {} {}{}", tag, f.name, hint.dimmed());
+    }
+    if problematic.len() > 3 {
         println!(
             "  {}",
-            format!(
-                "{} verify block(s), {} description(s), {} function(s)",
-                verify_count, desc_count, total_fns
-            )
-            .dimmed()
+            format!("...and {} more", problematic.len() - 3).dimmed()
         );
-    }
-
-    // Show worst unjustified functions (up to 3)
-    let mut unjustified: Vec<&FnDetail> = stats
-        .fn_details
-        .iter()
-        .filter(|f| !f.is_justified())
-        .collect();
-    unjustified.sort_by(|a, b| b.lines.cmp(&a.lines));
-
-    if !unjustified.is_empty() {
-        let shown = unjustified.iter().take(3);
-        for f in shown {
-            println!(
-                "  {} {} ({} lines, line {})",
-                "unjustified:".red(),
-                f.name,
-                f.lines,
-                f.line
-            );
-        }
-        if unjustified.len() > 3 {
-            println!(
-                "  {}",
-                format!(
-                    "...and {} more unjustified function(s)",
-                    unjustified.len() - 3
-                )
-                .dimmed()
-            );
-        }
     }
 
     println!();
 }
 
-/// Raw integer percentage (for threshold comparisons).
+impl Justification {
+    fn cmp_priority(self) -> u8 {
+        match self {
+            Justification::Unjustified => 0,
+            Justification::Partial => 1,
+            Justification::Justified => 2,
+        }
+    }
+}
+
 fn raw_pct(part: usize, total: usize) -> usize {
     if total == 0 {
         return 0;
@@ -340,8 +388,6 @@ fn raw_pct(part: usize, total: usize) -> usize {
     (part * 100) / total
 }
 
-/// Human-friendly percentage string: `"0%"` only when count is truly 0,
-/// otherwise `"<1%"` for small fractions, or `"N%"` for the rest.
 fn fmt_pct(part: usize, total: usize) -> String {
     if total == 0 || part == 0 {
         return "0%".to_string();
