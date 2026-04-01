@@ -44,7 +44,7 @@ fn transform_fn(fd: &mut FnDef, scc_members: &HashSet<String>) {
     if let Some(expr) = body.tail_expr_mut() {
         transform_tail_expr(expr, scc_members);
     }
-    fd.body = std::rc::Rc::new(body);
+    fd.body = std::sync::Arc::new(body);
 }
 
 /// Recursively transform an expression in tail position.

@@ -5,7 +5,7 @@
 /// dependencies.
 use aver_rt::{AverList, AverVector};
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc as Rc;
 use thiserror::Error;
 
 use crate::ast::FnBody;

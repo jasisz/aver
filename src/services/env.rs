@@ -8,7 +8,7 @@
 /// - Env.get
 /// - Env.set
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc as Rc;
 
 use crate::nan_value::{Arena, NanValue};
 use crate::value::{RuntimeError, Value};

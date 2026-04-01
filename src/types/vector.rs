@@ -10,7 +10,7 @@
 ///
 /// No effects required.
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc as Rc;
 
 use aver_rt::AverVector;
 

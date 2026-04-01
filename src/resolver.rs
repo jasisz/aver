@@ -10,7 +10,7 @@
 /// Only top-level `FnDef` bodies are resolved. Top-level `Stmt` items (globals,
 /// REPL) are not touched.
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc as Rc;
 
 use crate::ast::*;
 

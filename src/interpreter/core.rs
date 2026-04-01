@@ -35,7 +35,7 @@ impl Interpreter {
 
         // Result namespace
         {
-            use std::rc::Rc;
+            use std::sync::Arc as Rc;
             let mut members: Vec<(Rc<str>, NanValue)> = Vec::new();
             let ok_idx = arena.push_builtin("__ctor:Result.Ok");
             members.push((Rc::from("Ok"), NanValue::new_builtin(ok_idx)));
@@ -53,7 +53,7 @@ impl Interpreter {
         }
         // Option namespace
         {
-            use std::rc::Rc;
+            use std::sync::Arc as Rc;
             let mut members: Vec<(Rc<str>, NanValue)> = Vec::new();
             let some_idx = arena.push_builtin("__ctor:Option.Some");
             members.push((Rc::from("Some"), NanValue::new_builtin(some_idx)));

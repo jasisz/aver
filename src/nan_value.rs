@@ -37,7 +37,7 @@
 use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
-use std::rc::Rc;
+use std::sync::Arc as Rc;
 
 use crate::value::FunctionValue;
 

@@ -1645,7 +1645,7 @@ pub(super) fn cmd_context(
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
+    use std::sync::Arc as Rc;
 
     use aver::ast::{
         DecisionBlock, DecisionImpact, FnBody, FnDef, Spanned, VerifyBlock, VerifyKind,

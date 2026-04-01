@@ -21,7 +21,7 @@
 ///
 /// No effects required.
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc as Rc;
 
 use crate::nan_value::{Arena, NanString, NanValue};
 use crate::value::{RuntimeError, Value, list_from_vec, list_view};

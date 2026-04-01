@@ -17,7 +17,7 @@
 /// No effects required.
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc as Rc;
 
 use crate::nan_value::{Arena, NanValue};
 use crate::value::{RuntimeError, Value, aver_repr, list_from_vec, list_view};

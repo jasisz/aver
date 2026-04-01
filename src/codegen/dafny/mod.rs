@@ -14,7 +14,7 @@ use crate::codegen::{CodegenContext, ProjectOutput};
 
 /// Check if a function body uses the `?` (ErrorProp) operator.
 /// Such functions require early-return semantics that Dafny pure functions cannot express.
-fn body_uses_error_prop(body: &std::rc::Rc<crate::ast::FnBody>) -> bool {
+fn body_uses_error_prop(body: &std::sync::Arc<crate::ast::FnBody>) -> bool {
     match body.as_ref() {
         crate::ast::FnBody::Block(stmts) => stmts.iter().any(|s| match s {
             crate::ast::Stmt::Binding(_, _, expr) => expr_uses_error_prop(expr),

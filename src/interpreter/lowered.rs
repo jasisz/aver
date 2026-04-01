@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::sync::Arc as Rc;
 
 use crate::ast::{BinOp, Expr, FnBody, Literal, Pattern, Spanned, Stmt, StrPart};
 use crate::ir::{

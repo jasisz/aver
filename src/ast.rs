@@ -172,7 +172,7 @@ pub struct FnResolution {
     /// Total number of local slots needed (params + bindings in body).
     pub local_count: u16,
     /// Map from local variable name → slot index in the local `Slots` frame.
-    pub local_slots: std::rc::Rc<std::collections::HashMap<String, u16>>,
+    pub local_slots: std::sync::Arc<std::collections::HashMap<String, u16>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -183,7 +183,7 @@ pub struct FnDef {
     pub return_type: String,
     pub effects: Vec<Spanned<String>>,
     pub desc: Option<String>,
-    pub body: std::rc::Rc<FnBody>,
+    pub body: std::sync::Arc<FnBody>,
     /// `None` for unresolved (REPL, module sub-interpreters).
     pub resolution: Option<FnResolution>,
 }

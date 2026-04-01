@@ -8,7 +8,7 @@
 ///
 /// Each method requires its own exact effect (`Console.print`, `Console.error`, etc.).
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc as Rc;
 
 use crate::nan_value::{Arena, NanValue};
 use crate::value::{RuntimeError, Value, aver_display};

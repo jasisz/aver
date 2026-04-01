@@ -2233,7 +2233,7 @@ mod tests {
     use crate::tco;
     use crate::types::checker::run_type_check_full;
     use std::collections::{HashMap, HashSet};
-    use std::rc::Rc;
+    use std::sync::Arc as Rc;
 
     fn empty_ctx() -> CodegenContext {
         CodegenContext {

@@ -22,6 +22,31 @@ impl Arena {
         }
     }
 
+    /// Create a fresh Arena with only the static context (symbols, type metadata,
+    /// stable constants) from this Arena. Dynamic runtime entries are empty.
+    /// Used for effect tuple threads: each gets a clean Arena with just the
+    /// compile-time context needed to execute functions and builtins.
+    pub fn clone_static(&self) -> Self {
+        Arena {
+            young_entries: Vec::with_capacity(64),
+            yard_entries: Vec::new(),
+            handoff_entries: Vec::new(),
+            stable_entries: self.stable_entries.clone(),
+            scratch_young: Vec::new(),
+            scratch_yard: Vec::new(),
+            scratch_handoff: Vec::new(),
+            scratch_stable: Vec::new(),
+            peak_usage: ArenaUsage::default(),
+            alloc_space: AllocSpace::Young,
+            type_names: self.type_names.clone(),
+            type_field_names: self.type_field_names.clone(),
+            type_variant_names: self.type_variant_names.clone(),
+            type_variant_ctor_ids: self.type_variant_ctor_ids.clone(),
+            ctor_to_type_variant: self.ctor_to_type_variant.clone(),
+            symbol_entries: self.symbol_entries.clone(),
+        }
+    }
+
     #[inline]
     pub fn push(&mut self, entry: ArenaEntry) -> u32 {
         match &entry {

@@ -8,7 +8,7 @@
 /// for any completed HTTP exchange (including 4xx/5xx). Transport failures return
 /// `Err(String)`. Response bodies are capped at 10 MB.
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc as Rc;
 
 use aver_rt::{AverList, Header, HttpResponse};
 

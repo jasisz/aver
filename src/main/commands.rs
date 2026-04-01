@@ -3,7 +3,7 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process;
-use std::rc::Rc;
+use std::sync::Arc as Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use colored::Colorize;
@@ -3021,7 +3021,7 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::fs;
     use std::path::PathBuf;
-    use std::rc::Rc;
+    use std::sync::Arc as Rc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_case_dir(tag: &str) -> PathBuf {

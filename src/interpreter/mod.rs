@@ -1,7 +1,7 @@
 use crate::nan_value::{Arena, NanValue};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::Arc as Rc;
 
 use crate::ast::*;
 use crate::replay::{
