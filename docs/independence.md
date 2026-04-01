@@ -137,6 +137,6 @@ Aver does not have tasks, futures, async/await, channels, streams, thread pools,
 
 ## Why this works
 
-Products are compositional, nestable, recursive, and structural. They are not an execution strategy — they are a shape of computation. Aver expresses shapes, not commands.
+Products describe computation shape. `!` and `?!` additionally declare that the runtime may exploit independence when choosing an evaluation schedule.
 
-Aver collapses fixed-width and dynamic recursive fan-out into a single expression-form operator, instead of splitting them across multiple concurrency APIs or dedicated concurrency statements.
+Aver uses the same expression-form operator for fixed-width and recursive dynamic fan-out, instead of exposing separate user-facing concurrency constructs for those cases.
