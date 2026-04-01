@@ -43,6 +43,8 @@ This construct is sound by construction for pure terms. For effectful terms, cor
 
 5. **Execution model** — the language does not prescribe how independent products are evaluated. Sequential and concurrent evaluation are both valid implementations, given that the programmer has correctly declared effect independence. Replay records effects and their grouping, accepting any order within a product.
 
+6. **Cancellation policy** — when one branch of a `?!` product fails, sibling branches may already be in flight or completed. The runtime lets them finish and chooses one error. There is no cancellation of in-flight work. This means `?!` on effectful terms may perform speculative work: a sibling effect can execute even if its result is ultimately discarded due to another branch's failure.
+
 ## Examples
 
 ### Flat: multiple independent effects
@@ -87,6 +89,47 @@ fn loadWithFallback(userId: String) -> String
         (Result.Err(_), Result.Ok(settings)) -> "settings only: {settings}"
         (Result.Err(_), Result.Err(_)) -> "nothing loaded"
 ```
+
+### Pipeline parallelism (double buffering)
+
+```aver
+fn pipelineContinue(ready: String, remaining: List<String>) -> Result<Unit, String>
+    ? "Processes a ready result while fetching the next."
+    ! [Http.get, Console.print]
+    match remaining
+        [] -> process(ready)
+        [url, ..rest] ->
+            data = (process(ready), fetchOne(url))?!
+            match data
+                (_, nextBody) -> pipelineContinue(nextBody, rest)
+```
+
+`process(ready)` and `fetchOne(url)` form an independent product: item N is consumed while item N+1 is produced. This is not streaming — there is no incremental delivery mechanism. It is structured overlap: each recursive step overlaps one unit of consumption with one unit of production.
+
+### Windowed parallel fetch (bounded concurrency)
+
+```aver
+fn processInWindows(urls: List<String>, windowSize: Int) -> Result<Unit, String>
+    ! [Http.get, Console.print]
+    match urls
+        [] -> Result.Ok(Unit)
+        _ ->
+            bodies = fetchAllParallel(List.take(urls, windowSize))?!
+            processAll(bodies)?
+            processInWindows(List.drop(urls, windowSize), windowSize)
+```
+
+`windowSize` bounds the number of concurrent effects — at most N in flight at any time. This is bounded concurrency, not backpressure (the producer does not wait for a demand signal from the consumer).
+
+### What these patterns are
+
+These patterns are not new semantic primitives; they emerge from composing independent products with sequential control flow:
+
+- **Pipeline parallelism** — overlap production and consumption via `?!` + recursion
+- **Bounded concurrency** — limit fan-out via window size parameter
+- **Batched concurrent processing** — parallel fetch within window, sequential between windows
+
+These are not: element-by-element streaming, demand-driven backpressure, or channel-based communication.
 
 ## What Aver does not have
 
