@@ -8,6 +8,7 @@ It is built around one idea: the risky part of AI-written code is usually not sy
 - decisions live next to the code they explain
 - pure behavior lives in colocated `verify` blocks
 - effectful behavior can be recorded and replayed deterministically
+- `aver why` scores every function's justification coverage: description, verify, decisions
 - `aver context` exports the contract-level view of a module graph for humans or LLMs
 - `aver compile` turns an Aver module graph into a Rust/Cargo project
 - `aver proof` exports the pure subset of an Aver module graph to a Lean 4 proof project (default) or Dafny verification file (`--backend dafny`)
@@ -61,6 +62,7 @@ aver verify   hello.av --vm
 aver verify   hello.av --json
 aver check    hello.av
 aver check    hello.av --json
+aver why      hello.av
 aver context  hello.av
 aver compile  hello.av -o out/
 (cd out && cargo run)
@@ -81,6 +83,7 @@ aver run      examples/core/calculator.av --self-host
 aver verify   examples/core/calculator.av
 aver verify   examples/core/calculator.av --vm
 aver check    examples/core/calculator.av
+aver why      examples/core/calculator.av
 aver context  examples/core/calculator.av
 aver compile  examples/core/calculator.av -o out/
 (cd out && cargo run)

@@ -172,6 +172,7 @@ aver verify examples/core/calculator.av
 aver verify examples/core/lists.av
 aver check examples/core/hello.av
 aver check examples/core/calculator.av
+aver why examples/core/calculator.av
 aver context decisions/architecture.av --decisions-only
 aver context decisions/architecture.av --decisions-only -o docs/decisions.md
 aver context examples/core/calculator.av
