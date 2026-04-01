@@ -116,6 +116,14 @@ impl VmRuntime {
         self.replay_state.args_diff_count()
     }
 
+    pub(super) fn replay_enter_group(&mut self) {
+        self.replay_state.enter_group();
+    }
+
+    pub(super) fn replay_exit_group(&mut self) {
+        self.replay_state.exit_group();
+    }
+
     pub(super) fn ensure_replay_consumed(&self) -> Result<(), VmError> {
         self.replay_state
             .ensure_replay_consumed()

@@ -694,6 +694,71 @@ impl VM {
                     self.stack.push(NanValue::new_tuple(idx));
                 }
 
+                EFFECT_TUPLE_BEGIN => {
+                    self.runtime.replay_enter_group();
+                }
+
+                EFFECT_TUPLE => {
+                    self.runtime.replay_exit_group();
+                    let count = read_u8!(code, ip) as usize;
+                    let unwrap = read_u8!(code, ip) != 0;
+                    let start = self.stack.len() - count;
+                    let items: Vec<NanValue> = self.stack[start..].to_vec();
+                    self.stack.truncate(start);
+
+                    if unwrap {
+                        // ?! — unwrap each Result, propagate first Err
+                        let mut unwrapped = Vec::with_capacity(count);
+                        let mut err_value = None;
+                        for v in &items {
+                            if v.is_ok() {
+                                unwrapped.push(v.wrapper_inner(&self.arena));
+                            } else if v.is_err() {
+                                err_value = Some(*v);
+                                break;
+                            } else {
+                                return Err(VmError::runtime(
+                                    "Effect tuple with '?' requires all elements to be Result",
+                                ));
+                            }
+                        }
+                        if let Some(err) = err_value {
+                            // Propagate Err — same as PROPAGATE_ERR
+                            let frame = self.frames.pop().unwrap();
+                            self.stack.truncate(frame.bp as usize);
+                            match self.complete_frame_return(frame, err, caller_depth) {
+                                ReturnControl::Done(result) => return Ok(result),
+                                ReturnControl::Resume {
+                                    result,
+                                    fn_id: next_fn_id,
+                                    ip: next_ip,
+                                    bp: next_bp,
+                                } => {
+                                    self.stack.push(result);
+                                    fn_id = next_fn_id;
+                                    ip = next_ip;
+                                    bp = next_bp;
+                                    continue;
+                                }
+                            }
+                        }
+                        let idx = self
+                            .arena
+                            .with_alloc_space(self.next_value_alloc_space(code, ip), |arena| {
+                                arena.push_tuple(unwrapped)
+                            });
+                        self.stack.push(NanValue::new_tuple(idx));
+                    } else {
+                        // bare ! — return raw tuple
+                        let idx = self
+                            .arena
+                            .with_alloc_space(self.next_value_alloc_space(code, ip), |arena| {
+                                arena.push_tuple(items)
+                            });
+                        self.stack.push(NanValue::new_tuple(idx));
+                    }
+                }
+
                 PROPAGATE_ERR => {
                     let value = *self.stack.last().ok_or(VmError::StackUnderflow)?;
                     if value.is_ok() {

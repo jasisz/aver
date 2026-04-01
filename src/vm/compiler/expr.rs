@@ -81,7 +81,8 @@ impl<'a> FnCompiler<'a> {
                 updates,
             } => self.compile_record_update(type_name, base, updates),
             Expr::Attr(obj, field) => self.compile_attr(obj, field),
-            Expr::Tuple(items) | Expr::EffectTuple(items, _) => self.compile_tuple(items),
+            Expr::Tuple(items) => self.compile_tuple(items),
+            Expr::EffectTuple(items, unwrap) => self.compile_effect_tuple(items, *unwrap),
             Expr::MapLiteral(entries) => self.compile_map(entries),
         }
     }
@@ -281,6 +282,21 @@ impl<'a> FnCompiler<'a> {
         }
         self.emit_op(TUPLE_NEW);
         self.emit_u8(items.len() as u8);
+        Ok(())
+    }
+
+    fn compile_effect_tuple(
+        &mut self,
+        items: &[Spanned<Expr>],
+        unwrap: bool,
+    ) -> Result<(), CompileError> {
+        self.emit_op(EFFECT_TUPLE_BEGIN);
+        for item in items {
+            self.compile_expr(item)?;
+        }
+        self.emit_op(EFFECT_TUPLE);
+        self.emit_u8(items.len() as u8);
+        self.emit_u8(if unwrap { 1 } else { 0 });
         Ok(())
     }
 
