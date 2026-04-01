@@ -47,6 +47,102 @@ impl Arena {
         }
     }
 
+    /// Deep-import a NanValue from `source` arena into `self`.
+    /// Inline values (int, float, bool, unit, none, empty containers) are returned as-is.
+    /// Heap-referenced values are recursively copied into `self` with new indices.
+    pub fn deep_import(&mut self, value: NanValue, source: &Arena) -> NanValue {
+        // Not NaN-boxed = plain float, return as-is
+        if !value.is_nan_boxed() {
+            return value;
+        }
+        // Check if it has a heap index — if not, it's inline
+        let heap_idx = match value.heap_index() {
+            Some(idx) => idx,
+            None => return value, // inline int, bool, unit, none, empty list/map/etc
+        };
+
+        let entry = source.get(heap_idx).clone();
+        match entry {
+            ArenaEntry::Int(i) => NanValue::new_int(i, self),
+            ArenaEntry::String(s) => {
+                let idx = self.push(ArenaEntry::String(s));
+                NanValue::new_string(idx)
+            }
+            ArenaEntry::Tuple(items) => {
+                let imported: Vec<NanValue> =
+                    items.iter().map(|v| self.deep_import(*v, source)).collect();
+                let idx = self.push_tuple(imported);
+                NanValue::new_tuple(idx)
+            }
+            ArenaEntry::List(_) => {
+                // Flatten list and re-import as a fresh flat list
+                let flat = source.list_to_vec_value(value);
+                let imported: Vec<NanValue> =
+                    flat.iter().map(|v| self.deep_import(*v, source)).collect();
+                if imported.is_empty() {
+                    NanValue::EMPTY_LIST
+                } else {
+                    let rc_items = Rc::new(imported);
+                    let idx = self.push(ArenaEntry::List(ArenaList::Flat {
+                        items: rc_items,
+                        start: 0,
+                    }));
+                    NanValue::new_list(idx)
+                }
+            }
+            ArenaEntry::Map(map) => {
+                let new_map = super::PersistentMap::new();
+                for (hash, (k, v)) in map.iter() {
+                    let ik = self.deep_import(*k, source);
+                    let iv = self.deep_import(*v, source);
+                    new_map.insert(*hash, (ik, iv));
+                }
+                let idx = self.push(ArenaEntry::Map(new_map));
+                NanValue::new_map(idx)
+            }
+            ArenaEntry::Vector(items) => {
+                let imported: Vec<NanValue> =
+                    items.iter().map(|v| self.deep_import(*v, source)).collect();
+                let idx = self.push(ArenaEntry::Vector(imported));
+                NanValue::new_vector(idx)
+            }
+            ArenaEntry::Record { type_id, fields } => {
+                let imported: Vec<NanValue> = fields
+                    .iter()
+                    .map(|v| self.deep_import(*v, source))
+                    .collect();
+                let idx = self.push(ArenaEntry::Record {
+                    type_id,
+                    fields: imported,
+                });
+                NanValue::new_record(idx)
+            }
+            ArenaEntry::Variant {
+                type_id,
+                variant_id,
+                fields,
+            } => {
+                let imported: Vec<NanValue> = fields
+                    .iter()
+                    .map(|v| self.deep_import(*v, source))
+                    .collect();
+                let idx = self.push(ArenaEntry::Variant {
+                    type_id,
+                    variant_id,
+                    fields: imported,
+                });
+                NanValue::new_variant(idx)
+            }
+            ArenaEntry::Boxed(inner) => {
+                let imported = self.deep_import(inner, source);
+                let idx = self.push(ArenaEntry::Boxed(imported));
+                NanValue::encode(value.tag(), idx as u64)
+            }
+            // Fn/Builtin/Namespace — should not appear in effect tuple results
+            ArenaEntry::Fn(_) | ArenaEntry::Builtin(_) | ArenaEntry::Namespace { .. } => value,
+        }
+    }
+
     #[inline]
     pub fn push(&mut self, entry: ArenaEntry) -> u32 {
         match &entry {

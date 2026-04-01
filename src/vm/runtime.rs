@@ -47,6 +47,10 @@ impl VmRuntime {
         }
     }
 
+    pub(super) fn allowed_effects(&self) -> &[u32] {
+        &self.allowed_effects
+    }
+
     pub(super) fn set_allowed_effects(&mut self, effects: Vec<u32>) {
         self.allowed_effects = effects;
     }
@@ -114,6 +118,13 @@ impl VmRuntime {
 
     pub(super) fn args_diff_count(&self) -> usize {
         self.replay_state.args_diff_count()
+    }
+
+    pub(super) fn is_effect_tracking(&self) -> bool {
+        matches!(
+            self.replay_state.mode(),
+            EffectReplayMode::Record | EffectReplayMode::Replay
+        )
     }
 
     pub(super) fn replay_enter_group(&mut self) {

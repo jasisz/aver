@@ -1,5 +1,5 @@
 use super::{ReturnControl, VM};
-use crate::nan_value::NanValue;
+use crate::nan_value::{Arena, NanValue};
 use crate::vm::opcode::*;
 use crate::vm::types::{CallFrame, VmError};
 
@@ -719,15 +719,63 @@ impl VM {
                     // Enter replay group
                     self.runtime.replay_enter_group();
 
-                    // Execute each call sequentially (MVP — parallel via par_execute next)
-                    let mut results = Vec::with_capacity(count);
+                    // Build per-element arg slices
+                    let mut element_args: Vec<Vec<NanValue>> = Vec::with_capacity(count);
                     let mut arg_offset = 0;
-                    for (call_fn_id, argc) in &descs {
-                        let args = &all_args[arg_offset..arg_offset + *argc];
+                    for (_, argc) in &descs {
+                        element_args.push(all_args[arg_offset..arg_offset + *argc].to_vec());
                         arg_offset += argc;
-                        let result = self.call_function(*call_fn_id, args)?;
-                        results.push(result);
                     }
+
+                    // Check if recording/replaying — if so, run sequentially
+                    // (replay state is thread_local, can't share across threads)
+                    // Check if recording/replaying — if so, sequential
+                    let is_tracking = self.runtime.is_effect_tracking();
+                    let results = if is_tracking || count <= 1 {
+                        let mut results = Vec::with_capacity(count);
+                        for (i, (call_fn_id, _)) in descs.iter().enumerate() {
+                            let result = self.call_function(*call_fn_id, &element_args[i])?;
+                            results.push(result);
+                        }
+                        results
+                    } else {
+                        // Parallel: spawn a child VM per element
+                        let code = self.code.clone();
+                        let globals = self.globals.clone();
+                        let allowed_effects = self.runtime.allowed_effects().to_vec();
+
+                        let tasks: Vec<
+                            Box<dyn FnOnce() -> Result<(NanValue, Arena), VmError> + Send>,
+                        > = descs
+                            .iter()
+                            .zip(element_args)
+                            .map(|((call_fn_id, _), args)| {
+                                let code = code.clone();
+                                let globals = globals.clone();
+                                let arena = self.arena.clone();
+                                let call_fn_id = *call_fn_id;
+                                let effects = allowed_effects.clone();
+                                Box::new(move || {
+                                    let mut child_vm = VM::new(code, globals, arena);
+                                    child_vm.set_allowed_effects(effects);
+                                    let result = child_vm.call_function(call_fn_id, &args)?;
+                                    Ok((result, child_vm.arena))
+                                })
+                                    as Box<
+                                        dyn FnOnce() -> Result<(NanValue, Arena), VmError> + Send,
+                                    >
+                            })
+                            .collect();
+
+                        let par_results = aver_rt::par_execute(tasks);
+                        let mut results = Vec::with_capacity(count);
+                        for r in par_results {
+                            let (value, child_arena) = r?;
+                            let imported = self.arena.deep_import(value, &child_arena);
+                            results.push(imported);
+                        }
+                        results
+                    };
 
                     // Exit replay group
                     self.runtime.replay_exit_group();

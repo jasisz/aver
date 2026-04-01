@@ -99,6 +99,10 @@ impl VM {
         self.runtime.start_replay(effects, validate_args);
     }
 
+    pub fn set_allowed_effects(&mut self, effects: Vec<u32>) {
+        self.runtime.set_allowed_effects(effects);
+    }
+
     pub fn recorded_effects(&self) -> &[crate::replay::session::EffectRecord] {
         self.runtime.recorded_effects()
     }
