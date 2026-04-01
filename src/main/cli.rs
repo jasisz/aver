@@ -244,6 +244,9 @@ pub(super) enum Commands {
         /// Resolve `depends [...]` from this root (default: current working directory)
         #[arg(long)]
         module_root: Option<String>,
+        /// Show all partial/unjustified functions (default: top 3 per file)
+        #[arg(long)]
+        verbose: bool,
     },
     /// Export pure Aver code to a proof/verification project
     Proof {

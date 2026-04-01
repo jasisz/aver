@@ -13,7 +13,7 @@ use super::shared::{parse_file, read_file, resolve_module_root};
 // Public entry point
 // ---------------------------------------------------------------------------
 
-pub(super) fn cmd_why(path: &str, module_root_override: Option<&str>) {
+pub(super) fn cmd_why(path: &str, module_root_override: Option<&str>, verbose: bool) {
     let module_root = resolve_module_root(module_root_override);
     let inputs = match resolve_av_inputs(path) {
         Ok(inputs) => inputs,
@@ -29,7 +29,7 @@ pub(super) fn cmd_why(path: &str, module_root_override: Option<&str>) {
         let shown_path = display_check_path(file, &module_root);
         match analyze_file(file) {
             Ok(stats) => {
-                render_file(&shown_path, &stats);
+                render_file(&shown_path, &stats, verbose);
                 total_stats.total_lines += stats.total_lines;
                 total_stats.justified_lines += stats.justified_lines;
                 total_stats.partial_lines += stats.partial_lines;
@@ -292,7 +292,7 @@ fn next_toplevel_line_after(items: &[TopLevel], after_line: usize) -> Option<usi
 // Rendering
 // ---------------------------------------------------------------------------
 
-fn render_file(shown_path: &str, stats: &FileStats) {
+fn render_file(shown_path: &str, stats: &FileStats, verbose: bool) {
     let just_raw = raw_pct(stats.justified_lines, stats.total_lines);
 
     let color_path = if just_raw >= 60 {
@@ -339,7 +339,8 @@ fn render_file(shown_path: &str, stats: &FileStats) {
             .then(b.lines.cmp(&a.lines))
     });
 
-    for f in problematic.iter().take(3) {
+    let max_shown = if verbose { usize::MAX } else { 3 };
+    for f in problematic.iter().take(max_shown) {
         let tag = match f.justification() {
             Justification::Unjustified => "unjustified:".red(),
             Justification::Partial => "partial:".yellow(),
@@ -361,7 +362,7 @@ fn render_file(shown_path: &str, stats: &FileStats) {
         };
         println!("  {} {}{}", tag, f.name, hint.dimmed());
     }
-    if problematic.len() > 3 {
+    if !verbose && problematic.len() > 3 {
         println!(
             "  {}",
             format!("...and {} more", problematic.len() - 3).dimmed()

@@ -150,8 +150,12 @@ fn main() {
                 with_self_host_support: *with_self_host_support,
             });
         }
-        Commands::Why { file, module_root } => {
-            why_cmd::cmd_why(file, module_root.as_deref());
+        Commands::Why {
+            file,
+            module_root,
+            verbose,
+        } => {
+            why_cmd::cmd_why(file, module_root.as_deref(), *verbose);
         }
         Commands::Proof {
             file,
