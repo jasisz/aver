@@ -2,14 +2,21 @@
 
 All notable changes to Aver are documented here.
 
-## 0.7.4 (unreleased)
+## 0.8.0 (unreleased)
 
 ### Added
-- **Effect tuples (`?!` / `!`)** — declare independent effectful expressions. `(a, b)?!` evaluates both independently, unwraps Results (all-or-nothing). `(a, b)!` returns raw tuple for partial-success handling. Works recursively: `(fetchOne(url), fetchAll(rest))?!` fans out into parallel-ready effect trees. Sequential execution in interpreter (MVP); replay groups and codegen parallelism (`tokio::join!`) planned.
+- **Independent products (`?!` / `!`)** — a tuple followed by `!` denotes a product of independent computations. A tuple followed by `?!` denotes a product of independent Result computations with error propagation. Elements cannot reference each other — independence is structural, not annotated. Composes recursively: `(fetchOne(url), fetchAll(rest))?!` gives fan-out parallelism, streaming, and backpressure with no new language concepts. See [docs/independence.md](docs/independence.md).
+- **Parallel codegen** — `?!` / `!` tuples compile to `std::thread::scope` in generated Rust. Measured: 4 HTTP calls × 2s = 3.7s total (vs ~8s sequential).
+- **Replay groups** — effects within a `?!` / `!` product share a `group_id`. During replay, effects within a group are matched by type and args, not position. Reordering independent effects in code does not break replay sessions.
+- **VM `CALL_PAR` opcode** — bytecode VM compiles `?!` / `!` to a single `CALL_PAR` opcode encoding `(fn_id, argc)` per element. Sequential execution with replay groups (parallel dispatch via `aver_rt::par_execute` planned).
+- **`Arena.clone_static()`** — creates a fresh Arena with only compile-time context (symbols, type metadata, stable constants). No runtime garbage. Foundation for VM parallel dispatch.
+- **`aver_rt::par_execute`** — shared parallel runtime backend for VM and interpreter. Uses `std::thread::scope` internally; configurable thread pool planned.
+- **`aver check` validation** — effect tuple elements must be function calls. Complex expressions (arithmetic, match) produce a compile error.
 - **`aver why`** — trace justification coverage across a codebase. Scores every function as justified (description + verify without coverage gaps), partial, or unjustified. Effectful functions are justified by description alone since verify blocks don't apply. Supports `--verbose` (show all functions) and `--json` (NDJSON output with per-file and per-function detail).
-- **`[[check.suppress]]` in `aver.toml`** — suppress specific `aver check` warnings with a mandatory `reason` explaining why the warning is acceptable. Supports `slug` (diagnostic category), optional `files` (glob patterns), and requires a non-empty `reason` string. Example: suppress `non-tail-recursion` for tree-walking interpreters that can't be rewritten without CPS.
+- **`[[check.suppress]]` in `aver.toml`** — suppress specific `aver check` warnings with a mandatory `reason` explaining why the warning is acceptable. Supports `slug` (diagnostic category), optional `files` (glob patterns), and requires a non-empty `reason` string.
 
 ### Changed
+- **Rc → Arc migration** — all runtime types (`AverStr`, `AverList`, `AverMap`, `NanValue` arena entries, AST nodes) use `Arc` instead of `Rc`. Makes Aver types `Send + Sync` for parallel execution. Overhead: ~1ns per clone (negligible for I/O-bound `?!` workloads).
 - **Structured replay diagnostics** — replay failures now use per-error-type diagnostics (`replay-args-mismatch`, `replay-effect-mismatch`, `replay-output-mismatch`) with proper source file and recording JSON locations. Args diff hint shown even without `--check-args`.
 
 ## 0.7.3 (2026-03-30)
