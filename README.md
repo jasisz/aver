@@ -153,54 +153,16 @@ No `if`/`else`. No loops. No exceptions. No nulls. No implicit side effects.
 
 Aver is intentionally opinionated. These omissions are part of the design, not missing features:
 
-- no `if`/`else` - branching goes through `match`
-- no `for`/`while` - iteration is recursion or explicit list operations
-- no exceptions - failure is `Result`
-- no `null` - absence is `Option`
-- no closures - functions are top-level and explicit
+- no `if`/`else` — branching goes through `match`
+- no `for`/`while` — iteration is recursion or explicit list operations
+- no exceptions — failure is `Result`
+- no `null` — absence is `Option`
+- no closures — functions are top-level and explicit
+- no async/await, streams, or channels — `(a, b)?!` declares independent computations; the runtime handles the rest. See [docs/independence.md](docs/independence.md)
 
 The point is to remove classes of implicit behavior that are easy for AI to generate and annoying for humans to audit.
 
 For the fuller language rationale, see [docs/language.md](docs/language.md).
-
----
-
-## Independent products (`?!`)
-
-Aver has no async/await, no futures, no channels, no streams. Instead it has independent products:
-
-```aver
-fn loadDashboard(userId: String) -> Result<Dashboard, String>
-    ? "Loads profile and settings independently."
-    ! [Http.get, Disk.readText]
-    data = (fetchProfile(userId), loadSettings(userId))?!
-    match data
-        (profile, settings) -> Result.Ok(Dashboard(profile = profile, settings = settings))
-```
-
-- `(a, b)` — product of values (a regular tuple)
-- `(a, b)!` — product of independent computations (runtime may execute concurrently)
-- `(a, b)?!` — same, with Result unwrapping (all must succeed or first error propagates)
-
-This composes recursively. A function that processes a list with `?!` gives fan-out parallelism, streaming, and backpressure with no new concepts:
-
-```aver
-fn fetchAll(urls: List<String>) -> Result<List<String>, String>
-    ? "Fetches all URLs independently via recursive fan-out."
-    ! [Http.get]
-    match urls
-        [] -> Result.Ok([])
-        [url, ..rest] -> fetchStep(url, rest)
-
-fn fetchStep(url: String, rest: List<String>) -> Result<List<String>, String>
-    ? "Fetches one URL and the rest independently."
-    ! [Http.get]
-    data = (fetchOne(url), fetchAll(rest))?!
-    match data
-        (body, others) -> Result.Ok(List.prepend(body, others))
-```
-
-No tasks, no thread pools, no executors. Just products and independence. See [docs/independence.md](docs/independence.md) for the full semantic model.
 
 ---
 
