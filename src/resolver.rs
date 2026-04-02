@@ -105,7 +105,7 @@ fn collect_expr_bindings(
                 collect_expr_bindings(elem, local_slots, next_slot);
             }
         }
-        Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
+        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for item in items {
                 collect_expr_bindings(item, local_slots, next_slot);
             }
@@ -233,7 +233,7 @@ fn resolve_expr(expr: &mut Spanned<Expr>, local_slots: &HashMap<String, u16>) {
                 resolve_expr(elem, local_slots);
             }
         }
-        Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
+        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for item in items {
                 resolve_expr(item, local_slots);
             }

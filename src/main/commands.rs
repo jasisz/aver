@@ -531,7 +531,7 @@ fn expr_uses_self_host_runtime(expr: &Spanned<Expr>) -> bool {
             aver::ast::StrPart::Literal(_) => false,
             aver::ast::StrPart::Parsed(inner) => expr_uses_self_host_runtime(inner),
         }),
-        Expr::List(items) | Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             items.iter().any(expr_uses_self_host_runtime)
         }
         Expr::MapLiteral(entries) => entries.iter().any(|(key, value)| {
@@ -733,7 +733,7 @@ fn walk_expr_for_exposes(
                 }
             }
         }
-        Expr::List(items) | Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for item in items {
                 walk_expr_for_exposes(item, dep_targets, unique_type_owner, used_by_target);
             }

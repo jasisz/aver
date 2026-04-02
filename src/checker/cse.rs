@@ -217,7 +217,7 @@ fn collect_all_nontrivial_from_spanned<'a>(
                 collect_all_nontrivial_from_spanned(e, out);
             }
         }
-        Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
+        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for e in items {
                 collect_all_nontrivial_from_spanned(e, out);
             }
@@ -354,7 +354,7 @@ fn spanned_contains_subtree(haystack: &Spanned<Expr>, needle: &Expr) -> bool {
         Expr::Constructor(_, Some(inner)) => spanned_contains_subtree(inner, needle),
         Expr::ErrorProp(inner) => spanned_contains_subtree(inner, needle),
         Expr::List(elements) => elements.iter().any(|e| spanned_contains_subtree(e, needle)),
-        Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
+        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             items.iter().any(|e| spanned_contains_subtree(e, needle))
         }
         Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {

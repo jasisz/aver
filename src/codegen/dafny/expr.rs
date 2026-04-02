@@ -165,7 +165,7 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             let items: Vec<String> = elems.iter().map(|e| emit_expr(e, ctx)).collect();
             format!("[{}]", items.join(", "))
         }
-        Expr::Tuple(elems) | Expr::EffectTuple(elems, _) => {
+        Expr::Tuple(elems) | Expr::IndependentProduct(elems, _) => {
             let items: Vec<String> = elems.iter().map(|e| emit_expr(e, ctx)).collect();
             format!("({})", items.join(", "))
         }

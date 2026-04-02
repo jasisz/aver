@@ -78,7 +78,7 @@ pub(super) fn substitute_expr(
                 .map(|item| substitute_expr(item, bindings))
                 .collect(),
         ),
-        Expr::EffectTuple(items, flag) => Expr::EffectTuple(
+        Expr::IndependentProduct(items, flag) => Expr::IndependentProduct(
             items
                 .iter()
                 .map(|item| substitute_expr(item, bindings))
@@ -224,7 +224,7 @@ fn collect_user_fn_simp_names(
                 }
             }
         }
-        Expr::List(items) | Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for item in items {
                 collect_user_fn_simp_names(item, ctx, skip_fn, out);
             }

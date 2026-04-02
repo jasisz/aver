@@ -82,7 +82,7 @@ impl<'a> FnCompiler<'a> {
             } => self.compile_record_update(type_name, base, updates),
             Expr::Attr(obj, field) => self.compile_attr(obj, field),
             Expr::Tuple(items) => self.compile_tuple(items),
-            Expr::EffectTuple(items, unwrap) => self.compile_effect_tuple(items, *unwrap),
+            Expr::IndependentProduct(items, unwrap) => self.compile_independent_product(items, *unwrap),
             Expr::MapLiteral(entries) => self.compile_map(entries),
         }
     }
@@ -285,7 +285,7 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
-    fn compile_effect_tuple(
+    fn compile_independent_product(
         &mut self,
         items: &[Spanned<Expr>],
         unwrap: bool,
@@ -306,12 +306,12 @@ impl<'a> FnCompiler<'a> {
                     for arg in args {
                         self.compile_expr(arg)?;
                     }
-                    // Resolve function to fn_id (always CALL_KNOWN in effect tuples)
+                    // Resolve function to fn_id (always CALL_KNOWN in independent products)
                     let fn_id = match self.resolve_call_target(&fn_expr.node) {
                         Some(CallTarget::KnownFn(id)) => id,
                         _ => {
                             return Err(CompileError {
-                                msg: "Effect tuple element must be a known function call"
+                                msg: "Independent product element must be a known function call"
                                     .to_string(),
                             });
                         }

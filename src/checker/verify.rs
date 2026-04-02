@@ -37,7 +37,7 @@ pub(super) fn collect_target_call_args<'a>(
         Expr::Constructor(_, Some(inner)) | Expr::ErrorProp(inner) => {
             collect_target_call_args(inner, fn_name, arg_index, out);
         }
-        Expr::List(items) | Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for item in items {
                 collect_target_call_args(item, fn_name, arg_index, out);
             }
@@ -103,7 +103,7 @@ pub(super) fn verify_case_calls_target(left: &Spanned<Expr>, fn_name: &str) -> b
         Expr::List(elems) => elems
             .iter()
             .any(|elem| verify_case_calls_target(elem, fn_name)),
-        Expr::Tuple(items) | Expr::EffectTuple(items, _) => items
+        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => items
             .iter()
             .any(|item| verify_case_calls_target(item, fn_name)),
         Expr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
@@ -412,7 +412,7 @@ pub fn expr_to_str(expr: &Spanned<Expr>) -> String {
             let parts: Vec<String> = elements.iter().map(expr_to_str).collect();
             format!("[{}]", parts.join(", "))
         }
-        Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
+        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             let parts: Vec<String> = items.iter().map(expr_to_str).collect();
             format!("({})", parts.join(", "))
         }

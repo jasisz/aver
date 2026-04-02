@@ -150,7 +150,7 @@ impl Parser {
                     .map(|item| Self::substitute_expr(item, bindings))
                     .collect(),
             ),
-            Expr::EffectTuple(items, flag) => Expr::EffectTuple(
+            Expr::IndependentProduct(items, flag) => Expr::IndependentProduct(
                 items
                     .iter()
                     .map(|item| Self::substitute_expr(item, bindings))

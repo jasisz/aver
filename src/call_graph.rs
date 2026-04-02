@@ -223,7 +223,7 @@ fn walk_expr(expr: &Spanned<Expr>, visit: &mut impl FnMut(&Expr)) {
                 walk_expr(&arm.body, visit);
             }
         }
-        Expr::List(items) | Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for item in items {
                 walk_expr(item, visit);
             }
@@ -396,7 +396,7 @@ fn count_recursive_calls_expr(expr: &Spanned<Expr>, recursive: &HashSet<String>,
                 count_recursive_calls_expr(&arm.body, recursive, out);
             }
         }
-        Expr::List(elems) | Expr::Tuple(elems) | Expr::EffectTuple(elems, _) => {
+        Expr::List(elems) | Expr::Tuple(elems) | Expr::IndependentProduct(elems, _) => {
             for e in elems {
                 count_recursive_calls_expr(e, recursive, out);
             }

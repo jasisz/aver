@@ -635,7 +635,7 @@ fn expr_uses_error_prop(expr: &Expr) -> bool {
                 || arms.iter().any(|a| expr_uses_error_prop(&a.body.node))
         }
         Expr::List(es) => es.iter().any(|e| expr_uses_error_prop(&e.node)),
-        Expr::Tuple(es) | Expr::EffectTuple(es, _) => {
+        Expr::Tuple(es) | Expr::IndependentProduct(es, _) => {
             es.iter().any(|e| expr_uses_error_prop(&e.node))
         }
         Expr::Attr(e, _) => expr_uses_error_prop(&e.node),
@@ -1014,7 +1014,7 @@ fn expr_is_loop_invariant(
             StrPart::Literal(_) => true,
             StrPart::Parsed(expr) => expr_is_loop_invariant(&expr.node, stable_names, ctx, ectx),
         }),
-        Expr::List(items) | Expr::Tuple(items) | Expr::EffectTuple(items, _) => items
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => items
             .iter()
             .all(|item| expr_is_loop_invariant(&item.node, stable_names, ctx, ectx)),
         Expr::MapLiteral(entries) => entries.iter().all(|(key, value)| {
@@ -1173,7 +1173,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
                 }
             }
         }
-        Expr::List(items) | Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for item in items {
                 collect_hoistable_invariant_subexprs(
                     &item.node,
@@ -1400,7 +1400,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
                 }
             }
         }
-        Expr::List(items) | Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for item in items {
                 collect_self_tailcall_hoists_in_expr(
                     &item.node,
@@ -1584,7 +1584,7 @@ fn rewrite_expr_with_hoists(expr: &Expr, hoisted_exprs: &HashMap<usize, String>)
                 .map(|item| rewrite_spanned(item, hoisted_exprs))
                 .collect(),
         ),
-        Expr::EffectTuple(items, flag) => Expr::EffectTuple(
+        Expr::IndependentProduct(items, flag) => Expr::IndependentProduct(
             items
                 .iter()
                 .map(|item| rewrite_spanned(item, hoisted_exprs))

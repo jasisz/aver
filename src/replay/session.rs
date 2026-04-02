@@ -21,7 +21,7 @@ pub struct EffectRecord {
     pub caller_fn: String,
     /// Source line of the call expression that triggered this effect (0 = unknown).
     pub source_line: usize,
-    /// Effect tuple group: effects sharing a `group_id` are order-independent.
+    /// Independent product group: effects sharing a `group_id` are order-independent.
     /// During replay, effects within a group are matched by type+args, not position.
     pub group_id: Option<u32>,
 }

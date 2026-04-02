@@ -333,7 +333,7 @@ impl TypeChecker {
                 Type::Tuple(tys)
             }
 
-            Expr::EffectTuple(elements, unwrap) => {
+            Expr::IndependentProduct(elements, unwrap) => {
                 // Validate: each element must be a function call
                 for elem in elements {
                     match &elem.node {
@@ -343,7 +343,7 @@ impl TypeChecker {
                             _ => {
                                 self.error_at_line(
                                     elem.line,
-                                    "Effect tuple element must be a function call, e.g. (fetchA(), fetchB())?!"
+                                    "Independent product element must be a function call, e.g. (fetchA(), fetchB())?!"
                                         .to_string(),
                                 );
                             }
@@ -351,7 +351,7 @@ impl TypeChecker {
                         _ => {
                             self.error_at_line(
                                 elem.line,
-                                "Effect tuple element must be a function call, e.g. (fetchA(), fetchB())?!"
+                                "Independent product element must be a function call, e.g. (fetchA(), fetchB())?!"
                                     .to_string(),
                             );
                         }
@@ -374,7 +374,7 @@ impl TypeChecker {
                                     Some(Type::Result(_, fn_err_ty)) => {
                                         if !err_ty.compatible(&fn_err_ty) {
                                             self.error_at_line(prop_line, format!(
-                                                "Effect tuple '?!': Err type {} is incompatible with function's Err type {}",
+                                                "Independent product '?!': Err type {} is incompatible with function's Err type {}",
                                                 err_ty.display(),
                                                 fn_err_ty.display()
                                             ));
@@ -383,14 +383,14 @@ impl TypeChecker {
                                     Some(Type::Unknown) => {}
                                     Some(other) => {
                                         self.error_at_line(prop_line, format!(
-                                            "Effect tuple '?!' used in function returning {}, which is not Result",
+                                            "Independent product '?!' used in function returning {}, which is not Result",
                                             other.display()
                                         ));
                                     }
                                     None => {
                                         self.error_at_line(
                                             prop_line,
-                                            "Effect tuple '?!' used outside of a function"
+                                            "Independent product '?!' used outside of a function"
                                                 .to_string(),
                                         );
                                     }
@@ -404,7 +404,7 @@ impl TypeChecker {
                                 self.error_at_line(
                                     prop_line,
                                     format!(
-                                        "Effect tuple '?!' element must be Result, got {}",
+                                        "Independent product '?!' element must be Result, got {}",
                                         other.display()
                                     ),
                                 );

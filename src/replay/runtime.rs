@@ -40,7 +40,7 @@ pub struct EffectReplayState {
     replay_pos: usize,
     validate_replay_args: bool,
     args_diff_count: usize,
-    /// Current effect tuple group id for recording. None = sequential.
+    /// Current independent product group id for recording. None = sequential.
     current_group: Option<u32>,
     /// Next group id to assign.
     next_group_id: u32,
@@ -102,7 +102,7 @@ impl EffectReplayState {
         Ok(())
     }
 
-    /// Enter an effect tuple group for recording. Returns the group id.
+    /// Enter an independent product group for recording. Returns the group id.
     pub fn enter_group(&mut self) -> u32 {
         self.next_group_id += 1;
         let id = self.next_group_id;
@@ -110,7 +110,7 @@ impl EffectReplayState {
         id
     }
 
-    /// Exit the current effect tuple group.
+    /// Exit the current independent product group.
     pub fn exit_group(&mut self) {
         self.current_group = None;
     }

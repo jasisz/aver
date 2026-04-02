@@ -134,7 +134,7 @@ pub const WRAP: u8 = 0x66; // kind:u8
 /// Pop `count` items, build a tuple from them, push tuple.
 pub const TUPLE_NEW: u8 = 0x68; // count:u8
 
-/// Parallel function calls for effect tuples (?! / !).
+/// Parallel function calls for independent products (?! / !).
 /// Pops all args from stack, dispatches N function calls via aver_rt::par_execute,
 /// builds result tuple. Enters/exits replay group around parallel dispatch.
 ///

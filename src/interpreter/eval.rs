@@ -96,7 +96,7 @@ enum EvalCont {
         idx: usize,
         values: Vec<NanValue>,
     },
-    EffectTuple {
+    IndependentProduct {
         lowered: Rc<LoweredFunctionBody>,
         items: SharedExprs,
         idx: usize,
@@ -381,11 +381,11 @@ impl Interpreter {
                 let items = Rc::clone(items);
                 self.resume_tuple(lowered, items, 0, Vec::with_capacity(cap), conts)
             }
-            LoweredExpr::EffectTuple { items, unwrap } => {
+            LoweredExpr::IndependentProduct { items, unwrap } => {
                 let cap = items.len();
                 let items = Rc::clone(items);
                 let unwrap = *unwrap;
-                self.resume_effect_tuple(lowered, items, 0, Vec::with_capacity(cap), unwrap, conts)
+                self.resume_independent_product(lowered, items, 0, Vec::with_capacity(cap), unwrap, conts)
             }
             LoweredExpr::MapLiteral(entries) => {
                 let entries = Rc::clone(entries);
@@ -665,7 +665,7 @@ impl Interpreter {
                 }
                 Err(err) => EvalState::Apply(Err(err)),
             },
-            EvalCont::EffectTuple {
+            EvalCont::IndependentProduct {
                 lowered,
                 items,
                 idx,
@@ -674,7 +674,7 @@ impl Interpreter {
             } => match result {
                 Ok(value) => {
                     values.push(value);
-                    self.resume_effect_tuple(lowered, items, idx, values, unwrap, conts)
+                    self.resume_independent_product(lowered, items, idx, values, unwrap, conts)
                 }
                 Err(err) => EvalState::Apply(Err(err)),
             },
@@ -1299,7 +1299,7 @@ impl Interpreter {
         }
     }
 
-    fn resume_effect_tuple(
+    fn resume_independent_product(
         &mut self,
         lowered: Rc<LoweredFunctionBody>,
         items: SharedExprs,
@@ -1308,7 +1308,7 @@ impl Interpreter {
         unwrap: bool,
         conts: &mut Vec<EvalCont>,
     ) -> EvalState {
-        // Enter replay group when starting the effect tuple
+        // Enter replay group when starting the independent product
         if idx == 0 {
             self.replay_state.enter_group();
         }
@@ -1328,7 +1328,7 @@ impl Interpreter {
                         return EvalState::Apply(Err(RuntimeError::ErrProp(inner)));
                     } else {
                         return EvalState::Apply(Err(RuntimeError::Error(
-                            "Effect tuple with '?' can only contain Result values".to_string(),
+                            "Independent product with '?' can only contain Result values".to_string(),
                         )));
                     }
                 }
@@ -1340,7 +1340,7 @@ impl Interpreter {
             }
         }
 
-        conts.push(EvalCont::EffectTuple {
+        conts.push(EvalCont::IndependentProduct {
             lowered: Rc::clone(&lowered),
             items: Rc::clone(&items),
             idx: idx + 1,

@@ -328,7 +328,7 @@ fn expr_has_tail_call(expr: &aver::ast::Spanned<Expr>) -> bool {
             aver::ast::StrPart::Literal(_) => false,
             aver::ast::StrPart::Parsed(e) => expr_has_tail_call(e),
         }),
-        Expr::List(items) | Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             items.iter().any(expr_has_tail_call)
         }
         Expr::MapLiteral(entries) => entries

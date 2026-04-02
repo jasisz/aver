@@ -196,7 +196,7 @@ fn collect_vars_inner(expr: &Expr, vars: &mut HashSet<String>) {
                 collect_vars_inner(&e.node, vars);
             }
         }
-        Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
+        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for e in items {
                 collect_vars_inner(&e.node, vars);
             }

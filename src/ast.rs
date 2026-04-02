@@ -110,12 +110,12 @@ pub enum Expr {
     /// Tail-position call to a function in the same SCC (self or mutual recursion).
     /// Produced by the TCO transform pass before type-checking.
     TailCall(Box<(String, Vec<Spanned<Expr>>)>),
-    /// Effect tuple: `(a, b, c)!` or `(a, b, c)?!`.
+    /// Independent product: `(a, b, c)!` or `(a, b, c)?!`.
     /// Elements are independent effectful expressions evaluated with no guaranteed order.
     /// `unwrap=true` (`?!`): all elements must be Result; unwraps Ok values, propagates first Err.
     /// `unwrap=false` (`!`): returns raw tuple of results.
     /// Produces a replay group (effects matched by type+args, not position).
-    EffectTuple(Vec<Spanned<Expr>>, bool),
+    IndependentProduct(Vec<Spanned<Expr>>, bool),
     /// Compiled variable lookup: `env[last][slot]` — O(1) instead of HashMap scan.
     /// Produced by the resolver pass for locals inside function bodies.
     Resolved(u16),

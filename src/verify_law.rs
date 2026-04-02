@@ -398,7 +398,7 @@ fn collect_direct_pure_user_calls(
                 }
             }
         }
-        Expr::List(items) | Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for item in items {
                 collect_direct_pure_user_calls(item, fn_defs, fn_sigs, out);
             }
@@ -602,7 +602,7 @@ fn collect_roundtrip_serializer_calls<'a>(
                 }
             }
         }
-        Expr::List(items) | Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for item in items {
                 collect_roundtrip_serializer_calls(item, given_name, out);
             }
@@ -660,7 +660,7 @@ fn expr_mentions_ident(expr: &Spanned<Expr>, name: &str) -> bool {
             StrPart::Literal(_) => false,
             StrPart::Parsed(inner) => expr_mentions_ident(inner, name),
         }),
-        Expr::List(items) | Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             items.iter().any(|item| expr_mentions_ident(item, name))
         }
         Expr::MapLiteral(entries) => entries
@@ -703,7 +703,7 @@ fn expr_calls_function(expr: &Spanned<Expr>, fn_name: &str) -> bool {
             StrPart::Literal(_) => false,
             StrPart::Parsed(expr) => expr_calls_function(expr, fn_name),
         }),
-        Expr::List(items) | Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             items.iter().any(|item| expr_calls_function(item, fn_name))
         }
         Expr::MapLiteral(entries) => entries.iter().any(|(key, value)| {

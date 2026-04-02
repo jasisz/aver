@@ -163,7 +163,7 @@ pub(crate) enum LoweredExpr {
     InterpolatedStr(Rc<[LoweredStrPart]>),
     List(Rc<[ExprId]>),
     Tuple(Rc<[ExprId]>),
-    EffectTuple {
+    IndependentProduct {
         items: Rc<[ExprId]>,
         unwrap: bool,
     },
@@ -443,12 +443,12 @@ impl<Ctx: CallLowerCtx> LowerBuilder<'_, Ctx> {
                     .collect::<Vec<_>>();
                 LoweredExpr::Tuple(lowered_items.into())
             }
-            Expr::EffectTuple(items, unwrap) => {
+            Expr::IndependentProduct(items, unwrap) => {
                 let lowered_items = items
                     .iter()
                     .map(|item| self.lower_expr(item))
                     .collect::<Vec<_>>();
-                LoweredExpr::EffectTuple {
+                LoweredExpr::IndependentProduct {
                     items: lowered_items.into(),
                     unwrap: *unwrap,
                 }

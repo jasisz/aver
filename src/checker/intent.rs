@@ -52,7 +52,7 @@ fn expr_has_branching_or_binop(expr: &Spanned<Expr>) -> bool {
             expr_has_branching_or_binop(callee) || args.iter().any(expr_has_branching_or_binop)
         }
         Expr::Constructor(_, Some(arg)) => expr_has_branching_or_binop(arg),
-        Expr::List(items) | Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             items.iter().any(expr_has_branching_or_binop)
         }
         Expr::ErrorProp(inner) | Expr::Attr(inner, _) => expr_has_branching_or_binop(inner),
@@ -141,7 +141,7 @@ fn collect_used_effects_expr(expr: &Spanned<Expr>, fn_sigs: &FnSigMap, out: &mut
             }
         }
         Expr::ErrorProp(inner) => collect_used_effects_expr(inner, fn_sigs, out),
-        Expr::List(items) | Expr::Tuple(items) | Expr::EffectTuple(items, _) => {
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for item in items {
                 collect_used_effects_expr(item, fn_sigs, out);
             }
