@@ -103,7 +103,7 @@ If multiple branches produce `Err`, the propagated error is the first `Err` in l
    ```
 
    - **`complete`** (default) — the runtime lets all branches finish and chooses one error. This means `?!` on effectful terms may perform speculative work: a sibling effect can execute even if its result is ultimately discarded due to another branch's failure.
-   - **`cancel`** — the runtime sets a shared cancellation flag when one branch fails. Sibling branches check this flag periodically and bail early with a cancellation error. Effects that already started will complete (cancellation is cooperative, not preemptive). Sibling branches stop initiating further work after they observe the cancellation flag.
+   - **`cancel`** — the runtime sets a shared cancellation flag when one branch fails. Sibling branches check this flag periodically and bail early with a cancellation error. Effects that already started will complete (cancellation is cooperative, not preemptive). Sibling branches stop initiating further work after they observe the cancellation flag. Cancel mode reduces wasted compute but cannot reduce wasted I/O wait: a branch blocked in a kernel syscall (e.g. an HTTP request with a long timeout) will not observe the flag until the syscall returns.
 
 ## Examples
 
