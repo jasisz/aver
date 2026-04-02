@@ -974,7 +974,7 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
         mode: ScopeMode,
         guest_args: Option<aver_rt::AverList<crate::AverStr>>,
         runtime_policy: Option<RuntimePolicy>,
-        current_group: Option<u32>,
+        group_stack: Vec<u32>,
         branch_stack: Vec<u32>,
         effect_emission_count: u32,
         next_group_id: u32,
@@ -1141,7 +1141,7 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
         SCOPE_STATE.with(|cell| {
             if let ScopeState::Active(scope) = &mut *cell.borrow_mut() {
                 scope.next_group_id += 1;
-                scope.current_group = Some(scope.next_group_id);
+                scope.group_stack.push(scope.next_group_id);
                 scope.branch_stack.push(0);
             }
         });
@@ -1150,7 +1150,7 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
     pub fn exit_effect_group() {
         SCOPE_STATE.with(|cell| {
             if let ScopeState::Active(scope) = &mut *cell.borrow_mut() {
-                scope.current_group = None;
+                scope.group_stack.pop();
                 scope.branch_stack.pop();
             }
         });
@@ -1187,7 +1187,7 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
                 };
                 SCOPE_STATE.with(|cell| {
                     if let ScopeState::Active(scope) = &mut *cell.borrow_mut() {
-                        let group_id = scope.current_group;
+                        let group_id = scope.group_stack.last().copied();
                         if let ScopeMode::Record { session, .. } = &mut scope.mode {
                             let seq = session.effects.len() as u32 + 1;
                             session.effects.push(EffectRecord {
@@ -1283,7 +1283,7 @@ __POLICY_CHECK__
                 mode,
                 guest_args,
                 runtime_policy,
-                current_group: None,
+                group_stack: Vec::new(),
                 branch_stack: Vec::new(),
                 effect_emission_count: 0,
                 next_group_id: 0,

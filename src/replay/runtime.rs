@@ -40,8 +40,8 @@ pub struct EffectReplayState {
     replay_pos: usize,
     validate_replay_args: bool,
     args_diff_count: usize,
-    /// Current independent product group id for recording. None = sequential.
-    current_group: Option<u32>,
+    /// Stack of independent product group ids for nested products.
+    group_stack: Vec<u32>,
     /// Branch path stack for nested independent products.
     /// E.g. [0, 1] means "branch 0 of outer product, branch 1 of inner product".
     branch_stack: Vec<u32>,
@@ -111,14 +111,14 @@ impl EffectReplayState {
     pub fn enter_group(&mut self) -> u32 {
         self.next_group_id += 1;
         let id = self.next_group_id;
-        self.current_group = Some(id);
+        self.group_stack.push(id);
         self.branch_stack.push(0); // start at branch 0
         id
     }
 
     /// Exit the current independent product group.
     pub fn exit_group(&mut self) {
-        self.current_group = None;
+        self.group_stack.pop();
         self.branch_stack.pop();
     }
 
@@ -146,7 +146,7 @@ impl EffectReplayState {
             outcome,
             caller_fn: caller_fn.to_string(),
             source_line,
-            group_id: self.current_group,
+            group_id: self.group_stack.last().copied(),
             branch_path: if self.branch_stack.is_empty() {
                 None
             } else {
