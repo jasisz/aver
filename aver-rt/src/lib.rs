@@ -117,13 +117,41 @@ pub fn aver_str_concat(a: &AverStr, b: &AverStr) -> AverStr {
 }
 use std::sync::Arc as Rc;
 
-// ── par_execute: parallel execution for effect tuples (?!) ─────────────────
+// ── par_execute: parallel execution for independent products (?!) ─────────────────
 
 /// Execute tasks in parallel using scoped threads.
-/// Uniform parallel execution for VM/interpreter (all tasks return NanValue).
+/// All branches run to completion (`complete` mode).
 pub fn par_execute<T: Send>(tasks: Vec<Box<dyn FnOnce() -> T + Send>>) -> Vec<T> {
     std::thread::scope(|s| {
         let handles: Vec<_> = tasks.into_iter().map(|task| s.spawn(task)).collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    })
+}
+
+/// Execute tasks in parallel with cooperative cancellation (`cancel` mode).
+///
+/// Each task receives a shared `cancelled` flag. When one branch fails, the
+/// flag is set so siblings can check it and bail early. Tasks must call
+/// `cancelled.load(Ordering::Relaxed)` at effect boundaries to cooperate.
+pub fn par_execute_with_cancel<T: Send, E: Send>(
+    tasks: Vec<Box<dyn FnOnce(std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<T, E> + Send>>,
+) -> Vec<Result<T, E>> {
+    use std::sync::{Arc, atomic::AtomicBool};
+    let cancelled = Arc::new(AtomicBool::new(false));
+    std::thread::scope(|s| {
+        let handles: Vec<_> = tasks
+            .into_iter()
+            .map(|task| {
+                let flag = Arc::clone(&cancelled);
+                s.spawn(move || {
+                    let result = task(Arc::clone(&flag));
+                    if result.is_err() {
+                        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    result
+                })
+            })
+            .collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     })
 }

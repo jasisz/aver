@@ -35,6 +35,16 @@ pub struct CheckSuppression {
     pub reason: String,
 }
 
+/// How independent products (`?!`) behave when one branch fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IndependenceMode {
+    /// Wait for all branches to finish, then report one error.
+    #[default]
+    Complete,
+    /// Signal siblings to stop as soon as one branch fails.
+    Cancel,
+}
+
 /// Project-level configuration loaded from `aver.toml`.
 #[derive(Debug, Clone)]
 pub struct ProjectConfig {
@@ -42,6 +52,8 @@ pub struct ProjectConfig {
     pub effect_policies: HashMap<String, EffectPolicy>,
     /// Check-time warning suppressions.
     pub check_suppressions: Vec<CheckSuppression>,
+    /// How `?!` products handle branch failure.
+    pub independence_mode: IndependenceMode,
 }
 
 impl ProjectConfig {
@@ -134,10 +146,12 @@ impl ProjectConfig {
         }
 
         let check_suppressions = parse_check_suppressions(&table)?;
+        let independence_mode = parse_independence_mode(&table)?;
 
         Ok(ProjectConfig {
             effect_policies,
             check_suppressions,
+            independence_mode,
         })
     }
 
@@ -347,6 +361,27 @@ fn env_key_matches(key: &str, pattern: &str) -> bool {
         key.starts_with(prefix)
     } else {
         false
+    }
+}
+
+/// Parse `[independence]` section from the top-level TOML table.
+fn parse_independence_mode(table: &toml::Table) -> Result<IndependenceMode, String> {
+    let section = match table.get("independence") {
+        Some(toml::Value::Table(t)) => t,
+        Some(_) => return Err("[independence] must be a table".to_string()),
+        None => return Ok(IndependenceMode::default()),
+    };
+    match section.get("mode") {
+        Some(toml::Value::String(s)) => match s.as_str() {
+            "complete" => Ok(IndependenceMode::Complete),
+            "cancel" => Ok(IndependenceMode::Cancel),
+            other => Err(format!(
+                "[independence] mode must be \"complete\" or \"cancel\", got {:?}",
+                other
+            )),
+        },
+        Some(_) => Err("[independence] mode must be a string".to_string()),
+        None => Ok(IndependenceMode::default()),
     }
 }
 
@@ -888,5 +923,40 @@ reason = "Not yet ready for verify"
         let config = ProjectConfig::parse("").unwrap();
         assert!(config.check_suppressions.is_empty());
         assert!(!config.is_check_suppressed("non-tail-recursion", "any.av"));
+    }
+
+    #[test]
+    fn test_independence_mode_default() {
+        let config = ProjectConfig::parse("").unwrap();
+        assert_eq!(config.independence_mode, IndependenceMode::Complete);
+    }
+
+    #[test]
+    fn test_independence_mode_complete() {
+        let toml = r#"
+[independence]
+mode = "complete"
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        assert_eq!(config.independence_mode, IndependenceMode::Complete);
+    }
+
+    #[test]
+    fn test_independence_mode_cancel() {
+        let toml = r#"
+[independence]
+mode = "cancel"
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        assert_eq!(config.independence_mode, IndependenceMode::Cancel);
+    }
+
+    #[test]
+    fn test_independence_mode_invalid() {
+        let toml = r#"
+[independence]
+mode = "yolo"
+"#;
+        assert!(ProjectConfig::parse(toml).is_err());
     }
 }

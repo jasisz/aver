@@ -23,6 +23,8 @@ pub struct VM {
     /// Last executing (fn_id, ip) — updated at top of dispatch loop for error reporting.
     error_fn_id: u32,
     error_ip: u32,
+    /// Cooperative cancellation flag — set by sibling threads on error.
+    cancelled: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 enum ReturnControl {
@@ -47,6 +49,7 @@ impl VM {
             profile: None,
             error_fn_id: 0,
             error_ip: 0,
+            cancelled: None,
         }
     }
 
@@ -101,6 +104,17 @@ impl VM {
 
     pub fn set_allowed_effects(&mut self, effects: Vec<u32>) {
         self.runtime.set_allowed_effects(effects);
+    }
+
+    pub fn set_cancelled(&mut self, flag: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+        self.cancelled = Some(flag);
+    }
+
+    /// Check if this VM has been cancelled by a sibling branch.
+    fn is_cancelled(&self) -> bool {
+        self.cancelled
+            .as_ref()
+            .is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed))
     }
 
     pub fn recorded_effects(&self) -> &[crate::replay::session::EffectRecord] {

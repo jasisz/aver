@@ -92,6 +92,14 @@ impl VmRuntime {
         self.runtime_policy = Some(config);
     }
 
+    pub(super) fn independence_mode(&self) -> crate::config::IndependenceMode {
+        self.runtime_policy
+            .as_ref()
+            .map_or(crate::config::IndependenceMode::default(), |c| {
+                c.independence_mode
+            })
+    }
+
     pub(super) fn start_recording(&mut self) {
         self.replay_state.start_recording();
     }

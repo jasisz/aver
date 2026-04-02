@@ -54,6 +54,11 @@ impl VM {
         let mut leaf_return: Option<(u32, usize, usize)> = None; // (fn_id, ip, bp)
 
         loop {
+            // Cooperative cancellation: check every 256 opcodes to amortise cost.
+            if ip & 0xFF == 0 && self.is_cancelled() {
+                return Err(VmError::runtime("cancelled by sibling branch"));
+            }
+
             let code = &self.code.functions[fn_id as usize].code;
 
             // Save position for error reporting (cold-path lookup in line_table).
@@ -743,39 +748,86 @@ impl VM {
                         let code = self.code.clone();
                         let globals = self.globals.clone();
                         let allowed_effects = self.runtime.allowed_effects().to_vec();
+                        let cancel_mode = self.runtime.independence_mode()
+                            == crate::config::IndependenceMode::Cancel;
 
-                        #[allow(clippy::type_complexity)]
-                        let tasks: Vec<
-                            Box<dyn FnOnce() -> Result<(NanValue, Arena), VmError> + Send>,
-                        > = descs
-                            .iter()
-                            .zip(element_args)
-                            .map(|((call_fn_id, _), args)| {
-                                let code = code.clone();
-                                let globals = globals.clone();
-                                let arena = self.arena.clone();
-                                let call_fn_id = *call_fn_id;
-                                let effects = allowed_effects.clone();
-                                Box::new(move || {
-                                    let mut child_vm = VM::new(code, globals, arena);
-                                    child_vm.set_allowed_effects(effects);
-                                    let result = child_vm.call_function(call_fn_id, &args)?;
-                                    Ok((result, child_vm.arena))
+                        if cancel_mode && unwrap {
+                            // Cancel mode with ?!: cooperative cancellation via shared flag.
+                            // When a branch returns Result.Err, set the flag so siblings
+                            // can bail early via the VM's periodic cancellation check.
+                            use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+
+                            #[allow(clippy::type_complexity)]
+                            let tasks: Vec<
+                                Box<dyn FnOnce(Arc<AtomicBool>) -> Result<(NanValue, Arena), VmError> + Send>,
+                            > = descs
+                                .iter()
+                                .zip(element_args)
+                                .map(|((call_fn_id, _), args)| {
+                                    let code = code.clone();
+                                    let globals = globals.clone();
+                                    let arena = self.arena.clone();
+                                    let call_fn_id = *call_fn_id;
+                                    let effects = allowed_effects.clone();
+                                    Box::new(move |flag: Arc<AtomicBool>| {
+                                        let mut child_vm = VM::new(code, globals, arena);
+                                        child_vm.set_allowed_effects(effects);
+                                        child_vm.set_cancelled(flag.clone());
+                                        let result = child_vm.call_function(call_fn_id, &args)?;
+                                        if result.is_err() {
+                                            flag.store(true, Ordering::Relaxed);
+                                        }
+                                        Ok((result, child_vm.arena))
+                                    })
+                                        as Box<
+                                            dyn FnOnce(Arc<AtomicBool>) -> Result<(NanValue, Arena), VmError> + Send,
+                                        >
                                 })
-                                    as Box<
-                                        dyn FnOnce() -> Result<(NanValue, Arena), VmError> + Send,
-                                    >
-                            })
-                            .collect();
+                                .collect();
 
-                        let par_results = aver_rt::par_execute(tasks);
-                        let mut results = Vec::with_capacity(count);
-                        for r in par_results {
-                            let (value, child_arena) = r?;
-                            let imported = self.arena.deep_import(value, &child_arena);
-                            results.push(imported);
+                            let par_results = aver_rt::par_execute_with_cancel(tasks);
+                            let mut results = Vec::with_capacity(count);
+                            for r in par_results {
+                                let (value, child_arena) = r?;
+                                let imported = self.arena.deep_import(value, &child_arena);
+                                results.push(imported);
+                            }
+                            results
+                        } else {
+                            // Complete mode: all branches run to completion
+                            #[allow(clippy::type_complexity)]
+                            let tasks: Vec<
+                                Box<dyn FnOnce() -> Result<(NanValue, Arena), VmError> + Send>,
+                            > = descs
+                                .iter()
+                                .zip(element_args)
+                                .map(|((call_fn_id, _), args)| {
+                                    let code = code.clone();
+                                    let globals = globals.clone();
+                                    let arena = self.arena.clone();
+                                    let call_fn_id = *call_fn_id;
+                                    let effects = allowed_effects.clone();
+                                    Box::new(move || {
+                                        let mut child_vm = VM::new(code, globals, arena);
+                                        child_vm.set_allowed_effects(effects);
+                                        let result = child_vm.call_function(call_fn_id, &args)?;
+                                        Ok((result, child_vm.arena))
+                                    })
+                                        as Box<
+                                            dyn FnOnce() -> Result<(NanValue, Arena), VmError> + Send,
+                                        >
+                                })
+                                .collect();
+
+                            let par_results = aver_rt::par_execute(tasks);
+                            let mut results = Vec::with_capacity(count);
+                            for r in par_results {
+                                let (value, child_arena) = r?;
+                                let imported = self.arena.deep_import(value, &child_arena);
+                                results.push(imported);
+                            }
+                            results
                         }
-                        results
                     };
 
                     // Exit replay group
@@ -807,7 +859,7 @@ impl VM {
                                 }
                             } else {
                                 return Err(VmError::runtime(
-                                    "Effect tuple '?!' requires all elements to be Result",
+                                    "Independent product '?!' requires all elements to be Result",
                                 ));
                             }
                         }
