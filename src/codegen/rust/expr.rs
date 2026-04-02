@@ -318,7 +318,10 @@ fn emit_expr_with_options(
                 code.push_str(" } else { ");
             }
 
-            // Parallel path (always emitted; sole path when no replay)
+            // Parallel path (always emitted; sole path when no replay).
+            // Note: cancel mode has no effect in codegen — generated code lacks
+            // cooperative cancellation points. All branches run to completion.
+            // Error selection is still left-to-right (deterministic).
             code.push_str("std::thread::scope(|_s| { ");
             for (i, part) in parts.iter().enumerate() {
                 code.push_str(&format!("let _h{i} = _s.spawn(|| {part}); "));
