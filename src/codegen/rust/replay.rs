@@ -697,7 +697,7 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub branch_path: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub branch_occurrence: Option<u32>,
+        pub effect_occurrence: Option<u32>,
     }
 
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -976,7 +976,7 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
         runtime_policy: Option<RuntimePolicy>,
         current_group: Option<u32>,
         branch_stack: Vec<u32>,
-        branch_effect_count: u32,
+        effect_emission_count: u32,
         next_group_id: u32,
     }
 
@@ -1162,7 +1162,7 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
                 if let Some(last) = scope.branch_stack.last_mut() {
                     *last = index;
                 }
-                scope.branch_effect_count = 0;
+                scope.effect_emission_count = 0;
             }
         });
     }
@@ -1201,11 +1201,11 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
                                 } else {
                                     Some(scope.branch_stack.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("."))
                                 },
-                                branch_occurrence: if scope.branch_stack.is_empty() {
+                                effect_occurrence: if scope.branch_stack.is_empty() {
                                     None
                                 } else {
-                                    let occ = scope.branch_effect_count;
-                                    scope.branch_effect_count += 1;
+                                    let occ = scope.effect_emission_count;
+                                    scope.effect_emission_count += 1;
                                     Some(occ)
                                 },
                             });
@@ -1285,7 +1285,7 @@ __POLICY_CHECK__
                 runtime_policy,
                 current_group: None,
                 branch_stack: Vec::new(),
-                branch_effect_count: 0,
+                effect_emission_count: 0,
                 next_group_id: 0,
             });
         });

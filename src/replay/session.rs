@@ -29,7 +29,7 @@ pub struct EffectRecord {
     pub branch_path: Option<String>,
     /// Per-branch ordinal of effect emission (0-based). Disambiguates multiple
     /// emissions of the same effect type+args within a single branch.
-    pub branch_occurrence: Option<u32>,
+    pub effect_occurrence: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -74,7 +74,7 @@ struct SerdeEffectRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     branch_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    branch_occurrence: Option<u32>,
+    effect_occurrence: Option<u32>,
 }
 
 fn is_zero(v: &usize) -> bool {
@@ -162,7 +162,7 @@ fn effect_record_to_serde(effect: &EffectRecord) -> SerdeEffectRecord {
         source_line: effect.source_line,
         group_id: effect.group_id,
         branch_path: effect.branch_path.clone(),
-        branch_occurrence: effect.branch_occurrence,
+        effect_occurrence: effect.effect_occurrence,
     }
 }
 
@@ -180,7 +180,7 @@ fn effect_record_from_serde(effect: SerdeEffectRecord) -> Result<EffectRecord, S
         source_line: effect.source_line,
         group_id: effect.group_id,
         branch_path: effect.branch_path,
-        branch_occurrence: effect.branch_occurrence,
+        effect_occurrence: effect.effect_occurrence,
     })
 }
 
@@ -283,7 +283,7 @@ mod tests {
                 source_line: 0,
                 group_id: None,
                 branch_path: None,
-                branch_occurrence: None,
+                effect_occurrence: None,
             }],
             output: RecordedOutcome::RuntimeError("boom".to_string()),
         };

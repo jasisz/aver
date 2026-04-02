@@ -61,7 +61,7 @@ Let τ range over observable effect traces. For an independent product, each bra
 ⟨(a, b)?!, τ₀⟩ ⇓ ⟨Err(e), τ₀ · τ⟩
 ```
 
-If multiple branches produce `Err`, the propagated error is the first `Err` in left-to-right order. The single-failure rules generalize to multiple failures by replacing `Err(e)` with the leftmost produced error.
+If multiple branches produce `Err`, the propagated error is the first `Err` in left-to-right order. The single-failure rules generalize to multiple failures by replacing `Err(e)` with the `Err` from the leftmost branch that produces one.
 
 **Bare `!`:**
 
@@ -73,11 +73,11 @@ If multiple branches produce `Err`, the propagated error is the first `Err` in l
 ⟨(a, b)!, τ₀⟩ ⇓ ⟨(v₁, v₂), τ₀ · τ⟩
 ```
 
-**Replay invariant:** replay records tuples of `(group_id, branch_path, branch_occurrence, effect_type, effect_args, result)`. Within a group, matching is by `(group_id, branch_path, branch_occurrence, effect_type, effect_args)`, not by position in the execution schedule. `branch_path` is a dotted path encoding the branch position within nested products (e.g. `"0.1"` = branch 0 of outer product, branch 1 of inner). `branch_occurrence` is the per-branch ordinal of effect emission (0-based), disambiguating multiple emissions of the same effect within a single branch. Together these make replay deterministic with respect to branch identity and repeated effects within nested and recursive compositions. Reordering within an independent product does not invalidate replay.
+**Replay invariant:** replay records tuples of `(group_id, branch_path, effect_occurrence, effect_type, effect_args, result)`. Within a group, matching is by `(group_id, branch_path, effect_occurrence, effect_type, effect_args)`, not by position in the execution schedule. `branch_path` is a dotted path encoding the branch position within nested products (e.g. `"0.1"` = branch 0 of outer product, branch 1 of inner). `effect_occurrence` is the per-branch ordinal of effect emission (0-based), disambiguating multiple emissions of the same effect within a single branch. Together these make replay deterministic with respect to branch identity and repeated effects within nested and recursive compositions. Reordering within an independent product does not invalidate replay.
 
 **Cancellation and error priority:** a cancellation error is an execution artifact, not a primary failure. When `?!` unwraps results, a real `Result.Err` from a branch always takes priority over a cancellation error from a sibling. A cancellation error propagates only if no branch produced a real `Err`.
 
-**Backend coverage:** cancel mode with cooperative interruption is implemented in the VM backend (periodic check every 256 opcodes). The compiled Rust backend (`aver compile`) does not support cooperative interruption — generated `thread::scope` code runs all branches to completion regardless of `mode`. Error selection is deterministic (left-to-right) in both backends. Replay `branch_path` and `branch_occurrence` are recorded in all backends that support replay.
+**Backend coverage:** cancel mode with cooperative interruption is implemented in the VM backend (periodic check every 256 opcodes). The compiled Rust backend (`aver compile`) does not support cooperative interruption — generated `thread::scope` code runs all branches to completion regardless of `mode`. Error selection is deterministic (left-to-right) in both backends. On backends without cooperative interruption, cancel degrades operationally to complete, while preserving the same error selection policy. Replay `branch_path` and `effect_occurrence` are recorded in all backends that support replay.
 
 ## Structural properties
 

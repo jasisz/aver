@@ -3084,7 +3084,7 @@ fn check() -> Bool
                 source_line: 0,
                 group_id: None,
                 branch_path: None,
-                branch_occurrence: None,
+                effect_occurrence: None,
             }],
             true,
         );
@@ -3115,7 +3115,7 @@ fn check() -> Bool
                 source_line: 0,
                 group_id: None,
                 branch_path: None,
-                branch_occurrence: None,
+                effect_occurrence: None,
             }],
             false,
         );

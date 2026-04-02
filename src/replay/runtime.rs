@@ -46,7 +46,7 @@ pub struct EffectReplayState {
     /// E.g. [0, 1] means "branch 0 of outer product, branch 1 of inner product".
     branch_stack: Vec<u32>,
     /// Per-branch effect emission counter (reset when branch changes).
-    branch_effect_count: u32,
+    effect_emission_count: u32,
     /// Next group id to assign.
     next_group_id: u32,
     /// Indices within replay_effects consumed from current group (for unordered match).
@@ -127,7 +127,7 @@ impl EffectReplayState {
         if let Some(last) = self.branch_stack.last_mut() {
             *last = index;
         }
-        self.branch_effect_count = 0;
+        self.effect_emission_count = 0;
     }
 
     pub fn record_effect(
@@ -158,14 +158,14 @@ impl EffectReplayState {
                         .join("."),
                 )
             },
-            branch_occurrence: if self.branch_stack.is_empty() {
+            effect_occurrence: if self.branch_stack.is_empty() {
                 None
             } else {
-                Some(self.branch_effect_count)
+                Some(self.effect_emission_count)
             },
         });
         if !self.branch_stack.is_empty() {
-            self.branch_effect_count += 1;
+            self.effect_emission_count += 1;
         }
     }
 
@@ -269,7 +269,7 @@ impl EffectReplayState {
                 continue;
             }
 
-            // Check branch_path + branch_occurrence: if both sides have them, must match.
+            // Check branch_path + effect_occurrence: if both sides have them, must match.
             // If recording lacks them (old format), accept as fallback.
             let bp_match = match (&current_bp, &record.branch_path) {
                 (Some(got), Some(rec)) => {
@@ -282,10 +282,10 @@ impl EffectReplayState {
             };
             if bp_match {
                 // Branch path matches — also check occurrence if available
-                let current_occ = Some(self.branch_effect_count);
-                match (current_occ, record.branch_occurrence) {
+                let current_occ = Some(self.effect_emission_count);
+                match (current_occ, record.effect_occurrence) {
                     (Some(got), Some(rec)) if got == rec => {
-                        self.branch_effect_count += 1;
+                        self.effect_emission_count += 1;
                         return self.consume_group_match(idx, group_start, group_end);
                     }
                     (Some(_), Some(_)) => continue, // same branch, different occurrence
