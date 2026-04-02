@@ -42,6 +42,11 @@ pub struct EffectReplayState {
     args_diff_count: usize,
     /// Current independent product group id for recording. None = sequential.
     current_group: Option<u32>,
+    /// Branch path stack for nested independent products.
+    /// E.g. [0, 1] means "branch 0 of outer product, branch 1 of inner product".
+    branch_stack: Vec<u32>,
+    /// Per-branch effect emission counter (reset when branch changes).
+    branch_effect_count: u32,
     /// Next group id to assign.
     next_group_id: u32,
     /// Indices within replay_effects consumed from current group (for unordered match).
@@ -107,12 +112,22 @@ impl EffectReplayState {
         self.next_group_id += 1;
         let id = self.next_group_id;
         self.current_group = Some(id);
+        self.branch_stack.push(0); // start at branch 0
         id
     }
 
     /// Exit the current independent product group.
     pub fn exit_group(&mut self) {
         self.current_group = None;
+        self.branch_stack.pop();
+    }
+
+    /// Set the current branch index within the current (innermost) product.
+    pub fn set_branch(&mut self, index: u32) {
+        if let Some(last) = self.branch_stack.last_mut() {
+            *last = index;
+        }
+        self.branch_effect_count = 0;
     }
 
     pub fn record_effect(
@@ -132,7 +147,26 @@ impl EffectReplayState {
             caller_fn: caller_fn.to_string(),
             source_line,
             group_id: self.current_group,
+            branch_path: if self.branch_stack.is_empty() {
+                None
+            } else {
+                Some(
+                    self.branch_stack
+                        .iter()
+                        .map(|i| i.to_string())
+                        .collect::<Vec<_>>()
+                        .join("."),
+                )
+            },
+            branch_occurrence: if self.branch_stack.is_empty() {
+                None
+            } else {
+                Some(self.branch_effect_count)
+            },
         });
+        if !self.branch_stack.is_empty() {
+            self.branch_effect_count += 1;
+        }
     }
 
     pub fn replay_effect(
@@ -182,7 +216,8 @@ impl EffectReplayState {
         Ok(record.outcome)
     }
 
-    /// Match an effect within a replay group by type (and optionally args), not position.
+    /// Match an effect within a replay group by (branch_index, type, args), not position.
+    /// Falls back to (type, args) matching for recordings without branch_index.
     fn replay_effect_in_group(
         &mut self,
         group_id: u32,
@@ -197,7 +232,21 @@ impl EffectReplayState {
             .map(|offset| group_start + offset)
             .unwrap_or(self.replay_effects.len());
 
-        // Search for a matching effect in the group
+        // Search for a matching effect in the group.
+        // Prefer exact branch_index match; fall back to type+args only.
+        let current_bp = if self.branch_stack.is_empty() {
+            None
+        } else {
+            Some(
+                self.branch_stack
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join("."),
+            )
+        };
+
+        let mut fallback_idx: Option<usize> = None;
         for idx in group_start..group_end {
             if self.group_consumed.contains(&idx) {
                 continue;
@@ -207,28 +256,54 @@ impl EffectReplayState {
                 continue;
             }
 
-            // Found a match by type — check args
-            if let Some(ref got) = got_args
-                && *got != record.args
-            {
-                if self.validate_replay_args {
-                    // Keep searching for an exact args match
-                    continue;
+            // Check args
+            let args_ok = match (&got_args, self.validate_replay_args) {
+                (Some(got), true) if *got != record.args => false,
+                (Some(got), false) if *got != record.args => {
+                    self.args_diff_count += 1;
+                    true
                 }
-                self.args_diff_count += 1;
+                _ => true,
+            };
+            if !args_ok {
+                continue;
             }
 
-            let outcome = record.outcome.clone();
-            self.group_consumed.push(idx);
-
-            // If all group effects consumed, advance past the group
-            let group_size = group_end - group_start;
-            if self.group_consumed.len() >= group_size {
-                self.replay_pos = group_end;
-                self.group_consumed.clear();
+            // Check branch_path + branch_occurrence: if both sides have them, must match.
+            // If recording lacks them (old format), accept as fallback.
+            let bp_match = match (&current_bp, &record.branch_path) {
+                (Some(got), Some(rec)) => {
+                    if got != rec {
+                        continue; // different branch, skip
+                    }
+                    true
+                }
+                _ => false, // one or both lack branch_path
+            };
+            if bp_match {
+                // Branch path matches — also check occurrence if available
+                let current_occ = Some(self.branch_effect_count);
+                match (current_occ, record.branch_occurrence) {
+                    (Some(got), Some(rec)) if got == rec => {
+                        self.branch_effect_count += 1;
+                        return self.consume_group_match(idx, group_start, group_end);
+                    }
+                    (Some(_), Some(_)) => continue, // same branch, different occurrence
+                    _ => {
+                        // Fallback: no occurrence info
+                        if fallback_idx.is_none() {
+                            fallback_idx = Some(idx);
+                        }
+                    }
+                }
+            } else if fallback_idx.is_none() {
+                fallback_idx = Some(idx);
             }
+        }
 
-            return Ok(outcome);
+        // Use fallback if no exact branch match found
+        if let Some(idx) = fallback_idx {
+            return self.consume_group_match(idx, group_start, group_end);
         }
 
         // No match found in group
@@ -237,5 +312,21 @@ impl EffectReplayState {
             expected: format!("one of group {} effects", group_id),
             got: effect_type.to_string(),
         })
+    }
+
+    fn consume_group_match(
+        &mut self,
+        idx: usize,
+        group_start: usize,
+        group_end: usize,
+    ) -> Result<RecordedOutcome, ReplayFailure> {
+        let outcome = self.replay_effects[idx].outcome.clone();
+        self.group_consumed.push(idx);
+        let group_size = group_end - group_start;
+        if self.group_consumed.len() >= group_size {
+            self.replay_pos = group_end;
+            self.group_consumed.clear();
+        }
+        Ok(outcome)
     }
 }

@@ -14,7 +14,7 @@ For pure computations, independence follows structurally: tuple elements have no
 
 For effectful computations, `!` is a declaration by the author that the effects of the elements are safe to reorder or execute concurrently. The compiler checks shape and types, but does not prove effect commutativity.
 
-The runtime may therefore evaluate elements sequentially, in any order permitted by the execution model, or concurrently.
+The runtime may therefore evaluate elements sequentially (left-to-right) or concurrently.
 
 **`(a, b)?!`** — product of independent Result computations.
 
@@ -61,7 +61,7 @@ Let τ range over observable effect traces. For an independent product, each bra
 ⟨(a, b)?!, τ₀⟩ ⇓ ⟨Err(e), τ₀ · τ⟩
 ```
 
-If multiple branches produce `Err`, the propagated error is nondeterministic among the produced errors in parallel execution, and left-to-right in sequential execution. With replay enabled, the choice is recorded and reproduced.
+If multiple branches produce `Err`, the propagated error is the first `Err` in left-to-right order in sequential execution, and nondeterministic among the produced errors in parallel execution. With replay enabled, the choice is recorded and reproduced. The single-failure rules generalize to multiple failures by replacing `Err(e)` with any selected produced error according to this policy.
 
 **Bare `!`:**
 
@@ -73,7 +73,9 @@ If multiple branches produce `Err`, the propagated error is nondeterministic amo
 ⟨(a, b)!, τ₀⟩ ⇓ ⟨(v₁, v₂), τ₀ · τ⟩
 ```
 
-**Replay invariant:** replay records tuples of `(group_id, effect_type, effect_args, result)`. Within a group, matching is by `(group_id, effect_type, effect_args)`, not by position in the execution schedule. Therefore reordering within an independent product does not invalidate replay.
+**Replay invariant:** replay records tuples of `(group_id, branch_path, branch_occurrence, effect_type, effect_args, result)`. Within a group, matching is by `(group_id, branch_path, branch_occurrence, effect_type, effect_args)`, not by position in the execution schedule. `branch_path` is a dotted path encoding the branch position within nested products (e.g. `"0.1"` = branch 0 of outer product, branch 1 of inner). `branch_occurrence` is the per-branch ordinal of effect emission (0-based), disambiguating multiple emissions of the same effect within a single branch. Together these ensure replay is fully deterministic across all compositions — nested, recursive, and with duplicate effects. Reordering within an independent product does not invalidate replay.
+
+**Cancellation and error priority:** a cancellation error is an execution artifact, not a primary failure. When `?!` unwraps results, a real `Result.Err` from a branch always takes priority over a cancellation error from a sibling. A cancellation error propagates only if no branch produced a real `Err`.
 
 ## Structural properties
 

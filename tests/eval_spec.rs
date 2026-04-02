@@ -3083,6 +3083,8 @@ fn check() -> Bool
                 caller_fn: String::new(),
                 source_line: 0,
                 group_id: None,
+                branch_path: None,
+                branch_occurrence: None,
             }],
             true,
         );
@@ -3112,6 +3114,8 @@ fn check() -> Bool
                 caller_fn: String::new(),
                 source_line: 0,
                 group_id: None,
+                branch_path: None,
+                branch_occurrence: None,
             }],
             false,
         );

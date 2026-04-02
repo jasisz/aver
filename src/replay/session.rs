@@ -22,8 +22,14 @@ pub struct EffectRecord {
     /// Source line of the call expression that triggered this effect (0 = unknown).
     pub source_line: usize,
     /// Independent product group: effects sharing a `group_id` are order-independent.
-    /// During replay, effects within a group are matched by type+args, not position.
+    /// During replay, effects within a group are matched by (branch_path, type, args).
     pub group_id: Option<u32>,
+    /// Branch path within nested independent products (e.g. "0.1" = branch 0 of outer,
+    /// branch 1 of inner). Disambiguates effects from different branches.
+    pub branch_path: Option<String>,
+    /// Per-branch ordinal of effect emission (0-based). Disambiguates multiple
+    /// emissions of the same effect type+args within a single branch.
+    pub branch_occurrence: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -65,6 +71,10 @@ struct SerdeEffectRecord {
     source_line: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     group_id: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    branch_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    branch_occurrence: Option<u32>,
 }
 
 fn is_zero(v: &usize) -> bool {
@@ -151,6 +161,8 @@ fn effect_record_to_serde(effect: &EffectRecord) -> SerdeEffectRecord {
         caller_fn: effect.caller_fn.clone(),
         source_line: effect.source_line,
         group_id: effect.group_id,
+        branch_path: effect.branch_path.clone(),
+        branch_occurrence: effect.branch_occurrence,
     }
 }
 
@@ -167,6 +179,8 @@ fn effect_record_from_serde(effect: SerdeEffectRecord) -> Result<EffectRecord, S
         caller_fn: effect.caller_fn,
         source_line: effect.source_line,
         group_id: effect.group_id,
+        branch_path: effect.branch_path,
+        branch_occurrence: effect.branch_occurrence,
     })
 }
 
@@ -268,6 +282,8 @@ mod tests {
                 caller_fn: String::new(),
                 source_line: 0,
                 group_id: None,
+                branch_path: None,
+                branch_occurrence: None,
             }],
             output: RecordedOutcome::RuntimeError("boom".to_string()),
         };

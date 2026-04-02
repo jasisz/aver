@@ -1340,6 +1340,7 @@ impl Interpreter {
             }
         }
 
+        self.replay_state.set_branch(idx as u32);
         conts.push(EvalCont::IndependentProduct {
             lowered: Rc::clone(&lowered),
             items: Rc::clone(&items),

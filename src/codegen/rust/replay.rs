@@ -694,6 +694,10 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
         pub outcome: RecordedOutcome,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub group_id: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub branch_path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub branch_occurrence: Option<u32>,
     }
 
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -971,6 +975,8 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
         guest_args: Option<aver_rt::AverList<crate::AverStr>>,
         runtime_policy: Option<RuntimePolicy>,
         current_group: Option<u32>,
+        branch_stack: Vec<u32>,
+        branch_effect_count: u32,
         next_group_id: u32,
     }
 
@@ -1136,6 +1142,7 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
             if let ScopeState::Active(scope) = &mut *cell.borrow_mut() {
                 scope.next_group_id += 1;
                 scope.current_group = Some(scope.next_group_id);
+                scope.branch_stack.push(0);
             }
         });
     }
@@ -1144,6 +1151,18 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
         SCOPE_STATE.with(|cell| {
             if let ScopeState::Active(scope) = &mut *cell.borrow_mut() {
                 scope.current_group = None;
+                scope.branch_stack.pop();
+            }
+        });
+    }
+
+    pub fn set_effect_branch(index: u32) {
+        SCOPE_STATE.with(|cell| {
+            if let ScopeState::Active(scope) = &mut *cell.borrow_mut() {
+                if let Some(last) = scope.branch_stack.last_mut() {
+                    *last = index;
+                }
+                scope.branch_effect_count = 0;
             }
         });
     }
@@ -1177,6 +1196,18 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
                                 args,
                                 outcome,
                                 group_id,
+                                branch_path: if scope.branch_stack.is_empty() {
+                                    None
+                                } else {
+                                    Some(scope.branch_stack.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("."))
+                                },
+                                branch_occurrence: if scope.branch_stack.is_empty() {
+                                    None
+                                } else {
+                                    let occ = scope.branch_effect_count;
+                                    scope.branch_effect_count += 1;
+                                    Some(occ)
+                                },
                             });
                         }
                     }
@@ -1253,6 +1284,8 @@ __POLICY_CHECK__
                 guest_args,
                 runtime_policy,
                 current_group: None,
+                branch_stack: Vec::new(),
+                branch_effect_count: 0,
                 next_group_id: 0,
             });
         });
@@ -1479,19 +1512,48 @@ __POLICY_CHECK__
                     .position(|e| e.group_id != Some(gid))
                     .map(|offset| group_start + offset)
                     .unwrap_or(session.effects.len());
+                // Prefer exact branch_index match; fall back to type-only
+                let current_bp: Option<String> = SCOPE_STATE.with(|cell| {
+                    if let ScopeState::Active(scope) = &*cell.borrow() {
+                        if scope.branch_stack.is_empty() {
+                            None
+                        } else {
+                            Some(scope.branch_stack.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("."))
+                        }
+                    } else {
+                        None
+                    }
+                });
+                let mut fallback_idx: Option<usize> = None;
                 for idx in group_start..group_end {
                     let candidate = &session.effects[idx];
-                    if candidate.effect_type == effect_type {
-                        let matched = candidate.clone();
-                        // Swap matched to current position so sequential position advances cleanly
-                        // (move consumed record to front of remaining group)
-                        if idx != *position {
-                            let effects = &mut session.effects;
-                            effects.swap(*position, idx);
-                        }
-                        *position += 1;
-                        return matched;
+                    if candidate.effect_type != effect_type {
+                        continue;
                     }
+                    match (&current_bp, &candidate.branch_path) {
+                        (Some(got), Some(rec)) if got == rec => {
+                            let matched = candidate.clone();
+                            if idx != *position {
+                                session.effects.swap(*position, idx);
+                            }
+                            *position += 1;
+                            return matched;
+                        }
+                        (Some(_), Some(_)) => continue,
+                        _ => {
+                            if fallback_idx.is_none() {
+                                fallback_idx = Some(idx);
+                            }
+                        }
+                    }
+                }
+                if let Some(idx) = fallback_idx {
+                    let matched = session.effects[idx].clone();
+                    if idx != *position {
+                        session.effects.swap(*position, idx);
+                    }
+                    *position += 1;
+                    return matched;
                 }
                 panic!(
                     "Replay group mismatch: no '{}' found in group {}",

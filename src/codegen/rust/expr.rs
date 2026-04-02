@@ -296,7 +296,7 @@ fn emit_expr_with_options(
                 code.push_str("crate::aver_replay::enter_effect_group(); ");
                 if *unwrap {
                     for (i, part) in parts.iter().enumerate() {
-                        code.push_str(&format!("let _r{i} = {part}?; "));
+                        code.push_str(&format!("crate::aver_replay::set_effect_branch({i}); let _r{i} = {part}?; "));
                     }
                     code.push_str("crate::aver_replay::exit_effect_group(); (");
                     for i in 0..n {
@@ -306,7 +306,7 @@ fn emit_expr_with_options(
                     code.push(')');
                 } else {
                     for (i, part) in parts.iter().enumerate() {
-                        code.push_str(&format!("let _r{i} = {part}; "));
+                        code.push_str(&format!("crate::aver_replay::set_effect_branch({i}); let _r{i} = {part}; "));
                     }
                     code.push_str("crate::aver_replay::exit_effect_group(); (");
                     for i in 0..n {

@@ -143,6 +143,10 @@ impl VmRuntime {
         self.replay_state.exit_group();
     }
 
+    pub(super) fn replay_set_branch(&mut self, index: u32) {
+        self.replay_state.set_branch(index);
+    }
+
     pub(super) fn ensure_replay_consumed(&self) -> Result<(), VmError> {
         self.replay_state
             .ensure_replay_consumed()

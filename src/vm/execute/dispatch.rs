@@ -736,9 +736,11 @@ impl VM {
                     // (replay state is thread_local, can't share across threads)
                     // Check if recording/replaying — if so, sequential
                     let is_tracking = self.runtime.is_effect_tracking();
+                    let mut had_vm_error: Option<VmError> = None;
                     let results = if is_tracking || count <= 1 {
                         let mut results = Vec::with_capacity(count);
                         for (i, (call_fn_id, _)) in descs.iter().enumerate() {
+                            self.runtime.replay_set_branch(i as u32);
                             let result = self.call_function(*call_fn_id, &element_args[i])?;
                             results.push(result);
                         }
@@ -788,10 +790,27 @@ impl VM {
                             let par_results = aver_rt::par_execute_with_cancel(tasks);
                             let mut results = Vec::with_capacity(count);
                             for r in par_results {
-                                let (value, child_arena) = r?;
-                                let imported = self.arena.deep_import(value, &child_arena);
-                                results.push(imported);
+                                match r {
+                                    Ok((value, child_arena)) => {
+                                        let imported = self.arena.deep_import(value, &child_arena);
+                                        results.push(imported);
+                                    }
+                                    Err(e) => {
+                                        // Cancelled branch — remember error but don't bail yet.
+                                        // A real Result.Err from another branch takes priority
+                                        // during ?! unwrap.
+                                        if had_vm_error.is_none() {
+                                            had_vm_error = Some(e);
+                                        }
+                                        // Push a sentinel — won't be Ok or Err, so unwrap
+                                        // will skip it in favor of real branch errors.
+                                        results.push(NanValue::UNIT);
+                                    }
+                                }
                             }
+                            // If all branches returned Ok values but some were cancelled,
+                            // propagate the VM error (e.g. only cancellations, no results).
+                            // If any branch has a real Result.Err, unwrap will find it first.
                             results
                         } else {
                             // Complete mode: all branches run to completion
@@ -834,34 +853,52 @@ impl VM {
                     self.runtime.replay_exit_group();
 
                     if unwrap {
-                        // ?! — unwrap each Result, propagate first Err
+                        // ?! — unwrap each Result.
+                        // First pass: prefer a real Result.Err over cancellation errors.
+                        // A real Err propagates immediately; cancelled sentinels (UNIT)
+                        // are skipped in this pass.
                         let mut unwrapped = Vec::with_capacity(count);
+                        let mut first_real_err: Option<NanValue> = None;
                         for v in &results {
                             if v.is_ok() {
                                 unwrapped.push(v.wrapper_inner(&self.arena));
                             } else if v.is_err() {
-                                let frame = self.frames.pop().unwrap();
-                                self.stack.truncate(frame.bp as usize);
-                                match self.complete_frame_return(frame, *v, caller_depth) {
-                                    ReturnControl::Done(result) => return Ok(result),
-                                    ReturnControl::Resume {
-                                        result,
-                                        fn_id: next_fn_id,
-                                        ip: next_ip,
-                                        bp: next_bp,
-                                    } => {
-                                        self.stack.push(result);
-                                        fn_id = next_fn_id;
-                                        ip = next_ip;
-                                        bp = next_bp;
-                                        continue;
-                                    }
-                                }
+                                first_real_err = Some(*v);
+                                break;
+                            } else if v.is_unit() {
+                                // Cancelled branch sentinel — skip for now
+                                continue;
                             } else {
                                 return Err(VmError::runtime(
                                     "Independent product '?!' requires all elements to be Result",
                                 ));
                             }
+                        }
+
+                        // Propagate: real Err takes priority, then cancellation VmError
+                        if let Some(err_val) = first_real_err {
+                            let frame = self.frames.pop().unwrap();
+                            self.stack.truncate(frame.bp as usize);
+                            match self.complete_frame_return(frame, err_val, caller_depth) {
+                                ReturnControl::Done(result) => return Ok(result),
+                                ReturnControl::Resume {
+                                    result,
+                                    fn_id: next_fn_id,
+                                    ip: next_ip,
+                                    bp: next_bp,
+                                } => {
+                                    self.stack.push(result);
+                                    fn_id = next_fn_id;
+                                    ip = next_ip;
+                                    bp = next_bp;
+                                    continue;
+                                }
+                            }
+                        }
+
+                        // No real Err — check if we had cancelled branches
+                        if let Some(vm_err) = had_vm_error {
+                            return Err(vm_err);
                         }
                         let tuple_idx = self.arena.push_tuple(unwrapped);
                         self.stack.push(NanValue::new_tuple(tuple_idx));
