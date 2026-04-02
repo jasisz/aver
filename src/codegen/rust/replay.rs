@@ -1512,18 +1512,12 @@ __POLICY_CHECK__
                     .position(|e| e.group_id != Some(gid))
                     .map(|offset| group_start + offset)
                     .unwrap_or(session.effects.len());
-                // Prefer exact branch_index match; fall back to type-only
-                let current_bp: Option<String> = SCOPE_STATE.with(|cell| {
-                    if let ScopeState::Active(scope) = &*cell.borrow() {
-                        if scope.branch_stack.is_empty() {
-                            None
-                        } else {
-                            Some(scope.branch_stack.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("."))
-                        }
-                    } else {
-                        None
-                    }
-                });
+                // Prefer exact branch match; fall back to type-only
+                let current_bp: Option<String> = if scope.branch_stack.is_empty() {
+                    None
+                } else {
+                    Some(scope.branch_stack.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("."))
+                };
                 let mut fallback_idx: Option<usize> = None;
                 for idx in group_start..group_end {
                     let candidate = &session.effects[idx];
