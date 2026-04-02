@@ -1167,6 +1167,7 @@ fn main() -> Result<String, String>
         ctx.policy = Some(crate::config::ProjectConfig {
             effect_policies: std::collections::HashMap::new(),
             check_suppressions: Vec::new(),
+            independence_mode: crate::config::IndependenceMode::default(),
         });
 
         let out = transpile(&ctx);

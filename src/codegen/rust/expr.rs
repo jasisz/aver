@@ -270,7 +270,7 @@ fn emit_expr_with_options(
                 .collect();
             format!("({})", parts.join(", "))
         }
-        Expr::EffectTuple(items, unwrap) => {
+        Expr::IndependentProduct(items, unwrap) => {
             let bare_items: Vec<Expr> = items.iter().map(|e| e.node.clone()).collect();
             let item_ctxs = compute_args_used_after_full(
                 &bare_items,
@@ -285,63 +285,62 @@ fn emit_expr_with_options(
                 .map(|(e, item_ctx)| clone_arg(e, ctx, item_ctx))
                 .collect();
 
-            // Runtime branch: if recording/replaying, execute sequentially
-            // with replay groups (thread_local state stays on one thread).
-            // Otherwise, use thread::scope for real parallelism.
             let n = parts.len();
-            let mut code = String::from("if crate::aver_replay::is_effect_tracking_active() { ");
+            let has_replay = ctx.emit_replay_runtime;
 
-            // Sequential path with replay groups
-            code.push_str("crate::aver_replay::enter_effect_group(); ");
-            if *unwrap {
-                for (i, part) in parts.iter().enumerate() {
-                    code.push_str(&format!("let _r{i} = {part}?; "));
-                }
-                code.push_str("crate::aver_replay::exit_effect_group(); (");
-                for i in 0..n {
-                    if i > 0 {
-                        code.push_str(", ");
+            let mut code = String::new();
+            if has_replay {
+                // Runtime branch: if recording/replaying, execute sequentially
+                // with replay groups (thread_local state stays on one thread).
+                code.push_str("if crate::aver_replay::is_effect_tracking_active() { ");
+                code.push_str("crate::aver_replay::enter_effect_group(); ");
+                if *unwrap {
+                    for (i, part) in parts.iter().enumerate() {
+                        code.push_str(&format!("let _r{i} = {part}?; "));
                     }
-                    code.push_str(&format!("_r{i}"));
-                }
-                code.push(')');
-            } else {
-                for (i, part) in parts.iter().enumerate() {
-                    code.push_str(&format!("let _r{i} = {part}; "));
-                }
-                code.push_str("crate::aver_replay::exit_effect_group(); (");
-                for i in 0..n {
-                    if i > 0 {
-                        code.push_str(", ");
+                    code.push_str("crate::aver_replay::exit_effect_group(); (");
+                    for i in 0..n {
+                        if i > 0 { code.push_str(", "); }
+                        code.push_str(&format!("_r{i}"));
                     }
-                    code.push_str(&format!("_r{i}"));
+                    code.push(')');
+                } else {
+                    for (i, part) in parts.iter().enumerate() {
+                        code.push_str(&format!("let _r{i} = {part}; "));
+                    }
+                    code.push_str("crate::aver_replay::exit_effect_group(); (");
+                    for i in 0..n {
+                        if i > 0 { code.push_str(", "); }
+                        code.push_str(&format!("_r{i}"));
+                    }
+                    code.push(')');
                 }
-                code.push(')');
+                code.push_str(" } else { ");
             }
 
-            // Parallel path
-            code.push_str(" } else { std::thread::scope(|_s| { ");
+            // Parallel path (always emitted; sole path when no replay)
+            code.push_str("std::thread::scope(|_s| { ");
             for (i, part) in parts.iter().enumerate() {
                 code.push_str(&format!("let _h{i} = _s.spawn(|| {part}); "));
             }
             if *unwrap {
                 code.push_str("Ok::<_, aver_rt::AverStr>((");
                 for i in 0..n {
-                    if i > 0 {
-                        code.push_str(", ");
-                    }
+                    if i > 0 { code.push_str(", "); }
                     code.push_str(&format!("_h{i}.join().unwrap()?"));
                 }
-                code.push_str(")) })? }");
+                code.push_str(")) })? ");
             } else {
                 code.push('(');
                 for i in 0..n {
-                    if i > 0 {
-                        code.push_str(", ");
-                    }
+                    if i > 0 { code.push_str(", "); }
                     code.push_str(&format!("_h{i}.join().unwrap()"));
                 }
-                code.push_str(") }) }");
+                code.push_str(") }) ");
+            }
+
+            if has_replay {
+                code.push('}');
             }
             code
         }
