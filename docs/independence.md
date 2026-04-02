@@ -18,15 +18,62 @@ The runtime may therefore evaluate elements sequentially, in any order permitted
 
 **`(a, b)?!`** — product of independent Result computations.
 
-If all elements produce `Ok`, the result is the tuple of unwrapped values. If one or more elements produce `Err`, evaluation fails with one error chosen by the execution schedule, or by replay policy when replay is enabled.
-
-In sequential execution, this choice is deterministic. In parallel execution, it may be nondeterministic.
+`(a, b)?!` is the independent product of `Result` computations. If all branches produce `Ok`, the result is the tuple of unwrapped values. If one or more branches produce `Err`, the product evaluates to `Err`. In sequential execution, the first `Err` (left-to-right) propagates. In parallel execution, the propagated error is nondeterministic among the produced errors. With replay enabled, the choice is recorded and reproduced.
 
 **`(a, b)`** — product of values. Standard tuple semantics. No independence claim.
 
 ## Soundness envelope
 
-This construct is sound by construction for pure terms. For effectful terms, correctness depends on the author's declaration that the participating effects are non-interfering with respect to the program's intended observable behavior.
+`!` is sound by construction only for pure terms. For effectful terms, it is an unchecked semantic contract: the programmer asserts that all schedules permitted by the execution mode are observationally acceptable.
+
+## Formal semantics
+
+Let τ range over observable effect traces. For an independent product, each branch is evaluated from the same incoming trace prefix. The runtime may choose any schedule consistent with the execution mode.
+
+**Pure / all-success case:**
+
+```
+⟨a, τ₀⟩ ⇓ ⟨Ok(v₁), τ₀ · τ_a⟩
+⟨b, τ₀⟩ ⇓ ⟨Ok(v₂), τ₀ · τ_b⟩
+τ ∈ Interleave(τ_a, τ_b)
+────────────────────────────────────────────
+⟨(a, b)?!, τ₀⟩ ⇓ ⟨Ok((v₁, v₂)), τ₀ · τ⟩
+```
+
+**Single-failure, complete mode:**
+
+```
+⟨a, τ₀⟩ ⇓ ⟨Err(e), τ₀ · τ_a⟩
+⟨b, τ₀⟩ ⇓ ⟨r_b,    τ₀ · τ_b⟩
+τ ∈ Interleave(τ_a, τ_b)
+────────────────────────────────────────────
+⟨(a, b)?!, τ₀⟩ ⇓ ⟨Err(e), τ₀ · τ⟩
+```
+
+**Single-failure, cancel mode:**
+
+```
+⟨a, τ₀⟩ ⇓ ⟨Err(e), τ₀ · τ_a⟩
+⟨b, τ₀⟩ ⇓cancel ⟨r_b', τ₀ · τ_b'⟩
+τ_b' ⊑ τ_b
+τ ∈ Interleave(τ_a, τ_b')
+────────────────────────────────────────────
+⟨(a, b)?!, τ₀⟩ ⇓ ⟨Err(e), τ₀ · τ⟩
+```
+
+If multiple branches produce `Err`, the propagated error is nondeterministic among the produced errors in parallel execution, and left-to-right in sequential execution. With replay enabled, the choice is recorded and reproduced.
+
+**Bare `!`:**
+
+```
+⟨a, τ₀⟩ ⇓ ⟨v₁, τ₀ · τ_a⟩
+⟨b, τ₀⟩ ⇓ ⟨v₂, τ₀ · τ_b⟩
+τ ∈ Interleave(τ_a, τ_b)
+────────────────────────────────────────────
+⟨(a, b)!, τ₀⟩ ⇓ ⟨(v₁, v₂), τ₀ · τ⟩
+```
+
+**Replay invariant:** replay records tuples of `(group_id, effect_type, effect_args, result)`. Within a group, matching is by `(group_id, effect_type, effect_args)`, not by position in the execution schedule. Therefore reordering within an independent product does not invalidate replay.
 
 ## Structural properties
 
@@ -37,13 +84,22 @@ This construct is sound by construction for pure terms. For effectful terms, cor
    - Recursive: `(f(x), g(xs))?!`
    - Flat: `(a, b, c, d)?!`
 
-3. **Error algebra** — `?` lifts through the product. `(a, b)?!` evaluates the `!` product, then applies `?` to each component. In sequential execution, the first `Err` (left-to-right) propagates. In parallel execution, any produced `Err` may propagate.
+3. **Error algebra** — `(a, b)?!` is the independent product of `Result` computations. If all branches produce `Ok`, the result is the tuple of unwrapped values. If one or more branches produce `Err`, the product evaluates to `Err` according to the error selection policy described in Core definitions.
 
 4. **Recursion builds products** — a recursive function over a list constructs a product at each step: the computation for the current element and the computation for the rest. With `?!`, this gives recursive structured fork/join, which can expose fan-out parallelism and latency hiding without introducing futures or async syntax.
 
 5. **Execution model** — the language does not prescribe how independent products are evaluated. Sequential and concurrent evaluation are both valid implementations, given that the programmer has correctly declared effect independence. Replay records effects and their grouping, accepting any order within a product.
 
-6. **Cancellation policy** — when one branch of a `?!` product fails, sibling branches may already be in flight or completed. The runtime lets them finish and chooses one error. There is no cancellation of in-flight work. This means `?!` on effectful terms may perform speculative work: a sibling effect can execute even if its result is ultimately discarded due to another branch's failure.
+6. **Cancellation policy** — when one branch of a `?!` product fails, sibling branches may already be in flight or completed. The runtime behaviour is configurable via `aver.toml`:
+
+   ```toml
+   [independence]
+   mode = "complete"   # default — all branches run to completion
+   # mode = "cancel"   # signal siblings to stop on first error
+   ```
+
+   - **`complete`** (default) — the runtime lets all branches finish and chooses one error. This means `?!` on effectful terms may perform speculative work: a sibling effect can execute even if its result is ultimately discarded due to another branch's failure.
+   - **`cancel`** — the runtime sets a shared cancellation flag when one branch fails. Sibling branches check this flag periodically and bail early with a cancellation error. Effects that already started will complete (cancellation is cooperative, not preemptive). Sibling branches stop initiating further work after they observe the cancellation flag.
 
 ## Examples
 

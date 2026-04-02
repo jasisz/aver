@@ -5,7 +5,7 @@ All notable changes to Aver are documented here.
 ## 0.8.0 (unreleased)
 
 ### Added
-- **Independent products (`?!` / `!`)** — a tuple followed by `!` is a product of independent computations. `?!` adds Result unwrapping — all must succeed or the first error propagates. Independence is structural: tuple elements cannot reference each other. Composes recursively, giving fan-out parallelism, streaming, and backpressure with no new language concepts. No async, no futures, no channels — just products and independence. See [docs/independence.md](docs/independence.md).
+- **Independent products (`?!` / `!`)** — a tuple followed by `!` is a product of independent computations. `?!` adds Result unwrapping — all must succeed or the first error propagates. Independence is structural: tuple elements cannot reference each other. Composes recursively, giving fan-out parallelism and pipeline overlap with no new language concepts. No async, no futures, no channels — just products and independence. See [docs/independence.md](docs/independence.md).
 - **Parallel execution** — compiled Aver programs run `?!` / `!` elements on separate threads. Two HTTP calls that each take 2 seconds complete in ~3 seconds, not 4. Recursive `?!` over a list fans out the entire tree.
 - **Replay groups** — effects inside a `?!` / `!` product are order-independent in replay. Reordering independent code does not break recorded sessions.
 - **`aver check`** validates that `?!` / `!` elements are function calls — no complex expressions allowed inside independent products.

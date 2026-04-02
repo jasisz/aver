@@ -1,0 +1,79 @@
+module IndependentFanout
+    intent =
+        "Tests independent products (?! and !) with pure recursive fan-out."
+        "No external effects — exercises the independence machinery on pure computations."
+
+fn slow(x: Int) -> Result<Int, String>
+    ? "Simulates a computation that returns Ok."
+    Result.Ok(x * 10)
+
+fn failing(x: Int) -> Result<Int, String>
+    ? "Simulates a computation that fails for negative input."
+    match x < 0
+        true -> Result.Err("negative: {x}")
+        false -> Result.Ok(x * 100)
+
+// ── Flat ?! — all succeed ──────────────────────────────────────────────────
+
+fn flatOk() -> Result<(Int, Int, Int), String>
+    ? "Three independent computations, all succeed."
+    data = (slow(1), slow(2), slow(3))?!
+    Result.Ok(data)
+
+// ── Flat ?! — one fails ────────────────────────────────────────────────────
+
+fn flatFail() -> (Result<Int, String>, Result<Int, String>, Result<Int, String>)
+    ? "Three independent computations as bare product — middle one fails."
+    (slow(1), failing(0 - 5), slow(3))!
+
+// ── Bare ! — partial success ───────────────────────────────────────────────
+
+fn bareProduct() -> (Result<Int, String>, Result<Int, String>)
+    ? "Two independent computations, bare product preserves both Results."
+    (slow(7), failing(0 - 1))!
+
+// ── Recursive fan-out with ?! ──────────────────────────────────────────────
+
+fn processOne(x: Int) -> Result<Int, String>
+    ? "Process a single element."
+    Result.Ok(x * x)
+
+fn processStep(x: Int, rest: List<Int>) -> Result<List<Int>, String>
+    ? "Process one element and the rest independently."
+    data = (processOne(x), processAll(rest))?!
+    match data
+        (val, others) -> Result.Ok(List.prepend(val, others))
+
+fn processAll(items: List<Int>) -> Result<List<Int>, String>
+    ? "Recursive fan-out over a list using ?!."
+    match items
+        [] -> Result.Ok([])
+        [x, ..rest] -> processStep(x, rest)
+
+// ── Entry point ─────────────────────────────────────────────────────────────
+
+fn main() -> Unit
+    ! [Console.print]
+
+    // Flat ?! success
+    match flatOk()
+        Result.Ok(t) -> match t
+            (a, b, c) -> Console.print("flatOk: ({a}, {b}, {c})")
+        Result.Err(e) -> Console.print("flatOk FAILED: {e}")
+
+    // Bare ! with failure — see all results
+    match flatFail()
+        (Result.Ok(a), Result.Err(e), Result.Ok(c)) -> Console.print("flatFail: ok={a}, err={e}, ok={c}")
+        _ -> Console.print("flatFail: unexpected pattern")
+
+    // Bare ! — partial success
+    match bareProduct()
+        (Result.Ok(a), Result.Err(e)) -> Console.print("bareProduct: ok={a}, err={e}")
+        _ -> Console.print("bareProduct: unexpected")
+
+    // Recursive fan-out [1,2,3,4,5] -> [1,4,9,16,25]
+    match processAll([1, 2, 3, 4, 5])
+        Result.Ok(results) -> Console.print("fanout: {results}")
+        Result.Err(e) -> Console.print("fanout FAILED: {e}")
+
+    Console.print("done")
