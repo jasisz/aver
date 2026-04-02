@@ -1459,6 +1459,85 @@ fn vm_respects_aver_toml_runtime_policy() {
     );
 }
 
+#[test]
+fn vm_cancel_mode_stops_independent_product_sibling_early() {
+    let marker_path = std::env::temp_dir().join(format!(
+        "aver_vm_independence_{}_{}.txt",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock went backwards")
+            .as_nanos()
+    ));
+    let src = format!(
+        r#"fn failFast() -> Result<Unit, String>
+    Result.Err("boom")
+
+fn appendMore(path: String, remaining: Int) -> Result<Unit, String>
+    ? "Appends one marker, then continues."
+    ! [Disk.appendText]
+    _ = Disk.appendText(path, "x\n")?
+    appendMany(path, remaining - 1)
+
+fn appendMany(path: String, remaining: Int) -> Result<Unit, String>
+    ? "Appends one marker per recursive step."
+    ! [Disk.appendText]
+    match remaining == 0
+        true -> Result.Ok(Unit)
+        false -> appendMore(path, remaining)
+
+fn main() -> Result<Unit, String>
+    ! [Disk.appendText]
+    _ = (failFast(), appendMany("{marker}", 64))?!
+    Result.Ok(Unit)
+"#,
+        marker = marker_path.display()
+    );
+
+    let run_with_mode = |mode: &str| {
+        let _ = std::fs::remove_file(&marker_path);
+        let mut items = parse(&src);
+        tco::transform_program(&mut items);
+        resolver::resolve_program(&mut items);
+
+        let mut arena = Arena::new();
+        let (code, globals) = vm::compile_program(&items, &mut arena).expect("compile failed");
+        let mut machine = vm::VM::new(code, globals, arena);
+        machine.set_runtime_policy(
+            ProjectConfig::parse(&format!("[independence]\nmode = \"{mode}\"\n"))
+                .expect("parse policy"),
+        );
+        let result = machine.run().expect("VM execution failed");
+        let value = result.to_value(&machine.arena);
+        let count = match std::fs::read_to_string(&marker_path) {
+            Ok(content) => content.lines().count(),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(err) => panic!("failed to read {}: {}", marker_path.display(), err),
+        };
+        let _ = std::fs::remove_file(&marker_path);
+        (value, count)
+    };
+
+    let (complete_value, complete_count) = run_with_mode("complete");
+    let (cancel_value, cancel_count) = run_with_mode("cancel");
+
+    assert_eq!(
+        complete_value,
+        aver::value::Value::Err(Box::new(aver::value::Value::Str("boom".to_string())))
+    );
+    assert_eq!(
+        cancel_value,
+        aver::value::Value::Err(Box::new(aver::value::Value::Str("boom".to_string())))
+    );
+    assert_eq!(complete_count, 64);
+    assert!(
+        cancel_count < complete_count,
+        "cancel mode should stop sibling work early, got cancel_count={} vs complete_count={}",
+        cancel_count,
+        complete_count
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Map literals
 // ---------------------------------------------------------------------------

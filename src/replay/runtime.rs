@@ -176,7 +176,8 @@ impl EffectReplayState {
         effect_type: &str,
         got_args: Option<Vec<JsonValue>>,
     ) -> Result<RecordedOutcome, ReplayFailure> {
-        // Check if current position is inside a group — match by type+args, not position
+        // Check if current position is inside a group — match by branch_path +
+        // effect_occurrence + type + args, not execution order
         if self.replay_pos < self.replay_effects.len()
             && let Some(gid) = self.replay_effects[self.replay_pos].group_id
         {

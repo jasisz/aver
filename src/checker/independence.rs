@@ -133,11 +133,13 @@ fn check_independent_product(
     for left_idx in 0..items.len() {
         for right_idx in left_idx + 1..items.len() {
             let mut conflicting = BTreeSet::new();
+            let mut hazard_kinds = BTreeSet::new();
             for left in &branch_effects[left_idx] {
                 for right in &branch_effects[right_idx] {
-                    if effects_conflict(left, right) {
+                    if let Some(kind) = effect_hazard(left, right) {
                         conflicting.insert(left.clone());
                         conflicting.insert(right.clone());
+                        hazard_kinds.insert(kind.label());
                     }
                 }
             }
@@ -149,6 +151,7 @@ fn check_independent_product(
             let left_branch = left_idx + 1;
             let right_branch = right_idx + 1;
             let shared = conflicting.into_iter().collect::<Vec<_>>().join(", ");
+            let hazard_note = hazard_kinds.into_iter().collect::<Vec<_>>().join(", ");
             let left_effects = describe_effects(&branch_effects[left_idx]);
             let right_effects = describe_effects(&branch_effects[right_idx]);
             warnings.push(CheckFinding {
@@ -157,8 +160,8 @@ fn check_independent_product(
                 file: None,
                 fn_name: Some(fd.name.clone()),
                 message: format!(
-                    "Independent product branches {} and {} use potentially conflicting effects [{}] — independent products may reorder or overlap these effects; keep them sequential or suppress with [[check.suppress]] reason if this independence is intentional",
-                    left_branch, right_branch, shared
+                    "Independent product branches {} and {} use potentially conflicting effects [{}] ({}) — independent products may reorder or overlap these effects; keep them sequential or suppress with [[check.suppress]] reason if this independence is intentional",
+                    left_branch, right_branch, shared, hazard_note
                 ),
                 extra_spans: vec![
                     FindingSpan {
@@ -175,6 +178,29 @@ fn check_independent_product(
                     },
                 ],
             });
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum HazardKind {
+    SharedOutput,
+    SharedTransport,
+    SharedServerLifecycle,
+    DiskMutation,
+    HttpMutation,
+    EnvMutation,
+}
+
+impl HazardKind {
+    fn label(self) -> &'static str {
+        match self {
+            HazardKind::SharedOutput => "shared terminal/output hazard",
+            HazardKind::SharedTransport => "shared tcp/socket hazard",
+            HazardKind::SharedServerLifecycle => "shared server lifecycle hazard",
+            HazardKind::DiskMutation => "disk mutation hazard",
+            HazardKind::HttpMutation => "http mutation hazard",
+            HazardKind::EnvMutation => "environment mutation hazard",
         }
     }
 }
@@ -266,18 +292,30 @@ fn collect_used_effects_expr(expr: &Spanned<Expr>, fn_sigs: &FnSigMap, out: &mut
     }
 }
 
-fn effects_conflict(left: &str, right: &str) -> bool {
-    same_namespace_any(left, right, "Console")
-        || same_namespace_any(left, right, "Terminal")
-        || same_namespace_any(left, right, "Tcp")
-        || same_namespace_any(left, right, "HttpServer")
-        || same_namespace_with_mutation(left, right, "Disk", is_disk_mutating)
-        || same_namespace_with_mutation(left, right, "Http", is_http_mutating)
-        || same_namespace_with_mutation(left, right, "Env", is_env_mutating)
+fn effect_hazard(left: &str, right: &str) -> Option<HazardKind> {
+    if shared_output_effect(left, right) {
+        Some(HazardKind::SharedOutput)
+    } else if same_namespace_any(left, right, "Tcp") {
+        Some(HazardKind::SharedTransport)
+    } else if same_namespace_any(left, right, "HttpServer") {
+        Some(HazardKind::SharedServerLifecycle)
+    } else if same_namespace_with_mutation(left, right, "Disk", is_disk_mutating) {
+        Some(HazardKind::DiskMutation)
+    } else if same_namespace_with_mutation(left, right, "Http", is_http_mutating) {
+        Some(HazardKind::HttpMutation)
+    } else if same_namespace_with_mutation(left, right, "Env", is_env_mutating) {
+        Some(HazardKind::EnvMutation)
+    } else {
+        None
+    }
 }
 
 fn same_namespace_any(left: &str, right: &str, namespace: &str) -> bool {
     belongs_to_namespace(left, namespace) && belongs_to_namespace(right, namespace)
+}
+
+fn shared_output_effect(left: &str, right: &str) -> bool {
+    belongs_to_output_namespace(left) && belongs_to_output_namespace(right)
 }
 
 fn same_namespace_with_mutation(
@@ -293,6 +331,10 @@ fn same_namespace_with_mutation(
 
 fn belongs_to_namespace(effect: &str, namespace: &str) -> bool {
     effect == namespace || effect.starts_with(&format!("{namespace}."))
+}
+
+fn belongs_to_output_namespace(effect: &str) -> bool {
+    belongs_to_namespace(effect, "Console") || belongs_to_namespace(effect, "Terminal")
 }
 
 fn is_disk_mutating(effect: &str) -> bool {
@@ -424,5 +466,40 @@ fn demo() -> (Unit, Unit)
         let warnings = collect_independence_warnings(&items, &tc.fn_sigs);
         assert_eq!(warnings.len(), 1, "warnings={warnings:?}");
         assert!(warnings[0].message.contains("Console"));
+    }
+
+    #[test]
+    fn warns_on_console_terminal_cross_namespace_hazard() {
+        let items = parse_items(
+            r#"
+fn left() -> Unit
+    ! [Console.print]
+    Console.print("a")
+
+fn right() -> Unit
+    ! [Terminal.flush]
+    Terminal.flush()
+
+fn demo() -> (Unit, Unit)
+    ! [Console.print, Terminal.flush]
+    (left(), right())!
+"#,
+        );
+        let tc = crate::types::checker::run_type_check_full(&items, None);
+        assert!(
+            tc.errors.is_empty(),
+            "unexpected type errors: {:?}",
+            tc.errors
+        );
+
+        let warnings = collect_independence_warnings(&items, &tc.fn_sigs);
+        assert_eq!(warnings.len(), 1, "warnings={warnings:?}");
+        assert!(warnings[0].message.contains("Console.print"));
+        assert!(warnings[0].message.contains("Terminal.flush"));
+        assert!(
+            warnings[0]
+                .message
+                .contains("shared terminal/output hazard")
+        );
     }
 }

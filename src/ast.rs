@@ -114,7 +114,7 @@ pub enum Expr {
     /// Elements are independent effectful expressions evaluated with no guaranteed order.
     /// `unwrap=true` (`?!`): all elements must be Result; unwraps Ok values, propagates first Err.
     /// `unwrap=false` (`!`): returns raw tuple of results.
-    /// Produces a replay group (effects matched by type+args, not position).
+    /// Produces a replay group (effects matched by branch_path + effect_occurrence + type + args).
     IndependentProduct(Vec<Spanned<Expr>>, bool),
     /// Compiled variable lookup: `env[last][slot]` — O(1) instead of HashMap scan.
     /// Produced by the resolver pass for locals inside function bodies.

@@ -105,6 +105,22 @@ If multiple branches produce `Err`, the propagated error is the first `Err` in l
    - **`complete`** (default) — the runtime lets all branches finish and chooses one error. This means `?!` on effectful terms may perform speculative work: a sibling effect can execute even if its result is ultimately discarded due to another branch's failure.
    - **`cancel`** — the runtime sets a shared cancellation flag when one branch fails. Sibling branches check this flag periodically and bail early with a cancellation error. Effects that already started will complete (cancellation is cooperative, not preemptive). Sibling branches stop initiating further work after they observe the cancellation flag. Cancel mode reduces wasted compute but cannot reduce wasted I/O wait: a branch blocked in a kernel syscall (e.g. an HTTP request with a long timeout) will not observe the flag until the syscall returns.
 
+## `aver check` hazard heuristics
+
+`aver check` emits `warning[independence-hazard]` when a branch pair in an independent product uses effects that are likely to be unsafe or nondeterministic when reordered or overlapped.
+
+Today the heuristic is intentionally small and conservative:
+
+- Any mix of `Console.*` and `Terminal.*` warns. This includes cross-namespace pairs like `Console.print` with `Terminal.flush`, because both share the terminal/output channel.
+- Any pair of `Tcp.*` effects warns.
+- Any pair of `HttpServer.*` effects warns.
+- `Disk.*` warns when at least one side is mutating: `writeText`, `appendText`, `delete`, `deleteDir`, `makeDir`.
+- `Http.*` warns when at least one side is mutating: `post`, `put`, `patch`, `delete`.
+- `Env.*` warns when at least one side is mutating: `set`.
+- Broad namespace effects such as `! [Console]` or `! [Disk]` participate in the same rules.
+
+This is a heuristic, not a proof system. It does not yet reason about concrete resource identity such as "same file path" or "same environment key". Use it as a review signal: if the warning is intentional, suppress it with `[[check.suppress]]` and a reason in `aver.toml`.
+
 ## Examples
 
 ### Flat: multiple independent effects

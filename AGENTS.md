@@ -89,7 +89,7 @@ src/
     int.rs            — Int.* (pure)
     float.rs          — Float.* (pure)
     string.rs         — String.* (pure)
-    list.rs           — List.len/head/tail/prepend/concat/reverse/contains/find/any/zip (pure, recursive)
+    list.rs           — List.len/prepend/concat/reverse/contains/zip/take/drop (pure, recursive)
     vector.rs         — Vector.new/get/set/len/fromList/toList (pure, indexed O(1) COW)
     map.rs            — Map.* (pure)
     char.rs           — Char.toCode/fromCode (pure, not a type)

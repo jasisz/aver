@@ -1225,7 +1225,7 @@ mod tests {
     #[test]
     fn classifies_independence_hazard_warning() {
         let (slug, repair) = classify_finding(
-            "Independent product branches 1 and 2 use potentially conflicting effects [Console.print, Console.error] — independent products may reorder or overlap these effects; keep them sequential or suppress with [[check.suppress]] reason if this independence is intentional",
+            "Independent product branches 1 and 2 use potentially conflicting effects [Console.print, Console.error] (shared terminal/output hazard) — independent products may reorder or overlap these effects; keep them sequential or suppress with [[check.suppress]] reason if this independence is intentional",
         );
         assert_eq!(slug, "independence-hazard");
         assert!(repair.is_some());

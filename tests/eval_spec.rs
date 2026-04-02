@@ -2122,6 +2122,109 @@ keys = ["SAFE_*"]
 }
 
 // ---------------------------------------------------------------------------
+// Independent product runtime policy
+// ---------------------------------------------------------------------------
+
+mod independence_runtime_tests {
+    use super::*;
+    use aver::config::ProjectConfig;
+    use aver::interpreter::{Interpreter, Value};
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_file_path(tag: &str) -> PathBuf {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock went backwards")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "aver_eval_independence_{}_{}_{}.txt",
+            tag,
+            std::process::id(),
+            ts
+        ))
+    }
+
+    fn marker_count(path: &Path) -> usize {
+        match std::fs::read_to_string(path) {
+            Ok(content) => content.lines().count(),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(err) => panic!("failed to read {}: {}", path.display(), err),
+        }
+    }
+
+    fn run_with_mode(mode: &str, marker_path: &Path) -> (Value, usize) {
+        let src = format!(
+            r#"fn failFast() -> Result<Unit, String>
+    Result.Err("boom")
+
+fn appendMore(path: String, remaining: Int) -> Result<Unit, String>
+    ? "Appends one marker, then continues."
+    ! [Disk.appendText]
+    _ = Disk.appendText(path, "x\n")?
+    appendMany(path, remaining - 1)
+
+fn appendMany(path: String, remaining: Int) -> Result<Unit, String>
+    ? "Appends one marker per recursive step."
+    ! [Disk.appendText]
+    match remaining == 0
+        true -> Result.Ok(Unit)
+        false -> appendMore(path, remaining)
+
+fn main() -> Result<Unit, String>
+    ! [Disk.appendText]
+    _ = (failFast(), appendMany("{marker}", 64))?!
+    Result.Ok(Unit)
+"#,
+            marker = marker_path.display()
+        );
+        let _ = std::fs::remove_file(marker_path);
+
+        let items = parse(&src);
+        let mut interp = Interpreter::new();
+        interp.set_runtime_policy(
+            ProjectConfig::parse(&format!("[independence]\nmode = \"{mode}\"\n"))
+                .expect("parse policy"),
+        );
+        for item in &items {
+            if let TopLevel::FnDef(fd) = item {
+                interp.exec_fn_def(fd).expect("exec_fn_def failed");
+            }
+        }
+        let main_fn = interp.lookup("main").expect("main not found");
+        let effects = Interpreter::callable_declared_effects(&main_fn);
+        let value = interp
+            .call_value_with_effects_pub(main_fn, vec![], "main", effects)
+            .expect("call failed");
+        let count = marker_count(marker_path);
+        let _ = std::fs::remove_file(marker_path);
+        (value, count)
+    }
+
+    #[test]
+    fn interpreter_cancel_mode_remains_sequential_for_independent_products() {
+        let marker_path = temp_file_path("cancel_policy");
+
+        let (complete_value, complete_count) = run_with_mode("complete", &marker_path);
+        let (cancel_value, cancel_count) = run_with_mode("cancel", &marker_path);
+
+        assert_eq!(
+            complete_value,
+            Value::Err(Box::new(Value::Str("boom".to_string())))
+        );
+        assert_eq!(
+            cancel_value,
+            Value::Err(Box::new(Value::Str("boom".to_string())))
+        );
+        assert_eq!(complete_count, 64);
+        assert_eq!(
+            cancel_count, 64,
+            "tree-walking interpreter is sequential, so cancel mode should not shorten sibling work"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tcp builtins
 // ---------------------------------------------------------------------------
 

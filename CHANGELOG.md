@@ -8,13 +8,17 @@ All notable changes to Aver are documented here.
 - **Independent products (`?!` / `!`)** — a tuple followed by `!` is a product of independent computations. `?!` adds Result unwrapping — all must succeed or the first error propagates. Independence is structural: tuple elements cannot reference each other. Composes recursively, giving fan-out parallelism and pipeline overlap with no new language concepts. No async, no futures, no channels — just products and independence. See [docs/independence.md](docs/independence.md).
 - **Parallel execution** — compiled Aver programs run `?!` / `!` elements on separate threads. Two HTTP calls that each take 2 seconds complete in ~3 seconds, not 4. Recursive `?!` over a list fans out the entire tree.
 - **Replay groups** — effects inside a `?!` / `!` product are order-independent in replay. Reordering independent code does not break recorded sessions.
-- **`aver check`** validates that `?!` / `!` elements are function calls — no complex expressions allowed inside independent products.
+- **`aver check` independence hazards** — branch-pair warnings for likely unsafe overlaps in independent products, including `Console`/`Terminal`, `Tcp`, `HttpServer`, and mutating `Disk` / `Http` / `Env` effects. Warnings can be suppressed via `[[check.suppress]]` with a mandatory reason.
+- **`List.take` / `List.drop`** — list windowing helpers for bounded fan-out and batching patterns.
 - **`aver why`** — justification coverage tracer. Scores every function as justified, partial, or unjustified based on description, verify blocks, and coverage. `--verbose` and `--json` output modes.
 - **`[[check.suppress]]` in `aver.toml`** — suppress specific warnings with a mandatory `reason`.
 
 ### Changed
 - **Thread-safe runtime** — all runtime types use atomic reference counting, enabling parallel execution of independent products.
 - **Structured replay diagnostics** — per-error-type diagnostics with source locations. Args diff hint shown even without `--check-args`.
+- **Independent-product replay matching** — replay now keys grouped effects by `branch_path + effect_occurrence + effect_type + effect_args`, so nested and repeated effects replay deterministically across reordering.
+- **VM independent products** — `CALL_PAR` now carries callable values rather than only statically resolved function ids, so aliases like `f = foo; (f(x), f(y))!` work. Branch VMs import a thin static arena plus per-branch inputs/outputs instead of cloning the whole parent heap.
+- **Compiled Rust cancellation** — generated Rust now uses cooperative cancel checkpoints for `?!` in `mode = "cancel"` and keeps branch closures borrow-checker-safe.
 
 ## 0.7.3 (2026-03-30)
 
